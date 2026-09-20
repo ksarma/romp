@@ -543,6 +543,50 @@ test("decision 47, the hook and the prose surfaces record round 5's fifth addend
   assert.ok(!/\u2014/.test(d47), 'no em dash in decision 47');
 });
 
+// Round 5's fifth addendum's second fix-up (2026-09-20): the nested-expansion rule and the piped-script rule, each stated once at its home
+// in the hook and on decision 47 in the same words, the functions that carry them, the two fixtures with their populations, the residual
+// (a producer the guard cannot see; a shell outside SHELLS, busybox among them) named on the header, the decision and hooks/README.md,
+// and the three prose surfaces carrying the same sentence.
+test("decision 47, the hook and the prose surfaces record the fifth addendum's second fix-up: the nested-expansion rule at the lexer and the piped-script rule at extract, each on decision 47 in the same words, the functions, the two matrix fixtures with their populations and residual rows, the residual named with busybox on the header, the decision and the README, and the three surfaces' sentence", () => {
+  const RULE_NESTED = 'an expansion nested inside a parameter-expansion word is read as the command it runs, recursively, in every position (an operand, inside `[[ ]]`, inside `(( ))`, a redirection target, a quoted word), exactly as an expansion among plain operands is read; the `${` read descends';
+  const RULE_PIPED = 'when a pipeline\'s last command is a shell of SHELLS reading its script from stdin (no `-c`, no script operand: `bash`, `bash -s`, `sh -`, dash) and the command piped into it is an echo or a printf, the words echo or printf would print are the script, read as the here-string form already is, under the grammar the shell named uses (dash\'s for `sh` and `dash`, TEST_ARITH_SHELLS)';
+  const hookFlat = hook.replace(/\n\s*\/\/ ?/g, ' ').replace(/\s+/g, ' ');
+  const d47Flat = d47.replace(/\s+/g, ' ');
+  assert.ok(d47Flat.includes("THE SECOND FIX-UP (2026-09-20; the fix-up's verifiers, on its head)"), 'decision 47 records the second fix-up');
+  assert.ok(hookFlat.includes(RULE_NESTED) && d47Flat.includes(RULE_NESTED), 'the nested-expansion rule is stated at the lexer and on decision 47 in the same words');
+  assert.ok(hookFlat.includes(RULE_PIPED) && d47Flat.includes(RULE_PIPED), 'the piped-script rule is stated at extract and on decision 47 in the same words');
+  for (const fn of ['nestedExpansions', 'skipNested', 'BRACE_WORD_VIA', 'stdinBodies', 'pipedScripts', 'echoOutput', 'printfOutput', 'shellEscapes']) {
+    assert.ok(d47.includes(`\`${fn}\``), `decision 47 names ${fn}`);
+    assert.ok(hook.includes(fn), `the hook has ${fn}`);
+  }
+  // the descent's home and the reads that make it: the `${` read descends in both quotings, comments are off inside, a single quote is a
+  // character in a double-quoted word, and the piped script joins the stdin bodies
+  assert.ok(hook.includes("const braceParameter = (dq = false) => { raw += '${'; i += 2; const inner = skipNested('{', '}', dq); raw += inner + '}'; opaqueExpansion('${' + inner + '}'); nestedExpansions(inner, dq); };"), 'the ${ read descends');
+  assert.ok(hook.includes("if (e.kind === 'brace') { braceParameter(true); continue; }") && hook.includes("if (e.kind === 'brace') { braceParameter(dqInner); continue; }"), 'in double quotes and unquoted');
+  assert.ok(hook.includes("const nested = lex(inner, shell, { comments: false, quotes: dq ? 'double' : 'plain', depth: nestDepth + 1 });"), 'the inner text is lexed with no comment, in its quoting, one level deeper');
+  assert.ok(hook.includes("if (c === '#' && !inWord && comments) {") && hook.includes("if (c === \"'\" && !dqInner) {"), 'a # opens no comment inside the word; a single quote is a character in a double-quoted one');
+  assert.ok(hook.includes("for (const t of s.subs) seg.viaSubs.push({ text: t, via: BRACE_WORD_VIA });"), 'the nested substitutions join the segment with the word named');
+  assert.ok(hook.includes("out.push(...pipedScripts(idx));") && hook.includes("if (producer.name === 'echo') return echoOutput(producer.args);") && hook.includes("if (producer.name === 'printf') return printfOutput(producer.args);"), 'the piped script joins the stdin bodies, from an echo or a printf alone');
+  assert.ok(hook.includes("if (idx < 1 || segments[idx - 1].op !== '|' || segments[idx - 1].paren) return [];"), 'the producer is the command directly before the pipe, never a subshell');
+  // the residual, named with busybox on the header, the decision and the README
+  for (const [name, text] of [['the hook header', hook], ['decision 47', d47], ['hooks/README.md', hooksReadme]]) {
+    const flat = text.replace(/\n\s*\/\/ ?/g, ' ').replace(/\s+/g, ' ');
+    assert.ok(/busybox `?sh`? or `?ash`?/.test(flat), `${name} names busybox sh and ash as shells outside the set the guard reads`);
+    assert.ok(flat.includes('cat f | bash'), `${name} names a producer the guard cannot see`);
+  }
+  // the fixtures state their populations and the piped fixture its residual rows
+  const pw = JSON.parse(fs.readFileSync(path.join(REPO, 'tools', 'romp-track-bash-guard-param-word-matrix.json'), 'utf8'));
+  assert.ok(pw.rows > 0 && pw.population.includes('operator form of the ${...} word') && pw.note.includes('NOT exhaustive') && Array.isArray(pw.forms) && Array.isArray(pw.positions), 'the param-word fixture states its population and that it is not exhaustive');
+  const ps = JSON.parse(fs.readFileSync(path.join(REPO, 'tools', 'romp-track-bash-guard-piped-script-matrix.json'), 'utf8'));
+  assert.ok(ps.rows > 0 && ps.residualRows > 0 && ps.population.includes("every shell of the hook's SHELLS") && ps.note.includes('The residual rows are expected ALLOWED') && ps.note.includes('busybox'), 'the piped-script fixture states its population, its residual rows and the consumer outside SHELLS');
+  assert.ok(ps.rows > ps.residualRows, 'the literal rows outnumber the residual ones');
+  // the three prose surfaces carry the second fix-up's sentence
+  const SENT = "since its second fix-up the same day an expansion nested in a `${...}` word (`${x:-$(cp a b)}`, a backtick, a `<(...)`) is read as the command it runs in every position, and a literal echo or printf piped into a shell reading stdin is that shell's script (a producer the guard cannot see, `cat f | bash`, stays unread, as does a script handed to a shell outside the set it reads, busybox sh or ash among them)";
+  const prose = { 'hooks/README.md': hooksReadme, 'docs/install.md': read('docs', 'install.md'), 'the vendored SKILL.md': read('vendor', 'track-changents', 'skill', 'SKILL.md') };
+  for (const [name, text] of Object.entries(prose)) assert.ok(text.replace(/\s+/g, ' ').includes(SENT), `${name} carries the second fix-up's sentence`);
+  assert.ok(!/\u2014/.test(d47), 'no em dash in decision 47');
+});
+
 // The seventh pass's attacker (2026-09-19): decision 47 and the hook header record the two misses and the readonly sibling, each
 // tied to the hook function that closes it, and the wrapper list on the three prose surfaces names zsh's modifiers.
 test("decision 47 and the hook header record the seventh pass's attacker: nesting-aware group frames, zsh's precommand modifiers in the wrapper set and on every prose surface, the readonly value kept, and the shadowed poison gone", () => {

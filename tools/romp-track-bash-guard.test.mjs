@@ -3676,7 +3676,7 @@ const sixthPassWorld = () => {
     return acc.join(' ');
   };
   const fill = (s) => s.replaceAll('{W}', W).replaceAll('{NA}', NA).replaceAll('{WEB}', WEB).replaceAll('{OUT}', OUT);
-  const cwds = { na: NA, nas: path.join(NA, 'scratch'), nad: path.join(NA, 'docs'), out: OUT };
+  const cwds = { na: NA, nas: path.join(NA, 'scratch'), nad: path.join(NA, 'docs'), nan: path.join(NA, 'notes'), out: OUT };   // nan: the tracked notes/ folder (the second fix-up's rows)
   const env = { PATH: process.env.PATH, HOME, LC_ALL: 'C.UTF-8' };
   // the hook as a process from the row's cwd, HOME the world's home
   const hook = (cmd, cwd) => { const r = spawnSync(process.execPath, [HOOK], { input: payload(cmd, cwd), encoding: 'utf8', env: { ...env, ROMP_SID } }); return { status: r.status, reason: String(r.stderr || '') }; };
@@ -5870,6 +5870,361 @@ test("round 5's fifth addendum, the construct matrix: head (the command-position
     assert.deepEqual(mismatches, [], 'every row matches the fixture');
     console.log(`# the construct matrix: rows ${rows.length}, refused ${refused}, allowed ${rows.length - refused}, writes bash=${writesBy.bash} zsh=${writesBy.zsh} dash=${writesBy.dash}; refused with no tracked write: ${costs.dead.length} dead (parsed by no shell), ${costs.doctrine.length} doctrine (a definition never called), ${costs.opens.length} opens (>> or <> onto the existing tracked file: the not-found command or the test writes no byte, the folder twin creates its file), ${costs.unset.length} unset (a name the command never sets: the non-literal rule, the comparison's priced cost), ${costs.arithProcsub.length} arith-procsub (a process substitution as an operand of (( )): an arithmetic error in bash and zsh, a syntax error in dash, the expansion read as the command a shell would run), ${costs.other.length} other`);
     for (const line of costs.other) console.log(`#   other: ${line}`);
+  } finally { process.env.HOME = savedHome; w.rm(); }
+});
+
+// THE PARAM-WORD MATRIX and THE PIPED-SCRIPT MATRIX (round 5's fifth addendum, second fix-up, 2026-09-20): the attack on the two
+// rules the fix-up's verifiers forced, kept as pins beside the construct matrix. (1) THE NESTED EXPANSION: every `${...}` operator
+// form (`:-`, `-`, `:=`, `=`, `:+`, `+`, `#`, `##`, `%`, `%%`, `:?`, `?`, `/`, `//`, a subscript, a `${` nested in a `${` and one
+// nested two deep; the pattern, replacement, subscript and `+` forms with x set to a plain string first, since the shells evaluate
+// their word only then) x the expansion nested in it (`$(...)`, a backtick, `<(...)`) x the position of the word (an operand, an
+// operand of `[[ ]]`, an operand of `(( ))`, inside double quotes, a redirection target) x the cwd (docs/, notes/, the project
+// root, out/), the write inside the expansion aimed at the tracked file the cwd reaches (docs/report.md; a new name under
+// notes/). The hard invariant: no row a shell writes is allowed. The refusals where no shell writes are the cost, by class:
+// subscript-procsub (a `<(...)` as the subscript: a syntax error in bash, a bad math expression in zsh, a bad substitution in
+// dash), arith-procsub (a `<(...)` inside a `${...}` operand of `(( ))`: an arithmetic error in bash and zsh, a syntax error in
+// dash, the expansion read as the command a shell would run), quoted-procsub (a `<(...)` inside a double-quoted `${...}` of the
+// `:-` family, which no shell performs, read all the same since bash performs it in a double-quoted pattern, replacement or
+// message part: `"${x#<(cmd)}"` writes), and any other, printed. Outside it: the forms whose word the
+// shells skip (`${x:-..}` with x set, `${x:+..}` with x unset: the rows test pins the cost), `${!x}`, `${#x}`, zsh's own flags
+// and modifiers, a `${` inside a here-string or a heredoc delimiter, a `${` inside a script handed to a shell (the rows test pins
+// `dash -c`), and the quoting corners the rows test pins (a `#`, a single quote inside and outside double quotes, a backslash, a
+// brace inside a nested `$(...)`, the double-quoted `<(...)` bash performs in a pattern part). (2) THE PIPED SCRIPT: the producer (`echo`, `printf '%s\n'`, the script as printf's format) x
+// the quoting of the script (single, double) x the script (a copy every shell performs; `[[ x > report.md ]]`, a redirection in
+// dash's grammar alone; `[[ a ]]>report.md`, a redirection in every grammar) x the consumer (each shell of the hook's SHELLS) x
+// its form (bare, `-s`, `-`), from docs/; and, marked residual, the producers the guard does not read piped into each consumer (a
+// `cat f`, a `"$s"` whose value has whitespace and is never resolved, a `tee`, a subshell, a group, a function): those rows are
+// expected ALLOWED, the documented residual, and the fixture records the shells that write. The hard invariant holds over the
+// literal rows; the refusals where no shell writes are the cost, by class: absent (a consumer not installed on the box: ksh
+// here), skipped-test (the `[[ x > report.md ]]` script handed to a consumer of the test grammar whose `[[` compares, refused
+// under no reading: none expected), and any other, printed.
+// PARAM WORD MATRIX GENERATOR BEGIN
+const PARAM_WORD_MATRIX = {
+  // [name, the word given the nested expansion E, the assignment before the command ('' when the parameter stays unset)]
+  FORMS: [
+    ['colon-minus', (e) => `\${x:-${e}}`, ''],
+    ['minus', (e) => `\${x-${e}}`, ''],
+    ['colon-eq', (e) => `\${x:=${e}}`, ''],
+    ['eq', (e) => `\${x=${e}}`, ''],
+    ['colon-plus', (e) => `\${x:+${e}}`, 'x=abc; '],
+    ['plus', (e) => `\${x+${e}}`, 'x=abc; '],
+    ['hash', (e) => `\${x#${e}}`, 'x=abc; '],
+    ['hash2', (e) => `\${x##${e}}`, 'x=abc; '],
+    ['pct', (e) => `\${x%${e}}`, 'x=abc; '],
+    ['pct2', (e) => `\${x%%${e}}`, 'x=abc; '],
+    ['colon-q', (e) => `\${x:?${e}}`, ''],
+    ['q', (e) => `\${x?${e}}`, ''],
+    ['slash', (e) => `\${x/b/${e}}`, 'x=abc; '],
+    ['slash2', (e) => `\${x//b/${e}}`, 'x=abc; '],
+    ['subscript', (e) => `\${x[${e}]}`, ''],
+    ['nested', (e) => `\${x:-\${y:-${e}}}`, ''],
+    ['nested2', (e) => `\${x:-\${y:-\${z:-${e}}}}`, ''],
+  ],
+  // the expansion nested in the word, given the write W (a command); the arithmetic position needs a number, so W is followed by `echo 1`
+  EXPANSIONS: [
+    ['sub', (w) => `$(${w})`],
+    ['backtick', (w) => `\`${w}\``],
+    ['procsub', (w) => `<(${w})`],
+  ],
+  // the position of the word P in the command
+  POSITIONS: [
+    ['operand', (p) => `echo ${p}`],
+    ['test', (p) => `[[ -n ${p} ]]`],
+    ['arith', (p) => `(( ${p} ))`],
+    ['quoted', (p) => `echo "${p}"`],
+    ['target', (p) => `echo hi > ${p}`],
+  ],
+  // the cwd and the write that reaches a tracked file from it
+  CWDS: [['nad', 'echo x > report.md'], ['nan', 'echo x > new.md'], ['na', 'echo x > docs/report.md'], ['out', 'echo x > ../notes-api/docs/report.md']],
+};
+const paramWordMatrixRows = () => {
+  const rows = [];
+  for (const [form, wordOf, prefix] of PARAM_WORD_MATRIX.FORMS) {
+    for (const [expansion, expOf] of PARAM_WORD_MATRIX.EXPANSIONS) {
+      for (const [position, tpl] of PARAM_WORD_MATRIX.POSITIONS) {
+        for (const [cwd, write] of PARAM_WORD_MATRIX.CWDS) {
+          const w = position === 'arith' ? `${write}; echo 1` : write;
+          rows.push({ id: `${form}/${expansion}/${position}/${cwd}`, form, expansion, position, cwd, cmd: `${prefix}${tpl(wordOf(expOf(w)))}` });
+        }
+      }
+    }
+  }
+  return rows;
+};
+// PARAM WORD MATRIX GENERATOR END
+// PIPED SCRIPT MATRIX GENERATOR BEGIN
+const PIPED_SCRIPT_MATRIX = {
+  PRODUCERS: [
+    ['echo', (q) => `echo ${q}`],
+    ['printf-s', (q) => `printf '%s\\n' ${q}`],
+    ['printf-fmt', (q, s) => (q.startsWith("'") ? `printf '${s}\\n'` : `printf "${s}\\n"`)],
+  ],
+  QUOTING: [['single', (s) => `'${s}'`], ['double', (s) => `"${s}"`]],
+  SCRIPTS: [['cp', 'cp ../base/report.md report.md'], ['test', '[[ x > report.md ]]'], ['glued', '[[ a ]]>report.md']],
+  CONSUMERS: [...guard.SHELLS],
+  FORMS: [['bare', (c) => c], ['dash-s', (c) => `${c} -s`], ['dash', (c) => `${c} -`]],
+  // the producers the guard does not read (the residual), given the single-quoted copy script
+  RESIDUAL: [
+    ['cat', (q) => 'cat ../scratch/other.md'],
+    ['value', (q) => `s=${q}; echo "$s"`],
+    ['tee', (q) => `echo ${q} | tee /dev/null`],
+    ['subshell', (q) => `(echo ${q})`],
+    ['group', (q) => `{ echo ${q}; }`],
+    ['function', (q) => `f() { echo ${q}; }; f`],
+  ],
+};
+const pipedScriptMatrixRows = () => {
+  const rows = [];
+  for (const [producer, prodOf] of PIPED_SCRIPT_MATRIX.PRODUCERS) {
+    for (const [quoting, quote] of PIPED_SCRIPT_MATRIX.QUOTING) {
+      for (const [script, text] of PIPED_SCRIPT_MATRIX.SCRIPTS) {
+        for (const consumer of PIPED_SCRIPT_MATRIX.CONSUMERS) {
+          for (const [form, consOf] of PIPED_SCRIPT_MATRIX.FORMS) {
+            rows.push({ id: `${producer}/${quoting}/${script}/${consumer}/${form}`, producer, quoting, script, consumer, form, residual: false, cwd: 'nad', cmd: `${prodOf(quote(text), text)} | ${consOf(consumer)}` });
+          }
+        }
+      }
+    }
+  }
+  for (const [producer, prodOf] of PIPED_SCRIPT_MATRIX.RESIDUAL) {
+    for (const consumer of PIPED_SCRIPT_MATRIX.CONSUMERS) {
+      rows.push({ id: `residual-${producer}/single/cp/${consumer}/bare`, producer: `residual-${producer}`, quoting: 'single', script: 'cp', consumer, form: 'bare', residual: true, cwd: 'nad', cmd: `${prodOf("'cp ../base/report.md report.md'")} | ${consumer}` });
+    }
+  }
+  return rows;
+};
+// PIPED SCRIPT MATRIX GENERATOR END
+const PARAM_WORD_MATRIX_PIN = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'romp-track-bash-guard-param-word-matrix.json'), 'utf8'));
+const PIPED_SCRIPT_MATRIX_PIN = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'romp-track-bash-guard-piped-script-matrix.json'), 'utf8'));
+
+// One matrix run: every row judged in-process and run unguarded in the shells present, matched to its fixture row by row; the
+// hard invariant over the rows not marked residual; a residual row is expected allowed (the documented residual, its writers
+// recorded); the refusals where no shell writes are classed by `classOf` and printed.
+const runMatrixAgainstPin = (w, rows, pin, label, classOf, present) => {
+  const mismatches = [];
+  const hard = [];
+  const residualRead = [];
+  let refused = 0;
+  const writesBy = { bash: 0, zsh: 0, dash: 0 };
+  const costs = {};
+  for (const row of rows) {
+    const at = w.cwds[row.cwd];
+    const pinned = pin.pin[row.id];
+    assert.ok(pinned, `the fixture pins ${row.id}`);
+    const [pv, pw, pp] = pinned.split(':');
+    const reason = evaluate(payload(row.cmd, at));
+    const v = reason == null ? 'a' : 'r';
+    if (v === 'r') refused++;
+    const writers = [];
+    const parsed = [];
+    for (const sh of present) {
+      const r = w.run(row.cmd, at, sh);
+      if (r.changed) writers.push(sh);
+      if (!/parse error|syntax error/i.test(r.stderr)) parsed.push(sh);
+    }
+    for (const sh of writers) writesBy[sh]++;
+    if (row.residual) { if (v === 'r') residualRead.push(`${row.id}: refused, so the guard now reads a producer the fixture marks residual: ${JSON.stringify(row.cmd)}`); }
+    else if (writers.length && v === 'a') hard.push(`${row.id}: allowed while ${writers.join(',')} write the tracked subset: ${JSON.stringify(row.cmd)}`);
+    const same = (got, want) => SHELL_ORDER.every((sh, i) => !present.includes(sh) || got[i] === want[i]);
+    if (v !== pv || !same(mask(writers), pw) || !same(mask(parsed), pp)) mismatches.push(`${row.id}: ${v}:${mask(writers)}:${mask(parsed)} (pinned ${pinned}): ${JSON.stringify(row.cmd)}`);
+    if (v === 'r' && !writers.length) {
+      const cls = classOf(row, parsed) || 'other';
+      (costs[cls] = costs[cls] || []).push(cls === 'other' ? `${row.id}: ${String(reason).split('\n')[0].replace(/\/tmp\S*/g, '<tmp>').slice(0, 140)}` : row.id);
+    }
+  }
+  assert.deepEqual(hard, [], `${label}: no row a shell writes is allowed`);
+  assert.deepEqual(residualRead, [], `${label}: a residual row stays allowed, so the residual stays named as one (a producer read is a rule to state, not a fixture drift)`);
+  assert.deepEqual(mismatches, [], `${label}: every row matches the fixture`);
+  const classes = Object.entries(costs).map(([k, v]) => `${v.length} ${k}`).join(', ') || 'none';
+  console.log(`# ${label}: rows ${rows.length}, refused ${refused}, allowed ${rows.length - refused}, writes bash=${writesBy.bash} zsh=${writesBy.zsh} dash=${writesBy.dash}; refused with no tracked write: ${classes}`);
+  for (const line of costs.other || []) console.log(`#   other: ${line}`);
+};
+
+test("round 5's fifth addendum, second fix-up, the param-word matrix: every `${...}` operator form x the expansion nested in it (`$(...)`, a backtick, `<(...)`) x the position of the word (an operand, inside `[[ ]]`, inside `(( ))`, double-quoted, a redirection target) x the cwd (docs/, notes/, the root, out/), judged in-process and run unguarded in bash, zsh and dash, matches the fixture row by row; no row a shell writes is allowed; the refusals where no shell writes are counted by class", () => {
+  const w = sixthPassWorld();
+  const savedHome = process.env.HOME;
+  process.env.HOME = w.HOME;
+  try {
+    const rows = paramWordMatrixRows();
+    assert.equal(rows.length, PARAM_WORD_MATRIX_PIN.rows, 'the generator produces the rows the fixture pins');
+    assert.deepEqual(PARAM_WORD_MATRIX.FORMS.map((f) => f[0]), PARAM_WORD_MATRIX_PIN.forms, 'the fixture names the operator forms it was generated over');
+    assert.deepEqual(PARAM_WORD_MATRIX.POSITIONS.map((p) => p[0]), PARAM_WORD_MATRIX_PIN.positions, 'and the positions');
+    const present = shellsFor(SHELL_ORDER, 'the param-word matrix');
+    runMatrixAgainstPin(w, rows, PARAM_WORD_MATRIX_PIN, 'the param-word matrix', (row) => {
+      if (row.expansion === 'procsub' && row.form === 'subscript') return 'subscript-procsub';
+      if (row.expansion === 'procsub' && row.position === 'arith') return 'arith-procsub';
+      if (row.expansion === 'procsub' && row.position === 'quoted') return 'quoted-procsub';
+      return null;
+    }, present);
+  } finally { process.env.HOME = savedHome; w.rm(); }
+});
+
+test("round 5's fifth addendum, second fix-up, the piped-script matrix: the producer (echo, `printf '%s\\n'`, the script as printf's format) x the script's quoting x the script (a copy, `[[ x > report.md ]]`, `[[ a ]]>report.md`) x the consumer (every shell of SHELLS) x its form (bare, -s, -), plus the producers the guard does not read as the named residual, judged in-process and run unguarded, matches the fixture row by row; no literal row a shell writes is allowed; every residual row stays allowed; the refusals where no shell writes are counted by class", () => {
+  const w = sixthPassWorld();
+  const savedHome = process.env.HOME;
+  process.env.HOME = w.HOME;
+  try {
+    const rows = pipedScriptMatrixRows();
+    assert.equal(rows.length, PIPED_SCRIPT_MATRIX_PIN.rows, 'the generator produces the rows the fixture pins (a shell added to SHELLS changes this count)');
+    assert.deepEqual(PIPED_SCRIPT_MATRIX.CONSUMERS, PIPED_SCRIPT_MATRIX_PIN.consumers, 'the fixture names the consumers it was generated over, the hook\'s SHELLS');
+    assert.equal(rows.filter((r) => r.residual).length, PIPED_SCRIPT_MATRIX_PIN.residualRows, 'and the residual rows');
+    const present = shellsFor(SHELL_ORDER, 'the piped-script matrix');
+    const installed = (sh) => _spawnSync('sh', ['-c', `command -v ${sh}`], { encoding: 'utf8' }).status === 0;
+    const absent = new Set(PIPED_SCRIPT_MATRIX.CONSUMERS.filter((c) => !installed(c)));
+    runMatrixAgainstPin(w, rows, PIPED_SCRIPT_MATRIX_PIN, 'the piped-script matrix', (row) => (absent.has(row.consumer) ? 'absent' : null), present);
+  } finally { process.env.HOME = savedHome; w.rm(); }
+});
+
+test("round 5's fifth addendum, second fix-up, the rows: an expansion nested in a `${...}` word is read as the command it runs in every operator form and position (the verifiers' rows and the quoting corners, exactly the shells named writing), a `${...}` as a target or a writer's operand keeps the non-literal rule, a literal echo or printf piped into a shell reading stdin is the script under that shell's grammar, the producers the guard does not read stay the named residual, and the costs are measured with no shell writing", () => {
+  const w = sixthPassWorld();
+  const savedHome = process.env.HOME;
+  process.env.HOME = w.HOME;
+  try {
+    const A = ['bash', 'zsh', 'dash'];
+    const BZ = ['bash', 'zsh'];
+    const BD = ['bash', 'dash'];
+    const B = ['bash'];
+    const Z = ['zsh'];
+    const N = [];
+    const WORD = guard.BRACE_WORD_VIA;
+    // [id, cwd, command, the shells that write the tracked subset unguarded, the verdict as in the fifth addendum's rows]
+    const rows = [
+      // (1) the verifiers' param-word rows, from docs/: each operator form, the backtick, the double quotes, the nesting, the test and
+      // arithmetic operands, dash -c, and the two `<(...)` rows bash alone performs
+      ['P-colon-minus', 'nad', 'echo ${x:-$(cp ../base/report.md report.md)}', A, ['name', WORD]],
+      ['P-minus', 'nad', 'echo ${x-$(cp ../base/report.md report.md)}', A, ['name', WORD]],
+      ['P-colon-eq', 'nad', 'echo ${x:=$(cp ../base/report.md report.md)}', A, ['name', WORD]],
+      ['P-colon-plus-unset', 'nad', 'echo ${x:+$(cp ../base/report.md report.md)}', N, ['name', WORD]],   // x unset: no shell evaluates the word (the cost)
+      ['P-colon-plus-set', 'nad', 'x=1; echo ${x:+$(cp ../base/report.md report.md)}', A, ['name', WORD]],
+      ['P-hash-unset', 'nad', 'echo ${x#$(cp ../base/report.md report.md)}', Z, ['name', WORD]],   // bash and dash skip the pattern of an unset name; zsh evaluates it
+      ['P-hash-set', 'nad', 'x=abc; echo ${x#$(cp ../base/report.md report.md)}', A, ['name', WORD]],
+      ['P-dq', 'nad', 'echo "${x:-$(cp ../base/report.md report.md)}"', A, ['name', WORD]],
+      ['P-backtick', 'nad', 'echo ${x:-`cp ../base/report.md report.md`}', A, ['name', WORD]],
+      ['P-nested', 'nad', 'echo ${x:-${y:-$(cp ../base/report.md report.md)}}', A, ['name', WORD]],
+      ['P-test', 'nad', '[[ -n ${x:-$(echo x > report.md)} ]]', A, ['name', WORD]],
+      ['P-arith', 'nad', '(( ${x:-$(echo x > report.md; echo 1)} ))', A, ['name', WORD]],
+      ['P-dash-c', 'nad', "dash -c 'echo ${x:-$(cp ../base/report.md report.md)}'", A, ['name', WORD]],
+      ['P-colon-q', 'nad', 'echo ${x:?$(cp ../base/report.md report.md)}', BD, ['name', WORD]],   // zsh reports the unset name without evaluating the word
+      ['P-slash-unset', 'nad', 'echo ${x/b/$(cp ../base/report.md report.md)}', Z, ['name', WORD]],   // bash skips the replacement of an unset name; dash has no `/` form (a bad substitution, nothing runs)
+      ['P-slash-set', 'nad', 'x=abc; echo ${x/b/$(cp ../base/report.md report.md)}', BZ, ['name', WORD]],
+      ['P-subscript', 'nad', 'echo ${x[$(cp ../base/report.md report.md)]}', BZ, ['name', WORD]],   // dash: a bad substitution
+      ['P-test-procsub', 'nad', '[[ -n ${x:-<(echo x > report.md)} ]]', B, ['name', WORD]],
+      ['P-cat-procsub', 'nad', 'cat ${x:-<(echo x > report.md)}', B, ['name', WORD]],
+      ['P-notes', 'nan', 'echo ${x:-$(echo x > new.md)}', A, ['name', WORD]],
+      ['P-root', 'na', 'echo ${x:-$(cp base/report.md docs/report.md)}', A, ['name', WORD]],
+      ['P-out', 'out', 'echo ${x:-$(cp ../notes-api/base/report.md ../notes-api/docs/report.md)}', A, ['name', WORD]],
+      ['P-eq-unset', 'nad', 'echo ${x=$(cp ../base/report.md report.md)}', A, ['name', WORD]],
+      ['P-colon-assign-idiom', 'nad', ': ${x:=$(cp ../base/report.md report.md)}', A, ['name', WORD]],
+      // (2) the `${...}` word itself as a target or a writer's operand: the non-literal rule, as before (W31 to W33)
+      ['W31-target', 'nad', 'echo x > ${x:-report.md}', A, ['literal', '${x:-report.md}']],
+      ['W32-cp-operand', 'nad', 'cp ../base/report.md ${x:-report.md}', A, ['literal', '${x:-report.md}']],
+      ['W33-tee-operand', 'nad', 'tee ${x:-report.md} </dev/null', A, ['literal', '${x:-report.md}']],
+      ['W34-target-nested', 'nad', 'echo hi > ${x:-$(echo x > report.md; echo g)}', A, ['name', WORD]],   // the nested write is read first, by name; the word stays a non-literal target
+      // (3) the quoting corners, each measured: a `#` is a character inside the word; a single quote quotes in the unquoted word and is
+      // a character inside double quotes; a backslash escapes the dollar in both; a `<(` inside double quotes is performed by bash in a
+      // pattern, replacement or message part and by no shell in the `:-` family (read in both: the cost row); a brace inside a nested
+      // `$(...)` is the substitution's own; a newline and a `;` inside the word
+      ['Q-hash', 'nad', 'echo ${x:-a #$(cp ../base/report.md report.md)}', A, ['name', WORD]],
+      ['Q-sq-unquoted', 'nad', "echo ${x:-'$(cp ../base/report.md report.md)'}", N, 'allow'],
+      ['Q-sq-in-dq', 'nad', "echo \"${x:-'$(cp ../base/report.md report.md)'}\"", A, ['name', WORD]],
+      ['Q-dq-in-dq-sq', 'nad', "echo \"${x:-\"'$(cp ../base/report.md report.md)'\"}\"", A, ['name', WORD]],
+      ['Q-backslash', 'nad', 'echo ${x:-\\$(cp ../base/report.md report.md)}', N, 'allow'],
+      ['Q-backslash-dq', 'nad', 'echo "${x:-\\$(cp ../base/report.md report.md)}"', N, 'allow'],
+      ['Q-procsub-dq-hash', 'nad', 'x=abc; echo "${x#<(echo x > report.md)}"', B, ['name', WORD]],
+      ['Q-procsub-dq-slash', 'nad', 'x=abc; echo "${x/b/<(echo x > report.md)}"', B, ['name', WORD]],
+      ['Q-procsub-dq-colon-q', 'nad', 'echo "${x:?<(echo x > report.md)}"', B, ['name', WORD]],
+      ['Q-procsub-dq-cost', 'nad', 'echo "${x:-<(echo x > report.md)}"', N, ['name', WORD]],   // no shell performs it in the `:-` word; read since bash does in the three parts above
+      ['Q-procsub-subscript-cost', 'nad', 'echo ${x[<(echo x > report.md)]}', N, ['name', WORD]],   // a syntax error in bash, a bad math expression in zsh, a bad substitution in dash
+      ['Q-brace-in-sub', 'nad', 'echo ${x:-$(echo } > report.md)}', BD, 'name'],   // bash and dash run the echo with `}` as its operand and write; zsh reports a parse error and runs nothing; the redirection is read where the shells perform it
+      ['Q-newline', 'nad', 'echo ${x:-a\n$(cp ../base/report.md report.md)}', A, ['name', WORD]],
+      ['Q-semicolon', 'nad', 'echo ${x:-a;$(cp ../base/report.md report.md)}', A, ['name', WORD]],
+      ['Q-arith-nested', 'nad', 'echo ${x:-$((1+$(echo x > report.md; echo 1)))}', A, 'name'],
+      ['Q-in-sub', 'nad', 'echo $(echo ${x:-$(cp ../base/report.md report.md)})', A, ['name', WORD]],
+      ['Q-herestring-word', 'nad', 'cat <<< ${x:-$(cp ../base/report.md report.md)}', BZ, ['name', WORD]],   // dash rejects `<<<` and runs nothing
+      ['Q-untracked', 'nad', 'echo ${x:-$(cp ../base/report.md ../scratch/keep.md)}', N, 'allow'],
+      ['Q-read', 'nad', 'echo ${x:-$(cat report.md)}', N, 'allow'],
+      // the cost: the word's command is read whatever the parameter's state
+      ['C-set-colon-minus', 'nad', 'x=1; echo ${x:-$(cp ../base/report.md report.md)}', N, ['name', WORD]],
+      // (4) the piped script: a literal echo or printf into a shell reading stdin, under the consumer's grammar
+      ['S-echo-bash', 'nad', "echo 'cp ../base/report.md report.md' | bash", A, 'name'],
+      ['S-echo-sh', 'nad', "echo 'echo x > report.md' | sh", A, 'name'],
+      ['S-echo-dash-test', 'nad', "echo '[[ x > report.md ]]' | dash", A, 'name'],   // dash's grammar alone for a dash consumer: `[[` a plain word, the `>` a plain redirection
+      ['S-echo-bash-test', 'nad', "echo '[[ x > report.md ]]' | bash", N, 'allow'],   // bash's grammar: a comparison
+      ['S-printf-glued', 'nad', "printf '%s\\n' '[[ a ]]>report.md' | bash", A, 'name'],
+      ['S-printf-fmt', 'nad', "printf 'cp ../base/report.md report.md\\n' | bash", A, 'name'],
+      ['S-printf-two', 'nad', "printf '%s %s\\n' 'cp ../base/report.md' report.md | bash", A, 'name'],   // the conversions take the operands in order
+      ['S-printf-reuse', 'nad', "printf '%s\\n' true 'cp ../base/report.md report.md' | bash", A, 'name'],   // the format reused while operands remain
+      ['S-printf-b', 'nad', "printf '%b' 'cp ../base/report.md report.md\\n' | bash", A, 'name'],
+      ['S-echo-e-newline', 'nad', "echo -e 'true\\ncp ../base/report.md report.md' | bash", A, 'name'],   // bash's -e, zsh's and dash's default interpret the escape (dash prints the -e and the copy still runs on the second line)
+      ['S-echo-notes', 'nan', "echo 'echo x > new.md' | bash", A, 'name'],
+      ['S-echo-root', 'na', "echo 'cp base/report.md docs/report.md' | zsh", A, 'name'],
+      ['S-echo-bash-s', 'nad', "echo 'cp ../base/report.md report.md' | bash -s", A, 'name'],
+      ['S-echo-sh-dash', 'nad', "echo 'cp ../base/report.md report.md' | sh -", A, 'name'],
+      ['S-echo-dq', 'nad', 'echo "cp ../base/report.md report.md" | bash', A, 'name'],
+      ['S-echo-wrapped', 'nad', "command echo 'cp ../base/report.md report.md' | env bash", A, 'name'],   // the producer and the consumer behind wrappers the hook peels
+      ['S-echo-expansion-kept', 'nad', "echo 'cp ../base/report.md' $t | bash", N, ['literal', '$t']],   // an expansion in the script keeps its spelling: the non-literal rule (bash: the copy has one operand and fails)
+      ['S-echo-untracked', 'nad', "echo 'cp ../base/report.md ../scratch/keep.md' | bash", N, 'allow'],
+      ['S-echo-read', 'nad', "echo 'cat report.md' | bash", N, 'allow'],
+      ['S-echo-c', 'nad', "echo 'cp ../base/report.md report.md' | bash -c 'true'", N, 'allow'],   // a -c script: the pipe is not the script
+      ['S-printf-v', 'nad', "printf -v t 'cp ../base/report.md report.md' | bash", N, 'allow'],   // into a variable, nothing printed
+      // (5) the residual, named: a producer the guard does not read
+      ['R-value', 'nad', "s='cp ../base/report.md report.md'; echo \"$s\" | bash", A, 'allow'],   // a value with whitespace is never resolved (the readability rule), as `bash <<< \"$s\"` is not read
+      ['R-cat', 'nad', 'cat ../scratch/other.md | bash', N, 'allow'],
+      ['R-tee', 'nad', "echo 'cp ../base/report.md report.md' | tee /dev/null | bash", A, 'allow'],
+      ['R-subshell', 'nad', "(echo 'cp ../base/report.md report.md') | bash", A, 'allow'],
+      ['R-function', 'nad', "f() { echo 'cp ../base/report.md report.md'; }; f | bash", A, 'allow'],
+      // a shell outside SHELLS: busybox's sh and ash, whose `[[` is a builtin that performs the redirection (measured), each named on decision 47
+      ['R-busybox-sh-c', 'nad', "busybox sh -c 'cp ../base/report.md report.md'", A, 'allow'],
+      ['R-busybox-ash-test', 'nad', "busybox ash -c '[[ x > report.md ]]'", A, 'allow'],
+      ['R-busybox-piped', 'nad', "echo 'cp ../base/report.md report.md' | busybox sh", A, 'allow'],
+      // the heredoc-fed and here-string forms, read before and still
+      ['H-cat-heredoc', 'nad', "cat <<'EOF' | bash\ncp ../base/report.md report.md\nEOF", A, 'name'],
+      ['H-herestring', 'nad', "bash <<< 'cp ../base/report.md report.md'", BZ, 'name'],
+    ];
+    const cwds = { ...w.cwds };
+    let n = 0;
+    for (const [id, cwd, raw, writers, expect] of rows) {
+      const cmd = w.fill(raw);
+      const at = cwds[cwd];
+      const h = w.hook(cmd, at);
+      n++;
+      if (expect === 'allow') assert.equal(h.status, 0, `${id}: allowed: ${cmd}: ${h.reason}`);
+      else {
+        assert.equal(h.status, 2, `${id}: refused: ${cmd}: ${h.reason}`);
+        assert.ok(!/\u2014/.test(h.reason) && !ROMP_NOUNS.test(h.reason.split(w.W).join('<w>')), `${id}: no em dash, no romp noun`);
+        if (expect === 'name') assert.match(h.reason, BY_NAME_RE, `${id}: by name: ${h.reason.split('\n')[0]}`);
+        else if (expect[0] === 'name') assert.ok(BY_NAME_RE.test(h.reason) && h.reason.includes(expect[1]), `${id}: by name, the reason including (${expect[1]}): ${h.reason.split('\n')[0]}`);
+        else assert.ok(NOT_LITERAL.test(h.reason) && h.reason.includes(expect[1]), `${id}: refused as not literal, the reason including (${expect[1]}): ${h.reason.split('\n')[0]}`);
+      }
+      for (const shell of shellsFor(A, id)) {
+        const r = w.run(cmd, at, shell);
+        assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
+      }
+    }
+    assert.equal(n, 79);
+    // the lexer's descent: the nested substitutions join the segment's viaSubs with the word's text, in every quoting the shells give the word
+    const via = (c, sh) => lex(c, sh).segments.flatMap((s) => s.viaSubs.filter((v) => v.via === WORD).map((v) => v.text));
+    assert.deepEqual(via('echo ${x:-$(cp a b)}'), ['cp a b'], 'a $(...) inside a ${...} word is read');
+    assert.deepEqual(via('echo "${x:-`cp a b`}"'), ['cp a b'], 'a backtick inside a double-quoted one');
+    assert.deepEqual(via('echo ${x:-${y:-$(cp a b)}}'), ['cp a b'], 'two deep');
+    assert.deepEqual(via('echo ${x:-<(cp a b)}'), ['cp a b'], 'a <(...) inside an unquoted word, under the test grammar');
+    assert.deepEqual(via('echo ${x:-<(cp a b)}', 'dash'), [], 'and not under dash grammar, where dash performs none');
+    assert.deepEqual(via('echo "${x:-<(cp a b)}"'), ['cp a b'], 'and inside double quotes too: bash performs it in a pattern, replacement or message part (`"${x#<(cmd)}"`), so every double-quoted word reads it');
+    assert.deepEqual(via("echo ${x:-'$(cp a b)'}"), [], 'a single-quoted part of an unquoted word runs nothing');
+    assert.deepEqual(via("echo \"${x:-'$(cp a b)'}\""), ['cp a b'], 'inside double quotes the single quote is a character');
+    assert.deepEqual(via('echo ${x:-a #$(cp a b)}'), ['cp a b'], 'a # is a character inside the word');
+    assert.deepEqual(via('echo ${x:-\\$(cp a b)}'), [], 'a backslash escapes the dollar');
+    assert.deepEqual(lex('echo ${x:-$(echo } > f)}').segments[0].words.map((x) => x.text), ['echo', '${x:-$(echo } > f)}'], 'a brace inside the nested $(...) is its own: the word runs to the outer closer');
+    assert.deepEqual(lex('echo x > ${x:-$(cp a b)}').segments[0].redirects.map((r) => [r.target.text, r.target.literal]), [['${x:-$(cp a b)}', false]], 'the word stays a non-literal target');
+    assert.equal(lex('echo ' + '${x:-'.repeat(70) + '$(cp a b)' + '}'.repeat(70)).opaque, true, 'past the nesting cap the command is opaque, not followed');
+    // the piped script through extractWriteTargets: the consumer's grammar
+    const tgt = (c) => extractWriteTargets(c, w.NA).targets.map((t) => path.relative(w.NA, t.path));
+    assert.deepEqual(tgt("echo 'cp base/report.md docs/report.md' | bash"), ['docs/report.md']);
+    assert.deepEqual(tgt("echo '[[ x > docs/report.md ]]' | dash"), ['docs/report.md'], 'dash grammar for a dash consumer');
+    assert.deepEqual(tgt("echo '[[ x > docs/report.md ]]' | bash"), [], 'bash grammar for a bash consumer');
+    assert.deepEqual(tgt("printf '%s\\n' '[[ a ]]>docs/report.md' | sh -s"), ['docs/report.md']);
+    assert.deepEqual(tgt("cat notes/n1.md | bash"), [], 'a producer the guard does not read');
+    assert.ok(!tgt("echo 'cp base/report.md docs/report.md' | tee /dev/null | bash").includes('docs/report.md'), 'a tee between them: the producer is the tee, whose own operand is the only target');
   } finally { process.env.HOME = savedHome; w.rm(); }
 });
 

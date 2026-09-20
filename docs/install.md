@@ -206,7 +206,11 @@ the clone updates it:
   as a command list), so a tracked f there refuses naming dash and the construct, a process
   substitution among the test's operands runs in bash (`[[ -f <(echo x > f) ]]` writes f) and an
   operator glued to the closing `]]` is a redirection or list operator (`[[ a ]]>f` writes f in
-  every shell), each judged as anywhere since the addendum's fix-up (2026-09-20), and `[[ $a > $b ]]`
+  every shell), each judged as anywhere since the addendum's fix-up (2026-09-20), since its second fix-up
+  the same day an expansion nested in a `${...}` word (`${x:-$(cp a b)}`, a backtick, a `<(...)`) is read as
+  the command it runs in every position, and a literal echo or printf piped into a shell reading stdin is
+  that shell's script (a producer the guard cannot see, `cat f | bash`, stays unread, as does a script
+  handed to a shell outside the set it reads, busybox sh or ash among them), and `[[ $a > $b ]]`
   with `$b` the guard cannot read refuses from a tracked cwd (the remedy: `expr`, or a cwd outside
   the project); a link the command makes is followed into a numeric
   name's folder too, and one whose source is not literal refuses a numeric write through it; a

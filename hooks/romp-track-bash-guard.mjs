@@ -24,7 +24,12 @@
 // so `mkdir -p <out>/run-$$ && echo x > <out>/run-$$/../plain.log` keeps its verdict), so a link to
 // a tracked file does not carry a write past it. A read-only command (cat, grep, diff, git) names no
 // write target and passes. A command the extraction cannot see through (eval, xargs, a script held
-// in a variable) passes too: never a silent block of ordinary work. So does a python or node
+// in a variable) passes too: never a silent block of ordinary work. So does a script the guard cannot see (round 5's fifth
+// addendum's second fix-up, 2026-09-20, names both beside the heredoc-fed forms it reads): one piped into a shell from anything
+// but a literal echo or printf (`cat f | bash`; a `"$s"` whose value has whitespace, which the guard never resolves; a tee, a
+// subshell, a group or a function before the pipe), and one handed to a shell outside SHELLS (busybox `sh` or `ash`, whose `[[`
+// is a builtin that performs the redirection: `busybox sh -c '[[ x > report.md ]]'` wrote from docs/ in every shell, measured).
+// So does a python or node
 // one-liner whose write path is computed (a name, `sys.argv`, `os.environ`, `process.env`): the
 // interpreter scan reads a literal path (by its text, whatever characters it holds, since the fifth
 // commit) and, since that commit, refuses a template or format string (an f-string, `.format(`, `%`,
@@ -480,6 +485,23 @@
 // `$(...)` or a `<(...)` among them, glued to the closer, spaced after it: the regions a construct has), and the rows test
 // pins the verifier's rows.
 //
+// ROUND 5'S FIFTH ADDENDUM, SECOND FIX-UP (2026-09-20; the fix-up's verifiers): two reads failing toward allowing, each a
+// class, one at the lexer and one present since the guard's first commit. (1) THE NESTED EXPANSION: a `$(...)`, a backtick or
+// a `<(...)` inside a `${...}` word was never lexed (the `${` read skipped its inner text whole), so `echo ${x:-$(cp
+// ../base/report.md report.md)}` from docs/ was allowed while bash, zsh and dash copied, and so were `${x-..}`, `${x:=..}`,
+// `${x#..}`, `${x:?..}`, `${x/b/..}`, `${x[..]}`, the backtick, the double-quoted word, the `${` nested two deep, the word as
+// an operand of `[[ ]]` and of `(( ))`, `dash -c` and the `<(...)` bash alone performs; 20 of the verifiers' 21 rows, from docs/,
+// notes/, the project root and out/. THE RULE, at nestedExpansions in the lexer and on decision 47 in the same words: an expansion nested inside a parameter-expansion word is read as the command it runs, recursively, in every position (an operand, inside `[[ ]]`, inside `(( ))`, a redirection target, a quoted word), exactly as an expansion among plain operands is read; the `${` read descends. (2) THE PIPED SCRIPT: `echo 'cp ../base/report.md report.md' | bash`, `echo 'echo x > report.md' | sh`, `echo '[[ x >
+// report.md ]]' | dash` and `printf '%s\n' '[[ a ]]>report.md' | bash` were allowed while every shell wrote: the heredoc-fed
+// shell and the here-string were read, a pipe from echo or printf was neither read nor named. THE RULE, at stdinBodies in
+// extract and on decision 47 in the same words: when a pipeline's last command is a shell of SHELLS reading its script from stdin (no `-c`, no script operand: `bash`, `bash -s`, `sh -`, dash) and the command piped into it is an echo or a printf, the words echo or printf would print are the script, read as the here-string form already is, under the grammar the shell named uses (dash's for `sh` and `dash`, TEST_ARITH_SHELLS); a producer the guard cannot see stays THE RESIDUAL, named
+// above. The two populations, each through the hook as a process and the three shells unguarded: the param-word matrix (every
+// `${...}` operator form x the nested expansion x the word's position x the cwd, 1020 rows, `FALSE ALLOWS 0`, the refusals where
+// no shell writes counted by class) and the piped-script matrix (producer x quoting x script x consumer x form, 270 literal rows,
+// `FALSE ALLOWS 0`, plus 30 residual rows pinned allowed). The matrix's own find, folded in before the fixture was written: bash
+// performs a `<(...)` inside a DOUBLE-QUOTED `${...}` word's pattern, replacement and message parts (`"${x#<(cmd)}"` wrote), so
+// the descent reads `<(` in every double-quoted word, the `:-` family's over-read a counted cost.
+//
 // THE LISTS THAT REMAIN are not written here (round 5 of the review, 2026-09-20). The hand-written census that stood here
 // omitted the two lists whose gap falls on the WRITE side, the compound-head frame push and CLOSERS, and that omission is
 // how a `select` missing from both slipped through round 3: an instrument built to bound the hand-maintained lists that
@@ -566,7 +588,9 @@ import engine from '../vendor/track-changents/engine.js';
 // (<<EOF ... EOF) and a here-string (<<< word) are data, not commands: kept on the segment whose
 // command opened them (not the one current when the line ends, which after
 // `python3 - <<EOF && echo done` is the echo) for the python, node and shell stdin scans, and
-// never lexed as shell. `>(cmd)` and `<(cmd)` are process substitutions: cmd is read like a
+// never lexed as shell, except that a literal echo or printf piped into a shell reading stdin is that shell's script
+// (extract's stdinBodies, the second fix-up). An expansion nested inside a `${...}` word (`${x:-$(cmd)}`, a backtick, a
+// `<(...)`) is read as the command it runs, in every position (nestedExpansions, the second fix-up). `>(cmd)` and `<(cmd)` are process substitutions: cmd is read like a
 // `$(...)`, and the word stands for a /dev/fd path the hook cannot resolve, inside `[[ ... ]]` too, where bash performs it
 // (round 5's fifth addendum's fix-up, 2026-09-20). Inside `[[ ... ]]`
 // (the unquoted keyword, in command position) a `>` or `<` compares in bash and zsh, and `&&`, `||`, `(` and `)` are the
@@ -588,7 +612,7 @@ import engine from '../vendor/track-changents/engine.js';
 // `>>| f` and `>&| f` as syntax errors, and reads `&>| f` as `&` then `>| f`, a write of f the zsh reading names), so a
 // command refuses when any of the three shells would write the tracked file.
 const WRITE_REDIRECTS = new Set(['>', '>>', '>|', '&>', '&>>', '>&', '<>', '>!', '>>!', '>>|', '>&!', '>&|', '>>&', '>>&!', '>>&|', '&>!', '&>|', '&>>!', '&>>|']);
-const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh']);
+export const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh']);   // exported for the piped-script matrix's consumer population (the second fix-up)
 // Command wrappers the hook peels to reach the write inside: it reads them so a write behind one is judged as if
 // spelled without it. `setsid`, `flock`, `taskset`, `chrt` and `numactl` were added in review round 4 (2026-09-19),
 // each with operand-aware peeling below (a lockfile, a CPU mask, a priority, an option's argument), after the
@@ -646,6 +670,10 @@ export const CONSTRUCT_HEADS = {
   '((': { closer: '))', bash: 'arithmetic: a `>` compares', dash: 'in command position, a subshell inside a subshell running the body as a command list; after any other word a syntax error', via: ' inside a `(( ... ))` (arithmetic in bash and zsh; dash has no `((`, runs its body as a command list in a subshell)', expandVia: ' inside a `$(...)` in a `(( ... ))` body (an expansion every shell runs)' },
   '$((': { closer: '))', expansion: true, bash: 'arithmetic when the `(` after `$(` closes at the very end, else `$( (`, a command substitution whose list runs', dash: 'arithmetic, whatever the parentheses inside', via: ' inside a `$(( ... ))` whose first `(` closes before the last (`$( (` to bash and zsh, a command substitution they run; arithmetic to dash)', expandVia: ' inside a `$(...)` in a `$(( ... ))` body (an expansion every shell runs)' },
 };
+// The text a write found inside a `${...}` word carries in its refusal (nestedExpansions), and the nesting depth past which the
+// `${` read stops descending (the command is marked opaque; the shells reject such a depth long before).
+export const BRACE_WORD_VIA = ' inside a `${...}` word (an expansion the shell performs before the word is used, in every position)';
+const NESTED_DEPTH_CAP = 64;
 // The one class of expansion the narrowing reads (the header): the shell's process id, in its two spellings. Every
 // other parameter can be unset or shadowed by the command and then hold a path (round 3, by execution in bash, zsh
 // and dash), so nothing else is ever numeric.
@@ -820,9 +848,19 @@ const newSegment = () => ({ words: [], redirects: [], heredocs: [], subs: [], ar
 // `shell` is the name of the shell the command is a script of, when the call is a recursion into `sh -c '...'`,
 // `bash <<EOF` or a `$(...)` inside one (null for the Bash tool's own command): it decides whether `$'...'` is
 // ANSI-C quoting (ANSI_C_SHELLS). The numeric set is the same in every shell (round 3).
-export function lex(command, shell = null) {
+export function lex(command, shell = null, opts = {}) {
   const src = String(command);
   const ansiCQuoting = shell == null || ANSI_C_SHELLS.has(shell);
+  // The nested read's options (round 5's fifth addendum, second fix-up, 2026-09-20; nestedExpansions below): the inner text of a
+  // `${...}` word is lexed with this function, where a `#` opens no comment (`${x:-a #$(cmd)}` runs cmd in bash, zsh and dash,
+  // measured) and, when the word stands inside double quotes, a single quote is a character (`"${x:-'$(cmd)'}"` runs cmd in all
+  // three, where the unquoted `${x:-'$(cmd)'}` runs nothing) and a `$'` is a dollar; a `<(` is read as the process substitution
+  // it is anywhere (bash performs it inside a double-quoted word's pattern, replacement and message parts, `"${x#<(cmd)}"`,
+  // `"${x/b/<(cmd)}"`, `"${x:?<(cmd)}"`, measured writing; no shell performs it in `"${x:-<(cmd)}"` and its kin, a priced cost).
+  // `depth` counts the nesting, capped so a `${` inside a `${` thousands deep cannot overflow the stack.
+  const comments = opts.comments !== false;
+  const dqInner = opts.quotes === 'double';
+  const nestDepth = opts.depth || 0;
   // The two grammars (round 5's fifth addendum, 2026-09-20). Under testGrammar (the Bash tool's own command, `sh`, and the shells
   // of TEST_ARITH_SHELLS) `[[` in command position is the test keyword and `((` opens arithmetic; under dashGrammar (the same
   // command and `sh`, and every shell not in that set) the dash reading is added at closeTest and skipArithmetic, and for a script
@@ -1015,21 +1053,27 @@ export function lex(command, shell = null) {
     seg.dashPieces = [...(seg.dashPieces || []), ...rest];
     if (!seg.dashFirstOp) seg.dashFirstOp = first.op;
   };
-  // Skip a $( ... ) or ${ ... } from just after its opener to its closer, quotes honoured;
-  // returns the inner text. The word carrying it is not literal.
-  const skipNested = (open, close) => {
+  // Skip a $( ... ) or ${ ... } from just after its opener to its closer, quotes honoured (a single quote is a character when
+  // the `${` stands inside double quotes, `dq`, as the shells read it: `"${x:-'}'}"` closes at the first brace); a `$(...)`
+  // inside a `${...}`, a `${...}` inside a `$(...)` and a backtick inside either are skipped as the units the shells parse
+  // them as, so a closer inside them is their own (`${x:-$(echo } > f)}` runs the echo with the brace as its operand; the
+  // second fix-up, 2026-09-20). Returns the inner text. The word carrying it is not literal.
+  const skipNested = (open, close, dq = false) => {
     let depth = 1;
     const start = i;
     while (i < src.length && depth > 0) {
       const c = src[i];
       if (c === '\\') { i += 2; continue; }
-      if (c === "'") { const e = src.indexOf("'", i + 1); i = e < 0 ? src.length : e + 1; continue; }
+      if (c === "'" && !dq) { const e = src.indexOf("'", i + 1); i = e < 0 ? src.length : e + 1; continue; }
       if (c === '"') {
         i++;
         while (i < src.length && src[i] !== '"') { if (src[i] === '\\') i++; i++; }
         i++;
         continue;
       }
+      if (c === '$' && src[i + 1] === '(' && open !== '(') { i += 2; skipNested('(', ')'); continue; }
+      if (c === '$' && src[i + 1] === '{' && open !== '{') { i += 2; skipNested('{', '}'); continue; }
+      if (c === '`') { const e = src.indexOf('`', i + 1); i = e < 0 ? src.length : e + 1; continue; }
       if (c === open) depth++;
       else if (c === close) depth--;
       i++;
@@ -1050,8 +1094,37 @@ export function lex(command, shell = null) {
     else if (inner.startsWith('(') && inner.endsWith(')')) { seg.arith.push(inner.slice(1, -1)); seg.viaSubs.push({ text: inner, via: CONSTRUCT_HEADS['$(('].via }); }
     else seg.subs.push(inner);
   };
-  // A `${...}` of unknown content: the spelling stays in the word, marked as an expansion.
-  const braceParameter = () => { raw += '${'; i += 2; const inner = skipNested('{', '}'); raw += inner + '}'; opaqueExpansion('${' + inner + '}'); };
+  // A `${...}` of unknown content: the spelling stays in the word, marked as an expansion, and the expansions nested in it are
+  // read (nestedExpansions); `dq` says whether the word stands inside double quotes.
+  const braceParameter = (dq = false) => { raw += '${'; i += 2; const inner = skipNested('{', '}', dq); raw += inner + '}'; opaqueExpansion('${' + inner + '}'); nestedExpansions(inner, dq); };
+  // THE NESTED EXPANSION (round 5's fifth addendum, second fix-up, 2026-09-20; the fix-up's verifiers found `echo ${x:-$(cp
+  // ../base/report.md report.md)}` from docs/ allowed while bash, zsh and dash copied, and the same through `${x-..}`, `${x:=..}`,
+  // `${x#..}`, `${x:?..}`, `${x/b/..}`, `${x[..]}`, a backtick, a `<(...)` in bash, a `${` nested two deep, inside double quotes,
+  // as an operand of `[[ ]]` and of `(( ))`, and through `dash -c`: the `${` read skipped its inner text whole, so nothing inside a
+  // parameter expansion was ever lexed): an expansion nested inside a parameter-expansion word is read as the command it runs,
+  // recursively, in every position (an operand, inside `[[ ]]`, inside `(( ))`, a redirection target, a quoted word), exactly
+  // as an expansion among plain operands is read; the `${` read descends. The inner text is lexed with this lexer under the same
+  // shell, with no comment (a `#` is a character there) and in the quoting the word stands in (inside double quotes a single
+  // quote is a character and `$'` a dollar; unquoted, a single-quoted part runs nothing; a `<(` is read in both, since bash
+  // performs it unquoted anywhere in the word and double-quoted in the pattern, replacement and message parts), and every
+  // substitution it finds (a `$(...)`, a backtick, a `<(...)`, the substitutions of a `$((...))`) joins this segment's
+  // viaSubs with a text naming the word, where the walk reads it as any `$(...)` of the command; the `${...}` word itself keeps
+  // the non-literal rule (as a target or a writer's operand it is refused while a project is in play). The cost, measured with no
+  // shell writing: the word's command is read whatever the parameter's state, so `x=1; echo ${x:-$(cp a b)}` and `${x:+$(cp a
+  // b)}` with x unset refuse while no shell runs the copy (the shells evaluate the word only when the operator's condition holds);
+  // `"${x:-<(cp a b)}"` refuses while no shell performs a process substitution there; `${x[<(cp a b)]}` refuses while every shell
+  // rejects the subscript; `(( ${x:-<(cp a b; echo 1)} ))` refuses while bash and zsh report an arithmetic error and dash a syntax
+  // error (the param-word matrix counts each class).
+  const nestedExpansions = (inner, dq) => {
+    if (!/[$`]|<\(|>\(/.test(inner)) return;   // no expansion can start without one of these
+    if (nestDepth >= NESTED_DEPTH_CAP) { opaque = true; return; }
+    const nested = lex(inner, shell, { comments: false, quotes: dq ? 'double' : 'plain', depth: nestDepth + 1 });
+    if (nested.opaque) opaque = true;
+    for (const s of nested.segments) {
+      for (const t of s.subs) seg.viaSubs.push({ text: t, via: BRACE_WORD_VIA });
+      for (const v of s.viaSubs) seg.viaSubs.push(v);
+    }
+  };
   // A backtick command: as `$(...)`; unterminated, the rest of the command is opaque.
   const backtick = () => {
     const e = src.indexOf('`', i + 1);
@@ -1072,7 +1145,7 @@ export function lex(command, shell = null) {
       endSegment('\n');
       continue;
     }
-    if (c === '#' && !inWord) {   // comment to the end of the line
+    if (c === '#' && !inWord && comments) {   // comment to the end of the line (not inside a `${...}` word: nestedExpansions)
       while (i < src.length && src[i] !== '\n') i++;
       continue;
     }
@@ -1081,7 +1154,7 @@ export function lex(command, shell = null) {
       inWord = true; quoted(src[i + 1] == null ? '' : src[i + 1]); raw += src.slice(i, i + 2); i += 2;
       continue;
     }
-    if (c === "'") {
+    if (c === "'" && !dqInner) {   // inside a double-quoted `${...}` word a single quote is a character (nestedExpansions)
       const e = src.indexOf("'", i + 1);
       if (e < 0) { opaque = true; quoted(src.slice(i + 1)); raw += src.slice(i); inWord = true; i = src.length; break; }
       inWord = true; quoted(src.slice(i + 1, e)); raw += src.slice(i, e + 1); i = e + 1;
@@ -1109,7 +1182,7 @@ export function lex(command, shell = null) {
           }
           if (e.kind === 'numeric') { sawExpansion = true; expanded(src.slice(i, i + e.len)); raw += src.slice(i, i + e.len); i += e.len; continue; }
           if (e.kind === 'sub') { substitution(); continue; }
-          if (e.kind === 'brace') { braceParameter(); continue; }
+          if (e.kind === 'brace') { braceParameter(true); continue; }
           if (e.kind === 'var' || e.kind === 'home') { opaqueExpansion(src.slice(i, i + e.len)); raw += src.slice(i, i + e.len); i += e.len; continue; }
           quoted('$'); raw += '$'; i++; continue;
         }
@@ -1131,8 +1204,9 @@ export function lex(command, shell = null) {
       inWord = true;
       if (e.kind === 'numeric') { sawExpansion = true; expanded(src.slice(i, i + e.len)); raw += src.slice(i, i + e.len); i += e.len; continue; }
       if (e.kind === 'sub') { substitution(); continue; }
-      if (e.kind === 'brace') { braceParameter(); continue; }
+      if (e.kind === 'brace') { braceParameter(dqInner); continue; }
       if (e.kind === 'ansi') {
+        if (dqInner) { buf += c; marks += 'u'; raw += c; i++; continue; }   // inside a double-quoted `${...}` word a `$'` is a dollar (nestedExpansions)
         // $'...': the body up to an unescaped quote (`\'` does not end it)
         let j = i + 2;
         while (j < src.length && src[j] !== "'") j += src[j] === '\\' && j + 1 < src.length ? 2 : 1;
@@ -1142,7 +1216,7 @@ export function lex(command, shell = null) {
         quoted(body); raw += src.slice(i, j + 1); i = j + 1;
         continue;
       }
-      if (e.kind === 'locale') { ambiguous(); raw += '$'; i++; continue; }   // the `"` that follows is read as a double-quoted string
+      if (e.kind === 'locale') { if (!dqInner) { ambiguous(); raw += '$'; i++; continue; } buf += c; marks += 'u'; raw += c; i++; continue; }   // the `"` that follows is read as a double-quoted string; inside a double-quoted `${...}` word the `$` is a dollar
       if (e.kind === 'var' || e.kind === 'home') { opaqueExpansion(src.slice(i, i + e.len)); raw += src.slice(i, i + e.len); i += e.len; continue; }
       buf += c; marks += 'u'; raw += c; i++;   // a bare dollar: text
       continue;
@@ -2406,6 +2480,70 @@ function shellScript(args, shell) {
   return {};
 }
 
+// What an echo or a printf prints, from its words as the lexer read them, for THE PIPED SCRIPT (extract's stdinBodies): the
+// readings a shell may give the line, since the guard does not know which shell runs it. echo: the operands joined by one space,
+// once as spelled (bash's default) and once with the escapes interpreted (`\\n`, `\\t`, an octal `\\0nnn`: zsh's and dash's default,
+// bash's `-e`), the leading option words bash and zsh take (`-n`, `-e`, `-E`, clustered) dropped (dash prints them, a reading whose
+// writes the stripped one covers: a `-e` in command position runs nothing and every redirection of the line is in both). printf:
+// the format's escapes interpreted, each conversion taking the next operand (`%b` with its escapes interpreted, `%%` a percent,
+// a `*` width or precision an operand of its own; the flags, width and precision otherwise ignored, so a `%.2s` reads the whole
+// operand, the safe side), the format reused while operands remain, as the shells do; `-v` prints nothing.
+function shellEscapes(text, octalZero = false) {
+  const simple = { a: '\x07', b: '\b', e: '\x1b', E: '\x1b', f: '\f', n: '\n', r: '\r', t: '\t', v: '\v', '\\': '\\', '"': '"', "'": "'" };
+  let out = '';
+  for (let k = 0; k < text.length; k++) {
+    if (text[k] !== '\\' || k + 1 >= text.length) { out += text[k]; continue; }
+    const n = text[k + 1];
+    if (Object.hasOwn(simple, n)) { out += simple[n]; k++; continue; }
+    if (n === 'c') break;   // `\\c`: the rest is not printed
+    const oct = text.slice(k + 1).match(octalZero ? /^0[0-7]{0,3}/ : /^[0-7]{1,3}/);
+    if (oct) { out += String.fromCharCode(parseInt(oct[0] || '0', 8)); k += oct[0].length; continue; }
+    const hex = text.slice(k + 1).match(/^x[0-9A-Fa-f]{1,2}/);
+    if (hex) { out += String.fromCharCode(parseInt(hex[0].slice(1), 16)); k += hex[0].length; continue; }
+    out += text[k];   // an escape no shell knows keeps its backslash
+  }
+  return out;
+}
+function echoOutput(words) {
+  let k = 0;
+  while (k < words.length && /^-[neE]+$/.test(words[k].text)) k++;
+  const raw = words.slice(k).map((w) => w.text).join(' ');
+  const interpreted = shellEscapes(raw, true);
+  return interpreted === raw ? [raw] : [raw, interpreted];
+}
+function printfOutput(words) {
+  let k = 0;
+  while (k < words.length && words[k].text.startsWith('-') && words[k].text.length > 1) {
+    if (words[k].text === '-v') return [];   // into a variable: nothing printed
+    if (words[k].text === '--') { k++; break; }
+    k++;
+  }
+  if (k >= words.length) return [];
+  const fmt = words[k].text;
+  const operands = words.slice(k + 1).map((w) => w.text);
+  const conv = /%([-+ #0]*)(\*|\d+)?(?:\.(\*|\d+))?([A-Za-z%])/g;
+  let out = '';
+  let n = 0;
+  do {
+    let consumed = false;
+    let last = 0;
+    for (const m of fmt.matchAll(conv)) {
+      out += shellEscapes(fmt.slice(last, m.index));
+      last = m.index + m[0].length;
+      if (m[4] === '%') { out += '%'; continue; }
+      if (m[2] === '*') n++;
+      if (m[3] === '*') n++;
+      const arg = n < operands.length ? operands[n] : '';
+      n++;
+      consumed = true;
+      out += m[4] === 'b' ? shellEscapes(arg, true) : arg;
+    }
+    out += shellEscapes(fmt.slice(last));
+    if (!consumed) break;   // a format with no conversion prints once, whatever the operands
+  } while (n < operands.length);
+  return [out];
+}
+
 // The paths a command would write, each as { path, how }, resolved against `cwd` (the session's
 // working directory; a `cd` earlier in the command moves it, a `cd` inside `( ... )` only up to
 // the `)`, a `cd` inside an if, loop or case body leaves it unknown once the body closes, since
@@ -3461,11 +3599,32 @@ function extract(command, ctx) {
     if (sub.opaque) sawOpaqueCommand = true;
   };
   // What a command at segment `idx` reads on stdin, as text the hook holds: its own heredocs and
-  // here-strings, and those of the commands piped into it (cat <<EOF | python3 -).
+  // here-strings, those of the commands piped into it (cat <<EOF | python3 -), and THE PIPED SCRIPT (round 5's fifth addendum,
+  // second fix-up, 2026-09-20; the fix-up's verifiers found `echo 'cp ../base/report.md report.md' | bash`, `echo 'echo x >
+  // report.md' | sh`, `echo '[[ x > report.md ]]' | dash` and `printf '%s\\n' '[[ a ]]>report.md' | bash` from docs/, notes/ and
+  // the project root allowed while bash, zsh and dash wrote, a form present since the guard's first commit: the heredoc-fed shell
+  // and the here-string were read, a pipe from echo or printf was neither read nor named): when a pipeline's last command is a
+  // shell of SHELLS reading its script from stdin (no `-c`, no script operand: `bash`, `bash -s`, `sh -`, dash) and the command
+  // piped into it is an echo or a printf, the words echo or printf would print are the script, read as the here-string form
+  // already is, under the grammar the shell named uses (dash's for `sh` and `dash`, TEST_ARITH_SHELLS), each word as the lexer
+  // read it: a quoted script is literal, and an expansion in it keeps its spelling and takes the non-literal rules, as a
+  // here-string's does (a value the command set to a plain string resolves first, B2). A producer that is anything else (a `cat
+  // f`, a `"$s"` whose value the guard did not read, a function, a subshell, a `tee`, a `{ }` group) prints what the guard cannot
+  // see, and its script passes unread: THE RESIDUAL decision 47 and the header name beside the heredoc-fed forms. The producer's
+  // words were resolved when its own segment was judged (the pipeline's segments are walked in order).
   const stdinBodies = (idx) => {
     const out = [...segments[idx].heredocs];
     for (let j = idx - 1; j >= 0 && segments[j].op === '|'; j--) out.push(...segments[j].heredocs);
+    out.push(...pipedScripts(idx));
     return out;
+  };
+  const pipedScripts = (idx) => {
+    if (idx < 1 || segments[idx - 1].op !== '|' || segments[idx - 1].paren) return [];
+    const producer = commandOf(segments[idx - 1].words);
+    if (!producer || producer.unknown || producer.opaque || 'script' in producer) return [];
+    if (producer.name === 'echo') return echoOutput(producer.args);
+    if (producer.name === 'printf') return printfOutput(producer.args);
+    return [];
   };
   // Open scopes, innermost last: a subshell frame holds the dir to restore at its `)`; a function
   // frame (`f() { ... }`, a body defined, not run) holds the dir to restore at its closing brace;

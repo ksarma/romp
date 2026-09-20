@@ -3023,7 +3023,8 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   ordinary command it refused for a file the command never touches: a cd inside `( ... )` ending at the `)`, and
   in an if, loop or case body leaving the cwd unknown once the body closes; a heredoc body kept by the command
   that opened it through a following `&&`, `|`, `;` or `&`, or piped into python or node; a shell fed its script
-  by heredoc (`bash <<EOF`, `bash -s`, `sh -`) read like `sh -c`; `-c` in an option cluster (`bash -lc`,
+  by heredoc (`bash <<EOF`, `bash -s`, `sh -`) read like `sh -c`, and since the fifth addendum's second fix-up
+  (2026-09-20) one fed by a literal echo or printf piped into it; `-c` in an option cluster (`bash -lc`,
   `sh -ec`); python and node options before a heredoc on stdin; a prefix with options (`sudo -u`, `env -u`,
   `timeout -s`, `exec -a`); pushd moving the cwd and popd leaving it unknown; `[[ a > b ]]` and `(( a > b ))`
   comparing in bash and zsh and, since round 5's fifth addendum (2026-09-20), read in dash's grammar too, a
@@ -3574,7 +3575,9 @@ document stands on its own, each with the reasoning it was given.
     rule (c) of the third pass, below). The refusal is exit 2 with one
     line naming the file and the track-edit command, in the person's voice. What it lets through: a read (cat,
     grep, diff, git, sed without -i) names no target; a command behind eval, xargs or a shell -c it cannot read
-    is unresolvable and passes, since a silent block of ordinary work would cost more than a missed write, and
+    is unresolvable and passes, since a silent block of ordinary work would cost more than a missed write (so does a
+    script piped into a shell from a producer other than a literal echo or printf, and one handed to a shell outside the
+    set the guard reads, busybox sh or ash among them: the second fix-up of round 5's fifth addendum names both), and
     so does a python or node one-liner whose write path is computed (a name, an f-string, `sys.argv`,
     `os.environ`), since the interpreter scan reads a literal path only (the round-1 review of 2026-09-18
     rejected a scan of computed paths by execution: it would refuse ordinary scripting and still miss the
@@ -4187,6 +4190,79 @@ document stands on its own, each with the reasoning it was given.
     untracked, in every shell). Pinned: the rows test's group (11), 61 rows (the two families, the twins, the costs), the
     construct matrix's fixture with its placement dimension, the lexer's three reads in their order (the plan test), and
     the shapes tests' targets and hook-process rows.
+    THE SECOND FIX-UP (2026-09-20; the fix-up's verifiers, on its head): two more reads failing toward allowing, each a class,
+    one at the lexer and one present since the guard's first commit. (1) THE NESTED EXPANSION: a `$(...)`, a backtick or a
+    `<(...)` inside a `${...}` word was never lexed (the `${` read skipped its inner text whole), so `echo ${x:-$(cp
+    ../base/report.md report.md)}` from docs/ was `ALLOWED writers=[bash,zsh,dash]`, and so were `${x-..}`, `${x:=..}`, the
+    double-quoted word, the backtick, `${x:-${y:-..}}`, `[[ -n ${x:-$(echo x > report.md)} ]]`, `(( ${x:-$(echo x >
+    report.md; echo 1)} ))` and `dash -c 'echo ${x:-$(cp ..)}'` (`writers=[bash,zsh,dash]`), `${x:?..}`
+    (`writers=[bash,dash]`), `${x[$(..)]}` (`writers=[bash,zsh]`), `${x#..}` and `${x/b/..}` with x unset (`writers=[zsh]`;
+    with x set every shell but dash's `/`), `[[ -n ${x:-<(echo x > report.md)} ]]` and `cat ${x:-<(echo x > report.md)}`
+    (`writers=[bash]`), and the same from notes/, the project root and out/; the verifiers' 21 param-word rows and the three
+    `${...}`-as-target rows (W31 to W33, refused by the non-literal rule before and still) through the hook as a process from
+    each row's cwd with ROMP_SID set, then bash 5.2, zsh 5.9 and dash 0.5.12 unguarded over a fresh world (the shells the
+    guard claims; busybox sh and ash are outside them and outside every count here), before: `rows 24 refused 3 allowed 21
+    other 0 writes bash=21 zsh=20 dash=18 timeouts 0`, `FALSE ALLOWS (allowed, a shell writes): 20` (the 24 rows; the one
+    param-word row no shell writes is `${x:+..}` with x unset); after: `rows 24 refused 24 allowed 0 other 0 writes bash=21
+    zsh=20 dash=18 timeouts 0`, `FALSE ALLOWS (allowed, a shell writes): 0`. THE RULE, stated at the lexer's `nestedExpansions`
+    and here in the same words: an expansion nested inside a parameter-expansion word is read as the command it runs, recursively, in every position (an operand, inside `[[ ]]`, inside `(( ))`, a redirection target, a quoted word), exactly as an expansion among plain operands is read; the `${` read descends. The inner text is lexed with the same lexer under the same shell, with
+    no comment (a `#` is a character there: `${x:-a #$(cmd)}` runs cmd in every shell, measured) and in the quoting the word
+    stands in (inside double quotes a single quote is a character, `"${x:-'$(cmd)'}"` runs cmd in every shell where the
+    unquoted `${x:-'$(cmd)'}` runs nothing; a `<(` is read in both quotings, since bash performs it unquoted anywhere in the
+    word and double-quoted in the pattern, replacement and message parts, `"${x#<(cmd)}"`, `"${x/b/<(cmd)}"`, `"${x:?<(cmd)}"`,
+    each measured writing; a backslash escapes the dollar in both), and every substitution it finds joins the segment's
+    `viaSubs` with the word named (`BRACE_WORD_VIA`), where the walk reads it as any `$(...)` of the command; the `${...}` word
+    itself keeps the non-literal rule. The skip over the brace's inner text (`skipNested`) reads a `$(...)` inside a `${...}`, a
+    `${...}` inside a `$(...)` and a backtick inside either as the units the shells parse, so a closer inside them is their own
+    (`${x:-$(echo } > report.md)}` runs the echo in bash and dash, a parse error in zsh), and a single quote is a character in a
+    double-quoted brace, as the shells read it. (2) THE PIPED SCRIPT: `echo 'cp ../base/report.md report.md' | bash`, `echo
+    'echo x > report.md' | sh`, `echo '[[ x > report.md ]]' | dash`, `printf '%s\n' '[[ a ]]>report.md' | bash`, from docs/,
+    notes/ and the project root, through `bash -s`, `sh -` and the double-quoted script, were `ALLOWED
+    writers=[bash,zsh,dash]`: the heredoc-fed shell (`bash <<EOF`, `bash -s`, `sh -`, `cat <<'EOF' | bash`) and the
+    here-string were read as `sh -c` is, a pipe from echo or printf appeared neither as read nor as a residual. The 13 rows
+    (the verifiers' spellings, the heredoc and here-string twins, a `cat f` and a `"$s"` producer) before: `rows 13 refused 2
+    allowed 11 other 0 writes bash=12 zsh=12 dash=11 timeouts 0`, `FALSE ALLOWS (allowed, a shell writes): 10`; after: `rows
+    13 refused 11 allowed 2 other 0 writes bash=12 zsh=12 dash=11 timeouts 0`, `FALSE ALLOWS (allowed, a shell writes): 1`
+    (the 13 rows; the one is `s='cp ..'; echo "$s" | bash`, the residual below). THE RULE, stated at extract's `stdinBodies`
+    (`pipedScripts`, `echoOutput`, `printfOutput`, `shellEscapes`) and here in the same words: when a pipeline's last command is a shell of SHELLS reading its script from stdin (no `-c`, no script operand: `bash`, `bash -s`, `sh -`, dash) and the command piped into it is an echo or a printf, the words echo or printf would print are the script, read as the here-string form already is, under the grammar the shell named uses (dash's for `sh` and `dash`, TEST_ARITH_SHELLS); each
+    word as the lexer read it, so a quoted script is literal and an expansion in it keeps its spelling and takes the
+    non-literal rules, as a here-string's does. echo's output is read once as spelled and once with the escapes interpreted
+    (bash's default and its `-e`, zsh's and dash's default), its leading option words dropped (dash prints them, a reading
+    whose writes the stripped one covers); printf's format has its escapes interpreted and its conversions take the operands
+    in order, `%b` with escapes, the format reused while operands remain, `-v` printing nothing. THE RESIDUAL, named here and
+    on the hook header beside the heredoc-fed forms: a producer the guard cannot see stays unread and its script passes (`cat f
+    | bash`; `s='cp ..'; echo "$s" | bash`, since a value with whitespace is never resolved, the readability rule, exactly as
+    `bash <<< "$s"` is not read; a tee, a subshell, a group or a function before the pipe), and so does a script handed to a
+    shell outside `SHELLS` (busybox `sh` or `ash`: `busybox sh -c 'cp ../base/report.md report.md'`, `busybox ash -c '[[ x >
+    report.md ]]'`, whose `[[` is a builtin performing the redirection, and `echo 'cp ..' | busybox sh` each `ALLOWED
+    writers=[bash,zsh,dash]`, measured; eval and xargs the same, as named before); the rows test pins each allowed, so a
+    residual the guard starts reading shows as a rule to state. THE POPULATIONS, each through the hook as a process from the
+    row's cwd and the three shells unguarded, the fixtures stating them: the param-word matrix
+    (`tools/romp-track-bash-guard-param-word-matrix.json`: 17 operator forms x 3 nested expansions x 5 positions x 4 cwds),
+    `rows 1020 refused 1020 allowed 0 other 0 writes bash=936 zsh=608 dash=572 timeouts 0`, `FALSE ALLOWS (allowed, a shell
+    writes; the 1020 rows not marked residual): 0`, `refused with no writer: arith-procsub 32 quoted-procsub 32
+    subscript-procsub 20` (its first run, with a double-quoted `<(` still read as text, printed `FALSE ALLOWS 32`, the pattern,
+    replacement and message forms bash performs: the matrix's own find, folded in before the fixture was written); the
+    piped-script matrix (`tools/romp-track-bash-guard-piped-script-matrix.json`: 3 producers x 2 quotings x 3 scripts x the 5
+    shells of SHELLS x 3 forms, plus 6 residual producers x 5 consumers), `rows 300 refused 216 allowed 84 other 0 writes
+    bash=200 zsh=200 dash=200 timeouts 0`, `FALSE ALLOWS (allowed, a shell writes; the 270 rows not marked residual): 0`,
+    `residual rows 30, refused 0; residual rows a shell writes: 20`, `refused with no writer: absent 36` (ksh is not installed
+    here). THE COSTS, each measured with no shell writing: the word's command is read whatever the parameter's state (`x=1;
+    echo ${x:-$(cp ..)}`, `${x:+$(cp ..)}` with x unset); a double-quoted `<(...)` in the `:-` family (`"${x:-<(cp ..)}"`,
+    32 matrix rows); a `<(...)` as a subscript (`${x[<(cp ..)]}`, a syntax error in bash, a bad math expression in zsh, a bad
+    substitution in dash, 20 rows); a `<(...)` inside a `${...}` operand of `(( ))` (an arithmetic error in bash and zsh, a
+    syntax error in dash, 32 rows); a script piped into a consumer that is not installed (ksh, 36 rows); and an expansion in a
+    piped script (`echo 'cp ../base/report.md' $t | bash`: the non-literal rule, while bash's copy fails on one operand). The
+    verdicts of the addendum's and the fix-up's fixtures are unchanged (`existing rows: 2280 unchanged, 0 changed, 0
+    missing` for the construct matrix at this commit). Pinned: the rows test's second fix-up group (79 rows: the verifiers'
+    rows with exact writers, W31 to W34, the quoting corners, the costs, the piped forms, the residuals, the heredoc twins), the
+    two matrix fixtures, the lexer's descent and the piped script in-process, and the plan test (both rules on both surfaces in
+    the same words, the functions, the fixtures' populations, the residual named on the header, here and hooks/README.md).
+    Mutation on scratch copies: with the `${` descent removed, the verifiers' rows print `FALSE ALLOWS (allowed, a shell
+    writes): 20` and the param-word matrix and the rows tests go red (`the param-word matrix: no row a shell writes is
+    allowed`, `P-colon-minus: refused`); with the piped-script read removed, `FALSE ALLOWS (allowed, a shell writes): 10` and
+    the piped-script matrix and the rows tests go red (`the piped-script matrix: no row a shell writes is allowed`,
+    `S-echo-bash: refused`).
 48. **Sessions commit the comments folder** (2026-09-10). The user found that their sessions never added
     `.trackchanges/` to git, so the user's comments on the sessions' files and the record of the tracked changes
     were not archived with the work. Decision 25 is unchanged: romp does no git operation, and a `.gitignore` line is the
