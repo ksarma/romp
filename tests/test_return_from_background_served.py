@@ -896,6 +896,22 @@ class ReturnFromBackground(unittest.TestCase):
                 # serve-token file's path, to the failure text; a red here says the count and the size and prints no byte of it
                 self.assertFalse(b"<html" in denial.lower(), p + ": the denial writes no <html> tag (%d bytes)" % (len(denial),))
                 self.assertFalse(b"data-romp-served" in denial, p + ": ...and carries no stamp (%d bytes)" % (len(denial),))
+        # review round 5 (tests-4): the shell page every client loads, `/` with the token (Handler._send's _landing() writer), is stamped once
+        # although its body carries more than one <html match (its own script's), the first-tag rule; and the credential-less `/` is the
+        # paste-the-token page, a text/html 200 with NO <html> tag and no stamp, the one such body the kernel writes (served at / alone, never at
+        # a pane url: unstamped, it would read as a failure there). Counted, never printed.
+        with urllib.request.urlopen("http://127.0.0.1:%d/?token=%s" % (self.port, self.token), timeout=10) as resp:
+            landing = resp.read()
+            self.assertEqual(resp.status, 200, "/: the landing, served with the token")
+            self.assertTrue(resp.headers.get("Content-Type", "").startswith("text/html"), "/: text/html: %r" % (resp.headers.get("Content-Type"),))
+        self.assertEqual(landing.count(b"<html data-romp-served=200"), 1, "/: one stamp on the landing's <html> tag (count %d, %d bytes)" % (landing.count(b"data-romp-served"), len(landing)))
+        self.assertGreaterEqual(len(re.findall(rb"<html(?=[\s>])", landing, re.I)), 2, "/: the landing's body carries more than one <html match (its shell script's), so the count above pins the first-tag rule (%d matches)" % (len(re.findall(rb"<html(?=[\s>])", landing, re.I)),))
+        with urllib.request.urlopen("http://127.0.0.1:%d/" % self.port, timeout=10) as resp:
+            token_page = resp.read()
+            self.assertEqual(resp.status, 200, "/ without a credential: the paste-the-token page, a 200")
+            self.assertTrue(resp.headers.get("Content-Type", "").startswith("text/html"), "/ without a credential: text/html: %r" % (resp.headers.get("Content-Type"),))
+        self.assertGreater(len(token_page), 0, "the token page has a body")
+        self.assertEqual((len(re.findall(rb"<html(?=[\s>])", token_page, re.I)), token_page.count(b"data-romp-served")), (0, 0), "the paste-the-token page: no <html> tag, so unstamped, the disclosed exception, read off the real kernel (%d bytes)" % (len(token_page),))
 
     def test_firefox_phone_hung_12s_tab_tap_denied_document(self):
         self._leg("phone", "hung", 12, engine="firefox", tap="fleet", denied=True, retry_enter=True)

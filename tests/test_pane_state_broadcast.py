@@ -20,9 +20,11 @@ keeps; that arm's Files-pane branch, a browseFiles with pane:'pane', runs in tes
 BrowseRelay).
 Synthetic only: placeholder sids, the notes-api demo world, TESTHOST.
 """
+import ast
 import inspect
 import json
 import os
+import re
 import subprocess
 import tempfile
 import unittest
@@ -40,6 +42,7 @@ os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XD
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ.setdefault("ROMP_SERVE_TOKEN", "test-token-DO-NOT-USE")
 km = load_source("romp_kernel_psb", os.path.join(BIN, "romp-kernel"))
+_STAMP_TAGS = re.compile(r"<html(?=[\s>])", re.I)   # the tag the stamp lands on, as _stamp_served_html matches it
 
 SID = "11111111-2222-3333-4444-555555555555"
 
@@ -1714,6 +1717,57 @@ def _lazy(seed, driver, phone=True, abort_mobile=False):
     return _run(harness + km._LANDING_DESKTOP_PANES_JS + mobile + km._LANDING_COLLAPSE_JS + driver)
 
 
+def _kernel_source():
+    return Path(os.path.join(os.path.dirname(HERE), "kernel", "kernel.py")).read_text()
+
+
+def _text_html_200_writers(src):
+    """The kernel's text/html 200 writers, DERIVED from the source (review round 5, tests-4): every `self._send(200, <body>, "text/html…")`
+    call with the type a literal, found by an AST walk (a pattern-matched grep is a sample: the round-5 refuter's grep missed one of the
+    nine). Returns the callee names of the bodies built by a call (the page functions) and the names of the bodies passed as a constant
+    (the paste-the-token page). A writer whose type is computed (the file relays' `_send(status, body, ctype)`) is outside this census:
+    _send stamps it the same way when the type is text/html, and none serves a pane url. A body shape neither a call nor a name is
+    loud, so a new writer's shape is classified here before it is served."""
+    calls, names = set(), set()
+    for node in ast.walk(ast.parse(src)):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "_send" and len(node.args) >= 3):
+            continue
+        code, body, ctype = node.args[0], node.args[1], node.args[2]
+        if not (isinstance(code, ast.Constant) and code.value == 200 and isinstance(ctype, ast.Constant) and isinstance(ctype.value, str) and ctype.value.lower().startswith("text/html")):
+            continue
+        if isinstance(body, ast.Call) and isinstance(body.func, ast.Name):
+            calls.add(body.func.id)
+        elif isinstance(body, ast.Name):
+            names.add(body.id)
+        else:
+            raise AssertionError("kernel.py line %d: a text/html 200 writer whose body is neither a call nor a name; classify it here" % node.lineno)
+    return calls, names
+
+
+def _send_response_bypasses(src):
+    """Every `self.send_response(` in kernel.py outside Handler._send, classified (review round 5, extra6-1): the status expression, the
+    Content-Type the block sends, and whether the block writes a body. The block is the site's line and the lines after it down to the
+    first dedent below the site's indentation. A body write is `wfile.write(` or `copyfileobj(` in the block."""
+    lines = src.split("\n")
+    body_lines, start = inspect.getsourcelines(km.Handler._send)
+    span = range(start, start + len(body_lines))
+    sites = []
+    for i, ln in enumerate(lines, 1):
+        if "self.send_response(" not in ln or i in span:
+            continue
+        indent = len(ln) - len(ln.lstrip())
+        block = [ln]
+        for nxt in lines[i:]:
+            if nxt.strip() and (len(nxt) - len(nxt.lstrip())) < indent:
+                break
+            block.append(nxt)
+        text = "\n".join(block)
+        status = re.search(r"send_response\(([^)]+)\)", ln).group(1).strip()
+        ct = re.search(r'send_header\("Content-Type",\s*([^\n]+?)\)\s*(#|$)', text, re.M)
+        sites.append({"line": i, "status": status, "ctype": ct.group(1).strip() if ct else None, "writes": bool(re.search(r"wfile\.write\(|copyfileobj\(", text))})
+    return sites
+
+
 class LazyPanes(unittest.TestCase):
     """T1 (stage 0, 2026-09-18), the shell side: on the phone an off-screen pane other than the feed has no src, so no document and
     no socket, until its first tap; the tap sets it once, before the re-tell; the desktop still loads every pane at boot."""
@@ -1936,13 +1990,20 @@ class LazyPanes(unittest.TestCase):
         self.assertEqual((o["secondPaneLoaded"]["src"], o["secondPaneLoaded"]["div"], o["secondPaneLoaded"]["unmarked"]), ("/fleet", [], []), "...and its good load ends it")
 
     def test_the_kernel_stamps_every_200_html_document_it_writes_and_nothing_else(self):
-        # The writer's side of the round-4 rule (kernel-1): Handler._send marks every text/html 200 with data-romp-served=200 on the <html>
-        # tag (a rule over the writer, so no list of pages can go stale), and nothing else: the seven pane routes' pages, the four fallback
+        # The writer's side of the round-4 rule (kernel-1): Handler._send marks every text/html 200 whose body has an <html> tag with
+        # data-romp-served=200 on that tag (a rule over the writer, so no list of pages can go stale), and nothing else: the seven pane routes'
+        # pages, the shell page every client loads (review round 5, tests-4: _landing(), covered by neither census before), the four fallback
         # pages a missing ui/ module yields all carry it; a 403 or a 500 text/plain body (what the kernel's denial and its traceback are), a
         # text/plain 200 and a body with no <html> tag (the paste-the-token page at /, disclosed below) pass through untouched, bytes or str.
+        # The population is DERIVED from the writers: an AST walk over kernel.py's `_send(200, <body>, "text/html…")` calls must name exactly
+        # the page functions in the bodies loop, and the one constant body (the token page), so a new text/html 200 writer reds this test.
         stamp = km._stamp_served_html
-        pages = {"chat": km._chat_page, "feed": km._feed_page, "timeline": km._timeline_page, "fleet": km._fleet_page, "waiting": km._waiting_page, "files": km._files_page, "settings": km._settings_page}
-        self.assertEqual(sorted(pages), sorted([k for k, _ in km._PANE_ORDER] + ["settings"]), "the census: every pane key of _PANE_ORDER has its page here, plus the gear's")
+        pages = {"chat": km._chat_page, "feed": km._feed_page, "timeline": km._timeline_page, "fleet": km._fleet_page, "waiting": km._waiting_page, "files": km._files_page, "settings": km._settings_page, "landing": km._landing}
+        self.assertEqual(sorted(k for k in pages if k != "landing"), sorted([k for k, _ in km._PANE_ORDER] + ["settings"]), "the census: every pane key of _PANE_ORDER has its page here, plus the gear's, plus the shell's landing")
+        calls, names = _text_html_200_writers(_kernel_source())
+        self.assertTrue(calls and names, "the census over the writers found text/html 200 writers of both shapes (a derivation over nothing pins nothing): %r %r" % (calls, names))
+        self.assertEqual(calls, {fn.__name__ for fn in pages.values()}, "the population is the writers': every text/html 200 the kernel writes from a page function is in the bodies loop, and nothing else is")
+        self.assertEqual(names, {"_TOKEN_LOGIN_HTML"}, "the one text/html 200 written from a constant is the paste-the-token page, the rootless exception disclosed below")
         bodies = {k: fn() for k, fn in pages.items()}
         real_ui = km.UI
         try:
@@ -1952,7 +2013,11 @@ class LazyPanes(unittest.TestCase):
             km.UI = real_ui
         self.assertTrue(all("needs the ui/ modules" in b for b in fallbacks.values()), "the four fallback pages were produced: %r" % ({k: b[:60] for k, b in fallbacks.items()},))
         for k, b in list(bodies.items()) + [("fallback-" + k, b) for k, b in fallbacks.items()]:
-            self.assertNotIn("data-romp-served", b, k + ": the page function writes no stamp of its own (the writer does)")
+            if k == "landing":
+                self.assertNotIn("<html data-romp-served", b, k + ": the page function writes no stamp of its own (its shell script names the attribute in docState's read and a comment, so the bare literal is present)")
+                self.assertGreaterEqual(len(_STAMP_TAGS.findall(b)), 2, k + ": the landing's body carries more than one <html match (its shell script's), so the one-stamp count below pins the first-tag rule")
+            else:
+                self.assertNotIn("data-romp-served", b, k + ": the page function writes no stamp of its own (the writer does)")
             out = stamp(200, b, "text/html; charset=utf-8")
             self.assertEqual(out.count("<html data-romp-served=200"), 1, k + ": one stamp on the <html> tag of a text/html 200")
             self.assertEqual(len(out), len(b) + len(" data-romp-served=200"), k + ": nothing else changes")
@@ -1963,7 +2028,24 @@ class LazyPanes(unittest.TestCase):
         for code, body, ctype in [(403, "forbidden: token required", "text/plain"), (500, "Traceback (most recent call last):\n", "text/plain"), (502, "<html><body>bad gateway</body></html>", "text/html"),
                                   (200, "forbidden-looking text", "text/plain"), (200, '{"ok": true}', "application/json"), (200, "<!DOCTYPE html>no root tag here", "text/html"), (404, "<html><body>not found</body></html>", "text/html; charset=utf-8")]:
             self.assertEqual(stamp(code, body, ctype), body, "%d %s: untouched (a stamp on this would call a non-200, a non-document or a rootless body a 200 the kernel served)" % (code, ctype))
-        self.assertIn("body = _stamp_served_html(code, body, ctype)", inspect.getsource(km.Handler._send), "the one call, at the top of the one place every response leaves")
+        self.assertIn("body = _stamp_served_html(code, body, ctype)", inspect.getsource(km.Handler._send), "the one call, at the top of the writer every text/html response leaves through")
+
+    def test_every_response_writer_that_bypasses_the_stamping_send_is_a_non_200_a_bodiless_head_road_or_an_octet_stream_attachment(self):
+        # extra6-1 (review round 5): the stamp's exhaustiveness over text/html 200s rests on Handler._send, and _send is NOT the one place every
+        # response leaves: eight `send_response` sites bypass it (HEAD roads answering with the real length and no body, 206 ranges, the 204
+        # preflight, the 101 upgrade, and two 200 attachments with application/octet-stream hardcoded). The rule holds because none of them
+        # writes a text/html 200, and this census pins that over the WRITERS, not the type tables: every `send_response(` outside _send is a
+        # non-200 status literal, a block that writes no body, or a block whose Content-Type is the octet-stream literal. A new bypassing
+        # writer of a text/html 200 (or an existing one re-typed) reds it. Red under mutation: the download route's octet-stream literal
+        # changed to text/html.
+        sites = _send_response_bypasses(_kernel_source())
+        self.assertGreaterEqual(len(sites), 8, "the census found the bypassing writers (eight at review round 5; a derivation over nothing pins nothing): %r" % (sites,))
+        for st in sites:
+            non200 = st["status"].isdigit() and int(st["status"]) != 200
+            octet = st["ctype"] == '"application/octet-stream"'
+            self.assertTrue(non200 or not st["writes"] or octet, "kernel.py line %d bypasses Handler._send and could write a text/html 200: status %s, Content-Type %s, writes a body %r (a text/html 200 must leave through _send, the stamping writer)" % (st["line"], st["status"], st["ctype"], st["writes"]))
+        self.assertTrue([st for st in sites if st["status"] == "200" and st["writes"]], "the census saw the 200 attachments that write a body (the sites the octet-stream clause is for): %r" % (sites,))
+        self.assertTrue([st for st in sites if not st["writes"]], "…and the bodiless HEAD roads: %r" % (sites,))
 
     def test_a_failure_judged_after_a_flip_to_the_desktop_re_promotes_there_and_the_phone_armed_detectors_are_inert(self):
         # Family one (review round 3): the layout is read when the failure is JUDGED, not when the promotion was armed, across an actual media-query

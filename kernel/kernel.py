@@ -68483,7 +68483,8 @@ function filesCtlM(){try{var st=JSON.parse(localStorage.getItem('romp:settings')
 // loading). `app`: the pane's OWN document, same-origin at its url with the pane shim run in its window (window.__rompApp, set as
 // the shim parses, ahead of the bundle and the load event). `doc`: a same-origin document at the url with no shim that carries the
 // kernel's stamp of a 200 (data-romp-served=200 on its <html> tag, written by Handler._send on every text/html 200 this kernel
-// serves, _stamp_served_html: a rule over the writer, not a list of pages), so a 200 the kernel served that this reader cannot
+// writes whose body has an <html> tag, _stamp_served_html: a rule over the writer, not a list of pages; a body with none is served
+// unstamped and would read as a failure here, the paste-the-token page at / being the one today, never at a pane url), so a 200 the kernel served that this reader cannot
 // classify: the kernel's own "needs the ui/ modules" fallback page. `other`: a same-origin document at the url with neither the
 // marker nor the stamp, so what the kernel did not serve as a 200 (its 403 line for a token-gated route once the cookie is stale,
 // its 500 page, a proxy's 502 body while it restarts). THE RULE (review round 2's family two, narrowed in review round 4,
@@ -71781,15 +71782,22 @@ _STAMP_HTML_TAG_B = re.compile(rb"(<html)(?=[\s>])", re.I)
 
 
 def _stamp_served_html(code, body, ctype):
-    """[fork] The lazy panes' proof of a 200 (review round 4 of the lazy panes, 2026-09-19, kernel-1): every text/html document this
-    kernel serves with a 200 carries `data-romp-served=200` on its <html> tag, written at the one place every response leaves
-    (Handler._send), so it is a rule over the writer and no list of pages. The phone shell's docState (_LANDING_MOBILE_JS) reads it
+    """[fork] The lazy panes' proof of a 200 (review round 4 of the lazy panes, 2026-09-19, kernel-1): every text/html 200 this kernel
+    writes whose body carries an <html> tag gets `data-romp-served=200` on that tag, written at the top of Handler._send, so it is a
+    rule over the writer and no list of pages. Handler._send is not the one place every response leaves (review round 5, extra6-1):
+    eight `send_response` sites bypass it, and the rule holds over text/html 200s because none of them writes one: they are HEAD roads
+    with no body, 206 ranges, the 204 preflight, the 101 upgrade, and two 200 attachments with application/octet-stream hardcoded, a
+    census tests/test_pane_state_broadcast.py pins over the writers (every `send_response(` outside _send is a non-200, a bodiless
+    road, or an octet-stream attachment). A body with no <html> tag is returned as it came, unstamped, so served at a pane url it
+    would read as a failure; the paste-the-token page at / is one today, and / is not a pane url (correctness-2, regression-1, extra6-2:
+    the rule with its shape condition, the token page an example and not a list). The phone shell's docState (_LANDING_MOBILE_JS) reads it
     off a pane frame's same-origin document: one with the pane shim's marker is the pane's own; one with this stamp and no marker
     is a 200 the kernel served that the shell cannot classify (its "needs the ui/ modules" page), shown as served; one with neither
     is not a 200 of this kernel's (its 403 line under a stale cookie, its 500 page, a proxy's 502 body while it restarts) and is a
     failure with the retry road. The 403 and the 500 are text/plain and a proxy's page is not this kernel's, so none can carry it:
-    that is the point. The first <html tag alone; a body with none is returned as it came, bytes or str alike; any other status
-    or type passes through untouched."""
+    that is the point. The first <html tag alone (the shell page's own script names the tag in a regex and a comment, so a body can
+    carry more than one match); a body with none is returned as it came, bytes or str alike; any other status or type passes through
+    untouched."""
     if code != 200 or not isinstance(ctype, str) or not ctype.lower().startswith("text/html"):
         return body
     if isinstance(body, bytes):
@@ -71806,7 +71814,7 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     def _send(self, code, body, ctype, cache=None, headers=None):
-        body = _stamp_served_html(code, body, ctype)   # [fork] every text/html 200 carries the kernel's stamp (the lazy panes' proof of a 200; the function's docstring)
+        body = _stamp_served_html(code, body, ctype)   # [fork] every text/html 200 whose body has an <html> tag carries the kernel's stamp (the lazy panes' proof of a 200; the function's docstring names the writers that bypass this method and the rootless exception)
         body = body.encode("utf-8") if isinstance(body, str) else body
         self.send_response(code)
         self.send_header("Content-Type", ctype)

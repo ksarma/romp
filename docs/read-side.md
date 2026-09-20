@@ -267,8 +267,14 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   `pane-load-failed` row (surface `shell`: `pane`, `via` `load` or `backstop`,
   `n` the failures for that pane on this page). A 200 the kernel served at the
   pane's url that carries no pane shim (its own "needs the ui/ modules" page;
-  the kernel stamps every text/html 200 it writes with `data-romp-served=200`
-  on the `<html>` tag, and the shell reads that stamp) is not a failure: the
+  the kernel stamps every text/html 200 it writes whose body carries an
+  `<html>` tag with `data-romp-served=200` on that tag, so every text/html 200
+  at a pane url carries the stamp once, which the census tests read off the
+  writers and off a lab kernel (`tests/test_pane_state_broadcast.py`,
+  `tests/test_return_from_background_served.py`); a body with no `<html>` tag
+  is served as it came, unstamped, so at a pane url it would read as a
+  failure (the paste-the-token page at `/` is such a body today, and `/` is
+  not a pane url); and the shell reads that stamp) is not a failure: the
   shell cannot classify it, so it is shown as served (the loader clears, the
   src stays) and one `pane-load-unmarked` row (surface `shell`: `pane`, `via`)
   says what was seen; a reader that cannot classify a 200 never reports
