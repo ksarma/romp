@@ -176,6 +176,17 @@ test("a change below a browsed window patches the worked footers from the first 
   assert.equal(w.v.el.children.length, 6, "no unit node added or removed");
 });
 
+test("a paint of the view ends a re-window's follow of its rebuilt rows: the mark armed by the stick re-window is cleared before any branch runs (review round 1b; the reader's own scroll is the other ending event, tail-shrink.test.ts)", () => {
+  const w = world(["user", "assistant"], [ev(0), ev(1)], [ev(0), ev(1)], 2, 0);
+  w.v.followRebuilt = true;
+  w.sync("A", true);
+  assert.equal(w.v.followRebuilt, false, "appendActive's paint has a follow of its own (append-stick); the re-window's is over");
+  const w2 = world(["user", "assistant"], [ev(0), ev(1)], [ev(0), ev(1)], 2, 0);
+  w2.v.followRebuilt = true;
+  w2.sync("A");
+  assert.equal(w2.v.followRebuilt, false, "…and a switch's or a landing's paint ends it too");
+});
+
 // ── the measured figure: taken only by a paint that anchors the reader, and by every one of them (review round 1b) ──────────────────
 
 test("a sync with no flag (a switch's, a landing's, a hidden prebuild's) takes no measured figure and tells its build so: applyMeasure is never called and renderWindowItems is handed anchored false", () => {

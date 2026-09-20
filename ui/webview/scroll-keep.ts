@@ -122,8 +122,10 @@ export function followTailShrink(stick: boolean, dh: number): boolean {
  *  follows the rebuilt rows' first height change of EITHER sign. The re-window writes the bottom synchronously, and the rows then settle
  *  by a few pixels each before the view observer's report at frame end: when the net was a shrink the tail-shrink rule wrote the reader
  *  back; when it was growth nothing did, and the go-to-the-live-tail jump ended 40 to 67 px above the bottom (the landing lab, under the
- *  median per-turn estimate, whose spacer runs a little taller than the old one). `armed` is the re-window's mark; the observer clears
- *  it on its first delivery. Growth at the tail is otherwise the append path's (append-stick), as followTailShrink says. Pure. */
+ *  median per-turn estimate, whose spacer runs a little taller than the old one). `armed` is the re-window's mark; the events that END
+ *  the re-window clear it (render.ts): the reader's own scroll and the view's next paint, never an observer delivery, which a rebuild
+ *  that changed no height never makes (review round 1b). Growth at the tail is otherwise the append path's (append-stick), as
+ *  followTailShrink says. Pure. */
 export function followRebuiltTail(stick: boolean, armed: boolean, dh: number): boolean {
   return armed && stick && dh !== 0;
 }

@@ -13415,7 +13415,9 @@ function ensureView(id: string): View {
           writeScroll(content, content.scrollHeight, "rewindow", true);
           view.scrollTop = content.scrollTop;
         }
-        if (lastH >= 0) view.followRebuilt = false;   // the re-window's mark lasts one delivery
+        // the re-window's mark is NOT cleared here: a delivery may never come (a rebuild that changed no height), and a latch cleared by
+        // something that may never happen outlives its condition. The events that end the re-window clear it: the reader's own scroll
+        // (the scroll listener, a gesture) and the view's next paint (syncViewInner) (review round 1b)
         lastH = h;
       });
       v.ro.observe(elv);
@@ -13513,6 +13515,10 @@ function syncViewInner(id: string, atBottom?: boolean, anchored: boolean = atBot
   const v = ensureView(id);
   const s = sessions.get(id);
   if (!s) return v;
+  // a paint of the view ends a re-window's follow of its rebuilt rows (followRebuiltTail): the re-window arms AFTER its own build, so it is
+  // not cleared by itself, and appendActive's next paint has a follow of its own (append-stick). The other ending event is the reader's own
+  // scroll (the scroll listener); an observer delivery never clears it, since a rebuild that changed no height makes none (review round 1b)
+  v.followRebuilt = false;
   // An empty transcript has nothing to build → a "No messages yet." placeholder, NEVER the deferred
   // "Loading transcript…" hint. The kernel re-sends the FULL events payload on every push, so a zero-event
   // session is genuinely empty — nothing is streaming in to wait for, so a perpetual "Loading…" was a lie
@@ -15783,6 +15789,7 @@ function updateReplyChips(): void {
     // the settle it is a sample, or the landing that was and stayed exact filed settled false
     lastScrollWriteAfter = null;   // one-shot: the first event after a write consumes its marker, echo or not (a gesture that lands within a pixel of an older write's target is a gesture)
     if (cls !== "write-echo") scrollDiagRow("scrollgesture", { sid: activeId || "", top: c.scrollTop, gesture: true, sh: c.scrollHeight, ch: c.clientHeight });
+    if (gv && cls === "gesture") gv.followRebuilt = false;   // the reader's own scroll ends a re-window's follow of the rebuilt rows (followRebuiltTail); a write's echo, the re-window's own bottom write included, does not (review round 1b)
     lastKnownSh = c.scrollHeight;   // sh/ch: a clamp reads top == sh - ch after sh dropped (T262e)
   }, { passive: true });
 }
@@ -16041,7 +16048,7 @@ function virtualizeToViewport(): void {
       // Placing the focus unit's top under the viewport left them above the bottom by the spacer estimate's error, and only a
       // view that came out SHORTER (the tail-shrink follow) brought them back: with an estimate that came out longer they
       // stayed 55 px above the live tail (the landing lab's takeover road, under the median estimate).
-      if (v.stick && (v.winEnd ?? 0) >= items.length) { writeScroll(content, content.scrollHeight, "rewindow", true); v.followRebuilt = true; }   // …and the view observer follows the rows' settling (followRebuiltTail)
+      if (v.stick && (v.winEnd ?? 0) >= items.length) { writeScroll(content, content.scrollHeight, "rewindow", true); v.followRebuilt = true; }   // …and the view observer follows the rows' settling (followRebuiltTail) until the reader's own scroll or the view's next paint ends the re-window
       else if (anchor) {
         const yNow = anchor.getBoundingClientRect().top - content.getBoundingClientRect().top + content.scrollTop;
         writeScroll(content, yNow - beforeY, "rewindow");
