@@ -4901,26 +4901,44 @@ The two rows, as the kernel writes them (`t` its clock, `wid` the dashboard id):
   inspects no nested key of any admitted object (`marks`, `env`, `nav`,
   `res`, `frames`, `loaf` and federation's `counts` alike): a nested string
   value is cut at 64 characters, a nested key is stored as posted, and a row a
-  value of which was cut carries `cut` naming the key. Host names reach the file wherever
-  an admitted value can hold one, in three forms: a bare name under a `host`
-  key (the shell's push-test row; every federation row that carries its
-  conn's host, the `hostconn`, `feedDelta-nobase`, `feedDelta-stale`,
-  `sendqueue` and `senddrop` rows, with the poll rows carrying an empty
-  host; and the kernel's own `wsopen` row for a spliced relay,
-  `kind` `hub`, above); a
-  host-prefixed session id, `<host>:<uuid>`, when the row concerns a remote
-  session (the chat surface's `sid`, `id`, `ids` and `active`: every remote
-  session id a federated page holds carries its host, and the 64-character
-  cut keeps the head, prefix included); and a host-keyed map (federation's
-  `feedmerge` `counts`). The chat road is older than this field, is not gated
-  by the share switch, and is filed on routine use (a send, a scroll, a tab
-  set: up to 40 scroll rows a minute per kind), so on a federated page it is
-  the most frequent host-carrying row type; the position-to-name map itself
-  follows from the rows that record a host at attach (federation's
-  `hostconn` open rows of the same pane), not from chat rows alone, which
-  name a host without its position. `tests/test_client_diag_allowlist.py`
-  classifies every admitted key of every surface by the content its value
-  can carry, so a new key fails there until classified. The key is absent, not `null`, when no remote host is attached
+  value of which was cut carries `cut` naming the key. Host names reach the
+  file wherever an admitted value can hold one, in four forms: a bare name
+  under a `host` key (the shell's push-test row; every federation row that
+  carries its conn's host, the `hostconn`, `feedDelta-nobase`,
+  `feedDelta-stale`, `sendqueue` and `senddrop` rows, with the poll rows
+  carrying an empty host; and the kernel's own `wsopen` row for a spliced
+  relay, `kind` `hub`, above); a host-prefixed session id, `<host>:<uuid>`,
+  when the row concerns a remote session (the chat surface's `sid`, `id`,
+  `ids` and `active`: every remote session id a federated page holds carries
+  its host, and the 64-character cut keeps the head, prefix included; and the
+  shell's `tap-pending-land` and `tap-vanish-land` rows' `sid8`, the first 8
+  characters of the push ledger row's sid, which the test push files as the
+  active tab's whole data-id and the relay prefixes with its origin, so a host
+  name's first 8 characters or a short host whole, on every row of both kinds
+  that concerns a remote session); a host-keyed map (federation's `feedmerge`
+  `counts`); and a host name at the tail of a postal message id,
+  `<epoch>.<pid>_<hex>.<host>` (the postal service bakes the delivering
+  kernel's postal host in): the feed surface's `id`, `appeared` and `gone`
+  carry item ids, and a parked hand-off's card id is `parked:` plus that
+  message id (the card's own kernel's postal host, on a single-kernel page the
+  page's own machine's, of which 5 to 11 characters survive the cut) and a
+  quarantined relay's is `quarantine:` plus the held mail's id (its origin
+  kernel's postal host, 0 to 4 characters surviving), on every row of the kind
+  that names such a card, filed on routine use and not gated by the share
+  switch; and the chat surface's `anchor` on one road, a landing miss for a
+  deep link the timeline's message connector filled with a postal message id,
+  the last 12 characters of it, a host of up to 11 characters whole. The chat
+  road is older than this field, is not gated by the share switch, and is
+  filed on routine use (a send, a scroll, a tab set: up to 40 scroll rows a
+  minute per kind), so on a federated page it is the most frequent
+  host-carrying row type; the position-to-name map itself follows from the
+  rows that record a host at attach (federation's `hostconn` open rows of the
+  same pane), not from chat or feed rows alone, which name a host without its
+  position. `tests/test_client_diag_allowlist.py` classifies every admitted
+  key of every surface by the content its value can carry, following each
+  value to its producers (a field is a carrier if any producer chain can put a
+  host name in it, classified by that chain's range, never by the field's
+  typical content), so a new key fails there until classified. The key is absent, not `null`, when no remote host is attached
   at the flush and none received characters in the minute: a page that never
   attached one, the shell, and the rows after every host has detached. `rafGap` is
   `{n, worst}`, the animation-frame gaps over 50 ms while the document was

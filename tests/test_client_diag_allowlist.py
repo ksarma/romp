@@ -61,18 +61,27 @@ SHARED = {"nav": {"type": "reload", "responseEnd": 210, "domContentLoaded": 656,
           # the same unit per REMOTE host by its position in the pane document, h1 the first remote host it attached; positions, never names
           "wsBytesByHost": {"h1": 40123, "h2": 991}}
 
-# The content census (review round 1 of the wsBytesByHost change, 2026-09-20). Every admitted key of every surface, classified by
-# what its VALUE can carry as the first-party posters and the kernel's own writers build it: BARE (a host name as the value),
-# PREFIXED (a session id with its host in front, <host>:<uuid>, when the row concerns a remote session), KEYED (a map whose keys
-# are host names), NONE (why it cannot carry one, and where a shape holds it, who holds it: the collector, the poster or the
-# kernel). A census keyed on the NAME `host` had missed the chat surface, whose sid, id, ids and active are the tab ids the page
-# holds, which federation.ts prefixes for every remote session (prefixInbound on SCALAR_ID and ARRAY_ID, the tab records through
-# OBJ_ID); the cut at CLIENT_DIAG_STR_MAX keeps the head of a string, prefix included. The kernel admits a surface's top-level
-# keys and cuts nested string values; it inspects no nested key and no value's form, so every class here names the writer that
-# holds the shape. test_every_admitted_key_is_classified_by_the_content_its_value_can_carry ties this table to CLIENT_DIAG_KEYS
-# both ways, so a key added to the table without a row here fails, and the disclosure copies are read back against the
-# host-carrying surfaces this table derives (test_the_disclosure_copies_state_the_content_rule_and_name_every_host_carrying_surface).
-BARE, PREFIXED, KEYED, NONE = "bare", "prefixed", "keyed", "none"
+# The content census (review round 1 of the wsBytesByHost change, 2026-09-20; re-derived by producers in round 4). Every admitted
+# key of every surface, classified by what its VALUE can carry as the first-party posters and the kernel's own writers build it.
+# THE RULE (round 4, after a row was found classified from a sibling field): a field is a carrier if ANY producer chain can put a
+# host name in it, however rare that road; classify by the producer's RANGE, never by the field's typical content, and follow the
+# value to its WRITERS and their minters, never to the shape of the row it appears in (a sibling field is not evidence about a
+# value). Each carrier's reason names its range, every row of the kind or the one road, and the disclosure copies read the
+# range back. The four forms follow from the rule: BARE (a host name as the value), PREFIXED (a session id with its host in
+# front, <host>:<uuid>, when the row concerns a remote session), KEYED (a map whose keys are host names), SUFFIX (a host name as
+# the tail of a postal message id inside the value, <epoch>.<pid>_<hex>.<host>: postal_service.py _unique bakes self_host() in);
+# a fifth would classify itself. NONE names the producer chain and answers whether any branch reaches a host name. A shorthand
+# reason (_BOOL, _INT, _ENUM) is a claim about EVERY writer of the key, checked by the fixture rows in
+# test_one_fixture_row_per_poster_call_site_passes_whole_and_the_table_names_nothing_else, one per call site with the values
+# the writers post. A census keyed on the NAME `host` had missed the chat surface, whose sid, id, ids and active are the tab ids
+# the page holds, which federation.ts prefixes for every remote session (prefixInbound on SCALAR_ID and ARRAY_ID, the tab records
+# through OBJ_ID); the cut at CLIENT_DIAG_STR_MAX keeps the head of a string, prefix included, and a suffix survives it by 64
+# less the head's length. The kernel admits a surface's top-level keys and cuts nested string values; it inspects no nested key
+# and no value's form, so every class here names the writer that holds the shape.
+# test_every_admitted_key_is_classified_by_the_content_its_value_can_carry ties this table to CLIENT_DIAG_KEYS both ways, so a
+# key added to the table without a row here fails, and the disclosure copies are read back against the host-carrying surfaces
+# this table derives (test_the_disclosure_copies_state_the_content_rule_and_name_every_host_carrying_surface).
+BARE, PREFIXED, KEYED, SUFFIX, NONE = "bare", "prefixed", "keyed", "suffix", "none"
 _ENUM, _INT, _BOOL = "a fixed word", "a number", "a boolean"
 CENSUS = {
     "perf": {   # perf-telemetry.ts: the minute and slowframe rows; every key's shape is the collector's
@@ -96,29 +105,54 @@ CENSUS = {
         "attempts": (NONE, _INT), "firstFailMs": (NONE, _INT), "wasDiscarded": (NONE, _BOOL), "nav": (NONE, "the navigation type word"),
         "awaitLink": (NONE, _BOOL), "linkUpMs": (NONE, _INT), "parked": (NONE, _BOOL),
     },
-    "reload-core": {"reason": (NONE, "build or fresh"), "detail": (NONE, "the offered dist token or code, a number's text"), "hold": (NONE, "the hold word"), "ageMs": (NONE, _INT)},
+    "reload-core": {   # kernel.py's _RELOAD_CORE_JS, the one writer heldLong (a hold that has stood for the bound files one breadcrumb, once per owed request)
+        "reason": (NONE, "held: owed.reason, the literal build (a dist offer) or fresh (a reconnect's fresh window)"),
+        "detail": (NONE, "held: owed.detail, String(offered.dv || offered.code) on a build offer (the offered dist token or the kernel's code word, a number's text), '' on fresh"),
+        "hold": (NONE, "held: busy()'s word, the first clocked pane word behind any gesture (paneHere, busyHere: code literals of the gesture and hold tables) or fresh"),
+        "ageMs": (NONE, "held: Date.now() less the hold's start, a number"),
+    },
     "shell": {   # kernel.py's shell scripts: the push panel's rows, the tap ledger rows, the return probe
         "sidAttached": (NONE, _BOOL),
         "host": (BARE, "push-test: the active tab's host, read off the tab id's prefix (activeSession), empty for a local session"),
-        "why": (NONE, "activeSession's cause word"), "tabs": (NONE, _INT), "status": (NONE, "an HTTP status or ok"), "via": (NONE, _ENUM), "boot": (NONE, _BOOL),
+        "why": (NONE, "push-test: activeSession's cause word, one of six literals ('', no-frame, no-doc, no-tabs, none-active, threw)"), "tabs": (NONE, _INT),
+        "status": (NONE, "reveal-post: the /reveal fetch's Response.status, a number, on land()'s then arm; the literal 0 on its catch arm (the fetch threw); no writer posts a word"),
+        "via": (NONE, "the road word each caller passes, literals: reveal-post link, ack, vanish, sw; deeplink boot, pageshow, popstate; tap-pending boot, visible, pageshow, focus"), "boot": (NONE, _BOOL),
         "hasSid": (NONE, _BOOL), "hasCard": (NONE, _BOOL), "hasPid": (NONE, _BOOL), "controlled": (NONE, _BOOL), "dup": (NONE, _BOOL), "sub": (NONE, _BOOL),
-        "rows": (NONE, _INT), "err": (NONE, "true when GET /push/pending failed; the row carries no text"), "getNotifications": (NONE, _BOOL),
-        "displayed": (NONE, _INT), "vanished": (NONE, _INT), "superseded": (NONE, _INT),
-        "sid8": (NONE, "the first 8 characters of a push ledger row's sid, a bare uuid: _push_pending carries the host in its own field, which the row does not copy"),
-        "ageS": (NONE, _INT), "shape": (NONE, _ENUM), "kind": (NONE, "the worker message's kind word"), "sw": (NONE, _BOOL), "decision": (NONE, _ENUM),
+        "rows": (NONE, _INT), "err": (NONE, "tap-pending: the literal true when GET /push/pending failed (fromLedger's catch arm; the kernel's body has no err key); absent otherwise"),
+        "getNotifications": (NONE, "tap-pending: whether getNotifications answered (d !== null), a boolean"),
+        "displayed": (NONE, _INT), "vanished": (NONE, _INT), "superseded": (NONE, "tap-pending: a count, written only when nonzero"),
+        "sid8": (PREFIXED, "tap-pending-land and tap-vanish-land: the first 8 characters of the push ledger row's sid (r.sid.slice(0,8), v.sid.slice(0,8)), which the test push "
+                           "files as the active tab's whole data-id (activeSession's sid, host:uuid on a federated tab, into _push_ledger_add) and which the relay prefixes with its "
+                           "origin before its own ledger row (host:sid); the ledger's host field is a courtesy copy of that prefix (_push_payload) and the rows do not read it. So the "
+                           "head is a host name's first 8 characters, or a short host name whole, on every row of both kinds that concerns a remote session"),
+        "ageS": (NONE, "tap-pending-land and tap-vanish-land: _push_pending's bounded int"), "shape": (NONE, "sw-message: m.romp behind the gate m.romp === 'notificationClick', so that literal"),
+        "kind": (NONE, "sw-message: the worker's copy of _push_payload's str(kind or 'card'): card, turn or test"),
+        "sw": (NONE, "sw-message: the worker's diag block or null: road (open, focus or open-after-refused), vis (a visibilityState word), clients and tops (counts); sw.js's "
+                     "notificationclick mints it beside the message's sid and host and copies neither in; the kernel stores its nested keys as posted"),
+        "decision": (NONE, _ENUM),
         "hiddenMs": (NONE, _INT), "quietMs": (NONE, _INT), "attempts": (NONE, _INT), "firstFailMs": (NONE, _INT), "ms": (NONE, _INT),
     },
     "federation": {   # federation.ts diag(): hostconn, feedDelta-nobase, feedDelta-stale, feedmerge, sendqueue, senddrop
         "host": (BARE, "the conn's host on every hostconn, feedDelta-nobase, feedDelta-stale, sendqueue and senddrop row (federation_host_row_kinds, "
                        "derived from federation.ts); empty on the poll rows, local on the local nobase row"),
         "ev": (NONE, "the hostconn event word"),
-        "why": (NONE, "a cause word, a slot name, the remote's build id, or the page's own /tunnels fetch failure text, cut at 200 by the poster and 64 here"),
-        "quietMs": (NONE, _INT), "foreground": (NONE, _BOOL), "msgType": (NONE, "a message type word"), "rs": (NONE, "a readyState"),
-        "flushed": (NONE, "message type words"), "held": (NONE, "message type words"), "unread": (NONE, _BOOL), "endedUnread": (NONE, _BOOL),
-        "code": (NONE, "the close code"), "clean": (NONE, _BOOL), "detached": (NONE, _BOOL), "pendingDropped": (NONE, "message type words or a count"),
-        "buildId": (NONE, "the remote kernel's build id"),
-        "counts": (KEYED, "feedmerge: the merged feed's ask count per host, keyed by the host name (local for the local kernel)"),
-        "gt": (NONE, _INT), "superseded": (NONE, _BOOL),
+        "why": (NONE, "a cause word at each literal writer (watchdog-close's quiet, dial-deferred's local-down, senddrop's closed, the feedDelta-stale ladder's words); "
+                      "on delta-unknown-slot the peer frame's own slot string as parsed off the remote socket, cut at 32 (UNKNOWN_SLOT_CUT: the remote kernel's choice, a fixed "
+                      "word for every kernel in this repo), then the peer's sha as the hub's /version poll validated it (_peer_sha) or nothing; on delta-unkeyed-base this bundle's "
+                      "slot, collection and shape words with the same tail; or the page's own /tunnels fetch failure text, cut at 200 by the poster and 64 here. NONE on the census's "
+                      "first-party scope (this header): a peer kernel could put any 32 characters in its slot word"),
+        "quietMs": (NONE, _INT), "foreground": (NONE, _BOOL), "msgType": (NONE, "hold, sendqueue and senddrop: msg.type of an outbound frame, a KERNEL_SETTING word or a BOOKKEEPING type"),
+        "rs": (NONE, "a readyState"),
+        "flushed": (NONE, "open and flush-halt: message type words (flushPending's list)"), "held": (NONE, "flush-halt: pendingTypes, message type words"),
+        "unread": (NONE, _BOOL), "endedUnread": (NONE, _BOOL),
+        "code": (NONE, "the close code"), "clean": (NONE, _BOOL), "detached": (NONE, _BOOL),
+        "pendingDropped": (NONE, "detach: pendingTypes(c), each a KERNEL_SETTING word or a BOOKKEEPING type; moot: needFull alone (dropAsksTheReadyServes); type words on every writer this "
+                                 "field ever had (no writer posted a count)"),
+        "buildId": (NONE, "feedDelta-nobase and feedDelta-stale: the feedDelta frame's buildId as its kernel sent it, posted raw: the LOCAL kernel's on the local nobase row, the "
+                          "remote's on the remote rows; _next_feed_build_id's integer counter on every kernel in this repo"),
+        "counts": (KEYED, "feedmerge: the merged feed's ask count per host, keyed by the host name (local for the local kernel), every row"),
+        "gt": (NONE, _INT), "superseded": (NONE, "sendqueue: the replaced queued pick's gt, the gesture-clock stamp it was posted with (a number at or above the wall clock in ms), or "
+                                                 "true when that pick carried no numeric gt (an older emitter)"),
     },
     "chat": {   # render.ts's direct posts and scroll-write.ts's rows through scrollDiagRow
         "sid": (PREFIXED, "the active tab's id or the session's id: <host>:<uuid> for a remote session (send, cancel-miss, reconcile-optimistic-failed, every scroll row)"),
@@ -129,36 +163,77 @@ CENSUS = {
         "active": (PREFIXED, "skeleton: the active tab's id, prefixed for a remote session"),
         "ts": (NONE, _INT), "len": (NONE, _INT), "route": (NONE, "plain, quote or followup"),
         "id": (PREFIXED, "empty-session-frame: the frame's session id, prefixed by prefixInbound for a remote session"),
-        "load": (NONE, "the federation.js resource entry's figures"), "first": (NONE, "the earlier pass's load figures or a boolean"),
+        "load": (NONE, "federation-missing: federationLoadEntry's four rounded numbers (frame-listener.ts) or null"),
+        "first": (NONE, "federation-missing: the earlier pass's load figures, federationLoadEntry's four numbers read back from the sessionStorage retry marker ({load: entry}, its "
+                        "only writer), or null; no build ever posted a boolean"),
         "recovered": (NONE, _BOOL), "hadRestore": (NONE, _BOOL), "perMinute": (NONE, _INT), "writer": (NONE, "the writing function's name"),
         "before": (NONE, _INT), "after": (NONE, _INT), "delta": (NONE, _INT), "stick": (NONE, _BOOL), "gesture": (NONE, _BOOL), "sh": (NONE, _INT), "ch": (NONE, _INT),
-        "anchor": (NONE, "the last 12 characters of an atom uuid"), "proto": (NONE, _INT), "events": (NONE, _INT), "regions": (NONE, _BOOL),
-        "headKnown": (NONE, _BOOL), "headFrom": (NONE, _ENUM), "older": (NONE, _BOOL), "noframe": (NONE, _BOOL), "trail": (NONE, _INT),
-        "dh": (NONE, _INT), "last": (NONE, "the tail element's class list or live-ask"), "cls": (NONE, "an element's class name"), "fromTail": (NONE, _INT),
-        "atBottom": (NONE, _BOOL), "where": (NONE, "view or live-ask"), "removed": (NONE, "element class names"), "added": (NONE, "element class names"),
-        "reAdded": (NONE, _BOOL), "shBefore": (NONE, _INT), "shAfter": (NONE, _INT), "st": (NONE, _INT), "top": (NONE, _INT), "bot": (NONE, _INT),
-        "dTop": (NONE, _INT), "dBot": (NONE, _INT), "lo": (NONE, _INT), "hi": (NONE, _INT), "edge": (NONE, "top or bottom"), "why": (NONE, "scroll or land"),
-        "notice": (NONE, _BOOL), "nav": (NONE, "the navigation type word"), "kind": (NONE, "the region kind word"), "keep": (NONE, _INT), "reland": (NONE, _BOOL),
+        "anchor": (SUFFIX, "landmiss: the last 12 characters of whatever scrollToAnchor was called with (uuid.slice(-12)): a rendered turn's data-uuid, a kept or restored row's "
+                           "uuid, the chatWindow reply's echoed ask, a feed card's anchorUuid the kernel relays (showOnTimeline), a branch token, or a deep link URL's anchor query "
+                           "forwarded verbatim by the kernel's deepLink road (the timeline bridge's __rompTimelineOpenExternal, timeline-boot.ts, the extension's URI handler), which "
+                           "the timeline's message connector fills with a postal message id, <epoch>.<pid>_<hex>.<host> (postal_service.py _unique), so on that ONE road the tail is "
+                           "the delivering kernel's short hostname, whole with its leading dot for a host of up to 11 characters, on a single-kernel page the page's own machine's; "
+                           "filed on a landing miss, not gated by the share switch"),
+        "proto": (NONE, _INT), "events": (NONE, _INT), "regions": (NONE, _BOOL),
+        "headKnown": (NONE, _BOOL),
+        "headFrom": (NONE, "landmiss: the resident tail's first global event index (Session.headFrom, a non-negative number from the kernel's full frame or the chatHead reply's from), "
+                           "or null when the active tab has no live session"),
+        "older": (NONE, _BOOL), "noframe": (NONE, _BOOL),
+        "trail": (NONE, "landmiss and regionask: landTrail.slice(-4), the last up-to-four landing-trail words, code literals render.ts pushes (pointer-exact, time-nearest, "
+                        "window-fault and the like), the longest 21 characters"),
+        "dh": (NONE, _INT), "last": (NONE, "the tail element's class list or live-ask"),
+        "cls": (NONE, "unitchange: an element's className, or '#' plus the id of one of #content's non-thread children (scroll-write.ts boxLabel), literal ids"), "fromTail": (NONE, _INT),
+        "atBottom": (NONE, _BOOL), "where": (NONE, "view or live-ask"), "removed": (NONE, "tailmut: up to four element class names (scroll-write.ts)"), "added": (NONE, "tailmut: the same minter's class names"),
+        "reAdded": (NONE, _BOOL), "shBefore": (NONE, _INT), "shAfter": (NONE, _INT), "st": (NONE, _INT),
+        "top": (NONE, "scrollgesture: #content's scrollTop, a number; spacer: the top spacer's [before, after] heights (scroll-write.ts spacerRow)"),
+        "bot": (NONE, "spacer: the bottom spacer's [before, after] heights, its only writer"),
+        "dTop": (NONE, _INT), "dBot": (NONE, _INT), "lo": (NONE, _INT), "hi": (NONE, _INT), "edge": (NONE, "top or bottom"),
+        "why": (NONE, "regionask: gap-scroll (requestTurns, a gap fill's region ask) or landing (the window ask at landing), the two writers' literals"),
+        "notice": (NONE, _BOOL),
+        "nav": (NONE, "regionask: whether the window ask is a fresh landing rather than keepPlaceAcrossWindow's re-land, nav = !relandAsk, a boolean"),
+        "kind": (NONE, "regionask: the landing anchor's kind, the kernel's _focus_kind word (user) on the showOnTimeline road, or a deep link URL's anchorKind query forwarded as "
+                       "posted by the kernel's deepLink road (a string any link can carry, cut at 64; first-party links send user or nothing); not a host by construction on any "
+                       "first-party road, the standing error and strip's err have"),
+        "keep": (NONE, "regionask: whether a keep-offset restore is armed, pendingAnchorKeepY != null, a boolean"), "reland": (NONE, _BOOL),
     },
     "strip": {   # strip.ts: the host popover's fetch and toggle rows
         "ok": (NONE, _BOOL), "tunnels": (NONE, _INT), "err": (NONE, "the page's own /tunnels fetch failure as String(err), cut"), "open": (NONE, _BOOL),
-        "base": (NONE, "empty on a kernel page; in the VS Code webview the extension's kernel URL, http://127.0.0.1:<port> (extension.ts HOST is the loopback literal), a URL with no host name"),
+        "base": (NONE, "netToggle: the extension's kernel URL in the VS Code webview, http://127.0.0.1:<port> (extension.ts HOST is the loopback literal), a URL with no host name; the "
+                       "served dashboard never posts a strip row (the strip renders only under the extension's window.__rompShowStrip), so the poster's '' default is unreachable"),
     },
-    "feed": {   # feed.ts: colflip, itemset, feedDelta-unapplied
-        "id": (NONE, "an item id, <bare sid>:g<n>: prefixInbound prefixes a row's sid and not its item ids"), "from": (NONE, "a column word"), "to": (NONE, "a column word"),
-        "ev": (NONE, "the input change word"), "buildId": (NONE, _INT), "predicted": (NONE, _BOOL),
-        "appeared": (NONE, "item ids, the bare-sid form"), "gone": (NONE, "item ids, the bare-sid form"), "total": (NONE, _INT),
+    "feed": {   # feed.ts: colflip, itemset (auditShownColumns), feedDelta-unapplied
+        "id": (SUFFIX, "colflip: the ask's itemId (a.itemId), by its minter in kernel.py: goal node ids <uuid>:g<n> and provisional:/awaiting:/blocked:/usertodo:<sid> carry a bare "
+                       "sid; notice:<sid>:<key>:<rev> a caller-chosen key under NOTICE_KEY_RE (20 characters of it survive the cut); parked:<postal mid> ends in the card's own "
+                       "kernel's postal host (deliver()'s row id, postal_service.py _unique and self_host: <epoch>.<pid>_<hex32>.<host>; 5 to 11 host characters survive the 64 "
+                       "cut); quarantine:<px- mid> ends in the held mail's ORIGIN kernel's postal host (0 to 4 survive). prefixInbound rewrites the ask's sid and never its item "
+                       "id; the road is not gated by the share switch and needs no remote session: on a single-kernel page the parked form names the page's own machine's postal "
+                       "name. The parked and quarantine cards are fixed at needs_input, so this row's flip road is the pane's own prediction"),
+        "from": (NONE, "a column word"), "to": (NONE, "a column word"),
+        "ev": (NONE, "the input change word"), "buildId": (NONE, "the merged frame's buildId, _next_feed_build_id's integer counter"), "predicted": (NONE, _BOOL),
+        "appeared": (SUFFIX, "itemset: item ids of feed.id's forms, every minter included, cut per element; filed on routine use (a card arriving after first render)"),
+        "gone": (SUFFIX, "itemset: item ids of feed.id's forms, cut per element; filed on routine use (a card leaving)"), "total": (NONE, _INT),
     },
-    "outline": {"buildId": (NONE, _INT), "slot": (NONE, "a slot word"), "rev": (NONE, _INT)},
-    "waiting": {"buildId": (NONE, _INT)},
+    "outline": {   # fleet.ts: a feedDelta or a delta frame that reached the pane unapplied (federation.js absent or older than the receiver), the frame's own stamps posted raw
+        "buildId": (NONE, "feedDelta-unapplied: the frame's buildId as its kernel sent it, _next_feed_build_id's integer counter on every kernel in this repo"),
+        "slot": (NONE, "delta-unapplied: the frame's slot word, the kernel's frame type literal (_send_slot's ftype, one of _DELTA_SLOTS's names)"),
+        "rev": (NONE, "delta-unapplied: the frame's rev, the kernel's per-slot integer counter"),
+    },
+    "waiting": {"buildId": (NONE, "feedDelta-unapplied (waiting.ts): the frame's buildId as its kernel sent it, _next_feed_build_id's integer counter")},
     "kernel": {   # the kernel's four direct writers: _note_ws_open, _note_history_reply, _note_chat_withheld_at_close, _implicit_handshake
         "app": (NONE, "the dial's app word"), "kind": (NONE, "page, relay or hub"), "reconnect": (NONE, _BOOL), "iid": (NONE, "a boolean: whether the dial stated one"),
         "cid": (NONE, "a minted hex id"),
         "host": (BARE, "wsopen, kind hub: the host a spliced /remote/<host>/ws upgrade was relayed to (_note_ws_open, from the hub's splice)"),
-        "sid": (NONE, "the session id a history ask named: a page asks for its local sessions bare, and the relay strips a remote id's host before forwarding (federation.ts stripHost)"),
-        "type": (NONE, "the ask's type word"), "span": (NONE, "turn numbers"), "events": (NONE, _INT), "bytes": (NONE, _INT), "head": (NONE, _BOOL),
+        "sid": (NONE, "historyReply: str(msg['id']), the session id a history ask named, stored uncut (the kernel's rows never pass _client_diag_scrub): a page asks for its "
+                      "local sessions bare, and the relay strips a remote id's host before forwarding (federation.ts stripHost)"),
+        "type": (NONE, "the ask's type word, one of four guarded words or the literal loadOlder"),
+        "span": (NONE, "historyReply: the turn pair [lo, hi) the kernel computed from its turn index (_chat_history_reply), or null on a loadAround with no placed turn; on a "
+                       "chatTurns reply the kernel could not build (lo or hi not an int, no session or build, an exception) the ask's own lo and hi echoed as parsed and stored "
+                       "UNCUT, since the kernel's rows never pass _client_diag_scrub; the first-party asks send numbers (render.ts requestTurns via pagesToAsk, "
+                       "reaskOutstandingGaps via parseGapKey) and the relay forwards lo and hi untouched"),
+        "events": (NONE, _INT), "bytes": (NONE, _INT), "head": (NONE, _BOOL),
         "missing": (NONE, _BOOL), "refused": (NONE, _BOOL),
-        "reason": (NONE, "the fault text the kernel minted for a refused history reply (no build to answer from, or an exception's class and text)"),
+        "reason": (NONE, "historyReply: the fault text the kernel minted for a refused history reply (_fault's two forms, the legacy arm's; no build to answer from, or an "
+                         "exception's class and text), stored uncut; an exception's text may quote the ask"),
         "sent": (NONE, _BOOL), "frames": (NONE, _INT), "ageS": (NONE, _INT), "frame": (NONE, "a WS_OPS word or other"), "withheld": (NONE, _INT), "proto": (NONE, _INT),
     },
 }
@@ -850,7 +925,7 @@ class ClientDiagAllowlistTest(unittest.TestCase):
             self.assertEqual(sorted(table), sorted(km.CLIENT_DIAG_KEYS[surface]),
                              "%s: every admitted key has a classification and every classified key is admitted" % surface)
             for key, (cls, why) in sorted(table.items()):
-                self.assertIn(cls, (BARE, PREFIXED, KEYED, NONE), (surface, key))
+                self.assertIn(cls, (BARE, PREFIXED, KEYED, SUFFIX, NONE), (surface, key))
                 self.assertTrue(isinstance(why, str) and why, "%s.%s: a class names its reason" % (surface, key))
         # the kernel-written markers: the two the kernel writes after the admit (CLIENT_DIAG_CUT_KEY and the row cap's), each
         # classified NONE with its writer named, and admitted from no poster (the constants test)
@@ -861,9 +936,11 @@ class ClientDiagAllowlistTest(unittest.TestCase):
             self.assertTrue(all(key not in keys for keys in km.CLIENT_DIAG_KEYS.values()), key)
         carrying = host_carrying_keys()
         self.assertTrue(carrying, "the derivation found no host-carrying key: the census is reading nothing")
-        self.assertEqual(carrying, {"chat": {"active": PREFIXED, "id": PREFIXED, "ids": PREFIXED, "sid": PREFIXED},
-                                    "federation": {"counts": KEYED, "host": BARE}, "kernel": {"host": BARE}, "shell": {"host": BARE}},
-                         "the host-carrying keys and their forms, as derived; a change here is a change to the disclosure copies")
+        self.assertEqual(carrying, {"chat": {"active": PREFIXED, "anchor": SUFFIX, "id": PREFIXED, "ids": PREFIXED, "sid": PREFIXED},
+                                    "feed": {"appeared": SUFFIX, "gone": SUFFIX, "id": SUFFIX},
+                                    "federation": {"counts": KEYED, "host": BARE}, "kernel": {"host": BARE}, "shell": {"host": BARE, "sid8": PREFIXED}},
+                         "the host-carrying keys and their forms, as derived (round 4 gained shell.sid8, feed's three and chat.anchor by following the values to their "
+                         "producers); a change here is a change to the disclosure copies")
         # the prefixed form lands as posted: the head of a string survives the cut, host and all (a 64-character cut of
         # <host>:<uuid> keeps the whole id for a host name of up to 27 characters and the host for any longer one)
         sid = "TESTHOST:11111111-2222-3333-4444-555555555555"
@@ -872,6 +949,25 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         long_host = "h" * 80
         self.post("chat", "skeleton", {"n": 1, "active": long_host + ":" + sid.split(":")[1]})
         self.assertEqual(self.rows()[-1]["data"]["active"], long_host[:km.CLIENT_DIAG_STR_MAX])
+        # the suffix form: a parked card's id ends in a postal message id whose last component is the delivering kernel's short
+        # hostname; the cut keeps the head, so what survives of the host is 64 less the head's length (a one-digit pid leaves the
+        # whole 8-character fixture host; a five-digit pid leaves 7 of it, and the row then carries the cut marker)
+        parked = "parked:1700000000.7_" + "a" * 32 + ".TESTHOST"
+        self.assertEqual(len(parked), 61)
+        self.assertEqual(self.post("feed", "colflip", {"id": parked, "from": "working", "to": "blocked", "ev": "feedDelta", "buildId": 7, "predicted": True}), "")
+        self.assertEqual(self.rows()[-1]["data"]["id"], parked, "under the cut: the host lands whole")
+        parked5 = "parked:1700000000.12345_" + "a" * 32 + ".TESTHOST"
+        self.assertEqual(len(parked5), 65)
+        self.post("feed", "itemset", {"appeared": [parked5], "gone": [], "total": 1, "ev": "feed", "buildId": 7})
+        d = self.rows()[-1]["data"]
+        self.assertEqual(d["appeared"], [parked5[:km.CLIENT_DIAG_STR_MAX]], "cut per element: 7 of the host's 8 characters survive")
+        self.assertTrue(d["appeared"][0].endswith(".TESTHOS"))
+        self.assertEqual(d[km.CLIENT_DIAG_CUT_KEY], ["appeared"])
+        # the anchor's one host-carrying road: the tail of a postal message id, 12 characters, a host of up to 11 whole
+        mid = "1700000000.7_" + "b" * 32 + ".TESTHOST"
+        self.assertEqual(mid[-12:], "bbb.TESTHOST")
+        self.post("chat", "landmiss", {"sid": sid, "anchor": mid[-12:], "proto": 2, "events": 3, "regions": True, "headKnown": True, "headFrom": 0, "older": False, "noframe": False, "trail": ["pre-jump"]})
+        self.assertEqual(self.rows()[-1]["data"]["anchor"], "bbb.TESTHOST")
 
     def test_the_disclosure_copies_state_the_content_rule_and_name_every_host_carrying_surface(self):
         # The disclosure is stated three times in the tree (the wsBytesByHost entry's comment in kernel.py, the minute-row entry
@@ -892,7 +988,9 @@ class ClientDiagAllowlistTest(unittest.TestCase):
                           r"GET /tunnels", r"in (its|their) own right",
                           r"remotes\.json", r"remotes-known\.json", r"lastAttachedAt", r"exact for", r"order inference",
                           r"no page-life correlation", r"attached-host order",   # the fourth road's whole statement (round 3, extra8-1)
-                          r"older than", r"most frequent", r"routine use", r"not from chat rows alone",
+                          r"older than", r"most frequent", r"routine use", r"not from chat or feed rows alone",
+                          r"four forms", r"tail of a postal message id", r"postal host", r"sid8", r"first 8 characters", r"message connector",   # round 4: the suffix form, the shell's rows, the anchor's road
+                          r"single-kernel page", r"every row of (the|both) kind", r"one road",   # each carrier's RANGE (the ruling's rule: classify by the producer's range)
                           r"\bmints\b", r"does not inspect the map's keys", r"nested key",
                           r"a value of which was cut carries",   # the cut marker: a stored value can be told from a whole one (round 4)
                           r"regular-expression test in the page bundle", r"the kernel has none"):   # the enforcement named (round 3, extra8-3)
@@ -933,7 +1031,8 @@ class ClientDiagAllowlistTest(unittest.TestCase):
                            r"page's life", r"attached to this page", r"this page NOW"):
                 self.assertIsNone(re.search(phrase, text, re.I), "federation.ts %s: the page grain again: %r" % (site, phrase))
             self.assertIsNotNone(re.search(r"manager|pane document", text), "federation.ts %s: the grain is stated (the manager, the pane document)" % site)
-        named = {"chat": r"\bchat\b", "federation": r"\bfederation\b", "shell": r"\bshell\b", "kernel": r"\bwsopen\b"}
+        named = {"chat": r"\bchat\b", "federation": r"\bfederation\b", "shell": r"\bshell\b", "kernel": r"\bwsopen\b",
+                 "feed": r"feed surface's `?id`?, `?appeared`? and `?gone`?"}   # the fourth form's surface (round 4), named with its three keys
         carrying = host_carrying_keys()
         self.assertTrue(carrying)
         for surface in sorted(carrying):
@@ -944,11 +1043,16 @@ class ClientDiagAllowlistTest(unittest.TestCase):
     def test_one_fixture_row_per_poster_call_site_passes_whole_and_the_table_names_nothing_else(self):
         """The table against the posters: one synthetic row per clientDiag call site in the bundles (render.ts and
         scroll-write.ts, federation.ts, feed.ts, fleet.ts, waiting.ts, strip.ts) and the shell scripts in kernel.py, with the
-        keys each posts. Every row passes whole with no stderr line, and per surface the fixtures' keys are exactly the
-        table's, so a poster that grows a key without the table, or a table key no poster sends, fails here. The perf,
-        pane-shim and reload-core rows are test_todays_rows_pass_whole_and_quietly's."""
+        keys each posts and, since round 4 (2026-09-20), values of the shapes the writers post (the rows had been written
+        from the key names: eleven shell values across five call sites, and counts, strings and booleans where the writers
+        post lists, ints and objects, matched no producer, so the census's shorthand reasons were checked by nothing). Every
+        row passes whole with no stderr line, and per surface the fixtures' keys are exactly the table's, so a poster that
+        grows a key without the table, or a table key no poster sends, fails here. The perf, pane-shim and reload-core rows
+        are test_todays_rows_pass_whole_and_quietly's."""
         sid = "TESTHOST:11111111-2222-3333-4444-555555555555"   # a REMOTE session's tab id as the page holds it, host-prefixed (the census, CENSUS)
         host = "TESTHOST"
+        parked = "parked:1700000000.7_" + "a" * 32 + ".TESTHOST"   # a parked hand-off's item id: a postal message id, the delivering kernel's postal host at its tail (the census, feed.id)
+        load = {"duration": 88, "transferSize": 120000, "encodedBodySize": 119700, "responseStatus": 200}   # federationLoadEntry's four figures (frame-listener.ts)
         posters = {
             "chat": [   # render.ts's direct posts, then scrollDiagRow's kinds (scroll-write.ts builds the rows)
                 ("reconcile-optimistic-failed", {"sid": sid, "error": "gone"}),
@@ -959,55 +1063,60 @@ class ClientDiagAllowlistTest(unittest.TestCase):
                 ("skeleton", {"n": 4, "active": sid}),
                 ("send", {"sid": sid, "ts": 1700000000000, "len": 42, "route": "local"}),
                 ("empty-session-frame", {"id": sid, "held": True}),
-                ("federation-missing", {"load": 1, "first": True}),
-                ("federation-missing", {"recovered": True, "first": False}),
+                ("federation-missing", {"load": load, "first": None}),
+                ("federation-missing", {"recovered": True, "first": load}),
                 ("cancel-miss", {"sid": sid, "mdLen": 12, "hadRestore": False}),
                 ("scrollwrite", {"sid": sid, "writer": "paintAll", "before": 100, "after": 120, "delta": 20, "stick": True, "gesture": False, "sh": 5000, "ch": 800}),
-                ("landmiss", {"sid": sid, "anchor": "u1", "proto": 2, "events": 3, "regions": 1, "headKnown": True, "headFrom": "frame", "older": 0, "noframe": False, "trail": 2}),
+                ("landmiss", {"sid": sid, "anchor": "bbb.TESTHOST", "proto": 2, "events": 3, "regions": True, "headKnown": True, "headFrom": 0, "older": False, "noframe": False, "trail": ["pointer-fetch-older", "pointer-not-rendered"]}),   # the anchor as the message connector's road leaves it: the tail of a postal message id (the census, chat.anchor)
                 ("tailchange", {"sid": sid, "dh": 12, "last": "u9", "stick": True, "sh": 5000, "ch": 800}),
                 ("unitchange", {"sid": sid, "dh": 4, "cls": "turn", "fromTail": True, "stick": False, "atBottom": True, "sh": 5000, "ch": 800}),
-                ("tailmut", {"sid": sid, "where": "tail", "removed": 1, "added": 2, "reAdded": 0, "shBefore": 5000, "shAfter": 5010, "st": 4200, "ch": 800}),
-                ("spacer", {"sid": sid, "top": 40, "bot": 0, "dTop": 8, "dBot": 0, "sh": 5000, "ch": 800}),
+                ("tailmut", {"sid": sid, "where": "tail", "removed": ["turn"], "added": ["turn", "live-ask"], "reAdded": False, "shBefore": 5000, "shAfter": 5010, "st": 4200, "ch": 800}),
+                ("spacer", {"sid": sid, "top": [40, 48], "bot": [0, 0], "dTop": 8, "dBot": 0, "sh": 5000, "ch": 800}),
                 ("scrollgesture", {"sid": sid, "top": 4100, "gesture": True, "sh": 5000, "ch": 800}),
-                ("regionask", {"sid": sid, "lo": 10, "hi": 20, "edge": "top", "why": "scroll", "notice": False}),
-                ("regionask", {"sid": sid, "why": "land", "nav": "reload", "kind": "older", "keep": 2, "reland": False, "trail": 1, "notice": True, "atBottom": False}),
+                ("regionask", {"sid": sid, "lo": 10, "hi": 20, "edge": "top", "why": "gap-scroll", "notice": False}),
+                ("regionask", {"sid": sid, "why": "landing", "nav": True, "kind": "user", "keep": True, "reland": False, "trail": ["pre-jump"], "notice": True, "atBottom": False}),
                 ("scrollwrite-capped", {"sid": sid, "perMinute": 200}),
             ],
             "federation": [   # federation.ts diag(): hostconn's events, then the others
                 ("hostconn", {"host": host, "ev": "watchdog-close", "why": "quiet", "quietMs": 31000, "foreground": True}),
                 ("hostconn", {"host": host, "ev": "dial-deferred", "why": "local-down"}),   # a relay dial put off while the pane's local socket is down (2026-09-18)
-                ("hostconn", {"host": host, "ev": "hold", "msgType": "prompt", "rs": 0}),
-                ("hostconn", {"host": host, "ev": "flush-halt", "flushed": 2, "held": 1}),
+                ("hostconn", {"host": host, "ev": "hold", "msgType": "setAutoNudge", "rs": 0}),
+                ("hostconn", {"host": host, "ev": "flush-halt", "flushed": ["setAutoNudge"], "held": ["setJudgeModel"]}),
                 ("hostconn", {"host": host, "ev": "tunnels-poll-failing", "why": "http", "unread": 3}),
                 ("hostconn", {"host": host, "ev": "tunnels-poll-recovered", "unread": 3, "endedUnread": 1}),
-                ("hostconn", {"host": host, "ev": "open", "flushed": 1}),
+                ("hostconn", {"host": host, "ev": "open", "flushed": ["setAutoNudge"]}),
                 ("hostconn", {"host": host, "ev": "close", "code": 1006, "clean": False, "detached": False}),
-                ("hostconn", {"host": host, "ev": "detach", "pendingDropped": 2}),
+                ("hostconn", {"host": host, "ev": "detach", "pendingDropped": ["setAutoNudge", "needFull"]}),
                 ("hostconn", {"host": host, "ev": "moot", "pendingDropped": ["needFull", "needFull"]}),   # the held asks the ready's connect push answers, dropped before the flush, by type (2026-09-18)
                 ("hostconn", {"host": host, "ev": "delta-unknown-slot", "why": "lanes"}),   # a remote patch for a slot the conn's receiver has no table for (2026-09-19)
                 ("hostconn", {"host": host, "ev": "delta-unkeyed-base", "why": "bars judging dictlist:k is a list @a1b2c3d4e"}),   # a remote's patch that found no base because its whole frame was refused as one (a collection the receiver's table cannot key): the slot, the collection and shape, and the remote's build when the /tunnels row names one; once per distinct row (2026-09-19)
-                ("feedDelta-nobase", {"host": host, "buildId": "b1"}),
-                ("feedDelta-stale", {"host": host, "buildId": "b1", "why": "gen"}),   # a stamped remote feedDelta refused by the gen gate: the ask carries the held pair (2026-09-19). The why is one of STALE_WHY_WORDS (a word per field failure, a word per relation between valid fields); each is driven in test_the_stale_rows_why_words_pass_whole_and_a_foreign_key_on_the_row_is_dropped
+                ("feedDelta-nobase", {"host": host, "buildId": 7}),
+                ("feedDelta-nobase", {"host": "local", "buildId": 7}),   # the local socket's frame with no base: the LOCAL kernel's counter (the census, federation.buildId)
+                ("feedDelta-stale", {"host": host, "buildId": 7, "why": "gen"}),   # a stamped remote feedDelta refused by the gen gate: the ask carries the held pair (2026-09-19). The why is one of STALE_WHY_WORDS (a word per field failure, a word per relation between valid fields); each is driven in test_the_stale_rows_why_words_pass_whole_and_a_foreign_key_on_the_row_is_dropped
                 ("feedmerge", {"counts": {host: 4}}),
-                ("sendqueue", {"host": host, "msgType": "prompt", "gt": 2, "rs": 0, "superseded": True}),
-                ("senddrop", {"host": host, "msgType": "prompt", "why": "closed"}),
+                ("sendqueue", {"host": host, "msgType": "setAutoNudge", "gt": 1700000000002, "rs": 0, "superseded": True}),   # an older emitter's pick replaced: no numeric gt
+                ("sendqueue", {"host": host, "msgType": "setJudgeModel", "gt": 1700000000002, "rs": 0, "superseded": 1700000000001}),   # a stamped pick replaced: its gesture-clock stamp
+                ("senddrop", {"host": host, "msgType": "setAutoNudge", "why": "closed"}),
             ],
             "feed": [
-                ("colflip", {"id": "g1", "from": "working", "to": "blocked", "ev": "feedDelta", "buildId": "b1", "predicted": True}),
-                ("itemset", {"appeared": 1, "gone": 0, "total": 12, "ev": "feed", "buildId": "b1"}),
-                ("feedDelta-unapplied", {"buildId": "b1"}),
+                ("colflip", {"id": parked, "from": "working", "to": "blocked", "ev": "feedDelta", "buildId": 7, "predicted": True}),
+                ("itemset", {"appeared": [parked], "gone": ["11111111-2222-3333-4444-555555555555:g1"], "total": 12, "ev": "feed", "buildId": 7}),
+                ("feedDelta-unapplied", {"buildId": 7}),
             ],
-            "outline": [("feedDelta-unapplied", {"buildId": "b1"}), ("delta-unapplied", {"slot": "bars", "rev": 7})],
-            "waiting": [("feedDelta-unapplied", {"buildId": "b1"})],
-            "strip": [("netFetch", {"ok": True, "tunnels": 2}), ("netFetch", {"ok": False, "err": "TypeError"}), ("netToggle", {"open": True, "base": "/"})],
+            "outline": [("feedDelta-unapplied", {"buildId": 7}), ("delta-unapplied", {"slot": "bars", "rev": 7})],
+            "waiting": [("feedDelta-unapplied", {"buildId": 7})],
+            "strip": [("netFetch", {"ok": True, "tunnels": 2}), ("netFetch", {"ok": False, "err": "TypeError"}), ("netToggle", {"open": True, "base": "http://127.0.0.1:1"})],
             "shell": [   # the shell scripts' shellDiag rows (kernel.py)
-                ("push-test", {"sidAttached": True, "host": host, "why": "click", "tabs": 2}),
-                ("reveal-post", {"status": "ok", "via": "tap", "boot": False}),
-                ("deeplink", {"via": "url", "hasSid": True, "hasCard": False, "hasPid": False, "dup": False, "controlled": True}),
-                ("tap-pending", {"via": "sw", "sub": True, "rows": 1, "err": "", "getNotifications": 1, "displayed": 1, "vanished": 0, "superseded": 0}),
-                ("tap-pending-land", {"sid8": sid.split(":")[1][:8], "ageS": 4, "dup": False}),   # the push ledger's sid is bare; its host rides a field the row does not copy
-                ("tap-vanish-land", {"sid8": sid.split(":")[1][:8], "ageS": 4}),
-                ("sw-message", {"shape": "object", "hasSid": True, "kind": "tap", "dup": False, "sw": True}),
+                ("push-test", {"sidAttached": True, "host": host, "why": "", "tabs": 2}),
+                ("push-test", {"sidAttached": False, "host": "", "why": "none-active", "tabs": 2}),
+                ("reveal-post", {"status": 200, "via": "link", "boot": False}),
+                ("reveal-post", {"status": 0, "via": "ack", "boot": True}),   # the fetch threw
+                ("deeplink", {"via": "boot", "hasSid": True, "hasCard": False, "hasPid": True, "dup": False, "controlled": True}),
+                ("tap-pending", {"via": "boot", "sub": True, "rows": 0, "err": True}),   # GET /push/pending failed: err is the literal true and the row ends before displayed() runs
+                ("tap-pending", {"via": "visible", "sub": True, "rows": 2, "getNotifications": True, "displayed": 1, "vanished": 0, "superseded": 1}),   # superseded is written only when nonzero
+                ("tap-pending-land", {"sid8": sid[:8], "ageS": 4, "dup": False}),   # the head of the ledger row's sid, the page's whole prefixed data-id: for this fixture the host name itself (the census, shell.sid8)
+                ("tap-vanish-land", {"sid8": sid[:8], "ageS": 4}),
+                ("sw-message", {"shape": "notificationClick", "hasSid": True, "kind": "card", "dup": False, "sw": {"road": "focus", "vis": "visible", "clients": 2, "tops": 1}}),
                 ("return-probe", {"decision": "redial-closed", "hiddenMs": 30000, "quietMs": 31000, "attempts": 3, "firstFailMs": 12500, "ms": 30500}),   # D3 (2026-09-18): the shell socket's return probe, one row per return; decision is an enum, the rest ints
             ],
         }
