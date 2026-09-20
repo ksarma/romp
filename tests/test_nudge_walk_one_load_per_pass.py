@@ -3313,29 +3313,43 @@ class Docs(unittest.TestCase):
         self.assertIn("loads (the walk's shared goal-store reads", field, "the _PerfStats field docstring names the counter")
 
     def test_the_bypass_retake_sentence_counts_this_heads_cases(self):
-        """Every sentence of the module docstring that states a figure over this module's cases is read here against the loader's
-        count, so a case added without a re-take reds this case naming each stale figure and its sentence, instead of leaving a
-        count that reads true and is not (review round 3, correctness-2 and regression-2: the bypass sentence went stale nine
+        """Every fragment of the module docstring that states a count of this module's cases in the form 'over its N cases', N in
+        digits, is read here, the current head's against the loader's count and a historical one for its head label, and the current
+        head's clean line against the same count, so a case added without a re-take reds this case naming each stale figure and its
+        fragment, instead of leaving a count that reads true and is not (review round 3, correctness-2 and regression-2: the bypass sentence went stale nine
         commits and one case later; review round 4, correctness-2 and regression-4: the round-3 paragraph's clean line read 19
         passed at a head of 20 cases; review round 5, tests-2: the round-4 fix read one sentence through re.search while the same
         commit added three more case-count sentences it could not read, so the staleness class survived one sentence away, in prose
         the fix itself wrote). The sweep: every fragment of the docstring holding 'over its N cases' (a fragment runs between two
-        full stops or semicolons) is either the current head's, naming 'this head', whose N must equal the loader's count, or a
-        historical one, which must name its head by role (the head of the round-N fixes, the head the round-N ruling read, of that
-        head) and is not pinned; at least one current-head fragment must exist (a derived expectation fails on empty); the phrase
+        full stops or semicolons, and holds one count, so each count sits with its own head label) is either the current head's,
+        naming 'this head', whose N must equal the loader's count, or a historical one, which must name its head by role (the head of
+        the round-N fixes, the head the round-N ruling read, the head the round-N verifiers read, of that head) and is not pinned; at
+        least one current-head fragment must exist (a derived expectation fails on empty); the phrase
         'this head, the head of the round-N fixes' must name exactly one round across the docstring (two is a paragraph nobody
         relabelled when the next round's landed); and the clean line, 'The clean module at this head, the head of the round-N
         fixes: P passed[, F failed (...)] single-process on 3.10, 3.11, 3.12, 3.13 and 3.14t', must occur exactly once, name that
         same round, and carry figures that sum to the count (a failed figure records a head at which another count was one re-take
         behind). A paragraph that goes historical is relabelled 'at the head of the round-N fixes', which matches none of the
         current-head reads; the template a history paragraph writes its current-head sentences in is therefore exact: 'at this
-        head, the head of the round-N fixes, over its N cases'."""
+        head, the head of the round-N fixes, over its N cases'. What the sweep does not read, stated (a verifier of the round-5
+        fixes: the first sentence here said every sentence stating a figure): a count spelled as a word (the battery paragraph's
+        'twelve cases', whose head is the build's verifier pass after the round-2 fixes, a role the label regex does not know), the
+        historical clean lines (labelled by role, not summed), and a paragraph's per-state figures, 'F failed, P passed', which ride on
+        the paragraph's framing count and are re-taken with it; a count in another form is unread here, not pinned."""
         doc = " ".join(sys.modules[__name__].__doc__.split())
         n = unittest.defaultTestLoader.loadTestsFromModule(sys.modules[__name__]).countTestCases()
-        fragments = re.findall(r"([^.;]*over its (\d+) cases[^.;]*)", doc)
+        # every count per fragment, a fragment running between two full stops or semicolons (a verifier of the round-5 fixes: a greedy
+        # prefix before 'over its' read the last count of a fragment alone, so a stale count written before a fresh one in the same
+        # sentence was invisible), and one count per fragment, so each count sits with its own head label
+        counted = [(p.strip(), [int(c) for c in re.findall(r"over its (\d+) cases", p)]) for p in re.split(r"[.;]", doc)
+                   if re.search(r"over its \d+ cases", p)]
+        fragments = [(f, c) for f, cs in counted for c in cs]
         self.assertTrue(fragments, "the docstring states at least one figure over this module's cases in the form 'over its N cases'")
-        current = [(f.strip(), int(c)) for f, c in fragments if "this head" in f]
-        historical = [(f.strip(), int(c)) for f, c in fragments if "this head" not in f]
+        self.assertEqual(len(counted), len(fragments), "one count per fragment, so every count sits in a fragment with its own head label: "
+                                                        "%d fragment(s) hold %d count(s); the fragments holding more than one: %r"
+                                                        % (len(counted), len(fragments), [f for f, cs in counted if len(cs) > 1]))
+        current = [(f, c) for f, c in fragments if "this head" in f]
+        historical = [(f, c) for f, c in fragments if "this head" not in f]
         self.assertTrue(current, "at least one 'over its N cases' fragment is the current head's, naming 'this head' (every one here is "
                                  "historical, so the current head's states have no count pinned): %r" % [f for f, _c in historical])
         stale = [(c, f) for f, c in current if c != n]
@@ -3344,10 +3358,11 @@ class Docs(unittest.TestCase):
                                     "landed on the kernel, run and reverted with the three files hashed) and write the new count, or relabel "
                                     "the paragraph by its head's role if it has gone historical"
                                     % (n, "; ".join("%d in '%s'" % (c, f) for c, f in stale)))
-        unlabelled = [f for f, _c in historical if not re.search(r"head of the round-\d+ fixes|head the round-\d+ ruling read|of that head", f)]
+        unlabelled = [f for f, _c in historical
+                      if not re.search(r"head of the round-\d+ fixes|head the round-\d+ (?:ruling|verifiers) read|of that head", f)]
         self.assertEqual(unlabelled, [], "a historical figure over this module's cases names its head by role (the head of the round-N fixes, "
-                                         "the head the round-N ruling read, of that head), so a reader knows which count it reads against: %r"
-                                         % unlabelled)
+                                         "the head the round-N ruling read, the head the round-N verifiers read, of that head), so a reader "
+                                         "knows which count it reads against: %r" % unlabelled)
         heads = set(re.findall(r"this head, the head of the round-(\d+) fixes", doc))
         self.assertEqual(len(heads), 1, "exactly one round's head is 'this head' across the docstring: rounds %r (a paragraph that has gone "
                                         "historical is relabelled 'at the head of the round-N fixes')" % sorted(heads))
