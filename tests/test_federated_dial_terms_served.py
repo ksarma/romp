@@ -83,8 +83,10 @@ def _stamp_field(f, k):
 
 
 def held_pair(frames, slot):
-    """The (gen, rev) pair the client holds for `slot` ("feed" or "bars") after `frames`, the recorded frames of a host's relay
-    sockets in arrival order, by federation.ts's rule: a full carrying gen leaves (gen, 0) and a full carrying none clears
+    """The (gen, rev) pair the client holds for `slot` ("feed" or "bars") after `frames`, the recorded frames of one CONN's relay
+    sockets in arrival order (the pair lives on the conn: connect()'s gated reset keeps it across the conn's redials, and
+    closeRemote drops the conn, so a host detached and re-attached starts a fresh conn with no pair; the labs using this
+    helper never detach a host, so a host's sockets are one conn's), by federation.ts's rule: a full carrying gen leaves (gen, 0) and a full carrying none clears
     the pair; a stamped delta leaves (newGen when carried, else gen; through), which is (newGen, R) for a composed frame and
     (gen, rev) for the stamping kernel's per-cycle delta (through equal to rev, no newGen); a stamped delta carrying no
     through is refused by the client (every stamped delta carries it: a needFullFeed, nothing applied) and moves nothing, as
@@ -137,11 +139,16 @@ def composed_frames(frames, slot):
 
 def expected_relay_caps(prev_frames):
     """The caps term a relay dial carries: REMOTE_DIAL_CAPS, then held:feed:<g>.<r> and held:bars:<g>.<r> for the pairs the
-    host's EARLIER relay sockets left the conn (held_pair over their recorded frames in arrival order: the client keeps a
-    base holding a gen across a redial, so a third dial declares what the whole stream left, not what one socket
-    received), each omitted when none is held. `prev_frames` is None for a first dial (no socket before it). A redial
-    none of whose earlier sockets recorded a frame is an empty drive and an AssertionError: the expectation never rests on
-    nothing."""
+    CONN's EARLIER relay sockets left it (held_pair over their recorded frames in arrival order: the client keeps a base
+    holding a gen across a redial, so a third dial declares what the whole stream left, not what one socket received),
+    each omitted when none is held. `prev_frames` is None for a first dial (no socket before it). A redial none of whose
+    earlier sockets recorded a frame is an empty drive and an AssertionError: the expectation never rests on nothing.
+    Precondition (review round 1, 2026-09-20): assert_relay_dials keys the earlier sockets by HOST, which equals the conn
+    only while no host detaches and re-attaches (closeRemote drops the conn and its pair; the re-attach is a first dial
+    again, REMOTE_DIAL_CAPS alone). No lab using this helper detaches a host; a lab that does must restart the drive at the
+    re-attach, recording the detach's position in the socket sequence, since this helper keeps no socket indices. The
+    hook and the conn keying land with the first lab that detaches or the first kernel that stamps a gen, whichever comes
+    first; no failing-before test exists for it here, since neither does yet."""
     if prev_frames is None:
         return REMOTE_DIAL_CAPS
     if not prev_frames:
