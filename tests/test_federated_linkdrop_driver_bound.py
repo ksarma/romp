@@ -61,6 +61,7 @@ showed, over a synthetic record for each class (round 5: a wait that ran to its 
 Synthetic: no kernel, no browser; stub classes over scratch directories.
 """
 import ast
+import glob
 import json
 import os
 import re
@@ -924,6 +925,21 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
         late = record([row(3, RESUME + 500)], [patch(RESUME - 2500, ["ledgers"], 3)])
         self.assertEqual(late._return_window_stray(), ([{"rev": 3, "slot": "feed"}], []),
                          "the return window's since is 1.5 s before the resume: an attach 2.5 s before it is none of this window's, so its row is stray (from 3 s before, it would take the row)")
+
+    def test_the_ledger_entry_names_every_module_of_this_family(self):
+        """The upstream ledger entry's `where:` line names every module of the link-drop lab's family in the tree (round 6, the
+        maintainer's round 5 correctness-5: the line named three modules while the delta added a fourth, the omission round 2
+        had closed once on the same entry). The population is derived from the TREE by the glob tests/test_federated_linkdrop*.py,
+        a spelling-keyed population (a fifth module named otherwise escapes it), stated here because the alternative is a tool
+        reading git's delta against a base a CI checkout may not hold; the pre-push check reads that delta. Every path must
+        appear on the line whole, so the rendered table's 200-character cut is the entry's own concern and not this pin's."""
+        entry = os.path.join(ROOT, "upstream", "2026-09-19-tests-federated-linkdrop-served.md")
+        with open(entry, encoding="utf-8") as f:
+            where = [ln for ln in f.read().splitlines() if ln.startswith("where: ")]
+        self.assertEqual(len(where), 1, "the entry has one where: line")
+        modules = sorted(os.path.relpath(p, ROOT) for p in glob.glob(os.path.join(HERE, "test_federated_linkdrop*.py")))
+        self.assertGreaterEqual(len(modules), 4, "the family in the tree (the served, mint, driver-bound and parsed modules): %r" % (modules,))
+        self.assertEqual([m for m in modules if m not in where[0]], [], "every module of the family is named on the entry's where: line: %r" % (where[0],))
 
     def test_the_site_censuses_read_every_function_kind_and_every_argument_spelling(self):
         """The two site censuses (round 6, the maintainer's round 5 tests-4 and extra7-2) over a synthetic source: a call inside
