@@ -348,11 +348,11 @@ try {
   // the TAB-TAP leg (stage 0): tap a lazy pane's tab, wait for its socket (its document loads on the tap), then go back to the chat,
   // so the return below finds a tapped pane off screen: the parked-pane contract (D2) exercised on a pane that did not exist at boot
   if (cfg.tapPane && cfg.abortMode === "unmarked") {
-    // docState's `doc` answer in a REAL engine (review round 5, 2026-09-20, tests-1: round 3's served leg for the shown-as-served road was
+    // docState's `doc` answer in a REAL engine (pass 5, the author's label, 2026-09-20, taking the reviewer's round-4 finding tests-1: pass 3's served leg for the shown-as-served road was
     // deleted with the narrowing, and the node harness's hand-built documentElement was the answer's only driver). The tapped pane's document
     // request is re-issued to the lab kernel (route.fetch, the stored cookie riding as ever) and the frame is fulfilled with the kernel's own
     // 200, status and headers, its body with the inline shim's WHOLE <script> element removed, the one holding `window.__rompApp=APP;` (the
-    // marker the shell reads for `app`; the round-5 verify: with the one statement removed the shim still ran to its connect() and redialed
+    // marker the shell reads for `app`; the author's pass-5 verify: with the one statement removed the shim still ran to its connect() and redialed
     // the kernel at ~250 ms, refused every time, a perturbation the prose denied). So the frame holds a document the kernel stamped
     // (data-romp-served=200 on its <html> tag, written by Handler._send) with no pane shim in its window, the shape of the kernel's "needs the
     // ui/ modules" page, through a real HTML parser; the bundles' <script src> elements stay, as the pane's own page carries them. The shell

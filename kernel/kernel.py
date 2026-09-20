@@ -55310,13 +55310,13 @@ def _resolve_reconnect(c, chat_list):
             # this socket; without the stamp a tap for this window parked for the rest of the page's life.
             c["ready"] = True
         act = c.get("active")
-        _hint = None   # the page's hint the preference below replaced, when it did (review round 5, kernel-2: the record)
-        # [fork] review round 4b (2026-09-20; fresh-1 / regression-4, the round-3 fixlist's extra9-1): a reveal PARKED for this client's
+        _hint = None   # the page's hint the preference below replaced, when it did (pass 5, the author's label, taking the reviewer's round-4 finding kernel-2: the record)
+        # [fork] pass 4b, the author's label (2026-09-20, taking the reviewer's round-3 addendum: fresh-1 / regression-4, the round-3 fixlist's extra9-1): a reveal PARKED for this client's
         # window (the shell's /reveal at boot beats the chat pane's socket on the ack and vanish roads, and on sw when the browser opens the
         # installed app on its own start URL) names the session the user tapped, and the consume behind this strip will focus it. When the
         # tab list carries it, the one full is ITS, not the last-shown tab's: before this the phone's skeleton first dial spent the full on
         # the dial's hint and the notified session arrived as a skeleton, shown only after a skeleton-click round trip. What this buys is
-        # that time-to-show, NOT a full or an ask saved (the round-4b verify; settled by execution in the ack-road leg of
+        # that time-to-show, NOT a full or an ask saved (the author's pass-4b verify; settled by execution in the ack-road leg of
         # tests/test_notification_tap_resume_browser.py): the strip lands ahead of the focus, so the page restores the tab its blob stored,
         # a skeleton now, and asks for it (activeTab, then needFull skeleton-click) before it processes the focus; the ask is answered
         # (the activeTab's release, _release_skeleton) and the tab is whole at a later tap. The round trip moves from the notified session
@@ -55333,18 +55333,18 @@ def _resolve_reconnect(c, chat_list):
             if _pr is None and _pk:
                 _pr = _PENDING_REVEAL.get("")
             _ps = str((_pr or {}).get("sid") or "")
-            # [fork] review round 5 (2026-09-20, correctness-1: the round-4b ruling's own regression). The preference is for the client
+            # [fork] pass 5, the author's label (2026-09-20, taking the reviewer's round-4 finding correctness-1: the regression pass 4b introduced by taking the reviewer's round-3 addendum). The preference is for the client
             # that will SHOW the parked session, and the kernel cannot name it on a split chat page (two or more columns under one wid:
             # the consume focuses the first chat client of the wid, and the page hands a session another column holds to that column,
             # render.ts's focus gate), so it applies to a window with ONE chat column. Two reads say how many the window has, and both
-            # must say one. The DECLARATION (the round-5 verify): the shell posts its chat column count with the tap (_LANDING_REVEAL_JS
+            # must say one. The DECLARATION (the author's pass-5 verify): the shell posts its chat column count with the tap (_LANDING_REVEAL_JS
             # cols, the /reveal body), kept on the park as `cols`, so a split page is known before its columns have all redialed; a park
             # with no declaration (_send_focus_to_view's, a shell of a build before the field) leaves this read open. The SOCKETS: every
             # chat client of this wid, this one included, reports the same `col` (the column each declares at its handshake, _ws), the
             # belt for a column split off after the tap. Keyed on the column and not on a count of same-wid clients, because the boot
             # road's normal state is a stale twin of the SAME column (the previous page's socket, its wid kept by sessionStorage, up to
             # WS_DEAD_S from its reaping): a count read it as a second column and dropped the preference on the road the clause exists
-            # for (executed by the round-5 refuter). Read off a lock-free copy of _clients, no _clients_lock under this slot lock (a new
+            # for (executed by the reviewer's round-4 refuter). Read off a lock-free copy of _clients, no _clients_lock under this slot lock (a new
             # nesting would need its order stated; a stale read here chooses between the preference and the parent's whole-hint push,
             # fail-safe either way). RESIDUAL, disclosed in the PR body: for a park with NO declaration the sockets read is the only one,
             # and on a split page whose columns redial one after another (both reaped by the ping timeout, or a kernel restart) the first
@@ -55356,7 +55356,7 @@ def _resolve_reconnect(c, chat_list):
             _cols = {str(x.get("col") or "") for x in list(_clients) if x.get("app") == "chat" and str(x.get("wid") or "") == _pk}
             _cols.add(_col)
             if _ps and (_pc is None or _pc == 1) and len(_cols) <= 1 and _ps != str(act) and any(s.get("sid") == _ps for s in chat_list):
-                _hint = str(act)   # the page's own hint, for the record below (review round 5, kernel-2)
+                _hint = str(act)   # the page's own hint, for the record below (pass 5, the reviewer's round-4 kernel-2)
                 act = _ps
         held = c.get("echat") or {}
         if not act:
@@ -55380,7 +55380,7 @@ def _resolve_reconnect(c, chat_list):
         c["skeleton"] = set(skel)
         c["skeletonOrder"] = skel
         if _hint is not None:
-            # [fork] review round 5 (2026-09-20, kernel-2): the preference is the one place the kernel overrides the page's own active
+            # [fork] pass 5, the author's label (2026-09-20, taking the reviewer's round-4 finding kernel-2): the preference is the one place the kernel overrides the page's own active
             # hint, and every other _PENDING_REVEAL transition prints a [reveal] line; this one filed nothing, and the `skeleton` client-diag
             # row carries the page's activeId, so no record named the session the kernel served whole. Printed after the set is built, so the
             # hint's fate is read off the resolved set (a hint with no transcript stays whole: _skeleton_for), and named by the EVENT, this
@@ -64458,7 +64458,7 @@ def _reveal_request(sid, wid, boot=False, via="", cols=None):
     """POST /reveal: aim the focus at the dashboard whose wid asked. Its chat pane already
     connected → deliver now; not yet (the cold-start norm — the shell's fetch beats the iframe's
     WS) → park for _consume_pending_reveal. Returns whether it was delivered immediately.
-    `cols` ([fork] review round 5 verify, correctness-1's residual): the window's chat column count the shell
+    `cols` ([fork] the author's pass-5 verify, correctness-1's residual): the window's chat column count the shell
     declared with the tap, kept on the park (`cols`) for _resolve_reconnect's parked-reveal preference, which
     applies to a one-column window and cannot read that off the sockets registered at the first column's
     resolve; None declares nothing (a shell of a build before the field; _send_focus_to_view's park has no
@@ -69101,7 +69101,7 @@ function feedHere(){return !(window.__rompPaneEnabled&&!window.__rompPaneEnabled
 // one waits is not queued: the page's opener toggles, so two would open and close it.
 var sPend=false;
 var sArmed=false,sOpen=null;   // [fork] review round 4 (2026-09-19, correctness-2 and extra6-2), on its own line so the project's declaration above stands unedited: sArmed, the one load listener armed for the element's life; sOpen, the poster of the ask the fetch in flight answers, written by the tap that fetched and read once by that listener
-var sDeferred=false;   // [fork] review round 5 (2026-09-20, ui-1): a tap has ridden the fetch in flight (the deferral below), once per fetch; cleared where a fetch starts
+var sDeferred=false;   // [fork] pass 5, the author's label (2026-09-20, taking the reviewer's round-4 finding ui-1): a tap has ridden the fetch in flight (the deferral below), once per fetch; cleared where a fetch starts
 window.__rompOpenSettings=function(tab,section){var f=document.getElementById('f-settings');if(!f)return;
 // tab and section (T379): the chat strip's tab-widgets gear asks for the Chat tab at its Tab widgets section; the rail's gear names none (the remembered tab)
 var msg={romp:'openSettings'};if(typeof tab==='string'&&tab)msg.tab=tab;if(typeof section==='string'&&section)msg.section=section;
@@ -69119,17 +69119,17 @@ var open=function(){try{f.contentWindow&&f.contentWindow.postMessage(msg,'*');}c
 // A tap while the first fetch is still in flight reads not-live too. Before the document commits (about:blank, or no document) it restarts
 // the fetch (one open still, at that load; the earlier "not queued" rule kept a second tap from toggling the page twice, and the restart
 // keeps that). Once the document has COMMITTED at the url but its inline shim has not run (the page's two stylesheets load ahead of it),
-// the marker alone cannot tell "still in flight" from "finished and not the page": the LOAD EVENT can (review round 5, 2026-09-20, ui-1),
+// the marker alone cannot tell "still in flight" from "finished and not the page": the LOAD EVENT can (pass 5, the author's label, 2026-09-20, the reviewer's round-4 ui-1),
 // since the listener below clears the pending flag on the page's load. With the flag still up, the tap rides the fetch already running,
 // re-recording its own ask so the load posts this tap's tab and section, and it does so ONCE: a further tap in the unchanged state
 // restarts (the refuter's rule: a link lost mid-load, the document committed and its shim never arriving, must not leave the gear
 // unopenable for the page's life). Before this the second tap tore the navigation down and started a second load, where the parent
 // rode the one running. The gear paints no failure state; a further tap is the recovery.
 if(f.getAttribute('src')){var live=false,parsed=false;try{var sd=f.contentDocument;parsed=!!(sd&&sd.URL&&sd.URL!=='about:blank');live=!!(parsed&&f.contentWindow&&typeof f.contentWindow.__rompApp==='string');}catch(e){}
-  if(!live&&parsed&&sPend&&!sDeferred){sDeferred=true;sOpen=open;return;}   // [fork] review round 5 (ui-1): committed at the url, no marker yet, no load yet: the fetch is in flight, so this tap rides it once (its ask recorded for the load; the comment above)
+  if(!live&&parsed&&sPend&&!sDeferred){sDeferred=true;sOpen=open;return;}   // [fork] pass 5, the author's label, the reviewer's round-4 ui-1: committed at the url, no marker yet, no load yet: the fetch is in flight, so this tap rides it once (its ask recorded for the load; the comment above)
   if(!live){try{f.removeAttribute('src');}catch(e){}sPend=false;}}
 if(!f.getAttribute('src')){var u=f.getAttribute('data-src');if(!u)return;sPend=true;f.setAttribute('src',u);
-  sOpen=open;sDeferred=false;   // [fork] review round 4 (2026-09-19, correctness-2 and extra6-2): the ask THIS fetch answers (sDeferred: a new fetch, no tap has ridden it yet, review round 5 ui-1), read by the listener below at the page's load. The listener is armed once for the element's life and closed over the first tap's open (and so its msg), so every re-fetch after a dead document, and the restart a tap during the first fetch makes, opened the gear at the FIRST tap's tab and section whatever the later tap named; the tap that fetches records its own ask here and the listener posts and clears it
+  sOpen=open;sDeferred=false;   // [fork] review round 4 (2026-09-19, correctness-2 and extra6-2): the ask THIS fetch answers (sDeferred: a new fetch, no tap has ridden it yet, pass 5, the reviewer's round-4 ui-1), read by the listener below at the page's load. The listener is armed once for the element's life and closed over the first tap's open (and so its msg), so every re-fetch after a dead document, and the restart a tap during the first fetch makes, opened the gear at the FIRST tap's tab and section whatever the later tap named; the tap that fetches records its own ask here and the listener posts and clears it
   if(!sArmed){sArmed=true;f.addEventListener('load',function(){try{if(f.contentDocument&&f.contentDocument.URL==='about:blank')return;}catch(e){}   // the empty document's own load, not the page's; ONE listener for the element's life (a re-fetch after a failed one reuses it: review round 3)
     if(sPend){sPend=false;var o=sOpen;sOpen=null;if(o)o();}});}return;}
 if(sPend)return;
@@ -69220,7 +69220,7 @@ if(m.romp==='browseFiles'&&(m.pane==='pane'||!feedHere())){var fb=document.getEl
 else if(m.romp==='browseFiles'){var bf=document.getElementById('f-feed');
   if(!document.body.classList.contains('po-feed')){window.__rompFeedWasOff=true;
     try{window.__rompPaneToggle&&window.__rompPaneToggle('feed',true);}catch(e){}}
-  try{if(window.__rompMobileOn&&window.__rompMobileOn())window.__rompMobileTab&&window.__rompMobileTab('feed');}catch(e){}   // the phone's one-pane tab swap, gated on the layout as the two Files arms above and the Log row are (review round 5, 2026-09-20, ui-2: the desktop grid shows the feed already, and show() there would persist the remembered phone tab, romp-mobile-tab, from a desktop gesture); the lift above and the post below run on both layouts
+  try{if(window.__rompMobileOn&&window.__rompMobileOn())window.__rompMobileTab&&window.__rompMobileTab('feed');}catch(e){}   // the phone's one-pane tab swap, gated on the layout as the two Files arms above and the Log row are (pass 5, the author's label, 2026-09-20, taking the reviewer's round-4 finding ui-2: the desktop grid shows the feed already, and show() there would persist the remembered phone tab, romp-mobile-tab, from a desktop gesture); the lift above and the post below run on both layouts
   try{bf&&bf.contentWindow&&bf.contentWindow.postMessage({romp:'browseFiles',path:m.path,sid:m.sid},'*');}catch(e){}}
 // A passage selected in a viewer hosted by a pane with NO composer (the Files pane, the feed) posts up in
 // the editorSelection shape the chat already handles (file-view.ts composerWindow); the shell forwards it
@@ -70141,17 +70141,17 @@ function filesCtlM(){try{var st=JSON.parse(localStorage.getItem('romp:settings')
 // round 4, 2026-09-19, regression-1: round 3 armed them under mobileOn() alone, so the desktop's re-promotion had no detector; when
 // it failed too the pane kept a src over a dead document with no state, lazyFlip's flip-back parking skipped a frame with a src,
 // and back on the phone the tab tap, the overlay tap and the Try again button all did nothing for the page's life, a dead end the
-// parent commit did not have). The desktop's response is a TABLE over the episode count (EPI) and docState's answer (review round 5,
-// 2026-09-20, correctness-3 and extra9-1). `blank` at the backstop HOLDS: the src is kept for the fetch still in flight, nothing is
+// parent commit did not have). The desktop's response is a TABLE over the episode count (EPI) and docState's answer (pass 5, the author's label,
+// 2026-09-20, taking the reviewer's round-4 findings correctness-3 and extra9-1). `blank` at the backstop HOLDS: the src is kept for the fetch still in flight, nothing is
 // re-fetched, the row and the episode count record the 30 s uncommitted document and DEAD records the promotion for the flip back; a
 // healthy slow load is not torn down and lands through the load listener as ever, loaded() ending the episode (round 4 tore it down at
 // 30 s, re-fetched it, and a rotation to the desktop armed one such deadline per parked pane in the same tick). Otherwise the episode's
 // first failure re-parks under data-src and promotes again, and the second is the bound: `other`, a document the kernel sent (its 403
 // line, whose body names the serve-token file's path; its 500 page), is dropped from the frame (the src removed, so the frame navigates
-// to about:blank; the answer is on show for the frames between its commit and its load event, the listener's read, then dropped: review
-// round 5 verify), its url parked under data-lazy-src, the attribute the controller's reconcile does not read (parked under data-src, a
+// to about:blank; the answer is on show for the frames between its commit and its load event, the listener's read, then dropped: the
+// author's pass-5 verify), its url parked under data-lazy-src, the attribute the controller's reconcile does not read (parked under data-src, a
 // gear save set the src again with no token and no backstop and the bound promotion's stale listener judged and dropped it once more:
-// one re-fetch and one pane-load-failed row per save, review round 5 verify), so on the desktop nothing promotes it again short of a
+// one re-fetch and one pane-load-failed row per save, the author's pass-5 verify), so on the desktop nothing promotes it again short of a
 // flip to the phone or a reload; and `none`, the browser's own error page, keeps its src as a desktop failure always showed;
 // both record the promotion's token in DEAD, so the promote-fail loop is closed at two and the flip back to the phone (lazyFlip's phone
 // branch) parks that pane under data-lazy-src with the failed state, where the three retry roads promote it again. Round 4's bound kept
@@ -70173,7 +70173,7 @@ function filesCtlM(){try{var st=JSON.parse(localStorage.getItem('romp:settings')
 // EPISODE say so and offer the page reload (EPI counts the failures since the pane last loaded and loaded() resets it, review round 3,
 // correctness-1: FAILS, the page-life count the row carries, never resets, and read for the copy it called a fresh failure the second).
 // The copy names no input (ui-2: "Try again" sits on the control), since the phone layout also serves a narrowed mouse window.
-var LAZY='data-lazy-src',LOAD_MS=30000,URLS={},FAILS={},EPI={},TOK={},PEND={},DEAD={};   // PEND: per pane, the token of the promotion still awaiting its verdict (the backstop's guard); DEAD: the token of a desktop promotion recorded for the flip back to the phone to park: the episode's bound, or a backstop over a fetch still in flight (review round 4, the table of review round 5)
+var LAZY='data-lazy-src',LOAD_MS=30000,URLS={},FAILS={},EPI={},TOK={},PEND={},DEAD={};   // PEND: per pane, the token of the promotion still awaiting its verdict (the backstop's guard); DEAD: the token of a desktop promotion recorded for the flip back to the phone to park: the episode's bound, or a backstop over a fetch still in flight (pass 4, the table of pass 5; the author's labels)
 var MSG_FAILED="Couldn't load this pane.",MSG_FAILED_AGAIN="Still not loading. Try again, or reload the page.";
 var RFOC=false;   // the Try again button's click retried with the keyboard's focus on it (review round 4, 2026-09-19, ui-1): paintLoading hides the button while the retry loads, and hiding the focused control drops focus to the body in every engine with nothing bringing it back, so round 3's keyboard road survived exactly one activation; the failed paint that shows the button again puts focus on it while this is set, and clears it. A load (loaded) and a tab switch (show) clear it too, so a later pane's first failure moves focus onto nothing the user did not ask for; the overlay tap sets nothing (a pointer gesture keeps its own focus)
 function paneDiv(f){try{var d=f&&f.parentNode;return (d&&d.classList&&typeof d.classList.contains==='function')?d:null;}catch(e){return null;}}
@@ -70184,9 +70184,9 @@ var rb=document.getElementById('pane-load-retry');if(rb){rb.hidden=!bad;if(bad&&
 function loaded(k){EPI[k]=0;PEND[k]=0;DEAD[k]=0;RFOC=false;try{var d=paneDiv(F[k]);if(d){d.classList.remove('loading');d.classList.remove('failed');}}catch(e){}paintLoading();}   // a load ends the episode: the next failure's copy is a first failure's; nothing is pending or dead; the keyboard's retry, if one was owed a focus, is answered by the load (RFOC)
 function docState(f){try{var d=f.contentDocument;if(!d)return 'none';var u=d.URL;if(!u||u==='about:blank')return 'blank';var w=f.contentWindow;if(w&&typeof w.__rompApp==='string')return 'app';var h=d.documentElement;return (h&&h.getAttribute&&h.getAttribute('data-romp-served')==='200')?'doc':'other';}catch(e){return 'none';}}   // the frame's document, classified (the comment above): none (a cross-origin error page), blank (the initial document, never committed), app (the pane's own, its shim run: window.__rompApp), doc (a 200 the kernel served, its stamp on the <html> tag, that this reader cannot classify: shown as served, said), other (a document at the url with neither: not a 200 of this kernel's, a failure)
 function unmarked(k,via){loaded(k);try{shellDiag('pane-load-unmarked',{pane:k,via:via});}catch(e){}}   // a 200 the kernel served with no pane shim (its "needs the ui/ modules" fallback page): shown as served, the loading state ended and the src kept, and said once (review round 3; a 200 alone since review round 4, the stamp)
-function failed(k,via,s){var f=F[k];if(!f)return;var mob=mobileOn();PEND[k]=0;FAILS[k]=(FAILS[k]||0)+1;EPI[k]=(EPI[k]||0)+1;   // the verdict is in, s docState's answer at it (review round 5); FAILS: the page-life count the row carries (docs/read-side.md); EPI: this episode's, for the copy and the desktop's bound
-var hold=!mob&&s==='blank',again=!mob&&!hold&&EPI[k]<2,bound=!mob&&!hold&&!again,keep=hold||(bound&&s!=='other');   // the desktop's table (review round 5; the comment above): a fetch still in flight at the backstop is held (the src kept, nothing re-fetched); else the episode's first failure is re-parked and promoted again below, and the second is the bound, which drops a document the kernel sent (`other`) from the frame and keeps the browser's own error page (`none`); the hold and the bound record DEAD for the flip back
-var park=(mob||bound)?LAZY:'data-src';   // the attribute the url waits under: the phone's, and the desktop BOUND's too (review round 5 verify: the controller's reconcile copies data-src to src on every gear save, so a bound pane parked there was re-fetched with no token and no backstop and judged by the bound promotion's stale listener, one re-fetch and one pane-load-failed row per save); the desktop's first failure keeps data-src, which the promotion below reads at once
+function failed(k,via,s){var f=F[k];if(!f)return;var mob=mobileOn();PEND[k]=0;FAILS[k]=(FAILS[k]||0)+1;EPI[k]=(EPI[k]||0)+1;   // the verdict is in, s docState's answer at it (pass 5, the author's label); FAILS: the page-life count the row carries (docs/read-side.md); EPI: this episode's, for the copy and the desktop's bound
+var hold=!mob&&s==='blank',again=!mob&&!hold&&EPI[k]<2,bound=!mob&&!hold&&!again,keep=hold||(bound&&s!=='other');   // the desktop's table (pass 5, the author's label; the comment above): a fetch still in flight at the backstop is held (the src kept, nothing re-fetched); else the episode's first failure is re-parked and promoted again below, and the second is the bound, which drops a document the kernel sent (`other`) from the frame and keeps the browser's own error page (`none`); the hold and the bound record DEAD for the flip back
+var park=(mob||bound)?LAZY:'data-src';   // the attribute the url waits under: the phone's, and the desktop BOUND's too (the author's pass-5 verify: the controller's reconcile copies data-src to src on every gear save, so a bound pane parked there was re-fetched with no token and no backstop and judged by the bound promotion's stale listener, one re-fetch and one pane-load-failed row per save); the desktop's first failure keeps data-src, which the promotion below reads at once
 if(!keep){try{f.removeAttribute('src');}catch(e){}try{if(URLS[k]){f.setAttribute(park,URLS[k]);f.removeAttribute(park===LAZY?'data-src':LAZY);}}catch(e){}}   // re-parked under the attribute its next promotion reads, and the other dropped (review round 4 verify: a pane the desktop promoted and the phone judged held data-src beside data-lazy-src, and the controller's reconcile set its src from data-src on the next gear save with no token, listener or backstop armed; so a feed parked by a failure is re-fetched by its Feed tab tap, never off screen by a gear save): promote()'s src guard reads nothing, the url is back where a first tap (the phone) or the grid's promotion below (the desktop's first failure) finds it, and no other writer promotes it (at the desktop's bound the reconcile reads data-src and finds none)
 DEAD[k]=(hold||bound)?TOK[k]:0;
 try{var d=paneDiv(f);if(d){d.classList.remove('loading');if(mob)d.classList.add('failed');else d.classList.remove('failed');}}catch(e){}   // the failed state is the phone's; the desktop path never leaves one for a later rotation to paint (the flip back paints it for a DEAD pane, lazyFlip)
@@ -70230,7 +70230,7 @@ if(MQ){if(MQ.addEventListener)MQ.addEventListener('change',retell);else if(MQ.ad
 // every pane still unloaded (no src) but the chat and the feed again, as the boot does, so a later gear enable on the phone
 // loads nothing off screen (review round 2: after a rotation there and back a gear-off pane sat on data-src and the
 // controller's enable loaded it hidden). A pane whose desktop promotion failed at the episode's bound kept its src over a dead
-// document (failed(), DEAD; since review round 5 the bound drops the src for a document the kernel sent, and a backstop over a fetch
+// document (failed(), DEAD; since pass 5 (the author's label) the bound drops the src for a document the kernel sent, and a backstop over a fetch
 // still in flight records DEAD with the src kept): the flip back parks it too, under data-lazy-src with the failed state, so the phone's three retry roads
 // (the tab tap, the overlay tap, the Try again button) promote it again (review round 4, regression-1: before, a frame with a src
 // was skipped and the pane was dead for the page's life); keyed on the recorded failure, never on a read of the document at the flip
@@ -70241,7 +70241,7 @@ if(MQ){if(MQ.addEventListener)MQ.addEventListener('change',retell);else if(MQ.ad
 // (the same verify). Its own listener on the same media query, beside the re-tell's.
 var lazyFlip=function(){try{if(!mobileOn()){for(var lk in F){var lf2=F[lk],lz=null;try{lz=lf2&&lf2.getAttribute(LAZY);}catch(e){}
 if(lz){try{lf2.setAttribute('data-src',lz);lf2.removeAttribute(LAZY);}catch(e){}}promote(lk);}}
-else{for(var lk3 in F){var lf3=F[lk3];if(!lf3||lk3==='chat')continue;var lu3=null;try{lu3=lf3.getAttribute('data-src');if(DEAD[lk3]&&DEAD[lk3]===TOK[lk3]){var du3=URLS[lk3]||lu3;lf3.removeAttribute('src');if(du3)lf3.setAttribute(LAZY,du3);lf3.removeAttribute('data-src');DEAD[lk3]=0;var dd3=paneDiv(lf3);if(dd3)dd3.classList.add('failed');}   // the DEAD pane, checked FIRST (review round 5: the bound drops the src for a document the kernel sent, and the unloaded parking below would have parked that frame with no failed state and DEAD standing): its src dropped if it still has one, the url parked for the tap, the failed state on (the phone's response to the failure the desktop recorded), painted if its tab is the shown one; the feed too (review round 4 verify: its exemption is from the off-screen parking, not from a recorded failure; skipped, a feed recorded DEAD kept its src over the dead document and its tab tap did nothing)
+else{for(var lk3 in F){var lf3=F[lk3];if(!lf3||lk3==='chat')continue;var lu3=null;try{lu3=lf3.getAttribute('data-src');if(DEAD[lk3]&&DEAD[lk3]===TOK[lk3]){var du3=URLS[lk3]||lu3;lf3.removeAttribute('src');if(du3)lf3.setAttribute(LAZY,du3);lf3.removeAttribute('data-src');DEAD[lk3]=0;var dd3=paneDiv(lf3);if(dd3)dd3.classList.add('failed');}   // the DEAD pane, checked FIRST (pass 5, the author's label: the bound drops the src for a document the kernel sent, and the unloaded parking below would have parked that frame with no failed state and DEAD standing): its src dropped if it still has one, the url parked for the tap, the failed state on (the phone's response to the failure the desktop recorded), painted if its tab is the shown one; the feed too (the author's pass-4 verify: its exemption is from the off-screen parking, not from a recorded failure; skipped, a feed recorded DEAD kept its src over the dead document and its tab tap did nothing)
 else if(lk3!=='feed'&&lu3&&!lf3.getAttribute('src')){lf3.setAttribute(LAZY,lu3);lf3.removeAttribute('data-src');}
 else if(PEND[lk3]&&PEND[lk3]===TOK[lk3]&&lf3.getAttribute('src')){var pd3=paneDiv(lf3);if(pd3)pd3.classList.add('loading');}}catch(e){}}paintLoading();}}catch(e){}};   // a desktop promotion whose verdict is still owed (PEND, the token) wears the loading class the grid's promote() did not paint, keyed on the recorded promotion and never on a read of the document, so the shown tab's tap meets the loader and not a blank pane (review round 4 verify: on WebKit up to 30 s of blank until the backstop's verdict); loaded() or failed() takes it off
 if(MQ){if(MQ.addEventListener)MQ.addEventListener('change',lazyFlip);else if(MQ.addListener)MQ.addListener(lazyFlip);}
@@ -70255,7 +70255,7 @@ function reveal(p){try{window.__rompPaneToggle&&window.__rompPaneToggle(p,true);
 // relay's: the tab the relay remembered for the viewer's close (the settings listener's __rompFilesTabFrom) is
 // dropped, so closing a file much later cannot jump them back to a tab they left on their own
 function userSwitch(p){window.__rompFilesTabFrom=null;show(p);}
-// [fork] review round 5 (2026-09-20, ui-2; the round-3 ruling's class, correctness-3 and regression-3): the switches the person makes are the
+// [fork] pass 5, the author's label (2026-09-20, taking the reviewer's round-4 finding ui-2; the reviewer's round-3 class, correctness-3 and regression-3): the switches the person makes are the
 // PHONE's. show() is the one writer of body data-tab and the remembered tab (KT, romp-mobile-tab), and on the desktop layout a reveal aimed
 // at this window (a feed card's tap into a session, the Waiting pane's, a remote link, the kernel's push on a notification tap) and the chat
 // header's Outline pill reached it through userSwitch above, so a desktop gesture rewrote the tab the phone boots on. The Log row and the
@@ -70614,7 +70614,7 @@ feedReady=true;if(pendingCard){var c=pendingCard;pendingCard=null;revealCard(c.i
 // the session the user is looking at: the chat pane's active tab, read off the same-origin iframe's DOM — the read
 // the bell's test push uses (one truth, no second channel); '' before the pane has tabs, or without a pane
 function activeSid(){try{var f=document.getElementById('f-chat'),d=f&&f.contentDocument,t=d&&d.querySelector('#tabs .tab.active[data-id]');return t?String(t.getAttribute('data-id')||''):'';}catch(e){return '';}}
-// [fork] review round 5 verify (2026-09-20, correctness-1's residual): the window's CHAT COLUMN COUNT rides every /reveal, so the kernel's
+// [fork] the author's pass-5 verify (2026-09-20, correctness-1's residual): the window's CHAT COLUMN COUNT rides every /reveal, so the kernel's
 // parked-reveal preference (_resolve_reconnect) reads a declaration the page made rather than the chat sockets registered so far, which
 // on a split page whose columns redial one after another are one column's at the first column's resolve, whatever the page holds.
 // Before _LANDING_SPLIT_JS parses (this script's own boot run, fromLink below) the count is what that script will build: one on the
@@ -70628,7 +70628,7 @@ var raw=JSON.parse(localStorage.getItem('romp-chat-cols')||'null');var n=Array.i
 function land(sid,kind,cardId,boot,via){
 boot=!!boot||!(chatUp||activeSid());   // booting, or our chat pane has not connected yet: the kernel parks for it and its ready delivers, never a same-wid socket the previous page left; via: which road the tap took, for the kernel's log line. The pane's rendered tabs (activeSid, the same-origin read above) are proof its socket was up even when its wsState message beat this listener (2026-09-09: the served shell's parser can yield to that message before this script runs, and every landing then said booting and parked for a ready that had already come)
 var body={sid:sid,wid:wid(),via:via};if(boot)body.boot=true;
-var cc=cols();if(cc>0)body.cols=cc;   // [fork] cols: the window's chat column count (above), the kernel's parked-reveal preference reads it; its own line after the project's body line, which is inserted around and never edited (review round 6, 2026-09-20)
+var cc=cols();if(cc>0)body.cols=cc;   // [fork] cols: the window's chat column count (above), the kernel's parked-reveal preference reads it; its own line after the project's body line, which is inserted around and never edited (pass 5, the author's label, its verify's fixer, 2026-09-20)
 if(sid)fetch('/reveal',{method:'POST',body:JSON.stringify(body)}).then(function(r){
 diag('reveal-post',{status:r.status,via:via,boot:!!boot});
 if(!r.ok)return r.text().then(function(t){throw new Error(t||('HTTP '+r.status));});},
@@ -72010,7 +72010,7 @@ def _landing():
             # as a pending reveal, arrived as a skeleton and cost a second kernel round trip (a skeleton-click) before it showed. The blob
             # is seeded HERE, in the head, before the parser reaches the chat iframe: the notified session becomes the stored tab, the
             # first dial carries active=<it>, the kernel's one full is its by construction (_resolve_reconnect read the hint as before until
-            # review round 4b, whose parked-reveal preference covers the roads the seed does not), and render.ts's wantActive restores
+            # pass 4b, the author's label, whose parked-reveal preference covers the roads the seed does not), and render.ts's wantActive restores
             # that tab before the reveal's focus lands, which then finds it active
             # and loaded. The value is admitted in push-card's shape (a host-prefixed id passes); a blob that already names it is left
             # alone; the param stays for the reveal script, whose /reveal still lands the focus (a revive prompt for an ended session). Its
@@ -72024,7 +72024,7 @@ def _landing():
             # already describe: a local strip that lists no such local tab opens the prefetch gate (skeleton-tabs.ts gateOnStrip) and the idle
             # chain loads the tabs in the kernel's order; a tap loads its tab at once. A kernel-side fail-safe (a live-session fallback in
             # _resolve_reconnect) was executed in the review and declined: it restored the whole board in place of one full, misfired for
-            # the host-prefixed hints the page handles by design, and reached beyond the push cold open. The round-4b preference in
+            # the host-prefixed hints the page handles by design, and reached beyond the push cold open. The pass-4b preference in
             # _resolve_reconnect is a different clause: it reads a reveal PARKED for the window, not the hint's match, and falls back to
             # the hint when the parked sid is not a session this kernel lists.
             "try{var _pr=new URL(location.href).searchParams.get('push-reveal');if(_pr&&/^[A-Za-z0-9_.:-]{1,128}$/.test(_pr)){"
@@ -73448,11 +73448,11 @@ _STAMP_HTML_TAG_B = re.compile(rb"(<html)(?=[\s>])", re.I)
 def _stamp_served_html(code, body, ctype):
     """[fork] The lazy panes' proof of a 200 (review round 4 of the lazy panes, 2026-09-19, kernel-1): every text/html 200 this kernel
     writes whose body carries an <html> tag gets `data-romp-served=200` on that tag, written at the top of Handler._send, so it is a
-    rule over the writer and no list of pages. Handler._send is not the one place every response leaves (review round 5, extra6-1):
+    rule over the writer and no list of pages. Handler._send is not the one place every response leaves (pass 5, the author's label, taking the reviewer's round-4 finding extra6-1):
     eight `send_response` sites bypass it, and the rule holds over text/html 200s because none of them writes one: they are HEAD roads
     with no body, 206 ranges, the 204 preflight, the 101 upgrade, and two 200 attachments with application/octet-stream hardcoded, a
     census tests/test_pane_state_broadcast.py pins over the writers (every `send_response(` outside _send is a non-200, a bodiless
-    road, or an octet-stream attachment). One road lies outside both censuses (the round-5 verify): _remote_ws writes the remote
+    road, or an octet-stream attachment). One road lies outside both censuses (the author's pass-5 verify): _remote_ws writes the remote
     kernel's status line and headers to the client with `down.sendall(head)` and pumps its frames, with no send_response at all; no
     document can arrive by it (the route answers 400 text/plain without a Sec-WebSocket-Key, a header no navigation or fetch can set,
     pinned by tests/test_kernel_remote_ws_proxy.py), and a third census in the same module classifies every raw `sendall(` and
@@ -75118,7 +75118,7 @@ class Handler(BaseHTTPRequestHandler):
                     via = str(body.get("via") or "")   # 'sw' | 'link' | 'ack' | 'vanish': the road the tap took, for the log line
                     if via not in _REVEAL_ROADS:       # whitelisted before it reaches the journal (_REVEAL_ROADS has the why)
                         via = "other" if via else ""
-                    # [fork] review round 5 verify (correctness-1's residual): the window's chat column count the shell declares with the
+                    # [fork] the author's pass-5 verify (correctness-1's residual): the window's chat column count the shell declares with the
                     # tap (_LANDING_REVEAL_JS cols), a positive int; anything else, or a shell of a build before the field, declares nothing
                     cols = body.get("cols")
                     cols = cols if (isinstance(cols, int) and not isinstance(cols, bool) and 0 < cols < 100) else None

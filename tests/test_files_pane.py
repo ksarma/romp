@@ -346,8 +346,8 @@ class Relay(unittest.TestCase):
     def test_the_feeds_browse_relay_is_untouched(self):
         js = km._LANDING_SETTINGS_JS
         _has(self, "else if(m.romp==='browseFiles'){var bf=document.getElementById('f-feed');", js)
-        _has(self, "try{if(window.__rompMobileOn&&window.__rompMobileOn())window.__rompMobileTab&&window.__rompMobileTab('feed');}catch(e){}", js, "the phone's tab swap, gated on the layout probe since review round 5 (ui-2): the Files arms' and the Log row's gate")
-        _lacks(self, "try{window.__rompMobileTab&&window.__rompMobileTab('feed');}catch(e){}", js, "no ungated switch left in the feed's browse arm (review round 5, ui-2)")
+        _has(self, "try{if(window.__rompMobileOn&&window.__rompMobileOn())window.__rompMobileTab&&window.__rompMobileTab('feed');}catch(e){}", js, "the phone's tab swap, gated on the layout probe since pass 5 (the author's label, taking the reviewer's round-4 finding ui-2): the Files arms' and the Log row's gate")
+        _lacks(self, "try{window.__rompMobileTab&&window.__rompMobileTab('feed');}catch(e){}", js, "no ungated switch left in the feed's browse arm (pass 5, the reviewer's round-4 ui-2)")
         _has(self, "if(m.romp==='browseClosed'&&window.__rompFeedWasOff){window.__rompFeedWasOff=false;", js)
 
     def test_the_two_ends_agree_on_the_message(self):
@@ -493,7 +493,7 @@ send({ romp: 'browseFiles', path: '/repo/notes-api', sid: SID });
 out.noPane = snap(); reset();
 send({ romp: 'browseFiles', pane: 'feed', path: '/repo/notes-api', sid: SID, identity });
 out.otherPane = snap(); reset();
-MOBILE = true; TAB = 'chat';   // the same two asks on the phone (review round 5, ui-2: the two above run on the desktop, where the feed's tab swap is gated now)
+MOBILE = true; TAB = 'chat';   // the same two asks on the phone (pass 5, the author's label, the reviewer's round-4 ui-2: the two above run on the desktop, where the feed's tab swap is gated now)
 send({ romp: 'browseFiles', path: '/repo/notes-api', sid: SID });
 out.noPanePhone = snap(); reset();
 send({ romp: 'browseFiles', pane: 'feed', path: '/repo/notes-api', sid: SID, identity });
@@ -589,7 +589,7 @@ class BrowseRelay(unittest.TestCase):
             n = self.out[key]
             self.assertEqual(n["feed"], [{"romp": "browseFiles", "path": "/repo/notes-api", "sid": self.SID}], key + ": forwarded into the feed, path and sid only")
             self.assertEqual(n["files"], [], key + ": the Files pane hears nothing")
-            # review round 5 (2026-09-20, ui-2): the feed's tab swap is the phone's; on the desktop the grid shows the feed already and the
+            # pass 5, the author's label (2026-09-20, taking the reviewer's round-4 finding ui-2): the feed's tab swap is the phone's; on the desktop the grid shows the feed already and the
             # switch would persist the remembered phone tab from a desktop gesture (before the gate these two desktop steps switched, and
             # this pin called the switch a phone's)
             self.assertEqual(n["tabs"], ["feed"] if key.endswith("Phone") else [], key + (": the feed's browser switches a phone to the Feed tab" if key.endswith("Phone") else ": desktop, no tab switch"))
@@ -630,7 +630,7 @@ class BrowseRelay(unittest.TestCase):
         # the feed branch's body is as it was: the lift, the remembered was-off flag, the phone tab, the forward
         feed = js.split(self.FEED)[1].split("if(m.type==='editorSelection'")[0]
         _has(self, "if(!document.body.classList.contains('po-feed')){window.__rompFeedWasOff=true;", feed)
-        _has(self, "try{if(window.__rompMobileOn&&window.__rompMobileOn())window.__rompMobileTab&&window.__rompMobileTab('feed');}catch(e){}", feed, "the phone tab, gated on the layout (review round 5, ui-2)")
+        _has(self, "try{if(window.__rompMobileOn&&window.__rompMobileOn())window.__rompMobileTab&&window.__rompMobileTab('feed');}catch(e){}", feed, "the phone tab, gated on the layout (pass 5, the reviewer's round-4 ui-2)")
         _has(self, "postMessage({romp:'browseFiles',path:m.path,sid:m.sid},'*')", feed)
         _lacks(self, "identity", self._code(feed), "the feed resolves its own identity")
         # the comment above the pane branch names the ladder, the gesture and the phone's way back

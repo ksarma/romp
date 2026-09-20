@@ -267,7 +267,7 @@ test("T6: a return on the phone (the owner's decision, 2026-09-19): the redial r
   onSocketUp(st3);
   assert.equal(st3.returnHold, false);
   assert.equal(newSkeletonState().returnHold, false, "a fresh state holds nothing: the boot dial sends no wsup, so a cold open's chain is untouched");
-  // a return whose local strip lists no local want (the stored tab ended while the phone was away; review round 4b, 2026-09-20, extra7-1):
+  // a return whose local strip lists no local want (the stored tab ended while the phone was away; pass 4b, the author's label, 2026-09-20, taking the reviewer's round-3 addendum's extra7-1):
   // the strip opens the gate under the hold, the hold alone keeps the chain silent (nextPrefetch's hold term), and the flip back to the
   // desktop resumes it; before this the strip refused under the hold and recorded nothing, so the lift found the gate closed and armed nothing
   const st4 = newSkeletonState();

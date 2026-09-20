@@ -303,11 +303,11 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   episode's first failure hands the url back to `data-src` and promotes once
   more; the second is the bound, which drops a document the kernel sent (the
   frame to about:blank, the url under `data-lazy-src`) and keeps the browser's
-  own error page (review round 5); a fetch still in flight at the backstop is
-  held on its kept src and its load ends the episode. No loader and no retry
-  control outside the phone layout: a flip to the phone parks a bound or held
-  pane with the failed state, where a tap recovers it, and a reload is the
-  other road.
+  own error page (pass 5, the author's label); a fetch still in flight at the
+  backstop is held on its kept src and its load ends the episode. No loader and
+  no retry control outside the phone layout: a flip to the phone parks a bound
+  or held pane with the failed state, where a tap recovers it, and a reload is
+  the other road.
   A redial declares itself (`reconnect=1` on the `/ws` URL) once the kernel's
   caps frame has answered the bundle's ready; before that, with the ready still
   queued, or after a socket that died before the caps frame came back, it dials
@@ -315,14 +315,14 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   life (the bundle posts ready once), so each of its redials is served whole.
   On a declared redial the kernel sends the active tab in full, or, when a
   reveal is parked for the window and the kernel lists its session, that
-  session in full (review round 4b; for a one-column window alone: the shell
-  declares its chat column count with the tap and the kernel reads the columns'
-  sockets beside it, a split page keeping the active tab, round 5), and lists
-  every other session as a `skeleton` on the tab strip with one small `status`
-  frame each, and the chat pane loads a skeleton on click or one at a time in
-  idle, never while the tab is hidden; one `skeleton` client-diag row (count,
-  active) records the regime, and a `[reveal]` journal line names the parked
-  session the kernel served whole in place of the page's hint (round 5). On
+  session in full (pass 4b, the author's label; for a one-column window alone:
+  the shell declares its chat column count with the tap and the kernel reads
+  the columns' sockets beside it, a split page keeping the active tab, pass 5),
+  and lists every other session as a `skeleton` on the tab strip with one small
+  `status` frame each, and the chat pane loads a skeleton on click or one at a
+  time in idle, never while the tab is hidden; one `skeleton` client-diag row
+  (count, active) records the regime, and a `[reveal]` journal line names the
+  parked session the kernel served whole in place of the page's hint (pass 5). On
   the phone layout the chat pane's first dial declares `skeleton=1` too (since
   2026-09-18), so a cold open there is served the same way: the strip, one
   full for the stored tab, or for the parked reveal's session as above, and a

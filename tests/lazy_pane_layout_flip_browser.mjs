@@ -18,7 +18,7 @@
 //      extra7-2's refuter executed it), then the window narrows back to the phone: the recorded failure parks the pane with the failed
 //      state painted, and ONE recovery gesture (cfg.recover: "tab" the Waiting tab's button, "overlay" a tap on #pane-load away from its
 //      children, "button" the Try again button) promotes it again; the third request passes and the pane loads.
-//   D  (review round 5, correctness-3, ruled high) the desktop's bound over a document the KERNEL sent: every request for /waiting is
+//   D  (pass 5, the author's label, taking the reviewer's round-4 finding correctness-3, ruled high) the desktop's bound over a document the KERNEL sent: every request for /waiting is
 //      re-issued to the lab kernel credential-less (route.fetch with an explicit empty Cookie header, the return harness's denied mode)
 //      and the frame fulfilled with the kernel's own answer, 403, text/plain, a body naming the serve-token file's path (its STATUS is
 //      recorded; the body is never read, printed or kept). The flip to the desktop promotes the parked pane; the first denial re-parks
@@ -28,7 +28,7 @@
 //      optional set, so the reconcile road is driven by the LazyPanes node case on the Outline, not here), no third request. Round 4's
 //      bound kept the src, so that body stood on the desktop's screen with no failed state and no retry. The flip back parks it with the
 //      failed state; the Waiting tab's tap (the route passing now) loads it.
-//   E  (review round 5, tests-2 with extra9-1) a healthy but SLOW desktop load through the 30 s backstop: the first request for /waiting
+//   E  (pass 5, the author's label, taking the reviewer's round-4 findings tests-2 with extra9-1) a healthy but SLOW desktop load through the 30 s backstop: the first request for /waiting
 //      is held cfg.slowMs (34 s, past LOAD_MS) and then continued. The flip to the desktop promotes the pane; at 30 s the backstop reads a
 //      frame never committed (`blank`) and HOLDS it: the src kept, no re-fetch (one request on the wire, one src set), one pane-load-failed
 //      row via backstop recording the 30 s uncommitted document; the document then lands on the kept src and paints. Round 4 tore it down

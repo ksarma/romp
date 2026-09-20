@@ -1528,7 +1528,7 @@ unmarked:shRows('pane-load-unmarked'),failedRows:shRows('pane-load-failed'),list
         self.assertIn("if(w&&typeof w.__rompApp==='string')return 'app';", km._LANDING_MOBILE_JS, "the shell's read of the same name (review round 4: the marker is read first, the kernel's 200 stamp tells doc from other after it)")
 
     def test_the_gears_tap_time_read_and_the_real_settings_shims_marker_agree_so_a_second_tap_toggles_the_live_page_and_fetches_nothing(self):
-        # review round 4 verify (2026-09-19, kernel-2's coupling): the gear's tap-time check reads window.__rompApp on the settings frame's
+        # the author's pass-4 verify (2026-09-19, kernel-2's coupling): the gear's tap-time check reads window.__rompApp on the settings frame's
         # window, the marker the settings page's REAL shim sets (APP "settings"). The gear harness in tests/test_pane_state_broadcast.py
         # stubs the marker under whatever name the gear reads, and the linked case above couples the shim to the PANES' reader (docState),
         # not the gear's, so a rename kept in step on the shim and in docState and missed in the gear's read left every fast tier green

@@ -14,8 +14,8 @@ node with a MediaQueryList fake). Case A fails the pane on the phone and then fl
 abort land on the desktop; case C fails the desktop's re-promotion too and, back on the phone, recovers by one of the three gestures
 (review round 4: the desktop promotion has its own detectors, its failure is bounded to one re-promotion per episode, and the flip back
 parks the recorded pane with the failed state); case D drives the kernel's own 403 to the desktop's bound, where the document the kernel sent
-is dropped from the frame (review round 5, correctness-3); case E holds a desktop load past the 30 s backstop and lets it land on the kept src
-(review round 5, tests-2 with extra9-1). Chromium alone: WebKit's failure detector is the 30 s backstop (no load event for a
+is dropped from the frame (pass 5, the author's label, taking the reviewer's round-4 finding correctness-3); case E holds a desktop load past the 30 s backstop and lets it land on the kept src
+(pass 5, the reviewer's round-4 findings tests-2 with extra9-1). Chromium alone: WebKit's failure detector is the 30 s backstop (no load event for a
 failed navigation), which would cost 30 s a case for the same shell lines the LazyPanes harness covers.
 
 The lab: one kernel from test_ship_reship_served.kernel_env with the return harness's seed (three synthetic sessions of the
@@ -200,14 +200,14 @@ class LazyPaneLayoutFlip(unittest.TestCase):
         self._case_c("button")
 
     def test_D_at_the_desktop_bound_the_kernels_own_denial_is_dropped_from_the_frame_and_the_flip_back_parks_it_with_the_failed_state(self):
-        # review round 5 (2026-09-20, correctness-3, ruled high): the desktop's bound is reached by docState's `other` answer too, whose commonest
+        # pass 5, the author's label (2026-09-20, taking the reviewer's round-4 finding correctness-3, ruled high): the desktop's bound is reached by docState's `other` answer too, whose commonest
         # member is the kernel's own 403 line (its body names the serve-token file's path). Round 4's bound kept the src whatever the answer, so
         # that body stood on the desktop's screen with no failed state and no retry for the page's life. Driven against the REAL kernel's denial
         # (the route re-issues the request credential-less and hands the frame the kernel's answer): at the bound the src is dropped and the frame
         # navigates to about:blank (the kernel's answer is on show for the frames between its commit and the load event that judged it, then
-        # dropped: the round-5 verify's rAF witness saw it for about two frames), the url waits under data-lazy-src, the attribute the
+        # dropped: the author's pass-5 verify's rAF witness saw it for about two frames), the url waits under data-lazy-src, the attribute the
         # controller's gear-save reconcile does not read (under data-src it re-fetched the denial on every save with no token and no backstop,
-        # the round-5 verify; the Waiting pane is outside that controller's optional set, so the reconcile road is driven by the LazyPanes node
+        # the author's pass-5 verify; the Waiting pane is outside that controller's optional set, so the reconcile road is driven by the LazyPanes node
         # case on the Outline, where a save after the bound moves nothing), no third request; the flip back parks it with the failed state and
         # the tab tap loads it. Asserted: the status and the page's state. The body is never read, printed or kept by the driver or here.
         r = self._drive("D")
@@ -236,7 +236,7 @@ class LazyPaneLayoutFlip(unittest.TestCase):
         self.assertEqual(r["errors"], [], "no page errors")
 
     def test_E_a_slow_desktop_load_is_held_through_the_backstop_and_lands_on_the_kept_src(self):
-        # review round 5 (2026-09-20, tests-2 with extra9-1): every desktop promotion arms the 30 s backstop since round 4, and its `blank` answer
+        # pass 5, the author's label (2026-09-20, taking the reviewer's round-4 findings tests-2 with extra9-1): every desktop promotion arms the 30 s backstop since pass 4, and its `blank` answer
         # (a fetch not yet committed) was a failure there too, so a healthy but slow desktop load was torn down at 30 s, re-fetched, and filed a
         # row (the LazyPanes node cases drive the same lines and the rotation back). Here the Waiting pane's one request is held 34 s by the route
         # and then answered by the lab kernel: at the backstop the src is kept and nothing is re-fetched (one request on the wire, one src set),

@@ -418,7 +418,7 @@ class OptionalPanes(unittest.TestCase):
                          "the shown optional panes load from data-src; the hidden one never gets a src")
         self.assertEqual(b["hidden"], {"chat": False, "timeline": False, "fleet": False, "feed": True, "waiting": False, "files": False}, "its rail button and phone tab are hidden")
         self.assertFalse(b["cls"], "no po-feed body class: the column is not shown")
-        self.assertEqual(b["tabs"], ["chat"], "the stored tab named the hidden pane: the switch to the chat runs on either layout (this harness is the desktop; review round 5, 2026-09-20, ui-2: the gear's set is per browser and the tab bar hides that tab on the phone too, so the remembered tab is moved to a place the phone can show and a flip lands on a shown pane; the one road into show() beside the boot show that reads no layout, by design, MobileShowRoads)")
+        self.assertEqual(b["tabs"], ["chat"], "the stored tab named the hidden pane: the switch to the chat runs on either layout (this harness is the desktop; pass 5, the author's label, 2026-09-20, taking the reviewer's round-4 finding ui-2: the gear's set is per browser and the tab bar hides that tab on the phone too, so the remembered tab is moved to a place the phone can show and a flip lands on a shown pane; the one road into show() beside the boot show that reads no layout, by design, MobileShowRoads)")
         self.assertEqual(b["sets"], {"timeline": 1, "fleet": 1}, "src set once per shown pane")
 
     def test_the_rail_toggle_refuses_a_hidden_pane_and_the_persisted_set_omits_it(self):
@@ -520,7 +520,7 @@ Object.defineProperty(global, 'navigator', { configurable: true, value: {   // a
   setAppBadge: (n) => { BADGES.push(n); return Promise.resolve(); }, clearAppBadge: () => { BADGES.push(0); return Promise.resolve(); } } });
 let FEED_OFF = false;   // the gear's Panes section has the Feed pane off in this browser (the head script's reader, stubbed)
 global.__rompPaneEnabled = (k) => !(k === 'feed' && FEED_OFF);
-const PTOGGLES = [];   // reveal()'s un-hide (__rompPaneToggle, the collapse script's, stubbed): recorded on both layouts (review round 5, ui-2)
+const PTOGGLES = [];   // reveal()'s un-hide (__rompPaneToggle, the collapse script's, stubbed): recorded on both layouts (pass 5, the reviewer's round-4 ui-2)
 global.__rompPaneToggle = (k, on) => PTOGGLES.push([k, !!on]);
 global.encodeURIComponent = (s) => s;
 global.location = { protocol: 'http:', host: 'TESTHOST:1' };
@@ -559,7 +559,7 @@ out.desktop = window.__rompMobileOn();
 window.__rompMobileTab('nowhere');
 out.unknown = { tab: TAB };
 // the relay remembered a tab; the person's own tap on another tab drops that memory, the relay's own switch keeps it. On the PHONE:
-// the tab bar exists there alone, and since review round 5 (2026-09-20, ui-2) userSwitch itself reads the layout
+// the tab bar exists there alone, and since pass 5 (the author's label, 2026-09-20, the reviewer's round-4 ui-2) userSwitch itself reads the layout
 MATCHES = true;
 window.__rompFilesTabFrom = 'chat'; TAPS.feed();
 out.tap = { tab: TAB, from: window.__rompFilesTabFrom };
@@ -574,7 +574,7 @@ window.__rompFilesTabFrom = 'chat'; arrive({ romp: 'toggleFleet', to: 'chat' });
 out.pill = { tab: TAB, from: window.__rompFilesTabFrom };
 window.__rompFilesTabFrom = 'chat'; arrive({ romp: 'toggleFleet' });
 out.pillOutline = { tab: TAB, from: window.__rompFilesTabFrom };
-// the DESKTOP layout (review round 5, ui-2): the same arrivals switch no tab and drop no memory, since show() there would persist the
+// the DESKTOP layout (pass 5, the reviewer's round-4 ui-2): the same arrivals switch no tab and drop no memory, since show() there would persist the
 // remembered phone tab (romp-mobile-tab) from a desktop gesture; the reveal's un-hide runs as ever. The relay's own switch first (its
 // callers gate it, the hook itself does not), so the tab and the store are known before the arrivals
 MATCHES = false; window.__rompMobileTab('files'); window.__rompFilesTabFrom = 'chat';
@@ -670,7 +670,7 @@ class MobileScript(unittest.TestCase):
         self.assertEqual(self.out["pillOutline"], {"tab": "fleet", "from": None})
 
     def test_on_the_desktop_layout_a_reveal_unhides_and_switches_nothing_and_the_pill_and_a_tap_switch_nothing(self):
-        # review round 5 (2026-09-20, ui-2; the round-3 ruling's class): show() persists the remembered phone tab and sets body data-tab
+        # pass 5, the author's label (2026-09-20, taking the reviewer's round-4 finding ui-2; the reviewer's round-3 class): show() persists the remembered phone tab and sets body data-tab
         # on every layout, so a reveal aimed at a desktop dashboard (a feed card's tap, the kernel's push on a notification tap) or the
         # header's pill rewrote the tab the phone boots on. userSwitch, the one function every such arrival passes through, reads the
         # layout: the reveal's un-hide still runs, the tab, the store and the relay's remembered tab stand
@@ -711,7 +711,7 @@ class MobileScript(unittest.TestCase):
         self.assertLess(html.index("window.__rompMobileTab=show;"), html.index("window.__rompPanesTell=broadcastAll;"))   # broadcastAll since review round 1 of D3 (2026-09-18): the re-tell reaches every iframe
 
 
-# ── every road into the mobile script's show() (review round 5, 2026-09-20, ui-2) ─────────────────────────
+# ── every road into the mobile script's show() (pass 5, the author's label, 2026-09-20, the reviewer's round-4 ui-2) ─────────────────────────
 # show() is the one writer of body data-tab and the remembered tab (romp-mobile-tab). Round 3 ruled one of its callers (the Log row's
 # switch, gated on the layout probe) and round 4 found another ungated (the feed's browse arm): a fix at one site with the population
 # unread. The population is DERIVED here from the served page's scripts: every call of the hook the other scripts use (`__rompMobileTab(`
@@ -790,7 +790,7 @@ def _mobile_show_roads():
     gate on the line above the call) and `call_at` the call's offset in it; `cls` the classification: `gated` (the layout probe's `if(`
     guards the call: the statement it opens, braced or single, holds the call, whether it opens on the site's line or on one of the two
     above; a gate that has CLOSED before the call gates nothing, however near, so a call on the line after a gated arm's close is
-    unclassified until it says which layout it serves; review round 6, 2026-09-20), `through userSwitch` (reveal, the
+    unclassified until it says which layout it serves; pass 5, the author's label, its verify's fixer, 2026-09-20), `through userSwitch` (reveal, the
     toggleFleet arm and the bar's buttons all pass through userSwitch, whose fork declaration reads the layout), `userSwitch declaration,
     gated` and `userSwitch declaration, shadowed` (the fork's and the project's: the later binds, pinned apart), `phone-only by
     construction` (the failed overlay's retry, an element the desktop stylesheet hides, pinned apart), `both layouts by design` (the boot
@@ -835,7 +835,7 @@ def _mobile_show_roads():
 
 class MobileShowRoads(unittest.TestCase):
     def test_a_gate_reaches_a_call_only_inside_the_statement_it_guards(self):
-        """The census's form space (review round 6, 2026-09-20): the classifier read the gate literal anywhere in the two lines above a
+        """The census's form space (pass 5, the author's label, its verify's fixer, 2026-09-20): the classifier read the gate literal anywhere in the two lines above a
         call, so a call on the line after a gated arm's close inherited the arm's gate. The gate guards one statement; the call is gated
         inside it and nowhere else."""
         G = _MOBILE_ON_GATE
@@ -855,7 +855,7 @@ class MobileShowRoads(unittest.TestCase):
     def test_every_road_into_show_is_classified_and_a_desktop_gesture_reaches_it_through_a_gate(self):
         sites = _mobile_show_roads()
         self.assertEqual([s["line"] for s in sites if s["cls"] == "UNCLASSIFIED"], [], "every call into show() says which layout it serves; a new caller is classified here, not left to run on both")
-        self.assertGreaterEqual(len(sites), 17, "the population is derived from the served scripts; seventeen sites at review round 5 (a derived population that reads empty is no census): %r" % ([s["line"][:60] for s in sites],))
+        self.assertGreaterEqual(len(sites), 17, "the population is derived from the served scripts; seventeen sites at pass 5, the author's label (a derived population that reads empty is no census): %r" % ([s["line"][:60] for s in sites],))
         by = {}
         for s in sites:
             by[s["cls"]] = by.get(s["cls"], 0) + 1
@@ -953,7 +953,7 @@ send({ romp: 'viewFile', path: '/p', sid: SID });
 out.noPane = snap(); reset();
 send({ romp: 'browseFiles', path: '/repo/notes-api', sid: SID });
 out.browse = snap(); reset();
-MOBILE = true; TAB = 'chat';   // the same ask on the phone (review round 5, ui-2: the step above runs on the desktop, where the switch is gated now)
+MOBILE = true; TAB = 'chat';   // the same ask on the phone (pass 5, the author's label, the reviewer's round-4 ui-2: the step above runs on the desktop, where the switch is gated now)
 send({ romp: 'browseFiles', path: '/repo/notes-api', sid: SID });
 out.browsePhone = snap(); reset(); MOBILE = false;
 // the Files page is still loading when the click arrives: the forward waits for the iframe's load, once
@@ -1038,7 +1038,7 @@ window.__rompOpenSettings('panes', 'files');
 out.gearInFlightSecond = Object.assign(snap(), { src: ATTRS['f-settings'].src, sets: SETTINGS_SETS - setsBefore, waiting: SETTINGS_LOADS.length });
 SETTINGS_URL = 'http://TESTHOST:1/settings'; SETTINGS_APP = 'settings'; SETTINGS_LOADS.slice().forEach((f) => f());   // the restarted fetch's page loads
 out.gearInFlightLoaded = Object.assign(snap(), { sets: SETTINGS_SETS - setsBefore }); reset();
-// (g) review round 5 (2026-09-20, ui-1): a tap while the page has COMMITTED at /settings but its inline shim has not run (no marker yet,
+// (g) pass 5, the author's label (2026-09-20, taking the reviewer's round-4 finding ui-1): a tap while the page has COMMITTED at /settings but its inline shim has not run (no marker yet,
 // no load event yet: the stylesheets load ahead of the shim). Round 4's read called that not-live and restarted, tearing down the
 // navigation in flight where the parent rode it. The load event tells the two apart: with the pending flag still up the tap rides the
 // fetch once, re-recording its own ask so the load posts THIS tap's names; a further tap in the unchanged state restarts (the refuter's
@@ -1234,7 +1234,7 @@ class RelayArms(unittest.TestCase):
         self.assertLess(js.index("var live=false,parsed=false;"), js.index("if(!f.getAttribute('src')){var u=f.getAttribute('data-src');"), "…so the promotion below re-fetches in the same tap")
 
     def test_a_tap_over_a_committed_page_whose_shim_has_not_run_rides_the_fetch_once_and_a_further_tap_restarts(self):
-        # review round 5 (2026-09-20, ui-1): round 4's tap-time read counted a settings page that had committed but whose inline shim had
+        # pass 5, the author's label (2026-09-20, taking the reviewer's round-4 finding ui-1): pass 4's tap-time read counted a settings page that had committed but whose inline shim had
         # not run as not-live, so a second tap in that window tore down the navigation in flight and started a second load, where the
         # parent rode the one running. The load event distinguishes the two (the listener clears the pending flag on the page's load):
         # with the flag up the tap rides the fetch ONCE, re-recording its own ask; a further tap in the unchanged state restarts (the
@@ -1269,7 +1269,7 @@ class RelayArms(unittest.TestCase):
         self.assertEqual((f2["src"], f2["sets"], f2["settings"], f2["waiting"]), ("/settings", 6, [], 1), "a second tap while the fetch is in flight (about:blank, no marker) restarts it and posts nothing yet: %r" % (f2,))
         self.assertEqual(self.out["gearInFlightLoaded"]["settings"], [{"romp": "openSettings", "tab": "panes", "section": "files"}], "the restarted fetch's load delivers the SECOND tap's ask (before: the first's, its names dropped)")
         js = km._LANDING_SETTINGS_JS
-        self.assertIn("\nvar sPend=false;\nvar sArmed=false,sOpen=null;", js, "the project's declaration stands byte-identical (review round 6: the upstream-line rule, so a fold meets no conflict on it) and the fork declares the listener's arm flag and the pending ask's poster on the line after it, in the shared scope the listener reads")
+        self.assertIn("\nvar sPend=false;\nvar sArmed=false,sOpen=null;", js, "the project's declaration stands byte-identical (pass 6, the author's label: the upstream-line rule, so a fold meets no conflict on it) and the fork declares the listener's arm flag and the pending ask's poster on the line after it, in the shared scope the listener reads")
         self.assertIn("if(sPend){sPend=false;var o=sOpen;sOpen=null;if(o)o();}});}return;}", js, "the one listener posts the recorded ask and clears it")
         up = "if(!f.getAttribute('src')){var u=f.getAttribute('data-src');if(!u)return;sPend=true;f.setAttribute('src',u);"
         self.assertIn(up, js, "the upstream promotion line is intact")
@@ -1290,7 +1290,7 @@ class RelayArms(unittest.TestCase):
     def test_the_feeds_browse_relay_and_the_quote_seed_forward_are_untouched(self):
         b = self.out["browse"]
         self.assertEqual(b["feed"], [{"romp": "browseFiles", "path": "/repo/notes-api", "sid": SID}])
-        self.assertEqual(b["tabs"], [], "desktop: no tab switch (review round 5, 2026-09-20, ui-2: the grid shows the feed already, and show() would persist the remembered phone tab; this step runs on the desktop, and before the gate its pin read the switch as a phone's)")
+        self.assertEqual(b["tabs"], [], "desktop: no tab switch (pass 5, the author's label, 2026-09-20, the reviewer's round-4 ui-2: the grid shows the feed already, and show() would persist the remembered phone tab; this step runs on the desktop, and before the gate its pin read the switch as a phone's)")
         self.assertEqual(b["files"], [])
         p = self.out["browsePhone"]
         self.assertEqual(p["feed"], [{"romp": "browseFiles", "path": "/repo/notes-api", "sid": SID}], "the phone: the same forward")
@@ -1775,7 +1775,7 @@ out.mirror = snap();
 console.log(JSON.stringify(out));
 """
 
-# review round 4 verify (2026-09-19): the FEED through the recorded-failure road. The feed is exempt from the phone's off-screen parking (it
+# the author's pass-4 verify (2026-09-19): the FEED through the recorded-failure road. The feed is exempt from the phone's off-screen parking (it
 # loads at boot) and lazyFlip's phone branch skipped it with the chat, before the DEAD check, so a feed recorded DEAD on the desktop (the phone
 # boot's promotion failed, the flip promoted it again, that failed too: the bound) kept its src over the dead document on the flip back, and
 # the Feed tab tap ran promote() against a src and painted nothing: the ruled dead end, for the feed alone. The DEAD check runs for every key
@@ -1799,7 +1799,7 @@ shimUp('feed'); (LOADS.feed || []).forEach((f) => f());   // the good load
 out.recovered = snapFd();
 console.log(JSON.stringify(out));
 """
-# review round 4 verify: a desktop promotion judged on the phone. lazyFlip's desktop branch sets data-src and promote() removes data-lazy-src
+# the author's pass-4 verify: a desktop promotion judged on the phone. lazyFlip's desktop branch sets data-src and promote() removes data-lazy-src
 # alone, so when the verdict landed on the phone (the flip back before it) failed() parked the pane under data-lazy-src with data-src still on
 # the frame; the controller's reconcile (the gear's storage event) then set its src from data-src with no token, listener or backstop, a
 # promotion nothing judged: on an engine that fires no load event for a failed navigation the failed state stood for the page's life while
@@ -1823,7 +1823,7 @@ window.__rompMobileTab('fleet');   // the tab tap: the one promotion road, with 
 out.tabTap = snapBa();
 console.log(JSON.stringify(out));
 """
-# review round 4 verify: the flip back while the DESKTOP's own promotion is in flight. The grid's promote() paints no loading class, lazyFlip's
+# the author's pass-4 verify: the flip back while the DESKTOP's own promotion is in flight. The grid's promote() paints no loading class, lazyFlip's
 # phone branch left a frame with a src alone, and the tab tap's promote() refuses a src, so paintLoading found nothing: a blank pane whose
 # taps did nothing until the verdict (WebKit: up to 30 s, the backstop). The phone branch paints the loader for a promotion still owed its
 # verdict (PEND), keyed on the recorded promotion and never on a read of the document.
@@ -1852,13 +1852,13 @@ console.log(JSON.stringify(out));
 
 # ui-1 (review round 4, 2026-09-19): the keyboard's retry keeps its focus. paintLoading hides the button while the retry loads, which drops focus to the
 # body in every engine (the served leg's witness); the failed paint that shows it again must put focus back, and nothing else may move focus onto it.
-# review round 5 (2026-09-20, correctness-3, ruled high): the desktop's bound is reached by docState's `other` answer too, whose commonest
+# pass 5, the author's label (2026-09-20, taking the reviewer's round-4 finding correctness-3, ruled high): the desktop's bound is reached by docState's `other` answer too, whose commonest
 # member is a document the KERNEL sent (its 403 line under a stale cookie, whose body names the serve-token file's path). Round 4's bound kept
 # the src whatever the answer, so that body stood on the desktop's screen with no failed state and no retry for the page's life: round 3's
 # high moved to the desktop. The bound now drops a document the kernel sent from the frame (src removed, the url under data-src) and keeps
 # the browser's own error page (`none`) as before; both record DEAD, and the flip back parks the pane with the failed state (the DEAD branch
 # ahead of the unloaded parking, which would otherwise have parked the src-less pane with no state). The dropped document's url waits under
-# data-lazy-src, not data-src (the round-5 verify): the controller's reconcile copies data-src to src on every gear save (the romp:settings
+# data-lazy-src, not data-src (the author's pass-5 verify): the controller's reconcile copies data-src to src on every gear save (the romp:settings
 # storage event), so parked there the bound pane was re-fetched with no token and no backstop and the bound promotion's stale listener
 # judged and dropped it again, one re-fetch and one row per save; under data-lazy-src a gear save moves nothing.
 _LAZY_DESKTOP_OTHER_BOUND_DRIVER = _LAZY_TOOLS + r"""
@@ -1887,7 +1887,7 @@ shimUp('fleet'); (LOADS.fleet || []).forEach((f) => f());   // the good load (th
 out.recovered = snapO('fleet');
 console.log(JSON.stringify(out));
 """
-# review round 5 (2026-09-20, tests-2 with extra9-1): every desktop promotion arms the 30 s backstop since round 4, and its `blank` answer (a
+# pass 5, the author's label (2026-09-20, taking the reviewer's round-4 findings tests-2 with extra9-1): every desktop promotion arms the 30 s backstop since pass 4, and its `blank` answer (a
 # fetch not yet committed) was a failure there too, so a healthy but slow desktop load was torn down at 30 s, re-fetched, and filed a
 # pane-load-failed row; on a rotation to the desktop one deadline per parked pane fired in the same tick. The backstop now HOLDS a `blank` on
 # the desktop: the src is kept for the fetch still in flight (no re-fetch), the row and the episode count record the 30 s uncommitted
@@ -1915,7 +1915,7 @@ frames['f-waiting'].contentDocument = null; (LOADS.waiting || []).forEach((f) =>
 out.phoneFail = snapB('waiting');
 console.log(JSON.stringify(out));
 """
-# extra9-1's rotation (review round 5): the fetch still in flight at the backstop, then the rotation back to the phone BEFORE it lands: the
+# extra9-1's rotation (pass 5, the author's label): the fetch still in flight at the backstop, then the rotation back to the phone BEFORE it lands: the
 # recorded hold parks the pane with the failed state, the tab tap promotes it again and its load recovers it (the fetch dropped with the src
 # at the flip back is the open residual, stated in the PR body). Beside it, a hold whose fetch lands late as a document the kernel sent (the
 # 403 line) is the episode's second failure: the bound, the document dropped from the frame.
@@ -1994,15 +1994,15 @@ def _enclosing(spans, line):
 
 
 def _text_html_200_writers(src):
-    """The kernel's text/html 200 writers, DERIVED from the source (review round 5, tests-4; every `_send` call classified since the
-    round-5 verify, which found the first walk read one shape alone): an AST walk over every `self._send(...)` call, its status, body and
+    """The kernel's text/html 200 writers, DERIVED from the source (pass 5, the author's label, taking the reviewer's round-4 finding tests-4; every `_send` call classified since the
+    author's pass-5 verify, which found the first walk read one shape alone): an AST walk over every `self._send(...)` call, its status, body and
     type read positionally or by keyword (`code`, `body`, `ctype`). A type that is not a literal is admitted inside the named
     computed-type writers alone (_COMPUTED_TYPE_WRITERS, the file relays whose type is the file's, and the /dist/ route's _DIST_TYPE_EXPR in
     do_GET): a computed type anywhere else is loud, so a page served as `_send(200, page(), _CT_HTML)` reds this census instead of shipping
     unclassified. A literal text/html type must ride a literal status (a relayed status with a text/html literal is loud), and a 200's
     body is a call of a page function or a constant name (any other shape is loud). Returns the callee names of the bodies built by a call
     (the page functions) and the names of the bodies passed as a constant (the paste-the-token page). A pattern-matched grep is a sample:
-    the round-5 refuter's grep missed one of the nine writers; this walks every call."""
+    the reviewer's round-4 refuter's grep missed one of the nine writers; this walks every call."""
     tree = ast.parse(src)
     spans = _kernel_functions(tree)
     calls, names = set(), set()
@@ -2037,7 +2037,7 @@ def _text_html_200_writers(src):
 
 
 def _send_response_bypasses(src):
-    """Every `self.send_response(` in kernel.py outside Handler._send, classified (review round 5, extra6-1): the status expression, the
+    """Every `self.send_response(` in kernel.py outside Handler._send, classified (pass 5, the author's label, taking the reviewer's round-4 finding extra6-1): the status expression, the
     Content-Type the block sends, and whether the block writes a body. The block is the site's line and the lines after it down to the
     first dedent below the site's indentation. A body write is `wfile.write(` or `copyfileobj(` in the block."""
     lines = src.split("\n")
@@ -2064,7 +2064,7 @@ _WS_FRAME_WRITERS = {"_ws_sender", "_ws_send", "_ws_pong"}   # WebSocket frames 
 
 
 def _raw_socket_writers(src, bypasses):
-    """Every raw write to a socket in kernel.py (a `sendall(...)` call, or a `write(...)` on a `wfile`, read off the AST), classified (review round 5 verify, extra6-1's third road):
+    """Every raw write to a socket in kernel.py (a `sendall(...)` call, or a `write(...)` on a `wfile`, read off the AST), classified (the author's pass-5 verify, extra6-1's third road):
     the stamping writer (Handler._send's own write), a bypassing `send_response` block's (`bypasses`, the census above: the HEAD roads and
     the two attachments), the _remote_ws splice (the remote kernel's status line, headers and frames pumped to the client byte for byte,
     the one road bytes leave a handler with no send_response at all), or a WebSocket frame writer (_WS_FRAME_WRITERS). Anything else is
@@ -2324,7 +2324,7 @@ class LazyPanes(unittest.TestCase):
     def test_the_kernel_stamps_every_200_html_document_it_writes_and_nothing_else(self):
         # The writer's side of the round-4 rule (kernel-1): Handler._send marks every text/html 200 whose body has an <html> tag with
         # data-romp-served=200 on that tag (a rule over the writer, so no list of pages can go stale), and nothing else: the seven pane routes'
-        # pages, the shell page every client loads (review round 5, tests-4: _landing(), covered by neither census before), the four fallback
+        # pages, the shell page every client loads (pass 5, the reviewer's round-4 tests-4: _landing(), covered by neither census before), the four fallback
         # pages a missing ui/ module yields all carry it; a 403 or a 500 text/plain body (what the kernel's denial and its traceback are), a
         # text/plain 200 and a body with no <html> tag (the paste-the-token page at /, disclosed below) pass through untouched, bytes or str.
         # The population is DERIVED from the writers: an AST walk over kernel.py's `_send(200, <body>, "text/html…")` calls must name exactly
@@ -2353,7 +2353,7 @@ class LazyPanes(unittest.TestCase):
             out = stamp(200, b, "text/html; charset=utf-8")
             self.assertEqual(out.count("<html data-romp-served=200"), 1, k + ": one stamp on the <html> tag of a text/html 200")
             self.assertEqual(len(out), len(b) + len(" data-romp-served=200"), k + ": nothing else changes")
-            self.assertTrue(re.match(r"\s*<!DOCTYPE html>\s*<html data-romp-served=200[\s>]", out, re.I), k + ": the stamped tag is the document's ROOT, the one documentElement carries (review round 5 verify: the stamp lands on the FIRST <html match, so a leading comment naming the tag would take it, count one and add the same 21 bytes, with the root unstamped and docState reading `other`): %r" % (out[:80],))
+            self.assertTrue(re.match(r"\s*<!DOCTYPE html>\s*<html data-romp-served=200[\s>]", out, re.I), k + ": the stamped tag is the document's ROOT, the one documentElement carries (the author's pass-5 verify: the stamp lands on the FIRST <html match, so a leading comment naming the tag would take it, count one and add the same 21 bytes, with the root unstamped and docState reading `other`): %r" % (out[:80],))
         self.assertNotIn("<html", km._TOKEN_LOGIN_HTML, "the token-less landing (the paste-the-token page at /) writes no root tag, so it is the one 200 the writer cannot stamp: disclosed here; it is served at / alone, never at a pane url, so no pane frame's reader meets it")
         self.assertEqual(stamp(200, km._TOKEN_LOGIN_HTML, "text/html"), km._TOKEN_LOGIN_HTML, "...and it passes through as it came")
         self.assertEqual(stamp(200, b"<!DOCTYPE html><html lang=en><body>x</body></html>", "text/html"), b"<!DOCTYPE html><html data-romp-served=200 lang=en><body>x</body></html>", "a bytes body is stamped the same")
@@ -2364,7 +2364,7 @@ class LazyPanes(unittest.TestCase):
         self.assertIn("body = _stamp_served_html(code, body, ctype)", inspect.getsource(km.Handler._send), "the one call, at the top of the writer every text/html response leaves through")
 
     def test_every_response_writer_that_bypasses_the_stamping_send_is_a_non_200_a_bodiless_head_road_or_an_octet_stream_attachment(self):
-        # extra6-1 (review round 5): the stamp's exhaustiveness over text/html 200s rests on Handler._send, and _send is NOT the one place every
+        # extra6-1 (pass 5, the author's label): the stamp's exhaustiveness over text/html 200s rests on Handler._send, and _send is NOT the one place every
         # response leaves: eight `send_response` sites bypass it (HEAD roads answering with the real length and no body, 206 ranges, the 204
         # preflight, the 101 upgrade, and two 200 attachments with application/octet-stream hardcoded). The rule holds because none of them
         # writes a text/html 200, and this census pins that over the WRITERS, not the type tables: every `send_response(` outside _send is a
@@ -2372,7 +2372,7 @@ class LazyPanes(unittest.TestCase):
         # writer of a text/html 200 (or an existing one re-typed) reds it. Red under mutation: the download route's octet-stream literal
         # changed to text/html.
         sites = _send_response_bypasses(_kernel_source())
-        self.assertGreaterEqual(len(sites), 8, "the census found the bypassing writers (eight at review round 5; a derivation over nothing pins nothing): %r" % (sites,))
+        self.assertGreaterEqual(len(sites), 8, "the census found the bypassing writers (eight at pass 5, the author's label; a derivation over nothing pins nothing): %r" % (sites,))
         for st in sites:
             non200 = st["status"].isdigit() and int(st["status"]) != 200
             octet = st["ctype"] == '"application/octet-stream"'
@@ -2381,7 +2381,7 @@ class LazyPanes(unittest.TestCase):
         self.assertTrue([st for st in sites if not st["writes"]], "…and the bodiless HEAD roads: %r" % (sites,))
 
     def test_every_raw_socket_write_is_the_stamping_writers_a_bypassing_blocks_the_remote_ws_splices_or_a_websocket_frames(self):
-        # review round 5 verify (extra6-1's third road): the two censuses above read `_send` calls and `send_response(` sites, and neither
+        # the author's pass-5 verify (extra6-1's third road): the two censuses above read `_send` calls and `send_response(` sites, and neither
         # sees bytes that leave a handler with NO send_response: _remote_ws writes a remote kernel's status line and headers to the client
         # (`down.sendall(head)`) and pumps its body, byte for byte. Today no document can arrive by that road (the route answers 400
         # text/plain without a Sec-WebSocket-Key, a header no navigation or fetch can set, pinned by tests/test_kernel_remote_ws_proxy.py),
@@ -2448,13 +2448,13 @@ class LazyPanes(unittest.TestCase):
         self.assertEqual((rb["src"], rb["div"], rb["bodyFailed"], rb["bodyLoading"], rb["msg"], rb["sets"], rb["rows"]), ("/fleet", [], False, False, "", 4, o["phoneFailB2"]["rows"]), "the good load: recovered, no overlay, no new row")
         self.assertEqual(o["mirrorB"], dict(rb, mobile=True), "the mirror: a flip there and back over the loaded pane parks nothing (nothing recorded)")
         js = km._LANDING_MOBILE_JS
-        self.assertIn("function failed(k,via,s){var f=F[k];if(!f)return;var mob=mobileOn();", js, "the layout is read at fire time, docState's answer passed in (review round 5)")
-        self.assertIn("var park=(mob||bound)?LAZY:'data-src';", js, "the url waits under the phone's attribute on the phone and at the desktop's bound, and under data-src for the desktop's first failure alone (review round 5 verify: the controller's reconcile reads data-src on every gear save)")
+        self.assertIn("function failed(k,via,s){var f=F[k];if(!f)return;var mob=mobileOn();", js, "the layout is read at fire time, docState's answer passed in (pass 5, the author's label)")
+        self.assertIn("var park=(mob||bound)?LAZY:'data-src';", js, "the url waits under the phone's attribute on the phone and at the desktop's bound, and under data-src for the desktop's first failure alone (the author's pass-5 verify: the controller's reconcile reads data-src on every gear save)")
         self.assertIn("f.setAttribute(park,URLS[k]);", js)
-        self.assertIn("var hold=!mob&&s==='blank',again=!mob&&!hold&&EPI[k]<2,bound=!mob&&!hold&&!again,keep=hold||(bound&&s!=='other');", js, "the desktop's table (review round 5): a fetch still in flight at the backstop is held; else one re-promotion per episode, and the bound keeps the src for the browser's own error page alone")
+        self.assertIn("var hold=!mob&&s==='blank',again=!mob&&!hold&&EPI[k]<2,bound=!mob&&!hold&&!again,keep=hold||(bound&&s!=='other');", js, "the desktop's table (pass 5, the author's label): a fetch still in flight at the backstop is held; else one re-promotion per episode, and the bound keeps the src for the browser's own error page alone")
         self.assertIn("DEAD[k]=(hold||bound)?TOK[k]:0;", js, "the hold and the bound are recorded under the promotion's token")
         self.assertIn("if(DEAD[lk3]&&DEAD[lk3]===TOK[lk3]){", js, "lazyFlip's phone branch parks the recorded pane")
-        self.assertLess(js.index("if(DEAD[lk3]&&DEAD[lk3]===TOK[lk3]){"), js.index("else if(lk3!=='feed'&&lu3&&!lf3.getAttribute('src')){"), "the recorded pane is checked ahead of the unloaded parking (review round 5: the bound drops the src for a document the kernel sent, and the unloaded parking would have parked it with no failed state)")
+        self.assertLess(js.index("if(DEAD[lk3]&&DEAD[lk3]===TOK[lk3]){"), js.index("else if(lk3!=='feed'&&lu3&&!lf3.getAttribute('src')){"), "the recorded pane is checked ahead of the unloaded parking (pass 5, the author's label: the bound drops the src for a document the kernel sent, and the unloaded parking would have parked it with no failed state)")
         self.assertIn("if(TOK[k]!==tok||PEND[k]!==tok)return;var s=docState(f);", js, "the backstop's guard is the pending verdict, not the phone's paint class")
         self.assertNotIn("if(mobileOn()){try{var d=paneDiv(f);if(d)d.classList.add('loading');}catch(e){}\nf.addEventListener", js, "the detectors are not under the phone gate")
         self.assertIn("if(mob)d.classList.add('failed');else d.classList.remove('failed');", js)
@@ -2462,7 +2462,7 @@ class LazyPanes(unittest.TestCase):
         self.assertIn("URLS[k]=u;var tok=TOK[k]=(TOK[k]||0)+1;", js, "the token is minted on every promotion, before the layout branch")
 
     def test_a_feed_recorded_dead_on_the_desktop_is_parked_by_the_flip_back_and_its_tab_tap_promotes_it(self):
-        # review round 4 verify (2026-09-19): the feed goes through promote() (the phone boot's, the desktop flip's) and so can be recorded DEAD,
+        # the author's pass-4 verify (2026-09-19): the feed goes through promote() (the phone boot's, the desktop flip's) and so can be recorded DEAD,
         # but lazyFlip's phone branch skipped it with the chat before the DEAD check, so the ruled dead end (the tab tap inert for the page's
         # life over a src on a dead document) survived for the feed alone. Its exemption is from the off-screen parking, not from a failure.
         o = _lazy(self.seed, _LAZY_FEED_DEAD_DRIVER)
@@ -2485,7 +2485,7 @@ class LazyPanes(unittest.TestCase):
         self.assertIn("if(lk3!=='feed'&&lu3&&!lf3.getAttribute('src')){lf3.setAttribute(LAZY,lu3);lf3.removeAttribute('data-src');}", js, "the feed's exemption gates the unloaded parking alone")
 
     def test_a_failure_judged_on_the_phone_after_a_desktop_promotion_leaves_no_data_src_for_the_gears_reconcile_to_promote_unjudged(self):
-        # review round 4 verify: lazyFlip's desktop branch sets data-src and promote() removes data-lazy-src alone, so a desktop-promoted pane
+        # the author's pass-4 verify: lazyFlip's desktop branch sets data-src and promote() removes data-lazy-src alone, so a desktop-promoted pane
         # whose verdict landed on the phone held BOTH attributes after failed()'s re-park; the controller's reconcile then set its src from
         # data-src on any gear save, a promotion with no token, listener or backstop, and on an engine with no load event for a failed
         # navigation the failed state stood for the page's life while every retry road ran promote() against a src. failed() drops the
@@ -2505,7 +2505,7 @@ class LazyPanes(unittest.TestCase):
         self.assertIn("if(URLS[k]){f.setAttribute(park,URLS[k]);f.removeAttribute(park===LAZY?'data-src':LAZY);}", js, "failed() re-parks under the attribute its next promotion reads and drops the other")
 
     def test_a_flip_back_while_the_desktops_promotion_is_in_flight_paints_the_loader_for_the_shown_tab(self):
-        # review round 4 verify: the grid's promote() paints no loading class, lazyFlip's phone branch left a frame with a src alone, and the
+        # the author's pass-4 verify: the grid's promote() paints no loading class, lazyFlip's phone branch left a frame with a src alone, and the
         # tab tap's promote() refuses a src, so paintLoading found nothing: a blank pane whose taps did nothing until the verdict (WebKit: up to
         # 30 s, the backstop). The phone branch paints the loader for a promotion still owed its verdict (PEND), keyed on the recorded
         # promotion, never on a read of the document; loaded() and failed() take it off as ever.
@@ -2524,12 +2524,12 @@ class LazyPanes(unittest.TestCase):
         self.assertIn("else if(PEND[lk3]&&PEND[lk3]===TOK[lk3]&&lf3.getAttribute('src')){var pd3=paneDiv(lf3);if(pd3)pd3.classList.add('loading');}", js, "the loader for a promotion still owed its verdict, keyed on PEND")
 
     def test_at_the_desktop_bound_a_document_the_kernel_sent_is_dropped_from_the_frame_and_the_browsers_own_error_page_is_kept(self):
-        # review round 5 (correctness-3, ruled high): the bound is reached by docState's `other` answer too, whose commonest member is the
+        # pass 5, the author's label, taking the reviewer's round-4 finding correctness-3, ruled high: the bound is reached by docState's `other` answer too, whose commonest member is the
         # kernel's own 403 line, its body naming the serve-token file's path; round 4's bound kept the src whatever the answer, so on the
         # desktop that body stood as the pane with no failed state and no retry short of a flip or a reload. Now the bound drops a document
         # the kernel sent (src removed, the url under data-src, the frame navigates to about:blank) and keeps the browser's own error page;
         # both are recorded, and the flip back parks the pane with the failed state, from which the tab tap recovers it. The dropped
-        # document's url waits under data-lazy-src (the round-5 verify): under data-src the controller's reconcile re-promoted it on every
+        # document's url waits under data-lazy-src (the author's pass-5 verify): under data-src the controller's reconcile re-promoted it on every
         # gear save with no token and no backstop, and the bound promotion's stale listener judged and dropped it again (one re-fetch and
         # one row per save); a gear save after the bound now moves nothing.
         o = _lazy(self.seed, _LAZY_DESKTOP_OTHER_BOUND_DRIVER)
@@ -2538,7 +2538,7 @@ class LazyPanes(unittest.TestCase):
         fo = o["firstOther"]
         self.assertEqual((fo["src"], fo["lazy"], fo["dataSrc"], fo["div"], fo["sets"], fo["rows"]), ("/fleet", None, "/fleet", [], 2, [{"pane": "fleet", "via": "load", "n": 1}]), "the kernel's denial at the first desktop failure: re-parked under data-src and promoted again, as before")
         ob = o["desktopOtherBound"]
-        self.assertEqual((ob["src"], ob["lazy"], ob["dataSrc"]), (None, "/fleet", None), "the bound over a document the kernel sent: the src is DROPPED (the frame navigates to about:blank; before: the 403 body stood on the screen) and the url waits under data-lazy-src, the attribute the controller's reconcile does not read (round 5's first cut parked it under data-src)")
+        self.assertEqual((ob["src"], ob["lazy"], ob["dataSrc"]), (None, "/fleet", None), "the bound over a document the kernel sent: the src is DROPPED (the frame navigates to about:blank; before: the 403 body stood on the screen) and the url waits under data-lazy-src, the attribute the controller's reconcile does not read (pass 5's first cut parked it under data-src)")
         self.assertEqual((ob["div"], ob["sets"], ob["bodyFailed"], ob["bodyLoading"], ob["msg"]), ([], 2, False, False, ""), "no third promotion, no failed class on the desktop (nothing paints it there), no loader")
         self.assertEqual(ob["rows"], [{"pane": "fleet", "via": "load", "n": 1}, {"pane": "fleet", "via": "load", "n": 2}], "both failures counted and said")
         self.assertEqual(ob["unmarked"], [], "nothing shown as served")
@@ -2557,7 +2557,7 @@ class LazyPanes(unittest.TestCase):
         self.assertEqual((rc["div"], rc["sets"], rc["bodyLoading"], rc["bodyFailed"], rc["rows"]), ([], 3, False, False, ob["rows"]), "the good load: recovered, no new row")
 
     def test_a_desktop_backstop_over_a_fetch_still_in_flight_holds_the_src_and_the_load_that_lands_ends_the_episode(self):
-        # review round 5 (tests-2 with extra9-1). Round 4 armed the backstop on every promotion and its `blank` answer was a failure on the
+        # pass 5, the author's label, taking the reviewer's round-4 findings tests-2 with extra9-1. Pass 4 armed the backstop on every promotion and its `blank` answer was a failure on the
         # desktop too, so a healthy but slow desktop load was torn down at 30 s, re-fetched, and filed a row; a rotation to the desktop armed
         # one deadline per parked pane in the same tick. The backstop holds a `blank` on the desktop: the src kept for the fetch in flight,
         # no re-fetch (one src set), the row and the episode count recording the 30 s uncommitted document, and the load that lands ends the
@@ -2583,7 +2583,7 @@ class LazyPanes(unittest.TestCase):
         self.assertEqual((pf["div"], pf["bodyFailed"], pf["msg"], pf["rows"][-1]), (["failed"], True, "Couldn't load this pane.", {"pane": "waiting", "via": "load", "n": 2}), "a later failure on the phone shows a FIRST failure's copy: the load cleared the episode's count (the row's n keeps the page-life count)")
 
     def test_a_rotation_back_before_a_held_fetch_lands_parks_the_pane_with_the_failed_state_and_the_tap_recovers_it(self):
-        # extra9-1 (review round 5): the held pane is recorded, so the rotation back to the phone parks it with the failed state and its tab
+        # extra9-1 (pass 5, the author's label): the held pane is recorded, so the rotation back to the phone parks it with the failed state and its tab
         # tap promotes it again (the fetch in flight is dropped with the src at the flip back: open, stated in the PR body). A hold whose
         # fetch lands late as the kernel's 403 line is the episode's second failure: the bound, the document dropped from the frame.
         o = _lazy(self.seed, _LAZY_DESKTOP_HOLD_ROTATION_DRIVER)

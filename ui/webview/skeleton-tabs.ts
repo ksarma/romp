@@ -40,7 +40,7 @@ export interface SkeletonState {
   // 16 to 22 MB on the owner's board, for tabs nobody asked for (by the design's per-full figures, 37 fulls at 0.44 to 0.58 MB each;
   // no return's chain has been measured). Set by onSocketUp when the pane's shell is the phone layout (the arm's layout read, at
   // render.ts's wsup arm, the redial's frame); while it stands gateOnFrame and gateOnShow open nothing and nextPrefetch issues no
-  // ask; gateOnStrip opens under it (review round 4b, 2026-09-20, extra7-1: its evidence, a local strip with no local want, does not
+  // ask; gateOnStrip opens under it (pass 4b, the author's label, 2026-09-20, taking the reviewer's round-3 addendum's extra7-1: its evidence, a local strip with no local want, does not
   // recur, and a refusal recorded nowhere left the gate closed after the flip back to the desktop, the lift arming nothing), which
   // costs no ask while the hold stands and is what the lift arms over. The boot dial sends no wsup, so a cold open's chain is
   // untouched; the desktop passes false and keeps its chain.
@@ -71,7 +71,7 @@ export function gateOnFrame(st: SkeletonState, id: string, wants: ReadonlyArray<
  *  active (`want` null; an id the strip does not carry: an ended session; or a want on another host, `host:uuid`, whose full is
  *  served over that host's relay socket and is not this chain's to wait for) no full is coming for one from this kernel, so the
  *  gate opens here and the chain loads the tabs in the kernel's order. A strip that does list a local want leaves the gate to
- *  the frame. Reads no return hold (review round 4b, extra7-1): an open gate under the hold issues no ask, nextPrefetch's hold term
+ *  the frame. Reads no return hold (pass 4b, the author's label, taking the reviewer's round-3 addendum's extra7-1): an open gate under the hold issues no ask, nextPrefetch's hold term
  *  below, and the lift's second read of the gate arms the chain on the flip back. Returns whether it opened NOW. */
 export function gateOnStrip(st: SkeletonState, order: readonly string[], want: string | null | undefined): boolean {
   if (st.gate) return false;
@@ -208,7 +208,7 @@ export function onLayoutWord(st: SkeletonState, phone: boolean): boolean {
  *  return hold stands (`st.returnHold`, the owner's decision of 2026-09-19, re-decided on the shell's layout word since round 3). */
 export function nextPrefetch(st: SkeletonState, activeId: string | null, inFlight: ReadonlySet<string>,
                              hidden: boolean, inView: (id: string) => boolean): string | null {
-  if (hidden || !st.gate || st.returnHold) return null;   // …and while the return hold stands (review round 3, extra8-1: a hold set on a layout word after the gate opened must stop the chain too; before this only the openers read the hold, so a flip to the phone mid-socket held nothing; and, since gateOnStrip reads no hold (review round 4b, extra7-1), the one term that keeps an open gate silent under it)
+  if (hidden || !st.gate || st.returnHold) return null;   // …and while the return hold stands (review round 3, extra8-1: a hold set on a layout word after the gate opened must stop the chain too; before this only the openers read the hold, so a flip to the phone mid-socket held nothing; and, since gateOnStrip reads no hold (pass 4b, the author's label, the reviewer's round-3 addendum's extra7-1), the one term that keeps an open gate silent under it)
   for (const id of st.ids) if (inFlight.has(id)) return null;
   for (const id of st.order) {
     if (!st.ids.has(id) || id === activeId) continue;

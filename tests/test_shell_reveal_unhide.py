@@ -27,7 +27,7 @@ class RevealUnhidesThePane(unittest.TestCase):
                       "the kernel's app=shell push")
 
     def test_on_the_desktop_layout_the_tab_switch_behind_a_reveal_is_gated_by_the_forks_later_declaration(self):
-        # review round 5 (2026-09-20, ui-2; the round-3 ruling's class, correctness-3 and regression-3): show() persists the remembered
+        # pass 5, the author's label (2026-09-20, taking the reviewer's round-4 finding ui-2; the reviewer's round-3 class, correctness-3 and regression-3): show() persists the remembered
         # phone tab (romp-mobile-tab) and sets body data-tab on every layout, so a reveal on a desktop dashboard rewrote the tab the phone
         # boots on. The project's userSwitch line stands unedited; the fork declares userSwitch AGAIN after it, gated on the layout probe,
         # and a function body binds the later declaration (both var-scoped), so a desktop reveal un-hides the pane and switches nothing.

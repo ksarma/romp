@@ -1592,7 +1592,7 @@ class RevealRoute(unittest.TestCase):
         self.assertEqual(km._PENDING_REVEAL.get("W-x"), {"sid": "SID-x", "wid": "W-x"})
 
     def test_parks_with_the_declared_chat_column_count_and_ignores_any_other_shape(self):
-        # review round 5 verify (correctness-1's residual): the shell posts the window's chat column count with the tap and the park
+        # the author's pass-5 verify (correctness-1's residual): the shell posts the window's chat column count with the tap and the park
         # keeps it for _resolve_reconnect's one-column check; a shape other than a positive int (a string, zero, a boolean, a shell of
         # a build before the field) declares nothing and the entry keeps its two-key shape
         import contextlib, io
@@ -2001,7 +2001,7 @@ const chatFrame = { contentDocument: { querySelector: () => (activeSid ? { getAt
 global.document = { getElementById: (id) => (id === 'f-feed' ? { contentWindow: feedWin } : id === 'f-chat' ? chatFrame : null),
   addEventListener: (k, f) => { if (k === 'visibilitychange') DOC.push(f); }, visibilityState: 'visible' };
 global.sessionStorage = { getItem: (k) => (k === 'romp:wid' ? 'W-test' : null) };
-// the shell's split state and layout probe (review round 5 verify: the reveal declares the window's chat column count): ROMP_TEST_CHAT_COLS
+// the shell's split state and layout probe (the author's pass-5 verify: the reveal declares the window's chat column count): ROMP_TEST_CHAT_COLS
 // is the raw romp-chat-cols record (none: one column); ROMP_TEST_MOBILE the phone layout (the head probe's answer); a driver may define
 // window.__rompChatFrames (the split script up: its frames are the truth) or make the store throw (a count the page cannot read)
 const STORE = {}; if (process.env.ROMP_TEST_CHAT_COLS) STORE['romp-chat-cols'] = process.env.ROMP_TEST_CHAT_COLS;
@@ -2292,7 +2292,7 @@ _FEED_OFF_DRIVER = _REVEAL_LIB + r"""
 """
 
 
-# review round 5 verify (correctness-1's residual): the reveal declares the window's CHAT COLUMN COUNT with every tap, so the kernel's
+# the author's pass-5 verify (correctness-1's residual): the reveal declares the window's CHAT COLUMN COUNT with every tap, so the kernel's
 # parked-reveal preference reads a declaration rather than the chat sockets registered so far. Before the split script parses (the boot
 # link, this script's own run) the count is what that script will build from the persisted record and the layout; once it is up, its
 # frames are the truth; a store the page cannot read declares nothing.
@@ -2777,7 +2777,7 @@ class MasterBellRoute(unittest.TestCase):
 
 
 class RevealDeclaresChatColumns(unittest.TestCase):
-    """review round 5 verify (correctness-1's residual): every /reveal body carries `cols`, the window's chat column count, so the kernel's
+    """The author's pass-5 verify (correctness-1's residual): every /reveal body carries `cols`, the window's chat column count, so the kernel's
     parked-reveal preference (_resolve_reconnect) can tell a one-column window from a split page before the page's columns have all
     redialed. The count is the split script's own rule before that script parses (one on the phone layout; one plus the persisted later
     columns of romp-chat-cols, v2 entries or the v1 array), the document's chat frames once it is up, and nothing when the store throws."""

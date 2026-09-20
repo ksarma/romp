@@ -191,7 +191,7 @@ class Shell(unittest.TestCase):
         # the tap-time read (the same round, kernel-3; the marker read added in review round 4, kernel-2): no document, about:blank, or a document without the
         # pane shim's marker (an error body) drops the src and the pending flag so the promotion below fetches again
         _has(self, "if(f.getAttribute('src')){var live=false,parsed=false;try{var sd=f.contentDocument;parsed=!!(sd&&sd.URL&&sd.URL!=='about:blank');live=!!(parsed&&f.contentWindow&&typeof f.contentWindow.__rompApp==='string');}catch(e){}", js)
-        # review round 5 (2026-09-20, ui-1): a committed document with no marker and the pending flag still up is a fetch in flight, so the tap
+        # pass 5, the author's label (2026-09-20, taking the reviewer's round-4 finding ui-1): a committed document with no marker and the pending flag still up is a fetch in flight, so the tap
         # rides it once (its ask re-recorded for the load) and a further tap in the unchanged state restarts; the dead shapes restart as before
         _has(self, "if(!live&&parsed&&sPend&&!sDeferred){sDeferred=true;sOpen=open;return;}", js)
         _has(self, "if(!live){try{f.removeAttribute('src');}catch(e){}sPend=false;}}", js)

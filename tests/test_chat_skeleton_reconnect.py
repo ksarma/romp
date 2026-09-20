@@ -52,7 +52,7 @@ TAB_ORDER = [S2, S1, S3, S4]                  # big, mid, small — the tab orde
 SIZES = {S2: 3000, S1: 2000, S3: 1000}        # transcript bytes; S4 has none
 # the journal of a tap that parked on the named road and was landed by the redial's first strip (item 12)
 REDIAL_TRAIL = r"\[reveal\] %s sid=\S+ wid=W1: parked[\s\S]*\[reveal\] sid=\S+ wid=W1: consumed \S+ the pane's redial"
-# the record the parked-reveal preference files when it applies (review round 5, kernel-2): the session served whole, the page's hint, its fate
+# the record the parked-reveal preference files when it applies (pass 5, the author's label, taking the reviewer's round-4 finding kernel-2): the session served whole, the page's hint, its fate
 PREFERRED_LINE = r"\[reveal\] sid=%s wid=W1: preferred at the set's resolve, the one full in place of the page's hint %s \(%s\)"
 
 
@@ -943,7 +943,7 @@ class SkeletonReconnect(unittest.TestCase):
         finally:
             km._PENDING_REVEAL.clear()
 
-    # ── round 4b (2026-09-20; fresh-1 / regression-4, the round-3 fixlist's extra9-1) ──
+    # ── pass 4b, the author's label (2026-09-20, taking the reviewer's round-3 addendum: fresh-1 / regression-4, the round-3 fixlist's extra9-1) ──
     def test_12e_a_reveal_parked_for_the_window_makes_the_parked_session_the_redials_one_full_when_the_kernel_lists_it(self):
         # The phone's first dial takes the skeleton diet with the LAST-SHOWN tab as its hint. A notification tap whose /reveal
         # beat the chat pane's socket (the ack and vanish roads land at boot; sw when the browser opens the installed app on
@@ -969,7 +969,7 @@ class SkeletonReconnect(unittest.TestCase):
             self.assertLess(types.index("tabOrder"), types.index("focus"), "behind the strip that names its tab")
             self.assertEqual(km._PENDING_REVEAL, {}, "the park was consumed")
             self.assertRegex(trail.getvalue(), REDIAL_TRAIL % "ack", "the journal says the redial landed the park")
-            # review round 5 (kernel-2): the one place the kernel overrides the page's hint files a record, printed once the set is built
+            # pass 5, the author's label, taking the reviewer's round-4 finding kernel-2: the one place the kernel overrides the page's hint files a record, printed once the set is built
             # and named by the event (the set's resolve; the branch runs on the redial and on the ready arm alike), the hint's fate read off
             # the resolved set (web has a transcript: a skeleton)
             self.assertRegex(trail.getvalue(), PREFERRED_LINE % (S2[:8], S1[:8], "a skeleton"), "the preference is recorded, naming the session served whole and the hint's fate")
@@ -983,7 +983,7 @@ class SkeletonReconnect(unittest.TestCase):
                 km._push([c2])
             self.assertTrue(self._sessions(c2))
             self.assertEqual(sorted(self._names(self._sessions(c2))), ["docs", "web"], "the hint's full, as before")
-            self.assertNotIn("preferred at the set's resolve", gone_trail.getvalue(), "not applied, so no record claims it (review round 5, kernel-2)")
+            self.assertNotIn("preferred at the set's resolve", gone_trail.getvalue(), "not applied, so no record claims it (pass 5, the reviewer's round-4 kernel-2)")
             self.assertEqual(self._names(self._tab_orders(c2)[0]["skeleton"]), ["tests", "api"])
             self.assertEqual([f["type"] for f in c2["_frames"] if f["type"] in ("focus", "confirmRevive")], ["confirmRevive"],
                              "the ended session's park lands the revive prompt")
@@ -998,12 +998,12 @@ class SkeletonReconnect(unittest.TestCase):
             self.assertEqual(sorted(self._names(self._sessions(c3))), ["docs", "web"])
             self.assertEqual(self._names(self._tab_orders(c3)[0]["skeleton"]), ["tests", "api"])
             self.assertEqual([(f["id"], f["live"]) for f in self._frames(c3, "focus")], [("gpu1:" + S2, True)])
-            # THE SPLIT (review round 5, correctness-1: the round-4b ruling's own regression). Two chat columns under one wid, each
+            # THE SPLIT (pass 5, the author's label, taking the reviewer's round-4 finding correctness-1: the regression pass 4b introduced by taking the reviewer's round-3 addendum). Two chat columns under one wid, each
             # with its own active hint, and a park for api. The kernel cannot name the column that will SHOW the tapped session
             # (the consume focuses the first chat client of the wid and the page hands a session another column holds to that
             # column), so the preference is for a window with ONE chat column, keyed on the `col` each column declares at its
             # handshake: here each column's own active stays whole and out of its own skeleton list, the parent's behaviour. At
-            # the round-4b head the column that resolved first was served api's full and its own visible tab as a skeleton.
+            # the pass-4b head the column that resolved first was served api's full and its own visible tab as a skeleton.
             del km._clients[:]
             with contextlib.redirect_stderr(io.StringIO()):
                 self.assertFalse(km._reveal_request(S2, "W1", via="ack"), "parked: neither column has said ready")
@@ -1013,7 +1013,7 @@ class SkeletonReconnect(unittest.TestCase):
                 km._push([cA, cB])
             self.assertTrue(self._sessions(cA) and self._sessions(cB), "both columns were sent session frames")
             self.assertNotIn("web", self._names(cA["skeleton"]), "the first column's own active hint stays out of its own skeleton list")
-            self.assertNotIn("tests", self._names(cB["skeleton"]), "the second column's own active hint stays out of its own skeleton list (at the round-4b head: a skeleton, api's full in its place)")
+            self.assertNotIn("tests", self._names(cB["skeleton"]), "the second column's own active hint stays out of its own skeleton list (at the pass-4b head: a skeleton, api's full in its place)")
             self.assertEqual(sorted(self._names(self._sessions(cA))), ["docs", "web"], "the first column's one full is its own hint's")
             self.assertEqual(sorted(self._names(self._sessions(cB))), ["docs", "tests"], "the second column's one full is its own hint's")
             self.assertEqual(self._names(self._tab_orders(cB)[0]["skeleton"]), ["web", "api"], "api is a skeleton for the second column, ascending size (the page's focus handler asks for it, one round trip: the parent's road)")
@@ -1056,9 +1056,9 @@ class SkeletonReconnect(unittest.TestCase):
             self.assertEqual(self._names(self._tab_orders(c5)[0]["skeleton"]), ["tests", "web"], "the stored tab a skeleton")
             self.assertEqual([f["id"] for f in self._frames(c5, "focus")], [S2], "the arm consumed the park")
             self.assertEqual(km._PENDING_REVEAL, {})
-            # THE DECLARATION (the round-5 verify, correctness-1's residual). The sockets read above is ONE column's at the first column's
+            # THE DECLARATION (the author's pass-5 verify, correctness-1's residual). The sockets read above is ONE column's at the first column's
             # resolve when a split page's columns redial one after another (the second's handshake has not registered its col yet), so
-            # at the round-5 head the first column was served the parked session's full and its own shown tab as a skeleton in that
+            # at the pass-5 head the first column was served the parked session's full and its own shown tab as a skeleton in that
             # window. The shell now declares its chat column count with the tap (_LANDING_REVEAL_JS cols, the /reveal body) and the park
             # carries it: a park declaring two columns declines the preference for the first column to resolve, alone in _clients, and
             # its own hint stays whole; the park is consumed all the same (the page routes the focus to the owning column).
@@ -1071,7 +1071,7 @@ class SkeletonReconnect(unittest.TestCase):
                 km._clients.append(cA2)                                            # the first column's handshake registered it; the second's has not yet
                 km._push([cA2])
             self.assertTrue(self._sessions(cA2))
-            self.assertEqual(sorted(self._names(self._sessions(cA2))), ["docs", "web"], "the first column to redial, alone in _clients: the declared two columns decline the preference, so its one full is its own hint's (at the round-5 head: api's full, web a skeleton)")
+            self.assertEqual(sorted(self._names(self._sessions(cA2))), ["docs", "web"], "the first column to redial, alone in _clients: the declared two columns decline the preference, so its one full is its own hint's (at the pass-5 head: api's full, web a skeleton)")
             self.assertEqual(self._names(self._tab_orders(cA2)[0]["skeleton"]), ["tests", "api"])
             self.assertEqual([f["id"] for f in self._frames(cA2, "focus")], [S2], "the park is consumed behind the strip all the same (the page hands the focus to the owning column)")
             self.assertEqual(km._PENDING_REVEAL, {})

@@ -40,7 +40,7 @@ Three scenarios against the REAL shell, the REAL worker and the REAL kernel (her
      /push/landed for that pid, [reveal] vanish in the kernel log. All three displayed → nothing. One displayed → two
      vanished → nothing lands, nothing shows, and both rows are settled (/push/dropped) so they never inflate a later
      count.
-  4. THE ACK ROAD'S COLD OPEN ON THE PHONE (review round 4b of the lazy panes, 2026-09-20): a row the worker acked CLICKED, the
+  4. THE ACK ROAD'S COLD OPEN ON THE PHONE (pass 4b of the lazy panes, the author's label, 2026-09-20): a row the worker acked CLICKED, the
      app opened on its start URL at a phone viewport with `web` stored, and the chat document held until the kernel has answered
      the shell's boot /reveal (via 'ack', parked: the road's own order, held so a run cannot lose the race). The kernel's
      parked-reveal preference makes `api` the diet's one full; the page restores its stored tab from the strip and asks for it
@@ -279,7 +279,7 @@ await browser.close();
 process.exit(0);
 """
 
-# THE ACK ROAD'S COLD OPEN ON THE PHONE (review round 4b of the lazy panes, 2026-09-20; fresh-1 / regression-4, the round-3 fixlist's
+# THE ACK ROAD'S COLD OPEN ON THE PHONE (pass 4b of the lazy panes, the author's label, 2026-09-20, taking the reviewer's round-3 addendum: fresh-1 / regression-4, the round-3 fixlist's
 # extra9-1): the kernel holds a row the worker acked CLICKED, and the app is opened on its start URL (not the link), so the shell's boot
 # check lands the tap via 'ack' and its /reveal beats the chat pane's socket: the tap is PARKED for the window before the chat pane dials.
 # The park's precedence is held by construction here (the chat document is released only once the kernel has answered the shell's /reveal),
@@ -787,7 +787,7 @@ class ServedTapLanding(unittest.TestCase):
         self.assertRegex(klog, r"\[reveal\] link sid=%s wid=\S+ boot: (parked|delivered, copy parked \(booting page\))" % re.escape(SID_B[:8]), "the boot reveal: %s" % self._trail())
 
     def test_a_phone_cold_open_with_the_tap_parked_before_the_chat_dial_gets_the_notified_session_as_the_one_full(self):
-        # review round 4b (2026-09-20; fresh-1 / regression-4, the round-3 fixlist's extra9-1): the ack road's cold open, the road the
+        # pass 4b, the author's label (2026-09-20, taking the reviewer's round-3 addendum: fresh-1 / regression-4, the round-3 fixlist's extra9-1): the ack road's cold open, the road the
         # kernel's parked-reveal preference is for. The shell's boot check lands the kernel's clicked row via 'ack' and its /reveal beats
         # the chat pane's socket (held to that order here), so the tap is parked for the window when the chat pane's first dial takes
         # the diet with the stored tab (web) as its hint; no seed runs on this road (the URL carries no push-reveal). _resolve_reconnect
@@ -795,7 +795,7 @@ class ServedTapLanding(unittest.TestCase):
         # the preference moves rather than removes, read off the wire: the strip lands ahead of the focus, the page restores its stored
         # tab (a skeleton now) and asks for it with skeleton-click before it processes the focus, and the ask is answered; before the
         # preference the same one ask left for the notified tab. A later tap on the stored tab shows it whole: no awaiting-full latch
-        # stands (the round-4b verify's corollary, not reproduced on this road).
+        # stands (the author's pass-4b verify's corollary, not reproduced on this road).
         ep, pid = self._subscribe_and_test_push("ack-phone-device")
         out = self._drive(DRIVER_ACK_PHONE, endpoint=ep, pid=pid)
         self.assertEqual(out.get("ack"), 200, "the worker's clicked ack was admitted (pid-authenticated): %r" % (out.get("ack"),))
