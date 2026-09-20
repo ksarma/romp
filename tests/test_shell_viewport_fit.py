@@ -17,6 +17,7 @@ rail measured 870..900 inside a 600px-tall body before, and 570..600 after.
 """
 import os
 import re
+import sys
 import tempfile
 import unittest
 from romp_load import load_source
@@ -30,35 +31,8 @@ os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 km = load_source("romp_kernel_vhfit", os.path.join(BIN, "romp-kernel"))
-
-
-def _served_rules(html):
-    """Every style rule the served page carries, as (at_rules, selector, declarations), derived from the page's <style>
-    elements by brace matching: a prelude starting with @ (an @media query, a @keyframes name, a @font-face) opens a
-    nesting level the blocks inside carry as their at_rules tuple; any other prelude is a selector and its block the
-    declarations. Read from the served text, so a rule added anywhere in the page joins a population derived here
-    without anyone listing it (D1 round 2, 2026-09-19: a hand list of fixed panels missed the one keyed to --app-h)."""
-    rules = []
-    for m in re.finditer(r"<style>(.*?)</style>", html, re.S):
-        css, stack, buf, i = m.group(1), [], "", 0
-        while i < len(css):
-            ch = css[i]
-            if ch == "{":
-                prelude, buf = buf.strip(), ""
-                if prelude.startswith("@"):
-                    stack.append(prelude)
-                else:
-                    j = css.index("}", i)
-                    rules.append((tuple(stack), prelude, css[i + 1:j]))
-                    i = j
-            elif ch == "}":
-                stack.pop()
-                buf = ""
-            else:
-                buf += ch
-            i += 1
-        assert not stack, "unbalanced braces in a served <style>: %r" % (stack,)
-    return rules
+sys.path.insert(0, HERE)
+import served_css   # noqa: E402  the served page's parsed rules and scripts (loads no romp code)
 
 
 # D1's fixed body (the mobile block; tests below)
@@ -119,7 +93,18 @@ class OneHeightBasis(unittest.TestCase):
         # or under 820 px takes this fixed body too, at the 0px fit() writes off a coarse pointer (round 2, 2026-09-19:
         # test_kernel_mobile's finePointer scenario, and the populations legs in test_keyboard_gap_served)
         self.assertEqual(html.count("body{position:fixed"), 1)
-        self.assertNotIn("--app-top", html[:mobile_at], "no --app-top consumer before the mobile block (the writer is the script after it)")
+        # round 4 (2026-09-20): the consumers of --app-top DERIVED by the parser over every served style element, through any
+        # custom-property alias, rather than a substring over the page's prefix (which saw nothing after the block): exactly
+        # the two rules the census below holds to the origin, both inside the mobile block, so the population claim in
+        # fit()'s comment (a coarse document outside the block publishes a pan nothing consumes) rests on this. A new
+        # consumer anywhere, inside the block or outside it, joins this list on purpose: a tripwire, not a defect. Inline
+        # style attributes and script-inserted rules are outside the served CSS and outside this scan.
+        rules = served_css.rules(html)
+        app_top = served_css.closure(rules, "--app-top")
+        consumers = sorted((r.at, r.selector) for r in rules if any(served_css.names_any(v, app_top) for _, v in r.decls))
+        mobile = ("@media " + km._MOBILE_MQ,)
+        self.assertEqual(consumers, [(mobile, "body"), (mobile, "body.picker-open iframe.lifted")],
+                         "every consumer of --app-top is a census member's origin inside the mobile block")
 
     def test_no_html_or_body_rule_gives_the_fixed_panels_a_new_containing_block(self):
         # round 2 (2026-09-19): the first cut looped over the test's own literal for these properties, a guard no kernel.py could
@@ -133,16 +118,21 @@ class OneHeightBasis(unittest.TestCase):
         # transform:scale(...) is a transform value, not a scale declaration). Round 3 (2026-09-19): the list was six; the
         # five added (translate, rotate, scale, content-visibility, offset-path) each displaced a fixed bottom:0 bar into the
         # body's box in Chromium and WebKit the way will-change:transform does, and the six-item scan stayed green for them.
-        rules = _served_rules(self.html)
+        # Round 4 (2026-09-20): the property is read from the PARSED declaration, and an optional vendor prefix is allowed
+        # (-webkit-transform and -webkit-filter create the containing block in Chromium and WebKit, -webkit-backdrop-filter
+        # in WebKit; the unprefixed alternation stayed green for all three). The population is html, body and :root only:
+        # the picker's lift sits four levels down the tree, and a containing-block property on an intermediate ancestor
+        # (.pane, .col) would re-parent it too; that road is guarded by the served leg, tests/test_keyboard_gap_served.py,
+        # which reads the lift's box against the body's in a real engine under the pan (a static scan cannot see a class
+        # added at runtime or a script-inserted rule, so the engine leg is the instrument for the ancestors, not this one).
+        rules = served_css.rules(self.html)
         subject = re.compile(r"^(html|body|:root)(?![\w-])")
-        def subjects(sel):
-            return [re.split(r"[\s>+~]+", c.strip())[-1] for c in sel.split(",") if c.strip()]
-        pop = [(at, sel, decl) for at, sel, decl in rules if any(subject.match(x) for x in subjects(sel))]
+        pop = [r for r in rules if any(subject.match(x) for x in served_css.subjects(r.selector))]
         self.assertGreaterEqual(len(pop), 4, "the html/body population is the base chain, the mobile chain, the flex body and the fixed body at least: %r"
-                                % ([sel for _, sel, _ in pop],))
-        self.assertIn(_FIXED_BODY_RULE, ["%s{%s}" % (sel, decl) for _, sel, decl in pop], "the fixed body rule is in the population")
-        prop = re.compile(r"(^|;)\s*(transform|translate|rotate|scale|filter|backdrop-filter|contain|content-visibility|will-change|perspective|offset-path)\s*:")
-        self.assertEqual([(at, sel, decl) for at, sel, decl in pop if prop.search(decl)], [],
+                                % ([r.selector for r in pop],))
+        self.assertIn(_FIXED_BODY_RULE, ["%s{%s}" % (r.selector, r.declarations) for r in pop], "the fixed body rule is in the population")
+        prop = re.compile(r"^(?:-[a-z]+-)?(transform|translate|rotate|scale|filter|backdrop-filter|contain|content-visibility|will-change|perspective|offset-path)$")
+        self.assertEqual([(r.at, r.selector, p, v) for r in pop for p, v in r.decls if prop.match(p)], [],
                          "a containing-block property on html or body moves every fixed panel with the fixed body's pan")
 
     def test_every_fixed_box_sized_by_the_shells_height_sits_at_its_pan(self):
@@ -150,34 +140,61 @@ class OneHeightBasis(unittest.TestCase):
         # sized by --app-h, the new-session picker's lift (body.picker-open iframe.lifted, top:0), still at layout y 0 under
         # the pan, so the band the body rule removes from the composer survived under the picker; the comment over the body
         # rule had listed six fixed panels by hand and missed it. The consumers are DERIVED here from the served CSS, never
-        # listed. Round 3 (2026-09-19): per SELECTOR, not per rule. A selector's declarations are the union over every rule
-        # that names it (each member of a comma list counts), at any at-rule level, so a box whose position:fixed sits in one
-        # rule and whose var(--app-h) height sits in another rule of the same selector is in the population too (the per-rule
-        # scan before this left such a box out and its census stayed green). Each member sits at var(--app-top) in a rule of
-        # its selector inside the mobile block (the lift's base rule is upstream's line and stays byte-identical; the mobile
-        # block re-tops it, so a coarse desktop layout keeps the lift at the static body's origin), and no rule of the
-        # selector after that origin names another top, which would win the cascade at equal specificity.
-        rules = _served_rules(self.html)
+        # listed. Round 4 (2026-09-20): the derivation PARSES the sheet (tests/served_css.py) instead of substring-searching
+        # it, which had four blind spots: a sizing keyed to --app-h through a custom property (resolved to a fixed point
+        # here, so a chain of aliases is seen too), whitespace inside the var() call (a parsed declaration, not a substring),
+        # an element whose position:fixed and whose sizing sit under two different selector STRINGS (the settings lift is
+        # such an element: #f-settings{display:none} and body.settings-open #f-settings{...position:fixed...}), and a style
+        # element carrying an attribute (every <style> is read, and the parse refuses when a tag opening was not consumed).
+        # The join is per ELEMENT: keyed on the selector's subject compound, so both of the settings lift's rules land on
+        # one key; two compounds that differ by a class on the same element (body and body.picker-open) stay separate keys,
+        # a bound this static reading keeps. Each member sits at var(--app-top) in a rule inside the mobile block (the
+        # lift's base rule is upstream's line and stays byte-identical; the mobile block re-tops it, so a coarse desktop
+        # layout keeps the lift at the static body's origin), and the cascade is judged over EVERY rule whose subject can
+        # match the member's element (a subset or superset of its simple selectors: iframe, .lifted, body.picker-open), by
+        # specificity, then order, an !important winning outright, over every property that sets the top edge (top and the
+        # inset, inset-block and inset-block-start shorthands, which the sheet uses fourteen times); within the origin rule
+        # itself the origin is the last top-edge declaration. A selector sharing no simple selector with the member
+        # (body.picker-open #f-chat) is outside this reading; the served leg reads the boxes themselves.
+        rules = served_css.rules(self.html)
         self.assertGreater(len(rules), 100, "the parse read the served stylesheets: %d rules" % len(rules))
-        by_sel = {}
-        for i, (at, sel, decl) in enumerate(rules):
-            for member in sel.split(","):
-                by_sel.setdefault(member.strip(), []).append((i, at, decl))
-        fixed_h = sorted(sel for sel, rs in by_sel.items()
-                         if any("position:fixed" in d for _, _, d in rs) and any("var(--app-h" in d for _, _, d in rs))
-        self.assertTrue(fixed_h, "derived population empty: no selector both position:fixed and sized by --app-h in the served CSS")
-        # the census as of this change. A new fixed consumer of --app-h joins this list AND takes the pan (the loop below),
-        # or the band opens again under whatever it covers.
-        self.assertEqual(fixed_h, ["body", "body.picker-open iframe.lifted"])
+        by_el = {}
+        for r in rules:
+            for el in served_css.subjects(r.selector):
+                by_el.setdefault(el, []).append(r)
+        app_h = served_css.closure(rules, "--app-h")
+        sized = lambda r: any(served_css.names_any(v, app_h) for _, v in r.decls)
+        fixed_h = sorted(el for el, rs in by_el.items() if any(served_css.is_fixed(r) for r in rs) and any(sized(r) for r in rs))
+        self.assertTrue(fixed_h, "derived population empty: no element both position:fixed and sized by --app-h in the served CSS")
+        # the split-selector element the per-selector census could not see: the settings lift is position:fixed under one
+        # selector string and hidden under another, and the join sees one element. It is NOT sized by --app-h today (inset:0
+        # spans the whole layout viewport, so no bare band shows under it; moving it onto the band is a design change the
+        # owner decides), so it is outside the census; a sizing by --app-h under EITHER of its selectors puts it in.
+        settings = by_el.get("#f-settings", [])
+        self.assertTrue(any(served_css.is_fixed(r) for r in settings) and len({r.selector for r in settings}) >= 2,
+                        "the join unites the settings lift's rules on one element: %r" % ([(r.at, r.selector) for r in settings],))
+        self.assertNotIn("#f-settings", fixed_h, "the settings lift is not sized by --app-h; when it is, it joins the census and takes the origin")
+        # the census as of this change, in subject-compound form. A new fixed consumer of --app-h joins this list AND takes the
+        # pan (the loop below), or the band opens again under whatever it covers.
+        self.assertEqual(fixed_h, ["body", "iframe.lifted"])
         mobile = ("@media " + km._MOBILE_MQ,)
-        origin = "top:var(--app-top,0px)"
-        a_top = re.compile(r"(^|;)\s*top\s*:")
-        for sel in fixed_h:
-            rs = by_sel[sel]
-            origins = [i for i, at, d in rs if at == mobile and origin in d]
-            self.assertTrue(origins, "%s has no --app-top origin inside the mobile block: %r" % (sel, [(at, d) for _, at, d in rs]))
-            self.assertEqual([(at, d) for i, at, d in rs if i > max(origins) and a_top.search(d) and origin not in d], [],
-                             "%s: a rule after its --app-top origin names another top and wins the cascade" % sel)
+        app_top = served_css.closure(rules, "--app-top")
+        is_origin = lambda p, v: p == "top" and served_css.names_any(v, app_top)
+        top_edge = {"top", "inset", "inset-block", "inset-block-start"}
+        for el in fixed_h:
+            rs = by_el[el]
+            origins = [r for r in rs if r.at == mobile and any(is_origin(p, v) for p, v in r.decls)]
+            self.assertTrue(origins, "%s has no --app-top origin inside the mobile block: %r" % (el, [(r.at, r.declarations) for r in rs]))
+            for r in origins:
+                tops = [(p, v) for p, v in r.decls if p in top_edge]
+                self.assertTrue(is_origin(*tops[-1]), "%s: the origin is not the last top-edge declaration of its own rule: %r" % (el, r.declarations))
+                self.assertFalse(any("!important" in v for p, v in tops), "%s: the origin rule's top edge carries no !important: %r" % (el, r.declarations))
+            spec = max(served_css.specificity(m) for r in origins for m in served_css.members(r.selector) if served_css.subject(m) == el)
+            last = max(r.index for r in origins)
+            winners = [(r.at, m, p, v) for r in rules for m in served_css.members(r.selector) if served_css.can_match(served_css.subject(m), el)
+                       for p, v in r.decls if p in top_edge and not is_origin(p, v)
+                       and ("!important" in v or served_css.specificity(m) > spec or (served_css.specificity(m) == spec and r.index > last))]
+            self.assertEqual(winners, [], "%s: a rule that can match the element sets its top edge and wins the cascade over the --app-top origin" % el)
 
     def test_an_unpainted_pane_is_dark_not_white(self):
         # a pane whose document has not painted is a white rectangle in a dark frame (Firefox shows it
