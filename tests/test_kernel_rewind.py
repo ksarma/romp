@@ -12,7 +12,10 @@ import inspect
 import json
 import os
 import tempfile
+import threading
+import time
 import unittest
+from datetime import datetime, timezone
 from romp_load import load_source
 from pathlib import Path
 
@@ -816,3 +819,98 @@ class RewindKeptLookupEconomy(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BootRoadAndTheJudgePools(unittest.TestCase):
+    """The boot migration (threading.Thread(target=_rewind_migration_bg), kernel boot) is the one kernel call into a
+    jd.run_* entry outside _producer: jd.run_rewound_reconcile, on a plain daemon thread. Review round 1 (2026-09-19) found
+    PR 792's rationale had asserted, as checked, that no such call exists; this pins BY EXECUTION what that road does to the
+    perf collector: the real migration runs over a discoverable session whose goal store holds a dead-branch orphan, does
+    its work (one node archived, the marker written), and submits NO pool future, so judge.py's worker-CPU sink never fires
+    and the armed collector's cpu_ms_workers and cpu_ms_sum stand still. Were a later change to give the reconcile a pool,
+    the sink would count its futures under the same two keys from this thread (tests/test_perf_stats.py pins that for a
+    plain thread); nothing here depends on the caller being the producer."""
+
+    SID = "11111111-2222-3333-4444-666666666666"
+    T0 = 1781100000
+
+    @staticmethod
+    def _iso(t):
+        return datetime.fromtimestamp(t, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+    def _u(self, t, text, uuid, parent=None):
+        return {"type": "user", "timestamp": self._iso(t), "uuid": uuid, "parentUuid": parent,
+                "promptSource": "typed", "message": {"role": "user", "content": text}}
+
+    def _a(self, t, text, uuid, parent):
+        return {"type": "assistant", "timestamp": self._iso(t), "uuid": uuid, "parentUuid": parent,
+                "message": {"role": "assistant", "content": [{"type": "text", "text": text}], "stop_reason": "end_turn"}}
+
+    def setUp(self):
+        jd = km.jd
+        td = Path(tempfile.mkdtemp())
+        self._saved = (jd.STATE, jd.PROJECTS)
+        (td / "state").mkdir()                       # judge-errors.jsonl appends into it without mkdir -p
+        jd._rebind_state(td / "state")
+        jd.PROJECTS = td / "projects"                # _proj_dir maps a launch dir under here
+        jd._discover_cache.clear()
+        jd._RECON_MEMO.clear()
+        cdir = str(td / "work")
+        self.proj = jd._proj_dir(cdir)
+        self.proj.mkdir(parents=True)
+        jd.NAMES.mkdir(parents=True)
+        (jd.NAMES / self.SID).write_text("web\t%s" % cdir)   # the registry line discover reads: name, launch dir
+        self.path = self.proj / (self.SID + ".jsonl")
+
+    def tearDown(self):
+        jd = km.jd
+        jd._discover_cache.clear(); jd._RECON_MEMO.clear()
+        jd._rebind_state(self._saved[0]); jd.PROJECTS = self._saved[1]
+
+    def test_the_boot_migrations_reconcile_does_its_work_and_submits_no_pool_future(self):
+        jd, T0, SID = km.jd, self.T0, self.SID
+        CUT = T0 + 20
+        # u1 -> a1 -> u2 -> a2, then u3 branches from a1: u2 and a2 are a dead branch on disk (a rewind the kernel never saw)
+        recs = [self._u(T0, "first synthetic ask", "u1"), self._a(T0 + 10, "First synthetic reply.", "a1", "u1"),
+                self._u(CUT, "second synthetic ask", "u2", "a1"), self._a(T0 + 30, "Second synthetic reply.", "a2", "u2"),
+                self._u(T0 + 60, "second ask, rewritten", "u3", "a1"), self._a(T0 + 70, "Reply on the new branch.", "a3", "u3")]
+        self.path.write_text("\n".join(json.dumps(r) for r in recs) + "\n")
+        s = {"rompUuid": SID, "seq": 0, "nodes": {}, "placements": {}, "status": {}, "placementsV": jd.PLACEMENTS_V}
+        jd.apply_plan(s, "seg-dead", CUT, [{"do": "mint", "why": "x", "text": "Orphan ask from the deleted turn"}], jd.open_menu(s), prompt_uuid="u2")
+        jd.apply_plan(s, "seg-live", T0 + 60, [{"do": "mint", "why": "x", "text": "Real ask on the new branch"}], jd.open_menu(s), prompt_uuid="u3")
+        jd.rollup_status(s, session_closed=False)
+        jd.save_goals(SID, s)
+        now = int(time.time())
+        self.assertEqual([e[0] for e in jd.discover(now, window=10 * 365 * 86400)], [SID], "the migration's discovery finds the session")
+        marker = jd.STATE / "rewind-reconcile-migration-v2.done"
+        self.assertFalse(marker.exists())
+
+        # the collector this kernel built takes the sink, with a recording wrapper on the instance (the class method stays)
+        st = km._PERF_STATS
+        received = []
+        real = km._PerfStats.judge_worker_cpu
+
+        def sink(ms):
+            received.append((threading.current_thread().name, ms))
+            real(st, ms)
+        st.judge_worker_cpu = sink
+        self.addCleanup(lambda: st.__dict__.pop("judge_worker_cpu", None))
+        prev = st.arm_judge_worker_sink()
+        self.addCleanup(jd.set_worker_cpu_sink, prev)
+        with st.lock:
+            before = dict(st.judge)
+
+        th = threading.Thread(target=km._rewind_migration_bg, daemon=True, name="rewind-migration")   # the boot's own shape
+        th.start(); th.join(120)
+        self.assertFalse(th.is_alive(), "the migration finished")
+        self.assertTrue(marker.exists(), "a zero-failure pass writes the marker: the reconcile ran to the end")
+        self.assertEqual(json.loads(marker.read_text()).get("archived"), 1, "and did real work: the dead-branch orphan archived")
+        live = jd.load_goals(SID)["nodes"]
+        self.assertNotIn("%s:g1" % SID, live, "the orphan left the live store"); self.assertIn("%s:g2" % SID, live, "the live branch's card stands")
+        self.assertEqual(received, [], "no pool future ran on the boot road: the sink never fired")
+        with st.lock:
+            after = dict(st.judge)
+        self.assertEqual((after["cpu_ms_workers"], after["cpu_ms_sum"]), (before["cpu_ms_workers"], before["cpu_ms_sum"]),
+                         "the workers' share and the sum stood still across the migration")
+        self.assertTrue(st.holds_judge_worker_sink())
+        self.assertIn("cpu_ms_workers", st.snapshot()["judge"], "this collector holds the sink: its served block carries the key")

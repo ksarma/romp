@@ -797,11 +797,16 @@ listenForFrames(perfFrameHandler("fleet", (m) => vscodeApi?.postMessage(m), (e: 
     return;
   }
   if (m.type === "delta") {
-    // The shim reassembles every {type:"delta"} frame into the whole message before a bundle sees it, and
-    // federation's remote sockets never dial for deltas — so one reaching this handler means a host handed
-    // the pane a kernel frame unreassembled. Say so and ask for the whole slot (needSlot: what the shim
-    // itself sends for a delta it cannot apply) rather than sit on the last frame while every update is
-    // dropped on the floor (fail loudly, never degrade). Run for real in fleet-live-clock.test.ts.
+    // The shim reassembles every {type:"delta"} frame its own LOCAL socket receives into the whole message before
+    // a bundle sees it, and federation.js does the same for each REMOTE socket it dials (those dial with the page's
+    // delta=1 since 2026-09-15, so a remote kernel serves its bars, and its feed when it is too old to read the
+    // caps term, as slot patches; the per-conn receiver came 2026-09-18), so one reaching this handler means a host
+    // handed the pane a kernel frame unreassembled (federation.js absent, or older than the receiver). Say so and
+    // ask for the whole slot (needSlot: what the shim itself sends for a delta it cannot apply) rather than sit on
+    // the last frame while every update is dropped on the floor (fail loudly, never degrade). The ask reaches the
+    // LOCAL kernel (this pane has no host to route it by), which repairs a local slot and cannot repair a remote
+    // one: for a remote frame the row and the console line are the whole remedy, and the fix is the newer bundle.
+    // Run for real in fleet-live-clock.test.ts.
     console.error("outline: a delta frame reached the pane unreassembled — asking the kernel for the whole slot");
     vscodeApi?.postMessage({ type: "clientDiag", surface: "outline", what: "delta-unapplied", data: { slot: m.slot, rev: m.rev } });
     vscodeApi?.postMessage({ type: "needSlot", slot: m.slot });

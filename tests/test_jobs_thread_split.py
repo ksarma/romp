@@ -14,6 +14,7 @@ import re
 import sys
 import threading
 import time
+import types
 import unittest
 from unittest import mock
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -21,6 +22,7 @@ sys.path.insert(0, HERE)
 from test_asm_checkpoint import kernel_module   # noqa: E402
 
 JOB_NAME_RE = r"_job_stage\(['\"](\w+)['\"]"
+WALK_SID = "33333333-4444-5555-6666-777777777777"   # the walk test's own synthetic session: no other module keys a memo under it
 
 PUSHER_JOBS = ("beginCheckpointCycle", "sessionsListing", "applyPendingOps", "turnNotify", "persistCheckpoints", "convergeCheckpoints",
                "bootRowBackstop", "kernelSample", "apiHealth")
@@ -50,6 +52,11 @@ class Partition(unittest.TestCase):
         self.assertEqual(tuple(jobs), HOUSEKEEPING, "the housekeeping, in the order it always ran")
         self.assertFalse(set(pusher) & set(jobs), "no job on both threads")
         self.assertEqual(set(pusher) | set(jobs), set(km._PerfStats.JOBS), "together they are the JOBS census")
+        # the collector keeps the two lists by thread since 2026-09-18 (stage attribution: the pusher's nine are seeded under
+        # pusher.cycleJobsMs, the jobs thread's nineteen as flat `jobs.<job>` rows), so each must be the source's, in order
+        self.assertEqual(km._PerfStats.CYCLE_JOBS, PUSHER_JOBS, "CYCLE_JOBS is _pusher_cycle_jobs's list")
+        self.assertEqual(km._PerfStats.PASS_JOBS, HOUSEKEEPING, "PASS_JOBS is _jobs_pass's list")
+        self.assertEqual(km._PerfStats.JOBS, PUSHER_JOBS + HOUSEKEEPING, "JOBS is the census as CYCLE_JOBS + PASS_JOBS")
 
     def test_the_jobs_pass_keeps_its_ordering_reasons(self):
         src = inspect.getsource(self.km._jobs_pass)
@@ -125,8 +132,10 @@ class TheBrowserNeverWaitsOnTheHousekeeping(_LabCycles):
         the base the walk ran inside the pusher's cycle, so the cycle carried the sleep."""
         km = self.km
         calls = []
+        self.addCleanup(setattr, km, "_auto_nudge_tick", km._auto_nudge_tick)   # the real tick, captured BEFORE the stub: the lab
+        #                                                                        kernel is one object for the process, and a cleanup that
+        #                                                                        read the attribute after the assignment restored the stub
         km._auto_nudge_tick = lambda now, live_map: (calls.append(1), time.sleep(0.4))
-        self.addCleanup(setattr, km, "_auto_nudge_tick", self.saved_jobs.get("_auto_nudge_tick", km._auto_nudge_tick))
         t0 = time.monotonic(); km._pusher_cycle(); cycle = time.monotonic() - t0
         self.assertEqual(calls, [], "the pusher's cycle ran no walk")
         self.assertLess(cycle, 0.3, "and did not carry its sleep: %.3f s" % cycle)
@@ -141,8 +150,18 @@ class TheBrowserNeverWaitsOnTheHousekeeping(_LabCycles):
 
     def test_the_jobs_pass_has_its_own_split_and_scope(self):
         km = self.km
-        km._jobs_cycle()
-        snap = km._PERF_STATS.snapshot()
+        reads = []
+
+        def fake(who):                                    # a thread clock that advances one ms of user, half a ms of sys per read
+            reads.append(who)
+            return types.SimpleNamespace(ru_utime=0.001 * len(reads), ru_stime=0.0005 * len(reads), ru_maxrss=0)
+        with mock.patch.object(km, "_RUSAGE_THREAD", 11), mock.patch.object(km.resource, "getrusage", fake):
+            km._jobs_cycle()
+            snap = km._PERF_STATS.snapshot()
+        # the pass container's thread CPU (stages_cpu_ms; 2026-09-18 review, medium 8): its open and close reads apart
+        cpu = snap["stages_cpu_ms"]["jobsPass"]
+        self.assertGreaterEqual(cpu["user"], 1.0 - 1e-6, "the pass's CPU row moved: at least its own read pair apart")
+        self.assertAlmostEqual(cpu["sys"], cpu["user"] / 2.0, places=6, msg="the fake's ratio survives the fold")
         first = snap["jobs"]["firstPass"]
         self.assertIsNotNone(first, "the boot's first pass's split is kept under jobs.firstPass")
         self.assertIn("jobsPass", first["stages"], sorted(first["stages"]))
@@ -164,16 +183,138 @@ class TheBrowserNeverWaitsOnTheHousekeeping(_LabCycles):
         # the pass body directly, under the job's own stage: a test earlier in this module leaves a pass in flight on a blocked
         # thread, and the tick's single-flight guard would stand this walk down
         now = int(time.time())
+        km._PERF_STATS.cycle_begin("jobs")                 # this thread stands for the jobs thread: a `jobs.` stage is the flat row's
+        #                                                    by its writer's owner (2026-09-18), and a thread owning no loop
+        #                                                    would count under stagesForeign instead
         km._job_stage("autoNudge", lambda: km._auto_nudge_pass(now, km._live_map(), False))
-        st = km._PERF_STATS.snapshot()["stages_ms"]
+        snap = km._PERF_STATS.snapshot()
+        st = snap["stages_ms"]
         have = sorted(k for k in st if k.startswith("jobs.autoNudge"))
         self.assertEqual(have, ["jobs.autoNudge", "jobs.autoNudge.key", "jobs.autoNudge.looks", "jobs.autoNudge.snapshot"], have)
         parts = sum(st[k] for k in st if k.startswith("jobs.autoNudge."))
         self.assertLessEqual(parts, st["jobs.autoNudge"] + 1.0, "the parts sum to at most the job")
+        self.assertEqual(snap["stagesForeign"], {}, "the walk ran as the jobs owner: nothing foreign")
+
+    def test_the_dashboards_act_now_pass_is_the_writer_of_stages_foreign(self):
+        """The one writer of stagesForeign on a running kernel (2026-09-18 review): the dashboard's setAutoNudge and
+        setCompactSuggest arms run the nudge pass on the WS handler thread (_ws_act_now_tick), which owns neither loop, so
+        the pass's parts are counted there under their stage names and move neither the flat jobs.autoNudge rows (the jobs
+        thread's) nor pusher.cycleJobsMs (the pusher's). The reference and the collector's docstring name this writer; an
+        earlier reading had the block empty on a running kernel."""
+        km = self.km
+        before = km._PERF_STATS.snapshot()
+        done = threading.Event()
+
+        def handler_thread():                                  # a WS handler's: no cycle_begin on it
+            try:
+                km._ws_act_now_tick()
+            finally:
+                done.set()
+        # single-flight against nothing here: the tick stands down when a pass is in flight, and a module sharing this lab
+        # kernel can leave one on a blocked thread; the guard itself is pinned in tests/test_dead_wait_block.py
+        with mock.patch.object(km, "_AUTO_NUDGE_TICK_LOCK", threading.Lock()):
+            th = threading.Thread(target=handler_thread); th.start(); th.join(30)
+        self.assertTrue(done.is_set(), "the act-now pass ran")
+        snap = km._PERF_STATS.snapshot()
+        self.assertEqual(sorted(snap["stagesForeign"]), ["jobs.autoNudge.key", "jobs.autoNudge.looks", "jobs.autoNudge.snapshot"],
+                         "the pass's parts, from a thread owning neither loop (no session alive, so no parse)")
+        self.assertEqual(snap["stages_ms"]["jobs.autoNudge"], before["stages_ms"]["jobs.autoNudge"], "the flat row is the jobs thread's")
+        self.assertFalse([k for k in snap["stages_ms"] if k.startswith("jobs.autoNudge.")], "no part reached a flat row")
+        self.assertEqual(snap["pusher"]["cycleJobsMs"], before["pusher"]["cycleJobsMs"], "nor the pusher's block")
+        self.assertEqual((snap["jobs"]["passes"], snap["pusher"]["cycles"]), (0, 0), "no cycle opened: the handler's own thread")
+
+    def test_the_looks_mark_excludes_the_parses_for_a_writer_owning_no_loop(self):
+        """jobs.autoNudge.looks is the loop's wall outside the parses for every writer (2026-09-18 review). The pass read the
+        parses' wall off the FLAT jobs.autoNudge.parse row before and after the loop, and that row moves for the jobs owner
+        alone since the routing, so the act-now pass on the WS handler thread (stagesForeign) and a pusher-owner walk got a
+        zero delta and a looks mark that carried every parse a second time. The walk now tallies its parses on the walking
+        thread (_NUDGE_HORIZON.parse_s). Driven here with no owner and one session whose parse sleeps: the four parts
+        partition the job in the writer's block."""
+        km = self.km
+        now = int(time.time())
+        row = {"sid": WALK_SID, "path": "/nonexistent/transcript.jsonl", "name": "web", "mtime": now}
+
+        def slow_parse(sid, paths, now_):
+            time.sleep(0.05)
+            return {"turns": []}                                 # the look returns at the parse: nothing else to walk
+
+        def forget_memo():                                       # the look records its memo under the sid; the lab keeps none
+            with km._TICK_SEEN_LOCK:
+                for key in [k for k in km._TICK_SEEN if isinstance(k, tuple) and WALK_SID in k]:
+                    km._TICK_SEEN.pop(key, None)
+        self.addCleanup(forget_memo)
+        out = {}
+
+        def walker():                                            # a thread owning neither loop
+            try:
+                km._job_stage("autoNudge", lambda: km._auto_nudge_pass(now, {}, False))
+            except BaseException as e:                           # noqa: BLE001
+                out["err"] = e
+        with mock.patch.multiple(km, _alive_sessions=lambda now, live_map: [row], _session_flag=lambda sid, flag: False,
+                                 _compacting_now=lambda *a, **k: False, _api_error=lambda path: False), \
+             mock.patch.object(km.jd, "parsed_session", side_effect=slow_parse):
+            th = threading.Thread(target=walker); th.start(); th.join(30)
+        self.assertFalse(th.is_alive(), "the walk returned")
+        self.assertNotIn("err", out, repr(out.get("err")))
+        fx = km._PERF_STATS.snapshot()["stagesForeign"]
+        self.assertEqual(sorted(fx), ["jobs.autoNudge", "jobs.autoNudge.key", "jobs.autoNudge.looks", "jobs.autoNudge.parse",
+                                      "jobs.autoNudge.snapshot"], fx)
+        self.assertGreaterEqual(fx["jobs.autoNudge.parse"], 50.0, "the session paid the parse: %r" % fx)
+        parts = sum(v for k, v in fx.items() if k.startswith("jobs.autoNudge."))
+        self.assertLessEqual(parts, fx["jobs.autoNudge"] + 1.0, "the parts partition the job, the parse counted once: %r" % fx)
+
+    def test_a_loop_body_on_a_thread_owning_the_other_loops_cycle_takes_the_owner_over(self):
+        """The guard at the top of each loop body (2026-09-18 review): a thread that owns the OTHER loop's cycle flips to this
+        loop's, so the body's jobs are credited to this loop. Before, the guard opened a cycle only for a thread owning none,
+        so a test driving both bodies on one thread kept the first owner through the second body and the nine cycle jobs
+        landed in the flat jobs.<job> rows, the merge stage()'s routing exists to end. The running kernel's two loop threads
+        never meet this: each loop function opens its own cycle before its body."""
+        km = self.km
+        now = int(time.time())
+        km._jobs_pass(now, {})                                   # this thread is the jobs owner
+        self.assertEqual(km._PERF_STATS._mine(), "jobs")
+        km._pusher_cycle_jobs(now, {}, False)                    # the pusher's body: the thread flips to its owner
+        self.assertEqual(km._PERF_STATS._mine(), "pusher")
+        snap = km._PERF_STATS.snapshot()
+        st, cyc = snap["stages_ms"], snap["pusher"]["cycleJobsMs"]
+        self.assertFalse({"jobs." + j for j in PUSHER_JOBS} & set(st),
+                         "no cycle job's row in stages_ms: %r" % sorted(k for k in st if k.startswith("jobs.")))
+        self.assertEqual(sorted(cyc), sorted(PUSHER_JOBS))
+        self.assertGreater(sum(cyc.values()), 0.0, "the nine were credited to the pusher's block")
+        for j in HOUSEKEEPING:
+            self.assertIn("jobs." + j, st, j)
+        self.assertEqual(snap["stagesForeign"], {})
+        km._jobs_pass(now, {})                                   # and back: the jobs' body takes the owner from the pusher
+        self.assertEqual(km._PERF_STATS._mine(), "jobs")
+        snap = km._PERF_STATS.snapshot()
+        self.assertEqual(snap["pusher"]["cycleJobsMs"], cyc, "the second pass added nothing to the pusher's block")
+        self.assertGreater(snap["stages_ms"]["jobsPass"], st["jobsPass"], "and its pass went to the flat rows")
+
+    def test_a_run_of_both_loops_keeps_each_threads_job_rows_apart(self):
+        """The real _pusher_cycle and _jobs_cycle, every job quiet: the nine cycle jobs' walls land under pusher.cycleJobsMs
+        and sum to at most the pusher's `jobs` container, the nineteen housekeeping jobs' land in the flat `jobs.<job>` rows
+        and sum to at most `jobsPass`, no cycle job's key is in stages_ms, and nothing is foreign. Each sum is a set of
+        disjoint intervals inside its container's, so the bound is exact, not a ratio (the ratio tests here were coin
+        tosses under load)."""
+        km = self.km
+        km._pusher_cycle(); km._jobs_cycle()
+        snap = km._PERF_STATS.snapshot()
+        st, cyc = snap["stages_ms"], snap["pusher"]["cycleJobsMs"]
+        self.assertEqual(sorted(cyc), sorted(PUSHER_JOBS), "exactly the nine, whether or not a job took measurable time")
+        self.assertFalse({"jobs." + j for j in PUSHER_JOBS} & set(st), "no cycle job's row in stages_ms")
+        for j in HOUSEKEEPING:
+            self.assertIn("jobs." + j, st, j)
+        self.assertLessEqual(sum(cyc.values()), st["jobs"] + 1e-6, "the cycle jobs against the pusher's jobs container")
+        self.assertLessEqual(sum(st["jobs." + j] for j in HOUSEKEEPING), st["jobsPass"] + 1e-6, "the housekeeping against the pass")
+        self.assertGreater(st["jobsPass"], 0.0); self.assertGreater(st["jobs"], 0.0)
+        self.assertEqual(snap["stagesForeign"], {})
+        self.assertEqual(snap["jobs"]["passes"], 1); self.assertEqual(snap["pusher"]["cycles"], 1)
 
     def test_the_stats_keep_two_owners_apart(self):
-        """A stage closed on the jobs thread lands in the jobs split and never in the pusher's, and the other way round, while
-        the cumulative totals take both."""
+        """A stage closed on the jobs thread lands in the jobs split and never in the pusher's, and the other way round. The
+        cumulative rows are each writer's own since 2026-09-18 (a flat `jobs.` row the jobs thread's, a flat push row the
+        pusher's, a connect push's push.chat under pusher.connectPush.stagesMs and not in the flat row), where they took
+        every writer's before: the flat push.chat read 30 ms under the fold, the pusher's 10 and the connect thread's 20."""
         km = self.km
         ps = km._PerfStats()
         ps.cycle_begin()                                              # this thread is the pusher
@@ -186,13 +327,29 @@ class TheBrowserNeverWaitsOnTheHousekeeping(_LabCycles):
             done.set()
         th = threading.Thread(target=jobs_thread); th.start(); th.join(5)
         self.assertTrue(done.is_set())
+        connected = threading.Event()
+        def connect_thread():                                         # a fresh client's handler thread: no cycle, _push's "connect" mark
+            km._stage_marked("connect")(lambda: ps.stage("push.chat", 0.020))()
+            connected.set()
+        th = threading.Thread(target=connect_thread); th.start(); th.join(5)
+        self.assertTrue(connected.is_set())
         ps.stage("jobs.apiHealth", 0.001); ps.stage("jobs", 0.001)
         ps.cycle(0.012)
         snap = ps.snapshot()
         self.assertEqual(sorted(snap["pusher"]["firstCycle"]["stages"]), ["jobs", "jobs.apiHealth", "push", "push.chat"])
         self.assertEqual(sorted(snap["jobs"]["firstPass"]["stages"]), ["jobs.autoNudge", "jobsPass"])
         self.assertAlmostEqual(snap["jobs"]["firstPass"]["stages"]["jobsPass"]["ms"], 20.0)
-        self.assertAlmostEqual(snap["stages_ms"]["jobs.autoNudge"], 20.0, "the totals take every thread's stages")
+        self.assertAlmostEqual(snap["stages_ms"]["jobs.autoNudge"], 20.0, msg="the flat row takes the jobs thread's job")
+        # the pusher's `jobs.apiHealth` (2026-09-18): its split row as before, its cumulative wall under pusher.cycleJobsMs
+        # and not in stages_ms, which holds no cycle job's key since the change
+        self.assertAlmostEqual(snap["pusher"]["firstCycle"]["stages"]["jobs.apiHealth"]["ms"], 1.0)
+        self.assertAlmostEqual(snap["pusher"]["cycleJobsMs"]["apiHealth"], 1.0)
+        self.assertNotIn("jobs.apiHealth", snap["stages_ms"])
+        # the pusher's push stages (2026-09-18): the flat rows are its own by its ownership of the cycle, exact
+        self.assertAlmostEqual(snap["stages_ms"]["push.chat"], 10.0, msg="the pusher's push.chat, the flat row (30.0 under the fold)")
+        self.assertAlmostEqual(snap["stages_ms"]["push"], 10.0)
+        self.assertEqual(snap["pusher"]["connectPush"]["stagesMs"], {"push.chat": 20.0}, "the connect thread's, apart")
+        self.assertEqual(snap["stagesForeign"], {}, "every writer had an owner or a purpose")
         self.assertEqual(ps._mine(), "pusher")
         self.assertEqual(snap["jobs"]["passes"], 1)
         self.assertEqual(snap["pusher"]["cycles"], 1)
@@ -205,8 +362,8 @@ class TheBootRowCarriesBothFirsts(_LabCycles):
         km._pusher_cycle()
         self.assertEqual(self.rows, [], "the pusher's first cycle alone writes no row: the jobs pass is still open")
         self.assertFalse(km._BOOT_HEALTH_DONE[0])
+        self.addCleanup(setattr, km, "_auto_nudge_tick", km._auto_nudge_tick)   # captured before the stub (see the slow-job test)
         km._auto_nudge_tick = lambda now, live_map: time.sleep(0.05)
-        self.addCleanup(setattr, km, "_auto_nudge_tick", self.saved_jobs.get("_auto_nudge_tick", km._auto_nudge_tick))
         km._jobs_cycle()
         self.assertEqual(len(self.rows), 1, "the jobs thread's first pass, the later of the two, wrote it")
         row = self.rows[0]

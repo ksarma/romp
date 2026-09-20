@@ -150,6 +150,183 @@ class SpawnSecrets(unittest.TestCase):
         self.assertTrue(handed["secrets"]["CLAUDE_CODE_OAUTH_TOKEN"] == self.tok)
         self.assertEqual(opts.env.get("CLAUDE_CODE_OAUTH_TOKEN"), self.tok, "the options object is untouched (spawn_spec copied)")
 
+    def test_every_credential_shaped_name_leaves_the_spec_env_not_only_the_three(self):
+        """The box admin's hazard review of the pull-in (2026-09-16): the first cut moved AUTH_ENV_NAMES alone, so a
+        credential-shaped variable of any OTHER name in the overlay was written to spawn.json. Every name
+        env_credential_names would flag over the overlay itself leaves it now (spawn_env_secret_names): the two
+        suffixes and 1Password's names. Synthetic names, values built at run time (never a real key's shape)."""
+        val = "synthetic-notes-token-" + uuid.uuid4().hex
+        key = "synthetic-notes-key-" + uuid.uuid4().hex
+        op = "synthetic-op-session-" + uuid.uuid4().hex
+        spec = {"sid": SID, "env": {"ROMP_SID": SID, "NOTES_ENDPOINT": "http://notes.test", "NOTES_API_TOKEN": val,
+                                    "NOTES_API_KEY": key, "OP_SESSION_notes": op, "EMPTY_TOKEN": ""}}
+        secrets = sb.split_spawn_secrets(spec)
+        self.assertEqual(spec["env"], {"ROMP_SID": SID, "NOTES_ENDPOINT": "http://notes.test", "EMPTY_TOKEN": ""},
+                         "a plain name stays; an empty credential-shaped value holds no secret and stays the unset it means")
+        self.assertEqual(sorted(secrets), ["NOTES_API_KEY", "NOTES_API_TOKEN", "OP_SESSION_notes"])
+        self.assertTrue(secrets["NOTES_API_TOKEN"] == val and secrets["NOTES_API_KEY"] == key and secrets["OP_SESSION_notes"] == op,
+                        "the returned values are the overlay's")
+        text = json.dumps(spec)
+        for v in (val, key, op):
+            self.assertNotIn(v, text, "no moved value survives in the spec")
+        self.assertEqual(sb.spawn_env_secret_names({"ROMP_SID": SID, "NOTES_ENDPOINT": "x"}), [], "nothing credential-shaped: nothing to move")
+        self.assertEqual(sb.spawn_env_secret_names({"ANTHROPIC_API_KEY": ""}), ["ANTHROPIC_API_KEY"], "the three leave whatever their value")
+        self.assertEqual(sb.spawn_env_secret_names(None), [], "no overlay: nothing to move")
+
+    def test_spawn_host_hands_every_moved_name_to_the_host_through_its_environment(self):
+        """The road a moved name takes is the login token's (_spawn_host): the host's process environment, laid over
+        the kernel's own, so the overlay's value outranks an inherited one exactly as options.env does for a kernel
+        child, and never the command line. Green on the base tree by design (review round 1's addendum, 2026-09-18):
+        this hands _spawn_host the dict itself and pins its merge, a base leg the change newly leans on, not the
+        split; the kernel's road for a name beyond the three is pinned by the spawn-road case below and, end to end
+        through a real host, by HostProcess's moved-name case, which derives the host's environment from the split."""
+        val = "synthetic-notes-token-" + uuid.uuid4().hex
+        with mock.patch.dict(os.environ, {"NOTES_API_TOKEN": "inherited-" + uuid.uuid4().hex}):
+            argv, kw = self._spawn(False, {"NOTES_API_TOKEN": val})
+        self.assertTrue(kw["env"]["NOTES_API_TOKEN"] == val, "the overlay's value rides the host's environment, over the kernel's")
+        self.assertFalse(any(val in a for a in argv), "the value never rides the command line")
+
+    def _spawn_road(self, env, login=""):
+        """The real _host_transport_for on its spawn road over a stub kernel (review round 1, 2026-09-18, shared by the
+        round's cases): hosts/ is cleared first, since a lease-less leftover hosts/<sid> from an earlier spawn in the
+        same state root sends the call down _host_orphan_recover, which this stub does not provide. Returns the
+        spawn.json written, what _spawn_host was handed, and every _log call as (message, kwargs)."""
+        ht = sb._ht()
+        shutil.rmtree(Path(self.state) / "hosts", ignore_errors=True)
+        handed, logged = {}, []
+
+        def spawn_host(sess, spec_path, secret_env=None):
+            handed["secrets"] = dict(secret_env or {})
+            ht.host_sock(self.state, SID).touch()                    # the launcher "served" its socket
+            return types.SimpleNamespace(pid=4242, poll=lambda: None, returncode=None)
+        me = types.SimpleNamespace(state_dir=self.state, code_version="abc12345", cli_scope=False,
+                                   _host_recently_ended={}, _lock=threading.Lock(), _host_spawning=set(),
+                                   _holder_ident=sb.SdkBackend._holder_ident, _spawn_host=spawn_host,
+                                   _new_host_transport=lambda sess, sock, offset: ("transport", str(sock), offset),
+                                   _log=lambda m, *a, **k: logged.append((str(m), k)))
+        sess = types.SimpleNamespace(sid=SID, name="web", _options_login=login, _host=None, _host_is_attach=False)
+        opts = types.SimpleNamespace(cli_path="/x/romp-cli-scope", cwd=self.state, env=dict(env), permission_mode="default")
+        t = asyncio.run(sb.SdkBackend._host_transport_for(me, sess, opts, ()))
+        self.assertEqual(t[0], "transport", "the spawn road handed back the new transport")
+        written = json.loads((Path(self.state) / "hosts" / SID / "spawn.json").read_text())
+        return written, handed, logged
+
+    def test_the_host_launch_writes_spawn_json_without_any_credential_shaped_name_and_hands_them_to_the_host(self):
+        """The real _host_transport_for, spawn road, over a stub kernel, with an overlay carrying a credential-shaped
+        name beyond the three (the box admin's hazard review of the pull-in, 2026-09-16): the file keeps the plain
+        name, the value is in no file under hosts/, _spawn_host receives exactly the moved variable for the host's
+        environment, and the log names what moved without its value. Review round 1 (2026-09-18) pinned the line's
+        two deliberate details, which survived mutation with the suite green: its problem=False classification, by
+        identity (assertFalse(None) passes, and None is exactly what a dropped kwarg records), and the login names'
+        silence (a second spawn, a login token alone in the overlay, says nothing)."""
+        ht = sb._ht()
+        handed, logged = {}, []
+        val = "synthetic-notes-token-" + uuid.uuid4().hex
+
+        def spawn_host(sess, spec_path, secret_env=None):
+            handed["secrets"] = dict(secret_env or {})
+            ht.host_sock(self.state, SID).touch()                    # the launcher "served" its socket
+            return types.SimpleNamespace(pid=4242, poll=lambda: None, returncode=None)
+        me = types.SimpleNamespace(state_dir=self.state, code_version="abc12345", cli_scope=False,
+                                   _host_recently_ended={}, _lock=__import__("threading").Lock(), _host_spawning=set(),
+                                   _holder_ident=sb.SdkBackend._holder_ident, _spawn_host=spawn_host,
+                                   _new_host_transport=lambda sess, sock, offset: ("transport", str(sock), offset),
+                                   _log=lambda m, *a, **k: logged.append((str(m), k)))
+        sess = types.SimpleNamespace(sid=SID, name="web", _options_login="", _host=None, _host_is_attach=False)
+        opts = types.SimpleNamespace(cli_path="/x/romp-cli-scope", cwd=self.state,
+                                     env={"ROMP_SID": SID, "NOTES_ENDPOINT": "http://notes.test", "NOTES_API_TOKEN": val},
+                                     permission_mode="default")
+        t = asyncio.run(sb.SdkBackend._host_transport_for(me, sess, opts, ()))
+        self.assertEqual(t[0], "transport", "the spawn road handed back the new transport")
+        written = json.loads((Path(self.state) / "hosts" / SID / "spawn.json").read_text())
+        self.assertEqual(written["env"], {"ROMP_SID": SID, "NOTES_ENDPOINT": "http://notes.test"},
+                         "the plain name stays in the file; the credential-shaped one is gone")
+        under_hosts = [q for q in (Path(self.state) / "hosts").rglob("*") if q.is_file()]
+        self.assertTrue(under_hosts, "the write left files to check")
+        for q in under_hosts:
+            self.assertNotIn(val, q.read_bytes().decode("utf-8", "replace"), "the value is in no file under hosts/")
+        self.assertEqual(handed["secrets"], {"NOTES_API_TOKEN": val}, "the host's environment gets exactly the moved variable")
+        self.assertEqual(opts.env["NOTES_API_TOKEN"], val, "the options object is untouched (spawn_spec copied)")
+        said = [(m, k) for m, k in logged if "NOTES_API_TOKEN" in m]
+        self.assertEqual(len(said), 1, "the log names the moved variable, once")
+        self.assertNotIn(val, "".join(m for m, _ in logged), "and never its value")
+        self.assertIs(said[0][1].get("problem"), False, "a routine line, never a problem row: filed as False explicitly")
+        # the three login names are routine (every login launch moves one) and go unsaid
+        written, handed, logged = self._spawn_road({"ROMP_SID": SID, "CLAUDE_CODE_OAUTH_TOKEN": self.tok})
+        self.assertEqual(written["env"], {"ROMP_SID": SID})
+        self.assertEqual(handed["secrets"], {"CLAUDE_CODE_OAUTH_TOKEN": self.tok}, "the login token still moves")
+        self.assertEqual([m for m, _ in logged if "credential-shaped" in m], [], "a login name alone: nothing said")
+
+    def test_a_non_string_value_anywhere_in_the_overlay_does_not_abort_the_split(self):
+        """Review round 1 (2026-09-18): the first cut judged the shape rule over the raw overlay, and
+        env_credential_names strips every value it is handed, so ONE non-string value anywhere in the overlay raised
+        AttributeError out of split_spawn_secrets, where the base tree launched the session (a total function became
+        partial). The rule is judged over a coerced view now (_overlay_text, for the NAME decision only): nothing
+        raises, and a credential-shaped name whose value is not a string still leaves the spec, as the text the
+        host's environment carries (filtering the overlay to string values first would have written it into the file).
+
+        What this pins about a non-string value under a PLAIN name is BASE behaviour, not correctness (review round
+        2, 2026-09-18): it stays in the spec as it always did, and a spec holding one cannot launch a real CLI. The
+        host's SDK transport, which every real install runs, merges the overlay as it is and a subprocess
+        environment refuses a non-string value; only the pipe transport of the SDK-less tests converts per value.
+        Pre-existing, unchanged here, out of scope for a fix-tier change, and no writer of options.env produces such
+        a value today; written down so the assertion is not read as support for the state (split_spawn_secrets'
+        docstring carries the same note)."""
+        spec = {"sid": SID, "env": {"ROMP_SID": SID, "X_COUNT": 5, "X_FLAG": True}}
+        self.assertEqual(sb.split_spawn_secrets(spec), {}, "nothing credential-shaped: nothing moves, nothing raises")
+        self.assertEqual(spec["env"], {"ROMP_SID": SID, "X_COUNT": 5, "X_FLAG": True}, "the plain values stay as they were")
+        num = 10 ** 12 + uuid.uuid4().int % 10 ** 12
+        spec = {"sid": SID, "env": {"ROMP_SID": SID, "NOTES_API_TOKEN": num, "NOTES_API_KEY": ["a", "b"], "X_FLAG": True}}
+        secrets = sb.split_spawn_secrets(spec)
+        self.assertEqual(secrets, {"NOTES_API_TOKEN": str(num), "NOTES_API_KEY": str(["a", "b"])},
+                         "a credential-shaped name moves whatever its value's type, as text for the host's environment")
+        self.assertEqual(spec["env"], {"ROMP_SID": SID, "X_FLAG": True})
+        self.assertNotIn(str(num), json.dumps(spec), "the value is gone from the spec")
+        self.assertEqual(sb.split_spawn_secrets({"env": {"CLAUDE_CODE_OAUTH_TOKEN": None}}), {"CLAUDE_CODE_OAUTH_TOKEN": ""},
+                         "a login name moves whatever its value; None rides as the empty string, never the word None")
+        spec = {"env": {"EMPTY_TOKEN": None}}
+        self.assertEqual(sb.split_spawn_secrets(spec), {}, "None under another credential-shaped name holds no secret and stays")
+        self.assertEqual(spec["env"], {"EMPTY_TOKEN": None})
+        for v in (5, True, 1.5, ["a"], {"k": "v"}, 0, False, None, "", []):
+            self.assertEqual(sb.spawn_env_secret_names({"X_VALUE": v}), [], "total over every JSON-native value: %r" % (v,))
+
+    def test_the_host_launch_proceeds_with_a_non_string_value_and_still_omits_the_credential_under_one(self):
+        """The real _host_transport_for spawn road (review round 1, 2026-09-18): an overlay holding an integer under a
+        plain name and one under a credential-shaped name. The first cut aborted this launch before the file was
+        written; now the file is written, the credential-shaped name's value is in no file under hosts/, and the host
+        receives it as text. The plain integer staying in the file is BASE behaviour, pinned as such and not as a
+        supported state (review round 2, 2026-09-18): the SDK transport a real install's host runs cannot spawn a CLI
+        from a spec whose overlay holds a non-string value; pre-existing, unchanged here, see split_spawn_secrets."""
+        num = 10 ** 12 + uuid.uuid4().int % 10 ** 12
+        written, handed, logged = self._spawn_road({"ROMP_SID": SID, "X_COUNT": 5, "NOTES_API_TOKEN": num})
+        self.assertEqual(written["env"], {"ROMP_SID": SID, "X_COUNT": 5}, "the plain integer stays in the file as it was")
+        under_hosts = [q for q in (Path(self.state) / "hosts").rglob("*") if q.is_file()]
+        self.assertTrue(under_hosts, "the write left files to check")
+        for q in under_hosts:
+            self.assertNotIn(str(num), q.read_bytes().decode("utf-8", "replace"), "the value is in no file under hosts/")
+        self.assertEqual(handed["secrets"], {"NOTES_API_TOKEN": str(num)}, "the host's environment gets it as text")
+        said = [m for m, _ in logged if "NOTES_API_TOKEN" in m]
+        self.assertEqual(len(said), 1, "the log names the moved variable, once")
+        self.assertNotIn(str(num), "".join(m for m, _ in logged), "and never its value")
+
+    def test_a_lowercase_credential_shaped_name_leaves_the_spec_env_too(self):
+        """Review round 1 (2026-09-18): the shape rule was an exact, case-sensitive suffix, so notes_api_token was never
+        moved and would have been written to spawn.json with its value. The suffixes are compared on the upper-cased
+        name now (in env_credential_names, so the boot notice folds case too); an empty value still stays whatever
+        its case, and a name whose suffix only begins with the shape stays."""
+        val = "synthetic-notes-token-" + uuid.uuid4().hex
+        key = "synthetic-notes-key-" + uuid.uuid4().hex
+        spec = {"sid": SID, "env": {"ROMP_SID": SID, "notes_api_token": val, "Notes_Api_Key": key, "empty_token": "",
+                                    "editor_tokenizer": "x"}}
+        secrets = sb.split_spawn_secrets(spec)
+        self.assertEqual(secrets, {"notes_api_token": val, "Notes_Api_Key": key}, "moved under their own spelling, values byte for byte")
+        self.assertEqual(spec["env"], {"ROMP_SID": SID, "empty_token": "", "editor_tokenizer": "x"})
+        self.assertNotIn(val, json.dumps(spec)); self.assertNotIn(key, json.dumps(spec))
+        written, handed, _ = self._spawn_road({"ROMP_SID": SID, "notes_api_token": val})
+        self.assertEqual(written["env"], {"ROMP_SID": SID}, "the file omits the lowercase name")
+        self.assertNotIn(val, (Path(self.state) / "hosts" / SID / "spawn.json").read_text())
+        self.assertEqual(handed["secrets"], {"notes_api_token": val})
+
 
 class JournalRules(unittest.TestCase):
     def test_offsets_are_ordinals_and_reads_start_anywhere(self):
@@ -483,7 +660,8 @@ class _PickSdk:
 
 
 class HostProcess(unittest.TestCase):
-    """Each test starts one host on the fake CLI in a private state root and kills everything after."""
+    """Each test starts one host on the fake CLI in a private state root and kills everything after (one exception: the
+    never-lands pin on _journal_landed writes the journal directory itself and starts no host)."""
 
     def setUp(self):
         self.state = tempfile.mkdtemp()
@@ -491,13 +669,20 @@ class HostProcess(unittest.TestCase):
         self.fake_log = os.path.join(self.state, "fake-cli.log")
         self.tdir = os.path.join(self.state, "transcripts")
 
+    def _overlay(self):
+        """The spec's env overlay as a compose builds one for the fake CLI: its log, transcript dir and conversation id,
+        and a canary value no test hands the CLI by another road (the secrets case reads it back to check it appears
+        nowhere the host writes or sends). Its own method since review round 1's addendum (2026-09-18), so a case that
+        builds the overlay itself and runs the kernel's split over it starts from the same one."""
+        return {"FAKE_CLI_LOG": self.fake_log, "FAKE_CLI_TRANSCRIPT_DIR": self.tdir, "FAKE_CLI_SESSION_ID": FSID,
+                "ROMP_CANARY_SECRET": "canary-" + uuid.uuid4().hex}
+
     def _spec(self, **over):
         d = Path(self.state) / "hosts" / SID
         d.mkdir(parents=True, mode=0o700)
         spec = {"sid": SID, "name": "web", "version": "abc12345", "state_dir": self.state, "protocol": 1,
                 "cli_path": FAKE, "cwd": self.state, "permission_prompt_tool_name": "stdio", "permission_mode": "default",
-                "env": {"FAKE_CLI_LOG": self.fake_log, "FAKE_CLI_TRANSCRIPT_DIR": self.tdir, "FAKE_CLI_SESSION_ID": FSID,
-                        "ROMP_CANARY_SECRET": "canary-" + uuid.uuid4().hex},
+                "env": self._overlay(),
                 "max_buffer_size": 1024 * 1024, "hook_self_answer_s": 2, "unattached_grace_s": 3600}
         spec.update(over)
         p = d / "spawn.json"
@@ -559,14 +744,40 @@ class HostProcess(unittest.TestCase):
         """The journal once the writer has landed `n` records: the host forwards a record to the kernel at once and
         journals it on its own writer task, so a frame on the socket says nothing about the disk yet (the writer may
         lag by design, and a slow runner's disk shows it: the macOS cell read three records where the socket had four,
-        2026-09-16). The event waited on is the n-th record on disk, never a fixed pause."""
+        2026-09-16). The event waited on is the n-th record on disk, never a fixed pause.
+
+        On the deadline the wait FAILS, naming what it saw (2026-09-19, the reviewer's ruling on the journal-fault
+        test's wait: a read that cannot tell a late landing from one that never happens must not report never). It used
+        to return the short list silently, so a record that never landed failed the caller's assertion as a numbering
+        mismatch, `[0] != [0, 2]`, fifteen seconds later: the very message the wait exists to eliminate. The failure now
+        reads as the writer's, with the count waited for, the count found, the offsets found and the timeout in
+        seconds. `timeout` is that deadline, so a test can pin the failure quickly (the never-lands test below, at 0.3 s).
+        Shared by the turn test, the lagging-writer test and the journal-fault test, whose deadlines now fail this way."""
         d = os.path.join(self.state, "hosts", SID)
         deadline = time.time() + timeout
         journal = list(sh.read_journal_dir(d))
         while time.time() < deadline and len(journal) < n:                # loop-ok: the event is the writer's n-th record on disk
             time.sleep(0.005)
             journal = list(sh.read_journal_dir(d))
+        if len(journal) < n:
+            self.fail("the journal writer never landed %d records within %g s: %d found, at offsets %r"
+                      % (n, timeout, len(journal), [o for o, _ in journal]))
         return journal
+
+    def test_the_journal_wait_fails_naming_what_it_saw_when_the_records_never_land(self):
+        """_journal_landed against its refusable input: a journal directory that never reaches the waited count (one
+        record on disk and no host to land another). On the deadline the helper fails, and the message carries the four
+        facts that tell a writer fault from a numbering mismatch: the count waited for, the count found, the offsets
+        found and the timeout in seconds. Red on the helper before 2026-09-19, which returned the one record silently."""
+        j = sh.Journal(os.path.join(self.state, "hosts", SID))
+        j.append({"type": "assistant", "n": 0}); j.close()
+        t0 = time.time()
+        with self.assertRaises(AssertionError) as cm:
+            self._journal_landed(2, timeout=0.3)
+        self.assertLess(time.time() - t0, 10, "the deadline is the argument, not the 15 s default")
+        msg = str(cm.exception)
+        for fact in ("never landed 2 records", "1 found", "offsets [0]", "within 0.3 s"):
+            self.assertIn(fact, msg, "the failure names " + fact)
 
     def test_the_lease_and_the_hello_carry_the_clis_spawn_time_once_and_the_specs_login(self):
         """The host is the authority for when ITS CLI spawned: the lease's spawnedAt is stamped once at the spawn and stands
@@ -807,7 +1018,13 @@ class HostProcess(unittest.TestCase):
 
     def test_a_journal_write_fault_is_a_fault_frame_not_the_clis_death(self):
         # finding 3: a failed journal write used to end the read loop and be reported as the CLI dying
-        host, sock, spec = self._start(_test_journal_fault_at=1)
+        # The journal read below waits for the records to land (2026-09-19): the host sends a record's `out` frame one
+        # event-loop turn BEFORE its writer task appends it (publication precedes durability, by design: the module
+        # docstring of kernel/session_host.py), so a read at the result frame can see [0] where [0, 2] land a moment later,
+        # as a loaded full-suite run did. The wait is _journal_landed, the turn test's precedent (4ec6da845); the writer
+        # delay makes the late landing certain instead of a matter of scheduling. Of the two sibling tests that wait, the
+        # lagging-writer one carries the delay knob (at 0.4 s) and the turn test does not.
+        host, sock, spec = self._start(_test_journal_fault_at=1, _test_journal_delay_s=0.05)
         k, _ = self._attach(sock)
         k.send({"t": "in", "data": self._user("hi sleep=0.2")})
         res = k.recv_until(lambda f: f.get("t") == "out" and f["data"].get("type") == "result")
@@ -818,9 +1035,10 @@ class HostProcess(unittest.TestCase):
         self.assertIn("journal-write-failed", kinds); self.assertNotIn("cli-exited", kinds)
         # live delivery was complete (the kernel got every record) even though offset 1 is missing from the journal
         self.assertEqual([f["offset"] for f in k.outs()], list(range(len(k.outs()))))
-        offs = [o for o, _ in sh.read_journal_dir(os.path.join(self.state, "hosts", SID))]
+        landed = [o for o in range(len(k.outs())) if o != 1]               # every live offset but the faulted one
+        offs = [o for o, _ in self._journal_landed(len(landed))]          # readers skip the gap marker, so the count is theirs
         self.assertNotIn(1, offs, "the failed record is a gap the readers skip")
-        self.assertEqual(offs, [o for o in range(len(k.outs())) if o != 1], "the numbering around the gap holds")
+        self.assertEqual(offs, landed, "the numbering around the gap holds")
         k.send({"t": "end", "grace": 10})
         ex = k.recv_until(lambda f: f.get("t") == "exit")
         self.assertEqual(ex["cause"], "end")
@@ -948,14 +1166,14 @@ class HostProcess(unittest.TestCase):
         self.assertEqual(again["data"]["request_id"], req["data"]["request_id"], "re-sent from the table although its journal write failed")
         k2.close()
 
-    def _env_probe_cli(self):
-        """A CLI stand-in that records whether CLAUDE_CODE_OAUTH_TOKEN is set in ITS environment (presence only,
-        never the value) and then becomes the fake CLI. Returns (cli_path, the record's path)."""
+    def _env_probe_cli(self, name="CLAUDE_CODE_OAUTH_TOKEN"):
+        """A CLI stand-in that records whether `name` (the login token by default) is set in ITS environment
+        (presence only, never the value) and then becomes the fake CLI. Returns (cli_path, the record's path)."""
         seen = os.path.join(self.state, "cli-env-seen")
         probe = os.path.join(self.state, "cli-env-probe.py")
         with open(probe, "w") as f:
             f.write("#!%s\nimport os, sys\n" % sys.executable)
-            f.write("open(%r, 'w').write('present' if os.environ.get('CLAUDE_CODE_OAUTH_TOKEN') else 'absent')\n" % seen)
+            f.write("open(%r, 'w').write('present' if os.environ.get(%r) else 'absent')\n" % (seen, name))
             f.write("os.execv(%r, [%r, %r] + sys.argv[1:])\n" % (sys.executable, sys.executable, FAKE))
         os.chmod(probe, 0o755)
         return probe, seen
@@ -979,6 +1197,38 @@ class HostProcess(unittest.TestCase):
         blob = json.dumps(self._hostlog()) + json.dumps([r for _, r in journal]) + json.dumps(k.frames)
         blob += (Path(self.state) / "hosts" / SID / "spawn.json").read_text() + sb.read_lease(self.state, SID).__repr__()
         self.assertNotIn(tok, blob, "the token's value is in no file the host writes, no frame, no lease")
+        k.close()
+
+    def test_a_moved_name_in_the_hosts_environment_reaches_the_cli_the_same_way(self):
+        """A name of spawn_env_secret_names' shape beyond the three login names (a synthetic _TOKEN here) takes the login
+        token's road since 2026-09-18 (the box admin's hazard review of the pull-in, 2026-09-16): out of the spec, into
+        the host's process environment, and from there into the CLI. The host's environment is DERIVED from the kernel's
+        split here, never handed over by the test: the overlay is built with the name, split_spawn_secrets moves it out
+        of a spec holder as _host_transport_for does before the write, the split overlay is the spec the host reads, and
+        the returned dict is the host's environment (review round 1's addendum, 2026-09-18: the first cut put the
+        variable in host_env by hand, so it passed on the base tree, whose split moved the three login names alone, and
+        pinned nothing of the kernel's road).
+
+        The discriminating assertions are the spec's contents and the absence of the value under hosts/, NOT the CLI
+        probe: on the base tree the CLI reads the variable present anyway, because the host lays the spec's overlay over
+        its own environment, so the probe leg is true on both trees and only the file assertions turn this red before
+        the change (the refuter's caveat, kept here so nobody strengthens the wrong leg)."""
+        probe, seen = self._env_probe_cli("NOTES_API_TOKEN")
+        val = "synthetic-notes-token-" + uuid.uuid4().hex
+        holder = {"sid": SID, "env": dict(self._overlay(), NOTES_ENDPOINT="http://notes.test", NOTES_API_TOKEN=val)}
+        secrets = sb.split_spawn_secrets(holder)          # the kernel's split over the overlay, the spec's env its remainder
+        host, sock, spec = self._start(host_env=secrets, cli_path=probe, env=holder["env"])
+        self.assertNotIn("NOTES_API_TOKEN", json.dumps(spec), "the spec the host read carries no such name: the split moved it")
+        self.assertEqual(spec["env"].get("NOTES_ENDPOINT"), "http://notes.test", "the plain name stays in the spec")
+        blob = "".join(q.read_bytes().decode("utf-8", "replace") for q in (Path(self.state) / "hosts").rglob("*") if q.is_file())
+        self.assertNotIn(val, blob, "the value is in no file under hosts/")
+        self.assertEqual(sorted(secrets), ["NOTES_API_TOKEN"], "the split's return is the host's whole credential environment")
+        self.assertTrue(secrets["NOTES_API_TOKEN"] == val)
+        k = self._one_turn(sock)
+        # true on the base tree too (the host lays the spec's overlay over its environment): not the discriminating leg
+        self.assertEqual(open(seen).read(), "present", "the CLI inherited the variable from the host's environment")
+        blob = "".join(q.read_bytes().decode("utf-8", "replace") for q in (Path(self.state) / "hosts").rglob("*") if q.is_file())
+        self.assertNotIn(val, blob + json.dumps(k.frames), "after a turn: the value is in no file under hosts/ and no frame")
         k.close()
 
     def test_without_a_token_in_the_hosts_environment_the_cli_gets_none(self):

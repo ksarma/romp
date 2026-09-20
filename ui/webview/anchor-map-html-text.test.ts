@@ -125,8 +125,10 @@ test("an RCDATA element inline (a `<textarea>`) shows everything up to its end t
   assert.equal(shown("Lead <title>t &amp; *u*</title> tail\n"), "Lead tail", "an inline body title: dropped content (round 5)");
   const BLOCK = "<div><textarea>d <i>e</i> *f*</textarea> tail</div>\n";
   assert.equal(quote(BLOCK, "d <i>e</i> *f*"), "d <i>e</i> *f*", "the block form: an html block's raw takes no emphasis (as before)");
-  // no end tag in the block: the block's rest is the text (recorded; the parser reads on past the block)
-  assert.equal(shown("Lead <textarea>open *x* tail\n"), "Lead open <em>x</em> tail");
+  // no end tag in the block: the start tag is literal text since decision 52 (md-literal-tags.ts, run on the reader's lex as on the
+  // viewer's parse), so its characters show and the tokens after it render as prose (before: the block's rest was read as the
+  // textarea's text, marked's HTML for the tokens, where the parser read on past the block)
+  assert.equal(shown("Lead <textarea>open *x* tail\n"), "Lead <textarea>open x tail");
 });
 
 test("inside an `<svg>` a `<title>` is an ordinary element, closed by its own end tag or by `</svg>` (foreign content; the parser's raw-text rule holds in HTML content alone): `<svg><title>inner title</svg> beside` reads `inner title beside` (before: the title's text ran to the block's end, tags and all, the one regression against round 2's regex strip)", () => {

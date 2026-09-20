@@ -92,7 +92,15 @@ def _no_crypto():
     every loaded cryptography module and the top-level name read None in sys.modules, which the
     import system raises ModuleNotFoundError for, and the kernel's cache is reset so the import is
     really attempted (patching _PUSH_CRYPTO to a sentinel would only prove the sentinel). Reset again
-    on the way out: the next call is the retry a re-installed package is found by."""
+    on the way out: the next call is the retry a re-installed package is found by.
+
+    Minting inside the block works (_mint_browser_keys, _sub_body): the package's Rust bindings
+    resolve `cryptography.hazmat.primitives.asymmetric.ec` through an import on the first key
+    generated in the process and keep it, so one key is generated and discarded here before anything
+    is hidden. Without that, a cold process (the test alone, an xdist split of this module) halted in
+    the test's own mint before the route was reached — 2026-09-19."""
+    if HAVE_CRYPTO:
+        ec.generate_private_key(ec.SECP256R1())   # the warm the docstring describes
     hidden = {k: None for k in list(sys.modules) if k == "cryptography" or k.startswith("cryptography.")}
     hidden["cryptography"] = None
     km._PUSH_CRYPTO[0] = None
@@ -661,7 +669,8 @@ class SubscribeRoutes(unittest.TestCase):
         # install layout, bin/romp-sdk-setup in this checkout, which installs the package into the SDK
         # venv the kernel reads; the bell's This-device sub-line shows the body verbatim
         with _no_crypto():
-            code, body = self._post("/push/subscribe", self._sub_body())
+            sub = self._sub_body()
+            code, body = self._post("/push/subscribe", sub)
             kcode, kbody = self._get_text("/push/vapid-key")
         self.assertEqual(code, 500)
         self.assertIn("'cryptography'", body)
@@ -677,12 +686,30 @@ class SubscribeRoutes(unittest.TestCase):
         # the message sends the user to bin/romp-sdk-setup and says to turn the switch on again: that
         # only holds if a miss is not cached for the kernel's life (it was, as _PUSH_CRYPTO[0] = False)
         with _no_crypto():
-            code, _ = self._post("/push/subscribe", self._sub_body())
+            sub = self._sub_body()
+            code, _ = self._post("/push/subscribe", sub)
             self.assertEqual(code, 500)
             self.assertIsNone(km._push_crypto())
         code, _ = self._post("/push/subscribe", self._sub_body())
         self.assertEqual(code, 200, "the same kernel, the package importable now: the subscribe lands")
         self.assertEqual(len(km._push_subs()), 1)
+
+    @unittest.skipUnless(HAVE_CRYPTO, "python 'cryptography' not installed")
+    def test_a_subscription_minted_inside_the_block_still_reaches_the_route(self):
+        # the fourth test, written on purpose: a subscription minted INSIDE _no_crypto(), the natural way
+        # to write one of these, mints (the helper warms the bindings' lazy import before it hides the
+        # package) and then meets the route's 500, so the halt comes from the kernel's import and never
+        # from the test's own key generation. Red on a cold process before the helper warmed (2026-09-19).
+        with _no_crypto():
+            sub = self._sub_body()
+            import base64
+            b64 = sub["keys"]["p256dh"]
+            point = base64.urlsafe_b64decode(b64 + "=" * (-len(b64) % 4))
+            self.assertEqual((len(point), point[0]), (65, 0x04), "a P-256 point, minted under the hidden package")
+            code, body = self._post("/push/subscribe", sub)
+        self.assertEqual(code, 500)
+        self.assertIn("'cryptography'", body, "the route's own import met the hidden None")
+        self.assertEqual(km._push_subs(), {})
 
     def test_the_sdk_venvs_site_packages_are_put_on_the_path_for_the_import(self):
         # bin/romp-sdk-setup installs the package into the SDK venv; _ensure_sdk_on_path adds that venv

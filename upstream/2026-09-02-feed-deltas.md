@@ -17,3 +17,5 @@ MERGED 2026-09-06T19:50Z as their PR #952 (merge `47e0d174`), as offered, togeth
 2026-09-07: came home in the upmerge0907 fold (upstream/main 1dae845d merged into the fork; their PR #952 is in the folded range).
 
 2026-09-10: their PR #952 did not carry the ready-gate layer of (1): upstream's shim at 459e50d6 has no `bundleReady`, `readyQueued` or `READY_GATE_CAP`, so the hold of every push until the bundle's `ready` stayed fork-only (found by the slice 4 fold's review). It goes upstream with the shim-redial-gate candidate (`upstream/2026-09-10-shim-redial-gate.md`, fix tier, from the fold), which carries the two shim bits with the term; the merged status above covers the rest of the three layers.
+
+Dated record; superseded in part on 2026-09-18: federation's remote sockets announce `caps=feedDelta` and reassemble a remote host's view-delta patches per relay socket (2026-09-18-remote-conns-receive-feed-deltas.md).

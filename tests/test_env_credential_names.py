@@ -33,7 +33,8 @@ def _op_name(n):
 
 
 def _shaped(n):
-    return n.endswith("_API_KEY") or n.endswith("_TOKEN") or _op_name(n)
+    u = n.upper()      # the suffixes fold case since review round 1 of the spawn-spec fix (2026-09-18); the op names do not
+    return u.endswith("_API_KEY") or u.endswith("_TOKEN") or _op_name(n)
 
 
 class PureNames(unittest.TestCase):
@@ -56,6 +57,14 @@ class PureNames(unittest.TestCase):
         (credentials.check_boot_environment), not this helper, is what keeps a key out of the environment."""
         env = {n: "v" for n in sb.AUTH_ENV_NAMES}
         self.assertEqual(self.names(env), sorted(sb.AUTH_ENV_NAMES))
+
+    def test_the_suffix_test_folds_case(self):
+        """Review round 1 of the spawn-spec fix (2026-09-18): the suffixes were compared exactly, so a lowercase or
+        mixed-case spelling was never named here, and the spawn spec's writer, which reuses this rule, would have
+        written such a name to hosts/<sid>/spawn.json with its value. A name whose suffix only begins with the
+        shape (editor_tokenizer) stays unnamed in any case."""
+        self.assertEqual(self.names({"notes_api_token": "x", "Notes_Api_Key": "y", "editor_tokenizer": "z"}),
+                         ["Notes_Api_Key", "notes_api_token"])
 
     def test_empty_or_whitespace_values_are_not_named(self):
         self.assertEqual(self.names({"FOO_API_KEY": "", "BAR_TOKEN": "   ", "BAZ_API_KEY": "v"}), ["BAZ_API_KEY"])
@@ -104,6 +113,25 @@ class BootNoticeMethod(unittest.TestCase):
         self.assertNotIn("value-oai-synth", rows[0])
         self.assertNotIn("value-hf-synth", rows[0])
         self.assertIs(self.logs[0][1], False, "filed as information explicitly, never left to _log's default")
+
+    def test_the_line_names_a_lowercase_name_and_its_copy_says_the_suffixes_fold_case(self):
+        """Review round 2 of the spawn-spec fix (2026-09-18): round 1 folded case in env_credential_names, and this
+        line's own copy still described the exact-cased suffixes, so a lowercase variable was listed under a shape
+        clause that excluded it. The copy says the fold now, between the suffixes and the 1Password clause (the op
+        names stay case-exact, so the clause must not follow them), and keeps saying that other shapes go
+        unchecked. Red before the one-string change; the docstring's promise that the copy says what shape was
+        checked is what this pins."""
+        with patch.dict(os.environ, {"notes_api_token": "value-lc-synth", "Notes_Api_Key": "value-mc-synth"}, clear=False):
+            self.be._note_env_credential_names()
+        rows = [m for m, _ in self.logs if "reach every session" in m]
+        self.assertEqual(len(rows), 1)
+        self.assertIn("notes_api_token", rows[0])
+        self.assertIn("Notes_Api_Key", rows[0])
+        self.assertNotIn("value-lc-synth", rows[0])
+        self.assertNotIn("value-mc-synth", rows[0])
+        self.assertIn("(ending _API_KEY or _TOKEN in any letter case, or 1Password's own OP_* names)", rows[0],
+                      "the shape clause names the fold, before the 1Password clause")
+        self.assertIn("names of another shape are not checked", rows[0], "and keeps its honesty about other shapes")
 
     def test_quiet_when_no_credential_names(self):
         with patch.dict(os.environ, {}, clear=False):       # restores every popped name on exit

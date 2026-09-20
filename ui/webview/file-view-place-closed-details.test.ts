@@ -41,7 +41,8 @@
 // once per block per source, where the PR's head paid it on every frame. Synthetic fixtures only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
-import { marked, Lexer } from "marked";
+import { Lexer } from "marked";
+import { viewerHtml } from "./file-view";   // the viewer's parse (mdBlock's recipe: marked's lexer, the literal-tags rule of md-literal-tags.ts, the per-call walk, its parser), the stand-in's too
 import { readPlace, seatPlace, blockHolding, type Place } from "./reader-place";
 import { sourceBlockSpans, renderedBlockIndex, renderedBlockWrappers } from "./anchor-map";
 import { hideEdges, sameNodes } from "../test-dom-shim";
@@ -166,7 +167,7 @@ function scene(open: boolean, top0 = 0, rectOnly = false): Scene {
   const doc = new FakeDocument(rectOnly);
   const body = doc.createElement("div"); body.setAttribute("class", "fileview-body"); body.box = { top: EDGE, bottom: EDGE + 600 };
   const md = doc.createElement("div"); md.setAttribute("class", "fileview-md");
-  for (const n of parseHTML(doc, marked.parse(fold(open)) as string)) md.appendChild(n);
+  for (const n of parseHTML(doc, viewerHtml(fold(open)))) md.appendChild(n);
   body.appendChild(md);
   const blocks = md.elements();
   const det = blocks[5];
@@ -479,7 +480,7 @@ function readmeScene(doc: string, top0 = 0): Readme {
   const d = new FakeDocument();
   const body = d.createElement("div"); body.setAttribute("class", "fileview-body"); body.box = { top: EDGE, bottom: EDGE + 600 };
   const md = d.createElement("div"); md.setAttribute("class", "fileview-md");
-  for (const n of parseHTML(d, marked.parse(doc) as string)) md.appendChild(n);
+  for (const n of parseHTML(d, viewerHtml(doc))) md.appendChild(n);
   body.appendChild(md);
   const blocks = md.elements();
   const div = blocks[3];
@@ -653,7 +654,7 @@ function layoutScene(doc: string, top0 = 0): { body: FakeElement; md: FakeElemen
   const d = new FakeDocument();
   const body = d.createElement("div"); body.setAttribute("class", "fileview-body"); body.box = { top: EDGE, bottom: EDGE + 600 };
   const md = d.createElement("div"); md.setAttribute("class", "fileview-md");
-  for (const n of parseHTML(d, marked.parse(doc) as string)) md.appendChild(n);
+  for (const n of parseHTML(d, viewerHtml(doc))) md.appendChild(n);
   body.appendChild(md);
   const isWrapper = (el: FakeElement) => (el.tagName === "DIV" || el.tagName === "DETAILS") && el.elements().length > 0;
   const own = (el: FakeElement, y: number): number => {

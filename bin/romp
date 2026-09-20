@@ -336,7 +336,8 @@ fi
 
 # `romp perf [--interval <s>] [--json]` / `romp perf log on|off` — the kernel's performance counters
 # (GET /perf), read as RATES from two snapshots taken <s> seconds apart (default 10): pusher cycles and
-# wakes per second, cycle time percentiles, the share of cycle time per stage, CPU split between the
+# wakes per second, cycle time percentiles, the share of the pusher's cycle time per stage with the connect
+# pushes' stage walls apart, CPU split between the
 # pusher thread, the judge threads and the rest of the process, build cache hits vs rebuilds, bytes
 # sent per slot kind, goal-store loads per second, judge passes, rss. It exists so an optimization can
 # be checked against the LIVE kernel after each restart without attaching a profiler. --json prints one
@@ -792,6 +793,17 @@ held, held_ms, exempt = dl("pusher", "held"), dl("pusher", "held_ms"), dl("pushe
 cpu_proc = 100.0 * dl("process", "cpu_s") / dt
 cpu_pusher = 100.0 * dl("pusher", "cycle_cpu_ms_sum") / (dt * 1000.0)
 cpu_judge = 100.0 * dl("judge", "cpu_ms_sum") / (dt * 1000.0)
+# the judge's CPU carries no REPORTED workers' share when the newer snapshot's judge block has no cpu_ms_workers: the
+# kernel opens that key when it arms judge.py's worker-CPU sink at load and serves it exactly while its collector holds
+# the sink, so a block without it is from a collector that is not the sink now (nothing armed it, or a later kernel
+# load displaced it; a test process), and no workers' share lands in that collector from then on. The note means this
+# block cannot tell you how much of the window's figure is the share, not that the share is absent from it: a window
+# that begins after the displacement has none, a window that straddles it still carries what landed while armed. The
+# two lines that print the note say so rather than pass the figure off as measured whole (the review ruling on the
+# write-time fold, 2026-09-18; the displaced case from review round 1; review round 2, 2026-09-19, restored this
+# hedge, which the sibling copies in kernel.py's docstring and docs/reference.md carry)
+_jb = b.get("judge")
+workers_note = "" if "cpu_ms_workers" in (_jb if isinstance(_jb, dict) else {}) else " (workers' share not reported)"
 up = int(g(b, "uptime_s"))
 
 
@@ -804,14 +816,25 @@ def kb(n):                        # bytes over the window as a rate
     return "%.0f KB/s" % (n / 1024.0 / dt) if n < 1024 * 1024 * dt else "%.1f MB/s" % (n / 1048576.0 / dt)
 
 
-def share(ms):                    # a stage's share of the window's cycle time
+def share(ms):                    # a pusher-owned stage's share of the PUSHER'S cycle time over the window: the numerator is a
+    #                               stages_ms row and the divisor the pusher's cycle_ms_sum. The five push numerators (push,
+    #                               push.chat, push.feed, push.timeline, push.send) are the pusher's own since 2026-09-18
+    #                               (kernel/kernel.py, _PerfStats.stage credits a push stage to the thread that owns the pusher's
+    #                               cycle: a connect push's stages, closed on a handler thread under the "connect" mark, ride
+    #                               pusher.connectPush.stagesMs and print apart below, and a push stage from a thread that neither
+    #                               owns the cycle nor carries the mark counts under stagesForeign, in no share), so no push share
+    #                               here counts time the pusher's cycles never spent (before the split the chat share read above
+    #                               the push share, or above one hundred percent, while pages reloaded). The sixth numerator,
+    #                               stages_ms.jobs, is not routed: stage() adds a bare `jobs` write to the flat row for every
+    #                               writer under every mark, and the row is the pusher's because _pusher_cycle_jobs, inside the
+    #                               pusher's cycle, is its one writer (tests/test_perf_stats.py holds the call-site count to one)
     return "%3.0f%%" % (100.0 * ms / cyc_ms) if cyc_ms else "  -"
 
 
 print("romp perf: %.1f s window, kernel up %s, pid %d, romp-perf log %s"
       % (dt, hms(up), g(b, "process", "pid"), "on" if b.get("log") else "off"))
-print("process   rss %d MB   threads %d   cpu %.1f%% of one core (pusher %.1f%%, judge %.1f%%, other %.1f%%)"
-      % (g(b, "process", "rss_kb") // 1024, g(b, "process", "threads"), cpu_proc, cpu_pusher, cpu_judge,
+print("process   rss %d MB   threads %d   cpu %.1f%% of one core (pusher %.1f%%, judge %.1f%%%s, other %.1f%%)"
+      % (g(b, "process", "rss_kb") // 1024, g(b, "process", "threads"), cpu_proc, cpu_pusher, cpu_judge, workers_note,
          cpu_proc - cpu_pusher - cpu_judge))
 pb, pa = (b.get("process") or {}), (a.get("process") or {})
 if "allocated_blocks" in pb:
@@ -870,8 +893,19 @@ print("cycle ms  p50 %.0f   p90 %.0f   max %.0f (over the last %d cycles)   last
       % (g(b, "pusher", "cycle_ms_p50"), g(b, "pusher", "cycle_ms_p90"), g(b, "pusher", "cycle_ms_ring_max"),
          g(b, "pusher", "ring_n"), g(b, "pusher", "cycle_ms_last")))
 st = {k: dl("stages_ms", k) for k in ("jobs", "push", "push.chat", "push.feed", "push.timeline", "push.send")}
-print("stages    jobs %s   push %s  (chat %s  feed %s  timeline %s  send %s)"
-      % tuple(share(st[k]) for k in ("jobs", "push", "push.chat", "push.feed", "push.timeline", "push.send")))
+# the connect pushes (a fresh client's full push on its handler thread), apart from the pusher's shares: their count and
+# whole wall over the window, and the wall of the same four stages inside them, as ms (a share of the pusher's cycle time
+# would be a share of time the pusher never spent). A kernel from before the table (2026-09-18) has the count and the wall
+# and no split: said, not printed as zeros
+cp_n, cp_ms = dl("pusher", "connectPush", "count"), dl("pusher", "connectPush", "ms_sum")
+cp_tab = ((b.get("pusher") or {}).get("connectPush") or {}).get("stagesMs")
+if isinstance(cp_tab, dict):
+    connect = "connect pushes %d in %.0f ms (chat %.0f  feed %.0f  timeline %.0f  send %.0f)" % (
+        (cp_n, cp_ms) + tuple(dl("pusher", "connectPush", "stagesMs", "push." + k) for k in ("chat", "feed", "timeline", "send")))
+else:
+    connect = "connect pushes %d in %.0f ms (no stage split: a kernel from before 2026-09-18)" % (cp_n, cp_ms)
+print("stages    jobs %s   push %s  (chat %s  feed %s  timeline %s  send %s)   %s"
+      % (tuple(share(st[k]) for k in ("jobs", "push", "push.chat", "push.feed", "push.timeline", "push.send")) + (connect,)))
 parts = []
 for k in ("chat", "feed", "timeline", "feedJson"):     # feedJson: GET /feed.json's own reads, apart from the pusher's feed
     built, cached, ms = dl("builds", k, "built"), dl("builds", k, "cached"), dl("builds", k, "ms")
@@ -923,13 +957,17 @@ jw, jev, jbs = dl("judge", "wakes"), dl("judge", "wakes_event"), dl("judge", "wa
 # per-pass work is under "other"); it is the number a cheaper pass shows, where the judge share alone
 # cannot tell a cheaper pass from a faster cadence. "sets absorbed" is wakes - wakes_event: one SDK turn
 # fires several sets and a pass consumes them all at once, so wakes/s overstates the poke rate; a set
-# late in the window whose wake lands in the next reads as one short here, clamped at zero.
-print("judge     %d passes (%.2f/s)   last %.0f ms   mean %s ms   cpu/pass %s ms   chain memo %d hits / %d misses   "
+# late in the window whose wake lands in the next reads as one short here, clamped at zero. The chain memo's hits and
+# misses read this process's judge module: zero on the child road, where the memo lives in the child (docs/reference.md,
+# the child-road notes under the judges' child).
+print("judge     %d passes (%.2f/s)   last %.0f ms   mean %s ms   cpu/pass %s ms%s   chain memo %d hits / %d misses   "
       "wakes %d (event %d, backstop %d, %d sets absorbed)"
       % (jp, jp / dt, g(b, "judge", "ms_last"), ("%.0f" % (dl("judge", "ms_sum") / jp)) if jp else "-",
-         ("%.0f" % (dl("judge", "cpu_ms_sum") / jp)) if jp else "-",
+         ("%.0f" % (dl("judge", "cpu_ms_sum") / jp)) if jp else "-", workers_note,
          dl("memos", "chain", "hit"), dl("memos", "chain", "miss"), jw, jev, jbs, max(0, jw - jev)))
-# the evidence gate, per gated tier: per-session runs the tier made against the ones it declined
+# the evidence gate, per gated tier: per-session runs the tier made against the ones it declined. On the child
+# road (judge.child present) the gate runs in the child and this process's counters stay at zero, so the line
+# prints "no gated runs in the window" while the child judges (the done line carries no tiers block)
 # (skipped / (ran + skipped) is the acceptance number for the gate), then the runs that ended without a
 # stamp when there were any (incomplete: a deferral or a failed call; due_clock: a background deadline
 # made the run due; bypassed: no signature could be computed, or the parse ran under another cut)
