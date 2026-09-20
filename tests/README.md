@@ -37,10 +37,25 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   Run: `python3 -m pytest tests/ -q` (~20s; a stalled run is a hang, not slow).
   The `_HAVE_SDK`-gated classes in `test_sdk_backend.py` (OptionsAssembly, the
   runner and can_use_tool bridge suites) SKIP unless `claude_agent_sdk` imports,
-  and a skip reads as green — to execute them, put romp's SDK venv on the path:
+  and a skip reads as green. CI installs the SDK (`.github/workflows/ci.yml`, the
+  "Install the Claude Agent SDK" step, since 2026-09-20) at `SDK_TESTED_VERSION`
+  from `kernel/session_host.py`, the repo's one declaration of the version the
+  session host is written against, into every Python cell's interpreter, the
+  3.14t cell included (it installed, imported with the GIL off and passed these
+  modules on a free-threaded 3.14.6 before the step landed). So the 48 gated tests
+  (43 here, 5 in `test_host_transport.py`) and the two SDK-transport host tests
+  in `test_session_host.py` RUN in CI, and every session host a test spawns
+  there takes the SDK transport, as on a box with the venv `bin/romp-sdk-setup`
+  builds. `tests/test_ci_sdk_pin.py` holds the pin and never skips: it executes
+  the step's own read of the constant and, wherever `claude_agent_sdk` imports,
+  asserts the installed version equals it, so a box whose venv moved and a CI
+  cell whose install disagreed with the constant both go red; on a venv without
+  the SDK it checks the pin's presence and form and says the equality was not
+  checked there. To execute the gated tests from a plain venv, put romp's SDK
+  venv on the path:
   `PYTHONPATH=~/.local/state/romp/sdkvenv/lib/python3.12/site-packages python3 -m
-  pytest tests/test_sdk_backend.py -q` (the venv `bin/romp-sdk-setup` creates;
-  match the python version to it).
+  pytest tests/test_sdk_backend.py -q` (the venv `bin/romp-sdk-setup` creates, at
+  the version the same constant names; match the python version to it).
   Under pytest-xdist (`python3 -m pytest tests/ -n 4`) two import-time effects of
   `tests/test_host_transport.py` decide what a red means. It puts that same SDK venv
   on `sys.path` at import (the kernel's own idiom), and every worker imports every
