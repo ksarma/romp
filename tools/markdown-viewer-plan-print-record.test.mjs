@@ -35,6 +35,25 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, '..');
 const read = (...parts) => fs.readFileSync(path.join(REPO, ...parts), 'utf8');
 const exists = (...parts) => fs.existsSync(path.join(REPO, ...parts));
+/** The TypeScript compiler the UI builds with, for reading a test module's syntax rather than matching its text, and for
+ *  running a table a leg builds. */
+const tsc = createRequire(path.join(REPO, 'vscode-extension', 'package.json'))('typescript');
+/** The figure leg's table, BUILT: `shapes()` and the helpers it reads (`svgOf`, `image`, `HIDE_RULE`), cut from the leg's
+ *  source, transpiled with the compiler and run, so a count here is of the rows the leg builds (rows come from loops, so a
+ *  `name:` grep undercounts them). A cut that misses either mark fails, which is the failure wanted. */
+function figureRows() {
+  const src = read('ui', 'webview', 'file-print-figure-browser.test.ts');
+  const start = src.indexOf('const svgOf = ');
+  const fnAt = src.indexOf('function shapes(): Shape[] {', start);
+  const end = src.indexOf('\n}\n', fnAt);
+  assert.ok(start >= 0 && fnAt > start && end > fnAt, 'the leg declares svgOf, then shapes()');
+  const js = tsc.transpileModule(src.slice(start, end + 2) + '\nreturn shapes();', { compilerOptions: { target: tsc.ScriptTarget.ES2020, module: tsc.ModuleKind.None } }).outputText;
+  const rows = new Function(js)();
+  assert.ok(Array.isArray(rows) && rows.length > 0 && rows.every((r) => typeof r.name === 'string' && typeof r.html === 'function'), 'the built table: rows with a name and an html builder');
+  return rows;
+}
+/** A count in the section's words, for a pin that derives the number and reads the sentence. */
+const WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve'];
 /** A TypeScript source without its comments: a block comment that opens a line, a full-line `//` comment and a trailing
  *  `//` comment that a space precedes (a `//` inside a URL literal follows a colon and stays; a `/*` inside a regex or a
  *  string is mid-line and stays). */
@@ -795,6 +814,21 @@ test('Derivations and their unknown cases: the paragraph stands between P7 and t
   assert.ok(!/transform|clip-path|mask|filter/.test(hid), 'transform, clip-path, mask and filter are not read');
   assert.ok(unit.includes('test("figureHidden under node, where no browser computes a style:'), 'the figureHidden case under node');
   assert.ok(exists('ui', 'webview', 'file-print-figure-browser.test.ts') && read('ui', 'webview', 'file-print-figure-browser.test.ts').includes('for every shape the flow\'s answer equals the browser\'s own answer for the shape\'s ungated twin'), 'the figure leg in Chromium, the computed half');
+  // the shape count, ONE pin (the round-5 review's correctness-4 and regression-3: the number stood in five places and a
+  // delta updated two): the count is of the rows the leg builds, read here by running its table; one regex over the P2, D
+  // and Tests slices finds every copy, and each must be that count. D carries none (it says "every gated shape"), the
+  // ledger entry carries none (it points here), so the copies are P2's and the Tests list's, and a row added to the leg
+  // reds both at once.
+  const rows = figureRows();
+  const counts = (slice) => [...slice.matchAll(/\b(\d+) gated shapes?\b/g)].map((m) => Number(m[1]));
+  assert.deepEqual({ P2: counts(P2), D: counts(D), TESTS: counts(TESTS) }, { P2: [rows.length], D: [], TESTS: [rows.length] }, 'the shape count, in P2 and the Tests list once each and nowhere else in the section\'s derivations, is the number of rows the leg builds (' + rows.length + ')');
+  assert.ok(D.includes('the flow\'s answer equal to the browser\'s for the ungated twin of every gated shape, the spellings of zero among them'), 'D states the rule over every shape and counts none');
+  // the history clause beside each copy (the count at the round-3 review, and how many joined since) adds up to the same number
+  for (const [name, slice, added] of [['P2', P2, 'more'], ['TESTS', TESTS, 'added']]) {
+    const m = slice.match(new RegExp('(\\d+) at the round-3 review(?:,| and) (\\w+) ' + added + ' since the round-4 review'));
+    assert.ok(m, name + ' carries the round-3 count and the number added since');
+    assert.equal(m[2], WORDS[rows.length - Number(m[1])], name + ': the round-3 count plus the number added since is the count the leg builds');
+  }
   assert.ok(unit.includes('assert.equal(figureHidden(media("img", { display: "none" })), false,') && unit.includes('assert.equal(figureHidden(media("picture", { inert: "" })), false,') && unit.includes('assert.equal(figureHidden(media("svg", { opacity: "0.5" })), false,'), 'the permissive answers executed');
   assert.ok(OPEN.includes('8. The figure half of the printable rule answers on the permissive side.'));
   // figurePrintable, collectPictures
@@ -944,8 +978,6 @@ test('P2: the wait\'s count is the aim\'s and does not fall as pictures settle, 
 
 // ── the post-filter index: the population, derived, not recalled ──────────────────────────────────
 
-/** The TypeScript compiler the UI builds with, for reading a test module's syntax rather than matching its text. */
-const tsc = createRequire(path.join(REPO, 'vscode-extension', 'package.json'))('typescript');
 /** The print follow-on's test modules under ui/webview: the `ls ui/webview/file-print*.test.ts` listing the Tests paragraph
  *  names, the gate's node module, the takings leg and the legs' shared harness. Read from the directory, so a module added
  *  under the pattern joins the census on its own. */

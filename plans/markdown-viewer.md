@@ -8355,7 +8355,7 @@ the figure on the paper as far as the flow reads, the PERMISSIVE side: an svg's 
 `filter` can hide its paint and are not read (the `figureHidden` under node case: `hidden` and `popover` on an HTML
 element true and on an SVG element false; a presentation attribute, `display` on an `<img>`, a zero `width`, `inert` and
 a faint `opacity` false; file-print-figure-browser.test.ts in the three engines: the flow's answer equal to the browser's for the
-ungated twin of each of 74 gated shapes, the spellings of zero among them; open point 8). `figurePrintable` (P2): both
+ungated twin of every gated shape, the spellings of zero among them; open point 8). `figurePrintable` (P2): both
 must hold, over every painting element of the figure (`paintsOf`), each with its ancestors up to the root (`shows`); an
 SVG ancestor whose content never renders, or one `SVG_RENDERS` does not name, takes the paint off, the safe side; an
 `<audio>` without `controls` and the fallback content of an `<audio>` or a `<video>` paint nothing and are not counted;
