@@ -3027,7 +3027,8 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   `sh -ec`); python and node options before a heredoc on stdin; a prefix with options (`sudo -u`, `env -u`,
   `timeout -s`, `exec -a`); pushd moving the cwd and popd leaving it unknown; `[[ a > b ]]` and `(( a > b ))`
   comparing in bash and zsh and, since round 5's fifth addendum (2026-09-20), read in dash's grammar too, a
-  tracked target there refusing, while `[ a > b ]` redirects in every shell; a function body moving nothing after it; `Path(x).open('w')`, `open()`
+  tracked target there refusing, an operator glued to the closing `]]` and a process substitution among the
+    operands read as anywhere (the addendum's fix-up), while `[ a > b ]` redirects in every shell; a function body moving nothing after it; `Path(x).open('w')`, `open()`
   with keyword arguments and `fs.openSync` with a write flag; node `-p` and `--print`; the refusal's word (a
   change, never a suggestion); the NUL-byte rule; the full walk of a directory source, past 500 entries and into
   a subfolder behind them, skipped for a landing folder that does not exist under any project that tracks
@@ -4109,7 +4110,7 @@ document stands on its own, each with the reasoning it was given.
     truncated the file in both); the substitutions inside any arithmetic body (never read before; `(( $(echo x >
     report.md) ))` wrote in all three, `for (( i=$(..); .. ))` in bash and zsh, `expansionsOf`); and the reads that diverge
     in no way that writes (a here-doc body is data in all three; a here-string and a process substitution are syntax
-    errors in dash; quotes read alike; a brace list dash writes as one literal name, `{a,b}.md`, a residual named below).
+    errors in dash, though bash performs a process substitution inside `[[ ]]` (the fix-up below); quotes read alike; a brace list dash writes as one literal name, `{a,b}.md`, a residual named below).
     Where dash parses nothing, no dash reading is due, measured: a `for (( ))` head ("Bad for loop variable"), a `((`
     after any word but a reserved one (`time ((`, `echo ((`, `x=1 ((`, `} ((`), an unquoted parenthesis between `[[` and
     `]]`. The shell facts live in `TEST_ARITH_SHELLS` (bash, zsh and ksh read the test keyword and arithmetic; a script
@@ -4137,6 +4138,55 @@ document stands on its own, each with the reasoning it was given.
     script beyond the three `-c` rows, every position the twelve do not spell (a case or select body, zsh's brace bodies, a
     coproc), and dash's literal reading of a brace list (`> docs/{a,b}.md` writes `docs/{a,b}.md` in dash: judged only when
     an alternative is tracked).
+    THE FIX-UP (2026-09-20; the addendum's verifier, on its head): two reads at the test's boundaries failed toward allowing,
+    both inside the addendum's own construct and both present at the fourth addendum's head too. A process substitution
+    among the operands was read as the test's `<` and a `(`, the test's own operators being read before the expansion, so
+    `[[ -f <(echo x > report.md) ]]` from docs/ was allowed while bash performed it and wrote, in every position (alone,
+    `!`, if, while, a group, a called function, after `&&`, inside `$(...)`; through `bash -c` and a heredoc-fed bash every
+    shell wrote; zsh performs it after `!`, in a pipeline, with `&`, `|&` and under coproc, and rejects it alone, in `( )`, in a
+    group, in if, in a called function, in `$(...)` and via `zsh -c`; dash rejects it as a syntax error; the addendum's
+    own row had measured the substitution outside a test only). An operator glued to the closing `]]` was read as a word
+    of the test, the operator read running before the `]]` under way had ended the word, so `[[ a ]]>report.md`,
+    `[[ a ]]>|report.md`, `[[ -n a ]]&&cp ../base/report.md report.md`, `[[ -z a ]]||cp ..` and `[[ -z a ]]||cd ..; cp
+    base/report.md docs/report.md` were allowed while bash, zsh and dash wrote (`>>`, `<>`, `2>` and `&>` glued were
+    refused by accident, their second character reaching the ordinary path). The two families' 42 rows through the hook
+    as a process from docs/ and the three shells, before the change: `rows 42 refused 8 allowed 34 other 0 writes bash=39
+    zsh=23 dash=20 timeouts 0`, `FALSE ALLOWS (allowed, a shell writes): 34`; after: `rows 42 refused 42 allowed 0 other 0
+    writes bash=39 zsh=23 dash=20 timeouts 0`, `FALSE ALLOWS (allowed, a shell writes): 0`. THE TEST'S BOUNDARIES, stated
+    beside the rule at the lexer and here in the same words: the test's grammar covers the words between `[[` and the
+    unquoted `]]` that closes it and only the test's own operators among them; an expansion among the operands (a
+    `$(...)`, a backtick, a `<(...)` or `>(...)`) is performed by the shell before the test reads a word and is read as the
+    command it runs, where it is lexed; and an operator glued to the closing `]]` is outside the test, the redirection or
+    list operator it is anywhere else, read after the test has closed. Both are made at the lexer's operator read (the
+    `]]` under way ends the test first; `<(` and `>(` are read before the test's own `<` and `>`, under the test grammar
+    alone, since dash reads them as `<` and an unquoted `(`, the syntax error `closeTest` already reads as no dash
+    reading), so they hold in every position. THE POPULATION, widened by the property the verifier named: the construct
+    matrix crosses the PLACEMENT of the write against the construct with head, position, operator and target, the
+    placements being the regions a construct has (before the head is the position; among the operands; inside an
+    expansion among the operands, a `$(...)` in every shell and a `<(...)` in bash; after the closer, glued or spaced):
+    five placements, 2280 rows, through the hook as a process and unguarded in the three shells: `rows 2280 refused 1547
+    allowed 733 other 0 writes bash=741 zsh=653 dash=820 timeouts 0`, `FALSE ALLOWS (allowed, a shell writes): 0`; the
+    addendum's 456 rows are the operand placement, `existing rows: 456 unchanged, 0 changed`; the refusals where no shell
+    writes by class: `dead 91 doctrine 130 opens 173 unset 102 arith-procsub 110 other 0` (arith-procsub: a process
+    substitution as an operand of `(( ))`, an arithmetic error in bash and zsh and a syntax error in dash, the expansion
+    read as the command a shell would run). Outside it still: the `$((` family, a backtick among the operands (the path a
+    `$(...)` takes), the further commands after `&&` or `||` inside the test, nested constructs, `~`, glob and brace
+    targets, scripts beyond the `-c` rows, positions beyond the twelve, and a redirection before the head or with a
+    descriptor number (the rows test pins `2>` glued and a triple `]]]`, dash's operand and redirection). THE COSTS,
+    each measured with no shell writing: `[[ -f <(echo x > $n) ]]` and `[[ a ]]>$n` with `$n` unset (the non-literal
+    rule; bash reports an ambiguous redirect); `(( <(echo x > report.md) ))` (an arithmetic error in bash and zsh, dash's
+    syntax error; the body's expansion read as a command); `[[ -f <([[ x > report.md ]]) ]]` (the inner test's dash
+    reading inside a substitution dash never performs); `dash -c '[[ -f <(echo x > report.md) ]]'` (dash's `<` and `(`, a
+    subshell running the echo in the hook's reading, a syntax error in dash); and `[[ a ]]>>report.md` and
+    `[[ a ]]<>report.md` (the test prints nothing: the operator opens the file and writes no byte, where the notes/ twin
+    creates its file). One verdict widened toward allowing: `dash -c 'tee >(cat) report.md'`, refused before under the
+    bash reading of a dash script, allowed now, dash rejecting `>(` and running nothing (measured, every shell spawning
+    dash). The twins stay allowed: `[[ -f <(echo x > ../scratch/keep.md) ]]`, `[[ a ]]>../scratch/keep.md`,
+    `[[ -f <(cat report.md) ]]`, `[[ -f <(true) || cp ../base/report.md report.md ]]` (a syntax error in every shell,
+    dash's reading seeing the parenthesis), `[[ a ]]<report.md`, and `[[ a ]]>report.md]]` (the target `report.md]]`,
+    untracked, in every shell). Pinned: the rows test's group (11), 61 rows (the two families, the twins, the costs), the
+    construct matrix's fixture with its placement dimension, the lexer's three reads in their order (the plan test), and
+    the shapes tests' targets and hook-process rows.
 48. **Sessions commit the comments folder** (2026-09-10). The user found that their sessions never added
     `.trackchanges/` to git, so the user's comments on the sessions' files and the record of the tracked changes
     were not archived with the work. Decision 25 is unchanged: romp does no git operation, and a `.gitignore` line is the

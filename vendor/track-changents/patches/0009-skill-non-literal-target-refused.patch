@@ -74,11 +74,15 @@
 # `(( ))` body; a `$((` whose first `(` closes early is `$( (` to bash and zsh; a `$(...)` inside an arithmetic body
 # runs in every shell), so a tracked target there refuses naming dash and the construct and `[[ $a > $b ]]` with an
 # unreadable `$b` refuses from a tracked cwd; and the clobber-override clause names dash's reading beside bash's and zsh's.
+# The fifth addendum's fix-up (2026-09-20; the addendum's verifier found a process substitution among the test's operands
+# and an operator glued to the closing `]]` allowed while a shell wrote) adds one clause to the same sentence: a process
+# substitution among the test's operands runs in bash and an operator glued to the closing `]]` is a redirection or list
+# operator, each judged as anywhere.
 diff --git a/skill/SKILL.md b/skill/SKILL.md
-index f7d8bc9..cd7a8e5 100644
+index f7d8bc9..29eedaf 100644
 --- a/skill/SKILL.md
 +++ b/skill/SKILL.md
-@@ -59,6 +59,190 @@ heredoc included), no `sed -i` or `perl -i`, no python `open(..., 'w')` or node
+@@ -59,6 +59,194 @@
  the write: its status is 0 when tracking is ON, so `track-config ... && cp ...` runs
  the copy on exactly the file it must not touch.
  
@@ -159,7 +163,11 @@ index f7d8bc9..cd7a8e5 100644
 +performs the `>` and the second a subshell running its body as a command list;
 +a `$((` whose first `(` closes before the last is `$( (` to bash and zsh, a
 +command substitution they run; a `$(...)` inside any arithmetic body runs in
-+every shell), so a tracked f there refuses naming dash and the construct, and
++every shell), so a tracked f there refuses naming dash and the construct, a
++process substitution among the test's operands runs in bash
++(`[[ -f <(echo x > f) ]]` writes f) and an operator glued to the closing `]]`
++is a redirection or list operator (`[[ a ]]>f` writes f in every shell), each
++judged as anywhere since the addendum's fix-up (2026-09-20), and
 +`[[ $a > $b ]]` with `$b` the guard cannot read refuses from a tracked cwd, a
 +stated cost (compare from a directory outside the project, or with `expr`); a link the
 +command makes is followed into a numeric name's folder too, and one whose source

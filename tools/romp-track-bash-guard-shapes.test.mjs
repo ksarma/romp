@@ -299,6 +299,18 @@ test('[[ a > b ]] and (( a > b )) compare in bash and zsh, and are a command nam
   assert.deepEqual(targets('(( 3 > 2 )) && echo yes'), [path.join(proj, '2')], 'the dash reading names the file `2` in the cwd, untracked here');
   assert.deepEqual(targets('for ((i=3; i>0; i--)); do echo $i; done'), [], 'a for head is a syntax error in dash and gets no dash reading');
   assert.deepEqual(targets('[[ x ]] > docs/report.md'), [report], 'after ]] a > redirects again');
+  // the test's boundaries (round 5's fifth addendum's fix-up, 2026-09-20): an operator glued to the closing `]]` is outside the test,
+  // and a process substitution among the operands is performed by bash (zsh after `!`, in a pipeline, with `&`, `|&` and under coproc; dash rejects it), its command read
+  assert.deepEqual(targets('[[ x ]]>docs/report.md'), [report], 'glued to ]] a > redirects too: the ]] under way ends the test before the operator is read (bash, zsh and dash truncated the file)');
+  assert.deepEqual(targets('[[ x ]]>|docs/report.md'), [report], 'the clobber form glued');
+  assert.deepEqual(targets('[[ -n a ]]&&cp base/report.md docs/report.md'), [report], 'a list operator glued to ]] ends the segment: the cp is a command');
+  assert.deepEqual(targets('[[ -f <(cp base/report.md docs/report.md) ]]'), [report], 'a process substitution among the operands runs its command');
+  assert.deepEqual(targets('[[ -f <(echo x > docs/report.md) ]]'), [report]);
+  assert.deepEqual(targets('[[ -f <(cat docs/report.md) ]]'), [], 'a read inside it is no write');
+  assert.deepEqual(targets('[[ x ]]>docs/other.md'), [path.join(proj, 'docs', 'other.md')], 'the untracked twin names its own file');
+  const gluedSeg = lex('[[ x ]]>docs/report.md').segments[0];
+  assert.deepEqual([gluedSeg.words.map((w) => w.text), gluedSeg.redirects.map((r) => r.op)], [['[[', 'x', ']]'], ['>']], 'the ]] closes the test before the operator is read: no test word for the operator');
+  assert.deepEqual(lex('[[ -f <(cmd) ]]').segments[0].subs, ['cmd'], 'the substitution is recorded as one, not as the test\'s < and a parenthesis');
   assert.deepEqual(targets('[ a > docs/report.md ]'), [report], 'single brackets are a command: the shell redirects');
   assert.deepEqual(targets('test a > docs/report.md'), [report]);
   assert.deepEqual(targets('[[ a > b ]]; echo x > docs/report.md'), [path.join(proj, 'b'), report].sort(), 'the next command is not inside the test; the test\'s own dash target is the file b');
@@ -856,6 +868,8 @@ test('the hook process rules the same way on a subshell cd, a chained heredoc an
   assert.equal(run("bash <<'EOF'\ncp base/report.md docs/report.md\nEOF").status, 2);
   assert.equal(run("bash -lc 'cp base/report.md docs/report.md'").status, 2);
   assert.equal(run('[[ a > docs/report.md ]]').status, 2, 'a comparison in bash and zsh, a redirection in dash (round 5\'s fifth addendum)');
+  assert.equal(run('[[ a ]]>docs/report.md').status, 2, 'an operator glued to the closing ]] is a redirection in every shell (the fifth addendum\'s fix-up)');
+  assert.equal(run('[[ -f <(echo x > docs/report.md) ]]').status, 2, 'a process substitution among the operands runs its command in bash (the fifth addendum\'s fix-up)');
   assert.equal(run('sudo -n cp base/report.md docs/report.md').status, 2);
   assert.equal(run("python3 -u <<'EOF'\n" + PY_WRITE + '\nEOF').status, 2);
   // the second round's shapes

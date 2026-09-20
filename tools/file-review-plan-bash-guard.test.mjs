@@ -148,7 +148,7 @@ test('decision 47 states what passes, and the hook agrees: reads, opaque command
   assert.ok(hook.includes('function expandGlob(w, cwd)') && hook.includes('const GLOB_MATCH_CAP = ') && hook.includes('const GLOB_READ_CAP = '));
   assert.ok(d47.includes('a brace list is expanded before the operands are read') && hook.includes('function braceExpand(text, marks, depth = 0)'));
   assert.ok(d47.includes('a here-string is scanned like a heredoc') && hook.includes("expect = { kind: 'herestring' }"));
-  assert.ok(d47.includes('a process substitution\'s command is read like a `$(...)`') && hook.includes("if ((c === '>' || c === '<') && src[i + 1] === '(') {"));
+  assert.ok(d47.includes('a process substitution\'s command is read like a `$(...)`') && hook.includes("if (testGrammar && (c === '>' || c === '<') && src[i + 1] === '(') {"));
   assert.ok(d47.includes('`cd` moving the working directory for what follows, inside `( ... )` only up to the `)`'));
   assert.ok(hook.includes("frames.push({ kind: 'subshell', dir, unknownDir, unknownWhy });"));
   assert.ok(hook.includes("case 'eval': case 'xargs': sawOpaqueCommand = true; break;"));
@@ -495,14 +495,23 @@ test("decision 47, the hook header and the ledger record round 5's addendum: the
 
 // Round 5's fifth addendum (2026-09-20): the two-grammar rule, stated once at the lexer's closeTest and on decision 47 in the same words,
 // the shell facts in their table, the four prose surfaces corrected, the census naming the two new tables, and the fixture stating its population.
-test("decision 47, the hook and the prose surfaces record round 5's fifth addendum: the two-grammar rule in the same words at the lexer and on the decision, the shell facts in TEST_ARITH_SHELLS and CONSTRUCT_HEADS, the functions that carry it, the construct matrix's fixture with its population, and the README, install and skill surfaces saying what dash makes of `[[` and `((`", () => {
+test("decision 47, the hook and the prose surfaces record round 5's fifth addendum: the two-grammar rule in the same words at the lexer and on the decision, the shell facts in TEST_ARITH_SHELLS and CONSTRUCT_HEADS, the functions that carry it, the construct matrix's fixture with its population, and the README, install and skill surfaces saying what dash makes of `[[` and `((`; and the addendum's fix-up: the test's boundaries in the same words on both, the two lexer reads in their order, the fixture's placement dimension, and the three surfaces naming the process substitution and the glued operator", () => {
   const RULE = 'a construct the hook reads under bash and zsh grammar (`[[ ... ]]`, `(( ... ))`, a `$(( ... ))`) contributes, in addition, its dash reading to the write set: where dash reads the construct as a plain command (`[[`), the words after the head are its operands and every redirection operator among them a redirection dash performs before the command is looked up, and the words after a `&&` or `||` among them a further command; where dash reads it as a subshell (`((`, two nested `(`), its body is a command list dash runs; and each target so found is judged exactly as any redirection or writer the hook already judges';
   const SUB = 'a substitution inside an arithmetic body (`$(...)`, a backtick) runs in every shell and is read as a command, and a `$((` whose first `(` closes before the last is a command substitution in bash and zsh and is read as one';
+  // the fix-up (2026-09-20): the test's boundaries, stated beside the rule at the lexer and on decision 47 in the same words
+  const BOUNDS = "the test's grammar covers the words between `[[` and the unquoted `]]` that closes it and only the test's own operators among them; an expansion among the operands (a `$(...)`, a backtick, a `<(...)` or `>(...)`) is performed by the shell before the test reads a word and is read as the command it runs, where it is lexed; and an operator glued to the closing `]]` is outside the test, the redirection or list operator it is anywhere else, read after the test has closed";
   const hookFlat = hook.replace(/\n\s*\/\/ ?/g, ' ').replace(/\s+/g, ' ');   // the rule's home comment sits inside lex, indented, so the comment lines are joined whatever their indentation
   const d47Flat = d47.replace(/\s+/g, ' ');
   assert.ok(d47Flat.includes("Round 5's fifth addendum (2026-09-20;"), 'decision 47 records the fifth addendum');
   assert.ok(hookFlat.includes(RULE) && d47Flat.includes(RULE), 'the rule is stated at the lexer and on decision 47 in the same words');
   assert.ok(hookFlat.includes(SUB) && d47Flat.includes(SUB), 'the substitution and $(( sentence, on both');
+  assert.ok(hookFlat.includes(BOUNDS) && d47Flat.includes(BOUNDS), "the test's boundaries (the fix-up), stated at the lexer and on decision 47 in the same words");
+  assert.ok(d47Flat.includes("THE FIX-UP (2026-09-20; the addendum's verifier, on its head)"), 'decision 47 records the fix-up');
+  const gluedRead = "if (inTest && inWord && raw === ']]') endWord();";
+  const procsubRead = "if (testGrammar && (c === '>' || c === '<') && src[i + 1] === '(') {";
+  const testRead = "if (inTest && (c === '<' || c === '>')) { bareWord(c); i++; continue; }";
+  assert.ok(hook.includes(gluedRead) && hook.includes(procsubRead) && hook.includes(testRead), 'the two boundary reads and the test\'s own operator read are in the lexer');
+  assert.ok(hook.indexOf(gluedRead) < hook.indexOf(procsubRead) && hook.indexOf(procsubRead) < hook.indexOf(testRead), 'the ]] under way ends the test first, the process substitution is read next, and the test\'s own < and > last: the order is the fix');
   for (const fn of ['closeTest', 'skipArithmetic', 'expansionsOf', 'parenCloseAt', 'withDashPieces', 'viaSubs', 'TEST_ARITH_SHELLS', 'CONSTRUCT_HEADS']) {
     assert.ok(d47.includes(`\`${fn}\``), `decision 47 names ${fn}`);
     assert.ok(hook.includes(fn), `the hook has ${fn}`);
@@ -519,6 +528,8 @@ test("decision 47, the hook and the prose surfaces record round 5's fifth addend
   assert.ok(censusSrc.includes("TEST_ARITH_SHELLS: { side: 'REFUSE'") && censusSrc.includes("CONSTRUCT_HEADS: { side: 'WRITE'"), 'the census names the two tables with their sides');
   const fixture = JSON.parse(fs.readFileSync(path.join(REPO, 'tools', 'romp-track-bash-guard-construct-matrix.json'), 'utf8'));
   assert.ok(fixture.rows > 0 && typeof fixture.population === 'string' && fixture.population.includes('CONSTRUCT_HEADS') && fixture.note.includes('NOT exhaustive'), 'the construct fixture states its population and that it is not exhaustive');
+  assert.deepEqual(fixture.placements, ['operand', 'sub', 'procsub', 'closer-glued', 'closer-spaced'], 'the construct fixture names the placements of the write it was generated over (the fix-up)');
+  assert.ok(fixture.population.includes('placement of the write against the construct'), 'and its population statement carries the dimension');
   const brace = JSON.parse(fs.readFileSync(path.join(REPO, 'tools', 'romp-track-bash-guard-brace-matrix.json'), 'utf8'));
   assert.ok(brace.note.includes('POPULATION (stated since round 5\'s fifth addendum'), 'the brace fixture states its population');
   const prose = { 'hooks/README.md': hooksReadme, 'docs/install.md': read('docs', 'install.md'), 'the vendored SKILL.md': read('vendor', 'track-changents', 'skill', 'SKILL.md') };
@@ -526,6 +537,7 @@ test("decision 47, the hook and the prose surfaces record round 5's fifth addend
     const flat = text.replace(/\s+/g, ' ');
     assert.ok(flat.includes("`[[ a > f ]]` and `(( a > f ))` compare in bash and zsh and are read in dash's grammar too since round 5's fifth addendum"), `${name} states the two-grammar reading`);
     assert.ok(flat.includes("judged in bash's and zsh's readings (dash reads `>! f` as bash does") && !flat.includes("judged in both shells' readings"), `${name} names dash's reading of the clobber forms`);
+    assert.ok(flat.includes("a process substitution among the test's operands runs in bash (`[[ -f <(echo x > f) ]]` writes f) and an operator glued to the closing `]]` is a redirection or list operator (`[[ a ]]>f` writes f in every shell), each judged as anywhere since the addendum's fix-up (2026-09-20)"), `${name} names the two boundary reads of the fix-up`);
   }
   assert.ok(!hook.includes("records BOTH shells' readings"), 'the header names the three shells for the clobber forms');
   assert.ok(!/\u2014/.test(d47), 'no em dash in decision 47');

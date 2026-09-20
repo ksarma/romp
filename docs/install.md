@@ -203,7 +203,10 @@ the clone updates it:
   rejects `>>| f` and `>&| f`, and writes f through `&>| f`, measured 2026-09-20); `[[ a > f ]]`
   and `(( a > f ))` compare in bash and zsh and are read in dash's grammar too since round 5's fifth
   addendum (2026-09-20: a command named `[[` performing the `>`, a subshell running the `(( ))` body
-  as a command list), so a tracked f there refuses naming dash and the construct, and `[[ $a > $b ]]`
+  as a command list), so a tracked f there refuses naming dash and the construct, a process
+  substitution among the test's operands runs in bash (`[[ -f <(echo x > f) ]]` writes f) and an
+  operator glued to the closing `]]` is a redirection or list operator (`[[ a ]]>f` writes f in
+  every shell), each judged as anywhere since the addendum's fix-up (2026-09-20), and `[[ $a > $b ]]`
   with `$b` the guard cannot read refuses from a tracked cwd (the remedy: `expr`, or a cwd outside
   the project); a link the command makes is followed into a numeric
   name's folder too, and one whose source is not literal refuses a numeric write through it; a

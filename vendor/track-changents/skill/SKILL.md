@@ -136,7 +136,11 @@ bash and zsh and are read in dash's grammar too since round 5's fifth addendum
 performs the `>` and the second a subshell running its body as a command list;
 a `$((` whose first `(` closes before the last is `$( (` to bash and zsh, a
 command substitution they run; a `$(...)` inside any arithmetic body runs in
-every shell), so a tracked f there refuses naming dash and the construct, and
+every shell), so a tracked f there refuses naming dash and the construct, a
+process substitution among the test's operands runs in bash
+(`[[ -f <(echo x > f) ]]` writes f) and an operator glued to the closing `]]`
+is a redirection or list operator (`[[ a ]]>f` writes f in every shell), each
+judged as anywhere since the addendum's fix-up (2026-09-20), and
 `[[ $a > $b ]]` with `$b` the guard cannot read refuses from a tracked cwd, a
 stated cost (compare from a directory outside the project, or with `expr`); a link the
 command makes is followed into a numeric name's folder too, and one whose source

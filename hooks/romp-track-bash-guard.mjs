@@ -467,6 +467,19 @@
 // operand: the two constructs were the only false allows) and the construct matrix (head x position x operator x target, the
 // heads from CONSTRUCT_HEADS, the fixture romp-track-bash-guard-construct-matrix.json).
 //
+// ROUND 5'S FIFTH ADDENDUM, FIX-UP (2026-09-20; the addendum's verifier, on its head): two reads at the test's boundaries
+// failed toward allowing, both inside the addendum's own construct. A process substitution among the operands was read as
+// the test's `<` and a `(` (the test's own operators were read before the expansion), so `[[ -f <(echo x > report.md) ]]`
+// from docs/ was allowed while bash performed it and wrote, in every position, through `bash -c` and a heredoc-fed bash (zsh
+// after `!`, in a pipeline, with `&`, `|&` and under coproc too); and an operator glued to the closing `]]` was read as a word of the test, since the operator read ran
+// before the `]]` under way had ended the word, so `[[ a ]]>report.md`, `]]>|`, `]]&&cp ..`, `]]||cp ..` and `]]||cd ..; cp
+// ..` were allowed while bash, zsh and dash wrote. The lexer's operator read ends a `]]` under way first and reads `<(` and
+// `>(` before the test's own `<` and `>` (THE TEST'S BOUNDARIES, beside the rule at closeTest); under dash's grammar alone a
+// `<(` is `<` and an unquoted `(`, the syntax error dash makes of it, so closeTest gives such a test no dash reading. The
+// construct matrix crosses the placement of the write with head, position, operator and target (among the operands, inside a
+// `$(...)` or a `<(...)` among them, glued to the closer, spaced after it: the regions a construct has), and the rows test
+// pins the verifier's rows.
+//
 // THE LISTS THAT REMAIN are not written here (round 5 of the review, 2026-09-20). The hand-written census that stood here
 // omitted the two lists whose gap falls on the WRITE side, the compound-head frame push and CLOSERS, and that omission is
 // how a `select` missing from both slipped through round 3: an instrument built to bound the hand-maintained lists that
@@ -554,9 +567,11 @@ import engine from '../vendor/track-changents/engine.js';
 // command opened them (not the one current when the line ends, which after
 // `python3 - <<EOF && echo done` is the echo) for the python, node and shell stdin scans, and
 // never lexed as shell. `>(cmd)` and `<(cmd)` are process substitutions: cmd is read like a
-// `$(...)`, and the word stands for a /dev/fd path the hook cannot resolve. Inside `[[ ... ]]`
+// `$(...)`, and the word stands for a /dev/fd path the hook cannot resolve, inside `[[ ... ]]` too, where bash performs it
+// (round 5's fifth addendum's fix-up, 2026-09-20). Inside `[[ ... ]]`
 // (the unquoted keyword, in command position) a `>` or `<` compares in bash and zsh, and `&&`, `||`, `(` and `)` are the
-// test's own operators there; `(( ... ))` is arithmetic in bash and zsh. dash has neither word, and since round 5's fifth
+// test's own operators there, up to the unquoted `]]` that closes the test (an operator glued to that word is the
+// redirection or list operator it is anywhere else, the fix-up); `(( ... ))` is arithmetic in bash and zsh. dash has neither word, and since round 5's fifth
 // addendum (2026-09-20) each construct is read in BOTH grammars: its dash reading, a command named `[[` performing every
 // redirection among its operands, a subshell running the `(( ))` body as a command list, adds its writes to the segment (the
 // rule is stated once, at closeTest below; the shell facts at TEST_ARITH_SHELLS and CONSTRUCT_HEADS). `opaque` is set
@@ -611,8 +626,14 @@ const ANSI_C_SHELLS = new Set(['bash', 'zsh']);
 // other word the `((` is a syntax error in dash and runs nothing (`for (( ... ))`: "Bad for loop variable"); `$(( ... ))`
 // is arithmetic in dash whatever its parentheses, while bash and zsh read a `$((` whose first `(` closes before the last as
 // `$( (`, a command substitution, and run its list (`echo $((x > f);(y))` wrote f in both); a `$(...)` or backtick inside
-// any arithmetic body runs in all three. `sh` may be dash or bash and takes both readings; a shell not in this set takes the
-// dash reading alone (the lexer's `testGrammar` and `dashGrammar`).
+// any arithmetic body runs in all three. A process substitution among the test's operands (the addendum's fix-up, 2026-09-20,
+// by execution) is performed by bash in every position (`[[ -f <(echo x > f) ]]` wrote f alone, after `!`, as an if or while
+// condition, in a group, in a called function, after `&&`, inside `$(...)`), by zsh after `!`, in a pipeline (on either side of
+// the `|`), backgrounded with `&`, with `|&` and under `coproc` (each measured writing f), while zsh rejects it alone, in `( )`, in
+// a group, as an if condition, in a called function, inside `$(...)` and through `zsh -c` (`process substitution <(...) cannot be
+// used here`, nothing written), and by dash never (`<` and an unquoted `(`: a syntax error, nothing on the line runs); an operator glued to the closing `]]` (`[[ a ]]>f`) is a redirection on the test in bash and zsh and in
+// dash the command's redirection after its operand `]]`: all three wrote f. `sh` may be dash or bash and takes both readings; a
+// shell not in this set takes the dash reading alone (the lexer's `testGrammar` and `dashGrammar`).
 const TEST_ARITH_SHELLS = new Set(['bash', 'zsh', 'ksh']);
 // The constructs read in both grammars, with each reading's text for the refusal (the lexer reads the two command-position
 // heads and the expansion at their characters; this table carries what each shell makes of them, and the matrix generator
@@ -621,7 +642,7 @@ const TEST_ARITH_SHELLS = new Set(['bash', 'zsh', 'ksh']);
 // (`> redirection`, `cp`) when the write was found through the construct's dash reading, so the refusal names dash and the
 // construct; `expandVia` when it was found through a substitution inside the body, which every shell runs.
 export const CONSTRUCT_HEADS = {
-  '[[': { closer: ']]', bash: 'the test keyword: a `>` or `<` between them compares', dash: 'a command named `[[`: its operands words, every redirection among them performed before the lookup fails, the words after a `&&` or `||` a further command', via: ' inside a `[[ ... ]]` (a comparison in bash and zsh; dash has no `[[`, runs a command named so and performs the redirection)' },
+  '[[': { closer: ']]', bash: 'the test keyword: a `>` or `<` between them compares; an expansion among them (`$(...)`, a backtick, `<(...)`) is performed first and its command runs; the grammar ends at the unquoted `]]`, an operator glued to it a redirection or list operator', dash: 'a command named `[[`: its operands words, every redirection among them performed before the lookup fails, the words after a `&&` or `||` a further command', via: ' inside a `[[ ... ]]` (a comparison in bash and zsh; dash has no `[[`, runs a command named so and performs the redirection)' },
   '((': { closer: '))', bash: 'arithmetic: a `>` compares', dash: 'in command position, a subshell inside a subshell running the body as a command list; after any other word a syntax error', via: ' inside a `(( ... ))` (arithmetic in bash and zsh; dash has no `((`, runs its body as a command list in a subshell)', expandVia: ' inside a `$(...)` in a `(( ... ))` body (an expansion every shell runs)' },
   '$((': { closer: '))', expansion: true, bash: 'arithmetic when the `(` after `$(` closes at the very end, else `$( (`, a command substitution whose list runs', dash: 'arithmetic, whatever the parentheses inside', via: ' inside a `$(( ... ))` whose first `(` closes before the last (`$( (` to bash and zsh, a command substitution they run; arithmetic to dash)', expandVia: ' inside a `$(...)` in a `$(( ... ))` body (an expansion every shell runs)' },
 };
@@ -930,7 +951,18 @@ export function lex(command, shell = null) {
   // hold an unquoted parenthesis are syntax errors in dash and get no dash reading (TEST_ARITH_SHELLS states each fact).
   // The rest of the grammar (a here-doc body, a here-string, a process substitution, a quoted string, a brace list) was
   // checked the same way: dash reads a here-doc as data, rejects `<<<` and `>(`/`<(` as syntax errors, reads quotes alike,
-  // and writes a brace list's spelling as one literal name (`{a,b}.md`), a residual named in decision 47.
+  // and writes a brace list's spelling as one literal name (`{a,b}.md`), a residual named in decision 47. THE TEST'S
+  // BOUNDARIES (the addendum's fix-up, 2026-09-20; the addendum's verifier found a process substitution among the operands read
+  // as two words of the test while bash performed it, `[[ -f <(echo x > report.md) ]]` writing from docs/ in every position,
+  // and an operator glued to the closing `]]` read as a word of the test, `[[ a ]]>report.md` writing in all three shells;
+  // the population had been the operators among the operands, not every place a write can sit against the construct): the
+  // test's grammar covers the words between `[[` and the unquoted `]]` that closes it and only the test's own operators among
+  // them; an expansion among the operands (a `$(...)`, a backtick, a `<(...)` or `>(...)`) is performed by the shell before the
+  // test reads a word and is read as the command it runs, where it is lexed; and an operator glued to the closing `]]` is
+  // outside the test, the redirection or list operator it is anywhere else, read after the test has closed. Both are made at
+  // the lexer's operator read, so they hold in every position the construct can stand in; the construct matrix crosses the
+  // placement of the write (among the operands, inside a `$(...)` or a `<(...)` among them, glued to the closer, spaced after
+  // it) with head, position, operator and target, the placements being the regions a construct has.
   //
   // (( ... )): arithmetic in bash and zsh, no command and no redirection in it; skip to the matching )). Its `$(...)` and
   // backticks run in every shell and are read as commands (viaSubs); in command position dash reads it as a subshell running
@@ -1124,17 +1156,20 @@ export function lex(command, shell = null) {
     // operators
     if (c === '<' || c === '>' || c === '&' || c === '|' || c === ';' || c === '(' || c === ')') {
       opAt = i;
-      // inside [[ ... ]] a > or < is a string comparison, not a redirection, and &&, ||, ( and ) are the
-      // test's own operators: each a word of its own, the segment going on (bash and zsh; dash's reading is added at closeTest,
-      // and dash's `>|` is kept in the test's span so that reading sees it where a `|` would have ended the segment: bash and
-      // zsh reject the line, dash writes through it, round 5's fifth addendum)
-      if (inTest && c === '>' && src[i + 1] === '|') { bareWord('>|'); i += 2; continue; }
-      if (inTest && (c === '<' || c === '>')) { bareWord(c); i++; continue; }
-      if (inTest && ((c === '&' && src[i + 1] === '&') || (c === '|' && src[i + 1] === '|'))) { bareWord(c + c); i += 2; continue; }
-      if (inTest && (c === '(' || c === ')')) { bareWord(c); i++; continue; }
+      // THE TEST'S BOUNDARIES (round 5's fifth addendum's fix-up, 2026-09-20; the addendum's verifier found both reads failing
+      // toward allowing): the test's grammar ends at the unquoted `]]` word, so an operator glued to it is outside the test, the
+      // redirection or list operator it is anywhere else, and the `]]` under way ends here, before the operator is read (before,
+      // `[[ a ]]>report.md` truncated the file in bash, zsh and dash while the `>` was read as a word of the test; `]]>|`, `]]&&cp
+      // ..` and `]]||cd ..` the same); and an expansion among the operands is performed by the shell before the test reads a word,
+      // a process substitution too (`[[ -f <(echo x > report.md) ]]` wrote in bash, in every position; zsh performs it after `!`, in a
+      // pipeline, with `&`, `|&` and under coproc, and rejects it alone, in `( )`, in a group, in if, in a called function, in `$(...)`
+      // and via `zsh -c`; dash rejects it), so `<(` and `>(` are read as the process substitution they are anywhere,
+      // before the test's own `<` and `>`, and the command inside runs. Under dash's grammar alone they are `<` or `>` and an
+      // unquoted `(`, as dash reads them: the parenthesis closeTest reads as dash's syntax error.
+      if (inTest && inWord && raw === ']]') endWord();
       // >(cmd) or <(cmd): a process substitution. cmd runs and is read like a $(...); the word stands
       // for a /dev/fd path the hook cannot resolve, so `tee >(cat) file` still names file.
-      if ((c === '>' || c === '<') && src[i + 1] === '(') {
+      if (testGrammar && (c === '>' || c === '<') && src[i + 1] === '(') {
         endWord();
         i += 2;
         const inner = skipNested('(', ')');
@@ -1145,6 +1180,14 @@ export function lex(command, shell = null) {
         endWord();
         continue;
       }
+      // inside [[ ... ]] a > or < is a string comparison, not a redirection, and &&, ||, ( and ) are the
+      // test's own operators: each a word of its own, the segment going on (bash and zsh; dash's reading is added at closeTest,
+      // and dash's `>|` is kept in the test's span so that reading sees it where a `|` would have ended the segment: bash and
+      // zsh reject the line, dash writes through it, round 5's fifth addendum)
+      if (inTest && c === '>' && src[i + 1] === '|') { bareWord('>|'); i += 2; continue; }
+      if (inTest && (c === '<' || c === '>')) { bareWord(c); i++; continue; }
+      if (inTest && ((c === '&' && src[i + 1] === '&') || (c === '|' && src[i + 1] === '|'))) { bareWord(c + c); i += 2; continue; }
+      if (inTest && (c === '(' || c === ')')) { bareWord(c); i++; continue; }
       // a digits-only word glued to < or > is the descriptor (2>file still writes file): drop it
       if (inWord && /^[0-9]+$/.test(buf) && (c === '<' || c === '>')) { buf = ''; raw = ''; marks = ''; inWord = false; }
       else endWord();

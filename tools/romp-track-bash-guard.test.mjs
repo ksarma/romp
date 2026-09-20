@@ -5318,6 +5318,15 @@ test("round 5's fourth addendum: a quoted brace word is an operand in a function
 // quotes and a brace list were checked the same way and diverge in no way that writes (dash rejects `<<<` and `>(` as syntax errors).
 // THE RULE is stated once at the lexer's closeTest and read here through the hook as a process from each row's cwd, then unguarded in
 // bash, zsh and dash over a fresh world with the writers asserted exactly.
+// THE FIX-UP (the addendum's verifier, on its head, 2026-09-20): two reads at the test's boundaries failed toward allowing, both
+// inside `[[ ... ]]`. A process substitution among the operands was read as the test's `<` and a `(`, so `[[ -f <(echo x > report.md) ]]`
+// from docs/ was allowed while bash performed it and wrote (in every position, through `bash -c` and a heredoc-fed bash; zsh after `!`
+// too; the `>(` check had said dash rejects it, which is true of dash alone); and an operator glued to the closing `]]` was read as a
+// word of the test, so `[[ a ]]>report.md`, `]]>|`, `]]&&cp ..`, `]]||cp ..` and `]]||cd ..; cp ..` were allowed while bash, zsh and
+// dash wrote. THE BOUNDARIES are stated beside the rule at closeTest: the test's grammar covers the words between `[[` and the unquoted
+// `]]` that closes it and only the test's own operators among them; an expansion among the operands is performed before the test reads
+// a word and is read as the command it runs; an operator glued to the closing `]]` is outside the test. Group (11) below pins the
+// verifier's rows, their twins and the costs, and the construct matrix crosses the placement of the write with the other dimensions.
 test("round 5's fifth addendum: `[[ ... ]]` and `(( ... ))` are read in dash's grammar too (a command named `[[` performing every redirection among its operands and running the words after a `&&` or `||` as a further command; a subshell running the `(( ))` body), in every position; a `$((` bash and zsh read as `$( (` and a substitution inside any arithmetic body are commands; a for head, a parenthesis inside the test and a `((` after a non-reserved word are syntax errors in dash and get no dash reading; a script handed to dash or sh takes the reading and one handed to bash does not; exactly the shells named write the tracked subset unguarded", () => {
   const w = sixthPassWorld();
   const savedHome = process.env.HOME;
@@ -5325,6 +5334,7 @@ test("round 5's fifth addendum: `[[ ... ]]` and `(( ... ))` are read in dash's g
   try {
     const A = ['bash', 'zsh', 'dash'];
     const D = ['dash'];
+    const B = ['bash'];
     const BZ = ['bash', 'zsh'];
     const N = [];
     const TEST = guard.CONSTRUCT_HEADS['[['].via;
@@ -5414,6 +5424,74 @@ test("round 5's fifth addendum: `[[ ... ]]` and `(( ... ))` are read in dash's g
       // the twins: an untracked target through each construct
       ['T-untracked', 'nad', '[[ x > ../scratch/keep.md ]]', N, 'allow'],
       ['A-untracked', 'nad', '(( x > ../scratch/keep.md ))', N, 'allow'],
+      // (11) THE FIX-UP: the addendum's verifier's rows, at the test's boundaries. A process substitution among the operands is performed
+      // by bash in every position (zsh after `!`, in a pipeline, with `&`, `|&` and under coproc, measured, and rejected alone, in `( )`, in a
+      // group, in if, in a called function, in `$(...)` and via `zsh -c`; dash rejects it as a syntax error), and the command inside is read as it is anywhere
+      ['X-procsub-f', 'nad', '[[ -f <(echo x > report.md) ]]', B, 'name'],
+      ['X-procsub-out', 'nad', '[[ -n >(cat > report.md) ]]', B, 'name'],
+      ['X-procsub-cp', 'nad', '[[ -f <(cp ../base/report.md report.md) ]]', B, 'name'],
+      ['X-procsub-tee', 'nad', '[[ -n <(tee report.md </dev/null) ]]', B, 'name'],
+      ['X-procsub-cd', 'nas', '[[ -f <(cd ../docs && echo x > report.md) ]]', B, 'name'],
+      ['X-procsub-paren', 'nad', '[[ ( -f <(echo x > report.md) ) ]]', B, 'name'],
+      ['X-procsub-bang', 'nad', '! [[ -f <(echo x > report.md) ]]', BZ, 'name'],   // zsh performs the substitution after `!` (measured; in a pipeline, with `&`, `|&` and under coproc too, the matrix's pipe rows), and rejects it in each other position below
+      ['X-procsub-if', 'nad', 'if [[ -f <(echo x > report.md) ]]; then :; fi', B, 'name'],
+      ['X-procsub-while', 'nad', 'while [[ -f <(echo x > report.md) ]]; do break; done', B, 'name'],
+      ['X-procsub-and', 'nad', 'true && [[ -f <(echo x > report.md) ]]', B, 'name'],
+      ['X-procsub-sub', 'nad', 'echo $([[ -f <(echo x > report.md) ]])', B, 'name'],
+      ['X-procsub-fn-called', 'nad', 'f() { [[ -f <(echo x > report.md) ]]; }; f', B, 'name'],
+      ['X-procsub-lt', 'nad', '[[ a < <(echo x > report.md) ]]', B, 'name'],
+      ['X-procsub-eq', 'nad', '[[ <(echo x > report.md) == <(echo y) ]]', B, 'name'],
+      ['X-procsub-out-cwd', 'out', '[[ -f <(echo x > ../notes-api/docs/report.md) ]]', B, 'name'],
+      ['X-procsub-notes-new', 'nad', '[[ -f <(echo x > ../notes/new.md) ]]', B, 'name'],
+      ['X-procsub-bash-c', 'nad', "bash -c '[[ -f <(echo x > report.md) ]]'", A, 'name'],   // every shell spawns bash, which performs it
+      ['X-procsub-bash-heredoc', 'nad', "bash <<'EOF'\n[[ -f <(echo x > report.md) ]]\nEOF", A, 'name'],
+      ['X-procsub-and-inside', 'nad', '[[ -n a && -f <(echo x > report.md) ]]', B, 'name'],   // refused before the fix-up by accident (the spliced dash piece's substitutions were walked); by the boundary now
+      ['X-procsub-set-name', 'nad', 'n=report.md; [[ -f <(echo x > $n) ]]', B, 'name'],
+      // an operator glued to the closing `]]` is outside the test: the redirection or list operator it is anywhere, in every shell
+      ['X-glued-gt', 'nad', '[[ a ]]>report.md', A, 'name'],
+      ['X-glued-clobber', 'nad', '[[ a ]]>|report.md', A, 'name'],
+      ['X-glued-ampgt', 'nad', '[[ a ]]&>report.md', A, 'name'],   // refused before the fix-up by accident (`&` is not a word of the test); by the boundary now
+      ['X-glued-and-cp', 'nad', '[[ -n a ]]&&cp ../base/report.md report.md', BZ, 'name'],
+      ['X-glued-or-cp', 'nad', '[[ -z a ]]||cp ../base/report.md report.md', A, 'name'],
+      ['X-glued-or-cd', 'nad', '[[ -z a ]]||cd ..; cp base/report.md docs/report.md', A, ['dir', 'an earlier `cd` after `||` may not run']],
+      ['X-glued-and-cd', 'nad', '[[ -n a ]]&&cd ..; cp base/report.md docs/report.md', BZ, ['dir', 'an earlier `cd` after `&&` may not run']],
+      ['X-glued-or-cd-notes', 'nad', '[[ -z a ]]||cd ../notes; echo x > n1.md', A, ['dir', 'an earlier `cd` after `||` may not run']],
+      ['X-glued-if', 'nad', 'if [[ a ]]>report.md; then :; fi', A, 'name'],
+      ['X-glued-while', 'nad', 'while [[ a ]]>report.md; do break; done', A, 'name'],
+      ['X-glued-bang', 'nad', '! [[ a ]]>report.md', A, 'name'],
+      ['X-glued-group', 'nad', '{ [[ a ]]>report.md; }', A, 'name'],
+      ['X-glued-fn-called', 'nad', 'f() { [[ a ]]>report.md; }; f', A, 'name'],
+      ['X-glued-sub', 'nad', 'echo $([[ a ]]>report.md)', A, 'name'],
+      ['X-glued-bash-c', 'nad', "bash -c '[[ a ]]>report.md'", A, 'name'],
+      ['X-glued-dash-c', 'nad', "dash -c '[[ a ]]>report.md'", A, 'name'],
+      ['X-glued-notes-new', 'nad', '[[ a ]]>../notes/new.md', A, 'name'],
+      ['X-glued-out', 'out', '[[ a ]]>../notes-api/docs/report.md', A, 'name'],
+      ['X-glued-append', 'nad', '[[ a ]]>>report.md', N, 'name'],   // the operator opens the file and no byte is written (the test prints nothing): the opens cost
+      ['X-glued-rw', 'nad', '[[ a ]]<>report.md', N, 'name'],
+      ['X-glued-append-new', 'nad', '[[ a ]]>>../notes/new.md', A, 'name'],
+      ['X-glued-set-name', 'nad', 'n=report.md; [[ a ]]>$n', A, 'name'],
+      ['X-glued-arith', 'nad', '(( 1 ))>report.md', A, 'name'],   // the `((` twin, refused before the fix-up too: skipArithmetic consumes its closer
+      ['X-glued-arith-and', 'nad', '(( 1 ))&&cp ../base/report.md report.md', BZ, 'name'],
+      ['X-glued-spaced', 'nad', '[[ a ]] >report.md', A, 'name'],   // the spaced twin, refused before too
+      // a `]]` that is not the unquoted word alone does not close the test: dash's operand, and its redirection dash performs
+      ['X-glued-fd', 'nad', '[[ a ]]2>report.md', D, ['name', TEST]],
+      ['X-triple-closer', 'nad', '[[ a ]]]>report.md', D, ['name', TEST]],
+      ['X-quoted-closer', 'nad', '[[ a "]]">report.md ]]', D, ['name', TEST]],
+      // the twins
+      ['X-procsub-untracked', 'nad', '[[ -f <(echo x > ../scratch/keep.md) ]]', N, 'allow'],
+      ['X-glued-untracked', 'nad', '[[ a ]]>../scratch/keep.md', N, 'allow'],
+      ['X-procsub-read', 'nad', '[[ -f <(cat report.md) ]]', N, 'allow'],
+      ['X-procsub-or-cp', 'nad', '[[ -f <(true) || cp ../base/report.md report.md ]]', N, 'allow'],   // a syntax error in every shell; dash's reading sees the parenthesis and adds nothing
+      ['X-glued-other', 'nad', '[[ a ]]>other.md', N, 'allow'],
+      ['X-glued-lt', 'nad', '[[ a ]]<report.md', N, 'allow'],
+      ['X-closer-glued-target', 'nad', '[[ a ]]>report.md]]', N, 'allow'],   // `report.md]]` is the target in every shell, an untracked name
+      ['X-dash-c-procsub-tee', 'nad', "dash -c 'tee >(cat) report.md'", N, 'allow'],   // dash reads `>(` as `>` and a parenthesis, a syntax error it runs nothing on; before the fix-up the bash reading applied to a dash script and refused
+      // the costs, each measured with no shell writing
+      ['X-procsub-unset-name', 'nad', '[[ -f <(echo x > $n) ]]', N, ['literal', '$n']],   // bash: an ambiguous redirect
+      ['X-glued-unset-name', 'nad', '[[ a ]]>$n', N, ['literal', '$n']],
+      ['X-arith-procsub', 'nad', '(( <(echo x > report.md) ))', N, ['name', EXP_A]],   // an arithmetic error in bash and zsh, a syntax error in dash; the body's expansion is read as the command every shell would run
+      ['X-procsub-nested-test', 'nad', '[[ -f <([[ x > report.md ]]) ]]', N, ['name', TEST]],   // the inner test's dash reading, in a substitution dash never performs
+      ['X-dash-c-procsub-test', 'nad', "dash -c '[[ -f <(echo x > report.md) ]]'", N, 'name'],   // dash's `<` and `(`: a subshell running the echo in the hook's reading, a syntax error in dash
     ];
     let n = 0;
     for (const [id, cwd, raw, writers, expect] of rows) {
@@ -5435,7 +5513,7 @@ test("round 5's fifth addendum: `[[ ... ]]` and `(( ... ))` are read in dash's g
         assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
       }
     }
-    assert.equal(n, 61);
+    assert.equal(n, 122);
     // the lexer's two grammars: the Bash tool's own command takes both readings, a bash script the test alone, a dash script the plain one
     const both = lex('[[ a > b ]]').segments[0].redirects;
     assert.deepEqual(both.map((r) => [r.op, r.target.text, !!r.how]), [['>', 'b', true]], 'the dash reading adds one redirection, carrying its how');
@@ -5455,6 +5533,18 @@ test("round 5's fifth addendum: `[[ ... ]]` and `(( ... ))` are read in dash's g
     assert.deepEqual(pieces[0].dashPieces.map((s) => [s.words.map((x) => x.text).join(' '), s.redirects.map((r) => r.op + r.target.text).join(' '), s.dashPiece.op]), [['b', '>f', '||'], ['c ]]', '', '&&']], 'the further commands dash reads, each with the operator before it');
     assert.equal(pieces[0].dashFirstOp, '||');
     assert.equal(lex('[[ ( a > f ) ]]').segments[0].redirects.length, 0, 'a parenthesis inside: a syntax error in dash, no dash reading');
+    // the test's boundaries (the fix-up): the `]]` under way ends the test before an operator glued to it is read, and a process
+    // substitution among the operands is the expansion it is anywhere
+    const glued = lex('[[ a ]]>f').segments[0];
+    assert.deepEqual([glued.words.map((x) => x.text), glued.redirects.map((r) => [r.op, r.target.text, !!r.how])], [['[[', 'a', ']]'], [['>', 'f', false]]], 'an operator glued to the closing ]] is a plain redirection on the segment, no word of the test');
+    assert.deepEqual(lex('[[ a ]]>|f').segments[0].redirects.map((r) => r.op), ['>|'], 'the clobber form glued');
+    assert.deepEqual(lex('[[ -n a ]]&&cp x y').segments.map((sg) => [sg.words.map((x) => x.text).join(' '), sg.op]), [['[[ -n a ]]', '&&'], ['cp x y', '']], 'a list operator glued to the closing ]] ends the segment');
+    assert.deepEqual(lex('[[ a ]]2>f').segments[0].words.map((x) => x.text), ['[[', 'a', ']]2', '>', 'f'], 'a ]] glued to a digit is not the closer: the test goes on (dash reads the redirection, closeTest)');
+    const procsub = lex('[[ -f <(cmd) ]]').segments[0];
+    assert.deepEqual([procsub.words.map((x) => x.text), procsub.subs, procsub.redirects], [['[[', '-f', '<(cmd)', ']]'], ['cmd'], []], 'a process substitution among the operands: its command read, the word an expansion, no test word');
+    assert.equal(lex('[[ -f <(true) || cp a b ]]').segments[0].dashPieces, null, 'dash reads <( as < and an unquoted parenthesis, a syntax error: no dash reading, no piece');
+    assert.ok(lex('[[ -f <(cmd) ]]', 'dash').segments.some((sg) => sg.paren), 'under dash grammar alone <( is a < and a parenthesis');
+    assert.deepEqual(lex('tee >(cat) f', 'bash').segments[0].subs, ['cat'], 'under the test grammar a process substitution is read as before');
     // the grammar through extractWriteTargets, and the recursion into a script
     assert.deepEqual(extractWriteTargets('[[ x > docs/report.md ]]', w.NA).targets.map((t) => t.path), [path.join(w.NA, 'docs', 'report.md')]);
     assert.deepEqual(extractWriteTargets("bash -c '[[ x > docs/report.md ]]'", w.NA).targets, [], 'a bash script: the test keyword alone');
@@ -5660,20 +5750,28 @@ test("round 5's third addendum, the brace matrix: every frame kind x brace place
 // matrix. Its population is DERIVED from the hook's own table: the heads are the command-position entries of CONSTRUCT_HEADS (`[[` and
 // `((` today; a head the hook learns without a kind here changes the row count and reds the fixture pin), crossed with twelve positions
 // (alone; after `!`; as an if, while or until condition; as a for head, which only `((` fills, `for [[ .. ]]` being a syntax error in every
-// shell; in a group; in a pipeline; in a function body, defined only and defined then called; after `&&` and after `||`), the write
-// operators dash reads among the operands (`>`, `>>`, `&>`, `>|`, `<>`) and a `>` onto a name set to the target in the same command
-// and onto one never set, and three targets (the tracked docs/report.md, which exists; a name under the tracked notes/ folder that does
-// not exist yet, so that `>>` and `<>`, which write no byte through a command that is not found, show the creation; and the untracked
-// scratch/keep.md), the unset name collapsing the target dimension to one row. Each row is judged in-process and run unguarded in bash,
-// zsh and dash over a fresh world; the fixture beside this file (romp-track-bash-guard-construct-matrix.json, written from this
-// generator run through the hook as a process) pins verdict, writers and parsing per row. The hard invariant: no row a shell writes
-// is allowed. The refusals where no shell writes are the cost, listed by class: dead (parsed by no shell), doctrine (the definition
-// never called), opens (`>>` or `<>` onto the existing tracked file, whose folder twin creates a file), unset (the name never set: the
-// existing non-literal rule, the comparison's priced cost), and any other, printed. OUTSIDE THIS POPULATION, stated: the `$((` family
-// and the substitutions inside an arithmetic body (pinned by the rows test above, not generated here), the words after a `&&` or `||`
-// inside the test (the rows test), a construct nested in a construct, a target spelled through `~`, a glob or a brace list, a `[[` or
-// `((` inside a script handed to a shell (the rows test covers `dash -c`, `sh -c` and `bash -c` once each), and every position the
-// twelve do not spell (a case body, a select body, zsh's brace bodies, a coproc).
+// shell; in a group; in a pipeline; in a function body, defined only and defined then called; after `&&` and after `||`), the PLACEMENT of
+// the write against the construct (the addendum's fix-up, 2026-09-20: the verifier found the population scoped to a write among the
+// operands while a write inside a process substitution among them and one glued to the closer were live false allows; the placements are
+// the regions a construct has, so the dimension is complete by construction: before the head is the position; among the operands the
+// write is a redirection of dash's command; inside an expansion among the operands it is the expansion's command, which the shell runs
+// before the test reads a word, `$(echo x > f)` in every shell and `<(echo x > f)` in bash; after the closer it is a redirection on the
+// construct, glued to the closer or spaced), the write operators (`>`, `>>`, `&>`, `>|`, `<>`) and a `>` onto a name set to the target
+// in the same command and onto one never set, and three targets (the tracked docs/report.md, which exists; a name under the tracked
+// notes/ folder that does not exist yet, so that `>>` and `<>`, which write no byte through a command that is not found or prints
+// nothing, show the creation; and the untracked scratch/keep.md), the unset name collapsing the target dimension to one row. Each row
+// is judged in-process and run unguarded in bash, zsh and dash over a fresh world; the fixture beside this file
+// (romp-track-bash-guard-construct-matrix.json, written from this generator run through the hook as a process) pins verdict, writers and
+// parsing per row. The hard invariant: no row a shell writes is allowed. The refusals where no shell writes are the cost, listed by
+// class: dead (parsed by no shell), doctrine (the definition never called), opens (`>>` or `<>` onto the existing tracked file, whose
+// folder twin creates a file), unset (the name never set: the existing non-literal rule, the comparison's priced cost), arith-procsub (a
+// process substitution as an operand of `(( ))`: an arithmetic error in bash and zsh and a syntax error in dash, the hook reading the
+// expansion as the command a shell would run), and any other, printed. OUTSIDE THIS POPULATION, stated: the `$((` family (pinned by the
+// rows test above, not generated here), a backtick among the operands (read by the path `$(...)` takes; the rows test pins one), the
+// words after a `&&` or `||` inside the test (the rows test), a construct nested in a construct, a target spelled through `~`, a glob or
+// a brace list, a `[[` or `((` inside a script handed to a shell (the rows test covers `dash -c`, `sh -c` and `bash -c`), every position
+// the twelve do not spell (a case body, a select body, zsh's brace bodies, a coproc), and a redirection before the head or with a
+// descriptor number (`2>`), read by the lexer's ordinary paths.
 // CONSTRUCT MATRIX GENERATOR BEGIN
 const CONSTRUCT_MATRIX = {
   HEADS: Object.entries(guard.CONSTRUCT_HEADS).filter(([, c]) => !c.expansion).map(([head, c]) => ({ head, closer: c.closer })),
@@ -5691,6 +5789,14 @@ const CONSTRUCT_MATRIX = {
     ['and', (k) => `true && ${k}`],
     ['or', (k) => `false || ${k}`],
   ],
+  // the placement of the write against the construct: [name, the words between head and closer given the write `x OP target`, the text after the closer]
+  PLACEMENTS: [
+    ['operand', (write) => write, () => ''],
+    ['sub', (write) => `-n $(echo ${write})`, () => ''],
+    ['procsub', (write) => `-f <(echo ${write})`, () => ''],
+    ['closer-glued', () => 'x', (write) => write.slice(2).replace(' ', '')],
+    ['closer-spaced', () => 'x', (write) => ` ${write.slice(2)}`],
+  ],
   OPERATORS: ['>', '>>', '&>', '>|', '<>', 'name-set', 'name-unset'],
   TARGETS: { tracked: 'report.md', folder: '../notes/new.md', untracked: '../scratch/keep.md' },
 };
@@ -5698,13 +5804,16 @@ const constructMatrixRows = (heads = CONSTRUCT_MATRIX.HEADS) => {
   const rows = [];
   for (const { head, closer } of heads) {
     for (const [position, tpl] of CONSTRUCT_MATRIX.POSITIONS) {
-      for (const operator of CONSTRUCT_MATRIX.OPERATORS) {
-        const targets = operator === 'name-unset' ? [['none', null]] : Object.entries(CONSTRUCT_MATRIX.TARGETS);
-        for (const [tname, target] of targets) {
-          const operand = operator.startsWith('name') ? 'x > $n' : `x ${operator} ${target}`;
-          const inner = position === 'for-head' && head === '((' ? `i=0; ${operand}; i++` : operand;
-          const prefix = operator === 'name-set' ? `n=${target}; ` : '';
-          rows.push({ id: `${head}/${position}/${operator}/${tname}`, head, position, operator, target: tname, cwd: 'nad', cmd: `${prefix}${tpl(`${head} ${inner} ${closer}`)}` });
+      for (const [placement, between, after] of CONSTRUCT_MATRIX.PLACEMENTS) {
+        for (const operator of CONSTRUCT_MATRIX.OPERATORS) {
+          const targets = operator === 'name-unset' ? [['none', null]] : Object.entries(CONSTRUCT_MATRIX.TARGETS);
+          for (const [tname, target] of targets) {
+            const write = operator.startsWith('name') ? 'x > $n' : `x ${operator} ${target}`;
+            const operand = between(write);
+            const inner = position === 'for-head' && head === '((' ? `i=0; ${operand}; i++` : operand;
+            const prefix = operator === 'name-set' ? `n=${target}; ` : '';
+            rows.push({ id: `${head}/${position}/${placement}/${operator}/${tname}`, head, position, placement, operator, target: tname, cwd: 'nad', cmd: `${prefix}${tpl(`${head} ${inner} ${closer}${after(write)}`)}` });
+          }
         }
       }
     }
@@ -5714,7 +5823,7 @@ const constructMatrixRows = (heads = CONSTRUCT_MATRIX.HEADS) => {
 // CONSTRUCT MATRIX GENERATOR END
 const CONSTRUCT_MATRIX_PIN = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'romp-track-bash-guard-construct-matrix.json'), 'utf8'));
 
-test("round 5's fifth addendum, the construct matrix: head (the command-position entries of the hook's CONSTRUCT_HEADS) x position x redirection operator x target, judged in-process and run unguarded in bash, zsh and dash, matches the fixture row by row (verdict, the shells that write, the shells that parse); no row a shell writes is allowed; the refusals where no shell writes are counted and listed by class", () => {
+test("round 5's fifth addendum, the construct matrix: head (the command-position entries of the hook's CONSTRUCT_HEADS) x position x placement of the write (among the operands, inside a `$(...)` or a `<(...)` among them, glued to the closer, spaced after it) x redirection operator x target, judged in-process and run unguarded in bash, zsh and dash, matches the fixture row by row (verdict, the shells that write, the shells that parse); no row a shell writes is allowed; the refusals where no shell writes are counted and listed by class", () => {
   const w = sixthPassWorld();
   const savedHome = process.env.HOME;
   process.env.HOME = w.HOME;
@@ -5722,12 +5831,13 @@ test("round 5's fifth addendum, the construct matrix: head (the command-position
     const rows = constructMatrixRows();
     assert.equal(rows.length, CONSTRUCT_MATRIX_PIN.rows, 'the generator produces the rows the fixture pins (a head the hook learns without a kind changes this count)');
     assert.deepEqual(CONSTRUCT_MATRIX.HEADS.map((h) => h.head), CONSTRUCT_MATRIX_PIN.heads, 'the fixture names the heads it was generated over');
+    assert.deepEqual(CONSTRUCT_MATRIX.PLACEMENTS.map((p) => p[0]), CONSTRUCT_MATRIX_PIN.placements, 'the fixture names the placements it was generated over');
     const present = shellsFor(SHELL_ORDER, 'the construct matrix');
     const mismatches = [];
     const hard = [];
     let refused = 0;
     const writesBy = { bash: 0, zsh: 0, dash: 0 };
-    const costs = { dead: [], doctrine: [], opens: [], unset: [], other: [] };
+    const costs = { dead: [], doctrine: [], opens: [], unset: [], arithProcsub: [], other: [] };
     for (const row of rows) {
       const at = w.cwds[row.cwd];
       const pinned = CONSTRUCT_MATRIX_PIN.pin[row.id];
@@ -5752,12 +5862,13 @@ test("round 5's fifth addendum, the construct matrix: head (the command-position
         else if (row.position === 'fn') costs.doctrine.push(row.id);
         else if ((row.operator === '>>' || row.operator === '<>') && row.target === 'tracked') costs.opens.push(row.id);
         else if (row.operator === 'name-unset') costs.unset.push(row.id);
+        else if (row.head === '((' && row.placement === 'procsub') costs.arithProcsub.push(row.id);
         else costs.other.push(`${row.id}: ${String(reason).split('\n')[0].replace(/\/tmp\S*/g, '<tmp>').slice(0, 140)}`);
       }
     }
     assert.deepEqual(hard, [], 'no row a shell writes is allowed');
     assert.deepEqual(mismatches, [], 'every row matches the fixture');
-    console.log(`# the construct matrix: rows ${rows.length}, refused ${refused}, allowed ${rows.length - refused}, writes bash=${writesBy.bash} zsh=${writesBy.zsh} dash=${writesBy.dash}; refused with no tracked write: ${costs.dead.length} dead (parsed by no shell), ${costs.doctrine.length} doctrine (a definition never called), ${costs.opens.length} opens (>> or <> onto the existing tracked file: the not-found command writes no byte, the folder twin creates its file), ${costs.unset.length} unset (a name the command never sets: the non-literal rule, the comparison's priced cost), ${costs.other.length} other`);
+    console.log(`# the construct matrix: rows ${rows.length}, refused ${refused}, allowed ${rows.length - refused}, writes bash=${writesBy.bash} zsh=${writesBy.zsh} dash=${writesBy.dash}; refused with no tracked write: ${costs.dead.length} dead (parsed by no shell), ${costs.doctrine.length} doctrine (a definition never called), ${costs.opens.length} opens (>> or <> onto the existing tracked file: the not-found command or the test writes no byte, the folder twin creates its file), ${costs.unset.length} unset (a name the command never sets: the non-literal rule, the comparison's priced cost), ${costs.arithProcsub.length} arith-procsub (a process substitution as an operand of (( )): an arithmetic error in bash and zsh, a syntax error in dash, the expansion read as the command a shell would run), ${costs.other.length} other`);
     for (const line of costs.other) console.log(`#   other: ${line}`);
   } finally { process.env.HOME = savedHome; w.rm(); }
 });
