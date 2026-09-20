@@ -4422,8 +4422,8 @@ EOF
     cp "$plist" "$plist.before"
     sed 's|<string>com.romp.manager</string>|<string>com.romp.manager\&#10;</string>|' "$plist.before" > "$plist.lnl"
     sed 's|<string>/x/cc</string>|<string>/x/cc\&#10;</string>|' "$plist.lnl" > "$plist.both"
-    ! cmp -s "$plist.lnl" "$plist.before"
-    ! cmp -s "$plist.both" "$plist.lnl"
+    run cmp -s "$plist.lnl" "$plist.before"; [ "$status" -ne 0 ]
+    run cmp -s "$plist.both" "$plist.lnl"; [ "$status" -ne 0 ]
     for stub in nonl nl; do
         [ "$stub" = nonl ] || _plutil_stub                                                # the second pass: a plutil that writes a line end
         cp "$plist.lnl" "$plist"
