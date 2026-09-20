@@ -1749,12 +1749,14 @@ RESIDUAL = {
     ('kernel/sdk_backend.py', 'SdkBackend._host_orphan_recover', 'glob', 'hdir', 1):
         ('by-path', FOLLOW_UP, FOLLOW_UP_ITEM + ": the orphan road's journal glob, reached only when the road's descent admitted the directory; the same descriptor form as the other glob"),
 }
-# The read roads' terminals since the second addendum, each held by-descriptor: the stat of identity.json by name
-# (host_file_exists), the open by name under the <sid> descriptor that read_host_file shares with spawn.json and
-# host.stderr (_open_file_nofollow) and its fdopen, the poll's stat of the published name under the hosts/ descriptor
-# (host_sock_present), and, since the fourth addendum, the owner check's fstat of the descriptor read_host_file opened.
+# The read roads' terminals since the second addendum, each held by-descriptor: the owner question's stat of the name
+# under the <sid> descriptor (_stat_name, shared by host_file_exists and read_host_file since the fifth addendum; through
+# the fourth it was host_file_exists's own), the open by name under the <sid> descriptor that read_host_file shares with
+# spawn.json and host.stderr (_open_file_nofollow) and its fdopen, the poll's stat of the published name under the hosts/
+# descriptor (host_sock_present), and, since the fourth addendum, the owner check's fstat of the descriptor
+# read_host_file opened.
 CONVERTED = (
-    ('kernel/host_transport.py', 'host_file_exists', 'os.stat', 'name', 1),
+    ('kernel/host_transport.py', '_stat_name', 'os.stat', 'name', 1),
     ('kernel/host_transport.py', '_open_file_nofollow', 'os.open', 'name', 1),
     ('kernel/host_transport.py', 'read_host_file', 'os.fstat', 'fd', 1),
     ('kernel/host_transport.py', 'read_host_file', 'os.fdopen', 'fd', 1),

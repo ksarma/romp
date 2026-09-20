@@ -141,13 +141,18 @@ class HostDirAbsent(HostDirRefused):
 
 
 class HostFileForeign(HostDirRefused):
-    """A FILE under a verified `hosts/<sid>/` whose owner is not this process's euid, found by the fstat of the
-    descriptor the reader holds (read_host_file) or the fstatat of the name under the directory's descriptor
-    (host_file_exists): the round-7 fourth addendum of the review (2026-09-20, the reviewer's ruling of 19:12Z). The
+    """An ENTRY under a verified `hosts/<sid>/` whose owner is not this process's euid, of ANY kind (a regular file, a
+    symlink, a directory, a FIFO, a socket), found by the fstatat of the name under the directory's descriptor before
+    anything is opened (_stat_name, which host_file_exists and read_host_file share) and, on the read, by the fstat of
+    the descriptor the open returned: the round-7 fourth addendum of the review (2026-09-20, the reviewer's ruling of
+    19:12Z), the owner question moved ahead of the open by the fifth (the same day; through the fourth a peer's UNIX
+    socket at the name never reached read_host_file's fstat, since open(2) answers ENXIO for a socket before it returns
+    a descriptor, and two of the three read roads swallowed that OSError with no row). The
     read descent verifies the two DIRECTORIES as this uid's and does not check their mode (open_host_dirs_if_present
-    says why), so a `<sid>/` of ours left group- or world-writable admits a file a peer planted at identity.json or
-    host.log; through the third addendum such a file was read as ours. Now the reader checks the owner of the object it
-    opened, never of a path (a path stat would reopen the re-point window the descent closes), and a foreign owner is an
+    says why), so a `<sid>/` of ours left group- or world-writable admits an entry a peer planted at identity.json or
+    host.log; through the third addendum such a file was read as ours. Now the reader checks the owner of the entry at
+    the name and of the object it opened, never of a path (a path stat would reopen the re-point window the descent
+    closes), and a foreign owner is an
     ANSWER on the read roads, the way an absent component is (HostDirAbsent): the road files one row naming the file,
     its directory and the owning uid (sdk_backend._refused_directory_row, the file remedy worded for the owner) and
     answers as it does for an absent file (None from read_host_file's caller, False from host_file_exists's). A
@@ -165,7 +170,7 @@ class HostFileForeign(HostDirRefused):
 _DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
 
 
-def _open_dir_nofollow(name, what: str, shown: Path, dir_fd=None, private: bool = True, loose=None) -> int:
+def _open_dir_nofollow(name, what: str, shown: Path, dir_fd=None, private: bool = True, loose=None, modes=None) -> int:
     """One component of the descent: `name` opened O_DIRECTORY|O_NOFOLLOW (relative to `dir_fd` when given), then
     fstat'd and refused unless it is a directory this uid owns and, with `private` (the spawn road's writes), one with no
     group or other bits, the shape the create road (sh.owner_only_dir) guarantees. Returns the descriptor. A symlink at
@@ -177,7 +182,10 @@ def _open_dir_nofollow(name, what: str, shown: Path, dir_fd=None, private: bool 
     (`what`, `shown`, the mode) for the caller to file as a row and go on (the round-7 fourth addendum, 2026-09-20: the
     read roads report a loose directory of ours and neither refuse it, which would deny every session's first connect
     on an install whose hosts/ was made at the umask, nor repair it, which is the spawn road's helpers' job; the order
-    here is read, record, proceed, and this function changes no mode on any road)."""
+    here is read, record, proceed, and this function changes no mode on any road). `modes`, a list: EVERY component
+    admitted is recorded on it the same way, loose or not (the round-7 fifth addendum, 2026-09-20: the caller files a
+    loose row once per connect episode per mode it observed, and a mode that changes between two descents of one
+    episode is a transition it files, which takes the tight observations as well as the loose ones to tell apart)."""
     try:
         fd = os.open(name, _DIR_FLAGS, dir_fd=dir_fd)
     except OSError as e:
@@ -203,6 +211,8 @@ def _open_dir_nofollow(name, what: str, shown: Path, dir_fd=None, private: bool 
                 raise HostDirRefused("%s %s is group/world-accessible (mode %04o)" % (what, shown, stat.S_IMODE(st.st_mode)))
             if loose is not None:
                 loose.append((what, shown, stat.S_IMODE(st.st_mode)))
+        if modes is not None:
+            modes.append((what, shown, stat.S_IMODE(st.st_mode)))
     except BaseException:
         os.close(fd)
         raise
@@ -225,17 +235,31 @@ class HostDirs:
     named a PERMANENT residual at its line and in the PR's record (the round-7 fourth addendum, 2026-09-20: connect(2)
     has no dir_fd form, and the descriptor-relative spellings are a different mechanism), under the same precondition
     every residual here shares: a state root that is not 0700 while a session starts, and for the connect one a peer
-    can WRITE, since the swap of hosts/ is a rename in the root. On this deployment the root reads
+    can WRITE, since the swap of hosts/ is a rename in the root. The journal reads (the one queued follow-up, named at
+    their sites) are reachable under a weaker one: a group-writable hosts/, or a loose hosts/<sid>/ of ours, under a
+    root the peer can traverse. Stated precisely (the round-7 fifth addendum, 2026-09-20): under a root that is 0700
+    before any peer held a descriptor inside it, neither is reachable; a peer who obtained a directory descriptor on a
+    loose <sid>/ while the root was traversable keeps creating entries there until a spawn tightens that directory
+    (the permission check of a create through a held descriptor is the directory's own mode, not an ancestor's, so
+    tightening the root afterwards closes nothing the peer already holds). On this deployment the root reads
     0700 because kernel/judge.py chmods it at import, best-effort (the OSError swallowed, the mode read back once and
     reported on stderr when it is not 0700), and nothing re-checks or guards it afterwards (extra6-1, round 5 of the
     review, 2026-09-20: an attempt at startup, not a standing property of the box). `path` is `hosts/<sid>/` as the
     caller names it, for the wording of a refusal at a file under it (_open_file_nofollow). `loose` (the round-7 fourth
     addendum, 2026-09-20): on the read roads' descent, each component whose mode has group or other bits, as
     (what, path, mode) tuples read from the descent's own fstat, for the caller to file as a row before it reads on
-    (sdk_backend._file_loose_directory_rows); empty on the spawn road, whose descent refuses such a directory."""
+    (sdk_backend._file_loose_directory_rows); empty on the spawn road, whose descent refuses such a directory. `modes`
+    (the fifth addendum): every component admitted, loose or not, the same tuples, so that caller can tell a mode that
+    changed between two descents of one connect episode from one it has already filed.
+    THE DESIGN, in one sentence (the fifth addendum, the half of the reviewer's deferral condition that IS met): the
+    owner check is available on a held descriptor at EVERY read site under hosts/<sid>/, as the fstat of the opened
+    descriptor for a read (read_host_file) and as the fstatat of the name under this `dir` descriptor for an existence
+    question or a question asked before an open (_stat_name, host_file_exists), so a sixth read site written tomorrow
+    has the check at hand in both forms and needs no path stat; that availability, not any one reader, is why the
+    read roads can answer the owner question without reopening the window the descent closes."""
 
-    def __init__(self, hosts: int, dir: int, path=None, loose=()):
-        self.hosts, self.dir, self.path, self.loose = hosts, dir, path, tuple(loose)
+    def __init__(self, hosts: int, dir: int, path=None, loose=(), modes=()):
+        self.hosts, self.dir, self.path, self.loose, self.modes = hosts, dir, path, tuple(loose), tuple(modes)
 
     def close(self) -> None:
         for name in ("hosts", "dir"):
@@ -274,13 +298,14 @@ def _descend(state_dir, sid: str, private: bool) -> HostDirs:
     name under it, each O_DIRECTORY|O_NOFOLLOW and fstat-verified by _open_dir_nofollow."""
     hosts_path = Path(state_dir) / "hosts"
     loose = []          # the read roads' record of a loose component (what, path, mode); the spawn road refuses one instead
-    hfd = _open_dir_nofollow(str(hosts_path), "hosts directory", hosts_path, private=private, loose=loose)
+    modes = []          # every component admitted, the same tuples (the loose rows' once-per-episode-per-mode latch reads it)
+    hfd = _open_dir_nofollow(str(hosts_path), "hosts directory", hosts_path, private=private, loose=loose, modes=modes)
     try:
-        dfd = _open_dir_nofollow(str(sid), "host directory", hosts_path / str(sid), dir_fd=hfd, private=private, loose=loose)
+        dfd = _open_dir_nofollow(str(sid), "host directory", hosts_path / str(sid), dir_fd=hfd, private=private, loose=loose, modes=modes)
     except BaseException:
         os.close(hfd)
         raise
-    return HostDirs(hfd, dfd, hosts_path / str(sid), loose)
+    return HostDirs(hfd, dfd, hosts_path / str(sid), loose, modes)
 
 
 def open_host_dirs_if_present(state_dir, sid: str):
@@ -309,50 +334,77 @@ def open_host_dirs_if_present(state_dir, sid: str):
     the uid check, and a link there by the O_NOFOLLOW open. The caller closes the descriptors (a `with`, or close()).
     WHAT THE MODE'S ABSENCE FROM THE CONDITION ADMITS, AND THE TWO ANSWERS (the round-7 fourth addendum, 2026-09-20,
     the reviewer's ruling of 19:12Z, replacing the third addendum's bare departure): a `<sid>/` of ours that is group- or
-    world-writable admits a FILE a peer planted at identity.json or host.log, which the two readers below read as ours
-    through the third addendum. (1) The readers check the OWNER of the object they hold: read_host_file fstats the
-    descriptor its O_NOFOLLOW open returned, host_file_exists fstatats the name under the `<sid>` descriptor with no
-    link followed, and a file whose st_uid is not this euid raises HostFileForeign, which the read roads file as one row
-    naming the file, the directory and the owning uid and then answer as they do for an absent file (None, False). The
-    check is on the descriptor or the name under it, never on a path: a path stat would reopen the re-point window the
-    descent closes. (2) The mode is READ, from the fstat the descent already makes, and a loose component is recorded on
-    the returned HostDirs (`loose`: what, path, mode) for the caller to FILE as one row per descent
+    world-writable admits an ENTRY a peer planted at identity.json or host.log, which the two readers below read as ours
+    through the third addendum when it was a file. (1) The readers ask the OWNER QUESTION of the entry at the name
+    before anything is opened (_stat_name: a fstatat of the name under the `<sid>` descriptor with no link followed,
+    shared by host_file_exists and read_host_file since the fifth addendum, 2026-09-20), and read_host_file asks it
+    again of the descriptor its O_NOFOLLOW|O_NONBLOCK open returned; an entry of ANY kind whose st_uid is not this euid
+    raises HostFileForeign, which the read roads file as one row naming the file, the directory and the owning uid and
+    then answer as they do for an absent file (None, False); a non-regular entry of ours (a directory, a FIFO, a
+    socket) is answered None or False with nothing opened. The check is on the descriptor or the name under it, never
+    on a path: a path stat would reopen the re-point window the descent closes. (The fourth addendum asked the owner
+    question of the opened descriptor only, and a peer's socket at the name never reached it: open(2) answers ENXIO for
+    a socket before it returns a descriptor, and the orphan and served roads swallowed the OSError with no row.)
+    (2) The mode is READ, from the fstat the descent already makes, and a loose component is recorded on
+    the returned HostDirs (`loose`: what, path, mode; `modes`: every component) for the caller to FILE
     (sdk_backend._file_loose_directory_rows, kind host.directory-loose, the mode in octal, the remedy naming the spawn
-    road's repair) and then proceed. The read roads neither refuse on the mode (the denial of service above) nor repair
+    road's repair) once per connect episode per mode observed, so a stable loose directory is one row however many
+    descents the episode makes and a mode that changes between two of them is a row naming the new mode (the fifth
+    addendum, on the reviewer's ruling of 20:40Z; the fourth filed one row per descent), and then proceed. The read
+    roads neither refuse on the mode (the denial of service above) nor repair
     it: a read road stays a read road, the chmod belongs to the spawn road's helpers (sh.hosts_dir, sh.owner_only_dir),
     and the order here is read, record, proceed, never repair-before-reading. Pinned in tests/test_host_transport.py
-    (ReadDescent, BackendHostRules): the mode is unchanged after every read road, by stat before and after."""
+    (ReadDescent, BackendHostRules): the mode is unchanged after every read road, by stat before and after; the answer
+    for every kind of entry a peer can put at the name, on each read road and from each reader, cell by cell from one
+    table (SHAPE_TABLE there)."""
     try:
         return _descend(state_dir, sid, private=False)
     except HostDirAbsent:
         return None
 
 
-def host_file_exists(name: str, dirs: HostDirs) -> bool:
-    """Whether a regular file OF OURS stands at `hosts/<sid>/<name>`: a stat by NAME relative to the verified `<sid>`
-    descriptor with no symlink followed (fstatat with AT_SYMLINK_NOFOLLOW), so nothing outside the directory is
-    consulted. The connect road's read of identity.json's existence (_host_lease_applies; the round-7 second addendum).
-    Two refusals since the fourth addendum (2026-09-20), each a subclass of HostDirRefused the road files as a row: a
-    SYMLINK at the name (`file` set, the wording _open_file_nofollow gives a link at spawn.json or host.stderr, so the
-    lease-applies road files the file remedy the orphan and served roads file for the same plant; through the third
-    addendum the link answered False here with no row), and a file ANOTHER UID owns (HostFileForeign, carrying the
-    name, the directory and the uid; the road turns it into False after the row). Why a stat of the name and not an
-    open-and-fstat: this reader answers existence and reads no byte, and an open would take a descriptor on a file it
-    does not want (and block on a FIFO planted at the name); both forms are descriptor-relative, the name resolved
-    under the held `<sid>` descriptor and never through a path, which is what keeps the re-point window closed. What
-    the stat sees is the entry itself (no link followed), so the owner it reports is the owner of what stands at the
-    name. Anything else at the name (a directory, a FIFO, a socket) is not the file: False, as before."""
+def _stat_name(name: str, dirs: HostDirs):
+    """THE OWNER QUESTION, asked of the entry at `hosts/<sid>/<name>` before anything is opened: a stat by NAME relative
+    to the verified `<sid>` descriptor with no symlink followed (fstatat with AT_SYMLINK_NOFOLLOW), so nothing outside
+    the directory is consulted, no path is, and what it reports is the entry itself, whatever its kind. Shared by
+    host_file_exists and read_host_file since the round-7 fifth addendum of the review (2026-09-20). The answers: no
+    entry at the name (ENOENT), None; an entry ANOTHER UID owns, of ANY kind (a regular file, a symlink, a directory, a
+    FIFO, a socket), HostFileForeign naming the entry, the directory and the uid; a SYMLINK of ours, the file-shape
+    HostDirRefused (`file` set, the wording _open_file_nofollow gives a link at spawn.json or host.stderr); anything
+    else of ours, the stat result, for the caller to read the kind from (S_ISREG decides whether it is the file). Any
+    other OSError of the stat (EACCES on a `<sid>/` of ours with no search bit, EIO) propagates as itself: a fault of
+    the directory, not a shape at the name. Why the question is asked here and not of an opened descriptor alone:
+    through the fourth addendum read_host_file's owner check was the fstat of the descriptor its open returned, and a
+    UNIX socket a peer planted at the name never reached it, because open(2) answers ENXIO for a socket before any
+    descriptor exists; the orphan and served roads catch OSError around their read, so the peer's socket at
+    identity.json or host.log was answered absent with no owner row on those two roads while the lease-applies road
+    (host_file_exists, already a stat by name) filed one for the same plant (the fourth addendum's two verifiers)."""
     try:
         st = os.stat(name, dir_fd=dirs.dir, follow_symlinks=False)
-    except OSError:
-        return False
+    except FileNotFoundError:
+        return None
+    if st.st_uid != os.geteuid():
+        raise _foreign(name, dirs, st.st_uid)
     if stat.S_ISLNK(st.st_mode):
         e = HostDirRefused("%s in host directory %s is a symlink, not a regular file" % (name, dirs.path))
         e.file = name
         raise e
-    if st.st_uid != os.geteuid():
-        raise _foreign(name, dirs, st.st_uid)
-    return stat.S_ISREG(st.st_mode)
+    return st
+
+
+def host_file_exists(name: str, dirs: HostDirs) -> bool:
+    """Whether a regular file OF OURS stands at `hosts/<sid>/<name>`: the owner question (_stat_name) and then S_ISREG of
+    what it returned. The connect road's read of identity.json's existence (_host_lease_applies; the round-7 second
+    addendum). The answers, by the kind of entry, from the one table tests/test_host_transport.py pins cell by cell
+    (SHAPE_TABLE, the same table read_host_file answers): no entry, False; a regular file of ours, True; an entry
+    another uid owns, of any kind, HostFileForeign (the road files one row and answers as for an absent file); a
+    symlink of ours, the file-shape HostDirRefused (`file` set; through the third addendum a link answered False here
+    with no row); a directory, a FIFO or a socket of ours, False, nothing opened (an existence question reads no byte,
+    takes no descriptor and cannot block on a FIFO). A device node is outside the table: making one needs a privilege no
+    peer here has, and it would take the non-regular arm like a FIFO. Both readers resolve the name under the held
+    `<sid>` descriptor and never through a path, which is what keeps the re-point window the descent closed closed."""
+    st = _stat_name(name, dirs)
+    return st is not None and stat.S_ISREG(st.st_mode)
 
 
 def _foreign(name: str, dirs: HostDirs, uid: int) -> HostFileForeign:
@@ -363,23 +415,41 @@ def _foreign(name: str, dirs: HostDirs, uid: int) -> HostFileForeign:
 
 def read_host_file(name: str, dirs: HostDirs):
     """The bytes of `hosts/<sid>/<name>` read whole through the descent, or None when no regular file of ours stands at
-    the name: opened by NAME relative to the verified `<sid>` descriptor with O_NOFOLLOW (_open_file_nofollow, so a
-    symlink at the name is refused under HostDirRefused naming the file, as at spawn.json and host.stderr), the
-    DESCRIPTOR fstat'd, read, closed. The read roads' one file read (the round-7 second addendum of the review,
-    2026-09-20): identity.json on the orphan road, host.log on the served road. Any other OSError of the open (EACCES,
-    EMFILE) propagates as itself.
-    THE OWNER CHECK (the round-7 fourth addendum, 2026-09-20): the fstat is of the descriptor the open returned, so the
-    object checked is the object read and no path is consulted between the two (a stat by path would reopen the
-    re-point window the descent closes); a file whose st_uid is not this euid is closed unread and refused under
-    HostFileForeign (the name, the directory, the uid), which the read roads file as one row and turn into None, the
-    answer an absent file gets. The open carries O_NONBLOCK, so a FIFO a peer planted at the name returns a descriptor
-    instead of blocking the kernel's connect until a writer appears; what is not a regular file after the owner check
-    (a directory, a FIFO of ours, a socket) is closed and answered None, the answer host_file_exists gives such an
-    entry (through the third addendum a directory at the name surfaced as the fdopen's IsADirectoryError)."""
+    the name. The read roads' one file read (the round-7 second addendum of the review, 2026-09-20): identity.json on
+    the orphan road, host.log on the served road. Two checks and the open between them (the round-7 fifth addendum,
+    2026-09-20, correcting the fourth).
+    FIRST THE OWNER QUESTION, BEFORE ANY OPEN (_stat_name, a stat by NAME under the verified `<sid>` descriptor with no
+    link followed): an entry another uid owns, of any kind, raises HostFileForeign; a symlink of ours raises the
+    file-shape refusal; no entry, or a directory, a FIFO or a socket of ours, is None here with NOTHING OPENED. That
+    is the table host_file_exists answers, and it is why a socket at the name no longer depends on the open failing:
+    through the fourth addendum the owner check was the fstat of the descriptor the open returned, and open(2) answers
+    ENXIO for a UNIX socket before it returns one, so a peer's socket at identity.json or host.log raised a bare OSError
+    the orphan and served roads swallowed with no owner row, while the lease-applies road filed one for the same plant;
+    a FIFO of ours, opened O_NONBLOCK so as not to block, was answered by that fstat; now neither is opened at all.
+    THEN THE OPEN, by NAME under the same descriptor with O_NOFOLLOW|O_NONBLOCK (_open_file_nofollow), AND THE FSTAT OF
+    THE DESCRIPTOR IT RETURNED, which asks the owner question again of the object actually held and reads its kind: the
+    authoritative check, since the entry can change between the stat and the open, deciding the same way (another
+    uid's, HostFileForeign, closed unread; not a regular file, None). What the open itself can answer after the stat
+    said a regular file of ours, each mapped to the same table: ENOENT, the entry is gone, None; ELOOP, a link stands
+    there now, the file-shape refusal _open_file_nofollow raises; ENXIO, a socket stands there now, the owner question
+    asked once more by name (a peer's socket is its row) and then None, the socket's answer; every other errno (EACCES
+    on a file of ours with no read bit, EMFILE, EIO) propagates as the fault it is, because the class is for the shapes
+    an entry can take and not for every failure of the open, and the roads' own OSError arms are where a fault is
+    answered. Every check is on the held descriptor or on the name under it, never on a path (a path stat would reopen
+    the re-point window the descent closes); the census (tests/test_hosts_path_census.py, CONVERTED) holds both stats
+    by-descriptor."""
+    st = _stat_name(name, dirs)
+    if st is None or not stat.S_ISREG(st.st_mode):
+        return None
     try:
         fd = _open_file_nofollow(name, os.O_RDONLY | os.O_NONBLOCK, dirs)
     except FileNotFoundError:
         return None
+    except OSError as e:
+        if e.errno == errno.ENXIO:
+            _stat_name(name, dirs)
+            return None
+        raise
     try:
         st = os.fstat(fd)
         if st.st_uid != os.geteuid():
