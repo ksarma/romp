@@ -15,13 +15,14 @@
 // record of the units the DOM holds, a first unit below the window's start (the change is among the units the top spacer stands for),
 // a gap at or past the first unit (its element and its spacer entry are keyed by unit), a bottom spacer under the window (the trim
 // walks up from the last child; a spacer carries no unit and would end it at once). A window the reader browsed away from the tail
-// grows its bottom spacer when the change lies below it (the shape normal mode has always had) and rebuilds when the change lies
+// grows its bottom spacer when the change lies below it (the shape normal mode has always had; the seam also patches the window's
+// worked footers there, the one render that reads later events, review round 1b) and rebuilds when the change lies
 // inside it, as before. Pure: chat-compact-tail.test.ts executes every rule.
 import type { DisplayItem } from "./compact";
 
 export type TailPlan =
   | { kind: "rebuild"; why: "stale" | "no-record" | "below-window" | "inside-browsed" | "bottom-spacer" | "gap" }
-  | { kind: "spacer" }                  // the change lies below a browsed window: grow the bottom spacer, touch no node
+  | { kind: "spacer" }                  // the change lies below a browsed window: grow the bottom spacer, re-render no unit (the seam patches the footers)
   | { kind: "append"; u0: number };     // trim the units from u0 off the tail and re-render [u0, items.length)
 
 /** Two display items describe the same unit: the same kind over the same events (a gap over the same turns, before the same event). */

@@ -299,7 +299,7 @@ test("syncViewInner asks the plan in compact mode between the fast path and the 
   const normal = sync.indexOf("// Normal mode, pure append.");
   assert.ok(fast > 0 && seam > fast && rebuild > seam && normal > rebuild, "fast path, then the plan, then the rebuild, then normal mode");
   assert.match(sync, /stale: v\.stale, bottomSpacer: !!v\.el\.querySelector\(":scope > \.tx-spacer-bot"\) \}\);/, "the plan reads the stale mark and the bottom spacer off the view");
-  assert.match(sync, /if \(plan\.kind === "spacer"\) \{\s*\n\s*v\.spacerCountBot = total - \(v\.winEnd \?\? total\); v\.unitTotal = total; v\.rendered = len; v\.units = items; sizeSpacers\(v\); return v;/, "below a browsed window: the bottom spacer grows, as normal mode's does");
+  assert.match(sync, /if \(plan\.kind === "spacer"\) \{\s*\n(?:\s*\/\/[^\n]*\n)*\s*patchWorkedFooters\(v, s, v\.rendered, working, items\);\s*\n\s*v\.spacerCountBot = total - \(v\.winEnd \?\? total\); v\.unitTotal = total; v\.rendered = len; v\.units = items; sizeSpacers\(v\); return v;/, "below a browsed window: the worked footers are patched from the first changed event (the pre-append v.rendered, the one render that reads later events; compact-seam-exec.test.ts runs it), then the bottom spacer grows, as normal mode's does");
   const app = sync.slice(sync.indexOf('if (plan.kind === "append") {'), rebuild);
   assert.match(app, /const span = Math\.max\(WINDOW_TAIL, \(v\.winEnd \?\? total\) - \(v\.winStart \?\? 0\)\);/, "the span is read before the append");
   // the first re-rendered unit is seeded with the rail chain a window build reaches there (railChainBefore: the seed at winStart advanced

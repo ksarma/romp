@@ -158,17 +158,22 @@ test("a scrolled-up reader's append (atBottom false) keeps the window's top (kee
   assert.equal(w.v.winEnd, 82);
 });
 
-test("a change below a browsed window grows the bottom spacer and touches no node: exactly sizeSpacers, no trim, no appendItem, no rebuild", () => {
-  // six units built, a reply landed as the seventh; the window browsed away from the tail (winEnd lowered to 4 by hand, as a landing leaves it)
+test("a change below a browsed window patches the worked footers from the first changed event and grows the bottom spacer: no trim, no appendItem, no rebuild (review round 1b: the footer is the one render inside the window that reads later events)", () => {
+  // six units built, a reply landed as the seventh; the window browsed away from the tail (winEnd lowered to 4 by hand, as a landing leaves it).
+  // The footer patch is told the first changed event (6, v.rendered before the bookkeeping moves it to len) with the unit list, as the append
+  // branch's is; the rebuild this branch replaced re-rendered the window's footers whenever events landed below it, and the branch alone left
+  // them as they were (a turn completed by a prompt below the window kept its live spinner instead of its "worked …" footer)
   const kinds = ["user", "assistant", "user", "assistant", "user", "assistant", "assistant"];
   const prev = Array.from({ length: 6 }, (_, i) => ev(i)), now = prev.concat([ev(6)]);
   const w = world(kinds, prev, now, 6, 0);
   w.v.winEnd = 4;
   w.sync("A");
-  assert.deepEqual(w.calls, [["sizeSpacers"]], "the spacer re-size alone");
+  assert.deepEqual(w.calls, [["patchWorkedFooters", 6, true, 7], ["sizeSpacers"]], "the footer patch from the pre-append v.rendered, then the spacer re-size, and nothing else");
+  assert.deepEqual(w.calls.filter((c) => c[0] === "appendItem" || c[0] === "renderWindowItems" || c[0] === "trim"), [], "no unit re-rendered, no rebuild");
+  assert.equal(w.calls.filter((c) => c[0] === "sizeSpacers").length, 1, "one spacer re-size");
   assert.equal(w.v.spacerCountBot, 3, "total less winEnd: the units the bottom spacer stands for");
-  assert.equal(w.v.rendered, 7); assert.equal(w.v.unitTotal, 7); assert.deepEqual(w.v.units, now);
-  assert.equal(w.v.el.children.length, 6, "no node touched");
+  assert.equal(w.v.rendered, 7, "the bookkeeping moves v.rendered to len after the patch"); assert.equal(w.v.unitTotal, 7); assert.deepEqual(w.v.units, now);
+  assert.equal(w.v.el.children.length, 6, "no unit node added or removed");
 });
 
 // ── the measured figure: taken only by a paint that anchors the reader, and by every one of them (review round 1b) ──────────────────

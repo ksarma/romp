@@ -13592,6 +13592,15 @@ function syncViewInner(id: string, atBottom?: boolean, anchored: boolean = atBot
     const plan = compactTailPlan({ prev: v.units, items, from: v.rendered, winStart: v.winStart ?? 0, winEnd: v.winEnd ?? total, unitTotal: v.unitTotal,
                                    stale: v.stale, bottomSpacer: !!v.el.querySelector(":scope > .tx-spacer-bot") });
     if (plan.kind === "spacer") {
+      // The one render inside the window that reads LATER events is the "worked …" footer on a turn's last reply (turnWorkedSecs reads the
+      // events after it), so it is patched here from the first changed event (v.rendered, still the pre-append value), as the append branch
+      // and normal mode's tail do; the rebuild this branch replaced re-rendered the browsed window's footers whenever events landed below it
+      // (review round 1b). The population is one item, derived from what appendItem and renderEvent read: the rail markers and the day
+      // dividers read EARLIER events (prevEpoch, the walk); a run's head reads its members, and a member joining below the window moves
+      // firstDifferingUnit inside the window, which the plan rebuilds (inside-browsed); data-turn is the kernel's turn number and does not
+      // move; the gap units are minted by the regions (chatHead's and fillInPlace's rebuilds), never by a tail frame (regionsAbsorbTail only
+      // extends the tail run), so v.gapUnits needs no refresh here; the measure's take ran above the fast path.
+      patchWorkedFooters(v, s, v.rendered, working, items);
       v.spacerCountBot = total - (v.winEnd ?? total); v.unitTotal = total; v.rendered = len; v.units = items; sizeSpacers(v); return v;
     }
     if (plan.kind === "append") {
