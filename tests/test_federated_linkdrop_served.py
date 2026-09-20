@@ -1056,19 +1056,28 @@ class _LinkDrop(unittest.TestCase):
         return [f for s in self._page("fleet")["socks"] if s["relay"] for f in s["frames"]
                 if f["t"] == "feed" and f.get("asks") is not None and t0 <= f["at"] <= t1]
 
-    def _assert_one_row_per_outline_feed_patch(self, k0=None, k1=None, patches_due=True):
+    def _assert_one_row_per_outline_feed_patch(self, k0=None, k1=None, patches_due=True, attach_after=None):
         """The old bundle's storm as an invariant, not a count: in the window (padded on both sides as _rows_in pads,
         the whole drive without marks) the outline/delta-unapplied rows correspond one to one, by rev, with the feed
         slot patches the Outline's own relay sockets received there, and every such row names the feed slot. With
         patches_due the window must hold at least one patch OR a whole keyed feed frame the Outline received inside it
         (_outline_caught_up_whole: a churned socket's retry absorbs the notices into one whole frame and files no row, so
         a count is one drive's, and a window with neither a patch nor such a frame is a change that reached the Outline as
-        nothing, not the storm); without, both sides are empty. Returns the row count, for the record."""
+        nothing, not the storm); without, both sides are empty. With attach_after (a mark) the return window's allowance
+        reaches into this window's right pad: a card-less feed-family patch at or after that mark is the connect push's
+        ledgers attach, by design and with no card in it, and it and the row the old bundle files for it (matched by rev
+        over the drive's attaches, _attach_revs_since) are the return's, not this window's. Returns the row count, for
+        the record."""
         rows = self._outline_unapplied(self._rows_in(k0, k1) if k0 and k1 else None)
         patches = self._outline_feed_patches(k0, k1)
         where = "[%s, %s)" % (k0, k1) if k0 and k1 else "the whole drive"
         self.assertTrue(all("rev" in f for f in patches), "every recorded feed patch carries its rev (the hook records m.rev on a delta frame): %r" % (patches,))
         self.assertTrue(all(isinstance(d, dict) and "rev" in d for d in rows), "every outline/delta-unapplied row carries the patch's rev: %r" % (rows,))
+        if attach_after:
+            since = self._marks()[attach_after]
+            attach_revs = self._attach_revs_since(since)
+            patches = [f for f in patches if not (f["at"] >= since and not self._carries_cards(f))]
+            rows = [d for d in rows if int(d["rev"]) not in attach_revs]
         feed_rows = [d for d in rows if d.get("slot") == "feed"]
         self.assertEqual(len(feed_rows), len(rows), "every outline/delta-unapplied row in %s names the feed slot: %r" % (where, rows))
         self.assertEqual(sorted(int(d["rev"]) for d in feed_rows), sorted(int(f["rev"]) for f in patches),
@@ -1217,6 +1226,14 @@ class _LinkDrop(unittest.TestCase):
             return "asks" in (f.get("coll") or [])
         return False
 
+    def _attach_revs_since(self, since_ms):
+        """The revs of the card-less feed slot patches (the connect push's ledgers attach, _carries_cards) the Outline received
+        from `since_ms` to phase B's first change, read over the drive's record and not a window's: the kernel floors a row's
+        stamp to the second, so the row the old bundle files for an attach can sit inside a window whose patch pad the attach
+        itself is past by tens of milliseconds (round 2, regression-3: a 40 ms gap on a recorded drive)."""
+        m = self._marks()
+        return {int(f["rev"]) for f in self._outline_feed_patches() if since_ms <= f["at"] < m["B0"] and not self._carries_cards(f)}
+
     def _link_up_phases(self):
         return ("A", "B", "C") if self.local_drop else ("A", "B")
 
@@ -1271,8 +1288,10 @@ class _LinkDrop(unittest.TestCase):
         self._assert_seen(D["seenWhileDown"], False, todo=(False if todo else None), what="phase D while the link was down (a change due, nothing to carry it)")
         if prompt is not None:
             self.assertNotEqual(D["seenWhileDown"].get("prov"), prompt, "api's provisional row did not read phase D's prompt while the link was down: %r" % (D["seenWhileDown"],))
-        down = self._outline_unapplied(self._rows_in("drop", "resume"))
-        self.assertEqual(down, [], "no outline/delta-unapplied row filed while the link was down with phase D due: %r" % (down,))
+        attach_revs = self._attach_revs_since(m["resume"] - 1500)   # the return's ledgers attaches, by rev (the row check below and the return window's)
+        down = [d for d in self._outline_unapplied(self._rows_in("drop", "resume")) if not (isinstance(d, dict) and d.get("rev") is not None and int(d["rev"]) in attach_revs)]
+        self.assertEqual(down, [], "no outline/delta-unapplied row filed while the link was down with phase D due (the row the old bundle files for a ledgers "
+                                   "attach the Outline received after the resume is the return's, in this window's right pad by the kernel's whole-second floor): %r" % (down,))
         self._assert_seen(D["seenAfterReturn"], True, todo=todo, prompt=prompt, what="phase D after the link's return (the redial's whole frame carried it)")
         for app in self.apps:
             window = [(s, f) for s in self._relay_socks(app) for f in s["frames"] if m["resume"] <= f["at"] < m["B0"]]
@@ -1290,10 +1309,9 @@ class _LinkDrop(unittest.TestCase):
         # a ledgers attach the Outline received in the window, matched by rev; a row with no such patch behind it is stray.
         t0, t1 = m["resume"] / 1000.0 - 1.5, m["B0"] / 1000.0 - 1.0
         rows = self._outline_unapplied([r for r in self.hub_diag_rows if t0 <= float(r.get("t") or 0) <= t1])
-        attach_revs = sorted(int(f["rev"]) for f in self._outline_feed_patches() if m["resume"] - 1500 <= f["at"] < m["B0"] and not self._carries_cards(f))
         stray = [d for d in rows if not (isinstance(d, dict) and d.get("slot") == "feed" and d.get("rev") is not None and int(d["rev"]) in attach_revs)]
         self.assertEqual(stray, [], "no outline/delta-unapplied row filed between the link's return and phase B's first change beyond one per ledgers attach the "
-                                    "Outline received there (a row here is a row for the return's whole frame or for a replayed patch); rows %r, attaches by rev %r" % (rows, attach_revs))
+                                    "Outline received there (a row here is a row for the return's whole frame or for a replayed patch); rows %r, attaches by rev %r" % (rows, sorted(attach_revs)))
         self._assert_seen(self._phase("B")["seenD"], True, todo=todo, what="phase D's changes after phase B")
         if self.local_drop:
             self._assert_seen(self._phase("C")["seenD"], True, todo=todo, what="phase D's changes at the end")
@@ -1395,7 +1413,9 @@ class LinkDropOldLocal(_LinkDrop):
     The delta-unapplied rows are the old bundle's storm. This lab reads it across the mid-session events: it is one
     row PER remote feed patch, it STOPS while the link is down (no patch arrives, so no row: the storm is gated on the
     link, established by phase D, a change due while the link was down that reached no page, crossed as no frame and
-    filed no row until the return's whole frame carried it), and it RESUMES after each redial's whole frame (the whole
+    filed no row until the return's whole frame carried it, the while-down read coming DOWN_WINDOW_MARGIN times this
+    drive's slowest link-up delivery after the post, so the old bundle's own 6 to 13 s catch-up latency cannot pass for
+    the gate), and it RESUMES after each redial's whole frame (the whole
     frame catches the page up once; the next patch freezes again). The class pins the correspondence, not a count: per
     window and over the whole drive, the rows equal the Outline's own feed slot patches by rev, non-empty in every
     phase unless a whole keyed feed frame caught the Outline up inside it (the old bundle's socket churn absorbing the
@@ -1485,7 +1505,7 @@ class LinkDropOldLocal(_LinkDrop):
         same drive."""
         self._driver_ran()
         perA = self._assert_one_row_per_outline_feed_patch("A0", "A1", patches_due=True)     # the link up: a patch per notice, a row per patch
-        down = self._assert_one_row_per_outline_feed_patch("drop", "resume", patches_due=False)   # the link down, phase D due: no patch, no row
+        down = self._assert_one_row_per_outline_feed_patch("drop", "resume", patches_due=False, attach_after="resume")   # the link down, phase D due: no patch, no row (the return's attach excepted)
         self.assertEqual(down, 0, "no delta-unapplied row while the link was down: no patch arrived, so no row (the storm is gated on the link); rows in the down window: %r" % (self._rows_by_kind(self._rows_in("drop", "resume")),))
         self._assert_the_down_window_outlasts_the_drives_slowest_delivery()   # the same zero, the same control in time as the gate leg's
         perB = self._assert_one_row_per_outline_feed_patch("B0", "B1", patches_due=True)     # the storm RESUMED on the return's socket
@@ -1516,7 +1536,9 @@ class LinkDropOldLocal(_LinkDrop):
 
     def test_a_change_due_while_the_link_was_down_crossed_nothing_and_the_return_carried_it_whole(self):
         """The gate's own leg on the old bundle: phase D's cards, posted with the row down, reach no page and file no row
-        while the link is down; the return's whole frame carries them (visible after the return, no patch carrying a
+        while the link is down, read DOWN_WINDOW_MARGIN times this drive's slowest link-up delivery after the post (the old
+        bundle shows a change only at the next churned socket's whole frame, 6 to 13 s, so a shorter read would be the
+        page's latency, not the gate); the return's whole frame carries them (visible after the return, no patch carrying a
         card and no row for one between the return and phase B's first change; a ledgers attach and the row this bundle
         files for it are allowed), and phase B's patches then file rows again (the storm test's phase B equality). A
         pause in the storm with a change due is the link, not the page."""

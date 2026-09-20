@@ -14,13 +14,15 @@ the shared clone is never the subject): the source's worktree records and its .g
 before the mint, after it and after teardown, with no locked record at any of the three; the minted checkout is at the sha
 and borrows the source's objects; an interrupted mint (git killed as the clone starts, the failure path) raises with git's
 words and leaves the source's records untouched; every git command the mint runs is either the clone, which reads the
-source, or bound by -C to a path under the lab, and none names a worktree, a record clearing or an object collection; and
-the lab module's source text carries no such argv token.
+source, or bound by -C to a path under the lab, and none names a worktree, a record clearing or an object collection; the
+class's teardown runs no command at all (the lab's rmtree takes the checkout), spied the same way; and no string constant
+in the lab module's source, in either quoting, is such an argv token (an ast walk, so a spelling cannot slip past it; a
+token assembled at run time or joined into one shell string is what the two spies are for, not this census).
 
 Synthetic: a scratch repository minted here, hostname TESTHOST; no kernel, no browser.
 """
+import ast
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -104,10 +106,12 @@ class OldHubMintIsPrivate(unittest.TestCase):
             return real(cmd, *a, **k)
         return seen, run
 
-    def _assert_commands_are_private(self, seen):
+    def _assert_commands_are_private(self, seen, expect_commands=True):
         """Every git command the mint ran either reads the source (the clone) or is bound to a path under the lab; none
-        carries a forbidden token. Derived from the spy's record, which must not be empty."""
-        self.assertTrue(seen, "the mint ran git (the spy saw its commands)")
+        carries a forbidden token. Derived from the spy's record, which must not be empty for a mint (expect_commands);
+        a clean teardown runs none, and then the record is checked as it stands."""
+        if expect_commands:
+            self.assertTrue(seen, "the mint ran git (the spy saw its commands)")
         for cmd in seen:
             self.assertEqual(cmd[0], "git", cmd)
             self.assertEqual([t for t in cmd if t in FORBIDDEN_ARGV], [], "no worktree, record-clearing or collection command in the mint: %r" % (cmd,))
@@ -169,11 +173,29 @@ class OldHubMintIsPrivate(unittest.TestCase):
         self.assertIn(L.OLD_HUB_SHA, str(cm.exception))
         self.assertEqual(self.src.records(), self.before)
 
+    def test_the_teardown_runs_no_command(self):
+        """The class's teardown with nothing to stop (no procs, no door, no splice) runs no subprocess at all: the lab's
+        rmtree takes the checkout, and no git command of the class names the source (round 1's teardown ran a repo-wide
+        record clearing there). Behavioural, so the spelling of an argv token cannot matter."""
+        real = subprocess.run
+        seen, run = self._spy(real)
+        with mock.patch.object(L.subprocess, "run", run):
+            self.Mint.tearDownClass()
+        self._assert_commands_are_private(seen, expect_commands=False)
+        self.assertEqual(seen, [], "a clean teardown runs no command: %r" % (seen,))
+        self.assertFalse(os.path.exists(self.lab), "…and the lab is gone")
+        self.assertEqual(self.src.records(), self.before, "the source's worktree records are byte-identical after teardown")
+
     def test_the_lab_module_names_no_forbidden_git_command(self):
+        """No string constant in the lab module is a forbidden argv token, read from the parsed source (ast.Constant), so a
+        single-quoted spelling is seen as the double-quoted one is (round 2: the pin matched one quoting and passed the
+        other). A cheap census beside the two spies, and only a census: a token assembled at run time is theirs to catch."""
         with open(L.__file__, encoding="utf-8") as f:
             src = f.read()
-        found = [tok for tok in FORBIDDEN_ARGV if re.search(r'"%s"' % re.escape(tok), src)]
-        self.assertEqual(found, [], "argv literals in the lab module that name a worktree, a record clearing or a collection: %r" % (found,))
+        constants = {n.value for n in ast.walk(ast.parse(src)) if isinstance(n, ast.Constant) and isinstance(n.value, str)}
+        self.assertTrue(constants, "the lab module was parsed and has string constants")
+        found = sorted(tok for tok in FORBIDDEN_ARGV if tok in constants)
+        self.assertEqual(found, [], "string constants in the lab module that name a worktree, a record clearing or a collection: %r" % (found,))
         self.assertNotIn("_remove_old_hub", src, "the teardown has no git step of its own: the lab's rmtree takes the checkout")
 
 
