@@ -847,7 +847,7 @@ const BODY_HANDED_TO: Array<{ callee: string; own?: true; why: string }> = [
  *  before the bare-read refusal, so a direct call still parses (the round-4 review's two ordering warnings). A token no
  *  member access follows is classed by its context (bareContext), and one the census cannot class is refused with its
  *  line. */
-function census(src: string, table: SeatRead[] = SEATS_READ_BY_HAND, indexTable: IndexRead[] = INDEX_READS_BY_HAND): { seated: Map<string, number[]>; refused: string[] } {
+function census(src: string, table: SeatRead[] = SEATS_READ_BY_HAND, indexTable: IndexRead[] = INDEX_READS_BY_HAND, argTable: ArgRead[] = ARGS_READ_BY_HAND, urlTable: UrlWriteRead[] = URL_WRITES_READ_BY_HAND): { seated: Map<string, number[]>; refused: string[] } {
   const lineAt = (i: number): number => src.slice(0, i).split("\n").length;
   const seated = new Map<string, number[]>();
   const refused: string[] = [];
@@ -911,7 +911,7 @@ function census(src: string, table: SeatRead[] = SEATS_READ_BY_HAND, indexTable:
     const entry = table.find((e) => e.in === s.fn && e.on === s.on && e.via === s.via);
     if (!entry) {
       if (SEAT_CALLS.includes(s.via) || s.via.endsWith(" =")) refused.push("line " + s.line + ": " + s.text + " seats on `" + s.on + "` in " + s.fn + ", a receiver the census has not read by hand: read the site for what " + s.on + " is (the body under another name, or a node whose seat lands as a child of the body, seats a root the lists must know) and list it in SEATS_READ_BY_HAND, or seat the body by its name");
-      else refused.push("line " + s.line + ": " + s.text + " calls " + s.via + " on `" + s.on + "` in " + s.fn + ", a call the census reads by its site (a call, apply or bind, a mount or render, a reflection global's method) and has not read by hand: read it for what it runs and list it in SEATS_READ_BY_HAND");
+      else refused.push("line " + s.line + ": " + s.text + " calls " + s.via + " on `" + s.on + "` in " + s.fn + ", a call the census reads by its site (a call, apply or bind, a mount or render, a reflection global's method by its binding, an add on a receiver that is neither a class list nor a Set) and has not read by hand: read it for what it runs and list it in SEATS_READ_BY_HAND");
       continue;
     }
     used.add(entry);
@@ -927,6 +927,15 @@ function census(src: string, table: SeatRead[] = SEATS_READ_BY_HAND, indexTable:
   for (const i of second.indexReads) if (!indexTable.some((e) => e.in === i.fn && e.on === i.on)) refused.push("line " + i.line + ": " + i.text + " reads a member of `" + i.on + "` by a computed name and stores or hands it on, in " + i.fn + ": read the site for what " + i.on + " is and list it in INDEX_READS_BY_HAND, or read the member by its name");
   for (const e of table) if (!used.has(e)) refused.push("SEATS_READ_BY_HAND lists `" + e.on + "." + e.via.replace(" =", " = ...") + "` in " + e.in + ", and the source has no such seat: the entry is stale, remove it or read the site again");
   for (const e of indexTable) if (!second.indexReads.some((i) => i.fn === e.in && i.on === e.on)) refused.push("INDEX_READS_BY_HAND lists `" + e.on + "` in " + e.in + ", and the source has no such stored index read: the entry is stale, remove it or read the site again");
+  // the argument axis (the round-6 review's item 7): a node of the tree handed to ANY callee passes only as a site the table
+  // lists; a string road runs code the census cannot read; a URL member written from a value that is not a literal, or from
+  // a javascript: literal, passes only as a site the table lists; a listed site the source no longer has fails too
+  const argKey = (h: { fn: string; to: string; arg: string }, e: ArgRead): boolean => e.in === h.fn && e.to === h.to && e.arg === h.arg;
+  for (const h of second.handedNodes) if (!argTable.some((e) => argKey(h, e))) refused.push("line " + h.line + ": " + h.text + " hands `" + h.arg + "`, a node of the tree read through " + h.member + (h.decl ? " (bound by `" + h.decl + "`)" : "") + ", to " + h.to + "(...) in " + h.fn + ", a callee the census has not read by hand for what it does with a node it is handed (it could seat the node in the body, or seat into it, where the census cannot follow): read it and list the site in ARGS_READ_BY_HAND, or read the node inside a call the census reads");
+  for (const e of argTable) if (!second.handedNodes.some((h) => argKey(h, e))) refused.push("ARGS_READ_BY_HAND lists `" + e.arg + "` handed to " + e.to + " in " + e.in + ", and the source has no such hand-off: the entry is stale, remove it or read the site again");
+  for (const r of second.stringRoads) refused.push("line " + r.line + ": " + r.text + " calls " + r.callee + " with a first argument that is not a function: a string road (eval, a timer's string, Function, import) runs code the census cannot read, and the kernel's page sends no script-src to stop it");
+  for (const u of second.urlWrites) if (!urlTable.some((e) => e.in === u.fn && e.on === u.on)) refused.push("line " + u.line + ": " + u.text + " writes " + u.on + " from `" + u.value + "` in " + u.fn + ", a URL member (href, src, srcdoc, location) written from a value that is not a literal, or from a javascript: literal, and a javascript: URL runs code the census cannot read: read the site for what the value can be and list it in URL_WRITES_READ_BY_HAND");
+  for (const e of urlTable) if (!second.urlWrites.some((u) => u.fn === e.in && u.on === e.on)) refused.push("URL_WRITES_READ_BY_HAND lists `" + e.on + "` in " + e.in + ", and the source has no such write: the entry is stale, remove it or read the site again");
   return { seated, refused };
 }
 /** The seating forms the census reads on ANY receiver, by the compiler's tree (seatSites): a call of a method that seats a node
@@ -997,7 +1006,7 @@ type Use = { line: number; text: string };
  *  `indexRead` passed only as a site INDEX_READS_BY_HAND lists, since `const f = md[m]; f(x)` seats where no name says so.
  *  The tree is the compiler's, so a receiver of any shape (a query result, a parentElement chain, a variable, a call's
  *  value) is one text the table can hold or refuse. */
-function seatSites(src: string): { sites: SeatSite[]; computed: Use[]; unknown: Array<Use & { name: string; on: string }>; handedOut: Array<Use & { name: string }>; oddCallee: Use[]; indexReads: Array<Use & { fn: string; on: string }> } {
+function seatSites(src: string): { sites: SeatSite[]; computed: Use[]; unknown: Array<Use & { name: string; on: string }>; handedOut: Array<Use & { name: string }>; oddCallee: Use[]; indexReads: Array<Use & { fn: string; on: string }>; handedNodes: HandedNode[]; stringRoads: Array<Use & { callee: string }>; urlWrites: Array<Use & { fn: string; on: string; value: string }> } {
   const sf = ts.createSourceFile("file-view.ts", src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   const lineOf = (n: ts.Node): number => sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1;
   const flat = (s: string): string => s.replace(/\s+/g, " ");
@@ -1017,7 +1026,7 @@ function seatSites(src: string): { sites: SeatSite[]; computed: Use[]; unknown: 
   /** The member name an access spells: `x.m` and `x["m"]` name m; `x[k]` names nothing. */
   const memberName = (e: ts.Expression): string | null => ts.isPropertyAccessExpression(e) ? e.name.text : ts.isElementAccessExpression(e) && ts.isStringLiteral(e.argumentExpression) ? e.argumentExpression.text : null;
   const memberObject = (e: ts.Expression): ts.Expression => (e as ts.PropertyAccessExpression | ts.ElementAccessExpression).expression;
-  const isSite = (name: string, obj: ts.Expression): boolean => SEAT_CALLS.includes(name) || SITE_CALLS.includes(name) || (ts.isIdentifier(strip(obj)) && SITE_RECEIVERS.includes((strip(obj) as ts.Identifier).text));
+  const isSite = (name: string, obj: ts.Expression): boolean => SEAT_CALLS.includes(name) || SITE_CALLS.includes(name) || SITE_RECEIVERS.includes(globalOf(obj) ?? "");   // a reflection global BY ITS BINDING: `Reflect`, an alias `const R = Reflect`, `globalThis.Reflect` (the round-6 review's item 7)
   /** A member access the FIRST read owns: `body.<seating method>` (its further access and its bare read are refused there). */
   const ownedByFirstRead = (e: ts.Expression): boolean => { const name = memberName(e); return name !== null && SEAT_CALLS.includes(name) && isBodyToken(memberObject(e)); };
   // the binding of an identifier: the innermost enclosing scope that declares the name (a block, a function's parameters, a
@@ -1056,7 +1065,87 @@ function seatSites(src: string): { sites: SeatSite[]; computed: Use[]; unknown: 
     }
     return { decl: "a global", bindingAt: -1 };
   };
+  /** The declaration an identifier resolves to by the language's scopes: `undefined` for a name the file never declares (a
+   *  global), null for one declared more than once in one scope (the census cannot say which). */
+  const declNodeOf = (id: ts.Identifier): ts.Node | null | undefined => {
+    for (let s: ts.Node | undefined = id.parent; s; s = s.parent) {
+      if (!isScope(s)) continue;
+      const ds = ownDecls(s, id.text);
+      if (ds.length === 1) return ds[0];
+      if (ds.length > 1) return null;
+    }
+    return undefined;
+  };
+  /** An expression with its parentheses, casts and non-null `!` read through. */
+  const peel = (e: ts.Expression): ts.Expression => { let r = e; while (ts.isParenthesizedExpression(r) || ts.isAsExpression(r) || ts.isNonNullExpression(r) || ts.isSatisfiesExpression(r) || ts.isTypeAssertionExpression(r)) r = r.expression; return r; };
+  /** The initializer a name is bound to by its `const` or `let` declaration, or null (a parameter, a global, a loop's binding). */
+  const initOf = (e: ts.Expression): ts.Expression | null => { const r = peel(e); if (!ts.isIdentifier(r)) return null; const d = declNodeOf(r); return d && ts.isVariableDeclaration(d) && d.initializer ? d.initializer : null; };
+  const GLOBAL_OBJECTS = ["globalThis", "window", "self"];
+  /** The global a receiver or callee resolves to BY ITS BINDING (the round-6 review's item 7: before this a reflection
+   *  global was read by its identifier's text, so `const R = Reflect; R.set(...)` and `globalThis.Reflect.set(...)` passed):
+   *  the name itself when the file never declares it, an alias through its declaration's initializer, a member of the
+   *  global object (`globalThis.Reflect`); null for a name the file declares or a shape the census cannot follow. */
+  const globalOf = (e: ts.Expression, depth = 0): string | null => {
+    const r = peel(e);
+    if (depth > 8) return null;
+    if (ts.isIdentifier(r)) { const d = declNodeOf(r); if (d === undefined) return r.text; return d && ts.isVariableDeclaration(d) && d.initializer ? globalOf(d.initializer, depth + 1) : null; }
+    if (ts.isPropertyAccessExpression(r)) { const g = globalOf(r.expression, depth + 1); return g !== null && GLOBAL_OBJECTS.includes(g) ? r.name.text : null; }
+    return null;
+  };
+  /** The bare callees that run a string as code unless their first argument is a function (a string road: eval, a timer's
+   *  string, the Function constructor; `import(...)` never takes a function, so every dynamic import is refused). */
+  const STRING_ROAD_CALLEES = ["eval", "setTimeout", "setInterval", "Function"];
+  /** Whether an argument is a function: an arrow or function expression, or a name bound to a function declaration or to a
+   *  declaration whose initializer is one. */
+  const isFunction = (a: ts.Expression | undefined): boolean => {
+    if (!a) return false;
+    const r = peel(a);
+    if (ts.isArrowFunction(r) || ts.isFunctionExpression(r)) return true;
+    if (!ts.isIdentifier(r)) return false;
+    const d = declNodeOf(r);
+    if (d && ts.isFunctionDeclaration(d)) return true;
+    const i = initOf(r);
+    return i !== null && (ts.isArrowFunction(peel(i)) || ts.isFunctionExpression(peel(i)));
+  };
+  /** The members a URL is written to, and whether an assignment's target reaches `location` (the global, or a member so named). */
+  const URL_MEMBERS = ["href", "src", "srcdoc"];
+  const touchesLocation = (e: ts.Expression): boolean => {
+    let r = peel(e);
+    for (;;) {
+      if (ts.isIdentifier(r)) return r.text === "location" && declNodeOf(r) === undefined;
+      if (ts.isPropertyAccessExpression(r)) { if (r.name.text === "location") return true; r = peel(r.expression); continue; }
+      if (ts.isElementAccessExpression(r)) { r = peel(r.expression); continue; }
+      return false;
+    }
+  };
+  const isUrlTarget = (left: ts.Expression): boolean => { const name = ts.isPropertyAccessExpression(left) || ts.isElementAccessExpression(left) ? memberName(left) : null; return (name !== null && URL_MEMBERS.includes(name)) || touchesLocation(left); };
+  const literalText = (right: ts.Expression): string | null => { const r = peel(right); return ts.isStringLiteral(r) || ts.isNoSubstitutionTemplateLiteral(r) ? r.text : null; };
+  /** `add` seats nothing on a DOMTokenList (`x.classList`, `relList`, `part`) or a Set (`new Set(...)`, `new WeakSet(...)`, a
+   *  name bound to one by its declaration); on any other receiver (an HTMLSelectElement's add seats an option) it is a call
+   *  read by its site (the round-6 review's item 7: `add` stood in NON_SEATING_METHODS for every receiver). */
+  const TOKEN_LISTS = ["classList", "relList", "part"];
+  const isSetLike = (e: ts.Expression, depth = 0): boolean => {
+    const r = peel(e);
+    if (ts.isNewExpression(r)) return ts.isIdentifier(r.expression) && ["Set", "WeakSet"].includes(r.expression.text) && globalOf(r.expression) === r.expression.text;
+    const i = initOf(r);
+    return i !== null && depth < 8 && isSetLike(i, depth + 1);
+  };
+  const addSeatsNothing = (obj: ts.Expression): boolean => { const r = peel(obj); return (ts.isPropertyAccessExpression(r) && TOKEN_LISTS.includes(r.name.text)) || isSetLike(r); };
+  /** The node of the tree an argument hands out (the round-6 review's item 7, the argument axis: before this no argument to
+   *  a callee other than the `body` token was read, so `addCopyBtn(load.parentElement!, "")` seated a body root with no
+   *  refusal): a NODE_MEMBERS chain (`x.parentElement`), an index into one (`x.children[0]`), or a name bound to either by
+   *  its declaration's initializer, each with parentheses, casts and `!` read through. A chain whose object is the `body`
+   *  token is the first read's (a bare read of `body.firstChild` is classed there) and is not counted twice. Null for
+   *  every other argument. */
+  const nodeHanded = (a: ts.Expression, depth = 0): { member: string; decl?: string } | null => {
+    const r = peel(a);
+    if (ts.isPropertyAccessExpression(r) && NODE_MEMBERS.includes(r.name.text)) return isBodyToken(peel(r.expression)) ? null : { member: r.name.text };
+    if (ts.isElementAccessExpression(r)) { const o = peel(r.expression); return ts.isPropertyAccessExpression(o) && NODE_MEMBERS.includes(o.name.text) && !isBodyToken(peel(o.expression)) ? { member: o.name.text } : null; }
+    if (ts.isIdentifier(r) && depth < 8) { const d = declNodeOf(r); if (d && ts.isVariableDeclaration(d) && d.initializer) { const h = nodeHanded(d.initializer, depth + 1); return h ? { member: h.member, decl: describe(d) } : null; } }
+    return null;
+  };
   const sites: SeatSite[] = [], computed: Use[] = [], unknown: Array<Use & { name: string; on: string }> = [], handedOut: Array<Use & { name: string }> = [], oddCallee: Use[] = [], indexReads: Array<Use & { fn: string; on: string }> = [];
+  const handedNodes: HandedNode[] = [], stringRoads: Array<Use & { callee: string }> = [], urlWrites: Array<Use & { fn: string; on: string; value: string }> = [];
   const site = (n: ts.Node, recv: ts.Expression, via: string): void => {
     const r = strip(recv);
     const s: SeatSite = { line: lineOf(n), fn: fnOf(n), on: flat(r.getText(sf)), via, text: text(n), body: ts.isIdentifier(r) && r.text === "body" };
@@ -1074,6 +1163,7 @@ function seatSites(src: string): { sites: SeatSite[]; computed: Use[]; unknown: 
     if (ts.isForStatement(p)) return p.condition === n || p.incrementor === n;
     return false;
   };
+  const calleeText = (n: ts.CallExpression | ts.NewExpression): string => (ts.isNewExpression(n) ? "new " : "") + (n.expression.kind === ts.SyntaxKind.ImportKeyword ? "import" : flat(strip(n.expression).getText(sf)).slice(0, 80));
   const visit = (n: ts.Node): void => {
     if (ts.isCallExpression(n)) {
       const c = n.expression;
@@ -1082,10 +1172,20 @@ function seatSites(src: string): { sites: SeatSite[]; computed: Use[]; unknown: 
         const obj = memberObject(c);
         if (ts.isElementAccessExpression(c)) computed.push({ line: lineOf(n), text: text(n) });
         else if (isSite(name!, obj)) { if (!(SITE_CALLS.includes(name!) && ownedByFirstRead(obj))) site(n, obj, name!); }   // `body.append.call(...)` is the first read's refusal
+        else if (name === "add" && !isBodyToken(obj) && !addSeatsNothing(obj)) site(n, obj, "add");   // add on a receiver that is neither a class list nor a Set: a site
         else if (!NON_SEATING_METHODS.includes(name!) && !isBodyToken(obj)) unknown.push({ line: lineOf(n), text: text(n), name: name!, on: flat(strip(obj).getText(sf)) });
       } else if (ts.isElementAccessExpression(c)) computed.push({ line: lineOf(n), text: text(n) });
-      else if (!ts.isIdentifier(c) && c.kind !== ts.SyntaxKind.SuperKeyword && c.kind !== ts.SyntaxKind.ImportKeyword) oddCallee.push({ line: lineOf(n), text: text(n) });
-    } else if (ts.isBinaryExpression(n) && n.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && n.operatorToken.kind <= ts.SyntaxKind.LastAssignment && (ts.isPropertyAccessExpression(n.left) || ts.isElementAccessExpression(n.left)) && memberName(n.left) !== null && SEAT_ASSIGNS.includes(memberName(n.left)!)) site(n, memberObject(n.left), memberName(n.left) + " =");
+      else if (ts.isIdentifier(c)) { const g = globalOf(c); if (g !== null && STRING_ROAD_CALLEES.includes(g) && !isFunction(n.arguments[0])) stringRoads.push({ line: lineOf(n), text: text(n), callee: c.text + (g === c.text ? "" : " (bound to " + g + ")") }); }
+      else if (c.kind === ts.SyntaxKind.ImportKeyword) stringRoads.push({ line: lineOf(n), text: text(n), callee: "import" });
+      else if (c.kind !== ts.SyntaxKind.SuperKeyword) oddCallee.push({ line: lineOf(n), text: text(n) });
+    } else if (ts.isNewExpression(n)) {
+      if (globalOf(n.expression) === "Function") stringRoads.push({ line: lineOf(n), text: text(n), callee: calleeText(n) });
+    } else if (ts.isBinaryExpression(n) && n.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && n.operatorToken.kind <= ts.SyntaxKind.LastAssignment) {
+      const name = ts.isPropertyAccessExpression(n.left) || ts.isElementAccessExpression(n.left) ? memberName(n.left) : null;
+      if (name !== null && SEAT_ASSIGNS.includes(name)) site(n, memberObject(n.left), name + " =");
+      else if (isUrlTarget(n.left)) { const lit = literalText(n.right); if (lit === null || /^\s*javascript:/i.test(lit)) urlWrites.push({ line: lineOf(n), text: text(n), fn: fnOf(n), on: flat(strip(n.left).getText(sf)), value: flat(n.right.getText(sf)).slice(0, 80) }); }
+    }
+    if (ts.isCallExpression(n) || ts.isNewExpression(n)) for (const a of n.arguments ?? []) { const h = nodeHanded(ts.isSpreadElement(a) ? a.expression : a); if (h) handedNodes.push({ line: lineOf(n), text: text(n), fn: fnOf(n), to: calleeText(n), arg: flat(a.getText(sf)).slice(0, 80), ...h }); }
     if ((ts.isPropertyAccessExpression(n) || ts.isElementAccessExpression(n)) && !isCallee(n)) {
       const name = memberName(n);
       if (name !== null) { if ((SEAT_CALLS.includes(name) || SITE_CALLS.includes(name)) && !ownedByFirstRead(n) && !isBodyToken(memberObject(n))) handedOut.push({ line: lineOf(n), text: text(effectiveParent(n)), name }); }
@@ -1094,7 +1194,7 @@ function seatSites(src: string): { sites: SeatSite[]; computed: Use[]; unknown: 
     ts.forEachChild(n, visit);
   };
   visit(sf);
-  return { sites, computed, unknown, handedOut, oddCallee, indexReads };
+  return { sites, computed, unknown, handedOut, oddCallee, indexReads, handedNodes, stringRoads, urlWrites };
 }
 /** A seat in file-view.ts on a receiver other than the `body` token, READ BY HAND and listed by its site: the nearest named
  *  function around it (`in`), the receiver's spelling (`on`) and the form (`via`), with what the receiver is (`is`), which is
@@ -1190,6 +1290,22 @@ const INDEX_READS_BY_HAND: IndexRead[] = [
   { in: "restore", on: "nowKeys", is: "the folds' keys, an array of strings, one per fold now in the body; the one at the index is looked up in a map" },
   { in: "boundarySide", on: "node.childNodes", is: "a selection boundary's neighbours, the child nodes at and before the offset, read for whether each is a text leaf (leafIsText) and never seated" },
 ];
+/** A node of the tree handed to a callee (seatSites.nodeHanded): its line and text, the nearest named function (`fn`), the
+ *  callee as spelled (`to`), the argument as spelled (`arg`), the NODE_MEMBERS member it reads through, and, for a name, the
+ *  declaration that binds it. */
+type HandedNode = Use & { fn: string; to: string; arg: string; member: string; decl?: string };
+/** A node of the tree handed to a callee in file-view.ts, READ BY HAND and listed by its site: the nearest named function
+ *  (`in`), the callee (`to`) and the argument as spelled (`arg`), with what the callee does with the node (`is`), which is
+ *  the hand read's claim: that it seats nothing in the body through it. The round-6 review's item 7 (2026-09-20): the
+ *  argument axis, whose first run is the census; a hand-off the table does not list fails with its line, and an entry the
+ *  source has no hand-off for fails too. */
+type ArgRead = { in: string; to: string; arg: string; is: string };
+const ARGS_READ_BY_HAND: ArgRead[] = [];
+/** A URL member (href, src, srcdoc, location) written from a value that is not a literal in file-view.ts, READ BY HAND and
+ *  listed by its site: the nearest named function (`in`) and the target as spelled (`on`), with what the value can be (`is`),
+ *  the hand read's claim: never a javascript: URL. A javascript: literal is refused whatever the table says. */
+type UrlWriteRead = { in: string; on: string; is: string };
+const URL_WRITES_READ_BY_HAND: UrlWriteRead[] = [];
 /** For every `body` token of `tokens`, the index of the innermost bracket (`(`, `[`, `{`) open around it, or -1, and for
  *  every bracket the index of the one open around it: one pass over `src` with the literal ranges skipped. */
 function bracketMap(src: string, literals: Array<[number, number]>, tokens: number[]): { openerAt: Map<number, number>; parentOf: Map<number, number> } {
@@ -1253,6 +1369,7 @@ function bareContext(src: string, at: number, openerAt: Map<number, number>, par
 
 test("the census of the body's roots, its default refusing: every `body` token in file-view.ts outside a literal is one the census classes (a member access by what follows the member: a seating call, resolved; a call, an assignment, a further access or a bare read the census lists as seating nothing; a bare token by its context: a declaration, a parameter, a property key, a comparison, the action-context accessor at its one declared site, an argument to a callee read by hand and listed) and every seat in the file on any other receiver (a seating call, an innerHTML or outerHTML assignment) and every call it reads by its site (call, apply, bind, mount, render, a reflection global's method) is a site read by hand and listed in SEATS_READ_BY_HAND with the receiver's binding, one binding per entry, every other method call is by a name listed as seating nothing, no seating method is read without being called, a member stored under a computed name is a site listed in INDEX_READS_BY_HAND, the file calls nothing through a computed name and nothing but a name or a member, and every listed site is live, else the census FAILS with the line; every element the viewer seats resolves to a root the flow lists (READY_ROOTS, NOT_READY_ROOTS or LINE_ROOTS), every listed root is seated, no root is in two lists, bodyReady answers over each root as its list says, an unlisted child is NOT in (the safe side, so a root the viewer gains fails here until it is listed), and under the PDF kind the loader alone of the wait roots reads as content", (t) => {
   const { seated, refused } = census(VIEWER_SRC);
+  if (refused.length) t.diagnostic("census refused " + refused.length + ":\n" + refused.join("\n"));
   assert.deepEqual(refused, [], "every use of the body is one the census knows how to read: a use it does not is read by hand and the census taught it, never skipped");
   const roots = [...seated.keys()].sort();
   t.diagnostic("census: " + roots.map((r) => r + " (line " + seated.get(r)!.join(", ") + ")").join("; "));
