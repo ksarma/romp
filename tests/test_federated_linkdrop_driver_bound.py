@@ -17,7 +17,10 @@ kernel or a browser:
   spends the budget once and is recorded, every later wait returns at once, no timeout handed on is ever 0 (playwright
   reads 0 as no timeout), and a wait that comes spends only what it took.
 
-Synthetic: no kernel, no browser; a stub class over a scratch directory.
+One more pin rides here because the module it pins has no kernel-free test of its own: LinkDropBothNew gates on no
+knob and LinkDropOldLocal skips as optional (round 1's high, closed by a value; round 2 asked for the pin).
+
+Synthetic: no kernel, no browser; stub classes over scratch directories.
 """
 import json
 import os
@@ -36,6 +39,12 @@ sys.path.insert(0, HERE)
 import test_federated_linkdrop_served as L   # noqa: E402  the lab module: the constants, BUDGET_JS, _drive
 
 CFG_KEYS = ("driverBudgetMs", "pageWaitMs", "phaseSettleMs", "quietTries", "quietStepMs")   # plus waitsMs.<mark>, below
+KNOBS = ("ROMP_LINKDROP_LAB", "ROMP_CORNER_OLD_HUB_ROOT", "ROMP_LINKDROP_OLD_HUB_BUILD", "ROMP_LINKDROP_HUB_ROOT")   # the lab's four
+
+
+def _without_knobs():
+    """The environment with the lab's four knobs unset, the rest kept (a bare clear=True would take PATH and HOME too)."""
+    return mock.patch.dict(os.environ, {k: v for k, v in os.environ.items() if k not in KNOBS}, clear=True)
 
 BUDGET_HARNESS = r"""
 const out = { timeouts: [] };
@@ -61,6 +70,13 @@ console.log("RESULT:" + JSON.stringify(res));
 class TheDriverEndsBeforeCI(unittest.TestCase):
     maxDiff = None
 
+    def _served_step_line(self):
+        with open(os.path.join(ROOT, ".github", "workflows", "ci.yml"), encoding="utf-8") as f:
+            ci = f.read()
+        served = [ln for ln in ci.splitlines() if "tests/test_*_served.py" in ln and "pytest" in ln]
+        self.assertEqual(len(served), 1, "the served step's one pytest line: %r" % (served,))
+        return served[0]
+
     def test_the_arithmetic_and_the_cap_it_is_chosen_against(self):
         for cls in (L.LinkDropBothNew, L.LinkDropOldLocal):
             worst = L.driver_worst_case_s(cls)
@@ -69,12 +85,33 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
             self.assertLess(worst, L.DRIVER_TIMEOUT_S, "%s's driver at its worst (%.1f s) ends before its subprocess timeout (%d s)" % (cls.__name__, worst, L.DRIVER_TIMEOUT_S))
         self.assertLessEqual(L.DRIVER_TIMEOUT_S + L.BOOT_ROOM_S, L.CI_TEST_TIMEOUT_S,
                              "the subprocess timeout leaves BOOT_ROOM_S of CI's per-test cap for the rest of setUpClass")
-        with open(os.path.join(ROOT, ".github", "workflows", "ci.yml"), encoding="utf-8") as f:
-            ci = f.read()
-        served = [ln for ln in ci.splitlines() if "tests/test_*_served.py" in ln and "pytest" in ln]
-        self.assertEqual(len(served), 1, "the served step's one pytest line: %r" % (served,))
-        self.assertIn("--timeout=%d --timeout-method=thread" % L.CI_TEST_TIMEOUT_S, served[0],
-                      "CI_TEST_TIMEOUT_S is the cap the served step runs under: %r" % (served[0],))
+        served = self._served_step_line()
+        self.assertIn("--timeout=%d --timeout-method=thread" % L.CI_TEST_TIMEOUT_S, served,
+                      "CI_TEST_TIMEOUT_S is the cap the served step runs under: %r" % (served,))
+
+    def test_the_new_bundle_class_gates_on_no_knob_and_the_old_hub_class_skips_as_optional(self):
+        """Round 1's high (this lab was the one served lab of 94 with no executing test in CI: its base class gated on a knob)
+        was closed by a value, _LinkDrop._knobs returning None. The property, pinned (round 2, extra6-1): with the four knobs
+        unset, LinkDropBothNew's _knobs returns, and LinkDropOldLocal's raises a SkipTest whose reason starts with "optional:"
+        and names its knob. The first call is wrapped so a regression fails the pin instead of skipping it; throwaway
+        subclasses, so nothing _knobs assigns reaches the real classes. And the served step runs with -rs, so an optional
+        skip prints its reason in CI's log rather than folding into a count."""
+        class New(L.LinkDropBothNew):
+            pass
+
+        class Old(L.LinkDropOldLocal):
+            pass
+        with _without_knobs():
+            try:
+                New._knobs()
+            except unittest.SkipTest as e:
+                self.fail("LinkDropBothNew._knobs raised SkipTest with the four knobs unset, so the lab would collect in CI's served job with no executing test: %s" % e)
+            with self.assertRaises(unittest.SkipTest) as cm:
+                Old._knobs()
+        reason = str(cm.exception)
+        self.assertTrue(reason.startswith("optional:"), "the old-hub class's skip is optional (the CI census reads the prefix): %r" % (reason,))
+        self.assertIn("ROMP_LINKDROP_LAB", reason, "…and names the knob that runs it")
+        self.assertIn(" -rs ", self._served_step_line(), "CI's served step prints skip reasons (-rs), so the optional skip is visible there")
 
     def test_drive_sends_the_timeout_the_budget_and_the_caps(self):
         lab = tempfile.mkdtemp(prefix="linkdrop-bound-")
