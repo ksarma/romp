@@ -21,9 +21,11 @@ kernel or a browser:
   reads 0 as no timeout), and a wait that comes spends only what it took;
 - the premise of the arithmetic (round 2, fresh-1): every wait the driver places is one the sum counts. A census of the
   driver's wait call sites against a table of the forms it may use requires each playwright wait to carry
-  timeout: budget.capped(...) (a wait with no timeout key inherits playwright's 30 s default, which no budget caps: the
-  driver never calls setDefaultTimeout) and each waitForTimeout to draw on the budget or be one of the two fixed dwells
-  driver_worst_case_s counts, and an unlisted wait form or an auto-waiting action fails by name.
+  timeout: budget.capped(...) as the WHOLE value (round 3: `budget.capped(x) + N`, `* N` or a second argument left the
+  value uncapped and the census green; a wait with no timeout key inherits playwright's 30 s default, which no budget
+  caps: the driver never calls setDefaultTimeout) and each waitForTimeout to draw on the budget or be one of the two fixed
+  dwells driver_worst_case_s counts; the navigations (goto, reload, goBack, goForward) are wait forms too; and an unlisted
+  wait form or an auto-waiting action fails by name.
 
 Three more pins ride here because the module they pin has no kernel-free test of its own: LinkDropBothNew gates on no
 knob, wherever such a gate could sit (a class-level skip, setUpClass, _knobs), and LinkDropOldLocal skips as optional
@@ -54,14 +56,19 @@ CFG_KEYS = ("driverBudgetMs", "pageWaitMs", "phaseSettleMs", "quietTries", "quie
 KNOBS = ("ROMP_LINKDROP_LAB", "ROMP_CORNER_OLD_HUB_ROOT", "ROMP_LINKDROP_OLD_HUB_BUILD", "ROMP_LINKDROP_HUB_ROOT")   # the lab's four
 
 # Every wait form the driver may place, and what caps it (the premise of driver_worst_case_s). "timeout": a playwright wait
-# whose options must carry exactly one timeout key reading budget.capped(...); "dwell": waitForTimeout, whose argument is
-# budget.capped(...) or one of FIXED_DWELLS, the two fixed waits the arithmetic counts by name; "budget": the budget's own
-# poll (const waitFor = budget.waitFor), whose positional timeout makeBudget caps inside (the node test below). The two
-# fetches (ctl and tunnelsStatus) carry no timeout and are the acknowledged driver_error road: a hang there ends the node
-# process at DRIVER_TIMEOUT_S, which the arithmetic does not count and _drive reports as "driver timed out".
-WAIT_FORMS = {"goto": "timeout", "waitForFunction": "timeout", "waitForSelector": "timeout", "waitForEvent": "timeout",
+# (the waitFor* family and the navigations goto, reload, goBack and goForward, which wait under the same 30 s default) whose
+# options must carry exactly one timeout key whose WHOLE value is one budget.capped(...) call (CAPPED); "dwell":
+# waitForTimeout, whose argument is one such call or one of FIXED_DWELLS, the two fixed waits the arithmetic counts by name;
+# "budget": the budget's own poll (const waitFor = budget.waitFor), whose positional timeout makeBudget caps inside (the node
+# test below). The two fetches (ctl and tunnelsStatus) carry no timeout and are the acknowledged driver_error road: a hang
+# there ends the node process at DRIVER_TIMEOUT_S, which the arithmetic does not count and _drive reports as "driver timed out".
+WAIT_FORMS = {"goto": "timeout", "reload": "timeout", "goBack": "timeout", "goForward": "timeout",
+              "waitForFunction": "timeout", "waitForSelector": "timeout", "waitForEvent": "timeout",
               "waitForURL": "timeout", "waitForLoadState": "timeout", ".waitFor": "timeout", "waitForTimeout": "dwell", "waitFor": "budget"}
 FIXED_DWELLS = ("cfg.phaseSettleMs", "cfg.downDwellMs")
+# exactly one capped call and nothing around it: `budget.capped(x) + 600000`, `budget.capped(x) * 30` and `budget.capped(x, 99999)`
+# all begin with the call and none is bounded by the budget (round 3)
+CAPPED = re.compile(r"budget\.capped\(\s*[\w.]+\s*\)")
 AUTO_WAITING_ACTIONS = ("click", "dblclick", "fill", "press", "type", "check", "uncheck", "hover", "tap", "selectOption", "setInputFiles", "dragTo", "focus")
 
 
@@ -95,10 +102,11 @@ def _call_args(text, i):
 
 
 def _wait_sites(text):
-    """Every call site of a wait-shaped name in the (comment-stripped) driver: (form, args, line). `.waitFor(` on a locator
+    """Every call site of a wait-shaped name in the (comment-stripped) driver: (form, args, line), the navigations included
+    (round 3: `page.reload()` waited under playwright's default and was neither listed nor flagged). `.waitFor(` on a locator
     is the form ".waitFor"; a bare `waitFor(` or `budget.waitFor(` is the budget's poll."""
     out = []
-    for m in re.finditer(r"(?P<dot>\.?)\b(?P<name>goto|waitFor\w*)\s*\(", text):
+    for m in re.finditer(r"(?P<dot>\.?)\b(?P<name>goto|reload|goBack|goForward|waitFor\w*)\s*\(", text):
         name = m.group("name")
         if name == "waitFor" and m.group("dot") and text[max(0, m.start() - 7):m.start()] != "budget.":
             name = ".waitFor"
@@ -170,17 +178,18 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
             rule = WAIT_FORMS[name]
             if rule == "timeout":
                 keys = [k.strip() for k in re.findall(r"\btimeout\s*:\s*([^,}]+)", args)]
-                if len(keys) != 1 or not keys[0].startswith("budget.capped("):
+                if len(keys) != 1 or not CAPPED.fullmatch(keys[0]):
                     uncapped.append((ln, name, keys or "no timeout key (playwright's 30 s default, which no budget caps)"))
             elif rule == "dwell":
                 a = args.strip()
-                if a.startswith("budget.capped("):
+                if CAPPED.fullmatch(a):
                     continue
                 dwells.add(a)
                 if a not in FIXED_DWELLS:
                     uncapped.append((ln, name, a))
-        self.assertEqual(uncapped, [], "every wait the driver places draws on the budget (timeout: budget.capped(...)) or is a fixed dwell "
-                                       "driver_worst_case_s counts (%r); these do neither, so the arithmetic is not a bound: %r" % (FIXED_DWELLS, uncapped))
+        self.assertEqual(uncapped, [], "every wait the driver places draws on the budget (its timeout, or its dwell, is exactly one budget.capped(...) "
+                                       "call and nothing more) or is a fixed dwell driver_worst_case_s counts (%r); these do neither, so the arithmetic is not "
+                                       "a bound: %r" % (FIXED_DWELLS, uncapped))
         self.assertEqual(sorted(dwells), sorted(FIXED_DWELLS), "the fixed dwells the driver places are exactly the two the arithmetic counts "
                                                                 "(down_dwell_ms and phases x PHASE_SETTLE_MS): %r" % (sorted(dwells),))
         self.assertLessEqual({"goto", "waitForFunction", ".waitFor", "waitForTimeout", "waitFor"}, {name for name, _, _ in sites},
