@@ -194,7 +194,9 @@ def held_pair(frames, slot):
     the delta after it finds no base and asks, and the next whole frame that keys seeds again; this rule reads (gen, 0) from the
     recorded full and advances on the delta;
     (3) the feed road's content refusals, which are applyFeedDelta's throws (ui/webview/feed-delta.ts: asks not a list, an ask
-    or a ledger item null, removeAsks not iterable): caught in tryApplyFeedDelta and refused before Conn.feedHeld is written
+    or a ledger item null, removeAsks not iterable, and since the fixer pass after round 5 a top that is not an object, refusal-5:
+    a string top had applied with its characters as the frame's keys, an acceptance outside every named refusal): caught in
+    tryApplyFeedDelta and refused before Conn.feedHeld is written
     (the maintainer's round 5, refusals-2), so the client's pair STANDS while it asks once, bare, per stall and stops asking
     after the answering full (a full is not progress: the stop lifts on an applying delta alone, so a throw after an answering
     full and a quiet interval is read as the same stall, the fixer pass after round 5, refusal-4), so its divergence from this
@@ -654,6 +656,7 @@ RECEIVER_BLIND = [
     ('feed-apply-throw-asks-null-item', 'feed', [{"t": "feed", "slot": "", "gen": GEN, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 0, "rev": 1, "through": 1, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 1, "rev": 2, "through": 2, "genKey": True}], (GEN, 1), (GEN, 2)),  # an ask that is null: reading itemId of null
     ('feed-apply-throw-removeAsks-number', 'feed', [{"t": "feed", "slot": "", "gen": GEN, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 0, "rev": 1, "through": 1, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 1, "rev": 2, "through": 2, "genKey": True}], (GEN, 1), (GEN, 2)),  # removeAsks a number: not iterable (new Set)
     ('feed-apply-throw-ledgers-null-item', 'feed', [{"t": "feed", "slot": "", "gen": GEN, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 0, "rev": 1, "through": 1, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 1, "rev": 2, "through": 2, "genKey": True}], (GEN, 1), (GEN, 2)),  # a ledger item that is null: reading sid of null
+    ('feed-apply-throw-top-string', 'feed', [{"t": "feed", "slot": "", "gen": GEN, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 0, "rev": 1, "through": 1, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 1, "rev": 2, "through": 2, "genKey": True}], (GEN, 1), (GEN, 2)),  # a top that is not an object (the top guard, the fixer pass after round 5, refusal-5): a string top had applied, its characters the frame's keys, and moved the pair to (GEN, 2); measured in federation-remote-feed-delta.test.ts
     # the fourth shape, an ACCEPTANCE and not a refusal (the maintainer's round 5, extra7-1, and the 19:31Z ruling): a {type: delta,
     # slot: feed} patch on a remote conn is reassembled by the conn's receiver into a feed frame that enters the feed arm, which
     # re-seeds Conn.feedHeld from the reassembled frame's gen; the recorder keeps the patch's t, slot, base and rev and no rest
@@ -972,7 +975,7 @@ class HeldPairRule(unittest.TestCase):
         self.assertIn("bars-through-string", ids, "the one rev-field divergence, a through the hook does not copy")
         self.assertIn("bars-rest-restall-type-dropped", ids, "the frame-type throw (view-deltas.ts:260), enumerated and probed")
         self.assertEqual(len([i for i in ids if i.startswith("bars-full-unkeyable")]), 6, "the full path: the four Unkeyable shapes, the drop of a held pair, the delta after")
-        self.assertEqual(len([i for i in ids if i.startswith("feed-apply-throw")]), 4, "the feed road's four measured throws")
+        self.assertEqual(len([i for i in ids if i.startswith("feed-apply-throw")]), 5, "the feed road's five measured throws (four out of upsertById, one out of the top guard)")
         self.assertEqual(sorted((r[3] for r in RECEIVER_BLIND if r[0].startswith("feed-slotpatch-")), key=repr), sorted([(GEN2, 0), (GEN, 0), None], key=repr), "the acceptance's three measured re-seeds: rest.gen, the base's gen, cleared")
 
     def test_the_receivers_refusal_sites_are_counted_so_a_new_one_reds_until_classified(self):
@@ -1064,6 +1067,8 @@ class HeldPairRule(unittest.TestCase):
             self.assertEqual(len(re.findall(r"\breturn\b", _ts_code(mm.group(1)))), 1, "%s's one early return: the latch's asked and stopped states, nothing further" % name)
         fd = open(os.path.join(ROOT, "ui", "webview", "feed-delta.ts"), encoding="utf-8").read()
         self.assertEqual(fd.count("try"), 2, "feed-delta.ts: the checked apply's one try and its name (tryApplyFeedDelta); applyFeedDelta itself catches nothing")
+        fd_throws = _throw_forms(_ts_code(fd))
+        self.assertEqual(fd_throws, ['OTHER: new TypeError("feedDelta top is not an object")'], "feed-delta.ts's one explicit throw, the top guard (refusal-5), classified here by its statement; every other class-3 throw is upsertById's own (a read of null, a non-iterable): a second explicit throw reds until a row classifies it: %r" % (fd_throws,))
         self.assertRegex(fd, r"export function tryApplyFeedDelta\(base: any, d: FeedDelta\)[^\n]*\{\n  try \{\n    return \{ ok: true, next: applyFeedDelta\(base, d\) \};\n  \} catch \(e\) \{\n    return \{ ok: false, error: e \};", "the wrapper's shape: the throw caught and returned, the base untouched")
         self.assertEqual(fd.count("upsertById("), 3, "the two upserts (asks by itemId, ledgers by sid) and the function: the throw-capable sites are their reads of an item's id, a null item, and the Set over the removals (the four feed-apply-throw rows)")
         m3 = re.search(r"^    ws\.onmessage = \(ev: MessageEvent\) => \{\n(.*?)^    \};\n", fed, re.S | re.M)

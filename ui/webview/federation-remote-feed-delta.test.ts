@@ -1050,7 +1050,9 @@ test("a gen of exactly GEN_MAX characters is a stamp: the pair holds and the red
 
 // ── the apply-throw refusal, BOTH roads (the maintainer's round 5, refusals-2, and the 19:31Z ruling: the local road guarded
 // too, with its own recovery, road word and bound) ──────────────────────────────────────────────────────────────────────────
-// applyFeedDelta guards nothing but the two list shapes it upserts into, so a malformed delta throws out of upsertById; until this
+// applyFeedDelta guards the two list shapes it upserts into and, since the fixer pass after round 5 (refusal-5), the shape of `top`
+// (an object or absent: a string top spread its characters into the frame as keys and applied), so a malformed delta throws out of
+// upsertById or the top guard; until round 5's
 // pass the throw escaped ws.onmessage (a TypeError out of the handler, no ask, no row, the pane on its last frame) and, on the
 // local road, inbound into the shim's FIFO drain. Now feed-delta.ts's tryApplyFeedDelta catches it for both callers and each road
 // refuses it: nothing written (the base and the pair stand), one BARE needFullFeed per stall (the base's own content is a
@@ -1213,6 +1215,24 @@ test("the LOCAL bound: after the local full landed a second throw stops the aski
     assert.equal(sent.filter((x) => x && x.type === "needFullFeed").length, 1, "a throw after the later full asks nothing"); assert.equal(applyRows(sent).length, 2, "and files nothing"); assert.equal(notifies(notified).length, 1, "and tells nothing further");
     assert.deepEqual(ws.sent, [], "the remote socket carried nothing for any of it");
     assert.equal(fm.conns.get(HOST).feedApply, undefined, "and the remote conn's latch is untouched");
+    fm.conns.get(HOST).closed = true;
+  });
+});
+
+test("a remote feedDelta whose `top` is a string onto a held pair is refused like any apply throw (the fixer pass after round 5, refusal-5): the pair stands at (G, 1), the raw base is unchanged and carries no index keys, one bare ask, the row asked on the wire road; before the guard it applied and moved the pair to (G, 2) with '0', '1', '2' as the frame's keys", async () => {
+  await withManager(({ fm, emitted, sent }) => {
+    const ws = attached(fm);
+    ws.frame(stamped({ buildId: 12 }));
+    ws.frame(cycle(G, 0, 1));
+    assert.deepEqual(heldOf(fm), { gen: G, rev: 1 }, "the rig: a held pair (G, 1)");
+    const raw = fm.conns.get(HOST).feedRaw, before = feeds(emitted).length, asks = ws.sent.length;
+    ws.frame({ ...cycle(G, 1, 2), top: "str" });
+    assert.deepEqual(heldOf(fm), { gen: G, rev: 1 }, "the pair stands: the throw is refused before Conn.feedHeld is written (the mirror reads (G, 2) from the recorded stamp fields: the feed-apply-throw-top-string row)");
+    assert.equal(fm.conns.get(HOST).feedRaw, raw, "the base is the same object");
+    assert.equal(Object.keys(fm.perHostFeed[HOST] || {}).some((k) => /^\d+$/.test(k)), false, "no index key reached the merged frame");
+    assert.equal(feeds(emitted).length, before, "nothing emitted");
+    assert.deepEqual(ws.sent.slice(asks), [{ type: "needFullFeed" }], "one bare ask");
+    assert.deepEqual(applyRows(sent), [{ host: HOST, buildId: 12, why: "asked", road: "wire" }], "the apply-throw row, asked, on the wire road");
     fm.conns.get(HOST).closed = true;
   });
 });

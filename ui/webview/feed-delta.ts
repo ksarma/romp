@@ -17,6 +17,11 @@ export interface FeedDelta {
 export const FEED_KEYED: ReadonlyArray<readonly [string, string]> = [["asks", "itemId"], ["ledgers", "sid"]];
 
 export function applyFeedDelta(base: any, d: FeedDelta): any {
+  // `top`, when carried, is an object (the kernel serialises the rest fields' dict, or omits the key): a string or an array spread
+  // its characters or items into the frame as keys ("0", "1", ...) and applied, a content acceptance no refusal saw (the author's
+  // fixer pass after the maintainer's round 5, refusal-5); a throw here is refused by both roads through the checked apply below,
+  // the base standing, like the list shapes' throws
+  if (d.top !== undefined && (d.top === null || typeof d.top !== "object" || Array.isArray(d.top))) throw new TypeError("feedDelta top is not an object");
   const out: any = d.top
     ? { ...d.top }                                   // top present ⇒ it IS the complete set of non-keyed fields
     : Object.fromEntries(Object.entries(base || {}).filter(([k]) => k !== "asks" && k !== "ledgers"));
@@ -35,8 +40,9 @@ export function applyFeedDelta(base: any, d: FeedDelta): any {
 
 /** The apply with its throw CAUGHT, for both roads federation.ts runs it on, the local socket's and each remote conn's: `ok` with
  *  `next` when it applied, else `ok: false` with the `error` (for the console line beside the diag row). applyFeedDelta guards
- *  nothing but the two list shapes it upserts into, so a malformed delta (asks not a list, a null item, removeAsks not iterable)
- *  throws out of upsertById, and until the maintainer's round 5 of the wsBytesByHost review (refusals-2, 2026-09-20) the throw
+ *  the two list shapes it upserts into and the shape of `top` (an object or absent), so a malformed delta (asks not a list, a null
+ *  item, removeAsks not iterable, a top that is not an object)
+ *  throws out of upsertById or the top guard, and until the maintainer's round 5 of the wsBytesByHost review (refusals-2, 2026-09-20) the throw
  *  escaped the socket handler on either road: the pane stayed on its last frame with nothing said and nothing asked. The catch
  *  lives HERE and not at a call site, so every caller is covered by construction (the ruling: a catch at one call site leaves the
  *  other bare; tests/test_federated_dial_terms_served.py holds federation.ts to this function alone); each caller owns its own

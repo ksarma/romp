@@ -6,7 +6,7 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { applyFeedDelta, upsertById } from "./feed-delta";
+import { applyFeedDelta, tryApplyFeedDelta, upsertById } from "./feed-delta";
 import { mergeHostFeeds, FederationManager } from "./federation";
 import { ageRgb } from "./age-color";
 import { liveNow } from "./feed-age";
@@ -47,6 +47,20 @@ test("`top` present ⇒ it is the COMPLETE set of non-keyed fields — a field t
   assert.equal("sessions" in out, false, "not in top → not in the frame");
   assert.deepEqual(out.asks, b.asks, "keyed fields are never in `top`; they carry over");
   assert.deepEqual(out.ledgers, b.ledgers);
+});
+
+test("a `top` that is not an object is REFUSED (the author's fixer pass after the maintainer's round 5, refusal-5): a string or an array top spread its characters or items into the frame as keys ('0', '1', ...) and applied, a content acceptance outside every named refusal; applyFeedDelta throws, tryApplyFeedDelta returns the refusal, the base stands, and an absent or object top applies as before", () => {
+  const b = base();
+  for (const top of ["str", ["a", "b"], 7, true, null]) {
+    assert.throws(() => applyFeedDelta(b, { type: "feedDelta", now: 1010, buildId: 2, top } as any), /feedDelta top is not an object/, "top " + JSON.stringify(top) + " is refused (it applied, a string's characters as the frame's keys)");
+  }
+  const r = tryApplyFeedDelta(b, { type: "feedDelta", now: 1010, buildId: 2, top: "str" } as any);
+  assert.equal(r.ok, false, "the checked apply returns the refusal for both roads to act on");
+  assert.match(String((r as any).error), /top is not an object/);
+  assert.deepEqual(b.asks.map((a: any) => a.text), ["goal 0", "goal 1", "goal 2"], "the base stands");
+  const ok = applyFeedDelta(b, { type: "feedDelta", now: 1010, buildId: 2, top: { order: ["TESTSID"], working: [] } });
+  assert.equal("0" in ok, false, "an object top applies with no index keys");
+  assert.deepEqual(applyFeedDelta(b, { type: "feedDelta", now: 1010, buildId: 2 }).order, ["TESTSID"], "an absent top carries the base's fields over");
 });
 
 test("ledgers upsert by sid; a `ledgers` key in the delta means the client holds a list afterwards", () => {
