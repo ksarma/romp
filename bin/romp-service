@@ -807,30 +807,71 @@ _same_path() {   # $1 $2: the same path as written, or the same place once resol
 # read as an absent ExecStart and was re-pointed at the deploying clone. An EMPTY <string></string> is a value (the
 # entry set to the empty string): _file_present says so, and the writers keep it.
 _PLIST_READ=""; _PLIST_EXEC=""; _PLIST_EXEC_SET=""
-_PLUTIL_NL=""    # set by _plutil_calibrate: non-empty when this plutil ends a raw extract with a line end of its own (learned on a scratch plist)
+_PLUTIL_NL=""    # set by _plutil_calibrate: non-empty when this plutil ends a raw extract with a line end of its own (learned on a scratch plist,
+                 # on a value with no line end of its own and on three that end in one; a plutil the four do not agree on is refused)
 _PLIST_STRING_KEYS=(ROMP_SUPERVISED PATH ROMP_DIR ROMP_SERVICE_ENV_FILE StandardOutPath StandardErrorPath)
 _plist_route() { echo "  To write it afresh in romp's form, run romp-service install from the shell and clone that should own the service (the header says what it bakes); that restarts the manager." >&2; }
 _plutil_calibrate() {   # _PLUTIL_NL from a scratch plist this reader writes under a temp dir and removes: whether this plutil ends a raw extract
-                        # with a line end of its own, learned on a Label whose bytes are known (round 6 of fork PR #778, regression-1). Exit 1,
-                        # the reason on stderr, when the scratch cannot be made or plutil does not read it back as the value alone with or
-                        # without one line end; never a fall-back to the file's own Label, whose bytes are the question.
-    local d out
+                        # with a line end of its own, learned on values whose every byte this reader knows (round 6 of fork PR #778,
+                        # regression-1; round 7, correctness-1, regression-2 and extra5-1). Exit 1, the reason on stderr, when the scratch
+                        # cannot be made, when plutil does not read its Label back as the value alone or the value and one line end, or
+                        # when the four probes below do not agree on ONE line-end behaviour; never a fall-back to the file's own Label,
+                        # whose bytes are the question, and never a guess.
+                        # Round 6 measured ONE value, a Label with no line end of its own, and that value cannot tell a plutil that ALWAYS
+                        # writes a line end from one that writes a line end only when the value LACKS one: both read it back as the value
+                        # and one line end, the flag was set as for the first, and under the second the flag then took a value's OWN
+                        # trailing newline off every value that has one, the one class of value where the flag decides anything: the
+                        # not-romp gate below opened on a Label launchd reads with the newline, _plist_values_whole never fired, and the
+                        # rewrite wrote the values and the program's path a newline short at exit 0 (round 5's regression-1 again). So the
+                        # scratch carries the classes the file's reads span: a top-level Label with NO line end (the tool's own line end
+                        # shows here alone), and three values that END in one, on the three key shapes every other read uses: a top-level
+                        # string (StandardOutPath), a nested dictionary entry (EnvironmentVariables.PATH) and an array element
+                        # (ProgramArguments.0). The Label fixes the candidate (no line end: _PLUTIL_NL=""; one: _PLUTIL_NL=1), and each of the
+                        # three must then read back as its value and exactly that line end; any other read-back is a plutil whose raw line
+                        # end depends on the value's own bytes (or strips them), under which a value's own trailing newline cannot be told
+                        # from the tool's, and the read is REFUSED naming the probe and the bytes. plutil(1) documents the terminating
+                        # newline as a property of the tool (-n suppresses it) and the open-source implementation writes it after the value
+                        # whatever the value, the input format (the scratch is XML, the file may be binary1) or the key path (round 6's
+                        # refuters, from both sources), so neither evidenced plutil takes that arm; the arm exists because the reader must
+                        # not assume it. Its refusal is TOTAL for the tool, not this file: every plist read through such a plutil is refused
+                        # the same way, and the text says so and names the two ways out (another plutil in ROMP_PLUTIL, or a person's
+                        # install, which reads no plist).
+    local d p0 r0 k v rv want rw how nl=$'\n'
     if ! d="$(mktemp -d "${TMPDIR:-/tmp}/romp-service-plutil.XXXXXX" 2>/dev/null)"; then
         echo "romp-service: the $_SVC_NOUN's plist ($PLIST) was not read: this reader learns how $PLUTIL ends a raw extract on a scratch plist of its own, and no scratch directory could be made under ${TMPDIR:-/tmp}; nothing was rewritten." >&2
         return 1
     fi
-    if ! printf '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0">\n<dict>\n  <key>Label</key><string>romp.calibrate</string>\n</dict>\n</plist>\n' > "$d/c.plist" 2>/dev/null; then
+    if ! { printf '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0">\n<dict>\n  <key>Label</key><string>romp.calibrate</string>\n  <key>StandardOutPath</key><string>romp.calibrate&#10;</string>\n  <key>EnvironmentVariables</key>\n  <dict>\n    <key>PATH</key><string>romp.calibrate&#10;</string>\n  </dict>\n  <key>ProgramArguments</key>\n  <array>\n    <string>romp.calibrate&#10;</string>\n  </array>\n</dict>\n</plist>\n' > "$d/c.plist"; } 2>/dev/null; then
         rm -rf "$d"
         echo "romp-service: the $_SVC_NOUN's plist ($PLIST) was not read: this reader learns how $PLUTIL ends a raw extract on a scratch plist of its own, and the scratch could not be written under ${TMPDIR:-/tmp}; nothing was rewritten." >&2
         return 1
     fi
-    out="$("$PLUTIL" -extract Label raw -o - "$d/c.plist" 2>/dev/null && printf x)" || out=""
-    rm -rf "$d"
-    case "$out" in
+    # the sentinel x keeps a trailing newline through the command substitution; the expected bytes are literals, never a $(printf) of
+    # their own (a substitution would strip the very newline the probe is about)
+    p0="$("$PLUTIL" -extract Label raw -o - "$d/c.plist" 2>/dev/null && printf x)" || p0=""
+    r0="${p0%x}"; r0="${r0//$nl/\\n}"
+    case "$p0" in
         romp.calibratex) _PLUTIL_NL="" ;;
-        romp.calibrate$'\n'x) _PLUTIL_NL=1 ;;
-        *) echo "romp-service: the $_SVC_NOUN's plist ($PLIST) was not read: $PLUTIL did not read this reader's scratch plist back as its Label alone (with or without one line end of its own), so how it ends a raw extract is unknown and no value of the file can be read whole; nothing was rewritten." >&2; return 1 ;;
+        "romp.calibrate${nl}x") _PLUTIL_NL=1 ;;
+        *)
+            rm -rf "$d"
+            echo "romp-service: the $_SVC_NOUN's plist ($PLIST) was not read: $PLUTIL did not read this reader's scratch plist's Label (romp.calibrate) back as the value alone or as the value and one line end of its own (it read ${r0:-nothing}; a line end is rendered as \\n), so how it ends a raw extract is unknown and no value of the file can be read whole; nothing was rewritten." >&2
+            return 1 ;;
     esac
+    want="romp.calibrate$nl"; how="never writes"
+    if [[ -n "$_PLUTIL_NL" ]]; then want="$want$nl"; how="always writes"; fi
+    rw="${want//$nl/\\n}"
+    for k in StandardOutPath EnvironmentVariables.PATH ProgramArguments.0; do
+        v="$("$PLUTIL" -extract "$k" raw -o - "$d/c.plist" 2>/dev/null && printf x)" || v=""
+        if [[ "$v" != "${want}x" ]]; then
+            rm -rf "$d"
+            rv="${v%x}"; rv="${rv//$nl/\\n}"
+            echo "romp-service: the $_SVC_NOUN's plist ($PLIST) was not read: $PLUTIL ends a raw extract one way for a value with no line end of its own and another way for a value that ends in one, so a value's own trailing line end cannot be told from the tool's: it read this reader's scratch plist's Label (romp.calibrate) back as $r0 and its $k (romp.calibrate\\n) back as ${rv:-nothing}, where $rw would say the tool's line end is one it $how (a line end is rendered as \\n). This refuses every plist read through this plutil, this one included, not this file alone; nothing was rewritten." >&2
+            echo "  Name another plutil in ROMP_PLUTIL, or write the plist afresh: run romp-service install from the shell and clone that should own the service (the header says what it bakes; a person's install reads no plist); that restarts the manager." >&2
+            return 1
+        fi
+    done
+    rm -rf "$d"
 }
 _plutil_raw() {   # $1 a key path, $2 a variable: set to plutil's raw extract with the value's own bytes kept (read with a sentinel, so no command
                   # substitution strips a trailing newline; plutil's own line end, when it writes one, taken off); 1 when nothing extracts

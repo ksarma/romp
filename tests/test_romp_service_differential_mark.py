@@ -53,6 +53,74 @@ class MarkSelfCheck(unittest.TestCase):
         out = io.StringIO()
         self.assertEqual(self.m.self_check(out), 0)
         self.assertIn("mark self-check: %d of %d" % (len(self.m.MARK_CASES), len(self.m.MARK_CASES)), out.getvalue())
+        n = len(self.m.mark_clauses())
+        self.assertIn("; %d of %d mark clauses of compare() each told apart by a row" % (n, n), out.getvalue())
+
+    # round 7 of fork PR #778 (extra6-1): the clause population is read from compare()'s source, and the table must tell every clause's
+    # mutant apart; at round 6 three of eight clauses could be deleted with the check still reading 25 of 25
+    CLAUSES = [
+        "sd['fatal']",
+        "b is not None",
+        "len(orc_cmds) >= len(sd_cmds)",
+        "any((c not in sd_cmds for c in orc_cmds))",
+        "orc_cmds and orc_cmds[0] != sd_cmds[0]",
+        "orc['execs'][0]['path'] != sd['path']",
+        "len(orc['envfiles']) >= len(sd['envfiles'])",
+        "any((f not in sd['envfiles'] for f in orc['envfiles']))",
+    ]
+
+    def test_the_clause_census_reads_the_eight_clauses_and_every_one_is_told_apart_by_exactly_the_rows_that_isolate_it(self):
+        m = self.m
+        clauses = m.mark_clauses()
+        self.assertEqual([label for label, _ in clauses], self.CLAUSES)
+        for label, mutant in clauses:
+            flipped = [name for name, sd, orc, verdict, dangerous in m.MARK_CASES
+                       if (mutant("X", sd, orc)[0], mutant("X", sd, orc)[2]) != (verdict, dangerous)]
+            self.assertTrue(flipped, label)
+            for name in flipped:   # a mutant flips a marked row to unmarked, never the other way and never an unmarked row
+                row = next(c for c in m.MARK_CASES if c[0] == name)
+                self.assertTrue(row[4], (label, name))
+        # the three round-7 rows are the ONLY rows that tell their clause's mutant apart (the reason they were added)
+        alone = {"len(orc_cmds) >= len(sd_cmds)": "argv more, every command one of systemd's",
+                 "any((c not in sd_cmds for c in orc_cmds))": "argv fewer, the first kept, one systemd does not run",
+                 "len(orc['envfiles']) >= len(sd['envfiles'])": "EnvironmentFile more, every path one systemd reads"}
+        for label, mutant in clauses:
+            if label in alone:
+                flipped = [name for name, sd, orc, verdict, dangerous in m.MARK_CASES if mutant("X", sd, orc)[2] != dangerous]
+                self.assertEqual(flipped, [alone[label]], label)
+
+    def test_a_clause_added_without_a_row_fails_the_self_check_and_names_it(self):
+        # the discriminating half of the census: a ninth disjunct no row flips must fail the check, which a written-down count could not do
+        m = self.m
+        with open(m.__file__, encoding="utf-8") as f:
+            source = f.read()
+        marker = "or (orc_cmds and orc_cmds[0] != sd_cmds[0]): dangerous = True"
+        self.assertEqual(source.count(marker), 1)
+        ninth = source.replace(marker, "or (orc_cmds and orc_cmds[0] != sd_cmds[0]) or (len(orc_cmds) == 99): dangerous = True")
+        self.assertEqual([label for label, _ in m.mark_clauses(ninth)][:6], self.CLAUSES[:5] + ["len(orc_cmds) == 99"])
+        out = io.StringIO()
+        self.assertEqual(m.self_check(out, source=ninth), 1)
+        self.assertIn("8 of 9 mark clauses of compare() each told apart by a row", out.getvalue())
+        self.assertIn("mark self-check FAILED", out.getvalue())
+        self.assertIn("  mark clause told apart by no row of MARK_CASES: len(orc_cmds) == 99", out.getvalue())
+        # a census that finds nothing is a failure, not a pass
+        hollow = source.replace("def compare(kind, sd, orc):", "def compare(kind, sd, orc):\n    return 'agree', '', False\ndef _compare_was(kind, sd, orc):")
+        self.assertEqual(m.mark_clauses(hollow), [])
+        out = io.StringIO()
+        self.assertEqual(m.self_check(out, source=hollow), 1)
+        self.assertIn("0 of 0 mark clauses", out.getvalue())
+        self.assertIn("no mark clause found in compare()", out.getvalue())
+
+    def test_the_four_surfaces_state_the_unmarked_half_in_one_phrase(self):
+        # extra6-2 (round 7): the printed legend dropped the qualifier from the commands disjunct; the module docstring, compare()'s
+        # docstring, the legend and tests/README.md carry the one phrase, whitespace folded (the README wraps it)
+        m = self.m
+        phrase = "or listing fewer commands every one among systemd's with the first command kept, or fewer files every one among systemd's"
+        with open(os.path.join(HERE, "README.md"), encoding="utf-8") as f:
+            readme = f.read()
+        for surface, text in (("module docstring", m.__doc__), ("compare() docstring", m.compare.__doc__), ("LEGEND", m.LEGEND), ("tests/README.md", readme)):
+            self.assertIn(phrase, " ".join(text.split()), surface)
+        self.assertNotIn("fewer commands with the first command kept", m.LEGEND)
 
     def test_a_dead_mark_fails_the_self_check(self):
         # the discriminating half: compare() with every mark off must fail the check, which is what the recipe's real fixtures could not show

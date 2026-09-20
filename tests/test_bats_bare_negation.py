@@ -21,10 +21,17 @@ $output, so an armed negation goes after any `[[ "$output" ... ]]` check that re
 Scope: a line scan, not a bash parser. Inside a `@test ... {` block it reads every line that begins
 with `! ` and reports one whose next non-blank, non-comment line is not the block's closing `}`. It
 does not see `!cmd` written without a space, a `! cmd` sharing a line with another command, a
-bare `!` inside setup(), teardown() or a helper function (also under errexit), or a test whose
-`@test` line does not end in `{`; a lone `}` line inside a test body (a brace group, a heredoc) ends
-the block early and hides what follows. It does report `! cmd || <fallback>`, which errexit checks
-through the list's last command; write that as `run` + status too."""
+bare `!` inside setup(), teardown() or a file-scope helper function (also under errexit), or a test
+whose `@test` line does not end in `{`; a `}` at column zero inside a test body (a heredoc writing
+JSON, say) ends the block early and hides what follows. An INDENTED `}` does not end the block: a
+helper defined inside a test closes with one, and round 7 of fork PR #778 (tests-1, regression-1)
+found the block-end rule `strip() == "}"` ending a 242-line case 31 lines in, at its nested helper's
+brace, so 211 lines of the case that pinned that round's high were outside this scan; the rule is
+the column-zero brace now, which bats' own style puts on every test's last line, and a helper's
+body inside a test is scanned like the rest of it. A bare `!` on a helper's last line stays exempt
+under the same next-line rule: the caller's errexit reads the function's return status. It does
+report `! cmd || <fallback>`, which errexit checks through the list's last command; write that as
+`run` + status too."""
 import os
 import re
 import tempfile
@@ -47,7 +54,7 @@ def mid_test_bare_negations(text):
         if _TEST_OPEN.match(line):
             in_test = True
             continue
-        if in_test and line.strip() == "}":
+        if in_test and line == "}":   # the column-zero brace; an indented one closes a helper inside the test, not the test
             in_test = False
             continue
         if not (in_test and _BARE.match(line)):
@@ -104,6 +111,46 @@ class Scanner(unittest.TestCase):
                 f.write('@test "x" {\n    ! grep -q x "$LOG"\n    true\n}\n')
             with open(path, encoding="utf-8") as f:
                 self.assertEqual([ln for ln, _ in mid_test_bare_negations(f.read())], [2])
+
+    # round 7 of fork PR #778 (tests-1, regression-1): a helper defined inside the test body closes with an INDENTED brace, which
+    # the strip() rule took as the test's end, so everything after the helper was outside the scan
+    NESTED = ('@test "x" {\n'
+              '    _kept() {\n'
+              '        run true\n'
+              '        [ "$status" -eq 0 ]\n'
+              '    }\n'
+              '    _kept\n'
+              '    ! grep -q x "$LOG"\n'
+              '    true\n'
+              '}\n')
+
+    def test_flags_a_bare_bang_after_a_helper_defined_inside_the_test(self):
+        # red before the column-zero rule: the scanner returned [] for this file (the helper's `    }` ended the block at line 5)
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "nested.bats")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(self.NESTED)
+            with open(path, encoding="utf-8") as f:
+                self.assertEqual(mid_test_bare_negations(f.read()), [(7, '    ! grep -q x "$LOG"')])
+
+    def test_allows_a_bare_bang_as_the_last_command_after_a_helper_defined_inside_the_test(self):
+        # the test's last command is its return value, helper or no helper before it
+        text = self.NESTED.replace('    ! grep -q x "$LOG"\n    true\n', '    true\n    ! grep -q x "$LOG"\n')
+        self.assertEqual(mid_test_bare_negations(text), [])
+
+    def test_allows_a_bare_bang_as_the_last_line_of_a_helper_inside_the_test_and_flags_one_before_it(self):
+        # a helper's body is scanned like the rest of the test now; its last line is its return status, which the caller's errexit
+        # reads, so it is exempt under the same next-line rule, and a bare `!` before another command in the body is reported
+        text = ('@test "x" {\n    _h() {\n        run true\n        ! grep -q x "$LOG"\n    }\n    _h\n    true\n}\n')
+        self.assertEqual(mid_test_bare_negations(text), [])
+        text = ('@test "x" {\n    _h() {\n        ! grep -q x "$LOG"\n        run true\n    }\n    _h\n    true\n}\n')
+        self.assertEqual(mid_test_bare_negations(text), [(3, '        ! grep -q x "$LOG"')])
+
+    def test_the_block_still_ends_at_the_next_column_zero_brace_and_a_helper_after_it_is_outside(self):
+        # the other half of test_ignores_a_bare_bang_outside_a_test_block under the new rule: a file-scope helper after a test that
+        # holds a nested helper is outside the scan
+        text = self.NESTED.replace('    ! grep -q x "$LOG"\n', '') + 'helper() {\n    ! grep -q x "$LOG"\n    true\n}\n'
+        self.assertEqual(mid_test_bare_negations(text), [])
 
 
 if __name__ == "__main__":

@@ -1091,6 +1091,34 @@ class RealTree(unittest.TestCase):
         text = (ROOT / "upstream" / "2026-09-04-tab-groups-on-tags.md").read_text(encoding="utf-8")
         self.assertIn("a name that already runs: `/new` re-asserts an explicit `--in`, the picker's op warns instead", text)
 
+    def test_the_where_line_of_an_entry_this_branch_touches_names_every_file_the_branch_changes(self):
+        """The where: line is DERIVED from the branch's diff (round 7 of fork PR #778, rules-2 and regression-4: the line omitted a test
+        module the chain had created, the second such omission on one entry; round 4 ruled the derivation and nothing ran it). The base
+        is HEAD's merge base with the fork's main (origin/main, else main); the diff is taken to HEAD and to the working tree, so a run
+        before the commit reads its own edits. On main the diff is empty and nothing is asserted. With no base to diff against (a
+        shallow checkout) the test skips saying so, since the branch's diff is not derivable there; the local runs every round makes
+        are where it holds. A branch that touches no entry has nothing to derive against and passes."""
+        def git(*args):
+            return subprocess.run(["git", "-C", str(ROOT), *args], capture_output=True, text=True)
+        base = None
+        for ref in ("origin/main", "main"):
+            r = git("merge-base", "HEAD", ref)
+            if r.returncode == 0 and r.stdout.strip():
+                base = r.stdout.strip()
+                break
+        if base is None:
+            self.skipTest("no merge base with origin/main or main: the branch's diff is not derivable in this checkout")
+        committed, tree = git("diff", "--name-only", base, "HEAD"), git("diff", "--name-only", base)
+        self.assertEqual((committed.returncode, tree.returncode), (0, 0), committed.stderr + tree.stderr)
+        changed = sorted(set(committed.stdout.split()) | set(tree.stdout.split()))
+        entries = [c for c in changed if c.startswith("upstream/") and c.endswith(".md") and (ROOT / c).exists()]
+        if not entries:
+            return
+        named = " ".join(L.parse_entry(Path(e).name, (ROOT / e).read_text(encoding="utf-8"))[0].get("where") for e in entries)
+        missing = [c for c in changed if not (c.startswith("upstream/") and c.endswith(".md")) and c != "UPSTREAM.md" and c not in named]
+        self.assertEqual(missing, [], "files this branch changes that no touched entry's where: line names (derive the line from the "
+                         "diff: git diff --name-only <base>..HEAD): " + ", ".join(missing))
+
 
 if __name__ == "__main__":
     unittest.main()

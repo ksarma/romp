@@ -77,7 +77,7 @@ Classes (the round-4 lens's ids; assignment by fixture id, every disagreement in
   F  the @ prefix's argv shape                 G  repeated or conflicting prefixes     H  a quoted or escaped ; argument
   I  filename_is_valid / path_is_valid         J  path_simplify on exec->path          K  the - prefix downgrading errors
 """
-import json, os, re, shutil, subprocess, sys, tempfile
+import ast, json, os, re, shutil, subprocess, sys, tempfile
 from concurrent.futures import ThreadPoolExecutor
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -425,9 +425,11 @@ def compare(kind, sd, orc):
     command systemd does not run (as many commands as systemd's or more with a difference among them, fewer with one not among
     systemd's, or a first command that is not systemd's first), another exec->path for the first command (positional: systemd prints
     its first command's resolved path alone), a file systemd does not read (as many EnvironmentFile paths or more with a difference,
-    or fewer with one not among systemd's). The oracle refusing what systemd loads, or leaving unset what systemd sets, or listing
-    fewer commands or files, every one among systemd's with the first command kept, is unmarked (the module docstring says which of
-    those is a false refusal and which the D4 class where the reader follows it). The round-5 preface of fork PR #778 added the
+    or fewer with one not among systemd's). The oracle refusing what systemd loads, or leaving unset what systemd sets, or listing fewer commands every one
+    among systemd's with the first command kept, or fewer files every one among systemd's, is unmarked (the module docstring says
+    which of those is a false refusal and which the D4 class where the reader follows it; the four surfaces that state the unmarked
+    half, this docstring, the module's, the printed LEGEND and tests/README.md, carry that one phrase, pinned by
+    tests/test_romp_service_differential_mark.py since round 7 of fork PR #778, extra6-2). The round-5 preface of fork PR #778 added the
     both-set and same-count shapes; its addendum the shorter list carrying one systemd does not run or read (the lens's example: the
     oracle reporting one command with another argument where systemd runs two; the count test alone left it unmarked); round 6 the
     first-command shape by name (extra6-2: the exec->path branch marked it by accident, and the prose placed it on the unmarked side)
@@ -492,6 +494,13 @@ MARK_CASES = [   # (name, systemd's reading, the oracle's, the verdict, dangerou
     ("argv fewer, one systemd does not run", _sd(cmds=[["/nx/bin/a"], ["/nx/bin/b"]], path="/nx/bin/a"), _orc(execs=[_ex("/nx/bin/c")]), "DISAGREE", True),
     ("argv fewer, systemd's first dropped (the second reported first)", _sd(cmds=[["/nx/bin/a"], ["/nx/bin/b"]], path="/nx/bin/a"), _orc(execs=[_ex("/nx/bin/b")]), "DISAGREE", True),
     ("argv fewer, every one among systemd's, the first kept", _sd(cmds=[["/nx/bin/a"], ["/nx/bin/b"]], path="/nx/bin/a"), _orc(execs=[_ex("/nx/bin/a")]), "DISAGREE", False),
+    # round 7 of fork PR #778 (extra6-1): the rows that ALONE tell three clauses' mutants apart, where every earlier row on their side
+    # trips two clauses at once (a longer list with a command systemd does not run trips the count clause and the not-among clause; a
+    # shorter list with one systemd does not run, which is also not systemd's first, trips the not-among clause and the first-command
+    # clause): fewer with the first kept and one systemd does not run (the not-among clause alone), more with every one among systemd's
+    # (the count clause alone), and, below, more EnvironmentFile paths every one systemd reads (its count clause alone)
+    ("argv fewer, the first kept, one systemd does not run", _sd(cmds=[["/nx/bin/a"], ["/nx/bin/b"], ["/nx/bin/c"]], path="/nx/bin/a"), _orc(execs=[_ex("/nx/bin/a"), _ex("/nx/bin/d")]), "DISAGREE", True),
+    ("argv more, every command one of systemd's", _sd(cmds=[["/nx/bin/a"], ["/nx/bin/b"]], path="/nx/bin/a"), _orc(execs=[_ex("/nx/bin/a"), _ex("/nx/bin/b"), _ex("/nx/bin/a")]), "DISAGREE", True),
     # the round-6 addendum: the first-command clause on its own, where the exec->path branch cannot mark (the path uncompared under the -
     # prefix); the row above it is marked by that branch whether the clause exists or not
     ("argv fewer, systemd's first dropped, the path uncompared under -", _sd(cmds=[["/nx/bin/a"], ["/nx/bin/b"]], path=None), _orc(execs=[_ex("/nx/bin/b", "/nx/bin/b", ignore=True)]), "DISAGREE", True),
@@ -505,6 +514,7 @@ MARK_CASES = [   # (name, systemd's reading, the oracle's, the verdict, dangerou
     ("EnvironmentFile same count, another path", _sd(envfiles=["/x/env"]), _orc(envfiles=["/y/env"]), "DISAGREE", True),
     ("EnvironmentFile more files than systemd reads", _sd(envfiles=["/x/env"]), _orc(envfiles=["/x/env", "/y/env"]), "DISAGREE", True),
     ("EnvironmentFile fewer, one systemd does not read", _sd(envfiles=["/x/env", "/y/env"]), _orc(envfiles=["/z/env"]), "DISAGREE", True),
+    ("EnvironmentFile more, every path one systemd reads", _sd(envfiles=["/x/env"]), _orc(envfiles=["/x/env", "/x/env"]), "DISAGREE", True),   # round 7, extra6-1
     ("EnvironmentFile fewer, every one among systemd's (the D4 class where the reader follows it; unmarked)", _sd(envfiles=["/x/env", "/y/env"]), _orc(envfiles=["/x/env"]), "DISAGREE", False),
     # the round-6 addendum: the first-kept rule is the argv branch's alone (the reader's identity check reads the first command and no
     # first file), so a dropped FIRST file with a later one kept is the same unmarked D4 class; the prose says "first command" for that
@@ -515,20 +525,81 @@ MARK_CASES = [   # (name, systemd's reading, the oracle's, the verdict, dangerou
     ("the oracle does not model the form", _sd(), {"refuses": "NotImplementedError: not modelled"}, "REFUSES", False),
 ]
 
-def self_check(out=sys.stdout):
-    """Every MARK_CASES pair against compare(): 0 and one printed line when all agree, 1 and the mismatches otherwise."""
+def _compare_def(tree):
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name == "compare": return node
+    raise SystemExit("mark_clauses: no compare() in the source it was given")
+def _sets_mark(stmt):   # a statement that sets the mark: `dangerous = True`, or a return whose third element is True
+    if isinstance(stmt, ast.Assign):
+        return any(isinstance(t, ast.Name) and t.id == "dangerous" for t in stmt.targets) and isinstance(stmt.value, ast.Constant) and stmt.value.value is True
+    if isinstance(stmt, ast.Return) and isinstance(stmt.value, ast.Tuple) and len(stmt.value.elts) == 3:
+        return isinstance(stmt.value.elts[2], ast.Constant) and stmt.value.elts[2].value is True
+    return False
+def mark_clauses(source=None):
+    """The clauses of compare() that can set the mark, READ from its source (an AST walk; round 7 of fork PR #778, extra6-1), each with a
+    mutant compare() in which that clause alone is False: [(label, mutant)]. A clause is one top-level `or` disjunct of the test of an
+    `if` whose body directly sets the mark (`dangerous = True`, or a return whose third element is True); an `if` with no `or` is one
+    clause. At round 7 that is eight: systemd refuses and the oracle loads; an env key the oracle sets to another value or alone; the
+    argv count, the argv not-among and the first-command clauses; the exec->path clause; the EnvironmentFile count and not-among
+    clauses. The population is never written down here, so a clause added to compare() is in the census the moment it exists, and
+    self_check fails until a row of MARK_CASES tells its mutant apart. `source` is the module's own file unless a test hands it another."""
+    if source is None:
+        with open(os.path.abspath(__file__), encoding="utf-8") as f: source = f.read()
+    sites = []
+    for node in ast.walk(_compare_def(ast.parse(source))):
+        if isinstance(node, ast.If) and any(_sets_mark(st) for st in node.body):
+            n = len(node.test.values) if isinstance(node.test, ast.BoolOp) and isinstance(node.test.op, ast.Or) else 1
+            sites.extend((node.lineno, node.col_offset, i) for i in range(n))
+    out = []
+    for lineno, col, i in sorted(sites):
+        tree = ast.parse(source); fn = _compare_def(tree)
+        for node in ast.walk(fn):
+            if isinstance(node, ast.If) and (node.lineno, node.col_offset) == (lineno, col):
+                if isinstance(node.test, ast.BoolOp):
+                    label = ast.unparse(node.test.values[i]); node.test.values[i] = ast.copy_location(ast.Constant(False), node.test.values[i])
+                else:
+                    label = ast.unparse(node.test); node.test = ast.copy_location(ast.Constant(False), node.test)
+                break
+        mod = ast.fix_missing_locations(ast.Module(body=[fn], type_ignores=[]))
+        ns = dict(globals()); exec(compile(mod, "<compare() with one mark clause off>", "exec"), ns)
+        out.append((label, ns["compare"]))
+    return out
+
+def self_check(out=sys.stdout, source=None):
+    """Every MARK_CASES pair against compare(), then every mark clause of compare() (mark_clauses, read from the source) against the
+    table: 0 and one printed line when every pair scores as the table says AND every clause's mutant is told apart by some row, 1 and
+    the mismatches otherwise. The clause count is derived, not stated: at round 6 the table isolated five of eight clauses and read
+    "25 of 25" with the other three deleted (round 7 of fork PR #778, extra6-1); a ninth clause now fails this until a row covers it,
+    and a census that finds no clause fails too, since an empty derivation is a broken census, not a clean one."""
     bad = []
     for name, sd, orc, verdict, dangerous in MARK_CASES:
         got = compare("X", sd, orc)
         if got[0] != verdict or got[2] != dangerous: bad.append("  %s: wanted (%s, dangerous=%s), got (%s, dangerous=%s)" % (name, verdict, dangerous, got[0], got[2]))
+    clauses = mark_clauses(source)
+    untold = []
+    for label, mutant in clauses:
+        told = False
+        for name, sd, orc, verdict, dangerous in MARK_CASES:
+            got = mutant("X", sd, orc)
+            if got[0] != verdict or got[2] != dangerous: told = True; break
+        if not told: untold.append("  mark clause told apart by no row of MARK_CASES: %s" % label)
+    if not clauses: bad.append("  no mark clause found in compare(): the census read nothing")
     marked = sum(1 for c in MARK_CASES if c[4]); unmarked = sum(1 for c in MARK_CASES if c[3] == "DISAGREE" and not c[4])
-    print("mark self-check: %d of %d synthetic pairs as expected (%d on the dangerous side, %d DISAGREE unmarked, %d agree, refuse or unread)" % (
-        len(MARK_CASES) - len(bad), len(MARK_CASES), marked, unmarked, len(MARK_CASES) - marked - unmarked), file=out)
-    if bad:
-        print("mark self-check FAILED: compare() does not mark as the table says", file=out)
-        for b in bad: print(b, file=out)
+    print("mark self-check: %d of %d synthetic pairs as expected (%d on the dangerous side, %d DISAGREE unmarked, %d agree, refuse or unread); %d of %d mark clauses of compare() each told apart by a row" % (
+        len(MARK_CASES) - len(bad), len(MARK_CASES), marked, unmarked, len(MARK_CASES) - marked - unmarked, len(clauses) - len(untold), len(clauses)), file=out)
+    if bad or untold:
+        print("mark self-check FAILED: compare() does not mark as the table says, or a clause of it has no row" , file=out)
+        for b in bad + untold: print(b, file=out)
         return 1
     return 0
+
+LEGEND = ("dangerous = a disagreement where the oracle reports what systemd does not set, run or read (a value unset or other to systemd, a unit it fails to load, "
+          "as many commands or files or more with a difference, fewer with one systemd does not run or read or with a first command that is not systemd's first, "
+          "another exec->path for the first command); unmarked = the oracle refusing what systemd loads (a false refusal), or leaving unset "
+          "or listing fewer commands every one among systemd's with the first command kept, or fewer files every one among systemd's "
+          "(the D4 class where the reader follows it: it writes this clone's value or omits the line, at exit 0)")   # the printed legend; its unmarked half
+          # is the phrase the module docstring, compare()'s docstring and tests/README.md carry (round 7 of fork PR #778, extra6-2: it read
+          # "fewer commands with the first command kept", the qualifier trailing two disjuncts, and the pin module holds the four alike)
 
 def main():
     fx, fold = fixtures(), fold_fixtures()
@@ -587,7 +658,7 @@ def main():
     print("%-6s %6d %6d %8d %9d %10d" % ("total", tot["cases"], tot["agree"], tot["refuses"], tot["disagree"], tot["dangerous"]))
     f = per.get("fold", {"cases": 0, "agree": 0, "refuses": 0, "disagree": 0, "dangerous": 0})
     print("fold batch: %d cases, %d agree, %d REFUSES, %d DISAGREE, %d dangerous" % (f["cases"], f["agree"], f["refuses"], f["disagree"], f["dangerous"]))
-    print("dangerous = a disagreement where the oracle reports what systemd does not set, run or read (a value unset or other to systemd, a unit it fails to load, as many commands or files or more with a difference, fewer with one systemd does not run or read or with a first command that is not systemd's first, another exec->path for the first command); unmarked = the oracle refusing what systemd loads (a false refusal), or leaving unset or listing fewer commands with the first command kept or fewer files every one among systemd's (the D4 class where the reader follows it: it writes this clone's value or omits the line, at exit 0)")
+    print(LEGEND)
     print_rows(rows)
     return 0
 
