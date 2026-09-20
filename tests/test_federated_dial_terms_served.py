@@ -174,8 +174,12 @@ def held_pair(frames, slot):
     connect()'s gated reset and closeRemote, are the conn's life and not a frame's), `bars` and `delta slot:bars` for the bars pair
     (the receiver's two bases.set writes, the full's seed and the patch's advance). The authorities are the two receivers and the
     writers of Conn.feedHeld, never a list kept here (the maintainer's round 3, tests-3: a hand list here went stale twice in one
-    day); test_the_pair_writers_are_counted_so_a_new_one_reds_until_classified derives them from the sources, so a writer or a
-    frame type this rule does not read is a census failure. Outside the rule, in two kinds, each measured and held in RECEIVER_BLIND
+    day); test_the_pair_writers_are_counted_so_a_new_one_reds_until_classified derives them from the sources by the PROPERTY and
+    not a spelling (the author's fixer pass after round 5, refusal-1: every `feedHeld` token in federation.ts's code, comments
+    blanked, is the declaration, a member read or one of the four writes, whatever the receiver's name or the assignment's form,
+    and any other form, an object key, a string, a destructuring, is unclassified), so a writer in any spelling or a frame type
+    this rule does not read is a census failure; the refusal-site census reads every `throw` statement and every `return` of
+    the roads the same way (refusal-2). Outside the rule, in two kinds, each measured and held in RECEIVER_BLIND
     with the client's reading:
     A REFUSAL the receiver makes on content a recorder does not keep, three classes, sharing one property: each leaves this rule
     AHEAD of the client, so expected_relay_caps over-demands a held term in every one; they differ in what the client does next.
@@ -659,6 +663,77 @@ RECEIVER_BLIND = [
 ]
 
 
+def _ts_code(src):
+    """The TypeScript source with its comments blanked (spaces, so offsets and line numbers hold) and its string and template
+    literals left as they are: a character walk that tracks the string state, so a `//` inside a string is not a comment. The
+    censuses below count tokens (`feedHeld`, `throw`, `return`) in CODE, and a comment naming one is not a site."""
+    out = list(src)
+    i, n = 0, len(src)
+    while i < n:
+        ch = src[i]
+        if ch in "\"'`":
+            q = ch
+            i += 1
+            while i < n and src[i] != q:
+                if src[i] == "\\":
+                    i += 1
+                i += 1
+            i += 1
+        elif src.startswith("//", i):
+            j = src.find("\n", i)
+            j = n if j < 0 else j
+            for k in range(i, j):
+                out[k] = " "
+            i = j
+        elif src.startswith("/*", i):
+            j = src.find("*/", i + 2)
+            j = n if j < 0 else j + 2
+            for k in range(i, j):
+                if src[k] != "\n":
+                    out[k] = " "
+            i = j
+        else:
+            i += 1
+    return "".join(out)
+
+
+def _feed_held_tokens(fed):
+    """Every `feedHeld` token in federation.ts's code, classified by the PROPERTY of its site: the declaration (`feedHeld?:`),
+    a member WRITE (`<receiver>.feedHeld` followed by an assignment operator, plain or compound, or preceded by `delete`), a
+    member READ (any other `<receiver>.feedHeld`), else OTHER (an object key, a quoted name, a destructuring pattern). A write
+    is (line, receiver, the assigned expression up to the semicolon)."""
+    code = _ts_code(fed)
+    out = {"declaration": [], "write": [], "read": [], "other": []}
+    for m in re.finditer(r"feedHeld", code):
+        line = code.count("\n", 0, m.start()) + 1
+        before = code[m.start() - 1:m.start()]
+        tail = code[m.end():]
+        if before == ".":
+            head = code[code.rfind("\n", 0, m.start()) + 1:m.start()]
+            recv = re.search(r"([\w$]+)\.$", head)
+            if re.search(r"\bdelete\s+[\w$.\[\]]+\.$", head):
+                out["write"].append((line, recv.group(1) if recv else "?", "delete"))
+            elif re.match(r"\s*(=(?!=)|\+=|-=|\|\|=|\?\?=|&&=)", tail):
+                out["write"].append((line, recv.group(1) if recv else "?", code[m.end():code.find(";", m.end())].strip().lstrip("=").strip()))
+            else:
+                out["read"].append(line)
+        elif re.match(r"\s*\?:", tail):
+            out["declaration"].append(line)
+        else:
+            out["other"].append((line, before, tail[:24]))
+    return out
+
+
+def _throw_forms(code):
+    """Every `throw` statement in a comment-stripped region, by form: `new Error(`, `new Unkeyable(`, the rethrow of a caught
+    `e`, else OTHER (a TypeError, a thrown variable, anything a spelling-keyed count never saw)."""
+    forms = []
+    for t in re.finditer(r"\bthrow\b\s*([^;]*);", code):
+        f = t.group(1).strip()
+        forms.append("new Error(" if f.startswith("new Error(") else "new Unkeyable(" if f.startswith("new Unkeyable(") else "rethrow e" if f == "e" else "OTHER: " + f)
+    return forms
+
+
 class HeldPairRule(unittest.TestCase):
     """The drive-derived expectation's rule, pinned on synthetic frame records (no kernel): the labs above run against kernels
     whose frames carry no gen, so the stamped arms of held_pair, expected_relay_caps and assert_relay_dials are exercised
@@ -925,6 +1000,17 @@ class HeldPairRule(unittest.TestCase):
         self.assertEqual(vd.count("throw new Unkeyable("), sum(v.count("throw new Unkeyable(") for v in regions.values()), "and every Unkeyable throw")
         self.assertEqual(regions["stringKeys"].count("throw new Error("), 1, "stringKeys' one throw (an invalid key list), reached from receive for del and order (recorder-blind, class 1)")
         self.assertEqual(regions["assemble"].count("throw new Error("), 1, "assemble's one throw (a lane holding both scalar and item entries), reached from receive inside its try (recorder-blind, class 1)")
+        # the PROPERTY beside the spellings (the author's fixer pass after round 5, refusal-2: the counts above read two
+        # constructor spellings, so a `throw new TypeError(` or a thrown variable planted in split() left them green): every
+        # `throw` statement in the module's CODE (comments blanked: a comment naming a throw is not a site), per region and by
+        # form, the rethrow of the full arm's caught `e` classified with the two constructors, any other form unclassified and
+        # red; the module total is the regions' sum, so a throw outside the four regions reds too
+        code_regions = {k: _ts_code(v) for k, v in regions.items()}
+        forms = {k: _throw_forms(v) for k, v in code_regions.items()}
+        self.assertEqual({k: [f for f in v if f.startswith("OTHER")] for k, v in forms.items()}, {k: [] for k in forms}, "a throw in a form this census does not classify (not new Error(, new Unkeyable( or the rethrow of e): classify it, then the row")
+        self.assertEqual({k: len(v) for k, v in forms.items()}, {"receive": 8, "split": 3, "assemble": 1, "stringKeys": 1}, "every throw statement by region, whatever its form: receive's seven Errors and the full arm's rethrow; split's Error and two Unkeyables; assemble's and stringKeys' one each: %r" % (forms,))
+        self.assertEqual(forms["receive"].count("rethrow e"), 1, "receive's one rethrow (the full arm passes every error but Unkeyable on)")
+        self.assertEqual(len(re.findall(r"\bthrow\b", _ts_code(vd))), sum(len(v) for v in forms.values()), "every throw in view-deltas.ts's code is in one of the four regions")
         # the full path (the docstring's class 2): split()'s Unkeyable throws and the full arm's catch that deletes the base and
         # returns the frame whole, neither a recover call nor a throw inside the try, so the counts above cannot see it
         self.assertEqual(vd.count("throw new Unkeyable("), 2, "split's two Unkeyable sites: a container the kind cannot key, a lane holding the separator (the full arm refuses the whole frame as a base on either: recorder-blind, the bars-full-unkeyable rows)")
@@ -946,6 +1032,23 @@ class HeldPairRule(unittest.TestCase):
         self.assertEqual(fed.count("tryApplyFeedDelta("), 2, "the two roads, one call each: the local feedDelta arm and applyRemoteFeedDelta")
         self.assertEqual(m2.group(1).count("try"), 1, "one try in applyRemoteFeedDelta, and it is the checked apply's name (the catch itself is feed-delta.ts's)")
         self.assertEqual(m2.group(1).count("throw "), 0, "and the gate itself throws nothing: its refusals are the asks and the rows above")
+        # the roads' EXITS by the property (refusal-2): every `return` in the comment-stripped body of applyRemoteFeedDelta is one
+        # of the three refusals (nobase, the gate, the checked apply), each pinned by its statement, so a refusal that neither
+        # asks nor files (an early return) reds here until classified; the same over the local feedDelta arm's four exits (the
+        # remote hand-off, nobase, the checked apply, the end) and the two refusal helpers' one early return each
+        remote_code = _ts_code(m2.group(1))
+        self.assertEqual(len(re.findall(r"\breturn\b", remote_code)), 3, "applyRemoteFeedDelta's exits: nobase, the gate, the checked apply (a fourth is a refusal this census has not classified)")
+        self.assertEqual(len(re.findall(r"\bthrow\b", remote_code)), 0, "and no throw in its code")
+        self.assertRegex(remote_code, r'this\.sendRemote\(host, \{ type: "needFullFeed" \}\);\n\s*return;', "the nobase exit follows its bare ask")
+        self.assertRegex(remote_code, r'this\.sendRemote\(host, held \? \{ type: "needFullFeed", gen: held\.gen, rev: held\.rev \} : \{ type: "needFullFeed" \}\);\n\s*return;', "the gate's exit follows its ask with the held pair")
+        arm_m = re.search(r'^    if \(m && m\.type === "feedDelta"\) \{\n(.*?)\n    \}\n', fed, re.S | re.M)
+        self.assertIsNotNone(arm_m, "federation.ts's feedDelta arm was not found: re-aim this census")
+        arm_code = _ts_code(arm_m.group(1))
+        self.assertEqual(len(re.findall(r"\breturn\b", arm_code)), 4, "the feedDelta arm's exits: the remote hand-off, the local nobase ask, the local checked apply, the end")
+        self.assertRegex(arm_code, r'if \(host !== LOCAL\) \{ this\.applyRemoteFeedDelta\(host, msg\); return; \}', "the remote hand-off")
+        self.assertRegex(arm_code, r'if \(typeof s === "function"\) s\(\{ type: "needFullFeed" \}\);\n\s*return;', "the local nobase exit follows its ask")
+        self.assertRegex(arm_code, r'if \(!r\.ok\) \{ this\.refuseLocalApply\(m, r\.error\); return; \}', "the local checked apply's exit")
+        self.assertEqual(len(re.findall(r"\bthrow\b", arm_code)), 0, "and no throw in the arm's code")
         m4 = re.search(r"^  private refuseRemoteApply\(c: Conn, host: string, d: any, error: unknown\): void \{\n(.*?)^  \}\n", fed, re.S | re.M)
         self.assertIsNotNone(m4, "federation.ts refuseRemoteApply was not found: re-aim this census")
         self.assertEqual(m4.group(1).count('"needFullFeed"'), 1, "the apply-throw refusal's one bare ask (never the held pair: the base's own content is a suspect)")
@@ -955,6 +1058,8 @@ class HeldPairRule(unittest.TestCase):
         self.assertIsNotNone(m5, "federation.ts refuseLocalApply was not found: re-aim this census")
         self.assertEqual(m5.group(1).count('"needFullFeed"'), 1, "the local twin's one bare ask, through the local send hook")
         self.assertEqual(m5.group(1).count("this.diag("), 1); self.assertEqual(m5.group(1).count("this.tellShell("), 1)
+        for name, mm in (("refuseRemoteApply", m4), ("refuseLocalApply", m5)):
+            self.assertEqual(len(re.findall(r"\breturn\b", _ts_code(mm.group(1)))), 1, "%s's one early return: the latch's asked and stopped states, nothing further" % name)
         fd = open(os.path.join(ROOT, "ui", "webview", "feed-delta.ts"), encoding="utf-8").read()
         self.assertEqual(fd.count("try"), 2, "feed-delta.ts: the checked apply's one try and its name (tryApplyFeedDelta); applyFeedDelta itself catches nothing")
         self.assertRegex(fd, r"export function tryApplyFeedDelta\(base: any, d: FeedDelta\)[^\n]*\{\n  try \{\n    return \{ ok: true, next: applyFeedDelta\(base, d\) \};\n  \} catch \(e\) \{\n    return \{ ok: false, error: e \};", "the wrapper's shape: the throw caught and returned, the base untouched")
@@ -971,8 +1076,18 @@ class HeldPairRule(unittest.TestCase):
         # expression pinned with a loud miss, and the frame types that reach the feed arm, so a fifth writer or a new producer of
         # the arm's frame reds here until the rule's docstring classifies it
         fed = open(os.path.join(ROOT, "ui", "webview", "federation.ts"), encoding="utf-8").read()
-        writes = re.findall(r"\b(?:c|conn)\.feedHeld = (.*?);", fed)   # anywhere on a line: connect()'s clear shares its line with feedRaw's
-        self.assertEqual(len(writes), 4, "Conn.feedHeld's writers: the feed arm, applyRemoteFeedDelta, connect()'s gated reset, closeRemote: %r" % (writes,))
+        # every `feedHeld` token in the module's CODE, classified by the property of its site (the author's fixer pass after
+        # round 5, refusal-1: the census read `c.feedHeld =` and `conn.feedHeld =`, two receiver spellings, so a fifth writer
+        # through another variable name or an Object.assign left it green): the declaration once; a member write whatever the
+        # receiver's name and the assignment's form (plain, compound, delete); a member read; any other form (an object key, a
+        # quoted name, a destructuring) is unclassified and reds until a row classifies it
+        tokens = _feed_held_tokens(fed)
+        self.assertEqual(tokens["other"], [], "a feedHeld token in a form this census does not classify (not the declaration, a member read or a member write): a writer in a new spelling, red until classified")
+        self.assertEqual(len(tokens["declaration"]), 1, "Conn.feedHeld is declared once: %r" % (tokens["declaration"],))
+        self.assertGreaterEqual(len(tokens["read"]), 1, "the pair is read (the redial's caps compose it)")
+        writes = [w[2] for w in tokens["write"]]
+        self.assertEqual(len(writes), 4, "Conn.feedHeld's writers, whatever the receiver is called: the feed arm, applyRemoteFeedDelta, connect()'s gated reset, closeRemote: %r" % (tokens["write"],))
+        self.assertEqual(sorted(set(w[1] for w in tokens["write"])), ["c", "conn"], "the receivers today (informational: a new name is a fifth write above before it is a name here)")
         self.assertEqual(writes.count("undefined"), 2, "two are clears (connect()'s gated reset and closeRemote), the conn's life and not a frame's")
         content = [w for w in writes if w != "undefined"]
         self.assertEqual(len(content), 2, "two write the pair from a frame: %r" % (content,))
