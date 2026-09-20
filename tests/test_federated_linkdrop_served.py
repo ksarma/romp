@@ -197,15 +197,17 @@ PHASE_SETTLE_MS = 1500       # phase() lets the panes' rows land on the hub befo
 DOWN_WINDOW_MARGIN = 2.0     # the while-down read comes this many of the drive's slowest link-up deliveries after phase D's post
 #                              (_assert_the_down_window_outlasts_the_drives_slowest_delivery; down_dwell_ms is sized for it)
 DOWN_READ_ROOM_MS = 2000     # the room down_dwell_ms holds past DOWN_WINDOW_MARGIN x wait_ms: a phase's delivery (seen.waitedMs) is stamped
-#                              AFTER visible()'s reads (waitVisible), so it exceeds the wait's cap by the reads' duration on a phase that ran
-#                              to the cap; without the room the margin pin could red on a drive whose visibility legs pass. The reads
-#                              alone take 6 to 22 ms where the wait had nothing left to wait for (D.seenAfterReturn.waitedMs over 34
-#                              recorded drives as of 2026-09-20, `python3 reads_census.py <report.json>...` outside the repo); over the 45
-#                              unmutated recorded drives that carry the reading (of 56, as of the drive of 2026-09-20 at this code) it
-#                              runs 6 to 125 ms, the 125 ms one new-bundle drive's (`r6-margin/lab-head2.log`) where a wait still had a
-#                              render to wait for, so the reading is an upper bound on the reads. The room the reads get, this constant over DOWN_WINDOW_MARGIN
-#                              (1 s: the relation pin divides through by the margin), is a floor far above them, not a fit. The room is for the reads after a wait that RESOLVED: a phase whose wait ran
-#                              to the cap is refused by the margin leg (seen.expired, round 5), never measured against the room.
+#                              AFTER visible()'s reads (waitVisible), so a wait that resolved at the cap's edge is stamped past the cap by the
+#                              reads' duration; without the room the margin pin could red on a drive whose link-up waits all resolved and
+#                              showed. A phase whose wait ran to its cap is refused by the margin leg itself (seen.expired, round 5), never
+#                              measured against the room, so the room is for the reads after a wait that RESOLVED. The reads alone take
+#                              6 to 22 ms where the wait had nothing left to wait for (D.seenAfterReturn.waitedMs over 34 recorded drives
+#                              as of 2026-09-20, `python3 reads_census.py <report.json>...` outside the repo); over every unmutated recorded
+#                              drive that carries the reading (the same command over the population as of 2026-09-20; the count is dated by
+#                              drive elsewhere, since a drive at any head moves it) it runs 6 to 125 ms, the 125 ms one new-bundle drive's
+#                              (`r6-margin/lab-head2.log`) where a wait still had a render to wait for, so the reading is an upper bound on
+#                              the reads. The room the reads get, this constant over DOWN_WINDOW_MARGIN (1 s: the relation pin divides
+#                              through by the margin), is a floor far above them, not a fit.
 #                              tests/test_federated_linkdrop_driver_bound.py pins down_dwell_ms >= DOWN_WINDOW_MARGIN x wait_ms + this
 QUIET_TRIES, QUIET_STEP_MS = 7, 2000   # quiet(): up to QUIET_TRIES windows of QUIET_STEP_MS with no new relay frame on any page
 
@@ -698,10 +700,11 @@ class _LinkDrop(unittest.TestCase):
     # comes DOWN_WINDOW_MARGIN times the drive's own slowest link-up delivery after the post, asserted by both classes' gate legs
     # (_assert_the_down_window_outlasts_the_drives_slowest_delivery). The dwell is sized against the lab's own cap on that
     # delivery, not against the drives seen: a phase's delivery is seen.waitedMs, and waitVisible caps every wait it holds at
-    # wait_ms, so a catch-up slower than wait_ms reds the visibility legs (_assert_seen) and never reaches the margin pin;
-    # DOWN_WINDOW_MARGIN x wait_ms plus DOWN_READ_ROOM_MS of room for the reads that follow the wait, so the pin holds for every drive whose
-    # visibility legs pass and reds only for a window shorter than that (tests/test_federated_linkdrop_driver_bound.py pins the
-    # relation). The slowest delivery recorded is the old bundle's, whose frozen feed page shows a change only at the next
+    # wait_ms and records each wait's outcome (seen.expired), so the margin leg itself refuses a phase whose wait ran to its cap
+    # (round 5), beside the visibility legs, and every delivery it measures is a wait that RESOLVED, before its cap; the dwell is
+    # DOWN_WINDOW_MARGIN x wait_ms plus DOWN_READ_ROOM_MS of room for the reads that follow the wait, so the pin holds for every
+    # drive whose link-up waits all resolved and showed, the reads inside the room, and reds only for a window shorter than that
+    # (tests/test_federated_linkdrop_driver_bound.py pins the relation). The slowest delivery recorded is the old bundle's, whose frozen feed page shows a change only at the next
     # churned socket's whole frame, and a change whose three notices straddle a churn waits for the frame after that: 19,013 ms
     # over eighteen recorded unmutated old-hub drives as of the drive of 2026-09-20 at this code (`python3 analyse.py
     # <report.json>...` over the builder's reports outside the repo, max of the phases' seen.waitedMs; the new bundle's is

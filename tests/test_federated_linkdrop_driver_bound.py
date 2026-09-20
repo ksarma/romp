@@ -10,9 +10,10 @@ kernel or a browser:
 - the arithmetic: the driver's worst case (its shared wait budget plus the bounded work between the waits) is under the
   subprocess timeout, which is under CI's cap with room for the rest of setUpClass, and the cap the constant is chosen
   against is the one the workflow's served step states; and the down dwell holds DOWN_WINDOW_MARGIN times wait_ms, the
-  cap on the delivery the gate legs measure it against, plus DOWN_READ_ROOM_MS (a phase's delivery is stamped after the
-  reads that follow its wait, so it can exceed the cap by their duration), so that pin holds for every drive whose
-  visibility legs pass;
+  cap waitVisible puts on the delivery the gate legs measure it against, plus DOWN_READ_ROOM_MS (a phase's delivery is
+  stamped after the reads that follow its wait, so a wait that resolved at the cap's edge is stamped past it by their
+  duration; a wait that ran to its cap is refused by the margin leg itself, seen.expired, beside the visibility legs),
+  so that pin holds for every drive whose link-up waits all resolved and showed, the reads inside the room;
 - the bytes sent: _drive hands subprocess.run the timeout and writes the budget, the wait caps and the settle values
   into the driver's cfg from the class that drives (a stub class, the driver replaced by a spy), and the driver it writes
   opens with the budget and reads every one of those keys;
@@ -160,8 +161,9 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
             self.assertGreaterEqual(cls.down_dwell_ms, L.DOWN_WINDOW_MARGIN * cls.wait_ms + L.DOWN_READ_ROOM_MS,
                                     "%s's down dwell (%d ms) holds DOWN_WINDOW_MARGIN (%g) times wait_ms (%d ms), the cap waitVisible puts on the delivery the "
                                     "gate legs measure the dwell against, plus DOWN_READ_ROOM_MS (%d ms) for the reads after the wait (seen.waitedMs is stamped "
-                                    "after visible()'s reads, so a delivery that ran to the cap exceeds it by their duration); with the room the per-drive "
-                                    "margin pin holds for every drive whose visibility legs pass and reds only for a window shorter than that"
+                                    "after visible()'s reads, so a wait that resolved at the cap's edge is stamped past it by their duration; a wait that ran "
+                                    "to its cap is refused by the margin leg itself, seen.expired, never measured); with the room the per-drive margin pin "
+                                    "holds for every drive whose link-up waits all resolved and showed, and reds only for a window shorter than that"
                                     % (cls.__name__, cls.down_dwell_ms, L.DOWN_WINDOW_MARGIN, cls.wait_ms, L.DOWN_READ_ROOM_MS))
         self.assertLessEqual(L.DRIVER_TIMEOUT_S + L.BOOT_ROOM_S, L.CI_TEST_TIMEOUT_S,
                              "the subprocess timeout leaves BOOT_ROOM_S of CI's per-test cap for the rest of setUpClass")
@@ -399,8 +401,11 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
         present (the card attached inside the read gap: an honest 20.0x s, refused all the same, since the leg keys on the
         wait's outcome and not on a read that happened to catch it), an older driver's record with no expired list and the
         visibles shown (the outcome cannot be established, so the read alone does not make it a delivery) and a resolved
-        wait whose read found nothing (the belt: the DOM changed between the wait and the read) each fail naming the phase; a resolved wait at 20,012 ms with the visibles present passes, since
-        a resolved wait ended by its cap and the excess is the reads (DOWN_READ_ROOM_MS)."""
+        wait whose read found nothing (the belt: the DOM changed between the wait and the read) each fail naming the phase and in
+        the words of the check that refused it (the expired check's own clause, not a token the record's repr carries: the seen
+        record embeds 'expired' as a key, so that word alone would let a visibles failure pass for an expired one); a resolved wait
+        at 20,012 ms with the visibles present passes, since a resolved wait ended by its cap and the excess is the reads
+        (DOWN_READ_ROOM_MS)."""
         span_ms = 42005                     # settled less phase D's t1: 42.004 to 42.010 s over the recorded head drives
         d_t1 = 2_000_000.0                  # phase D's post end, in the control door's seconds
         settled = int(d_t1 * 1000) + span_ms
@@ -432,9 +437,9 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
             self.assertAlmostEqual(span_s, span_ms / 1000.0, places=3, msg="%s: the leg read the window from phase D's post end to settled" % cls.__name__)
             self.assertEqual(deliveries, {"A": 1000, "B": 2000, "C": 19900}, "%s: every wait resolved and shown, so every phase's waitedMs is a delivery and the slowest is C's" % cls.__name__)
             for X in "ABC":
-                cells = [("a wait that expired with the visibles absent", seen(20012, X, shown=False, expired=["card"]), "expired"),
-                         ("a wait that expired though the read caught the card", seen(20012, X, shown=True, expired=["card"]), "expired"),
-                         ("an older driver's record with no expired list, visibles shown", seen(20012, X, shown=True, key=False), "expired"),
+                cells = [("a wait that expired with the visibles absent", seen(20012, X, shown=False, expired=["card"]), "resolved before their cap"),
+                         ("a wait that expired though the read caught the card", seen(20012, X, shown=True, expired=["card"]), "resolved before their cap"),
+                         ("an older driver's record with no expired list, visibles shown", seen(20012, X, shown=True, key=False), "resolved before their cap"),
                          ("a resolved wait whose read found nothing", seen(20012, X, shown=False, expired=[]), "phase %s's changes" % X)]
                 for why, v, token in cells:
                     with self.assertRaises(AssertionError, msg="%s: %s in phase %s must fail the margin leg instead of measuring the cap" % (cls.__name__, why, X)) as cm:
