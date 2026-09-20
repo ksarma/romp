@@ -2258,7 +2258,10 @@ class _WalkHarness(unittest.TestCase):
         checks against its derives. Bounds: WALK, GATE and SWEEP, the callers the condition names, hand
         lists; the ceilings (one per sid for the walk and the gate, the owned records for the sweep), the condition's own figures; the
         window, one _auto_nudge_tick call; and the doors recorded, the judge's two, with what setUp replaces pinned there against
-        REPLACED_KM and REPLACED_JD both ways, and CASE_KM and CASE_JD, what a case replaces after setUp, pinned by nothing."""
+        REPLACED_KM and REPLACED_JD both ways, and CASE_KM and CASE_JD, what a case replaces after setUp, pinned from the outside by
+        the cleanup's check (_restore) over both modules' globals and their classes' attributes: a case may replace only names on the
+        saved lists, since any other is named as leaked at its cleanup (until the round-7 fixes the two lists were pinned by nothing,
+        and this sentence said so past that fix)."""
         before = {k: km._NUDGE_WALK_STATS[k] for k in self.KEYS}
         gate0 = dict(km._NUDGE_GATE_STATS)
         s0, g0 = jd.shared_store_stats(), jd.goal_io_stats()["loads"]
