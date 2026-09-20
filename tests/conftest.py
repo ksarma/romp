@@ -1037,18 +1037,23 @@ def _sdk_judge_reload(before, after):
 # verdict as "%s. Fix: %s", and a period inside made ".. Fix:" on the line, which the outer tests' boundary() reader
 # accepted (S10 pins the single period).
 _SDK_FOUND_REFUSED = ("The object this scope found is the object this worker's first test window refused to attribute: "
-                      "that refusal names its origin, this line the scope that swapped it out and the value it left")
+                      "that refusal names its origin, this line the scope at whose end the slot no longer held it, and the "
+                      "value it held")
 
 
 def _sdk_found_refused(verdict, start, end):
     """The start-to-end boundary verdict with its link clause when the object the scope found (`start.be`, the verdict's
     rendered before value) is one the worker's first window refused to attribute (_sdk_refused: membership by identity
     on _SDK_REFUSED, never a rendered path), else the verdict as given. The refusal named the object's origin and no
-    scope; the verdict names the scope and the value it left; so the two lines name one object and the clause links them
-    AT THE OBJECT (S10, the swap never undone, the verdict beside the refusal in One.a's one teardown; S10B, the object
-    repointed by setUpModule between the module start read and the class's reads, two paths for one object, the clause
-    still there). Keyed on the object THIS ROAD RENDERS: the start-to-end judgment renders the found object as its
-    before value, so the clause is true of the line it rides; a verdict on a found object no refusal named carries none
+    scope; the verdict names the scope at whose end the slot no longer held the object, and the value it held then; so
+    the two lines name one object and the clause links them AT THE OBJECT (S10, the swap never undone, the verdict
+    beside the refusal in One.a's one teardown; S10B, the object repointed by setUpModule between the module start read
+    and the class's reads, two paths for one object, the clause still there). The tail says only what this road always
+    knows: it is reached when the scope ends on a value that is not the one it found, whether the scope's own setup
+    swapped the object out (S10's One) or a test inside it did and the scope's end merely found the slot changed (S15's
+    module end, after Two.a reset the slot: a tail naming the scope as the one that swapped the object out was false
+    there). Keyed on the object THIS ROAD RENDERS: the start-to-end judgment renders the found object as its before
+    value, so the clause is true of the line it rides; a verdict on a found object no refusal named carries none
     (S10C's Two, with a refusal standing in the worker; M, with none). Off the changed-marker road: the reload judgment
     renders the after value alone and no before, so a clause there would name an object the line does not show (no case
     has a refusal followed by a re-execution inside the refused object's scope, so this term is pinned by no run)."""
@@ -1070,11 +1075,13 @@ def _sdk_judge_scope(start, last, end, windows):
     roads carry no clause: the last-object roads render an object that is not the one the scope found (S10C's One
     finds the refused object, swaps it out, its test builds and its teardown repoints the build: the verdict renders
     the build alone, and a clause keyed on the found object would name one the line does not show), and the put-back
-    roads render the found object but end on it, so the clause's tail, the scope that swapped it out and the value it
-    left, would be false there. A later case that needs a clause on one of them keys it on the object THAT road
+    roads render the found object but end on it, so the clause's tail, the scope at whose end the slot no longer held
+    it, would be false there. A later case that needs a clause on one of them keys it on the object THAT road
     renders, never on start.be (THE RULE in the design comment: identity on the rendered object, never a rendered
     path). Never inside _sdk_judge, which is the function fixture's road too: a clause there would ride every
-    test-window verdict whose before value is the refused object."""
+    test-window verdict whose before value is the refused object (S15's Two.a, which starts under the refused object
+    and resets the slot: its own verdict carries no clause, and the module end's start-to-end verdict on the same
+    change does; the cell boundary-link-in-judge moves the clause there and S15 reds)."""
     if end.be is last.be:
         if last.sd != end.sd:                  # the teardown repointed the singleton its last test left: named before the quiet rules
             return (_sdk_repointed_text("left the kernel's backend singleton (km._sdk_backend) changed after its teardown",
