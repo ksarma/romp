@@ -50,8 +50,30 @@
 //     body's last visible line and the other text it holds, and a click on it commented on text out of view. Now the re-seat takes a box
 //     at least partly inside the body's (inBodyBox) and hides otherwise, as (6) has a remnant that moved; the stand-in's body wears a box
 //     for that read (BODY_BOX), every offer's rect inside it.
+// (10) A paint landing in the GAP between the person's change of the selection and the browser's selectionchange for it (found
+//     2026-09-19): Chromium posts the event as a task, 0.7 to 14.3 ms after the keydown over 20 measured presses, and afterPaint read the
+//     LIVE selection at the pass's end, so a pass landing in that gap (a peer's comment through the poll, a settings pick from another
+//     pane) found the person's change already in the live selection and recorded it as the offer's; their own event then read the
+//     selection as already answered and offered nothing, and on a one-line selection the pass left intact, whose right edge the change
+//     had moved a glyph, afterPaint had hidden the float first (the subject moved, the text not the record's): the Comment button
+//     vanished on Shift+ArrowRight. Now every pass reads the selection at its head, before its writes (noteSelectionAtHead): one the
+//     float has not answered (a passage of the body's, not the record's by its ends or its text, no pointer down, no editor, the panel
+//     open) is the person's change with its event still to come, a latch (pendingChange) the event lowers, and afterPaint drops the
+//     record and leaves the float to that event, which offers beside the selection as the pass left it; a second pass in the same task
+//     reads the latch still up. file-comments-paint-gap-browser.test.ts forces the gap in Chromium with the real keyboard.
+// (11) The same pass CUTTING the pending selection (the review of the fix, 2026-09-20): a remnant with a box is the event's to re-offer
+//     beside, as it stands (the ON cut and (6)'s moved remnant, hidden by the paint when no change is pending), but a subject the writes
+//     left gone or with no box is hidden by the pass as (4) and (5) have it: the pending branch returned before those hides, the event
+//     hides a collapsed selection itself but refuses a boxless remnant without hiding, and the Comment button stood beside a bare line
+//     break with a composer the whitespace refusal closed, (5) over again.
+// (12) A passage standing over NO record (the same review): read as pending, it left the record dropped and the pass's OWN event
+//     offering, so opening the panel over a selection made while it was closed (the listener refuses every selection then) showed the
+//     Comment button when the open's writes happened to split the selection's text node, and not otherwise; a stale record from before
+//     the close read the same. Now the latch is raised over a standing record alone, and openPanel starts the record and the latch
+//     afresh, so the open's own pass records the standing selection and its event is no offer; the person's next change offers.
 // Driven over the behavior suite's DOM stand-in with the selection faked per case (window.getSelection is what the panel reads and
-// what afterPaint records), the document's listeners run as the browser runs them, and the seam's paint fired through its hook.
+// what afterPaint records; a cut the paint makes is applied when the paint replaces the node, liveSelectionOn's cutOnPaint, since the
+// pass reads the selection at its head too), the document's listeners run as the browser runs them, and the seam's paint fired through its hook.
 // file-comments-paint-offer-browser.test.ts runs (1) over the real viewer in Chromium, where the paint moves the selection itself.
 // Nodes hide their edges at construction (hideEdges, ui/test-dom-shim.ts). Synthetic fixtures only: the notes-api world,
 // placeholder ids.
@@ -333,7 +355,8 @@ function answer(w: World, s: Status, m = lastOf(w, "fileComments", "status")): v
   if (s.storePath && s.storeMtimeNs !== null) w.mtimes[s.storePath] = s.storeMtimeNs;
   if (s.root && s.configMtimeNs !== null) w.mtimes[s.root + "/.trackchanges/config.json"] = s.configMtimeNs;
 }
-async function openPanel(w: World): Promise<void> {
+/** The panel mounted and opened (the bar button's click, the status answered); the button, for a close and a reopen (case (12)). */
+async function openPanel(w: World): Promise<El> {
   const fc = await import("./file-comments");
   const unit = fc.fileCommentsAction.mount(w.ctx) as unknown as El;
   const button = unit.childNodes[0] as El;
@@ -341,6 +364,7 @@ async function openPanel(w: World): Promise<void> {
   button.click();
   answer(w, status()); await flush(); await flush();
   assert.ok(w.main.querySelector(".fileview-aside"), "the panel is mounted beside the body");
+  return button;
 }
 function textNodeWith(root: El, needle: string): { node: Txt; at: number } {
   const hit = (function find(n: El): { node: Txt; at: number } | null {
@@ -416,12 +440,22 @@ function countReads(s: any): () => number { let n = 0; const orig = s.toString; 
 
 /** A LIVE selection over the passage, as a browser's is: its nodes read at each access, so after a paint has unwrapped the
  *  passage's mark, normalized the row and wrapped it again (the text node replaced), the ends name the new node, as a live range's
- *  do; `length` is how far the selection reaches into the passage, cut short by the paint's collapse of an end (the fake is told). */
+ *  do; `length` is how far the selection reaches into the passage. A paint's collapse of an end cuts it short the moment the paint
+ *  replaces the node (`cutOnPaint`: the length the cut leaves, and the text the remnant reads as when it is not the passage's own
+ *  head), never before: the panel reads the selection at a pass's head, before its writes, and a cut told before the paint would read
+ *  there as the person's own change with its event still to come (noteSelectionAtHead, the gap case below); a cut to length 0 is the
+ *  lone-child collapse, the selection collapsed by the paint (case (4)'s geometry). A `length` set directly is the person's change,
+ *  live at once; `remnant` overrides the text a remnant reads as until the next change clears it. */
 function liveSelectionOn(root: El, passage: string, length: number, rect: Rect): any {
   const hit = () => textNodeWith(root, passage);
-  const sel = { rangeCount: 1, isCollapsed: false, length, rect,
-    get anchorNode() { return hit().node; }, get anchorOffset() { return hit().at; }, get focusNode() { return hit().node; }, get focusOffset() { return hit().at + sel.length; },
-    toString: () => passage.slice(0, sel.length), getRangeAt: () => ({ getBoundingClientRect: () => sel.rect }) };
+  let cut: { node: Txt; length: number; text: string | null } | null = null;
+  const settle = () => { if (cut && hit().node !== cut.node) { sel.length = cut.length; sel.remnant = cut.text; if (cut.length === 0) collapsed = true; cut = null; } };
+  let collapsed = false;   // live, as a browser's isCollapsed is: the panel reads it before any end (passageGone), so the cut settles here too
+  const sel: any = { rangeCount: 1, length, rect, remnant: null as string | null,
+    get isCollapsed() { settle(); return collapsed; }, set isCollapsed(v: boolean) { collapsed = v; },
+    get anchorNode() { settle(); return hit().node; }, get anchorOffset() { settle(); return hit().at; }, get focusNode() { settle(); return hit().node; }, get focusOffset() { settle(); return hit().at + sel.length; },
+    toString: () => { settle(); return sel.remnant ?? passage.slice(0, sel.length); }, getRangeAt: () => ({ getBoundingClientRect: () => sel.rect }),
+    cutOnPaint: (n: number, text: string | null = null) => { cut = { node: hit().node, length: n, text }; } };
   return sel;
 }
 
@@ -437,7 +471,7 @@ test("the panel's own paint cuts an overlapping selection short and fires select
   assert.equal(float.hidden, true, "hidden by a scroll that moved the passage");
   // the paint (the seam's hook: hideFloat, then paintAll) unwraps and re-wraps the highlight: the passage's text node is replaced,
   // and the selection's end inside the old node collapsed to the mark's place, so the selection reaches nine characters, not all
-  live.length = 9; live.rect = RECT_B;
+  live.cutOnPaint(9); live.rect = RECT_B;
   paintHook(w);
   assert.notEqual(live.anchorNode, before, "the paint replaced the selection's node");
   assert.equal(String(live), QUOTE.slice(0, 9), "...and left the selection cut short");
@@ -453,7 +487,7 @@ test("the panel's own paint cuts an overlapping selection short and fires select
   // that cuts the selection again and leaves the remnant's box where the offer read it (the cut trims the selection inside the line
   // box the button sits beside: the fake's rect stays): the float stays as the paint found it, where main left it before the panel
   // heard selectionchange at all, and the paint's own event is no offer (a remnant the paint MOVES from under the button is (6)'s)
-  live.length = 3;
+  live.cutOnPaint(3);
   const mid = live.anchorNode;
   externalFilterPick();
   assert.notEqual(live.anchorNode, mid, "the pick's paint replaced the node again");
@@ -524,7 +558,7 @@ test("a paint whose writes collapse the selection to NOTHING, with no selectionc
   documentEvent("selectionchange");
   assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_B) }, "the keyboard's next selection offers the float");
   // a paint that cuts the selection short but not to nothing leaves a shown float where it was (case (1)'s rule stands)
-  live.length = 3;
+  live.cutOnPaint(3);
   externalFilterPick();
   assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_B) }, "cut short, still a selection: the float stays where the offer put it");
   documentEvent("selectionchange");
@@ -544,25 +578,23 @@ test("a paint whose writes cut the selection to a remnant with NO box (a selecti
   const w = world(); t.after(() => w.close()); t.after(() => { selection = null; });
   await openPanel(w);
   const live = liveSelectionOn(w.body, QUOTE, QUOTE.length, RECT_A);
-  let remnant: string | null = null;   // the text the fake reports once the paint has cut the selection to the break (null: the passage's own)
-  live.toString = () => remnant ?? QUOTE.slice(0, live.length);
   const float = dragOffer(w, live);
   assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_A) });
   // a paint with no gesture while the float shows (a settings pick from another pane: paintAll with no hideFloat, the poll's shape)
   // leaves the selection a bare line break between the paragraph's end and the next block's start: the fake is told (not collapsed,
   // its nodes in the body, its rect empty), and no selectionchange follows
-  live.length = 1; live.rect = RECT_NONE; remnant = "\n";
+  live.cutOnPaint(1, "\n"); live.rect = RECT_NONE;
   externalFilterPick();
   assert.deepEqual([String(live), live.isCollapsed, w.body.contains(live.anchorNode)], ["\n", false, true], "the paint left a line break selected, not collapsed, in the body");
   const box = live.getRangeAt(0).getBoundingClientRect();
   assert.deepEqual([box.width, box.height], [0, 0], "...with no box");
   assert.equal(float.hidden, true, "the float went with the paint that left it beside a selection with no box, the offer's own refusal (before: shown, a Comment button that opened a composer the whitespace refusal closed at once)");
   // the person's next change offers again
-  remnant = null; live.length = 5; live.rect = RECT_B;
+  live.remnant = null; live.length = 5; live.rect = RECT_B;
   documentEvent("selectionchange");
   assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_B) }, "the keyboard's next selection offers the float");
   // a paint that cuts the selection short to a remnant WITH a box leaves the shown float where it was (case (4)'s rule stands)
-  live.length = 3;
+  live.cutOnPaint(3);
   externalFilterPick();
   assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_B) }, "cut short to a remnant with a box: the float stays where the offer put it");
   documentEvent("selectionchange");
@@ -570,10 +602,10 @@ test("a paint whose writes cut the selection to a remnant with NO box (a selecti
   // hidden by a scroll that moved the passage, a paint that leaves the boxless remnant leaves it hidden, and the next change offers
   live.rect = RECT_MOVED; dispatch(w.body, new Ev("scroll"));
   assert.equal(float.hidden, true, "hidden by the scroll");
-  live.length = 1; live.rect = RECT_NONE; remnant = "\n";
+  live.cutOnPaint(1, "\n"); live.rect = RECT_NONE;
   externalFilterPick();
   assert.equal(float.hidden, true, "hidden it stays");
-  remnant = null; live.length = 4; live.rect = RECT_B;
+  live.remnant = null; live.length = 4; live.rect = RECT_B;
   documentEvent("selectionchange");
   assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_B) }, "the next selection offers");
 });
@@ -587,7 +619,7 @@ test("a paint whose writes cut the selection to a remnant WITH a box that has MO
   // a paint with no gesture while the float shows (a settings pick from another pane: paintAll with no hideFloat, the poll's shape)
   // cuts the selection and leaves the remnant's box a line below the offer's and shorter: the fake is told (in the body, not
   // collapsed, a box, moved), and the browser's selectionchange for the move, where it fires one, follows the paint
-  live.length = 9; live.rect = RECT_BELOW;
+  live.cutOnPaint(9); live.rect = RECT_BELOW;
   externalFilterPick();
   assert.deepEqual([String(live), live.isCollapsed, w.body.contains(live.anchorNode)], [QUOTE.slice(0, 9), false, true], "the paint left a remnant selected, in the body");
   const box = live.getRangeAt(0).getBoundingClientRect();
@@ -601,13 +633,13 @@ test("a paint whose writes cut the selection to a remnant WITH a box that has MO
   documentEvent("selectionchange");
   assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_BELOW) }, "the keyboard's next selection offers the float beside the remnant");
   // a paint whose cut leaves the remnant within a pixel of the offer's box (the sub-pixel drift the scroll rule allows for) keeps it
-  live.length = 10; live.rect = { ...RECT_BELOW, top: RECT_BELOW.top + 0.4, right: RECT_BELOW.right - 0.6 };
+  live.cutOnPaint(10); live.rect = { ...RECT_BELOW, top: RECT_BELOW.top + 0.4, right: RECT_BELOW.right - 0.6 };
   externalFilterPick();
   assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_BELOW) }, "a remnant within a pixel of the offer's box keeps the float where the offer put it");
   documentEvent("selectionchange");
   assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_BELOW) }, "...and the paint's own event moves nothing");
   // ...and one whose right edge moved a pixel loses it, the scroll's threshold
-  live.length = 11; live.rect = { ...RECT_BELOW, right: RECT_BELOW.right + 1 };
+  live.cutOnPaint(11); live.rect = { ...RECT_BELOW, right: RECT_BELOW.right + 1 };
   externalFilterPick();
   assert.equal(float.hidden, true, "a remnant whose edge moved a pixel: the float goes, as on a scroll");
   // hidden by a scroll that moved the passage, a paint that moves the remnant leaves it hidden, and the next change offers
@@ -616,7 +648,7 @@ test("a paint whose writes cut the selection to a remnant WITH a box that has MO
   assert.equal(float.hidden, false, "offered again for the next change");
   live.rect = RECT_MOVED; dispatch(w.body, new Ev("scroll"));
   assert.equal(float.hidden, true, "hidden by the scroll");
-  live.length = 9; live.rect = RECT_A;
+  live.cutOnPaint(9); live.rect = RECT_A;
   externalFilterPick();
   assert.equal(float.hidden, true, "hidden it stays");
   live.length = 4; live.rect = RECT_B;
@@ -659,7 +691,7 @@ test("a paint whose writes move the selection WHOLE, not a character cut (a peer
   assert.equal(String(live), QUOTE.slice(0, 9), "the paint left the selection whole again");
   assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_LINE_DOWN) }, "moved whole by a line: the float follows to the selection's box now");
   // a remnant the writes cut AND moved still goes (case (6)'s rule): the text changed, so this is no whole move
-  live.length = 5; live.rect = RECT_BELOW;
+  live.cutOnPaint(5); live.rect = RECT_BELOW;
   externalFilterPick();
   assert.equal(String(live), QUOTE.slice(0, 5), "the paint cut the selection to a remnant");
   assert.equal(float.hidden, true, "...and moved it from under the button: the float goes, as on a scroll (the remnant's rule stands)");
@@ -758,4 +790,125 @@ test("a paint whose writes move the selection WHOLE past the BODY'S BOX (the Sho
   live.length = 4; live.rect = RECT_B;
   documentEvent("selectionchange");
   assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_B) }, "the next selection offers");
+});
+
+test("a paint landing in the GAP between the person's change of the selection and the browser's selectionchange for it (the event is a posted task, 0.7 to 14.3 ms after the keydown over 20 measured presses): the pass reads the selection at its head, and one the float has not answered leaves the record dropped and the float untouched, so the event offers beside the changed selection (before: the pass recorded the changed selection as the offer's, the event compared equal and offered nothing, and afterPaint had hidden the float the change moved a glyph from under); a float a scroll hid is offered again by that event; two passes in one task read the latch still up; a pass over the selection as offered still absorbs its own move", async (t) => {
+  const w = world(); t.after(() => w.close()); t.after(() => { selection = null; });
+  await openPanel(w);
+  const live = liveSelectionOn(w.body, QUOTE, 9, RECT_B);
+  const float = dragOffer(w, live);
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_B) });
+  // the person's Shift+ArrowRight: the selection grows by a character and its box widens by the glyph, and the browser's selectionchange
+  // is a task away; a settings pick from another pane lands in that gap (paintAll, no gesture), replacing the selection's node (a mark
+  // elsewhere on the line unwrapped and wrapped again) and leaving every selected character selected
+  const GROWN: Rect = { ...RECT_B, right: RECT_B.right + 7 };
+  live.length = 10; live.rect = GROWN;
+  const before = live.anchorNode;
+  externalFilterPick();
+  assert.notEqual(live.anchorNode, before, "the pass replaced the selection's node");
+  assert.equal(String(live), QUOTE.slice(0, 10), "...and left the grown selection whole");
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_B) }, "the pass leaves the float where the offer put it: the grown selection is the person's change, not the pass's to answer (before: hidden, its subject moved a glyph and its text not the record's)");
+  documentEvent("selectionchange");   // the person's event, the pass's own move coalesced into it
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(GROWN) }, "the person's selectionchange offers beside the grown selection (before: the pass had recorded it as the offer's, and the event offered nothing: the button stayed gone)");
+  // the same selection fired again (the pass's own event, where the browser posts a second one): no second offer
+  documentEvent("selectionchange");
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(GROWN) }, "the same selection again: no new offer");
+  // a float a scroll hid, and the person's change with a pass in its gap: the event offers again, as it does with no pass
+  live.rect = RECT_MOVED; dispatch(w.body, new Ev("scroll"));
+  assert.equal(float.hidden, true, "hidden by a scroll that moved the passage");
+  live.length = 8; live.rect = RECT_A;
+  externalFilterPick();
+  assert.equal(float.hidden, true, "the pass in the gap leaves the hidden float hidden: the person's event is the one to offer");
+  documentEvent("selectionchange");
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_A) }, "the person's selectionchange offers the float a scroll had hidden (before: the pass had recorded the changed selection, and the event read it as already answered)");
+  // two passes in one task (a status landing repaints, then a composer's target repaint): the second reads the same pending change
+  live.length = 6; live.rect = RECT_B;
+  externalFilterPick(); externalFilterPick();
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_A) }, "two passes in the gap leave the float where it was");
+  documentEvent("selectionchange");
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_B) }, "...and the person's event offers beside the changed selection (a second pass with no record and a passage live reads it as pending, not as its own)");
+  // the pinned rule stands: a pass over the selection AS OFFERED absorbs its own cut, and its event offers nothing (case (1))
+  live.cutOnPaint(3);
+  externalFilterPick();
+  assert.equal(String(live), QUOTE.slice(0, 3), "the pass cut the selection it found as offered");
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_B) }, "cut short, still a selection under the button: the float stays where the offer put it");
+  documentEvent("selectionchange");
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_B) }, "...and the pass's own event is no offer");
+});
+
+test("a paint landing in the GAP and CUTTING the pending selection (the review of the fix, 2026-09-20): a subject the pass left with no box (a bare line break between two blocks) or gone (the lone-child collapse) is hidden by the pass itself, as with no change pending (before the amendment: the pending branch returned before those hides, the person's event refused the boxless remnant without hiding, and the Comment button stood beside text nobody can see); a remnant WITH a box, moved from under the button (round 6's geometry) or cut at the anchor's side under it (the ON cut), is the person's event's to offer beside, as it stands (before the fix: hidden by the pass, and the event compared equal to the pass's record and offered nothing)", async (t) => {
+  const w = world(); t.after(() => w.close()); t.after(() => { selection = null; });
+  await openPanel(w);
+  const live = liveSelectionOn(w.body, QUOTE, 9, RECT_B);
+  const float = dragOffer(w, live);
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_B) });
+  // (5)'s geometry with the person's change pending: Shift+ArrowRight grows the selection, and a settings pick from another pane lands in
+  // its gap and cuts it to a bare line break with no box; the fake holds the grown length at the pass's head and the cut for its paint
+  live.length = 10; live.cutOnPaint(1, "\n"); live.rect = RECT_NONE;
+  externalFilterPick();
+  assert.deepEqual([String(live), live.isCollapsed, w.body.contains(live.anchorNode)], ["\n", false, true], "the pass left a line break selected, not collapsed, in the body");
+  assert.equal(float.hidden, true, "the pass hid the float beside a remnant with no box, the change pending or not (before the amendment: left standing for an event that refuses the remnant without hiding, a Comment button beside text nobody can see)");
+  documentEvent("selectionchange");   // the person's event: the remnant refused, nothing shown
+  assert.equal(float.hidden, true, "the person's event offers nothing beside a remnant with no box: hidden it stays");
+  externalFilterPick();
+  assert.equal(float.hidden, true, "a further pass over the standing remnant leaves it hidden (no record, no latch)");
+  live.remnant = null; live.length = 5; live.rect = RECT_B;
+  documentEvent("selectionchange");
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_B) }, "the keyboard's next selection offers the float");
+  // (4)'s geometry with the change pending: the pass collapses the grown selection to the paragraph, and fires no event of its own
+  live.length = 6; live.cutOnPaint(0);
+  externalFilterPick();
+  assert.deepEqual([String(live), live.isCollapsed], ["", true], "the pass collapsed the selection");
+  assert.equal(float.hidden, true, "the pass hid the float beside no selection, the change pending or not");
+  documentEvent("selectionchange");   // the person's event: no passage, and the record is gone already
+  assert.equal(float.hidden, true, "the person's event hides nothing more and offers nothing");
+  live.isCollapsed = false; live.length = 5; live.rect = RECT_B;
+  documentEvent("selectionchange");
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_B) }, "the next selection offers");
+  // (6)'s geometry with the change pending: the pass cuts the grown selection to a remnant with a box a line below the offer's; the float
+  // stands where the offer put it through the pass, and the person's event offers beside the remnant as it stands
+  live.length = 10; live.cutOnPaint(9); live.rect = RECT_BELOW;
+  externalFilterPick();
+  assert.equal(String(live), QUOTE.slice(0, 9), "the pass cut the selection to a remnant with a box, moved from under the button");
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_B) }, "the pass leaves the float where the offer put it: a remnant with a box is the pending event's to answer (before the fix: hidden by the scroll's test, the remnant moved)");
+  documentEvent("selectionchange");
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_BELOW) }, "the person's event offers beside the remnant as it stands (before the fix: the pass had recorded the remnant, the event compared equal, and the button stayed gone)");
+  // the ON cut: the pass moves the anchor out of a mark at the passage's head, so the remnant keeps the grown selection's edge and loses
+  // its first character; the event offers beside it too
+  live.length = 10; live.cutOnPaint(9, QUOTE.slice(1, 10)); live.rect = RECT_A;
+  externalFilterPick();
+  assert.equal(String(live), QUOTE.slice(1, 10), "the pass cut the selection at its anchor's side");
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_BELOW) }, "the pass leaves the float where the offer put it");
+  documentEvent("selectionchange");
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_A) }, "the person's event offers beside the remnant, at the grown selection's edge");
+});
+
+test("a passage standing over NO record (the review of the fix, 2026-09-20): the panel opened over a selection made while it was closed, which the seam's offer and the listener both refused then, records it in the open's own pass, so that pass's own selectionchange is no offer (before: read as a pending change, the record left dropped, and the pass's event offered the float when the open's writes happened to split the selection's node); the same over a stale record from before a close, which the open drops; the person's next change offers", async (t) => {
+  const w = world(); t.after(() => w.close()); t.after(() => { selection = null; });
+  // a selection standing before the panel opens: nothing recorded it, since the panel offers nothing while closed
+  const live = liveSelectionOn(w.body, QUOTE, 9, RECT_B);
+  selection = live;
+  const button = await openPanel(w);   // the open's pass runs over the standing selection
+  const float = theFloat();
+  assert.equal(float.hidden, true, "the open's pass shows nothing over a selection made while the panel was closed");
+  documentEvent("selectionchange");   // the open's writes split the selection's node: the pass's own event, a task later
+  assert.equal(float.hidden, true, "the pass's own selectionchange is no offer: the open's pass recorded the standing selection (before: read as pending over no record, the record left dropped, and this event offered the float beside a selection made before the panel was there)");
+  live.length = 12;
+  documentEvent("selectionchange");
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_B) }, "the person's next change offers");
+  // a stale record: the offer standing, the panel closed, the selection changed while it was closed (the event runs, the listener refuses)
+  button.click();
+  assert.equal(w.main.querySelector(".fileview-aside"), null, "the panel is closed");
+  assert.equal(float.hidden, true, "...and the float with it");
+  live.length = 5; live.rect = RECT_A;
+  documentEvent("selectionchange");
+  assert.equal(float.hidden, true, "a change while the panel is closed offers nothing");
+  button.click(); answer(w, status()); await flush(); await flush();   // the reopen, and its pass
+  assert.ok(w.main.querySelector(".fileview-aside"), "the panel is open again");
+  assert.equal(float.hidden, true, "the reopen's pass shows nothing over the selection changed while the panel was closed");
+  documentEvent("selectionchange");
+  assert.equal(float.hidden, true, "the pass's own event is no offer: the open started the record afresh and its pass recorded the selection as it stands (before: the stale record from before the close differed from the head selection, read as pending, and this event offered)");
+  live.length = 7;
+  documentEvent("selectionchange");
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_A) }, "the person's next change offers");
 });

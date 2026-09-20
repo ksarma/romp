@@ -531,16 +531,16 @@ test("a primary press the browser ended itself is over at its contextmenu (ctrl+
   assert.equal(float.hidden, false, "the finger lifted: offered");
 });
 
-test("the document's listeners leave at dispose: selectionchange, and the press flag's mousedown, touchstart, mouseup, touchend, touchcancel, dragend and contextmenu, and the window's blur", async (t) => {
+test("the document's listeners leave at dispose: selectionchange, and the press flag's mousedown, touchstart, mouseup, touchend, touchcancel, dragend, contextmenu and dragstart, and the window's blur", async (t) => {
   const count = (type: string) => doc.listeners.filter((l) => l.type === type).length;
   const winCount = (type: string) => winListeners.filter((l) => l.type === type).length;
-  const before = { sc: count("selectionchange"), md: count("mousedown"), ts: count("touchstart"), mu: count("mouseup"), te: count("touchend"), tc: count("touchcancel"), de: count("dragend"), cm: count("contextmenu"), bl: winCount("blur") };
+  const before = { sc: count("selectionchange"), md: count("mousedown"), ts: count("touchstart"), mu: count("mouseup"), te: count("touchend"), tc: count("touchcancel"), de: count("dragend"), cm: count("contextmenu"), ds: count("dragstart"), bl: winCount("blur") };
   const w = world(); t.after(() => w.close());   // beside the explicit close below: a count that fails before it would leave the panel's poll timer holding the process, and the run would hang instead of reporting (dispose tolerates the second call)
   t.after(() => { selection = null; });
   await openPanel(w);
-  const during = { sc: count("selectionchange"), md: count("mousedown"), ts: count("touchstart"), mu: count("mouseup"), te: count("touchend"), tc: count("touchcancel"), de: count("dragend"), cm: count("contextmenu"), bl: winCount("blur") };
-  assert.deepEqual(during, { sc: before.sc + 1, md: before.md + 2, ts: before.ts + 2, mu: before.mu + 1, te: before.te + 1, tc: before.tc + 1, de: before.de + 1, cm: before.cm + 1, bl: before.bl + 1 }, "one selectionchange listener; the press flag beside hideFloatOnDown on mousedown and touchstart, and its six ends, the window's blur among them");
+  const during = { sc: count("selectionchange"), md: count("mousedown"), ts: count("touchstart"), mu: count("mouseup"), te: count("touchend"), tc: count("touchcancel"), de: count("dragend"), cm: count("contextmenu"), ds: count("dragstart"), bl: winCount("blur") };
+  assert.deepEqual(during, { sc: before.sc + 1, md: before.md + 2, ts: before.ts + 2, mu: before.mu + 1, te: before.te + 1, tc: before.tc + 1, de: before.de + 1, cm: before.cm + 1, ds: before.ds + 1, bl: before.bl + 1 }, "one selectionchange listener; the press flag beside hideFloatOnDown on mousedown and touchstart, its six ends, the window's blur among them, and the dragstart that hears a drag's end on its source (dragBegan)");
   w.close();
-  const after = { sc: count("selectionchange"), md: count("mousedown"), ts: count("touchstart"), mu: count("mouseup"), te: count("touchend"), tc: count("touchcancel"), de: count("dragend"), cm: count("contextmenu"), bl: winCount("blur") };
+  const after = { sc: count("selectionchange"), md: count("mousedown"), ts: count("touchstart"), mu: count("mouseup"), te: count("touchend"), tc: count("touchcancel"), de: count("dragend"), cm: count("contextmenu"), ds: count("dragstart"), bl: winCount("blur") };
   assert.deepEqual(after, before, "every one removed with the viewer");
 });

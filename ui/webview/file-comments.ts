@@ -1291,8 +1291,44 @@ class Panel {
    *  offer's two nodes past a reload's paint, and the whole previous render behind them, until the next offer (the same review).
    *  Dropped when the listener hides the float for a selection that is no passage of the body's (onSelectionChange: collapsed, or
    *  an end outside the body), since a record the float no longer answers to read the selection brought back to its ends as
-   *  already offered (the same review, round 4); the scroll's hide keeps it, so the re-seat of the same ends stays no offer. */
+   *  already offered (the same review, round 4); the scroll's hide keeps it, so the re-seat of the same ends stays no offer. Read
+   *  after the paint from a selection the float HAS answered only (pendingChange): the browser posts selectionchange as a task, 0.7 to
+   *  14.3 ms after the keydown over 20 measured presses, and a paint landing in that gap found the person's change already in the
+   *  live selection and recorded it here, so their own event then read the selection as already offered and offered nothing; on a
+   *  one-line selection the paint left intact, the change had moved the right edge a glyph from under the button, and afterPaint hid
+   *  the float, which the coming event did not re-offer: the Comment button vanished on Shift+ArrowRight (found 2026-09-19). Now a
+   *  pass reads the selection at its head (noteSelectionAtHead), and one the float has not answered leaves the record dropped and the
+   *  float to the pending event. */
   offeredFor: SelectionEnds & { text: string } | null = null;
+  /** A change of the selection the float has NOT answered is on its way: the person changed it since the last offer or pass, a pass found
+   *  the change at its head, and the browser's selectionchange for it is still to come (offeredFor's note on the gap). A latch: raised by
+   *  noteSelectionAtHead before a pass's writes (paintAll, repaintPreselPass), read by afterPaint at the pass's end, which then drops the
+   *  record instead of reading it from a selection that holds their change and leaves the float to that event, and lowered by the event
+   *  itself (onSelectionChange's first line), never by a pass: a second pass in the same task, the record dropped by the first, reads the
+   *  same pending change, whose event has not run. The event compares the selection as the pass left it with no record and offers
+   *  beside it (or hides) as for any change of theirs, and the pass's own move of the selection, where it makes one, rides the same
+   *  posted event. Raised over a standing record alone: with NO record a pass records the selection as before and its own event is no
+   *  offer, since a passage standing over no record is one the listener refused (a range with no box) or made while the panel was
+   *  closed, no change the float has to answer. Read as pending whenever no record stood, opening the panel over a selection made
+   *  while it was closed offered the float when the open's writes happened to split the selection's text node, and not otherwise (the
+   *  review of the fix, 2026-09-20). A pass the editor's stand-down ends (paintAll's first line) reads none of it: the editor's
+   *  selections are edits, as the listener has them. Nothing is pending while the panel is closed (the listener answers no change
+   *  then), and openPanel starts the record and the latch afresh, so a selection standing from while it was closed is the open's own
+   *  pass to record. */
+  pendingChange = false;
+  /** Read the selection at the head of a pass, before its writes, into pendingChange: raised when a record stands (offeredFor) and the
+   *  selection is a passage of the body's (passageGone's rule) that is not the record's, by its ends (atEnds: free, and the common case, a
+   *  poll's paint over a selection nobody touched) nor, the ends renamed by an earlier paint's split of a text node while the text stands
+   *  (the seam's own test of a selection its paint left standing, afterPaint's note), by its text; nothing while a pointer is down (a
+   *  drag's changes are the mouseup's offer, and its mid-drag selection is no pending change of the keyboard's), while the editor holds
+   *  the body, the listener's own guards (onSelectionChange), or while the panel is closed (the listener answers no change then). A latch
+   *  already raised stands: the event that lowers it has not run, and the record it compared with is gone (pendingChange). */
+  private noteSelectionAtHead(): void {
+    if (this.pendingChange) return;
+    const sel = typeof window.getSelection === "function" ? window.getSelection() : null;
+    const was = this.offeredFor;
+    this.pendingChange = !!sel && !!was && this.open && !this.pointerHeld && !this.ctx.editing() && !this.passageGone(sel) && !atEnds(was, sel) && was.text !== sel.toString();
+  }
   /** A pointer is down (the document's capture mousedown, for the PRIMARY button, or touchstart; cleared at mouseup, touchend,
    *  touchcancel, the dragend of a press that became a drag of the selected text, which ends in no mouseup, a contextmenu, and the
    *  window's blur): a drag's every selectionchange is ignored, so the drag keeps its one offer at mouseup (the seam's onSelect) and
@@ -1301,7 +1337,9 @@ class Panel {
    *  the release, so a flag raised by one stood until the reader's next left click, and every keyboard change of the selection in
    *  between offered nothing (the Slice 5 review, round 2); a contextmenu means the browser ended the press itself (ctrl+click on
    *  macOS, a long press on a touch screen, no click following), and the window's blur that a release in another frame never
-   *  reaches this one. A touch press has no button and is held as before. */
+   *  reaches this one. A touch press has no button and is held as before. A drag of the selected text ends in a dragend at the drag's
+   *  SOURCE, the text node under the press, heard at the document by propagation alone, and a pass landing mid-drag can detach that
+   *  node; the drag's end is heard on the source itself then (dragBegan). */
   pointerHeld = false;
   /** The marks of ours a primary-button press began on (the pressed mark and every mark of ours around it, since two comments
    *  over one passage nest their marks), each with the tabindex the paint gave it, taken off for the press (pressBegan) and put
@@ -1324,6 +1362,21 @@ class Panel {
     if (ev.type === "mousedown") this.unfocusForPress(ev.target as Element | null);
   };
   pressEnded = (ev?: Event): void => { this.pointerHeld = false; this.refocusPressed(!ev || (ev.type !== "blur" && ev.type !== "contextmenu")); };
+  /** A drag began under the press (the document's capture dragstart: the selected text taken up to drop elsewhere). Its end is a dragend
+   *  at the drag's SOURCE, the node under the press, a text node, which the document's own dragend listener hears by propagation alone.
+   *  A pass landing mid-drag (a peer's comment through the poll, a settings pick from another pane) removes that node when it is a mark's
+   *  text (the unwrap moves it out of the mark and the unpaint's normalize merges it into the text before it) or plain text after a mark
+   *  on its line (merged the same way), and Chromium then dispatches the dragend at the DETACHED node, where nothing of the document's
+   *  runs: the flag stood past the drop, every change of the selection from the keyboard offered nothing until the next primary press,
+   *  and nothing on screen said why (the browser probe of 2026-09-20: a programmatic passage selection and Shift+ArrowRight offered
+   *  nothing; a click, then the same selection offered). So the press's end is heard at the source itself, once for this drag: a listener
+   *  on a node runs wherever the node has gone. A connected source's dragend reaches the document's listener first, and the second call
+   *  finds the flag down (pressEnded is idempotent). No hook for a drag that began under no press of ours. */
+  dragBegan = (ev: Event): void => {
+    const src = ev.target as (EventTarget & Node) | null;
+    if (!this.pointerHeld || !src || typeof src.addEventListener !== "function") return;
+    src.addEventListener("dragend", this.pressEnded, { once: true });
+  };
   /** A press began on `t`: every mark of ours from it up to the body wears no tabindex until the press ends (pressedMarks). */
   private unfocusForPress(t: Element | null): void {
     if (this.pressedMarks.length) this.refocusPressed(false);   // a press whose end was never heard: its attributes back first
@@ -1361,6 +1414,7 @@ class Panel {
    *  every paint and reflow.
    *  Nothing while the editor holds the body: its selections are edits (the seam gates its own path the same way). */
   onSelectionChange = (): void => {
+    this.pendingChange = false;   // the change a pass's head found still to come has come, its own move riding the same event (pendingChange)
     if (this.pointerHeld || this.ctx.editing()) return;
     const sel = typeof window.getSelection === "function" ? window.getSelection() : null;
     if (!sel || this.passageGone(sel)) {
@@ -1736,6 +1790,7 @@ class Panel {
     for (const ev of ["mousedown", "touchstart"]) document.addEventListener(ev, this.pressBegan, true);
     for (const ev of ["mouseup", "touchend", "touchcancel", "dragend", "contextmenu"]) document.addEventListener(ev, this.pressEnded, true);
     window.addEventListener("blur", this.pressEnded);
+    document.addEventListener("dragstart", this.dragBegan, true);   // a drag's end is heard on its source too, which a pass mid-drag can detach (dragBegan)
     document.addEventListener("selectionchange", this.onSelectionChange);
     // the layout changes that re-wrap the lines with no width report, so the seam fires no reflow (the width observer's report
     // is its only source): a figure's bytes landing (the same captured `load`; a gated figure's restored media loads through it
@@ -2218,6 +2273,9 @@ class Panel {
   openPanel(): void {
     if (this.open) return;
     this.open = true;
+    // the float's record and the pending latch are the OPEN panel's (pendingChange): a selection standing from while it was closed,
+    // which the listener refused then (onSelection), is the pass this open runs to record, and that pass's own event is no offer
+    this.offeredFor = null; this.pendingChange = false;
     if (!this.root) {
       this.root = el("div", "fc-panel");
       // the list layout's scroll (the viewer makes this root the aside, .fileview-aside, whose box scrolls the cards): the
@@ -2302,6 +2360,7 @@ class Panel {
     for (const ev of ["mousedown", "touchstart"]) document.removeEventListener(ev, this.pressBegan, true);
     for (const ev of ["mouseup", "touchend", "touchcancel", "dragend", "contextmenu"]) document.removeEventListener(ev, this.pressEnded, true);
     window.removeEventListener("blur", this.pressEnded);
+    document.removeEventListener("dragstart", this.dragBegan, true);
     document.removeEventListener("selectionchange", this.onSelectionChange);   // the keyboard's offer goes with the float (onSelectionChange)
     this.offeredFor = null;                                                      // ...and the selection it compared with
     this.ctx.body().removeEventListener("load", this.scheduleRetrim, true);
@@ -3727,6 +3786,7 @@ class Panel {
     // stamped box is stripped in place instead, and the strip's removal of its tabindex drops the focus the same way,
     // so refocusMark reads the focus, not the element's presence, and the box, stamped again, takes it back too
     const held = this.heldMark();
+    this.noteSelectionAtHead();                        // the selection before the writes: the person's own change, its event still to come, is no record of this pass's (afterPaint)
     unpaintChanges(this.ctx.body());                   // before each repaint (D5): the marks are unwrapped, never stacked
     this.unpaint(".fc-hl, .fc-presel, .fc-hl-block, .fc-presel-block");   // a status refresh repaints the SAME body: never wrap twice (the block classes: a display formula's stamped box, stripped)
     const src = this.ctx.text(); const root = this.contentRoot();
@@ -3817,7 +3877,9 @@ class Panel {
     this.render();
   }
   /** After the panel's own writes over the body's text (the end of paintAll, of repaintPresel, and paintAll's stand-down while the
-   *  editor holds the body): the selection the float answers to is the selection as the writes left it (offeredFor, read by
+   *  editor holds the body), for a selection the float has answered (pendingChange false: the person's own change, its event still to
+   *  come, leaves the record dropped and the float to that event instead, the first clause and the docblock's tail): the selection the float answers to is the
+   *  selection as the writes left it (offeredFor, read by
    *  onSelectionChange), so the selectionchange the writes fire is no offer, and a record whose nodes a reload's paint or the editor
    *  replaced holds the live selection's nodes instead of the swapped-out render's. Read after every write of the pass, the overlays'
    *  (paintRegions) included, since a live range's ends move with the nodes around them; the text once (Selection.toString), the
@@ -3864,9 +3926,28 @@ class Panel {
    *  seated the button 30 px above a passage nobody can see, over the body's last visible line and the other text it holds, and a
    *  click on it commented on text out of view (78c0806ce hid it, as for any move; the scroll's listener hides for the same
    *  displacement). The re-seat takes a box at least partly inside the body's (inBodyBox) and hides otherwise, as for a remnant
-   *  that moved; the offer's own path (onSelection) keeps its guards, since a gesture's selection is in view by the browser's doing. */
+   *  that moved; the offer's own path (onSelection) keeps its guards, since a gesture's selection is in view by the browser's doing.
+   *  All of it for a selection the float has answered. A change of the person's the pass found at its head, its event still to come
+   *  (pendingChange), is that event's to answer: the record is dropped and the float left standing for it, which offers beside the
+   *  selection as the writes left it, a remnant with a box included (the ON cut and round 6's moved remnant, which go with the paint
+   *  when no change is pending, re-seat beside the remnant then: 235.8 to 245.0 px and 530.0 to 488.1 px in the review's 900 by 700 px
+   *  pane, where the paint hid them before), except a subject the writes left gone or with no box, which goes now as above: the event
+   *  hides a collapsed selection itself (the listener's guard) but refuses a boxless one without hiding (onSelection's), and the button
+   *  stood beside a bare line break with a composer the whitespace refusal closed, round 5 over again (the review of the fix,
+   *  2026-09-20). */
   private afterPaint(): void {
     const sel = typeof window.getSelection === "function" ? window.getSelection() : null;
+    // the person's own change, its selectionchange still to come (pendingChange, latched at the pass's head and lowered by that event):
+    // recorded here, from a live selection that already holds it, the event read the change as answered and offered nothing (the
+    // record's note on the gap). The record is dropped instead, so the event compares the selection as the pass left it with no record
+    // and offers beside it, or hides, as for any change of theirs; the float is that event's to move and stands until it, except beside
+    // a subject the writes left gone or with no box, hidden now as with no change pending (the rounds 2 and 5 hides below): the event
+    // refuses a boxless remnant without hiding (onSelection's guard), and the button stood beside a bare line break (the docblock's tail)
+    if (this.pendingChange && !this.ctx.editing()) {
+      this.offeredFor = null;
+      if (sel && !this.float.hidden && this.floatAt && !this.floatAt.img && (this.passageGone(sel) || !this.floatSubjectRect())) this.hideFloat();
+      return;
+    }
     const was = this.offeredFor;
     this.offeredFor = sel && sel.rangeCount ? { text: sel.toString(), ...endsOf(sel) } : null;
     // no passage's float SHOWING: a hidden float stays hidden whatever hid it, the scroll listener's own guard (a picture's stands)
@@ -4183,6 +4264,7 @@ class Panel {
    *  nothing: the caller's render stands, and no card moves on no new information. */
   private repaintPresel(): void { this.repaintPreselPass(); this.afterPaint(); }   // the selection as the repaint left it is the one the float answers to (afterPaint)
   private repaintPreselPass(): void {
+    this.noteSelectionAtHead();                        // as paintAll reads it before its writes: the person's pending change is no record of this pass's (afterPaint)
     const src = this.ctx.text(); const root = this.contentRoot();
     if (src === null || !root || this.ctx.mode() !== "rendered") {   // a media body, or the Raw view (a row mark, no layout-time trim)
       this.unpaint(".fc-presel, .fc-presel-block");
