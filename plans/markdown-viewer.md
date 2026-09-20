@@ -7744,7 +7744,8 @@ rule on. The file review's rounds are named the file review's round 1 to round 4
 rulings are kept beside the contract, one pair per round); the author's own verification after each round's fixes, by a
 verifier of the author's, is named the author's closing pass after that round, never a round of either review, and its
 findings carry the ids behaviour-N, records-N and coverage-N, which no fixlist of the file review holds. A record naming a
-round names the review it belongs to first.
+round names the review it belongs to first (ui/webview/linknav-records-attribution.test.ts holds this over every record the
+branch wrote).
 
 **What existed.** A link in a rendered file to another file (`[x](other.md)`, `other.md:7`, `other.md#section`, a
 picture or PDF path, a wikilink, an embed chip) opened that file in the SAME viewer card: re-opening replaced whatever
@@ -7905,9 +7906,14 @@ name (`figureHasPicture`: `loaded`, the browser having answered with a picture, 
 node suites' DOM, decided from its source), the rule `figureWantsControl` withholds the control on too, so a state
 `figureState` gains later is refused by both readers with no edit to either (before the file review's round 3 each
 reader named the two states it refused, a list a new value passes; a guard refuses on its safe side for any value it
-does not know; the three pins that hold the refused states' literals absent read every line of file-view.ts but the type
-line and `figureState`, and the three pins are file-wide on purpose, so a literal `"failed"` or `"fetching"` for
-anything else in the module must be spelled another way, which the author's closing pass after the file review's round 3 recorded, records-3); the target is read
+does not know; the pin that holds the refused states' literals absent reads every string literal of file-view.ts as the
+compiler reads it, in either quote, a template span or an escaped spelling alike, and a regular expression literal by its
+text (ui/webview/source-units.ts, the reader ui/webview/linknav-records-attribution.test.ts shares; before the file review's
+round 4, regression-2 with extra6-1, three copies of the pin matched the double-quoted spelling alone and a single-quoted
+comparison passed them all while their messages claimed no member's literal stood anywhere), but the type line's and
+`figureState`'s, and the pin is file-wide on purpose, so a literal `"failed"` or `"fetching"` for anything else in the
+module must be spelled another way, which the author's closing pass after the file review's round 3 recorded, records-3, while prose may
+quote the word, since a comment is no literal); the target is read
 again at the click; the failed figure's label, `failedSource`,
 delegates to it; read from the src alone, the control opened the fallback src a `<picture>` or a srcset figure had
 skipped), joined by the model's `figurePath` (file-comments-model.ts, the join rewriteFigureSrcs fetched through, so the
@@ -8128,8 +8134,8 @@ bypassed: no request reaches a host the gate still holds. The build's record her
 the contract said the same; the claim was false, and the follow-on is a privacy surface, landing on the owner's word
 (open point 11). The verifications: `git diff --stat $(git merge-base origin/main HEAD) HEAD -- kernel/` is empty and
 `git diff --name-only $(git merge-base origin/main HEAD) HEAD` lists files under ui/webview, docs, plans, tools,
-upstream or tests alone (36 files, the ledger entry's where line; run 2026-09-20 at the file review's records commit,
-when the merge-base was 3711863c9; tools/markdown-viewer-plan-linknav.test.mjs runs both wherever `origin/main` is
+upstream or tests alone (38 files, the ledger entry's where line; run 2026-09-20 at the commit that built the one
+reader for the file review's round 4, when the merge-base was 0d7723d34; tools/markdown-viewer-plan-linknav.test.mjs runs both wherever `origin/main` is
 known, reads the count off this sentence while the branch is unmerged, and holds the prose alone where the ref is
 not known). The build's record ran both against 34142c262, the branch point, and the merge of main into the branch
 (f694e5974) made that commit an ancestor of main, so at the merged head the same stat named four kernel files and the
@@ -8178,7 +8184,8 @@ ui/webview/file-view-figure-shapes.test.ts (the re-read's pins: watchFigureBoxes
 reason and its arming at the paints alone, figureBox's read of the laid-out box as it is for a figure in the document,
 the repaint deciding no figure and the width-only re-read gone from the source, removeFigureControl's order, the one rule
 figureTarget and figureWantsControl refuse on, figureHasPicture, over FigureState's four values, with each refused
-member's literal derived and pinned absent from every other line of the file, and both sheets' comment
+member's literal derived and pinned absent from every other string literal of the file, read as the compiler reads them
+through ui/webview/source-units.ts, and both sheets' comment
 naming decideFigureControl)
 and ui/webview/file-figure-open.test.ts (the stand-down as the listener's first line).
 The file review (2026-09-20; the control decided from the figure's current state by one function, and the figure's own
@@ -8226,7 +8233,21 @@ drop, linkAbove as any anchor, the tab's document request from the three gesture
 L3 and in L6, the cookie classes the leg measures, the failed figure opening nothing, the hidden group and the drag
 that starts on the control, each carried by the source or by a leg; L3 and this paragraph name the two shapes modules and the floor module, which
 exist; L6 names tests among the directories and the two files
-under it, which this paragraph names too, and derives its verifications from the merge-base. tests/test_file_view_bar_browser.py, the served bar pins, read the groups
+under it, which this paragraph names too, and derives its verifications from the merge-base.
+ui/webview/linknav-records-attribution.test.ts holds the rounds every record of this follow-on names to the convention in
+this section's opening paragraph (the file review's round 3, tests-2, re-ruled onto the structural rule in its round 4,
+rules-1, after a pin keyed on one string missed the misattribution in the commits that built it: a round belongs to the
+review named nearest before it in its unit of text and is one the convention enumerates for that review; a pass of the
+author's has no rounds; an id of the author's family stands only after a pass is named; a round with no review named
+fails), reading the files the branch created, this section, the guide's paragraph, the browser plan's pointer and
+file-view.ts's units naming the file review in every checkout, and every unit the branch added or touched since the
+merge-base where that base is neither `origin/main` nor HEAD, with the roster of created files checked against the
+diff's added files there. It and ui/webview/file-view-figure-shapes.test.ts read TS and JS through
+ui/webview/source-units.ts, the compiler's parser (comments as text with wrapped lines joined, string literals by value
+in either quote, template spans, escapes resolved), Markdown as paragraphs and Python as paragraphs with backslash
+escapes folded: the one reader for both pins, since the file review's round 4 ruled that a guard against a form is
+keyed on the property or parses, and that three guards keyed on three spellings are fixed as one mechanism.
+tests/test_file_view_bar_browser.py, the served bar pins, read the groups
 inside `.fileview-acts`, and the nav group stands outside it, in the bar itself, before the path; run as a single module
 at the records commit, green (`pytest tests/test_file_view_bar_browser.py`, a run that needs the extension deps and a
 Playwright browser).

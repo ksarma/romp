@@ -26,7 +26,6 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execFileSync } from 'node:child_process';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, '..');
@@ -230,17 +229,12 @@ test('the file review: L3 names the one decision, its verdict and the state it r
   assert.ok(viewer.includes('\ntype FigureState = "standin" | "fetching" | "loaded" | "failed";\n'), 'the domain: four states');
   const rule = between(viewer, 'function figureHasPicture(state: FigureState): boolean {', '\n}\n');
   assert.ok(rule.includes('return state === "loaded" || state === "standin";'), 'the allowance: loaded, or a stand-in outside a browser; every other value refused');
-  // keyed on the property, not one spelling (the file review's round 3, tests-3): each refused member's literal stands only on the type
-  // line and in figureState's body, so a reader naming one in any form, the two in either order included, fails here
-  const domain = viewer.match(/\ntype FigureState = ((?:"[a-z]+"(?: \| )?)+);\n/);
-  assert.ok(domain, 'the FigureState type line');
-  const members = Array.from(domain[1].matchAll(/"([a-z]+)"/g), (m) => m[1]);
-  const allowed = Array.from(rule.matchAll(/state === "([a-z]+)"/g), (m) => m[1]);
-  const refused = members.filter((m) => !allowed.includes(m));
-  assert.ok(allowed.length >= 1 && refused.length >= 1, 'a derived refused set: ' + JSON.stringify({ members, allowed, refused }));
-  const elsewhere = viewer.replace(domain[0], '\n').replace(state, '');
-  for (const m of refused) assert.equal((elsewhere.match(new RegExp('"' + m + '"', 'g')) || []).length, 0, 'no reader names the refused state "' + m + '" (its literal stands only on the type line and in figureState; the pin is file-wide on purpose, so a literal "' + m + '" for anything else in file-view.ts must be spelled another way)');
-  assert.ok(L3.includes('the three pins are file-wide on purpose'), 'L3 says the pins are file-wide (the author\'s closing pass after the file review\'s round 3, records-3)');
+  // the refused states' literals held absent from every reader of file-view.ts: ONE pin, in ui/webview/file-view-figure-shapes.test.ts,
+  // reading the literals as the compiler does (ui/webview/source-units.ts); the copy that stood here matched the double-quoted
+  // spelling alone and passed a single-quoted comparison (the file review's round 4, regression-2 with extra6-1), and is not kept as
+  // a second reader. L3 says what the pin reads and how far it reaches.
+  assert.ok(L3.includes('the pin that holds the refused states\' literals absent reads every string literal of file-view.ts as the compiler reads it'), 'L3 names the reader');
+  assert.ok(L3.includes('the pin is file-wide on purpose'), 'L3 says the pin is file-wide (the author\'s closing pass after the file review\'s round 3, records-3)');
   assert.ok(L3.includes('the two are the refused states of ONE rule, a target only for a state with a picture to name (`figureHasPicture`: `loaded`, the browser having answered with a picture, or a stand-in outside a browser'), 'L3 states the rule');
   assert.ok(L3.includes('so a state `figureState` gains later is refused by both readers with no edit to either'), 'L3: why the rule and not the list');
   assert.ok(read('ui', 'webview', 'file-view-figure-state-browser.test.ts').includes('a FAILED local figure with a box (a non-empty alt, laid out as text) wears no control, and its plain click opens nothing'), 'the state leg drives a failed figure with a box');
@@ -351,50 +345,6 @@ test('the file review: L2 hides the pair when neither direction has a target, on
   assert.ok(between(openPoints, '13. The Back and Forward pair hidden', 'L2 names invert').includes('74 px'), 'open point 13 prices the alternative');
 });
 
-// ── the attributions: the branch's review ran two rounds, the file review is named as such (the file review's round 3, tests-2) ──
-// Two roads, so the pin checks something in every checkout (the author's closing pass after the file review's round 3, behaviour-6 with records-2 and
-// coverage-2: the first form returned green after a diagnostic wherever origin/main was unknown, which is CI's default-depth
-// checkout of the tools job, and on main after the merge). (1) Always: the files the branch created, read as they stand, and
-// the plan's follow-on section. (2) Where origin/main is known and is not HEAD (a local checkout of the branch): every line the
-// branch added since the merge-base, the modified files included, and the roster of (1) checked against the diff's added files,
-// so a module created later joins the roster or reds here. On CI and on main only road (1) runs, and the test says so.
-const CREATED = [
-  'tests/test_guide_trail_chords_and_figure_button.py',
-  'tools/markdown-viewer-plan-linknav-review.test.mjs',
-  'tools/markdown-viewer-plan-linknav.test.mjs',
-  'ui/webview/file-figure-open-browser.test.ts',
-  'ui/webview/file-figure-open.test.ts',
-  'ui/webview/file-trail-browser.test.ts',
-  'ui/webview/file-trail.test.ts',
-  'ui/webview/file-trail.ts',
-  'ui/webview/file-view-figure-chosen-browser.test.ts',
-  'ui/webview/file-view-figure-chosen.test.ts',
-  'ui/webview/file-view-figure-floor-browser.test.ts',
-  'ui/webview/file-view-figure-recent-browser.test.ts',
-  'ui/webview/file-view-figure-shapes-browser.test.ts',
-  'ui/webview/file-view-figure-shapes.test.ts',
-  'ui/webview/file-view-figure-state-browser.test.ts',
-  'upstream/2026-09-19-linknav-trail-back-forward.md',
-];
-const WRONG_ROUND = /\bthe review's round (?:[3-9]|\d{2,})\b/i;
-test("no line the branch wrote names \"the review's round N\" with N above 2: the section's convention names the branch's two-round adversarial review \"the review\" and the maintainer's review of the PR \"the file review\", so a third or later round can only be the file review's and must say so; read from the files the branch created and the plan's section in every checkout, and from every added line since the merge-base where origin/main is known", (t) => {
-  assert.ok(flat(section).includes("The branch's adversarial review before the PR ran two rounds, named below as the review's round 1 and round 2; the maintainer session's review of the PR (2026-09-20) is named the file review."), 'the naming convention stands in the section');
-  // road (1): the created files and the section, as they stand
-  const wrongLines = [];
-  const scan = (label, text) => { text.split('\n').forEach((l, i) => { if (WRONG_ROUND.test(l)) wrongLines.push(label + ':' + (i + 1) + ': ' + l.trim()); }); };
-  for (const f of CREATED) { assert.ok(exists(f), f + ' exists (a created file of the branch; a rename moves it here too)'); scan(f, read(f)); }
-  scan('plans/markdown-viewer.md (the follow-on section)', plan.slice(headAt, nextAt < 0 ? plan.length : nextAt));
-  assert.deepEqual(wrongLines, [], "lines naming the branch's review with a round it never had (write \"the file review's round N\")");
-  // road (2): every added line since the merge-base, and the roster against the diff
-  const git = (...args) => execFileSync('git', args, { cwd: REPO, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-  let base = null;
-  try { base = git('merge-base', 'origin/main', 'HEAD'); } catch { base = null; }
-  if (!base) { t.diagnostic('origin/main is not known in this checkout (CI\'s default-depth checkout): the created files and the section were read; the added lines since the merge-base were not'); return; }
-  if (base === git('rev-parse', 'HEAD')) { t.diagnostic('HEAD is the merge-base (the branch is merged, or this is main): the created files and the section were read; there are no added lines to read'); return; }
-  const created = git('diff', '--name-status', base, 'HEAD').split('\n').filter((l) => l.startsWith('A\t')).map((l) => l.slice(2)).sort();
-  assert.deepEqual(created, [...CREATED].sort(), 'the roster is the diff\'s added files since ' + base + ' (a file created later joins the roster)');
-  const added = git('diff', '-U0', base, 'HEAD').split('\n').filter((l) => l.startsWith('+') && !l.startsWith('+++'));
-  assert.ok(added.length > 0, 'the branch added lines since ' + base);
-  const wrong = added.filter((l) => WRONG_ROUND.test(l));
-  assert.deepEqual(wrong, [], "added lines naming the branch's review with a round it never had (the file review's round 3 found two: write \"the file review's round N\")");
-});
+// ── the attributions: the rounds the records name are held by ui/webview/linknav-records-attribution.test.ts on the section's
+// convention (the file review's round 3, tests-2; re-ruled onto the structural rule in its round 4, rules-1), reading TS and JS as
+// the compiler does through ui/webview/source-units.ts; the string-keyed pin that stood here is gone, not kept as a second reader ──

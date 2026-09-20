@@ -26,6 +26,7 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { literals, type Unit } from "./source-units";
 
 const VIEW = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "file-view.ts"), "utf8");
 /** The text from one anchor to the next, both present. */
@@ -94,20 +95,30 @@ test("the one decision: figureWantsControl reads the figure's state by one rule 
   const rule = between(VIEW, "function figureHasPicture(state: FigureState): boolean {", "\n}\n");
   assert.match(rule, /\n\s*return state === "loaded" \|\| state === "standin";$/, "the allowance: loaded (the browser answered with a picture) or a stand-in (no browser to ask); every other value refused");
   // the guard against a list is keyed on the property, not on one spelling of the list (the file review's round 3, tests-3: a pin
-  // over `state === "fetching" || state === "failed"` passed the same two in the other order): the refused set is derived, the
-  // domain's members less the ones the allowance names, and each refused member's string literal stands nowhere in the file but
-  // the type line and figureState's body (the two places that must name every member), comments included, so a reader that
-  // names one in any form (a comparison in either order, a `case`, an array or a Set) fails here; the pin is file-wide on
-  // purpose (the author's closing pass after the file review's round 3, records-3), so a literal "failed" or "fetching" for anything else in the module must be
-  // spelled another way
-  const domain = VIEW.match(/\ntype FigureState = ((?:"[a-z]+"(?: \| )?)+);\n/);
-  assert.ok(domain, "the FigureState type line");
-  const members = Array.from(domain![1].matchAll(/"([a-z]+)"/g), (m) => m[1]);
-  const allowed = Array.from(rule.matchAll(/state === "([a-z]+)"/g), (m) => m[1]);
+  // over `state === "fetching" || state === "failed"` passed the same two in the other order; its round 4, regression-2 with
+  // extra6-1: the rebuilt pin matched the double-quoted literal and passed a single-quoted comparison, while its message, L3 and
+  // the body claimed no member's literal stood anywhere): the refused set is derived, the domain's members less the ones the
+  // allowance names, and the file's string literals are read as the compiler reads them (source-units.ts: either quote, a
+  // template span, escapes resolved, and a regular expression literal by its text), so no literal equal to a refused member
+  // stands outside the type line and figureState's body, the two places that must name every member, and a reader that names
+  // one in any spelling (a comparison in either order, a `case`, an array or a Set, a template, a regular expression over the
+  // word) fails here; comments are not literals, so prose may quote the word. The pin is file-wide on purpose (the author's
+  // closing pass after the file review's round 3, records-3), so a literal "failed" or "fetching" for anything else in the
+  // module must be spelled another way
+  const typeLine = VIEW.match(/\ntype FigureState = [^\n]*;\n/);
+  assert.ok(typeLine, "the FigureState type line");
+  const typeAt = VIEW.indexOf(typeLine![0]);
+  const ruleAt = VIEW.indexOf(rule);
+  const stateAt = VIEW.indexOf(state);
+  const within = (l: Unit, from: number, to: number): boolean => l.pos >= from && l.end <= to;
+  const lits = literals(VIEW, "file-view.ts");
+  const members = lits.filter((l) => within(l, typeAt, typeAt + typeLine![0].length)).map((l) => l.text);
+  const allowed = lits.filter((l) => within(l, ruleAt, ruleAt + rule.length)).map((l) => l.text);
   const refused = members.filter((m) => !allowed.includes(m));
   assert.ok(members.length >= 3 && allowed.length >= 1 && refused.length >= 1 && allowed.every((a) => members.includes(a)), "a derived refused set: " + JSON.stringify({ members, allowed, refused }));
-  const elsewhere = VIEW.replace(domain![0], "\n").replace(state, "");
-  for (const m of refused) assert.equal((elsewhere.match(new RegExp('"' + m + '"', "g")) || []).length, 0, "no reader names the refused state \"" + m + "\": its literal stands only on the type line and in figureState (a comparison in any order, a case, an array or a Set names it, and so does a comment quoting it; write `" + m + "` in prose; the pin is file-wide on purpose, so a literal \"" + m + "\" for anything else in file-view.ts must be spelled another way)");
+  const elsewhere = lits.filter((l) => !within(l, typeAt, typeAt + typeLine![0].length) && !within(l, stateAt, stateAt + state.length));
+  const readers = refused.flatMap((m) => elsewhere.filter((l) => (l.kind === "regex" ? new RegExp("\\b" + m + "\\b").test(l.text) : l.text === m)).map((l) => JSON.stringify(m) + " at line " + l.line + " (" + l.kind + ")"));
+  assert.deepEqual(readers, [], "no reader names a refused state (" + refused.map((m) => JSON.stringify(m)).join(", ") + "): its literal stands only on the type line and in figureState (read by the compiler: a string in either quote, a template span or an escaped spelling is the same literal, and a regular expression naming the word counts; comments are not read, so prose may quote it; the pin is file-wide on purpose, so a literal for anything else in file-view.ts must be spelled another way)");
   assert.match(VIEW, /\nconst FIGOPEN_MIN_PX = 48;\n/, "the floor: the control's 22px box, its 6px inset and as much figure again");
   const small = between(VIEW, "function figureTooSmall(img: Element): boolean {", "\n}\n");
   assert.match(small, /const b = figureBox\(img\);\n\s*return b !== null && \(b\.w < FIGOPEN_MIN_PX \|\| b\.h < FIGOPEN_MIN_PX\);/, "under the floor on EITHER side (a badge is wide and short)");

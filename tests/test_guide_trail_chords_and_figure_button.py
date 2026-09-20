@@ -215,19 +215,10 @@ class PicturesWithoutTheButton(GuideSentences):
         self.assertIn('\ntype FigureState = "standin" | "fetching" | "loaded" | "failed";\n', self.viewer, "the domain: four states")
         rule = _body(self.viewer, "function figureHasPicture(state: FigureState): boolean {", "}")
         self.assertIn('return state === "loaded" || state === "standin";', rule, "the allowance: loaded, or a stand-in; every other value refused")
-        # keyed on the property, not one spelling (the file review's round 3, tests-3: a pin over the list in one order passed the
-        # other order): the refused set is the domain's members less the ones the allowance names, and each refused member's
-        # literal stands only on the type line and in figureState's body, so a reader naming one in any form fails here
-        domain = re.search(r'\ntype FigureState = ((?:"[a-z]+"(?: \| )?)+);\n', self.viewer)
-        assert domain, "the FigureState type line"
-        members = re.findall(r'"([a-z]+)"', domain.group(1))
-        allowed = re.findall(r'state === "([a-z]+)"', rule)
-        refused = [m for m in members if m not in allowed]
-        self.assertTrue(allowed and refused and all(a in members for a in allowed), {"members": members, "allowed": allowed, "refused": refused})
-        state_fn = _body(self.viewer, "function figureState(img: Element): FigureState {", "}")
-        elsewhere = self.viewer.replace(domain.group(0), "\n").replace(state_fn, "")
-        for m in refused:
-            self.assertEqual(elsewhere.count('"%s"' % m), 0, "no reader names the refused state %r: its literal stands only on the type line and in figureState (the pin is file-wide on purpose, so a literal %r for anything else in file-view.ts must be spelled another way)" % (m, m))
+        # the refused states' literals held absent from every reader of file-view.ts: ONE pin, in
+        # ui/webview/file-view-figure-shapes.test.ts, reading the literals as the TypeScript compiler does
+        # (ui/webview/source-units.ts); the copy that stood here counted the double-quoted spelling alone and passed a
+        # single-quoted comparison (the file review's round 4, regression-2 with extra6-1), so it is not kept as a second reader
         target = _body(self.viewer, "function figureTarget(img: Element, filePath: string): FigureTarget | null {", "}")
         self.assertIn("const state = figureState(img);", target)
         self.assertIn("if (!figureHasPicture(state)) return null;", target, "no target for a state without a picture to name")
