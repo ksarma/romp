@@ -869,11 +869,13 @@ _plutil_calibrate() {   # _PLUTIL_NL from a scratch plist this reader writes und
                         # value's own only for a tool that REPORTS the value's bytes and treats the scratch as it treats the file, and they
                         # tell the entry's type only as the tool reports it. (a) A tool that ALTERS the bytes on the file (strips the value's
                         # own line end, say) cannot be told through itself, whether or not it honours -n and whatever the scratch shows,
-                        # since every read of it passes through the alteration. (b) A tool keyed on what no scratch shares with the file (its
-                        # place under LaunchAgents, its size, its name, its format, the document's other entries: the scratch is XML under
-                        # TMPDIR holding one entry, the file may be binary1 holding them all) is invisible to the scratch, so where it also
-                        # ignores or lacks -n (the two-way read is the one file-side road for a line end withheld on a value that ends in
-                        # one) it reads such a value a newline short and the rewrite writes it short at exit 0. (c) The TYPE read below
+                        # since every read of it passes through the alteration. (b) THE FILE-KEYED CLASS, stated once, here (the two bats
+                        # cases and the PR body name this clause and repeat no list of their own; round 9 of fork PR #778, extra6-1): a
+                        # tool keyed on what no scratch shares with the file, its place under LaunchAgents, its size, its name, its format,
+                        # the document's other entries (the scratch is XML under TMPDIR holding one entry, the file may be binary1 holding
+                        # them all), is invisible to the scratch, so where it also ignores or lacks -n (the two-way read is the one
+                        # file-side road for a line end withheld on a value that ends in one) it reads such a value a newline short and
+                        # the rewrite writes it short at exit 0. A dimension found later is added to this clause alone. (c) The TYPE read below
                         # (_plutil_raw) rests on the tool's own xml1 rendering of the entry's root element, so a tool that renders an entry
                         # of another type as <string> is not told either, and the raw rendering is written back as a string. These classes
                         # are untested by construction, not tested and absent: no scratch is the file, and no read is a second tool. The

@@ -3261,7 +3261,8 @@ _marked_install_ok() {   # the marked child's install over the unit on disk, exp
 }
 # The byte-order-mark shapes case's two helpers, at file scope (round 7 of fork PR #778, tests-1 and regression-1: defined inside the
 # @test body, their indented closing braces ended tests/test_bats_bare_negation.py's block early, so 211 lines of that case were
-# outside the bare-negation scan; the scanner's block-end is a column-zero brace now, and the helpers live here beside the others).
+# outside the bare-negation scan; the helpers live here beside the others, where the scan's documented file-scope limit applies, and the
+# scanner's own block-end fix left this PR in round 9 for its own fork PR, the bare-negation scanner).
 # They read the caller's $unit and $mgr by bash's dynamic scope, as _three_roads_refuse reads $status and $output.
 _kept() {   # the file at $unit (the caller's local, read by dynamic scope, as $mgr is), built by the function $2, carries a marked kept
             # CLAUDE_CONFIG_DIR line systemd reads as $1: kept and compared on the three roads, the rewrite writing it without the mark
@@ -4709,8 +4710,10 @@ EOF
     # these reads tell the tool's line end from the value's own only for a tool that REPORTS the value's bytes and treats the scratch as it
     # treats the file. The residual, said and not pinned (a pin here would assert a silent value change), at its width: a tool that ALTERS
     # the value's bytes on the file (strips its own newline, then writes one or none) reads identically on both roads and cannot be told
-    # through itself, -n honoured or not; and a tool keyed on what no scratch shares with the file (its place, size, name or format) that
-    # also ignores or lacks -n (file_lacking ignore) reads a value ending in a newline a newline short and rewrites at exit 0. Both are
+    # through itself, -n honoured or not; and a tool keyed on what no scratch shares with the file (the file-keyed class: its dimensions
+    # are listed once, in clause (b) of the RULE in _plutil_calibrate's comment in bin/romp-service, and this comment repeats no list of
+    # its own; round 9 of fork PR #778, extra6-1) that also ignores or lacks -n (file_lacking ignore) reads a value ending in a newline
+    # a newline short and rewrites at exit 0. Both are
     # untested by construction, not tested and absent. The evidence that no plutil does either, as read: plutil(1) documents -n and says
     # nothing else of the terminator; the open-source implementation writes it on the flag and format alone (PLUContext.swift line 1035);
     # Apple's plutil is closed source and no plutil binary ran here.
@@ -4931,8 +4934,11 @@ EOF
     # (a newline inside the value, a non-ASCII character: the refuters' stand-ins) read such a value a newline short and rewrote it at
     # exit 0 wherever -n was not honoured, while the reader's comment said such a class showed on the file's constants. Every value read
     # is now written into the scratch at the same key path shape, key name and array index and read back, which must give the file's raw
-    # read again; the value's own bytes and the key are then the file's, and the scratch differs from the file only in its place, size,
-    # name and format, which is the residual the reader states. At the round-7 head: interior_nonl reject on the PATH fixture, exit 0,
+    # read again; the value's own bytes and the key are then the file's, and what remains is the file-keyed class, a tool keyed on what
+    # no scratch shares with the file: its dimensions are listed once, in clause (b) of the RULE in _plutil_calibrate's comment in
+    # bin/romp-service, and this comment repeats no list (round 9 of fork PR #778, extra6-1: the four-item list this line gave, place,
+    # size, name and format, was one dimension short of the reader's clause and was attributed to it). At the round-7 head:
+    # interior_nonl reject on the PATH fixture, exit 0,
     # 'Rewrote the login agent', PATH /a\nb\n written back as /a\nb (the drive in the PR body). The round-8 addendum (the plutil lens, by
     # execution at the round-8 commit): that echo wrote the value with the tool's line end TAKEN OFF, so a class conditioned on the value
     # ENDING in a newline (nonascii_lacking, interior_lacking, key_ccd_lacking, index_lacking, long_lacking, label_lacking: the lens's

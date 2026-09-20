@@ -1179,7 +1179,16 @@ class RealTree(unittest.TestCase):
         fork's main (origin/main, else main). The working tree is read too, so a run before the commit reads its own edits (every
         uncommitted non-entry change must be named by an entry the tree modifies), except on main or detached at origin/main, where
         uncommitted edits carry no entry to attribute to. With no base (a shallow checkout) the test skips saying so; the local runs
-        every round makes are where it holds. A branch that touches no entry has nothing to derive against and passes."""
+        every round makes are where it holds. A branch that touches no entry has nothing to derive against and passes.
+
+        What the scoping DROPS, disclosed and not widened (round 8 of fork PR #778, correctness-3, ruled in round 9): this pin no longer
+        catches the round-7 case that created it. A file created or changed only by commits of this branch that do not themselves touch
+        the entry is owed by no where: line, so an entry omitting a test module the chain created in an entry-less commit, the rules-2 and
+        regression-4 omission above, passes green here; the shape it misses is a module-only commit beside an entry-only commit, in either
+        order, which reads [] (reproduced synthetically and at the head where those findings were filed). The widening proposed with the
+        finding (union in the branch's entry-less commits when the branch touches one entry) is not taken: against the fixtures below it
+        reds the batch and the stacked branch, since a batch member's non-entry commit is itself in base..HEAD, and correct coverage needs
+        reachability from other refs, which a plain checkout does not have. The pin's presence is not the coverage it had at round 7."""
         omissions = where_line_omissions(ROOT, self._base())
         self.assertEqual(omissions, [], "files an entry's own commits change that its where: line does not name (derive the line from "
                          "those commits: git log --format=%H <base>..HEAD -- <entry>, then git show --name-only --format= <commit>):\n"
