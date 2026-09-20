@@ -884,7 +884,8 @@ def _door_text(node):
     fixes planted the bytes, the padded and the cased forms as real loads and the module stayed green while its prose named the
     split alone as the residue; review round 5, tests-3, regression-3 and extra4-1: the recaps then named the families, a decode, a
     strip, a lower, where this function undoes one member of each, and a utf-16 bytes door at getattr and a chars-strip at a partial
-    of getattr each reach a real load with the module green, the limit held on its side and recorded in the round-5 paragraph)."""
+    of getattr each reach a real load with the module green, the limit held on its side by three enumeration rows since the round-5
+    consolidation, F75 to F77, and recorded in the round-5 paragraph)."""
     if isinstance(node, ast.Constant):
         if isinstance(node.value, bytes):
             return node.value.decode("ascii", "replace").strip().lower()
@@ -2500,8 +2501,9 @@ _LIMITS = {
                  "other transform undone at run time): spelled as a door in no node and in no constant either census reads, so outside "
                  "every static pin in this module, the kernel-wide pin included; the enumeration runs that pin over each form of this "
                  "class and expects no birth, so the class is held on the side it falls, and the class is stated by the pin's boundary "
-                 "rather than by its examples (the rows hold the split, the interpolation, the unlisted receiver and the reversal; the "
-                 "codec, the chars-strip and the fold are held green by kernel plants the round-5 paragraph records)",
+                 "rather than by its examples (the rows hold the split, the interpolation, the unlisted receiver, the reversal, the "
+                 "codec, the chars-strip at an unlisted receiver and the fold; the last three reached real loads in kernel plants too, "
+                 "which the round-5 paragraph records)",
     "outside": "a loader that reaches the scanned body under a name bound outside it (a module-level alias, an import alias at module "
                "level, a module-level dict or partial, a closure variable, a parameter, a class or instance attribute when only the "
                "method is scanned): the birth the kernel-wide pin refuses in the kernel and the judge",
@@ -2742,8 +2744,9 @@ _LOADER_FORMS = [
      "def f(sid):\n    match vars(jd):\n        case {'load_goals_shared': L}:\n            return L(sid)\n        case _:\n            return None\n",
      'f', None, [], 0, 'string'),
     # The three transforms the pin undoes, an ASCII bytes decode, a whitespace strip and str.lower (a verifier of the round-4 fixes: each
-    # reached a real load with the module green while the prose named the split alone as the residue), on the string side, and three
-    # completions it does not undo, on the assembled side.
+    # reached a real load with the module green while the prose named the split alone as the residue), on the string side, and six
+    # completions it does not undo, on the assembled side (F72 to F74 by that verifier; F75 to F77, the codec, the chars-strip at an
+    # unlisted receiver and the fold, by the round-5 consolidation after tests-3, regression-3 and extra4-1).
     ('F68', 'getattr with an upper-cased constant lowered at run time (the pin applies str.lower to the text it reads)',
      "def f(sid):\n    return getattr(jd, 'LOAD_GOALS_SHARED'.lower())(sid)\n", 'f', None, [], 0, 'string'),
     ('F69', 'getattr with a padded constant stripped at run time and bound to a variable first (the pin strips surrounding whitespace from the text it reads)',
@@ -2758,6 +2761,17 @@ _LOADER_FORMS = [
      "def f(sid):\n    return operator.methodcaller('load_goals_' + 'shared', sid)(jd)\n", 'f', None, [], 0, 'assembled'),
     ('F74', 'getattr with a reversed literal (a transform the pin does not undo)',
      "def f(sid):\n    return getattr(jd, 'derahs_slaog_daol'[::-1])(sid)\n", 'f', None, [], 0, 'assembled'),
+    # The three completions the round-5 recaps name as not undone (review round 5, tests-3, regression-3 and extra4-1: the recaps had
+    # named the families, a decode, a strip, a lower, where _door_text undoes one member of each), each held on the assembled side: the
+    # pin reads the constant and lets it pass and the enumeration expects no birth, so a widening of _door_text to any of the three
+    # reds its row here (the codec form's bytes are the name encoded as utf-16, spelled as escapes so this module's text stays ASCII).
+    ('F75', 'getattr with a bytes literal in a codec other than ASCII decoded at run time (utf-16: the pin reads bytes as ASCII, so the constant reads as no door and reaches the listed lookup undecoded)',
+     "def f(sid):\n    return getattr(jd, b'\\xff\\xfel\\x00o\\x00a\\x00d\\x00_\\x00g\\x00o\\x00a\\x00l\\x00s\\x00_\\x00s\\x00h\\x00a\\x00r\\x00e\\x00d\\x00'.decode('utf-16'))(sid)\n",
+     'f', None, [], 0, 'assembled'),
+    ('F76', 'functools.partial(getattr, jd) handed a padded constant with its padding characters stripped at run time (a chars-strip, not undone, at an unlisted receiver; at getattr itself the constant contains the name and the consumer clause reads it)',
+     "def f(sid):\n    return functools.partial(getattr, jd)('xxload_goals_sharedxx'.strip('x'))(sid)\n", 'f', None, [], 0, 'assembled'),
+    ('F77', 'getattr with a constant casefold folds to the name and str.lower leaves as it is (a long s for each s, so the text str.lower leaves contains no door spelling either; a case fold the pin does not undo)',
+     "def f(sid):\n    return getattr(jd, 'load_goal\\u017f_\\u017fhared'.casefold())(sid)\n", 'f', None, [], 0, 'assembled'),
 ]
 # The bump forms: the statement placed on the line after the load in `def f(sid)`, the bump indices _bump_sites answers, and
 # whether the walk census's adjacency (one bump, one load, the bump on the line after) holds.
@@ -2807,8 +2821,11 @@ class TheCensusOverEveryForm(unittest.TestCase):
     helper's body was no site, and no sample said so). The loader
     forms of the string and the assembled classes are also run through the kernel-wide pin, _loader_births, over the form's own
     file: a birth from every string form and none from any assembled form, so the pin is held against the input it refuses and
-    the input it lets pass, and the two limit texts cannot overstate it (a verifier of the consolidation pass found the module's
-    text saying the pin closed the string limit while vars(jd)[...] and jd.__dict__[...] passed it)."""
+    the input it lets pass over the forms the rows list; the two limit texts are messages no assertion reads, so an overstatement in
+    them beyond the listed forms is not caught here (a verifier of the consolidation pass found the module's text saying the pin
+    closed the string limit while vars(jd)[...] and jd.__dict__[...] passed it; review round 5 found the recaps naming families where
+    _door_text undoes one member; a verifier of the round-5 fixes rewrote the assembled limit text to a false universal with every
+    case green, which is why this sentence no longer says the texts cannot overstate)."""
 
     def setUp(self):
         self.td = tempfile.TemporaryDirectory()
@@ -2841,15 +2858,17 @@ class TheCensusOverEveryForm(unittest.TestCase):
 
     def test_every_loader_form_is_a_site_where_the_table_says_or_a_stated_limit(self):
         here = sys.version.split()[0]
-        self.assertEqual(len(_LOADER_FORMS), 119, "the table carries the lens's 95 loader forms, a consolidation-pass verifier's four, the "
+        self.assertEqual(len(_LOADER_FORMS), 122, "the table carries the lens's 95 loader forms, a consolidation-pass verifier's four, the "
                                                   "round-3 fixes' three (a t-string interpolation, a type-parameter bound and a type-parameter "
                                                   "default), the round-4 fixes' ten (methodcaller, itemgetter over vars(jd), a partial of "
                                                   "getattr, a match-mapping key, an f-string handed to getattr with and without a piece "
                                                   "interpolated, and four subscript keys: an f-string, a conditional, a walrus and a "
                                                   "concatenation that keeps the needle in one piece) and a round-4 verifier's seven (a cased, a "
                                                   "padded and a bytes constant at a listed lookup or bound first, a bytes subscript key, and three "
-                                                  "completions of the name the pin does not undo)")
-        self.assertEqual(len({row[0] for row in _LOADER_FORMS}), 119, "with distinct ids")
+                                                  "completions of the name the pin does not undo), and the round-5 consolidation's three (a bytes "
+                                                  "literal in another codec at getattr, a chars-strip at an unlisted receiver and a casefold at "
+                                                  "getattr, the three completions the round-5 recaps name as not undone)")
+        self.assertEqual(len({row[0] for row in _LOADER_FORMS}), 122, "with distinct ids")
         counted, limits, gated = 0, {}, []
         for fid, form, body, dotted, needs, sites, jds, limit in _LOADER_FORMS:
             self.assertEqual(limit is None, bool(sites), "%s (%s): a form the census counts names no limit and a form it misses names one" % (fid, form))
@@ -2884,15 +2903,16 @@ class TheCensusOverEveryForm(unittest.TestCase):
                 counted += 1
             else:
                 limits[limit] = limits.get(limit, 0) + 1
-        self.assertEqual(counted + sum(limits.values()) + len(gated), 119, "every row was counted, a limit, or gated: %d, %r, %r" % (counted, limits, gated))
-        self.assertEqual(limits, {"string": 26, "assembled": 6, "outside": 9, "wrapper": 2, "none": 5},
+        self.assertEqual(counted + sum(limits.values()) + len(gated), 122, "every row was counted, a limit, or gated: %d, %r, %r" % (counted, limits, gated))
+        self.assertEqual(limits, {"string": 26, "assembled": 9, "outside": 9, "wrapper": 2, "none": 5},
                          "the missed forms by limit: the lens's classification with its string class split by what the kernel-wide pin refuses "
                          "(the round-4 fixes moved F07d and F45 into the string class, a constant spelling a door whole being refused wherever "
                          "it appears, and added nine string rows, four for the doors the round found on no list, one for the f-string of the "
                          "whole name handed to getattr and four for the subscript keys the slice walk reaches, and one assembled row for the "
                          "f-string that splits the needle; a verifier of the round-4 fixes added four string rows, the cased, the padded and the "
                          "bytes constants the pin's three normalisations read as the name, and three assembled rows, a needle-keeping "
-                         "concatenation at two unlisted receivers and a reversed literal)")
+                         "concatenation at two unlisted receivers and a reversed literal; the round-5 consolidation added three assembled "
+                         "rows, a bytes literal in another codec at getattr, a chars-strip at an unlisted receiver and a casefold at getattr)")
 
     def test_every_bump_form_reads_as_the_table_says(self):
         self.assertEqual(len(_BUMP_FORMS), 20, "the table carries the lens's 20 bump forms")
