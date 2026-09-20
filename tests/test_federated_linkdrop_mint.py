@@ -18,12 +18,18 @@ source, or bound by -C to a path under the lab, and none names a worktree, a rec
 class's teardown, spied the same way WITH a minted checkout present (round 3: spied with none, a teardown step conditioned
 on the mint, the round-1 defect's own shape, was never exercised), runs no command at all (the lab's rmtree takes the
 checkout); and no string constant in the lab module's source, in either quoting, is such an argv token (an ast walk, so a
-spelling cannot slip past it). What the two spies see is a rule, not a list: they record every command the lab module
-issues through its `subprocess` attribute, `run` and `Popen` alike (`call` and `check_call` go through `Popen`, so the same
-record sees them), so a token assembled at run time or joined into one shell string is caught whichever of the two the
-module used (round 4: the spies saw `run` alone, and round 1's defect re-planted as a `Popen` with its tokens assembled
-passed every pin, the byte-identical records included, since the peer worktree's directory was still alive). What neither
-the spies nor the census sees is a command issued any other way, `os.system` or `os.popen`.
+spelling cannot slip past it). What the spies see is a rule over NAMES, not a list of commands: the recorder patched over
+the lab module's `subprocess` attribute records the argv of every call to one of that module's spawning functions, `run`,
+`Popen`, `call`, `check_call`, `check_output`, `getoutput` and `getstatusoutput` (SPAWNERS, pinned against this Python's
+`subprocess.__all__`), each once (a shell string as one token), and hands the call to the real function; every other name
+read through the attribute (PIPE, STDOUT, DEVNULL, TimeoutExpired, CompletedProcess) is delegated and unrecorded, so a
+command reaches the record only through a recorded name. A token assembled at run time or joined into one shell string is
+caught whichever recorded function the module used (round 4: the spies saw `run` alone, and round 1's defect re-planted as a
+`Popen` with its tokens assembled passed every pin, the byte-identical records included, since the peer worktree's directory
+was still alive; the fixer pass of that round found `call`, `check_call` and `check_output` reaching the real module through
+the delegation unseen while this docstring said the record saw them, and the same plant as a `check_call` passed every pin).
+What neither the spies nor the census sees is a command issued any other way: `os.system`, `os.popen`, `os.spawn*`,
+`os.exec*`, or a second import of `subprocess` under another name.
 
 Synthetic: a scratch repository minted here, hostname TESTHOST; no kernel, no browser.
 """
@@ -41,6 +47,9 @@ sys.path.insert(0, HERE)
 import test_federated_linkdrop_served as L   # noqa: E402  the lab module: _mint_old_hub and the globals it reads
 
 FORBIDDEN_ARGV = ("worktree", "prune", "gc")
+# every public callable of the subprocess module that starts a process: what the recorder records, by name (the pin below
+# checks the tuple against this Python's subprocess.__all__, so a spawning function added to the module is not delegated unseen)
+SPAWNERS = ("run", "Popen", "call", "check_call", "check_output", "getoutput", "getstatusoutput")
 
 
 def _git(*args):
@@ -105,31 +114,66 @@ class OldHubMintIsPrivate(unittest.TestCase):
         self.assertEqual(self.before["locked"], [], "…and nothing locked")
 
     def _spy(self, run=None):
-        """One recording namespace to patch over the lab module's `subprocess` attribute: its `run` and `Popen` append the
-        argv to one list and hand the call to the real module (`run`, when given, stands in for the real `run`: the
-        interrupted mint's drill); every other name (PIPE, STDOUT, TimeoutExpired, CompletedProcess, which the lab module
-        reads through the same attribute) delegates to the real module. One namespace over the attribute, never a second
-        patch of `Popen` on the real module: `subprocess.run` calls `Popen` as its own module's global, so that spelling
-        records every `run` twice (read as 4 != 2 on the mint pin). The recorder exists for the shape round 4 found
-        passing every pin: round 1's repo-global sweep re-planted at the top of the class's teardown as
-        `subprocess.Popen(["git", "-C", ROOT, "workt" + "ree", "pr" + "une"]).communicate()`, a `Popen` the `run` spy
-        never saw with tokens the ast census never sees; that plant cannot live in the repo and is recorded as a mutation
-        in the builder's review note outside it (red on test_the_teardown_runs_no_command through this recorder)."""
+        """One recording namespace to patch over the lab module's `subprocess` attribute: each spawning function of the module
+        (SPAWNERS) appends the argv to one list (a shell string as one token) and hands the call to the real function (`run`,
+        when given, stands in for the real `run`: the interrupted mint's drill); every other name (PIPE, STDOUT, DEVNULL,
+        TimeoutExpired, CompletedProcess, which the lab module reads through the same attribute) delegates to the real
+        module. One namespace over the attribute, never a second patch of `Popen` on the real module: `subprocess.run`,
+        `call`, `check_call` and `check_output` start their process through `Popen` as their own module's global, so that
+        spelling records every `run` twice (read as 4 != 2 on the mint pin), and for the same reason each recorded function
+        records once here. The recorder exists for the shape round 4 found passing every pin: round 1's repo-global sweep
+        re-planted at the top of the class's teardown as `subprocess.Popen(["git", "-C", ROOT, "workt" + "ree", "pr" +
+        "une"]).communicate()`, a `Popen` the `run` spy never saw with tokens the ast census never sees; the fixer pass of
+        that round re-planted it as `subprocess.check_call(...)`, which the two-name recorder delegated unseen. Neither plant
+        can live in the repo; both are recorded as mutations in the builder's review note outside it (red on
+        test_the_teardown_runs_no_command through this recorder)."""
         seen = []
         real = subprocess
 
         class Recorder:
-            def run(self, cmd, *a, **k):
-                seen.append(list(cmd))
-                return (run or real.run)(cmd, *a, **k)
-
-            def Popen(self, cmd, *a, **k):
-                seen.append(list(cmd))
-                return real.Popen(cmd, *a, **k)
-
             def __getattr__(self, name):
                 return getattr(real, name)
+
+        def recording(name):
+            target = run if (name == "run" and run is not None) else getattr(real, name)
+
+            def spawn(cmd, *a, **k):
+                seen.append([cmd] if isinstance(cmd, str) else list(cmd))
+                return target(cmd, *a, **k)
+            spawn.__name__ = name
+            return staticmethod(spawn)
+        for name in SPAWNERS:
+            setattr(Recorder, name, recording(name))
         return seen, Recorder()
+
+    def test_the_recorder_sees_every_spawning_function_once_and_delegates_the_rest(self):
+        """The instrument itself (round 4's fixer pass, after a `check_call` sweep passed the `run`-and-`Popen` recorder): under
+        the recorder each spawning function of the subprocess module records its argv exactly once (run, call, check_call and
+        check_output start their process through the REAL module's Popen, so a recorder over `run` alone misses the others and
+        a second patch of Popen doubles them), a shell string is recorded as one token, the names the lab module reads through
+        the attribute are the real module's own objects, and SPAWNERS is every public callable of this Python's subprocess
+        module that is not an exception class or CompletedProcess, so a spawning function added to the module is not
+        delegated unseen."""
+        public = {n for n in subprocess.__all__ if callable(getattr(subprocess, n))}
+        not_spawning = {n for n in public if isinstance(getattr(subprocess, n), type) and n != "Popen"}   # CompletedProcess and the exception classes
+        self.assertEqual(public - not_spawning, set(SPAWNERS), "SPAWNERS is every public callable of the subprocess module that starts a process")
+        seen, recorder = self._spy()
+        with mock.patch.object(L, "subprocess", recorder):
+            for name in SPAWNERS:
+                del seen[:]
+                fn = getattr(L.subprocess, name)
+                if name in ("getoutput", "getstatusoutput"):
+                    fn("true")
+                else:
+                    p = fn(["true"], stdout=subprocess.DEVNULL) if name != "check_output" else fn(["true"])
+                    if hasattr(p, "wait"):
+                        p.wait()
+                self.assertEqual(seen, [["true"]], "%s is recorded exactly once (a run, call, check_call or check_output recorded twice is the second-patch spelling): %r" % (name, seen))
+            del seen[:]
+            L.subprocess.run("true", shell=True, stdout=subprocess.DEVNULL)
+            self.assertEqual(seen, [["true"]], "a shell string is recorded as one token: %r" % (seen,))
+            for name in ("PIPE", "STDOUT", "DEVNULL", "TimeoutExpired", "CompletedProcess", "CalledProcessError"):
+                self.assertIs(getattr(L.subprocess, name), getattr(subprocess, name), "%s is delegated to the real module" % name)
 
     def _assert_commands_are_private(self, seen, expect_commands=True):
         """Every git command the mint ran either reads the source (the clone) or is bound to a path under the lab; none
@@ -200,8 +244,9 @@ class OldHubMintIsPrivate(unittest.TestCase):
         teardown ran a repo-wide record clearing there). The mint runs first under the spy, so a teardown step conditioned
         on the mint (old_hub_wt set, the round-1 defect's own shape) is exercised; round 3 found the pin spied a teardown
         with nothing minted, which such a step never entered. Behavioural, so the spelling of an argv token cannot matter,
-        and the recorder sees `run` and `Popen` alike, so the function it was issued through cannot matter either (round 4:
-        a `Popen` sweep with assembled tokens passed the `run` spy; _spy's docstring names the plant)."""
+        and the recorder sees every spawning function of the subprocess module alike (SPAWNERS), so the function it was
+        issued through cannot matter either (round 4: a `Popen` sweep with assembled tokens passed the `run` spy, and a
+        `check_call` sweep passed the `run`-and-`Popen` recorder; _spy's docstring names the plants)."""
         seen, recorder = self._spy()
         with mock.patch.object(L, "subprocess", recorder):
             wt = self.Mint._mint_old_hub()
