@@ -181,6 +181,21 @@ def federation_host_row_kinds():
     return set(re.findall(r'this\.diag\("([\w-]+)",[^\n{]*\{[^\n}]*\bhost\b', src))
 
 
+STALE_WHY_WORDS = ("gen", "base", "through", "rev", "disagree")   # the feedDelta-stale row's why vocabulary in the ladder's test order: four field words, then the relation word (round 3, 2026-09-20)
+
+
+def stale_why_words():
+    """The feedDelta-stale row's `why` vocabulary as federation.ts mints it: the string literals of the `const why = ...`
+    ladder in applyRemoteFeedDelta, in source order (the order the conditions are tested in), or None when the anchors are
+    gone. The anchor includes the minter's literal, `{ host, buildId: d.buildId, why }`, so the read also holds that the row
+    carries host, buildId and why and nothing else: the word is the whole signal a reader of the file has (a stale row in
+    the file carries no gen, base, rev or through), which is why a relation failure between two valid fields needs a word
+    of its own and cannot ride a field's. test_the_stale_rows_vocabulary_is_the_ladders holds this list to STALE_WHY_WORDS."""
+    src = open(os.path.join(os.path.dirname(HERE), "ui", "webview", "federation.ts"), encoding="utf-8").read()
+    m = re.search(r'const why = ([^;]*);\s*\n\s*this\.diag\("feedDelta-stale", \{ host, buildId: d\.buildId, why \}\);', src)
+    return re.findall(r'"([\w-]+)"', m.group(1)) if m else None
+
+
 def disclosure_copies():
     """The three disclosure copies in the tree, each as its text or None when the anchors are gone: the wsBytesByHost entry's
     comment in kernel.py (from the entry to the next surface), the minute-row entry's wsBytesByHost passage in docs/reference.md
@@ -858,7 +873,7 @@ class ClientDiagAllowlistTest(unittest.TestCase):
                 ("hostconn", {"host": host, "ev": "delta-unknown-slot", "why": "lanes"}),   # a remote patch for a slot the conn's receiver has no table for (2026-09-19)
                 ("hostconn", {"host": host, "ev": "delta-unkeyed-base", "why": "bars judging dictlist:k is a list @a1b2c3d4e"}),   # a remote's patch that found no base because its whole frame was refused as one (a collection the receiver's table cannot key): the slot, the collection and shape, and the remote's build when the /tunnels row names one; once per distinct row (2026-09-19)
                 ("feedDelta-nobase", {"host": host, "buildId": "b1"}),
-                ("feedDelta-stale", {"host": host, "buildId": "b1", "why": "gen"}),   # a stamped remote feedDelta refused by the gen gate (its gen not the held pair's, its base above the held rev, its through below it, or no rev): the ask carries the held pair (2026-09-19)
+                ("feedDelta-stale", {"host": host, "buildId": "b1", "why": "gen"}),   # a stamped remote feedDelta refused by the gen gate: the ask carries the held pair (2026-09-19). The why is one of STALE_WHY_WORDS (a field word for a field's own failure, or the relation word for a rev and through that are each valid and disagree); each is driven in test_the_stale_rows_why_words_pass_whole_and_a_foreign_key_on_the_row_is_dropped
                 ("feedmerge", {"counts": {host: 4}}),
                 ("sendqueue", {"host": host, "msgType": "prompt", "gt": 2, "rs": 0, "superseded": True}),
                 ("senddrop", {"host": host, "msgType": "prompt", "why": "closed"}),
@@ -891,6 +906,38 @@ class ClientDiagAllowlistTest(unittest.TestCase):
                 self.assertEqual((row["surface"], row["what"], row["data"]), (surface, what, data), "%s %s passes whole" % (surface, what))
                 sent |= set(data)
             self.assertEqual(sent, set(km.CLIENT_DIAG_KEYS[surface]), "%s: the fixtures' keys are the table's, both ways" % surface)
+
+    def test_the_stale_rows_why_words_pass_whole_and_a_foreign_key_on_the_row_is_dropped(self):
+        """Round 3 (2026-09-20), the fifth word. The feedDelta-stale row carries host, buildId and why and nothing else, so
+        its word is the whole signal a reader of the file has. Every word of STALE_WHY_WORDS is driven through the real
+        dispatch, the road the fixture test posts through, and stored whole: the admit filters a row's top-level KEYS against
+        the surface's table and reads no value, so a new WORD under the admitted `why` key needs no table change where a new
+        KEY does (PR 861: a pane-side marker under a key the table did not name was dropped). Green at the head before the
+        word existed in federation.ts, by that mechanism; the failing-before is the control: the same row carrying `rev` and
+        `through`, keys the minter does not send and the table does not admit, is stored without them and each is said once,
+        so a minter that grew a field to explain its word would lose the field here, and a kernel that stopped dropping
+        would fail this test."""
+        for i, word in enumerate(STALE_WHY_WORDS):
+            row = {"host": "TESTHOST", "buildId": "b%d" % i, "why": word}
+            self.assertEqual(self.post("federation", "feedDelta-stale", row), "", "%s: admitted with no stderr line" % word)
+            self.assertEqual(self.rows()[-1]["data"], row, "%s: the row is stored whole, the word whole among it" % word)
+        self.assertEqual(len(self.rows()), len(STALE_WHY_WORDS))
+        err = self.post("federation", "feedDelta-stale", {"host": "TESTHOST", "buildId": "b9", "why": "disagree", "rev": 2, "through": 7})
+        self.assertEqual(self.rows()[-1]["data"], {"host": "TESTHOST", "buildId": "b9", "why": "disagree"},
+                         "the control: the two foreign keys dropped, the word kept; the file never learns which two revs disagreed")
+        lines = [l for l in err.splitlines() if l]
+        self.assertEqual(len(lines), 2, err)
+        self.assertTrue(all(l.startswith("[client-diag] dropping a key the surface's allowlist does not admit") for l in lines), err)
+        self.assertTrue(any("'rev'" in l and "'federation'" in l for l in lines) and any("'through'" in l for l in lines), err)
+
+    def test_the_stale_rows_vocabulary_is_the_ladders(self):
+        """The words the drive above posts are the words federation.ts mints, in the ladder's order (gen, base, through and
+        rev for a failure of that field; disagree for the relation between a rev and a through that are each valid): a word
+        added to the ladder fails here until STALE_WHY_WORDS carries it, so it is driven too. Red at the head before the
+        fifth word (the ladder minted four, the relation failure riding rev's)."""
+        words = stale_why_words()
+        self.assertIsNotNone(words, "federation.ts: the ladder's anchors are gone (the `const why` expression, or the minter's literal {host, buildId, why}): re-aim stale_why_words()")
+        self.assertEqual(tuple(words), STALE_WHY_WORDS, "the ladder's words, in test order, are the driven vocabulary")
 
     def test_data_that_is_not_an_object_reads_null_and_an_unknown_surface_keeps_no_key(self):
         err = self.post("perf", "minute", "a string where an object goes")

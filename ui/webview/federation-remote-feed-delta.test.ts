@@ -839,11 +839,14 @@ test("a per-cycle stamped delta carrying through equal to its rev applies under 
 });
 
 // The pair advances to the frame's rev, and a stamped delta's rev IS its through (the design: through equal to rev on a
-// per-cycle delta, R on a composed frame); a frame whose two disagree is refused (why "rev") into needFullFeed carrying the
-// held pair, in either direction, because advancing to either number would declare a reach the stream never reached:
-// (gen, 7) from a delta that applied rev 2 (the round-3 find: the gate read through against the held rev alone), or
-// (gen, 2) from one whose stated reach was 7.
-test("a stamped delta whose rev and through disagree is refused with why rev and the held pair on the ask, in either direction and for a composed frame; nothing applied, the pair stands, and the redial declares only what applied", async () => {
+// per-cycle delta, R on a composed frame); a frame whose two disagree is refused into needFullFeed carrying the held pair,
+// in either direction, because advancing to either number would declare a reach the stream never reached: (gen, 7) from a
+// delta that applied rev 2 (the round-3 find: the gate read through against the held rev alone), or (gen, 2) from one whose
+// stated reach was 7. The row's why is "disagree", the relation word (round 3's fifth word): both revs are good safe
+// integers and no field failed, and the row carries the word alone, so a field's word ("rev") would hide the cause from
+// its reader; "rev" is a rev that is no safe integer, and it is read before the relation, so a non-integer rev that also
+// disagrees reads "rev".
+test("a stamped delta whose rev and through disagree is refused with why disagree and the held pair on the ask, in either direction and for a composed frame; a non-integer rev reads rev, disagreeing or not; nothing applied, the pair stands, and the redial declares only what applied", async () => {
   await withManager(({ fm, emitted, sent }) => {
     fm.outbound({ type: "ready", proto: 2 });
     fm.openRemote(HOST, true);
@@ -858,8 +861,13 @@ test("a stamped delta whose rev and through disagree is refused with why rev and
     assert.deepEqual(ws.sent.filter((x: any) => x.type !== "ready"), [{ type: "needFullFeed", gen: G, rev: 1 }], "refused: the ask carries the pair that applied, not (gen, 7)");
     ws.frame({ type: "feedDelta", gen: G, base: 1, rev: 7, through: 2, now: 521, buildId: 51, asks: [card(SID_A, 9)] });   // rev past through
     ws.frame({ type: "feedDelta", gen: G, newGen: G2, base: 1, rev: 4, through: 5, now: 522, buildId: 52, asks: [card(SID_A, 9)] });   // a composed frame whose two disagree
-    assert.equal(ws.sent.filter((x: any) => x.type === "needFullFeed").length, 3, "each refused frame asks once");
-    assert.deepEqual(diagRows(sent, "feedDelta-stale"), [{ host: HOST, buildId: 50, why: "rev" }, { host: HOST, buildId: 51, why: "rev" }, { host: HOST, buildId: 52, why: "rev" }], "the cause is the rev: not one rev to advance to");
+    ws.frame({ type: "feedDelta", gen: G, base: 1, rev: 2.5, through: 2, now: 523, buildId: 53, asks: [card(SID_A, 9)] });   // gen, base and through pass; the rev is no safe integer: the rev field's own failure
+    ws.frame({ type: "feedDelta", gen: G, base: 1, rev: 2.5, through: 7, now: 524, buildId: 54, asks: [card(SID_A, 9)] });   // a non-integer rev that also disagrees with its through: the field word, read before the relation
+    assert.equal(ws.sent.filter((x: any) => x.type === "needFullFeed").length, 5, "each refused frame asks once");
+    assert.ok(ws.sent.filter((x: any) => x.type === "needFullFeed").every((x: any) => x.gen === G && x.rev === 1), "every ask carries the pair that applied");
+    assert.deepEqual(diagRows(sent, "feedDelta-stale"),
+                     [{ host: HOST, buildId: 50, why: "disagree" }, { host: HOST, buildId: 51, why: "disagree" }, { host: HOST, buildId: 52, why: "disagree" }, { host: HOST, buildId: 53, why: "rev" }, { host: HOST, buildId: 54, why: "rev" }],
+                     "the relation word for two good revs that disagree (not one rev to advance to), the field word for a rev that is no safe integer, whatever its through");
     assert.equal(feeds(emitted).length, before, "nothing applied, nothing emitted");
     assert.equal(fm.conns.get(HOST).feedRaw, raw, "the base stands");
     assert.deepEqual(heldOf(fm), { gen: G, rev: 1 }, "the pair is what applied");

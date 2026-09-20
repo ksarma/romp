@@ -1526,17 +1526,24 @@ export class FederationManager {
       const inGate = !!held && gen === held.gen && Number.isSafeInteger(d.base) && d.base <= held.rev && Number.isSafeInteger(d.rev)
                      && Number.isSafeInteger(d.through) && d.through >= held.rev && d.rev === d.through;
       if (!inGate) {
-        // one why per FIELD the frame fails on, so a reader can tell a generation change from a base past the held rev:
-        // gen (the held pair's gen differs, or none is held for a stamped stream), base (not a safe integer, or above the
-        // held rev), through (not carried, so not a safe integer: every stamped delta carries it; or below the held rev),
-        // or rev (not a safe integer, or unequal to the through the frame states: the pair advances to rev, and a stamped
-        // delta's rev IS its through (the design's stamped shape: through equal to rev on a per-cycle delta, R on a
-        // composed frame), so a frame whose two disagree states no one rev to advance to and is refused rather than
-        // declared at either). The fields are tested in that order, so a frame below the held rev reads "through"
-        // whatever its rev, and "rev" is read only once gen, base and through have each passed. Four words, the stale
-        // row's whole vocabulary; each word covers every failure of its field.
+        // The stale row carries host, buildId and this word and nothing else, so the word is the whole signal a reader
+        // of the row has. Two kinds of word: one per FIELD for that field's own failures, and one for the RELATION between
+        // two fields that are each valid. The field words: gen (the held pair's gen differs, or none is held for a stamped
+        // stream), base (not a safe integer, or above the held rev), through (not carried, so not a safe integer: every
+        // stamped delta carries it; or below the held rev), rev (not a safe integer). The relation word: disagree (gen,
+        // base, through and rev each passed alone, and rev is not the through the frame states: the pair advances to rev,
+        // and a stamped delta's rev IS its through (the design's stamped shape: through equal to rev on a per-cycle delta,
+        // R on a composed frame), so a frame whose two disagree states no one rev to advance to and is refused rather than
+        // declared at either; both values can be good safe integers, so this is no failure of the rev field, and "rev"
+        // would hide it from a reader who has the word alone). Tested in that order, gen, base, through, rev, then the
+        // relation, so a frame below the held rev reads "through" whatever its rev, "rev" is read only once gen, base and
+        // through have each passed, and "disagree" only once every field has. Five words, the stale row's whole
+        // vocabulary: four field words, each covering every failure of its field, and one relation word. The kernel's
+        // admit road (kernel.py _client_diag_admit) filters the row's KEYS against CLIENT_DIAG_KEYS and reads no value, so
+        // a new word needs no allowlist change where a new key does; tests/test_client_diag_allowlist.py drives each word
+        // through it and holds the list to this ladder.
         const why = !held || gen !== held.gen ? "gen" : !Number.isSafeInteger(d.base) || d.base > held.rev ? "base"
-                    : !Number.isSafeInteger(d.through) || d.through < held.rev ? "through" : "rev";
+                    : !Number.isSafeInteger(d.through) || d.through < held.rev ? "through" : !Number.isSafeInteger(d.rev) ? "rev" : "disagree";
         this.diag("feedDelta-stale", { host, buildId: d.buildId, why });
         this.sendRemote(host, held ? { type: "needFullFeed", gen: held.gen, rev: held.rev } : { type: "needFullFeed" });
         return;
