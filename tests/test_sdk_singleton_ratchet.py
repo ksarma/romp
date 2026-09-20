@@ -333,7 +333,13 @@ segment read) and fail loudly, the line quoted, when it changes.
 
 Mutations of the fixture run against this module, each landed and reverted (2026-09-19; the runner compile-checks the
 mutated conftest and counts a NameError in the outer output as a crash, never as a weakening), listed by what the
-fixture READS and the branch each read feeds, with the case that reds under each:
+fixture READS and the branch each read feeds, each with a case that reds under it: a witness, never the set (a case
+added later joins a set, and no sentence here says it did not). The refusal's cells, the ones the S cases keep touching,
+state instead the RULE every red case satisfies and carry a derive id: the mutation is data (MUTATIONS, the exact text
+replaced in tests/conftest.py), TheMutationCellsApply pins that each replaced text occurs exactly once at this tree and
+that the matrix and the table name the same cells, and `python -B tests/test_sdk_singleton_ratchet.py --derive <id>`
+plants the cell in a detached worktree at HEAD, runs this module there, prints the red cases by case id with the head it
+ran at, and removes the worktree: a cell's current list is that run's, at the head it prints, and none is written here.
   the reads (_sdk_read): the marker ignored, every test on the same-marker road (A.c fails falsely on the stale
     pre-reload object); a None marker before treated as the same-marker road (H2.a fails falsely) or as an exemption
     (H.a passes); os.path.isdir replaced by os.path.exists (D.One's boundary verdict disappears, A.g); isdir forced
@@ -365,41 +371,54 @@ fixture READS and the branch each read feeds, with the case that reds under each
     the identity term (T's One.a gets a false report blaming import-time code, and the run counts two errors, the
     boundary verdict staying beside it); its reference moved from the module start read's jd.STATE to the window's (K2's
     One.a gets a false report blaming import-time code for the moves setUpModule and setUpClass made for their tests).
-  the first window's refusal (_sdk_swapped): deleted (S7's first test shows no refusal line and the run exits 0); keyed
-    on the window's before object in place of the start read's (S7: the window's object is None, so the refusal is
-    silent); the reference root rendered from the window's jd.STATE in place of the start read's (S7, S7B, S9 and S11: the
-    class root is rendered and the value regex, a path ending in /romp, fails; S10 and S9B green, their scopes leaving
-    jd.STATE where the start read found it; S12 and S14 green, reading the refusal's heads and not its root; S13 green, no
-    refusal there); the start read's object rendered from the live attribute in place of its recorded state_dir (S11: the
-    refusal names the repointed root; S9B: the refusal renders the moved path, and its read of the refusal's root against
-    the report's fails); the window value rendered as None whatever the slot holds (S12: the class's build in the slot is said
-    as None (not built); the window value's recorded-text argument is inert, nothing running between the before read and
-    the render, annotated at the call and not a cell); the named-object term dropped from its guard (S13: a kept-head
-    refusal on the follower's Two.a, a second line on the object module 1's class boundary named, the count 2 against 1);
-    its class guard dropped (T, U and V: a refusal naming None (not built) as the leak on a first window whose
-    start read saw nothing, beside T's class boundary verdict and inside U's and V's gone-report teardown, read as
-    carriers); its run-root guard dropped (S8: a refusal on the kernel's own import-time build over the run root, exit
-    1); its gone arm removed, the start read's gone object refused silently (S9: no refusal on One.a, the count 1
-    against 2; S10: the boundary verdict is One.a's only line); the gone arm rendered under the kept head (S9, S10: the
-    refusal opens with the standing directory's wording, read as carriers of each head); the kept arm rendered under
-    the gone head (S7, S7B: the same read the other way); the gone arm's cause clause replaced by the kept arm's (S9,
-    S10: the needle naming a directory since removed is missing); the kept arm's cause clause replaced by the gone arm's
-    (S7, S7B: the needle naming a root that is not the run's is missing); the refused list never written (S9, S9B: no
-    link clause on Two.a's gone report); the link clause dropped from the gone
-    branch (S9, S9B); the clause emitted for every gone report (E.a, U.a and V.a carry it, no refusal having preceded
-    them); the link keyed on the rendered text in place of the object, the refusal recording its object's rendered path
-    and the report testing its own (S9B: the two paths differ and the clause is missing; S9 green, its paths agree); the link
-    keyed on any refusal in the worker in place of the refused object, membership by existence (S14: the clause lands on the
-    gone report of an object no refusal named, a second gone object a later class built and removed after the refusal; S9
-    and S9B green, their gone object being the refused one); the
-    refusal marking its object as reported (S9: Two.a's gone report silenced, the count 1 against 2); the flag dropped
-    from its condition with the spent first term kept (S7, S7B, S9, S10, S11, S12 and S9B: a second refusal on Two.a,
-    saying the slot does not hold the object at a window where it does, and a third on Three.a in S7B; S13 green, the
-    object at its later windows named); the identity term alone in the condition's place (S7B and S10: a second refusal
-    on Three.a and on Two.a; S7 and S9 green, their only later window being Two.a's, where the identity term holds; S11,
-    S12, S13 and S9B green); a scope appended to its text (S7's no-scope read); the flag kept when the identity term
-    fails, the deferral not taken (S7: no refusal at One.a, and Two.a carries the kept-root report, whose premise
-    sentence, before any test in this worker has run, is false at that window).
+  the first window's refusal (_sdk_swapped), each cell a rule and a derive id: deleted (red: every case whose first
+    window refuses, reading the refusal line or the exit code it sets; derive: refusal-deleted); keyed on the window's
+    before object in place of the start read's (red: every refusing case whose first window holds None, the swapping
+    classes' reset, the refusal then silent, and every case whose start read found no object while its first window
+    holds a real one, that object then refused as the start read's; a window holding a real build of the class's own
+    beside a refused start read still renders the start read's fields; derive: refusal-window-object); the reference
+    root rendered from the window's jd.STATE in place of the start read's (red: every refusing case whose scope moved
+    jd.STATE before its first window and that reads the jd.STATE the refusal names by value, a run root ending in
+    /romp; a case reading the object's root or the heads alone stays green; derive: refusal-window-root); the start
+    read's object rendered from the live attribute in place of its recorded state_dir
+    (red: every case whose refused object is repointed between the module start read and the first window and that
+    reads the refusal's root; derive: refusal-live-root); the window value rendered as None whatever the slot holds
+    (red: every refusing case whose first window holds a real object and reads it in the refusal; the window value's
+    recorded-text argument is inert, nothing running between the before read and the render, annotated at the call and
+    not a cell; derive: refusal-window-value-none); the named-object term dropped from its guard (red: every case where
+    a verdict named the start read's object before the first window opened; derive: refusal-named-guard); its class
+    guard dropped (red: every case whose module start read found no real object and whose first window does not hold
+    that value, the refusal then naming None (not built); derive: refusal-class-guard); its run-root guard dropped (red:
+    every case whose start read's object stands over jd.STATE as that read recorded it and whose first window does not
+    hold it; derive: refusal-run-root-guard); its gone arm removed, the start read's gone object refused silently (red:
+    every case whose first window refuses under the gone head; derive: refusal-gone-arm-removed); the gone arm rendered
+    under the kept head (red: every case whose first window refuses under the gone head, each reading the carriers of
+    both heads; derive: refusal-gone-under-kept-head); the kept arm rendered under the gone head (red: every case whose
+    first window refuses under the kept head; derive: refusal-kept-under-gone-head); the gone arm's cause clause
+    replaced by the kept arm's (red: every case that reads the gone refusal's cause clause, the needle naming a
+    directory since removed; a case reading the gone head alone stays green; derive: refusal-gone-cause-swapped); the
+    kept arm's cause clause replaced by the gone arm's (red: every case that reads the kept refusal's cause clause, the
+    needle naming a root that is not the run's; derive: refusal-kept-cause-swapped); the refused list never written
+    (red: every case that reads a link clause present; derive: refused-list-unwritten); the link clause dropped from
+    the gone branch (red: every case that reads the gone report's link clause present; derive: report-link-dropped);
+    the clause emitted for every gone report (red: every case that reads a gone report on an object no refusal named
+    for the clause's absence, whether the run took no refusal or took one on another object; derive:
+    report-link-unconditional); the link keyed on the rendered text in place of the object, the refusal recording its
+    object's rendered path and the report testing its own (red: every case whose refused object is repointed between
+    the refusal and the gone report on it, the two paths then differing; derive: report-link-by-path); the link keyed
+    on any refusal in the worker in place of the refused object, membership by existence (red: every case with a
+    refusal followed by a gone report on an object no refusal named; derive: report-link-by-existence); the refusal
+    marking its object as reported (red: every case with a gone report on the refused object after the refusal, that
+    report then silenced; derive: refusal-marks-reported); the flag dropped from its condition with the spent first
+    term kept (red: every case whose worker has a later window where the refusal renders at all, the start read's
+    object real, unnamed, and gone or off the recorded jd.STATE, and the slot not holding it; a case whose object a
+    verdict named stays green; derive: refusal-flag-dropped); the identity term alone in the condition's place (red:
+    every case whose worker has a later window where the identity term fails; derive: refusal-identity-alone); a scope
+    appended to its text (red: every case that reads the refusal for naming no scope or test; derive:
+    refusal-scope-appended); the flag kept when the identity term fails, the deferral not taken (red: every case whose
+    first window refuses, the refusal then never taken and the flag spent only where the identity term holds, so a
+    later window that holds the start read's object over its standing root carries the kept-root report with its
+    premise sentence false; derive: refusal-flag-kept).
   the boundary: the class end deleted (D.One.b and K.One.b show no boundary error, M, P); the module end deleted
     (L.b shows none); compared to its last read only (K.One passes silently); judged without the restore exemption
     (K.Two errors); the named skip dropped (a second report at the class or module end of A, B, C, D, E, K and L;
@@ -425,9 +444,11 @@ belt: the one site that fills _SDK_REPORTED, the function fixture's report line,
 the same first window, and no earlier window exists in the worker, so the list is empty whenever the refusal is
 consulted; dropped, the module stays green; the _sdk_named term beside it is reachable and pinned, S13); and no others.
 """
+import ast
 import inspect
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -468,6 +489,165 @@ BOUNDARY = "'s class or module boundary (tearDownClass, tearDownModule or a clas
 SHARED_STATE = "left shared state changed"     # the judge fixture's text: quiet in every case here, so the ratchet's is the only red
 SDK_NOT_FOUND = "sdk-backend: claude_agent_sdk not found"     # the boot log's line on the missing road (_sdk_import_notice)
 SDK_NOT_IMPORTABLE = "claude_agent_sdk is NOT importable"     # the backend's construction notice on the missing road
+
+# The mutation table: cell id -> (target file relative to tests/, the exact substitutions). Each old text occurs exactly
+# once in its target at this tree (TheMutationCellsApply), so a fixture edit that moves an anchor reds that pin instead
+# of retiring the cell silently. The rule each cell's red set satisfies is written in the module docstring's matrix
+# alone, beside "derive: <id>"; no list of red cases is written anywhere: `python -B tests/test_sdk_singleton_ratchet.py
+# --derive <id>` (derive, below) plants the cell in a detached worktree at HEAD, runs this module there and prints the
+# red cases by case id with the head it ran at. The ids are the refusal block's (the module docstring's matrix).
+# _sdk_swapped's guard: the start.isdir line tells it from _sdk_inherited's, which opens the same way
+_REFUSAL_GUARD = ("    if not _sdk_is_real(be) or _sdk_named(be) or _sdk_reported(be):\n        return None\n"
+                  "    if start.isdir is False:\n")
+_REFUSAL_RENDER = "% (head, _sdk_singleton_text(be, start.sd), start.jd_state,"
+_REFUSAL_CONDITION = "    if _SDK_FIRST_WINDOW and _SDK_MODULE_START is not None and not first:\n"
+_REFUSE_CALL = "_sdk_refuse(_SDK_MODULE_START.be)"
+_LINK_CONDITION = 'if _sdk_refused(be) else "")'
+_GONE_HEAD_LINE = "        head, cause = _SDK_SWAPPED_GONE_HEAD, ("
+_KEPT_HEAD_LINE = "        head, cause = _SDK_SWAPPED_HEAD, ("
+_GONE_CAUSE = ('("building the singleton over a directory since removed, or removing the directory "\n'
+               '                                               "it was built over")')
+_KEPT_CAUSE = ('("building the singleton over a root that is not the run\'s, or moving jd.STATE after the "\n'
+               '                                          "build and leaving it there")')
+MUTATIONS = {
+    "refusal-deleted": ("conftest.py", [
+        ("        swapped = _sdk_swapped(_SDK_MODULE_START, before)\n", "        swapped = None\n")]),
+    "refusal-window-object": ("conftest.py", [("    be = start.be\n", "    be = before.be\n")]),
+    "refusal-window-root": ("conftest.py", [
+        (_REFUSAL_RENDER, "% (head, _sdk_singleton_text(be, start.sd), before.jd_state,")]),
+    "refusal-live-root": ("conftest.py", [(_REFUSAL_RENDER, "% (head, _sdk_singleton_text(be), start.jd_state,")]),
+    "refusal-window-value-none": ("conftest.py", [
+        ("_sdk_singleton_text(before.be, before.sd),", "_sdk_singleton_text(None),")]),
+    "refusal-named-guard": ("conftest.py", [(_REFUSAL_GUARD, _REFUSAL_GUARD.replace(" _sdk_named(be) or", ""))]),
+    "refusal-class-guard": ("conftest.py", [(_REFUSAL_GUARD, _REFUSAL_GUARD.replace("not _sdk_is_real(be) or ", ""))]),
+    "refusal-run-root-guard": ("conftest.py", [
+        ("    elif start.sd == start.jd_state:\n        return None\n", "    elif False:\n        return None\n")]),
+    "refusal-gone-arm-removed": ("conftest.py", [
+        ("    if start.isdir is False:\n" + _GONE_HEAD_LINE,
+         "    if start.isdir is False:\n        return None\n    elif False:\n" + _GONE_HEAD_LINE)]),
+    "refusal-gone-under-kept-head": ("conftest.py", [(_GONE_HEAD_LINE, _KEPT_HEAD_LINE)]),
+    "refusal-kept-under-gone-head": ("conftest.py", [(_KEPT_HEAD_LINE, _GONE_HEAD_LINE)]),
+    "refusal-gone-cause-swapped": ("conftest.py", [(_GONE_CAUSE, _KEPT_CAUSE)]),
+    "refusal-kept-cause-swapped": ("conftest.py", [(_KEPT_CAUSE, _GONE_CAUSE)]),
+    "refused-list-unwritten": ("conftest.py", [(_REFUSE_CALL, "None")]),
+    "report-link-dropped": ("conftest.py", [(_LINK_CONDITION, 'if False else "")')]),
+    "report-link-unconditional": ("conftest.py", [(_LINK_CONDITION, 'if True else "")')]),
+    "report-link-by-path": ("conftest.py", [
+        ("_SDK_REFUSED = []", "_SDK_REFUSED_TEXT = []; _SDK_REFUSED = []"),
+        (_REFUSE_CALL, _REFUSE_CALL + "; _SDK_REFUSED_TEXT.append(_sdk_singleton_text(_SDK_MODULE_START.be, "
+                       "_SDK_MODULE_START.sd))"),
+        (_LINK_CONDITION, 'if _sdk_singleton_text(be) in _SDK_REFUSED_TEXT else "")')]),
+    "report-link-by-existence": ("conftest.py", [(_LINK_CONDITION, 'if _SDK_REFUSED else "")')]),
+    "refusal-marks-reported": ("conftest.py", [(_REFUSE_CALL, _REFUSE_CALL + "; _sdk_report(_SDK_MODULE_START.be)")]),
+    "refusal-flag-dropped": ("conftest.py", [
+        (_REFUSAL_CONDITION, "    if _SDK_MODULE_START is not None and not first:\n")]),
+    "refusal-identity-alone": ("conftest.py", [
+        (_REFUSAL_CONDITION, "    if _SDK_MODULE_START is not None and before.be is not _SDK_MODULE_START.be:\n")]),
+    "refusal-scope-appended": ("conftest.py", [
+        ('        lines.append("%s %s" % (request.node.nodeid, swapped))\n',
+         '        lines.append("%s %s (%s)" % (request.node.nodeid, swapped, request.node.parent.nodeid))\n')]),
+    "refusal-flag-kept": ("conftest.py", [
+        (_REFUSAL_CONDITION, "    if False:\n"),
+        ("    _SDK_FIRST_WINDOW = False\n", "    if first:\n        _SDK_FIRST_WINDOW = False\n")]),
+}
+DERIVE_DESELECT = "tests/test_sdk_singleton_ratchet.py::TheMutationCellsApply"   # reds under any plant by construction
+DERIVE_ENV_DROPPED = ("PYTEST_ADDOPTS", "PYTEST_PLUGINS", "PYTEST_DISABLE_PLUGIN_AUTOLOAD", "PYTEST_CURRENT_TEST",
+                      "PYTEST_XDIST_WORKER", "PYTEST_XDIST_WORKER_COUNT", "ROMP_TESTS_SYSTEM_TMPDIR",
+                      "PY_COLORS", "FORCE_COLOR", "CLICOLOR_FORCE",      # what nested_run pops from its child's
+                      "CLAUDE_CODE_SESSION_ID")                          # environment; the session id the recipe unsets
+
+
+def mutation_cell_text(doc, cell):
+    """The docstring cell that carries "derive: <cell>", whitespace collapsed: from the cell's own opening words to the
+    close of the parenthesis the derive id sits in (nested parentheses balanced), or None when no cell carries it. The
+    pin reads it for the rule's presence; derive prints it beside the derived list, so the rule and the list sit
+    together in one output."""
+    doc = re.sub(r"\s+", " ", doc)
+    tag = "; derive: %s)" % cell
+    end = doc.find(tag)
+    if end < 0:
+        return None
+    end += len(tag)
+    depth, i = 0, end - 1
+    while i >= 0:
+        if doc[i] == ")":
+            depth += 1
+        elif doc[i] == "(":
+            depth -= 1
+            if depth == 0:
+                break
+        i -= 1
+    start = max(doc.rfind("; ", 0, i), doc.rfind("): ", 0, i))       # the previous cell's end, or the block's head
+    return doc[doc.index(" ", start) + 1:end]
+
+
+def derive(cell):
+    """Plant the cell's mutation in a detached worktree at HEAD, run this module there, print the red cases by case id
+    with the head, and remove the worktree: the runnable derivation of the cell's current red set, which no sentence in
+    this module lists (the module docstring's matrix states each cell's rule and points here). Exits 0 when the plant
+    and the run completed, whatever the run's colour; an old text absent or found twice, a mutated file that does not
+    parse, or a run that does not finish is a loud error. The applicability pin is deselected on the command line, never
+    skipped in the test: under any plant it reds by construction, and it is no cell's set. The run's environment is the
+    test recipe's (every ROMP_* variable and the pytest variables nested_run pops dropped, TMPDIR fresh)."""
+    target, subs = MUTATIONS[cell]
+    scratch = tempfile.mkdtemp(prefix="derive-")
+    tree = os.path.join(scratch, "tree")
+    added = False
+    try:
+        git = ["git", "-C", ROOT]
+        head = subprocess.run(git + ["rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip()
+        subprocess.run(git + ["worktree", "add", "--detach", "--quiet", tree, "HEAD"], check=True)
+        added = True
+        print("# cell: %s" % cell)
+        print("# head: %s" % head)
+        dirty = subprocess.run(git + ["status", "--porcelain", "--", "tests/conftest.py",
+                                      "tests/test_sdk_singleton_ratchet.py"],
+                               check=True, capture_output=True, text=True).stdout
+        if dirty.strip():
+            print("# warning: the working tree differs from HEAD (%s); the derivation ran at HEAD"
+                  % ", ".join(sorted(line[3:] for line in dirty.splitlines())))
+        path = os.path.join(tree, "tests", target)
+        with open(path) as f:
+            text = f.read()
+        for old, new in subs:
+            n = text.count(old)
+            if n != 1:
+                raise SystemExit("%s: the old text occurs %d times in %s, not once: %r" % (cell, n, target, old))
+            text = text.replace(old, new)
+        ast.parse(text, filename=path)
+        with open(path, "w") as f:
+            f.write(text)
+        print("# planted: %s, %d substitution(s)" % (target, len(subs)))
+        env = {k: v for k, v in os.environ.items() if not k.startswith("ROMP_") and k not in DERIVE_ENV_DROPPED}
+        env.update(TMPDIR=scratch, PYTHONDONTWRITEBYTECODE="1")
+        cmd = [sys.executable, "-B", "-m", "pytest", "-p", "no:cacheprovider", "-q", "-rf",
+               "--deselect", DERIVE_DESELECT, "tests/test_sdk_singleton_ratchet.py"]
+        print("# run: %s (in the worktree)" % " ".join(cmd[1:]))
+        r = subprocess.run(cmd, cwd=tree, env=env, capture_output=True, text=True, timeout=1200)
+        if r.returncode not in (0, 1):
+            raise SystemExit("%s: pytest exited %d, not 0 or 1:\n%s"
+                             % (cell, r.returncode, r.stdout[-4000:] + r.stderr[-2000:]))
+        failed = {}
+        for cls, test in re.findall(r"^FAILED tests/test_sdk_singleton_ratchet\.py::(\w+)::(\w+)", r.stdout, re.M):
+            failed.setdefault(cls, []).append(test)
+        module = sys.modules[__name__]
+        ids = {}
+        for cls in failed:
+            scratch_text = getattr(getattr(module, cls, None), "SCRATCH", None)
+            names = [n[len("SCRATCH_"):] for n, v in vars(module).items()
+                     if n.startswith("SCRATCH_") and v is scratch_text]
+            ids[cls] = "/".join(sorted(names)) if isinstance(scratch_text, str) and names else "-"
+        for cls in sorted(failed, key=lambda c: (ids[c], c)):
+            print("red: %s (%s): %s" % (ids[cls], cls, ", ".join(sorted(failed[cls]))))
+        lines = [line for line in r.stdout.splitlines() if line.strip()]
+        print("summary: %s" % (lines[-1] if lines else "(no output)"))
+        print("cell: %s" % (mutation_cell_text(__doc__, cell)
+                            or "(no cell in the module docstring carries derive: %s)" % cell))
+    finally:
+        if added:
+            subprocess.run(git + ["worktree", "remove", "--force", tree], check=False)
+        shutil.rmtree(scratch, ignore_errors=True)
+
 
 SCRATCH_HEAD = textwrap.dedent('''\
     import os, shutil, sys, tempfile, unittest
@@ -2217,6 +2397,42 @@ class TheReadersRosterNamesEveryReader(unittest.TestCase):
             self.assertRegex(roster, r"\b%s\b" % re.escape(name), "the roster does not name the reader %s" % name)
 
 
+class TheMutationCellsApply(unittest.TestCase):
+    """The mutation table (MUTATIONS) applies at this tree, and the module docstring's matrix and the table name the
+    same cells. Each cell's old text occurs exactly once in its target file and differs from its replacement, and the
+    mutated file parses: a fixture edit that moves an anchor reds here instead of retiring the cell silently, and a
+    recipe that would not compile is caught before a derivation runs it. Every key is carried by exactly one docstring
+    cell as "derive: <id>", inside a parenthesis that opens with the cell's rule ("(red: "), and every derive id in the
+    docstring is a key: the composition, pinned both ways. The table is not short: a population that comes back under
+    the count at the head that set the floor is a failure, not a pass (the roster pin's convention). derive() deselects
+    this class: under any plant it reds by construction, and it is no cell's set."""
+
+    def test_each_cells_old_text_occurs_exactly_once_and_the_mutation_parses(self):
+        for cell, (target, subs) in MUTATIONS.items():
+            with open(os.path.join(HERE, target)) as f:
+                text = f.read()
+            for old, new in subs:
+                self.assertEqual(text.count(old), 1, "%s: the old text occurs %d times in %s, not once: %r"
+                                 % (cell, text.count(old), target, old))
+                self.assertNotEqual(old, new, cell)
+                text = text.replace(old, new)
+            ast.parse(text, filename=target)                 # a SyntaxError is the failure
+
+    def test_the_docstring_and_the_table_name_the_same_cells(self):
+        doc = re.sub(r"\s+", " ", __doc__)
+        in_doc = re.findall(r"; derive: ([\w-]+)\)", doc)
+        self.assertEqual(len(in_doc), len(set(in_doc)), "a derive id appears in two cells: %r" % in_doc)
+        self.assertEqual(set(in_doc), set(MUTATIONS), "the docstring's derive ids and the table's keys differ")
+        for cell in MUTATIONS:
+            text = mutation_cell_text(__doc__, cell)
+            self.assertIsNotNone(text, cell)
+            self.assertIn("(red: ", text, "%s: the cell states no rule: %s" % (cell, text))
+
+    def test_the_table_is_not_short(self):
+        self.assertGreaterEqual(len(MUTATIONS), 23, "the refusal block's twenty-three cells at the round-6 head; a "
+                                "shorter table is a failure, not a pass: %r" % sorted(MUTATIONS))
+
+
 class ClassTeardownRemovesTheDirectory(_NestedRun, unittest.TestCase):
     SCRATCH = SCRATCH_D
     ERRORS = 2
@@ -2538,12 +2754,9 @@ class AnImportTimeKeptRootLeakMetFirstByAClassThatSwapsTheSingleton(_NestedRun, 
 class TheRefusalIsTheFirstWindowsAlone(AnImportTimeKeptRootLeakMetFirstByAClassThatSwapsTheSingleton):
     """S7B: S7 with a third class of One's shape after Two, so a LATER window where the identity term fails exists
     (Three.a's before object is None while the start read's is the import-time object). The refusal is the first
-    window's: one carrier, Three.a quiet, Three's boundary quiet, still one error. The flag's two cells, measured over
-    the whole module: with the identity term alone in the condition's place, S7B and S10 red (a second refusal on
-    Three.a here, on Two.a in S10) while S7 and S9 stay green, since their only later window is Two.a's, where the
-    identity term holds, and S11, S12, S13 and S9B stay green too; with the flag dropped and the spent first term kept,
-    S7, S7B, S9, S10, S11, S12 and S9B red (a second refusal on Two.a, a third on Three.a here) and S13 green, the
-    object at its later windows named."""
+    window's: one carrier, Three.a quiet, Three's boundary quiet, still one error. The flag's two cells are in the
+    module docstring's matrix with their rules and derive ids (refusal-flag-dropped, refusal-identity-alone); this case
+    is a carrier of both by the rules, Three.a being a later window, and one where the identity term fails."""
     SCRATCH = SCRATCH_S7B
 
     def test_the_later_swapping_class_gets_no_refusal(self):
@@ -2841,9 +3054,9 @@ class ASecondGoneObjectAfterTheRefusalCarriesNoLink(_NestedRun, unittest.TestCas
     alone, and the clause is written on membership by identity (_sdk_refused). Two errors, every boundary quiet (Two's
     start and end reads agree on the refused object). The kill cell is membership by existence, the clause written
     whenever any refusal was taken in the worker (`if _SDK_REFUSED` in place of `if _sdk_refused(be)`): Two.a's report
-    then says it is the object the first window refused to attribute, a false link, while S9, S9B, S10, E, U, V and S7
-    stay green, their gone object being the refused one or no refusal preceding them (a verifier's finding on the
-    round-4 fixes: no case had a refusal on one object followed by a gone report on another)."""
+    then says it is the object the first window refused to attribute, a false link, while the cases whose gone object
+    is the refused one, or whose run took no refusal, stay green (derive: report-link-by-existence; a verifier's finding
+    on the round-4 fixes: no case had a refusal on one object followed by a gone report on another)."""
     SCRATCH = SCRATCH_S14
     ERRORS = 2
     FIRST = "One.test_a_builds_over_the_class_root"
@@ -3149,4 +3362,9 @@ class ReexecutionThenTheRunRootRemoved(_NestedRun, unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    if len(sys.argv) == 3 and sys.argv[1] == "--derive":        # the derivation of a cell's red set (or every cell's)
+        for name in (sorted(MUTATIONS) if sys.argv[2] == "all" else [sys.argv[2]]):
+            derive(name)
+            print()
+    else:
+        unittest.main()
