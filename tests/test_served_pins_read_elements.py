@@ -29,8 +29,11 @@ too, judged over the whole text, so a literal a comment spells anywhere in the t
 the variable of a `for <name> in (<text>, <text>)` loop over served texts (one row per text, inside the loop's body;
 round 7), or a `self.<attr>` bound to one in any method of the same class (a setUp), or a body FETCHED by a literal path
 (round 8, 2026-09-20: `_, body = _serve_get("/sw.js", ...)`, `page = self._get_text("/")`, through `.read(...)` and
-`.decode(...)`, alone or by tuple unpack), which is the text of the getter the kernel's GET dispatch serves at that path
-(route_getters below). The getters are derived from the
+`.decode(...)`, alone or by tuple unpack; the fixer pass of round 8: a FORMATTED url too, `with urllib.request.urlopen(
+"http://127.0.0.1:%d/timeline?token=testtok" % self.port) as r:` binding `r` and `body = r.read().decode(...)` after it, the
+route the url's path, and only where the query carries `token=`, since a token-less fetch of a page route is answered by the
+handler's gate with the paste-the-token page, a text the route walk does not map), which is the text of the getter the
+kernel's GET dispatch serves at that path (route_getters below). The getters are derived from the
 kernel source by rule: the functions named `_landing`, `_<name>_page`, `_<name>_js` or `_<name>_css` that a call with no
 arguments renders (no parameter, or every parameter defaulted; round 7: the served script functions, the service worker,
 the reload and shim cores and the timeline axis, had been outside the getter rule with ten live pins), a page read for
@@ -79,10 +82,15 @@ with no arguments. The walk is shape-sensitive: it reads those two shapes and no
 a `match`, a comparison through a helper) is outside it until a branch is added and pinned in the form-space test below (a
 naive equality walk misses the landing and reports eight routes believing nine). A fetch is a call to a Name or a
 self.<method> (a test helper over the handler or an HTTP client) whose first argument is a string literal beginning with `/`
-that, without its ?query, is such a route; a method call on another object (`path.split("/")`) is not one.
+that, without its ?query, is such a route, or a call to an attribute named `urlopen` whose first argument is a string literal,
+bare or `%`-formatted, of the form `http://127.0.0.1:%d/<route>?...token=...` (the `with ... as r` target is what it binds;
+the fixer pass of round 8: the tokened fetches in tests/test_kernel.py carried 39 pins over five pages outside the population, one
+of them satisfiable by three comments of the timeline page); a method call on another object (`path.split("/")`) is not one.
 
-Bound: a body fetched from a formatted URL (`"http://127.0.0.1:%d/?token=testtok" % self.port`, tests/test_kernel.py, whose
-one such pin reads served_css.code and served_css.rules by hand), a fetch of a path the dispatch does not map to a getter
+Bound: a url built otherwise than as a bare or `%`-formatted literal (a `Request` object, an f-string, `.format`), a formatted
+url whose query carries no `token=` (tests/test_kernel.py's token-less fetch of `/`, answered with the paste-the-token page), a
+membership asserted through a helper (`_has(self, lit, body)` in tests/test_files_pane.py and tests/test_settings_page.py, whose
+formatted fetches bind a name no form here reads), a fetch of a path the dispatch does not map to a getter
 call (a JSON or text/plain API body, a `/dist/` bundle, a `/media/` file: outside the derivation, and not comment-satisfiable
 only where the body carries no comment syntax), a page from a dynamically resolved getter (`getattr(km, "_%s_page" % name)()`,
 tests/test_kernel_boot_splash.py, which reads served_css.code for the tokens a comment spells), a getter called WITH
@@ -147,10 +155,23 @@ _TEXT_ITEM = re.compile(r"([A-Za-z_]\w*)\.([A-Za-z_]\w*)(\(\))?")
 # a fetch of a literal path (round 8, 2026-09-20): `<targets> = <helper>("/route"...` or `= self.<helper>("/route"...`, the path a
 # route the dispatch maps (route_getters); and a body read from a fetched name, `<target> = <name>.decode(...)` or
 # `<target> = <name>.read(...).decode(...)`
+# a fetch of a FORMATTED url (the fixer pass of round 8): `with <x>.urlopen("http://127.0.0.1:%d/<route>?token=..." % <port>, ...) as r:`;
+# the route is the path, and the query must carry the token (a token-less fetch of a page route is answered by the handler's gate
+# with the paste-the-token page, a text the route walk does not map). One url grammar for both censuses; how a site is found
+# stays their own (an AST walk against a regex by logical line)
+_URL = re.compile(r"^https?://127\.0\.0\.1:%d(?P<route>/[^?\s\"']*)(?:\?(?P<query>[^\s\"']*))?$")
+_URLOPEN_DEF = re.compile(r"^\s*with\s+(?:[A-Za-z_]\w*\.)*urlopen\(\s*(?P<url>" + _LIT1 + r")\s*%.*\)\s+as\s+(?P<target>[A-Za-z_]\w*)\s*:\s*(?:#.*)?$")
 _FETCH_DEF = re.compile(r"^\s*(?P<targets>[A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)\s*=\s*(?:self\.)?[A-Za-z_]\w*\(\s*(?P<route>\"/[^\"\\\n]*\"|'/[^'\\\n]*')")
 _DECODE_DEF = re.compile(r"^\s*(?P<target>[A-Za-z_]\w*)\s*=\s*(?P<src>[A-Za-z_]\w*)(?:\.read\([^)]*\))?\.decode\([^)]*\)\s*(?:#.*)?$")
 _DEF_LINE = re.compile(r"^(?P<indent>\s*)(?:async\s+)?def\s")
 _CLASS_LINE = re.compile(r"^class\s")
+
+
+def _url_route(url):
+    """The route a formatted url names, or None: `http://127.0.0.1:%d/<route>?...` whose query carries `token=` (a token-less
+    url is not a fetch of the page: the handler's gate answers it with the paste-the-token page)."""
+    m = _URL.match(url)
+    return m.group("route") if m and re.search(r"(?:^|&)token=", m.group("query") or "") else None
 
 
 def _kernel_source():
@@ -276,14 +297,21 @@ def _text(node, getters, constants):
 def _fetched(node, names, routes):
     """The served text a fetched value stands for (round 8, 2026-09-20): a call to a Name or a self.<method> whose first argument
     is a string literal beginning with `/` that, without its ?query, is a route in `routes` (`_serve_get("/sw.js", ...)`,
-    `self._get_text("/")`); or the `.read(...)` or `.decode(...)` of such a value or of a Name bound to one, through any chain of
-    the two (`body.decode()`, `fetch("/chat").read().decode()`); else None. A bare Name is not followed (as _text does not)."""
+    `self._get_text("/")`); a call to an attribute named `urlopen` whose first argument is a string literal, bare or `%`-formatted,
+    naming such a route with the token in its query (_url_route; the fixer pass of round 8); or the `.read(...)` or `.decode(...)`
+    of such a value or of a Name bound to one, through any chain of the two (`body.decode()`, `fetch("/chat").read().decode()`);
+    else None. A bare Name is not followed (as _text does not)."""
     if not isinstance(node, ast.Call):
         return None
     f = node.func
     if isinstance(f, ast.Attribute) and f.attr in ("read", "decode"):
         inner = f.value
         return names.get(inner.id) if isinstance(inner, ast.Name) else _fetched(inner, names, routes)
+    if isinstance(f, ast.Attribute) and f.attr == "urlopen" and node.args:
+        a = node.args[0]
+        fmt = a.left if isinstance(a, ast.BinOp) and isinstance(a.op, ast.Mod) else a
+        route = _url_route(fmt.value) if isinstance(fmt, ast.Constant) and isinstance(fmt.value, str) else None
+        return routes.get(route) if route else None
     if node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str) and node.args[0].value.startswith("/") \
             and (isinstance(f, ast.Name) or (isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id == "self")):
         return routes.get(node.args[0].value.split("?")[0])
@@ -402,17 +430,23 @@ def rows_of(path, getters, constants, routes=None):
     functions = (ast.FunctionDef, ast.AsyncFunctionDef)
     groups = [[n for n in cls.body if isinstance(n, functions)] for cls in ast.walk(tree) if isinstance(cls, ast.ClassDef)]
     groups.append([n for n in tree.body if isinstance(n, functions)])   # module-level test functions (round 6, 2026-09-20)
+    def bindings(fn):   # in walk order, so a with-item's `as` target is bound before the assignments in its body read it
+        for st in ast.walk(fn):
+            if isinstance(st, ast.Assign):
+                yield st.targets, st.value
+            elif isinstance(st, ast.With):
+                for item in st.items:
+                    if item.optional_vars is not None:
+                        yield [item.optional_vars], item.context_expr
     for fns in groups:
         attrs = {}
         for fn in fns:   # a setUp's self.<attr> binding is visible to every method
-            for st in ast.walk(fn):
-                if isinstance(st, ast.Assign):
-                    _bind(st.targets, st.value, {}, attrs, getters, constants, None, routes)
+            for targets, value in bindings(fn):
+                _bind(targets, value, {}, attrs, getters, constants, None, routes)
         for fn in fns:
             names, sliced = {}, set()
-            for st in ast.walk(fn):
-                if isinstance(st, ast.Assign):
-                    _bind(st.targets, st.value, names, attrs, getters, constants, sliced, routes)
+            for targets, value in bindings(fn):   # an assignment, or a with-item's `as` target (`with urlopen(...) as r`; the fixer pass of round 8)
+                _bind(targets, value, names, attrs, getters, constants, sliced, routes)
             text_of = lambda x: _resolve(x, names, attrs, getters, constants)
             readable = lambda lit, x: plain(lit) and not (isinstance(x, ast.Name) and x.id in sliced)
             rows = []
@@ -515,7 +549,8 @@ def textual_census(path, getters, constants, routes=None):
     `<alias>.<CONST>` inline, a Name bound to one by an assignment of its own earlier in the same function (a `self.<attr>`
     so bound in any method of the class), by a tuple assignment, by a `for` over served texts inside that loop (one site per
     text), or by a fetch of a literal path the dispatch maps (`_FETCH_DEF`, every target; `_DECODE_DEF` for the body read from
-    one; round 8). A binding a later line rebinds keeps the served text, as the derivation reads it. containers is the set of
+    one; round 8) or of a formatted url with the token in its query (`_URLOPEN_DEF`, the `as` target; the fixer pass of round
+    8). A binding a later line rebinds keeps the served text, as the derivation reads it. containers is the set of
     (name, called) for every `<alias>.<name>` the module uses as a container in one of those forms, whatever the name, the
     NAMES the tests pin, read on their own for the check against the kernel-derived getters and constants (round 7)."""
     sites, containers, names, attrs, loops = [], set(), {}, {}, []
@@ -548,6 +583,11 @@ def textual_census(path, getters, constants, routes=None):
             if getter:
                 for t in m.group("targets").split(","):
                     names[t.strip()] = [(getter, True)]
+        m = _URLOPEN_DEF.match(line)
+        if m and routes:
+            route = _url_route(_literal(m.group("url")))
+            if route and routes.get(route):
+                names[m.group("target")] = [(routes[route], True)]
         m = _DECODE_DEF.match(line)
         if m and m.group("src") in names:
             names[m.group("target")] = names[m.group("src")]
@@ -687,7 +727,9 @@ class ServedPinsReadElements(unittest.TestCase):
         # getter (getattr) stays outside (the bound). Round 7 (2026-09-20): a `for` over served texts (one row per text, a
         # membership and a position form), a comprehension over literals, a position form over a loop literal, and the
         # constants of every kind the rule derives (a style constant, an HTML constant, a bare script constant and a markup
-        # constant outside the round-6 roster), each name derived here, not written; the module is built over EVERY derived
+        # constant outside the round-6 roster), each name derived here, not written. Round 8: a body fetched by a literal path,
+        # and (the fixer pass) by a formatted url with the token in its query, bound by the with-item's `as` target; a token-less
+        # url and an unmapped path bind nothing. The module is built over EVERY derived
         # getter, so a new getter is pinned by construction, and every expectation fails on an empty derivation
         getters, constants, routes = page_getters(), served_constants(), route_getters()
         css = sorted(c for c in constants if c.endswith("_CSS"))[0]   # one constant of each kind, derived
@@ -743,6 +785,15 @@ class T(unittest.TestCase):
         self.assertIn("f5", clean)
         parts = path.split("/")
         self.assertIn("f6", parts)
+        with urllib.request.urlopen("http://127.0.0.1:%d/chat?token=x" % self.port, timeout=5) as r:
+            fetched = r.read().decode("utf-8", "replace")
+        self.assertIn("f7", fetched)
+        with urllib.request.urlopen("http://127.0.0.1:%d/" % self.port, timeout=5) as r2:
+            login = r2.read().decode("utf-8", "replace")
+        self.assertIn("f8", login)
+        with urllib.request.urlopen("http://127.0.0.1:%d/healthz?token=x" % self.port, timeout=5) as r3:
+            health = r3.read().decode()
+        self.assertIn("f9", health)
 '''
         loop = "        for pg in (%s):\n" % ", ".join("km.%s()" % g for g in getters)
         tail = '''            self.assertIn("a1", pg, "one row per text")
@@ -781,7 +832,8 @@ def test_module_level():
                     (28, "h", "_feed_page", "in"), (29, "g", "_feed_page", "index"), (29, "f", "_feed_page", "index"), (30, "e", "_LANDING_MOBILE_JS", "count"),
                     (31, "d", "_feed_page", "find"), (31, "c", "_feed_page", "rindex"), (31, "b", "_feed_page", "rfind"),
                     (34, "y\tz", "_feed_page", "in"), (35, "tq", "_feed_page", "in"),
-                    (38, "f1", "_sw_js", "in"), (40, "f2", "_chat_page", "in"), (42, "f3", "_landing", "in")]   # the fetched forms (round 8)
+                    (38, "f1", "_sw_js", "in"), (40, "f2", "_chat_page", "in"), (42, "f3", "_landing", "in"),   # the fetched forms (round 8)
+                    (51, "f7", "_chat_page", "in")]   # a formatted url with the token, bound by the with-item's `as` (the fixer pass of round 8)
         expected += [(L + 1, "a1", g, "in") for g in getters] + [(L + 2, "a2", g, "index") for g in getters]
         expected += [(L + 5, "a4", "_feed_page", "index"), (L + 5, "a5", "_feed_page", "index"), (L + 6, "a6", "_feed_page", "index"), (L + 6, "a7", "_feed_page", "index"),
                      (L + 7, "a8", css, "in"), (L + 8, "a9", html, "in"), (L + 10, "b1", script, "in"), (L + 11, "b2", mark, "in"), (L + 12, "b4b5", "_feed_page", "in"),
@@ -790,21 +842,23 @@ def test_module_level():
         self.assertNotIn(("a3", "in"), {(lit, form) for _, lit, _, form, _ in rows}, "the loop variable is bound to the loop's body only")
         self.assertNotIn(("b3", "in"), {(lit, form) for _, lit, _, form, _ in rows}, "a loop whose iterable mixes a text with something else binds nothing")
         # round 8 (2026-09-20): a fetch of an unmapped path, a body passed through served_css.js_code, and a method call on another
-        # object with a route-shaped literal (path.split("/")) bind nothing
-        self.assertEqual({lit for _, lit, _, _, _ in rows} & {"f4", "f5", "f6"}, set())
+        # object with a route-shaped literal (path.split("/")) bind nothing; the fixer pass: nor a formatted url of a page route with
+        # no token in its query (the gate's paste-the-token page, f8), nor one of a path the dispatch does not map (f9)
+        self.assertEqual({lit for _, lit, _, _, _ in rows} & {"f4", "f5", "f6", "f8", "f9"}, set())
         # round 8 (2026-09-20): the rows the textual census declines, by form: a loop or comprehension literal (p, q, r, a4 to a7),
         # a name bound to a slice (h), a literal with a backslash and a triple-quoted one; every other row is readable
         declined = {(15, "p"), (15, "q"), (17, "r"), (28, "h"), (L + 5, "a4"), (L + 5, "a5"), (L + 6, "a6"), (L + 6, "a7"), (34, "y\tz"), (35, "tq")}
         self.assertEqual({(line, lit) for line, lit, _, _, readable in rows if not readable}, declined)
         # the textual census reads the inline forms, the one-line bound form (a Name, a self.<attr>), the tuple binding (by
         # position, an item that is no served text binding nothing), the bare assert and assertTrue lines, the position forms,
-        # the for over texts and an implicit concatenation of literals across the lines of one statement; the loop over
+        # the for over texts, the fetched forms (a literal path, a formatted url with the token) and an implicit concatenation
+        # of literals across the lines of one statement; the loop over
         # literals, the comprehension and the slice are the derivation's alone. Each site is a row
         expected_sites = [(6, "x", "_chat_page", "in"), (8, "y", "_feed_page", "in"), (10, "z", "_timeline_page", "in"), (12, "v", "_landing", "in"),
                           (18, "s", "_landing", "in"), (19, "t", "_feed_page", "in"), (23, "m", "_LANDING_MOBILE_JS", "in"), (25, "l", "_LANDING_MOBILE_JS", "in"),
                           (26, "k", "_feed_page", "in"), (26, "j", "_LANDING_MOBILE_JS", "in"), (29, "g", "_feed_page", "index"), (29, "f", "_feed_page", "index"),
                           (30, "e", "_LANDING_MOBILE_JS", "count"), (31, "d", "_feed_page", "find"), (31, "c", "_feed_page", "rindex"), (31, "b", "_feed_page", "rfind"),
-                          (38, "f1", "_sw_js", "in"), (40, "f2", "_chat_page", "in"), (42, "f3", "_landing", "in")]
+                          (38, "f1", "_sw_js", "in"), (40, "f2", "_chat_page", "in"), (42, "f3", "_landing", "in"), (51, "f7", "_chat_page", "in")]
         expected_sites += [(L + 1, "a1", g, "in") for g in getters] + [(L + 2, "a2", g, "index") for g in getters]
         expected_sites += [(L + 7, "a8", css, "in"), (L + 8, "a9", html, "in"), (L + 10, "b1", script, "in"), (L + 11, "b2", mark, "in"), (L + 12, "b4b5", "_feed_page", "in"),
                            (L + 19, "x1", "_landing", "in"), (L + 19, "x2", "_landing", "in"), (L + 20, "x3", "_landing", "in")]

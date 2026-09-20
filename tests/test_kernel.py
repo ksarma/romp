@@ -7579,7 +7579,10 @@ class ServeSecurity(unittest.TestCase):
         with urllib.request.urlopen("http://127.0.0.1:%d/timeline?token=testtok" % self.port, timeout=5) as r:
             self.assertEqual(r.status, 200)
             body = r.read().decode("utf-8", "replace")
-        self.assertIn("TimelinePanel", body, "the shared obsidian view is injected")
+        # the page's CODE, comments blanked (round 8, 2026-09-20, the fixer pass): the view's own comments and the pane sheet's spell
+        # the name, so a pin over the fetched body was satisfiable by three of its eight occurrences (the pins census reads a formatted
+        # fetch as its route's text now and named this row)
+        self.assertIn("TimelinePanel", served_css.code(body), "the shared obsidian view is injected")
         self.assertIn("app=timeline", body, "the page drives panel.update over the kernel WS")
 
     def test_landing_has_three_panes(self):
@@ -7795,9 +7798,8 @@ class ServeSecurity(unittest.TestCase):
         with urllib.request.urlopen("http://127.0.0.1:%d/?token=testtok" % self.port, timeout=5) as r:
             body = r.read().decode("utf-8", "replace")
         # read from the fetched page's code with its comments blanked and from its parsed rules: the fit script's comments spell
-        # both tokens, so a page-text pin was satisfiable by them (tests/test_served_pins_read_elements.py; a body fetched from a
-        # FORMATTED url is outside that census's derivation, which reads a fetch of a literal path as its getter's text since round
-        # 8, 2026-09-20, so this one is re-pointed by hand)
+        # both tokens, so a page-text pin was satisfiable by them (tests/test_served_pins_read_elements.py, which reads this
+        # formatted fetch as the landing's text since the fixer pass of round 8, 2026-09-20; it had been re-pointed by hand)
         code = served_css.code(body)
         rules = served_css.rules(body)
         self.assertIn("visualViewport", code)               # the live-visible-height source
