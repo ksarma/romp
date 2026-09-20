@@ -331,14 +331,17 @@ fixture READS and the branch each read feeds, with the case that reds under each
     One.a gets a false report blaming import-time code for the moves setUpModule and setUpClass made for their tests).
   the first window's refusal (_sdk_swapped): deleted (S7's first test shows no refusal line and the run exits 0); keyed
     on the window's before object in place of the start read's (S7: the window's object is None, so the refusal is
-    silent); its class guard dropped (T, U and V: a refusal naming None (not built) as the leak on a first window whose
+    silent); the reference root rendered from the window's jd.STATE in place of the start read's (S7, S7B, S9: the class
+    root is rendered and the value regex, a path ending in /romp, fails; S10 green, its class leaves jd.STATE alone); its
+    class guard dropped (T, U and V: a refusal naming None (not built) as the leak on a first window whose
     start read saw nothing, beside T's class boundary verdict and inside U's and V's gone-report teardown, read as
     carriers); its run-root guard dropped (S8: a refusal on the kernel's own import-time build over the run root, exit
     1); its gone arm removed, the start read's gone object refused silently (S9: no refusal on One.a, the count 1
     against 2; S10: the boundary verdict is One.a's only line); the gone arm rendered under the kept head (S9, S10: the
     refusal opens with the standing directory's wording, read as carriers of each head); the kept arm rendered under
     the gone head (S7, S7B: the same read the other way); the gone arm's cause clause replaced by the kept arm's (S9,
-    S10: the needle naming a directory since removed is missing); the refusal marking its object as reported (S9:
+    S10: the needle naming a directory since removed is missing); the kept arm's cause clause replaced by the gone arm's
+    (S7, S7B: the needle naming a root that is not the run's is missing); the refusal marking its object as reported (S9:
     Two.a's gone report silenced, the count 1 against 2); the flag
     dropped from its condition with the spent first term kept (S7: a second refusal on Two.a, saying the slot does not
     hold the object at a window where it does; S7B: a third on Three.a); the identity term alone in the condition's
@@ -2235,10 +2238,11 @@ class AnImportTimeKeptRootLeakMetFirstByAClassThatSwapsTheSingleton(_NestedRun, 
                          "the body runs; the refusal is the teardown's: %s" % self.out)
         self.assertIsNone(verdict(self.out, cls, method), "the allowed build over the class root is not accused: %s" % self.out)
         self.assertTrue(text.startswith("SdkBackend over "), text)                # the start read's object and its root
-        self.assertIn(", jd.STATE ", text)                                       # the run root as the start read recorded it
-        self.assertIn("(it holds None (not built))", text)                       # what the window found in the slot
-        self.assertIn("no test is accused and no scope is named", text)
+        self.assertRegex(text, r", jd.STATE \S+/romp at that read")             # the run root as the start read recorded it, by
+        self.assertIn("(it holds None (not built))", text)                       # value: the run root ends in /romp, the class
+        self.assertIn("no test is accused and no scope is named", text)          # root does not; what the window found in the slot
         self.assertIn("Import-time code did, or a session- or package-scoped fixture did", text)
+        self.assertIn("building the singleton over a root that is not the run's", text)   # the kept shape's cause clause
         self.assertNotIn("Fix:", text, "no remedy is addressed to the test at the window: %s" % text)
         self.assertNotIn(GONE, text)
         self.assertNotIn(BOUNDARY, text)
@@ -2318,7 +2322,7 @@ class ASwappingClassOverAnImportTimeGoneLeak(_NestedRun, unittest.TestCase):
                          "the body runs; the refusal is the teardown's: %s" % self.out)
         self.assertIsNone(verdict(self.out, cls, method), "the allowed build over the class root is not accused: %s" % self.out)
         self.assertTrue(text.startswith("SdkBackend over "), text)                # the start read's object and its removed root
-        self.assertIn(", jd.STATE ", text)
+        self.assertRegex(text, r", jd.STATE \S+/romp at that read")             # the run root as the start read recorded it, by value
         self.assertIn("(it holds None (not built))", text)
         self.assertIn("no test is accused and no scope is named", text)
         self.assertIn("building the singleton over a directory since removed", text)   # the gone shape's cause clause
