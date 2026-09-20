@@ -716,7 +716,9 @@ _SDK_WINDOWS = []                                      # the test windows that c
 _SDK_FIRST_WINDOW = True                               # no test window has run yet in this worker; the kept-root report is taken
                                                        # at this window only, and only for the module start read's object, against
                                                        # the jd.STATE that read recorded (at that read only import-time code and
-                                                       # any fixture of a scope wider than the function has run)
+                                                       # any fixture of a scope wider than the function has run); when the slot
+                                                       # does not hold that object here, the refusal (_sdk_swapped) is taken in
+                                                       # its place, and the flag is spent either way, never deferred
 _SDK_MODULE_START = None                               # the current module boundary's start read (_SdkRead): the first-window
                                                        # kept-root report's object and reference root
 _SDK_NAMED = []                                        # strong references to every object a verdict named (a test's own, a boundary's)
@@ -832,6 +834,39 @@ def _sdk_inherited(before, start):
     return None
 
 
+_SDK_SWAPPED_HEAD = ("opens the worker's first test window, and this module's start read had found the kernel's backend singleton "
+                     "(km._sdk_backend) over a directory that is not jd.STATE, before any test in this worker has run")
+
+
+def _sdk_swapped(start, before):
+    """The first window's refusal, or None: consulted only at the worker's FIRST test window and only when the kept-root
+    report's identity term fails there (the slot does not hold the object the module boundary's start read found). Taken
+    when that start read (`start`) found a real backend over a directory that stands and is not jd.STATE as that read
+    recorded it, the kept-root picture, which at that read only import-time code or a fixture of a scope wider than the
+    function could have made; the slot's value at the window (`before`) is what a module or class setup (setUpModule,
+    setUpClass, or a module- or class-scoped fixture, the actors between the two reads) swapped in. The leak is named
+    from the start read's fields, since the live object may have been repointed since; no test is accused and no scope
+    is named, because which test will start under the object, and whether it is put back, cannot be said at this
+    window, and the premise sentence, true here, would be false at any later one (the flag is spent with this line,
+    never deferred: a deferred report would fire where a test body has run, a wrong attribution in place of a silence).
+    Silent when the start read's object is over jd.STATE as it recorded it (no leak), when its directory is gone (the
+    gone report takes that object at any window a test starts under it), and on an object either list has named. The
+    refusal marks nothing on _SDK_REPORTED: no later window takes the kept-root report, so a mark would change nothing
+    there, and it would silence a later gone report on the same object."""
+    be = start.be
+    if not _sdk_is_real(be) or _sdk_named(be) or _sdk_reported(be):
+        return None
+    if start.isdir is False or start.sd == start.jd_state:
+        return None
+    return ("%s: %s, jd.STATE %s at that read. The slot does not hold that object at this window (it holds %s): a module or "
+            "class setup that ran between the two reads (setUpModule, setUpClass, or a module- or class-scoped fixture) swapped "
+            "it out, so this test does not start under it, and which test will, or whether it is put back, cannot be said here; "
+            "no test is accused and no scope is named. Import-time code did, or a session- or package-scoped fixture did (one "
+            "that set up before this module's own reads), building the singleton over a root that is not the run's, or moving "
+            "jd.STATE after the build and leaving it there; a swap left in place is judged at its own scope's end."
+            % (_SDK_SWAPPED_HEAD, _sdk_singleton_text(be, start.sd), start.jd_state, _sdk_singleton_text(before.be, before.sd)))
+
+
 def _sdk_remedy(after, ref):
     """The sandbox road's remedy when the value left is the kernel's own class over a root that is not the reference
     or is not a directory; the object road's otherwise."""
@@ -938,6 +973,12 @@ def _sdk_singleton_restored(request):
     # setup, judged at that scope's boundary, and a jd.STATE moved after it is a scope setup's move for its tests.
     first = _SDK_FIRST_WINDOW and _SDK_MODULE_START is not None and before.be is _SDK_MODULE_START.be
     inherited = _sdk_inherited(before, _SDK_MODULE_START if first else None)
+    # The identity term failed at the worker's first window: the refusal, or None, from the start read's fields (the object
+    # the report would have named, if the slot still held it). The flag is spent with it, never kept for a later window:
+    # the report's premise sentence holds at this window alone.
+    swapped = None
+    if _SDK_FIRST_WINDOW and _SDK_MODULE_START is not None and not first:
+        swapped = _sdk_swapped(_SDK_MODULE_START, before)
     _SDK_FIRST_WINDOW = False
     if inherited is not None:
         _sdk_report(before.be)             # reported now, so the tests after this one that inherit the object are quiet
@@ -947,11 +988,13 @@ def _sdk_singleton_restored(request):
     if after.be is not before.be:
         _SDK_WINDOWS.append(_SdkWindow(_SDK_READS, before.be, after.be,
                                        after.jd_state if after.marker is not before.marker else before.jd_state))
-    if verdict is None and inherited is None:
+    if verdict is None and inherited is None and swapped is None:
         return
     lines = []
     if inherited is not None:
         lines.append("%s %s" % (request.node.nodeid, inherited))
+    if swapped is not None:
+        lines.append("%s %s" % (request.node.nodeid, swapped))
     if verdict is not None:
         _sdk_name(after.be)
         lines.append("%s %s. Fix: %s" % (request.node.nodeid, verdict[0], verdict[1]))
