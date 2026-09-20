@@ -536,7 +536,9 @@ after the miss bump with no second key, on a road no drive reached and the undri
 around _finish_load left the module green at the head the verifiers read; the twelfth road drives it, that bump reds the drive at
 its raise (1 failed, 36 passed), and the raise swallowed reds it the same way (1 failed, 36 passed). The arrangement's limit (the
 fourth low): a dup bump conditioned on a two-node store after _finish_load leaves every drive green at both heads (36 passed there;
-37 passed here), since every drive seeds one node for one sid and calls once, stated in the witness's docstring and its message. The
+37 passed here), since no drive arranges a store of more than one node, every drive is on one sid and calls once, stated in the
+witness's docstring and its message (the round-5 wording, every drive seeds one node, was false for the five drives that seed none;
+the round-7 close weakened it). The
 fifth refused form (the fifth low): a second-key bump that is not a statement of a list, an assignment's value, reds the roster
 pin's count of lists against bumps and the miss, compare_miss, dup, refuse and fill_raises drives and the four fill cases (10
 failed, 27 passed; 9 failed, 27 passed at the head the verifiers read), named in the early-warning sentences now. The Docs count pin
@@ -786,8 +788,8 @@ SHARED_HANDOFF_KEYS = ("absent", "fallback", "corrupt", "unreadable_journal")
 # raises into a bumping handler; an exception from a clean list's other statement caught by one; a second-key raise list under a
 # contextlib.suppress with statement, which the raising clause, reading try statements alone, does not see; and any construct nobody
 # listed), each of which the witness catches
-# on the road it sits on when a drive reaches that road; the drives seed a one-node store for one sid and call once, so a bump
-# conditioned on state no drive arranges is on no driven road, stated in the witness's docstring (review round 4, tests-2,
+# on the road it sits on when a drive reaches that road; no drive arranges a store of more than one node, every drive is on one sid
+# and calls the door once, so a bump conditioned on state no drive arranges is on no driven road, stated in the witness's docstring (review round 4, tests-2,
 # regression-2 and extra4-1: the pin read the first two premises and the third was
 # held by reading the body; a verifier of the round-4 fixes: a bump in a finally clause left the list predicate green; review round
 # 5, correctness-1, regression-1 and extra6-1: the first three constructs above, each planted on the corrupt road, bumped two second
@@ -2670,9 +2672,10 @@ class TheDoorBumpsAtMostOneSecondKeyPerCall(_WalkHarness):
     not a site: a compare_miss entering the dup or refuse arm (the drives enter both from a miss; past the fill's
     first statement the code is the same); and any second bump conditioned on the hand-off itself raising (load_goals raising
     on the corrupt road: the drive's load_goals quarantines and answers a fresh store, so a Return whose expression raises is
-    exercised by another raise, not by a raising hand-off); and the arrangement itself: every drive seeds a one-node store for
-    one sid and calls the door once, so a second bump conditioned on state no drive arranges (a store of two or more nodes,
-    another sid, a call count) is on no driven road, and the at-most-one line holds against whatever nobody listed ON A DRIVEN
+    exercised by another raise, not by a raising hand-off); and the arrangement itself: no drive arranges a store of more than one
+    node (the drives that seed, seed one node under SID_C; the absent, fallback, corrupt, open_raises and read_raises drives seed
+    none), every drive is on one sid and _drive calls the door once, so a second bump conditioned on state no drive arranges (a
+    store of two or more nodes, another sid, a call count) is on no driven road, and the at-most-one line holds against whatever nobody listed ON A DRIVEN
     ROAD (a verifier of the round-5 fixes: a dup bump under a two-node condition after _finish_load left every drive green with
     the AST clauses green, and a two-node store moved it). Which callee each drive witnesses, as a dup bump planted in each and
     run derives it (re-derived over the drives on the tree of the round-7 unread-road fix): a bump in _shared_forget by the absent,
@@ -2696,8 +2699,9 @@ class TheDoorBumpsAtMostOneSecondKeyPerCall(_WalkHarness):
     pin's predicate), each row's hand-off column against the count over its sites, and the no-hand-off sites of hand-off keys, the
     _unread arm alone today, each executed by a drive and in no row of UNDRIVEN_SITES; the counters per call from the real
     _SHARED_STATS and goal_io loads. Bounds: the expected call-key and second-key deltas per road and each road's arrangement,
-    hand-written and held by execution; the arrangement's limit, a one-node store for one sid and one
-    call, so a bump conditioned on state no drive arranges is on no driven road; the stand-in's shape, hand-written, a contract over
+    hand-written and held by execution; the arrangement's limit, at most one node in the store, one sid and one call per drive
+    (until the round-7 close this sentence said every drive seeds a one-node store, false for the five drives that seed none), so
+    a bump conditioned on state no drive arranges is on no driven road; the stand-in's shape, hand-written, a contract over
     the mechanism; and the trace's reach, the door's source: a bump in a function defined outside the door and called from it, a
     callee, is no site of the door's tree (_door_regions reads the door's source) and runs in no frame of the derived set, so the
     counters alone see it and the drive reds at the line where the trace's keys and the counters' must agree, naming the key, and
@@ -2810,8 +2814,8 @@ class TheDoorBumpsAtMostOneSecondKeyPerCall(_WalkHarness):
                              "after one call on the real door, so it holds against every construct the roster pin's AST clauses do not name "
                              "(a helper defined inside the door, a Return whose expression raises into a bumping handler, an exception from a "
                              "clean list's other statement caught by one, contextlib.suppress, and whatever nobody listed on a driven road: "
-                             "the drives seed a one-node store for one sid and call once, so a bump conditioned on state no drive arranges "
-                             "is on none); the call keys moved: %r" % (road, sum(second.values()), second, calls))
+                             "no drive arranges a store of more than one node, every drive is on one sid and the drive calls the door once, "
+                             "so a bump conditioned on state no drive arranges is on none); the call keys moved: %r" % (road, sum(second.values()), second, calls))
         self.assertEqual(calls, expect_calls, "%s road: the call keys' delta is exactly the road's, %r, and was %r (a call that reaches the "
                                               "cache's branch and returns moves exactly one; a call whose open or read raises moves none)"
                                               % (road, expect_calls, calls))
