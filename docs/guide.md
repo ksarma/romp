@@ -529,9 +529,10 @@ turns solid under the pointer; a Markdown link that names a file keeps the
 ordinary link look. Selecting text across a link, and commenting on a line that
 holds one, work as before, and a drag that starts or ends on a link selects
 rather than opens. The viewer keeps a trail of the files you reach through the links
-inside a file, with two arrow buttons at the left of its title bar: **Back** returns you to
-the file you followed a link from, and **Forward** to the file you came back from, each at
-the place and in the view you left it (while you are not editing the file and no text box
+inside a file. Two arrow buttons appear at the left of its title bar once you have followed
+a link (there are none before that): **Back** returns you to the file you followed a link
+from, and **Forward** to the file you came back from, each at the place and in the view you
+left it (while you are not editing the file and no text box
 holds the keyboard, Cmd+[ and Cmd+] on a Mac do the same, and so do Alt+Left and Alt+Right
 on a Files or chat page open in a browser tab of its own; in the dashboard those two keys
 move the keyboard between the panes); a file opened from the chat, from a listing or from

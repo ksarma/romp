@@ -175,7 +175,8 @@ Design: **the browser sits beneath the viewer and the close contract becomes own
 
 Since 2026-09-19 the viewer keeps a trail of its own beneath this stack, the files reached
 through the links inside a shown file and the pictures opened from its figures, with Back and
-Forward glyphs at the left of its bar, and the two do not meet: a file picked from the listing
+Forward glyphs at the left of its bar once a step exists either way (the pair hidden until then),
+and the two do not meet: a file picked from the listing
 starts the trail over, the "‹ Files" link keeps closing the viewer to the listing, and closing
 the viewer ends the trail (plans/markdown-viewer.md, "Follow-on: Link navigation", L1 to L4).
 
