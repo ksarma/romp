@@ -4875,7 +4875,9 @@ function resolveFigureRefs(root: ParentNode, base: string): void {
 // target yet (figureState): its control waits for the load and its plain click opens nothing, since the candidate the
 // browser will show is not known (currentSrc is empty while the source is on the wire, and chosenSource read that as the
 // src); nor has a figure that FAILED: there is no picture to open, so its plain click and its Cmd/Ctrl-click open nothing,
-// as its control is withheld on the same verdict (the file review's round 2: the target refused the fetching state alone,
+// as its control is withheld on the same verdict; the two are the refused states of one rule, a target only for a state
+// with a picture to name (figureHasPicture: loaded, or a stand-in outside a browser), so a state the type gains later is
+// refused too (the file review's round 2: the target refused the fetching state alone,
 // so a failed local figure's click opened the missing path in the viewer and pushed it onto the trail, and a failed remote
 // figure's click opened a tab at a host whose image request had answered 404, while the control was already withheld; the
 // two readers of "is there something to open" now answer alike). The target is read again at the click. A gated
@@ -4884,7 +4886,7 @@ function resolveFigureRefs(root: ParentNode, base: string): void {
 type FigureTarget = { kind: "file"; path: string } | { kind: "web"; href: string };
 function figureTarget(img: Element, filePath: string): FigureTarget | null {
   const state = figureState(img);
-  if (state === "fetching" || state === "failed") return null;   // fetching: the browser has not answered for the figure yet, no candidate to name until the load or the error decides; failed: no picture to open, the verdict the control is withheld on (figureWantsControl), so the click and the control agree (the file review's round 2)
+  if (!figureHasPicture(state)) return null;   // the rule, not a list: a target only for a state with a picture to name (loaded; a stand-in outside a browser). Fetching (the browser has not answered, no candidate to name until the load or the error decides) and failed (no picture to open) are the refused states today, and a state the type gains later is refused with them; the control is withheld on the same rule (figureWantsControl), so the click and the control agree (the file review's round 2 made the two readers agree; the guard became a rule before its round 3)
   const dest = chosenSource(img);                      // the candidate the browser chose, as the author wrote it: the picture's source or the srcset candidate in currentSrc, else the src by pictureDest's rule
   if (dest === null) return null;
   // The web address FIRST, before the model's join: figurePath reads a protocol-relative source (`//host/pic.svg`) as an
@@ -4931,6 +4933,15 @@ function figureState(img: Element): FigureState {
   if (!i.complete) return "fetching";
   return i.naturalWidth > 0 ? "loaded" : "failed";
 }
+/** Whether a figure's state names a picture there is to open, the one rule figureTarget and figureWantsControl refuse on: in a
+ *  browser `loaded` alone (the browser has answered with a picture; in any other state there is no picture on the page to name a
+ *  host or a file for), and outside one `standin` (the node suites' DOM carries no `complete`, so the source is the figure's only
+ *  record and the paint decides from it). A rule over the states and not a list of the refused ones: `fetching`, `failed` and any
+ *  state FigureState gains later fall on the refusing side with no edit here, where a guard naming the two it refused would have
+ *  let a new value through to a target (the file review, before its round 3). */
+function figureHasPicture(state: FigureState): boolean {
+  return state === "loaded" || state === "standin";
+}
 /** The least a figure measures on each side, in CSS pixels, for a control: the control's 22px box and its 6px inset from the
  *  corner (the sheets' rest rule), and as much figure again beside them, so the control covers a corner of the picture and a
  *  click on the picture itself (the author's link, the panel's offer, the plain open) keeps most of it. A badge (a 100 by 20
@@ -4965,13 +4976,14 @@ function linkAbove(anchor: Element): Element | null {
   return p ? p.closest('a, [data-act="openpath"]') : null;
 }
 /** Whether a control belongs on `img`, whose figureAnchor is `anchor`, as the figure stands now (the section header): none
- *  inside a gate's placeholder (its figure loads on the click), none while fetching or after a failure (figureState), none
+ *  inside a gate's placeholder (its figure loads on the click), none for a state without a picture to name (figureHasPicture over
+ *  figureState: fetching, failed, and any state the type gains later), none
  *  on a loaded figure under the floor (figureTooSmall), none for a figure with nothing to open (figureTarget), none inside a
  *  link the climb did not leave (linkAbove); one for every other figure. */
 function figureWantsControl(img: Element, anchor: Element, filePath: string): boolean {
   if (img.closest('[data-act="' + GATE_ACT + '"]')) return false;
   const state = figureState(img);
-  if (state === "fetching" || state === "failed") return false;
+  if (!figureHasPicture(state)) return false;
   if (figureTooSmall(img)) return false;
   if (figureTarget(img, filePath) === null) return false;
   return linkAbove(anchor) === null;
@@ -5037,15 +5049,26 @@ function armFigureControls(body: HTMLElement, filePath: string): () => void {
  *  it back, whatever reflowed it (the pane dragged, the Comments aside opened or closed, the window resized, a text-size step
  *  re-measuring the 80ch column at a constant body width), with no call from any road (the file review's round 2: a call from
  *  the width watch's repaint ran on one road of two and missed the text-size step). The observer's first report describes each
- *  figure's box at observe(), the decision the paint took over a box not yet laid out, run again over the laid-out one; a gated
- *  placeholder's img reports 0 by 0 until its click restores it, and figureWantsControl reads the placeholder first. Re-armed at
+ *  figure's box at observe(), the decision the paint took over a box not yet laid out, run again over the laid-out one; a report
+ *  of 0 by 0 (a box not laid out: the viewer hidden, a gated placeholder's img until its click restores it) runs no decision, since
+ *  it measures nothing and the show or the restore reports the real box. Re-armed at
  *  each text paint (`onRendered` with any `why` but "reflow": a reflow keeps the figure nodes, a paint replaces them) over the
  *  figures the box holds then, and dropped by the function returned. Null where ResizeObserver is missing (a stand-in outside
  *  a browser), where nothing reflows and the paint's decision stands. */
 function watchFigureBoxes(body: HTMLElement, filePath: string, onRendered: (cb: (why?: FileViewRenderWhy) => void) => void): (() => void) | null {
   if (typeof ResizeObserver !== "function") return null;
   const ro = new ResizeObserver((entries) => {
-    for (const e of entries) { const img = e.target; if (img.isConnected && figureState(img) !== "standin") decideFigureControl(img, filePath); }
+    for (const e of entries) {
+      // A 0 by 0 report is a box that is not laid out, not a figure's size: the viewer hidden (display:none on the pane or its
+      // page, the dashboard at a viewport where the pane hides), a gated placeholder's img before its click. Decided over it,
+      // figureBox falls back to the picture's own size, so a hidden figure under the floor at its real width was given a control
+      // while hidden and lost it at the show (an add and a remove the reader never saw; found before the file review's round 3).
+      // Skipped: the show that follows reports the real box and is decided; the load, the error (armFigureControls) and the
+      // gate's restore decide their figures themselves.
+      if (e.contentRect.width === 0 || e.contentRect.height === 0) continue;
+      const img = e.target;
+      if (img.isConnected && figureState(img) !== "standin") decideFigureControl(img, filePath);
+    }
   });
   const rearm = (): void => { ro.disconnect(); body.querySelectorAll(".fileview-md img").forEach((img) => { ro.observe(img); }); };
   onRendered((why) => { if (why !== "reflow") rearm(); });

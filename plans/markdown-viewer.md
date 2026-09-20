@@ -7892,7 +7892,12 @@ control waits for the load and its plain click opens nothing, since currentSrc i
 and chosenSource read that as the src (the file review: the control the paint added, and the plain click, on a
 `<picture>` or a srcset figure still fetching opened the fallback the browser never asked for and put that file on the
 trail), nor has a figure that FAILED (the same read: `complete` true and `naturalWidth` 0), so no gesture opens it (the
-file review's round 2, below); the target is read again at the click; the failed figure's label, `failedSource`,
+file review's round 2, below); the two are the refused states of ONE rule, a target only for a state with a picture to
+name (`figureHasPicture`: `loaded`, the browser having answered with a picture, or a stand-in outside a browser, the
+node suites' DOM, decided from its source), the rule `figureWantsControl` withholds the control on too, so a state
+`figureState` gains later is refused by both readers with no edit to either (before the file review's round 3 each
+reader named the two states it refused, a list a new value passes; a guard refuses on its safe side for any value it
+does not know); the target is read again at the click; the failed figure's label, `failedSource`,
 delegates to it; read from the src alone, the control opened the fallback src a `<picture>` or a srcset figure had
 skipped), joined by the model's `figurePath` (file-comments-model.ts, the join rewriteFigureSrcs fetched through, so the
 picture opened is the one shown and its request is the paint's), through the figure's own door,
@@ -7954,7 +7959,11 @@ re-open the 761 by 76 picture's paint-time control left at its load, the picture
 file-view-figure-floor-browser.test.ts); and the floor is read
 again at each change of the figure's own laid-out box (`watchFigureBoxes`: one ResizeObserver per open over the
 figures of the Rendered box, armed beside the load and error pair, re-armed at each text paint through the seam's
-onRendered and dropped with the viewer, running the same decision for the figure whose box changed), which is the
+onRendered and dropped with the viewer, running the same decision for the figure whose box changed; a report of 0 by 0,
+a box not laid out, the viewer hidden or a gated placeholder's img until its click, runs no decision, since it measures
+nothing and the show or the restore reports the real box: found before the file review's round 3, decided over it
+`figureBox` fell back to the picture's own size and a figure hidden under the floor at its real width gained a control
+while hidden and lost it at the show, an add and a remove the reader never saw), which is the
 reflow itself whatever caused it: the pane dragged, the Comments aside opened or closed, the window resized, or a
 text-size step (A-, A+, Ctrl/Cmd + wheel), which re-measures the 80ch column at a constant body width and so reflows
 every column-capped figure with no width report; so a figure the column narrows under the floor loses its control and
@@ -8027,8 +8036,10 @@ control leaving as the viewport or the Comments aside narrows the column under t
 a page opened at the narrow width with none, a click dispatched on a gated placeholder's img opening nothing
 while a real click on the restored figure's control opens its tab, the held picture's re-open, and, since the file
 review's round 2, a 1300 by 110 band at a 1200 px modal losing its control at three A- presses (70%, the band's height
-under 48 px with the body's width unmoved) and getting it back at three A+, the same by Ctrl + wheel, and a control
-removed while it holds the keyboard handing it to the viewer's body, PageDown then scrolling the report), and, for the chosen candidate,
+under 48 px with the body's width unmoved) and getting it back at three A+, the same by Ctrl + wheel, a control
+removed while it holds the keyboard handing it to the viewer's body, PageDown then scrolling the report, and, since
+before the file review's round 3, the viewer hidden by display:none at 381 px gaining no control while hidden and the
+control following the real box at the show), and, for the chosen candidate,
 file-view-figure-chosen.test.ts (the source
 pins: chosenSource's body, figureTarget's read of it first, failedSource's delegation and the two callers) and
 file-view-figure-chosen-browser.test.ts (Chromium: a `<picture>`, a srcset img and a gated remote `<picture>` open the
@@ -8117,11 +8128,13 @@ leaving as the viewport narrows the column under the floor and returning as it w
 aside opening and closing, a page opened at the narrow width with none, a click dispatched on a gated
 placeholder's img opening nothing while a real click on the restored figure's control opens its tab, and, since the
 file review's round 2, the text-size step by the buttons and by Ctrl + wheel taking a band's control away under the
-floor and giving it back at a constant body width, and the keyboard handed to the viewer's body when the control
-holding it is removed) and re-aimed
-ui/webview/file-view-figure-shapes.test.ts (the re-read's pins: watchFigureBoxes's body and its arming, the repaint
-deciding no figure and the width-only re-read gone from the source, removeFigureControl's order, figureTarget's refusal of
-both states, and both sheets' comment naming decideFigureControl)
+floor and giving it back at a constant body width, the keyboard handed to the viewer's body when the control
+holding it is removed, and, since before its round 3, the hidden viewer's 0 by 0 report adding no control while hidden,
+the control following the real box at the show) and re-aimed
+ui/webview/file-view-figure-shapes.test.ts (the re-read's pins: watchFigureBoxes's body, its 0 by 0 skip and its arming,
+the repaint deciding no figure and the width-only re-read gone from the source, removeFigureControl's order, the one rule
+figureTarget and figureWantsControl refuse on, figureHasPicture, over FigureState's four values, and both sheets' comment
+naming decideFigureControl)
 and ui/webview/file-figure-open.test.ts (the stand-down as the listener's first line).
 The file review (2026-09-20; the control decided from the figure's current state by one function, and the figure's own
 door into the viewer) added ui/webview/file-view-figure-state-browser.test.ts (Chromium over the real chat modal: a failed figure, a

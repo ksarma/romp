@@ -18,7 +18,8 @@ sentence to the shell's lines, to `onNavKey`'s stand-downs (a prevented key, a t
 
 The picture sentence. The guide names four kinds of picture without the button once the browser has answered for it: a
 picture that failed to load (the file review's round 2: `figureState`, refused by `figureWantsControl` and by
-`figureTarget` alike, so the button and the plain click agree and nothing opens), a `data:` picture (`figureTarget`
+`figureTarget` alike, on one rule since before the review's round 3, `figureHasPicture`, a target or a button only for a
+state with a picture to name, so the button and the plain click agree and nothing opens), a `data:` picture (`figureTarget`
 null), one under `FIGOPEN_MIN_PX` on either side (a badge, an inline icon; `figureTooSmall`, read by the one decision
 `decideFigureControl` at the load and at each reflow of the figure's own box, `watchFigureBoxes`), and one inside a link
 that holds more than the picture (`linkAbove`: the climb of `figureAnchor` leaves such a link standing over the img,
@@ -202,28 +203,35 @@ class PicturesWithoutTheButton(GuideSentences):
     The refusal arms of figureWantsControl are the census the guide's list is read against: an arm added or removed fails here
     until the guide's sentence is revisited, so the count the guide gives can no longer drift from the code unseen."""
 
-    def test_the_target_refuses_a_fetching_and_a_failed_figure_so_the_click_and_the_button_agree(self):
+    def test_the_target_and_the_button_refuse_on_one_rule_a_picture_to_name_so_the_click_and_the_button_agree(self):
         """The file review's round 2 (regression-3 with extra5-4): figureWantsControl withheld the button on a failed figure while
         figureTarget refused the fetching state alone, so a plain click on a failed local figure opened the missing path in the
         viewer and pushed it onto the trail, and a plain click on a failed remote figure opened a tab at a host whose image
-        request had answered 404. Both readers now refuse both states, read before the candidate; the clause that a picture
-        which did not load has nothing to open is true by this pin and by file-view-figure-state-browser.test.ts's execution."""
+        request had answered 404. Both readers now refuse on ONE rule, read before the candidate: a target or a button only for a
+        state with a picture to name (figureHasPicture: loaded, or a stand-in outside a browser), so fetching, failed and any
+        state figureState gains later are refused alike (before the review's round 3 each reader listed the two states it
+        refused, a list a new value passes). The clause that a picture which did not load has nothing to open is true by this
+        pin and by file-view-figure-state-browser.test.ts's execution."""
+        self.assertIn('\ntype FigureState = "standin" | "fetching" | "loaded" | "failed";\n', self.viewer, "the domain: four states")
+        rule = _body(self.viewer, "function figureHasPicture(state: FigureState): boolean {", "}")
+        self.assertIn('return state === "loaded" || state === "standin";', rule, "the allowance: loaded, or a stand-in; every other value refused")
+        self.assertNotIn('state === "fetching" || state === "failed"', self.viewer, "no reader lists the refused states")
         target = _body(self.viewer, "function figureTarget(img: Element, filePath: string): FigureTarget | null {", "}")
         self.assertIn("const state = figureState(img);", target)
-        self.assertIn('if (state === "fetching" || state === "failed") return null;', target, "no target while fetching or after a failure")
-        self.assertLess(target.index('if (state === "fetching"'), target.index("const dest = chosenSource(img);"), "the state read before the candidate")
+        self.assertIn("if (!figureHasPicture(state)) return null;", target, "no target for a state without a picture to name")
+        self.assertLess(target.index("if (!figureHasPicture(state))"), target.index("const dest = chosenSource(img);"), "the state read before the candidate")
         build = _body(self.viewer, "function figureWantsControl(img: Element, anchor: Element, filePath: string): boolean {", "}")
-        self.assertIn('if (state === "fetching" || state === "failed") return false;', build, "the button withheld on the same verdict")
+        self.assertIn("if (!figureHasPicture(state)) return false;", build, "the button withheld on the same rule")
 
     def test_the_refusals_of_figure_wants_control_are_these_and_no_more(self):
         """Every `return false` arm of figureWantsControl, named and in order: the gate's placeholder (its figure loads on the
-        click), the state (fetching or failed), the floor, the target (a `data:` picture, no source), and the last word, any
-        link above. A fifth arm, or one gone, fails here and asks for the guide's sentence to be read again."""
+        click), the state (one rule, figureHasPicture: no picture to name, which today is fetching or failed), the floor, the
+        target (a `data:` picture, no source), and the last word, any link above. A fifth arm, or one gone, fails here and asks for the guide's sentence to be read again."""
         build = _body(self.viewer, "function figureWantsControl(img: Element, anchor: Element, filePath: string): boolean {", "}")
         arms = [ln.strip() for ln in build.splitlines() if ln.strip().startswith("if (") and ln.strip().endswith("return false;")]
         self.assertEqual(arms, [
             "if (img.closest('[data-act=\"' + GATE_ACT + '\"]')) return false;",
-            'if (state === "fetching" || state === "failed") return false;',
+            "if (!figureHasPicture(state)) return false;",
             "if (figureTooSmall(img)) return false;",
             "if (figureTarget(img, filePath) === null) return false;",
         ], "the refusal arms, as the guide's list of pictures without the button reads them")
@@ -237,7 +245,7 @@ class PicturesWithoutTheButton(GuideSentences):
         self.assertEqual(g.group(1), "four", "failed, data:, under the floor, inside a link holding more: the four the census maps to")
         self.assertIn("as does one still on its way (a click on it before then opens nothing)", self.links, "the waiting clause")
         target = _body(self.viewer, "function figureTarget(img: Element, filePath: string): FigureTarget | null {", "}")
-        self.assertIn('if (state === "fetching" || state === "failed") return null;', target, "which figureTarget makes true: no target while fetching")
+        self.assertIn("if (!figureHasPicture(state)) return null;", target, "which figureTarget makes true: no target while fetching, by the same rule")
 
     def test_the_floor_the_guide_gives_is_the_constant_and_is_read_on_either_side(self):
         m = re.search(r"\nconst FIGOPEN_MIN_PX = (\d+);\n", self.viewer)

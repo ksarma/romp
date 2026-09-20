@@ -94,7 +94,7 @@ test('L3 opens on the exceptions it names, and names the floor by the source\'s 
   assert.ok(L3.includes('a figure inside a link that holds more than it (`[![alt](fig.png) caption](other.md)`'));
   assert.ok(L3.includes('a figure alone in a link keeps its control, after the link'));
   const want = between(viewer, 'function figureWantsControl(img: Element, anchor: Element, filePath: string): boolean {', 'function decideFigureControl(');
-  inOrder(want, ['if (state === "fetching" || state === "failed") return false;', 'if (figureTooSmall(img)) return false;', 'if (figureTarget(img, filePath) === null) return false;', 'return linkAbove(anchor) === null;'], 'figureWantsControl: the state, the floor, the target, the link');
+  inOrder(want, ['if (!figureHasPicture(state)) return false;', 'if (figureTooSmall(img)) return false;', 'if (figureTarget(img, filePath) === null) return false;', 'return linkAbove(anchor) === null;'], 'figureWantsControl: the state (by the one rule), the floor, the target, the link');
   const build = between(viewer, 'function decideFigureControl(img: Element, filePath: string): void {', 'function addFigureControls(');
   inOrder(build, ['const anchor = figureAnchor(img);', 'if (standing) { if (!want) removeFigureControl(standing); return; }', 'parent.insertBefore(b, anchor.nextSibling);'], 'decideFigureControl: the one place a control is added or removed, the removal handing the keyboard on');
   const small = between(viewer, 'function figureTooSmall(img: Element): boolean {', '\n}\n');
@@ -109,7 +109,10 @@ test('L3 opens on the exceptions it names, and names the floor by the source\'s 
   assert.ok(L3.includes('or a text-size step (A-, A+, Ctrl/Cmd + wheel), which re-measures the 80ch column at a constant body width and so reflows every column-capped figure with no width report'), 'L3 names the text-size step among the reflows');
   assert.ok(L3.includes('a value measured once against a condition that can change is re-read on the event that changes it'), 'L3 states the class');
   const watch = between(viewer, 'function watchFigureBoxes(body: HTMLElement, filePath: string, onRendered: (cb: (why?: FileViewRenderWhy) => void) => void): (() => void) | null {', '\n}\n');
-  inOrder(watch, ['if (typeof ResizeObserver !== "function") return null;', 'if (img.isConnected && figureState(img) !== "standin") decideFigureControl(img, filePath);', 'body.querySelectorAll(".fileview-md img").forEach((img) => { ro.observe(img); });', 'onRendered((why) => { if (why !== "reflow") rearm(); });'], 'watchFigureBoxes: the guard, the one decision per reported figure, every figure observed, re-armed at each text paint');
+  inOrder(watch, ['if (typeof ResizeObserver !== "function") return null;', 'if (e.contentRect.width === 0 || e.contentRect.height === 0) continue;', 'if (img.isConnected && figureState(img) !== "standin") decideFigureControl(img, filePath);', 'body.querySelectorAll(".fileview-md img").forEach((img) => { ro.observe(img); });', 'onRendered((why) => { if (why !== "reflow") rearm(); });'], 'watchFigureBoxes: the guard, the 0 by 0 report skipped, the one decision per reported figure, every figure observed, re-armed at each text paint');
+  // a 0 by 0 report (the viewer hidden, a gated placeholder's img) is a box not laid out and runs no decision (found before the
+  // file review's round 3: decided over it, a hidden figure gained a control while hidden and lost it at the show); L3 says so
+  assert.ok(L3.includes('a report of 0 by 0, a box not laid out, the viewer hidden or a gated placeholder\'s img until its click, runs no decision, since it measures nothing and the show or the restore reports the real box'), 'L3 records the 0 by 0 report');
   assert.ok(viewer.includes('const figureWatch = watchFigureBoxes(body, path, ctx.onRendered);\n  if (figureWatch) ctx.onClose(figureWatch);'), 'armed once per open, dropped with the viewer');
   const repaint = between(viewer, 'const repaint = () => {', '\n  };\n');
   inOrder(repaint, ['if (unmeasurable()) return;', 'landRemembered(); landTarget();', 'retakeAfterHide();'], 'the width watch\'s repaint: the seat and the landings');
@@ -212,9 +215,17 @@ test('the file review: L3 names the one decision, its verdict and the state it r
   inOrder(state, ['if (typeof i.complete !== "boolean") return "standin";', 'if (!i.complete) return "fetching";', 'return i.naturalWidth > 0 ? "loaded" : "failed";'], 'figureState: the browser\'s record on the element');
   assert.ok(L3.includes('the browser\'s own record: fetching, loaded, failed, or a stand-in outside a browser'), 'L3 names the four states');
   const target = between(viewer, 'function figureTarget(img: Element, filePath: string): FigureTarget | null {', '\n}\n');
-  inOrder(target, ['const state = figureState(img);', 'if (state === "fetching" || state === "failed") return null;', 'const dest = chosenSource(img);'], 'figureTarget: the fetching and the failed figure have no target, read first (the file review\'s round 2, regression-3 with extra5-4)');
+  inOrder(target, ['const state = figureState(img);', 'if (!figureHasPicture(state)) return null;', 'const dest = chosenSource(img);'], 'figureTarget: no target for a state without a picture to name, read first (the file review\'s round 2, regression-3 with extra5-4; the rule form before its round 3)');
   assert.ok(L3.includes('a figure still fetching has NO target (`figureState`, read first in `figureTarget`: `complete` false), so its control waits for the load and its plain click opens nothing'), 'L3 says so');
   assert.ok(L3.includes('nor has a figure that FAILED (the same read: `complete` true and `naturalWidth` 0), so no gesture opens it'), 'L3: the failed figure has none either');
+  // the rule over the states, not a list of the two refused (before the file review's round 3 each reader named the two states it
+  // refused): the domain is FigureState's four values, the allowance names the two with a picture to name, and L3 says so
+  assert.ok(viewer.includes('\ntype FigureState = "standin" | "fetching" | "loaded" | "failed";\n'), 'the domain: four states');
+  const rule = between(viewer, 'function figureHasPicture(state: FigureState): boolean {', '\n}\n');
+  assert.ok(rule.includes('return state === "loaded" || state === "standin";'), 'the allowance: loaded, or a stand-in outside a browser; every other value refused');
+  assert.ok(!viewer.includes('state === "fetching" || state === "failed"'), 'no reader lists the refused states');
+  assert.ok(L3.includes('the two are the refused states of ONE rule, a target only for a state with a picture to name (`figureHasPicture`: `loaded`, the browser having answered with a picture, or a stand-in outside a browser'), 'L3 states the rule');
+  assert.ok(L3.includes('so a state `figureState` gains later is refused by both readers with no edit to either'), 'L3: why the rule and not the list');
   assert.ok(read('ui', 'webview', 'file-view-figure-state-browser.test.ts').includes('a FAILED local figure with a box (a non-empty alt, laid out as text) wears no control, and its plain click opens nothing'), 'the state leg drives a failed figure with a box');
   assert.ok(!L3.includes('which is also the paint-time read, before the browser has picked, that decides whether the control exists'), 'the false paint-time sentence is gone');
   assert.ok(viewer.includes('function openFigureInViewer(path: string, sid: string | null): void {\n  trailNext = "push";\n  try { openFileView(path, sid, { at: null }); } finally { trailNext = null; }\n}'), 'the figure\'s own door');

@@ -57,12 +57,12 @@ test("figureTarget reads the web address before the model's join, so a protocol-
   assert.match(fn, /figurePath reads a protocol-relative source \(`\/\/host\/pic\.svg`\) as an\n\s*\/\/ absolute path of the disk/, "the comment says why the order matters");
 });
 
-test("the one decision: figureWantsControl reads the figure's state (fetching and failed get none), then the floor, the target and any link above; decideFigureControl adds or removes against the control standing, handing the keyboard to the viewer's body before a removal; the floor is 48px on either side, read from the loaded picture's rendered box (or its own size when not laid out); linkAbove is any anchor; the load, the error and the figures' own ResizeObserver all run the decision, and the width watch's repaint runs none; figureTarget refuses the fetching and the failed state alike", () => {
+test("the one decision: figureWantsControl reads the figure's state by one rule (figureHasPicture: a control only for a state with a picture to name, loaded or a stand-in; fetching, failed and any later state get none), then the floor, the target and any link above; decideFigureControl adds or removes against the control standing, handing the keyboard to the viewer's body before a removal; the floor is 48px on either side, read from the loaded picture's rendered box (or its own size when not laid out); linkAbove is any anchor; the load, the error and the figures' own ResizeObserver all run the decision, a 0 by 0 report runs none, and the width watch's repaint runs none; figureTarget refuses on the same rule", () => {
   const want = between(VIEW, "function figureWantsControl(img: Element, anchor: Element, filePath: string): boolean {", "function decideFigureControl(");
   inOrder(want, [
     "if (img.closest('[data-act=\"' + GATE_ACT + '\"]')) return false;",
     "const state = figureState(img);",
-    'if (state === "fetching" || state === "failed") return false;',
+    "if (!figureHasPicture(state)) return false;",
     "if (figureTooSmall(img)) return false;",
     "if (figureTarget(img, filePath) === null) return false;",
     "return linkAbove(anchor) === null;",
@@ -87,6 +87,13 @@ test("the one decision: figureWantsControl reads the figure's state (fetching an
   assert.doesNotMatch(VIEW, /function ensureFigureControl|function dropFigureControl/, "the add-only builder and the drop arm are gone: one decision");
   const state = between(VIEW, "function figureState(img: Element): FigureState {", "\n}\n");
   inOrder(state, ['if (typeof i.complete !== "boolean") return "standin";', 'if (!i.complete) return "fetching";', 'return i.naturalWidth > 0 ? "loaded" : "failed";'], "figureState: the browser's own record on the element");
+  // the one rule both readers refuse on, a rule over the states and not a list of the two refused: the domain is the four
+  // values of FigureState, the allowance names the two with a picture to name, and any value outside it (a state the type gains
+  // later) falls on the refusing side with no edit to either reader
+  assert.match(VIEW, /\ntype FigureState = "standin" \| "fetching" \| "loaded" \| "failed";\n/, "the domain: four states");
+  const rule = between(VIEW, "function figureHasPicture(state: FigureState): boolean {", "\n}\n");
+  assert.match(rule, /\n\s*return state === "loaded" \|\| state === "standin";$/, "the allowance: loaded (the browser answered with a picture) or a stand-in (no browser to ask); every other value refused");
+  assert.doesNotMatch(VIEW, /state === "fetching" \|\| state === "failed"/, "no reader lists the refused states");
   assert.match(VIEW, /\nconst FIGOPEN_MIN_PX = 48;\n/, "the floor: the control's 22px box, its 6px inset and as much figure again");
   const small = between(VIEW, "function figureTooSmall(img: Element): boolean {", "\n}\n");
   assert.match(small, /const b = figureBox\(img\);\n\s*return b !== null && \(b\.w < FIGOPEN_MIN_PX \|\| b\.h < FIGOPEN_MIN_PX\);/, "under the floor on EITHER side (a badge is wide and short)");
@@ -109,12 +116,17 @@ test("the one decision: figureWantsControl reads the figure's state (fetching an
   inOrder(watch, [
     'if (typeof ResizeObserver !== "function") return null;',
     "const ro = new ResizeObserver((entries) => {",
+    "if (e.contentRect.width === 0 || e.contentRect.height === 0) continue;",
     'if (img.isConnected && figureState(img) !== "standin") decideFigureControl(img, filePath);',
     'body.querySelectorAll(".fileview-md img").forEach((img) => { ro.observe(img); });',
     'onRendered((why) => { if (why !== "reflow") rearm(); });',
     "rearm();",
     "return () => { ro.disconnect(); };",
-  ], "watchFigureBoxes: the guard, the observer over the figures, the re-arm at each paint, the drop");
+  ], "watchFigureBoxes: the guard, the observer over the figures, the 0 by 0 report skipped before the decision, the re-arm at each paint, the drop");
+  // a 0 by 0 report is a box not laid out (the viewer hidden, a gated placeholder's img), not a figure's size: decided over it,
+  // figureBox fell back to the natural size and a hidden figure under the floor at its real width gained a control while hidden and
+  // lost it at the show; file-view-figure-floor-browser.test.ts drives the hide and the show
+  assert.match(watch, /A 0 by 0 report is a box that is not laid out, not a figure's size/, "the comment says what the report is");
   assert.match(VIEW, /const figureWatch = watchFigureBoxes\(body, path, ctx\.onRendered\);\n\s*if \(figureWatch\) ctx\.onClose\(figureWatch\);/, "armed once per open beside the load and error pair, dropped through the close hooks");
   const paint = between(VIEW, "function addFigureControls(box: HTMLElement, filePath: string): void {", "\n}\n");
   assert.match(paint, /box\.querySelectorAll\("img"\)\.forEach\(\(img\) => \{ decideFigureControl\(img, filePath\); \}\);/, "the paint runs the same decision (a stand-in's only one)");
@@ -127,7 +139,7 @@ test("the one decision: figureWantsControl reads the figure's state (fetching an
   // the target waits for the browser's answer too, and refuses a failed figure as the control does (the file review's round 2,
   // regression-3 with extra5-4): a plain click on a fetching or a failed figure opens nothing, and the two readers agree
   const target = between(VIEW, "function figureTarget(img: Element, filePath: string): FigureTarget | null {", "\n}\n");
-  inOrder(target, ["const state = figureState(img);", 'if (state === "fetching" || state === "failed") return null;', "const dest = chosenSource(img);"], "figureTarget: no candidate before the browser has picked, nothing to open after a failure");
+  inOrder(target, ["const state = figureState(img);", "if (!figureHasPicture(state)) return null;", "const dest = chosenSource(img);"], "figureTarget: a target only for a state with a picture to name, read before the candidate (no candidate before the browser has picked, nothing to open after a failure, nothing for a state the type gains later)");
 });
 
 test("the sheets' figure-control comment names the builder that exists (decideFigureControl), not the one the one decision replaced", () => {

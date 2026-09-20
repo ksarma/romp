@@ -20,7 +20,11 @@
 // reflow a column-capped figure at a constant body width, and the control leaves under the floor and returns above it, since
 // the decision hangs on the figure's own box (watchFigureBoxes) and not on the width watch alone; (6) a control holding the
 // keyboard when the width's change removes it hands the keyboard to the viewer's body, so PageDown scrolls (the file review,
-// ui-4). Skipped LOUDLY where playwright has no browser (CI installs none). Synthetic
+// ui-4); (7) the viewer hidden (display:none on its card, as the dashboard hides a pane at a narrow viewport): the observer's
+// 0 by 0 report for the hidden figure runs no decision, so a figure under the floor at its real width gains no control while
+// hidden, and the show's report of the real box decides it (before the guard, figureBox fell back to the natural size over the
+// 0 by 0 report and a control was added while hidden, then removed at the show: an add and a remove the reader never saw).
+// Skipped LOUDLY where playwright has no browser (CI installs none). Synthetic
 // values only: the notes-api world, a placeholder session id, example.invalid addresses, /repo/notes-api paths.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
@@ -375,6 +379,75 @@ test("in a browser: a control holding the keyboard when the width's change takes
     await frames(page, 3);
     const top1: number = await page.evaluate(() => (document.querySelector(".fileview-body") as HTMLElement).scrollTop);
     assert.ok(top1 > top0, "PageDown scrolls the report: " + top0 + " to " + top1);
+    assert.deepEqual(errors, [], "no page errors");
+    await page.close();
+  });
+});
+
+// ── the hidden viewer's 0 by 0 report (found before the file review's round 3) ────────────────────────────────────────────
+/** The wide figure's controls by count (`[data-fv-figopen]` after its anchor, 0 or 1), the viewer card's display and the
+ *  figure's box, read together so a diagnostic names the state the count was read in. */
+type Hidden = { controls: number; display: string; w: number; h: number };
+const hiddenState = (page: any): Promise<Hidden> => page.evaluate(() => {
+  const img = document.querySelector(".fileview-md img") as HTMLImageElement;
+  const r = img.getBoundingClientRect();
+  let a: Element = img;
+  while (a.parentElement && (a.parentElement.classList.contains("fc-imgwrap") || a.parentElement.localName === "picture")) a = a.parentElement;
+  const n = a.nextElementSibling;
+  const card = document.getElementById("romp-fileview") as HTMLElement;
+  return { controls: n && n.hasAttribute("data-fv-figopen") ? 1 : 0, display: getComputedStyle(card).display, w: r.width, h: r.height };
+});
+const fmtHidden = (h: Hidden): string => "card " + h.display + ", figure " + Math.round(h.w) + "x" + Math.round(h.h) + ", controls " + h.controls;
+/** The viewer's card hidden (`display:none`) or shown again, then four frames, enough for the observer's report of the change
+ *  (a ResizeObserver delivers in the frame after the layout that changed the box) and the decision it runs. */
+async function setHidden(page: any, hidden: boolean): Promise<void> {
+  await page.evaluate((h: boolean) => { (document.getElementById("romp-fileview") as HTMLElement).style.display = h ? "none" : ""; }, hidden);
+  await frames(page, 4);
+}
+
+test("in a browser: the viewer hidden at 381 px, where the figure stands under the floor with no control, gets no control while hidden (the observer's 0 by 0 report runs no decision); shown again the figure keeps none; hidden and widened to 900 it still gets none while hidden, and the show's report of the real box brings the control; at 900 with the control standing, a hide removes nothing", async (t) => {
+  await inBrowser(t, async (browser) => {
+    const { page, errors } = await openReport(browser, 381, 600);
+    await settle(page, false);
+    const before = await hiddenState(page);
+    t.diagnostic("shown at 381: " + fmtHidden(before));
+    assert.ok(before.h < FLOOR, "under the floor at 381: " + fmtHidden(before));
+    assert.equal(before.controls, 0, "no control stands at 381: " + fmtHidden(before));
+    await setHidden(page, true);
+    const hidden = await hiddenState(page);
+    t.diagnostic("hidden at 381: " + fmtHidden(hidden));
+    assert.deepEqual([hidden.display, hidden.w, hidden.h], ["none", 0, 0], "the card is display:none and the figure's box is 0 by 0: " + fmtHidden(hidden));
+    // FAILS BEFORE: 1. The observer reported 0 by 0, figureBox fell back to the picture's natural size (761 by 76, above the
+    // floor) and the decision added a control to a figure nobody could see, which the show's report then removed
+    assert.equal(hidden.controls, 0, "no control added while hidden: " + fmtHidden(hidden));
+    await setHidden(page, false);
+    await settle(page, false);
+    const shown = await hiddenState(page);
+    t.diagnostic("shown again at 381: " + fmtHidden(shown));
+    assert.ok(shown.h > 0 && shown.h < FLOOR, "laid out under the floor again: " + fmtHidden(shown));
+    assert.equal(shown.controls, 0, "still none: " + fmtHidden(shown));
+    // hidden, then widened while hidden: the report while hidden is 0 by 0 whatever the viewport, so still no control; the show
+    // reports the real box at 900, above the floor, and the control follows it
+    await setHidden(page, true);
+    await page.setViewportSize({ width: 900, height: 600 });
+    await frames(page, 4);
+    const hiddenWide = await hiddenState(page);
+    t.diagnostic("hidden, viewport 900: " + fmtHidden(hiddenWide));
+    assert.deepEqual([hiddenWide.display, hiddenWide.controls], ["none", 0], "hidden at 900: no control while the box is 0 by 0: " + fmtHidden(hiddenWide));
+    await setHidden(page, false);
+    await settle(page, true);
+    const shownWide = await hiddenState(page);
+    t.diagnostic("shown at 900: " + fmtHidden(shownWide));
+    assert.ok(shownWide.w >= FLOOR && shownWide.h >= FLOOR, "above the floor at the show: " + fmtHidden(shownWide));
+    assert.equal(shownWide.controls, 1, "the show's real box brought the control: " + fmtHidden(shownWide));
+    // the other direction: a standing control is not removed by a hide (the 0 by 0 report is skipped, not read as under the floor)
+    await setHidden(page, true);
+    const hiddenWith = await hiddenState(page);
+    t.diagnostic("hidden at 900 with the control: " + fmtHidden(hiddenWith));
+    assert.deepEqual([hiddenWith.display, hiddenWith.controls], ["none", 1], "the control stands through the hide: " + fmtHidden(hiddenWith));
+    await setHidden(page, false);
+    await settle(page, true);
+    assert.equal((await hiddenState(page)).controls, 1, "and after the show");
     assert.deepEqual(errors, [], "no page errors");
     await page.close();
   });
