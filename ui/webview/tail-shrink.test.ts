@@ -15,6 +15,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
 import { followRebuiltTail, followTailShrink } from "./scroll-keep";
+import { hideEdges } from "../test-dom-shim";   // the fake-DOM rule (ui/test-dom-shim.test.ts): a fake element enumerates its primitives alone, so a failing dump never walks its tree
 
 const requireCjs = createRequire(__filename);
 const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "render.ts"), "utf8");
@@ -72,7 +73,7 @@ function liftFollow(classify: () => "gesture" | "write-echo" | "write") {
   const writes: Array<{ writer: string; top: number }> = [];
   let cb: ((entries: any[]) => void) | null = null, onScroll: (() => void) | null = null;
   const content: any = { scrollTop: 1400, scrollHeight: 2000, clientHeight: 600, addEventListener: (_k: string, f: () => void) => { onScroll = f; } };
-  const view: any = { stick: true, shown: true, followRebuilt: false, el: { children: [] }, scrollTop: 0 };
+  const view: any = { stick: true, shown: true, followRebuilt: false, el: hideEdges({ children: [] }), scrollTop: 0 };   // the fake element is built through the shared shim: its children edge is hidden at creation, still readable
   const hooks = { v: view, content, writes, classify, followTailShrink, followRebuiltTail,
                   ResizeObserver: class { constructor(f: (e: any[]) => void) { cb = f; } observe() {} unobserve() {} disconnect() {} } };
   const observer = liftBetween("      let lastH = -1;", "      v.ro.observe(elv);");
