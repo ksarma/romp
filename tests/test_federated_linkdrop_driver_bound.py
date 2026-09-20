@@ -124,14 +124,21 @@ def _call_args(text, i):
     raise AssertionError("no closing parenthesis from %d" % i)
 
 
+# a wait-shaped call with the receiver before its dot captured whole (round 4): `budget.waitFor(` is the poll, `mybudget.waitFor(`
+# a locator's; the round-3 lookback read the seven characters BEFORE the dot and compared them to "budget.", which could never
+# match, so the receiver form of the poll classified as an uncapped locator wait, green only because the driver uses the alias
+WAIT_SITE = re.compile(r"(?:(?P<recv>[\w$]*)(?P<dot>\.))?\b(?P<name>goto|reload|goBack|goForward|waitFor\w*)\s*\(")
+
+
 def _wait_sites(text):
     """Every call site of a wait-shaped name in the (comment-stripped) driver: (form, args, line), the navigations included
     (round 3: `page.reload()` waited under playwright's default and was neither listed nor flagged). `.waitFor(` on a locator
-    is the form ".waitFor"; a bare `waitFor(` or `budget.waitFor(` is the budget's poll."""
+    is the form ".waitFor"; a bare `waitFor(` or `budget.waitFor(` is the budget's poll, the receiver compared whole (WAIT_SITE),
+    so a receiver merely ending in budget is a locator's."""
     out = []
-    for m in re.finditer(r"(?P<dot>\.?)\b(?P<name>goto|reload|goBack|goForward|waitFor\w*)\s*\(", text):
+    for m in WAIT_SITE.finditer(text):
         name = m.group("name")
-        if name == "waitFor" and m.group("dot") and text[max(0, m.start() - 7):m.start()] != "budget.":
+        if name == "waitFor" and m.group("dot") and m.group("recv") != "budget":
             name = ".waitFor"
         out.append((name, _call_args(text, m.end() - 1), text.count("\n", 0, m.start()) + 1))
     return out
@@ -262,6 +269,26 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
                              "the walk is not vacuous: every receiver call the driver makes today is seen, by kind: %r" % (sorted({(kind, name) for kind, name, _ in calls}),))
         self.assertEqual(len(re.findall(r"\bfetch\s*\(", driver)), 2, "the driver's two fetches (ctl and tunnelsStatus) carry no timeout: the acknowledged driver_error road, DRIVER_TIMEOUT_S, "
                                                                         "which the arithmetic does not count; a third fetch is a new uncounted wait")
+
+    def test_a_wait_site_is_classified_by_the_receiver_before_its_dot(self):
+        """The census's classifier (_wait_sites), by cell: the budget's poll through the alias and through its receiver (`waitFor(`,
+        `budget.waitFor(`) is the budget form, whose positional timeout makeBudget caps; a locator's `.waitFor(` (a bare receiver,
+        a chain) is the timeout form the census requires capped; a receiver merely ending in budget (`mybudget`, `xbudget`) is a
+        locator's; a navigation and a waitFor* keep their names; the alias assignment is no site. Round 4: the round-3 head's
+        lookback compared the seven characters before the dot to "budget." and could never match, so `budget.waitFor(` classified
+        as an uncapped locator wait (a driver with the alias deleted and every poll written through the receiver redded the census
+        with seven false "no timeout key" entries); the six-character compare the findings offered would have taken `mybudget` for
+        the poll, which is why the receiver is captured whole."""
+        self.assertEqual(_wait_sites('await budget.waitFor(fn, 1, "w");'), [("waitFor", 'fn, 1, "w"', 1)])
+        self.assertEqual(_wait_sites('await waitFor(fn, cfg.waitsMs.held, "w");'), [("waitFor", 'fn, cfg.waitsMs.held, "w"', 1)])
+        self.assertEqual(_wait_sites('await row.waitFor({ timeout: budget.capped(x) })'), [(".waitFor", "{ timeout: budget.capped(x) }", 1)])
+        self.assertEqual(_wait_sites('\nawait pages.feed.locator(s).first().waitFor({ state: "attached", timeout: budget.capped(ms) });'),
+                         [(".waitFor", '{ state: "attached", timeout: budget.capped(ms) }', 2)])
+        for recv in ("mybudget", "xbudget", "budget2", "the_budget"):
+            self.assertEqual([n for n, _, _ in _wait_sites('await %s.waitFor(fn, 1, "w")' % recv)], [".waitFor"], "%s is not the budget" % recv)
+        self.assertEqual([n for n, _, _ in _wait_sites('await page.goto(u, { timeout: budget.capped(x) }); await page.waitForFunction(f, null, { timeout: budget.capped(x) });')],
+                         ["goto", "waitForFunction"])
+        self.assertEqual(_wait_sites("const waitFor = budget.waitFor;"), [], "an assignment is no site")
 
     def test_the_receiver_walk_classifies_a_call_by_the_receiver_it_is_chained_on(self):
         """The allow-list's instrument (_receiver_calls), by cell: a page's locator chain yields the page call and the locator calls
