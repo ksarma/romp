@@ -8148,9 +8148,11 @@ the contract said the same; the claim was false, and the follow-on is a privacy 
 (open point 11). The verifications: `git diff --stat $(git merge-base origin/main HEAD) HEAD -- kernel/` is empty and
 `git diff --name-only $(git merge-base origin/main HEAD) HEAD` lists files under ui/webview, docs, plans, tools,
 upstream or tests alone (38 files, the ledger entry's where line; run 2026-09-20 at the commit that built the one
-reader for the file review's round 4, when the merge-base was 0d7723d34; tools/markdown-viewer-plan-linknav.test.mjs runs both wherever `origin/main` is
-known, reads the count off this sentence while the branch is unmerged, and holds the prose alone where the ref is
-not known). The build's record ran both against 34142c262, the branch point, and the merge of main into the branch
+reader for the file review's round 4 and again at the head that closed the author's closing pass after the file review's
+round 4, the merge-base 0d7723d34 both times; tools/markdown-viewer-plan-linknav.test.mjs runs both behind the two-part
+gate the Tests paragraph names, the merge-base not `origin/main` itself and the diff since it adding the module, reads the
+count off this sentence where they run, and otherwise says which part held them, or holds the prose alone without the
+ref). The build's record ran both against 34142c262, the branch point, and the merge of main into the branch
 (f694e5974) made that commit an ancestor of main, so at the merged head the same stat named four kernel files and the
 same list reached kernel/ and vscode-extension/ (the file review, fresh-1): a verification is derived from the
 merge-base with main, never from a fixed sha a merge can move behind. The files under tests are
@@ -8237,9 +8239,12 @@ control nowhere; no history API call stands in the trail or the viewer; L6's two
 merge-base with `origin/main` behind a two-part gate read off git, the merge-base not `origin/main` itself and the
 diff since it adding the module (the file review's round 4, extra8-1: the kernel stat empty, every changed file under
 the six directories, and the count L6 gives the listing's, on the open PR branch in a clone where `origin/main` has
-moved past the branch's last merge of it; on a batch head, on main, on this branch right after merging `origin/main`
-and on any later branch once the follow-on has landed the checks stand down and the diagnostic names the part of the
-gate that held them, and without the ref the prose alone holds); the guide's two sentences are whole and the old
+moved past the branch's last merge of it; on main, on a batch head cut from main's tip, on this branch right after
+merging `origin/main` and on any later branch once the follow-on has landed the checks stand down and the diagnostic
+names the part of the gate that held them, and without the ref the prose alone holds; a batch head that main has moved
+under passes both parts and fails the count on the other PRs' files, the gate's residual, disclosed in both modules and
+here and not closed, a third part named for the maintainer in the PR body: the author's closing pass after the file
+review's round 4, attribution-and-gates-2 with records-2); the guide's two sentences are whole and the old
 wording is gone; the browser plan's pointer stands in its navigation-stack section; and the module list is two-way
 (every module the listing above produces is named here and the count in that sentence is the listing's, read from the
 sentence; every test module under ui/webview, tools or tests whose own text names this follow-on is named here; every
