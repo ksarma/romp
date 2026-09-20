@@ -553,7 +553,7 @@ test("(3) the wait. A Reload landing during the wait requests the landing's pict
     await road(s, "Print anyway", { printed: "window.print x1" }, async () => {
       await page.click(ANYWAY_BTN);
       const p = await prints(page);
-      assert.equal(p.length, 1); assert.equal(p[0].incomplete.length, 1, "the parked picture prints as the browser has it"); assert.equal(p[0].gates, 1, "the placeholder kept");
+      assert.equal(p.length, 1); assert.equal(p[0].incomplete.length, 1, "the parked picture prints still loading and left off the paper"); assert.equal(p[0].gates, 1, "the placeholder kept");
       assert.equal(s.heldCount(SLOW), 1, "its request is still parked");
     });
     assert.deepEqual(hostsAsked(s), [], "the gated host was never asked");
@@ -604,7 +604,7 @@ test("(3) the wait. A Reload landing during the wait requests the landing's pict
       assert.equal(b.phase, "preparing"); assert.equal(b.line, WAITING_ONE); assert.deepEqual(b.buttons, [ANYWAY_WORDS], "the open-ended wait's one button");
       await page.click(ANYWAY_BTN);
       const p = await prints(page);
-      assert.equal(p.length, 1); assert.equal(p[0].incomplete.length, 1, "the parked picture prints as the browser has it"); assert.equal(p[0].gates, 1, "the placeholder kept");
+      assert.equal(p.length, 1); assert.equal(p[0].incomplete.length, 1, "the parked picture prints still loading and left off the paper"); assert.equal(p[0].gates, 1, "the placeholder kept");
       assert.equal(s.heldCount(SLOW), 1, "its request is still parked");
       await frames(page, 1);
       b = await bar(page);
@@ -930,7 +930,7 @@ test("(9) one host, four placeholders, the open picture's route parked. A second
       await page.click(ANYWAY_BTN);
       const p = await prints(page);
       assert.equal(p.length, 1, "one print, in the click's own task");
-      assert.deepEqual({ gates: p[0].gates, incomplete: p[0].incomplete }, { gates: 3, incomplete: [FOUR_URL(FOUR_OPEN)] }, "the open picture prints as the browser has it (incomplete), the three placeholders standing");
+      assert.deepEqual({ gates: p[0].gates, incomplete: p[0].incomplete }, { gates: 3, incomplete: [FOUR_URL(FOUR_OPEN)] }, "the open picture prints still loading and left off the paper (incomplete), the three placeholders standing");
       assert.equal(s.heldCount(FOUR_OPEN), 1, "its request is still parked");
       assert.equal((await bar(page)).phase, null, "the bar rested");
     });

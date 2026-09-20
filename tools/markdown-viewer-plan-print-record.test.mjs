@@ -1033,3 +1033,42 @@ test('the post-filter index (the round-4 review\'s correctness-4, tests-7 and re
   assert.ok(TESTS.includes('A second node case holds `namesWhere`, the restore assert\'s message, the same way'), 'the Tests list names the second helper');
   assert.ok(TESTS.includes('the record test\'s census over the print test modules refuses every filter-then-map-by-index chain but the two cases\' fails-before records'), 'and the census');
 });
+
+// ── the retired sentence: the population of both spellings, derived once ────────────────────────
+
+/** The lines of the print test modules that still carry either spelling of the sentence the product retired (the round-5
+ *  review's tests-4, regression-6, extra5-2, extra6-1 and extra6-2): "as the browser has it/them", which the round-4
+ *  measurement refuted for a still-loading picture (it prints as nothing where it was, or an empty box of its declared size),
+ *  and the bare quoted wait line `"Waiting for 1 picture…"` closing right after the ellipsis, the line before the button's
+ *  own sentence joined it. Each as `file:line: text`. */
+function retiredSpellings() {
+  const out = [];
+  for (const file of printTestModules()) {
+    read('ui', 'webview', file).split('\n').forEach((text, i) => {
+      if (/as the browser has (it|them)/.test(text) || /Waiting for 1 picture…\\?"/.test(text)) out.push({ file, line: i + 1, text });
+    });
+  }
+  return out;
+}
+/** The sites sanctioned by hand, each keyed by module and by a fragment of its line, with the sense that keeps it. */
+const RETIRED_SPELLING_KEEPS = [
+  { file: 'file-print-egress-browser.test.ts', has: '"figure-off": in the open body with a figure the browser paints nothing of, read as the browser has it, the figure\'s', why: 'a different sense: how the flow reads the gated figure\'s computed state, not what a picture prints as' },
+  { file: 'file-print.test.ts', has: 'assert.equal(s.pending(), 2, "both still loading: they print as the browser has them");', why: 'the machine\'s count case: at that instant both are still loading, and the round-5 ruling leaves it' },
+  { file: 'file-print.test.ts', has: 'assert.ok(!ANYWAY_TITLE.includes("as the browser has it"),', why: 'the absence pin\'s own probe string' },
+];
+
+test('the retired sentence (the round-5 review\'s tests-4, regression-6, extra5-2, extra6-1 and extra6-2, one defect in five titles and messages): a census over the print test modules for both spellings finds exactly the three kept sites, each read by hand for its sense, and the five corrected sites quote or derive the current line', () => {
+  const found = retiredSpellings();
+  const kept = found.map((f) => RETIRED_SPELLING_KEEPS.find((k) => k.file === f.file && f.text.includes(k.has)) || null);
+  assert.deepEqual(found.filter((f, i) => kept[i] === null).map((f) => f.file + ':' + f.line + ': ' + f.text.trim().slice(0, 120)), [], 'a title or a message quotes a sentence the product no longer produces, so a red would contradict the assertion that failed');
+  assert.deepEqual(kept.filter((k) => k !== null).map((k) => k.has).sort(), RETIRED_SPELLING_KEEPS.map((k) => k.has).sort(), 'each kept site stands once, none stale');
+  assert.equal(found.length, 3, 'the population at the round-6 head: the three kept sites (five live sites were corrected)');
+  // the corrected sites: the two titles derive the wait line from waitingWords(1), so the ui-1 wording and any later one flow into them
+  const gated = read('ui', 'webview', 'file-print-browser.test.ts');
+  const driver = read('ui', 'webview', 'file-print-driver-browser.test.ts');
+  const egress = read('ui', 'webview', 'file-print-egress-browser.test.ts');
+  assert.ok(gated.includes('Print anyway prints once with the picture still loading and left off the paper; Keep waiting sets no timer, its line reading " + JSON.stringify(waitingWords(1)) + " with Print anyway alone'), 'case 4\'s title');
+  assert.ok(driver.includes('after Keep waiting the line reads " + JSON.stringify(waitingWords(1)) + " beside the loader with Print anyway alone (FAILS BEFORE: the line read \\"Preparing 1 picture…\\" with no button'), 'case (15)\'s title, its FAILS BEFORE clause standing');
+  assert.equal([...egress.matchAll(/"the parked picture prints still loading and left off the paper"/g)].length, 2, 'the two Print anyway roads\' messages');
+  assert.ok(egress.includes('"the open picture prints still loading and left off the paper (incomplete), the three placeholders standing"'), 'the four-host road\'s message');
+});

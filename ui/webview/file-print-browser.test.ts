@@ -306,7 +306,7 @@ async function askAtDeadline(s: Scene): Promise<number> {
   return t0;
 }
 
-test("case 4: the deadline asks. A picture whose route never answers: at the deadline (shortened through the test seam) the line says it has not loaded, with Print anyway and Keep waiting, and window.print is NOT called (FAILS BEFORE: the print ran at the deadline, the picture incomplete); Print anyway prints once as the browser has it; Keep waiting sets no timer, its line reading \"Waiting for 1 picture…\" with Print anyway alone, and prints once the picture lands, every <img> complete; Escape or a second press under the ask, and Escape during the open-ended wait, print nothing and leave the card up; the seam restored, the constant is 8 s", { timeout: 120000 }, async (t) => {
+test("case 4: the deadline asks. A picture whose route never answers: at the deadline (shortened through the test seam) the line says it has not loaded, with Print anyway and Keep waiting, and window.print is NOT called (FAILS BEFORE: the print ran at the deadline, the picture incomplete); Print anyway prints once with the picture still loading and left off the paper; Keep waiting sets no timer, its line reading " + JSON.stringify(waitingWords(1)) + " with Print anyway alone, and prints once the picture lands, every <img> complete; Escape or a second press under the ask, and Escape during the open-ended wait, print nothing and leave the card up; the seam restored, the constant is 8 s", { timeout: 120000 }, async (t) => {
   await inBrowser(t, async (browser) => {
     // a: the ask, then Print anyway
     let s = await scene(browser, "pane", GATED_NOTE);
