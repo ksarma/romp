@@ -24,9 +24,10 @@
 #
 # An annotated TAG carries a tagger the same way, and every other read the hook
 # makes peels a tag to the commit it names, so the tag object's own address is
-# read too: the tag cases at the end hold that. A tag field the hook cannot READ
+# read too: the tag cases at the end hold that. A field the hook cannot READ
 # refuses the push as unscanned (the last cases): an unread tagger is not an
-# empty one, and an object whose TYPE the hook cannot read is not a non-tag.
+# empty one, an object whose TYPE the hook cannot read is not a non-tag, and a
+# commit whose ADDRESSES cannot be read is not one stamped with none.
 #
 # Every identifier below is SYNTHETIC: the denylist, the logins, the hosts and
 # the domains are invented per test (the repo may go public, and a real one
@@ -395,6 +396,14 @@ fail_cat_file_p() {   # <sha whose `cat-file -p` fails>
 fail_cat_file_t() {   # <sha whose `cat-file -t` fails>
     git_refusing "[ \"\${1:-}\" = cat-file ] && [ \"\${2:-}\" = -t ] && [ \"\${3:-}\" = $1 ]" 128 "fatal: shim: cat-file -t refused for $1"
 }
+fail_log_addresses() {   # [<sha whose addresses log fails; every commit's when omitted>]
+    # the one `git log` format the hook reads a commit's addresses with; the message log is another format
+    if [ -n "${1:-}" ]; then
+        git_refusing "[ \"\${1:-}\" = log ] && [[ \"\${4:-}\" == --format=authored* ]] && [ \"\${!#}\" = $1 ]" 128 "fatal: shim: log (the addresses) refused for $1"
+    else
+        git_refusing '[ "${1:-}" = log ] && [[ "${4:-}" == --format=authored* ]]' 128 "fatal: shim: log (the addresses) refused"
+    fi
+}
 
 @test "a tag whose fields cannot be READ is refused as unscanned, naming the tag and each field: a failed read is not an empty field" {
     commit_clean ok.txt "clean"
@@ -493,6 +502,50 @@ fail_cat_file_t() {   # <sha whose `cat-file -t` fails>
     [ -z "$output" ]
     git -C "$REPO" tag light
     run_hook_tag light
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+# ── the commit ADDRESSES read ─────────────────────────────────────────────
+# The addresses a commit is stamped with are one `git log` whose output fed the
+# loop that judged them, and the loop's test swallowed the status: a log that
+# FAILED read as a commit stamped with no address, git's own error line the
+# only sign (found by execution, 2026-09-20: with that log refused, a commit
+# authored under a denylist domain went through a real push with every counter
+# at zero). The hook now captures the log and its status before the loop. The
+# same shim shape, keyed to the log format the hook reads addresses with.
+
+@test "a commit whose ADDRESSES cannot be read is refused as unscanned, naming the commit: a failed log is not a commit stamped with no address" {
+    commit_as "$STAMPED" "$STAMPED" web.txt "stamped by an unset user.email"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    fail_log_addresses
+    # the fault as the hook meets it, from the repo's top level: the addresses log fails, the message log and the diff work
+    run _hook_in "$REPO" -c 'git log -1 --no-show-signature --format=authored%x09%ae "$1"' _ "$sha"
+    [ "$status" -eq 128 ]
+    run _hook_in "$REPO" -c 'git log -1 --no-show-signature --format=%B "$1" >/dev/null && git diff-tree -p -r --root --no-commit-id "$1" >/dev/null' _ "$sha"
+    [ "$status" -eq 0 ]
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"the ADDRESSES of commit ${sha:0:10} could not be read (git log exited 128)"* ]]
+    [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" == *"git push --no-verify"* ]]
+    # reported as a failed read, not as a finding: no address was read to name
+    [[ "$output" != *"is authored as"* ]]
+    [[ "$output" != *"is committed as"* ]]
+    [[ "$output" != *"BLOCKED"* ]]
+}
+
+@test "a merge and an EMPTY commit under the hermetic identity pass beside that git when the fault sits on a commit not in the push: the refusal is the failed read, not the shim's presence" {
+    commit_clean base.txt "base"
+    base="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" update-ref refs/remotes/origin/main HEAD     # base is published
+    git -C "$REPO" checkout -q -b feature
+    commit_clean web.txt "branch work"
+    git -C "$REPO" checkout -q main
+    git -C "$REPO" commit -q --allow-empty -m "an empty commit"
+    git -C "$REPO" merge -q --no-ff -m "merge feature" feature
+    fail_log_addresses "$base"
+    run_hook "$base"
     [ "$status" -eq 0 ]
     [ -z "$output" ]
 }

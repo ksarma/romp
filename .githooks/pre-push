@@ -77,14 +77,18 @@
 #                     is peeled one object at a time.
 #
 # A read the hook cannot COMPLETE is not an empty result. The tip's content scan,
-# its symlink listing, each link's target, an object's type and a tag's fields are
-# git reads whose output the checks above grep, and a read that FAILED (git's
-# status, or an error line) leaves the push part-scanned: what went unread may be
-# exactly the string the scan exists for. Each such read reports one line naming
-# the ref and the read and refuses the push as unscanned, as a gitleaks that
-# cannot scan does; an ABSENT value (a tag with no message, a tree with no links)
-# reads as empty and passes. Found by execution (2026-09-20), one read at a time,
-# each letting a dirty tip or tag through a real push with nothing printed.
+# its symlink listing, each link's target, an object's type, a tag's fields and
+# each new commit's added lines, addresses and message are git reads whose
+# output the checks above grep, and a read that FAILED (git's status, or an
+# error line) leaves the push part-scanned: what went unread may be exactly the
+# string the scan exists for. Each such read reports one line naming the ref or
+# the commit and the read, and refuses the push as unscanned, as a gitleaks that
+# cannot scan does; an ABSENT value (a tag with no message, a tree with no
+# links, a commit whose diff or message is empty) reads as empty and passes.
+# Found by execution (2026-09-20), one read at a time, each letting a dirty tip,
+# tag or commit through a real push with nothing printed but git's own error
+# line where it printed one; the per-commit diff failed that way with the real
+# git once the added file's blob was gone from the store.
 #
 # The credential scan reads the same new commits, each merge by its
 # first-parent diff, and refuses the push on a hit. A range this clone cannot
@@ -151,10 +155,13 @@ rev_range() {   # <local_sha> <remote_sha> → a rev-list argument list
 # from the `+++ b/<path>` header, read only between a `diff --git` or
 # `diff --combined` line and the first hunk: inside a hunk, a line that begins
 # with `+++ ` is added content (`++ b/x` as written) and belongs to the current
-# file.
+# file. The function's status is its reads': the diff's through pipefail, and
+# the parent count's through `|| return` (a failure there left n empty, which
+# awk read as 1, and a merge's combined diff was read in one column: over-scan,
+# but a read that failed all the same).
 added_lines() {   # <rev>
     local n
-    n=$(git rev-list --parents -n 1 "$1" | awk '{ print NF - 1 }')
+    n=$(git rev-list --parents -n 1 "$1" | awk '{ print NF - 1 }') || return $?
     git diff-tree -p -r -M -c --root --no-commit-id --no-color "$1" | awk -v n="$n" '
         BEGIN { if (n < 1) n = 1; for (i = 0; i < n; i++) plus = plus "+" }
         /^diff --(git|combined) /        { hdr = 1; next }
@@ -191,13 +198,17 @@ is_chosen() {   # <address> <chosen addresses, one per line>
 # as the author's own name and address are, and numbered a real hit's line from
 # the report's first line rather than the subject. The flag keeps both reads to
 # the commit's own fields.
+#
+# The log is captured before the loop, so the function's status is the log's:
+# piped into the loop, a log that failed was a commit stamped with no address.
 stamped_addresses() {   # <rev> <chosen addresses, one per line>
-    local role email
-    git log -1 --no-show-signature --format='authored%x09%ae%ncommitted%x09%ce' "$1" | while IFS=$'\t' read -r role email; do
+    local role email stamped
+    stamped=$(git log -1 --no-show-signature --format='authored%x09%ae%ncommitted%x09%ce' "$1") || return $?
+    while IFS=$'\t' read -r role email; do
         [ -n "$email" ] || continue
         is_chosen "$email" "$2" && continue
         printf '%s\t%s\n' "$role" "$email"
-    done
+    done <<< "$stamped"
 }
 
 # One header field of an annotated tag object (`tagger`, `object`), or its
@@ -222,8 +233,13 @@ tag_message() {   # <tag_sha>
 # published a tag whose tagger domain was on the denylist; a git grep exiting 2,
 # an ls-tree that failed after listing the link, a link blob that would not read
 # and a failed type read each published a tip that inherited main's leak; nothing
-# printed, every counter at zero. Each caller says what could not be read; the
-# tail and the counter are the same for all.
+# printed, every counter at zero. A per-commit diff-tree or log that failed (a
+# shim; the diff-tree with the real git too, the added file's blob gone from the
+# store) published a commit that added a banned line, one authored under a banned
+# domain and one whose message named a banned host, git's own error line the only
+# sign: piped into the grep or the loop that judged it, the read's failure was a
+# no-match. Each caller says what could not be read; the tail and the counter are
+# the same for all.
 unscanned() {   # <what could not be read, as a clause>
     echo "romp pre-push: $1; the scan is incomplete, so the push is refused" >&2
     failed_scan=1
@@ -242,7 +258,7 @@ type_unread() {   # <local_ref> <sha>
 # ── identifiers ───────────────────────────────────────────────────────────
 scan_identifiers() {
     local strings_file line grep_args local_ref local_sha _remote_ref remote_sha lines role email obj tagger chosen
-    local rc out errs hits listing links link blob link_path target revs rev msg inner kind
+    local rc out errs hits listing links link blob link_path target revs rev msg addrs inner kind
     strings_file="${ROMP_PRIVATE_STRINGS:-${XDG_CONFIG_HOME:-$HOME/.config}/romp/private-strings.txt}"
     [ -f "$strings_file" ] || return 0
 
@@ -328,30 +344,53 @@ scan_identifiers() {
             done <<< "$links"
         fi
 
-        # The lines each commit new to the remote adds.
+        # The lines each commit new to the remote adds. Each per-commit read below
+        # (the diff, the addresses, the message) is captured with its status before
+        # the grep or the loop that judges it: piped straight in, a diff-tree or log
+        # that failed was the grep's no-match or a loop with nothing to read, a
+        # commit that added, said and was stamped with nothing (found by execution,
+        # 2026-09-20: each let its commit through a real push, git's error line the
+        # only sign). A failed read names the commit and the read (unscanned) and
+        # the scan goes on; whatever the read did print is still judged, so a hit
+        # ahead of the failure is still named. An empty diff or message (an empty
+        # commit, a merge with no line of its own) prints nothing and exits 0:
+        # absent, not unreadable. git's own error line is not captured: it prints
+        # ahead of the romp line, and message text cannot carry it.
         # shellcheck disable=SC2046  # the range is deliberately word-split
         revs=$(git rev-list $(rev_range "$local_sha" "$remote_sha") 2>/dev/null \
                || git rev-list "$local_sha")
         for rev in $revs; do
-            if hits=$(added_lines "$rev" | grep -i -F "${grep_args[@]}" | cut -f1 | sort -u) && [ -n "$hits" ]; then
+            rc=0; out=$(added_lines "$rev") || rc=$?
+            [ "$rc" -eq 0 ] || unscanned "the ADDED LINES of commit ${rev:0:10} could not be read (git diff-tree exited $rc)"
+            if hits=$(printf '%s\n' "$out" | grep -i -F "${grep_args[@]}" | cut -f1 | sort -u) && [ -n "$hits" ]; then
                 echo "romp pre-push: commit ${rev:0:10} ADDS a personal identifier in:" >&2
                 echo "$hits" | sed 's/^/  /' >&2
                 blocked_ids=1
             fi
             # The addresses it is stamped with: the domain of each one the clone did
             # not choose. `${email##*@}` is the whole string for an address with no @,
-            # which git never stamps; such an address is read whole.
+            # which git never stamps; such an address is read whole. Captured in
+            # this shell rather than read through a process substitution: bash gives
+            # the loop no status for one, and a counter set inside it is lost with
+            # its subshell. A herestring of an empty capture is one empty line.
+            rc=0; addrs=$(stamped_addresses "$rev" "$chosen") || rc=$?
+            [ "$rc" -eq 0 ] || unscanned "the ADDRESSES of commit ${rev:0:10} could not be read (git log exited $rc)"
             while IFS=$'\t' read -r role email; do
+                [ -n "$email" ] || continue
                 if printf '%s' "${email##*@}" | grep -qi -F "${grep_args[@]}"; then
                     echo "romp pre-push: commit ${rev:0:10} is $role as <$email>, an address this clone is not configured to use, whose domain carries a personal identifier" >&2
                     blocked_ids=1
                     blocked_addresses=1
                 fi
-            done < <(stamped_addresses "$rev" "$chosen")
+            done <<< "$addrs"
             # Its message, subject and body, like lines of content. -n so the report
             # can point at the line (1 is the subject) without echoing the string;
             # --no-show-signature so the message is all it reads (stamped_addresses).
-            if hits=$(git log -1 --no-show-signature --format=%B "$rev" | grep -in -F "${grep_args[@]}" | cut -d: -f1) && [ -n "$hits" ]; then
+            # Captured first; a substitution drops trailing newlines only, so the
+            # numbering from the subject is the pipe's.
+            rc=0; msg=$(git log -1 --no-show-signature --format=%B "$rev") || rc=$?
+            [ "$rc" -eq 0 ] || unscanned "the MESSAGE of commit ${rev:0:10} could not be read (git log exited $rc)"
+            if hits=$(printf '%s\n' "$msg" | grep -in -F "${grep_args[@]}" | cut -d: -f1) && [ -n "$hits" ]; then
                 lines=$(printf '%s\n' "$hits" | tr '\n' ,); lines=${lines%,}
                 echo "romp pre-push: the MESSAGE of commit ${rev:0:10} carries a personal identifier on line $lines (line 1 is the subject)" >&2
                 blocked_ids=1

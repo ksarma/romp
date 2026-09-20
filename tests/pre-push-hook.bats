@@ -34,9 +34,10 @@
 #
 # A read the hook cannot COMPLETE is not an empty result: a tip whose tree git
 # grep could not scan, a tree whose listing failed, a link whose blob could not
-# be read is refused as unscanned, the way a tag field the hook cannot read is
-# (pre-push-identity.bats). The cases at the end hold that line, each with a git
-# first on the hook's PATH that refuses one command shape.
+# be read, a commit whose diff could not be read is refused as unscanned, the way
+# a tag field the hook cannot read is (pre-push-identity.bats). The cases at the
+# end hold that line, each with a git first on the hook's PATH that refuses one
+# command shape.
 
 ROMP_DIR="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
 HOOK="$ROMP_DIR/.githooks/pre-push"
@@ -504,6 +505,13 @@ fail_ls_tree()  { git_refusing '[ "${1:-}" = ls-tree ]' 128 "fatal: shim: ls-tre
 fail_cat_file_p() {   # <sha whose `cat-file -p` fails>
     git_refusing "[ \"\${1:-}\" = cat-file ] && [ \"\${2:-}\" = -p ] && [ \"\${3:-}\" = $1 ]" 128 "fatal: shim: cat-file -p refused for $1"
 }
+fail_diff_tree() {   # [<sha whose diff-tree fails; every commit's when omitted>]
+    if [ -n "${1:-}" ]; then
+        git_refusing "[ \"\${1:-}\" = diff-tree ] && [ \"\${!#}\" = $1 ]" 128 "fatal: shim: diff-tree refused for $1"
+    else
+        git_refusing '[ "${1:-}" = diff-tree ]' 128 "fatal: shim: diff-tree refused"
+    fi
+}
 
 # The tip's CONTENT scan is one `git grep` over the tree. It exits 1 for no match
 # and above 1 when it could not scan (a git that would not run, a killed process,
@@ -683,4 +691,98 @@ fail_cat_file_p() {   # <sha whose `cat-file -p` fails>
     [[ "$output" == *"the tip of refs/tags/dirtyblob (${sha:0:10}) would publish a personal identifier"* ]]
     [[ "$output" == *"BLOCKED"* ]]
     [[ "$output" != *"could not be"* ]]
+}
+
+# Each commit the push publishes is read three ways, and each read was a git
+# command piped into the grep or the loop that judged it: its ADDED LINES
+# (diff-tree, below), its ADDRESSES (log; pre-push-identity.bats) and its MESSAGE
+# (log; pre-push-message.bats). Piped, the read's failure was the grep's
+# no-match: a diff-tree that failed read as a commit that added nothing, and
+# git's own error line was the only sign. Found by execution (2026-09-20): with
+# the diff-tree refused, a commit that added a banned line and the commit that
+# removed it again went through a real push with every counter at zero, and the
+# same with the real git once the added file's blob was gone from the store
+# (fatal: unable to read, exit 128), the fault the second case below makes. The
+# hook now reads the diff's status apart from the grep; whatever the diff did
+# print is still grepped, so a hit ahead of the failure is still named. An EMPTY
+# diff (an empty commit, a merge with no line of its own) is absent, not
+# unreadable, and passes.
+
+@test "a commit whose ADDED LINES cannot be read is refused as unscanned, naming the commit: a failed diff is not a commit that added nothing" {
+    commit_file base.txt "notes-api" "base"
+    commit_file leak.txt "home is /home/zzsynthuser/code" "leak"
+    leak="$(git -C "$REPO" rev-parse HEAD)"
+    remove_file leak.txt "redact"                       # the tip is clean: only the added-lines pass can see the leak
+    fail_diff_tree
+    # the fault as the hook meets it, from the repo's top level: the diff fails, the other reads work
+    run _hook_in "$REPO" -c 'git diff-tree -p -r --root --no-commit-id "$1"' _ "$leak"
+    [ "$status" -eq 128 ]
+    run _hook_in "$REPO" -c 'git rev-list "$1" --not --remotes >/dev/null && git log -1 --format=%B "$1" >/dev/null' _ "$leak"
+    [ "$status" -eq 0 ]
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"the ADDED LINES of commit ${leak:0:10} could not be read (git diff-tree exited 128)"* ]]
+    [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" == *"git push --no-verify"* ]]
+    # reported as a failed read, not as a finding: nothing was read to find
+    [[ "$output" != *"ADDS a personal identifier"* ]]
+    [[ "$output" != *"BLOCKED"* ]]
+}
+
+@test "a commit whose added file's BLOB is missing from the store is refused as unscanned: the real fault behind the diff-tree read" {
+    # No shim: the patch needs the blob, and once the removing commit is made no
+    # worktree copy stands in for it (diff-tree reads a checked-out file in the
+    # blob's place). The tip is clean, so no other pass reads the file.
+    commit_file base.txt "notes-api" "base"
+    commit_file leak.txt "home is /home/zzsynthuser/code" "leak"
+    leak="$(git -C "$REPO" rev-parse HEAD)"
+    blob="$(git -C "$REPO" rev-parse HEAD:leak.txt)"
+    remove_file leak.txt "redact"
+    rm "$REPO/.git/objects/${blob:0:2}/${blob:2}"       # loose in a fresh repo
+    run _hook_in "$REPO" -c 'git diff-tree -p -r --root --no-commit-id "$1"' _ "$leak"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"unable to read"* ]]
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"the ADDED LINES of commit ${leak:0:10} could not be read (git diff-tree exited 128)"* ]]
+    [[ "$output" == *"unable to read"* ]]
+    [[ "$output" != *"BLOCKED"* ]]
+}
+
+@test "the added-lines pass goes on past an unread commit: a leak in the commit beside it is still named, and the push is refused on both counts" {
+    commit_file base.txt "notes-api" "base"
+    commit_file web.txt "the web session's work" "clean commit"
+    clean="$(git -C "$REPO" rev-parse HEAD)"
+    commit_file leak.txt "home is /home/zzsynthuser/code" "leak"
+    leak="$(git -C "$REPO" rev-parse HEAD)"
+    remove_file leak.txt "redact"
+    fail_diff_tree "$clean"                             # the fault sits on the clean commit alone
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"the ADDED LINES of commit ${clean:0:10} could not be read"* ]]
+    [[ "$output" == *"commit ${leak:0:10} ADDS a personal identifier in:"* ]]
+    [[ "$output" == *"BLOCKED"* ]]
+}
+
+@test "an EMPTY commit and a merge with no line of its own pass beside that git when the fault sits on a commit not in the push: an empty diff is absent, not unreadable" {
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    base="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" push -q origin main
+    git -C "$REPO" checkout -q -b feature
+    commit_file web.txt "the web session's work" "branch work"
+    git -C "$REPO" checkout -q main
+    git -C "$REPO" commit -q --allow-empty -m "an empty commit"
+    git -C "$REPO" merge -q --no-ff -m "merge feature" feature     # every line of its tree is in one parent: -c prints nothing
+    fail_diff_tree "$base"                              # base is on the remote: not a commit this push publishes
+    # the reads as the hook meets them, from the repo's top level: an empty diff prints nothing and exits 0
+    run _hook_in "$REPO" -c 'git diff-tree -p -r -M -c --root --no-commit-id --no-color "$1"' _ "$(git -C "$REPO" rev-parse HEAD^1)"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    run _hook_in "$REPO" -c 'git diff-tree -p -r -M -c --root --no-commit-id --no-color "$1"' _ "$(git -C "$REPO" rev-parse HEAD)"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    run_hook
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
 }

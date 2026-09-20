@@ -23,7 +23,8 @@
 # whole, the author's own name included: it is text they typed, and a FILE naming
 # them is refused on the same ground. An annotated TAG's message is read the same
 # way (every other read the hook makes peels a tag to its commit): the tag case
-# at the end holds that.
+# near the end holds that. A message the hook cannot READ refuses the push as
+# unscanned (the last cases): a log that failed is not an empty message.
 #
 # Every identifier below is SYNTHETIC: the denylist, the logins, the hosts and
 # the paths are invented per test (the repo may go public, and a real one written
@@ -277,4 +278,88 @@ commit_msg() {   # <path> <paragraph>...
     [[ "$output" == *"git tag -f -a <name> <commit>"* ]]
     # the commit it names has a clean message and is reported as nothing
     [[ "$output" != *"the MESSAGE of commit"* ]]
+}
+
+# ── a message the hook cannot READ ────────────────────────────────────────
+# The message read was one `git log` piped into the grep that judged it, so the
+# pipeline's status was the grep's and a log that FAILED read as an empty
+# message, git's own error line the only sign (found by execution, 2026-09-20:
+# with that log refused, a commit whose subject named a denylist host went
+# through a real push with every counter at zero). The hook now captures the
+# message and its status before the grep, and numbers a hit's line from the
+# subject as before. An EMPTY message is absent, not unreadable, and passes.
+#
+# The fault is a git first on the hook's PATH that refuses ONE command shape
+# (the log format the hook reads messages with, keyed to one commit's sha when a
+# case needs a clean commit beside it) and runs the real git for every other,
+# written into the test's temp dir at run time. The test body is its own
+# subshell, so the PATH change does not outlive the test. Once per test: a
+# second call would resolve `command -v git` to the first shim, and the new one
+# would exec itself forever.
+git_refusing() {   # <bash test over the shim's "$@"> <exit status> <stderr line>
+    local real_git
+    real_git="$(command -v git)"
+    mkdir -p "$TEST_DIR/shim"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'if %s; then\n' "$1"
+        printf '    echo %q >&2\n    exit %d\nfi\n' "$3" "$2"
+        printf 'exec %q "$@"\n' "$real_git"
+    } > "$TEST_DIR/shim/git"
+    chmod 755 "$TEST_DIR/shim/git"
+    export PATH="$TEST_DIR/shim:$PATH"
+}
+fail_log_message() {   # [<sha whose message log fails; every commit's when omitted>]
+    # the one `git log` format the hook reads a commit's message with; the addresses log is another format
+    if [ -n "${1:-}" ]; then
+        git_refusing "[ \"\${1:-}\" = log ] && [ \"\${4:-}\" = --format=%B ] && [ \"\${!#}\" = $1 ]" 128 "fatal: shim: log (the message) refused for $1"
+    else
+        git_refusing '[ "${1:-}" = log ] && [ "${4:-}" = --format=%B ]' 128 "fatal: shim: log (the message) refused"
+    fi
+}
+
+@test "a commit whose MESSAGE cannot be read is refused as unscanned, naming the commit: a failed log is not an empty message" {
+    commit_msg web.txt "fix the crash on TESTHOST"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    fail_log_message
+    # the fault as the hook meets it, from the repo's top level: the message log fails, the addresses log and the diff work
+    run _hook_in "$REPO" -c 'git log -1 --no-show-signature --format=%B "$1"' _ "$sha"
+    [ "$status" -eq 128 ]
+    run _hook_in "$REPO" -c 'git log -1 --no-show-signature --format=authored%x09%ae "$1" >/dev/null && git diff-tree -p -r --root --no-commit-id "$1" >/dev/null' _ "$sha"
+    [ "$status" -eq 0 ]
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"the MESSAGE of commit ${sha:0:10} could not be read (git log exited 128)"* ]]
+    [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" == *"git push --no-verify"* ]]
+    # reported as a failed read, not as a finding: nothing was read to find
+    [[ "$output" != *"carries a personal identifier"* ]]
+    [[ "$output" != *"never redacted forward"* ]]
+    [[ "$output" != *"BLOCKED"* ]]
+}
+
+@test "an EMPTY message and a merge's clean one pass beside that git when the fault sits on a commit not in the push: an empty message is absent, not unreadable" {
+    commit_msg base.txt "base"
+    base="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" update-ref refs/remotes/origin/main HEAD     # base is published
+    git -C "$REPO" checkout -q -b feature
+    commit_msg web.txt "branch work"
+    git -C "$REPO" checkout -q main
+    stage_file api.txt
+    git -C "$REPO" commit -q --allow-empty-message -m ""
+    [ -z "$(git -C "$REPO" log -1 --format=%B | tr -d '\n')" ]
+    git -C "$REPO" merge -q --no-ff -m "merge feature" feature
+    fail_log_message "$base"
+    run_hook "$base"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "the message is numbered from the subject under the captured read: a hit in the body's third paragraph is line 5" {
+    commit_msg web.txt "fix: a subject" "a body line" "seen on TESTHOST"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    [ "$(git -C "$REPO" log -1 --format=%B | sed -n 5p)" = "seen on TESTHOST" ]
+    run_hook
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"the MESSAGE of commit ${sha:0:10} carries a personal identifier on line 5 (line 1 is the subject)"* ]]
 }
