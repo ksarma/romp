@@ -93,24 +93,40 @@ def _utf16_len(v):
     return len(v.encode("utf-16-le", "surrogatepass")) // 2
 
 
+REV_MAX = 2 ** 53 - 1   # Number.isSafeInteger's bound: the client reads every rev field as a JavaScript number
+
+
+def _safe_int(v):
+    """A value as the client's Number.isSafeInteger reads it after JSON parsing: an int (never a bool) within plus or minus
+    2^53 - 1; else None. The one caller that wants the sign-free form is the feed road's base test, which asks a safe integer at
+    or below the held rev and nothing more of it (federation.ts applyRemoteFeedDelta), so a negative base passes there."""
+    return v if isinstance(v, int) and not isinstance(v, bool) and -REV_MAX <= v <= REV_MAX else None
+
+
 def _stamp_field(f, k):
     """A stamp field as the client reads it: a gen (view-deltas.ts genOf) is a non-empty string of at most GEN_MAX UTF-16
     code units (String.length, the client's count: _utf16_len) holding neither '.' (the held member's own separator) nor ','
-    (the caps term's), the kernel's boot token and counter joined by '-'; a rev (base, rev, through) is a non-negative int.
-    Anything else is None, the answer for a value the client cannot read AND for a key the frame does not carry: a caller
-    that must tell the two apart reads the key's presence with _stamp_present, as held_pair does where it matters (round 4,
-    2026-09-20: unparseable is not absent; a present gen the client cannot read is a refusal on both roads, never a gen-less
-    frame)."""
+    (the caps term's), the kernel's boot token and counter joined by '-'; a rev (base, rev, through) is a non-negative safe
+    integer (_safe_int: at most 2^53 - 1, since the client's Number.isSafeInteger refuses a rev past it and this rule read one
+    as a rev until the author's pass after round 4). Anything else is None, the answer for a value the client cannot read AND
+    for a key the frame does not carry: a caller that must tell the two apart reads the key's presence with _stamp_present,
+    as held_pair does where it matters (the author's pass 4, 2026-09-20: unparseable is not absent; a present gen the client
+    cannot read is a refusal on both roads, never a gen-less frame)."""
     v = f.get(k)
     if k in GEN_FIELDS:
         return v if isinstance(v, str) and v and _utf16_len(v) <= GEN_MAX and "." not in v and "," not in v else None
-    return v if isinstance(v, int) and not isinstance(v, bool) and v >= 0 else None
+    v = _safe_int(v)
+    return v if v is not None and v >= 0 else None
 
 
 def _stamp_present(f, k):
     """Whether a recorded frame carried the stamp field `k` at all, whatever its value: the key itself (a hook records a gen
-    or newGen of any string or number form as posted) or the hook's presence flag beside it (`<k>Key`, which the hooks set
-    for gen and newGen, and the relay-redial consumer's _record for both, since that record keeps parsed values alone)."""
+    or newGen of any string or number form as posted) or the presence flag beside it (`<k>Key`), which EVERY frame recorder
+    feeding held_pair sets for gen and newGen: the driver hooks of the dial-terms, relay-redial and capability-corners labs
+    (both of the corners module's, since the author's pass after round 4: until then those two set neither flag, so a gen of
+    null, a boolean, an object or a list, which the hooks copy no value for, read as a gen-less frame in those two labs) and
+    the relay-redial consumer's _record (tests/test_relay_dial_declares_held_pair.py), which keeps parsed values alone.
+    FrameRecorderCensus pins the population and the two lines."""
     return k in f or bool(f.get(k + "Key"))
 
 
@@ -118,39 +134,46 @@ def held_pair(frames, slot):
     """The (gen, rev) pair the client holds for `slot` ("feed" or "bars") after `frames`, the recorded frames of one CONN's relay
     sockets in arrival order (the pair lives on the conn: connect()'s gated reset keeps it across the conn's redials, and
     closeRemote drops the conn, so a host detached and re-attached starts a fresh conn with no pair; the labs using this
-    helper never detach a host, so a host's sockets are one conn's), by federation.ts's rule: a full carrying gen leaves (gen, 0) and a full carrying none clears
-    the pair; a stamped delta leaves (newGen when carried, else gen; through), which is (newGen, R) for a composed frame and
-    (gen, rev) for the stamping kernel's per-cycle delta (through equal to rev, no newGen); a stamped delta carrying no
-    through moves nothing here. That refusal is the FEED road's rule alone (applyRemoteFeedDelta:
-    a needFullFeed, nothing applied), bounded by the kernel contract that every stamped delta carries through; the bars
-    road (view-deltas.ts receive) applies a through-less frame at rev equal to base plus one and holds (gen, rev), so for
-    the bars slot this rule is right only because no designed kernel sends that shape: a lab that met it would need the
-    slot branched and both receiver arms modelled (review round 1, 2026-09-20). A GEN-LESS delta (no gen key) onto a held
-    pair is the one arm where BOTH roads apply the frame and hold different pairs after it (the two refusal arms below
-    branch on the slot too, each modelling a refusal the roads answer differently), because the two clients differ there
-    by design and the difference was measured (round 4, the mirror measured, 2026-09-20; until then this rule read "moves
-    no pair" for both slots, the feed road's rule, and was wrong for the bars slot): the feed road applies it on the
-    base's presence alone and moves no pair, since applyRemoteFeedDelta writes Conn.feedHeld only under a gen the frame
-    carries (the vintage guard); the bars road applies it too, and its pair has no home but the base, whose rev every
-    applied frame moves (view-deltas.ts receive keeps base.gen and sets rev to the frame's), so ViewDeltas.held then reads
-    (the held gen, the frame's rev), a newGen the frame carries not adopted (the gate never ran for it). The measurement,
-    one probe per side under the poisoned ports (the client through an esbuild bundle of view-deltas.ts and the feed rig
-    of federation-remote-feed-delta.test.ts, this function through the module imported bare; the logs under the review
-    note's round-4 mirror section): a gen-less delta base 0 rev 1 onto a bars base seeded from a full carrying gen G read
-    held() {gen: G, rev: 1} at the client, the same with through 1 and with newGen and through, where this rule read (G,
-    0); onto a bars base seeded without a gen, null and None; onto the feed road's pair (G, 0), feedHeld {gen: G, rev: 0}
-    and (G, 0); onto a gen-less feed base, undefined and None. So the bars arm below advances the rev under the held gen
-    and the feed arm moves nothing. A delta onto a held pair that carries a gen key the client cannot read (_stamp_field
-    None with the key present, _stamp_present), or whose gen matched and whose newGen it cannot read, is a refusal on both
-    roads and is modelled as the client answers it (round 4, 2026-09-20: unparseable is not absent): on the feed road the
-    pair stands (needFullFeed with the held pair, nothing applied), on the bars road the base is dropped (needSlot), so
-    nothing is held until the next whole frame re-seeds it. Three refusals are modelled, then: a stamped delta onto no
-    pair (the feed road's unpaired: nothing applied, no pair; the bars road applies it and seeds no gen, so None on both),
-    the through-less stamped delta and the unreadable gen or newGen. Every OTHER refusal the gate makes on a stamped delta
-    is not modelled (a lab's stream is the kernel's own and applies): the set is applyRemoteFeedDelta's ladder in
-    federation.ts, whose words tests/test_client_diag_allowlist.py's stale_why_words() derives from the source and holds
-    to STALE_WHY_WORDS, so the bound this docstring states is that derivation's and not a list kept here (review round 3,
-    tests-3: a hand list here went stale twice in one day). None when no pair is held."""
+    helper never detach a host, so a host's sockets are one conn's), by each road's OWN rule, mirrored test by test in the
+    receiver's order (the author's pass after round 4, 2026-09-20, the maintainer's round 4 C: the arms had carried some of
+    the receivers' tests and not others, so this declared a pair for frames the client refused; measured on one probe shape
+    per refusal point of each receiver, the logs under the review note's section for that pass).
+
+    Both roads: a full carrying a gen the client reads leaves (gen, 0); a full carrying none, or one genOf cannot read, clears
+    the pair, and while no pair is held a delta moves nothing here (on the bars road the client applies it onto a gen-less
+    base and holds no pair to declare; on the feed road a stamped delta onto a base holding no pair is the gate's "unpaired"
+    and applies nothing, a gen-less one applies and writes no pair). Frames of another type or slot move nothing.
+
+    The BARS road (ui/webview/view-deltas.ts receive, onto a base holding a gen), in the receiver's order: the frame's base is
+    the held rev exactly (an absent or unreadable base included), else the base is dropped (needSlot: None here); a present
+    gen the client cannot read, or a readable gen that is not the base's, drops it; a matched gen with a present newGen the
+    client cannot read drops it; then the rev relation: rev a non-negative safe integer and, with a through key, through a
+    safe integer with rev at or above the base and equal to through, without one rev equal to base plus one, else dropped.
+    Applied, the pair is (the base's gen, the frame's rev), the frame's newGen adopted only when its gen matched and it
+    carries through (a gen-less frame's newGen is never adopted: the gate never ran for it). So the bars road APPLIES a
+    stamped delta carrying no through at base plus one, where the feed road refuses it, and a gen-less delta in sequence,
+    moving the pair's rev under the held gen, where the feed road moves nothing (the two roads' pairs live in different
+    places: the feed's in Conn.feedHeld, written under a gen alone, the bars' in the base itself, whose rev every applied
+    frame moves).
+
+    The FEED road (ui/webview/federation.ts applyRemoteFeedDelta, onto a held pair), in the gate's order, each refusal leaving
+    the pair standing (needFullFeed with the held pair, nothing applied): a gen-less delta (no gen key) applies and moves no
+    pair; a present gen the client cannot read, or a readable gen that is not the pair's ("gen"); a present newGen it cannot
+    read ("newGen"); a base that is not a safe integer ("base", any sign: the gate asks no more of it) or above the held rev
+    ("ahead"); a through absent or not a safe integer ("through") or below the held rev ("behind"); a rev that is not a safe
+    integer ("rev") or not equal to the through ("disagree"). Applied, the pair is (newGen when carried, else gen; rev).
+
+    THE BOUND, as a rule and not a list: this rule reads what a frame recorder keeps of a frame, its type, slot and stamp
+    fields (a gen field of any string or number, a rev field as a number, and the gen and newGen keys' presence), so every
+    refusal a receiver makes on THOSE is modelled above, on both roads, and every refusal it makes on what a recorder does not
+    keep is not: the receiver's shape checks on the frame's collections and remainder (view-deltas.ts receive's throws inside
+    its try; the feed road has none, applyFeedDelta refuses nothing) and a rev field of a type the hooks do not copy. The one
+    measured divergence of that second kind: a bars delta whose through is a string ("1") at base plus one is refused by the
+    client (revOk reads the through) and read here as through-less and applied, since the hook keeps no through that is not
+    a number; a base or rev of such a type reads as absent on both sides and is refused on both. The authorities are the two
+    receivers, never a list kept here (the maintainer's round 3, tests-3: a hand list here went stale twice in one day); the
+    words the feed gate files are stale_why_words()'s derivation in tests/test_client_diag_allowlist.py. None when no pair is
+    held."""
     full, delta = ("feed", "feedDelta") if slot == "feed" else ("bars", "delta")
     pair = None
     for f in frames:
@@ -158,35 +181,48 @@ def held_pair(frames, slot):
         if t == full:
             g = _stamp_field(f, "gen")
             pair = (g, 0) if g is not None else None
-        elif t == delta and (slot == "feed" or f.get("slot") == "bars"):
-            if pair is None:
-                continue   # no pair held: a delta moves nothing here (a stamped one onto no pair is the feed road's "unpaired" refusal and applies nothing; the bars road applies it and seeds no gen)
-            g = _stamp_field(f, "gen")
-            if g is None:
-                if _stamp_present(f, "gen"):
-                    # a present gen the client cannot read: refused, never read as a gen-less delta (round 4)
-                    if slot == "bars":
-                        pair = None   # needSlot: the base dropped
-                    continue          # needFullFeed with the held pair: the pair stands
-                # a gen-less delta, no gen key at all: the roads differ and this says what each does (round 4, the mirror measured;
-                # the docstring carries the measurement). Feed: applied, the pair unmoved (feedHeld is written under a gen alone).
-                # Bars: applied, and the pair is the base, so its rev is the frame's under the held gen; a newGen the frame carries
-                # is not adopted (the gate never ran for it). A gen-less delta whose rev the hook did not record is not modelled,
-                # as no malformed frame is (the client refuses it into a needSlot; a lab's stream is the kernel's own).
-                if slot == "bars":
-                    rev = _stamp_field(f, "rev")
-                    if rev is not None:
-                        pair = (pair[0], rev)
+            continue
+        if t != delta or (slot == "bars" and f.get("slot") != "bars"):
+            continue
+        if pair is None:
+            continue   # no pair held: a delta moves nothing here (a stamped one onto no pair is the feed road's "unpaired" refusal and applies nothing; the bars road applies it and seeds no gen)
+        held_gen, held_rev = pair
+        g, new_gen = _stamp_field(f, "gen"), _stamp_field(f, "newGen")
+        gen_key, new_key, through_key = _stamp_present(f, "gen"), _stamp_present(f, "newGen"), "through" in f
+        rev, through = _stamp_field(f, "rev"), _stamp_field(f, "through")
+        if slot == "bars":
+            # view-deltas.ts receive, in its order; every refusal drops the base (needSlot), so nothing is held after it
+            base = _stamp_field(f, "base")
+            if base != held_rev:
+                pair = None   # the exact-base test (:211): an absent or unreadable base is not the held rev either
                 continue
-            through, new_gen = _stamp_field(f, "through"), _stamp_field(f, "newGen")
-            if new_gen is None and _stamp_present(f, "newGen"):
-                # the gen matched and the newGen is one the client cannot read: refused before the apply (round 4)
-                if slot == "bars":
-                    pair = None
+            if (gen_key and g is None) or (g is not None and g != held_gen):
+                pair = None   # the gen gate (:229): a present gen the client cannot read, or another stream's gen
                 continue
-            if through is None:
-                continue   # a stamped delta carrying no through is refused by the client and applies nothing: the pair stands
-            pair = (new_gen if new_gen is not None else g, through)
+            if g is not None and new_key and new_gen is None:
+                pair = None   # a matched gen with a newGen the client cannot read (:230)
+                continue
+            if rev is None or (through_key and (through is None or rev < base or rev != through)) or (not through_key and rev != base + 1):
+                pair = None   # the rev relation (revOk): through present means rev at or above base and equal to it, absent means base plus one
+                continue
+            adopt = new_gen if through_key and g is not None else None   # a newGen rides only a matched, through-carrying frame
+            pair = (adopt if adopt is not None else held_gen, rev)
+        else:
+            # applyRemoteFeedDelta's gate, in its order; every refusal leaves the pair standing (needFullFeed with the held pair)
+            if not gen_key:
+                continue   # a gen-less delta applies and moves no pair (the vintage guard: Conn.feedHeld is written under a gen alone)
+            if g is None or g != held_gen:
+                continue   # "gen": a present gen the client cannot read, or another stream's
+            if new_key and new_gen is None:
+                continue   # "newGen"
+            base = _safe_int(f.get("base"))
+            if base is None or base > held_rev:
+                continue   # "base", "ahead"
+            if through is None or through < held_rev:
+                continue   # "through" (absent or unreadable), "behind"
+            if rev is None or rev != through:
+                continue   # "rev", "disagree"
+            pair = (new_gen if new_gen is not None else g, rev)
     return pair
 
 
@@ -464,6 +500,100 @@ await browser.close();
 GEN_STAMP = "0123456789abcdef"
 GEN, GEN2, GEN3 = GEN_STAMP + "-7", GEN_STAMP + "-9", GEN_STAMP + "-3"
 
+# ── the mirror against the client, one probe shape per refusal point of each receiver (the author's pass after round 4) ──
+# Each row: the case, the slot, the frames as a driver hook RECORDS them (type, slot, the stamp fields the hook copies, the gen
+# and newGen presence flags; no content), and the pair the CLIENT held after the same frames in the probe (view-deltas.ts
+# ViewDeltas for the bars road, the real FederationManager over federation-remote-feed-delta.test.ts's rig for the feed road;
+# the probe and its logs under the review note's section for that pass). held_pair must read every row as the client did. The
+# rows are the receivers' refusal points in source order, one shape each, then the applying shapes, then the shapes the
+# maintainer's round 4 measured. RECEIVER_BLIND rows are the recorder-blind class the docstring names (a refusal the receiver
+# makes on content a hook does not keep): the fifth member is what this rule reads there, asserted so the divergence stays
+# named and measured, never silent.
+OVER = GEN_STAMP + "-" + "9" * 48   # 65 characters: one over GEN_MAX
+GEN11 = GEN_STAMP + "-11"
+RECEIVER_CASES = [
+    ('bars-slot-other', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}, {"t": "delta", "slot": "lanes", "gen": GEN, "base": 0, "rev": 1, "through": 1, "genKey": True}], (GEN, 0), None),  # R1 unknown slot (:200): a delta for a slot this receiver has no table for
+    ('bars-slot-nonstring', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}, {"t": "delta", "slot": "7", "gen": GEN, "base": 0, "rev": 1, "through": 1, "genKey": True}], (GEN, 0), None),  # R1 unknown slot (:200): a non-string slot, no ask
+    ('bars-nobase-none', 'bars', [{"t": "delta", "slot": "bars", "base": 0, "rev": 1}], None, None),  # R2 no base (:201): a delta before any whole frame
+    ('bars-nobase-nogen', 'bars', [{"t": "bars", "slot": ""}, {"t": "delta", "slot": "bars", "base": 0, "rev": 1}], None, None),  # no refusal: a base seeded by a full without a gen applies and declares nothing
+    ('bars-nobase-badgen', 'bars', [{"t": "bars", "slot": "", "gen": GEN + ".x", "genKey": True}, {"t": "delta", "slot": "bars", "base": 0, "rev": 1}], None, None),  # no refusal: a base seeded by a full whose gen genOf cannot read holds no gen
+    ('bars-base-genless-ahead', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}, {"t": "delta", "slot": "bars", "base": 1, "rev": 2}], None, None),  # R3 exact base (:211): a gen-less delta whose base is above the held rev
+    ('bars-base-genless-replay', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}, {"t": "delta", "slot": "bars", "base": 0, "rev": 1}, {"t": "delta", "slot": "bars", "base": 0, "rev": 1}], None, None),  # R3 exact base (:211): a gen-less delta replaying an applied base
+    ('bars-base-stamped-ahead', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}, {"t": "delta", "slot": "bars", "gen": GEN, "base": 2, "rev": 3, "through": 3, "genKey": True}], None, None),  # R3 exact base (:211): a stamped delta whose base is above the held rev
+    ('bars-base-composed-same-rev', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}, {"t": "delta", "slot": "bars", "gen": GEN, "base": 0, "rev": 1, "through": 1, "genKey": True}, {"t": "delta", "slot": "bars", "gen": GEN, "newGen": GEN2, "base": 0, "rev": 1, "through": 1, "genKey": True, "newGenKey": True}], None, None),  # R3 exact base (:211): a composed frame at the held rev's predecessor base (correctness-3's shape)
+    ('bars-base-absent', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}, {"t": "delta", "slot": "bars", "rev": 1}], None, None),  # R3 exact base (:211): no base field
+    ('bars-base-string', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}, {"t": "delta", "slot": "bars", "rev": 1}], None, None),  # R3 exact base (:211): a base of a type the hook does not copy
+    ('bars-base-negative', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}, {"t": "delta", "slot": "bars", "base": -1, "rev": 0}], None, None),  # R3 exact base (:211) and :245 (base < 0): a negative base
+    ('bars-gen-number', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}, {"t": "delta", "slot": "bars", "gen": 8, "base": 0, "rev": 1, "through": 1, "genKey": True}], None, None),  # R4 gen gate (:229): a present gen genOf cannot read (a number) onto a gen-holding base
+    ('bars-gen-empty', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}, {"t": "delta", "slot": "bars", "gen": "", "base": 0, "rev": 1, "through": 1, "genKey": True}], None, None),  # R4 gen gate (:229): an empty-string gen
+    ('bars-gen-separator', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}, {"t": "delta", "slot": "bars", "gen": GEN + ".7", "base": 0, "rev": 1, "through": 1, "genKey": True}], None, None),  # R4 gen gate (:229): a gen carrying the held member's separator
+    ('bars-gen-overcap', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}, {"t": "delta", "slot": "bars", "gen": OVER, "base": 0, "rev": 1, "through": 1, "genKey": True}], None, None),  # R4 gen gate (:229): a gen over GEN_MAX
+    ('bars-gen-null', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}, {"t": "delta", "slot": "bars", "base": 0, "rev": 1, "through": 1, "genKey": True}], None, None),  # R4 gen gate (:229): a gen of null (the corners hooks record neither value nor flag: the flag fix)
+    ('bars-gen-foreign', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}, {"t": "delta", "slot": "bars", "gen": GEN2, "base": 0, "rev": 1, "through": 1, "genKey": True}], None, None),  # R4 gen gate (:229): a readable gen that is not the base's
+    ('bars-newgen-unreadable', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}, {"t": "delta", "slot": "bars", "gen": GEN, "newGen": 9, "base": 0, "rev": 1, "through": 1, "genKey": True, "newGenKey": True}], None, None),  # R5 newGen (:230): a matched gen with a newGen genOf cannot read
+    ('bars-newgen-null', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}, {"t": "delta", "slot": "bars", "gen": GEN, "base": 0, "rev": 1, "through": 1, "genKey": True, "newGenKey": True}], None, None),  # R5 newGen (:230): a newGen of null
+    ('bars-rev-float', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}, {"t": "delta", "slot": "bars", "base": 0, "rev": 1.5}], None, None),  # R6 revOk (:244-248): a rev that is not a safe integer
+    ('bars-rev-huge', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}, {"t": "delta", "slot": "bars", "base": 0, "rev": 2 ** 53 + 1, "through": 2 ** 53 + 1}], None, None),  # R6 revOk (:244-248): a rev past 2^53
+    ('bars-rev-string', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}, {"t": "delta", "slot": "bars", "base": 0}], None, None),  # R6 revOk (:244-248): a rev of a type the hook does not copy
+    ('bars-through-disagree', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}, {"t": "delta", "slot": "bars", "gen": GEN, "base": 0, "rev": 1, "through": 2, "genKey": True}], None, None),  # R6 revOk (:244-248): through present and rev not equal to it
+    ('bars-through-rev-below-base', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}, {"t": "delta", "slot": "bars", "base": 0, "rev": 1}, {"t": "delta", "slot": "bars", "base": 1, "rev": 2}, {"t": "delta", "slot": "bars", "base": 2, "rev": 1, "through": 1}], None, None),  # R6 revOk (:244-248): through present and rev below base
+    ('bars-nothrough-skip', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}, {"t": "delta", "slot": "bars", "base": 0, "rev": 5}], None, None),  # R6 revOk (:244-248): no through and rev not base plus one
+    ('bars-nothrough-same', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}, {"t": "delta", "slot": "bars", "base": 0, "rev": 0}], None, None),  # R6 revOk (:244-248): no through and rev equal to base
+    ('bars-through-float', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}, {"t": "delta", "slot": "bars", "base": 0, "rev": 1, "through": 1.5}], None, None),  # R6 revOk (:244-248): a through that is a number but not a safe integer
+    ('bars-apply-genless', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}, {"t": "delta", "slot": "bars", "base": 0, "rev": 1}], (GEN, 1), None),  # applies: a gen-less delta at base plus one
+    ('bars-apply-genless-two', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}, {"t": "delta", "slot": "bars", "base": 0, "rev": 1}, {"t": "delta", "slot": "bars", "base": 1, "rev": 2}], (GEN, 2), None),  # applies: two gen-less deltas in sequence
+    ('bars-apply-genless-newgen', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}, {"t": "delta", "slot": "bars", "newGen": GEN2, "base": 0, "rev": 1, "through": 1, "newGenKey": True}], (GEN, 1), None),  # applies: a gen-less delta carrying newGen and through (the newGen not adopted)
+    ('bars-apply-genless-through', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}, {"t": "delta", "slot": "bars", "base": 0, "rev": 1, "through": 1}], (GEN, 1), None),  # applies: a gen-less delta carrying through equal to rev at base plus one
+    ('bars-apply-stamped-cycle', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}, {"t": "delta", "slot": "bars", "gen": GEN, "base": 0, "rev": 1, "through": 1, "genKey": True}], (GEN, 1), None),  # applies: a stamped per-cycle delta
+    ('bars-apply-composed', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}, {"t": "delta", "slot": "bars", "gen": GEN, "newGen": GEN2, "base": 0, "rev": 4, "through": 4, "genKey": True, "newGenKey": True}], (GEN2, 4), None),  # applies: a composed frame (newGen adopted)
+    ('bars-apply-composed-caught-up', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}, {"t": "delta", "slot": "bars", "gen": GEN, "newGen": GEN2, "base": 0, "rev": 0, "through": 0, "genKey": True, "newGenKey": True}], (GEN2, 0), None),  # applies: a composed frame at the held rev (rev equal to base)
+    ('bars-apply-stamped-nothrough', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}, {"t": "delta", "slot": "bars", "gen": GEN, "base": 0, "rev": 1, "genKey": True}], (GEN, 1), None),  # applies on THIS road: a stamped delta carrying no through at base plus one (the feed road refuses it)
+    ('bars-apply-after-composed', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}, {"t": "delta", "slot": "bars", "gen": GEN, "newGen": GEN2, "base": 0, "rev": 4, "through": 4, "genKey": True, "newGenKey": True}, {"t": "delta", "slot": "bars", "gen": GEN2, "base": 4, "rev": 5, "through": 5, "genKey": True}], (GEN2, 5), None),  # applies: a per-cycle delta under the new generation after a composed frame
+    ('bars-refuse-then-reseed', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}, {"t": "delta", "slot": "bars", "gen": GEN2, "base": 0, "rev": 1, "through": 1, "genKey": True}, {"t": "bars", "slot": "", "gen": GEN11, "genKey": True}], (GEN11, 0), None),  # after a refusal (a foreign gen) the next whole frame re-seeds
+    ('feed-nobase', 'feed', [{"t": "feedDelta", "slot": "", "gen": GEN, "base": 0, "rev": 1, "through": 1, "genKey": True}], None, None),  # A nobase (:1518): a delta before any full frame on the conn
+    ('feed-genless-applies', 'feed', [{"t": "feed", "slot": "", "gen": GEN, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 0, "rev": 1, "through": 1, "genKey": True}, {"t": "feedDelta", "slot": "", "base": 1, "rev": 2}], (GEN, 1), None),  # no refusal: a gen-less delta applies and moves no pair (the vintage guard)
+    ('feed-genless-newgen-through', 'feed', [{"t": "feed", "slot": "", "gen": GEN, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 0, "rev": 1, "through": 1, "genKey": True}, {"t": "feedDelta", "slot": "", "newGen": GEN2, "base": 1, "rev": 2, "through": 2, "newGenKey": True}], (GEN, 1), None),  # no refusal: a gen-less delta carrying newGen and through moves no pair
+    ('feed-unreadable-gen-nogen-base', 'feed', [{"t": "feed", "slot": ""}, {"t": "feedDelta", "slot": "", "gen": 8, "base": 0, "rev": 1, "through": 1, "genKey": True}], None, None),  # no refusal: an unreadable gen onto a base holding no pair applies as gen-less
+    ('feed-unpaired', 'feed', [{"t": "feed", "slot": ""}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 0, "rev": 1, "through": 1, "genKey": True}], None, None),  # D unpaired: a stamped delta onto a base holding no pair
+    ('feed-unpaired-badgen-full', 'feed', [{"t": "feed", "slot": "", "gen": GEN + ".x", "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 0, "rev": 1, "through": 1, "genKey": True}], None, None),  # D unpaired: the full's gen was unreadable, so no pair is held
+    ('feed-gen-number', 'feed', [{"t": "feed", "slot": "", "gen": GEN, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 0, "rev": 1, "through": 1, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": 8, "base": 1, "rev": 2, "through": 2, "genKey": True}], (GEN, 1), None),  # D gen: a present gen genOf cannot read onto a held pair
+    ('feed-gen-null', 'feed', [{"t": "feed", "slot": "", "gen": GEN, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 0, "rev": 1, "through": 1, "genKey": True}, {"t": "feedDelta", "slot": "", "base": 1, "rev": 2, "through": 2, "genKey": True}], (GEN, 1), None),  # D gen: a gen of null onto a held pair (the corners hooks' blind type)
+    ('feed-gen-overcap', 'feed', [{"t": "feed", "slot": "", "gen": GEN, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 0, "rev": 1, "through": 1, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": OVER, "base": 1, "rev": 2, "through": 2, "genKey": True}], (GEN, 1), None),  # D gen: a gen over GEN_MAX
+    ('feed-gen-foreign', 'feed', [{"t": "feed", "slot": "", "gen": GEN, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 0, "rev": 1, "through": 1, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN2, "base": 1, "rev": 2, "through": 2, "genKey": True}], (GEN, 1), None),  # D gen: a readable gen that is not the held pair's
+    ('feed-newgen-unreadable', 'feed', [{"t": "feed", "slot": "", "gen": GEN, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 0, "rev": 1, "through": 1, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "newGen": 9, "base": 1, "rev": 2, "through": 2, "genKey": True, "newGenKey": True}], (GEN, 1), None),  # D newGen: a matched gen with a newGen genOf cannot read
+    ('feed-newgen-null', 'feed', [{"t": "feed", "slot": "", "gen": GEN, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 0, "rev": 1, "through": 1, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 1, "rev": 2, "through": 2, "genKey": True, "newGenKey": True}], (GEN, 1), None),  # D newGen: a newGen of null
+    ('feed-base-float', 'feed', [{"t": "feed", "slot": "", "gen": GEN, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 0, "rev": 1, "through": 1, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 1.5, "rev": 2, "through": 2, "genKey": True}], (GEN, 1), None),  # D base: a base that is not a safe integer
+    ('feed-base-string', 'feed', [{"t": "feed", "slot": "", "gen": GEN, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 0, "rev": 1, "through": 1, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "rev": 2, "through": 2, "genKey": True}], (GEN, 1), None),  # D base: a base of a type the hook does not copy
+    ('feed-base-absent', 'feed', [{"t": "feed", "slot": "", "gen": GEN, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 0, "rev": 1, "through": 1, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "rev": 2, "through": 2, "genKey": True}], (GEN, 1), None),  # D base: no base field
+    ('feed-base-negative-applies', 'feed', [{"t": "feed", "slot": "", "gen": GEN, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 0, "rev": 1, "through": 1, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": -1, "rev": 2, "through": 2, "genKey": True}], (GEN, 2), None),  # no refusal: a negative base is a safe integer at or below the held rev (the gate asks no more of it)
+    ('feed-ahead', 'feed', [{"t": "feed", "slot": "", "gen": GEN, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 0, "rev": 1, "through": 1, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 5, "rev": 6, "through": 6, "genKey": True}], (GEN, 1), None),  # D ahead: a base above the held rev
+    ('feed-through-absent', 'feed', [{"t": "feed", "slot": "", "gen": GEN, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 0, "rev": 1, "through": 1, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 1, "rev": 2, "genKey": True}], (GEN, 1), None),  # D through: no through on a stamped delta
+    ('feed-through-string', 'feed', [{"t": "feed", "slot": "", "gen": GEN, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 0, "rev": 1, "through": 1, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 1, "rev": 2, "genKey": True}], (GEN, 1), None),  # D through: a through of a type the hook does not copy
+    ('feed-through-huge', 'feed', [{"t": "feed", "slot": "", "gen": GEN, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 0, "rev": 1, "through": 1, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 1, "rev": 2 ** 53 + 1, "through": 2 ** 53 + 1, "genKey": True}], (GEN, 1), None),  # D through: a through past 2^53
+    ('feed-behind', 'feed', [{"t": "feed", "slot": "", "gen": GEN, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 0, "rev": 1, "through": 1, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 1, "rev": 2, "through": 2, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 2, "rev": 3, "through": 3, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 0, "rev": 2, "through": 2, "genKey": True}], (GEN, 3), None),  # D behind: a through below the held rev
+    ('feed-rev-string', 'feed', [{"t": "feed", "slot": "", "gen": GEN, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 0, "rev": 1, "through": 1, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 1, "through": 2, "genKey": True}], (GEN, 1), None),  # D rev: a rev of a type the hook does not copy
+    ('feed-rev-float', 'feed', [{"t": "feed", "slot": "", "gen": GEN, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 0, "rev": 1, "through": 1, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 1, "rev": 2.5, "through": 2, "genKey": True}], (GEN, 1), None),  # D rev: a rev that is not a safe integer
+    ('feed-rev-absent', 'feed', [{"t": "feed", "slot": "", "gen": GEN, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 0, "rev": 1, "through": 1, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 1, "through": 2, "genKey": True}], (GEN, 1), None),  # D rev: no rev field
+    ('feed-disagree', 'feed', [{"t": "feed", "slot": "", "gen": GEN, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 0, "rev": 1, "through": 1, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 1, "rev": 3, "through": 2, "genKey": True}], (GEN, 1), None),  # D disagree: every field valid and rev not the through
+    ('feed-apply-cycle', 'feed', [{"t": "feed", "slot": "", "gen": GEN, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 0, "rev": 1, "through": 1, "genKey": True}], (GEN, 1), None),  # applies: a stamped per-cycle delta
+    ('feed-apply-composed', 'feed', [{"t": "feed", "slot": "", "gen": GEN, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 0, "rev": 1, "through": 1, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "newGen": GEN2, "base": 1, "rev": 4, "through": 4, "genKey": True, "newGenKey": True}], (GEN2, 4), None),  # applies: a composed frame (newGen adopted, rev equal to through)
+    ('feed-apply-composed-caught-up', 'feed', [{"t": "feed", "slot": "", "gen": GEN, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 0, "rev": 1, "through": 1, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "newGen": GEN2, "base": 1, "rev": 1, "through": 1, "genKey": True, "newGenKey": True}], (GEN2, 1), None),  # applies: a composed frame at the held rev
+    ('feed-apply-base-below', 'feed', [{"t": "feed", "slot": "", "gen": GEN, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 0, "rev": 1, "through": 1, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 1, "rev": 2, "through": 2, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 0, "rev": 3, "through": 3, "genKey": True}], (GEN, 3), None),  # applies: a stamped delta whose base is below the held rev with through at it
+    ('feed-apply-after-composed', 'feed', [{"t": "feed", "slot": "", "gen": GEN, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 0, "rev": 1, "through": 1, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "newGen": GEN2, "base": 1, "rev": 4, "through": 4, "genKey": True, "newGenKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN2, "base": 4, "rev": 5, "through": 5, "genKey": True}], (GEN2, 5), None),  # applies: a per-cycle delta under the new generation
+]
+RECEIVER_BLIND = [
+    ('bars-through-string', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}, {"t": "delta", "slot": "bars", "base": 0, "rev": 1}], None, (GEN, 1)),  # R6 revOk (:244-248): a through of a type the hook does not copy (recorder blindness: reads as through-less here)
+    ('bars-coll-list', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}, {"t": "delta", "slot": "bars", "base": 0, "rev": 1}], None, (GEN, 1)),  # R6 (:248) object(coll) false: the recorder cannot see collections
+    ('bars-rest-list', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}, {"t": "delta", "slot": "bars", "base": 0, "rev": 1}], None, (GEN, 1)),  # R7 (:251) rest not an object
+    ('bars-rest-type', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}, {"t": "delta", "slot": "bars", "base": 0, "rev": 1}], None, (GEN, 1)),  # R7 (:251) rest.type not the slot
+    ('bars-rest-collection', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}, {"t": "delta", "slot": "bars", "base": 0, "rev": 1}], None, (GEN, 1)),  # R8 (:256) a collection key in the remainder
+    ('bars-coll-unknown', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}, {"t": "delta", "slot": "bars", "base": 0, "rev": 1}], None, (GEN, 1)),  # R10 (:262) an unknown collection name
+    ('bars-coll-change-scalar', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}, {"t": "delta", "slot": "bars", "base": 0, "rev": 1}], None, (GEN, 1)),  # R10 (:262) a non-object change
+    ('bars-set-scalar', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}, {"t": "delta", "slot": "bars", "base": 0, "rev": 1}], None, (GEN, 1)),  # R11 (:268) change.set not an object
+    ('bars-del-nonstrings', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}, {"t": "delta", "slot": "bars", "base": 0, "rev": 1}], None, (GEN, 1)),  # R13 stringKeys (:137) del not a list of strings
+    ('bars-order-incomplete', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}, {"t": "delta", "slot": "bars", "base": 0, "rev": 1}], None, (GEN, 1)),  # R12 (:275-277) incomplete collection order
+]
+
 
 class HeldPairRule(unittest.TestCase):
     """The drive-derived expectation's rule, pinned on synthetic frame records (no kernel): the labs above run against kernels
@@ -651,6 +781,98 @@ class HeldPairRule(unittest.TestCase):
         # an empty drive: no frame on ANY earlier socket of the host
         with self.assertRaises(AssertionError):
             assert_relay_dials(self, "feed", dials[:3], [])
+
+    def test_every_refusal_point_of_both_receivers_is_mirrored_one_probe_shape_each(self):
+        # the shape instruction (the maintainer's round 4, ROUND 5): the client's FULL refusal set, not the shapes changed. One
+        # row per refusal point of view-deltas.ts receive (the unknown slot, no base, the exact base, the gen gate, the newGen
+        # test, the rev relation) and of applyRemoteFeedDelta (nobase, then the ladder's nine words in gate order), plus the
+        # applying shapes on each road and the shapes the round measured; every row's expectation is the client's own reading
+        # in the probe. Red at the head before the pass on 28 of these rows (the bars exact-base and rev-relation classes, a
+        # foreign readable gen adopted on both roads, the feed gate's base, ahead, through, behind, rev and disagree words, a
+        # rev past 2^53, the through-less stamped delta on the bars road).
+        self.assertGreaterEqual(len(RECEIVER_CASES), 60, "the table is the probe's, not a sample")
+        for cid, slot, frames, expected, _ in RECEIVER_CASES:
+            self.assertEqual(held_pair(frames, slot), expected, "%s: the client held %r" % (cid, expected))
+        self.assertEqual({slot for _, slot, _, _, _ in RECEIVER_CASES}, {"bars", "feed"}, "both roads")
+
+    def test_the_recorder_blind_class_is_named_and_reads_as_the_docstring_says(self):
+        # the refusals a receiver makes on what a hook does not keep (the frame's collections and remainder; a rev field of a
+        # type the hook does not copy): this rule cannot see them, the docstring says so as a rule, and this pins the measured
+        # reading so the divergence is never silent. Every row: the client refused (None) and this rule applied.
+        self.assertGreaterEqual(len(RECEIVER_BLIND), 8)
+        for cid, slot, frames, client, mirror in RECEIVER_BLIND:
+            self.assertIsNone(client, cid)
+            self.assertEqual(held_pair(frames, slot), mirror, "%s: the recorder-blind reading" % cid)
+            self.assertIsNotNone(mirror, cid)
+        self.assertIn("bars-through-string", [r[0] for r in RECEIVER_BLIND], "the one rev-field divergence, a through the hook does not copy")
+
+    def test_the_receivers_refusal_sites_are_counted_so_a_new_one_reds_until_classified(self):
+        # the census form space: the refusal points the table above enumerates are read off the receivers' sources, so a
+        # receiver that grows a refusal site fails here until a row classifies it (modelled, or recorder-blind)
+        vd = open(os.path.join(ROOT, "ui", "webview", "view-deltas.ts"), encoding="utf-8").read()
+        m = re.search(r"^  receive\(msg: any\): any \{\n(.*?)^  \}\n", vd, re.S | re.M)
+        self.assertIsNotNone(m, "view-deltas.ts receive() was not found: re-aim this census")
+        body = m.group(1)
+        self.assertEqual(body.count("this.recover("), 6, "receive's recover sites: the unknown slot, no base, the exact base, the gen gate, the newGen test, the catch (each modelled above but the catch's content class)")
+        self.assertEqual(body.count("throw new Error("), 7, "receive's throws inside the try: the rev relation and coll object test (modelled for the stamp fields), the remainder, a collection in it, the frame type, an unknown collection, a set, the order (recorder-blind)")
+        self.assertEqual(vd.count('throw new Error("invalid key list")'), 1, "stringKeys' throw, reached from receive for del and order (recorder-blind)")
+        fed = open(os.path.join(ROOT, "ui", "webview", "federation.ts"), encoding="utf-8").read()
+        m2 = re.search(r"^  private applyRemoteFeedDelta\(host: string, d: any\): void \{\n(.*?)^  \}\n", fed, re.S | re.M)
+        self.assertIsNotNone(m2, "federation.ts applyRemoteFeedDelta was not found: re-aim this census")
+        self.assertEqual(m2.group(1).count('"needFullFeed"'), 3, "the feed road's two refusal sites: nobase (a bare ask) and the gate (the ask with the held pair, or bare when none is held)")
+        self.assertEqual(m2.group(1).count("this.diag("), 2, "the two rows the refusals file: feedDelta-nobase and feedDelta-stale (its words are stale_why_words()'s derivation)")
+
+
+class FrameRecorderCensus(unittest.TestCase):
+    """Every frame recorder that feeds held_pair sets both presence flags (the maintainer's round 4, tests-2 and regression-2:
+    two of the five recorders set neither, so _stamp_present was False for every frame of two labs and a gen of null, a
+    boolean, an object or a list, which the hooks copy no value for, read there as a gen-less frame). The population is
+    DERIVED: every tests/*.py that reaches held_pair (calls one of its readers: held_pair, drive_pair, expected_relay_caps or
+    assert_relay_dials; a module that only imports this one for its other helpers, as the bars-delta lab does, feeds nothing)
+    and records frames (a JS hook pushing onto window.__frames, or a Python _record), each recorder found by its push or its
+    def; a recorder found without the two lines fails, and an empty derivation fails (a census that found nothing checked
+    nothing)."""
+
+    JS_PUSH = re.compile(r"window\.__frames\.push\((\w+)\);")
+    READER = re.compile(r"\b(?:held_pair|drive_pair|expected_relay_caps|assert_relay_dials)\(")
+
+    def recorders(self):
+        found = []
+        for name in sorted(os.listdir(HERE)):
+            if not (name.startswith("test_") and name.endswith(".py")):
+                continue
+            src = open(os.path.join(HERE, name), encoding="utf-8").read()
+            if not self.READER.search(src):
+                continue   # records frames for another purpose, or reaches no reader: not a recorder feeding held_pair
+            for m in self.JS_PUSH.finditer(src):
+                block = src[max(0, m.start() - 2500):m.start()]
+                # the hook's frame object is built in the lines just above the push: the block from its `const <var> = {` on
+                start = block.rfind("const %s = {" % m.group(1))
+                self.assertGreaterEqual(start, 0, "%s: the frame object of the push at offset %d was not found" % (name, m.start()))
+                found.append((name, "js", m.group(1), block[start:]))
+            dm = re.search(r"^def _record\(m\):\n(.*?)^    return f\n", src, re.S | re.M)
+            if dm:
+                found.append((name, "py", "f", dm.group(1)))
+        return found
+
+    def test_every_frame_recorder_feeding_held_pair_sets_both_presence_flags(self):
+        found = self.recorders()
+        self.assertEqual(sorted((n, kind) for n, kind, _, _ in found), sorted([
+            ("test_federated_capability_corners_served.py", "js"), ("test_federated_capability_corners_served.py", "js"),
+            ("test_federated_dial_terms_served.py", "js"), ("test_federated_relay_redial_served.py", "js"),
+            ("test_relay_dial_declares_held_pair.py", "py")]),
+            "the five recorders feeding held_pair: three lab hooks plus the corners module's two, and the relay-redial consumer's _record; a sixth lands here until it carries the flags")
+        for name, kind, var, block in found:
+            if kind == "js":
+                # the message variable differs per hook (m, j); the frame variable is the pushed one
+                self.assertRegex(block, r'if \("gen" in \w+\) %s\.genKey = true;' % re.escape(var), "%s: the gen presence flag" % name)
+                self.assertRegex(block, r'if \("newGen" in \w+\) %s\.newGenKey = true;' % re.escape(var), "%s: the newGen presence flag" % name)
+            else:
+                self.assertIn('f["genKey"] = True', block, "%s: the gen presence flag" % name)
+                self.assertIn('f["newGenKey"] = True', block, "%s: the newGen presence flag" % name)
+        # and the flag is read as the docstring says: a frame carrying the key alone reads as a present gen the client cannot read
+        self.assertTrue(_stamp_present({"genKey": True}, "gen") and _stamp_present({"newGenKey": True}, "newGen"))
+        self.assertFalse(_stamp_present({"base": 0}, "gen"))
 
 
 class FederatedDialTerms(unittest.TestCase):
