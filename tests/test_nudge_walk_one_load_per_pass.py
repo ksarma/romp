@@ -646,7 +646,11 @@ def _traversal_references(tree):
     any base at all (`ast.walk`; `_a.walk` after `import ast as _a`; `importlib.import_module("ast").walk`, `__import__("ast").walk`,
     `sys.modules["ast"].walk`; `_m.walk` after `_m = ast`; a NodeVisitor or NodeTransformer base is spelled this way too), the base
     spelled by ast.unparse for the message; `from-import`, `from ast import walk`, with or without `as`, and `from ast import *`, a
-    reference to every name, reported as `*`; and `getattr`, a getattr with the name as a string constant on any first argument. The
+    reference to every name, reported as `*`; and `getattr`, a getattr on any first argument whose second argument holds the name in
+    a string constant anywhere under it, read through _walk over that argument the way the birth pin reads a constant, so a
+    no-placeholder f-string (`getattr(ast, f"walk")`, a JoinedStr holding the Constant) is a reference beside the plain string
+    (review round 5, extra5-1: the form tested the argument itself as a Constant, the sibling of the defect round 4 ruled on the
+    birth pin one function away), the call spelled by ast.unparse for the message. The
     first cut keyed the attribute and getattr forms on the names the ast module was imported under, an open set of roads to the
     module, and a verifier of the round-4 fixes walked a tree through each of the four roads above with the pin green (the list
     shape the round's ruling names, one more time); the four names are the closed set, so the forms key on them alone, which is
@@ -677,9 +681,10 @@ def _traversal_references(tree):
             for a in n.names:
                 if a.name in _TRAVERSAL or a.name == "*":
                     out.append((n.lineno, a.name, "from-import", "from ast import %s%s" % (a.name, " as " + a.asname if a.asname else ""), owner))
-        elif (isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "getattr" and len(n.args) >= 2
-              and isinstance(n.args[1], ast.Constant) and n.args[1].value in _TRAVERSAL):
-            out.append((n.lineno, n.args[1].value, "getattr", "getattr(%s, %r)" % (ast.unparse(n.args[0]), n.args[1].value), owner))
+        elif isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "getattr" and len(n.args) >= 2:
+            hit = [sub.value for sub in _walk(n.args[1]) if isinstance(sub, ast.Constant) and sub.value in _TRAVERSAL]
+            if hit:
+                out.append((n.lineno, hit[0], "getattr", ast.unparse(n), owner))
     return sorted(out)
 
 
@@ -2855,7 +2860,8 @@ class TheGrammarIsTheOneTheWalkersClassify(unittest.TestCase):
         traversal names in three forms keyed on the name and not on the road to the module: an attribute named like one on any base
         (the ast module, a name it is imported under or rebound to, importlib.import_module("ast"), __import__("ast"),
         sys.modules["ast"]; a NodeVisitor base is spelled this way too), a from-import with or without `as` (a star import from ast
-        counts as every name), and getattr with the name as a string constant on any first argument (a verifier of the round-4
+        counts as every name), and getattr on any first argument with the name in a string constant anywhere under its second
+        argument, a plain string or a no-placeholder f-string (review round 5, extra5-1) (a verifier of the round-4
         fixes: keyed on the names the module was imported under, the attribute and getattr forms let a walk through importlib,
         __import__, sys.modules or a rebound module name pass, the list shape once more). Every reference sits inside _walk but for
         the rows of _WALK_EXEMPT, each with its reason, and every row is used, so a stale exemption reds too; _walk itself holds
@@ -2897,6 +2903,10 @@ class TheGrammarIsTheOneTheWalkersClassify(unittest.TestCase):
             ("from ast import *\n", (1, "*", "from-import", "from ast import *", "<module>")),
             ("import ast as _a\ndef census(t):\n    return list(_a.walk(t))\n", (3, "walk", "attribute", "_a.walk", "census")),
             ("import ast\ndef census(t):\n    return list(getattr(ast, 'walk')(t))\n", (3, "walk", "getattr", "getattr(ast, 'walk')", "census")),
+            # the getattr key as a no-placeholder f-string, a JoinedStr holding the Constant (review round 5, extra5-1), as a call and
+            # as a class base; ast.unparse spells the constant-only f-string f'walk' on 3.10 through 3.14t
+            ("import ast\ndef census(t):\n    return list(getattr(ast, f'walk')(t))\n", (3, "walk", "getattr", "getattr(ast, f'walk')", "census")),
+            ("import ast\nclass V(getattr(ast, f'NodeVisitor')):\n    pass\n", (2, "NodeVisitor", "getattr", "getattr(ast, f'NodeVisitor')", "V")),
             ("import ast\nclass C:\n    def m(self, t):\n        return list(ast.walk(t))\n", (4, "walk", "attribute", "ast.walk", "C.m")),
             # the four roads to the module a verifier of the round-4 fixes walked with the pin green: each ends in the name
             ("import importlib\ndef census(t):\n    return list(importlib.import_module('ast').walk(t))\n",
