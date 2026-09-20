@@ -170,9 +170,11 @@ test('P2: the machine\'s phases and events are the record\'s: six phases with di
 });
 
 test('P2: the deadline asks instead of printing, Print anyway prints, Keep waiting is an open-ended wait Escape cancels and whose line offers Print anyway (the ruling of 2026-09-20), and a repaint under the ask counts again', () => {
-  assert.ok(P2.includes('after which the bar asks instead of printing (the third review, 2026-09-19): with a picture still loading the flow enters the `stalled` phase and the line reads "1 picture has not loaded." or "N pictures have not loaded." with **Print anyway** and **Keep waiting**'));
+  assert.ok(P2.includes('after which the bar asks instead of printing (the third review, 2026-09-19): with a picture still loading the flow enters the `stalled` phase and the line reads "1 picture has not loaded. Print anyway prints without it." or "N pictures have not loaded. Print anyway prints without them." (`stalledWords`, the count then `anywayWords`) with **Print anyway** and **Keep waiting**'));
   // the words and the titles are the module\'s
-  assert.ok(flow.includes('return n === 1 ? "1 picture has not loaded." : n + " pictures have not loaded.";'), 'the ask\'s words');
+  assert.ok(flow.includes('return (n === 1 ? "1 picture has not loaded." : n + " pictures have not loaded.") + " " + anywayWords(n);'), 'the ask\'s words: the count, then the button\'s own sentence (round 5: the round-4 review\'s HIGH 1)');
+  assert.ok(flow.includes('return n === 1 ? "Print anyway prints without it." : "Print anyway prints without them.";'), 'the button\'s own sentence, anywayWords');
+  assert.ok(flow.includes('export const ANYWAY_TITLE = "Print now; a picture still loading is left out";'), 'and its title says the same');
   assert.ok(flow.includes('export const ANYWAY_WORDS = "Print anyway";') && flow.includes('export const KEEP_WORDS = "Keep waiting";'));
   assert.ok(flow.includes('export const ANYWAY_TITLE = ') && flow.includes('export const KEEP_TITLE = '), 'the titles the section names');
   // the wait: a null deadline sets no timer; the deadline feeds stalled with the count still loading, never ready
@@ -206,8 +208,8 @@ test('P2: the deadline asks instead of printing, Print anyway prints, Keep waiti
   assert.ok(P2.includes('Nothing listens under the ask: "Keep waiting" reads the body as it stands then, so a picture that landed meanwhile is not waited on again, and with none left loading the print runs at once.'));
   // the open-ended wait's line: the waiting words, one word button, and the machine's anyway under untimed alone (romp-manager's
   // ruling, 2026-09-20: not an exit control, since Escape already left the wait, established by execution; no timer)
-  assert.ok(flow.includes('return n === 1 ? "Waiting for 1 picture…" : "Waiting for " + n + " pictures…";'), 'the open-ended wait\'s words');
-  assert.ok(P2.includes('While that open-ended wait stands the line reads "Waiting for 1 picture…" or "Waiting for N pictures…" (`waitingWords`) beside the loader, with one word button, **Print anyway** (`ANYWAY_WORDS` and `ANYWAY_TITLE`, the ask\'s), which prints at once with what has loaded'));
+  assert.ok(flow.includes('return (n === 1 ? "Waiting for 1 picture…" : "Waiting for " + n + " pictures…") + " " + anywayWords(n);'), 'the open-ended wait\'s words: the count, then the button\'s own sentence');
+  assert.ok(P2.includes('While that open-ended wait stands the line reads "Waiting for 1 picture… Print anyway prints without it." or "Waiting for N pictures… Print anyway prints without them." (`waitingWords`, the count then `anywayWords`) beside the loader, with one word button, **Print anyway** (`ANYWAY_WORDS` and `ANYWAY_TITLE`, the ask\'s), which prints at once with what has loaded'));
   assert.ok(flow.includes('if (ev.kind === "anyway" && s.untimed === true) return { state: { phase: "printing", gated: 0, pending: 0 }, act: "print" };'), 'anyway prints under the open-ended wait alone');
   inOrder(between(flow, 'case "preparing":', 'break;'), ['if (ev.kind === "ready")', 'if (ev.kind === "escape" && s.untimed === true)', 'if (ev.kind === "anyway" && s.untimed === true)'], 'the preparing phase: the verdict, then Escape and anyway under the mark');
   assert.equal([...flow.matchAll(/ev\.kind === "anyway"/g)].length, 2, 'anyway is read twice: under the ask, and under the open-ended wait');
@@ -312,8 +314,14 @@ test('P2: only a placeholder that reaches the paper is counted, named and restor
   assert.ok(P2.includes('falls to NOT printable, the unknown side answered against the fetch'));
   // the figure's own hiding: hidden and popover on an HTML element, the author's display, and the computed visibility and opacity (round 4: the round-3 review's correctness-1 and regression-1)
   assert.ok(flow.includes('export function figureHidden(el: FigureNode): boolean { return offPaper(el, true); }'), 'figureHidden reads the element as the one that paints');
-  const off = between(flow, 'function offPaper(el: FigureNode, self: boolean): boolean {', '\n}');
-  inOrder(off, ['if (isHtml(el) && (el.hasAttribute("hidden") || el.hasAttribute("popover"))) return true;', 'const display = authorDisplay(el);', 'const cs = computedOf(el);', 'if (cs === null) return false;', 'if (Number(cs.opacity) === 0) return true;', 'return self && (cs.visibility === "hidden" || cs.visibility === "collapse");'], 'offPaper: the HTML attributes, the author\'s display, then the computed opacity and, for the painting element, the computed visibility; no pattern over the attribute\'s text');
+  const off = between(flow, 'function offPaper(el: FigureNode, self: boolean, root: FigureNode = el): boolean {', '\n}');
+  // round 5 (the round-4 review's extra8-3): the display is the computed one below the root and the author's declaration at the root or where nothing computes
+  inOrder(off, ['if (isHtml(el) && (el.hasAttribute("hidden") || el.hasAttribute("popover"))) return true;', 'const cs = computedOf(el);', 'const display = el !== root && cs !== null ? cs.display : authorDisplay(el);', 'if (cs === null) return false;', 'if (Number(cs.opacity) === 0) return true;', 'return self && (cs.visibility === "hidden" || cs.visibility === "collapse");'], 'offPaper: the HTML attributes, the computed display below the root or the author\'s at it, then the computed opacity and, for the painting element, the computed visibility; no pattern over the attribute\'s text');
+  assert.ok(flow.includes('function computedOf(el: FigureNode): { visibility: string; opacity: string; display: string } | null {'), 'computedOf returns the display too');
+  assert.ok(flow.includes('if (offPaper(paint, true, root)) return false;') && flow.includes('if (offPaper(a, false, root)) return false;'), 'shows passes the root down, so offPaper knows which element is the root');
+  assert.ok(P2.includes('`display` none, read as the browser COMPUTES it on every element below the figure\'s root (the gate\'s sheet sets none on the root alone, and display does not inherit, so each descendant\'s computed display is its own; a sheet rule on an author\'s class is read this way, which the author\'s declaration alone missed: the round-4 review\'s extra8-3, 2026-09-20) and, for the root itself and wherever nothing computes, from the author\'s own declaration'));
+  assert.ok(read('ui', 'webview', 'file-print.ts').includes('measured in Chromium ALONE, file-print-figure-browser.test.ts: the image inside\n *  paints; Firefox and WebKit are not measured for the group or the nested svg'), 'contentsRenders\' docstring names the engine scope (a comment, read as one)');
+  assert.ok(P2.includes('`contentsRenders`: a group and a nested svg render it, measured in Chromium alone, Firefox and WebKit not measured for those two, as its docstring says'));
   assert.ok(!/parseFloat|\/\^/.test(off), 'no parse of the attribute\'s text and no pattern: the computed value is read');
   const join = between(flow, 'export function figurePrintable(', '\n}');
   assert.ok(join.includes('if (!printable(g)) return false;') && join.includes('if (!root) return true;') && join.includes('return paintsOf(root).some((p) => shows(p, root));'), 'figurePrintable joins the two over every painting element of the figure; a placeholder with no figure answers for itself (round 4: the round-3 review\'s regression-3)');
@@ -328,8 +336,9 @@ test('P2: only a placeholder that reaches the paper is counted, named and restor
   assert.ok(P2.includes('every other kept attribute leaves the figure on the paper as far as the flow reads, an svg\'s `transform`, `clip-path`, `mask` and `filter` among them (open point 8)'));
   // the round-3 history and the legs that hold it
   assert.ok(P2.includes('before the round-3 review (2026-09-20) the opacity was matched against one spelling of zero by a pattern and the placeholder\'s first element child alone was read'));
-  assert.ok(P2.includes('file-print-figure-browser.test.ts, in Chromium: every one of 74 gated shapes built twice on one page'));
-  assert.ok(read('ui', 'webview', 'file-print-egress-browser.test.ts').includes('test("(12) a gated svg at opacity 0e0 and a <picture> whose <img> is hidden, beside a plain placeholder, on three hosts:'), 'the egress leg\'s case (12)');
+  assert.ok(P2.includes('file-print-figure-browser.test.ts, in Chromium: every one of 83 gated shapes built twice on one page, 74 at the round-3 review and nine more since the round-4 review'));
+  assert.ok(read('ui', 'webview', 'file-print-egress-browser.test.ts').includes('test("(12) a gated svg at opacity 0e0 and a <picture> whose <img> is hidden, beside a plain placeholder, on three hosts, and a gated svg at opacity 0 on the plain placeholder\'s host:'), 'the egress leg\'s case (12), with the shared-host shape (round 5: the round-4 review\'s tests-4)');
+  assert.ok(P2.includes('and since the round-4 review\'s tests-4 (2026-09-20) a gated svg at `opacity="0"` on the plain placeholder\'s own host'));
   assert.ok(P2.includes('file-print-egress-browser.test.ts case (12): a gated svg at `opacity="0e0"` and a `<picture>` whose `<img>` carries `hidden`'));
   assert.ok(P2.includes('with an ungated twin beside it: the title names a host exactly when the browser renders the placeholder and paints the twin'), 'the (D) census carries twins');
   // the driver reads the body's placeholders through figurePrintable, and every count, title and restore goes through gates()
@@ -437,14 +446,28 @@ test('P7: bodyReady classes each child against three closed lists and answers no
   // the census: the derivation command is the one the section names, and the test reads the viewer rather than a list
   const census = read('ui', 'webview', 'file-print.test.ts');
   // round 4 (the round-3 review's tests-3): the census collects every use of `body`, classes each, and refuses what it cannot
-  assert.ok(P7.includes('collects every member the viewer reaches on `body` (`body.<member>`, with `document.body` and any other receiver\'s `.body` set aside), then classes each use by what follows the member'));
-  assert.ok(census.includes('for (const m of src.matchAll(/(?<![\\w$.])body\\.(\\w+)/g)) {'), 'every body.<member> in the source it read');
+  // round 5 (the round-4 review's correctness-2, tests-2, regression-1): every member access, in every spelling, and the rest refused
+  assert.ok(P7.includes('collects every member access on `body` (`body.<member>`, `body?.<member>`, `body[...]` and `body?.[...]`, across any whitespace and a non-null `!`, with `document.body` and any other receiver\'s `.body` set aside), then classes each use by what follows the member'));
+  assert.ok(census.includes('for (const m of src.matchAll(/(?<![\\w$.])body\\s*!?\\s*(\\?\\.\\s*\\[|\\[|\\?\\.|\\.)\\s*(\\w+)?/g)) {'), 'every body member access in the source it read: the dot, the optional dot, the computed access, across whitespace');
+  assert.ok(census.includes('reaches a member by a computed name the census cannot read'), 'a computed name is refused');
+  assert.ok(census.includes('reaches the seating method through a further access (call, bind, apply, a computed name), which seats where the census cannot read the arguments'), 'call, bind and apply on a seating method are refused');
+  assert.ok(census.includes('is read bare, and a member the census does not know as a scalar or a non-seating method, handed out, could seat where the census cannot follow'), 'a bare read of an unlisted member is refused');
+  assert.ok(census.includes('is a further access on a member the census does not know'), 'a further access on an unlisted member is refused');
+  assert.ok(census.includes('const stripComments = (src: string): string => src.replace(/') && census.includes('(m) => (m.startsWith("/*") || m.trimStart().startsWith("//") ? blank(m) : m));'), 'block comments are blanked as trailing // comments are, in one pass that keeps string literals');
+  assert.ok(P7.includes('reads file-view.ts with its comments blanked (block and trailing `//` alike, in one left-to-right pass that keeps string literals)'));
   assert.ok(census.includes('replaceChildren: (a) => a, prepend: (a) => a, append: (a) => a,') && census.includes('appendChild: (a) => a.slice(0, 1), insertBefore: (a) => a.slice(0, 1), insertAdjacentElement: (a) => a.slice(1, 2),'), 'the seating methods and the arguments each seats, as P7 says');
   assert.ok(P7.includes('(`replaceChildren`, `prepend` and `append` seat every argument; `appendChild` and `insertBefore` their first; `insertAdjacentElement` its second)'));
-  assert.ok(census.includes('refused.push("line " + line + ": body." + member + "(...) is a call the census does not know");') && census.includes('is an assignment the census does not know (innerHTML and its kin seat what no resolver reads)') && census.includes('hands out a node and a further access on it could seat where the census cannot follow'), 'the unknown call, assignment and child access are refused with the line');
+  assert.ok(census.includes('refused.push("line " + line + ": " + use + "(...) is a call the census does not know");') && census.includes('is an assignment the census does not know (innerHTML and its kin seat what no resolver reads)') && census.includes('hands out a node and a further access on it could seat where the census cannot follow'), 'the unknown call, assignment and child access are refused with the line');
   assert.ok(census.includes('for (const m of src.matchAll(/\\.(replaceWith|after|before|replaceChild|insertAdjacentElement|insertAdjacentHTML)\\(/g)) refused.push('), 'a child-level seat anywhere is refused on sight');
   assert.ok(census.includes('assert.deepEqual(refused, [], "every use of the body is one the census knows how to read'), 'the census fails on any refusal');
-  assert.ok(P7.includes('and EVERY OTHER USE FAILS the census with its line'));
+  assert.ok(P7.includes('and EVERY OTHER MEMBER ACCESS ON `body` FAILS the census with its line: a computed name (`body["append"]`), a call it does not know, an assignment it does not know (`innerHTML` and its kin seat what no resolver reads), a further access on a member that hands out a child node, on a seating method (`.call`, `.bind`, `.apply`) or on a member it does not list, and a bare read of a member it does not list (a seating method handed out)'));
+  assert.ok(!P7.includes('EVERY OTHER USE FAILS'), 'the round-3 universal, which the round-4 review measured false for five forms, is gone from the record');
+  assert.ok(P7.includes('Before the round-4 review (2026-09-20) the collect pattern read `body.<member>` alone, so `body?.append(x)` and `body["append"](x)` were outside it, `body.append?.(x)` was refused only for a member that hands out a node, and `body.append.call(body, x)`, `.bind`, `.apply` and a bare `body.append` passed'));
+  const mutant = between(census, 'test("the census refuses its unknown and derives its population, executed over mutants of file-view.ts\'s source:', '", () => {');
+  for (const form of ['body?.append(x)', 'body[\\"append\\"](x)', 'body.append?.(x)', 'body.append.call(body, x), .bind and .apply', 'a bare body.append', 'body.classList.add(...) still passes']) assert.ok(mutant.includes(form), 'the mutant case names the planted form ' + form);
+  const rootsDoc = between(read('ui', 'webview', 'file-print.ts'), '/** The roots file-view.ts seats in the body, as `<tag>.<class>`', 'export const READY_ROOTS');
+  assert.ok(!/replaceChildren.*prepend.*appendChild/.test(rootsDoc) && rootsDoc.replace(/\n\s*\*\s*/g, ' ').replace(/\s+/g, ' ').includes('every member access on the viewer\'s `body` that file-print.test.ts\'s census can read (the rule, not a roster of method names)'), 'the READY_ROOTS comment states the rule, not the round-2 roster (round 5: the round-4 review\'s regression-2; a comment, read as one, its hard wraps collapsed)');
+  assert.ok(read('ui', 'webview', 'file-view.ts').includes('refuses every access it cannot class (a computed\n  // name, a bare read of a seating method, a call, bind or apply on one, a member it has not seen)'), 'the viewer\'s install comment states the same rule (a comment, read as one)');
   assert.ok(P7.includes('Before the round-3 review the sites were found by a closed list of three method names, `replaceChildren`, `prepend` and `appendChild`, and the census\'s unknown passed'));
   assert.ok(!P7.includes('grep -nP'), 'the three-name command is gone from the record');
   assert.ok(!census.includes('(replaceChildren|prepend|appendChild)'), 'and from the census');
@@ -479,7 +502,9 @@ test('Open points 6 and 7 record two pre-existing gate observations, each agains
   assert.ok(egress.includes('test("(13) a gated host that answers 302 to a second host: Print with them over its placeholder fetches both hosts, one request each'), 'the egress leg\'s case (13)');
   assert.ok(OPEN.includes('file-print-egress-browser.test.ts case (13) counts it since the round-4 fixes (2026-09-20), the same host answering 302 to `https://elsewhere.test/from/r.svg`'));
   assert.ok(OPEN.includes('`withTitle`\'s doc, figure-gate.ts\'s header and the egress leg\'s header state the same.'));
-  for (const [file, clause] of [[['ui', 'webview', 'file-print.ts'], 'a host one of them answers with a\n *  redirect to is reached too, as the placeholder\'s own click reaches it'], [['ui', 'webview', 'figure-gate.ts'], 'A host that answers a figure\'s request with a\n// redirect to a second host is reached by the browser'], [['ui', 'webview', 'file-print-egress-browser.test.ts'], 'none for a host the person did not choose BY ITS URL (a host a granted host\'s answer redirects to is reached, on\n// the print and on the click alike, and is named nowhere']]) assert.ok(read(...file).includes(clause), file.join('/') + ' carries the redirect clause (a comment, read as one)');
+  for (const [file, clause] of [[['ui', 'webview', 'file-print.ts'], 'a host one of them answers with a\n *  redirect to is reached too, as the placeholder\'s own click reaches it'], [['ui', 'webview', 'figure-gate.ts'], 'A host that answers a figure\'s request with a\n// redirect to a second host is reached by the browser'], [['ui', 'webview', 'file-print-egress-browser.test.ts'], 'none for a host the person did not choose BY ITS URL (a host a granted host\'s answer redirects to is reached, on\n// the print and on the click alike, and is named nowhere'],
+    // the fourth site, the activate case's comment (round 5: the round-4 review's extra6-1, the one statement of that fetch left without the clause)
+    [['ui', 'webview', 'file-print.ts'], 'the figure\'s own fetch and no other, a placeholder naming two hosts fetching from both as its\n        // title said, and no page-life grant for any host (a click\'s meaning, kept for the click: loadGatedHost);\n        // a host one of them answers with a redirect to is reached too, as the placeholder\'s own click reaches it (open point 7;']]) assert.ok(read(...file).includes(clause), file.join('/') + ' carries the redirect clause (a comment, read as one)');
   assert.ok(P2.includes('which `withTitle`\'s doc, figure-gate.ts\'s header and the egress leg\'s header state and file-print-egress-browser.test.ts case (13) counts on both roads: open point 7'));
   // round 4: open point 9, the wait over a paint reference (the round-3 review's extra7-3, not ruled): the three collections and no fourth
   assert.ok(OPEN.includes('9. The wait and a figure reached through a paint reference. `collectPictures` (P2) awaits an `<img>`, a `<video poster>` and an svg `<image>` alone'));
@@ -726,10 +751,11 @@ test('Derivations and their unknown cases: the paragraph stands between P7 and t
   assert.ok(unit.includes('test("rendered: the browser\'s own answer where it can be asked (checkVisibility with visibility and opacity read, and at least one client rect), null where it cannot'), 'the rendered case');
   assert.ok(read('ui', 'webview', 'file-print-armed-browser.test.ts').includes('test("(D) the census of the printable rule\'s unknown side:'), 'the armed leg\'s case (D)');
   // figureHidden: the permissive side, named as such
-  assert.ok(D.includes('`hidden` and `popover` are read on an HTML element alone, the author\'s `display` from the declaration the browser parses, and opacity and visibility from the values the browser COMPUTES, which the gate\'s sheet leaves alone'));
+  assert.ok(D.includes('`hidden` and `popover` are read on an HTML element alone, `display` from the value the browser COMPUTES on every element below the figure\'s root and from the author\'s declaration the browser parses for the root and where nothing computes (the round-4 review\'s extra8-3, 2026-09-20), and opacity and visibility from the values the browser COMPUTES, which the gate\'s sheet leaves alone'));
   assert.ok(D.includes('every other kept attribute or value leaves the figure on the paper as far as the flow reads, the PERMISSIVE side'));
   assert.ok(!D.includes('the browser cannot be asked about the figure'), 'the round-2 reason is gone: the computed visibility and opacity are asked');
-  const hid = between(flow, 'function offPaper(el: FigureNode, self: boolean): boolean {', '\n}');
+  const hid = between(flow, 'function offPaper(el: FigureNode, self: boolean, root: FigureNode = el): boolean {', '\n}');
+  assert.ok(D.includes('`display` from the value the browser COMPUTES on every element below the figure\'s root and from the author\'s declaration the browser parses for the root and where nothing computes (the round-4 review\'s extra8-3, 2026-09-20)'));
   assert.ok(hid.includes('if (cs === null) return false;'), 'no browser to compute a style (a stand-in): the attributes alone, on the paper otherwise');
   assert.ok(!/transform|clip-path|mask|filter/.test(hid), 'transform, clip-path, mask and filter are not read');
   assert.ok(unit.includes('test("figureHidden under node, where no browser computes a style:'), 'the figureHidden case under node');
@@ -790,4 +816,73 @@ test('P2: entering the editor seats the viewer\'s loader before the editor is up
   assert.ok(P2.includes('never the editor\'s exit: `enterEdit` seats a `.fileview-load` loader before the editor is up, which takes the body out and disarms the ask, so the exit lands under no ask'));
   assert.ok(!P2.includes('or the editor\'s exit under the ask ran window.print') && !P2.includes('a format pick, the editor\'s exit;'), 'the third road is gone from both lists');
   assert.ok(read('ui', 'webview', 'file-view-print-takings-browser.test.ts').includes('case 2: Edit while armed'), 'the takings leg executes Edit while armed disarming');
+});
+
+// ── round 5 (the round-4 review's rulings, 2026-09-20): the button's line, the consent text, the aim's count ──────────
+
+test('P2: the ask\'s line and the open-ended wait\'s line end with the button\'s own sentence, what Print anyway does, and the record says what a still-loading picture prints as, scoped to the shape measured (the round-4 review\'s HIGH 1)', () => {
+  assert.ok(P2.includes('"Print anyway" prints at once WITHOUT the pictures still loading: a markdown picture with no declared size prints as a 0 by 0 box, nothing where it was, no gap and no label, and one with width and height as an empty box of that size (measured in Chromium under print media, file-print-driver-browser.test.ts case (15a)'));
+  assert.ok(P2.includes('The second sentence of both lines is the button\'s own (`anywayWords`): it stands beside "Print anyway" from the moment the line appears, so the person reads what the press does before pressing, one press and no second click'));
+  assert.ok(!P2.includes('the picture as the browser has it') && !P2.includes('as the browser has them'), 'the phrase the measurement refuted is gone from P2');
+  assert.ok(P2.includes('a chosen picture still loading printed as nothing where it stood (a markdown picture with no declared size; one with width and height as an empty box of that size), no gap and no label'));
+  const raw = read('ui', 'webview', 'file-print.ts');
+  assert.ok(!/\(in Chromium an empty box\)/.test(raw), 'the header\'s parenthetical, refuted by measurement, is gone');
+  assert.ok(raw.includes('a markdown\n//      picture with no declared size prints as a 0 by 0 box, nothing where it was, no gap and no label; one with width\n//      and height as an empty box of that size'), 'the header says what prints, scoped to the shape measured (a comment, read as one)');
+  const driver = read('ui', 'webview', 'file-print-driver-browser.test.ts');
+  assert.ok(driver.includes('test("(15a) what reaches the paper: under the deadline\'s ask and under Keep waiting\'s open-ended wait, with print media emulated, the parked markdown picture with no declared size has a 0 by 0 box'), 'the driver leg\'s case (15a)');
+  assert.ok(driver.includes('await page.emulateMedia({ media });') && driver.includes('assert.deepEqual(p.parked, { w: 0, h: 0 }, site + ", print media: the parked picture with no declared size is a 0 by 0 box'), 'the rect is read under emulated print media');
+  assert.ok(driver.includes('pressing it prints once with the parked picture still incomplete and the placeholder on the paper'), 'case (15)\'s title stands: the placeholder\'s box is on the paper (the gated box, not the picture)');
+  assert.ok(TESTS.includes('Print anyway printing once with the parked picture incomplete and the placeholder on the paper, the request still parked'), 'and so does the record\'s sentence about it');
+  assert.ok(TESTS.includes('case (15a), what reaches the paper: under the deadline\'s ask and under Keep waiting\'s open-ended wait both lines read, before any press, the count then the button\'s own sentence'));
+  assert.ok(read('ui', 'webview', 'file-print-browser.test.ts').includes('assert.equal(b.line, "1 picture has not loaded. Print anyway prints without it.", "the ask\'s line, read before the press'), 'the gated leg reads the ask\'s line before the press');
+  assert.ok(read('ui', 'webview', 'file-print.test.ts').includes('the ask\'s line and the open-ended wait\'s line each end with the button\'s own sentence, what Print anyway does (FAILS BEFORE:'), 'the node test pins the words');
+  // the guide says it as the person reads it
+  const label = '**Opening a markdown document.**';
+  const para = guide.slice(guide.indexOf(label), guide.indexOf('\n\n', guide.indexOf(label))).replace(/\s+/g, ' ');
+  assert.ok(para.includes('you are asked whether to print anyway, without the pictures still loading, or keep waiting'), 'the guide\'s ask clause says what Print anyway does');
+  assert.ok(P5.includes('print anyway, without the pictures still loading, or keep waiting (P2\'s ask, the third review; the button\'s sentence, the round-4 review\'s HIGH 1)'));
+});
+
+test('P2, P6, open point 8 and the guide carry the figure-level grant sentence: the restore is the whole figure\'s, so a remote URL inside a non-painting element of a painting figure is counted, named and fetched (the round-4 review\'s HIGH 2, a consent-text correction), and the code road is recorded as needing an owner', () => {
+  assert.ok(P2.includes('The restore is the WHOLE figure\'s: every URL the figure names is fetched, a remote URL inside a non-painting element of a figure that paints among them'));
+  assert.ok(P2.includes('A placeholder is counted, named and restored only when its figure paints (`figurePrintable`, below), and that is what the grant covers (the round-4 review\'s HIGH 2, 2026-09-20, a consent-text correction'));
+  const P6 = part('P6. **', 'P7. **');
+  assert.ok(P6.includes('The restore is the whole figure\'s, so a placeholder whose figure paints has every URL the figure names fetched, a remote URL inside a non-painting element among them, for something never on the paper (P2; the round-4 review\'s HIGH 2, 2026-09-20; open point 8)'));
+  assert.ok(OPEN.includes('And the answer is the FIGURE\'s: when one painting element shows, `loadGatedFigure` restores every moved attribute of the root and of its descendants, so a remote URL inside a non-painting element of a painting figure'));
+  assert.ok(OPEN.includes('is counted, its host named in the title and its URL fetched, for something never on the paper (the round-4 review\'s HIGH 2, 2026-09-20, a consent-text correction'));
+  assert.ok(OPEN.includes('give `loadGatedFigure` the paint predicate and restore only the refs whose owning element passes `shows()`, with the video row moved to NOT_ON_PAPER as the fails-before') && OPEN.includes('Not this PR\'s work. Recorded, not fixed.'), 'the code road, recorded as the better shape needing an owner');
+  // the code says the same where the grant is described, and its behaviour is the figure-level one
+  const gateRaw = read('ui', 'webview', 'figure-gate.ts');
+  assert.ok(gateRaw.includes('The restore is the FIGURE\'s, not a painting element\'s:') && gateRaw.includes('is fetched for something that is never on the paper'), 'loadGatedFigure\'s docstring (a comment, read as one)');
+  const one = between(code(gateRaw), 'export function loadGatedFigure(wrap: Element): boolean {', '\n}');
+  assert.ok(one.includes('restore(wrap);') && !/shows|offPaper|paints/.test(one), 'the restore is the whole figure\'s: no paint predicate in loadGatedFigure (the code road is deferred by the ruling)');
+  const flowRaw = read('ui', 'webview', 'file-print.ts');
+  assert.ok(flowRaw.includes('The restore is the WHOLE figure\'s: every\n//      URL the figure names is fetched, a remote URL inside a non-painting element of a figure that paints among them'), 'the header (a comment, read as one)');
+  assert.ok(!flowRaw.includes('a print fetches from one only for a picture that is on the paper'), 'the sentence that promised less than the code performs is gone');
+  assert.ok(read('ui', 'webview', 'figure-gate.test.ts').includes('test("loadGatedFigure restores the FIGURE, painting or not: an svg <image> under <defs> beside one that paints gets its href back too'), 'the gate\'s node case pins the behaviour and the sentences');
+  const fig = read('ui', 'webview', 'file-print-figure-browser.test.ts');
+  assert.ok(fig.includes('name: "svg>image[a]+defs>image[b]"') && fig.includes('fetches: ["a", "b"]') && fig.includes('name: "picture>source[a]+img[b]"') && fig.includes('fetches: ["a"]'), 'the figure leg holds the fetched URLs per shape, two hosts among them');
+  assert.ok(TESTS.includes('a second oracle keyed on the URL, every placeholder whose figure paints restored the way "Print with them" restores it (`loadGatedFigure`, one at a time) and the remote URLs the page then asks for held per shape equal to the table\'s `fetches` column'));
+  assert.ok(TESTS.includes('every one of 83 gated shapes built twice on one page (74 at the round-3 review, nine added since the round-4 review, below)'));
+  assert.ok(TESTS.includes('A node case in the same module holds `paperMismatches`, the leg\'s disagreement message, to name each disagreeing shape with its own expected value'));
+  assert.ok(fig.includes('function paperMismatches(rows: Array<{ name: string; twinPaints: boolean | null }>, expected: boolean[]): string[] {'), 'the message carries the expectation with the row');
+  // the guide's consent clause
+  const label = '**Opening a markdown document.**';
+  const para = guide.slice(guide.indexOf(label), guide.indexOf('\n\n', guide.indexOf(label))).replace(/\s+/g, ' ');
+  assert.ok(para.includes('when you choose **Print with them**, which loads each of those figures whole, hidden parts included;'), 'the guide\'s consent clause carries the figure-level rule');
+  assert.ok(P5.includes('which loads each of those figures whole, hidden parts included (P2\'s figure-level rule, the round-4 review\'s HIGH 2, 2026-09-20)'));
+  // the egress leg drives the figure-off class on a host shared with a printable placeholder (tests-4)
+  const egress = read('ui', 'webview', 'file-print-egress-browser.test.ts');
+  const offNote = between(egress, 'const OFF_NOTE = ', 'Last line.');
+  assert.ok(offNote.includes('opacity=\\"0\\"') && offNote.includes('href=\\"https://" + HOST_PLAIN + PLAIN_OFF'), 'OFF_NOTE carries a zero-opacity svg on the plain host');
+  assert.ok(!egress.includes('each on a host of its own:'), 'the header no longer says each shape stands on a host of its own');
+  assert.ok(TESTS.includes('and since the round-4 review\'s tests-4 (2026-09-20) a gated svg at `opacity="0"` on the plain placeholder\'s own host'));
+});
+
+test('P2: the wait\'s count is the aim\'s and does not fall as pictures settle, stated for the timed and the open-ended line (the round-4 review\'s extra7-2), and no per-settle callback was added', () => {
+  assert.ok(P2.includes('N is the count at the aim (the press, a choice, or a re-aim after a repaint or a settle) and does not fall as pictures settle, since the wait\'s promise resolves once, when every picture it listened on has settled, so a line over three pictures reads three until the last lands, and Keep waiting\'s open-ended line has the same property'));
+  const settle = between(flow, 'export function settlePictures(', '\n}');
+  assert.ok(!/onSettle|onEach|progress/.test(settle), 'settlePictures reports no per-settle event');
+  assert.ok(read('ui', 'webview', 'file-print.ts').includes('N is the count at the AIM (the press, a choice, or a re-aim after a\n//      repaint or a settle), not a count that falls as each picture settles'), 'the header states the property (a comment, read as one)');
+  assert.ok(read('ui', 'webview', 'file-print-driver-browser.test.ts').includes('"one of two pictures landed: the count is the aim\'s and does not fall per settle; nothing printed"'), 'the driver leg reads the count after one of two settles');
 });

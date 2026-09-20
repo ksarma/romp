@@ -133,7 +133,7 @@ test('P2: the words the section quotes are the module\'s literals, the deadline 
   const withoutWords = literalAfter(flow, 'export const WITHOUT_WORDS = ');
   assert.ok(section.includes('with **' + withWords + '** and **' + withoutWords + '**; a second press or Escape disarms'));
   assert.ok(flow.includes('return n === 1 ? "Preparing 1 picture…" : "Preparing " + n + " pictures…";'), 'the wait\'s words');
-  assert.ok(section.includes('The line reads "Preparing 1 picture…" or "Preparing N pictures…" meanwhile.'));
+  assert.ok(section.includes('The line reads "Preparing 1 picture…" or "Preparing N pictures…" meanwhile; N is the count at the aim'));
   assert.ok(flow.includes('export const PRINT_SETTLE_MS = 8000;'), 'the deadline constant');
   assert.ok(section.includes('or at `PRINT_SETTLE_MS`, 8 s, after which the bar asks instead of printing'));
   assert.ok(section.includes('"With them" restores exactly the placeholders it counted, each through `loadGatedFigure` (figure-gate.ts), the gate\'s restore of ONE placeholder'));
@@ -205,7 +205,9 @@ test('P5: the guide\'s printing sentence is the one the section describes, insid
   // command palette" read as if the key printed too; in the dashboard the key is the palette's and the bar's button prints);
   // then the gate's sentence with the module's own words; then the PDF's.
   const first = '**Print** in the file\'s bar, or **Cmd+P** on a Mac and **Ctrl+P** elsewhere while a file is open, prints the file alone, black on white, with its pictures loaded, across as many pages as it needs; in the dashboard that key opens the command palette instead (**Escape** closes it), so print from the bar there.';
-  const rest = ' Pictures from other hosts are loaded for the print only when you choose **' + withWords + '**; if a picture has not loaded after a few seconds, you are asked whether to print anyway or keep waiting; a PDF prints itself, or opens in a new tab to print from when the browser cannot print it in place.';
+  // the gate's clause carries the figure-level rule (the round-4 review's HIGH 2, 2026-09-20: Print with them restores the
+  // whole figure, a part that never shows included) and the ask's clause says what Print anyway does (its HIGH 1)
+  const rest = ' Pictures from other hosts are loaded for the print only when you choose **' + withWords + '**, which loads each of those figures whole, hidden parts included; if a picture has not loaded after a few seconds, you are asked whether to print anyway, without the pictures still loading, or keep waiting; a PDF prints itself, or opens in a new tab to print from when the browser cannot print it in place.';
   assert.ok(para.includes(first + rest), 'the guide\'s printing sentence, whole: ' + JSON.stringify(para));
   assert.ok(!para.includes('as many pages as it needs. Pictures'), 'the sentence before the palette clause is gone');
   assert.ok(!para.includes('also opens the command palette'), 'and the first review\'s wording, which read as a print too, is gone');
