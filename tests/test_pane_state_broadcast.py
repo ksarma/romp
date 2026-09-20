@@ -1855,9 +1855,10 @@ console.log(JSON.stringify(out));
 # pass 5, the author's label (2026-09-20, taking the reviewer's round-4 finding correctness-3, ruled high): the desktop's bound is reached by docState's `other` answer too, whose commonest
 # member is a document the KERNEL sent (its 403 line under a stale cookie, whose body names the serve-token file's path). Round 4's bound kept
 # the src whatever the answer, so that body stood on the desktop's screen with no failed state and no retry for the page's life: round 3's
-# high moved to the desktop. The bound now drops a document the kernel sent from the frame (src removed, the url under data-src) and keeps
+# high moved to the desktop. The bound now drops a document the kernel sent from the frame (src removed, the url under data-lazy-src) and keeps
 # the browser's own error page (`none`) as before; both record DEAD, and the flip back parks the pane with the failed state (the DEAD branch
-# ahead of the unloaded parking, which would otherwise have parked the src-less pane with no state). The dropped document's url waits under
+# ahead of the unloaded parking: a defensive order, since the bound's park leaves no data-src for that parking to take at this head; the flip
+# back's behaviour is the executed assertion in the desktop-bound case below, pass 7). The dropped document's url waits under
 # data-lazy-src, not data-src (the author's pass-5 verify): the controller's reconcile copies data-src to src on every gear save (the romp:settings
 # storage event), so parked there the bound pane was re-fetched with no token and no backstop and the bound promotion's stale listener
 # judged and dropped it again, one re-fetch and one row per save; under data-lazy-src a gear save moves nothing.
@@ -2454,7 +2455,9 @@ class LazyPanes(unittest.TestCase):
         self.assertIn("var hold=!mob&&s==='blank',again=!mob&&!hold&&EPI[k]<2,bound=!mob&&!hold&&!again,keep=hold||(bound&&s!=='other');", js, "the desktop's table (pass 5, the author's label): a fetch still in flight at the backstop is held; else one re-promotion per episode, and the bound keeps the src for the browser's own error page alone")
         self.assertIn("DEAD[k]=(hold||bound)?TOK[k]:0;", js, "the hold and the bound are recorded under the promotion's token")
         self.assertIn("if(DEAD[lk3]&&DEAD[lk3]===TOK[lk3]){", js, "lazyFlip's phone branch parks the recorded pane")
-        self.assertLess(js.index("if(DEAD[lk3]&&DEAD[lk3]===TOK[lk3]){"), js.index("else if(lk3!=='feed'&&lu3&&!lf3.getAttribute('src')){"), "the recorded pane is checked ahead of the unloaded parking (pass 5, the author's label: the bound drops the src for a document the kernel sent, and the unloaded parking would have parked it with no failed state)")
+        dead_at, unloaded_at = js.find("if(DEAD[lk3]&&DEAD[lk3]===TOK[lk3]){"), js.find("if(lk3!=='feed'&&lu3&&!lf3.getAttribute('src')){")   # the substrings both orders share (no `else`), by find
+        self.assertTrue(dead_at >= 0 and unloaded_at >= 0, "both branches of lazyFlip's phone loop are in the script (find, not index, on the text either order keeps: a reorder must print the message below, not a ValueError)")
+        self.assertLess(dead_at, unloaded_at, "the recorded pane is checked ahead of the unloaded parking: a DEFENSIVE order (pass 7 (the author's label, taking the reviewer's round-5 findings correctness-7 and ui-1)): at this head the bound's park removes data-src, so a recorded pane reaches the flip with none and the unloaded parking could not take it; the order guards a writer whose park leaves data-src on a recorded pane, and the bound's behaviour is pinned by the executed flip-back assertion of the desktop-bound case, not by this order")
         self.assertIn("if(TOK[k]!==tok||PEND[k]!==tok)return;var s=docState(f);", js, "the backstop's guard is the pending verdict, not the phone's paint class")
         self.assertNotIn("if(mobileOn()){try{var d=paneDiv(f);if(d)d.classList.add('loading');}catch(e){}\nf.addEventListener", js, "the detectors are not under the phone gate")
         self.assertIn("if(mob)d.classList.add('failed');else d.classList.remove('failed');", js)
@@ -2527,7 +2530,7 @@ class LazyPanes(unittest.TestCase):
         # pass 5, the author's label, taking the reviewer's round-4 finding correctness-3, ruled high: the bound is reached by docState's `other` answer too, whose commonest member is the
         # kernel's own 403 line, its body naming the serve-token file's path; round 4's bound kept the src whatever the answer, so on the
         # desktop that body stood as the pane with no failed state and no retry short of a flip or a reload. Now the bound drops a document
-        # the kernel sent (src removed, the url under data-src, the frame navigates to about:blank) and keeps the browser's own error page;
+        # the kernel sent (src removed, the url under data-lazy-src, the frame navigates to about:blank) and keeps the browser's own error page;
         # both are recorded, and the flip back parks the pane with the failed state, from which the tab tap recovers it. The dropped
         # document's url waits under data-lazy-src (the author's pass-5 verify): under data-src the controller's reconcile re-promoted it on every
         # gear save with no token and no backstop, and the bound promotion's stale listener judged and dropped it again (one re-fetch and
@@ -2548,7 +2551,7 @@ class LazyPanes(unittest.TestCase):
         self.assertEqual(o["afterSave"], {"fleet": ob_now, "timeline": nb}, "a gear save on the desktop (the romp:settings storage event): the controller's reconcile finds no data-src on the bound pane and sets no src, arms no listener and no backstop, files no row (parked under data-src it re-fetched the denied document with no token and no backstop, and the stale listener judged and dropped it again: a third set, a third row)")
         self.assertEqual(o["afterBackstops"], {"fleet": ob_now, "timeline": nb}, "every backstop: the verdicts are in, nothing moves")
         bk = o["back"]
-        self.assertEqual((bk["fleet"]["mobile"], bk["fleet"]["src"], bk["fleet"]["lazy"], bk["fleet"]["dataSrc"], bk["fleet"]["div"], bk["fleet"]["sets"]), (True, None, "/fleet", None, ["failed"], 2), "the flip back parks the src-less recorded pane under data-lazy-src WITH the failed state (the DEAD branch ahead of the unloaded parking, which would have parked it with no state)")
+        self.assertEqual((bk["fleet"]["mobile"], bk["fleet"]["src"], bk["fleet"]["lazy"], bk["fleet"]["dataSrc"], bk["fleet"]["div"], bk["fleet"]["sets"]), (True, None, "/fleet", None, ["failed"], 2), "the flip back parks the src-less recorded pane under data-lazy-src WITH the failed state (the executed pin for the bound's flip back; the DEAD branch's place ahead of the unloaded parking is defensive: the bound's park left no data-src for that parking to take)")
         self.assertEqual((bk["timeline"]["src"], bk["timeline"]["lazy"], bk["timeline"]["div"]), (None, "/timeline", ["failed"]), "…and the kept-src pane the same way, as before")
         self.assertFalse(bk["fleet"]["bodyFailed"], "the chat is the shown tab: nothing painted over it")
         tt = o["tabTap"]
