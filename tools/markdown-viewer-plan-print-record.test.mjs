@@ -79,6 +79,8 @@ function inOrder(text, marks, what) {
 
 const plan = read('plans', 'markdown-viewer.md');
 const flow = code(read('ui', 'webview', 'file-print.ts'));
+/** file-print.ts with its comments, for a pin over its header. */
+const flowRaw0 = () => read('ui', 'webview', 'file-print.ts');
 const viewer = code(read('ui', 'webview', 'file-view.ts'));
 const guide = read('docs', 'guide.md');
 
@@ -559,7 +561,17 @@ test('Open points 6 and 7 record two pre-existing gate observations, each agains
   assert.ok(OPEN.includes('`withTitle`\'s doc, figure-gate.ts\'s header and the egress leg\'s header state the same.'));
   for (const [file, clause] of [[['ui', 'webview', 'file-print.ts'], 'a host one of them answers with a\n *  redirect to is reached too, as the placeholder\'s own click reaches it'], [['ui', 'webview', 'figure-gate.ts'], 'A host that answers a figure\'s request with a\n// redirect to a second host is reached by the browser'], [['ui', 'webview', 'file-print-egress-browser.test.ts'], 'none for a host the person did not choose BY ITS URL (a host a granted host\'s answer redirects to is reached, on\n// the print and on the click alike, and is named nowhere'],
     // the fourth site, the activate case's comment (round 5: the round-4 review's extra6-1, the one statement of that fetch left without the clause)
-    [['ui', 'webview', 'file-print.ts'], 'the figure\'s own fetch and no other, a placeholder naming two hosts fetching from both as its\n        // title said, and no page-life grant for any host (a click\'s meaning, kept for the click: loadGatedHost);\n        // a host one of them answers with a redirect to is reached too, as the placeholder\'s own click reaches it (open point 7;']]) assert.ok(read(...file).includes(clause), file.join('/') + ' carries the redirect clause (a comment, read as one)');
+    [['ui', 'webview', 'file-print.ts'], 'the figure\'s own fetch and no other, a placeholder naming two hosts fetching from both as its\n        // title said, and no page-life grant for any host (a click\'s meaning, kept for the click: loadGatedHost);\n        // a host one of them answers with a redirect to is reached too, as the placeholder\'s own click reaches it (open point 7;'],
+    // the fifth site, the module header's two egress sentences (round 6: the round-5 review's tests-3 and extra5-3), in the pointer form: they name where the
+    // requests go and point at loadGatedFigure's doc, the one full statement, rather than carrying a fifth copy of the clause
+    [['ui', 'webview', 'file-print.ts'], 'unlisted host unless the person chose it; where a chosen figure\'s requests then go, a redirect its host answers\n//      among them, is stated once, in loadGatedFigure\'s doc, figure-gate.ts)'],
+    [['ui', 'webview', 'file-print.ts'], 'so the requests are the ones those figures make and no\n//      other, going where those figures\' URLs point (loadGatedFigure\'s doc, the one full statement of it']]) assert.ok(read(...file).includes(clause), file.join('/') + ' carries the redirect clause (a comment, read as one)');
+  // the pointed-at statement, in full, in the one place (a doc comment, read as one)
+  assert.ok(read('ui', 'webview', 'figure-gate.ts').replace(/\n \*  /g, ' ').includes('The figure\'s requests go where its URLs point, a redirect followed to a host the print\'s title never names and this never grants (the header).'), 'loadGatedFigure\'s doc states the caveat in full');
+  // the plan's twins point at it too (the round-5 review's tests-3: P2\'s reason sentence and P6\'s one-list sentence stood without the caveat, and are pinned)
+  assert.ok(P2.includes('so a print never fetches from a host outside the list unless the person chose it (where a chosen figure\'s requests then go, a redirect its host answers among them: `loadGatedFigure`\'s doc, figure-gate.ts, the one full statement, which this sentence and P6\'s point at rather than restate'), 'P2\'s reason sentence points at the full statement');
+  assert.ok(P2.includes('so the title and the restores are one list by construction (where those restores\' requests go, a redirect among them: `loadGatedFigure`\'s doc, figure-gate.ts, as in P2)'), 'the one-list sentence points at it');
+  assert.ok(!/redirect followed to a host the print\'s title never names/.test(flowRaw0()), 'the header carries the pointer, not a fifth copy of the caveat');
   assert.ok(P2.includes('which `withTitle`\'s doc, figure-gate.ts\'s header and the egress leg\'s header state and file-print-egress-browser.test.ts case (13) counts on both roads: open point 7'));
   // round 4: open point 9, the wait over a paint reference (the round-3 review's extra7-3, not ruled): the three collections and no fourth
   assert.ok(OPEN.includes('9. The wait and a figure reached through a paint reference. `collectPictures` (P2) awaits an `<img>`, a `<video poster>` and an svg `<image>` alone'));

@@ -7808,7 +7808,9 @@ buttons, the shape of the changed-on-disk notice and its Reload; no new rule, so
 print block, which hides every `.fileview > .fileview-err`, keeps the line off the paper) reading "1 picture from
 another host is not loaded." or "N pictures from other hosts are not loaded.", with **Print with them** and **Print
 without them**; a second press or Escape disarms. The press arms rather than prints, a two-click shape, for decision 8's
-reason: the gate is a privacy choice, so a print never fetches from a host outside the list unless the person chose it.
+reason: the gate is a privacy choice, so a print never fetches from a host outside the list unless the person chose it
+(where a chosen figure's requests then go, a redirect its host answers among them: `loadGatedFigure`'s doc, figure-gate.ts,
+the one full statement, which this sentence and P6's point at rather than restate; the round-5 review's tests-3).
 "With them" restores exactly the placeholders it counted, each through `loadGatedFigure` (figure-gate.ts), the gate's
 restore of ONE placeholder: the figure's moved attributes back under their names, on it and on its descendants, and the
 figure back in the placeholder's place, the same restore a click's `loadGatedHost` runs for each placeholder of a host,
@@ -7848,7 +7850,8 @@ state and file-print-egress-browser.test.ts case (13) counts on both roads: open
 `WITHOUT_TITLE`,
 "Print with their placeholders as they are". The placeholders are read at the arm and kept (`armedGates`, re-read at
 each recount), with the hosts they name (`armedHosts`, `hostsOf`): "with them" restores that list and no other (one no
-longer in the body is skipped, `host.body.contains`), so the title and the restores are one list by construction. A body repainted under the armed line
+longer in the body is skipped, `host.body.contains`), so the title and the restores are one list by construction (where
+those restores' requests go, a redirect among them: `loadGatedFigure`'s doc, figure-gate.ts, as in P2). A body repainted under the armed line
 (seen by P7's observer: a Reload landing, a Rendered or Raw pick) has its placeholders counted again (the driver's
 `recount`): over placeholders the line stands with the new count and the title with the new hosts, rewritten in place,
 the keyboard where it was; over none the line goes, since the question it asked is moot, and the next press prints.
