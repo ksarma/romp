@@ -16,7 +16,10 @@
 // and its exit when the node process that started it is SIGKILLed. With a browser as well: a synthetic
 // feed stream replayed at a fixed gap (so most frames reach the bundle as their own delivery) and a
 // synthetic timeline stream replayed back-to-back (so the shim's queue coalesces them) into the REAL
-// pages, served by the kernel's own page route and the built bundles, must produce a report with every
+// pages, served by the kernel's own page route and the built bundles, the timeline stream again into a
+// page that reports itself hidden, and that hidden replay once more with the page's clock standing still
+// across each delivery (every bundle reading 0.0 ms, the reading a hidden page's cheap delivery produces
+// by clock phase), must produce a report with every
 // frame type measured and settled, every frame accounted for by the handoff (delivered, coalesced, or the
 // shim's own), and no console error, uncaught exception or failed resource load; the feed run also writes
 // a CPU profile whose windows are the deliveries. Those tests skip, naming
@@ -232,6 +235,24 @@ test("attribution never files a row under the instrument's own file: its wrapper
     "instrument bookkeeping (the long-animation-frame observer's callback; no pane work) <PerformanceObserverCallback>",
     "instrument bookkeeping (collect; no pane work) <?>",
   ]);
+});
+
+test("buildReport counts a delivery that read 0.0 ms as measured, and drops one the instrument never timed or that read below 0", () => {
+  // The instrument's delivery row starts at ms -1 and its finally writes performance.now() - t0, which is 0 when
+  // the delivery ran inside one clock step (a hidden page's merge under Chromium's 0.1 ms steps). The bundle
+  // column's n is what the replay tests hold against `delivered`: a 0 reading is in it, -1 and a negative one are not.
+  const run = fakeRun({
+    handoff: "flush", flushes: 4, deliveries: 4,
+    perFrame: [pf(0, "data", 4000, 1.2, 30, "delivered", 0, 0), pf(1, "bars", 9000, 0.9, 25, "delivered", 0.4, 1),
+      pf(2, "data", 4000, 0.3, 12, "delivered", -1, 2), pf(3, "data", 4000, 0.3, 12, "delivered", -0.03, 3)],
+  });
+  const r = buildReport({ app: "timeline", framesFile: "f", cpuThrottle: 1, fast: true, iters: 1, browser: "t", runs: [run] });
+  assert.equal(r.types.data.delivered, 3);
+  assert.deepEqual(r.types.data.bundleMs, { n: 1, p50: 0, p90: 0, max: 0, mean: 0 }, "the 0.0 reading is the one measurement kept: -1 and the negative reading are not in n");
+  assert.deepEqual(r.types.bars.bundleMs, { n: 1, p50: 0.4, p90: 0.4, max: 0.4, mean: 0.4 });
+  assert.equal(r.first.bundleMs, 0, "the first frame's delivery reads 0.0, not null");
+  assert.equal(r.first.handoff, "delivered");
+  assert.equal(r.perFrame[0].bundleMs, 0);
 });
 
 test("buildReport keeps the shim's handler and the bundle's delivery apart when the shim hands frames over in its flush task, and counts the frames the queue coalesced", () => {
@@ -1203,12 +1224,12 @@ test("ROMP_UI_BENCH_REQUIRE turns the browser skip into a failure that names the
     const r = spawnSync(process.execPath, ["--test", "--test-name-pattern", "^replay:", THIS_FILE], { env, encoding: "utf8", timeout: 50_000 });
     assert.notEqual(r.status, 0, `the nested run must fail\n${r.stdout}\n${r.stderr}`);
     assert.match(r.stdout, /ROMP_UI_BENCH_REQUIRE is set and this test cannot run: no browser/);
-    assert.match(r.stdout, /# fail 5/, "every replay test (the hidden timeline replay among them), not a skip");
+    assert.match(r.stdout, /# fail 6/, "every replay test (the hidden timeline replay and its frozen-clock twin among them), not a skip");
     assert.doesNotMatch(r.stdout, /# skipped [1-9]/);
     delete env.ROMP_UI_BENCH_REQUIRE;
     const s = spawnSync(process.execPath, ["--test", "--test-name-pattern", "^replay:", THIS_FILE], { env, encoding: "utf8", timeout: 50_000 });
     assert.equal(s.status, 0, `without the variable the same run skips\n${s.stdout}\n${s.stderr}`);
-    assert.match(s.stdout, /# skipped 5/);
+    assert.match(s.stdout, /# skipped 6/);
   } finally {
     fs.rmSync(empty, { recursive: true, force: true });
   }
@@ -1497,11 +1518,50 @@ test("the Handler subprocess ends and removes its directory when the node proces
 // in back-to-back, so the frames queue together and the shim coalesces the whole-state kinds.
 const REPLAY_PACING = { feed: { gapMs: 100 }, timeline: { fast: true } };
 
+// The page's clock standing still across each delivery to the bundle, so the instrument's bracket around every
+// delivery (t0 = performance.now() before, performance.now() - t0 in its finally) reads 0.0 ms. Installed after
+// the instrument, it wraps the inbound the instrument wrapped and holds performance.now() at its entry value
+// until the delivery returns; the handler and flush brackets, the settle stamps and the return step read the
+// real clock. It forces, every run, the reading a hidden page's cheap delivery produces by clock phase: under the
+// paint hold the timeline view buffers a whole-state frame and returns before draw(), so the skeleton re-push's
+// delivery is a merge of about 0.1 ms, and Chromium's performance.now() moves in 0.1 ms steps in this
+// non-isolated context, so the difference reads 0.1 or 0.0 by where the step falls (CI 2026-09-19: the hidden
+// replay's `data` p50 read 0.0 in 4 of 131 runs; 1 of 20 on a developer box).
+const FROZEN_DELIVERY_CLOCK = `
+(() => {
+  const desc = Object.getOwnPropertyDescriptor(window, "__rompFed");
+  const now = performance.now.bind(performance);
+  let frozen = null;
+  performance.now = function () { return frozen != null ? frozen : now(); };
+  Object.defineProperty(window, "__rompFed", {
+    configurable: true, enumerable: true,
+    get() { return desc.get.call(this); },
+    set(v) {
+      desc.set.call(this, v);
+      if (v && typeof v.inbound === "function") {
+        const benched = v.inbound;
+        v.inbound = function frozenInbound(h, m) {
+          if (frozen != null) return benched.call(v, h, m);
+          frozen = now();
+          try { return benched.call(v, h, m); } finally { frozen = null; }
+        };
+      }
+    },
+  });
+})();
+//# sourceURL=ui-bench-frozen-clock.js
+`;
+
 // The third entry replays the timeline stream into a page that reports itself hidden (--hidden): the same
 // assertions hold (Chromium renders the page, so every settle stamp lands), and the report must show the view
-// expanding nothing under the hold and the return step expanding the held bars.
-for (const { app, hidden } of [{ app: "feed", hidden: false }, { app: "timeline", hidden: false }, { app: "timeline", hidden: true }]) {
-  test(`replay: a synthetic ${app} stream renders in headless Chromium${hidden ? " with the page hidden" : ""}, every frame type measured and accounted for by the handoff, no console errors`,
+// expanding nothing under the hold and the return step expanding the held bars. The fourth is the third under
+// FROZEN_DELIVERY_CLOCK: every delivery reads 0.0 ms and the hidden page's assertions hold, because on a hidden page
+// the bundle column asserts that each delivery was measured, not that it took time (the two visible entries keep the
+// strict claim, their deliveries rendering inside the bracket). Its timing relations are the third entry's, asserted
+// under ROMP_UI_BENCH_TIMING like every entry's, except the parse against the bundle reading, which the stub holds
+// at 0 (the entry's own pin) and which is therefore no relation of this entry's.
+for (const { app, hidden, frozenClock } of [{ app: "feed", hidden: false }, { app: "timeline", hidden: false }, { app: "timeline", hidden: true }, { app: "timeline", hidden: true, frozenClock: true }]) {
+  test(`replay: a synthetic ${app} stream renders in headless Chromium${hidden ? " with the page hidden" : ""}${frozenClock ? " and its clock standing still across each delivery (every bundle reading 0.0 ms)" : ""}, every frame type measured and accounted for by the handoff, no console errors`,
     { ...gate(skipReplay), timeout: 180_000 }, async (t) => {
       requireOrSkip(skipReplay);
       const timing = timingCheck(t);
@@ -1514,7 +1574,7 @@ for (const { app, hidden } of [{ app: "feed", hidden: false }, { app: "timeline"
         const cpuProfile = app === "feed" ? path.join(tmp, "prof", "feed.cpuprofile") : undefined;
         const pacing = REPLAY_PACING[app];
         const timersBefore = process.getActiveResourcesInfo().filter((x) => x === "Timeout").length;
-        const report = await replay({ app, framesFile: file, ...pacing, hidden, jsonOut, cpuProfile, log: () => {} });
+        const report = await replay({ app, framesFile: file, ...pacing, hidden, jsonOut, cpuProfile, pageInit: frozenClock ? FROZEN_DELIVERY_CLOCK : null, log: () => {} });
         const timersAfter = process.getActiveResourcesInfo().filter((x) => x === "Timeout").length;
         assert.ok(timersAfter <= timersBefore, `replay left ${timersAfter - timersBefore} timer(s) armed (the handshake timeout must be cleared)`);
         assert.equal(process.listenerCount("SIGINT"), 0, "the signal handlers are removed on the way out");
@@ -1548,9 +1608,25 @@ for (const { app, hidden } of [{ app: "feed", hidden: false }, { app: "timeline"
           assert.equal(s.delivered + s.coalesced + s.shim + s.queued, s.count, `${type}: every frame accounted for (${JSON.stringify(s)})`);
           assert.equal(s.queued, 0, `${type}: nothing still queued`);
           assert.equal(s.bundleMs.n, s.delivered, `${type}: a bundle time for each frame delivered on its own`);
-          if (s.delivered) assert.ok(s.bundleMs.p50 > 0 && s.bundleMs.max >= s.bundleMs.p50, `${type}: bundle percentiles`);
+          // The bundle column is a performance.now() difference rounded to 0.1 ms. On a VISIBLE page every type's
+          // deliveries render inside the bracket (the feed's board, the timeline's draw()), so its p50 is above 0: the
+          // strict claim the file has always made there, where it read 4.5 to 90 ms and never fired. On a HIDDEN page the
+          // property is that every delivery was MEASURED, not that it took time: the view buffers a whole-state frame
+          // under the paint hold and returns before draw(), so a skeleton re-push's delivery is a merge of about 0.1 ms
+          // that reads 0.0 by clock phase (CI 2026-09-19: this row's `data` p50 in 4 of 131 runs; the frozen-clock entry
+          // makes every reading 0.0). There the count above is the witness (the instrument's row starts at -1, and a
+          // reading it never took, or one below 0, drops out of n: buildReport), and this line reads the sample's shape.
+          if (s.delivered) assert.ok(hidden ? typeof s.bundleMs.p50 === "number" && s.bundleMs.p50 >= 0 && s.bundleMs.max >= s.bundleMs.p50 : s.bundleMs.p50 > 0 && s.bundleMs.max >= s.bundleMs.p50, `${type}: bundle percentiles ${JSON.stringify(s.bundleMs)}${hidden ? " (hidden page: each delivery measured, 0.0 allowed)" : " (visible page: rendered inside the bracket, p50 above 0)"}`);
           if (type === "ka") { assert.equal(s.shim, s.count, "keepalives are the shim's alone"); assert.equal(s.delivered, 0); }
           else if (s.delivered) assert.ok(s.settleMs.max >= s.bundleMs.p50, `${type}: the main thread is free no sooner than a delivery returns`);
+        }
+        // The frozen entry's own witness: the stub took effect, so every delivery read exactly 0.0 (a held clock minus
+        // itself). Without this pin a stub that stopped wrapping the instrument (the accessor's name moved, say) would
+        // leave the entry a second copy of the hidden replay, green, with the all-zero column the assertions above are
+        // meant to meet no longer checked; with it, that mutation reds this entry here.
+        if (frozenClock) {
+          for (const [type, s] of Object.entries(report.types)) if (s.delivered) assert.deepEqual([s.bundleMs.p50, s.bundleMs.max], [0, 0], `${type}: the frozen clock reads 0.0 for every delivery: ${JSON.stringify(s.bundleMs)}`);
+          if (report.first.handoff === "delivered") assert.equal(report.first.bundleMs, 0, `the first frame's delivery under the frozen clock: ${JSON.stringify(report.first)}`);
         }
         assert.equal(report.frames.settleMissing, 0);
         assert.equal(report.frames.addListenerMessages, 0, "the pane's socket handler is the onmessage the bench times");
@@ -1571,10 +1647,18 @@ for (const { app, hidden } of [{ app: "feed", hidden: false }, { app: "timeline"
         // margin of two animation frames, a keepalive's settle at least one frame interval, how many deltas reach the
         // bundle on their own at this gap, the forced collection freeing garbage) is the scheduler's to decide on a
         // loaded runner, so those are timing() relations: asserted under ROMP_UI_BENCH_TIMING, diagnostics otherwise.
+        // The strict `> 0` claims on a per-delivery timing in this loop are four lines: the two handler readings below, on
+        // every entry, and the bundle column's per-type p50 (above) and first-frame reading (further down) on the two
+        // visible entries; the hidden entries make none since 2026-09-19 (the 0.0 reading). The first content frame's
+        // parse read 0.2 to 0.4 ms in 12 of 12 probe runs, two clock steps above the floor, so a faster runner could bring
+        // it to a 0.0 reading; a red here would be that, not a lost measurement.
         assert.ok(report.first.handlerMs > 0, `the first frame's handler time is a measurement: ${report.first.handlerMs}`);
         assert.ok(report.types[report.first.type].handlerMs.max > 0);
         if (report.first.handoff === "delivered") {
-          timing(report.first.handlerMs < report.first.bundleMs, `the shim's parse is cheaper than the bundle's render: ${JSON.stringify(report.first)}`);
+          // Under the frozen clock the first frame's bundle reading is the stub's 0 (pinned above), so the parse against the
+          // render would compare a measurement with a constant: no relation of that entry's. The settle margin reads the
+          // real clock on every entry (settleAfter's stamps land after the delivery returned and the stub let the clock go).
+          if (!frozenClock) timing(report.first.handlerMs < report.first.bundleMs, `the shim's parse is cheaper than the bundle's render: ${JSON.stringify(report.first)}`);
           timing(report.first.settleMs - report.first.bundleMs - report.first.handlerMs >= 5, `settle waits for the main thread after the delivery: ${JSON.stringify(report.first)}`);
         }
         timing(report.types.ka.settleMs.p50 >= 10, `a keepalive settles two animation frames after receipt, not when its handler returns: ${JSON.stringify(report.types.ka.settleMs)}`);
@@ -1592,7 +1676,12 @@ for (const { app, hidden } of [{ app: "feed", hidden: false }, { app: "timeline"
         assert.equal(report.first.type, app === "feed" ? "feed" : "data");
         assert.ok(report.first.bytes > 1000);
         assert.ok(["delivered", "coalesced"].includes(report.first.handoff), `the first content frame reached the bundle: ${JSON.stringify(report.first)}`);
-        if (report.first.handoff === "delivered") assert.ok(report.first.bundleMs > 0 && report.first.settleMs >= report.first.bundleMs, JSON.stringify(report.first));
+        // When the first frame went to the bundle alone: its delivery timed above 0 on a visible page (it renders inside the
+        // bracket; 4.5 to 89.5 ms on record, never a red), measured on a hidden page (0.0 allowed, as in the bundle column
+        // above), and settled no sooner than it returned. Whether it went alone is the scheduler's under the fast pacing
+        // (the frozen entry's first frame went alone in 18 of 20 runs on a developer box and coalesced in 2), so this
+        // line's negative is exercised only on the runs where it does; the frozen entry's pin above holds the reading at 0 there.
+        if (report.first.handoff === "delivered") assert.ok((hidden ? report.first.bundleMs >= 0 : report.first.bundleMs > 0) && report.first.settleMs >= report.first.bundleMs, `the first frame's delivery ${hidden ? "measured" : "timed above 0"} and settled no sooner than it returned: ${JSON.stringify(report.first)}`);
         assert.deepEqual(report.console.errors, [], "console errors");
         assert.deepEqual(report.console.pageErrors, [], "uncaught exceptions");
         assert.deepEqual(report.console.failedResources, [], "every page resource served");
