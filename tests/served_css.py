@@ -19,10 +19,14 @@ a script), which the served pages do not use. The tokenizer's CDATA end-tag and 
 3.13 maintenance releases (a `</script` ends the element only before whitespace, `/` or `>`; a comment closes at `-->` or
 `--!>`); the shapes this module's unit cases pin read the same under 3.10, 3.11, 3.12, 3.13 and 3.14, and the eight served
 pages gave byte-identical spans, scripts and rules under each at round 8. Refuses a script or style element the page never
-closes, and a self-closing `<script/>` or `<style/>` (a start tag to HTML).
+closes, and a self-closing `<script/>` or `<style/>` (a start tag to HTML). A `<template>` or `<noscript>` container is not
+tracked: a style or script element inside one is read as live, though a scripting browser applies neither (no served page
+carries either container; disclosed, not closed, the fixer pass of round 8).
 
-Style rules: `rules(html)` parses every live style element (any attributes; a style or script element inside an HTML comment
-is comment text, not an element, round 5, 2026-09-20), strips its comments, and brace-matches it into Rule(index, at, selector,
+Style rules: `rules(html)` parses every live style element (any attributes, except that a `type` neither empty nor text/css
+refuses, the fixer pass of round 8: no engine applies such an element's content and its rules had read as live, the sibling
+hole of the media attribute; a style or script element inside an HTML comment is comment text, not an element, round 5,
+2026-09-20), strips its comments, and brace-matches it into Rule(index, at, selector,
 declarations, decls): `at` is the tuple of enclosing at-rule preludes (an @media query, a @supports condition), with the
 element's own `media` attribute as the outermost prelude where it conditions anything (`media_prelude`: `@media print`;
 absent, empty, `all` and `screen` add nothing; round 8: a rule under `<style media=print>` had read as unconditional, so a
@@ -94,6 +98,9 @@ _IMPORTANT = re.compile(r"!\s*important\s*$", re.I)
 _BARE_VAR = re.compile(r"^var\(\s*(--[\w-]+)\s*(?:,(.*))?\)$", re.S | re.I)
 # a style element's media attribute that conditions nothing: absent, empty, `all`, or `screen` (every page here is a screen)
 _UNCONDITIONAL_MEDIA = {"", "all", "screen"}
+# the type values under which HTML applies a style element's content as CSS (absent counts as empty); any other type is inert in
+# every engine, so an element carrying one REFUSES rather than reading as live rules (the fixer pass of round 8, 2026-09-20)
+_CSS_TYPES = {"", "text/css"}
 
 
 class _Elements(HTMLParser):
@@ -230,10 +237,16 @@ def style_elements(html, linked=False):
     whose rel set carries stylesheet, outside script elements: linked_sheets), whose rules no parse of the page's style
     elements returns (round 6, 2026-09-20: an unconsumed tag refused while the linked sheet passed in silence, which taught a
     reader that unread CSS is always caught); `linked=True` states that the caller knows the page links its stylesheets and
-    wants the style elements alone. A style element the page never closes refuses in the tokenizer (_Elements)."""
+    wants the style elements alone. A style element the page never closes refuses in the tokenizer (_Elements), and one whose
+    `type` is neither empty nor text/css (case-insensitive, stripped) refuses here: no engine applies its content, so its rules
+    would have read as live (the fixer pass of round 8; no served page carries one)."""
     links = linked_sheets(html)
     assert linked or not links, "the served page links %d external stylesheet(s) this parse does not read; pass linked=True to take the style elements alone" % len(links)
-    return [e for e in elements(html) if e.kind == "style"]
+    styles = [e for e in elements(html) if e.kind == "style"]
+    for e in styles:   # the sibling hole of the media attribute (the fixer pass of round 8): a non-CSS type is inert to every engine
+        t = attr(e, "type")
+        assert t is None or t.strip().lower() in _CSS_TYPES, "a <style type=%r> at offset %d is not CSS to any engine and no rule inside it applies; this parse refuses it" % (t, e.start)
+    return styles
 
 
 def style_blocks(html, linked=False):

@@ -276,6 +276,21 @@ class ParsedSheetReads(unittest.TestCase):
         self.assertEqual([(r.selector, r.at) for r in rules], [("#a", ("@media print", "@media (x)")), ("#b", ("@media (x)",))])
         self.assertEqual([r.selector for r in rules if r.at == ("@media (x)",)], ["#b"], "the print rule is not the (x) block's")
 
+    def test_a_style_elements_type_attribute_is_css_or_the_element_refuses(self):
+        # round 8 (2026-09-20, the fixer pass): the sibling hole of the media attribute. HTML applies a style element's content as CSS
+        # only when its type is absent, empty or text/css; any other type is inert in every engine, and the parse had read such an
+        # element's rules as live, so a census over what applies would have passed over a page whose only origin sat in a
+        # <style type=text/plain>. The element refuses (no served page carries one); the CSS spellings read as before
+        for t in ("text/plain", "text/x-scss", "TEXT/PLAIN", "'text/css; charset=utf-8'"):
+            with self.assertRaises(AssertionError, msg=t) as cm:
+                served_css.rules("<style type=%s>#a{top:var(--app-top)}</style>" % t)
+            self.assertIn("is not CSS", str(cm.exception))
+        for t in ("text/css", '"text/css"', "''", '""', "TEXT/CSS", "' text/css '"):
+            self.assertEqual([(r.selector, r.at) for r in served_css.rules("<style type=%s>#a{top:0}</style>" % t)], [("#a", ())], t)
+        self.assertEqual([(r.selector, r.at) for r in served_css.rules("<style type=text/css media=print>#a{top:0}</style>")], [("#a", ("@media print",))])
+        # a script element's type is read and not judged (the module's disclosure): a data block is still script text to scripts()
+        self.assertEqual(served_css.scripts("<script type=application/json>{\"a\":1}</script>"), ['{"a":1}'])
+
     def test_a_statement_at_rule_is_consumed_and_the_rule_after_it_is_read(self):
         # a statement at-rule had accumulated into the next rule's prelude, which then began with @ and was dropped with its
         # declarations as a nested at-rule, silently (round 6, 2026-09-20: the case had used @import, which refuses now)
