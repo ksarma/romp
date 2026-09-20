@@ -297,19 +297,22 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   queued, or after a socket that died before the caps frame came back, it dials
   as a fresh page. A page whose ready was never answered dials fresh for its
   life (the bundle posts ready once), so each of its redials is served whole.
-  On a declared redial the kernel sends the active tab in full and lists every
-  other session as a `skeleton` on the tab strip with one small `status` frame
-  each, and the chat pane loads a skeleton on click or one at a time in idle,
-  never while the tab is hidden; one `skeleton` client-diag row (count, active)
-  records the regime. On the phone layout the chat pane's first dial declares
-  `skeleton=1` too (since 2026-09-18), so a cold open there is served the same
-  way: the strip, one full for the stored tab (or, when a notification tap is
-  parked for the window, for the tapped session: review round 4b; the shell
-  declares its chat column count with the tap and the kernel prefers only for a
-  one-column window, a split page keeping the stored tab: round 5) and a status
-  per other tab, and the `skeleton` row records it. The idle chain's start gate
-  runs on every layout (the desktop's panes and dial are unchanged; a desktop
-  redial's first background ask follows the active tab's full instead of the
+  On a declared redial the kernel sends the active tab in full, or, when a
+  reveal is parked for the window and the kernel lists its session, that
+  session in full (review round 4b; for a one-column window alone: the shell
+  declares its chat column count with the tap and the kernel reads the columns'
+  sockets beside it, a split page keeping the active tab, round 5), and lists
+  every other session as a `skeleton` on the tab strip with one small `status`
+  frame each, and the chat pane loads a skeleton on click or one at a time in
+  idle, never while the tab is hidden; one `skeleton` client-diag row (count,
+  active) records the regime, and a `[reveal]` journal line names the parked
+  session the kernel served whole in place of the page's hint (round 5). On
+  the phone layout the chat pane's first dial declares `skeleton=1` too (since
+  2026-09-18), so a cold open there is served the same way: the strip, one
+  full for the stored tab, or for the parked reveal's session as above, and a
+  status per other tab, and the `skeleton` row records it. The idle chain's
+  start gate runs on every layout (the desktop's panes and dial are unchanged;
+  a desktop redial's first background ask follows that one full instead of the
   strip's paint): the chain starts from the moment the stored tab's full has
   applied, from a tap onto a tab already served whole, or from the local strip
   when it lists no such local tab, because the stored tab ended while the phone
