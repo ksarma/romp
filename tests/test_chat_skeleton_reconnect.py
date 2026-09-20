@@ -903,6 +903,64 @@ class SkeletonReconnect(unittest.TestCase):
             self.assertEqual(sorted(self._names(self._sessions(c3))), ["docs", "web"])
             self.assertEqual(self._names(self._tab_orders(c3)[0]["skeleton"]), ["tests", "api"])
             self.assertEqual([(f["id"], f["live"]) for f in self._frames(c3, "focus")], [("gpu1:" + S2, True)])
+            # THE SPLIT (review round 5, correctness-1: the round-4b ruling's own regression). Two chat columns under one wid, each
+            # with its own active hint, and a park for api. The kernel cannot name the column that will SHOW the tapped session
+            # (the consume focuses the first chat client of the wid and the page hands a session another column holds to that
+            # column), so the preference is for a window with ONE chat column, keyed on the `col` each column declares at its
+            # handshake: here each column's own active stays whole and out of its own skeleton list, the parent's behaviour. At
+            # the round-4b head the column that resolved first was served api's full and its own visible tab as a skeleton.
+            del km._clients[:]
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertFalse(km._reveal_request(S2, "W1", via="ack"), "parked: neither column has said ready")
+                cA = self._client(active=S1, reconnect=True, wid="W1", col="")     # the first column (the page's ?col= is empty for it)
+                cB = self._client(active=S3, reconnect=True, wid="W1", col="2")    # the second column, its own active hint
+                km._clients.extend([cA, cB])                                        # both registered, as the handshake registers them
+                km._push([cA, cB])
+            self.assertTrue(self._sessions(cA) and self._sessions(cB), "both columns were sent session frames")
+            self.assertNotIn("web", self._names(cA["skeleton"]), "the first column's own active hint stays out of its own skeleton list")
+            self.assertNotIn("tests", self._names(cB["skeleton"]), "the second column's own active hint stays out of its own skeleton list (at the round-4b head: a skeleton, api's full in its place)")
+            self.assertEqual(sorted(self._names(self._sessions(cA))), ["docs", "web"], "the first column's one full is its own hint's")
+            self.assertEqual(sorted(self._names(self._sessions(cB))), ["docs", "tests"], "the second column's one full is its own hint's")
+            self.assertEqual(self._names(self._tab_orders(cB)[0]["skeleton"]), ["web", "api"], "api is a skeleton for the second column, ascending size (the page's focus handler asks for it, one round trip: the parent's road)")
+            self.assertEqual(km._PENDING_REVEAL, {}, "the park was consumed by the strip behind which the page routes the focus")
+            self.assertEqual([f["id"] for c_ in (cA, cB) for f in self._frames(c_, "focus")], [S2], "one focus for the window, the parked tap's (own=True; the page hands it to the owning column)")
+            # THE STALE TWIN on the boot road (vote 1's executed shape): the previous page's chat socket of the SAME column is still
+            # registered (sessionStorage keeps the wid across a reload and the ping timeout has up to WS_DEAD_S to reap it). A count
+            # of same-wid chat clients would read it as a second column and drop the preference on the road the clause exists for;
+            # keyed on the column, the twin is the same column and the parked session's full still lands.
+            del km._clients[:]
+            with contextlib.redirect_stderr(io.StringIO()):
+                twin = self._client(active=S1, wid="W1", col="")                    # the dead page's socket: never said ready (no target), same column
+                twin["alive"] = False
+                c4 = self._client(active=S1, reconnect=True, wid="W1", col="")
+                km._clients.extend([twin, c4])
+                self.assertFalse(km._reveal_request(S2, "W1", via="ack"), "parked: the twin never said ready, the redial carries no ready")
+                km._push([c4])
+            self.assertTrue(self._sessions(c4))
+            self.assertEqual(sorted(self._names(self._sessions(c4))), ["api", "docs"], "the stale twin of the same column does not cost the preference: the parked session's full lands (a same-wid count would have served the hint's)")
+            self.assertEqual(self._names(self._tab_orders(c4)[0]["skeleton"]), ["tests", "web"])
+            self.assertEqual(km._PENDING_REVEAL, {})
+            self.assertEqual(self._sessions(twin), [], "the dead twin was pushed nothing")
+            # THE FRESH POP (the guard's `not fresh` term): a skeleton client's pre-ready pop consumes no park (the page cannot hear
+            # a focus yet; the ready arm re-resolves and consumes), so the preference waits for the pop that does. Pre-ready the set
+            # is the hint's (api a skeleton, the park standing); the arm's connect push, not fresh, serves api's full and the focus.
+            del km._clients[:]
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertFalse(km._reveal_request(S2, "W1", via="sw"))
+                c5 = self._client(active=S1, reconnect=True, skeletonOnReady=True, wid="W1")
+                km._clients.append(c5)
+                km._push([c5])
+            self.assertEqual(self._names(self._tab_orders(c5)[0]["skeleton"]), ["tests", "api"], "the pre-ready pop keeps the hint's set: no preference before a pop that consumes")
+            self.assertEqual(self._sessions(c5), [], "no session frame before the ready")
+            self.assertEqual(km._PENDING_REVEAL.get("W1"), {"sid": S2, "wid": "W1"}, "the park stands for the ready arm")
+            c5["_frames"].clear()
+            h = _Self(lambda cl: km._push([cl], connect=True))   # the real _push_one body
+            with contextlib.redirect_stderr(io.StringIO()):
+                km.Handler._dispatch_ws(h, {"type": "ready"}, c5)
+            self.assertEqual(sorted(self._names(self._sessions(c5))), ["api", "docs"], "the ready arm's connect push, not fresh: the parked session's full")
+            self.assertEqual(self._names(self._tab_orders(c5)[0]["skeleton"]), ["tests", "web"], "the stored tab a skeleton")
+            self.assertEqual([f["id"] for f in self._frames(c5, "focus")], [S2], "the arm consumed the park")
+            self.assertEqual(km._PENDING_REVEAL, {})
         finally:
             km._PENDING_REVEAL.clear()
 

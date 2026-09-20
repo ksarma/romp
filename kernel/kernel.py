@@ -54328,13 +54328,27 @@ def _resolve_reconnect(c, chat_list):
         # (_reveal_request, _send_focus_to_view), and a park landing after this read is served as today, its consume behind the strip
         # landing the focus on a skeleton tab the page then asks for. The ruled release+wake half is DEFERRED by the reviewer, not landed:
         # executed, it added a duplicate full on the live road and closed nothing.
-        if act:
+        if act and not fresh:
             _pk = str(c.get("wid") or "")
             _pr = _PENDING_REVEAL.get(_pk)
             if _pr is None and _pk:
                 _pr = _PENDING_REVEAL.get("")
             _ps = str((_pr or {}).get("sid") or "")
-            if _ps and _ps != str(act) and any(s.get("sid") == _ps for s in chat_list):
+            # [fork] review round 5 (2026-09-20, correctness-1: the round-4b ruling's own regression). The preference is for the client
+            # that will SHOW the parked session, and the kernel cannot name it on a split chat page (two or more columns under one wid:
+            # the consume focuses the first chat client of the wid, and the page hands a session another column holds to that column,
+            # render.ts's focus gate), so it applies to a window with ONE chat column: every chat client of this wid, this one included,
+            # reports the same `col` (the column each declares at its handshake, _ws). Keyed on the column and not on a count of same-wid
+            # clients, because the boot road's normal state is a stale twin of the SAME column (the previous page's socket, its wid kept
+            # by sessionStorage, up to WS_DEAD_S from its reaping): a count read it as a second column and dropped the preference on the
+            # road the clause exists for (executed by the round-5 refuter). Read off a lock-free copy of _clients, no _clients_lock under
+            # this slot lock (a new nesting would need its order stated; a stale read here chooses between the preference and the
+            # parent's whole-hint push, fail-safe either way). `not fresh`: the skeleton client's pre-ready pop consumes nothing (the
+            # ready arm re-resolves and consumes), so the preference waits for the pop that does.
+            _col = str(c.get("col") or "")
+            _cols = {str(x.get("col") or "") for x in list(_clients) if x.get("app") == "chat" and str(x.get("wid") or "") == _pk}
+            _cols.add(_col)
+            if _ps and len(_cols) <= 1 and _ps != str(act) and any(s.get("sid") == _ps for s in chat_list):
                 act = _ps
         held = c.get("echat") or {}
         if not act:
