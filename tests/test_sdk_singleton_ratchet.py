@@ -434,8 +434,9 @@ is that run's, at the head it prints, and none is written here.
     the clause emitted for every gone report (red: every case that reads a gone report on an object no refusal named
     for the clause's absence, whether the run took no refusal or took one on another object; derive:
     report-link-unconditional); the link keyed on the rendered text in place of the object, the refusal recording its
-    object's rendered path and the report testing its own (red: every case whose refused object is repointed between
-    the refusal and the gone report on it, the two paths then differing; derive: report-link-by-path); the link keyed
+    object's path as the module start read recorded it and the report testing the object's live rendering against that
+    list (red: every case whose refused object is repointed between the module start read and the gone report on it, the
+    two paths then differing; derive: report-link-by-path); the link keyed
     on any refusal in the worker in place of the refused object, membership by existence (red: every case with a
     refusal followed by a gone report on an object no refusal named; derive: report-link-by-existence); the refusal
     marking its object as reported (red: every case with a gone report on the refused object after the refusal, that
@@ -479,7 +480,7 @@ is that run's, at the head it prints, and none is written here.
     yield removed).
   the function fixture not naming the object it accused (A.h gets an inherited report, E, D).
 Eighty-nine cells red at the round-6 head.
-Five are pinned by no run, each for a stated reason: the unreadable reference root granting
+Five are pinned by no run at the round-6 head, each for a stated reason: the unreadable reference root granting
 the allowance (not constructible: the kernel always binds jd); the yield's identity condition dropped (redundant by
 construction: when the end value is the last read's and is not the last window's value, a class teardown inside the
 scope installed it, and that class's own boundary judged it against its start, which only a restore of the value the
@@ -623,7 +624,7 @@ MUTATIONS = {
         (_BOUNDARY_LINK_CALL, "    return _sdk_judge(start, end, start.jd_state)\n"),
         (_BOUNDARY_VERDICT, "    verdict = _sdk_found_refused(_sdk_judge_scope(start, last, end, windows), start, end)\n")]),
 }
-DERIVE_DESELECT = "tests/test_sdk_singleton_ratchet.py::TheMutationCellsApply"   # reds under any plant by construction
+DERIVE_DESELECT = "tests/test_sdk_singleton_ratchet.py::TheMutationCellsApply"   # reds under any plant (its docstring)
 DERIVE_ENV_DROPPED = ("PYTEST_ADDOPTS", "PYTEST_PLUGINS", "PYTEST_DISABLE_PLUGIN_AUTOLOAD", "PYTEST_CURRENT_TEST",
                       "PYTEST_XDIST_WORKER", "PYTEST_XDIST_WORKER_COUNT", "ROMP_TESTS_SYSTEM_TMPDIR",
                       "PY_COLORS", "FORCE_COLOR", "CLICOLOR_FORCE",      # what nested_run pops from its child's
@@ -660,8 +661,10 @@ def derive(cell):
     this module lists (the module docstring's matrix states each cell's rule and points here). Exits 0 when the plant
     and the run completed, whatever the run's colour; an old text absent or found twice, a mutated file that does not
     parse, or a run that does not finish is a loud error. The applicability pin is deselected on the command line, never
-    skipped in the test: under any plant it reds by construction, and it is no cell's set. The run's environment is the
-    test recipe's (every ROMP_* variable and the pytest variables nested_run pops dropped, TMPDIR fresh)."""
+    skipped in the test: under any plant it reds (a replacement that removes its old text fails the exact-once count,
+    and one that appends beside the old text puts a new text the pin holds absent into the file), and it is no cell's
+    set. The run's environment is the test recipe's (every ROMP_* variable and the pytest variables nested_run pops
+    dropped, TMPDIR fresh)."""
     target, subs = MUTATIONS[cell]
     scratch = tempfile.mkdtemp(prefix="derive-")
     tree = os.path.join(scratch, "tree")
@@ -2549,7 +2552,9 @@ class TheMutationCellsApply(unittest.TestCase):
     cell as "derive: <id>", inside a parenthesis that opens with the cell's rule ("(red: "), and every derive id in the
     docstring is a key: the composition, pinned both ways. The table is not short: a population that comes back under
     the count at the head that set the floor is a failure, not a pass (the roster pin's convention). derive() deselects
-    this class: under any plant it reds by construction, and it is no cell's set."""
+    this class, and under any plant it reds: a replacement that removes its old text fails the exact-once count, and one
+    that appends beside the old text (the new text containing the old, so the count holds after the plant) puts a new
+    text into the file that this class holds absent. It is no cell's set."""
 
     def test_each_cells_old_text_occurs_exactly_once_and_the_mutation_parses(self):
         for cell, (target, subs) in MUTATIONS.items():
@@ -2559,6 +2564,10 @@ class TheMutationCellsApply(unittest.TestCase):
                 self.assertEqual(text.count(old), 1, "%s: the old text occurs %d times in %s, not once: %r"
                                  % (cell, text.count(old), target, old))
                 self.assertNotEqual(old, new, cell)
+                if old in new:                   # an append beside the old text: the plant leaves the count at one
+                    self.assertFalse(new in text, "%s: the tree already carries the plant: %r" % (cell, new))
+                    # assertFalse, not assertNotIn: the container is the whole fixture file, which the failure
+                    # message would otherwise quote entire
                 text = text.replace(old, new)
             ast.parse(text, filename=target)                 # a SyntaxError is the failure
 
