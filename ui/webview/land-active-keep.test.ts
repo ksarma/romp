@@ -9,7 +9,11 @@
 // tab's position is still under the viewport), with the raw write standing when nothing was armed (no take, the saved scrollTop exact)
 // or no row was capturable (the saved place inside a spacer). landActive, captureScrollAnchor and restoreScrollAnchor are lifted from
 // render.ts and run over a layout model (the toggle harness's: a head spacer, rows of known heights, a scroller with a viewport); the
-// stubs record the take, the landing attempt and every write, and scrollToAnchor answers what the world says. Synthetic uuids.
+// stubs record the take, the landing attempt and every write, and scrollToAnchor answers what the world says. keepPlaceAcrossWindow,
+// the other taker pinned by source text alone until this round, is lifted the same way over both its roads (the direct restore, the
+// deep-link re-land with the kept offset) and the road where both miss: it takes before the restores (restoreScrollAnchor needs the
+// row's y in the re-sized layout), so on a double miss it took and wrote nothing, and the content under the viewport moved by the take's
+// delta; the row under the viewport top, captured before the take, now goes back at its offset there. Synthetic uuids.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -198,4 +202,86 @@ test("a hidden pane with a jump armed defers the whole land (nothing taken, noth
   const w = world({ saved: 2350, clientHeight: 0 }, { anchor: "11111111-2222-4333-8444-000000000005", land: true });
   w.land(w.content, w.v);
   assert.equal(takes(w), 0, "no take in a zero-height view"); assert.deepEqual(w.writes, []); assert.deepEqual(w.calls, []);
+});
+
+// ── keepPlaceAcrossWindow: the take over its restores, and the double miss (review round 2, tests-4 and correctness-3) ──────────────
+
+type KeepArm = { land?: boolean; older?: boolean; rebuild?: (host: Host) => void };
+type KeepWorld = { content: Content; host: Host; spacer: Node; rows: Node[]; writes: Write[]; calls: any[]; keep: (k: { uuid: string; y: number }) => boolean; state: () => { pendingAnchor: string | null; pendingAnchorKeepY: number | null; relandAsk: boolean } };
+/** The reader at `scrollTop` over the same view; `parked` a figure waiting; the stubbed scrollToAnchor answers `land`, marks an older fetch
+ *  when `older`, and runs `rebuild` over the host first (the window rebuilt around the anchor's unit: rows leave). */
+function keepWorld(scrollTop: number, arm: KeepArm = {}, parked = true): KeepWorld {
+  const content = new Content(600); const host = new Host(content);
+  const spacer = host.add(new Node(2000, "tx-spacer tx-spacer-top"));
+  const rows: Node[] = []; for (let i = 0; i < 10; i++) rows.push(host.add(new Node(100, "turn", "r" + i)));
+  content.scrollTop = scrollTop;
+  const v: any = { el: host, scrollTop, shown: true, stick: false };
+  const H: any = { content, v, spacer, writes: [] as Write[], calls: [] as any[], parked, delta: D, arm };
+  const js = liftBetween("function keepPlaceAcrossWindow(", "// Scroll/anchor landing + deep-link diagnostics + restamp")
+           + liftBetween("function captureScrollAnchor(", "// Live tail-append to the ACTIVE view");
+  const prelude = `
+    const H = HOOKS;
+    let pendingAnchor = null, pendingAnchorKeepY = null, relandAsk = false, anchorPendingOlder = false;
+    const applyMeasure = (v) => { H.calls.push("applyMeasure"); if (!H.parked) return false; H.parked = false; H.spacer.h += H.delta; return true; };
+    const redrawGapUnits = () => { H.calls.push("redrawGapUnits"); };
+    const sizeSpacers = () => { H.calls.push("sizeSpacers"); };
+    const scrollToAnchor = (uuid) => { H.calls.push(["scrollToAnchor", uuid, relandAsk, pendingAnchor, pendingAnchorKeepY]); if (H.arm.rebuild) H.arm.rebuild(H.content.host); if (H.arm.older) anchorPendingOlder = true; return !!H.arm.land; };
+    const writeScroll = (c, top, writer, stick = false, from) => { H.writes.push({ writer, top, stick, from }); c.scrollTop = Math.max(0, Math.min(top, c.scrollHeight - c.clientHeight)); };
+    const cssEscape = (s) => s;
+  `;
+  const api = new Function("HOOKS", prelude + js + "\nreturn { keep: (k) => keepPlaceAcrossWindow(H.content, H.v, k), state: () => ({ pendingAnchor, pendingAnchorKeepY, relandAsk }) };")(H);
+  return { content, host, spacer, rows, writes: H.writes, calls: H.calls, keep: api.keep, state: api.state };
+}
+const keepTakes = (w: KeepWorld) => w.calls.filter((c) => c === "applyMeasure").length;
+
+test("keepPlaceAcrossWindow, the direct restore: the take first (spacers and gap units re-sized), then the reader's row back at its offset over them; true, one write", () => {
+  const w = keepWorld(2350);   // r3 under the viewport top, 50 px above it
+  assert.equal(w.keep({ uuid: "r3", y: R3_OFFSET }), true);
+  assert.equal(keepTakes(w), 1, "the land of the reader's own row takes");
+  assert.deepEqual(w.calls.filter((c) => typeof c === "string"), ["applyMeasure", "redrawGapUnits", "sizeSpacers"], "the take, the gap units, the spacers, before any restore");
+  assert.equal(w.spacer.h, 2000 + D);
+  assert.deepEqual(w.writes, [{ writer: "anchor-restore", top: 2350 + D, stick: false, from: undefined }], "r3 at its offset, 300 px further down the document");
+  assert.equal(w.rows[3].getBoundingClientRect().top, R3_OFFSET, "the row did not move on screen");
+  assert.deepEqual(w.calls.filter((c) => Array.isArray(c)), [], "no deep-link attempt: the row was there");
+  assert.equal(w.state().pendingAnchor, null);
+  // nothing parked: no re-size, the row back where it is
+  const w2 = keepWorld(2350, {}, false);
+  assert.equal(w2.keep({ uuid: "r3", y: R3_OFFSET }), true);
+  assert.equal(keepTakes(w2), 1, "asked"); assert.equal(w2.spacer.h, 2000, "…and nothing to take");
+  assert.deepEqual(w2.writes, [{ writer: "anchor-restore", top: 2350, stick: false, from: undefined }]);
+});
+
+test("keepPlaceAcrossWindow, the restore missing (the reader's row gone from the rebuilt window): the deep-link re-land with the kept offset, armed and flagged as the re-land of the reader's own row while it runs, disarmed after unless an older fetch is on the wire", () => {
+  const w = keepWorld(2350, { land: true });
+  assert.equal(w.keep({ uuid: "11111111-2222-4333-8444-000000000011", y: R3_OFFSET }), true);
+  assert.equal(keepTakes(w), 1);
+  assert.deepEqual(w.calls.filter((c) => Array.isArray(c)), [["scrollToAnchor", "11111111-2222-4333-8444-000000000011", true, "11111111-2222-4333-8444-000000000011", R3_OFFSET]],
+    "the attempt runs with relandAsk raised and the anchor armed with the kept offset (the keep-offset write is scrollToAnchor's own)");
+  assert.deepEqual(w.state(), { pendingAnchor: null, pendingAnchorKeepY: null, relandAsk: false }, "disarmed after the land, the flag lowered");
+  assert.deepEqual(w.writes, [], "the landing wrote; nothing else does");
+  // an older fetch pointed at the anchor keeps the arm for chatHead's arrival
+  const w2 = keepWorld(2350, { land: false, older: true });
+  assert.equal(w2.keep({ uuid: "11111111-2222-4333-8444-000000000011", y: R3_OFFSET }), false);
+  assert.deepEqual(w2.state(), { pendingAnchor: "11111111-2222-4333-8444-000000000011", pendingAnchorKeepY: R3_OFFSET, relandAsk: false }, "armed for the arrival");
+});
+
+test("keepPlaceAcrossWindow, BOTH restores missing (the reader's row gone and the attempt landing nothing): the take was made, so the row that was under the viewport top goes back at its offset (measured on its own rect), never a take with no write; when the attempt's rebuild dropped that row too, nothing is written and the road is the disclosed residual", () => {
+  // the reader's row is nowhere (a fetch is armed for it); before the fix the take grew the head spacer 300 px and nothing was written,
+  // so the content under the viewport moved down by 300 px
+  const w = keepWorld(2350, { land: false, older: true });
+  assert.equal(w.keep({ uuid: "11111111-2222-4333-8444-000000000012", y: R3_OFFSET }), false);
+  assert.equal(keepTakes(w), 1, "the take is made before the restores, whatever they find");
+  assert.equal(w.spacer.h, 2000 + D);
+  assert.deepEqual(w.writes, [{ writer: "anchor-restore", top: 2350 + D, stick: false, from: undefined }], "the row under the viewport top before the take (r3) is put back at its offset");
+  assert.equal(w.rows[3].getBoundingClientRect().top, R3_OFFSET, "what the reader saw under the viewport top is still there (it sat 300 px lower with no write)");
+  // the same with no fetch armed (an anchor nowhere in the transcript): the arm is dropped, the row still goes back
+  const w2 = keepWorld(2350, { land: false });
+  assert.equal(w2.keep({ uuid: "11111111-2222-4333-8444-000000000012", y: R3_OFFSET }), false);
+  assert.deepEqual(w2.writes, [{ writer: "anchor-restore", top: 2350 + D, stick: false, from: undefined }]);
+  assert.deepEqual(w2.state(), { pendingAnchor: null, pendingAnchorKeepY: null, relandAsk: false });
+  // the attempt rebuilt the window around the anchor's unit (every row replaced) and its re-query missed: the captured row is gone too,
+  // nothing is written, and the reader is where the rebuild left them (the residual the body names)
+  const w3 = keepWorld(2350, { land: false, rebuild: (host) => { host.children = [host.children[0]]; for (let i = 20; i < 30; i++) host.add(new Node(100, "turn", "r" + i)); } });
+  assert.equal(w3.keep({ uuid: "11111111-2222-4333-8444-000000000012", y: R3_OFFSET }), false);
+  assert.equal(keepTakes(w3), 1); assert.deepEqual(w3.writes, [], "no row of the captured DOM is left to put back");
 });

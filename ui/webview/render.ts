@@ -15295,7 +15295,14 @@ let relandAsk = false;
 function keepPlaceAcrossWindow(content: HTMLElement, v: View, keep: { uuid: string; y: number }): boolean {
   // the reader's own row is put back over whatever moved, so this land takes the figures parked since the last paint (the spacers and
   // gap units re-sized before the restore, which covers them); a same-task re-show has nothing parked yet and takes nothing (PR E, review
-  // round 1b: every anchoring paint takes, and the switch's land before this one left the figures for it when its own road was land-saved)
+  // round 1b: every anchoring paint takes, and the switch's land before this one left the figures for it when its own road was land-saved).
+  // The take stays above the restores: restoreScrollAnchor needs the row's y in the re-sized layout. So the road where BOTH restores miss
+  // (the reader's row gone from the rebuilt window, and the landing attempt landing nothing: a fetch armed, an anchor nowhere in the
+  // transcript) took and wrote nothing, and the content under the viewport moved by the spacers' delta. The row under the viewport top is
+  // captured here, before the take, and put back at its offset on that road (measured on its own rect, not by symmetry with the other two
+  // roads); when the attempt rebuilt the window around the anchor's unit and its re-query missed, that row is gone too and nothing is
+  // written: the reader is where the rebuild left them, a residual the body names (review round 2)
+  const under = captureScrollAnchor(content, v);
   if (applyMeasure(v)) { redrawGapUnits(v); sizeSpacers(v); }
   if (restoreScrollAnchor(content, v, keep)) return true;
   pendingAnchor = keep.uuid; pendingAnchorKeepY = keep.y;
@@ -15303,6 +15310,7 @@ function keepPlaceAcrossWindow(content: HTMLElement, v: View, keep: { uuid: stri
   let landed = false;
   try { landed = scrollToAnchor(keep.uuid); } finally { relandAsk = false; }
   if (!anchorPendingOlder) { pendingAnchor = null; pendingAnchorKeepY = null; }   // an older-history fetch keeps them armed for chatHead's re-land
+  if (!landed && under) restoreScrollAnchor(content, v, under);   // the double miss: the row that was under the viewport top, back at its offset over the take
   return landed;
 }
 

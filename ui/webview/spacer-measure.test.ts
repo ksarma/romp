@@ -443,7 +443,9 @@ test("render.ts: the render task's spacer code holds no layout read; the unit ob
   assert.match(land, /else if \(!\(held && restoreScrollAnchor\(content, v, held\)\)\) writeScroll\(content, v\.scrollTop, "land-saved"\);/, "the saved-place fallback restores the captured row; the raw write stands when nothing was armed or no row was at the saved place");
   assert.equal((land.match(/applyMeasure\(v\)/g) || []).length, 1, "one take in the land");
   const keep = RENDER.slice(RENDER.indexOf("function keepPlaceAcrossWindow("), RENDER.indexOf("\n}\n", RENDER.indexOf("function keepPlaceAcrossWindow(")));
-  assert.match(keep, /if \(applyMeasure\(v\)\) \{ redrawGapUnits\(v\); sizeSpacers\(v\); \}\s*\n\s*if \(restoreScrollAnchor\(content, v, keep\)\) return true;/, "keepPlaceAcrossWindow takes over its restore, spacers and gap units first");
+  assert.match(keep, /const under = captureScrollAnchor\(content, v\);\s*\n\s*if \(applyMeasure\(v\)\) \{ redrawGapUnits\(v\); sizeSpacers\(v\); \}\s*\n\s*if \(restoreScrollAnchor\(content, v, keep\)\) return true;/,
+    "keepPlaceAcrossWindow captures the row under the viewport top, then takes over its restore, spacers and gap units first (the take stays above the restores, which read the re-sized layout; land-active-keep.test.ts executes the roads and the double miss)");
+  assert.match(keep, /if \(!landed && under\) restoreScrollAnchor\(content, v, under\);/, "the double miss puts the captured row back over the take instead of writing nothing (review round 2)");
   const calls = (RENDER.match(/(?<![\w.])applyMeasure\(v\)/g) || []).length;
   assert.equal(calls, 4, "four takers: syncViewInner, the window build, landActive and keepPlaceAcrossWindow (" + calls + "); the frame-end take asks for the first");
   // the census of callers, derived from the tree and keyed on the CALLER, not on a spelling (review round 2): every window build outside
