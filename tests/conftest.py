@@ -583,15 +583,20 @@ def restore_env(name, prior):
 #     the gone report never fires, and the scope's boundary verdict names the swap and not the object's origin
 #     (S10); when the scope does put it back, the test that then starts under the object carries the gone report
 #     as well, two lines on two items each saying what the other does not (S9), the completes-a-leak pattern
-#     below. The refusal marks nothing on _SDK_REPORTED: no later window takes the kept-root report, and a mark
-#     would silence that later gone report. The fixture's tests pin it (S7, beside S6, the same leak with no
+#     below, and that report names the object as the one this worker's first window refused to attribute, the
+#     link keyed on the object and not on its rendered path, which a repoint between the two reads changes (S9B).
+#     The refusal marks nothing on _SDK_REPORTED: no later window takes the kept-root report, and a mark would
+#     silence that later gone report; the fixture records the refused object on _SDK_REFUSED instead, the list
+#     that link reads. The fixture's tests pin it (S7, beside S6, the same leak with no
 #     swapping class, reported as inherited; S7B, the refusal as the first window's alone; S8, the run-root shape,
 #     refused; S9 and S10, the gone shape, the object put back and not).
-# Two module-level lists of STRONG references (identity membership; strong so an id is never reused by a
-# later object) keep the two kinds of naming apart. Every object a VERDICT names (a test's own, a boundary's)
+# Three module-level lists of STRONG references (identity membership; strong so an id is never reused by a
+# later object) keep the kinds of naming apart. Every object a VERDICT names (a test's own, a boundary's)
 # goes on _SDK_NAMED, the list the boundary's quiet-on-a-named-object rule consults. Every object the
 # INHERITED report named goes on _SDK_REPORTED, and the report is silent on an object in either list, which
-# is what makes "once" work (under xdist, once per worker process). The boundary never consults
+# is what makes "once" work (under xdist, once per worker process). Every object the first window's REFUSAL
+# named goes on _SDK_REFUSED, which silences nothing: the gone report on an object it holds says it is the
+# object the refusal named, so the two lines are linked at the object. The boundary never consults
 # _SDK_REPORTED: an inherited report says what a test did NOT do, not what its scope did, so a class or
 # module setup that completes a leak (builds, restores jd.STATE and removes the root before any test) yields
 # two error lines for one leak, the inherited gone report on the scope's first test and the boundary
@@ -740,6 +745,8 @@ _SDK_MODULE_START = None                               # the current module boun
                                                        # kept-root report's object and reference root
 _SDK_NAMED = []                                        # strong references to every object a verdict named (a test's own, a boundary's)
 _SDK_REPORTED = []                                     # strong references to every object the inherited report named
+_SDK_REFUSED = []                                      # strong references to every object the first window's refusal named: the
+                                                       # gone report's link to that line (_sdk_inherited); silences nothing
 _SDK_REAL = ("romp_sdk_backend", "SdkBackend")
 _SDK_GONE = ", whose state_dir is no longer a directory"
 _SDK_REMEDY_A = ("A test that reaches km._sdk() under a sandboxed jd.STATE builds the kernel's backend singleton over the "
@@ -804,6 +811,16 @@ def _sdk_report(be):
         _SDK_REPORTED.append(be)
 
 
+def _sdk_refused(be):
+    """Whether the first window's refusal named the object: the gone report's link clause reads this, by identity."""
+    return any(x is be for x in _SDK_REFUSED)
+
+
+def _sdk_refuse(be):
+    if be is not None and be is not False and not _sdk_refused(be):
+        _SDK_REFUSED.append(be)
+
+
 def _sdk_singleton_text(be, sd=_SDK_LIVE):
     """The value as "<class> over <state_dir>", None and False said in words. `sd` is the state_dir text to render: the
     live attribute by default, or a read's recorded text, since the same object's state_dir can have been repointed
@@ -833,13 +850,18 @@ def _sdk_inherited(before, start):
     setUpClass or a module- or class-scoped fixture, which is no leak; compared against the window's jd.STATE, a
     legitimate import-time build over the run root got the report whenever a scope setup moved jd.STATE for its tests);
     an object the start read did not see was installed by the module's or a class's own setup, which that scope's
-    boundary judges. Silent on an object either list has named (_sdk_named, _sdk_reported)."""
+    boundary judges. Silent on an object either list has named (_sdk_named, _sdk_reported). A gone report on an object
+    the worker's first window REFUSED (_sdk_refused: _sdk_swapped's object, recorded by the fixture when the refusal is
+    taken) opens its tail by saying it is that object, so the two lines are linked at the object and not at the rendered
+    path, which is no identity and which a repoint between the two reads changes (S9, S9B)."""
     be = before.be
     if not _sdk_is_real(be) or _sdk_named(be) or _sdk_reported(be):
         return None
     if before.isdir is False:
-        return ("starts under the kernel's backend singleton (km._sdk_backend) over a directory that no longer exists: %s. %s"
-                % (_sdk_singleton_text(be),
+        link = (("It is the object this worker's first test window refused to attribute: that refusal names its origin, "
+                 "this line the test that lives under it. ") if _sdk_refused(be) else "")
+        return ("starts under the kernel's backend singleton (km._sdk_backend) over a directory that no longer exists: %s. %s%s"
+                % (_sdk_singleton_text(be), link,
                    _SDK_INHERITED_TAIL % "an earlier test, a class or module setup or teardown, or import-time code did"))
     if start is not None and before.sd != start.jd_state:
         return ("starts under the kernel's backend singleton (km._sdk_backend) over a directory that is not jd.STATE, before "
@@ -877,14 +899,17 @@ def _sdk_swapped(start, before):
     gone report because the swapping scope may never put the object back, and then no window starts under it, the gone
     report never fires, and the scope's boundary verdict names the swap and not the object's origin; when the scope does
     put it back, the later test that starts under the object carries the gone report as well, two lines each saying what
-    the other does not. Silent when the start read's object stands over jd.STATE as it recorded it (no leak); on an
+    the other does not, and the later line says it is the object this window refused, keyed on the object (the rendered
+    path is not an identity, and a repoint between the two reads changes it; S9B). Silent when the start read's object stands over jd.STATE as it recorded it (no leak); on an
     object a verdict has named (_sdk_named, reachable: a class or module scope that touches the singleton and then skips
     or errors before any function window runs files a naming verdict while the flag is still armed, the boundary fixture
     reading at the scope's first item and the flag spent only in the function fixture; S13, a module pair); and, as a
     belt, on one the inherited report has named (_sdk_reported, empty at this window by construction: the one site that
     fills that list, the function fixture's report line, runs after this refusal is computed in the same first window,
     and no earlier window exists in the worker). The refusal marks nothing on _SDK_REPORTED: no later window takes the kept-root report,
-    so a mark would change nothing there, and it would silence that later gone report."""
+    so a mark would change nothing there, and it would silence that later gone report; the fixture records its object on
+    _SDK_REFUSED instead, the list the gone report's link clause reads. This function stays pure, text or None, as
+    _sdk_inherited is."""
     be = start.be
     if not _sdk_is_real(be) or _sdk_named(be) or _sdk_reported(be):
         return None
@@ -1019,6 +1044,10 @@ def _sdk_singleton_restored(request):
     swapped = None
     if _SDK_FIRST_WINDOW and _SDK_MODULE_START is not None and not first:
         swapped = _sdk_swapped(_SDK_MODULE_START, before)
+        if swapped is not None:
+            _sdk_refuse(_SDK_MODULE_START.be)   # the object the refusal names, recorded at the moment the refusal is taken, so the
+                                                # later gone report on the same object can say it is that object (never _SDK_REPORTED,
+                                                # which would silence that report)
     _SDK_FIRST_WINDOW = False
     if inherited is not None:
         _sdk_report(before.be)             # reported now, so the tests after this one that inherit the object are quiet
