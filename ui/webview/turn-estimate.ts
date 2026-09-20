@@ -3,7 +3,8 @@
 // (chat-regions.ts gapHeight). Both read the heights the unit ResizeObserver reported (render.ts ensureView, `v.uh`), never a layout
 // property: the render task forces no layout for them.
 //
-// The per-turn figure is the MEDIAN over the turns the window holds WHOLE. A turn starts at a visible user row and ends at the next
+// The per-turn figure is the MEDIAN over the turns the window holds WHOLE (at an even count the lower middle turn, so the figure is always
+// a height some turn has: median). A turn starts at a visible user row and ends at the next
 // one; the rows before the window's first user row belong to a turn whose prompt is above the window, and the rows after its last
 // belong to the turn still streaming, so neither is a turn the window can measure and neither is counted. At least two complete
 // turns are required, else the caller keeps the figure it had (the default, until a window has two). The old figure was the window's
@@ -71,12 +72,17 @@ export function completeTurnHeights(rows: readonly EstRow[]): number[] {
   return out;   // the turn still open at the end is the streaming one: never counted
 }
 
-/** The median of a non-empty list; null for an empty one. */
+/** The median of a non-empty list, null for an empty one: the middle value, and at an even count the LOWER of the two middle values, so
+ *  the figure is a height some turn in the window has. The mean of the two middle values (the textbook median) is a per-turn figure no
+ *  turn has: with two complete turns, a short one and a long agentic one, it drew the head gap at half the long turn per turn, a shape
+ *  neither refusal (a non-positive figure, a boxless scroller) could see, and four turns reproduced it at the next even count (review
+ *  round 1). The lower middle rather than the upper because the figure's failure modes are not symmetric: over-drawing shrank the
+ *  scrollbar thumb to a few pixels and put the transcript's head out of a gesture's reach (the defect this change was filed against),
+ *  where under-drawing leaves the gap to grow as history fills, under the fill's own anchor restore. */
 export function median(xs: readonly number[]): number | null {
   if (!xs.length) return null;
   const s = xs.slice().sort((a, b) => a - b);
-  const m = s.length >> 1;
-  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+  return s[(s.length - 1) >> 1];
 }
 
 /** The minimum count of complete turns a window must hold before its median stands as the per-turn figure. */

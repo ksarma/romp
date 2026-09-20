@@ -18,7 +18,7 @@ test("a window with one leading partial turn and two complete turns measures the
   // the shape the phone had: dense rows of a turn whose prompt is above the window, then two whole turns, then the turn streaming
   const rows = [asst(500), tool(500), asst(500), user(30), asst(70), user(30), asst(90), user(30), asst(900)];
   assert.deepEqual(completeTurnHeights(rows), [100, 120], "the two turns between three visible user rows");
-  assert.equal(perTurnEstimate(rows), 110);
+  assert.equal(perTurnEstimate(rows), 100, "the lower of the two: a height a turn in the window has");
   const users = rows.filter(isUserRow).length;
   assert.equal(users, 3);
   assert.notEqual(perTurnEstimate(rows), sum(rows) / users, "the old figure: every row over the user-row count (" + sum(rows) / users + ")");
@@ -34,7 +34,7 @@ test("fewer than two complete turns yields no figure: one user row (no complete 
   assert.deepEqual(completeTurnHeights(oneTurn), [100]);
   assert.equal(perTurnEstimate(oneTurn), null, "one complete turn is not enough");
   assert.equal(perTurnEstimate([]), null);
-  assert.equal(perTurnEstimate([user(30), asst(70), user(30), asst(50), user(30)]), 90, "two complete turns (100 and 80): their mean, the median of two");
+  assert.equal(perTurnEstimate([user(30), asst(70), user(30), asst(50), user(30)]), 80, "two complete turns (100 and 80): the lower, never their mean (90 is a height no turn has)");
 });
 
 test("the figure is whole pixels: sub-pixel layout differences between two windows of the same turns are not a change", () => {
@@ -42,8 +42,8 @@ test("the figure is whole pixels: sub-pixel layout differences between two windo
   // per turn is 7 px of spacer movement to compensate for nothing
   const a = [user(30.03125), asst(70.0625), user(30), asst(90.03125), user(30), asst(900)];
   const b = [user(30), asst(70), user(30.09375), asst(90), user(30), asst(900)];
-  assert.equal(perTurnEstimate(a), 110); assert.equal(perTurnEstimate(b), 110);
-  assert.equal(median([100.09375, 120.03125]), 110.0625, "the median itself keeps the fraction; the figure rounds it");
+  assert.equal(perTurnEstimate(a), 100); assert.equal(perTurnEstimate(b), 100);
+  assert.equal(median([100.09375, 120.03125]), 100.09375, "the median itself keeps the fraction; the figure rounds it");
   assert.equal(perTurnEstimate([user(30), asst(70.6), user(30), asst(70.6), user(30)]), 101, "…to the nearest pixel");
 });
 
@@ -52,7 +52,7 @@ test("the trailing turn is the one streaming and is never counted, so a growing 
   const before = perTurnEstimate(rows);
   rows[5] = asst(5000);
   assert.equal(perTurnEstimate(rows), before, "the last turn grew by 4,900 px and the figure stood");
-  assert.equal(before, 110);
+  assert.equal(before, 100);
 });
 
 test("a hidden user row (a stripped record, the echo of a send) starts no turn: a long turn holding one stays one turn", () => {
@@ -60,7 +60,7 @@ test("a hidden user row (a stripped record, the echo of a send) starts no turn: 
   assert.ok(!isUserRow(stripped) && !isUserRow(echo) && isTurnRow(stripped), "hidden user rows are turn rows that start nothing");
   const rows = [user(30), asst(100), stripped, tool(50), echo, asst(100), user(30), asst(40), user(30), asst(900)];
   assert.deepEqual(completeTurnHeights(rows), [280, 70], "one turn of 280 px, not two turns split at the hidden rows");
-  assert.equal(perTurnEstimate(rows), 175);
+  assert.equal(perTurnEstimate(rows), 70);
 });
 
 test("a window whose rows all report 0 (the view has no box: an ancestor hid it) yields no figure, never 0", () => {
@@ -81,7 +81,7 @@ test("a window whose rows all report 0 (the view has no box: an ancestor hid it)
 test("a turn holding a row the observer has not reported is dropped, never counted short", () => {
   const rows = [user(30), asst(70), user(30), asst(undefined), user(30), asst(50), user(30), asst(900)];
   assert.deepEqual(completeTurnHeights(rows), [100, 80], "the second turn is out: its reply has no height yet");
-  assert.equal(perTurnEstimate(rows), 90);
+  assert.equal(perTurnEstimate(rows), 80);
   const noUserH = [row("turn turn-user", undefined), asst(70), user(30), asst(50), user(30), asst(40), user(30)];   // (user(undefined) would take the default height)
   assert.deepEqual(completeTurnHeights(noUserH), [80, 70], "an unreported user row voids its own turn");
 });
@@ -92,15 +92,28 @@ test("spacers, gap elements and day dividers are not turn content: they neither 
   assert.ok(!isTurnRow(spacer) && !isTurnRow(gapEl) && !isTurnRow(divider));
   const rows = [spacer, gapEl, user(30), divider, asst(70), user(30), asst(90), divider, user(30), asst(900)];
   assert.deepEqual(completeTurnHeights(rows), [100, 120]);
-  assert.equal(perTurnEstimate(rows), 110);
+  assert.equal(perTurnEstimate(rows), 100);
 });
 
-test("the median: the middle value, or the mean of the two middle values", () => {
+test("the median: the middle value, or at an even count the LOWER of the two middle values, so the figure is always a height some turn has", () => {
   assert.equal(median([]), null);
   assert.equal(median([7]), 7);
   assert.equal(median([100, 5000, 120]), 120, "one tall turn does not pull the figure the way a mean would");
-  assert.equal(median([120, 100, 200, 110]), 115);
+  assert.equal(median([120, 100, 200, 110]), 110, "four values: the lower middle (their mean of two, 115, is a height none of them has)");
   assert.equal(median([3, 1, 2, 1000, 4]), 3);
+  // the shape review round 1 found: three visible user rows around one long agentic turn give two complete turns, a short one and a long
+  // one, and the mean of the two (6,905 px) drew a 200-turn head gap at the cap (480,000 px) as a figure no turn in the window had; the
+  // lower middle is the short turn, and at four turns the same holds (the averaging closed at two would have returned at four)
+  const two = [user(30), asst(70), user(30), asst(13680), user(30)];
+  assert.deepEqual(completeTurnHeights(two), [100, 13710]);
+  assert.equal(perTurnEstimate(two), 100, "a height a turn in the window has, never 6,905");
+  assert.ok(completeTurnHeights(two).includes(perTurnEstimate(two)!), "the figure is one of the turns");
+  const four = [user(30), asst(70), user(30), asst(70), user(30), asst(1000), user(30), asst(3000), user(30)];
+  assert.deepEqual(completeTurnHeights(four), [100, 100, 1030, 3030]);
+  assert.equal(median([100, 100, 1030, 3030]), 100, "the lower middle at four");
+  assert.equal(perTurnEstimate(four), 100);
+  assert.ok(completeTurnHeights(four).includes(perTurnEstimate(four)!), "…and one of the turns");
+  assert.equal(MIN_COMPLETE_TURNS, 2, "two complete turns still suffice: the figure is an observed height at every count");
 });
 
 test("the rows' mean is over every non-spacer, non-gap child, a hidden row at 0 and a divider with its height, skipping unreported rows", () => {

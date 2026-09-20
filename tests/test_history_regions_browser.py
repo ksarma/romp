@@ -74,8 +74,9 @@ const fills = await writes("gap-fill");
 // user row plus its reply, so a per-display-unit average drew gaps about half true). Measure the gap element's px/turn and the rendered
 // run's px/turn and compare. The run's figure is the estimator's own rule since PR E (ui/webview/turn-estimate.ts): the MEDIAN over the
 // turns the window holds WHOLE, a visible user row to the next, each row its border box (offsetHeight); the rows before the first user
-// row and after the last are turns the window does not hold whole and are not counted. (The old rule, every row's height over the count
-// of user rows, read the whole window as one turn when the window held one user row: the phone's 1.43M px gap.)
+// row and after the last are turns the window does not hold whole and are not counted; at an even count the median is the lower middle
+// turn. (The old rule, every row's height over the count of user rows, read the whole window as one turn when the window held one user
+// row: the phone's 1.43M px gap.)
 const gapPerTurn = await page.evaluate(() => { const g = document.querySelector("#content .tx-gap"); if (!g) return null; const lo = Number(g.dataset.lo), hi = Number(g.dataset.hi); return hi > lo ? g.offsetHeight / (hi - lo) : null; });
 const runPerTurn = await page.evaluate(() => {
   const c = document.getElementById("content");
@@ -84,8 +85,8 @@ const runPerTurn = await page.evaluate(() => {
   const turns = []; let open = false, acc = 0;
   for (const t of rows) { if (isUser(t)) { if (open) turns.push(acc); open = true; acc = t.offsetHeight; continue; } if (open) acc += t.offsetHeight; }
   if (turns.length < 2) return null;
-  turns.sort((a, b) => a - b); const m = turns.length >> 1;
-  return turns.length % 2 ? turns[m] : (turns[m - 1] + turns[m]) / 2;
+  turns.sort((a, b) => a - b);
+  return turns[(turns.length - 1) >> 1];   // the estimator's median: at an even count the lower middle turn (turn-estimate.ts median)
 });
 // ROAD 3: a live tail while the reader is up in history: it lands at the tail, nothing pauses
 const k = cfg.turns;

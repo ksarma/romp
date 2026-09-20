@@ -157,11 +157,11 @@ test("a window with two complete turns measures their median; the gap units and 
   g.style.height = gapHeight({ lo: 300, hi: 310 }, v.pxPerTurn) + "px";   // as gapElement draws it at build
   assert.equal(v.gapUnits.get(0), 200 * DEFAULT_TURN_PX); assert.equal(g.style.height, 10 * DEFAULT_TURN_PX + "px");
   observe(w, v, rows); paintTwo(w, v);
-  assert.equal(v.pxPerTurn, 110, "the median of 100 and 120");
-  assert.equal(v.gapUnits.get(0), 200 * 110, "the head gap at the measured figure");
-  assert.equal(v.gapUnits.get(items.length - 1), 10 * 110, "the mid-transcript gap too");
-  assert.equal(g.style.height, 10 * 110 + "px", "the rendered gap element follows without a rebuild");
-  assert.equal(topPx(v), Math.round(200 * 110 + 100 * v.avgTurnH), "the spacer: the gap plus the hidden run units at the average");
+  assert.equal(v.pxPerTurn, 100, "the median of 100 and 120: the lower of the two (a height a turn has)");
+  assert.equal(v.gapUnits.get(0), 200 * 100, "the head gap at the measured figure");
+  assert.equal(v.gapUnits.get(items.length - 1), 10 * 100, "the mid-transcript gap too");
+  assert.equal(g.style.height, 10 * 100 + "px", "the rendered gap element follows without a rebuild");
+  assert.equal(topPx(v), Math.round(200 * 100 + 100 * v.avgTurnH), "the spacer: the gap plus the hidden run units at the average");
 });
 
 test("a later build re-measures (not once): the figure follows the window's complete turns; a window with fewer than two keeps the last figure", () => {
@@ -169,7 +169,7 @@ test("a later build re-measures (not once): the figure follows the window's comp
   const two = (a: number, b: number): Array<[string, number]> => [["turn turn-user", 30], ["turn turn-assistant", a - 30], ["turn turn-user", 30], ["turn turn-assistant", b - 30], ["turn turn-user", 30], ["turn turn-assistant", 500]];
   const first = viewOver(w, 200, 1 + 100 + 6, 101, (u) => two(100, 120)[u - 101]);
   buildOne(w, first.v, first.items); observe(w, first.v, first.rows); paintTwo(w, first.v);
-  assert.equal(first.v.pxPerTurn, 110);
+  assert.equal(first.v.pxPerTurn, 100);
   const avgFirst = first.v.avgTurnH;
   assert.ok(avgFirst! > 0, "the average was taken on the first build");
   // the same view, re-windowed over taller turns (a browse, a fill): build, observe, paint
@@ -178,15 +178,15 @@ test("a later build re-measures (not once): the figure follows the window's comp
   const rows2: FakeEl[] = [];
   two(200, 220).forEach(([cls, h], i) => { const n = new FakeEl("div", cls, h, w.reads); n.dataset.unit = String(101 + i); v.el.appendChild(n); rows2.push(n); });
   buildOne(w, v, first.items); observe(w, v, rows2); paintTwo(w, v);
-  assert.equal(v.pxPerTurn, 210, "re-measured on the later build");
-  assert.equal(v.gapUnits.get(0), 200 * 210);
+  assert.equal(v.pxPerTurn, 200, "re-measured on the later build");
+  assert.equal(v.gapUnits.get(0), 200 * 200);
   assert.equal(v.avgTurnH, avgFirst, "the average is taken once per view: the taller rows did not move it");
   // …and a window with one complete turn leaves the figure where it was
   while (v.el.children.length > 1) v.el.removeChild(v.el.lastChild!);
   const rows3: FakeEl[] = [];
   ([["turn turn-user", 30], ["turn turn-assistant", 70], ["turn turn-user", 30], ["turn turn-assistant", 900]] as Array<[string, number]>).forEach(([cls, h], i) => { const n = new FakeEl("div", cls, h, w.reads); n.dataset.unit = String(101 + i); v.el.appendChild(n); rows3.push(n); });
   buildOne(w, v, first.items); observe(w, v, rows3); paintTwo(w, v);
-  assert.equal(v.pxPerTurn, 210, "one complete turn: the figure stands");
+  assert.equal(v.pxPerTurn, 200, "one complete turn: the figure stands");
   assert.equal(v.measured, undefined, "nothing waits");
 });
 
@@ -270,7 +270,7 @@ test("a follow-mode reader at the bottom is given the figures on the next paint:
   // the paint (appendActive's sync, the one that passes atBottom) takes them; its own follow writes the bottom (append-stick, scroll-keep.ts followTail)
   paintTwo(w, world.v);
   assert.equal(world.v.measured, undefined, "taken by the paint");
-  assert.equal(world.v.pxPerTurn, 110); assert.equal(world.v.gapUnits.get(0), 200 * 110, "the gap units follow");
+  assert.equal(world.v.pxPerTurn, 100); assert.equal(world.v.gapUnits.get(0), 200 * 100, "the gap units follow");
   assert.notEqual(topPx(world.v), topBefore, "the spacer moved in the paint");
   w.takeMeasureAtBottom(world.v);
   assert.equal(w.paints, 1, "nothing parked: no paint asked for");
@@ -314,15 +314,15 @@ test("an observer delivery with the view at width 0 (an ancestor hid it) forgets
   // the first delivery at a real width: baselines, the measure, the paint asked for
   deliver(rows, (r) => r.realH);
   assert.equal(heights.get(rows[1]), 70, "the border boxes are the baselines");
-  assert.deepEqual(v.measured, { avg: (30 + 70 + 30 + 90 + 30 + 500) / 6, per: 110 }, "the window measured");
+  assert.deepEqual(v.measured, { avg: (30 + 70 + 30 + 90 + 30 + 500) / 6, per: 100 }, "the window measured");
   assert.equal(w.paints, 1, "a bottom reader's paint asked for");
   paintTwo(w, v);
-  assert.equal(v.pxPerTurn, 110); const gapAfter = v.gapUnits.get(0), topAfter = topPx(v);
+  assert.equal(v.pxPerTurn, 100); const gapAfter = v.gapUnits.get(0), topAfter = topPx(v);
   // the ancestor hides the pane: every unit arrives at 0 with the view at width 0, its own display still ""
   (v.el as any).clientWidth = 0; v.measureDue = true;
   deliver(rows, () => 0);
   assert.equal(heights.get(rows[1]), undefined, "the baselines are forgotten, as on the view's own hide");
-  assert.equal(v.measured, undefined, "nothing parked"); assert.equal(v.pxPerTurn, 110, "the figure stands"); assert.equal(v.gapUnits.get(0), gapAfter); assert.equal(topPx(v), topAfter);
+  assert.equal(v.measured, undefined, "nothing parked"); assert.equal(v.pxPerTurn, 100, "the figure stands"); assert.equal(v.gapUnits.get(0), gapAfter); assert.equal(topPx(v), topAfter);
   assert.equal(w.paints, 1, "no paint asked for");
   assert.equal(v.measureDue, true, "the measure still owed: the re-show pays it");
   // the re-show at the same width: real sizes again, baselines recorded, the owed measure runs off them (nothing changed: no new figure parked)
