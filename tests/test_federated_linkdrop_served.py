@@ -558,9 +558,15 @@ try {
   mark("ready");
   out.provBefore = await provText();
   const chA = await phase("A");
-  // (2) the link drops: the splice's listener and every spliced pair close
-  const held = {};
-  for (const app of APPS) { const s = await snap(pages[app]); held[app] = s.socks.filter((k) => k.relay && k.openAt && !k.closeAt).map((k) => k.i); }
+  // (2) the link drops: the splice's listener and every spliced pair close. First the precondition the drop leg reads, made a
+  // designed guarantee (round 3): every page holds exactly ONE open relay socket. The old bundle's churn closes a page's socket
+  // for its 2 s retry every few seconds, and before this wait the drop landed 0.58 to 0.80 s after the pages' redials reopened
+  // in ten of the sixteen recorded old-hub drives (`python3 held_census.py <report.json>...` outside the repo): the feed page's
+  // redial-to-visible latency plus the settle against the retry, a coincidence and not a guarantee. `held` is the snapshot that
+  // satisfied the wait (or the last poll's, when it expired and the wait is recorded), so the drop leg reads what the wait saw.
+  const heldNow = async () => { const h = {}; for (const app of APPS) { const s = await snap(pages[app]); h[app] = s.socks.filter((k) => k.relay && k.openAt && !k.closeAt).map((k) => k.i); } return h; };
+  let held = await heldNow();
+  await waitFor(async () => { held = await heldNow(); return APPS.every((app) => held[app].length === 1); }, cfg.waitsMs.held, "every page holds one open relay socket before the drop");
   mark("drop");
   await ctl("drop");
   out.phases.drop = { held };
@@ -641,7 +647,7 @@ class _LinkDrop(unittest.TestCase):
     # its steady 15 s pass outside it); redialed, rowUp -> redialed, 0.8 to 4.6 s; localUp,
     # restarted -> localUp, 0.014 to 0.30 s (the restart itself, SIGTERM and the 3 s held down, is the control door's and
     # not this wait's); redialed2, localUp -> redialed2, 0.014 to 0.81 s.
-    waits_ms = {"closed": 20000, "rowDown": 40000, "rowUp": 40000, "redialed": 30000, "localUp": 30000, "redialed2": 30000}
+    waits_ms = {"held": 20000, "closed": 20000, "rowDown": 40000, "rowUp": 40000, "redialed": 30000, "localUp": 30000, "redialed2": 30000}
     page_wait_ms = 30000      # the start, per page: its load, its first relay socket, that socket's whole frame
     driver_budget_ms = 225000  # every wait the driver places draws on this one budget: about twice a healthy drive's total waiting and
     #                            more (the budget less budget.leftMs in the drive of 2026-09-20 at this dwell: 80 s on the new bundle,
@@ -1179,7 +1185,8 @@ class _LinkDrop(unittest.TestCase):
         drop = self._phase("drop")
         for app in self.apps:
             held = drop["held"].get(app) or []
-            self.assertEqual(len(held), 1, "the %s page held ONE open relay socket at the drop: %r" % (app, held))
+            self.assertEqual(len(held), 1, "the %s page held ONE open relay socket at the drop (the driver waits for that before it drops, waitsMs.held, so this "
+                                           "reads a designed precondition and not the drop's timing against the old bundle's churn): %r" % (app, held))
             s = self._page(app)["socks"][held[0]]
             self.assertIsNotNone(s["closeAt"], "the %s page's relay socket closed after the drop (the hub's splice lost its upstream): %r" % (app, {k: s[k] for k in ("url", "openAt", "closeAt", "code")}))
             self.assertGreaterEqual(s["closeAt"], m["drop"], "…after the drop, not before")
