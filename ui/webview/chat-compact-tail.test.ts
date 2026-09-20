@@ -123,20 +123,27 @@ class FakeEl {
   removeChild(c: FakeEl): void { this.children = this.children.filter((x) => x !== c); c.parent = null; }
   querySelector(sel: string): FakeEl | null {
     const m = /^(?::scope > )?\.([\w-]+)$/.exec(sel);
-    if (!m) throw new Error("unsupported selector " + sel);
-    return this.children.find((c) => c.classList.contains(m[1])) ?? null;
+    if (m) return this.children.find((c) => c.classList.contains(m[1])) ?? null;
+    const u = /^:scope > \[data-unit="(\d+)"\] > \.([\w-]+)$/.exec(sel);   // the re-seed's: the unit's first marker-bearing node
+    if (!u) throw new Error("unsupported selector " + sel);
+    for (const c of this.children) { if (c.dataset.unit !== u[1]) continue; const hit = c.children.find((x) => x.classList.contains(u[2])); if (hit) return hit; }
+    return null;
   }
 }
-type Lifted = { unitOfNode: (n: FakeEl) => number; trimUnitsFrom: (host: FakeEl, u0: number) => number; evictCompactTop: (v: any, newWinStart: number) => void };
-function liftTrim(hooks: { sized: number[] }): Lifted {
+type Lifted = { unitOfNode: (n: FakeEl) => number; trimUnitsFrom: (host: FakeEl, u0: number) => number; evictCompactTop: (v: any, newWinStart: number) => boolean; reseedWindowHead: (v: any, s: any, items: any[]) => void };
+/** The trim, the eviction and its re-seed lifted; `seed` is what the stubbed railSeed answers, `painted` records paintMarker's calls. */
+function liftTrim(hooks: { sized: number[]; seed?: number | null; painted?: Array<[number, number | null]> }): Lifted {
   const js = liftBetween("function unitOfNode(", "/** The estimated height of the units [from, to)");
   const prelude = `
     const H = HOOKS;
     const HTMLElement = H.FakeEl;
     const el = (tag, cls) => new H.FakeEl(tag, cls || "");
     const sizeSpacers = (v) => { H.sized.push(v.winStart); };
+    const railSeed = (s, items, ws) => { H.seeds.push(ws); return H.seed === undefined ? null : H.seed; };
+    const paintMarker = (m, epoch, prev, now) => { (H.painted || []).push([epoch, prev]); };
+    const Date = { now: () => 0 };
   `;
-  return new Function("HOOKS", prelude + js + "\nreturn { unitOfNode, trimUnitsFrom, evictCompactTop };")({ ...hooks, FakeEl }) as Lifted;
+  return new Function("HOOKS", prelude + js + "\nreturn { unitOfNode, trimUnitsFrom, evictCompactTop, reseedWindowHead };")({ ...hooks, FakeEl, seeds: [] }) as Lifted;
 }
 /** A view host holding units [winStart, winEnd) with a top spacer when winStart > 0; a unit owns one node, or two when `dividerAt` names it. */
 function window(winStart: number, winEnd: number, dividerAt: number[] = []): FakeEl {
@@ -189,14 +196,14 @@ test("the eviction keeps the window's span after an append at the bottom: the le
   const { evictCompactTop } = liftTrim({ sized });
   const host = window(100, 181);   // 81 units after one appended at the tail of an 80-unit window
   const v: any = { el: host, winStart: 100, winEnd: 181, spacerCount: 100 };
-  evictCompactTop(v, 101);
+  assert.equal(evictCompactTop(v, 101), true, "it evicted (the caller re-seeds the promoted head)");
   assert.deepEqual(unitsIn(host)[0], 101, "unit 100 left");
   assert.equal(host.children.length, 1 + 80, "the spacer and 80 units");
   assert.equal(v.winStart, 101); assert.equal(v.spacerCount, 101);
   assert.deepEqual(sized, [101], "the spacers were re-sized once, after the bookkeeping");
-  evictCompactTop(v, 101);
+  assert.equal(evictCompactTop(v, 101), false, "nothing to evict");
   assert.deepEqual(sized, [101], "nothing to evict: no re-size");
-  evictCompactTop(v, 90);
+  assert.equal(evictCompactTop(v, 90), false);
   assert.equal(v.winStart, 101, "a smaller start is not an eviction");
   // a window that had no spacer (winStart 0) gets one when its first units leave
   const whole = window(0, 81);
@@ -204,6 +211,31 @@ test("the eviction keeps the window's span after an append at the bottom: the le
   evictCompactTop(v2, 1);
   assert.ok(whole.children[0].classList.contains("tx-spacer-top"), "a top spacer was put in front");
   assert.deepEqual(unitsIn(whole)[0], 1);
+});
+
+test("the eviction's re-seed: the promoted head unit's first marker is repainted against the build's seed (railSeed at the new start), data-prev with it; nothing when it already carries it, or when the unit has no marker", () => {
+  // the promoted unit was drawn mid-window with the chain's reference (8000); a build of the window seeds it with railSeed (4242)
+  const painted: Array<[number, number | null]> = [];
+  const { evictCompactTop, reseedWindowHead } = liftTrim({ sized: [], seed: 4242, painted });
+  const host = window(100, 181, [101]);   // unit 101 opens a day: its divider precedes its row (the divider carries no marker)
+  const row = host.children.find((c) => c.dataset.unit === "101" && !c.classList.contains("day-divider"))!;
+  const m = new FakeEl("div", "time-marker"); m.dataset.epoch = "9000"; m.dataset.prev = "8000"; row.appendChild(m);
+  const v: any = { el: host, winStart: 100, winEnd: 181, spacerCount: 100 };
+  assert.ok(evictCompactTop(v, 101));
+  reseedWindowHead(v, {}, []);
+  assert.equal(m.dataset.prev, "4242", "the reference is the seed's");
+  assert.deepEqual(painted, [[9000, 4242]], "the marker repainted against it (its epoch, the seed)");
+  reseedWindowHead(v, {}, []);
+  assert.deepEqual(painted, [[9000, 4242]], "already the seed's: nothing painted");
+  // a seed of null (the transcript's start): the reference is empty, as timeMarker stamps it
+  const { reseedWindowHead: reseedNull } = liftTrim({ sized: [], seed: null, painted });
+  reseedNull(v, {}, []);
+  assert.equal(m.dataset.prev, ""); assert.deepEqual(painted.slice(-1), [[9000, null]]);
+  // a head unit with no marker (a gap element, a row with no epoch): nothing to re-seed, nothing painted
+  const bare = window(100, 181); const v2: any = { el: bare, winStart: 100, winEnd: 181, spacerCount: 100 };
+  const before = painted.length;
+  evictCompactTop(v2, 101); reseedWindowHead(v2, {}, []);
+  assert.equal(painted.length, before);
 });
 
 // ── the replica: N streamed frames over an 80-unit window ────────────────────────────────────────
@@ -264,7 +296,7 @@ test("syncViewInner asks the plan in compact mode between the fast path and the 
   assert.match(app, /patchWorkedFooters\(v, s, Math\.min\(v\.rendered, u0 < total \? itemFirstEvent\(items\[u0\]\) : len\), working, items\);/, "the footer patch by unit, from the first changed event or the first re-rendered one, whichever is earlier");
   assert.ok(app.indexOf("patchWorkedFooters(v, s, Math.min(v.rendered,") < app.indexOf("v.rendered = len;"), "…read before the bookkeeping moves v.rendered to len");
   assert.match(app, /v\.winEnd = total; v\.spacerCount = v\.winStart \?\? 0; v\.spacerCountBot = 0; v\.unitTotal = total; v\.rendered = len; v\.units = items; v\.measureDue = true;/, "the bookkeeping records the units and asks for a measure");
-  assert.match(app, /if \(!\(wasAtTail && atBottom === false\)\) evictCompactTop\(v, Math\.max\(0, total - span\)\);\s*\n\s*return v;/, "the top is evicted to the span unless the reader is scrolled up (keepTop)");
+  assert.match(app, /if \(!\(wasAtTail && atBottom === false\) && evictCompactTop\(v, Math\.max\(0, total - span\)\)\) reseedWindowHead\(v, s, items\);\s*\n\s*return v;/, "the top is evicted to the span unless the reader is scrolled up (keepTop), and an eviction re-seeds the promoted head unit (compact-tail-differential.test.ts executes the equivalence)");
   assert.match(RENDER, /v\.units = items;\s*\/\/[^\n]*\n\s*v\.measureDue = true;/, "renderWindowItems records the units its DOM holds");
   assert.match(RENDER, /import \{ compactTailPlan \} from "\.\/chat-compact-tail";/);
 });

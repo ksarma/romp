@@ -59,7 +59,8 @@ function liftSeam(sessions: Map<string, any>, views: Map<string, any>, itemsOf: 
     const dayWalkBefore = () => new H.DayWalk();
     const turnOfEvents = () => null;
     const appendItem = (v, s, items, u, prevEpoch) => { H.calls.push(["appendItem", u, prevEpoch]); return prevEpoch; };
-    const evictCompactTop = (v, ws) => { H.calls.push(["evict", ws]); };
+    const evictCompactTop = (v, ws) => { H.calls.push(["evict", ws]); if (ws <= (v.winStart ?? 0)) return false; v.winStart = ws; return true; };   // the real one's answer: whether it evicted
+    const reseedWindowHead = (v, s, items) => { H.calls.push(["reseed", v.winStart, items.length]); };
     const itemFirstEvent = (it) => (it.kind === "toolgroup" || it.kind === "noticegroup" ? it.indices[0] : it.kind === "gap" ? it.before : it.index);
     // normal mode's names: never reached in a compact world
     const dayWalkBeforeEvent = () => new H.DayWalk(); const prevTimedEpoch = () => null; const eventEpoch = () => null; const dayDividerFor = () => null;
@@ -114,4 +115,18 @@ test("the footer patch's from: the first CHANGED event when no unit reaches it (
   const w3 = world(["user", "tool", "tool"], [ev(0), ev(1)], [ev(0), tg(1, 2)], 2, 0);
   w3.sync("A", true);
   assert.deepEqual(w3.calls.filter((c) => c[0] === "patchWorkedFooters"), [["patchWorkedFooters", 1, true, 2]]);
+});
+
+test("an append at the bottom that evicts the top re-seeds the promoted head unit: the eviction reports it and the seam hands the re-seed the session and the units; an append that evicts nothing re-seeds nothing", () => {
+  // 81 units built over the whole list (the span is max(WINDOW_TAIL, 81)); a prompt lands: 82 units, the top evicted to unit 1
+  const kinds = Array.from({ length: 82 }, () => "user");
+  const prev = Array.from({ length: 81 }, (_, i) => ev(i)), now = prev.concat([ev(81)]);
+  const w = world(kinds, prev, now, 81, 0);
+  w.sync("A", true);
+  assert.deepEqual(w.calls.filter((c) => c[0] === "evict" || c[0] === "reseed"), [["evict", 1], ["reseed", 1, 82]], "the eviction, then the re-seed at the new start over the units now");
+  assert.ok(w.calls.findIndex((c) => c[0] === "reseed") > w.calls.findIndex((c) => c[0] === "appendItem"), "…after the append, so the window it re-seeds is the one a build would render");
+  // a shorter window: the appended unit fits the span, nothing is evicted, nothing re-seeded
+  const w2 = world(["user", "assistant", "user"], [ev(0), ev(1)], [ev(0), ev(1), ev(2)], 2, 0);
+  w2.sync("A", true);
+  assert.deepEqual(w2.calls.filter((c) => c[0] === "evict" || c[0] === "reseed"), [["evict", 0]], "the eviction asked and declined: no re-seed");
 });

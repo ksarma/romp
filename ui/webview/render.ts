@@ -13601,7 +13601,8 @@ function syncViewInner(id: string, atBottom?: boolean): View {
       // a hidden thinking block), else the first re-rendered unit's first event, whichever is earlier (review round 0, low)
       patchWorkedFooters(v, s, Math.min(v.rendered, u0 < total ? itemFirstEvent(items[u0]) : len), working, items);
       v.winEnd = total; v.spacerCount = v.winStart ?? 0; v.spacerCountBot = 0; v.unitTotal = total; v.rendered = len; v.units = items; v.measureDue = true;
-      if (!(wasAtTail && atBottom === false)) evictCompactTop(v, Math.max(0, total - span));
+      // …and the unit the eviction promotes to the window's first is re-seeded as a build would seed it (reseedWindowHead)
+      if (!(wasAtTail && atBottom === false) && evictCompactTop(v, Math.max(0, total - span))) reseedWindowHead(v, s, items);
       return v;
     }
   }
@@ -13997,15 +13998,35 @@ function trimUnitsFrom(host: HTMLElement, u0: number): number {
  *  the span leave the DOM and the top spacer stands for them, as the rebuild's re-slice did, so a watched session's DOM does not grow
  *  without bound (normal mode grows until a switch re-collapses it). Only at the bottom: appendActive writes the bottom after the sync,
  *  so a change above the reader is never seen; a scrolled-up reader's window is left whole (syncViewInner's keepTop). */
-function evictCompactTop(v: View, newWinStart: number): void {
+function evictCompactTop(v: View, newWinStart: number): boolean {
   const winStart = v.winStart ?? 0;
-  if (newWinStart <= winStart) return;
+  if (newWinStart <= winStart) return false;
   let top = v.el.querySelector(":scope > .tx-spacer-top") as HTMLElement | null;
   if (!top) { top = el("div", "tx-spacer tx-spacer-top"); v.el.insertBefore(top, v.el.firstChild); }
   let n: ChildNode | null = top.nextSibling;
   while (n) { const next = n.nextSibling; const u = unitOfNode(n); if (u < 0 || u >= newWinStart) break; v.el.removeChild(n); n = next; }
   v.winStart = newWinStart; v.spacerCount = newWinStart;
   sizeSpacers(v);
+  return true;   // the caller re-seeds the unit this promoted to the window's first (reseedWindowHead)
+}
+/** The unit an eviction promotes to the window's first was drawn mid-window, chained from the unit before it (appendItem's adv), where a
+ *  build of the same window seeds it with railSeed, and the two references part (a collapsed run leaves the chain on its FIRST member
+ *  where the seed's back-scan finds its LAST; a hidden thinking row is seen by the scan alone), so the row's stamp depended on which path
+ *  last painted it: present incrementally, blank after any later rebuild, with no new information (review round 1: the fifth full-rebuild
+ *  case, which compactTailPlan cannot list because the plan is computed before the eviction). The rule is CONSISTENCY WITH THE REBUILD,
+ *  in either direction (a notice run's anchor can make the chain suppress a stamp the seed shows): the head unit's first marker is
+ *  repainted against the seed, data-prev with it (the minute tick's reference, refreshRelativeMarkers). The marker is the one node the
+ *  seed reaches: the rows of an expanded run chain from the run's own members, the same on both paths, and appendItem appends at the end
+ *  only, so a re-render of the unit in place is not available. A unit with no marker (a gap) has nothing to re-seed. */
+function reseedWindowHead(v: View, s: Session, items: DisplayItem[]): void {
+  const ws = v.winStart ?? 0;
+  const m = v.el.querySelector(`:scope > [data-unit="${ws}"] > .time-marker`) as HTMLElement | null;   // the unit's first marker-bearing node (a divider carries none)
+  if (!m) return;
+  const seed = railSeed(s, items, ws);
+  const prev = seed == null ? "" : String(seed);
+  if (m.dataset.prev === prev) return;
+  m.dataset.prev = prev;
+  paintMarker(m, Number(m.dataset.epoch), seed, Date.now());
 }
 /** The estimated height of the units [from, to): a gap its own, every other unit the measured average. */
 function hiddenHeight(v: View, from: number, to: number, avg: number): number {
