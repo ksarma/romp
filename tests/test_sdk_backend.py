@@ -3960,6 +3960,15 @@ class FastModeReportedState(unittest.TestCase):
 
     def tearDown(self):
         import asyncio
+        # The refresh the init branch parked on the loop never ran; cancel it and run the loop once so the task
+        # closes its coroutine, instead of leaving it to the collector, which warned "coroutine ... was never
+        # awaited" once per test (seven per run in every CI cell's warnings summary since the cells install the
+        # SDK, 2026-09-20). Cancelling before the first step never runs the coroutine's body.
+        pending = asyncio.all_tasks(self._loop)
+        for task in pending:
+            task.cancel()
+        if pending:
+            self._loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
         asyncio.set_event_loop(None)
         self._loop.close()
 
