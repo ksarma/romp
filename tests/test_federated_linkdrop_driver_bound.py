@@ -250,8 +250,9 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
     def test_a_hub_a_knob_asked_for_errs_when_its_bundle_cannot_be_made_ready_and_this_checkouts_stays_a_skip(self):
         """Round 1's tests-3, through _boot with a stub build: the mint knob with a build that skips (lab_dist's esbuild
         failure) is a RuntimeError carrying the knob and the build's words; a knob-named root with no prebuilt dist is the
-        same, under the old-hub class's own knob and under the base-hub lever; and with no knob this checkout's own bundle
-        failing to build stays a SkipTest, as in every other served lab."""
+        same, under the old-hub class's own knob and under the base-hub lever; a knob-named root with no kernel file at all (a
+        mistyped root) is the same through the kernel check one statement earlier (round 3: it skipped, whatever the knob
+        said); and with no knob this checkout's own bundle failing to build stays a SkipTest, as in every other served lab."""
         words = "esbuild failed here: the stub build"
 
         class StubBuild:
@@ -288,6 +289,16 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
             self.assertEqual(Boot.hub_knob, knob, "the knob that named the hub is recorded")
             self.assertIn(knob, str(e), "the error names the knob that asked: %s" % e)
             self.assertIn("no prebuilt dist under %s" % root, str(e), "…and says what was missing: %s" % e)
+        # a knob-named root with NO kernel file (a mistyped root), under both knobs: the kernel check follows the same rule
+        for base, knob, env in ((L.LinkDropOldLocal, "ROMP_CORNER_OLD_HUB_ROOT", {"ROMP_LINKDROP_LAB": "1"}), (L.LinkDropBothNew, "ROMP_LINKDROP_HUB_ROOT", {})):
+            root = tempfile.mkdtemp(prefix="linkdrop-hubroot-empty-")
+            self.addCleanup(shutil.rmtree, root, True)
+            with _without_knobs(), mock.patch.dict(os.environ, dict(env, **{knob: root})):
+                Boot = self._boot_stub(base)
+                e = self._boot_expecting_error(Boot)
+            self.assertIn(knob, str(e), "the error names the knob that asked: %s" % e)
+            self.assertIn("no %s" % L.KERNEL_BIN, str(e), "…and the kernel file the root lacks: %s" % e)
+            self.assertIn(root, str(e), "…and the root: %s" % e)
         # no knob: this checkout's own bundle, whose failed build stays a skip
         def skip_dist(dest):
             raise unittest.SkipTest(words)

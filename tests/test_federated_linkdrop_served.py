@@ -705,6 +705,9 @@ class _LinkDrop(unittest.TestCase):
             cls.hub_root = cls._mint_old_hub()
         for root in (cls.hub_root, cls.remote_root):
             if root and not os.path.isfile(os.path.join(root, KERNEL_BIN)):
+                if root == cls.hub_root and cls._asked():   # _ready_dist's rule, one statement earlier: a hub the runner asked for is an error, not a skip
+                    raise RuntimeError("%s asked for the hub at %s and it has no %s (a root the runner named and mistyped must not skip the class)"
+                                       % (cls._asked(), root, KERNEL_BIN))
                 raise unittest.SkipTest("no %s under %s" % (KERNEL_BIN, root))
         cls._ready_dist()
         for name in ("testhost", "hub"):
@@ -738,6 +741,14 @@ class _LinkDrop(unittest.TestCase):
         cls._report()
 
     @classmethod
+    def _asked(cls):
+        """The knob that asked for the hub, when one did (ROMP_LINKDROP_OLD_HUB_BUILD=1 minting it, or the knob hub_knob records
+        as naming hub_root), else None. A hub the runner asked for that cannot boot is an error carrying the cause, never a
+        skip: _boot's kernel check and _ready_dist share this one rule (round 1's tests-3; round 3 found the kernel check
+        outside it, so a mistyped root skipped the class green)."""
+        return "ROMP_LINKDROP_OLD_HUB_BUILD=1" if cls.old_hub_build else cls.hub_knob
+
+    @classmethod
     def _ready_dist(cls):
         """The hub's bundle, serve-ready under the lab: the minted checkout's, built by the harness bound to THAT checkout
         (its own dist, lock and marker, its own config's inputs) and copied, as copy_dist does for this checkout's; a
@@ -749,8 +760,9 @@ class _LinkDrop(unittest.TestCase):
         a build that fails otherwise skip the class and the run reports green (round 1's tests-3, ruled twice), while the
         mint's own failure raises by design; the WHOLE statement is wrapped, the constructor included, since DistBuild's
         default inputs can skip through esbuild_exports before copy_to runs. tests/test_federated_linkdrop_driver_bound.py
-        pins both arms against a stub build."""
-        asked = "ROMP_LINKDROP_OLD_HUB_BUILD=1" if cls.old_hub_build else cls.hub_knob
+        pins both arms against a stub build, and the kernel check in _boot (a knob-named root with no
+        bin/romp-kernel) under the same rule."""
+        asked = cls._asked()
         try:
             if cls.old_hub_wt:
                 lab_dist.DistBuild(ext=os.path.join(cls.old_hub_wt, "vscode-extension"), root=cls.old_hub_wt).copy_to(os.path.join(cls.lab, "dist"))
