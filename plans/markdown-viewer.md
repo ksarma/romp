@@ -8761,7 +8761,7 @@ URL with a page fragment, no network; two chunk script tags derived from the pag
 bundle's origin; the download route, a same-origin click the code makes; the GitHub link, a remote host the kernel names,
 reached on the person's click alone; the URL viewer's own document URL, same-origin by the caller's test, reached on a
 click), and no string road: the count that run printed as its refusals, recorded here as that run's fact and held as a
-literal. The tables have outgrown it since the closing pass widened both rules: they list 27 argument sites over 31
+literal. The tables have outgrown it since the closing pass widened both rules: they list 26 argument sites over 29
 hand-offs and 17 URL writes today, three numbers the record test counts from the census file and holds this sentence to,
 and the census case prints in its `second read:` diagnostic; each is listed with the reason. The derived set is printed with its lines as a
 diagnostic, held equal to the three lists, and `bodyReady` is executed over each root as its list says, over an unlisted
