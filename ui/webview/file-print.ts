@@ -514,7 +514,8 @@ const contentsRenders = (el: FigureNode): boolean => el.localName === "g" || (el
  *  round-5 review's correctness-2, 2026-09-20)
  *  and, where the browser computes it, opacity zero (the computed value: `-0`, `+0`, `0e0`, `0%`, `.0`,
  *  ` 0 `, `calc(0)`, a negative value and one the engine rounds to nothing, `1e-100`, each compute to 0, while `0.0.0` and
- *  `0.`, which the browser refuses and paints at 1, and `1e-9`, which it keeps, do not); and, for the painting element
+ *  `0.`, which the browser refuses and paints at 1, do not, and `1e-9` is the engine's own: Chromium and Firefox keep it,
+ *  WebKit computes it to 0, so it is off the paper there alone, file-print-figure-browser.test.ts per engine); and, for the painting element
  *  alone, the visibility the browser computes, hidden or collapse: visibility inherits unless the element sets its own, so
  *  it is read where the paint is, and a visible child inside a hidden group paints (measured in the three engines), where an
  *  ancestor's opacity zero takes its children with it. Without a browser (a stand-in under node) the attributes alone are

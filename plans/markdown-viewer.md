@@ -7912,7 +7912,10 @@ counted and fetched, the shape the round-2 census had closed for a bare `<img hi
 round-3 review and nine more since the round-4 review, gated through the
 real gate and as an ungated twin at a local URL, the flow's answer for the gated figure held equal to the browser's own
 for the twin, the named spellings of opacity, visibility and display held to the answers the round named, and no remote
-host reached before the restores; file-print-egress-browser.test.ts case (12): a gated svg at `opacity="0e0"` and a `<picture>` whose
+host reached before the restores; where an engine's twin oracle reads other than the paint the row records that engine's
+reading and the flow is held to the paint, the twin oracle to the reading: the rows whose image stands inside a container
+that never renders its content, in Firefox and WebKit, which report a client rect there and paint nothing, and the opacity
+1e-9 row in WebKit, which computes it to 0 while its checkVisibility keeps it; file-print-egress-browser.test.ts case (12): a gated svg at `opacity="0e0"` and a `<picture>` whose
 `<img>` carries `hidden`, beside a plain placeholder, on three hosts, and since the round-4 review's tests-4 (2026-09-20)
 a gated svg at `opacity="0"` on the plain placeholder's own host, the line counting the plain one alone, the title
 naming its host alone, and "Print with them" asking that host once, for the plain placeholder's URL and never for the

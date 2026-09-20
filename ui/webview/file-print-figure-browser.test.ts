@@ -61,9 +61,21 @@ function bundle(): string {
  *  shape's URLs the browser asks for once the placeholder is restored as "Print with them" restores it ("a" the first, "b"
  *  the second), measured; absent, the first URL when the figure paints and none when it does not. */
 type PerEngine = Record<Engine, boolean>;
-type Shape = { name: string; html: (url: string, url2: string) => string; hidden?: boolean; paints: boolean | PerEngine; fetches?: string[] };
+/** `twinReads`: what the twin oracle (checkVisibility and a client rect over the twin's painting elements) reads in an engine
+ *  where that reading is NOT the paint, measured at the round-5 head's product code before the round-6 fix and unchanged by
+ *  it (2026-09-20): Firefox and WebKit report a client rect for an element inside an SVG container that never renders its
+ *  content (Firefox an empty one, WebKit a full one) and paint nothing there, in every engine, by a screenshot probe; and
+ *  WebKit keeps opacity 1e-9 visible in checkVisibility while computing it to 0, which the flow reads. Where a row records
+ *  it, the flow is held to `paints` and the oracle to this reading, so a change in either engine reds the row. */
+type Shape = { name: string; html: (url: string, url2: string) => string; hidden?: boolean | PerEngine; paints: boolean | PerEngine; fetches?: string[] | Record<Engine, string[]>; twinReads?: Partial<PerEngine> };
 /** The twin's paint the table names for `engine`. */
 const paintsIn = (s: Shape, engine: Engine): boolean => typeof s.paints === "boolean" ? s.paints : s.paints[engine];
+/** The root's figureHidden answer the table names for `engine`, or undefined where the row names none. */
+const hiddenIn = (s: Shape, engine: Engine): boolean | undefined => typeof s.hidden === "object" ? s.hidden[engine] : s.hidden;
+/** The twin oracle's reading the table expects in `engine`: the recorded one where the row carries it, the paint otherwise. */
+const oracleReads = (s: Shape, engine: Engine): boolean => s.twinReads && s.twinReads[engine] !== undefined ? s.twinReads[engine]! : paintsIn(s, engine);
+/** Whether the row records the oracle reading other than the paint in `engine`. */
+const recorded = (s: Shape, engine: Engine): boolean => !!s.twinReads && s.twinReads[engine] !== undefined;
 const svgOf = (attrs: string, inner: (url: string, url2: string) => string) => (url: string, url2: string): string => '<svg xmlns="http://www.w3.org/2000/svg" ' + attrs + ' width="8" height="8">' + inner(url, url2) + "</svg>";
 const image = (attrs = "") => (url: string): string => '<image href="' + url + '" ' + attrs + ' width="8" height="8"/>';
 /** The sheet rule of the leg's page that hides an author's class: what the computed display read below the root sees and
@@ -76,9 +88,13 @@ const HIDE_RULE = ".leg-hide { display: none; }";
 function shapes(): Shape[] {
   const out: Shape[] = [];
   for (const [v, hidden] of [["0", true], ["-0", true], ["+0", true], ["0e0", true], ["0%", true], [" 0 ", true], ["-1", true], ["1e-100", true], ["calc(0)", true], [".0", true],
-    ["0.0.0", false], ["0.", false], ["1e-9", false], ["50%", false], ["0.5", false], ["1", false], ["abc", false], ["", false]] as Array<[string, boolean]>) {
+    ["0.0.0", false], ["0.", false], ["50%", false], ["0.5", false], ["1", false], ["abc", false], ["", false]] as Array<[string, boolean]>) {
     out.push({ name: "opacity=" + JSON.stringify(v), html: svgOf('opacity="' + v + '"', image()), hidden, paints: !hidden });
   }
+  // opacity 1e-9 is the engine's own computed value, which the flow reads: Chromium and Firefox keep it (1e-09, 1e-9) and
+  // WebKit computes it to 0, so the flow reads the figure off the paper in WebKit alone, while every engine's checkVisibility
+  // keeps it and no engine puts a visible pixel on the paper at that opacity (the screenshot probe; twinReads above)
+  out.push({ name: 'opacity="1e-9"', html: svgOf('opacity="1e-9"', image()), hidden: { chromium: false, firefox: false, webkit: true }, paints: { chromium: true, firefox: true, webkit: false }, twinReads: { webkit: true } });
   for (const [v, hidden] of [["hidden", true], ["HIDDEN", true], [" collapse ", true], ["hidden /* c */", true], ["visible", false], ["bogus", false]] as Array<[string, boolean]>) {
     out.push({ name: "visibility=" + JSON.stringify(v), html: svgOf('visibility="' + v + '"', image()), hidden, paints: !hidden });
   }
@@ -98,12 +114,15 @@ function shapes(): Shape[] {
   out.push({ name: "video[poster]", html: (u) => '<video poster="' + u + '" width="8" height="8"></video>', hidden: false, paints: true });
   out.push({ name: "video[hidden][poster]", html: (u) => '<video hidden poster="' + u + '" width="8" height="8"></video>', hidden: true, paints: false });
   out.push({ name: "video>img (fallback)", html: (u) => '<video width="8" height="8"><img src="' + u + '" width="8" height="8" alt=""></video>', hidden: false, paints: true });
-  out.push({ name: "audio[controls][src]", html: (u) => '<audio controls src="' + u + '"></audio>', hidden: false, paints: true });
+  out.push({ name: "audio[controls][src]", html: (u) => '<audio controls src="' + u + '"></audio>', hidden: false, paints: true, fetches: { chromium: ["a"], firefox: ["a"], webkit: ["a x2"] } });
   out.push({ name: "audio[src]", html: (u) => '<audio src="' + u + '"></audio>', hidden: false, paints: false });
   out.push({ name: "audio>img (fallback)", html: (u) => '<audio><img src="' + u + '" width="8" height="8" alt=""></audio>', hidden: false, paints: false });
   out.push({ name: "img[hidden=until-found]", html: (u) => '<img hidden="until-found" src="' + u + '" width="8" height="8" alt="">', hidden: true, paints: false });
   // (an svg <title> or <desc> is an HTML integration point of the parser: an <image> inside becomes an HTML <img href>, which fetches nothing, so the gate wraps nothing there; neither is a shape)
-  for (const c of ["defs", "symbol", "clipPath", "mask", "pattern", "marker", "metadata"]) out.push({ name: "svg>" + c + ">image", html: svgOf("", (u) => "<" + c + ">" + image()(u) + "</" + c + ">"), hidden: false, paints: false });
+  // an image inside a container that never renders its content paints nothing in any engine; Firefox and WebKit report a
+  // client rect for it all the same (metadata excepted: its content is not laid out there), the reading twinReads records
+  for (const c of ["defs", "symbol", "clipPath", "mask", "pattern", "marker"]) out.push({ name: "svg>" + c + ">image", html: svgOf("", (u) => "<" + c + ">" + image()(u) + "</" + c + ">"), hidden: false, paints: false, twinReads: { firefox: true, webkit: true } });
+  out.push({ name: "svg>metadata>image", html: svgOf("", (u) => "<metadata>" + image()(u) + "</metadata>"), hidden: false, paints: false });
   for (const c of ["g", "a", "switch"]) out.push({ name: "svg>" + c + ">image", html: svgOf("", (u) => "<" + c + ">" + image()(u) + "</" + c + ">"), hidden: false, paints: true });
   out.push({ name: "svg>image[display=none]", html: svgOf("", image('display="none"')), hidden: false, paints: false });
   out.push({ name: "svg>image[display=contents]", html: svgOf("", image('display="contents"')), hidden: false, paints: false });
@@ -119,8 +138,10 @@ function shapes(): Shape[] {
   out.push({ name: "svg>a[display=contents]>image", html: svgOf("", (u) => '<a display="contents">' + image()(u) + "</a>"), hidden: false, paints: { chromium: false, firefox: true, webkit: false } });
   out.push({ name: "svg>switch[display=contents]>image", html: svgOf("", (u) => '<switch display="contents">' + image()(u) + "</switch>"), hidden: false, paints: false });
   out.push({ name: "svg>svg[display=contents]>image", html: svgOf("", (u) => '<svg display="contents" width="8" height="8">' + image()(u) + "</svg>"), hidden: false, paints: true });
-  out.push({ name: "svg[fill=url]>rect", html: (u) => '<svg xmlns="http://www.w3.org/2000/svg" fill="url(' + u + '#p)" width="8" height="8"><rect width="8" height="8"/></svg>', hidden: false, paints: true });
-  out.push({ name: "svg[fill=url]>defs>rect", html: (u) => '<svg xmlns="http://www.w3.org/2000/svg" fill="url(' + u + '#p)" width="8" height="8"><defs><rect width="8" height="8"/></defs></svg>', hidden: false, paints: false });
+  // a paint server on another host: Chromium asks for it on the restore, Firefox and WebKit do not (what the browser fetches of
+  // a restored figure is its own; the column is measured per engine)
+  out.push({ name: "svg[fill=url]>rect", html: (u) => '<svg xmlns="http://www.w3.org/2000/svg" fill="url(' + u + '#p)" width="8" height="8"><rect width="8" height="8"/></svg>', hidden: false, paints: true, fetches: { chromium: ["a"], firefox: [], webkit: [] } });
+  out.push({ name: "svg[fill=url]>defs>rect", html: (u) => '<svg xmlns="http://www.w3.org/2000/svg" fill="url(' + u + '#p)" width="8" height="8"><defs><rect width="8" height="8"/></defs></svg>', hidden: false, paints: false, twinReads: { firefox: true, webkit: true } });
   out.push({ name: "svg[fill=url] empty", html: (u) => '<svg xmlns="http://www.w3.org/2000/svg" fill="url(' + u + '#p)" width="8" height="8"></svg>', hidden: false, paints: false });
   // the round-4 review's extra8-3: a group a sheet rule hides, which no attribute and no style names
   out.push({ name: "svg>g.leg-hide>image", html: svgOf("", (u) => '<g class="leg-hide">' + image()(u) + "</g>"), hidden: false, paints: false });
@@ -136,8 +157,14 @@ function shapes(): Shape[] {
   out.push({ name: "video[poster=a]>img[b] (fallback)", html: (u, u2) => '<video poster="' + u + '" width="8" height="8"><img src="' + u2 + '" width="8" height="8" alt=""></video>', hidden: false, paints: true, fetches: ["a", "b"] });
   return out;
 }
-/** The URLs the restore is expected to have asked for in `engine`, as the table says. */
-const expectedFetches = (s: Shape, engine: Engine): string[] => s.fetches ?? (paintsIn(s, engine) ? ["a"] : []);
+/** The URLs the restore is expected to have asked for in `engine`, as the table says: the row's list, one per engine where
+ *  the engines differ in what they fetch of a restored figure (a paint server named by `fill="url(...)"`, which Firefox and
+ *  WebKit do not ask for on the restore where Chromium does; an audio's src, which WebKit asks for twice), the first URL
+ *  when the figure paints and none when it does not otherwise. */
+const expectedFetches = (s: Shape, engine: Engine): string[] => s.fetches === undefined ? (paintsIn(s, engine) ? ["a"] : []) : Array.isArray(s.fetches) ? s.fetches : s.fetches[engine];
+/** Whether a request URL is the page's own: the origin, or a blob URL the page minted (WebKit reports its own audio controls'
+ *  glyphs as `blob:` requests of the page's origin, eleven per `<audio controls>`; a blob URL is the page's memory, no host). */
+const ofOrigin = (u: string): boolean => u.startsWith(ORIGIN) || u.startsWith("blob:" + ORIGIN);
 
 type Row = { name: string; gated: boolean; rootDisplay: string; rootOpacity: string; hidden: boolean | null; printable: boolean | null; twinPaints: boolean | null; remote: string };
 /** The shapes whose measured paint disagrees with the table, each named with ITS OWN expected value: the expectation travels
@@ -163,7 +190,6 @@ for (const engine of ENGINES) test("figureHidden and figurePrintable over real g
   for (const sheet of ["feed.css", "styles.css"]) assert.ok(fs.readFileSync(path.join(UI, sheet), "utf8").includes(GATE_RULE), sheet + " carries the gate rule the flow's display read depends on");
   await inBrowser(t, async (browser) => {
     const all = shapes();
-    const paintsHere = (s: Shape): boolean => paintsIn(s, engine);
     const hostOf = (i: number): string => "s" + i + ".remote.test";
     const hostOf2 = (i: number): string => "s" + i + "b.remote.test";
     const requests: string[] = [];
@@ -215,14 +241,17 @@ for (const engine of ENGINES) test("figureHidden and figurePrintable over real g
     assert.deepEqual(rows.filter((r) => r.rootDisplay !== "none").map((r) => r.name), [], "the sheet's rule sets display none on every gated root");
     assert.deepEqual(rows.filter((r) => r.name.startsWith("opacity=") && r.hidden !== (Number(r.rootOpacity) === 0)).map((r) => r.name + " computed " + r.rootOpacity), [], "the sheet leaves opacity alone, and figureHidden reads the computed value: zero and only zero is hidden");
     // the flow's answer is the browser's answer for the twin, shape by shape
-    const disagree = rows.filter((r) => r.printable !== r.twinPaints).map((r) => r.name + ": figurePrintable " + r.printable + ", the browser paints the twin " + r.twinPaints);
+    const disagree = rows.map((r, i) => ({ r, s: all[i] })).filter((x) => !recorded(x.s, engine) && x.r.printable !== x.r.twinPaints).map((x) => x.r.name + ": figurePrintable " + x.r.printable + ", the browser paints the twin " + x.r.twinPaints);
     assert.deepEqual(disagree, [], "FAILS BEFORE: figurePrintable disagreed with the browser on the zero spellings, on 0.0.0, on the hidden img inside a picture, on the svg image inside defs and on the hidden svg");
+    // where the row records the twin oracle reading other than the paint in this engine (twinReads), the flow is held to the paint
+    const offRecord = rows.map((r, i) => ({ r, s: all[i] })).filter((x) => recorded(x.s, engine) && x.r.printable !== paintsIn(x.s, engine)).map((x) => x.r.name + ": figurePrintable " + x.r.printable + ", the table's paint " + paintsIn(x.s, engine) + " (the twin oracle reads " + x.r.twinPaints + " in " + engine + ", recorded)");
+    assert.deepEqual(offRecord, [], "where the twin oracle is recorded to read other than the paint, the flow answers the paint");
     // the named spellings and shapes, each to the answer the round named
-    const wrong = rows.filter((r, i) => all[i].hidden !== undefined && r.hidden !== all[i].hidden).map((r, i) => r.name + ": figureHidden " + r.hidden);
+    const wrong = rows.filter((r, i) => hiddenIn(all[i], engine) !== undefined && r.hidden !== hiddenIn(all[i], engine)).map((r, i) => r.name + ": figureHidden " + r.hidden);
     assert.deepEqual(wrong, [], "FAILS BEFORE: -0, +0, 0e0, -1 and calc(0) read as on the paper, 0.0.0 as off it, and <svg hidden> as hidden");
-    const wrongPaper = paperMismatches(rows, all.map(paintsHere));
-    assert.deepEqual(wrongPaper, [], "the browser's own answers are the ones this leg's table names (a change here is a change in the engine, and the flow follows it)");
-    assert.deepEqual(requests.filter((u) => !u.startsWith(ORIGIN)), [], "no request left the origin before any restore: the gate moved every remote URL aside on the parser document");
+    const wrongPaper = paperMismatches(rows, all.map((s) => oracleReads(s, engine)));
+    assert.deepEqual(wrongPaper, [], "the browser's own answers are the ones this leg's table names, the recorded per-engine readings among them (a change here is a change in the engine, and the flow follows it)");
+    assert.deepEqual(requests.filter((u) => !ofOrigin(u)), [], "no request left the origin before any restore: the gate moved every remote URL aside on the parser document");
     // the second oracle, keyed on the URL: every placeholder whose figure paints is restored as "Print with them" restores it,
     // and the remote URLs the page then asks for are read per shape against the table's `fetches`
     const before = requests.length;
@@ -241,7 +270,7 @@ for (const engine of ENGINES) test("figureHidden and figurePrintable over real g
       await new Promise((r) => setTimeout(r, 250));
       if (requests.length !== n) stable = -1;
     }
-    const asked = requests.slice(before).filter((u) => !u.startsWith(ORIGIN));
+    const asked = requests.slice(before).filter((u) => !ofOrigin(u));
     const fetchedOf = (i: number): string[] => { const a = asked.filter((u) => u === "https://" + hostOf(i) + "/p.svg").length, b = asked.filter((u) => u === "https://" + hostOf2(i) + "/q.svg").length; return [...(a ? ["a" + (a > 1 ? " x" + a : "")] : []), ...(b ? ["b" + (b > 1 ? " x" + b : "")] : [])]; };
     for (let i = 0; i < all.length; i++) t.diagnostic("fetch | " + engine + " | " + all[i].name + " | printable=" + restored[i].printableAtRestore + " | restored=" + restored[i].restored + " | fetched=" + (fetchedOf(i).join(",") || "none") + " | expected=" + (expectedFetches(all[i], engine).join(",") || "none"));
     assert.deepEqual(restored.map((r, i) => [rows[i].name, r.printableAtRestore]).filter(([, p], i) => p !== rows[i].printable), [], "the restore read the same printable answer as the rows");
