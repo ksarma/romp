@@ -83,16 +83,16 @@ counters that the recorders do not wrap, or through a reference to a real door t
 even though it cannot be named. Outside both witnesses: a reader below the judge's loaders or beside its module, the
 kernel opening and parsing the store file itself, the kernel calling the judge's own file reader (`jd._read_store_json`,
 below the loaders) or a second judge module loaded under another name with a cache and counters of its own (three plants,
-each per session in the pass loop, re-taken at the head of the round-6 fixes, over its 38 cases, one at a time with
+each per session in the pass loop, re-taken at this head (named by role in the round-7 paragraph below), over its 39 cases, one at a time with
 the kernel, the judge and this module hashed before the plant, across the run and after the revert: the first two leave every case
 green with no file changed across a run, so they stay outside every witness here; the third has been refused since the consolidation
 pass by the kernel-wide birth pin, whose called population names `_PJ.load_goals_shared` as a fifth loader spelling, so a second judge
 module is outside both execution witnesses and inside the static pin, which reds alone while every execution case stays green; and
 the alias control beside them reds the shared reconciliation on each of the five harness cases that drive a pass, and the birth pin
-(6 failed, 32 passed at the head of the round-6 fixes; the door witness's fourteen cases run outside any pass, thirteen each driving
+(6 failed, 33 passed at this head; the door witness's fourteen cases run outside any pass, thirteen each driving
 one call of the door under _drive (three of them, hit, compare_miss and dup, priming the cache with a call of their own before the
 drive's window, and the refuse case calling again after it) and one reading the table, seventeen calls over the fourteen, counted by a
-profile of the door's frames on the tree of round 7's fourth fix, and stay green under the control, so it reds five of the nineteen
+profile of the door's frames at this head, and stay green under the control, so it reds five of the nineteen
 harness cases; review round 5, extra7-1: this sentence said every harness case, and one of the six at the head the round-5 ruling read
 drove no pass; a verifier of the round-5 fixes: it then said the door witness's cases call the door, one of them reading the table;
 review round 6, regression-2: it then said thirteen cases, twelve calling the door once, against sixteen calls the same profile
@@ -128,7 +128,8 @@ walk and the gate load nothing, the sweep loads once per pass and reaches the fa
 since its real body is a writer).
 
 Two provenances are named in this module, never by one word. The reviewer's rounds carry a number: review round 1 ruled
-twelve findings, round 2 fourteen, round 3 nine, round 4 seventeen, round 5 seventeen, and "the round-N fixes" are the changes that answer round N's rulings. The
+twelve findings, round 2 fourteen, round 3 nine, round 4 seventeen, round 5 seventeen, round 6 thirteen (one refuted), and "the round-N fixes" are the changes that answer
+round N's rulings. The
 build's own passes carry a role and never a number: the build's verifier pass after the round-1 fixes, the build's verifier
 pass after the round-2 fixes, and the consolidation pass, the build's pass between the round-2 fixes and the reviewer's round
 3, in which three lenses read the head, the reviewer ruled on what they found (the reviewer's rulings on the pre-emption,
@@ -411,7 +412,7 @@ passed; the same three lines at the head the round-4 ruling read, each naming an
 naming the classes by their count, five (1 failed, 21 passed); TypeIgnore deleted from the ast module at import reds the interpreter
 check naming the removal as the third cause (1 failed, 21 passed). The staleness (correctness-2, regression-4): the round-3
 paragraph's figures are labelled with the count they read against and its clean line with its head by role, and the clean module at
-this head is pinned by the Docs case beside the bypass count, the line's figures summed against the loader's count; the clean figure
+that head is pinned by the Docs case beside the bypass count, the line's figures summed against the loader's count; the clean figure
 set one below reds the Docs case at the clean line, 21 against 22 (1 failed, 21 passed), the bypass count set one behind reds it at
 the bypass line (1 failed, 21 passed), and the round-3 clean line set to 18 leaves the module green (22 passed), the historical lines
 being labelled and not pinned, the ruling's alternative.
@@ -603,65 +604,100 @@ the run and after the revert: the kernel opening and parsing the store file itse
 session in the pass loop, 38 passed each and no file changed across a run; a second judge module loaded under another name reds
 the birth pin alone, naming `_PJ.load_goals_shared` (1 failed, 37 passed); the alias control, the shared door bound at kernel import
 and called per session, reds the shared reconciliation on each of the five harness cases that drive a pass, 2 against 0, 7 against
-5 twice, 6 against 4 and 3 against 1, and the birth pin (6 failed, 32 passed). The clean module at the head of the
-round-6 fixes: 38 passed single-process on 3.10, 3.11, 3.12, 3.13 and 3.14t.
+5 twice, 6 against 4 and 3 against 1, and the birth pin (6 failed, 32 passed). The clean module at the head of the round-6 fixes: 38
+passed single-process on 3.10, 3.11, 3.12, 3.13 and 3.14t. Re-taken at the head of the round-7 fixes, over its 39 cases, by the
+round's records pass: every state above reads the same failed and passed figures there but for the case count, with three exceptions. UNDRIVEN_SITES
+emptied cannot be landed at that head, the dict being empty since the unread road was driven (the round-7 paragraph's
+row-and-method-removed state is its successor). The tracer recording nothing reds every drive whose road executes a site, eleven
+with the unread drive, and the coverage case's control over the trace's nested code objects, and leaves the two raise roads that
+execute no site green (12 failed, 27 passed). The first bypass plant, the kernel opening and parsing the store file itself, red the
+five harness cases that drive a pass at their cleanup on the tree of the round's door-names fix, naming __warningregistry__ and no
+stub (5 failed, 34 passed), its unclosed handle warned about by the collector from the kernel's frame; the round's warnings-registry
+fix sets that name aside and the plant leaves every case green since (39 passed).
 
-Review round 7 (2026-09-20; the reviewer's standard after round 6: no instrument in this module carries a hand-written population
-on any axis where the module can compute one, and every instrument states which axes it derives and which it bounds). Every state
-below was taken at this head, the head of the round-7 fixes, over its 39 cases (the round adds one, the door witness's unread road,
-in its third fix): the unread-road states on the tree of the round's third fix, the false-sentence states on the tree of its
-fourth; each landed on kernel/kernel.py, kernel/judge.py or this module and reverted, the kernel, the judge and this module hashed
-before the plant and after the revert and found equal, the module run single-process on 3.12 through the clean runner. The unread road (extra5-1, extra6-2 and tests-5): the door's `if
-store.get("_unread")` arm, the second unreadable_journal site, was the one row of UNDRIVEN_SITES, on the ground of the door's own
-comment, which calls the arm unreachable while the journal's rows arrive as lines; the comment is right about the replay's mark,
-which a replay handed lines never sets, and the arm is reachable with no code change through the store file's own content, a
-top-level _unread key the writer never serializes and a hand-written or foreign file can carry, since nothing between the parse
-and the arm strips it. The witness drives it now, a thirteenth row of ROADS and a method that writes the key into the seeded store
-file, UNDRIVEN_SITES is empty with its mechanism kept, and the coverage case's derivation is unchanged. The states: the row and its
-method removed reds the coverage case naming the arm's site as one no drive executes and no statement names, and the Docs count, 39
-against the 38 cases left (2 failed, 36 passed); a helper defined inside the door on that arm bumping dup through an alias of the counters, a form no clause of the roster pin
-reads, left the module green on the tree of the round's second fix (38 passed) and reds the unread drive since, at the line where
-the sites the trace saw and the keys the counters moved must agree (1 failed, 38 passed); the same helper bumping through the
-spelling the clauses read was already red on that tree, the added site shifting the dup site's ordinal (3 failed, 35 passed: the dup
-drive's sites, the coverage case and the roster pin's deep count), and reds the unread drive too since (4 failed, 35 passed). The two
-false sentences (regression-2; tests-2 with regression-3), on the tree of the round's fourth fix: the first paragraph's alias-control
-sentence said the door witness's thirteen cases run outside any pass, twelve calling the door once, where a profile of the door's
-frames counted seventeen calls over fourteen cases, thirteen under _drive and one each before the window in the three priming cases
-and after it in the refuse case, so the sentence carries the measured figures (no assertion reads it; the profile is the state), and
-the alias control re-taken on the tree of the round's third fix left all fourteen green (6 failed, 33 passed: the five harness cases
-that drive a pass and the birth pin); the case count's 'reads against N' copies, one each in the paragraphs of the consolidation
-pass and rounds 4, 5 and 6, sat in fragments the split at '3.12' left with no head label, so the round-5 copy set one below its
-count left the module green (39 passed) and so did a stale copy written into this paragraph (39 passed); the copies are removed and
-the Docs case reads this paragraph whole by a census of its figures, so the stale copy written into this paragraph reds it since,
-naming the clause (1 failed, 38 passed), while the same copy in a historical paragraph stays unread by design. The axis statements,
-the standard's second clause, on the tree of the round's fifth fix: every instrument's docstring carries a sentence naming what it
-derives and what it bounds, prose no assertion reads (of this module's docstrings the Docs case reads the module's own alone), each
-checked against the code, with no failing state; an existing sentence made false and a Derives clause negated each left the module
-green on the tree of the round's fourth fix (39 passed each). The hand-off keys (the plan's hunt for a seventh hand-written axis, the
-class of extra7-1 and tests-2), on the tree of the round's sixth fix: SHARED_HANDOFF_KEYS was pinned by nothing while its three
-siblings are pinned against the door's AST, so dup added to it, which also narrowed _pass's dup and refuse zero line to refuse alone,
-and corrupt removed from it each left the module green on the tree of the round's fifth fix (39 passed each); the roster pin derives
-the keys from the door's statement lists, the direct bump keys of every list whose last statement returns a call of load_goals, and
-asserts them equal to the tuple both ways, and the door witness's coverage case derives from the same lists each road's hand-off
-column, the count of its sites whose list hands off, and the no-hand-off sites of hand-off keys, the _unread arm alone, each executed
-by a drive and in no row of UNDRIVEN_SITES; both mutations red the roster pin since, naming the key (1 failed, 38 passed each), and
-the corrupt handler's hand-off rewritten through a temporary, `store = load_goals(fsid)` then `return store`, reds the roster pin
-naming corrupt and the coverage case at the corrupt row's hand-off column, 1 against 0 (2 failed, 37 passed), the coverage case alone
-with the tuple edited to match (1 failed, 38 passed). The cleanup's restore (the plan's hunt for a seventh axis, the class of
-extra7-1), on the tree of the round's eighth fix: CASE_KM and CASE_JD bounded what _restore put back while nothing checked that a
-case replaced only those, so the wedge-gate sweep case standing a new-identity pass-through on km._nudge_response_ready, a kernel
-name in neither list, left the module green on the tree of the round's seventh fix (39 passed) with the stub live for every later
-test; setUp keeps its first snapshots and _restore, after the saved names go back and the root is rebound, checks every kernel and
-judge global against them by identity, the names the restoring rebind moves subtracted, and puts a leaked name back, so the same
-plant reds that case at its cleanup since, naming the kernel name (1 failed, 38 passed). The door names' copies (the plan's hunt
-for a seventh axis, the class of extra7-1), on the tree of the round's ninth fix: the four door names were spelled by hand three
-times, in _DOOR_SPELLINGS, in the birth pin's defs line and in the enumeration's stub judge, copies pinned to each other by nothing,
-so a fifth spelling added to the constant left the module green on the tree of the round's eighth fix (39 passed); the defs line
-reads the constant, the stub judge is built from it, and the birth pin holds the constant against the spellings the kernel calls and
-against the judge's defs both ways, so the same plant reds the birth pin since, naming the spelling as one the kernel never calls
-(1 failed, 38 passed), and a spelling removed from the constant reds the same pin, naming it as one called and not spelled
-(1 failed, 38 passed). The
-clean module at this head, the head of the round-7 fixes: 39 passed single-process on 3.10, 3.11, 3.12, 3.13 and 3.14t.
+Review round 7 (2026-09-20; the reviewer's standard after round 6: no instrument in this module carries a hand-written population on
+any axis where the module can compute one, and every instrument states which axes it derives and which it bounds). Ten fixes landed,
+nine planned and one the records pass found, and every state below was taken at this head, the head of the round-7 fixes, over its
+39 cases (the round adds one, the door witness's unread road), each landed on kernel/kernel.py, kernel/judge.py or this module and
+reverted, the kernel, the judge and this module hashed before the plant and after the revert and found equal, the module run
+single-process on 3.12 through the clean runner; where a plant left the module green on the tree before its fix the paragraph says
+so in words, and every figure is this head's. The census floor (regression-1, extra4-2 and tests-3): _census_floor read two
+container shapes, a module-level def and a direct method of a module-level class, so a reader in any other container was attributed
+to nothing; it attributes every reader reference to its nearest def or class chain over the whole tree now, and the roster case pins
+the class chains and the module statements with a reason each. The states, each green before the fix: a census written as a method
+of the roster pin's class that spells ast.parse and inspect.getsource and walks node._fields by hand, a nested class's method
+reading through _walk, a class-body statement calling _walk over ast.parse, a method handing _walk to map as a value, and a
+module-level statement outside _CENSUSES reading through _walk each red the roster case naming the chain, or the statement's target
+(1 failed, 38 passed each); the round-6 state, _census_floor reading class bodies by hand at the module level, reds the plant case
+naming it as having passed the stranger over at ClassDef.bases, four more class positions and Module.type_ignores, and the roster
+case, whose class rows empty under that walk (2 failed, 37 passed). The traversal roster (extra7-1): the finder's samples pinned the
+roster one way, a sample naming a name outside it red and a roster name with no sample did not; the sets are held equal both ways
+now, so a fifth name the module spells nowhere added to _TRAVERSAL and the NodeTransformer sample row removed, each green before,
+each red the membership line naming the name (1 failed, 38 passed each). The unread road (extra5-1, extra6-2 and tests-5): the
+door's `if store.get("_unread")` arm, the second unreadable_journal site, was the one row of UNDRIVEN_SITES on the ground of the
+door's own comment, which calls the arm unreachable while the journal's rows arrive as lines; the comment is right about the
+replay's mark, which a replay handed lines never sets, and the arm is reachable with no code change through the store file's own
+content, a top-level _unread key the writer never serializes and a hand-written or foreign file can carry, since nothing between the
+parse and the arm strips it. The witness drives it now, a thirteenth row of ROADS and a method that writes the key into the seeded
+store file, UNDRIVEN_SITES is empty with its mechanism kept, and the coverage case's derivation is unchanged. The states: the row
+and its method removed reds the coverage case naming the arm's site as one no drive executes and no statement names, and the Docs
+count, 39 against the 38 cases left (2 failed, 36 passed); a helper defined inside the door on that arm bumping dup through an alias
+of the counters, a form no clause of the roster pin reads and green before the road was driven, reds the unread drive at the line
+where the sites the trace saw and the keys the counters moved must agree (1 failed, 38 passed); the same helper bumping through the
+spelling the clauses read reds the dup drive's sites, the coverage case, the roster pin's deep count and the unread drive (4 failed,
+35 passed). The two false sentences (regression-2; tests-2 with regression-3): the first paragraph's alias-control sentence said the
+door witness's thirteen cases run outside any pass, twelve calling the door once, where a profile of the door's frames counts
+seventeen calls over fourteen cases, thirteen under _drive and one each before the window in the three priming cases and after it in
+the refuse case, the figures the sentence carries since (no assertion reads it; the profile at this head is the state); the case
+count's 'reads against N' copies, one each in the paragraphs of the consolidation pass and rounds 4, 5 and 6, sat in fragments the
+split at '3.12' left with no head label, so a stale copy was green wherever it stood; the copies are removed and the Docs case reads
+this paragraph whole by a census of its figures, so a stale copy written into this paragraph reds it naming the clause (1 failed, 38
+passed) while the same copy in a historical paragraph leaves the module green by design (39 passed). The axis statements, the
+standard's second clause: every instrument's docstring carries a sentence naming what it derives and what it bounds, prose no
+assertion reads (of this module's docstrings the Docs case reads the module's own alone), each checked against the code; a Bounds
+sentence made false and a Derives clause negated each leave the module green (39 passed each), the stated bound. The hand-off keys
+(the plan's hunt for a seventh hand-written axis, the class of extra7-1 and tests-2): SHARED_HANDOFF_KEYS was pinned by nothing
+while its three siblings are pinned against the door's AST; the roster pin derives the keys from the door's statement lists, the
+direct bump keys of every list whose last statement returns a call of load_goals, and holds them equal to the tuple both ways, and
+the door witness's coverage case derives from the same lists each road's hand-off column and the no-hand-off sites of hand-off keys,
+the _unread arm alone. The states: dup added to the tuple, which also narrowed _pass's dup and refuse zero line to refuse alone, and
+corrupt removed from it, each green before, each red the roster pin naming the key (1 failed, 38 passed each); the corrupt handler's
+hand-off rewritten through a temporary, `store = load_goals(fsid)` then `return store`, reds the roster pin naming corrupt and the
+coverage case at the corrupt row's hand-off column, 1 against 0 (2 failed, 37 passed), and the coverage case alone with the tuple
+edited to match (1 failed, 38 passed). The door trace (the hunt's second find): _line_trace read frames whose code was the door's
+own code object, a singleton, while the door's nested code objects are computable; it reads the door's code object and every code
+object reachable through co_consts now. The states: the corrupt bump moved into a helper defined inside the door's ValueError
+handler, its body a bump and a return, red the corrupt drive's executed-sites line with a false cause before the fix, the site
+having run in the helper's frame, and reds the two hand-off lines alone since, a true reading of the helper's list, which hands
+nothing off (2 failed, 37 passed); the round-5 shape, a helper inside the door bumping dup from the corrupt handler, reds the
+corrupt drive at its executed-sites line naming the dup site, the dup drive's sites, the coverage case and the roster pin (4 failed,
+35 passed); the remaining bound, a dup bump first in _shared_forget, a callee defined outside the door, reds six drives at the
+agreement line and the no-store sweep case (7 failed, 32 passed). The cleanup's restore (the hunt's third find): CASE_KM and CASE_JD
+bounded what _restore put back while nothing checked that a case replaced only those; setUp keeps its first snapshots and _restore,
+after the saved names go back and the root is rebound, checks every kernel and judge global against them by identity, the names the
+restoring rebind moves subtracted, and puts a leaked name back. The states, each green before with the stub live for every later
+test: the wedge-gate sweep case standing a new-identity pass-through on km._nudge_response_ready, a kernel name in neither list,
+reds that case at its cleanup naming the kernel name, as do a pass-through on jd._journal_key and a kernel global the case adds and
+never deletes (1 failed, 38 passed each). The door names' copies (the hunt's fourth find): the four door names were spelled by hand
+three times, in _DOOR_SPELLINGS, in the birth pin's defs line and in the enumeration's stub judge, copies pinned to each other by
+nothing; the defs line reads the constant, the stub judge is built from it, and the birth pin holds the constant against the
+spellings the kernel calls and against the judge's defs both ways. The states: a fifth spelling added to the constant, green before,
+reds the birth pin naming it as one the kernel never calls, and a spelling removed reds the same line naming it as called and not
+spelled (1 failed, 38 passed each). The warnings registry (the records pass's find, re-taking the bypass plants): the restore's
+check read every name of both modules' globals as a case's rebinding, and the interpreter writes one of its own,
+__warningregistry__, which the warnings module creates in the globals of the module a warning is attributed to on the first warning
+raised from its code, so the first bypass plant, whose unclosed handle the collector warned about from the kernel's frame, red the
+five harness cases that drive a pass at their cleanup naming the registry and no stub, as did a warnings.warn call in the pass loop
+(5 failed, 34 passed each, on the tree of the door-names fix); the name is set aside, stated as a bound with its reason beside the
+tick allowance, and both plants leave the module green since (39 passed each) while the leak plants above red as before. The bypass
+plants and the alias control, re-taken at this head: the kernel opening and parsing the store file itself and the kernel calling
+jd._read_store_json, per session in the pass loop, leave every case green with no file changed across a run (39 passed each); a
+second judge module loaded under another name reds the birth pin alone, naming `_PJ.load_goals_shared` (1 failed, 38 passed); the
+alias control, the shared door bound at kernel import and called per session, reds the shared reconciliation on each of the five
+harness cases that drive a pass, 2 against 0, 7 against 5 twice, 6 against 4 and 3 against 1, and the birth pin, the door witness's
+fourteen cases green under it (6 failed, 33 passed). The round-6 paragraph's states were re-taken at this head as well, and that
+paragraph's last sentences record the result. The clean module at this head, the head of the round-7 fixes: 39 passed single-process
+on 3.10, 3.11, 3.12, 3.13 and 3.14t.
 
 Drives the real pass (_auto_nudge_tick) over two alive sessions with real transcript files and real goal stores, on the
 suite's fake clock (the pass takes `now`). SYNTHETIC fixtures only; a PRIVATE synthetic sid pair (the goal-store fixture
@@ -4518,11 +4554,15 @@ class Docs(unittest.TestCase):
         same round, and carry figures that sum to the count (a failed figure records a head at which another count was one re-take
         behind). A paragraph that goes historical is relabelled 'at the head of the round-N fixes', which matches none of the
         current-head reads; the template a history paragraph writes its current-head sentences in is therefore exact: 'at this
-        head, the head of the round-N fixes, over its N cases'. What the sweep does not read, stated (a verifier of the round-5
+        head, the head of the round-N fixes, over its N cases'. What the sweep does not read by value, stated and re-derived at the
+        head of the round-7 fixes by a scan of every fragment of the docstring that names 'this head' (a verifier of the round-5
         fixes: the first sentence here said every sentence stating a figure): a count spelled as a word (the battery paragraph's
-        'twelve cases', whose head is the build's verifier pass after the round-2 fixes, a role the label regex does not know), the
-        historical clean lines (labelled by role, not summed), and a paragraph's per-state figures, 'F failed, P passed', which ride on
-        the paragraph's framing count and are re-taken with it. The current head's paragraph is then read whole by a census (review
+        'twelve cases', whose head is the build's verifier pass after the round-2 fixes, a role the label regex does not know); the
+        historical clean lines (labelled by role, not summed); a paragraph's per-state figures, 'F failed, P passed', which ride on
+        the paragraph's framing count and are re-taken with it (the current head's paragraph's are read for their form alone by the
+        census below, and the first paragraph's alias-control figure, in a fragment naming this head outside that paragraph, by
+        neither); and a historical paragraph's description of a mutation that spells 'this head' as the mutation's words, the
+        round-5 paragraph's, whose figures are that head's. The current head's paragraph is then read whole by a census (review
         round 6, tests-2 and regression-3: the round-5 paragraph restated the head's count in a second form, 'so a figure here reads
         against 37', which the sweep does not read and which sat, as every per-state figure does, in a fragment the split at '3.12'
         leaves with no head label, so the copy set one below left the module green; the four copies, one each in the paragraphs of
