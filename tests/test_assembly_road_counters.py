@@ -1,7 +1,42 @@
 #!/usr/bin/env python3
 """T398 (2026-09-12): a boot parsed two documented live leaves whole with no fallback counted, and nothing on GET /perf named the
 road the parse took. The assembly's road counters (serve, fold, restore, full with its reason, bypass, the g:<reason> demotions)
-ride asmCheckpoint.parse and the boot-health row, beside asmCheckpoint.removed, the document files removed per reason."""
+ride asmCheckpoint.parse and the boot-health row, beside asmCheckpoint.removed, the document files removed per reason.
+
+Ordering sensitivity of the two stage tests (2026-09-20). kernel/event_model.py holds ONE process-wide slot for the calling
+thread's stage-mark provider (_READ_STAGE_FN, installed by set_read_stage_provider; _SET_STAGE_FN and set_stage_provider are its
+pair), and every kernel load installs its own _current_read_stage and _set_stage there at module level, so the kernel loaded LAST
+in the process owns the slot. The event model is one object for the whole process: it is loaded under the fixed name
+romp_event_model, and load_source re-executes a name already in sys.modules into the same module object. 528 test files load
+their own kernel instance under 435 distinct module names (grep -l 'load_source("[a-z_0-9]*", .*romp-kernel' tests/*.py, counted
+2026-09-20; three of them hold the call only inside a string, so 525 files load a kernel in the pytest process, under 433 names).
+This module takes its kernel through test_asm_checkpoint.kernel_module(), which loads romp_kernel_t323s4a once per process into
+the module-level cache _KM. test_whole_reads_and_hydrations_are_counted_under_the_calling_threads_stage and
+test_the_push_mark_is_restored_on_every_exit_and_the_pushs_reads_count_under_push mark the stage on that instance's _STAGE_TL and
+read the count back through the slot, so with the slot pointing at another instance's thread-local the rows read `none`
+({'none:zero<-_push': ...}, {'none:upgrade<-_job_stage': ...}). In any collection that includes tests/test_intr_marks_memo.py or
+tests/test_merge_tx_sets_light.py the cache is filled AT COLLECTION, by their module-level `km = TA.kernel_module()` on the same
+bare module object this file imports, so setUp's kernel_module() returns the cached kernel and installs nothing, and the slot
+stays with the collection's last module-level kernel load (tests/test_ws_send_bounded.py, romp_kernel_wsbound, in the current
+file order). What moves it back is a test of pytest's own copy of tests/test_asm_checkpoint.py, imported as the package module
+tests.test_asm_checkpoint with a separate, empty _KM: its first kernel_module() call re-executes romp_kernel_t323s4a into the same
+module object and re-installs the providers (StringRowsAndRestoreSplit, HydrationAttribution, ClearedSessionDocument,
+CrossSessionRewoundCandidates, SeededDocumentMemo, and the setUpClass of PlannerOverRestored, ConvergeAssembly,
+ReadersOverRestoredHydrateOnlyWhatTheyNeed and KernelOverRestored). So the pair passes in a process only if one of those ran
+before it: alone (nothing fills the cache at collection) and in a full serial run (test_asm_checkpoint.py sorts before this file)
+it is green; under xdist (--dist load, the default with -n) every worker collects everything and takes a contiguous slice of the
+collection (chunk = items // workers // 4, xdist 3.8.0), and the pair is red on a worker whose slice holds no
+test_asm_checkpoint.py test. In the sweeps (run-sweep.sh: -n 10 under an 80G scope; 17,697 to 17,750 items, chunk 442 or 443)
+gw1's slice began past the last of them, which is why the pair was red on gw1 in every full xdist sweep of PRs that did not touch
+this module (four sightings, 2026-09-19/20) and green alone; in this tree at 20933397f (17,604 items, chunk 440, the last
+test_asm_checkpoint.py item at index 442, the pair at 511 and 516) gw1 holds both and the pair passes. setUp below saves the
+slot's pair, installs this kernel's providers through the public setters and restores the saved pair in a cleanup, so a
+later-loaded kernel's own tests are unaffected. Repro without xdist, as explicit node ids in this order: the roads test, the two
+stage tests, tests/test_intr_marks_memo.py::MarksMemo::test_a_cut_armed_after_the_key_and_before_the_persist_is_answered_but_not_persisted,
+tests/test_ws_liveness.py::PhantomPanesAreDropped::test_a_the_beat_carries_a_ping_and_a_browser_answers_it (the last two run after
+the pair; they only fill the cache and take the slot at collection). A run-time kernel load between setUp's first call and the
+pair moves the slot the same way: the roads test, tests/test_pusher_cadence.py::EnvOverride::test_romp_push_min_interval_sets_the_constant
+(loads romp_kernel_cadence_env in its body), then the two stage tests."""
 import json
 import os
 import sys
@@ -14,8 +49,13 @@ from test_asm_checkpoint import em, G, SID, NOW, Harness, kernel_module, _strip 
 class AssemblyRoadCounters(Harness):
     def setUp(self):
         super().setUp()
-        kernel_module()                                   # the kernel's first load refreshes the event model's globals: load it
+        km = kernel_module()                              # the kernel's first load refreshes the event model's globals: load it
         #                                                   before any counter is read, so the row and the test see one dict
+        saved = (em._READ_STAGE_FN[0], em._SET_STAGE_FN[0])   # the event model's one stage-provider slot is the LAST loaded kernel's
+        em.set_read_stage_provider(km._current_read_stage)    #  (module docstring): point it at THIS kernel, whose thread-local the
+        em.set_stage_provider(km._set_stage)                  #  stage tests mark, for the test's length, and put the pair back after
+        self.addCleanup(em.set_read_stage_provider, saved[0])
+        self.addCleanup(em.set_stage_provider, saved[1])
 
     def _reset(self):
         for k in list(em._ASM_STATS):
