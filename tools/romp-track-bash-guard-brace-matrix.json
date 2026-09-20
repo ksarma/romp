@@ -1,0 +1,518 @@
+{
+"rows": 2912,
+"note": "The brace matrix's pin (round 5's third addendum, 2026-09-20): pin[kind][placement][face] = verdict:writers:parsed, verdict r (refused) or a (allowed), the masks over bash, zsh and dash in that order (- for a shell that does not write the tracked subset, or that reports a parse or syntax error); written from tools/romp-track-bash-guard.test.mjs's generator run through the hook as a process and the three shells unguarded on one box (bash 5.2, zsh 5.9, dash 0.5.12), and re-measured by the test on every run.",
+"pin": {
+  "if-arith-run": {
+    "shared": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "own": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "newline": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "and": {"cd": "r:---:---", "name": "r:---:---", "cp": "r:---:---", "mv": "r:---:---", "install": "r:---:---", "ln": "r:---:---", "tee": "r:---:---", "redir": "r:---:---"},
+    "redirect": {"cd": "r:---:---", "name": "r:---:---", "cp": "r:---:---", "mv": "r:---:---", "install": "r:---:---", "ln": "r:---:---", "tee": "r:---:---", "redir": "r:---:---"},
+    "pipe": {"cd": "r:---:---", "name": "r:---:---", "cp": "r:---:---", "mv": "r:---:---", "install": "r:---:---", "ln": "r:---:---", "tee": "r:---:---", "redir": "r:---:---"}
+  },
+  "if-arith-skip": {
+    "shared": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "own": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "newline": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "and": {"cd": "r:---:---", "name": "r:---:---", "cp": "r:---:---", "mv": "r:---:---", "install": "r:---:---", "ln": "r:---:---", "tee": "r:---:---", "redir": "r:---:---"},
+    "redirect": {"cd": "r:---:---", "name": "r:---:---", "cp": "r:---:---", "mv": "r:---:---", "install": "r:---:---", "ln": "r:---:---", "tee": "r:---:---", "redir": "r:---:---"},
+    "pipe": {"cd": "r:---:---", "name": "r:---:---", "cp": "r:---:---", "mv": "r:---:---", "install": "r:---:---", "ln": "r:---:---", "tee": "r:---:---", "redir": "r:---:---"}
+  },
+  "if-paren-run": {
+    "shared": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "own": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "newline": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "and": {"cd": "r:---:---", "name": "r:---:---", "cp": "r:---:---", "mv": "r:---:---", "install": "r:---:---", "ln": "r:---:---", "tee": "r:---:---", "redir": "r:---:---"},
+    "redirect": {"cd": "r:---:---", "name": "r:---:---", "cp": "r:---:---", "mv": "r:---:---", "install": "r:---:---", "ln": "r:---:---", "tee": "r:---:---", "redir": "r:---:---"},
+    "pipe": {"cd": "r:---:---", "name": "r:---:---", "cp": "r:---:---", "mv": "r:---:---", "install": "r:---:---", "ln": "r:---:---", "tee": "r:---:---", "redir": "r:---:---"}
+  },
+  "if-paren-skip": {
+    "shared": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "own": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "newline": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "and": {"cd": "r:---:---", "name": "r:---:---", "cp": "r:---:---", "mv": "r:---:---", "install": "r:---:---", "ln": "r:---:---", "tee": "r:---:---", "redir": "r:---:---"},
+    "redirect": {"cd": "r:---:---", "name": "r:---:---", "cp": "r:---:---", "mv": "r:---:---", "install": "r:---:---", "ln": "r:---:---", "tee": "r:---:---", "redir": "r:---:---"},
+    "pipe": {"cd": "r:---:---", "name": "r:---:---", "cp": "r:---:---", "mv": "r:---:---", "install": "r:---:---", "ln": "r:---:---", "tee": "r:---:---", "redir": "r:---:---"}
+  },
+  "if-test-run": {
+    "shared": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "own": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "newline": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "and": {"cd": "r:---:---", "name": "r:---:---", "cp": "r:---:---", "mv": "r:---:---", "install": "r:---:---", "ln": "r:---:---", "tee": "r:---:---", "redir": "r:---:---"},
+    "redirect": {"cd": "r:---:---", "name": "r:---:---", "cp": "r:---:---", "mv": "r:---:---", "install": "r:---:---", "ln": "r:---:---", "tee": "r:---:---", "redir": "r:---:---"},
+    "pipe": {"cd": "r:---:---", "name": "r:---:---", "cp": "r:---:---", "mv": "r:---:---", "install": "r:---:---", "ln": "r:---:---", "tee": "r:---:---", "redir": "r:---:---"}
+  },
+  "if-test-skip": {
+    "shared": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "own": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "newline": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "and": {"cd": "r:---:---", "name": "r:---:---", "cp": "r:---:---", "mv": "r:---:---", "install": "r:---:---", "ln": "r:---:---", "tee": "r:---:---", "redir": "r:---:---"},
+    "redirect": {"cd": "r:---:---", "name": "r:---:---", "cp": "r:---:---", "mv": "r:---:---", "install": "r:---:---", "ln": "r:---:---", "tee": "r:---:---", "redir": "r:---:---"},
+    "pipe": {"cd": "r:---:---", "name": "r:---:---", "cp": "r:---:---", "mv": "r:---:---", "install": "r:---:---", "ln": "r:---:---", "tee": "r:---:---", "redir": "r:---:---"}
+  },
+  "if-group-run": {
+    "shared": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "own": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "newline": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "and": {"cd": "r:---:---", "name": "r:---:---", "cp": "r:---:---", "mv": "r:---:---", "install": "r:---:---", "ln": "r:---:---", "tee": "r:---:---", "redir": "r:---:---"},
+    "redirect": {"cd": "r:---:---", "name": "r:---:---", "cp": "r:---:---", "mv": "r:---:---", "install": "r:---:---", "ln": "r:---:---", "tee": "r:---:---", "redir": "r:---:---"},
+    "pipe": {"cd": "r:---:---", "name": "r:---:---", "cp": "r:---:---", "mv": "r:---:---", "install": "r:---:---", "ln": "r:---:---", "tee": "r:---:---", "redir": "r:---:---"}
+  },
+  "if-group-skip": {
+    "shared": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "own": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "newline": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "and": {"cd": "r:---:---", "name": "r:---:---", "cp": "r:---:---", "mv": "r:---:---", "install": "r:---:---", "ln": "r:---:---", "tee": "r:---:---", "redir": "r:---:---"},
+    "redirect": {"cd": "r:---:---", "name": "r:---:---", "cp": "r:---:---", "mv": "r:---:---", "install": "r:---:---", "ln": "r:---:---", "tee": "r:---:---", "redir": "r:---:---"},
+    "pipe": {"cd": "r:---:---", "name": "r:---:---", "cp": "r:---:---", "mv": "r:---:---", "install": "r:---:---", "ln": "r:---:---", "tee": "r:---:---", "redir": "r:---:---"}
+  },
+  "while-arith-run": {
+    "shared": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "own": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "newline": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "and": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "redirect": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "pipe": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"}
+  },
+  "while-arith-skip": {
+    "shared": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "own": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "newline": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "and": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "redirect": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "pipe": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"}
+  },
+  "while-paren-skip": {
+    "shared": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "own": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "newline": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "and": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "redirect": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "pipe": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"}
+  },
+  "while-test-skip": {
+    "shared": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "own": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "newline": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "and": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "redirect": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "pipe": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"}
+  },
+  "while-group-skip": {
+    "shared": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "own": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "newline": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "and": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "redirect": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "pipe": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"}
+  },
+  "until-arith-run": {
+    "shared": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "own": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "newline": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "and": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "redirect": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "pipe": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"}
+  },
+  "until-arith-skip": {
+    "shared": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "own": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "newline": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "and": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "redirect": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "pipe": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"}
+  },
+  "until-paren-skip": {
+    "shared": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "own": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "newline": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "and": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "redirect": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "pipe": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"}
+  },
+  "until-test-skip": {
+    "shared": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "own": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "newline": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "and": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "redirect": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "pipe": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"}
+  },
+  "until-group-skip": {
+    "shared": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "own": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "newline": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "and": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "redirect": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "pipe": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"}
+  },
+  "for-paren-run": {
+    "shared": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "own": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "newline": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "and": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "redirect": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "pipe": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"}
+  },
+  "for-paren-skip": {
+    "shared": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "own": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "newline": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "and": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "redirect": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "pipe": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"}
+  },
+  "for-in-run": {
+    "shared": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "own": {"cd": "r:---:bz-", "name": "r:---:bz-", "cp": "r:bz-:bz-", "mv": "r:bz-:bz-", "install": "r:bz-:bz-", "ln": "r:bz-:bz-", "tee": "r:bz-:bz-", "redir": "r:bz-:bz-"},
+    "newline": {"cd": "r:---:bz-", "name": "r:---:bz-", "cp": "r:bz-:bz-", "mv": "r:bz-:bz-", "install": "r:bz-:bz-", "ln": "r:bz-:bz-", "tee": "r:bz-:bz-", "redir": "r:bz-:bz-"},
+    "and": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "redirect": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "pipe": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"}
+  },
+  "for-in-skip": {
+    "shared": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "own": {"cd": "r:bz-:bz-", "name": "r:bz-:bz-", "cp": "r:---:bz-", "mv": "r:---:bz-", "install": "r:---:bz-", "ln": "r:---:bz-", "tee": "r:---:bz-", "redir": "r:---:bz-"},
+    "newline": {"cd": "r:bz-:bz-", "name": "r:bz-:bz-", "cp": "r:---:bz-", "mv": "r:---:bz-", "install": "r:---:bz-", "ln": "r:---:bz-", "tee": "r:---:bz-", "redir": "r:---:bz-"},
+    "and": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "redirect": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "pipe": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"}
+  },
+  "select-paren-skip": {
+    "shared": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "own": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "newline": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "and": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "redirect": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "pipe": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"}
+  },
+  "select-in-skip": {
+    "shared": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "own": {"cd": "r:bz-:bzd", "name": "r:bz-:bzd", "cp": "r:--d:bzd", "mv": "r:--d:bzd", "install": "r:--d:bzd", "ln": "r:--d:bzd", "tee": "r:--d:bzd", "redir": "r:--d:bzd"},
+    "newline": {"cd": "r:bz-:bzd", "name": "r:bz-:bzd", "cp": "r:--d:bzd", "mv": "r:--d:bzd", "install": "r:--d:bzd", "ln": "r:--d:bzd", "tee": "r:--d:bzd", "redir": "r:--d:bzd"},
+    "and": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "redirect": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "pipe": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"}
+  },
+  "case-run": {
+    "shared": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "own": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "newline": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "and": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "redirect": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "pipe": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"}
+  },
+  "case-skip": {
+    "shared": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "own": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "newline": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "and": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "redirect": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "pipe": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"}
+  },
+  "repeat-run": {
+    "shared": {"cd": "r:b-d:bzd", "name": "r:b-d:bzd", "cp": "r:-z-:bzd", "mv": "r:-z-:bzd", "install": "r:-z-:bzd", "ln": "r:-z-:bzd", "tee": "r:-z-:bzd", "redir": "r:bzd:bzd"},
+    "own": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "newline": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:bzd:-z-", "mv": "r:bzd:-z-", "install": "r:bzd:-z-", "ln": "r:bzd:-z-", "tee": "r:bzd:-z-", "redir": "r:bzd:-z-"},
+    "and": {"cd": "r:---:bzd", "name": "r:---:bzd", "cp": "r:-z-:bzd", "mv": "r:-z-:bzd", "install": "r:-z-:bzd", "ln": "r:-z-:bzd", "tee": "r:-z-:bzd", "redir": "r:bzd:bzd"},
+    "redirect": {"cd": "r:b-d:bzd", "name": "r:b-d:bzd", "cp": "r:-z-:bzd", "mv": "r:-z-:bzd", "install": "r:-z-:bzd", "ln": "r:-z-:bzd", "tee": "r:-z-:bzd", "redir": "r:bzd:bzd"},
+    "pipe": {"cd": "r:bzd:bzd", "name": "r:bzd:bzd", "cp": "r:-z-:bzd", "mv": "r:-z-:bzd", "install": "r:-z-:bzd", "ln": "r:-z-:bzd", "tee": "r:-z-:bzd", "redir": "r:bzd:bzd"}
+  },
+  "repeat-skip": {
+    "shared": {"cd": "r:bzd:bzd", "name": "r:bzd:bzd", "cp": "r:---:bzd", "mv": "r:---:bzd", "install": "r:---:bzd", "ln": "r:---:bzd", "tee": "r:---:bzd", "redir": "r:b-d:bzd"},
+    "own": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "newline": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:b-d:-z-", "mv": "r:b-d:-z-", "install": "r:b-d:-z-", "ln": "r:b-d:-z-", "tee": "r:b-d:-z-", "redir": "r:b-d:-z-"},
+    "and": {"cd": "r:-z-:bzd", "name": "r:-z-:bzd", "cp": "r:---:bzd", "mv": "r:---:bzd", "install": "r:---:bzd", "ln": "r:---:bzd", "tee": "r:---:bzd", "redir": "r:b-d:bzd"},
+    "redirect": {"cd": "r:bzd:bzd", "name": "r:bzd:bzd", "cp": "r:---:bzd", "mv": "r:---:bzd", "install": "r:---:bzd", "ln": "r:---:bzd", "tee": "r:---:bzd", "redir": "r:b-d:bzd"},
+    "pipe": {"cd": "r:bzd:bzd", "name": "r:bzd:bzd", "cp": "r:---:bzd", "mv": "r:---:bzd", "install": "r:---:bzd", "ln": "r:---:bzd", "tee": "r:---:bzd", "redir": "r:b-d:bzd"}
+  },
+  "fn-paren": {
+    "shared": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "own": {"cd": "r:bzd:bzd", "name": "r:bzd:bzd", "cp": "r:---:bzd", "mv": "r:---:bzd", "install": "r:---:bzd", "ln": "r:---:bzd", "tee": "r:---:bzd", "redir": "r:---:bzd"},
+    "newline": {"cd": "r:bzd:bzd", "name": "r:bzd:bzd", "cp": "r:---:bzd", "mv": "r:---:bzd", "install": "r:---:bzd", "ln": "r:---:bzd", "tee": "r:---:bzd", "redir": "r:---:bzd"},
+    "and": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "redirect": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "pipe": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"}
+  },
+  "fn-word": {
+    "shared": {"cd": "r:-zd:-zd", "name": "r:-zd:-zd", "cp": "r:---:-zd", "mv": "r:---:-zd", "install": "r:---:-zd", "ln": "r:---:-zd", "tee": "r:---:-zd", "redir": "r:--d:-zd"},
+    "own": {"cd": "r:bz-:bz-", "name": "r:bz-:bz-", "cp": "r:---:bz-", "mv": "r:---:bz-", "install": "r:---:bz-", "ln": "r:---:bz-", "tee": "r:---:bz-", "redir": "r:---:bz-"},
+    "newline": {"cd": "r:bz-:bz-", "name": "r:bz-:bz-", "cp": "r:--d:bz-", "mv": "r:--d:bz-", "install": "r:--d:bz-", "ln": "r:--d:bz-", "tee": "r:--d:bz-", "redir": "r:--d:bz-"},
+    "and": {"cd": "r:-z-:-zd", "name": "r:-z-:-zd", "cp": "r:---:-zd", "mv": "r:---:-zd", "install": "r:---:-zd", "ln": "r:---:-zd", "tee": "r:---:-zd", "redir": "r:--d:-zd"},
+    "redirect": {"cd": "r:-zd:-zd", "name": "r:-zd:-zd", "cp": "r:---:-zd", "mv": "r:---:-zd", "install": "r:---:-zd", "ln": "r:---:-zd", "tee": "r:---:-zd", "redir": "r:--d:-zd"},
+    "pipe": {"cd": "r:-zd:-zd", "name": "r:-zd:-zd", "cp": "r:---:-zd", "mv": "r:---:-zd", "install": "r:---:-zd", "ln": "r:---:-zd", "tee": "r:---:-zd", "redir": "r:--d:-zd"}
+  },
+  "fn-word-paren": {
+    "shared": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "own": {"cd": "r:bz-:bz-", "name": "r:bz-:bz-", "cp": "r:---:bz-", "mv": "r:---:bz-", "install": "r:---:bz-", "ln": "r:---:bz-", "tee": "r:---:bz-", "redir": "r:---:bz-"},
+    "newline": {"cd": "r:bz-:bz-", "name": "r:bz-:bz-", "cp": "r:---:bz-", "mv": "r:---:bz-", "install": "r:---:bz-", "ln": "r:---:bz-", "tee": "r:---:bz-", "redir": "r:---:bz-"},
+    "and": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "redirect": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "pipe": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"}
+  },
+  "fn-two-names": {
+    "shared": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "own": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "newline": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "and": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "redirect": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "pipe": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"}
+  },
+  "fn-bang": {
+    "shared": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "own": {"cd": "r:bzd:bzd", "name": "r:bzd:bzd", "cp": "r:---:bzd", "mv": "r:---:bzd", "install": "r:---:bzd", "ln": "r:---:bzd", "tee": "r:---:bzd", "redir": "r:---:bzd"},
+    "newline": {"cd": "r:bzd:bzd", "name": "r:bzd:bzd", "cp": "r:---:bzd", "mv": "r:---:bzd", "install": "r:---:bzd", "ln": "r:---:bzd", "tee": "r:---:bzd", "redir": "r:---:bzd"},
+    "and": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "redirect": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "pipe": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"}
+  },
+  "fn-called": {
+    "shared": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "own": {"cd": "r:---:bzd", "name": "r:---:bzd", "cp": "r:bzd:bzd", "mv": "r:bzd:bzd", "install": "r:bzd:bzd", "ln": "r:bzd:bzd", "tee": "r:bzd:bzd", "redir": "r:bzd:bzd"},
+    "newline": {"cd": "r:---:bzd", "name": "r:---:bzd", "cp": "r:bzd:bzd", "mv": "r:bzd:bzd", "install": "r:bzd:bzd", "ln": "r:bzd:bzd", "tee": "r:bzd:bzd", "redir": "r:bzd:bzd"},
+    "and": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "redirect": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "pipe": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"}
+  },
+  "group": {
+    "shared": {"cd": "a:---:-z-", "name": "a:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "own": {"cd": "a:---:bzd", "name": "a:---:bzd", "cp": "r:bzd:bzd", "mv": "r:bzd:bzd", "install": "r:bzd:bzd", "ln": "r:bzd:bzd", "tee": "r:bzd:bzd", "redir": "r:bzd:bzd"},
+    "newline": {"cd": "a:---:bzd", "name": "a:---:bzd", "cp": "r:bzd:bzd", "mv": "r:bzd:bzd", "install": "r:bzd:bzd", "ln": "r:bzd:bzd", "tee": "r:bzd:bzd", "redir": "r:bzd:bzd"},
+    "and": {"cd": "a:---:-z-", "name": "a:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "redirect": {"cd": "a:---:-z-", "name": "a:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "pipe": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"}
+  },
+  "always-try": {
+    "shared": {"cd": "a:---:-z-", "name": "a:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "own": {"cd": "a:---:-z-", "name": "a:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "newline": {"cd": "a:---:-z-", "name": "a:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "and": {"cd": "a:---:-z-", "name": "a:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "redirect": {"cd": "a:---:---", "name": "a:---:---", "cp": "r:---:---", "mv": "r:---:---", "install": "r:---:---", "ln": "r:---:---", "tee": "r:---:---", "redir": "r:---:---"},
+    "pipe": {"cd": "r:---:---", "name": "r:---:---", "cp": "r:---:---", "mv": "r:---:---", "install": "r:---:---", "ln": "r:---:---", "tee": "r:---:---", "redir": "r:---:---"}
+  },
+  "always-alt": {
+    "shared": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "own": {"cd": "r:b-d:bzd", "name": "r:b-d:bzd", "cp": "r:-z-:bzd", "mv": "r:-z-:bzd", "install": "r:-z-:bzd", "ln": "r:-z-:bzd", "tee": "r:-z-:bzd", "redir": "r:bzd:bzd"},
+    "newline": {"cd": "a:---:bzd", "name": "a:---:bzd", "cp": "r:bzd:bzd", "mv": "r:bzd:bzd", "install": "r:bzd:bzd", "ln": "r:bzd:bzd", "tee": "r:bzd:bzd", "redir": "r:bzd:bzd"},
+    "and": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "redirect": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "pipe": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"}
+  },
+  "else-then-run": {
+    "shared": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "own": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "newline": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "and": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "redirect": {"cd": "r:---:---", "name": "r:---:---", "cp": "r:---:---", "mv": "r:---:---", "install": "r:---:---", "ln": "r:---:---", "tee": "r:---:---", "redir": "r:---:---"},
+    "pipe": {"cd": "r:---:---", "name": "r:---:---", "cp": "r:---:---", "mv": "r:---:---", "install": "r:---:---", "ln": "r:---:---", "tee": "r:---:---", "redir": "r:---:---"}
+  },
+  "else-then-skip": {
+    "shared": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "own": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "newline": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "and": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "redirect": {"cd": "r:---:---", "name": "r:---:---", "cp": "r:---:---", "mv": "r:---:---", "install": "r:---:---", "ln": "r:---:---", "tee": "r:---:---", "redir": "r:---:---"},
+    "pipe": {"cd": "r:---:---", "name": "r:---:---", "cp": "r:---:---", "mv": "r:---:---", "install": "r:---:---", "ln": "r:---:---", "tee": "r:---:---", "redir": "r:---:---"}
+  },
+  "else-alt-run": {
+    "shared": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "own": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "newline": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "and": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "redirect": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "pipe": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"}
+  },
+  "else-alt-skip": {
+    "shared": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "own": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "newline": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "and": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "redirect": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "pipe": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"}
+  },
+  "else-test-alt-run": {
+    "shared": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "own": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "newline": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "and": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "redirect": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "pipe": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"}
+  },
+  "else-group-alt-run": {
+    "shared": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "own": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "newline": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "and": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "redirect": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "pipe": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"}
+  },
+  "elif-run": {
+    "shared": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "own": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "newline": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "and": {"cd": "r:---:---", "name": "r:---:---", "cp": "r:---:---", "mv": "r:---:---", "install": "r:---:---", "ln": "r:---:---", "tee": "r:---:---", "redir": "r:---:---"},
+    "redirect": {"cd": "r:---:---", "name": "r:---:---", "cp": "r:---:---", "mv": "r:---:---", "install": "r:---:---", "ln": "r:---:---", "tee": "r:---:---", "redir": "r:---:---"},
+    "pipe": {"cd": "r:---:---", "name": "r:---:---", "cp": "r:---:---", "mv": "r:---:---", "install": "r:---:---", "ln": "r:---:---", "tee": "r:---:---", "redir": "r:---:---"}
+  },
+  "elif-skip": {
+    "shared": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "own": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "newline": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "and": {"cd": "r:---:---", "name": "r:---:---", "cp": "r:---:---", "mv": "r:---:---", "install": "r:---:---", "ln": "r:---:---", "tee": "r:---:---", "redir": "r:---:---"},
+    "redirect": {"cd": "r:---:---", "name": "r:---:---", "cp": "r:---:---", "mv": "r:---:---", "install": "r:---:---", "ln": "r:---:---", "tee": "r:---:---", "redir": "r:---:---"},
+    "pipe": {"cd": "r:---:---", "name": "r:---:---", "cp": "r:---:---", "mv": "r:---:---", "install": "r:---:---", "ln": "r:---:---", "tee": "r:---:---", "redir": "r:---:---"}
+  },
+  "while-cond-group": {
+    "shared": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "own": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "newline": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "and": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "redirect": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "pipe": {"cd": "r:---:---", "name": "r:---:---", "cp": "r:---:---", "mv": "r:---:---", "install": "r:---:---", "ln": "r:---:---", "tee": "r:---:---", "redir": "r:---:---"}
+  },
+  "nested-if-run": {
+    "shared": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "own": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "newline": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "and": {"cd": "r:---:---", "name": "r:---:---", "cp": "r:---:---", "mv": "r:---:---", "install": "r:---:---", "ln": "r:---:---", "tee": "r:---:---", "redir": "r:---:---"},
+    "redirect": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "pipe": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"}
+  },
+  "nested-if-skip": {
+    "shared": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "own": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "newline": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "and": {"cd": "r:---:---", "name": "r:---:---", "cp": "r:---:---", "mv": "r:---:---", "install": "r:---:---", "ln": "r:---:---", "tee": "r:---:---", "redir": "r:---:---"},
+    "redirect": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "pipe": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"}
+  },
+  "nested-fn-if": {
+    "shared": {"cd": "r:---:---", "name": "r:---:---", "cp": "r:---:---", "mv": "r:---:---", "install": "r:---:---", "ln": "r:---:---", "tee": "r:---:---", "redir": "r:---:---"},
+    "own": {"cd": "r:---:---", "name": "r:---:---", "cp": "r:---:---", "mv": "r:---:---", "install": "r:---:---", "ln": "r:---:---", "tee": "r:---:---", "redir": "r:---:---"},
+    "newline": {"cd": "r:---:---", "name": "r:---:---", "cp": "r:---:---", "mv": "r:---:---", "install": "r:---:---", "ln": "r:---:---", "tee": "r:---:---", "redir": "r:---:---"},
+    "and": {"cd": "r:---:---", "name": "r:---:---", "cp": "r:---:---", "mv": "r:---:---", "install": "r:---:---", "ln": "r:---:---", "tee": "r:---:---", "redir": "r:---:---"},
+    "redirect": {"cd": "r:---:---", "name": "r:---:---", "cp": "r:---:---", "mv": "r:---:---", "install": "r:---:---", "ln": "r:---:---", "tee": "r:---:---", "redir": "r:---:---"},
+    "pipe": {"cd": "r:---:---", "name": "r:---:---", "cp": "r:---:---", "mv": "r:---:---", "install": "r:---:---", "ln": "r:---:---", "tee": "r:---:---", "redir": "r:---:---"}
+  },
+  "nested-group-if-run": {
+    "shared": {"cd": "r:---:---", "name": "r:---:---", "cp": "r:---:---", "mv": "r:---:---", "install": "r:---:---", "ln": "r:---:---", "tee": "r:---:---", "redir": "r:---:---"},
+    "own": {"cd": "r:---:---", "name": "r:---:---", "cp": "r:---:---", "mv": "r:---:---", "install": "r:---:---", "ln": "r:---:---", "tee": "r:---:---", "redir": "r:---:---"},
+    "newline": {"cd": "r:---:---", "name": "r:---:---", "cp": "r:---:---", "mv": "r:---:---", "install": "r:---:---", "ln": "r:---:---", "tee": "r:---:---", "redir": "r:---:---"},
+    "and": {"cd": "r:---:---", "name": "r:---:---", "cp": "r:---:---", "mv": "r:---:---", "install": "r:---:---", "ln": "r:---:---", "tee": "r:---:---", "redir": "r:---:---"},
+    "redirect": {"cd": "r:---:---", "name": "r:---:---", "cp": "r:---:---", "mv": "r:---:---", "install": "r:---:---", "ln": "r:---:---", "tee": "r:---:---", "redir": "r:---:---"},
+    "pipe": {"cd": "r:---:---", "name": "r:---:---", "cp": "r:---:---", "mv": "r:---:---", "install": "r:---:---", "ln": "r:---:---", "tee": "r:---:---", "redir": "r:---:---"}
+  },
+  "nested-group-if-skip": {
+    "shared": {"cd": "r:---:---", "name": "r:---:---", "cp": "r:---:---", "mv": "r:---:---", "install": "r:---:---", "ln": "r:---:---", "tee": "r:---:---", "redir": "r:---:---"},
+    "own": {"cd": "r:---:---", "name": "r:---:---", "cp": "r:---:---", "mv": "r:---:---", "install": "r:---:---", "ln": "r:---:---", "tee": "r:---:---", "redir": "r:---:---"},
+    "newline": {"cd": "r:---:---", "name": "r:---:---", "cp": "r:---:---", "mv": "r:---:---", "install": "r:---:---", "ln": "r:---:---", "tee": "r:---:---", "redir": "r:---:---"},
+    "and": {"cd": "r:---:---", "name": "r:---:---", "cp": "r:---:---", "mv": "r:---:---", "install": "r:---:---", "ln": "r:---:---", "tee": "r:---:---", "redir": "r:---:---"},
+    "redirect": {"cd": "r:---:---", "name": "r:---:---", "cp": "r:---:---", "mv": "r:---:---", "install": "r:---:---", "ln": "r:---:---", "tee": "r:---:---", "redir": "r:---:---"},
+    "pipe": {"cd": "r:---:---", "name": "r:---:---", "cp": "r:---:---", "mv": "r:---:---", "install": "r:---:---", "ln": "r:---:---", "tee": "r:---:---", "redir": "r:---:---"}
+  },
+  "nested-if-fn": {
+    "shared": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "own": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "newline": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "and": {"cd": "r:---:---", "name": "r:---:---", "cp": "r:---:---", "mv": "r:---:---", "install": "r:---:---", "ln": "r:---:---", "tee": "r:---:---", "redir": "r:---:---"},
+    "redirect": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "pipe": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"}
+  },
+  "nested-group-fn": {
+    "shared": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "own": {"cd": "r:bzd:bzd", "name": "r:bzd:bzd", "cp": "r:---:bzd", "mv": "r:---:bzd", "install": "r:---:bzd", "ln": "r:---:bzd", "tee": "r:---:bzd", "redir": "r:---:bzd"},
+    "newline": {"cd": "r:bzd:bzd", "name": "r:bzd:bzd", "cp": "r:---:bzd", "mv": "r:---:bzd", "install": "r:---:bzd", "ln": "r:---:bzd", "tee": "r:---:bzd", "redir": "r:---:bzd"},
+    "and": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "redirect": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "pipe": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"}
+  },
+  "nested-always-in-if": {
+    "shared": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "own": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "newline": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "and": {"cd": "r:---:---", "name": "r:---:---", "cp": "r:---:---", "mv": "r:---:---", "install": "r:---:---", "ln": "r:---:---", "tee": "r:---:---", "redir": "r:---:---"},
+    "redirect": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "pipe": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"}
+  },
+  "after-if-skip": {
+    "shared": {"cd": "a:---:-z-", "name": "a:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "own": {"cd": "a:---:-z-", "name": "a:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "newline": {"cd": "a:---:-z-", "name": "a:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "and": {"cd": "a:---:-z-", "name": "a:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "redirect": {"cd": "a:---:-z-", "name": "a:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "pipe": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"}
+  },
+  "after-if-run": {
+    "shared": {"cd": "a:---:-z-", "name": "a:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "own": {"cd": "a:---:-z-", "name": "a:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "newline": {"cd": "a:---:-z-", "name": "a:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "and": {"cd": "a:---:-z-", "name": "a:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "redirect": {"cd": "a:---:-z-", "name": "a:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "pipe": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"}
+  },
+  "after-fn": {
+    "shared": {"cd": "a:---:-z-", "name": "a:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "own": {"cd": "a:---:-z-", "name": "a:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "newline": {"cd": "a:---:-z-", "name": "a:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "and": {"cd": "a:---:-z-", "name": "a:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "redirect": {"cd": "a:---:-z-", "name": "a:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "pipe": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"}
+  },
+  "after-group": {
+    "shared": {"cd": "a:---:-z-", "name": "a:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "own": {"cd": "a:---:-z-", "name": "a:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "newline": {"cd": "a:---:-z-", "name": "a:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "and": {"cd": "a:---:-z-", "name": "a:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "redirect": {"cd": "a:---:-z-", "name": "a:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "pipe": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"}
+  },
+  "one-if-arith-run": {
+    "none": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"}
+  },
+  "one-if-arith-skip": {
+    "none": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"}
+  },
+  "one-if-test-run": {
+    "none": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"}
+  },
+  "one-if-test-skip": {
+    "none": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"}
+  },
+  "one-if-paren-run": {
+    "none": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"}
+  },
+  "one-if-paren-skip": {
+    "none": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"}
+  },
+  "one-if-group-run": {
+    "none": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"}
+  },
+  "one-if-group-skip": {
+    "none": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"}
+  },
+  "one-for-run": {
+    "none": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"}
+  },
+  "one-for-skip": {
+    "none": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"}
+  },
+  "one-repeat-run": {
+    "none": {"cd": "r:b-d:bzd", "name": "r:b-d:bzd", "cp": "r:-z-:bzd", "mv": "r:-z-:bzd", "install": "r:-z-:bzd", "ln": "r:-z-:bzd", "tee": "r:-z-:bzd", "redir": "r:bzd:bzd"}
+  },
+  "one-repeat-skip": {
+    "none": {"cd": "r:bzd:bzd", "name": "r:bzd:bzd", "cp": "r:---:bzd", "mv": "r:---:bzd", "install": "r:---:bzd", "ln": "r:---:bzd", "tee": "r:---:bzd", "redir": "r:b-d:bzd"}
+  },
+  "one-while-group-skip": {
+    "none": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"}
+  },
+  "one-until-arith-skip": {
+    "none": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"}
+  },
+  "one-fn-paren": {
+    "none": {"cd": "r:-zd:-zd", "name": "r:-zd:-zd", "cp": "r:---:-zd", "mv": "r:---:-zd", "install": "r:---:-zd", "ln": "r:---:-zd", "tee": "r:---:-zd", "redir": "r:---:-zd"}
+  },
+  "one-fn-word": {
+    "none": {"cd": "r:--d:-zd", "name": "r:--d:-zd", "cp": "a:---:-zd", "mv": "a:---:-zd", "install": "a:---:-zd", "ln": "a:---:-zd", "tee": "a:---:-zd", "redir": "r:--d:-zd"}
+  }
+}
+}

@@ -4825,6 +4825,7 @@ const SINCE_HEADS = {
   'seventh pass, the attacker': 'a36e34832173180184fb595ca1c6d0e8b85b8a55',
   'round 5': null,   // this tree; its previous head is the attacker's
   'round 5, second addendum': null,   // this tree too (one commit after the addendum's); its previous head is the attacker's
+  'round 5, third addendum': null,   // this tree too (the closing-brace cut at the lexer); its previous head is the attacker's
 };
 test("round 5, the since sweep: every corpus row marked `since` newly refuses at the pass it names (allowed by the hook at the head before that pass, refused at the pass's head, both hooks taken from this checkout's history and run as processes over the corpus world); every label is one the sweep's table knows; a checkout without the history says so loudly", () => {
   const since = CORPUS.filter((e) => e.since);
@@ -5013,7 +5014,6 @@ test("round 5's second addendum: a brace body's closing `}` that shares a segmen
   try {
     const A = ['bash', 'zsh', 'dash'];
     const Z = ['zsh'];
-    const REPEAT_ARG = ['literal', 'an assignment-shaped word of `repeat`'];
     // [id, cwd, command, the shells that write the tracked subset unguarded (bash and dash reject every one-line brace body with a syntax error and run nothing), the verdict]
     const rows = [
       // the cd face: the body not run, the write after it refused as an unknown directory (allowed on the addendum's head, zsh writing docs/report.md)
@@ -5028,8 +5028,8 @@ test("round 5's second addendum: a brace body's closing `}` that shares a segmen
       ['C-nested', 'nad', 'if (( 0 )) { { cd ../scratch } }; cp ../base/report.md report.md', Z, UNKNOWN_BODY_CD],
       ['C-else', 'nad', 'if (( 0 )) { cd ../scratch } else { : }; cp ../base/report.md report.md', Z, UNKNOWN_BODY_CD],
       ['C-quoted', 'nad', 'if (( 0 )) { cd "../scratch" }; cp ../base/report.md report.md', Z, UNKNOWN_BODY_CD],
-      ['C-repeat', 'nad', 'repeat 0 { cd ../scratch }; cp ../base/report.md report.md', A, 'name'],   // the words after `repeat` are its operands to commandOf, so the cd is not followed: by name from the cwd (bash and dash have no repeat and copy)
-      ['C-test', 'nad', 'if [[ 1 = 2 ]] { cd ../scratch }; cp ../base/report.md report.md', Z, 'name'],   // the condition's words are the segment's command, so the cd is not followed: by name
+      ['C-repeat', 'nad', 'repeat 0 { cd ../scratch }; cp ../base/report.md report.md', A, UNKNOWN_BODY_CD],   // the brace body is read as repeat's body since the third addendum (before, the words after `repeat` were its operands to commandOf and the row refused by name); bash and dash have no repeat and copy
+      ['C-test', 'nad', 'if [[ 1 = 2 ]] { cd ../scratch }; cp ../base/report.md report.md', Z, UNKNOWN_BODY_CD],   // the `[[ .. ]]` condition is dropped before the body since the third addendum, so the cd is the body's (before, the condition's words were the segment's command and the row refused by name)
       ['C-runs', 'nad', 'if (( 1 )) { cd ../scratch }; cp ../base/report.md report.md', [], UNKNOWN_BODY_CD],   // the body runs and zsh writes scratch/report.md: the priced cost, as `if true; then cd ..; fi` is
       // the name face: the body's assignment unreadable with the body's reason (refused on the addendum's head too, naming `}` as a command)
       ['N-if', 'na', 'x=docs/report.md; if (( 0 )) { x=scratch/keep.md }; cp base/report.md $x', Z, BODY],
@@ -5040,7 +5040,7 @@ test("round 5's second addendum: a brace body's closing `}` that shares a segmen
       ['N-select-in', 'na', 'x=docs/report.md; select y in a; { x=scratch/keep.md }; cp base/report.md $x', Z, BODY],
       ['N-case', 'na', 'x=docs/report.md; case a { b) x=scratch/keep.md }; cp base/report.md $x', Z, BODY],
       ['N-for-in', 'na', 'x=docs/report.md; for y in; { x=scratch/keep.md }; cp base/report.md $x', Z, BODY],
-      ['N-repeat', 'na', 'x=docs/report.md; repeat 0 { x=scratch/keep.md }; cp base/report.md $x', A, REPEAT_ARG],   // the assignment is an operand of `repeat` to commandOf
+      ['N-repeat', 'na', 'x=docs/report.md; repeat 0 { x=scratch/keep.md }; cp base/report.md $x', A, BODY],   // the body's own reason since the third addendum (before, the assignment was an operand of `repeat` to commandOf)
       // the operand face: the trailing `}` is zsh's closer, never the destination (allowed on the addendum's head, zsh writing docs/report.md)
       ['O-grp', 'nad', '{ cp ../base/report.md report.md }', Z, 'name'],
       ['O-then', 'nad', 'if true; then { cp ../base/report.md report.md }; fi', Z, 'name'],
@@ -5081,6 +5081,300 @@ test("round 5's second addendum: a brace body's closing `}` that shares a segmen
     assert.deepEqual(extractWriteTargets('x=docs/report.md; if (( 0 )) { x=scratch/keep.md }; cp base/report.md $x', w.NA).targets, [], 'the one-line body\'s assignment is unreadable');
     assert.ok(extractWriteTargets('{ cp base/report.md docs/report.md }', w.NA).targets.map((t) => t.path).includes(path.join(w.NA, 'docs', 'report.md')), 'the word before a trailing brace is the destination');
     assert.deepEqual(extractWriteTargets('if (( 0 )) {\ncd scratch\n}; cp base/report.md notes/n1.md', w.NA).unresolved.map((u) => u.why && u.why.kind), ['unknownDir'], 'the brace on its own segment closes as before');
+  } finally { process.env.HOME = savedHome; w.rm(); }
+});
+
+// Round 5's third addendum (2026-09-20): the round's verifier found twenty live false allows at the second addendum's head in the
+// family it claimed closed, a `}` sharing a segment with the words before it, in the frames that fix did not reach: the function
+// body's scan popped its frame before the cd sharing the segment was read (13 spellings), the words after a spliced brace became
+// operands of the body's command (`else { .. }`, `always { .. }`, a while's condition group, 6 rows), and `repeat 1 { cp .. }`
+// read the body as repeat's operands. Reproducing them found more of the same reading (the one-command body after `))` or `]]`,
+// the `[[ .. ]]` condition's words as the segment's command, `always` nested in a body, `} else {` with the block on later
+// lines, and a closer segment's redirection judged after the cd inside). The lexer now cuts a segment before such a brace
+// (splitAtClosers), so every frame kind reads the one-line form as its `;` twin. Each row below runs the hook as a process from
+// its cwd and then unguarded in every shell over a fresh world, asserting EXACTLY which shells write the tracked subset; every
+// refused row but the twins and the two priced costs was allowed on the second addendum's head with the shells named writing.
+test("round 5's third addendum: an unquoted `}` after other words ends its construct only after those words are read as its command, in a function body (every spelling), a compound brace body, an else, elif or always continuation, a condition group and a repeat body; the words after it begin a new command; a closer segment's redirection is judged where the construct began; and the twins stay allowed; exactly the shells named write the tracked subset unguarded", () => {
+  const w = sixthPassWorld();
+  const savedHome = process.env.HOME;
+  process.env.HOME = w.HOME;
+  try {
+    const A = ['bash', 'zsh', 'dash'];
+    const Z = ['zsh'];
+    const ZD = ['zsh', 'dash'];
+    const BD = ['bash', 'dash'];
+    // [id, cwd, command, the shells that write the tracked subset unguarded, the verdict]
+    const rows = [
+      // (1) the function body: the frame popped at the brace before the cd sharing its segment was read, the cd followed as plain sequence
+      ['F-fn', 'nad', 'f() { cd ../scratch }; cp ../base/report.md report.md', Z, 'name'],
+      ['F-function', 'nad', 'function f { cd ../scratch }; cp ../base/report.md report.md', ZD, 'name'],   // dash has no `function` word: it runs `function`, fails, and the rest as plain commands
+      ['F-function-paren', 'nad', 'function f() { cd ../scratch }; cp ../base/report.md report.md', Z, 'name'],
+      ['F-two-names', 'nad', 'f g () { cd ../scratch }; cp ../base/report.md report.md', Z, 'name'],
+      ['F-bang', 'nad', '! f() { cd ../scratch }; cp ../base/report.md report.md', Z, 'name'],
+      ['F-nested', 'nad', 'f() { { cd ../scratch } }; cp ../base/report.md report.md', Z, 'name'],
+      ['F-two-cmds', 'nad', 'f() { echo a; cd ../scratch }; cp ../base/report.md report.md', Z, 'name'],
+      ['F-newline', 'nad', 'f() { cd ../scratch }\ncp ../base/report.md report.md', Z, 'name'],
+      ['F-and', 'nad', 'f() { cd ../scratch } && cp ../base/report.md report.md', Z, 'name'],
+      ['F-redirect', 'nad', 'f() { cd ../scratch } 2>/dev/null; cp ../base/report.md report.md', Z, 'name'],
+      ['F-quoted', 'nad', "f() { cd '../scratch' }; cp ../base/report.md report.md", Z, 'name'],
+      ['F-pushd', 'nad', 'f() { pushd ../scratch }; cp ../base/report.md report.md', Z, 'name'],
+      ['F-group', 'nad', '{ f() { cd ../scratch } }; cp ../base/report.md report.md', Z, 'name'],
+      ['F-name', 'na', 'x=docs/report.md; f() { x=scratch/keep.md }; cp base/report.md $x', Z, BODY],   // refused before too, naming an assignment-shaped word of `}`
+      // (2) the words after the brace: `else`, `always` and a condition group's body were operands of the command before them
+      ['G-else-then', 'nad', 'if (( 1 )) { cp ../base/report.md report.md } else { : }', Z, 'name'],
+      ['G-else-alt', 'nad', 'if (( 0 )) { : } else { cp ../base/report.md report.md }', Z, 'name'],
+      ['G-else-mv', 'nad', 'if (( 1 )) { mv ../base/report.md report.md } else { : }', Z, 'name'],
+      ['G-always-try', 'nad', '{ cp ../base/report.md report.md } always { : }', Z, 'name'],
+      ['G-always-alt', 'nad', '{ : } always { cp ../base/report.md report.md }', Z, 'name'],
+      ['G-while-cond', 'nad', 'while { cp ../base/report.md report.md } { break }', Z, 'name'],
+      // (3) repeat's brace body
+      ['R-repeat', 'nad', 'repeat 1 { cp ../base/report.md report.md }', Z, 'name'],
+      // found beside them, the same reading
+      ['S-else-cd', 'nad', 'if (( 1 )) { : } else { cd ../scratch }; cp ../base/report.md report.md', Z, UNKNOWN_BODY_CD],
+      ['S-else-lines', 'nad', 'if (( 1 )) {\n:\n} else {\ncd ../scratch\n}\ncp ../base/report.md report.md', Z, UNKNOWN_BODY_CD],   // the else block on later lines was a plain group after the frame closed
+      ['S-arith-one', 'nad', 'if (( 0 )) cd ../scratch; cp ../base/report.md report.md', Z, UNKNOWN_BODY_CD],   // zsh's one-command body after `))`, walked as plain sequence
+      ['S-test-one', 'nad', 'if [[ 1 = 2 ]] cd ../scratch; cp ../base/report.md report.md', Z, UNKNOWN_BODY_CD],   // after `]]`: refused before too, by name, the cd an operand of `[[`
+      ['S-test-body', 'nad', 'if [[ 1 = 1 ]] { cp ../base/report.md report.md }; :', Z, 'name'],   // the condition's words were the segment's command
+      ['S-elif-body', 'nad', 'if (( 0 )) { : } elif [[ 1 = 1 ]] { cp ../base/report.md report.md }; :', Z, 'name'],
+      ['S-nested-always', 'nad', 'if (( 1 )) { { : } always { cp ../base/report.md report.md } }; :', Z, 'name'],
+      ['S-cond-cd', 'nad', 'if { cd ../scratch } { : }; cp ../base/report.md report.md', [], UNKNOWN_BODY_CD],   // the condition group runs and zsh writes scratch/report.md: the priced cost, as `if true; then cd ..; fi`
+      ['S-cond-lines', 'nad', 'while { false }\n{ cd ../scratch }; cp ../base/report.md report.md; break', [], UNKNOWN_BODY_CD],   // zsh continues the condition list across the newline and loops; nothing tracked is written
+      // a closer segment's redirection: every shell opens it before the construct runs, in the directory it started in
+      ['D-group-semi', 'nad', '{ cd ../scratch; } > report.md', A, 'name'],
+      ['D-group-shared', 'nad', '{ cd ../scratch } > report.md', Z, 'name'],
+      ['D-group-lines', 'nad', '{\ncd ../scratch\n} > report.md', A, 'name'],
+      ['D-group-tee', 'nad', '{ cd ../scratch; } | tee report.md', A, 'name'],
+      ['D-group-append', 'nad', '{ cd ../scratch; } >> report.md', [], 'name'],   // opened for append in docs/ by every shell; the group prints nothing, so the bytes are unchanged
+      ['D-if', 'nad', 'if true; then cd ../scratch; fi > report.md', A, 'name'],
+      ['D-while', 'nad', 'while false; do :; done > report.md; cd ../scratch', A, 'name'],
+      ['D-subshell', 'nad', '( cd ../scratch ) > report.md', A, 'name'],
+      ['D-fn', 'nad', 'f() { cd ../scratch; } > report.md', [], 'name'],   // the redirection is the definition's, opened at each call: refused before too, as a cost
+      // the twins
+      ['T-operand', 'na', 'cd notes; cp ../base/report.md }', BD, 'name'],   // bash and dash read the brace as cp's destination, a new file under the tracked folder; zsh: a parse error
+      ['T-group-cd', 'nad', '{ cd ../scratch }; cp ../base/report.md report.md', [], 'allow'],   // a plain group runs in this shell: the cd is followed (zsh writes scratch/report.md)
+      ['T-untracked', 'nad', '{ cp ../base/report.md ../scratch/keep.md } always { : }', [], 'allow'],
+      ['T-quoted', 'nad', "cp ../base/report.md ../scratch/keep.md '}'", [], 'allow'],
+    ];
+    let n = 0;
+    for (const [id, cwd, raw, writers, expect] of rows) {
+      const cmd = w.fill(raw);
+      const at = w.cwds[cwd];
+      const h = w.hook(cmd, at);
+      n++;
+      if (expect === 'allow') assert.equal(h.status, 0, `${id}: allowed: ${cmd}: ${h.reason}`);
+      else {
+        assert.equal(h.status, 2, `${id}: refused: ${cmd}: ${h.reason}`);
+        assert.ok(!/\u2014/.test(h.reason) && !ROMP_NOUNS.test(h.reason.split(w.W).join('<w>')), `${id}: no em dash, no romp noun`);
+        if (expect === 'name') assert.match(h.reason, BY_NAME_RE, `${id}: by name: ${h.reason.split('\n')[0]}`);
+        else if (expect[0] === 'dir') assert.ok(/the directory it is relative to is not known/.test(h.reason) && h.reason.includes(expect[1]), `${id}: the directory is unknown, the reason naming the construct: ${h.reason.split('\n')[0]}`);
+        else assert.ok(NOT_LITERAL.test(h.reason) && h.reason.includes(expect[1]), `${id}: refused as not literal, the reason naming the construct (${expect[1]}): ${h.reason.split('\n')[0]}`);
+      }
+      for (const shell of shellsFor(A, id)) {
+        const r = w.run(cmd, at, shell);
+        assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
+      }
+    }
+    assert.equal(n, 43);
+    // the cut: a `}` after other words heads a segment of its own, the command's segment keeps the cut braces as its tail, and
+    // `} always {` is dropped so the try-list and the always-list are one group
+    const shape = (c) => lex(c).segments.map((s) => [s.words.map((x) => x.text), s.op, s.closerTail ? s.closerTail.map((x) => x.text) : null]);
+    assert.deepEqual(shape('f() { cd ../scratch }; cp a b').slice(3), [[['{', 'cd', '../scratch'], ';', ['}']], [['}'], ';', null], [['cp', 'a', 'b'], '', null]], 'the brace heads its own segment after the function body\'s command');
+    assert.deepEqual(shape('{ cp a b } always { : } | cat'), [[['{', 'cp', 'a', 'b'], ';', ['}']], [[':'], ';', ['}']], [['}'], '|', null], [['cat'], '', null]], 'the always-list continues the group, which closes at the last brace');
+    assert.deepEqual(shape('if (( 1 )) { cp a b } else { : }; :'), [[['if', '{', 'cp', 'a', 'b'], ';', ['}']], [['}', 'else', '{', ':'], ';', ['}']], [['}'], ';', null], [[':'], '', null]], 'the words after the brace begin a new segment, with the brace');
+    assert.deepEqual(shape("cp a b '}'"), [[['cp', 'a', 'b', '}'], '', null]], 'a quoted brace is an operand');
+    assert.deepEqual(lex('if (( 0 )) { : }').segments[0].arithAt, [1], 'the lexer records the words before each (( ))');
+    // the grammar through extractWriteTargets
+    assert.deepEqual(extractWriteTargets('f() { cd scratch }; cp base/report.md notes/n1.md', w.NA).targets.map((t) => t.path), [path.join(w.NA, 'notes', 'n1.md')], 'the function body\'s cd is restored at its brace');
+    assert.deepEqual(extractWriteTargets('x=docs/report.md; f() { x=scratch/keep.md }; cp base/report.md $x', w.NA).targets, [], 'the function body\'s assignment is unreadable');
+    assert.deepEqual(extractWriteTargets('if (( 1 )) { cp base/report.md docs/other.md } else { cp base/report.md docs/report.md }', w.NA).targets.map((t) => path.basename(t.path)).sort(), ['other.md', 'report.md'], 'both blocks\' writers are commands');
+    assert.deepEqual(extractWriteTargets('{ cd scratch; } > notes/n1.md', w.NA).targets.map((t) => t.path), [path.join(w.NA, 'notes', 'n1.md')], 'a closer segment\'s redirection is judged where the group began');
+    assert.deepEqual(extractWriteTargets('if (( 0 )) cd scratch; cp base/report.md notes/n1.md', w.NA).unresolved.map((u) => u.why && u.why.kind), ['unknownDir'], 'the one-command body after (( )) is the body');
+    assert.deepEqual(extractWriteTargets('while { cd scratch } { break }; cp base/report.md notes/n1.md', w.NA).unresolved.map((u) => u.why && u.why.kind), ['unknownDir'], 'a condition group\'s cd is a body\'s');
+    assert.deepEqual(extractWriteTargets('repeat 1 { cp base/report.md docs/report.md }', w.NA).targets.map((t) => t.path), [path.join(w.NA, 'docs', 'report.md')], 'the repeat body\'s writer is a command');
+  } finally { process.env.HOME = savedHome; w.rm(); }
+});
+
+// THE BRACE MATRIX (round 5's third addendum, 2026-09-20): the attack on the closing-brace rule, kept as a pin. Every
+// combination of frame kind (if, while and until with `(( ))`, `( )`, `[[ ]]` and `{ }` conditions, for with `( )` and `in`,
+// select, case, repeat; the four function spellings, a called function and one behind `!`; a plain group; the else, elif and
+// always continuations; a while's condition group; one level of nesting; a group after the body) x brace placement (the brace
+// sharing the last command's segment, on its own after `;`, after a newline, followed by `&&`, followed by a redirection, piped)
+// x face (a cd, a name, and a writer: cp, mv, install, ln -f, tee, a `>` redirection) x position (the body, the continuation
+// block, a condition group, a group after the body), plus zsh's one-command bodies. Each row is judged in-process (evaluate over
+// the payload the hook reads) and run unguarded in bash, zsh and dash over a fresh world; the fixture beside this file
+// (romp-track-bash-guard-brace-matrix.json, written from the same generator run through the hook as a process) pins, per row,
+// the verdict, the shells that write the tracked subset and the shells that parse the line, so a row whose verdict, writers or
+// parsing changes reds by id. The hard invariant holds on top of the pin: a row any shell writes is refused. The refusals where
+// no shell writes are the cost, counted and listed by class: the standing doctrine (the face sits in a body no shell runs on
+// this line, or a definition never called), the priced classes (a cd or an assignment in a body that runs is unknown or
+// unreadable, as `if true; then cd ..; fi` is), and the spellings no shell parses. The matrix at the second addendum's head had
+// 213 rows a shell wrote that the hook allowed; this tree has 0.
+const BRACE_MATRIX = {
+  FACES: {
+    cd:      { cwd: 'nad', prefix: '', face: 'cd ../scratch', tail: 'cp ../base/report.md report.md' },
+    name:    { cwd: 'na',  prefix: 'x=docs/report.md; ', face: 'x=scratch/keep.md', tail: 'cp base/report.md $x' },
+    cp:      { cwd: 'nad', prefix: '', face: 'cp ../base/report.md report.md', tail: ':' },
+    mv:      { cwd: 'nad', prefix: '', face: 'mv ../base/report.md report.md', tail: ':' },
+    install: { cwd: 'nad', prefix: '', face: 'install ../base/report.md report.md', tail: ':' },
+    ln:      { cwd: 'nad', prefix: '', face: 'ln -f ../base/report.md report.md', tail: ':' },
+    tee:     { cwd: 'nad', prefix: '', face: 'tee report.md < ../base/report.md', tail: ':' },
+    redir:   { cwd: 'nad', prefix: '', face: 'echo x > report.md', tail: ':' },
+  },
+  // the brace body around the face, by placement; `join` is the operator between the construct and the tail
+  PLACEMENTS: {
+    shared:   { body: (f) => `{ ${f} }`, join: '; ' },
+    own:      { body: (f) => `{ ${f}; }`, join: '; ' },
+    newline:  { body: (f) => `{\n${f}\n}`, join: '; ' },
+    and:      { body: (f) => `{ ${f} }`, join: ' && ' },
+    redirect: { body: (f) => `{ ${f} } 2>/dev/null`, join: '; ' },
+    pipe:     { body: (f) => `{ ${f} } | cat`, join: '; ' },
+  },
+  // [kind, the body runs in zsh, position, template over the body]
+  FRAMES: [
+    ['if-arith-run', true, 'body', (b) => `if (( 1 )) ${b}`],
+    ['if-arith-skip', false, 'body', (b) => `if (( 0 )) ${b}`],
+    ['if-paren-run', true, 'body', (b) => `if (true) ${b}`],
+    ['if-paren-skip', false, 'body', (b) => `if (false) ${b}`],
+    ['if-test-run', true, 'body', (b) => `if [[ 1 = 1 ]] ${b}`],
+    ['if-test-skip', false, 'body', (b) => `if [[ 1 = 2 ]] ${b}`],
+    ['if-group-run', true, 'body', (b) => `if { true } ${b}`],
+    ['if-group-skip', false, 'body', (b) => `if { false } ${b}`],
+    ['while-arith-run', true, 'body', (b) => `while (( i++ < 1 )) ${b}`],
+    ['while-arith-skip', false, 'body', (b) => `while (( 0 )) ${b}`],
+    ['while-paren-skip', false, 'body', (b) => `while (false) ${b}`],
+    ['while-test-skip', false, 'body', (b) => `while [[ 1 = 2 ]] ${b}`],
+    ['while-group-skip', false, 'body', (b) => `while { false } ${b}`],
+    ['until-arith-run', true, 'body', (b) => `until (( i++ >= 1 )) ${b}`],
+    ['until-arith-skip', false, 'body', (b) => `until (( 1 )) ${b}`],
+    ['until-paren-skip', false, 'body', (b) => `until (true) ${b}`],
+    ['until-test-skip', false, 'body', (b) => `until [[ 1 = 1 ]] ${b}`],
+    ['until-group-skip', false, 'body', (b) => `until { true } ${b}`],
+    ['for-paren-run', true, 'body', (b) => `for y (a) ${b}`],
+    ['for-paren-skip', false, 'body', (b) => `for y () ${b}`],
+    ['for-in-run', true, 'body', (b) => `for y in a; ${b}`],
+    ['for-in-skip', false, 'body', (b) => `for y in; ${b}`],
+    ['select-paren-skip', false, 'body', (b) => `select y (a) ${b}`],
+    ['select-in-skip', false, 'body', (b) => `select y in a; ${b}`],
+    ['case-run', true, 'body', (b) => `case a ${b.replace('{', '{ a)')}`],
+    ['case-skip', false, 'body', (b) => `case a ${b.replace('{', '{ b)')}`],
+    ['repeat-run', true, 'body', (b) => `repeat 1 ${b}`],
+    ['repeat-skip', false, 'body', (b) => `repeat 0 ${b}`],
+    ['fn-paren', false, 'body', (b) => `f() ${b}`],
+    ['fn-word', false, 'body', (b) => `function f ${b}`],
+    ['fn-word-paren', false, 'body', (b) => `function f() ${b}`],
+    ['fn-two-names', false, 'body', (b) => `f g () ${b}`],
+    ['fn-bang', false, 'body', (b) => `! f() ${b}`],
+    ['fn-called', true, 'body', (b) => `f() ${b}; f`],
+    ['group', true, 'body', (b) => `${b}`],
+    ['always-try', true, 'body', (b) => `${b} always { : }`],
+    ['always-alt', true, 'continuation', (b) => `{ : } always ${b}`],
+    ['else-then-run', true, 'body', (b) => `if (( 1 )) ${b} else { : }`],
+    ['else-then-skip', false, 'body', (b) => `if (( 0 )) ${b} else { : }`],
+    ['else-alt-run', true, 'continuation', (b) => `if (( 0 )) { : } else ${b}`],
+    ['else-alt-skip', false, 'continuation', (b) => `if (( 1 )) { : } else ${b}`],
+    ['else-test-alt-run', true, 'continuation', (b) => `if [[ 1 = 2 ]] { : } else ${b}`],
+    ['else-group-alt-run', true, 'continuation', (b) => `if { false } { : } else ${b}`],
+    ['elif-run', true, 'continuation', (b) => `if (( 0 )) { : } elif [[ 1 = 1 ]] ${b}`],
+    ['elif-skip', false, 'continuation', (b) => `if (( 0 )) { : } elif [[ 1 = 2 ]] ${b}`],
+    ['while-cond-group', true, 'condition', (b) => `while ${b} { break }`],
+    ['nested-if-run', true, 'body', (b) => `if (( 1 )) { ${b} }`],
+    ['nested-if-skip', false, 'body', (b) => `if (( 0 )) { ${b} }`],
+    ['nested-fn-if', false, 'body', (b) => `f() { if (( 0 )) ${b} }`],
+    ['nested-group-if-run', true, 'body', (b) => `{ if (( 1 )) ${b} }`],
+    ['nested-group-if-skip', false, 'body', (b) => `{ if (( 0 )) ${b} }`],
+    ['nested-if-fn', false, 'body', (b) => `if (( 1 )) { f() ${b} }`],
+    ['nested-group-fn', false, 'body', (b) => `{ f() ${b} }`],
+    ['nested-always-in-if', true, 'continuation', (b) => `if (( 1 )) { { : } always ${b} }`],
+    ['after-if-skip', true, 'after', (b) => `if (( 0 )) { : }; ${b}`],
+    ['after-if-run', true, 'after', (b) => `if (( 1 )) { : }; ${b}`],
+    ['after-fn', true, 'after', (b) => `f() { : }; ${b}`],
+    ['after-group', true, 'after', (b) => `{ : }; ${b}`],
+  ],
+  // zsh's one-command bodies, no brace: [kind, runs, template over the command]
+  ONE_COMMAND: [
+    ['one-if-arith-run', true, (c) => `if (( 1 )) ${c}`],
+    ['one-if-arith-skip', false, (c) => `if (( 0 )) ${c}`],
+    ['one-if-test-run', true, (c) => `if [[ 1 = 1 ]] ${c}`],
+    ['one-if-test-skip', false, (c) => `if [[ 1 = 2 ]] ${c}`],
+    ['one-if-paren-run', true, (c) => `if (true) ${c}`],
+    ['one-if-paren-skip', false, (c) => `if (false) ${c}`],
+    ['one-if-group-run', true, (c) => `if { true } ${c}`],
+    ['one-if-group-skip', false, (c) => `if { false } ${c}`],
+    ['one-for-run', true, (c) => `for y (a) ${c}`],
+    ['one-for-skip', false, (c) => `for y () ${c}`],
+    ['one-repeat-run', true, (c) => `repeat 1 ${c}`],
+    ['one-repeat-skip', false, (c) => `repeat 0 ${c}`],
+    ['one-while-group-skip', false, (c) => `while { false } ${c}`],
+    ['one-until-arith-skip', false, (c) => `until (( 1 )) ${c}`],
+    ['one-fn-paren', false, (c) => `f() ${c}`],
+    ['one-fn-word', false, (c) => `function f ${c}`],
+  ],
+};
+const braceMatrixRows = () => {
+  const rows = [];
+  for (const [faceName, F] of Object.entries(BRACE_MATRIX.FACES)) {
+    for (const [kind, runs, position, tpl] of BRACE_MATRIX.FRAMES) {
+      for (const [pl, P] of Object.entries(BRACE_MATRIX.PLACEMENTS)) {
+        rows.push({ id: `${kind}/${pl}/${faceName}`, kind, runs, position, placement: pl, face: faceName, cwd: F.cwd, cmd: `${F.prefix}${tpl(P.body(F.face))}${P.join}${F.tail}` });
+      }
+    }
+    for (const [kind, runs, tpl] of BRACE_MATRIX.ONE_COMMAND) {
+      rows.push({ id: `${kind}/none/${faceName}`, kind, runs, position: 'body', placement: 'none', face: faceName, cwd: F.cwd, cmd: `${F.prefix}${tpl(F.face)}; ${F.tail}` });
+    }
+  }
+  return rows;
+};
+// the fixture: pin[kind][placement][face] = "<v>:<writers>:<parsed>", v `r` (refused) or `a` (allowed), the masks over bash, zsh
+// and dash in that order (`-` for a shell that does not write, or that reports a parse or syntax error)
+const BRACE_MATRIX_PIN = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'romp-track-bash-guard-brace-matrix.json'), 'utf8'));
+const SHELL_ORDER = ['bash', 'zsh', 'dash'];
+const mask = (list) => SHELL_ORDER.reduce((acc, sh) => acc + (list.includes(sh) ? sh[0] : '-'), '');   // a mask, not a leg: no shell runs here (the probe scan reads .map and .forEach over a shell list as legs)
+
+test("round 5's third addendum, the brace matrix: every frame kind x brace placement x face x position, judged in-process and run unguarded in bash, zsh and dash, matches the fixture row by row (verdict, the shells that write, the shells that parse); no row a shell writes is allowed; the refusals where no shell writes are counted and listed by class", () => {
+  const w = sixthPassWorld();
+  const savedHome = process.env.HOME;
+  process.env.HOME = w.HOME;
+  try {
+    const rows = braceMatrixRows();
+    assert.equal(rows.length, BRACE_MATRIX_PIN.rows, 'the generator produces the rows the fixture pins');
+    const present = shellsFor(SHELL_ORDER, 'the brace matrix');
+    const mismatches = [];
+    const hard = [];
+    const seen = {};
+    let refused = 0;
+    const writesBy = { bash: 0, zsh: 0, dash: 0 };
+    const costs = { doctrine: [], priced: [], dead: [] };
+    for (const row of rows) {
+      const at = w.cwds[row.cwd];
+      const pinned = ((BRACE_MATRIX_PIN.pin[row.kind] || {})[row.placement] || {})[row.face];
+      assert.ok(pinned, `the fixture pins ${row.id}`);
+      const [pv, pw, pp] = pinned.split(':');
+      const reason = evaluate(payload(row.cmd, at));
+      const v = reason == null ? 'a' : 'r';
+      if (v === 'r') refused++;
+      const writers = [];
+      const parsed = [];
+      for (const sh of present) {
+        const r = w.run(row.cmd, at, sh);
+        if (r.changed) writers.push(sh);
+        if (!/parse error|syntax error/i.test(r.stderr)) parsed.push(sh);
+      }
+      for (const sh of writers) writesBy[sh]++;
+      if (writers.length && v === 'a') hard.push(`${row.id}: allowed while ${writers.join(',')} write the tracked subset: ${JSON.stringify(row.cmd)}`);
+      // the pin, compared over the shells this runner has
+      const same = (got, want) => SHELL_ORDER.every((sh, i) => !present.includes(sh) || got[i] === want[i]);
+      if (v !== pv || !same(mask(writers), pw) || !same(mask(parsed), pp)) mismatches.push(`${row.id}: ${v}:${mask(writers)}:${mask(parsed)} (pinned ${pinned}): ${JSON.stringify(row.cmd)}`);
+      if (v === 'r' && !writers.length) {
+        if (!parsed.length) costs.dead.push(row.id);
+        else if (!row.runs) costs.doctrine.push(row.id);
+        else costs.priced.push(`${row.id}: ${String(reason).split('\n')[0].replace(/\/tmp\S*/g, '<tmp>').slice(0, 120)}`);
+      }
+      seen[row.id] = true;
+    }
+    assert.deepEqual(hard, [], 'no row a shell writes is allowed');
+    assert.deepEqual(mismatches, [], 'every row matches the fixture');
+    console.log(`# the brace matrix: rows ${rows.length}, refused ${refused}, allowed ${rows.length - refused}, writes bash=${writesBy.bash} zsh=${writesBy.zsh} dash=${writesBy.dash}; refused with no tracked write: ${costs.doctrine.length} doctrine (the face in a body no shell runs on this line, or a definition never called), ${costs.priced.length} priced (a cd or an assignment in a construct that runs), ${costs.dead.length} parsed by no shell`);
+    for (const line of costs.priced) console.log(`#   priced: ${line}`);
   } finally { process.env.HOME = savedHome; w.rm(); }
 });
 

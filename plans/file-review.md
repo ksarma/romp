@@ -4045,6 +4045,45 @@ document stands on its own, each with the reasoning it was given.
     vendored README's row for patch 0009 states the addendum's declaration rule the right way round (no declaration flag and
     no `declare`, `typeset` or `local` keeps a name readable, nor does a group opened after `&&`, `||` or `|`; the row had
     said they keep it readable).
+    Round 5's third addendum (2026-09-20; the round's verifier, on the second addendum's head): twenty live false allows in
+    the family that addendum claimed closed, a `}` sharing a segment with the words before it, in the frames its fix did not
+    reach. The function-body scan (`braces`) popped its frame at the brace before the cd sharing the segment was read, so
+    `f() { cd ../scratch }; cp ../base/report.md report.md` from docs/ followed the cd as plain sequence and was allowed while
+    zsh wrote docs/report.md, in thirteen spellings (`function f { .. }`, which dash runs too, `function f() { .. }`, `f g ()
+    { .. }`, `! f() { .. }`, nested, two commands, a newline, an `&&` join, a redirect after the brace, a quoted operand,
+    pushd, a group holding the definition); after `compoundBody` spliced a shared-segment brace, the words after it (`else {
+    .. }`, `always { .. }`, a while's condition group) became operands of the body's command, so `if (( 1 )) { cp .. } else {
+    : }`, `if (( 0 )) { : } else { cp .. }`, `{ cp .. } always { : }`, `{ : } always { cp .. }` and `while { cp .. } { break
+    }` were allowed while zsh copied; and `repeat 1 { cp .. }` read the brace body as repeat's operands. So the second
+    addendum's claims above, the operand face closed in a plain group, a `then` or `do` body, a function body and a group
+    after `&&`, and the cd face closed for every head of `BODY_CLOSER`, were false while those were live. THE RULE, stated
+    once at the lexer (`splitAtClosers`) and read by every frame kind through the segments it produces: an unquoted `}` that
+    follows other words in its segment ends its construct only after those words are read as the construct's own command,
+    and every word after it begins a new command; the lexer cuts the segment before such a brace, so a compound body, a
+    condition group, a function body, a plain group, a repeat body and the `else`, `elif` and `always` continuations each
+    read a one-line brace form as its `;` twin, through the code they had, and no frame kind carries a reading of its own.
+    Beside the cut: `compoundBody` keeps an `if` frame open across `else` and `elif` on the closer's segment, reads a `{`
+    first after `if`, `while` or `until` with no `(( ))` between (`arithAt`, recorded by the lexer) as a condition group whose
+    `}` leaves the frame waiting for its body, reads zsh's one-command body after `))`, `]]` or a condition group's `}` (`if
+    (( 0 )) cd ../scratch; cp ..` had walked the skipped cd as plain sequence), and drops a condition's words before the body
+    so `commandOf` reads the body's command (`if [[ 1 = 1 ]] { cp .. }` had read `[[` as the command and the copy as its
+    operand); the head branch drops `repeat N` before either body form; `braces` reads from the index a compound closer
+    handed it and stops at a compound head inside the body; and a closer segment's redirections are judged in the directory
+    saved when its construct opened (`closedConstruct`, `addRedirects`), since every shell opens them before the construct
+    runs (`{ cd ../scratch; } > report.md` and `if true; then cd ../scratch; fi > report.md` from docs/ truncated
+    docs/report.md in bash, zsh and dash while the guard judged the target after the cd it had followed inside). Gone with
+    it: the second addendum's `oneSegment` splice and its trailing-brace cut at the writer (the cut braces travel on the
+    segment as `closerTail`, so a writer is still judged with them as operands, bash's and dash's reading of `cp a }`), the
+    group scan's `always` splice (the lexer drops `} always {`: one group, closed by the last brace) and the seventh pass's
+    `pendingClose`. The cost: a condition group's cd (`if { cd ../scratch } { : }`, which zsh runs) is read as a body's and
+    the directory after it is unknown, the class `if true; then cd ..; fi` prices, one corpus row. Pinned with the verifier's
+    twenty rows and the rows found beside them, each run through the hook as a process and unguarded in the three shells with
+    the writers asserted, and with a generated matrix over frame kind, brace placement, face and position whose rows are the
+    pin (a row a shell writes must refuse; the refusals where no shell writes are counted and listed as the cost): 2912 rows,
+    2845 refused, 67 allowed, 0 a shell writes while the hook allows (213 at the second addendum's head), 470 spellings no
+    shell parses, 955 refusals of a face in a body no shell runs (the standing rules), 182 of the priced classes (88 a cd in a
+    construct that runs, 88 an assignment there, 6 a writer in a piped definition whose call finds no function), the fixture
+    `tools/romp-track-bash-guard-brace-matrix.json` beside the test.
 48. **Sessions commit the comments folder** (2026-09-10). The user found that their sessions never added
     `.trackchanges/` to git, so the user's comments on the sessions' files and the record of the tracked changes
     were not archived with the work. Decision 25 is unchanged: romp does no git operation, and a `.gitignore` line is the

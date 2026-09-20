@@ -389,12 +389,44 @@
 // `until`, `select`, `case a { b) .. }` and `for y in; { .. }` spellings): compoundBody closed the frame at the `}` before the
 // cd in its own segment was read, so the cd zsh skipped was followed and the write resolved to scratch/report.md while zsh
 // wrote the tracked docs/report.md (bash and dash reject the spelling); pre-existing at the round-4 head, claimed closed by the
-// addendum's F6 and F7, whose rows had the brace on its own segment. The brace is read after the segment's command now
-// (`oneSegment`), so the cd makes the directory unknown at the close and an assignment in the body is unreadable. (2) The
+// addendum's F6 and F7, whose rows had the brace on its own segment. That addendum read the brace after the segment's command
+// in compoundBody alone (`oneSegment`), for the heads of BODY_CLOSER, and claimed the cd face closed for every head. (2) The
 // trailing `}` of zsh's `{ cmd }` was read as the command's LAST OPERAND, cp's, mv's, install's and ln's destination
-// (`{ cp ../base/report.md report.md }` from docs/, in a plain group, a `then` or `do` body, a function body or a group after
-// `&&`), so the tracked file was read as a source and the copy onto it allowed while zsh performed it; every writer is judged
-// with the trailing braces and without them (`variants`). Both pinned with the rows, each run unguarded in the three shells.
+// (`{ cp ../base/report.md report.md }` from docs/), so the tracked file was read as a source and the copy onto it allowed
+// while zsh performed it; that addendum cut the trailing braces at the writer (`variants`) and claimed the operand face closed
+// in a plain group, a `then` or `do` body, a function body and a group after `&&`. Both claims were false while the function
+// frame and the words after a spliced brace were read the old way: the third addendum, below, holds the rule instead.
+//
+// ROUND 5'S THIRD ADDENDUM (2026-09-20; the round's verifier, on the second addendum's head): twenty live false allows in the
+// family the second addendum claimed closed, a `}` sharing a segment with the words before it, in the frames that addendum's
+// fix did not reach. The FUNCTION-body scan popped its frame at the brace before the cd sharing the segment was read, so the cd
+// was followed as plain sequence: `f() { cd ../scratch }; cp ../base/report.md report.md` from docs/ was allowed while zsh
+// wrote docs/report.md, in thirteen spellings (`function f { .. }`, which dash runs too, `function f() { .. }`, `f g () { .. }`,
+// `! f() { .. }`, nested, two commands, a newline separator, an `&&` join, a redirect after the brace, a quoted operand, pushd,
+// a group holding the definition). After compoundBody spliced a shared-segment brace, the words after it in the segment
+// (`else { .. }`, `always { .. }`, a while's condition group) became OPERANDS of the body's command, so a writer in the other
+// block was never a command: `if (( 1 )) { cp .. } else { : }`, `if (( 0 )) { : } else { cp .. }`, `{ cp .. } always { : }`,
+// `{ : } always { cp .. }`, `while { cp .. } { break }` allowed while zsh copied. And `repeat 1 { cp .. }` read the brace body as
+// repeat's operands. Reproducing them found more of the same reading: `if (( 0 )) cd ../scratch` and `if [[ 1 = 2 ]] cd ..`
+// (zsh's one-command body after `))` or `]]`, walked as plain sequence), `if [[ 1 = 1 ]] { cp .. }` and `elif [[ 1 = 1 ]] {
+// cp .. }` (the condition's words were the segment's command, the body's writer their operand), `always` nested in a body,
+// `} else {` with the else block on later lines (read as a plain group after the frame closed), and, from the redirect
+// placement, `{ cd ../scratch; } > report.md`, `{⏎cd ../scratch⏎} > report.md` and `if true; then cd ../scratch; fi >
+// report.md`, whose redirection every shell opens before the construct runs, in docs/, while the guard judged it after the
+// cd it followed inside (bash, zsh and dash wrote the tracked file). THE RULE (splitAtClosers, at the lexer, where it is
+// stated once): an unquoted `}` that follows other words in its segment ends its construct only after those words are read
+// as the construct's own command, and every word after it begins a new command; the lexer cuts the segment before such a
+// brace, so every frame kind (a compound body, a condition group, a function body, a plain group, a repeat body, and the
+// `else`, `elif` and `always` continuations) reads a one-line brace form as its `;` twin, through the code it already had.
+// compoundBody reads the continuations (`else`/`elif` keep the frame open; a `{` first after `if`, `while` or `until` with no
+// `(( ))` between is a condition group whose `}` leaves the frame waiting for the body; a one-command body follows `))`,
+// `]]` or a condition group's `}`) and drops a condition's words before the body so commandOf reads the body's command;
+// `repeat N` is dropped before either body form; a function body's count stops at a compound head inside it and reads the
+// second brace of a `} }` segment; and a closer segment's redirections are judged in the directory saved when its construct
+// opened (closedConstruct, addRedirects). The second addendum's `oneSegment` splice, its trailing-brace cut at the writer,
+// the group scan's `always` splice and the seventh pass's pendingClose are gone, replaced by the one cut. Pinned with the
+// verifier's twenty rows, the rows found beside them, and a generated matrix (frame kind x brace placement x face x position,
+// every row run through the hook and unguarded in the three shells; the rows the matrix produces are the pin).
 //
 // THE LISTS THAT REMAIN are not written here (round 5 of the review, 2026-09-20). The hand-written census that stood here
 // omitted the two lists whose gap falls on the WRITE side, the compound-head frame push and CLOSERS, and that omission is
@@ -458,7 +490,9 @@ import engine from '../vendor/track-changents/engine.js';
 
 // ── lexer ───────────────────────────────────────────────────────────
 //
-// A command is cut into simple commands ("segments") at |, ||, &&, ;, &, newline, ( and ). Each
+// A command is cut into simple commands ("segments") at |, ||, &&, ;, &, newline, ( and ), and before an
+// unquoted `}` that follows other words (splitAtClosers, below the lexer: zsh's `{ cmd }` closer heads a
+// segment of its own, read after the command). Each
 // segment is a list of words and a list of redirections, and `op` names the operator that ended
 // it, so a later pass can tell a pipeline from a list. A `(` or `)` is also emitted as a marker
 // segment (`paren`) so the scope of a subshell is known: a `cd` inside one moves nothing after the
@@ -670,7 +704,7 @@ function braceExpand(text, marks, depth = 0) {
 
 // `arith` holds the bodies of `(( ... ))` and `$(( ... ))`, which run in the current shell and can assign a name
 // (`(( HOME = 5 ))`), for the assignment scan (the walk-around lens second pass, 2026-09-19); they are never lexed as commands.
-const newSegment = () => ({ words: [], redirects: [], heredocs: [], subs: [], arith: [], op: '' });
+const newSegment = () => ({ words: [], redirects: [], heredocs: [], subs: [], arith: [], arithAt: [], op: '' });   // arithAt: the number of words before each `(( ))` (round 5's third addendum: compoundBody tells `if (( 0 )) {` from `if { cond } {` by it)
 
 // `shell` is the name of the shell the command is a script of, when the call is a recursion into `sh -c '...'`,
 // `bash <<EOF` or a `$(...)` inside one (null for the Bash tool's own command): it decides whether `$'...'` is
@@ -784,6 +818,7 @@ export function lex(command, shell = null) {
       i++;
     }
     if (depth > 0) opaque = true;
+    seg.arithAt.push(seg.words.length);   // endWord ran before the `((`, so this is the index of the word that follows it
     seg.arith.push(src.slice(start, Math.max(start, i - 2)));
   };
   // Skip a $( ... ) or ${ ... } from just after its opener to its closer, quotes honoured;
@@ -998,7 +1033,81 @@ export function lex(command, shell = null) {
   endSegment('');
   readHeredocBodies();
   if (pendingHeredocs.length) opaque = true;
-  return { segments, opaque };
+  return { segments: splitAtClosers(segments), opaque };
+}
+
+// THE CLOSING BRACE (round 5's third addendum, 2026-09-20; the round's verifier found twenty live false allows in one family
+// at the second addendum's head, every one a `}` sharing a segment with words before it). THE RULE, stated here and read by
+// every frame kind through the segments it produces: an unquoted `}` that follows other words in its segment ends its
+// construct only after those words are read as the construct's own command, and every word after it begins a new command;
+// so the lexer cuts the segment before such a brace (command | brace and the rest), before any frame logic runs,
+// and a `}` is always the first word of its segment (or preceded by `}` alone). A brace body, function body, group or
+// repeat body written on one line is then walked exactly as its `;` or newline twin, by the same code, and no frame kind
+// needs a reading of its own. Before this, the function-body scan popped its frame at `f() { cd ../scratch }` before the cd
+// in the same segment was read, so the cd was followed as plain sequence and `cp ../base/report.md report.md` from docs/ was
+// allowed while zsh wrote docs/report.md (13 spellings: `function f { .. }`, `function f() { .. }`, `f g () { .. }`, `! f()
+// { .. }`, nested, two commands, a newline separator, an `&&` join, a redirect after the brace, a quoted operand, pushd, a
+// group holding the definition); the compound body's reader spliced the shared-segment brace and left the words after it,
+// `else { .. }`, `always { .. }`, a body after a condition group, as OPERANDS of the body's command (`if (( 1 )) { cp .. }
+// else { : }`: the copy's destination read as a source; `{ : } always { cp .. }`, `while { cp .. } { break }`: the writer
+// never a command); and `repeat 1 { cp .. }` read the brace body as repeat's operands. Each of those is refused now, with the
+// construct named. The command's segment keeps the redirections, heredocs, substitutions and arithmetic of the line (a
+// redirection on `{ cd x } > f` is opened before the group runs, in the directory the shell started in, where a judgment
+// before the cd reads it) and remembers the braces cut from its tail (`closerTail`): bash and dash read a `}` after a command
+// as one more operand (`cp a }` writes a file named `}` where no group is open; they reject the group spelling and run
+// nothing), so extract judges a writer under both readings. zsh's `} always {` continues the group it follows: the three
+// words are dropped, so the try-list and the always-list are one group, closed by the last brace, whose operator says whether
+// the whole construct ran in a subshell (`{ x=1 } always { : } | cat` keeps x unchanged in zsh, F5). bash and dash have no
+// `always`: when the try-list's `}` shares its segment with the try-list's last command (`{ : } always { cd ../scratch; }`),
+// they read that brace, `always`, `{` and the words after them on the same segment as OPERANDS of that command and close the
+// group at the next `}` of its own, so the always-list's first command runs in zsh alone (from docs/, followed by `cp
+// ../base/report.md report.md`, zsh moved and bash and dash wrote docs/report.md, the matrix's row); the piece is marked
+// `alwaysHead`, and extract reads a cd there as a move it cannot know and an assignment there as unreadable. When the
+// try-list's `}` has its own segment (`{ :; } always { cd ../docs; }`), bash and dash reject the line at `always` and run
+// nothing (measured), so zsh's reading alone stands and the piece is not marked. A quoted brace is an operand and is not read
+// here (`cp a '}'`).
+function splitAtClosers(segments) {
+  const brace = (w) => (plainWord(w) && (w.text === '{' || w.text === '}') ? w.text : null);
+  const out = [];
+  for (const seg of segments) {
+    const pieces = [];
+    let words = seg.words;
+    let arithAt = seg.arithAt || [];
+    for (;;) {
+      let alwaysHead = false;   // this piece's command is the first of an always-list whose `} always {` follows a cut in this segment
+      while (words.length >= 3 && brace(words[0]) === '}' && plainWord(words[1]) && words[1].text === 'always' && brace(words[2]) === '{') {
+        words = words.slice(3);
+        arithAt = arithAt.map((n) => n - 3).filter((n) => n >= 0);
+        alwaysHead = words.length > 0 && pieces.length > 0;
+      }
+      let before = false;   // a word other than `}` stands before the brace in this piece
+      let cut = -1;
+      for (let i = 0; i < words.length && cut < 0; i++) {
+        if (brace(words[i]) === '}') { if (before) cut = i; }
+        else before = true;
+      }
+      if (cut < 0) { pieces.push({ words, arithAt, alwaysHead }); break; }
+      let tailEnd = cut;
+      while (tailEnd < words.length && brace(words[tailEnd]) === '}') tailEnd++;
+      pieces.push({ words: words.slice(0, cut), arithAt: arithAt.filter((n) => n <= cut), closerTail: words.slice(cut, tailEnd), alwaysHead });
+      words = words.slice(cut);
+      arithAt = arithAt.filter((n) => n > cut).map((n) => n - cut);
+    }
+    // the first piece is the segment itself, keeping its redirections, heredocs, substitutions, arithmetic and paren marker; a
+    // later piece emptied by the `always` drop is not a command; the last piece keeps the operator that ended the segment
+    const kept = [pieces[0], ...pieces.slice(1).filter((p) => p.words.length)];
+    const op = seg.op;   // read before the first piece, the segment itself, takes `;` (`{ x=1 } | cat` had lost its pipe to that overwrite)
+    kept.forEach((p, i) => {
+      const s = i === 0 ? seg : newSegment();
+      s.words = p.words;
+      s.arithAt = p.arithAt;
+      s.closerTail = p.closerTail || null;
+      s.alwaysHead = !!p.alwaysHead;
+      s.op = i === kept.length - 1 ? op : ';';
+      out.push(s);
+    });
+  }
+  return out;
 }
 
 // ── a path the hook could not check ───────────────────────────────
@@ -2387,8 +2496,10 @@ function identifierTokens(text, marks) {
 // (a)` is a syntax error, so a frame there costs nothing); compoundBody in extract reads the table. Round 5's second addendum
 // (2026-09-20, the round's verifier): a brace body written on one line, its `}` sharing a segment with the body's last command
 // (`if (( 0 )) { cd ../scratch }; cp ../base/report.md report.md` from docs/, zsh alone), closed its frame at the brace BEFORE
-// that command was read, so the skipped cd was followed and the write resolved to scratch/ while zsh wrote docs/report.md; the
-// brace is read after the command now (compoundBody, `oneSegment`), for every head of this table, and dropped from the words.
+// that command was read, so the skipped cd was followed and the write resolved to scratch/ while zsh wrote docs/report.md;
+// since the third addendum the lexer cuts the segment before such a brace (splitAtClosers), so every head of this table, the
+// function frame and the group scan read the one-line form as its `;` twin. The `list` flag also tells compoundBody which heads
+// take a condition list, where a `{` first after the head is a condition group (`while { cond } { body }`) and not the body.
 const BODY_CLOSER = {
   if: { opener: 'then', closer: 'fi' }, while: { opener: 'do', closer: 'done' }, until: { opener: 'do', closer: 'done' },
   for: { opener: 'do', closer: 'done', list: true }, case: { opener: 'in', closer: 'esac', list: true }, select: { opener: 'do', closer: 'done', list: true },
@@ -2648,6 +2759,7 @@ function extract(command, ctx) {
     const cond = frames.find((f) => f.conditional);
     if (cond) return { ok: false, why: cond.conditional === '|' ? 'a `{ }` group opened after `|`, a pipeline member bash and dash run in a subshell (zsh keeps the last in this shell)' : `a \`{ }\` group opened after \`${cond.conditional}\`, which may not run` };
     if (frames.some((f) => f.timed)) return { ok: false, why: 'a `{ }` group behind `time`, whose assignment zsh does not keep when it stands alone in the group' };
+    if (seg.alwaysHead) return { ok: false, why: 'the first command of an always-list on the line of its `always`, which zsh runs and bash and dash read as operands of the command before `always`' };   // round 5's third addendum, the matrix's row
     if (prevOp === '&&' || prevOp === '||') return { ok: false, why: `a command after \`${prevOp}\`, which may not run` };
     if (prevOp === '|' || seg.op === '|') return { ok: false, why: 'a pipeline, whose members bash and dash run in a subshell (zsh keeps the last in this shell)' };
     if (seg.op === '&') return { ok: false, why: 'a backgrounded command, which runs in a subshell' };
@@ -3126,7 +3238,8 @@ function extract(command, ctx) {
   // The `{ }` group frames (C5b, nesting-aware since the seventh pass's attacker, F2): a group frame holds the names assigned
   // inside it and the directory state at its `{`. A group that closes in plain sequence hands its names to the enclosing
   // group (whose own brace may be piped); one whose closing brace is piped or backgrounded ran in a subshell, so its names are
-  // tainted and its directory restored. A trailing `}` (zsh's `{ cmd }`) closes after the segment is read: pendingClose.
+  // tainted and its directory restored. zsh's trailing `}` of `{ cmd }` heads a segment of its own since the third addendum
+  // (splitAtClosers), read after the command like the `;` twin's; the seventh pass's pendingClose, which held it back, is gone.
   // Round 5's addendum (the frame lens, 2026-09-20): a group whose OPENING brace follows `&&`, `||` or `|` is `conditional`
   // (the operator kept): the shells skip it, or run it in a subshell, whole, so nothing inside it is this shell's own, on
   // whatever line the body sits (plainSequence and the cd handler read the flag; the same-line `false && { x=1; }` was refused
@@ -3134,7 +3247,6 @@ function extract(command, ctx) {
   // and dash, F1, `test -d d || {⏎mkdir d⏎cd d⏎}` the lead). A group behind `time` is `timed`: zsh does not keep an assignment
   // made alone inside it (`x=a; time { x=b; }` leaves a in zsh and b in bash, measured), so its assignments are unreadable
   // (F9) while its cd, which moves every shell, is followed.
-  let pendingClose = null;
   const openGroup = (conditional = null, timed = false) => frames.push({ kind: 'group', names: new Set(), dir, unknownDir, unknownWhy, oldDir, conditional, timed });
   const closeGroups = (n, op) => {
     for (let i = 0; i < n && frames.length && frames[frames.length - 1].kind === 'group'; i++) {
@@ -3157,7 +3269,7 @@ function extract(command, ctx) {
   // `oneSegment` on any frame says its body is the segment being read and it closes before the next one (a compound frame
   // applies `moved`, a function or coproc frame restores the directory); `untilChild` on a coproc frame says it closes with
   // the compound frame pushed above it (round 5's addendum).
-  const pushCompound = (head) => { const f = { kind: head, moved: false, opened: false, braces: 0, afterParen: false }; frames.push(f); return f; };
+  const pushCompound = (head) => { const f = { kind: head, moved: false, opened: false, braces: 0, condition: false, awaitBody: false, afterParen: false, dir, unknownDir, unknownWhy }; frames.push(f); return f; };   // the directory at the head: a redirection on the closer is judged there (closedConstruct)
   const closeCompoundAt = (j) => {
     if (frames.slice(j).some((f) => f.moved)) setUnknown('an earlier `cd` sits in an if, loop or case body that may not run');
     frames.length = j;
@@ -3212,50 +3324,66 @@ function extract(command, ctx) {
       }
     }
   };
-  // The body of the innermost compound frame, read on a segment (round 5's addendum; the frame lens found each spelling
-  // walked as plain sequence past a body the shell skipped, F4, F6, F7): the opener word as the segment's first plain word (or
-  // `in` in a case head) marks the body open; an unquoted `{` before the opener is a brace body, whose matching `}` closes the
-  // frame with `moved` applied (zsh's `if [[ .. ]] {`, `while (( .. )) {`, `for y (..) {`, `case x {`, `repeat n {`; bash's
-  // `for y in ..; {` and `select ..; {`), the braces inside it counted, and a `}` that shares its segment with the body's last
-  // command closes it after that command is read (round 5's second addendum, below); a later segment that is neither, after a head that
-  // takes a word list (`list` in the table) or after a `)` with nothing between (`afterParen`), is zsh's one-command body and
-  // closes the frame before the next segment (`oneSegment`); an `in` after a `for` or `select` head is its list, not a body;
-  // a `{` or `}` inside a body opened by its keyword is a plain group and changes nothing. Returns the index after a `}` that
-  // closed the frame, so the group scan does not read the same brace. A body the walk cannot see the end of stays open, the
-  // safe direction: every later name is unreadable and a cd inside is applied at the closer or never trusted.
-  const compoundBody = (seg, start, f) => {
+  // The body of the innermost compound frame, read on a segment (round 5's addendum; the frame lens found each spelling walked
+  // as plain sequence past a body the shell skipped, F4, F6, F7; the third addendum, 2026-09-20, made this the one reader of
+  // every brace-body form, over the segments splitAtClosers cuts, so a `}` always heads its segment and the body's last command
+  // is read before it). The opener word as the segment's first plain word (or `in` in a case head) marks the body open; an
+  // unquoted `{` before the opener is a brace body (zsh's `if [[ .. ]] {`, `while (( .. )) {`, `for y (..) {`, `case x {`,
+  // `repeat n {`; bash's `for y in ..; {` and `select ..; {`), the braces inside it counted, whose matching `}` closes the frame
+  // with `moved` applied. Two things keep the frame open at that `}`: an `if` body's `else` or `elif` on the same segment (zsh
+  // accepts no other placement) reopens the body at the next `{`; and a `{` that is the first word after `if`, `while` or
+  // `until` on the head's own segment with no `(( ))` between (`arithAt`) is a CONDITION group, not the body, so its `}` leaves
+  // the frame waiting for the body (a `{`, the opener, or one command, on this segment or a later one: zsh continues `while {
+  // false }⏎{ .. }` across the newline), and a cd inside it is a body's, unknown at the close, the safe reading of a list that
+  // runs at least once. zsh's one-command body is read as the body too: the segment after a head that takes a word list (`list`
+  // in the table) or after a `)` with nothing between (`afterParen`), and the word after a `(( ))` condition, after `]]`, or
+  // after a condition group's `}` (`if (( 0 )) cd ../scratch; cp ..` was walked as plain sequence and the skipped cd followed);
+  // such a frame closes before the next segment (`oneSegment`). The words of a condition that share the segment with the body's
+  // first command (`[[ 1 = 1 ]]` before `{ cp .. }` or before one command, an elif's) are dropped, with the caller's as-spelled
+  // words dropped alike (`mirror`), so commandOf reads the body's command and not the condition's; a case head's patterns are
+  // not a condition and stay. An `in` after a `for` or `select` head is its list, not a body; a `{` or `}` inside a body opened
+  // by its keyword is a plain group and changes nothing. Returns the index after a `}` that closed the frame, so the next reader
+  // (a function frame's braces, the group scan) does not read the same brace, and 0 when the frame stays open. A body the walk
+  // cannot see the end of stays open, the safe direction: every later name is unreadable and a cd inside is applied at the
+  // closer or never trusted.
+  const compoundBody = (seg, start, f, headSegment = false, mirror = null) => {
+    const { opener, list } = BODY_CLOSER[f.kind];
+    const arithBefore = (i) => (seg.arithAt || []).includes(i);
+    const drop = (from, to) => {   // the condition's words before the body's first command, dropped from the segment and the mirror
+      if (from < 0 || to <= from || f.kind === 'case') return 0;
+      seg.words.splice(from, to - from);
+      if (mirror) mirror.splice(from, to - from);
+      return to - from;
+    };
+    let condStart = start;   // where a condition's words begin on this segment while the body is not yet open
     let first = true;
-    let body = 0;   // words of the brace body read on THIS segment before its closing brace: the segment's own command
     for (let i = start; i < seg.words.length; i++) {
       const w = seg.words[i];
-      if (!plainWord(w)) { first = false; if (f.braces > 0) body++; continue; }
+      const plain = plainWord(w);
       if (f.braces > 0) {
-        if (w.text === '{') f.braces++;
-        else if (w.text === '}' && --f.braces === 0) {
-          // Round 5's second addendum (2026-09-20): a closing brace that shares its segment with the body's last command (zsh's
-          // `if (( 0 )) { cd ../scratch }`, `for y () { .. }`, `while (( 0 )) { .. }`, `until (( 1 )) { .. }`, `case a { b) cd .. }`,
-          // `select y (a) { .. }`, `select y in a; { .. }`, `for y in; { .. }`, a group nested in the body) is read AFTER that
-          // command: the frame closes before the next segment (`oneSegment`, closeOneSegment), so a cd in the body sets `moved`
-          // and the close makes the directory unknown, and an assignment in it is recorded inside the frame, unreadable. It
-          // closed HERE, before the command was read, so the cd zsh skipped was followed and the write after it resolved to a
-          // directory the shell never entered: allowed, while zsh wrote the tracked file (bash and dash reject each spelling and
-          // run nothing); the pinned rows had the brace on its own line or after a `;`, its own segment, where the close is right.
-          // The brace is dropped from the words: it is the body's own closer, matched to the `{` this frame read, in no shell an
-          // operand of the command before it.
-          if (body) { f.oneSegment = true; seg.words.splice(i, 1); return i; }
+        if (plain && w.text === '{') f.braces++;
+        else if (plain && w.text === '}' && --f.braces === 0) {
+          if (f.condition) { f.condition = false; f.awaitBody = true; condStart = i + 1; first = false; continue; }   // the condition group closed: the body follows
+          const next = seg.words[i + 1];
+          if (f.kind === 'if' && plainWord(next) && (next.text === 'else' || next.text === 'elif')) { f.opened = false; condStart = i + 2; i++; first = false; continue; }   // the same frame goes on
           closeCompoundAt(frames.indexOf(f));
           return i + 1;
         }
-        else body++;
         first = false;
         continue;
       }
       if (!f.opened) {
-        const { opener, list } = BODY_CLOSER[f.kind];
-        if (w.text === opener) { f.opened = true; f.afterParen = false; first = false; continue; }
-        if (w.text === '{') { f.opened = true; f.braces = 1; first = false; continue; }
-        if (list && w.text === 'in') { first = false; continue; }
-        if (first && start === 0 && (list || f.afterParen)) { f.opened = true; f.oneSegment = true; f.afterParen = false; return 0; }
+        if (plain && w.text === opener) { f.opened = true; f.afterParen = false; f.awaitBody = false; first = false; continue; }
+        if (plain && w.text === '{') {
+          if (headSegment && i === start && !list && !f.afterParen && !arithBefore(i)) { f.condition = true; f.braces = 1; first = false; continue; }   // `if { cond } { body }`, `while { cond } { body }`
+          i -= drop(condStart, i);
+          f.opened = true; f.braces = 1; f.afterParen = false; f.awaitBody = false; first = false;
+          continue;
+        }
+        if (plain && list && w.text === 'in') { first = false; continue; }
+        // zsh's one-command body
+        if ((first && start === 0 && (list || f.afterParen)) || f.awaitBody || (headSegment && !list && arithBefore(i))) { drop(condStart, i); f.opened = true; f.oneSegment = true; f.afterParen = false; f.awaitBody = false; return 0; }
+        if (plain && !list && w.text === ']]' && i + 1 < seg.words.length && !(plainWord(seg.words[i + 1]) && (seg.words[i + 1].text === '{' || seg.words[i + 1].text === opener))) { drop(condStart, i + 1); f.opened = true; f.oneSegment = true; return 0; }
       }
       first = false;
     }
@@ -3268,21 +3396,62 @@ function extract(command, ctx) {
   // The braces of a function body: the frame closes, restoring the dir, when its depth returns to 0. Returns the index of
   // the first word AFTER the brace that closed the body (round 5: `{ y=1; f() { :; }; } | cat` had the body's `}` counted
   // here and then again by the group scan, which closed the piped group one brace early, so y stayed readable while the
-  // shells ran the group in a subshell); 0 when no function frame is open, and the segment's length while the body goes on.
-  const braces = (seg) => {
+  // shells ran the group in a subshell); `from` when no function frame is open, and the segment's length while the body goes
+  // on. Read from `from` (round 5's third addendum): on a `} }` segment the first brace closes the compound body inside the
+  // function and this reads the second, and a compound head inside the body (`f() { if (( 0 )) { cd x } }`) ends the count,
+  // since its brace body is counted by its own frame (compoundBody) and was counted here too, which left the function frame
+  // open to the end of the command.
+  const braces = (seg, from = 0) => {
     const f = frames[frames.length - 1];
-    if (!f || f.kind !== 'function') return 0;
+    if (!f || f.kind !== 'function') return from;
     // a body without braces (zsh and dash accept `f() cmd` and `function f cmd`; bash rejects them): this one segment is the
     // body, defined and not run, and the frame closes before the next segment (round 5's addendum, F3: the frame was popped
     // here and the body read as the enclosing scope's, its assignment adopted and its cd followed, in zsh, dash and through
     // `sh -c` from every shell)
-    if (f.depth === 0 && !(seg.words.length && seg.words[0].text === '{')) { f.oneSegment = true; return 0; }
-    for (let i = 0; i < seg.words.length; i++) {
+    if (f.depth === 0 && from === 0 && !(seg.words.length && seg.words[0].text === '{')) { f.oneSegment = true; return 0; }
+    for (let i = from; i < seg.words.length; i++) {
       const w = seg.words[i];
+      if (plainWord(w) && Object.hasOwn(BODY_CLOSER, w.text)) break;   // a compound inside the body: its own frame counts its braces
       if (w.text === '{') f.depth++;
       else if (w.text === '}' && --f.depth <= 0) { popFunction(f); return i + 1; }
     }
     return seg.words.length;
+  };
+  // The frame a segment's leading closer ends, for its redirections (round 5's third addendum): bash, zsh and dash open a
+  // compound command's, a `{ }` group's or a function body's redirections before the construct runs, in the directory the shell
+  // is in at its start, so `{ cd ../scratch; } > report.md` from docs/ truncates docs/report.md in all three (and `if true; then
+  // cd ../scratch; fi > report.md` the same), where the guard judged the target after the cd it had followed inside and allowed
+  // the write. A `fi`, `done`, `esac` or `end` names its frame through CLOSERS; a run of `}` closes, from the top, the frames
+  // whose braces they are (a group's one, a function body's depth, a compound brace body's count), and the outermost of those
+  // is the construct the redirection belongs to. null when the segment closes nothing the guard tracks.
+  const closedConstruct = (seg) => {
+    let k = peelIndex(seg.words, 0, false);
+    const w = seg.words[k];
+    if (!plainWord(w)) return null;
+    if (Object.hasOwn(CLOSERS, w.text)) {
+      for (let j = frames.length - 1; j >= 0 && !isScope(frames[j]); j--) if (CLOSERS[w.text].includes(frames[j].kind)) return frames[j];
+      return null;
+    }
+    if (w.text !== '}') return null;
+    let n = 0;
+    while (k < seg.words.length && plainWord(seg.words[k]) && seg.words[k].text === '}') { n++; k++; }
+    let outer = null;
+    for (let j = frames.length - 1; j >= 0 && n > 0; j--) {
+      const f = frames[j];
+      const own = f.kind === 'group' ? 1 : f.kind === 'function' ? f.depth : isCompound(f) ? f.braces : 0;
+      if (!own) break;
+      outer = f;
+      n -= Math.min(n, own);
+    }
+    return outer;
+  };
+  // the write redirections of a segment, judged in the directory of the construct its leading closer ends (closedConstruct) when
+  // there is one, else where the walk stands
+  const addRedirects = (seg, construct) => {
+    const saved = { dir, unknownDir, unknownWhy };
+    if (construct) ({ dir, unknownDir, unknownWhy } = construct);
+    try { for (const r of seg.redirects) if (WRITE_REDIRECTS.has(r.op)) add(r.target, `${r.op} redirection`); }
+    finally { if (construct) ({ dir, unknownDir, unknownWhy } = saved); }
   };
   for (let idx = 0; idx < segments.length; idx++) {
     const seg = segments[idx];
@@ -3311,8 +3480,17 @@ function extract(command, ctx) {
       continue;
     }
     if (seg.paren === ')') { closeSubshell(seg.op); continue; }
-    let from = braces(seg);   // the words before `from` were a function body's; the rest are the enclosing scope's
-    { const t = frames[frames.length - 1]; if (isCompound(t)) from = Math.max(from, compoundBody(seg, 0, t)); }   // the innermost compound frame's opener, brace body or one-command body on this segment
+    const construct = closedConstruct(seg);   // before any frame closes: the construct this segment's leading closer ends, for its redirections
+    // the innermost frame reads the segment from `from`: a compound frame its opener, brace body, condition group or one-command
+    // body (compoundBody), a function frame its body's braces; a closer that ends one frame hands the rest of the segment to the
+    // frame beneath (`} }`: a compound brace body's, then the function body's around it; round 5's third addendum)
+    let from = 0;
+    for (;;) {
+      const t = frames[frames.length - 1];
+      const next = isCompound(t) ? compoundBody(seg, from, t) : t && t.kind === 'function' ? braces(seg, from) : from;
+      if (next <= from) break;
+      from = next;
+    }
     // A `{ }` group at the top level (C5b), at ANY nesting (the seventh pass's attacker, F2, 2026-09-19): a frame the readability
     // rule looks through (a plain group runs in this shell; one opened after `&&`, `||` or `|`, or behind `time`, is not plain, round 5's addendum) until its closing brace is piped or backgrounded, when the group ran
     // in a subshell: every name assigned inside it, the groups nested in it included, is tainted and the directory it moved to
@@ -3321,10 +3499,9 @@ function extract(command, ctx) {
     // FIRST `}`, so in `x=docs/report.md; { { x=scratch/keep.md; }; } | cat; cp base/report.md $x` the piped OUTER brace was
     // never seen as a subshell boundary, x resolved to the inner value and bash, zsh and dash wrote the tracked file (13 rows,
     // a cd face and a one-level declaration included). A segment may carry several braces (`{ {`, and `} }`, which all three shells accept without a `;`
-    // between), and zsh accepts `{ cmd }` with the brace after the command (bash and dash need the `;`): the leading braces are
-    // settled here, a trailing `}` after the segment's own words are read (pendingClose), and the segment's operator settles the
+    // between); zsh's `{ cmd }`, with the brace after the command (bash and dash need the `;`), reaches here as the `;` twin,
+    // the brace heading a segment of its own (splitAtClosers, round 5's third addendum), and the segment's operator settles the
     // LAST brace it closes. openGroups / closeGroups below.
-    if (pendingClose) { closeGroups(pendingClose.n, pendingClose.op); pendingClose = null; }
     let k = from;   // the index after the leading braces, and after the peel words before and between them (round 5)
     if (frames.every((f) => f.kind === 'group') && seg.words.length > from) {
       const brace = (w) => ((w.text === '{' || w.text === '}') && w.marks && w.marks[0] === 'u' ? w.text : null);
@@ -3332,21 +3509,12 @@ function extract(command, ctx) {
       const conditional = prevOp === '&&' || prevOp === '||' || prevOp === '|' ? prevOp : null;   // every group this segment opens is skipped or run in a subshell whole (round 5's addendum, F1)
       k = peelIndex(seg.words, from, false);
       let closes = 0;
-      while (k < seg.words.length && brace(seg.words[k]) === '}') {
-        closes++;
-        k = peelIndex(seg.words, k + 1, false);
-        // zsh's `{ try-list } always { always-list }` (round 5's addendum, F5): the `always` block continues the group, so the
-        // brace before it closes nothing and the brace after it opens nothing; the group closes at the last `}`, whose operator
-        // says whether the whole construct ran in a subshell (`{ x=1; } always { :; } | cat` keeps x unchanged in zsh, and the
-        // cd of an always-list moves it; bash and dash reject the word and run nothing)
-        if (k + 1 < seg.words.length && plainWord(seg.words[k]) && seg.words[k].text === 'always' && brace(seg.words[k + 1]) === '{') { closes--; seg.words.splice(k, 1); k = peelIndex(seg.words, k + 1, false); }   // the word is dropped so commandOf reads the always-list's own command, not a command named always with the list as its operands
-      }
+      // zsh's `{ try-list } always { always-list }` (round 5's addendum, F5) reaches here as one group: the lexer dropped the
+      // `} always {`, so the group closes at the last `}`, whose operator says whether the whole construct ran in a subshell
+      while (k < seg.words.length && brace(seg.words[k]) === '}') { closes++; k = peelIndex(seg.words, k + 1, false); }
       if (closes) closeGroups(closes, k >= seg.words.length ? seg.op : '');
       let start = from;
       while (k < seg.words.length && brace(seg.words[k]) === '{') { openGroup(conditional, seg.words.slice(start, k).some((w) => plainWord(w) && w.text === 'time')); start = k + 1; k = peelIndex(seg.words, k + 1, false); }
-      let trailing = 0;
-      for (let j = seg.words.length - 1; j >= k && brace(seg.words[j]) === '}'; j--) trailing++;
-      if (trailing) pendingClose = { n: trailing, op: seg.op };
     }
     // `function NAME {` and `function NAME` then `{` (bash, zsh; the parentheses optional): a definition, not a run (C6a: it was
     // read as a command named `function`, so the body's assignment was read as the shell's own and the call poisoned nothing).
@@ -3366,7 +3534,10 @@ function extract(command, ctx) {
         const body = q < seg.words.length;
         frames.push({ kind: 'function', name: seg.words[p + 1].text, bodyMoved: false, dir, unknownDir, unknownWhy, depth: body ? 1 : 0, dashRuns: !body });
         seg.words = seg.words.slice(q + (body ? 1 : 0));
-        if (!seg.words.length) continue;   // the body opens on the next segment, which `braces` counts
+        // the body opens on the next segment, which `braces` counts; the segment's redirections are still judged, since dash,
+        // having no `function` word, runs the line as a command and performs them (`function f echo x > report.md` truncated
+        // the tracked file in dash while the emptied segment was skipped whole: round 5's third addendum, the matrix's row)
+        if (!seg.words.length) { addRedirects(seg, construct); continue; }
       }
     }
     // `coproc` (a reserved word of bash and zsh; round 5's addendum, F8): the command after it, in bash a NAME and a compound
@@ -3397,17 +3568,17 @@ function extract(command, ctx) {
       // left to right as the shells perform them (C5d: `x=../docs/report.md y=$x` gives y the NEW x); the redirections were
       // resolved above, before any of them (bash expands a redirection before it assigns)
       const head0 = compoundHeadOf(seg.words);   // after the peel (round 5), read from the one table
-      if (head0 != null && Object.hasOwn(BODY_CLOSER, head0)) compoundBody(seg, peelIndex(seg.words) + 1, pushCompound(head0));
+      if (head0 != null && Object.hasOwn(BODY_CLOSER, head0)) compoundBody(seg, peelIndex(seg.words) + 1, pushCompound(head0), true);
       const seq = plainSequence(seg, idx);
       seg.words = seg.words.map((w) => { const r = resolveWord(w); recordPlainWord(r, seg, idx, seq); return r; });
-      for (const r of seg.redirects) if (WRITE_REDIRECTS.has(r.op)) add(r.target, `${r.op} redirection`);
+      addRedirects(seg, construct);
       for (const inner of seg.subs) recurse(inner);
       taintArith(seg);   // a bare `(( x = 5 ))` is a segment with no words: its body may assign any name in it
       continue;
     }
     let preWords = seg.words;   // as spelled: the readability rule reads a mention in the command's own text, not in a resolved value
     seg.words = seg.words.map(resolveWord);
-    for (const r of seg.redirects) if (WRITE_REDIRECTS.has(r.op)) add(r.target, `${r.op} redirection`);   // a glob: every match (add)
+    addRedirects(seg, construct);   // a glob: every match (add); a closer's redirections in the construct's start directory
     for (const inner of seg.subs) recurse(inner);
     // the compound head after the peel (round 5), read from the one table; Object.hasOwn, since `in` consulted the prototype
     // chain and a command word that is an Object.prototype key (`toString`, `constructor`, `__proto__`) inside a body threw
@@ -3417,18 +3588,20 @@ function extract(command, ctx) {
     else if (head != null && Object.hasOwn(BODY_CLOSER, head)) {
       const f = pushCompound(head);
       const at = peelIndex(seg.words);
-      // zsh's `repeat N cmd` (round 5's addendum, F4): the words after the count are the body, run N times (0 included), so they
-      // are read as the body of a one-segment frame (`repeat 2 cp base/report.md docs/report.md` writes the tracked file in zsh;
-      // bash and dash have no repeat and run nothing)
-      if (head === 'repeat' && seg.words.length > at + 2 && !(plainWord(seg.words[at + 2]) && seg.words[at + 2].text === '{')) { f.opened = true; f.oneSegment = true; seg.words = seg.words.slice(at + 2); preWords = preWords.slice(at + 2); }
-      else compoundBody(seg, at + 1, f);
+      // zsh's `repeat N cmd` and `repeat N { .. }` (round 5's addendum, F4; the third addendum for the brace form): the words after
+      // the count are the body, run N times (0 included), so `repeat N` is dropped and the rest read as the body, one command
+      // (`repeat 2 cp base/report.md docs/report.md` writes the tracked file in zsh; bash and dash have no repeat and run nothing)
+      // or a brace body, whose writer commandOf had read as repeat's operand (`repeat 1 { cp .. }` allowed while zsh copied)
+      if (head === 'repeat' && seg.words.length > at + 2) { seg.words = seg.words.slice(at + 2); preWords = preWords.slice(at + 2); compoundBody(seg, 0, f, true, preWords); }
+      else compoundBody(seg, at + 1, f, true, preWords);
     }
     const cmd = commandOf(seg.words);
     if (!cmd) {
-      // assignment words (and reserved words) alone once compoundBody dropped a brace body's closing `}` from the segment (round
-      // 5's second addendum): recorded as the assignment-only path above records them, inside the frame the head pushed, so the
-      // body's assignment is unreadable with the body's own reason (before, the `}` was read as a command named `}` and the
-      // assignment as its prefix word: a refusal, with the wrong construct named); anything else keeps the taint-by-shape read
+      // assignment words (and reserved words) alone once compoundBody dropped a condition's words or the head branch `repeat N`
+      // (round 5's second and third addenda: `if [[ 1 = 1 ]] { x=.. }`, `repeat 0 { x=.. }`): recorded as the assignment-only
+      // path above records them, inside the frame the head pushed, so the body's assignment is unreadable with the body's own
+      // reason (before, the `}` or `repeat` was read as the command and the assignment as its word: a refusal, with the wrong
+      // construct named); anything else keeps the taint-by-shape read
       if (seg.words.every((w) => isAssignmentWord(w) || (plainWord(w) && RESERVED.has(w.text)))) {
         const seq = plainSequence(seg, idx);
         for (const w of seg.words) recordPlainWord(w, seg, idx, seq);
@@ -3484,19 +3657,12 @@ function extract(command, ctx) {
     // bash's keyword mode (setsKeywordMode): a later writer's operands are read as spelled and with every assignment-shaped
     // word dropped, and a write under either reading is judged; zsh reads the words as spelled
     let variants = keywordMode && asSpelled.some(isAssignmentWord) ? [asSpelled, asSpelled.filter((w) => !isAssignmentWord(w))] : [asSpelled];
-    // A trailing `}` (round 5's second addendum, 2026-09-20): zsh reads an unquoted `}` after a command's last word as the closer
-    // of an open `{ }` group (`{ cp ../base/report.md report.md }`, in a plain group, a `then` or `do` body, a function body or a
-    // group opened after `&&`; a stray one is a parse error and nothing runs), bash and dash as one more operand (and they reject
-    // the group spelling, running nothing). The guard does not count every group brace (a `{` inside a body opened by its keyword
-    // is a plain group it does not track), so the brace was read as the LAST operand, the destination of cp, mv, install and ln,
-    // and the file zsh overwrote was read as a source: allowed, while zsh wrote the tracked file. Each writer is judged with the
-    // trailing braces and without them, the closer reading first, and a write under either reading is refused.
-    const closer = (w) => plainWord(w) && w.text === '}';
-    if (asSpelled.length && closer(asSpelled[asSpelled.length - 1])) {
-      const cut = asSpelled.slice();
-      while (cut.length && closer(cut[cut.length - 1])) cut.pop();
-      variants = [cut, ...variants];
-    }
+    // The braces the lexer cut from this command's tail (splitAtClosers, round 5's third addendum; the second addendum had found
+    // the trailing `}` of zsh's `{ cp ../base/report.md report.md }` read as cp's destination, so the tracked file zsh overwrote
+    // was read as a source, and cut it here): zsh reads them as closers, the reading the frames took; bash and dash read a `}`
+    // after a command as one more operand (`cp a }` writes a file named `}` where no group is open, and they reject the group
+    // spelling), so each writer is judged as cut and with the braces back as operands, and a write under either reading is refused.
+    if (seg.closerTail && seg.closerTail.length) variants = [...variants, ...variants.map((v) => [...v, ...seg.closerTail])];
     for (const args of variants) {
     // the walk-around lens second pass (family 6): a call to a function whose body moved the shell moves the cwd, which the guard does not
     // follow into the call, so the directory is unknown from here (the body was modelled as not moving the shell)
@@ -3541,6 +3707,7 @@ function extract(command, ctx) {
         const unmodeled = opts.some((w) => !/^-[LPe@n]+$/.test(w.text)) && !rotate;
         let block = null;
         if (prevOp === '&&' || prevOp === '||') block = `an earlier \`${name}\` after \`${prevOp}\` may not run, so where it lands is not known (its move depends on the previous status)`;
+        else if (seg.alwaysHead) block = `an earlier \`${name}\` is the first command of an always-list on the line of its \`always\`, which zsh runs and bash and dash read as operands of the command before \`always\`, so where the shell is after it depends on which shell runs the line`;   // round 5's third addendum
         else if (seg.op === '|' || prevOp === '|') block = `an earlier \`${name}\` is part of a pipeline, so it runs in a subshell and moves nothing in this shell`;
         else if (seg.op === '&') block = `an earlier \`${name}\` is backgrounded, so it runs in a subshell and moves nothing in this shell`;
         else if (frames.some((f) => f.kind === 'group' && f.conditional)) {
