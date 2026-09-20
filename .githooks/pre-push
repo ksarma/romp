@@ -74,7 +74,9 @@
 #                     is read whenever its ref is pushed: a remote holding it at
 #                     this sha would not be updating the ref, and one holding it
 #                     at another sha is receiving a new object. A tag of a tag
-#                     is peeled one object at a time.
+#                     is peeled one object at a time. A tag field the hook cannot
+#                     READ leaves the tag part-scanned and refuses the push, as a
+#                     gitleaks that cannot scan does.
 #
 # The credential scan reads the same new commits, each merge by its
 # first-parent diff, and refuses the push on a hit. A range this clone cannot
@@ -101,6 +103,7 @@ blocked_messages=0      # likewise a subset of blocked_ids, with a remedy of its
 blocked_tags=0          # an annotated tag's own tagger or message: one of the two above, with a remedy of its own
 blocked_creds=0
 failed_scan=0
+failed_creds=0          # a subset of failed_scan: gitleaks itself could not scan, with advice of its own
 
 # The commits THIS push publishes for one ref: what no remote already has.
 # "Already has" means reachable from the remote ref's current value or from ANY
@@ -202,10 +205,23 @@ tag_message() {   # <tag_sha>
     git cat-file -p "$1" | awk 'BEGIN { hdr = 1 } hdr && !NF { hdr = 0; next } !hdr { print }'
 }
 
+# A tag field whose read FAILED (the pipeline's status is git's; an absent field
+# prints nothing and exits 0): the tag is then only part-scanned, and a tagger
+# that was never read may be exactly the address the scan exists for. Report it
+# and refuse the push as unscanned, the road the credential scan takes when
+# gitleaks cannot run. Found by execution (2026-09-20): with the field counted as
+# empty instead, a `cat-file -p` that failed while `cat-file -t` still said tag
+# published a tag whose tagger domain was on the denylist, with nothing printed
+# and every counter at zero.
+tag_unread() {   # <local_ref> <tag_sha> <FIELD> [<consequence>]
+    echo "romp pre-push: the $3 of tag $1 (${2:0:10}) could not be read${4:+, $4}; the scan is incomplete, so the push is refused" >&2
+    failed_scan=1
+}
+
 # ── identifiers ───────────────────────────────────────────────────────────
 scan_identifiers() {
     local strings_file line grep_args local_ref local_sha _remote_ref remote_sha lines role email obj tagger chosen
-    local hits links link blob link_path target revs rev
+    local hits links link blob link_path target revs rev msg inner
     strings_file="${ROMP_PRIVATE_STRINGS:-${XDG_CONFIG_HOME:-$HOME/.config}/romp/private-strings.txt}"
     [ -f "$strings_file" ] || return 0
 
@@ -287,12 +303,13 @@ scan_identifiers() {
         # An annotated tag's own tagger and message (the header note): the pushed
         # object, peeled tag by tag down to the commit, which the loop above read.
         # The tagger's address is read as a commit's are (not when the clone chose
-        # it, its domain otherwise) and the message like a commit's. A field that
-        # cannot be read counts as empty, as a symlink blob does above: under set -e
-        # a failed substitution would end the hook before its verdict.
+        # it, its domain otherwise) and the message like a commit's. A field whose
+        # read fails is reported by tag_unread and refuses the push; its value still
+        # counts as empty so the peel ends, and under set -e a bare failed
+        # substitution would end the hook before its verdict.
         obj="$local_sha"
         while [ "$(git cat-file -t "$obj" 2>/dev/null || true)" = tag ]; do
-            tagger="$(tag_field "$obj" tagger 2>/dev/null)" || tagger=""
+            tagger="$(tag_field "$obj" tagger 2>/dev/null)" || { tagger=""; tag_unread "$local_ref" "$obj" TAGGER; }
             email=""
             case "$tagger" in *"<"*">"*) email="${tagger#*<}"; email="${email%%>*}";; esac
             if [ -n "$email" ] && ! is_chosen "$email" "$chosen" && printf '%s' "${email##*@}" | grep -qi -F "${grep_args[@]}"; then
@@ -301,14 +318,18 @@ scan_identifiers() {
                 blocked_addresses=1
                 blocked_tags=1
             fi
-            if hits=$(tag_message "$obj" 2>/dev/null | grep -in -F "${grep_args[@]}" | cut -d: -f1) && [ -n "$hits" ]; then
+            # The message is captured before the grep so a failed read has a road of
+            # its own: piped straight into grep, the read's failure was grep's no-match.
+            msg="$(tag_message "$obj" 2>/dev/null)" || { msg=""; tag_unread "$local_ref" "$obj" MESSAGE; }
+            if hits=$(printf '%s\n' "$msg" | grep -in -F "${grep_args[@]}" | cut -d: -f1) && [ -n "$hits" ]; then
                 lines=$(printf '%s\n' "$hits" | tr '\n' ,); lines=${lines%,}
                 echo "romp pre-push: the MESSAGE of tag $local_ref (${obj:0:10}) carries a personal identifier on line $lines" >&2
                 blocked_ids=1
                 blocked_messages=1
                 blocked_tags=1
             fi
-            obj="$(tag_field "$obj" object 2>/dev/null)" || obj=""
+            inner="$(tag_field "$obj" object 2>/dev/null)" || { inner=""; tag_unread "$local_ref" "$obj" OBJECT "which ends the peel here"; }
+            obj="$inner"
         done
     done <<< "$refs"
 
@@ -392,7 +413,7 @@ scan_credentials() {
         case $rc in
             0) ;;
             2) blocked_creds=1 ;;
-            *) failed_scan=1 ;;
+            *) failed_scan=1; failed_creds=1 ;;
         esac
     done <<< "$refs"
 
@@ -403,7 +424,7 @@ scan_credentials() {
         echo "  Removing it in a NEW commit is not enough; the old commit still carries it." >&2
         echo "  A false positive belongs in .gitleaks.toml, narrowly, with a reason." >&2
     fi
-    if [ "$failed_scan" -ne 0 ]; then
+    if [ "$failed_creds" -ne 0 ]; then
         echo "" >&2
         echo "romp pre-push: BLOCKED. gitleaks could not scan; its error is above." >&2
         echo "  The push is refused rather than published unscanned. Fix the scanner or its config, or set ROMP_NO_GITLEAKS=1 for one push." >&2

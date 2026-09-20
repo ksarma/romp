@@ -24,7 +24,9 @@
 #
 # An annotated TAG carries a tagger the same way, and every other read the hook
 # makes peels a tag to the commit it names, so the tag object's own address is
-# read too: the tag cases at the end hold that.
+# read too: the tag cases at the end hold that. A tag field the hook cannot READ
+# refuses the push as unscanned (the last cases): an unread tagger is not an
+# empty one.
 #
 # Every identifier below is SYNTHETIC: the denylist, the logins, the hosts and
 # the domains are invented per test (the repo may go public, and a real one
@@ -356,4 +358,70 @@ commit_clean() {   # <path> <message>
     run_hook_tag v1-outer
     [ "$status" -ne 0 ]
     [[ "$output" == *"tag refs/tags/v1-outer (${inner:0:10}) is tagged as <$STAMPED>"* ]]
+}
+
+# ── a tag field the hook cannot READ ──────────────────────────────────────
+# The tag reads are `git cat-file -p` pipelines. An absent field is empty and
+# exits 0 (a tag object with no tagger line, a tag with no message); a read that
+# FAILS is another thing: the tag is then part-scanned, and the tagger that was
+# never read may be exactly the address the scan exists for. The hook refuses
+# such a push as unscanned, the way it does when gitleaks cannot run, instead of
+# counting the field as empty and publishing (found by execution, 2026-09-20: a
+# `cat-file -p` that failed while `cat-file -t` still said tag let a tag whose
+# tagger domain was on the denylist through a real push, with nothing printed).
+#
+# The fault is a git first on the hook's PATH whose `cat-file -p` of ONE object
+# fails; every other command runs the real git. It is written into the test's
+# temp dir at run time, keyed to the sha the test names.
+
+# Put that git on PATH. The test body is its own subshell, so the PATH change
+# does not outlive the test.
+fail_cat_file_p() {   # <sha whose `cat-file -p` fails>
+    local real_git
+    real_git="$(command -v git)"
+    mkdir -p "$TEST_DIR/shim"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'if [ "${1:-}" = cat-file ] && [ "${2:-}" = -p ] && [ "${3:-}" = %q ]; then\n' "$1"
+        printf '    echo "shim: cat-file -p refused for $3" >&2\n    exit 1\nfi\n'
+        printf 'exec %q "$@"\n' "$real_git"
+    } > "$TEST_DIR/shim/git"
+    chmod 755 "$TEST_DIR/shim/git"
+    export PATH="$TEST_DIR/shim:$PATH"
+}
+
+@test "a tag whose fields cannot be READ is refused as unscanned, naming the tag and each field: a failed read is not an empty field" {
+    commit_clean ok.txt "clean"
+    GIT_COMMITTER_EMAIL="$STAMPED" git -C "$REPO" tag -a v1 -m "release one"
+    sha="$(git -C "$REPO" rev-parse refs/tags/v1)"
+    fail_cat_file_p "$sha"
+    # the fault as the hook meets it, from the repo's top level: the type read works, the content read does not
+    [ "$(git -C "$REPO" cat-file -t "$sha")" = tag ]
+    run _hook_in "$REPO" -c 'git cat-file -p "$1"' _ "$sha"
+    [ "$status" -ne 0 ]
+    run_hook_tag v1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"the TAGGER of tag refs/tags/v1 (${sha:0:10}) could not be read"* ]]
+    [[ "$output" == *"the MESSAGE of tag refs/tags/v1 (${sha:0:10}) could not be read"* ]]
+    [[ "$output" == *"the OBJECT of tag refs/tags/v1 (${sha:0:10}) could not be read"* ]]
+    [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" == *"git push --no-verify"* ]]
+    # reported as a failed read, not as a finding: nothing was read to find
+    [[ "$output" != *"is tagged as"* ]]
+    [[ "$output" != *"BLOCKED"* ]]
+}
+
+@test "a tag whose fields all read passes beside that git: the refusal is the failed read, whatever the tag would have said" {
+    commit_clean ok.txt "clean"
+    git -C "$REPO" tag -a v1 -m "release one"         # the hermetic identity, a clean message
+    git -C "$REPO" tag -a other -m "the other tag"    # the same identity and as clean
+    fail_cat_file_p "$(git -C "$REPO" rev-parse refs/tags/other)"    # the fault sits on the OTHER object
+    run_hook_tag v1
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    # the clean tag the fault sits on is refused all the same: unread, it cannot be known clean
+    run_hook_tag other
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"the TAGGER of tag refs/tags/other"* ]]
+    [[ "$output" != *"BLOCKED"* ]]
 }
