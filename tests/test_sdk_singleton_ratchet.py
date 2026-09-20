@@ -85,12 +85,20 @@ that meets the object is quiet, and the refusal is the first window's alone (S7B
 root is no leak and gets no refusal (S8). One over a gone directory is refused too, under the gone wording, whatever its
 root: the swapping scope may never put the object back, and then no window starts under it, the gone report never fires,
 and the scope's boundary verdict names the swap and not the object's origin (S10, the refusal beside that verdict in
-One.a's one teardown, the only line naming the leak's origin); when the scope does put it back, the later test that
+One.a's one teardown, the only line naming the leak's origin; and that verdict, the start-to-end judgment on the object
+the class found, says the object it found is the one the first window refused to attribute, a clause of its own with
+the same key, the object); when the scope does put it back, the later test that
 starts under the object carries the gone report as well, two lines on two items each saying what the other does not
 (S9), and that report names the object as the one the first window refused to attribute, the link keyed on the object
-and not on the rendered path, which a repoint between the two lines changes (S9B); a second gone object a later class
+and not on the rendered path, which a repoint between the two lines changes (S9B; S10B for the boundary's pair, a
+setUpModule repointing the object between the module start read and the class's reads, so the refusal renders the
+recorded root and the verdict the live one, and the clause is still there); a second gone object a later class
 builds and removes after the refusal carries its gone report without that clause, the link being membership by identity
-and not any refusal's having been taken in the worker (S14). The outer tests read the refusal as
+and not any refusal's having been taken in the worker (S14), and the boundary's clause is keyed the same way, on the
+object its start-to-end verdict renders as before, so a verdict rendering another object carries none: the scope found
+the refused object and its teardown repointed the build its test left (S10C's One), the scope found an object no
+refusal named while a refusal stands in the worker (S10C's Two), or the run took no refusal (M). The outer tests read
+the refusal as
 they read every report, by the test it lands on (inherited with the SWAPPED
 or SWAPPED_GONE head) and as the set of tests carrying each head (carriers, a set of size one), never by a phrase
 count. The class and module boundaries yield to the
@@ -241,9 +249,28 @@ alphabetically, and each case's `before` is what the previous case left):
   S10, the gone shape, the object never put back: E's import-time leak, then a class whose setUpClass resets the slot
     and leaves it (jd.STATE untouched; a lazy-builds over the run root, Two.a meets that build); One.a's teardown
     carries the refusal under the gone head beside One's boundary verdict on the swap (before the gone object, after
-    the class's build, the object remedy), one exception group, one error; no test starts under the gone object, so no
-    gone report; Two.a quiet. Without the gone arm the boundary verdict was the only line and named neither the gone
-    directory nor import-time code.
+    the class's build, the object remedy, and the verdict saying the object it found is the one the first window
+    refused to attribute, the two lines linked at the object, the clause ending one period before the remedy), one
+    exception group, one error; no test starts under the gone object, so no gone report; Two.a quiet. Without the gone
+    arm the boundary verdict was the only line and named neither the gone directory nor import-time code.
+  S10B, S10's two lines with the object repointed between the reads that render them: setUpModule, after the module
+    start read, repoints the gone object's state_dir to a second removed path and leaves it in the slot; One's class
+    start read finds the object over the moved path; One's setUpClass resets the slot and never puts the object back
+    (jd.STATE untouched); One.a's lazy build over the run root is allowed and its first window refuses under the gone
+    head, naming the root the module start read recorded; One's boundary verdict on the swap renders the object it
+    found from the live attribute, the moved path, so the two lines render two paths for one object, and the verdict
+    still says it found the one the first window refused (the link is the object, not the path); one exception group,
+    one error; Two.a meets the build and is quiet; the module end is quiet on the named build.
+  S10C, the refused object found by a class whose verdicts render other objects, the boundary clause's negatives with a
+    refusal in the run: E's import-time gone leak, the object kept as _obj and put back by tearDownModule (the module's
+    start and end reads agree on it, so the module end is quiet); One's setUpClass resets the slot (S10's swap), One.a
+    lazy-builds over the run root, and One's tearDownClass repoints that build's state_dir to a kept sandbox (X.Two's
+    shape), so One's verdict is the last-object repoint (before the build over the run root, after it over the sandbox,
+    the state_dir remedy), rendering the build alone while the object One FOUND is the refused one, and carries no
+    clause; Two does nothing under the build and its tearDownClass resets the slot to None (M.Three's shape), so Two's
+    verdict is the start-to-end judgment on a found object no refusal named (before the build over the sandbox, after
+    None, the object remedy), no clause while the refused list holds the first object; the refusal on One.a under the
+    gone head beside One's verdict, one exception group; Two.a passes and errors at its teardown; two errors.
   S11, S7 with the start read's object repointed before the swap: One's setUpClass moves the import-time object's
     state_dir to a second sandbox, then saves, resets and moves jd.STATE; the refusal names the root the start read
     RECORDED (the kept one) and not the live attribute's (the repointed one); tearDownClass puts the object, jd.STATE and
@@ -291,7 +318,8 @@ alphabetically, and each case's `before` is what the previous case left):
     class boundary names the change from the run root's backend to the sandbox's, sandbox remedy); Three's
     tearDownClass resets the slot to None (object remedy, no sandbox sentence); Four does nothing under the None and
     is quiet; Five's tearDownClass builds from None over a sandbox (named); Six does nothing under it and the module
-    end is quiet.
+    end is quiet. No refusal is taken in the run, and none of its three boundary verdicts, each the start-to-end
+    judgment, names a refused object: the boundary link clause's negative with no refusal in the worker (S10C has one).
   P, a class that puts back the object it found and removes that object's directory: One.a leaks over a kept sandbox
     (named); Two's setUpClass saves and replaces the singleton and moves jd.STATE, Two.a builds over the class root
     (allowed), and Two's tearDownClass restores both and removes both roots: the class boundary names the put-back
@@ -334,12 +362,13 @@ segment read) and fail loudly, the line quoted, when it changes.
 Mutations of the fixture run against this module, each landed and reverted (2026-09-19; the runner compile-checks the
 mutated conftest and counts a NameError in the outer output as a crash, never as a weakening), listed by what the
 fixture READS and the branch each read feeds, each with a case that reds under it: a witness, never the set (a case
-added later joins a set, and no sentence here says it did not). The refusal's cells, the ones the S cases keep touching,
-state instead the RULE every red case satisfies and carry a derive id: the mutation is data (MUTATIONS, the exact text
-replaced in tests/conftest.py), TheMutationCellsApply pins that each replaced text occurs exactly once at this tree and
-that the matrix and the table name the same cells, and `python -B tests/test_sdk_singleton_ratchet.py --derive <id>`
-plants the cell in a detached worktree at HEAD, runs this module there, prints the red cases by case id with the head it
-ran at, and removes the worktree: a cell's current list is that run's, at the head it prints, and none is written here.
+added later joins a set, and no sentence here says it did not). The refusal's cells and the boundary link's, the ones
+the S cases keep touching, state instead the RULE every red case satisfies and carry a derive id: the mutation is data
+(MUTATIONS, the exact text replaced in tests/conftest.py), TheMutationCellsApply pins that each replaced text occurs
+exactly once at this tree and that the matrix and the table name the same cells, and
+`python -B tests/test_sdk_singleton_ratchet.py --derive <id>` plants the cell in a detached worktree at HEAD, runs this
+module there, prints the red cases by case id with the head it ran at, and removes the worktree: a cell's current list
+is that run's, at the head it prints, and none is written here.
   the reads (_sdk_read): the marker ignored, every test on the same-marker road (A.c fails falsely on the stale
     pre-reload object); a None marker before treated as the same-marker road (H2.a fails falsely) or as an exemption
     (H.a passes); os.path.isdir replaced by os.path.exists (D.One's boundary verdict disappears, A.g); isdir forced
@@ -419,6 +448,20 @@ ran at, and removes the worktree: a cell's current list is that run's, at the he
     first window refuses, the refusal then never taken and the flag spent only where the identity term holds, so a
     later window that holds the start read's object over its standing root carries the kept-root report with its
     premise sentence false; derive: refusal-flag-kept).
+  the boundary verdict's link to the refusal (_sdk_found_refused), each cell a rule and a derive id: the clause dropped
+    (red: every case that reads the boundary's clause present, a scope that found the refused object and ended on
+    another value; derive: boundary-link-dropped); the link keyed on the rendered text in place of the object, the
+    refusal recording its object's rendered path and the boundary testing the found object's live rendering against
+    that list (red: every case whose refused object is repointed between the module start read and the scope's reads,
+    the two paths then differing; derive: boundary-link-by-path); the clause emitted on every start-to-end verdict
+    (red: every case that reads a start-to-end boundary verdict on a found object no refusal named for the clause's
+    absence, or reads one to its last words; the last-object and put-back roads carry no gate and are untouched;
+    derive: boundary-link-unconditional); the link keyed on any refusal in the worker in place of the found object,
+    membership by existence (red: every case with a refusal followed by a start-to-end boundary verdict whose found
+    object is not the refused one; derive: boundary-link-by-existence); the clause keyed on the found object on every
+    road, the gate moved from the start-to-end call to the boundary fixture (red: every case whose scope found the
+    refused object and whose verdict renders another object, the last-object roads; derive:
+    boundary-link-on-start-object).
   the boundary: the class end deleted (D.One.b and K.One.b show no boundary error, M, P); the module end deleted
     (L.b shows none); compared to its last read only (K.One passes silently); judged without the restore exemption
     (K.Two errors); the named skip dropped (a second report at the class or module end of A, B, C, D, E, K and L;
@@ -434,7 +477,7 @@ ran at, and removes the worktree: a cell's current list is that run's, at the he
     disappears) or without its reference condition (K.One passes silently); the windows never recorded (as the
     yield removed).
   the function fixture not naming the object it accused (A.h gets an inherited report, E, D).
-Eighty-four cells red. Four are pinned by no run, each for a stated reason: the unreadable reference root granting
+Eighty-four cells red. Five are pinned by no run, each for a stated reason: the unreadable reference root granting
 the allowance (not constructible: the kernel always binds jd); the yield's identity condition dropped (redundant by
 construction: when the end value is the last read's and is not the last window's value, a class teardown inside the
 scope installed it, and that class's own boundary judged it against its start, which only a restore of the value the
@@ -442,7 +485,10 @@ scope found passes, so the module end is looking at its own start value); the wi
 end (the read-count filter never selects a stale entry; the clearing bounds memory); the refusal's _sdk_reported term (a
 belt: the one site that fills _SDK_REPORTED, the function fixture's report line, runs after the refusal is computed in
 the same first window, and no earlier window exists in the worker, so the list is empty whenever the refusal is
-consulted; dropped, the module stays green; the _sdk_named term beside it is reachable and pinned, S13); and no others.
+consulted; dropped, the module stays green; the _sdk_named term beside it is reachable and pinned, S13); the boundary
+link's changed-marker term (end.marker is not start.marker in _sdk_found_refused's gate: the reload judgment renders the
+after value alone and no before, so the term keeps the clause off a line that renders no found object; no case has a
+refusal followed by a kernel re-execution inside the refused object's scope, the run that would show it); and no others.
 """
 import ast
 import inspect
@@ -482,6 +528,11 @@ SWAPPED = ("opens the worker's first test window, and this module's start read h
 SWAPPED_GONE = ("opens the worker's first test window, and this module's start read had found the kernel's backend singleton "
                 "(km._sdk_backend) over a directory that no longer exists, before any test in this worker has run")
 REFUSED_OBJECT = "the object this worker's first test window refused to attribute"   # the gone report's link to the refusal's line
+# The start-to-end boundary verdict's own link to the refusal's line (_sdk_found_refused). REFUSED_FOUND carries
+# REFUSED_OBJECT, so that needle reads both clauses absent (S10C, M); REFUSED_FOUND_TAIL is the clause's last words, where
+# the clause ends, one period before "Fix:" (S10, S10B).
+REFUSED_FOUND = "The object this scope found is " + REFUSED_OBJECT
+REFUSED_FOUND_TAIL = "the scope that swapped it out and the value it left"
 PUT_BACK_REPOINTED = "put back the kernel's backend singleton (km._sdk_backend) it found with its state_dir repointed: before "
 REMEDY_C = ("Put back the singleton's state_dir where it was found: the kernel's readers hold the object and read its state_dir "
             "on every registry scan")
@@ -509,6 +560,11 @@ _GONE_CAUSE = ('("building the singleton over a directory since removed, or remo
                '                                               "it was built over")')
 _KEPT_CAUSE = ('("building the singleton over a root that is not the run\'s, or moving jd.STATE after the "\n'
                '                                          "build and leaving it there")')
+# the boundary link's gate (_sdk_found_refused), its one call site in _sdk_judge_scope, and the boundary fixture's call
+_BOUNDARY_LINK_GATE = ("    if verdict is None or end.marker is not start.marker or not _sdk_refused(start.be):\n"
+                       "        return verdict\n")
+_BOUNDARY_LINK_CALL = "    return _sdk_found_refused(_sdk_judge(start, end, start.jd_state), start, end)\n"
+_BOUNDARY_VERDICT = "    verdict = _sdk_judge_scope(start, last, end, windows)\n"
 MUTATIONS = {
     "refusal-deleted": ("conftest.py", [
         ("        swapped = _sdk_swapped(_SDK_MODULE_START, before)\n", "        swapped = None\n")]),
@@ -549,6 +605,21 @@ MUTATIONS = {
     "refusal-flag-kept": ("conftest.py", [
         (_REFUSAL_CONDITION, "    if False:\n"),
         ("    _SDK_FIRST_WINDOW = False\n", "    if first:\n        _SDK_FIRST_WINDOW = False\n")]),
+    "boundary-link-dropped": ("conftest.py", [(_BOUNDARY_LINK_GATE, "    if True:\n        return verdict\n")]),
+    "boundary-link-by-path": ("conftest.py", [
+        ("_SDK_REFUSED = []", "_SDK_REFUSED_TEXT = []; _SDK_REFUSED = []"),
+        (_REFUSE_CALL, _REFUSE_CALL + "; _SDK_REFUSED_TEXT.append(_sdk_singleton_text(_SDK_MODULE_START.be, "
+                       "_SDK_MODULE_START.sd))"),
+        (_BOUNDARY_LINK_GATE, "    if verdict is None or end.marker is not start.marker or _sdk_singleton_text(start.be) not in "
+                              "_SDK_REFUSED_TEXT:\n        return verdict\n")]),
+    "boundary-link-unconditional": ("conftest.py", [
+        (_BOUNDARY_LINK_GATE, "    if verdict is None:\n        return verdict\n")]),
+    "boundary-link-by-existence": ("conftest.py", [
+        (_BOUNDARY_LINK_GATE, "    if verdict is None or end.marker is not start.marker or not _SDK_REFUSED:\n"
+                              "        return verdict\n")]),
+    "boundary-link-on-start-object": ("conftest.py", [
+        (_BOUNDARY_LINK_CALL, "    return _sdk_judge(start, end, start.jd_state)\n"),
+        (_BOUNDARY_VERDICT, "    verdict = _sdk_found_refused(_sdk_judge_scope(start, last, end, windows), start, end)\n")]),
 }
 DERIVE_DESELECT = "tests/test_sdk_singleton_ratchet.py::TheMutationCellsApply"   # reds under any plant by construction
 DERIVE_ENV_DROPPED = ("PYTEST_ADDOPTS", "PYTEST_PLUGINS", "PYTEST_DISABLE_PLUGIN_AUTOLOAD", "PYTEST_CURRENT_TEST",
@@ -1291,6 +1362,77 @@ SCRATCH_S10 = SCRATCH_HEAD + textwrap.dedent("""\
     class Two(unittest.TestCase):
         def test_a_meets_the_classes_build(self):
             assert km._sdk_backend.state_dir == jd.STATE and not _root.exists()
+""")
+
+SCRATCH_S10B = SCRATCH_HEAD + textwrap.dedent("""\
+
+    _root = sandbox()                                 # E's import-time leak: built over a sandbox, jd.STATE restored, the sandbox removed
+    _saved = jd.STATE
+    jd.STATE = _root
+    km._sdk()
+    jd.STATE = _saved
+    shutil.rmtree(_root)
+    _obj = km._sdk_backend                            # the object the worker's first window will refuse
+    _moved = None
+
+    def setUpModule():
+        global _moved
+        _moved = Path(tempfile.mkdtemp(prefix="moved-"))   # a second removed path: the gone object repointed there after the module
+        shutil.rmtree(_moved)                             # start read and LEFT in the slot, so One's start read finds it over this path
+        _obj.state_dir = _moved
+
+    class One(unittest.TestCase):
+        @classmethod
+        def setUpClass(cls):
+            km._sdk_backend = None                    # S10's swap: the gone object swapped out and never put back; jd.STATE untouched
+
+        def test_a_builds_over_the_run_root(self):
+            assert km._sdk().state_dir == jd.STATE
+
+    class Two(unittest.TestCase):
+        def test_a_meets_the_classes_build(self):
+            be = km._sdk_backend
+            assert be is not _obj and be.state_dir == jd.STATE and not _root.exists() and not _moved.exists()
+""")
+
+SCRATCH_S10C = SCRATCH_HEAD + textwrap.dedent("""\
+
+    _root = sandbox()                                 # E's import-time leak: built over a sandbox, jd.STATE restored, the sandbox removed
+    _saved = jd.STATE
+    jd.STATE = _root
+    km._sdk()
+    jd.STATE = _saved
+    shutil.rmtree(_root)
+    _obj = km._sdk_backend                            # the object the worker's first window will refuse
+
+    def tearDownModule():
+        km._sdk_backend = _obj                        # the module's start and end reads agree on the gone object: its end is quiet
+
+    class One(unittest.TestCase):
+        root = None
+
+        @classmethod
+        def setUpClass(cls):
+            km._sdk_backend = None                    # S10's swap: the refused object swapped out and never put back; jd.STATE untouched
+
+        @classmethod
+        def tearDownClass(cls):
+            One.root = sandbox()
+            km._sdk_backend.state_dir = One.root      # the teardown repoints the build its test left (X.Two's shape): the
+                                                      # verdict renders that build alone; the object the class FOUND is
+                                                      # the refused one
+
+        def test_a_builds_over_the_run_root(self):
+            assert km._sdk().state_dir == jd.STATE
+
+    class Two(unittest.TestCase):
+        @classmethod
+        def tearDownClass(cls):
+            km._sdk_backend = None                    # M.Three's shape: the start-to-end judgment on One.a's build, an object no
+                                                      # refusal named, while the refused list holds the first object
+
+        def test_a_does_nothing_under_the_repointed_build(self):
+            assert km._sdk_backend.state_dir == One.root and One.root.is_dir() and not _root.exists()
 """)
 
 SCRATCH_S11 = SCRATCH_HEAD + textwrap.dedent("""\
@@ -2429,8 +2571,8 @@ class TheMutationCellsApply(unittest.TestCase):
             self.assertIn("(red: ", text, "%s: the cell states no rule: %s" % (cell, text))
 
     def test_the_table_is_not_short(self):
-        self.assertGreaterEqual(len(MUTATIONS), 23, "the refusal block's twenty-three cells at the round-6 head; a "
-                                "shorter table is a failure, not a pass: %r" % sorted(MUTATIONS))
+        self.assertGreaterEqual(len(MUTATIONS), 28, "the refusal block's twenty-three cells and the boundary link's five "
+                                "at the round-6 head; a shorter table is a failure, not a pass: %r" % sorted(MUTATIONS))
 
 
 class ClassTeardownRemovesTheDirectory(_NestedRun, unittest.TestCase):
@@ -2888,7 +3030,13 @@ class ASwappingClassNeverPutsTheGoneObjectBack(_NestedRun, unittest.TestCase):
     meets that build). Without the gone arm the only line was One's boundary verdict on the swap (before the gone
     object, after the class's build, the object remedy), which names neither the gone directory nor import-time code:
     the leak's origin went unstated. Now One.a's teardown carries the refusal under the gone head beside that verdict,
-    one exception group, one error; no test starts under the gone object, so no gone report; Two.a is quiet."""
+    one exception group, one error; no test starts under the gone object, so no gone report; Two.a is quiet.
+    The two lines name one object, and the verdict says so: the object it found is the one this worker's first test
+    window refused to attribute, the link keyed on the object (_sdk_refused, membership by identity on _SDK_REFUSED) and
+    not on its rendered path, which here the two lines agree on and in S10B do not. The clause is the boundary's own,
+    with its own tail (the scope that swapped the object out and the value it left; the gone report's tail, the test
+    that lives under the object, is false here, where no test does), and ends one period before the remedy: a period
+    inside the clause made ".. Fix:" on the line, and the boundary() reader's non-greedy read accepted it."""
     SCRATCH = SCRATCH_S10
     ERRORS = 1
     FIRST = "One.test_a_builds_over_the_run_root"
@@ -2905,6 +3053,7 @@ class ASwappingClassNeverPutsTheGoneObjectBack(_NestedRun, unittest.TestCase):
         self.assertIn("no test is accused and no scope is named", text)
         self.assertIn("building the singleton over a directory since removed", text)
         self.assertNotIn("Fix:", text, text)
+        self.assertNotIn(REFUSED_OBJECT, text, "the refusal is the line linked to; the clause is the verdict's: %s" % text)
         self.assertNotIn(BOUNDARY, text, "the boundary verdict is its own line, not folded into the refusal: %s" % text)
         self.assertIsNone(re.search(r"test_scratch2?\.py::\w+", text), "no scope or test is named in the refusal: %s" % text)
         self.assertEqual(carriers(self.out, SWAPPED_GONE), {"test_scratch.py::" + self.FIRST.replace(".", "::")}, self.out)
@@ -2912,9 +3061,14 @@ class ASwappingClassNeverPutsTheGoneObjectBack(_NestedRun, unittest.TestCase):
         for head in (INHERITED, INHERITED_KEPT):
             self.assertEqual(carriers(self.out, head), set(), "no test starts under the gone object: %s" % self.out)
 
-    def test_the_boundary_verdict_on_the_swap_lands_beside_the_refusal(self):
+    def test_the_boundary_verdict_on_the_swap_lands_beside_the_refusal_and_names_the_object_as_the_one_refused(self):
         clause = self.assertBoundaryFailed("::One", self.FIRST, remedy=REMEDY_B)
         self.assertTrue(clause.startswith("changed after its teardown: before SdkBackend over "), clause)
+        self.assertIn(REFUSED_FOUND, clause, "the verdict says the object it found is the one the refusal named: %s" % clause)
+        self.assertLess(clause.index(", after SdkBackend over "), clause.index(REFUSED_FOUND), clause)   # the clause follows
+        # the transition it links, before the remedy (boundary() reads it up to "Fix:"); its last words are the tail
+        self.assertTrue(clause.endswith(REFUSED_FOUND_TAIL), "the clause ends on its tail, no period inside it: %s" % clause)
+        self.assertNotIn(".. Fix:", self.out, "one period between the clause and the remedy: %s" % self.out)
         self.assertEqual(boundary_scopes(self.out), {"test_scratch.py::One"}, self.out)
         # Two nodes fail in One.a's teardown stack, the item (the function fixture's refusal) and the class (the boundary
         # verdict), so pytest 9 groups them as "errors during test teardown" with two sub-exceptions; J, R1 and R2 pin the
@@ -2926,6 +3080,119 @@ class ASwappingClassNeverPutsTheGoneObjectBack(_NestedRun, unittest.TestCase):
 
     def test_the_test_that_meets_the_classes_build_is_quiet(self):
         self.assertRatchetPassed("Two", "test_a_meets_the_classes_build")
+
+
+class TheSwapVerdictNamesTheGoneObjectRepointedBetweenTheTwoLines(_NestedRun, unittest.TestCase):
+    """S10B: S10's pair of lines, the refusal and One's boundary verdict on the swap, with the gone object REPOINTED
+    between the reads that render them, so the two lines render two different paths for one object and the rendered text
+    cannot link them. E's import-time leak (built over a sandbox, jd.STATE restored, the sandbox removed); setUpModule,
+    after the module start read, repoints the object's state_dir to a second removed path (prefix moved-) and leaves it
+    in the slot; One's class start read finds the object over the moved path; One's setUpClass resets the slot and never
+    puts the object back (jd.STATE untouched); One.a makes the lazy build over the run root (allowed) and its first
+    window refuses under the gone head, naming the root the module start read RECORDED; One's boundary verdict on the
+    swap renders the object it found from the live attribute, the moved path, and still says it found the object the
+    first window refused to attribute: the link is the object, not its path (_sdk_refused, membership by identity on
+    _SDK_REFUSED). One exception group on One.a's teardown, one error; Two.a meets the build and is quiet; the module
+    end is quiet on the named build. With the boundary's link keyed on the rendered text the clause would be missing
+    here (the kill cell, derive: boundary-link-by-path), while S10, where the two lines render one path, would stay
+    green."""
+    SCRATCH = SCRATCH_S10B
+    ERRORS = 1
+    FIRST = "One.test_a_builds_over_the_run_root"
+
+    def test_the_two_lines_render_two_paths_and_the_verdict_names_the_object_as_the_one_refused(self):
+        cls, method = self.FIRST.split(".")
+        refusal = inherited(self.out, cls, method, head=SWAPPED_GONE)
+        self.assertIsNotNone(refusal, "the first window's refusal line, opening with SWAPPED_GONE, is missing: %s" % self.out)
+        self.assertEqual(outcomes(self.out).get(self.FIRST), {"PASSED", "ERROR"}, self.out)
+        self.assertIsNone(verdict(self.out, cls, method), "the lazy build over the run root is not accused: %s" % self.out)
+        clause = self.assertBoundaryFailed("::One", self.FIRST, remedy=REMEDY_B)
+        refused_root = re.match(r"SdkBackend over (\S+),", refusal).group(1)     # the root the module start read recorded
+        m = re.match(r"changed after its teardown: before SdkBackend over (\S+), after SdkBackend over (\S+)\.", clause)
+        self.assertIsNotNone(m, clause)
+        found_root = m.group(1)                                                    # the live attribute at the class's reads
+        self.assertNotEqual(refused_root, found_root, "the object was repointed between the two lines: %s" % self.out)
+        self.assertIn("moved-", found_root)
+        self.assertNotIn("moved-", refused_root)
+        self.assertIn(REFUSED_FOUND, clause, "the link, keyed on the object: %s" % clause)
+        self.assertLess(clause.index(", after SdkBackend over "), clause.index(REFUSED_FOUND), clause)   # the clause follows the transition
+        self.assertTrue(clause.endswith(REFUSED_FOUND_TAIL), "the clause ends on its tail, no period inside it: %s" % clause)
+        self.assertNotIn(".. Fix:", self.out, "one period between the clause and the remedy: %s" % self.out)
+        self.assertNotIn(REFUSED_OBJECT, refusal)
+        self.assertIn("building the singleton over a directory since removed", refusal)
+        self.assertEqual(carriers(self.out, SWAPPED_GONE), {"test_scratch.py::" + self.FIRST.replace(".", "::")}, self.out)
+        self.assertEqual(carriers(self.out, SWAPPED), set(), self.out)
+        for head in (INHERITED, INHERITED_KEPT):
+            self.assertEqual(carriers(self.out, head), set(), "no test starts under the gone object: %s" % self.out)
+        self.assertEqual(boundary_scopes(self.out), {"test_scratch.py::One"}, self.out)
+        self.assertRegex(self.out, r"BaseExceptionGroup: errors during test teardown \(2 sub-exceptions\)",
+                         "the refusal and the boundary verdict are One.a's one teardown report: %s" % self.out)
+
+    def test_the_test_that_meets_the_classes_build_is_quiet_and_the_other_ends_are(self):
+        self.assertRatchetPassed("Two", "test_a_meets_the_classes_build")
+        for scope in ("::Two", ""):
+            self.assertIsNone(boundary(self.out, scope), self.out)
+
+
+class TheFoundObjectRefusedAndTheVerdictsOnOtherObjectsCarryNoClause(_NestedRun, unittest.TestCase):
+    """S10C, the boundary link clause's two negatives with a refusal in the run: a verdict rendering an object other
+    than the one the scope found, and a verdict on a found object no refusal named. E's import-time gone leak, the
+    object kept as _obj and put back by tearDownModule (the module's start and end reads agree on it, so the module end
+    is quiet, the reason S14's Two is). One's setUpClass resets the slot (S10's swap) and One.a lazy-builds over the run
+    root (allowed; its first window refuses under the gone head, naming the gone object); One's tearDownClass repoints
+    that build's state_dir to a kept sandbox (X.Two's shape), so One's verdict is the last-object repoint, rendering the
+    build alone (before it over the run root, after it over the sandbox, the state_dir remedy) while the object One
+    FOUND is the refused one: a clause keyed on the found object there would name an object the line does not show, and
+    the fixture keys the clause on the object each road renders, so One's verdict carries none. Two does nothing under
+    the build and its tearDownClass resets the slot to None (M.Three's shape), so Two's verdict is the start-to-end
+    judgment on a found object no refusal named (before the build over the sandbox, after None, the object remedy), and
+    carries none while the refused list holds the first object: membership by identity, not any refusal's having been
+    taken. The refusal and One's verdict are One.a's one teardown report; Two.a passes and errors at its teardown; two
+    errors. Kill cells: the clause on every start-to-end verdict (derive: boundary-link-unconditional, Two's carries
+    it), the link by any refusal in the worker (derive: boundary-link-by-existence, Two's carries it), and the clause
+    keyed on the found object on every road (derive: boundary-link-on-start-object, One's carries it)."""
+    SCRATCH = SCRATCH_S10C
+    ERRORS = 2
+    FIRST = "One.test_a_builds_over_the_run_root"
+    LAST = "Two.test_a_does_nothing_under_the_repointed_build"
+
+    def test_the_refusal_names_the_gone_object_and_neither_verdict_says_it_found_it(self):
+        cls, method = self.FIRST.split(".")
+        refusal = inherited(self.out, cls, method, head=SWAPPED_GONE)
+        self.assertIsNotNone(refusal, "the first window's refusal line, opening with SWAPPED_GONE, is missing: %s" % self.out)
+        self.assertEqual(outcomes(self.out).get(self.FIRST), {"PASSED", "ERROR"}, self.out)
+        self.assertIsNone(verdict(self.out, cls, method), "the lazy build over the run root is not accused: %s" % self.out)
+        self.assertIn("building the singleton over a directory since removed", refusal)
+        self.assertNotIn(REFUSED_OBJECT, refusal)
+        self.assertEqual(carriers(self.out, SWAPPED_GONE), {"test_scratch.py::" + self.FIRST.replace(".", "::")}, self.out)
+        self.assertEqual(carriers(self.out, SWAPPED), set(), self.out)
+        for head in (INHERITED, INHERITED_KEPT):
+            self.assertEqual(carriers(self.out, head), set(), "no test starts under the gone object: %s" % self.out)
+        refused_root = re.match(r"SdkBackend over (\S+),", refusal).group(1)     # the gone root the module start read recorded
+        one = self.assertBoundaryFailed("::One", self.FIRST, remedy=REMEDY_C)
+        self.assertTrue(one.startswith("changed after its teardown: before SdkBackend over "), one)
+        self.assertIn(", after SdkBackend over ", one)
+        self.assertNotIn(GONE, one)
+        self.assertNotIn(REFUSED_OBJECT, one, "the verdict renders the build the teardown repointed, not the object the class "
+                         "found; a clause here would name an object the line does not show: %s" % one)
+        self.assertNotIn(refused_root, one, "the refused object is rendered on the refusal alone: %s" % one)
+        two = self.assertBoundaryFailed("::Two", self.LAST, remedy=REMEDY_B)
+        self.assertTrue(two.startswith("changed after its teardown: before SdkBackend over "), two)
+        self.assertTrue(two.endswith(", after None (not built)"), two)
+        self.assertNotIn(REFUSED_OBJECT, two, "a start-to-end verdict on a found object no refusal named, with a refusal standing "
+                         "in the worker: %s" % two)
+        self.assertNotIn(refused_root, two, two)
+        self.assertEqual(boundary_scopes(self.out), {"test_scratch.py::One", "test_scratch.py::Two"}, self.out)
+        self.assertRegex(self.out, r"BaseExceptionGroup: errors during test teardown \(2 sub-exceptions\)",
+                         "the refusal and One's boundary verdict are One.a's one teardown report: %s" % self.out)
+
+    def test_the_test_under_the_repointed_build_passes_and_the_module_end_is_quiet(self):
+        cls, method = self.LAST.split(".")
+        self.assertEqual(outcomes(self.out).get(self.LAST), {"PASSED", "ERROR"}, "Two's verdict lands on its one test: %s" % self.out)
+        self.assertIsNone(verdict(self.out, cls, method), self.out)
+        self.assertIsNone(inherited(self.out, cls, method), "the build stands over a directory: no gone report: %s" % self.out)
+        self.assertIsNone(boundary(self.out, ""), "tearDownModule put the refused object back, the module's start and end reads "
+                          "agree on it, and the module end is quiet: %s" % self.out)
 
 
 class TheRefusalNamesTheRootTheStartReadRecorded(_NestedRun, unittest.TestCase):
@@ -3211,8 +3478,23 @@ class ModuleSetupCompletesALeak(_NestedRun, unittest.TestCase):
 
 
 class ClassTeardownInstallsAValue(_NestedRun, unittest.TestCase):
+    """M, class teardowns that install a value (the case list above), and the boundary link clause's negative with no
+    refusal in the run (One.a opens the worker's first window holding the value its module start read found, None, so
+    the identity term holds and the refusal is never consulted): none of the three boundary verdicts, each the
+    start-to-end judgment, Two's on the object One.a built, Three's on the one Two's teardown built (both real) and
+    Five's on None, names a refused object. The clause is written on membership by identity (_sdk_refused), and a clause
+    emitted on every start-to-end verdict lands on all three here (the kill cell, derive: boundary-link-unconditional),
+    while S10 and S10B, whose found object is the refused one, stay green."""
     SCRATCH = SCRATCH_M
     ERRORS = 3
+
+    def test_no_verdict_names_a_refused_object_since_no_refusal_preceded(self):
+        for head in (SWAPPED, SWAPPED_GONE):
+            self.assertEqual(carriers(self.out, head), set(), "no refusal in this run: %s" % self.out)
+        for scope in ("::Two", "::Three", "::Five"):
+            found = boundary(self.out, scope)
+            self.assertIsNotNone(found, "the boundary verdict names the scope %r: %s" % (scope, self.out))
+            self.assertNotIn(REFUSED_OBJECT, found[0], "a link clause on a verdict whose found object no refusal named: %s" % found[0])
 
     def test_a_teardown_that_builds_over_a_sandbox_is_named_at_the_class_boundary(self):
         text = self.assertBoundaryFailed("::Two", "Two.test_a_does_nothing")

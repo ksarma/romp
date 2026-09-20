@@ -585,22 +585,37 @@ def restore_env(name, prior):
 #     as well, two lines on two items each saying what the other does not (S9), the completes-a-leak pattern
 #     below, and that report names the object as the one this worker's first window refused to attribute, the
 #     link keyed on the object and not on its rendered path, which a repoint between the two reads changes (S9B).
-#     The refusal marks nothing on _SDK_REPORTED: no later window takes the kept-root report, and a mark would
-#     silence that later gone report; the fixture records the refused object on _SDK_REFUSED instead, the list
-#     that link reads. The fixture's tests pin it (S7, beside S6, the same leak with no
-#     swapping class, reported as inherited; S7B, the refusal as the first window's and no later one's; S8, the
-#     run-root shape, no refusal; S9 and S10, the gone shape, the object put back and not; S11, the refusal's roots
-#     from the start read's recorded fields; S12, a real object in the slot at the window; S13, the named-object
-#     guard; S9B, the gone pair linked at the object; S14, a second gone object after the refusal, its report without
-#     the link clause).
+#     The boundary verdict of a scope that found the refused object and ended on another value carries a clause of
+#     its own with the same key (_sdk_found_refused, on the start-to-end judgment alone, the road whose rendered
+#     before value IS the object the scope found): in S10 One's verdict on the swap, beside the refusal in One.a's
+#     one teardown, says the object it found is the one the refusal named; in S10B setUpModule repoints the object
+#     between the module start read and One's reads, so the refusal renders the root the start read recorded and the
+#     verdict the live one, two paths for one object, and the clause is still there, keyed on the object. The refusal
+#     marks nothing on _SDK_REPORTED: no later window takes the kept-root report, and a mark would silence that later
+#     gone report; the fixture records the refused object on _SDK_REFUSED instead, the list both links read. The
+#     fixture's tests pin it (S7, beside S6, the same leak with no swapping class, reported as inherited; S7B, the
+#     refusal as the first window's and no later one's; S8, the run-root shape, no refusal; S9 and S10, the gone
+#     shape, the object put back and not, each pair linked at the object; S11, the refusal's roots from the start
+#     read's recorded fields; S12, a real object in the slot at the window; S13, the named-object guard; S9B and
+#     S10B, each pair with the object repointed between its two lines, linked at the object; S14, a second gone
+#     object after the refusal, its report without the link clause; S10C, the refused object found by a class whose
+#     verdicts render other objects, and M, verdicts with no refusal in the run, each without the boundary's clause).
 # Three module-level lists of STRONG references (identity membership; strong so an id is never reused by a
 # later object) keep the kinds of naming apart. Every object a VERDICT names (a test's own, a boundary's)
 # goes on _SDK_NAMED, the list the boundary's quiet-on-a-named-object rule consults. Every object the
 # INHERITED report named goes on _SDK_REPORTED, and the report is silent on an object in either list, which
 # is what makes "once" work (under xdist, once per worker process). Every object the first window's REFUSAL
-# named goes on _SDK_REFUSED, which silences nothing: the gone report on an object it holds says it is the
-# object the refusal named, so the two lines are linked at the object, by identity: a gone object of another
-# scope's making after the refusal carries no such clause (S14). The boundary never consults
+# named goes on _SDK_REFUSED, which silences nothing: the gone report on an object it holds, and the start-to-end
+# boundary verdict of a scope that found one, say it is the object the refusal named, so the two lines are linked
+# at the object, by identity (a gone object of another scope's making after the refusal carries no such clause,
+# S14; a boundary verdict on a found object no refusal named carries none, S10C, M). THE RULE, which both links
+# follow and any later one must: ANY PAIR OF LINES NAMING ONE OBJECT IS LINKABLE BY IDENTITY, NEVER BY A RENDERED
+# PATH. A rendered path is not an identity: one object renders two paths when a repoint falls between the two
+# lines' reads (S9B, S10B), and two objects render one path when one is rebuilt over the other's directory; so a
+# link is membership on a list of strong references (_sdk_refused), read on the object the linked line RENDERS
+# (the gone report's own object; the start-to-end verdict's before value, the object the scope found), and a
+# third pair, should one arise (a test's own verdict naming the refused object, say), is linked the same way,
+# never by matching text. The boundary never consults
 # _SDK_REPORTED: an inherited report says what a test did NOT do, not what its scope did, so a class or
 # module setup that completes a leak (builds, restores jd.STATE and removes the root before any test) yields
 # two error lines for one leak, the inherited gone report on the scope's first test and the boundary
@@ -715,8 +730,11 @@ def restore_env(name, prior):
 # judged); otherwise S -> E is judged as a test transition with S's jd.STATE as the
 # reference (the scope's own setUpClass moved jd.STATE, a test built under it, allowed at its own window
 # because it inherited that root, and the scope did not put the singleton back: the scope is the author);
-# and E different from both S and L is the teardown itself installing a value, judged the same way.
-# Before that S -> E judgment the boundary yields to the tests' own windows: the function fixture records
+# and E different from both S and L is the teardown itself installing a value, judged the same way. The
+# S -> E judgment alone carries the link clause to the first window's refusal (_sdk_found_refused): its before
+# value is the object S found, the object the clause names; the other roads render other objects or end on the
+# found one, and carry none. Before that S -> E judgment the boundary yields to the tests' own windows: the
+# function fixture records
 # every test window that changed the slot (_SDK_WINDOWS: the before and after values and the reference the
 # window was judged against; cleared at each module end, since no later scope starts before that read),
 # and when the first such window inside the scope started from the value S found, the last left the value
@@ -750,7 +768,9 @@ _SDK_MODULE_START = None                               # the current module boun
 _SDK_NAMED = []                                        # strong references to every object a verdict named (a test's own, a boundary's)
 _SDK_REPORTED = []                                     # strong references to every object the inherited report named
 _SDK_REFUSED = []                                      # strong references to every object the first window's refusal named:
-                                                       # the gone report's link to that line (_sdk_inherited); silences nothing
+                                                       # the gone report's (_sdk_inherited) and the start-to-end
+                                                       # boundary verdict's (_sdk_found_refused) link to that line, by
+                                                       # identity; silences nothing
 _SDK_REAL = ("romp_sdk_backend", "SdkBackend")
 _SDK_GONE = ", whose state_dir is no longer a directory"
 _SDK_REMEDY_A = ("A test that reaches km._sdk() under a sandboxed jd.STATE builds the kernel's backend singleton over the "
@@ -816,7 +836,9 @@ def _sdk_report(be):
 
 
 def _sdk_refused(be):
-    """Whether the first window's refusal named the object: the gone report's link clause reads this, by identity."""
+    """Whether the first window's refusal named the object: the gone report's and the start-to-end boundary verdict's
+    link clauses read this, by identity, never by a rendered path (THE RULE in the comment above: a repoint between two
+    reads renders two paths for one object), each on the object its own line renders."""
     return any(x is be for x in _SDK_REFUSED)
 
 
@@ -914,8 +936,10 @@ def _sdk_swapped(start, before):
     the function fixture's report line, runs after this refusal is computed in the same first window, and no earlier
     window exists in the worker). The refusal marks nothing on _SDK_REPORTED: no later window takes the kept-root
     report, so a mark would change nothing there, and it would silence that later gone report; the fixture records its
-    object on _SDK_REFUSED instead, the list the gone report's link clause reads. This function stays pure, text or
-    None, as _sdk_inherited is."""
+    object on _SDK_REFUSED instead, the list the gone report's link clause reads, as does the boundary's: the scope
+    that found the refused object and ended on another value says, on its start-to-end verdict, that the object it
+    found is the one this window refused, the same key (_sdk_found_refused; S10, S10B). This function stays pure, text
+    or None, as _sdk_inherited is."""
     be = start.be
     if not _sdk_is_real(be) or _sdk_named(be) or _sdk_reported(be):
         return None
@@ -1009,9 +1033,48 @@ def _sdk_judge_reload(before, after):
             % (_sdk_singleton_text(be1), ref, _SDK_GONE if after.isdir is False else ""), _SDK_REMEDY_A)
 
 
+# The start-to-end boundary verdict's link to the first window's refusal. No period at the end: _sdk_boundary frames the
+# verdict as "%s. Fix: %s", and a period inside made ".. Fix:" on the line, which the outer tests' boundary() reader
+# accepted (S10 pins the single period).
+_SDK_FOUND_REFUSED = ("The object this scope found is the object this worker's first test window refused to attribute: "
+                      "that refusal names its origin, this line the scope that swapped it out and the value it left")
+
+
+def _sdk_found_refused(verdict, start, end):
+    """The start-to-end boundary verdict with its link clause when the object the scope found (`start.be`, the verdict's
+    rendered before value) is one the worker's first window refused to attribute (_sdk_refused: membership by identity
+    on _SDK_REFUSED, never a rendered path), else the verdict as given. The refusal named the object's origin and no
+    scope; the verdict names the scope and the value it left; so the two lines name one object and the clause links them
+    AT THE OBJECT (S10, the swap never undone, the verdict beside the refusal in One.a's one teardown; S10B, the object
+    repointed by setUpModule between the module start read and the class's reads, two paths for one object, the clause
+    still there). Keyed on the object THIS ROAD RENDERS: the start-to-end judgment renders the found object as its
+    before value, so the clause is true of the line it rides; a verdict on a found object no refusal named carries none
+    (S10C's Two, with a refusal standing in the worker; M, with none). Off the changed-marker road: the reload judgment
+    renders the after value alone and no before, so a clause there would name an object the line does not show (no case
+    has a refusal followed by a re-execution inside the refused object's scope, so this term is pinned by no run)."""
+    if verdict is None or end.marker is not start.marker or not _sdk_refused(start.be):
+        return verdict
+    return ("%s. %s" % (verdict[0], _SDK_FOUND_REFUSED), verdict[1])
+
+
 def _sdk_judge_scope(start, last, end, windows):
     """The class or module boundary's verdict from its start read, the last read before its end, its end read, and the
-    test windows inside the scope that changed the slot (oldest first)."""
+    test windows inside the scope that changed the slot (oldest first). Five roads render a verdict. The last-object
+    roads (the teardown repointed, or removed the directory under, the object its last test left) render that object,
+    the last read's; the put-back roads (the scope ends on the object it found, repointed or over a gone directory)
+    render the found object on both sides; the start-to-end judgment (_sdk_judge from the start read to the end read,
+    one call site, reached when the scope ends on a value that is neither its last test's nor the one it found, or on
+    its last test's value that no window chain and no verdict accounts for) renders the found object as its before
+    value and the value left as its after. The link clause to the first window's refusal (_sdk_found_refused) rides
+    the start-to-end judgment ALONE, keyed on the object it renders as before, the one the scope found. The four other
+    roads carry no clause: the last-object roads render an object that is not the one the scope found (S10C's One
+    finds the refused object, swaps it out, its test builds and its teardown repoints the build: the verdict renders
+    the build alone, and a clause keyed on the found object would name one the line does not show), and the put-back
+    roads render the found object but end on it, so the clause's tail, the scope that swapped it out and the value it
+    left, would be false there. A later case that needs a clause on one of them keys it on the object THAT road
+    renders, never on start.be (THE RULE in the design comment: identity on the rendered object, never a rendered
+    path). Never inside _sdk_judge, which is the function fixture's road too: a clause there would ride every
+    test-window verdict whose before value is the refused object."""
     if end.be is last.be:
         if last.sd != end.sd:                  # the teardown repointed the singleton its last test left: named before the quiet rules
             return (_sdk_repointed_text("left the kernel's backend singleton (km._sdk_backend) changed after its teardown",
@@ -1023,8 +1086,7 @@ def _sdk_judge_scope(start, last, end, windows):
             return None
         if windows and windows[0].before is start.be and windows[-1].after is end.be and windows[-1].ref == start.jd_state:
             return None                    # the tests made the change, each judged at its own window: the boundary did nothing
-        return _sdk_judge(start, end, start.jd_state)
-    if end.be is start.be:
+    elif end.be is start.be:
         if start.sd != end.sd:
             return (_sdk_repointed_text("put back the kernel's backend singleton (km._sdk_backend) it found with its state_dir "
                                         "repointed", end.be, start, end), _SDK_REMEDY_C)
@@ -1032,7 +1094,8 @@ def _sdk_judge_scope(start, last, end, windows):
             return ("put back the kernel's backend singleton (km._sdk_backend) it found, whose directory is gone: %s%s"
                     % (_sdk_singleton_text(end.be), _SDK_GONE), _sdk_remedy(end, start.jd_state))
         return None
-    return _sdk_judge(start, end, start.jd_state)
+    # The one start-to-end call site, the link clause's road (the first block falls through to it).
+    return _sdk_found_refused(_sdk_judge(start, end, start.jd_state), start, end)
 
 
 @pytest.fixture(autouse=True)
@@ -1051,9 +1114,10 @@ def _sdk_singleton_restored(request):
     if _SDK_FIRST_WINDOW and _SDK_MODULE_START is not None and not first:
         swapped = _sdk_swapped(_SDK_MODULE_START, before)
         if swapped is not None:
-            _sdk_refuse(_SDK_MODULE_START.be)   # the object the refusal names, recorded at the moment the refusal is taken, so the
-                                                # later gone report on the same object can say it is that object (never _SDK_REPORTED,
-                                                # which would silence that report)
+            _sdk_refuse(_SDK_MODULE_START.be)   # the object the refusal names, recorded at the moment the refusal is
+                                                # taken, so the later gone report on the same object, or the
+                                                # start-to-end verdict of the scope that found it, can say it is that
+                                                # object (never _SDK_REPORTED, which would silence that report)
     _SDK_FIRST_WINDOW = False
     if inherited is not None:
         _sdk_report(before.be)             # reported now, so the tests after this one that inherit the object are quiet
