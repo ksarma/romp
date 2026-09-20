@@ -60,19 +60,21 @@ jobs:
     # anyone finds out, and a required check that hangs blocks merges silently.
     # T230b follow-up (the review's catch): the job cap must EXCEED the pytest phase plus the
     # 600 s per-test timeout plus setup, or a stall that begins late in the run is killed by
-    # this cap first - the identical silence the per-test timeout exists to end. Priced from the
-    # Actions API, not remembered (2026-09-20): the five Linux cells' pytest phases ran 866 to 1184 s
-    # on the run this branch was cut from and 849 to 1175 s across the four main runs before it, so
-    # the 25 min cap of the first pricing (measured at 160 to 300 s of phase) left under 600 s of
-    # headroom on every cell and 296 s on 3.14t, and the invariant above already failed before the
-    # SDK step below added its install and the tests it lets run. 35 min = 1200 + 600 + setup, with
-    # margin for a slow runner. The macOS cells (the weekly schedule and a manual dispatch) run the
-    # same suite in 17 to 25 minutes on the image's slower runners: the 3.10 cell took 24 min 43 s on
-    # one dispatch and was cancelled at 25 min 27 s on the next (2026-09-16), a one-minute margin that
-    # can kill the release's combined proof for nothing. macOS gets 40, unmeasured on this fork's
-    # suite (its macOS cells had not run when this was priced; the invariant fails there past about
-    # 1750 s of phase, which the first scheduled run measures); Linux gets 35.
-    timeout-minutes: ${{ matrix.os == 'macos-latest' && 40 || 35 }}
+    # this cap first - the identical silence the per-test timeout exists to end. Measured from the
+    # Actions API (2026-09-20): the five Linux cells' pytest phases ran 866 to 1184 s on the run this
+    # branch was cut from and 849 to 1175 s across the four main runs before it, and on main's latest
+    # run the Linux jobs took 16 min 29 s (3.13) to 19 min 56 s (3.14t) whole, 5.1 to 8.5 minutes
+    # under the 25 min cap; the SDK step below adds 5 to 7 s. An earlier version of this comment
+    # priced the phases at 160 to 300 s (25 min = 300 + 600 + setup). That pricing was wrong; the cap
+    # stands. At the measured phases the invariant above would need about 30 min, but the worst cell
+    # finishes 5 minutes under 25, this fork's binding constraint is the runner queue, and a higher
+    # cap holds a runner that much longer on every stuck cell; a genuine slowdown is caught here
+    # first, and a stall in the last ten minutes of the worst cell is ended by this cap, named by the
+    # job's timeout rather than the test's. The macOS cells (a manual dispatch) run the same suite in
+    # 17 to 25 minutes on the image's slower runners: the 3.10 cell took 24 min 43 s on one dispatch
+    # and was cancelled at 25 min 27 s on the next (2026-09-16), a one-minute margin that can kill the
+    # release's combined proof for nothing. macOS gets 40; Linux keeps 25.
+    timeout-minutes: ${{ matrix.os == 'macos-latest' && 40 || 25 }}
     strategy:
       # One red cell must not hide the others: a 3.10-only break and a
       # macOS-only break look identical if the matrix stops at the first.

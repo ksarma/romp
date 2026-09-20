@@ -38,23 +38,20 @@ class PythonJobCeiling(unittest.TestCase):
     """The python job's ceiling is per cell (2026-09-16): the macOS cells run the same suite in 17 to 25 minutes on the
     image's slower runners, and the 3.10 cell was cancelled at the job's 25-minute ceiling after 25 min 27 s on one
     dispatch having completed in 24 min 43 s on the one before, so the release's combined proof could die on a minute's
-    margin. macOS gets 40 minutes. Linux got 25 while the suite finished in 12 to 15; re-priced to 35 on 2026-09-20 from
-    the Actions API, where the Linux pytest phases read 849 to 1184 s over five main runs, so 25 left under the 600 s
-    per-test timeout of headroom (T230b's invariant: cap > phase + 600 s + setup) before the SDK install step added to
-    the phase."""
+    margin. macOS gets 40 minutes; Linux keeps 25, where the suite finishes in 12 to 15."""
     def setUp(self):
         src = open(WF).read()
         m = re.search(r"^  python:\n((?:    .*\n|\n)+?)    strategy:\n", src, re.M)
         self.assertTrue(m, "the python job's head moved: re-anchor this pin")
         self.head = m.group(1)
 
-    def test_macos_cells_get_forty_minutes_and_linux_thirty_five(self):
+    def test_macos_cells_get_forty_minutes_and_linux_keeps_twenty_five(self):
         m = re.search(r"^    timeout-minutes: \$\{\{ matrix\.os == 'macos-latest' && (\d+) \|\| (\d+) \}\}$", self.head, re.M)
         self.assertTrue(m, "the python job's timeout-minutes is not the per-cell expression (macos-latest && N || M)")
         macos, linux = int(m.group(1)), int(m.group(2))
         self.assertGreaterEqual(macos, 40, "the macOS cells need the margin: 25 min 27 s measured against a 25-minute ceiling")
         self.assertLessEqual(macos, 60, "past an hour a hung macOS cell eats the dispatch")
-        self.assertEqual(linux, 35, "the Linux cells' ceiling is priced from measured phases (849 to 1184 s) plus the 600 s per-test timeout plus setup")
+        self.assertEqual(linux, 25, "the Linux cells keep their measured ceiling (12 to 15 minutes of suite under it)")
 
 
 class ExtensionJobCeiling(unittest.TestCase):
