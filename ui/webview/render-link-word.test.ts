@@ -90,5 +90,8 @@ test("at source: the link branch sits right after the panes branch and before th
   assert.ok(panes > 0 && link > panes && heal > link, "panes branch, then the link block, then the heal");
   assert.equal(RENDER.slice(at, heal).split('m.romp === "link"').length, 2, "one link branch in the handler");
   const block = RENDER.slice(link, RENDER.indexOf("\n  }\n", link));
-  assert.match(block, /onLayoutWord\(skeletonTabs, m\.mob\)[^\n]*schedulePrebuild\(\);[^\n]*\n\s*return;$/, "the block reads the layout word (review round 4, kernel-3: a split column's hold follows the layout) and returns; nothing else in it");
+  // anchored at BOTH ends (review round 5, tests-3): `block` starts at the `if` keyword itself, so `^` lands on the opening line, and `$`
+  // (no m flag) pins `return;` as the last statement; a tail anchor alone let a statement inserted at the block's head pass (a
+  // console.log, a try/catch-wrapped parent post in render.ts's own idiom). The same shape file-view.test.ts uses on the panes block.
+  assert.match(block, /^if \(m\.romp === "link"\) \{\n\s*if \(typeof m\.mob === "boolean" && onLayoutWord\(skeletonTabs, m\.mob\)[^\n]*schedulePrebuild\(\);[^\n]*\n\s*return;$/, "the block opens on the layout-word arm (review round 4, kernel-3: a split column's hold follows the layout) and returns; nothing else in it, at either end");
 });
