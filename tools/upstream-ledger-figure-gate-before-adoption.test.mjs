@@ -33,7 +33,7 @@ const SVG_LEG = 'ui/webview/file-view-figures-gate-adopt-svg-browser.test.ts';
  *  npm test step; tools/markdown-viewer-plan-gate-adopt.test.mjs reads that off the job's block). */
 const NODE_SCENE = 'ui/webview/file-view-figures-gate-adopt.test.ts';
 /** `git diff --name-only origin/main...HEAD` at the branch's head (the branch's own files, from its merge base with main), sorted as git
- *  prints it. Not the two-dot diff from 2d41e5c9b: the branch merged origin/main once, so that diff also counts what main brought in
+ *  prints it. Not the two-dot diff from the branch point: the branch merged origin/main once, so that diff also counts what main brought in
  *  (22 files at the head before the node scene, where the line said 15; found and corrected by the build of the node scene, 2026-09-20). */
 const FILES = [
   'plans/markdown-viewer.md',
@@ -142,7 +142,7 @@ test('the fork PR\'s round-2 push: the where: line and the body state the rule o
   assert.ok(leg.includes('the Copy button, created in the live document and appended into the sanitizer\'s body before the adoption, answers a real click on each fence after it'), 'and the Copy case');
   assert.ok(leg.includes('await buttons.nth(k).click();'), 'the Copy case clicks through the engine');
   const view = read('ui', 'webview', 'file-view.ts');
-  assert.ok(view.indexOf('clean.querySelectorAll("pre code")') > 0 && view.indexOf('clean.querySelectorAll("pre code")') < view.indexOf('resolveFigureRefs(clean, doc.href);'), 'the fence pass over the sanitized body sits before the chain in file-view.ts');
+  assert.ok(view.includes('clean.querySelectorAll("pre code")'), 'the fence pass reads the sanitized body in file-view.ts (a presence pin; its place before the chain is file-view-seam.test.ts\'s to check, on comment-stripped code, which this module, run in CI\'s shell job with no node_modules, cannot reach)');
   const seam = read('ui', 'webview', 'file-view-seam.test.ts');
   assert.ok(seam.includes('test("no re-parse after the adoption:'), 'the seam test holds the re-parse population pin');  // the first-round ruling's answers, named in the line and standing in the files
   assert.ok(where.includes("reads the box's end state through figure-gate's own gateRefs and unlistedHosts (the CI-run guard, keyed on the outcome at the boundary) and asserts by the clock that the gate ran before any node of the body entered the live document"), 'where: names the property guard and the order leg');

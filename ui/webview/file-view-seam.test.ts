@@ -1181,14 +1181,15 @@ test("codeOnly reads the compiler's comment ranges: an affected module keeps the
     'const e = "https://host.test/p?q=1#f"; const keepE = 5; // dropE',        // a URL in a string, a trailing line comment
     '/** dropF: see http://x.test/y */ const keepF = 6;',                      // a doc comment holding a URL, code after it on the line
     'const f = g / h; // dropG: a division, then a comment',
-    'const i = j /k/ l; const keepH = 7;',                                     // a regex literal between two divisions' operands
+    'const i = j / /k/.test(l) ? 1 : 0; const keepH = 7;',                    // a division, then a regex literal: the parser's context tells the two slashes apart (ts.createSourceFile over this line: SlashToken, then RegularExpressionLiteral)
+    'const d = a / b / c; // dropH: two divisions, then a comment',           // the division-first control: two slashes that are neither a regex nor a comment opener
   ].join("\n");
   const code = codeOnly(synthetic), whole = stripComments(synthetic);
-  for (const keep of ["keepA", "keepB", "keepC", "keepD", "keepE", "keepF", "keepH", '"a // not a comment"', "`t /* not a comment */ ${d  + 1}`", '"https://host.test/p?q=1#f"', "/x:\\/\\//i", "const f = g / h;", "j /k/ l"]) assert.ok(code.includes(keep), "kept: " + keep);
-  for (const drop of ["dropC", "dropD", "dropE", "dropF", "dropG"]) assert.ok(!code.includes(drop), "gone: " + drop);
+  for (const keep of ["keepA", "keepB", "keepC", "keepD", "keepE", "keepF", "keepH", '"a // not a comment"', "`t /* not a comment */ ${d  + 1}`", '"https://host.test/p?q=1#f"', "/x:\\/\\//i", "const f = g / h;", "j / /k/.test(l)", "const d = a / b / c;"]) assert.ok(code.includes(keep), "kept: " + keep);
+  for (const drop of ["dropC", "dropD", "dropE", "dropF", "dropG", "dropH"]) assert.ok(!code.includes(drop), "gone: " + drop);
   assert.deepEqual(code.split("\n").filter((l) => /\/\*|\/\//.test(l.replace(/"[^"]*"|`[^`]*`|\/x:[^;]*\/i/g, ""))), [], "outside the kept string, template and regex literals no comment opener is left");
   assert.equal(whole.split("\n").length, synthetic.split("\n").length, "stripComments keeps every newline, so line numbers survive");
-  assert.equal(code.split("\n").length, 8, "codeOnly drops no line that holds code");
+  assert.equal(code.split("\n").length, 9, "codeOnly drops no line that holds code");
 });
 /** The profile's keys, in the literal's order: the whole of what sanitizeMd spreads RETURN_DOM onto. */
 const PROFILE_KEYS = ["USE_PROFILES", "ADD_DATA_URI_TAGS", "ALLOW_DATA_ATTR", "FORBID_TAGS", "FORBID_ATTR", "SANITIZE_NAMED_PROPS"];
@@ -1357,7 +1358,7 @@ test("the inertness premise, held where CI runs: MD_PURIFY is its six-key litera
   assert.doesNotMatch(mdCode.slice(0, bindAt), /\bclean\b/, "and nothing is called `clean` before the sanitize binds it");
 });
 
-// ── no re-parse after the adoption: the population of re-parsing writes, derived from the code ──────────────────────────────
+// ── no re-parse after the adoption: the population of re-parsing sites, derived from the code ──────────────────────────────
 // The rule mdBlock's chain block states (file-view.ts): every pass that sets, repoints, moves or CREATES a fetching element runs
 // before the adoption. A pass creates one by re-parsing or re-serializing markup in the live document: the fence pass's
 // wrapCodeLines (code-block.ts) does that through innerHTML, and with the pass after the adoption an svg <image> split from its
@@ -1379,12 +1380,19 @@ test("the inertness premise, held where CI runs: MD_PURIFY is its six-key litera
 // this list. The judged sites: mdBlock holds one write, the hljs highlight's, inside the fence pass BEFORE the adoption (escaped
 // text: hljs creates spans alone), and code-block.ts holds one, wrapCodeLines's, reached from that pass and so before the
 // adoption too. The whole file's count is pinned as well (twelve sites, the highlight's the one inside mdBlock), so a new site
-// anywhere in file-view.ts is red here until it is judged and the plan's count follows. Derivation command, for a reader by hand
-// (the test runs the same over codeOnly): grep -nE 'innerHTML\s*[+]?=|outerHTML\s*=|insertAdjacentHTML|createContextualFragment|
-// DOMParser|document\.write\b|insertAdjacentElement|\bsetHTML\w*\s*\(|parseHTMLUnsafe|createElement\(\s*[^)]*template|
-// \bel\(\s*[^)]*template' over file-view.ts's mdBlock after the adoption line and over the modules named below.
-const RE_PARSE = /innerHTML\s*[+]?=|outerHTML\s*=|insertAdjacentHTML|createContextualFragment|DOMParser|document\.write\b|insertAdjacentElement|\bsetHTML\w*\s*\(|parseHTMLUnsafe|createElement\(\s*['"`]template|\bel\(\s*['"`]template/;
-test("no re-parse after the adoption: mdBlock's post-adoption region and every module a pass there reaches, derived from the code, hold no write of innerHTML or outerHTML and no insertAdjacentHTML, insertAdjacentElement, createContextualFragment, DOMParser, document.write, setHTML, setHTMLUnsafe, parseHTMLUnsafe or template element; the two judged sites sit before the adoption; the whole file holds twelve sites, eleven outside mdBlock", () => {
+// anywhere in file-view.ts is red here until it is judged and the plan's count follows. The two property names are matched BARE
+// (`\b(?:innerHTML|outerHTML)\b`, a read or a write under any spelling), not as `innerHTML =`: a write spelled `x["innerHTML"] = s`,
+// `Object.assign(x, { innerHTML: s })` or `x.innerHTML ||= s` reaches the same setter and the assignment spelling did not match it
+// (the fork PR review's round 2, finding guards-1, 2026-09-20: such a write planted inside an existing post-adoption callee left
+// this test green); a read of either in the region or a reached module is as suspect as a write, and none exists today, so the
+// counts below did not move with the widening (measured at the head that widened it). The node scene records the write itself,
+// by the property's setter, whatever the spelling (file-view-figures-gate-adopt.test.ts, Reparse). Derivation command, for a
+// reader by hand (the test runs the same over codeOnly): grep -nE '\b(?:innerHTML|outerHTML)\b|insertAdjacentHTML|
+// createContextualFragment|DOMParser|document\.write\b|insertAdjacentElement|\bsetHTML\w*\s*\(|parseHTMLUnsafe|
+// createElement\(\s*[^)]*template|\bel\(\s*[^)]*template' over file-view.ts's mdBlock after the adoption line and over the
+// modules named below.
+const RE_PARSE = /\b(?:innerHTML|outerHTML)\b|insertAdjacentHTML|createContextualFragment|DOMParser|document\.write\b|insertAdjacentElement|\bsetHTML\w*\s*\(|parseHTMLUnsafe|createElement\(\s*['"`]template|\bel\(\s*['"`]template/;
+test("no re-parse after the adoption: mdBlock's post-adoption region and every module a pass there reaches, derived from the code, hold no use of innerHTML or outerHTML (a write under any spelling, or a read) and no insertAdjacentHTML, insertAdjacentElement, createContextualFragment, DOMParser, document.write, setHTML, setHTMLUnsafe, parseHTMLUnsafe or template element; the two judged sites sit before the adoption; the whole file holds twelve sites, eleven outside mdBlock", () => {
   const mdCode = codeOnly(VIEW.split("function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {")[1].split("\n}\n")[0]);
   const adopt = "box.replaceChildren(...Array.from(clean.childNodes));";
   const adoptAt = mdCode.indexOf(adopt);

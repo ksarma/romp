@@ -43,11 +43,15 @@
 // pass is called) and the scene's own oracle (a URL parse against the page, the host against the allowed set, a same-origin path
 // against /file or the document's directory), which alone sees a page-relative leak, since remoteHost answers null for the page's
 // own origin by design; the engines' own loading, DOMPurify's document and its inertness
-// (the seam test's premise pin), and the bytes are the browser legs'. So is the fence pass's re-parse (code-block.ts wrapCodeLines,
-// `code.innerHTML = wrapLinesHtml(code.innerHTML)`), which the round-2 move put before the chain: the stand-in's innerHTML is a
-// plain field, not a parser, so the HTML parser's rename of an svg <image> split from its svg into an HTML <img> cannot happen
-// here, and the fence scene of file-view-figures-gate-adopt-browser.test.ts is where that is seen; the seam test pins the pass's
-// place and derives the post-adoption re-parse population from the code.
+// (the seam test's premise pin), and the bytes are the browser legs'. So is what the fence pass's re-parse (code-block.ts
+// wrapCodeLines, `code.innerHTML = wrapLinesHtml(code.innerHTML)`), which the round-2 move put before the chain, MAKES: the
+// stand-in's innerHTML is a recorded setter, not a parser, so the HTML parser's rename of an svg <image> split from its svg into an
+// HTML <img> cannot happen here, and the fence scene of file-view-figures-gate-adopt-browser.test.ts is where that is seen. What
+// the scene does see is the re-parse itself: every write of innerHTML or outerHTML and every insertAdjacentHTML is recorded with
+// the element's document at that moment (Reparse, below), by the property's setter and so under every spelling of the write, and
+// the end-state read is red on a live one under the box, since a re-parse there creates elements the chain never judged; the
+// seam test pins the pass's place and derives the post-adoption re-parse population from the code, its pattern matching the two
+// property names bare.
 // Mutations, each applied to a scratch copy of the branch head and run with this scene alone (2026-09-20, at 8a599db74 with
 // the scene as first built and again at the head after the review's third round, which added road (a)'s tree-wide read and
 // the end-state pin; the scene compiled through esbuild's testBuild, the build's report holds the commands): (i) the base's
@@ -82,6 +86,17 @@
 // two kind tests on road (e)'s first assertion (a move-aside the gate made landed on a live-document element), beside the seam
 // test's premise guard (its door sweep names `document` in mintHeadingIds; its derived registrant list shows the new
 // registrant). At the head, 6 of 6 green.
+// Re-measured after the fork PR review's round 2 (2026-09-20), which found the re-parse road open under node (its guards-1): with
+// the stand-in's innerHTML a plain field, one line at the top of keepVideoShape, an existing callee of mdBlock's post-adoption
+// region, `Object.assign(root, { innerHTML: '<img srcset="http://evil.test/a.png 1x">' });`, left this scene and the seam test
+// green together (67 of 67, the round's verification run at the head it reviewed: no parse under node, and the seam test's
+// pattern matched `innerHTML =` and `innerHTML +=` alone). With the setter recorded and the pattern widened to the bare names,
+// the same plant in a scratch copy of the head that answered the round, scene and seam together: 62 of 67, the four scene tests
+// that read the end state red, each naming `div.innerHTML` at its tick, and the seam test's whole-file count red, 13 against 12.
+// The three round-1 plants re-run at that head, this scene alone (a post-adoption src write on every img, a created img with a
+// remote srcset appended under the box, the gated-src write-back): 4 of 6 red each, the property-guard red now naming each
+// element, `img[src]=http://evil.test/x.png -> evil.test` and its like, where before it named the host alone (its guards-2). At
+// that head, 6 of 6 green.
 // Synthetic values only: the notes-api world, a placeholder sid, .test hosts.
 import { test, type TestContext } from "node:test";
 import * as assert from "node:assert/strict";
@@ -89,7 +104,7 @@ import { inspect } from "node:util";
 import { assertHiddenEvent, hideEdges, staysEnumerable } from "../test-dom-shim";
 import type { FileViewActionCtx } from "./file-view";
 import { setMdSanitizer } from "./md-sanitize";   // the sanitizer seam the node suites install a stand-in through (Slice 7 of plans/markdown-viewer.md)
-import { FIGURE_SEL, PAINT_ATTRS, forgetLoadedHosts, gateRefs, loadGatedHost, unlistedHosts } from "./figure-gate";   // gateRefs and unlistedHosts: the gate's own oracle, read over the box's end state
+import { FIGURE_SEL, PAINT_ATTRS, allowedFigureHosts, forgetLoadedHosts, gateRefs, loadGatedHost, refUrls, remoteHost, unlistedHosts } from "./figure-gate";   // gateRefs and unlistedHosts: the gate's own oracle, read over the box's end state, with the set the gate reads (allowedFigureHosts) and its two readers for the message
 import { XLINK_NS } from "./md-links";
 
 // ── what the scene records ────────────────────────────────────────────────────────────────────────────
@@ -117,6 +132,14 @@ const writes: Write[] = [];
 const adoptions: Adoption[] = [];
 /** Every move-aside the gate made (figure-gate.ts gate: the fetching attribute removed, its value under data-fv-gated-*). */
 const gateMoves: GateMove[] = [];
+/** A re-parse: a write of innerHTML or outerHTML, or an insertAdjacentHTML, on an element, with the element's document at that
+ *  moment. The stand-in has no HTML parser, so the write creates nothing; the RECORD is what the end-state read judges, and it is
+ *  taken by the property's setter, so every spelling of the write reaches it (`x.innerHTML = s`, `x.innerHTML += s`, `x["innerHTML"]
+ *  = s`, `Object.assign(x, { innerHTML: s })`: each goes through [[Set]]), where a pattern over the code sees the spellings it was
+ *  written for (the fork PR review's round 2, finding guards-1, 2026-09-20: a write spelled through Object.assign inside an existing
+ *  post-adoption callee left every CI-run guard green while the field was plain). */
+type Reparse = { el: El; prop: "innerHTML" | "outerHTML" | "insertAdjacentHTML"; live: boolean; seq: number };
+const reparses: Reparse[] = [];
 const isFetching = (el: El, attr: string): boolean => (FETCHING[el.tagName] || []).includes(attr) || PAINT.includes(attr);
 const inSvg = (el: El): boolean => el.tagName === "SVG" || el.closest("svg") !== null;
 /** The fetching attributes under `root` (the root included) as they stand now. */
@@ -207,7 +230,7 @@ class El {
   listeners: Reg[] = [];
   hidden = false; disabled = false; title = ""; type = ""; value = ""; placeholder = ""; spellcheck = true; wrap = "";
   alt = ""; download = ""; target = ""; rel = "";
-  innerHTML = "";
+  _html = ""; _outer = "";   // what the last innerHTML and outerHTML writes stored (no parser: a string, read back as written)
   style: any = styleOf();
   onclick: ((ev: Ev) => void) | null = null;
   scrolled = 0;
@@ -256,6 +279,14 @@ class El {
   set poster(v: string) { this.setAttribute("poster", v); }
   get href(): string { return this.attrs.get("href") || ""; }
   set href(v: string) { this.setAttribute("href", v); }
+  // the re-parsing properties record every write with this element's document at that moment (Reparse, above); the getter hands
+  // back the stored string, so `code.innerHTML = wrapLinesHtml(code.innerHTML)` (code-block.ts, the fence pass over the inert body)
+  // round-trips as it did when this was a plain field
+  get innerHTML(): string { return this._html; }
+  set innerHTML(v: string) { this._html = v; reparses.push({ el: this, prop: "innerHTML", live: this._doc === doc, seq: seq++ }); }
+  get outerHTML(): string { return this._outer; }
+  set outerHTML(v: string) { this._outer = v; reparses.push({ el: this, prop: "outerHTML", live: this._doc === doc, seq: seq++ }); }
+  insertAdjacentHTML(_where: string, _html: string): void { reparses.push({ el: this, prop: "insertAdjacentHTML", live: this._doc === doc, seq: seq++ }); }
   get attributes(): Array<{ name: string; value: string }> { return Array.from(this.attrs, ([name, value]) => ({ name, value })); }
   get textContent(): string { return this.childNodes.map((c) => c.textContent).join(""); }
   set textContent(v: string) { for (const c of this.childNodes) { this.dropFocusIn(c); c.parentNode = null; } this.childNodes.length = 0; if (v !== "") this.appendChild(new Txt(v, this._doc)); }
@@ -592,7 +623,7 @@ async function mod(): Promise<typeof import("./file-view")> {
   return fvMod;
 }
 const settle = async () => { for (let i = 0; i < 8; i++) await new Promise<void>((r) => setImmediate(r)); };
-const reset = () => { writes.length = 0; adoptions.length = 0; gateMoves.length = 0; sanitized.length = 0; posted.length = 0; seam = null; forgetLoadedHosts(); store.delete("romp:fileviewFmt"); };
+const reset = () => { writes.length = 0; adoptions.length = 0; gateMoves.length = 0; reparses.length = 0; sanitized.length = 0; posted.length = 0; seam = null; forgetLoadedHosts(); store.delete("romp:fileviewFmt"); };
 /** The Rendered box the viewer built, and the body around it: the render stood (a `.fileview-md` and no `.fileview-err` line). */
 function rendered(): { body: El; md: El } {
   const wrap = doc.getElementById("romp-fileview")!;
@@ -633,12 +664,26 @@ function assertGateBeforeFirstMove(): { firstMove: Adoption; lastGate: GateMove 
  *  page's own origin), the gate's walk found the figures left live, and every element the gate moved an attribute aside on stands
  *  under a placeholder naming a host. Keyed on what the box HOLDS when the render is done, so an element a later pass wrote,
  *  moved or created (the fence class) is read here whatever the pass is called. */
-function assertEndState(md: El, kind: Kind, allowed: Set<string>): void {
+function assertEndState(md: El, kind: Kind, sceneAllowed: Set<string>): void {
   const box = md as unknown as Element;
-  assert.deepEqual(unlistedHosts(box, PAGE, allowed), [], "the gate's own oracle over the box's end state: no fetching attribute under the Rendered box names an unlisted host (gateRefs over the box, remoteHost against the page, the allowed set as the gate reads it)");
+  // the set the gate reads (figure-gate.ts allowedFigureHosts: the gear's list, the hosts loaded in this document, the URL kind's
+  // own host), pinned equal to the scene's own, so the guard below judges by the gate's set and a drift between the two is named
+  const allowed = allowedFigureHosts(kind.kind === "url" ? [kind.own] : []);
+  assert.deepEqual([...allowed].sort(), [...sceneAllowed].sort(), "the gate's allowed set is the scene's: the gear's one host" + (kind.kind === "url" ? " and the document's own" : "") + ", no host loaded yet");
+  // the message names each element with the host it would fetch from, by the gate's own readers (gateRefs, refUrls, remoteHost),
+  // the same walk unlistedHosts makes, so a red says which element and attribute leaked, not the host alone (the fork PR review's
+  // round 2, finding guards-2: three plants named the host and nothing else, 2026-09-20)
+  const leaking = gateRefs(box).flatMap((r) => refUrls(r).map((u) => ({ r, h: remoteHost(u, PAGE) }))).filter((x) => x.h && !allowed.has(x.h)).map((x) => x.r.el.tagName.toLowerCase() + "[" + x.r.attr + "]=" + x.r.value + " -> " + x.h);
+  assert.deepEqual(unlistedHosts(box, PAGE, allowed), [], "the gate's own oracle over the box's end state: no fetching attribute under the Rendered box names an unlisted host (gateRefs over the box, remoteHost against the page, the allowed set as the gate reads it, allowedFigureHosts); the leaking elements: " + leaking.join("; "));
+  assert.deepEqual(leaking, [], "and the scene's reading of the same refs agrees (an element the mirror sees and unlistedHosts does not is a gap between the two)");
+  // no re-parse landed on a live-document element the box holds: a write of innerHTML or outerHTML, or an insertAdjacentHTML, on a
+  // live element under the box creates elements the chain never judged (the fence class), and the stand-in has no parser, so the
+  // recorded write is what is read here, whatever spelling made it (the setter, Reparse above); a live write the scene makes itself
+  // is recorded the same way (the control in the file kind's test), so the zero is measured
+  assert.deepEqual(reparses.filter((r) => r.live && (r.el === md || md.contains(r.el))).map((r) => r.el.tagName.toLowerCase() + "." + r.prop + " at tick " + r.seq), [], "no re-parse (an innerHTML or outerHTML write, an insertAdjacentHTML) landed on a live-document element under the Rendered box during the render: a re-parse there creates elements the chain never judged, and the stand-in records the write by its setter, so the spelling does not matter");
   const refs = gateRefs(box);
   assert.ok(refs.length >= 1, "the gate's walk over the box finds the fetching attributes left live (the folder figure's /file src, an allowed host's src): " + refs.length);
-  assert.deepEqual(leaksIn(fetchRefsOf(md), kind, allowed), [], kind.kind === "file" ? "the rendered box holds no fetching attribute on an unlisted host and none page-relative" : "the rendered box holds no leaking fetching attribute once the render is done");
+  assert.deepEqual(leaksIn(fetchRefsOf(md), kind, sceneAllowed), [], kind.kind === "file" ? "the rendered box holds no fetching attribute on an unlisted host and none page-relative" : "the rendered box holds no leaking fetching attribute once the render is done");
   assert.deepEqual(refs.map((r) => r.el.tagName.toLowerCase() + "[" + r.attr + "]=" + r.value).sort(), fetchRefsOf(md).map((r) => r.tag.toLowerCase() + "[" + r.attr + "]=" + r.value).sort(), "the two walks read the same attributes off the box (the scene's table is the gate's; a fetching attribute one walk sees and the other does not is a gap in a table)");
   const gatedEls = new Set(gatedPairs(md).map(([el]) => el));
   assert.ok(gatedEls.size > 0, "the gate moved attributes aside on the box's figures");
@@ -771,6 +816,14 @@ test("the file kind: the chain runs before the adoption, so the nodes that enter
   assert.deepEqual(leaksIn([writes[before]], FILE_KIND, allowedNow()), ["img[src]: an unlisted host, " + REMOTE], "and the oracle calls it");
   f.allowed.setAttribute("src", OK);
   writes.length = before;
+  // and the re-parse hook: a live innerHTML write under the box, spelled through Object.assign (the spelling no pattern over the
+  // code was written for), is recorded as live on that element, so the zero assertEndState read above is measured
+  const parsed = reparses.length;
+  Object.assign(f.allowed, { innerHTML: "<b>x</b>" });
+  assert.equal(reparses.length, parsed + 1, "the scene's own re-parse was recorded");
+  assert.ok(reparses[parsed].live && reparses[parsed].el === f.allowed && reparses[parsed].prop === "innerHTML", "and as a live innerHTML write on that element");
+  assert.deepEqual(reparses.filter((r) => r.live && md.contains(r.el)).length, 1, "and the end-state read's filter finds it under the box");
+  reparses.length = parsed;
   // A7, the click: the host joins the loaded set and its placeholders are restored, the moved attributes written back live
   const remoteRoots = placeholders(md).filter((g) => g.getAttribute("data-fv-hosts") === "remote.test");
   assert.equal(remoteRoots.length, FILE_PLACEHOLDERS - 1, "every placeholder but the svg on other.test waits on remote.test");

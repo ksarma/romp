@@ -1327,7 +1327,7 @@ test("source: mdBlock keeps no try, no catch and no fallback; both viewers' rend
   assert.match(recipe, /\n {2}return marked\.parser\(tokens, opts\);$/, "the parser at the recipe's own level");
   assert.doesNotMatch(recipe, /try \{/, "inside no try: a throw from the lexer or the parser propagates to mdBlock and on to the caller");
   assert.match(mdFn, /\n {2}const clean = sanitizeMd\(dirty, mintHeadingIds\);/, "the sanitize at the function's own level: a throw propagates");
-  assert.match(mdFn, /\n {2}box\.replaceChildren\(\.\.\.Array\.from\(clean\.childNodes\)\);\n/, "the adoption at the function's own level too: a throw from either propagates (its place after the figure chain is pinned above, on the comment-stripped code, and in file-view-seam.test.ts)");
+  assert.match(mdFn, /\n {2}box\.replaceChildren\(\.\.\.Array\.from\(clean\.childNodes\)\);\n/, "the adoption at the function's own level too: a throw from either propagates (a presence pin; its place after the figure chain is file-view-seam.test.ts's to pin)");
   assert.doesNotMatch(mdFn, /\n {2}try \{/, "no try at the function's own level (the fence highlight's and the URL parse's inner ones stand)");
   assert.doesNotMatch(mdFn, /box\.textContent = text;|let rendered|rendered = false|if \(rendered/, "no fallback write and no `rendered` flag: the caller keeps the content, and both link passes run on every render");
   assert.match(mdFn, /\n {4}linkMarkdownAnchors\(box, doc\.path\);\n/, "the anchors' pass, ungated");
