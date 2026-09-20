@@ -460,8 +460,9 @@ written in prose is measured once and outlives the cell added after it).
     (red: every case that reads the boundary's clause present, a scope that found the refused object and ended on
     another value; derive: boundary-link-dropped); the link keyed on the rendered text in place of the object, the
     refusal recording its object's rendered path and the boundary testing the found object's live rendering against
-    that list (red: every case whose refused object is repointed between the module start read and the scope's reads,
-    the two paths then differing; derive: boundary-link-by-path); the clause emitted on every start-to-end verdict, the
+    that list (red: every case that reads the boundary's clause on a found object repointed between the module start
+    read and the reads of the scope that found it, the two paths then differing; derive: boundary-link-by-path); the
+    clause emitted on every start-to-end verdict, the
     whole gate gone (red: every case that reads a start-to-end boundary verdict on a found object no refusal named for
     the clause's absence, or reads one to its last words, and every case that reads the reload verdict of a scope that
     found the refused object for the clause's absence, the changed-marker term going with the gate; the last-object and
