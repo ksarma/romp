@@ -55,6 +55,7 @@ type Writes = Array<{ top: number; writer: string; stick: boolean }>;
 type World = {
   reads: Reads; diag: Diag; rafs: Array<() => void>; views: Map<string, any>; activeId: string | null; writes: Writes; content: { scrollTop: number; ch: number }; paints: number;
   sizeSpacers: (v: any) => void; measureUnits: (v: any) => void; applyMeasure: (v: any) => boolean; redrawGapUnits: (v: any) => void; takeMeasureAtBottom: (v: any) => void; forgetAverage: (v: any) => void;
+  setActive: (id: string | null) => void;   // the lifted span's own activeId (a tab switch between a queued spacer row and its frame)
   gapUnitsOf: (items: DisplayItem[], per: number | undefined) => Map<number, number> | undefined; entryBoxHeight: (e: any) => number;
 };
 /** The scroller: 9,114 px tall in a 902 px viewport; `scrollTop` starts at the bottom unless a world says otherwise. Every layout read counts.
@@ -75,12 +76,13 @@ function lift(activeId: string | null, scrollTop = 9114 - 902): World {
     const H = HOOKS;
     const HTMLElement = H.FakeEl;
     const el = (tag, cls) => new H.FakeEl(tag, cls || "");
-    const views = H.views; const activeId = H.activeId; const document = H.document;
+    const views = H.views; let activeId = H.activeId; const document = H.document;
+    const setActive = (id) => { activeId = id; };
     const requestAnimationFrame = H.raf; const scrollDiagRow = H.diag; const spacerRow = H.spacerRow; const gapHeight = H.gapHeight;
     const rowsFor = H.rowsFor, meanRowHeight = H.meanRowHeight, perTurnEstimate = H.perTurnEstimate;
     const atBottom = H.atBottom, writeScroll = H.writeScroll, scheduleAppendActive = H.scheduleAppendActive;
   `;
-  const api = new Function("HOOKS", prelude + js + "\nreturn { sizeSpacers, measureUnits, applyMeasure, redrawGapUnits, gapUnitsOf, entryBoxHeight, takeMeasureAtBottom, forgetAverage };")(hooks);
+  const api = new Function("HOOKS", prelude + js + "\nreturn { sizeSpacers, measureUnits, applyMeasure, redrawGapUnits, gapUnitsOf, entryBoxHeight, takeMeasureAtBottom, forgetAverage, setActive };")(hooks);
   return Object.assign(world, api) as World;
 }
 /** The unit observer's callback, lifted from ensureView (the `const view3 = v;` span) over a world's measure and take: a fake
@@ -227,6 +229,21 @@ test("sizeSpacers and the measure read no layout property: zero offsetHeight, sc
   assert.deepEqual(w.diag[0].data.bot, [0, 0], "no bottom spacer in this window");
   assert.equal(w.diag[1].data.dTop, topTwo - topOne, "the delta follows the pair's order");
   assert.ok(topOne !== topTwo, "the second write moved the spacer again (the measured figures)");
+});
+
+test("a spacer row whose view was switched away before the frame carries no geometry and says so: the scroller is the active view's alone, and it is not read when no queued row is that view's (review round 1b)", () => {
+  const w = lift("A");
+  const { v, items } = viewOver(w, 200, 301, 221, () => ["turn turn-assistant", 90]);
+  w.views.set("A", v);
+  buildOne(w, v, items);                       // A is active: its spacer write queues a row for the next frame
+  assert.equal(w.diag.length, 0); assert.equal(w.rafs.length, 1);
+  w.setActive("B");   // the reader switched tabs before the frame ran
+  w.rafs.shift()!();
+  assert.deepEqual(w.reads, { offsetHeight: 0, scrollHeight: 0, clientHeight: 0 }, "no queued row is the active view's: the scroller is not read at all");
+  assert.deepEqual(w.diag.map((d) => [d.kind, d.data.sid, d.data.sh, d.data.ch, d.data.view]), [["spacer", "A", null, null, "inactive"]], "A's row: no geometry and the marker, never B's 9114 / 902");
+  // the marker is spread only when set: the shown view's row carries none (scroll-movers.test.ts and scroll-journal-audit.test.ts read that shape)
+  assert.ok(!("view" in spacerRow("A", 1, 2, 0, 0, 9114, 902)), "no marker on the active view's row");
+  assert.deepEqual(spacerRow("A", 1, 2, 0, 0, null, null, "inactive"), { sid: "A", top: [1, 2], bot: [0, 0], dTop: 1, dBot: 0, sh: null, ch: null, view: "inactive" });
 });
 
 test("an inactive view's spacer write files no row, and a write that changes nothing files none", () => {
@@ -393,7 +410,11 @@ test("render.ts: the render task's spacer code holds no layout read; the unit ob
   const paintSide = code(span.replace(inFrame, ""));
   assert.ok(paintSide.includes("function sizeSpacers(v") && paintSide.includes("function measureUnits(v") && paintSide.includes("function applyMeasure(v"), "the span holds the paint-side functions");
   assert.doesNotMatch(paintSide, /offsetHeight|scrollHeight|clientHeight|getBoundingClientRect|offsetTop/, "sizeSpacers, the trim, the eviction, the measure and the apply read no layout property");
-  assert.match(inFrame, /requestAnimationFrame\(\(\) => \{[\s\S]*?const sh = content \? content\.scrollHeight : 0, ch = content \? content\.clientHeight : 0;/, "the diag row's scroller read rides a frame");
+  // the frame's read is per row, not per batch (review round 1b): once, only when a queued row is the shown view's, and a row of a view switched
+  // away since it was queued is filed with no geometry and the inactive marker, never another view's figures
+  assert.match(inFrame, /requestAnimationFrame\(\(\) => \{[\s\S]*?const live = activeId;\s*\n\s*let sh: number \| null = null, ch: number \| null = null;\s*\n\s*if \(live && content && rows\.some\(\(\[rsid\]\) => rsid === live\)\) \{ sh = content\.scrollHeight; ch = content\.clientHeight; \}/, "the diag row's scroller read rides a frame, once, for the active view's rows alone");
+  assert.match(inFrame, /rsid === live \? spacerRow\(rsid, a, b, c, d, sh, ch\) : spacerRow\(rsid, a, b, c, d, null, null, "inactive"\)/, "a switched-away view's row: no geometry, marked");
+  assert.doesNotMatch(inFrame, /const sh = content \? content\.scrollHeight : 0/, "the batch read is gone");
   const uo = RENDER.slice(RENDER.indexOf("v.uo = new ResizeObserver((entries) => {"), RENDER.indexOf("v.mo = new MutationObserver("));
   assert.match(uo, /unitHeights\.set\(e\.target, entryBoxHeight\(e\)\); view3\.measureDue = true; measureUnits\(view3\); takeMeasureAtBottom\(view3\); return; \}/, "a reflow records border boxes, re-measures and asks for a bottom reader's paint");
   assert.match(uo, /height: entryBoxHeight\(e\) \}\)\), view3\.el\.children, unitHeights, unitOf\);\s*\n\s*measureUnits\(view3\); takeMeasureAtBottom\(view3\);/, "…and so does every delivery");

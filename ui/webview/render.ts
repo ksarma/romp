@@ -14099,9 +14099,15 @@ function queueSpacerRow(sid: string, topBefore: number, topAfter: number, botBef
   spacerRowsRaf = requestAnimationFrame(() => {
     spacerRowsRaf = null;
     const rows = spacerRowsPending; spacerRowsPending = [];
+    // the scroller's heights belong to the view active IN THIS FRAME: #content is the one scroller and a view switched away since its row
+    // was queued has no geometry, so its row is filed with none and says so (view: "inactive") rather than with the other view's figures,
+    // which corrupted the journal this change's own defect was diagnosed from (review round 1b). One read, and only when a queued row is
+    // the active view's; a row of the active view under a scroller with no box carries the 0 the scroller reads, an honest figure.
     const content = document.getElementById("content");
-    const sh = content ? content.scrollHeight : 0, ch = content ? content.clientHeight : 0;
-    for (const [rsid, a, b, c, d] of rows) scrollDiagRow("spacer", spacerRow(rsid, a, b, c, d, sh, ch));
+    const live = activeId;
+    let sh: number | null = null, ch: number | null = null;
+    if (live && content && rows.some(([rsid]) => rsid === live)) { sh = content.scrollHeight; ch = content.clientHeight; }
+    for (const [rsid, a, b, c, d] of rows) scrollDiagRow("spacer", rsid === live ? spacerRow(rsid, a, b, c, d, sh, ch) : spacerRow(rsid, a, b, c, d, null, null, "inactive"));
   });
 }
 

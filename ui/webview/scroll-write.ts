@@ -72,9 +72,12 @@ export function tailMutRow(sid: string, m: { removedTail: string[]; addedTail: s
 
 /** The breadcrumb for one re-size of a view's virtualization spacers (T262j): a top spacer re-estimate paired with
  *  a bottom one leaves scrollHeight unchanged yet moves everything under the top spacer, and Chrome's scroll
- *  anchoring then moves the reader by the same amount with no pane write. `top`/`bot` = [before, after] heights. */
-export function spacerRow(sid: string, topBefore: number, topAfter: number, botBefore: number, botAfter: number, sh = 0, ch = 0) {
-  return { sid, top: [topBefore, topAfter], bot: [botBefore, botAfter], dTop: topAfter - topBefore, dBot: botAfter - botBefore, sh, ch };
+ *  anchoring then moves the reader by the same amount with no pane write. `top`/`bot` = [before, after] heights.
+ *  `sh`/`ch` are the scroller's heights read a frame later for the view shown in that frame; a row whose view was
+ *  switched away before the frame has none (null, never another view's figures) and carries `view: "inactive"` (PR E
+ *  review round 1b). A row with no marker and numbers is the shown view's. */
+export function spacerRow(sid: string, topBefore: number, topAfter: number, botBefore: number, botAfter: number, sh: number | null = 0, ch: number | null = 0, view?: "inactive") {
+  return { sid, top: [topBefore, topAfter], bot: [botBefore, botAfter], dTop: topAfter - topBefore, dBot: botAfter - botBefore, sh, ch, ...(view ? { view } : {}) };
 }
 
 /** The breadcrumb for one height change of the transcript's TAIL outside the append path (T262f, the user
