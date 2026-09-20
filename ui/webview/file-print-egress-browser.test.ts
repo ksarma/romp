@@ -19,7 +19,8 @@
 // HOSTS asked; the requests PER URL; the PLACEHOLDERS whose URL was fetched, split into those that reach the paper and those
 // that do not (each page's placeholders, their URLs and where each stands, in the open body, inside a closed <details> or
 // under `hidden`, are read off the rendered DOM before the roads and asserted, readPlacements, so the split is the page's,
-// not the test's word; a URL no placeholder of the page names is listed apart, and none is expected); the PAGE-LIFE GRANT,
+// not the test's word; a URL no placeholder of the page names is listed apart, and none is expected but on the redirect
+// road of (13), where it is the URL a granted host's answer redirected to); the PAGE-LIFE GRANT,
 // read on the roads that land a second note naming the host after a print or a click (landAgain: the host's figure in the
 // landing shows as a placeholder, so the document's loaded set does not hold the host, or as a picture, so it does; "not
 // read" on every other road); what PRINTED (window.print's calls, the PDF frame's print or the /file tab through
@@ -73,15 +74,27 @@
 // WHOLE, its folded picture's URL asked too (the click's road: by host), and the recount narrows the line and the title to
 // the second host; "Print with them" then asks the second host once, for its open placeholder alone, its hidden one
 // standing; a second note naming both hosts shows the clicked host's figure as a PICTURE, asked once (the click's page-life
-// grant), and the printed host's as a placeholder, asked nothing. Before the round-2 review (2026-09-19) "with them" loaded
+// grant), and the printed host's as a placeholder, asked nothing. (12) a placeholder whose figure the browser paints nothing
+// of once restored, beside a plain one, each on a host of its own: a gated svg at `opacity="0e0"` (a spelling of zero the
+// round-3 review found the flow's pattern missed, so its host was named and fetched) and a <picture> whose <img> carries
+// `hidden` (read at the picture alone before that review): the render; a press counts the plain placeholder alone and the
+// title names its host alone, then Escape; "Print with them" asks the plain host once and the two others never. (13) a
+// gated host that answers 302 to a second host, on two pages: "Print with them" over its placeholder fetches BOTH hosts,
+// one request each, the title naming the first alone and the page's markup naming the second nowhere, and a second note
+// naming both hosts landed after the print shows two placeholders, neither granted; on the second page the placeholder's
+// own click fetches both the same way (the gate's road, figure-gate.ts's header), and the landing shows the clicked host's
+// figure as a picture, fetched through the redirect once more, and the second host's as a placeholder: reached twice,
+// named nowhere, granted never. Before the round-2 review (2026-09-19) "with them" loaded
 // by HOST through the click's road, so on such a page the folded URL was asked too, for a picture the print never shows,
 // and every page in this leg gave each placeholder a host of its own, so no road could see it; the shared-host probe before
 // that found the wait counting the folded picture as well (the line read two, the deadline asked about the folded one,
 // nothing printed until the person answered). The counts this leg holds are the third review's target: one request per URL
-// per press, none for a host the person did not choose, none for a placeholder that does not reach the paper, and no host
-// granted for the page's life by a print; a click's grant, by host and for the page, is the person's own and is measured
-// beside the press in (11). Skips loudly without a browser. Synthetic values only: an invented note, /repo/notes-api
-// paths, invented hosts under .test.
+// per press, none for a host the person did not choose BY ITS URL (a host a granted host's answer redirects to is reached, on
+// the print and on the click alike, and is named nowhere: the gate judges the URL as written and reads nothing of the
+// answer, figure-gate.ts's header; (13) counts both hosts' requests and reads the title), none for a placeholder that does
+// not reach the paper, and no host granted for the page's life by a print; a click's grant, by host and for the page, is
+// the person's own and is measured beside the press in (11). Skips loudly without a browser. Synthetic values only: an
+// invented note, /repo/notes-api paths, invented hosts under .test.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import { inBrowser, openViewer, frames, requireCjs, REPORT, ROOT, ORIGIN, SID, MT2, type Mode } from "./real-viewer-leg";
@@ -141,6 +154,17 @@ const HAND_OPEN = "/open.svg", HAND_FOLD = "/fold.svg", REST_OPEN = "/open.svg",
 const HAND_NOTE = "# Two hosts, a click\n\nOpen ![](https://" + HOST_HAND + HAND_OPEN + ") and open ![](https://" + HOST_REST + REST_OPEN + ")\n\n"
   + "<details><summary>Fold</summary><img src=\"https://" + HOST_HAND + HAND_FOLD + "\" alt=\"\"></details>\n\n"
   + "<div hidden><img src=\"https://" + HOST_REST + REST_HIDDEN + "\" alt=\"\"></div>\n\nLast line.\n";
+// (12) a zero-opacity svg and a picture whose img is hidden, beside a plain picture, three hosts
+const HOST_ZERO = "zero.test", HOST_PICHIDDEN = "pichidden.test", HOST_PLAIN = "plain.test";
+const OFF_NOTE = "# Off the paper\n\nA plain one ![](https://" + HOST_PLAIN + "/o.svg)\n\n"
+  + "<svg xmlns=\"http://www.w3.org/2000/svg\" opacity=\"0e0\" width=\"8\" height=\"8\"><image href=\"https://" + HOST_ZERO + "/z.svg\" width=\"8\" height=\"8\"/></svg>\n\n"
+  + "<picture><img hidden src=\"https://" + HOST_PICHIDDEN + "/p.svg\" alt=\"\"></picture>\n\nLast line.\n";
+// (13) a host that answers 302 to a second host, at the same path under /from
+const HOST_REDIR = "redirecting.test", HOST_ELSEWHERE = "elsewhere.test";
+const REDIR_PATH = "/r.svg";
+const REDIR_NOTE = "# Redirect\n\nA picture ![](https://" + HOST_REDIR + REDIR_PATH + ").\n\nLast line.\n";
+/** Where the redirecting host sends a request for `path`. */
+const redirectedTo = (path: string): string => "https://" + HOST_ELSEWHERE + "/from" + path;
 // the second note a grant read lands: one picture per named host, in the open body, at a path the first note never used
 const AGAIN = "/again.svg";
 const AGAIN_MARK = "Another 1";
@@ -205,7 +229,7 @@ const F = (printable: Tally, not: Tally = {}): Fetched => ({ printable, not, unl
 type Row = { road: string; hosts: string[]; third: Tally; fetched: Fetched; grant: string; local: Tally; other: Tally; printed: string };
 /** The page's placeholders by URL, as readPlacements read them off the DOM: whether each reaches the paper. */
 type Placeholders = Record<string, { printable: boolean }>;
-type Where = "body" | "closed-details" | "open-details" | "hidden";
+type Where = "body" | "closed-details" | "open-details" | "hidden" | "figure-off";   // figure-off: the placeholder stands in the open body and the browser paints nothing of its figure (readPlacements)
 type Placement = { host: string; url: string; where: Where };
 const ph = (host: string, path: string, where: Where): Placement => ({ host, url: "https://" + host + path, where });
 /** One request's class and key (the header's rule). */
@@ -298,9 +322,10 @@ const asksFor = (s: Scene, url: string): number => s.requests.filter((u) => u ==
  *  the origin, each of `held` parked (its route held until release()), each of `missing` answered 404, every host under .test
  *  other than the origin answered after 150 ms with the svg, except a URL whose path ends in one of `heldThird`, parked the
  *  same way under that suffix as its name; the probes installed. The first road, the render, is read here. */
-async function scene(t: any, browser: any, mode: Mode, note: string, opts: { held?: string[]; heldThird?: string[]; missing?: string[]; waitFor?: string; before?: (pg: any) => Promise<void>; open: { third?: Tally; local?: Tally; other?: Tally } }): Promise<Scene> {
+async function scene(t: any, browser: any, mode: Mode, note: string, opts: { held?: string[]; heldThird?: string[]; missing?: string[]; redirect?: Record<string, (path: string) => string>; waitFor?: string; before?: (pg: any) => Promise<void>; open: { third?: Tally; local?: Tally; other?: Tally } }): Promise<Scene> {
   const heldNames = opts.held || [];
   const heldThird = opts.heldThird || [];
+  const redirect = opts.redirect || {};   // a host whose every answer is a 302 to the URL the function names for the path
   const missing = opts.missing || [];
   const held: Array<{ name: string; route: any }> = [];
   const requests: string[] = [];
@@ -321,7 +346,10 @@ async function scene(t: any, browser: any, mode: Mode, note: string, opts: { hel
         held.push({ name: heldNames.find((n) => p.endsWith(n))!, route });
       });
       await pg.route((u: URL) => u.origin !== ORIGIN && u.hostname.endsWith(".test"), async (route: any) => {
-        const parked = heldThird.find((n) => new URL(route.request().url()).pathname.endsWith(n));
+        const asked = new URL(route.request().url());
+        const to = redirect[asked.hostname];
+        if (to) { await route.fulfill({ status: 302, headers: { Location: to(asked.pathname) } }); return; }
+        const parked = heldThird.find((n) => asked.pathname.endsWith(n));
         if (parked) { held.push({ name: parked, route }); return; }
         await new Promise((r) => setTimeout(r, 150)); await route.fulfill({ status: 200, contentType: "image/svg+xml", body: SVG });
       });
@@ -342,17 +370,25 @@ async function scene(t: any, browser: any, mode: Mode, note: string, opts: { hel
   return s;
 }
 /** Read the page's placeholders off the rendered DOM, in document order: each one's hosts, the URL its figure's moved `src`,
- *  `poster` or `href` names (data-fv-gated-*, figure-gate.ts), and where it stands (the open body; inside a closed or an open
- *  <details>; under `hidden`), asserted equal to `expected`; then registered as the page's placeholders, one in the open body
- *  or an open <details> reaching the paper, one inside a closed <details> or under hidden not. The rows' "placeholders"
- *  column is read against this map, so the split is the DOM's, not the test's word. */
+ *  `poster` or `href` names (data-fv-gated-*, figure-gate.ts, on the figure's root or on the element inside it that fetches,
+ *  a <picture>'s <img>), and where it stands (the open body; inside a closed or an open <details>; under `hidden`; or
+ *  "figure-off": in the open body with a figure the browser paints nothing of, read as the browser has it, the figure's
+ *  computed opacity zero or visibility hidden, which compute while it is gated, or `hidden` on every HTML element of it that
+ *  paints), asserted equal to `expected`; then registered as the page's placeholders, one in the open body or an open
+ *  <details> reaching the paper, one inside a closed <details>, under hidden or with its figure off not. The rows'
+ *  "placeholders" column is read against this map, so the split is the DOM's and the browser's, not the test's word. */
 async function readPlacements(s: Scene, expected: Placement[]): Promise<void> {
   await waitGates(s.page, expected.length);
   const placed: Placement[] = await s.page.evaluate(() => Array.from(document.querySelectorAll('#romp-fileview [data-act="fv-load"]')).map((g) => {
     const m = g.firstElementChild;
-    const url = m ? (m.getAttribute("data-fv-gated-src") || m.getAttribute("data-fv-gated-poster") || m.getAttribute("data-fv-gated-href") || "") : "";
+    const fetching = "[data-fv-gated-src], [data-fv-gated-poster], [data-fv-gated-href]";
+    const carrier = m ? (m.matches(fetching) ? m : m.querySelector(fetching)) : null;
+    const url = carrier ? (carrier.getAttribute("data-fv-gated-src") || carrier.getAttribute("data-fv-gated-poster") || carrier.getAttribute("data-fv-gated-href") || "") : "";
+    const cs = m ? getComputedStyle(m) : null;
+    const paints = m ? [...(m.matches("img, video, audio") ? [m] : []), ...Array.from(m.querySelectorAll("img, video, audio"))] : [];
+    const off = !!cs && (Number(cs.opacity) === 0 || cs.visibility === "hidden" || cs.visibility === "collapse" || (paints.length > 0 && paints.every((e) => e.hasAttribute("hidden"))));
     const d = g.closest("details");
-    return { host: g.getAttribute("data-fv-hosts") || "", url, where: g.closest("[hidden]") ? "hidden" : d ? (d.hasAttribute("open") ? "open-details" : "closed-details") : "body" };
+    return { host: g.getAttribute("data-fv-hosts") || "", url, where: g.closest("[hidden]") ? "hidden" : d ? (d.hasAttribute("open") ? "open-details" : "closed-details") : off ? "figure-off" : "body" };
   }));
   assert.deepEqual(placed, expected, "the placeholders, the URL each stands for and where each stands");
   for (const p of placed) s.placeholders[p.url] = { printable: p.where === "body" || p.where === "open-details" };
@@ -1006,5 +1042,79 @@ test("(11) two hosts, each with a printable placeholder and one that never reach
     assert.deepEqual({ handOpen: asksFor(s, "https://" + HOST_HAND + HAND_OPEN), handFold: asksFor(s, "https://" + HOST_HAND + HAND_FOLD), handAgain: asksFor(s, "https://" + HOST_HAND + AGAIN), restOpen: asksFor(s, "https://" + HOST_REST + REST_OPEN), restHidden: asksFor(s, "https://" + HOST_REST + REST_HIDDEN), restAgain: asksFor(s, "https://" + HOST_REST + AGAIN) },
       { handOpen: 1, handFold: 1, handAgain: 1, restOpen: 1, restHidden: 0, restAgain: 0 }, "the click's host: every URL once, the landing's too (the grant); the print's host: the open URL once, the hidden and the landing's never");
     await tail(s, "(11)");
+  });
+});
+
+// ── (12) a figure the browser paints nothing of: a zero-opacity svg in a spelling the pattern missed, a hidden img inside a picture ──
+
+test("(12) a gated svg at opacity 0e0 and a <picture> whose <img> is hidden, beside a plain placeholder, on three hosts: the render asks the origin alone; a press counts the plain placeholder alone and the title names its host alone (FAILS BEFORE: the line read three and the title named all three, the pattern reading 0e0 as not zero and the picture at its root alone), then Escape; Print with them asks the plain host once and the zero host and the hidden picture's host never", { timeout: 120000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const s = await scene(t, browser, "pane", OFF_NOTE, { open: { local: { ...PAGE_LOCAL } } });
+    const { page } = s;
+    await readPlacements(s, [ph(HOST_PLAIN, "/o.svg", "body"), ph(HOST_ZERO, "/z.svg", "figure-off"), ph(HOST_PICHIDDEN, "/p.svg", "figure-off")]);
+    await road(s, "press: the bar arms over the plain placeholder alone, then Escape", { printed: "none" }, async () => {
+      await page.click(PRINT_BTN);
+      const b = await bar(page);
+      assert.equal(b.phase, "armed"); assert.equal(b.line, ARMED_ONE, "FAILS BEFORE: the zero-opacity svg and the hidden picture were counted too");
+      assert.deepEqual(b.titles.slice(0, 1), [titleFor([HOST_PLAIN])], "FAILS BEFORE: the title named zero.test and pichidden.test as well");
+      await page.keyboard.press("Escape");
+      await frames(page, 1);
+      assert.equal((await bar(page)).phase, null, "Escape disarmed");
+    });
+    await road(s, "press, then Print with them", { third: { [HOST_PLAIN + "/o.svg"]: 1 }, fetched: F({ [HOST_PLAIN + "/o.svg"]: 1 }), printed: "window.print x1" }, async () => {
+      await page.click(PRINT_BTN);
+      assert.equal((await bar(page)).line, ARMED_ONE);
+      await page.click(WITH_BTN);
+      await printsReach(page, 1);
+      const p = await prints(page);
+      assert.equal(p[0].gates, 2, "the two placeholders whose figures paint nothing still stand"); assert.deepEqual(p[0].incomplete, [], "every <img> complete at the print");
+      assert.deepEqual(await gatesNow(page), [HOST_ZERO + ":body", HOST_PICHIDDEN + ":body"], "per placeholder: the plain one restored, the two others standing in the open body");
+    });
+    assert.deepEqual(hostsAsked(s), [HOST_PLAIN], "FAILS BEFORE: over the page's life the plain host alone was asked (zero.test and pichidden.test were fetched for figures the print shows nothing of)");
+    assert.equal(asksFor(s, "https://" + HOST_ZERO + "/z.svg"), 0, "the zero-opacity svg's host was never asked");
+    assert.equal(asksFor(s, "https://" + HOST_PICHIDDEN + "/p.svg"), 0, "the hidden picture's host was never asked");
+    await tail(s, "(12)");
+  });
+});
+
+// ── (13) a granted host that redirects: the second host is reached on the print and on the click, and named nowhere ──
+
+test("(13) a gated host that answers 302 to a second host: Print with them over its placeholder fetches both hosts, one request each (the redirect target listed apart, since no placeholder names it), the title naming the redirecting host alone and the page's markup naming the second nowhere, and a second note naming both hosts landed after the print shows two placeholders, neither granted; on a second page the placeholder's own click fetches both the same way, and the landing shows the clicked host's figure as a picture, fetched through the redirect once more, and the second host's as a placeholder: reached twice, named nowhere, granted never (the gate's road, figure-gate.ts's header; open point 7 of the plan)", { timeout: 180000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const REDIR = "https://" + HOST_REDIR + REDIR_PATH, TARGET = redirectedTo(REDIR_PATH);
+    const targetKey = HOST_ELSEWHERE + "/from" + REDIR_PATH, againTargetKey = HOST_ELSEWHERE + "/from" + AGAIN;
+    const namesElsewhere = (): Promise<boolean> => page.evaluate((h: string) => document.getElementById("romp-fileview")!.outerHTML.includes(h), HOST_ELSEWHERE);
+    // a: the print's road
+    let s = await scene(t, browser, "pane", REDIR_NOTE, { redirect: { [HOST_REDIR]: redirectedTo }, open: { local: { ...PAGE_LOCAL } } });
+    let page = s.page;
+    await readPlacements(s, [ph(HOST_REDIR, REDIR_PATH, "body")]);
+    assert.equal(await namesElsewhere(), false, "the page's markup names the second host nowhere before the press");
+    await road(s, "press, then Print with them over the redirecting host", { third: { [HOST_REDIR + REDIR_PATH]: 1, [targetKey]: 1 }, fetched: { printable: { [HOST_REDIR + REDIR_PATH]: 1 }, not: {}, unlisted: { [targetKey]: 1 } }, printed: "window.print x1" }, async () => {
+      await page.click(PRINT_BTN);
+      const b = await bar(page);
+      assert.equal(b.phase, "armed"); assert.equal(b.line, ARMED_ONE);
+      assert.deepEqual(b.titles.slice(0, 1), [titleFor([HOST_REDIR])], "the title names the redirecting host alone: the host of the URL as written");
+      await page.click(WITH_BTN);
+      await printsReach(page, 1);
+      assert.deepEqual((await prints(page))[0].incomplete, [], "the picture, answered through the redirect, is complete at the print");
+    });
+    assert.equal(await namesElsewhere(), false, "after the fetch the markup still names the second host nowhere: the browser followed the redirect, the page never saw it");
+    await road(s, "a second note naming both hosts landed after the print (the grant read)", { grant: HOST_ELSEWHERE + ": placeholder, " + HOST_REDIR + ": placeholder", printed: "none" }, async () => landAgain(s, [HOST_REDIR, HOST_ELSEWHERE]));
+    assert.deepEqual(hostsAsked(s), [HOST_ELSEWHERE, HOST_REDIR].sort(), "over the page's life both hosts were asked: the granted one, and the one it redirected to");
+    assert.deepEqual({ redir: asksFor(s, REDIR), target: asksFor(s, TARGET) }, { redir: 1, target: 1 }, "once each, on the print's road");
+    await tail(s, "(13a)");
+    // b: the click's road
+    s = await scene(t, browser, "pane", REDIR_NOTE, { redirect: { [HOST_REDIR]: redirectedTo }, open: { local: { ...PAGE_LOCAL } } });
+    page = s.page;
+    await readPlacements(s, [ph(HOST_REDIR, REDIR_PATH, "body")]);
+    await road(s, "the placeholder activated by hand: the click loads the host, the browser follows the redirect", { third: { [HOST_REDIR + REDIR_PATH]: 1, [targetKey]: 1 }, fetched: { printable: { [HOST_REDIR + REDIR_PATH]: 1 }, not: {}, unlisted: { [targetKey]: 1 } }, printed: "none" }, async () => {
+      await page.click('#romp-fileview [data-act="fv-load"]');
+      await waitGates(page, 0);
+    });
+    await road(s, "a second note naming both hosts landed after the click (the grant read): the clicked host's picture, through the redirect again; the second host's placeholder", { third: { [HOST_REDIR + AGAIN]: 1, [againTargetKey]: 1 }, fetched: { printable: { [HOST_REDIR + AGAIN]: 1 }, not: {}, unlisted: { [againTargetKey]: 1 } }, grant: HOST_ELSEWHERE + ": placeholder, " + HOST_REDIR + ": picture", printed: "none" }, async () => landAgain(s, [HOST_REDIR, HOST_ELSEWHERE]));
+    assert.deepEqual(hostsAsked(s), [HOST_ELSEWHERE, HOST_REDIR].sort(), "both hosts asked on the click's road too");
+    assert.deepEqual({ redir: asksFor(s, REDIR), target: asksFor(s, TARGET), again: asksFor(s, "https://" + HOST_REDIR + AGAIN), againTarget: asksFor(s, redirectedTo(AGAIN)), elsewhereOwn: asksFor(s, "https://" + HOST_ELSEWHERE + AGAIN) },
+      { redir: 1, target: 1, again: 1, againTarget: 1, elsewhereOwn: 0 }, "the clicked host's two URLs once each, each redirect followed once; the second host's own placeholder never asked: reached twice through the redirects, granted never");
+    await tail(s, "(13b)");
   });
 });

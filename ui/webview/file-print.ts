@@ -9,10 +9,15 @@
 //      is not inside a closed <details>, a typed one or a folded callout, outside its summary, and not under a `hidden`
 //      attribute, the two hidings the walk knows; where the browser can be asked it renders the placeholder too, by its
 //      own checkVisibility and a client rect, so a hiding the walk does not know, a `popover` not shown, a ruby's <rp>, a
-//      <canvas>'s fallback content, an author's class a sheet rule hides, falls to NOT printable; and the figure the placeholder wraps carries
-//      none of the kept attributes that would hide it once restored, `hidden`, `popover`, an svg's display none,
-//      visibility hidden or opacity 0, an enumeration, since the sheet hides every child of a placeholder but its label
-//      and the browser cannot be asked about the figure while it is gated; the third review, 2026-09-19: before this every
+//      <canvas>'s fallback content, an author's class a sheet rule hides, falls to NOT printable; and a painting element of
+//      the figure the placeholder wraps would show once restored (figurePrintable over the root and every painting
+//      element inside it, the img of a <picture> and an svg's graphics elements among them, each read with its ancestors
+//      up to the root: `hidden` and `popover` on an HTML element, the author's own display none, and the opacity and
+//      visibility the browser COMPUTES, which the gate's sheet leaves alone where it sets display none on the gated root,
+//      so display alone is read from the author's declaration; the round-3 review, 2026-09-20: before this the opacity
+//      was matched against one spelling of zero, so `-0`, `+0` and `0e0` counted printable and were fetched while `0.0.0`,
+//      which the browser paints, read as off the paper, and the first element child alone was read, so
+//      `<picture><img hidden>` was counted and fetched; the third review, 2026-09-19: before this every
 //      placeholder was counted and every host it named was loaded, so "with them" fetched from hosts for pictures the
 //      print never showed; the round-2 review: the walk alone counted a placeholder the browser never renders). With any,
 //      the bar ARMS instead of printing: one line under
@@ -49,11 +54,17 @@
 //      same URL (neither element reports completeness; the probe asks the browser for the URL the element itself
 //      fetched, so no other host is reached). The probes are ONE PER URL FOR THE
 //      LIFE OF ONE PRESS'S WAIT (a Map keyed by the resolved URL, cleared when a press or a choice begins its wait, handed to
-//      the collection as its probe factory): a re-aim finds the probe it already made, so a URL whose picture failed settles
-//      for good with that one probe complete. Before this every re-aim minted a fresh Image per URL, a failed URL is never
+//      the collection as its probe factory): the settle's re-aim finds the probe it already made, so a URL whose picture
+//      failed settles for good with that one probe complete. Before this every re-aim minted a fresh Image per URL, a failed URL is never
 //      complete on a fresh Image, and the driver looped, probe, request, error, settle, re-aim, until the deadline: one press
 //      asked the host hundreds of times for one URL (the third review, 2026-09-19, measured 337 requests in 8 s), a request
-//      storm from one keystroke. An <img loading="lazy"> the browser has not started fetching (far below the fold) fires
+//      storm from one keystroke. A REPAINT's re-aim (reaim under the wait, recountAsk under the ask) first drops the probes
+//      already complete (dropDone): the landing's element fetches its URL again and the finished probe's verdict is the old
+//      document's, so that URL is probed once more against the new body, a request the browser folds into the landing
+//      element's own while that is in flight, while a probe still in flight is kept (the
+//      round-2 review's extra7-1, landed 2026-09-20: before this a Reload landing mid-wait that named a poster or svg image
+//      URL whose probe had already failed answered from that probe and window.print ran with the landing's own fetch still
+//      in flight). An <img loading="lazy"> the browser has not started fetching (far below the fold) fires
 //      neither event, so the collection sets it eager first, which starts the deferred fetch at once (the same URL, so no
 //      other host is reached; a gated img has no src and fetches nothing); the attribute stays eager after the print. The
 //      wait is bounded by PRINT_SETTLE_MS, 8 s. Its VERDICT reaches the machine as one event, `ready`, carrying why it ended
@@ -74,8 +85,9 @@
 //      three dots, .fileview-load inline in the row: ui/CLAUDE.md's loading-state rule, which puts the romp loader on every
 //      wait; the first build showed the words alone). With no gated placeholder and every picture complete the press
 //      prints at once, in the click's own task. The wait is AIMED at the body as it stands, and re-aimed when the
-//      body is repainted under it (the host's `body` report: a reload's landing, a format pick, the editor's exit; the
-//      pictures listened on were the old body's, detached by the swap) and again at the settle (a picture that entered or
+//      body is repainted under it (the host's `body` report: a reload's landing, a format pick; the pictures listened on
+//      were the old body's, detached by the swap; entering the editor seats the viewer's loader, which takes the body out
+//      and disarms first, so the editor's exit lands under no wait) and again at the settle (a picture that entered or
 //      was re-aimed since the collection, a heal's retry of a failed figure among them, is awaited too; a URL the retry
 //      changed is a new key and is probed once), always under the deadline the press set, never past it (each re-aim's
 //      bound executed by its own case of file-print-driver-browser.test.ts: case 3c lands a parked picture by a Reload
@@ -83,7 +95,8 @@
 //      releases the first, the settle's re-aim; each reads the ask at the press's deadline, under 1600 ms after the landing
 //      or the release, where a re-aim that restarted the deadline would read about 2000): the print fires with every
 //      picture in the body complete, or the deadline asks. A repaint under the ask (a Reload landing, a Rendered or Raw
-//      pick, the editor's exit) NEVER prints: it is no answer to the ask. The new body's pictures still loading are counted
+//      pick; the editor's exit lands under no ask, since entering the editor took the body out and disarmed) NEVER
+//      prints: it is no answer to the ask. The new body's pictures still loading are counted
 //      the same way; over any the line's count follows in place, and over none the question is moot and the flow returns
 //      to rest, the line gone, so the person may press again. Before this the count of none was read as the print act and
 //      window.print ran with neither button pressed, over the Raw view in one case (the round-2 review, 2026-09-19).
@@ -190,7 +203,7 @@ export type PrintEvent =
 /** What the driver does for a step: `arm` shows the line with its two buttons, `disarm` (a second press, Escape, or the body
  *  going out, when the driver cancels a running wait too) and `rest` remove the line and restore the button, `activate` loads
  *  every gated host and then prepares, `skip` prepares over the placeholders as they stand, `wait` shows the preparing line,
- *  `stall` shows the ask (the line with "Print anyway" and "Keep waiting", rewritten in place when it stands), `resume` aims
+ *  `stall` shows the ask (the line with "Print anyway" and "Keep waiting", written into the standing line: the wait's at the deadline, the ask's own under a repaint), `resume` aims
  *  an open-ended wait at the body and then prepares, `print` calls window.print, `printPdf` prints the PDF itself (the frame's
  *  window, or the /file tab). The button's disabled dress follows the phase, not an act: the driver syncs it after every step. */
 export type PrintAct = "none" | "arm" | "disarm" | "activate" | "skip" | "wait" | "stall" | "resume" | "print" | "printPdf" | "rest";
@@ -275,10 +288,13 @@ export const ANYWAY_WORDS = "Print anyway";
 export const KEEP_WORDS = "Keep waiting";
 export const ANYWAY_TITLE = "Print now; a picture still loading prints as the browser has it";
 export const KEEP_TITLE = "Wait for every picture to load, then print";
-/** "Print with them"'s title: the hosts the placeholders name, in the order they appear, so the hosts one press fetches from
- *  can be read together before the press (for this print alone: loadGatedFigure grants a host nothing for the page, which a
- *  click does, decision 8); the line itself counts pictures, by contract. With none known (a stand-in body) the words name
- *  them generically. */
+/** "Print with them"'s title: the hosts the placeholders name, in the order they appear, so the hosts one press asks can be
+ *  read together before the press (for this print alone: loadGatedFigure grants a host nothing for the page, which a click
+ *  does, decision 8). The title names the hosts of the URLs as the figures name them: a host one of them answers with a
+ *  redirect to is reached too, as the placeholder's own click reaches it (the browser follows the redirect on both roads),
+ *  and named nowhere, not here and not in the placeholder's label (figure-gate.ts's header; file-print-egress-browser.test.ts
+ *  case (13) counts both hosts' requests). The line itself counts pictures, by contract. With none known (a stand-in body)
+ *  the words name them generically. */
 export function withTitle(hosts: string[]): string {
   const list = hosts.length === 0 ? "those hosts" : hosts.length === 1 ? hosts[0] : hosts.slice(0, -1).join(", ") + " and " + hosts[hosts.length - 1];
   return "Load the pictures from " + list + ", then print";
@@ -362,37 +378,137 @@ export function printable(el: PrintableNode): boolean {
   }
   return rendered(el) !== false;
 }
-/** What figureHidden reads of a placeholder's figure: its name and its attributes. */
-export type FigureNode = { localName: string; hasAttribute(name: string): boolean; getAttribute(name: string): string | null };
-/** A CSS keyword attribute's value, trimmed and lower-cased (an svg presentation attribute is CSS: `NONE` and ` none ` are `none`). */
-const keyword = (el: FigureNode, name: string): string => (el.getAttribute(name) || "").trim().toLowerCase();
-/** Whether the figure a placeholder wraps carries, ITSELF, a kept attribute that leaves it off the paper once restored. An
- *  enumeration over the sanitizer's kept attributes (md-sanitize.ts MD_PURIFY: DOMPurify's html and svg attribute lists,
- *  `style` filtered to colour), since the browser cannot be asked here: the sheet hides every child of a placeholder but its
- *  label while it is gated, so checkVisibility on the figure says hidden for every one. On any element: `hidden`, whatever
- *  its value, and `popover` (shown by a call alone, which a note cannot make). On an svg, the presentation attributes that
- *  hide it whole: `display="none"`, `visibility="hidden"` or `"collapse"`, `opacity` zero (a number or a percentage).
- *  Every other kept attribute leaves the figure on the paper as far as the flow reads: a zero `width` or `height` is a
- *  degenerate picture the browser still draws and fetches; an svg's `transform`, `clip-path`, `mask` and `filter` can hide
- *  its paint and are not read (the placeholder's own rendering, above, is). Before this the walk started at the placeholder
- *  and never looked at the figure inside it, so `<img hidden src="https://host/p.svg">` had its placeholder counted, its
- *  host named and, on "Print with them", its picture fetched for a print that never shows it (the round-2 census). */
-export function figureHidden(el: FigureNode): boolean {
-  if (el.hasAttribute("hidden") || el.hasAttribute("popover")) return true;
-  if (el.localName !== "svg") return false;
-  if (keyword(el, "display") === "none") return true;
-  const vis = keyword(el, "visibility");
-  if (vis === "hidden" || vis === "collapse") return true;
-  const op = keyword(el, "opacity");
-  return op !== "" && /^[0.]+%?$/.test(op) && parseFloat(op) === 0;
+/** The SVG namespace: the figure test tells an SVG element from an HTML one by it (a presentation attribute is CSS on an
+ *  SVG element; `hidden` and `popover` are HTML's attributes and are not read on one). */
+export const SVG_NS = "http://www.w3.org/2000/svg";
+const HTML_NS = "http://www.w3.org/1999/xhtml";
+/** What the figure test reads of an element inside a placeholder: its name and its namespace (absent on a stand-in: HTML),
+ *  its attributes, its parent for the walk up to the figure's root, its `style` declaration (the style attribute as the
+ *  browser parsed it), its document (whose window computes its style, and whose scratch element parses a declaration) and
+ *  its descendants (querySelectorAll; a stand-in without it has none). An Element is all of these. */
+export type FigureNode = {
+  localName: string; namespaceURI?: string | null; parentElement?: FigureNode | null;
+  hasAttribute(name: string): boolean; getAttribute(name: string): string | null;
+  style?: { display: string };
+  ownerDocument?: { defaultView?: { getComputedStyle?(el: unknown): { visibility: string; opacity: string } } | null; createElement?(tag: string): { style: { display: string } } } | null;
+  querySelectorAll?(selectors: string): { forEach(cb: (el: FigureNode) => void): void };
+};
+/** `el` is an HTML element, by its namespace (a stand-in without one is HTML). `hidden` and `popover` are HTML's attributes
+ *  and the browser reads them on HTML elements alone: an `<svg hidden>` and an svg `<image hidden>` each paint (measured in
+ *  Chromium, Firefox and WebKit, 2026-09-20; file-print-figure-browser.test.ts executes both). */
+const isHtml = (el: FigureNode): boolean => el.namespaceURI === undefined || el.namespaceURI === null || el.namespaceURI === HTML_NS;
+/** The style the browser computes for `el`, or null where nothing computes it: a stand-in under node, or an element outside
+ *  a document (a disconnected element computes empty strings). visibility and opacity compute on a gated figure as they do
+ *  on the restored one: the gate's sheet sets display none on the placeholder's child (feed.css and styles.css,
+ *  `.fv-gate[data-act="fv-load"] > :not([data-fv-label])`) and neither of these. */
+function computedOf(el: FigureNode): { visibility: string; opacity: string } | null {
+  const view = el.ownerDocument ? el.ownerDocument.defaultView : null;
+  if (!view || typeof view.getComputedStyle !== "function") return null;
+  const cs = view.getComputedStyle(el);
+  return cs.opacity === "" ? null : cs;
 }
-/** Whether a placeholder reaches the paper AND the figure it stands for would once restored: printable on the placeholder
- *  (the walk, and the browser's own answer), and figureHidden false on the media element it wraps (its first element
- *  child; the label follows it). A placeholder with no figure inside answers for itself. */
+/** The author's own `display` for `el`, as the browser parses a declaration, or null where no document can parse one (a
+ *  stand-in). The style attribute's declaration first (`el.style.display`, the browser's CSSStyleDeclaration; the sanitizer
+ *  keeps colour declarations alone, md-sanitize.ts colorOnlyStyle, so in the product it is empty), then, on an SVG element,
+ *  the `display` presentation attribute, whose value is CSS, parsed by a scratch declaration of the same document: `NONE`,
+ *  ` none `, `none` with a CSS comment beside it and the escaped `n\6fne` each read `none` and `bogus` reads empty, as the
+ *  computed value would (measured in the three engines). The computed display itself is not read: the gate's sheet sets it to none on the placeholder's child
+ *  while it is gated, and a presentation attribute never reaches `el.style`. */
+function authorDisplay(el: FigureNode): string | null {
+  const doc = el.ownerDocument;
+  if (!doc || typeof doc.createElement !== "function") return null;
+  const styled = el.style ? el.style.display : "";
+  if (styled) return styled;
+  if (el.namespaceURI !== SVG_NS) return "";
+  const scratch = doc.createElement("span").style;
+  scratch.display = el.getAttribute("display") || "";
+  return scratch.display;
+}
+/** The SVG containers whose content renders: the svg itself, a group, a link, a switch. A graphics element under any other
+ *  SVG ancestor (defs, symbol, clipPath, mask, pattern, marker, a gradient, a filter, title, desc) is never rendered directly
+ *  and paints nothing there; an SVG ancestor this list does not name reads the same way, the safe side, so nothing is
+ *  counted for it. */
+const SVG_RENDERS: readonly string[] = ["svg", "g", "a", "switch"];
+/** Whether the author's `display: contents` on the SVG element `el` lets its content render: on a group, and on an svg
+ *  nested inside SVG content, it does (measured in Chromium, file-print-figure-browser.test.ts: the image inside paints);
+ *  on every other SVG element, an outermost svg, a link, a switch and an image among them, `contents` computes to none
+ *  (measured the same way; the outermost svg and the image in the three engines), so it hides as `none` does. */
+const contentsRenders = (el: FigureNode): boolean => el.localName === "g" || (el.localName === "svg" && !!el.parentElement && el.parentElement.namespaceURI === SVG_NS);
+/** Whether `el`, an element of a placeholder's figure, takes itself off the paper once the placeholder is restored (`self`)
+ *  or takes everything inside it off (`self` false: an ancestor of the element that paints). On an HTML element the
+ *  `hidden` attribute, whatever its value (`until-found` included), and `popover` (shown by a call alone, which a note cannot
+ *  make); on any element the author's own display none (authorDisplay; on an SVG element whose content `contents` does not
+ *  render, contentsRenders, `contents` as well) and, where the browser computes it, opacity zero (the computed value: `-0`, `+0`, `0e0`, `0%`, `.0`,
+ *  ` 0 `, `calc(0)`, a negative value and one the engine rounds to nothing, `1e-100`, each compute to 0, while `0.0.0` and
+ *  `0.`, which the browser refuses and paints at 1, and `1e-9`, which it keeps, do not); and, for the painting element
+ *  alone, the visibility the browser computes, hidden or collapse: visibility inherits unless the element sets its own, so
+ *  it is read where the paint is, and a visible child inside a hidden group paints (measured in the three engines), where an
+ *  ancestor's opacity zero takes its children with it. Without a browser (a stand-in under node) the attributes alone are
+ *  read, as printable's walk stands alone without rendered; nothing fetches there. */
+function offPaper(el: FigureNode, self: boolean): boolean {
+  if (isHtml(el) && (el.hasAttribute("hidden") || el.hasAttribute("popover"))) return true;
+  const display = authorDisplay(el);
+  if (display === "none" || (display === "contents" && el.namespaceURI === SVG_NS && !contentsRenders(el))) return true;
+  const cs = computedOf(el);
+  if (cs === null) return false;
+  if (Number(cs.opacity) === 0) return true;
+  return self && (cs.visibility === "hidden" || cs.visibility === "collapse");
+}
+/** Whether the figure element `el` is itself off the paper once its placeholder is restored (offPaper, as the element that
+ *  paints). The placeholder's own walk and rendering are read apart (printable), and the elements around a painting one in
+ *  figurePrintable. Before the round-3 review (2026-09-20) the opacity was matched against one spelling of zero by a
+ *  pattern, so `-0`, `+0` and `0e0` read as on the paper and `0.0.0` as off it; the computed value is the browser's own. */
+export function figureHidden(el: FigureNode): boolean { return offPaper(el, true); }
+/** The elements inside a placeholder's figure that put paint on the paper themselves: HTML's img, video (its poster or a
+ *  frame; with neither, its box) and audio with `controls` (the controls: the browser's own sheet hides an audio without
+ *  them, so one paints nothing), and SVG's graphics elements as the sanitizer keeps them (circle, ellipse, image, line,
+ *  path, polygon, polyline, rect, text; use and foreignObject are dropped today and listed for a wider profile). A
+ *  <picture>, a <source> and a <track> paint nothing of their own (the picture's <img> does); an svg root paints through
+ *  its graphics elements alone, so an svg holding a picture inside <defs> and nothing else paints nothing; and the content
+ *  of an audio or a video is fallback for a browser without the element, never rendered by one that has it, so nothing
+ *  inside either paints (an <img> there still fetches when the element is restored, riding on the video's own box). */
+export const PAINTS_SEL = "img, video, audio, circle, ellipse, image, line, path, polygon, polyline, rect, text, use, foreignObject";
+const PAINTING_ROOTS: readonly string[] = ["img", "video", "audio"];
+/** Whether `el`, an element PAINTS_SEL names, paints of itself: every one does but an audio without `controls`. */
+const paintsItself = (el: FigureNode): boolean => el.localName !== "audio" || !isHtml(el) || el.hasAttribute("controls");
+/** Whether `el` stands inside an audio or a video below `root`: fallback content, never rendered. */
+const fallbackContent = (el: FigureNode, root: FigureNode): boolean => {
+  for (let a = el.parentElement; a && a !== root.parentElement; a = a === root ? null : a.parentElement) if (isHtml(a) && (a.localName === "audio" || a.localName === "video")) return true;
+  return false;
+};
+/** The painting elements of the figure `root`: the root itself when it is an HTML img, video or audio that paints, and every
+ *  descendant PAINTS_SEL names that paints of itself and is no fallback content (through querySelectorAll; a stand-in without
+ *  it has no descendants). */
+function paintsOf(root: FigureNode): FigureNode[] {
+  const out: FigureNode[] = [];
+  if (isHtml(root) && PAINTING_ROOTS.includes(root.localName) && paintsItself(root)) out.push(root);
+  if (typeof root.querySelectorAll === "function") root.querySelectorAll(PAINTS_SEL).forEach((el) => { if (paintsItself(el) && !fallbackContent(el, root)) out.push(el); });
+  return out;
+}
+/** Whether `paint`, a painting element of the figure `root` (the root itself included), would show once the placeholder is
+ *  restored: it is not off the paper itself (offPaper, self), no ancestor up to the root takes what is inside it off
+ *  (offPaper: an ancestor's hidden, popover, display none or opacity zero; its visibility is read on `paint`, which
+ *  inherits it unless it sets its own), and every SVG ancestor below the root renders its content (SVG_RENDERS). */
+function shows(paint: FigureNode, root: FigureNode): boolean {
+  if (offPaper(paint, true)) return false;
+  for (let a = paint === root ? null : paint.parentElement; a; a = a === root ? null : a.parentElement) {
+    if (offPaper(a, false)) return false;
+    if (a.namespaceURI === SVG_NS && !SVG_RENDERS.includes(a.localName)) return false;
+  }
+  return true;
+}
+/** Whether a placeholder reaches the paper AND the figure it wraps would put paint there once restored: printable on the
+ *  placeholder (the walk, and the browser's own answer), and a painting element of the figure (its first element child; the
+ *  label follows it) that shows. A placeholder with no figure inside answers for itself. Before the round-3 review
+ *  (2026-09-20) the first element child alone was read, so `<picture><img hidden src="https://host/p.svg">` had its
+ *  placeholder counted, its host named and, on "Print with them", its picture fetched for a print that never shows it, the
+ *  shape the round-2 census had closed for a bare `<img hidden>`; an svg `<image>` under `<defs>`, or one with display none
+ *  or opacity zero of its own, the same. */
 export function figurePrintable(g: PrintableNode & { firstElementChild?: FigureNode | null }): boolean {
   if (!printable(g)) return false;
-  const figure = g.firstElementChild;
-  return !figure || !figureHidden(figure);
+  const root = g.firstElementChild;
+  if (!root) return true;
+  return paintsOf(root).some((p) => shows(p, root));
 }
 
 // ── the pictures and the wait ────────────────────────────────────────────────────────────────────────
@@ -638,16 +754,28 @@ export function installFilePrint(host: PrintHost): { button: HTMLButtonElement }
     for (const g of list) for (const h of (g.getAttribute("data-fv-hosts") || "").split(" ")) if (h) hosts.add(h);
     return Array.from(hosts);
   };
-  /** This press's probes by resolved URL, one Image each for the life of one press's wait: a re-aim (at a settle, at a
-   *  repaint) finds the probe it already made instead of minting one, so a URL whose picture failed is asked for once and
-   *  settles for good (a failed Image is complete; a fresh one never was). Cleared when a press or a choice begins its wait
-   *  (beginWait), never per re-aim, so the next press probes the body afresh and a URL a heal retry changed is a new key. */
+  /** This press's probes by resolved URL, one Image each for the life of one press's wait: a re-aim at a settle finds the
+   *  probe it already made instead of minting one, so a URL whose picture failed is asked for once and settles for good (a
+   *  failed Image is complete; a fresh one never was). Cleared when a press or a choice begins its wait (beginWait), never
+   *  per re-aim, so the next press probes the body afresh and a URL a heal retry changed is a new key; a repaint's re-aim
+   *  drops the complete ones first (dropDone). */
   const probes = new Map<string, Picture>();
   const probe = (url: string): Picture => {
     let p = probes.get(url);
     if (!p) { const im = new Image(); im.src = url; p = im; probes.set(url, p); }
     return p;
   };
+  /** Drop this press's probes that are complete, before a repaint's re-aim (reaim under the wait, recountAsk under the ask):
+   *  the landing's element fetches its URL again, and a finished probe's verdict is the old document's, so the URL is probed
+   *  once more against the new body, for the URL the element itself fetches (a request the browser folds into the element's
+   *  own while that is in flight: file-print-driver-browser.test.ts case (3d) counts none beyond the landing's); a probe
+   *  still in flight is kept, so the repaint costs no second request for it. Never called from the settle's own re-aim (aimWait's recursion): a
+   *  failed URL would be probed again at every settle, the request storm of the third review. The round-2 review's extra7-1,
+   *  landed 2026-09-20: before this a Reload landing mid-wait that named a poster or svg image URL whose probe had failed
+   *  answered from that probe, and window.print ran with the landing's own fetch still in flight
+   *  (file-print-driver-browser.test.ts case (3d)); under the ask the same landing read as nothing loading and the question
+   *  was called moot (case (13c)). */
+  const dropDone = (): void => { for (const [u, p] of probes) if (p.complete) probes.delete(u); };
   /** Remove the line. A word button of it holding the keyboard hands it back to the Print button, the trigger (the zoom
    *  flyout's and the Outline's Escape do the same for theirs), or, when the disarm is the body going out (`bodyOut`), to
    *  the viewer's body through the host's takeKeyboard (the changed-on-disk bar's hand-over, dropDiskBar: the button is not
@@ -738,12 +866,14 @@ export function installFilePrint(host: PrintHost): { button: HTMLButtonElement }
   };
   /** Begin the wait, at a press or a choice: the full deadline from now, and this press's probes afresh. */
   const beginWait = (): number => { probes.clear(); waitEnds = Date.now() + settleMs; return aimWait(settleMs); };
-  /** The body repainted during the wait (the observer: a reload's landing, a format pick, the editor's exit): the pictures
-   *  listened on were the old body's, detached by the swap, so the wait is aimed at the new body under the time left (none
+  /** The body repainted during the wait (the observer: a reload's landing, a format pick; the editor's exit lands under no
+   *  wait, since entering the editor seats the loader, which takes the body out and disarms): the pictures listened on
+   *  were the old body's, detached by the swap, so the wait is aimed at the new body under the time left (none
    *  for Keep waiting's wait); with nothing loading there the print runs at once, a settle in effect, and the line's count
    *  follows. The machine holds the phase (its `body` in during the wait is `none`): the re-aim is the driver's, as the
    *  collection is. */
   const reaim = (): void => {
+    dropDone();
     const n = aimWait(timeLeft());
     if (n === 0) { feed({ kind: "ready", why: "settled", pending: 0 }); return; }
     preparingLine(n);
@@ -752,7 +882,7 @@ export function installFilePrint(host: PrintHost): { button: HTMLButtonElement }
    *  and the listeners come off again, since nothing is awaited under the ask; the machine's `stalled` then rewrites the
    *  count in place, or over none loading disarms (the question is moot; a repaint is no answer to it, so nothing prints and
    *  the person may press again). */
-  const recountAsk = (): void => { const n = aimWait(null); dropSettle(); feed({ kind: "stalled", pending: n }); };
+  const recountAsk = (): void => { dropDone(); const n = aimWait(null); dropSettle(); feed({ kind: "stalled", pending: n }); };
   const doPrint = (): void => {
     const done = (): void => { window.removeEventListener("afterprint", done); feed({ kind: "printed" }); };
     window.addEventListener("afterprint", done);
@@ -806,11 +936,18 @@ export function installFilePrint(host: PrintHost): { button: HTMLButtonElement }
       case "skip": feed({ kind: "prepare", pending: beginWait() }); return;
       case "wait": showLine(preparingWords(state.pending), true); break;
       case "stall": {
-        // the deadline's ask, in the armed line's shape (the words, then two word buttons with titles); a repaint under a
+        // the deadline's ask, in the armed line's shape (the words, then two word buttons with titles), written INTO THE
+        // WAIT'S LINE when it stands: the same row, so the live region that announced the wait announces the ask (the words
+        // change, what followed them goes, the loader, and the buttons come; the round-2 review's ui-2, landed 2026-09-20:
+        // before this showLine removed the row and built another, so the accessibility tree lost one node and gained
+        // another at the transition, where a recount keeps the armed line's node and a repaint under the ask keeps this
+        // one; the order of role and words on a fresh row was measured to change nothing there); a repaint under a
         // standing ask rewrites the words in place, as a recount does the armed line's
         const words = stalledWords(state.pending);
         if (line && asked) { line.firstChild!.textContent = words; break; }
-        const row = showLine(words);
+        const row = line || showLine(words);
+        row.firstChild!.textContent = words;
+        while (row.firstChild!.nextSibling) row.firstChild!.nextSibling!.remove();
         for (const [btnWords, title, answer] of [[ANYWAY_WORDS, ANYWAY_TITLE, { kind: "anyway" }], [KEEP_WORDS, KEEP_TITLE, { kind: "keep" }]] as Array<[string, string, PrintEvent]>) {
           const b = doc.createElement("button") as HTMLButtonElement;
           b.type = "button"; b.textContent = btnWords;

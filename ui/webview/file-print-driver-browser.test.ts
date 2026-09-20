@@ -43,6 +43,17 @@
 // (14) the press-time read of the body (the round-2 review's tests-5): a press reads the body's children itself before it
 //     acts, so a swap in the press's own task, before the observer has run, is seen: the loader swapped in and a press in
 //     one task prints nothing and disables; content swapped in over the open's loader and a press in one task prints.
+// (3d) a Reload landing during the wait that names a URL the press already probed to its end (an svg <image href> whose
+//     route answered 404: the probe is complete): the finished probe is dropped and the URL probed again against the
+//     landing (file-print.ts dropDone), a request the browser folds into the landing element's own, still in flight, so no
+//     request beyond the landing's leaves the page and the print waits on that fetch and comes at its release; a probe
+//     still in flight is kept. Before this (the round-2 review's extra7-1, landed 2026-09-20) the wait answered from the old
+//     document's failed probe and window.print ran with the landing's fetch still in flight. (13c) the same landing under
+//     the deadline's ask: the count reads one, the ask stands and its line is the same row; before this the count read none
+//     and the question was called moot, the line gone with the landing's fetch in flight.
+// (5b) the deadline's ask is written INTO the wait's line: the same row (marked before the deadline, still marked after), the
+//     loader gone, the two word buttons in it (the round-2 review's ui-2, landed 2026-09-20: before this the ask was a fresh
+//     row, so the accessibility tree lost the wait's live region and gained another at the transition).
 // Each re-aim's deadline is executed by its own case: the repaint's in case (3c), a Reload landing mid-wait whose picture
 // is parked too, and the ask at the PRESS's deadline, not one restarted at the landing (the third review's tests-2: the
 // record's claim was pinned by a source-text census alone, and a re-aim restarting the full deadline left every leg
@@ -76,6 +87,9 @@ const NOPIC_NOTE = "# Plain\n\nText alone, no picture.\n\nLast line.\n";
 const TWO_SLOW_NOTE = "# Slow\n\nTwo slow ones ![](" + SLOW2 + ") and ![](" + SLOW3 + ").\n\nA session appended two figures.\n";
 const MEDIA_NOTE = "# Media\n\nA clip:\n\n<video poster=\"" + POSTER + "\" controls></video>\n\nA diagram:\n\n<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"8\" height=\"8\"><image href=\"" + IMAGE + "\" width=\"8\" height=\"8\"/></svg>\n\nLast line.\n";
 const HEADED_GATED = "# Title\n\n## One\n\nA remote picture ![](" + REMOTE + ").\n\n## Two\n\nMore text.\n\n## Three\n\nLast line.\n";
+const DIAGRAM = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"8\" height=\"8\"><image href=\"" + IMAGE + "\" width=\"8\" height=\"8\"/></svg>";
+const SLOW_DIAGRAM_NOTE = "# Diagram\n\nA local picture ![](" + QUICK + ") and a slow one ![](" + SLOW + ").\n\nA diagram:\n\n" + DIAGRAM + "\n\nLast line.\n";   // (3d), (13c): the diagram's route answers 404 to the render and to the press's probe
+const DIAGRAM_ONLY_NOTE = "# Diagram\n\nA diagram:\n\n" + DIAGRAM + "\n\nA session replaced the pictures.\n";   // the landing: the same svg image URL, its route parked from here on
 const TWO_HOST_NOTE = "# Two hosts\n\n<picture><source srcset=\"https://a.test/p.svg\" type=\"image/svg+xml\"><img src=\"https://b.test/p.svg\" alt=\"\"></picture>\n\nLast line.\n";
 const TWO_GATES_NOTE = "# Two placeholders\n\nOne ![](" + REMOTE + ") and two ![](https://" + REMOTE2_HOST + "/a.svg).\n\nLast line.\n";
 /** Three hundred paragraphs, then a lazy picture: at 900 by 700 the picture stands far past every distance at which the browser
@@ -997,6 +1011,133 @@ test("(14) a press reads the body's children before it acts, so a swap in the pr
     await frames(page, 2);
     assert.equal((await bar(page)).phase, null, "the real paint landed: live");
     assert.deepEqual(opened.errors, [], "no script error");
+    await page.close();
+  });
+});
+
+// ── (3d) and (13c): a landing naming a URL whose probe is complete ─────────────────────────────────
+
+/** The diagram's route: the render's own request and the press's probe answer 404 (the probe completes by its error), and
+ *  every request after that is parked, so the landing's own fetch and the re-aim's fresh probe can be told from the two
+ *  before and released by the test. Registered in the scene's `before`, after the scene's routes, so it is matched first. */
+function diagramRoute(): { before: (pg: any) => Promise<void>; parked: () => number; release: () => Promise<void> } {
+  const held: any[] = [];
+  let seen = 0;
+  return {
+    before: async (pg: any) => {
+      await pg.route((u: URL) => u.origin === ORIGIN && u.pathname === "/file" && (u.searchParams.get("path") || "").endsWith(IMAGE), (route: any) => {
+        seen++;
+        if (seen <= 2) return route.fulfill({ status: 404, contentType: "text/plain", body: "no such file" });
+        held.push(route);
+      });
+    },
+    parked: () => held.length,
+    release: async () => { for (const r of held.splice(0)) await r.fulfill({ status: 200, contentType: "image/svg+xml", body: SVG }); },
+  };
+}
+/** The diagram's element fetched (404) at the render and probed (404) at the press: two requests, both answered, and both
+ *  answers delivered to the page (two resource timing entries for the URL: the probe is complete, by its error, once the
+ *  second has landed; a picture completing rewrites no line, so the line cannot say). */
+async function diagramProbed(s: Scene, diagram: ReturnType<typeof diagramRoute>): Promise<void> {
+  for (let i = 0; i < 200 && s.requestsFor(IMAGE) < 2; i++) await frames(s.page, 1);
+  assert.equal(s.requestsFor(IMAGE), 2, "the diagram's own request and the press's probe (" + s.requestsFor(IMAGE) + ")"); assert.equal(diagram.parked(), 0, "both answered 404");
+  await s.page.waitForFunction((n: string) => performance.getEntriesByType("resource").filter((e) => decodeURIComponent(e.name).includes("/docs/" + n)).length >= 2, IMAGE, { timeout: 5000 });
+}
+
+test("(3d) a Reload landing during the wait names an svg image URL the press already probed to its end (its route answered 404, so the probe is complete): the finished probe is dropped and the URL probed again against the landing, a request the browser folds into the landing element's own, still parked, so the wait goes on and the print comes at that request's release (FAILS BEFORE: the wait answered from the old document's failed probe and window.print ran at the landing with its own fetch still in flight); the parked slow picture of the old body never printed anything", { timeout: 120000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const diagram = diagramRoute();
+    const s = await scene(browser, "pane", SLOW_DIAGRAM_NOTE, { held: [SLOW], before: diagram.before });
+    const { page } = s;
+    await parked(s, [SLOW]);
+    for (let i = 0; i < 200 && s.requestsFor(IMAGE) < 1; i++) await frames(page, 1);
+    assert.equal(s.requestsFor(IMAGE), 1, "the diagram's element asked for its picture at the render (404)");
+    await page.click(PRINT_BTN);
+    await diagramProbed(s, diagram);
+    let b = await bar(page);
+    assert.equal(b.phase, "preparing", "the wait runs: the slow picture is loading and the diagram's probe has failed (a picture completing rewrites no line, so the line still counts both)");
+    await reloadTo(page, DIAGRAM_ONLY_NOTE);
+    await page.waitForFunction(() => !document.getElementById("fileview-save-err") && document.querySelectorAll("#romp-fileview .fileview-body img").length === 0 && !!document.querySelector("#romp-fileview .fileview-body image"), null, { timeout: 10000 });
+    for (let i = 0; i < 100 && diagram.parked() < 1; i++) await frames(page, 1);
+    await frames(page, 6);
+    b = await bar(page);
+    assert.deepEqual({ prints: (await prints(page)).length, requests: s.requestsFor(IMAGE), parked: diagram.parked(), phase: b.phase, line: b.line },
+      { prints: 0, requests: 3, parked: 1, phase: "preparing", line: "Preparing 1 picture\u2026" },
+      "FAILS BEFORE: the landing printed at once (prints 1, phase null) with the diagram's own request parked; now the finished probe is dropped, the fresh probe is folded by the browser into the landing element's request, still parked (three requests in all, nothing more left the page), and the wait goes on over it");
+    await s.release([SLOW]);
+    await frames(page, 6);
+    assert.equal((await prints(page)).length, 0, "the old body's slow picture landing prints nothing: it is not in the body");
+    await diagram.release();
+    await printsReach(page, 1);
+    const p = await prints(page);
+    assert.equal(p.length, 1, "the print at the release of the landing's request, which answered the element and the probe"); assert.equal(p[0].line, false);
+    await frames(page, 6);
+    assert.equal(s.requestsFor(IMAGE), 3, "nothing asked again after the print");
+    await frames(page, 1);
+    assert.equal((await bar(page)).phase, null, "the bar rested");
+    assert.deepEqual(s.errors, [], "no script error");
+    await page.close();
+  });
+});
+
+test("(13c) the same landing under the deadline's ask: the finished probe is dropped and the URL probed again, so the count reads one and the ask stands, its words rewritten in the same row (FAILS BEFORE: the old failed probe read as complete, the count read none, the question was called moot and the line went, with the landing's fetch still in flight); Escape disarms; the releases print nothing", { timeout: 120000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const diagram = diagramRoute();
+    const s = await scene(browser, "pane", SLOW_DIAGRAM_NOTE, { held: [SLOW], before: diagram.before });
+    const { page } = s;
+    await parked(s, [SLOW]);
+    await page.evaluate(() => { (window as any).FV.setPrintSettleMs(600); });
+    await page.click(PRINT_BTN);
+    await diagramProbed(s, diagram);
+    await askReached(page);
+    await markLine(page);
+    await reloadTo(page, DIAGRAM_ONLY_NOTE);
+    await page.waitForFunction(() => !document.getElementById("fileview-save-err") && document.querySelectorAll("#romp-fileview .fileview-body img").length === 0 && !!document.querySelector("#romp-fileview .fileview-body image"), null, { timeout: 10000 });
+    for (let i = 0; i < 100 && diagram.parked() < 1; i++) await frames(page, 1);
+    await frames(page, 6);
+    const b = await bar(page);
+    assert.deepEqual({ prints: (await prints(page)).length, requests: s.requestsFor(IMAGE), parked: diagram.parked(), phase: b.phase, line: b.line, marked: await lineMarked(page), buttons: b.buttons },
+      { prints: 0, requests: 3, parked: 1, phase: "stalled", line: STALLED_ONE, marked: true, buttons: [ANYWAY_WORDS, KEEP_WORDS] },
+      "FAILS BEFORE: the landing's count read none from the old failed probe, the flow rested and the line went (phase null, line null); now the URL is probed again, the probe folded into the landing element's parked request (three requests in all), the count reads one and the ask stands in the same row");
+    await page.keyboard.press("Escape");
+    await frames(page, 1);
+    assert.equal((await bar(page)).phase, null, "Escape under the ask disarms");
+    await s.release([SLOW]); await diagram.release();
+    await frames(page, 6);
+    assert.equal((await prints(page)).length, 0, "nothing printed by the releases: the wait was disarmed");
+    await page.evaluate(() => { (window as any).FV.setPrintSettleMs(null); });
+    assert.deepEqual(s.errors, [], "no script error");
+    await page.close();
+  });
+});
+
+// ── (5b) the ask written into the wait's line ─────────────────────────────────────────────────────
+
+test("(5b) the deadline's ask is written into the wait's line: the row marked during the wait is the row the ask stands in, the loader gone from it and the two word buttons in it, one line on the card (FAILS BEFORE: the ask was a fresh row, so the mark was gone with the wait's line); Escape disarms", { timeout: 120000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const s = await scene(browser, "pane", SLOW_NOTE, { held: [SLOW] });
+    const { page } = s;
+    await parked(s, [SLOW]);
+    await page.evaluate(() => { (window as any).FV.setPrintSettleMs(600); });
+    await page.click(PRINT_BTN);
+    let b = await bar(page);
+    assert.equal(b.phase, "preparing"); assert.equal(b.line, "Preparing 1 picture\u2026");
+    assert.equal(await page.evaluate(() => !!document.querySelector("#fileview-print-line .fileview-print-load")), true, "the wait's line carries the loader");
+    await markLine(page);
+    await askReached(page);
+    b = await bar(page);
+    assert.deepEqual({ marked: await lineMarked(page), loader: await page.evaluate(() => !!document.querySelector("#fileview-print-line .fileview-print-load")), lines: b.lines, buttons: b.buttons, titles: b.titles, phase: b.phase },
+      { marked: true, loader: false, lines: 1, buttons: [ANYWAY_WORDS, KEEP_WORDS], titles: [ANYWAY_TITLE, KEEP_TITLE], phase: "stalled" },
+      "FAILS BEFORE: the mark was gone (the ask a fresh row); now the same row reads the ask, its loader gone and its two buttons in");
+    assert.equal((await prints(page)).length, 0, "nothing printed at the deadline");
+    await page.keyboard.press("Escape");
+    await frames(page, 1);
+    assert.equal((await bar(page)).phase, null, "Escape under the ask disarms");
+    await s.release([SLOW]);
+    await frames(page, 6);
+    assert.equal((await prints(page)).length, 0);
+    await page.evaluate(() => { (window as any).FV.setPrintSettleMs(null); });
+    assert.deepEqual(s.errors, [], "no script error");
     await page.close();
   });
 });

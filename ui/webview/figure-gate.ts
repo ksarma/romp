@@ -49,6 +49,15 @@
 // sanitizer keeps `class`), so nothing here FINDS anything by class: the placeholder is found by its `data-act` and its
 // label by `data-fv-label`, marks the sanitizer never lets through (ALLOW_DATA_ATTR: false); the classes are for the
 // sheets alone.
+//
+// The gate judges each URL AS WRITTEN and reads nothing of the response. A host that answers a figure's request with a
+// redirect to a second host is reached by the browser, which follows the redirect on the click's restore (loadGatedHost)
+// and on the print's (loadGatedFigure, file-print.ts) alike, and that second host is named nowhere, not in the
+// placeholder's label and not in the print's with-button title, and joins no loaded set: a later figure on it is gated
+// (a probe of 2026-09-19, `https://redirecting.test/r.svg` answered 302 to `https://elsewhere.test/e.svg`, and
+// file-print-egress-browser.test.ts case (13), the same host answered 302 to `https://elsewhere.test/from/r.svg`: both
+// hosts requested on either road, the label and the title naming redirecting.test alone). Whether such a redirect should be refused, followed or reported is a ruling not taken (plans/markdown-viewer.md,
+// the print follow-on's open point 7); this records what the gate does.
 import { XLINK_NS } from "./md-links";
 import { loadSettings, onExternalSettingsChange } from "./settings";
 
@@ -437,7 +446,8 @@ export function regateFigures(doc: ParentNode): void {
 }
 /** The click: the host joins the document's loaded set and every placeholder waiting on it (alone) is restored. A click on a
  *  placeholder keeps this host-wide, page-life meaning (the ruling: for the session); the print's one-time restore is
- *  loadGatedFigure below. */
+ *  loadGatedFigure below. The restored figures' requests go where their URLs point, a redirect followed to a host this
+ *  never names or grants (the header). */
 export function loadGatedHost(host: string, doc: ParentNode = document): void {
   if (!host) return;
   loadedHosts.add(host.toLowerCase());
@@ -452,7 +462,8 @@ export function loadGatedHost(host: string, doc: ParentNode = document): void {
  *  (found by the delegated action, as gateOf and regateFigures find one, never by the class) and was restored; false, and
  *  nothing touched, for any other element. Before the round-2 review (2026-09-19) the print restored by host through
  *  loadGatedHost, so a host one printable and one folded placeholder shared had both restored and the folded picture
- *  fetched for a print that never shows it. */
+ *  fetched for a print that never shows it. The figure's requests go where its URLs point, a redirect followed to a host the
+ *  print's title never names and this never grants (the header). */
 export function loadGatedFigure(wrap: Element): boolean {
   if (wrap.getAttribute("data-act") !== GATE_ACT) return false;
   restore(wrap);

@@ -132,7 +132,7 @@ async function gatedSettled(s: Scene): Promise<void> {
   assert.equal(s.heldCount(), 1, "the slow picture's request is parked (" + SLOW_PATH + ")");
 }
 
-test("case 1: a gated note. The chord arms (FAILS BEFORE: the raw print runs unprevented with a placeholder standing and an <img> incomplete); Escape and a second press disarm; without them prints once the held picture lands, the placeholder kept; with them loads the host and prints after that picture settled; every print fires with every <img> complete", { timeout: 120000 }, async (t) => {
+test("case 1: a gated note. The chord arms (FAILS BEFORE: the raw print runs unprevented with a placeholder standing and an <img> incomplete); Escape and a second press disarm; without them prints once the held picture lands, the placeholder kept; with them restores the placeholder and prints after that picture settled; every print fires with every <img> complete", { timeout: 120000 }, async (t) => {
   await inBrowser(t, async (browser) => {
     const s = await scene(browser, "pane", GATED_NOTE);
     const { page } = s;
@@ -207,7 +207,7 @@ test("case 1: a gated note. The chord arms (FAILS BEFORE: the raw print runs unp
     assert.equal(b.phase, "armed", "the placeholder still stands, so the press arms again");
     await page.click('#fileview-print-line button:has-text("Print with them")');
     b = await bar(page);
-    assert.equal((await imgFacts(page)).gates, 0, "the placeholder is restored at once (loadGatedHost, the click's own path)");
+    assert.equal((await imgFacts(page)).gates, 0, "the placeholder is restored at once (loadGatedFigure: this placeholder alone, and its host granted nothing for the page)");
     assert.equal(b.phase, "preparing"); assert.equal(b.line, "Preparing 1 picture…", "the remote picture is the one loading now");
     assert.equal((await prints(page)).length, 1, "no print before the remote picture settled");
     await printsReach(page, 2);

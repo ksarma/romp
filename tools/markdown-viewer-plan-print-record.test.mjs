@@ -199,8 +199,10 @@ test('P2: the deadline asks instead of printing, Print anyway prints, Keep waiti
   assert.ok(P2.includes('Nothing listens under the ask: "Keep waiting" reads the body as it stands then, so a picture that landed meanwhile is not waited on again, and with none left loading the print runs at once.'));
   // the driver: the ask in the armed line\'s shape, rewritten in place under a repaint; the recount under the ask
   const stall = between(flow, 'case "stall": {', '\n      }');
-  inOrder(stall, ['const words = stalledWords(state.pending);', 'if (line && asked) { line.firstChild!.textContent = words; break; }', 'const row = showLine(words);', 'b.className = "fileview-btn fileview-err-act";', 'asked = true;'], 'the ask\'s line');
-  assert.ok(flow.includes('const recountAsk = (): void => { const n = aimWait(null); dropSettle(); feed({ kind: "stalled", pending: n }); };'), 'a repaint under the ask: counted through the wait\'s collection, the listeners off again');
+  inOrder(stall, ['const words = stalledWords(state.pending);', 'if (line && asked) { line.firstChild!.textContent = words; break; }', 'const row = line || showLine(words);', 'row.firstChild!.textContent = words;', 'while (row.firstChild!.nextSibling) row.firstChild!.nextSibling!.remove();', 'b.className = "fileview-btn fileview-err-act";', 'asked = true;'], 'the ask\'s line: the wait\'s row when one stands, its words rewritten and what followed them removed (round 4: the round-2 review\'s ui-2; file-print-driver-browser.test.ts case (5b) executes the same row)');
+  assert.ok(flow.includes('const recountAsk = (): void => { dropDone(); const n = aimWait(null); dropSettle(); feed({ kind: "stalled", pending: n }); };'), 'a repaint under the ask: the complete probes dropped, counted through the wait\'s collection, the listeners off again');
+  assert.ok(flow.includes('const dropDone = (): void => { for (const [u, p] of probes) if (p.complete) probes.delete(u); };') && between(flow, 'const reaim = (): void => {', '\n  };').includes('dropDone();'), 'a repaint\'s re-aim drops the complete probes first, under the wait and under the ask (round 4: the round-2 review\'s extra7-1; file-print-driver-browser.test.ts cases (3d) and (13c) execute both)');
+  assert.ok(!between(flow, 'const aimWait = (deadlineMs: number | null): number => {', '\n  };').includes('dropDone'), 'never from the settle\'s own re-aim, which would probe a failed URL again at every settle');
   assert.ok(P2.includes('A repaint under the ask counts the new body\'s pictures still loading again (`recountAsk`, through the wait\'s own collection, the listeners taken off again, then the machine\'s `stalled` with the count): over any the line\'s count follows in place; over none the question is moot and the flow rests, the line gone, so the person may press again. A repaint under the ask NEVER prints, since it is no answer to the ask'));
   assert.ok(!P2.includes('none loading prints, as a re-aim does'), 'the print over none is gone from the record');
   assert.ok(read('ui', 'webview', 'file-print.test.ts').includes('a repaint under the ask counts again or rests over none, and never prints'), 'the node case\'s title says so, and its body asserts the disarm');
@@ -283,11 +285,13 @@ test('P2: only a placeholder that reaches the paper is counted, named and restor
   assert.ok(rend.includes('return el.checkVisibility({ visibilityProperty: true, opacityProperty: true }) && el.getClientRects().length > 0;'), 'checkVisibility with visibility and opacity, and a client rect');
   assert.ok(P2.includes('Then the browser\'s own answer, where it can be asked (`rendered`: `checkVisibility` with visibility and opacity read, and at least one client rect; null on a stand-in under node or an engine without the API, where the walk alone decides)'));
   assert.ok(P2.includes('falls to NOT printable, the unknown side answered against the fetch'));
-  // the figure's attributes: an enumeration, since the sheet hides every child of a placeholder but its label
-  const hid = between(flow, 'export function figureHidden(el: FigureNode): boolean {', '\n}');
-  inOrder(hid, ['if (el.hasAttribute("hidden") || el.hasAttribute("popover")) return true;', 'if (el.localName !== "svg") return false;', 'if (keyword(el, "display") === "none") return true;', 'if (vis === "hidden" || vis === "collapse") return true;', 'return op !== "" && /^[0.]+%?$/.test(op) && parseFloat(op) === 0;'], 'figureHidden: hidden and popover on any element, then the svg\'s three presentation attributes, else on the paper');
+  // the figure's own hiding: hidden and popover on an HTML element, the author's display, and the computed visibility and opacity (round 4: the round-3 review's correctness-1 and regression-1)
+  assert.ok(flow.includes('export function figureHidden(el: FigureNode): boolean { return offPaper(el, true); }'), 'figureHidden reads the element as the one that paints');
+  const off = between(flow, 'function offPaper(el: FigureNode, self: boolean): boolean {', '\n}');
+  inOrder(off, ['if (isHtml(el) && (el.hasAttribute("hidden") || el.hasAttribute("popover"))) return true;', 'const display = authorDisplay(el);', 'const cs = computedOf(el);', 'if (cs === null) return false;', 'if (Number(cs.opacity) === 0) return true;', 'return self && (cs.visibility === "hidden" || cs.visibility === "collapse");'], 'offPaper: the HTML attributes, the author\'s display, then the computed opacity and, for the painting element, the computed visibility; no pattern over the attribute\'s text');
+  assert.ok(!/parseFloat|\/\^/.test(off), 'no parse of the attribute\'s text and no pattern: the computed value is read');
   const join = between(flow, 'export function figurePrintable(', '\n}');
-  assert.ok(join.includes('if (!printable(g)) return false;') && join.includes('return !figure || !figureHidden(figure);'), 'figurePrintable joins the two; a placeholder with no figure answers for itself');
+  assert.ok(join.includes('if (!printable(g)) return false;') && join.includes('if (!root) return true;') && join.includes('return paintsOf(root).some((p) => shows(p, root));'), 'figurePrintable joins the two over every painting element of the figure; a placeholder with no figure answers for itself (round 4: the round-3 review\'s regression-3)');
   assert.ok(P2.includes('(`figureHidden`: `hidden` whatever its value and `popover` on any element; on an svg `display="none"`, `visibility` hidden or collapse, `opacity` zero), an enumeration'));
   assert.ok(P2.includes('every other kept attribute leaves the figure on the paper as far as the flow reads, an svg\'s `transform`, `clip-path`, `mask` and `filter` among them (open point 8)'));
   // the driver reads the body's placeholders through figurePrintable, and every count, title and restore goes through gates()
@@ -646,16 +650,17 @@ test('Derivations and their unknown cases: the paragraph stands between P7 and t
   assert.ok(read('ui', 'webview', 'file-print-armed-browser.test.ts').includes('test("(D) the census of the printable rule\'s unknown side:'), 'the armed leg\'s case (D)');
   // figureHidden: the permissive side, named as such
   assert.ok(D.includes('every other kept attribute or value leaves the figure on the paper as far as the flow reads, the PERMISSIVE side, taken because the sheet hides every child of a placeholder but its label while it is gated and the browser cannot be asked about the figure'));
-  const hid = between(flow, 'export function figureHidden(', '\n}');
-  assert.ok(hid.includes('if (el.localName !== "svg") return false;') && hid.includes('return op !== "" && /^[0.]+%?$/.test(op) && parseFloat(op) === 0;'), 'not an svg: on the paper; an svg: on the paper unless the three attributes say otherwise');
+  const hid = between(flow, 'function offPaper(el: FigureNode, self: boolean): boolean {', '\n}');
+  assert.ok(hid.includes('if (cs === null) return false;'), 'no browser to compute a style (a stand-in): the attributes alone, on the paper otherwise');
   assert.ok(!/transform|clip-path|mask|filter/.test(hid), 'transform, clip-path, mask and filter are not read');
-  assert.ok(unit.includes('test("figureHidden enumerates the kept attributes that leave a figure off the paper once restored:'), 'the figureHidden case');
+  assert.ok(unit.includes('test("figureHidden under node, where no browser computes a style:'), 'the figureHidden case under node');
+  assert.ok(exists('ui', 'webview', 'file-print-figure-browser.test.ts') && read('ui', 'webview', 'file-print-figure-browser.test.ts').includes('for every shape the flow\'s answer equals the browser\'s own answer for the shape\'s ungated twin'), 'the figure leg in Chromium, the computed half');
   assert.ok(unit.includes('assert.equal(figureHidden(media("img", { display: "none" })), false,') && unit.includes('assert.equal(figureHidden(media("picture", { inert: "" })), false,') && unit.includes('assert.equal(figureHidden(media("svg", { opacity: "0.5" })), false,'), 'the permissive answers executed');
   assert.ok(OPEN.includes('8. The figure half of the printable rule answers on the permissive side.'));
   // figurePrintable, collectPictures
   assert.ok(D.includes('both must hold, and a placeholder with no figure inside answers for itself'));
-  assert.ok(between(flow, 'export function figurePrintable(', '\n}').includes('return !figure || !figureHidden(figure);'));
-  assert.ok(unit.includes('test("figurePrintable: a placeholder reaches the paper when it does (printable: the walk and the browser) and the figure it wraps carries none of the attributes'), 'the figurePrintable case');
+  assert.ok(between(flow, 'export function figurePrintable(', '\n}').includes('return paintsOf(root).some((p) => shows(p, root));'));
+  assert.ok(unit.includes('test("figurePrintable under node: a placeholder reaches the paper when it does (printable: the walk and the browser) and a painting element of the figure it wraps shows'), 'the figurePrintable case');
   assert.ok(unit.includes('test("collectPictures reads the browser\'s answer through printable too:'), 'the collectPictures case over the browser\'s answer');
   // step under the ask
   assert.ok(D.includes('a `stalled` with nothing loading disarms and rests, never prints'));

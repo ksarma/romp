@@ -9,7 +9,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { hideEdges } from "../test-dom-shim";   // every stand-in below that carries a tree edge (parentElement, children, childNodes, firstElementChild) hides it, the shared module's rule (ui/test-dom-shim.test.ts's ratchet)
 import { step, RESTING, DISABLED, armedWords, preparingWords, stalledWords, isPrintChord, isPrintKeys, settlePictures, collectPictures, bodyReady, rootKind, PRINT_SETTLE_MS, setPrintSettleMs, printSettleMs,
-  WITH_WORDS, WITHOUT_WORDS, ANYWAY_WORDS, KEEP_WORDS, TAB_WORDS, NO_TAB_WORDS, pdfFrameWindow, READY_ROOTS, NOT_READY_ROOTS, LINE_ROOTS, PDF_LOADER_ROOT, printable, figurePrintable, figureHidden, rendered,
+  WITH_WORDS, WITHOUT_WORDS, ANYWAY_WORDS, KEEP_WORDS, TAB_WORDS, NO_TAB_WORDS, pdfFrameWindow, READY_ROOTS, NOT_READY_ROOTS, LINE_ROOTS, PDF_LOADER_ROOT, printable, figurePrintable, figureHidden, rendered, SVG_NS, PAINTS_SEL,
   type PrintState, type Picture, type Timers, type BodyLike, type PrintableNode, type FigureNode } from "./file-print";
 
 // ── the machine ─────────────────────────────────────────────────────────────────────────────────────
@@ -370,44 +370,55 @@ test("rendered: the browser's own answer where it can be asked (checkVisibility 
   assert.deepEqual(opts, [{ visibilityProperty: true, opacityProperty: true }], "checkVisibility is asked with visibility and opacity read (an svg's visibility=hidden or opacity=0, kept attributes, leave nothing on the paper) and content-visibility auto left alone (the sheets use none, and a picture far below the fold is on the paper)");
 });
 
-/** A figure stand-in inside a placeholder: its own attributes, by name and value. */
-const media = (localName: string, attrs: Record<string, string> = {}): FigureNode => ({ localName, hasAttribute: (k) => k in attrs, getAttribute: (k) => (k in attrs ? attrs[k] : null) });
-test("figureHidden enumerates the kept attributes that leave a figure off the paper once restored: hidden (any value) and popover on any element, and an svg's display none, visibility hidden or collapse, and opacity 0; every other attribute, and every other value, leaves it on the paper (the browser cannot be asked about a gated figure: the sheet hides every child of a placeholder but its label)", () => {
+/** A figure stand-in inside a placeholder: its name, its attributes and, for an SVG element, its namespace (an HTML one has
+ *  none here, as the flow reads a stand-in without one). It has no document, so no browser computes its style: the
+ *  attributes alone answer, as printable's walk answers alone without rendered. */
+const media = (localName: string, attrs: Record<string, string> = {}, namespaceURI?: string): FigureNode => ({ localName, namespaceURI, hasAttribute: (k) => k in attrs, getAttribute: (k) => (k in attrs ? attrs[k] : null) });
+test("figureHidden under node, where no browser computes a style: hidden (any value) and popover on an HTML element leave the figure off the paper; on an SVG element neither is read, since the browser ignores them there (an <svg hidden> paints, measured in Chromium, Firefox and WebKit); a presentation attribute needs the browser's parse and reads nothing here (file-print-figure-browser.test.ts executes display, visibility and opacity over the real gate in Chromium, the spellings of zero among them); every other attribute leaves the figure on the paper", () => {
   assert.equal(figureHidden(media("img")), false, "a plain picture");
   assert.equal(figureHidden(media("img", { hidden: "" })), true, "hidden");
   assert.equal(figureHidden(media("img", { hidden: "until-found" })), true, "hidden=until-found: skipped until a find reveals it");
   assert.equal(figureHidden(media("img", { popover: "" })), true, "a popover is shown by a call alone, which a note cannot make");
   assert.equal(figureHidden(media("img", { popover: "manual" })), true);
-  assert.equal(figureHidden(media("svg", { display: "none" })), true, "an svg's display none");
-  assert.equal(figureHidden(media("svg", { display: "NONE" })), true, "the keyword read case-insensitively, as CSS does");
-  assert.equal(figureHidden(media("svg", { display: " none " })), true, "with the spaces the attribute may carry");
-  assert.equal(figureHidden(media("svg", { display: "inline" })), false, "another display value: on the paper");
-  assert.equal(figureHidden(media("svg", { visibility: "hidden" })), true);
-  assert.equal(figureHidden(media("svg", { visibility: "collapse" })), true, "collapse hides as hidden does outside a table");
-  assert.equal(figureHidden(media("svg", { visibility: "visible" })), false);
-  assert.equal(figureHidden(media("svg", { opacity: "0" })), true);
-  assert.equal(figureHidden(media("svg", { opacity: "0.0" })), true); assert.equal(figureHidden(media("svg", { opacity: "0%" })), true, "a zero percentage");
-  assert.equal(figureHidden(media("svg", { opacity: "0.5" })), false, "a faint figure is on the paper"); assert.equal(figureHidden(media("svg", { opacity: "1" })), false);
+  assert.equal(figureHidden(media("svg", { hidden: "" }, SVG_NS)), false, "hidden on an SVG element is not read: the browser paints an <svg hidden>");
+  assert.equal(figureHidden(media("image", { popover: "" }, SVG_NS)), false, "popover on an SVG element: not read either");
+  assert.equal(figureHidden(media("svg", { display: "none" }, SVG_NS)), false, "a presentation attribute with no browser to parse it reads nothing under node (in Chromium the figure leg reads it hidden)");
+  assert.equal(figureHidden(media("svg", { visibility: "hidden" }, SVG_NS)), false, "the same for visibility");
+  assert.equal(figureHidden(media("svg", { opacity: "0" }, SVG_NS)), false, "and for opacity: the computed value is the browser's, and there is none here");
   assert.equal(figureHidden(media("img", { display: "none" })), false, "display is no HTML attribute: on an img it styles nothing (the style attribute keeps colour alone), so the picture is on the paper");
   assert.equal(figureHidden(media("video", { poster: "x", width: "0" })), false, "a zero size is a degenerate picture the browser still draws: on the paper as far as the flow reads");
   assert.equal(figureHidden(media("picture", { inert: "" })), false, "inert renders");
+  assert.equal(figureHidden(media("svg", { opacity: "0.5" })), false, "a faint figure is on the paper (in the browser too: the figure leg)");
 });
 
-test("figurePrintable: a placeholder reaches the paper when it does (printable: the walk and the browser) and the figure it wraps carries none of the attributes that would hide it once restored (figureHidden); FAILS BEFORE: an <img hidden> inside its placeholder, or a gated svg with display none, had the placeholder counted and its figure fetched by Print with them for a print that never shows it; no media child leaves the placeholder's own answer", () => {
+test("figurePrintable under node: a placeholder reaches the paper when it does (printable: the walk and the browser) and a painting element of the figure it wraps shows: the root when it is an img, a video or an audio with controls, and the descendants PAINTS_SEL names through querySelectorAll (none on a stand-in without it), each read with its ancestors up to the root. FAILS BEFORE the round-2 census: an <img hidden> inside its placeholder had the placeholder counted and its figure fetched by Print with them for a print that never shows it; FAILS BEFORE the round-3 review: a <picture> whose <img> carries hidden was read at the picture alone and counted. No media child leaves the placeholder's own answer; the gated figure's own checkVisibility is not read", () => {
   // a placeholder stand-in around `figure`: hideEdges makes a node's methods non-enumerable, so a spread of one copies nothing; the fields are named
   const around = (base: PrintableNode, figure: FigureNode | null): PrintableNode & { firstElementChild: FigureNode | null } =>
     hideEdges({ localName: base.localName, parentElement: base.parentElement, hasAttribute: (k: string) => base.hasAttribute(k), checkVisibility: base.checkVisibility, getClientRects: base.getClientRects, firstElementChild: figure });
   const wrap = (cv: boolean, rects: number, figure: FigureNode | null): PrintableNode & { firstElementChild: FigureNode | null } => around(seen("span", cv, rects), figure);
   assert.equal(figurePrintable(wrap(true, 1, media("img"))), true, "the placeholder rendered and its picture plain");
   assert.equal(figurePrintable(wrap(true, 1, media("img", { hidden: "" }))), false, "FAILS BEFORE: the placeholder's label is rendered while the picture it wraps carries hidden");
-  assert.equal(figurePrintable(wrap(true, 1, media("svg", { display: "none" }))), false, "FAILS BEFORE: an svg with display none");
-  assert.equal(figurePrintable(wrap(true, 1, media("svg", { visibility: "hidden" }))), false); assert.equal(figurePrintable(wrap(true, 1, media("svg", { opacity: "0" }))), false);
+  assert.equal(figurePrintable(wrap(true, 1, media("video"))), true, "a clip paints its poster or a frame, or its box");
+  assert.equal(figurePrintable(wrap(true, 1, media("audio", { controls: "" }))), true, "a sound with controls paints them"); assert.equal(figurePrintable(wrap(true, 1, media("audio"))), false, "a sound without controls paints nothing: the browser's own sheet hides it (the figure leg measures it in Chromium)");
+  assert.equal(figurePrintable(wrap(true, 1, media("picture"))), false, "a picture paints through its img: a stand-in with no descendants paints nothing");
+  assert.equal(figurePrintable(wrap(true, 1, media("svg", {}, SVG_NS))), false, "an svg paints through its graphics elements: none on a stand-in");
   assert.equal(figurePrintable(wrap(false, 0, media("img"))), false, "the placeholder itself not rendered (a popover, a ruby's rp, a canvas's fallback content)");
   assert.equal(figurePrintable(wrap(true, 1, null)), true, "no media child (the placeholder alone): its own answer");
   assert.equal(figurePrintable(around(node("span"), media("img"))), true, "no browser to ask: the walk alone on the placeholder, the attributes on the figure");
   assert.equal(figurePrintable(around(node("span", [], node("details")), media("img"))), false, "the walk on the placeholder: a closed details");
   const sheetHidden: FigureNode & PrintableNode = hideEdges({ localName: "img", hasAttribute: () => false, getAttribute: () => null, parentElement: null, checkVisibility: () => false, getClientRects: () => ({ length: 0 }) });
-  assert.equal(figurePrintable(wrap(true, 1, sheetHidden)), true, "the browser's answer for the gated figure is not read: the sheet hides every child of a placeholder but its label, so it would say hidden for every figure");
+  assert.equal(figurePrintable(wrap(true, 1, sheetHidden)), true, "the gated figure's own checkVisibility is not read (the sheet's display none on it would say hidden for every gated figure): its HTML attributes, the author's display and the computed visibility and opacity are, and a stand-in with no document offers none of the last three");
+  // the descendants: a picture stand-in whose querySelectorAll hands PAINTS_SEL its img, the img's parent the picture
+  const holding = (pic: FigureNode, img: FigureNode): FigureNode => hideEdges({ ...pic, querySelectorAll: (sel: string) => ({ forEach: (cb: (el: FigureNode) => void) => { assert.equal(sel, PAINTS_SEL, "the descendants are asked for by PAINTS_SEL"); cb(img); } }) });
+  const inside = (attrs: Record<string, string>, parent: FigureNode): FigureNode => hideEdges({ ...media("img", attrs), parentElement: parent });
+  const plainPic = media("picture"); const plainImg = inside({}, plainPic);
+  assert.equal(figurePrintable(wrap(true, 1, holding(plainPic, plainImg))), true, "a picture with a plain img: the img paints");
+  const hiddenImg = inside({ hidden: "" }, plainPic);
+  assert.equal(figurePrintable(wrap(true, 1, holding(plainPic, hiddenImg))), false, "FAILS BEFORE: <picture><img hidden> was read at the picture alone and counted; the img is the element that paints, and it is hidden");
+  const hiddenPic = media("picture", { hidden: "" }); const imgUnder = inside({}, hiddenPic);
+  assert.equal(figurePrintable(wrap(true, 1, holding(hiddenPic, imgUnder))), false, "a plain img under a hidden picture: the ancestor takes it off the paper");
+  const popPic = media("picture", { popover: "" });
+  assert.equal(figurePrintable(wrap(true, 1, holding(popPic, inside({}, popPic)))), false, "a popover ancestor the same");
 });
 
 test("collectPictures reads the browser's answer through printable too: a picture with no box (a ruby's rp, a canvas's fallback content, a popover not shown) or without a rect (an svg image inside defs) is not collected, not set eager and not probed", () => {
@@ -548,15 +559,27 @@ test("bodyReady reads the element children through `children`, else through `chi
 // ── the census of the body's roots (P7) ────────────────────────────────────────────────────────────
 // bodyReady classes a child it has never seen as UNKNOWN, and an unknown child makes the body not in whatever stands beside
 // it (the safe side: a press that prints what stands is the dangerous one; the person can still close and reopen), so a
-// root the viewer gains would lock Print silently unless something reads the viewer. This census does: it reads file-view.ts, finds every site that seats an element in the body and resolves
-// each seated expression down to the root element's `el("<tag>", "<class>")`, then holds that set equal to the flow's three
-// lists (READY_ROOTS, NOT_READY_ROOTS, LINE_ROOTS) and executes bodyReady over each root as its list says. The sites, by
-// hand, are the lines this command prints:
-//   grep -nP '(?<!document\.)\bbody\.(replaceChildren|prepend|appendChild)\(' ui/webview/file-view.ts
-// and the census resolves each argument of those calls: a builder call (`mdBlock(...)`) to the `el(...)` assigned to the
-// variable the builder's last `return` names; a bare variable to the expression assigned to it last before the site; a
-// ternary to both its branches; an `el("<tag>", "<class>")` to itself. An expression it cannot resolve fails the census with
-// the expression, so a new shape is read by hand rather than skipped.
+// root the viewer gains would lock Print silently unless something reads the viewer. This census does: it reads file-view.ts
+// and collects EVERY member the viewer reaches on `body` (`body.<member>`, with `document.body` and any other receiver's
+// `.body` aside), then classes each use by what follows the member: a CALL of a seating method has its seated arguments
+// resolved down to the root element's `el("<tag>", "<class>")` (SEATING: replaceChildren, prepend and append seat every
+// argument; appendChild and insertBefore their first, insertBefore's second being the reference child; insertAdjacentElement
+// its second, the first being the position); a call of a method that seats nothing passes (NON_SEATING_CALLS); an
+// ASSIGNMENT to a scalar passes (NON_SEATING_ASSIGNS: scrollTop, scrollLeft, tabIndex); a bare READ passes, since a read
+// seats nothing; and EVERY OTHER USE FAILS the census with its line: a call it does not know, an assignment it does not
+// know (innerHTML, outerHTML, textContent and insertAdjacentHTML seat what no resolver can read), and a member that reaches
+// a child node (firstChild, children and their kin) followed by a further access, behind which a seat could hide. The file
+// is read once more for a child-level seat anywhere (replaceWith, after, before, replaceChild, insertAdjacentElement,
+// insertAdjacentHTML), which the census cannot attribute to the body and fails on sight; file-view.ts has none. The
+// resolved set is then held equal to the flow's three lists (READY_ROOTS, NOT_READY_ROOTS, LINE_ROOTS) and bodyReady is
+// executed over each root as its list says. Each seated expression resolves as before: a builder call (`mdBlock(...)`) to
+// the `el(...)` assigned to the variable the builder's last `return` names; a bare variable to the expression assigned to it
+// last before the site; a ternary to both its branches; an `el("<tag>", "<class>")` to itself; anything else fails with the
+// expression. The round-3 review (2026-09-20): before this the sites were found by a closed list of three method names
+// (replaceChildren, prepend, appendChild) and its unknown passed, so a root seated by body.append or body.insertBefore was
+// invisible to it and the guarantee the lists state was false; the mutant case below executes both seats and an innerHTML
+// assignment against the census over the same source. What this census cannot see is a seat through another name for the
+// body (a helper handed the body seating under its own parameter name): file-view.ts's body is seated by the one name.
 /** file-view.ts with its trailing `//` comments removed (a space or a tab before the `//`; the newlines stay, so an index
  *  still maps to its line): the test runs in vscode-extension, and reads the tree as real-viewer-leg.ts does. */
 const VIEWER_SRC = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "file-view.ts"), "utf8").replace(/[ \t]\/\/[^\n]*/g, "");
@@ -591,51 +614,78 @@ function splitTop(expr: string, sep: string): string[] {
   out.push(rest);
   return out;
 }
-/** The roots (`<tag>.<class>`) the expression `expr`, written at `before` in file-view.ts, seats. */
-function rootsOf(expr: string, before: number): string[] {
+/** The roots (`<tag>.<class>`) the expression `expr`, written at `before` in `src`, seats. */
+function rootsOf(src: string, expr: string, before: number): string[] {
   const e = expr.trim();
   const q = indexTop(e, " ? ");
   if (q >= 0) {
     const branches = e.slice(q + 3);
     const c = indexTop(branches, " : ");
     assert.ok(c >= 0, "a ternary has both branches: " + e);
-    return [...rootsOf(branches.slice(0, c), before), ...rootsOf(branches.slice(c + 3), before)];
+    return [...rootsOf(src, branches.slice(0, c), before), ...rootsOf(src, branches.slice(c + 3), before)];
   }
   const built = /^el\("(\w+)", "([\w -]+)"\)$/.exec(e);
   if (built) return [built[1] + "." + built[2].split(" ").join(".")];
   const call = /^(\w+)\(/.exec(e);
   if (call && call[1] !== "el") {
     const head = "\nfunction " + call[1] + "(";
-    const at = VIEWER_SRC.indexOf(head);
+    const at = src.indexOf(head);
     assert.ok(at >= 0, "the builder " + call[1] + " is a top-level function of file-view.ts");
-    const end = VIEWER_SRC.indexOf("\n}\n", at);
-    const body = VIEWER_SRC.slice(at, end);
+    const end = src.indexOf("\n}\n", at);
+    const body = src.slice(at, end);
     const returns = [...body.matchAll(/^\s+return (\w+);$/gm)];
     assert.ok(returns.length >= 1, "the builder " + call[1] + " returns a variable");
-    return rootsOf(returns[returns.length - 1][1], at + body.length);
+    return rootsOf(src, returns[returns.length - 1][1], at + body.length);
   }
   const name = /^(\w+)$/.exec(e);
   if (name) {
-    const assigned = [...VIEWER_SRC.slice(0, before).matchAll(new RegExp("\\b" + name[1] + " = (?!=)([^;\\n]+?)(?: as \\w+)?;", "g"))];
+    const assigned = [...src.slice(0, before).matchAll(new RegExp("\\b" + name[1] + " = (?!=)([^;\\n]+?)(?: as \\w+)?;", "g"))];
     assert.ok(assigned.length >= 1, "the variable " + name[1] + " is assigned before the site at " + before);
     const last = assigned[assigned.length - 1];
-    return rootsOf(last[1], last.index!);
+    return rootsOf(src, last[1], last.index!);
   }
   throw new Error("a seated expression the census cannot resolve: " + e);
 }
-
-test("the census of the body's roots: every element file-view.ts seats in the body resolves to a root the flow lists (READY_ROOTS, NOT_READY_ROOTS or LINE_ROOTS), every listed root is seated, no root is in two lists, bodyReady answers over each root as its list says, an unlisted child is NOT in (the safe side, so a root the viewer gains fails here until it is listed), and under the PDF kind the loader alone of the wait roots reads as content", (t) => {
-  const sites = [...VIEWER_SRC.matchAll(/(?<!document\.)\bbody\.(replaceChildren|prepend|appendChild)\(/g)];
-  assert.ok(sites.length >= 10, "the seating sites are found in file-view.ts: " + sites.length);
+/** The seating methods and which of a call's arguments each seats. */
+const SEATING: Record<string, (args: string[]) => string[]> = {
+  replaceChildren: (a) => a, prepend: (a) => a, append: (a) => a,
+  appendChild: (a) => a.slice(0, 1), insertBefore: (a) => a.slice(0, 1), insertAdjacentElement: (a) => a.slice(1, 2),
+};
+/** The body's methods the viewer calls that seat nothing: listeners, queries, the keyboard, geometry, containment. */
+const NON_SEATING_CALLS = ["addEventListener", "removeEventListener", "querySelector", "querySelectorAll", "focus", "blur", "contains", "getBoundingClientRect", "getClientRects", "scrollTo", "scrollBy", "dispatchEvent"];
+/** The scalars the viewer assigns on the body: a scroll offset, the tab order. */
+const NON_SEATING_ASSIGNS = ["scrollTop", "scrollLeft", "tabIndex"];
+/** The members that hand out a node of the body's tree: a further access on one could seat where the census cannot follow. */
+const NODE_MEMBERS = ["firstChild", "lastChild", "firstElementChild", "lastElementChild", "children", "childNodes", "parentNode", "parentElement", "nextSibling", "previousSibling", "nextElementSibling", "previousElementSibling"];
+/** The census over `src`: the roots seated, each with the lines that seat it, and every use the census refuses, each with its
+ *  line and why. */
+function census(src: string): { seated: Map<string, number[]>; refused: string[] } {
+  const lineAt = (i: number): number => src.slice(0, i).split("\n").length;
   const seated = new Map<string, number[]>();
-  for (const m of sites) {
-    const line = VIEWER_SRC.slice(0, m.index!).split("\n").length;
-    const args = balancedAt(VIEWER_SRC, m.index! + m[0].length - 1).replace(/\s+/g, " ").trim();
-    if (!args) continue;   // a clearing seats nothing: an empty body is executed above
-    for (const arg of splitTop(args, ",")) for (const root of rootsOf(arg, m.index!)) seated.set(root, [...(seated.get(root) || []), line]);
+  const refused: string[] = [];
+  for (const m of src.matchAll(/(?<![\w$.])body\.(\w+)/g)) {
+    const member = m[1], after = m.index! + m[0].length, line = lineAt(m.index!);
+    const tail = /^\s*!?\s*(\(|=(?!=)|\??\.|\[|)/.exec(src.slice(after))![1];   // what follows the member (a non-null `!` skipped): a call, an assignment (not a comparison), a further access, or nothing, a read
+    if (tail === "(") {
+      const seats = SEATING[member];
+      if (seats) {
+        const args = balancedAt(src, src.indexOf("(", after)).replace(/\s+/g, " ").trim();
+        for (const arg of seats(args ? splitTop(args, ",") : [])) for (const root of rootsOf(src, arg, m.index!)) seated.set(root, [...(seated.get(root) || []), line]);
+      } else if (!NON_SEATING_CALLS.includes(member)) refused.push("line " + line + ": body." + member + "(...) is a call the census does not know");
+    } else if (tail === "=") {
+      if (!NON_SEATING_ASSIGNS.includes(member)) refused.push("line " + line + ": body." + member + " = ... is an assignment the census does not know (innerHTML and its kin seat what no resolver reads)");
+    } else if ((tail === "." || tail === "?." || tail === "[") && NODE_MEMBERS.includes(member)) refused.push("line " + line + ": body." + member + " hands out a node and a further access on it could seat where the census cannot follow");
   }
+  for (const m of src.matchAll(/\.(replaceWith|after|before|replaceChild|insertAdjacentElement|insertAdjacentHTML)\(/g)) refused.push("line " + lineAt(m.index!) + ": ." + m[1] + "(...) seats through a node the census cannot attribute to the body");
+  return { seated, refused };
+}
+
+test("the census of the body's roots: every use of `body` in file-view.ts is one the census classes (a seating call, resolved; a call, an assignment or a read that seats nothing) and the file seats through no child, else the census FAILS with the line; every element the viewer seats resolves to a root the flow lists (READY_ROOTS, NOT_READY_ROOTS or LINE_ROOTS), every listed root is seated, no root is in two lists, bodyReady answers over each root as its list says, an unlisted child is NOT in (the safe side, so a root the viewer gains fails here until it is listed), and under the PDF kind the loader alone of the wait roots reads as content", (t) => {
+  const { seated, refused } = census(VIEWER_SRC);
+  assert.deepEqual(refused, [], "every use of the body is one the census knows how to read: a use it does not is read by hand and the census taught it, never skipped");
   const roots = [...seated.keys()].sort();
   t.diagnostic("census: " + roots.map((r) => r + " (line " + seated.get(r)!.join(", ") + ")").join("; "));
+  assert.ok([...seated.values()].reduce((n, ls) => n + ls.length, 0) >= 10, "the seating sites are found in file-view.ts");
   const listed = [...READY_ROOTS, ...NOT_READY_ROOTS, ...LINE_ROOTS].sort();
   assert.deepEqual(roots, listed, "the roots the viewer seats in the body are the roots the flow lists, no more and no fewer");
   assert.equal(new Set(listed).size, listed.length, "no root is in two lists");
@@ -653,6 +703,31 @@ test("the census of the body's roots: every element file-view.ts seats in the bo
   for (const r of NOT_READY_ROOTS) assert.equal(bodyReady(bodyOf(r), "pdf"), r === PDF_LOADER_ROOT, r + " alone under the PDF kind: " + (r === PDF_LOADER_ROOT ? "in (the pages attempt's loader; the PDF road reads nothing from the body)" : "not in"));
   assert.ok(NOT_READY_ROOTS.includes(PDF_LOADER_ROOT), "the PDF kind's exception is one of the wait roots");
   for (const r of LINE_ROOTS) assert.equal(bodyReady(bodyOf(r), "pdf"), false, r + " alone under the PDF kind: not in");
+});
+
+test("the census refuses its unknown and derives its population, executed over mutants of file-view.ts's source: a root seated by body.append or body.insertBefore is resolved and fails the lists (FAILS BEFORE: the three-name list never saw either, so the census passed over both), a seat through an innerHTML assignment, a call the census does not know, a further access on a child node and a child-level replaceWith each fail with their line, and a read or a scroll assignment passes", () => {
+  const at = (src: string, needle: string): number => { const i = src.indexOf(needle); assert.ok(i >= 0, needle + " is in the source"); return i; };
+  const seat = (call: string): string => { const i = at(VIEWER_SRC, "\n  body.appendChild(load);\n"); return VIEWER_SRC.slice(0, i) + "\n  " + call + VIEWER_SRC.slice(i); };   // a line inside the local viewer's open, before its loader is seated
+  const before = census(VIEWER_SRC);
+  const appended = census(seat('body.append(el("div", "fileview-mutant"));'));
+  assert.deepEqual(appended.refused, [], "body.append is a seating call the census knows");
+  assert.deepEqual([...appended.seated.keys()].filter((r) => !before.seated.has(r)), ["div.fileview-mutant"], "FAILS BEFORE: the root body.append seats is resolved (the three-name list never saw an append)");
+  const inserted = census(seat('body.insertBefore(el("div", "fileview-mutant"), body.firstChild);'));
+  assert.deepEqual(inserted.refused, [], "insertBefore's first argument is the seat; its second, the reference child, is a bare read of firstChild and seats nothing");
+  assert.deepEqual([...inserted.seated.keys()].filter((r) => !before.seated.has(r)), ["div.fileview-mutant"], "FAILS BEFORE: the root body.insertBefore seats is resolved");
+  const adjacent = census(seat('body.insertAdjacentElement("afterbegin", el("div", "fileview-mutant"));'));
+  assert.deepEqual([...adjacent.seated.keys()].filter((r) => !before.seated.has(r)), ["div.fileview-mutant"], "insertAdjacentElement seats its second argument");
+  const html = census(seat('body.innerHTML = "<div class=\\"fileview-mutant\\"></div>";'));
+  assert.equal(html.refused.length, 1, "an innerHTML assignment is refused"); assert.match(html.refused[0], /^line \d+: body\.innerHTML = \.\.\. is an assignment the census does not know/);
+  const unknownCall = census(seat('body.replaceChild(el("div", "fileview-mutant"), load);'));
+  assert.equal(unknownCall.refused.length, 2, "a call the census does not know is refused, and the child-level read of the file finds the same replaceChild"); assert.match(unknownCall.refused[0], /^line \d+: body\.replaceChild\(\.\.\.\) is a call the census does not know/);
+  const chained = census(seat('body.firstElementChild!.replaceWith(el("div", "fileview-mutant"));'));
+  assert.equal(chained.refused.length, 2, "a further access on a child node is refused, and so is the replaceWith it reaches"); assert.match(chained.refused[0], /^line \d+: body\.firstElementChild hands out a node/); assert.match(chained.refused[1], /^line \d+: \.replaceWith\(\.\.\.\) seats through a node/);
+  const reads = census(seat('if (body.scrollTop > 0 && body.clientWidth === 0 && typeof body.getClientRects === "function") body.scrollTop = 0;'));
+  assert.deepEqual(reads.refused, [], "reads and a scroll assignment seat nothing and pass");
+  assert.deepEqual([...reads.seated.keys()].sort(), [...before.seated.keys()].sort(), "...and seat no root");
+  const unresolvable = (): void => { census(seat('body.appendChild(someRoot);')); };
+  assert.throws(unresolvable, /the variable someRoot is assigned before the site/, "an argument the census cannot resolve fails with the expression");
 });
 
 test("disabled until the body is in: the driver's start, where a press (the button's or the chord's), an Escape, a choice, a prepare, a ready and a printed change nothing; the body arriving rests; the body going out from rest, armed, the wait or the print disarms and disables; the body's arrival elsewhere changes nothing", () => {
