@@ -10,7 +10,10 @@
 // the row's standing down, as while the box is hovered (round 4's twins pass: until then the row's showed on that focus,
 // and the box's, what Fast mode is and costs, reached a pointer alone); and with that row parked just above the card's
 // bottom in a shorter window the BOX is what placeSub places (rs-up on the box, its description above the row: the box is
-// static, so its popover's containing block is the row), the host rule the pointer road uses. Synthetic values only.
+// static, so its popover's containing block is the row), the host rule the pointer road uses; and with the focus inside the
+// box and the pointer parked on the ROW's mixed mark the box's description stands down (the fixer pass over the twins: a
+// focus and a pointer rest on two elements at once where one pointer cannot, and the show twin outranked the mark rule, so
+// the description and the mark's native title stacked), and shows again once the pointer leaves. Synthetic values only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -34,6 +37,12 @@ test("the sheet shows a description while its row holds the focus: :focus-within
     "the box's hover pair's focus twins: while the focus is inside the box the row's description stands down and the box's own shows, so a keyboard reads on the box what a pointer reads on it");
   assert.match(GEAR_CSS, /^#rsettings \.rs-row:focus-within \.rs-fastin\.rs-up \.rs-sub \{ top: auto; bottom: 100%; margin-top: 0; margin-bottom: 2px; \}/m,
     "the box's up rule's focus twin: a box wearing rs-up opens its description above the row on the keyboard as on hover");
+  const showTwin = "#rsettings .rs-row:has(.rs-fastin:focus-within) .rs-fastin .rs-sub { display: block; }";
+  const markStand = "#rsettings .rs-row:has(.rs-mixed:hover) .rs-fastin .rs-sub { display: none; }";
+  assert.ok(GEAR_CSS.includes(markStand),
+    "one tooltip on the keyboard too: the box's description stands down while a mark in its row is hovered, or a focus in the box and a pointer on the row's mark stack it with the mark's title");
+  assert.ok(GEAR_CSS.indexOf(markStand) > GEAR_CSS.indexOf(showTwin),
+    "and it follows the show twin: the two share a specificity, (1,5,0), so the order is the tie-break");
 });
 
 test("placeSub runs on focusin as on mouseover, on the pointer road's host (the box for a focus inside a Fast mode box), and the class goes with the focus as with the pointer", () => {
@@ -199,4 +208,43 @@ test("a Tab into a Fast mode box with its row just above the card's bottom place
     assert.equal(await page.evaluate(() => (document.getElementById("rs-judgefast") as HTMLElement).closest(".rs-fastin")!.classList.contains("rs-up")), false, "focusout drops the class from the box");
     assert.deepEqual(errors, [], "no page error");
   }, 260);
+});
+
+test("a pointer parked on the row's mixed mark while the focus is inside a Fast mode box: the box's description stands down, so the mark's native title is the one tooltip, and it shows again once the pointer leaves", { timeout: 90000 }, async (t) => {
+  await withGear(t, "tasks", async (page, errors) => {
+    await page.waitForFunction(() => (document.getElementById("rs-judgefast") as HTMLInputElement).checked === true, null, { timeout: 10000 });
+    const r0 = await focusParked(page, "rs-judgefast", "top");
+    assert.equal(r0.focused, true, "the box's checkbox took the focus");
+    assert.equal(r0.display, "block", "the rig: the box's description is shown on the focus before any mark is shown or hovered");
+    // the row's mark, shown as fillMixedMarks shows it when the attached machines differ (a synthetic title; the mark rules key
+    // on the mark's hover, not its text); shown AFTER the focus, so a rule keyed on the mark's presence rather than its hover
+    // would pass the stand-down below and fail the restore
+    await page.evaluate(() => {
+      const row = document.getElementById("rs-judgefast")!.closest("#rsettings .rs-row")!;
+      const mark = row.querySelector("b .rs-mixed") as HTMLElement;
+      mark.hidden = false; mark.textContent = "mixed"; mark.title = "differs on: TESTHOST";
+    });
+    const read = () => page.evaluate(() => {
+      const box = document.getElementById("rs-judgefast")!, row = box.closest("#rsettings .rs-row")!;
+      const subs = Array.from(row.querySelectorAll(".rs-sub")) as HTMLElement[];
+      const mark = row.querySelector("b .rs-mixed") as HTMLElement;
+      return { markHovered: mark.matches(":hover"), focused: document.activeElement === box,
+        boxDisplay: getComputedStyle(document.getElementById("rs-judgefast-sub")!).display,
+        shownInRow: subs.filter((el) => getComputedStyle(el).display !== "none").length };
+    });
+    const mark = await page.evaluateHandle(() => document.getElementById("rs-judgefast")!.closest("#rsettings .rs-row")!.querySelector("b .rs-mixed"));
+    await mark.asElement().hover();
+    const on = await read();
+    assert.equal(on.markHovered, true, "the rig: the pointer is on the row's mark");
+    assert.equal(on.focused, true, "and the focus stayed in the box");
+    assert.equal(on.boxDisplay, "none", "the box's description stands down while the mark is hovered, as the row's does: the mark's title is the one tooltip");
+    assert.equal(on.shownInRow, 0, "no description shown in the row beside the title");
+    await page.mouse.move(5, 5);
+    const off = await read();
+    assert.equal(off.markHovered, false, "the rig: the pointer left the mark");
+    assert.equal(off.focused, true, "and the focus is still in the box");
+    assert.equal(off.boxDisplay, "block", "so the box's description shows again on the focus alone: the stand-down is the pointer's");
+    assert.equal(off.shownInRow, 1, "one description in the row, the box's");
+    assert.deepEqual(errors, [], "no page error");
+  });
 });

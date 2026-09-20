@@ -126,27 +126,29 @@ def held_pair(frames, slot):
     road (view-deltas.ts receive) applies a through-less frame at rev equal to base plus one and holds (gen, rev), so for
     the bars slot this rule is right only because no designed kernel sends that shape: a lab that met it would need the
     slot branched and both receiver arms modelled (review round 1, 2026-09-20). A GEN-LESS delta (no gen key) onto a held
-    pair is the one arm this rule branches on the slot, because the two clients differ there by design and the difference
-    was measured (round 4, the mirror measured, 2026-09-20; until then this rule read "moves no pair" for both slots, the
-    feed road's rule, and was wrong for the bars slot): the feed road applies it on the base's presence alone and moves no
-    pair, since applyRemoteFeedDelta writes Conn.feedHeld only under a gen the frame carries (the vintage guard); the bars
-    road applies it too, and its pair has no home but the base, whose rev every applied frame moves (view-deltas.ts receive
-    keeps base.gen and sets rev to the frame's), so ViewDeltas.held then reads (the held gen, the frame's rev), a newGen the
-    frame carries not adopted (the gate never ran for it). The measurement, one probe per side under the poisoned ports
-    (the client through an esbuild bundle of view-deltas.ts and the feed rig of federation-remote-feed-delta.test.ts, this
-    function through the module imported bare; the logs under the review note's round-4 mirror section): a gen-less delta
-    base 0 rev 1 onto a bars base seeded from a full carrying gen G read held() {gen: G, rev: 1} at the client, the same
-    with through 1 and with newGen and through, where this rule read (G, 0); onto a bars base seeded without a gen, null
-    and None; onto the feed road's pair (G, 0), feedHeld {gen: G, rev: 0} and (G, 0); onto a gen-less feed base, undefined
-    and None. So the bars arm below advances the rev under the held gen and the feed arm moves nothing. A delta onto a held pair that carries a gen
-    key the client cannot read (_stamp_field None with the key present, _stamp_present), or whose gen matched and whose
-    newGen it cannot read, is a refusal on both roads and is modelled as the client answers it (round 4, 2026-09-20:
-    unparseable is not absent): on the feed road the pair stands (needFullFeed with the held pair, nothing applied), on the
-    bars road the base is dropped (needSlot), so nothing is held until the next whole frame re-seeds it. Three refusals are
-    modelled, then: a stamped delta onto no pair (the feed road's unpaired: nothing applied, no pair; the bars road applies
-    it and seeds no gen, so None on both), the through-less stamped delta and the unreadable gen or newGen. Every OTHER
-    refusal the gate makes on a stamped delta is not modelled (a lab's stream is the kernel's own and applies): the set is applyRemoteFeedDelta's ladder
-    in federation.ts, whose words tests/test_client_diag_allowlist.py's stale_why_words() derives from the source and holds
+    pair is the one arm where BOTH roads apply the frame and hold different pairs after it (the two refusal arms below
+    branch on the slot too, each modelling a refusal the roads answer differently), because the two clients differ there
+    by design and the difference was measured (round 4, the mirror measured, 2026-09-20; until then this rule read "moves
+    no pair" for both slots, the feed road's rule, and was wrong for the bars slot): the feed road applies it on the
+    base's presence alone and moves no pair, since applyRemoteFeedDelta writes Conn.feedHeld only under a gen the frame
+    carries (the vintage guard); the bars road applies it too, and its pair has no home but the base, whose rev every
+    applied frame moves (view-deltas.ts receive keeps base.gen and sets rev to the frame's), so ViewDeltas.held then reads
+    (the held gen, the frame's rev), a newGen the frame carries not adopted (the gate never ran for it). The measurement,
+    one probe per side under the poisoned ports (the client through an esbuild bundle of view-deltas.ts and the feed rig
+    of federation-remote-feed-delta.test.ts, this function through the module imported bare; the logs under the review
+    note's round-4 mirror section): a gen-less delta base 0 rev 1 onto a bars base seeded from a full carrying gen G read
+    held() {gen: G, rev: 1} at the client, the same with through 1 and with newGen and through, where this rule read (G,
+    0); onto a bars base seeded without a gen, null and None; onto the feed road's pair (G, 0), feedHeld {gen: G, rev: 0}
+    and (G, 0); onto a gen-less feed base, undefined and None. So the bars arm below advances the rev under the held gen
+    and the feed arm moves nothing. A delta onto a held pair that carries a gen key the client cannot read (_stamp_field
+    None with the key present, _stamp_present), or whose gen matched and whose newGen it cannot read, is a refusal on both
+    roads and is modelled as the client answers it (round 4, 2026-09-20: unparseable is not absent): on the feed road the
+    pair stands (needFullFeed with the held pair, nothing applied), on the bars road the base is dropped (needSlot), so
+    nothing is held until the next whole frame re-seeds it. Three refusals are modelled, then: a stamped delta onto no
+    pair (the feed road's unpaired: nothing applied, no pair; the bars road applies it and seeds no gen, so None on both),
+    the through-less stamped delta and the unreadable gen or newGen. Every OTHER refusal the gate makes on a stamped delta
+    is not modelled (a lab's stream is the kernel's own and applies): the set is applyRemoteFeedDelta's ladder in
+    federation.ts, whose words tests/test_client_diag_allowlist.py's stale_why_words() derives from the source and holds
     to STALE_WHY_WORDS, so the bound this docstring states is that derivation's and not a list kept here (review round 3,
     tests-3: a hand list here went stale twice in one day). None when no pair is held."""
     full, delta = ("feed", "feedDelta") if slot == "feed" else ("bars", "delta")

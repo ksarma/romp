@@ -123,6 +123,12 @@ body.rs-lifted.rs-pane-gone::before { display: none; }
    takes no focus, so its "why greyed" text stays the pointer's (a disabled control's own rule, from before this sheet). */
 #rsettings .rs-row:has(.rs-fastin:focus-within) > .rs-sub { display: none; }
 #rsettings .rs-row:has(.rs-fastin:focus-within) .rs-fastin .rs-sub { display: block; }
+/* one tooltip while a mark is hovered, on the keyboard too (2026-09-20, the fixer pass over the twins): a focus and a pointer
+   rest on two elements at once where one pointer cannot, so with the focus inside the box and the pointer on the ROW's mixed
+   mark the show twin above kept the box's description open beside the mark's native title (the mark rule stands the row's
+   down at (1,4,0) and loses to the twin's (1,5,0)); this stands the box's down while any mark in its row is hovered, at the
+   twin's specificity and after it, so the order breaks the tie. Pointer gone, the twin shows it again on the focus alone. */
+#rsettings .rs-row:has(.rs-mixed:hover) .rs-fastin .rs-sub { display: none; }
 /* the label's nowrap keeps the box and its word together; the hint must NOT inherit it, or it runs off
    the card as one line with the Opus-only condition and the premium cut off at the right edge */
 #rsettings .rs-fastin .rs-sub { white-space: normal; }
