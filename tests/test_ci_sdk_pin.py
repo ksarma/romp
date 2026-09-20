@@ -8,7 +8,7 @@ the hosted sessions was the only place they ran. Now the Python job's "Install t
 repo's one declaration of the version the host's private imports were verified against (bin/romp-sdk-setup reads the
 same line with the same sed). The number appears nowhere in the workflow.
 
-This module holds three things, and it never skips: a pin that skips reports green having checked nothing.
+This module holds four things, and it never skips: a pin that skips reports green having checked nothing.
 1. Source pins on the step (no YAML library in the test deps, as tests/test_ci_bats_bound.py): it sits between
    "Install cryptography" and "Run pytest", carries no continue-on-error (the SDK requires cryptography through mcp's
    pyjwt[crypto]; a lagging cryptography wheel must red the cell, not skip 48 tests), carries no `if:` (the 3.14t cell
@@ -32,11 +32,18 @@ This module holds three things, and it never skips: a pin that skips reports gre
    host tests on it, move the number. The residual is stated here because nothing else states it: nothing polls PyPI,
    a person notices a release; the trigger for the bump is a red from this module on a box whose venv moved or a red
    cell on a release that the pin refuses.
+4. The proof that this module cannot skip. The property is the OUTCOME, not a spelling: tests/conftest.py lists this
+   file in _NEVER_SKIP_FILES and reports any skipped test report or skipped collection report for it as a failure
+   carrying the skip's own reason, always, with no switch. NeverSkips proves that belt by execution, running pytest in
+   a child over scratch files: a file of this name whose tests skip by every spelling (pytest.mark.skipif,
+   unittest.skipIf, self.skipTest, SkipTest in setUpClass, an xfail) reds on each; one whose module level runs
+   pytest.importorskip reds as a collection error; a plain-named twin of the first keeps skipping. Until 2026-09-20 the
+   guard was a five-name list of unittest spellings read from this file's AST, which pytest.mark.skipif passed, and
+   which a module-level importorskip removed from the run along with the rest of the module.
 
 Hermetic: the run block executes in a scratch directory with its own copy of the constant's line, never at the repo
 root, and its `python` is a shim that records its arguments; no network, no pip.
 """
-import ast
 import importlib.metadata
 import importlib.util
 import os
@@ -240,13 +247,90 @@ class InstalledVersion(unittest.TestCase):
         self.assertEqual(metadata, pin, disagree)
 
 
+SKIP_SPELLINGS = '''
+import unittest
+import pytest
+class Marked(unittest.TestCase):
+    @pytest.mark.skipif(True, reason="synthetic skipif spelling")
+    def test_skipif(self):
+        pass
+    @unittest.skipIf(True, "synthetic unittest.skipIf spelling")
+    def test_unittest_skipif(self):
+        pass
+    @pytest.mark.xfail(reason="synthetic xfail spelling")
+    def test_xfail(self):
+        self.fail("an xfail absorbs this")
+class InBody(unittest.TestCase):
+    def test_skiptest(self):
+        self.skipTest("synthetic skipTest spelling")
+class InSetUpClass(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        raise unittest.SkipTest("synthetic SkipTest in setUpClass")
+    def test_never_reached(self):
+        pass
+'''
+MODULE_LEVEL_SKIP = '''
+import unittest
+import pytest
+pytest.importorskip("no_such_module_synthetic_xyz")
+class Unreachable(unittest.TestCase):
+    def test_never_collected(self):
+        pass
+'''
+
+
 class NeverSkips(unittest.TestCase):
-    def test_this_module_has_no_skip_road(self):
-        # a pin that skips reports green having checked nothing; the bare road warns and asserts instead
-        tree = ast.parse(open(os.path.realpath(__file__)).read())
-        names = {n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute)} | {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
-        for forbidden in ("skip", "skipIf", "skipUnless", "skipTest", "SkipTest"):
-            self.assertNotIn(forbidden, names, "%s is used in this module" % forbidden)
+    """The never-skips belt in tests/conftest.py (_NEVER_SKIP_FILES), proved by execution the way
+    tests/test_served_tests_require.py proves the served-tests switch: pytest in a child, tests/conftest.py loaded as a
+    plugin, over scratch files in a temp directory. A scratch file of THIS module's name carries five skip spellings
+    (two the old five-name list never covered, pytest.mark.skipif and an xfail; three it did) and every one is red,
+    each naming the belt and quoting its reason; the same content under a plain name skips as pytest always let it;
+    a scratch file of this name whose module level runs pytest.importorskip, which collects no items, is a collection
+    error and the run stops red. Synthetic files only; no SDK, no network."""
+    def setUp(self):
+        self.d = tempfile.mkdtemp(prefix="never-skips-")
+        self.addCleanup(shutil.rmtree, self.d, ignore_errors=True)
+
+    def _write(self, name, body):
+        path = os.path.join(self.d, name)
+        with open(path, "w") as f:
+            f.write(body)
+        return path
+
+    def _run(self, *paths):
+        p = subprocess.run([sys.executable, "-m", "pytest", "-p", "tests.conftest", "-p", "no:cacheprovider", "-q", "-rs", *paths],
+                           cwd=ROOT, env=dict(os.environ), capture_output=True, text=True, timeout=240)
+        return p.returncode, p.stdout + p.stderr
+
+    def test_every_skip_spelling_in_a_file_of_this_name_is_red_and_a_plain_twin_still_skips(self):
+        rc, out = self._run(self._write("test_ci_sdk_pin.py", SKIP_SPELLINGS), self._write("test_fake_plain.py", SKIP_SPELLINGS))
+        self.assertNotEqual(rc, 0, "a skip in a file of this name must fail the run: " + out[-3000:])
+        # the listed file: a setup-phase skip (skipif, SkipTest in setUpClass) is filed as an error, a body skip and the
+        # xfail as failures; the plain twin: four skips and one xfail, as pytest reports them without the belt
+        self.assertIn("3 failed, 4 skipped, 1 xfailed, 2 errors", out, out[-3000:])
+        self.assertEqual(out.count("never-skips: test_ci_sdk_pin.py skipped"), 5, "each red names the belt and the file: " + out[-3000:])
+        for reason in ("synthetic skipif spelling", "synthetic unittest.skipIf spelling", "synthetic skipTest spelling",
+                       "synthetic SkipTest in setUpClass", "xfail: synthetic xfail spelling"):
+            self.assertIn("_NEVER_SKIP_FILES): %s" % reason, out.replace("_NEVER_SKIP_FILES): Skipped: ", "_NEVER_SKIP_FILES): "),
+                          "the red carries the skip's own reason (%s): %s" % (reason, out[-3000:]))
+        self.assertNotIn("never-skips: test_fake_plain.py", out, "the belt reaches only the listed file: " + out[-3000:])
+        self.assertIn("test_fake_plain.py", out.split("short test summary info")[-1], "the plain twin's skips are reported as skips: " + out[-3000:])
+
+    def test_a_module_level_importorskip_in_a_file_of_this_name_is_a_collection_error(self):
+        rc, out = self._run(self._write("test_ci_sdk_pin.py", MODULE_LEVEL_SKIP))
+        self.assertNotEqual(rc, 0, "a module that skips whole collects nothing and must still red the run: " + out[-3000:])
+        self.assertIn("1 error during collection", out, out[-3000:])
+        self.assertIn("never-skips: test_ci_sdk_pin.py skipped (at collection)", out, out[-3000:])
+        self.assertIn("no_such_module_synthetic_xyz", out, "the collection error carries the skip's own reason: " + out[-3000:])
+        self.assertNotIn("skipped", out.split("short test summary info")[-1].replace("never-skips: test_ci_sdk_pin.py skipped", ""),
+                         "nothing in the run is reported as a skip: " + out[-3000:])
+
+    def test_a_module_level_importorskip_under_a_plain_name_still_skips_the_module(self):
+        rc, out = self._run(self._write("test_fake_plain.py", MODULE_LEVEL_SKIP))
+        self.assertEqual(rc, 5, "no tests collected, nothing red: the belt reaches only the listed file: " + out[-3000:])
+        self.assertIn("1 skipped", out, out[-3000:])
+        self.assertNotIn("never-skips:", out, "the belt did not fire: " + out[-3000:])   # the colon: the scratch dir is named never-skips-
 
 
 if __name__ == "__main__":

@@ -46,7 +46,10 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   (43 here, 5 in `test_host_transport.py`) and the two SDK-transport host tests
   in `test_session_host.py` RUN in CI, and every session host a test spawns
   there takes the SDK transport, as on a box with the venv `bin/romp-sdk-setup`
-  builds. `tests/test_ci_sdk_pin.py` holds the pin and never skips: it executes
+  builds. `tests/test_ci_sdk_pin.py` holds the pin and never skips
+  (`tests/conftest.py` reports any skip in that file, whatever its spelling, as a
+  failure carrying the skip's reason; its `NeverSkips` class proves that belt by
+  running pytest in a child): it executes
   the step's own read of the constant and, wherever `claude_agent_sdk` imports,
   asserts the installed version equals it, so a box whose venv moved and a CI
   cell whose install disagreed with the constant both go red; on a venv without

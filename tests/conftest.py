@@ -763,12 +763,24 @@ def _redact_report(rep) -> None:
 def pytest_runtest_makereport(item, call):
     # ONE implementation per hook per module: a second `def` of this name would silently replace this one
     # (it did, for an afternoon on 2026-09-10, and every report printed its values again). Anything else
-    # that shapes a test report joins here: the served-tests switch first (its message quotes the skip's
-    # reason), the redaction last, so whatever any step wrote is read for values before it is printed.
+    # that shapes a test report joins here: the served-tests switch first, then the never-skips belt (each
+    # message quotes the skip's reason), the redaction last, so whatever any step wrote is read for values
+    # before it is printed.
     outcome = yield
     rep = outcome.get_result()
     _require_served_test_ran(item, rep)
+    _require_never_skip_ran(item, rep)
     _redact_report(rep)
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_make_collect_report(collector):
+    """The never-skips belt's collection half: a module-level skip (pytest.importorskip, or
+    pytest.skip(allow_module_level=True)) produces a skipped CollectReport and no items, so the item hook
+    above never sees it. The same flip here, on the report as it is made, turns it into a collection error,
+    and pytest stops the run red ("1 error during collection"). Redaction follows in pytest_collectreport."""
+    outcome = yield
+    _require_never_skip_collected(collector, outcome.get_result())
 
 
 @pytest.hookimpl(hookwrapper=True)
@@ -830,8 +842,24 @@ def wait_for_census(before, timeout=5.0):
 _SERVED_TESTS_REQUIRE = os.environ.get("ROMP_SERVED_TESTS_REQUIRE") == "1"
 
 
+def _node_file(node) -> str:
+    """The basename of the file a collected node (an item, a module collector) came from."""
+    return os.path.basename(str(getattr(node, "path", None) or node.fspath))
+
+
+def _skip_reason(rep) -> str:
+    """The text of a skipped report: the reason of its (path, line, reason) longrepr; an xfail's declared
+    reason (its longrepr is the traceback of the failure the xfail absorbed); else the longrepr's text."""
+    lr = rep.longrepr
+    if isinstance(lr, tuple) and len(lr) == 3:
+        return lr[2]
+    if getattr(rep, "wasxfail", None):
+        return "xfail: %s" % rep.wasxfail
+    return str(lr)
+
+
 def _is_served_test_file(item) -> bool:
-    name = os.path.basename(str(getattr(item, "path", None) or item.fspath))
+    name = _node_file(item)
     return name.startswith("test_") and (name.endswith("_browser.py") or name.endswith("_served.py"))
 
 
@@ -842,10 +870,50 @@ def _require_served_test_ran(item, rep) -> None:
     if not _SERVED_TESTS_REQUIRE:
         return
     if rep.skipped and _is_served_test_file(item):
-        lr = rep.longrepr
-        reason = lr[2] if isinstance(lr, tuple) and len(lr) == 3 else str(lr)
+        reason = _skip_reason(rep)
         if re.match(r"^(Skipped: )?optional:", reason):
             return
         rep.outcome = "failed"
         rep.longrepr = ("ROMP_SERVED_TESTS_REQUIRE=1: a browser-backed test skipped (at %s) where it must run: %s"
                         % (rep.when, reason))
+
+
+# A file listed here declares that every one of its tests checks something on every road, so a skip outcome in it,
+# from any spelling (pytest.mark.skipif, unittest.skipIf, self.skipTest, SkipTest raised in setUpClass, a module-level
+# pytest.importorskip or pytest.skip(allow_module_level=True); an xfail too, which pytest records as a skipped
+# outcome), at collection, at setup or in the test body, is reported as a FAILURE carrying the skip's own reason.
+# Always on, no switch: no road of tests/test_ci_sdk_pin.py is a skip (on an interpreter without the SDK its
+# InstalledVersion test asserts the pin's form and warns; where the run requires the SDK it fails), so a skip there is
+# a pin reporting green having checked nothing. The property is read from the report, in the worker under xdist and in
+# the one process serially, so nothing depends on which test ran last or on which spelling an edit used.
+# 2026-09-20: the guard before this was a five-name list of unittest spellings inside the module, which
+# pytest.mark.skipif and a module-level pytest.importorskip passed, and which a module-level skip removed from the run
+# entirely (the guard never ran). Proved by execution in tests/test_ci_sdk_pin.py's NeverSkips.
+_NEVER_SKIP_FILES = ("test_ci_sdk_pin.py",)
+
+
+def _never_skip_longrepr(name, where, reason) -> str:
+    return ("never-skips: %s skipped (at %s) where every test checks something on every road (tests/conftest.py, "
+            "_NEVER_SKIP_FILES): %s" % (name, where, reason))
+
+
+def _require_never_skip_ran(item, rep) -> None:
+    """A skipped report for a test in a _NEVER_SKIP_FILES file is a failure carrying the skip's reason. Called
+    from the one pytest_runtest_makereport above; always on. An xfail's `wasxfail` mark is removed with the flip:
+    pytest's session counts a failed report toward the exit status only without it, so a flipped xfail would
+    otherwise print FAILED and exit 0."""
+    if rep.skipped and _node_file(item) in _NEVER_SKIP_FILES:
+        reason = _skip_reason(rep)
+        if hasattr(rep, "wasxfail"):
+            del rep.wasxfail
+        rep.outcome = "failed"
+        rep.longrepr = _never_skip_longrepr(_node_file(item), rep.when, reason)
+
+
+def _require_never_skip_collected(collector, rep) -> None:
+    """The collection half (pytest_make_collect_report above): a skipped CollectReport for a _NEVER_SKIP_FILES
+    module, which a module-level skip produces in place of any items, becomes a failed one, a collection error."""
+    if rep.skipped and _node_file(collector) in _NEVER_SKIP_FILES:
+        reason = _skip_reason(rep)
+        rep.outcome = "failed"
+        rep.longrepr = _never_skip_longrepr(_node_file(collector), "collection", reason)
