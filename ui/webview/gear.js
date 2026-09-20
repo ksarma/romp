@@ -2057,15 +2057,14 @@ function initGear(post, opts) {
     pcard.addEventListener('mouseout', function (e) { var host = hostOf(e.target); if (host && !(e.relatedTarget && host.contains(e.relatedTarget))) host.classList.remove('rs-up'); });
     // the focus road (2026-09-20): the sheet shows a description while its row holds the focus (:focus-within, gear.css), and
     // the selector alone does not place it, so the same measurement runs on focusin (a Tab, a screen reader's move, a touch
-    // browser's focus on tap) and the class goes with the focus as it goes with the pointer
-    // A focus inside a Fast mode box is placed as its ROW's (review round 4 of the share field, the fixer pass): while the row
-    // holds the focus the sheet shows the row's description and hides the box's nested one (gear.css), so the box's own
-    // popover has no height to place, and placing the box returned on that zero height and left the row's popover unplaced,
-    // to clip past the card's bottom on the three Fast mode rows. The pointer road keeps the box as its host: a hover on the
-    // box shows the box's popover and hides the row's, so there the box is the element whose popover is shown.
-    function focusHostOf(t) { var host = hostOf(t); return host && host.classList.contains('rs-fastin') ? (host.closest('#rsettings .rs-row') || host) : host; }
-    pcard.addEventListener('focusin', function (e) { var host = focusHostOf(e.target); if (host) placeSub(host); });
-    pcard.addEventListener('focusout', function (e) { var host = focusHostOf(e.target); if (host && !(e.relatedTarget && host.contains(e.relatedTarget))) host.classList.remove('rs-up'); });
+    // browser's focus on tap) and the class goes with the focus as it goes with the pointer. The host is hostOf's on both
+    // roads: for a focus inside a Fast mode box that is the box, whose own description the sheet shows on that focus (the
+    // focus twins of the box's hover pair, gear.css) as it does on a hover on the box, so the box's popover is the one with a
+    // height to place. (Round 4 of the share field had the sheet show the ROW's description on that focus, and a climb from
+    // the box to its row here, so that the shown popover was the one placed; the twins made the row's stand down and the
+    // climb a measurement of a hidden popover, so it went.)
+    pcard.addEventListener('focusin', function (e) { var host = hostOf(e.target); if (host) placeSub(host); });
+    pcard.addEventListener('focusout', function (e) { var host = hostOf(e.target); if (host && !(e.relatedTarget && host.contains(e.relatedTarget))) host.classList.remove('rs-up'); });
   }
   function closeSettings() { endDrags(); if (raBack && !raBack.hidden) raHide(); clearSectionScroll(); p.hidden = true; setModalCls(false); feedFull(false); }   // the reset FIRST, while the card still has a layout: a hidden card ignores a scroll write and keeps its old offset for the next open (measured); a pending section ask dies with the panel (round two, LOW 2 and 7)
   function openSettings(tab, section) {

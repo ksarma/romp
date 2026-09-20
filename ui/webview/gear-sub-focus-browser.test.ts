@@ -6,11 +6,11 @@
 // with a stated reason without a playwright browser, which CI installs none of): the share row's checkbox is FOCUSED with
 // the row parked at the card's bottom edge, and the description must be shown (display block) with the per-machine sentence
 // in it and PLACED by placeSub (rs-up, since a popover below would run past the card's bottom, the T408 clip); parked at the
-// card's top edge it shows below (no rs-up); a Tab into a Fast mode box shows ONE description in its row (the row's), not
-// the box's nested one stacked on it; and with that row parked just above the card's bottom in a shorter window the ROW is
-// what placeSub places (rs-up on the row, the description above it), since the box's own popover, which the sheet hides
-// while the row holds the focus, has no height to measure (the fixer pass of round 4: placing the box had left the row's
-// description to clip on the three Fast mode rows). Synthetic values only.
+// card's top edge it shows below (no rs-up); a Tab into a Fast mode box shows ONE description in its row, the BOX's own,
+// the row's standing down, as while the box is hovered (round 4's twins pass: until then the row's showed on that focus,
+// and the box's, what Fast mode is and costs, reached a pointer alone); and with that row parked just above the card's
+// bottom in a shorter window the BOX is what placeSub places (rs-up on the box, its description above the row: the box is
+// static, so its popover's containing block is the row), the host rule the pointer road uses. Synthetic values only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -30,15 +30,19 @@ test("the sheet shows a description while its row holds the focus: :focus-within
     "the up rule's focus twin, the same declarations as the hover rule beside it");
   assert.match(GEAR_CSS, /^#rsettings \.rs-row:focus-within \.rs-fastin \.rs-sub \{ display: none; \}/m,
     "the Fast mode box's description stands down while its row holds the focus (the :hover rule's twin), or a Tab into the box stacks two");
+  assert.match(GEAR_CSS, /^#rsettings \.rs-row:has\(\.rs-fastin:focus-within\) > \.rs-sub \{ display: none; \}\n#rsettings \.rs-row:has\(\.rs-fastin:focus-within\) \.rs-fastin \.rs-sub \{ display: block; \}/m,
+    "the box's hover pair's focus twins: while the focus is inside the box the row's description stands down and the box's own shows, so a keyboard reads on the box what a pointer reads on it");
+  assert.match(GEAR_CSS, /^#rsettings \.rs-row:focus-within \.rs-fastin\.rs-up \.rs-sub \{ top: auto; bottom: 100%; margin-top: 0; margin-bottom: 2px; \}/m,
+    "the box's up rule's focus twin: a box wearing rs-up opens its description above the row on the keyboard as on hover");
 });
 
-test("placeSub runs on focusin as on mouseover, on the ROW for a focus inside a Fast mode box, and the class goes with the focus as with the pointer", () => {
-  assert.match(GEAR, /function focusHostOf\(t\) \{ var host = hostOf\(t\); return host && host\.classList\.contains\('rs-fastin'\) \? \(host\.closest\('#rsettings \.rs-row'\) \|\| host\) : host; \}/,
-    "a focus inside a Fast mode box is the row's: the sheet shows the row's description and hides the box's, so the box has nothing to place");
-  assert.match(GEAR, /pcard\.addEventListener\('focusin', function \(e\) \{ var host = focusHostOf\(e\.target\); if \(host\) placeSub\(host\); \}\);/,
-    "the selector shows the popover; only placeSub measures and flips it above a row near the card's bottom");
-  assert.match(GEAR, /pcard\.addEventListener\('focusout', function \(e\) \{ var host = focusHostOf\(e\.target\); if \(host && !\(e\.relatedTarget && host\.contains\(e\.relatedTarget\)\)\) host\.classList\.remove\('rs-up'\); \}\);/,
+test("placeSub runs on focusin as on mouseover, on the pointer road's host (the box for a focus inside a Fast mode box), and the class goes with the focus as with the pointer", () => {
+  assert.match(GEAR, /pcard\.addEventListener\('focusin', function \(e\) \{ var host = hostOf\(e\.target\); if \(host\) placeSub\(host\); \}\);/,
+    "the selector shows the popover; only placeSub measures and flips it above a row near the card's bottom; the host is hostOf's, as on mouseover");
+  assert.match(GEAR, /pcard\.addEventListener\('focusout', function \(e\) \{ var host = hostOf\(e\.target\); if \(host && !\(e\.relatedTarget && host\.contains\(e\.relatedTarget\)\)\) host\.classList\.remove\('rs-up'\); \}\);/,
     "the mouseout twin: the next focus measures afresh");
+  assert.doesNotMatch(GEAR, /focusHostOf/,
+    "no climb from a Fast mode box to its row on the focus road: the sheet shows the box's own description on that focus (its hover pair's focus twins), so the box is the host on both roads and its popover has a height to place");
 });
 
 const ENTRY = `
@@ -104,14 +108,17 @@ async function withGear(t: any, tab: string, body: (page: any, errors: string[])
 /** Scroll the card (the modal's scroll box) so the row that owns `id` sits as LOW as the card allows ("bottom": scrollTop 0),
  *  as HIGH as it allows ("top": the card's end), or just above the card's bottom edge wherever the row is in the card ("low":
  *  the scroll that puts the row's bottom 4 px above the card's), focus the control without a scroll (so the geometry the focus
- *  met is the one read), and read what the sheet and placeSub did. The short window makes the positions differ in whether a
- *  popover below the row fits inside the card (fitsBelow), which is the one thing placeSub decides on. */
+ *  met is the one read), and read what the sheet and placeSub did. The HOST is gear.js's hostOf rule (the closest of a Fast
+ *  mode box, a row or a widget row), so `own` is the box's description for a control inside a box and the row's otherwise,
+ *  and `up` is the class on that host. The short window makes the positions differ in whether a popover below the row fits
+ *  inside the card (fitsBelow), which is the one thing placeSub decides on. */
 const focusParked = (page: any, id: string, edge: "bottom" | "top" | "low") => page.evaluate(([cid, where]: [string, string]) => {
   const box = document.getElementById(cid) as HTMLInputElement;
   const row = box.closest("#rsettings .rs-row") as HTMLElement;
   const card = document.querySelector("#rsettings .rs-card") as HTMLElement;
+  const host = box.closest("#rsettings .rs-fastin, #rsettings .rs-row, #rsettings .rs-widget") as HTMLElement;
   (document.activeElement as HTMLElement | null)?.blur?.();
-  row.classList.remove("rs-up");
+  row.classList.remove("rs-up"); host.classList.remove("rs-up");
   card.scrollTop = where === "top" ? card.scrollHeight : 0;
   if (where === "low") {
     const rr0 = row.getBoundingClientRect(), cr0 = card.getBoundingClientRect();
@@ -119,14 +126,19 @@ const focusParked = (page: any, id: string, edge: "bottom" | "top" | "low") => p
   }
   box.focus({ preventScroll: true });
   const subs = Array.from(row.querySelectorAll(".rs-sub")) as HTMLElement[];
-  const own = subs.find((el) => el.closest("#rsettings .rs-row, #rsettings .rs-fastin, #rsettings .rs-widget") === row)!;
+  const hostOfSub = (el: HTMLElement) => el.closest("#rsettings .rs-fastin, #rsettings .rs-row, #rsettings .rs-widget");
+  const own = subs.find((el) => hostOfSub(el) === host)!;
+  const rowOwn = subs.find((el) => hostOfSub(el) === row)!;
   const sr = own.getBoundingClientRect(), cr = card.getBoundingClientRect(), rr = row.getBoundingClientRect();
   return {
     geom: { row: [rr.top, rr.bottom], card: [cr.top, cr.bottom], sub: [sr.top, sr.bottom, sr.height], scroll: [card.scrollTop, card.scrollHeight, card.clientHeight] },
     focused: document.activeElement === box,
+    hostIsBox: host !== row && host.classList.contains("rs-fastin"),
     display: getComputedStyle(own).display,
+    rowDisplay: getComputedStyle(rowOwn).display,
     text: own.textContent || "",
-    up: row.classList.contains("rs-up"),
+    up: host.classList.contains("rs-up"),
+    rowUp: row.classList.contains("rs-up"),
     shownInRow: subs.filter((el) => getComputedStyle(el).display !== "none").length,
     // the popover's own bottom against the card's, as placeSub measured it: above the row when rs-up placed it, else below
     subBelowRow: sr.top >= rr.bottom - 1, subAboveRow: sr.bottom <= rr.top + 1,
@@ -156,29 +168,35 @@ test("the share switch's description opens on focus and is placed: at the card's
   });
 });
 
-test("a Tab into a Fast mode box shows one description in its row, the row's, never the box's nested one stacked on it", { timeout: 90000 }, async (t) => {
+test("a Tab into a Fast mode box shows one description in its row, the BOX's own, the row's standing down, as a hover on the box does", { timeout: 90000 }, async (t) => {
   await withGear(t, "tasks", async (page, errors) => {
     await page.waitForFunction(() => (document.getElementById("rs-judgefast") as HTMLInputElement).checked === true, null, { timeout: 10000 });
     const r = await focusParked(page, "rs-judgefast", "top");
     assert.equal(r.focused, true);
+    assert.equal(r.hostIsBox, true, "the rig: the host of a focus inside the box is the box (hostOf's rule)");
     assert.equal(r.shownInRow, 1, "one description shown in the row while the box holds the focus");
-    assert.equal(r.display, "block", "the row's own");
-    assert.equal(await page.evaluate(() => getComputedStyle(document.getElementById("rs-judgefast-sub")!).display), "none", "the box's nested one stands down, as it does while the row is hovered");
+    assert.equal(r.display, "block", "the box's own: what a pointer reads on the box, a keyboard reads on its checkbox");
+    assert.match(r.text, /fast mode \(an Opus-only research preview/, "and it is the Fast mode text, not the row's");
+    assert.equal(r.rowDisplay, "none", "the row's stands down, as it does while the box is hovered");
+    assert.equal(await page.evaluate(() => getComputedStyle(document.getElementById("rs-judgefast-sub")!).display), "block");
     assert.deepEqual(errors, [], "no page error");
   });
 });
 
-test("a Tab into a Fast mode box with its row just above the card's bottom places the ROW's description above the row: placeSub runs on the row the sheet shows, not on the box whose popover it hides", { timeout: 90000 }, async (t) => {
+test("a Tab into a Fast mode box with its row just above the card's bottom places the BOX's description above the row: placeSub runs on the box, the host whose popover the sheet shows, and the box's up rule's focus twin opens it above", { timeout: 90000 }, async (t) => {
   await withGear(t, "tasks", async (page, errors) => {
     await page.waitForFunction(() => (document.getElementById("rs-judgefast") as HTMLInputElement).checked === true, null, { timeout: 10000 });
     const r = await focusParked(page, "rs-judgefast", "low");
     assert.equal(r.focused, true, "the box's checkbox took the focus");
+    assert.equal(r.hostIsBox, true, "the rig: the host is the box");
     assert.equal(r.fitsBelow, false, "the rig: with the row just above the card's bottom in a 260 px window, a popover below it would run past the card " + JSON.stringify(r.geom));
-    assert.equal(r.shownInRow, 1, "one description shown in the row, the row's");
-    assert.equal(r.up, true, "the ROW wears rs-up: placeSub measured the row's popover, the one the sheet shows (measuring the box, whose popover the sheet hides while the row holds the focus, returned on its zero height and left the row's to clip)");
-    assert.equal(r.subAboveRow, true, "and the sheet placed the row's description above the row");
+    assert.equal(r.shownInRow, 1, "one description shown in the row, the box's");
+    assert.equal(r.display, "block", "the box's own is the shown one");
+    assert.equal(r.up, true, "the BOX wears rs-up: placeSub measured the box's popover, the one the sheet shows on this focus (a climb to the row would measure the row's, hidden, and place nothing)");
+    assert.equal(r.rowUp, false, "and the row was not placed: the focus road's host is the pointer road's");
+    assert.equal(r.subAboveRow, true, "and the sheet opened the box's description above the row (the box's up rule's focus twin; the box is static, so the row is its containing block)");
     await page.evaluate(() => (document.activeElement as HTMLElement).blur());
-    assert.equal(await page.evaluate(() => (document.getElementById("rs-judgefast") as HTMLElement).closest(".rs-row")!.classList.contains("rs-up")), false, "focusout drops the class from the row");
+    assert.equal(await page.evaluate(() => (document.getElementById("rs-judgefast") as HTMLElement).closest(".rs-fastin")!.classList.contains("rs-up")), false, "focusout drops the class from the box");
     assert.deepEqual(errors, [], "no page error");
   }, 260);
 });

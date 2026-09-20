@@ -73,6 +73,9 @@ body.rs-lifted.rs-pane-gone::before { display: none; }
    (1,5,0): two classes above the hover rule and one above the row's own rs-up rule, so the box's placement wins whatever the
    row wears, whatever the order in this sheet */
 #rsettings .rs-row:hover .rs-fastin.rs-up .rs-sub { top: auto; bottom: 100%; margin-top: 0; margin-bottom: 2px; }
+/* the same on the keyboard (2026-09-20, the twins of the box's hover rules): the box's description shows while the focus is
+   inside the box (the pair below), placeSub places the box on focusin as on mouseover, and this opens it above the row */
+#rsettings .rs-row:focus-within .rs-fastin.rs-up .rs-sub { top: auto; bottom: 100%; margin-top: 0; margin-bottom: 2px; }
 #rsettings .rs-sub code { background: #0d0d0d; border-radius: 3px; padding: 0 3px; }
 /* an inline live status beside a control (the login flow's "starting…") — visible when non-empty,
    never a popover (as an rs-sub it doubled the Account row's tooltip, 2026-09-02) */
@@ -112,6 +115,14 @@ body.rs-lifted.rs-pane-gone::before { display: none; }
 #rsettings .rs-row:focus-within .rs-fastin .rs-sub { display: none; }
 #rsettings .rs-row:has(.rs-fastin:hover) > .rs-sub { display: none; }
 #rsettings .rs-row:has(.rs-fastin:hover) .rs-fastin .rs-sub { display: block; }
+/* the pair's twins (2026-09-20): while the FOCUS is inside the box (a Tab onto its checkbox) the row's description stands down
+   and the box's own shows, as while the box is hovered, so what a pointer reads on the box (what Fast mode is and costs, why a
+   greyed box is greyed, a refusal) a keyboard reads on its checkbox; until these, a focus in the box showed the ROW's
+   description and the box's reached a pointer alone. Specificities (1,4,0) and (1,5,0), the hover pair's own, so they win
+   over the focus show rule and the focus stand-down above as the hover pair wins over its. A greyed box is disabled and
+   takes no focus, so its "why greyed" text stays the pointer's (a disabled control's own rule, from before this sheet). */
+#rsettings .rs-row:has(.rs-fastin:focus-within) > .rs-sub { display: none; }
+#rsettings .rs-row:has(.rs-fastin:focus-within) .rs-fastin .rs-sub { display: block; }
 /* the label's nowrap keeps the box and its word together; the hint must NOT inherit it, or it runs off
    the card as one line with the Opus-only condition and the premium cut off at the right edge */
 #rsettings .rs-fastin .rs-sub { white-space: normal; }
