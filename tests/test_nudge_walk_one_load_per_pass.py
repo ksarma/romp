@@ -637,7 +637,17 @@ naming the clause (1 failed, 38 passed), while the same copy in a historical par
 the standard's second clause, on the tree of the round's fifth fix: every instrument's docstring carries a sentence naming what it
 derives and what it bounds, prose no assertion reads (of this module's docstrings the Docs case reads the module's own alone), each
 checked against the code, with no failing state; an existing sentence made false and a Derives clause negated each left the module
-green on the tree of the round's fourth fix (39 passed each). The
+green on the tree of the round's fourth fix (39 passed each). The hand-off keys (the plan's hunt for a seventh hand-written axis, the
+class of extra7-1 and tests-2), on the tree of the round's sixth fix: SHARED_HANDOFF_KEYS was pinned by nothing while its three
+siblings are pinned against the door's AST, so dup added to it, which also narrowed _pass's dup and refuse zero line to refuse alone,
+and corrupt removed from it each left the module green on the tree of the round's fifth fix (39 passed each); the roster pin derives
+the keys from the door's statement lists, the direct bump keys of every list whose last statement returns a call of load_goals, and
+asserts them equal to the tuple both ways, and the door witness's coverage case derives from the same lists each road's hand-off
+column, the count of its sites whose list hands off, and the no-hand-off sites of hand-off keys, the _unread arm alone, each executed
+by a drive and in no row of UNDRIVEN_SITES; both mutations red the roster pin since, naming the key (1 failed, 38 passed each), and
+the corrupt handler's hand-off rewritten through a temporary, `store = load_goals(fsid)` then `return store`, reds the roster pin
+naming corrupt and the coverage case at the corrupt row's hand-off column, 1 against 0 (2 failed, 37 passed), the coverage case alone
+with the tuple edited to match (1 failed, 38 passed). The
 clean module at this head, the head of the round-7 fixes: 39 passed single-process on 3.10, 3.11, 3.12, 3.13 and 3.14t.
 
 Drives the real pass (_auto_nudge_tick) over two alive sessions with real transcript files and real goal stores, on the
@@ -691,11 +701,19 @@ SHARED_CALL_KEYS = ("hit", "miss", "compare_miss", "absent", "fallback")
 # The shared door's hand-offs into load_goals: the four counters load_goals_shared bumps right before it returns load_goals(fsid)
 # (judge.py, the door's body: the cache off, no store file, an unreadable journal, bytes that did not parse). Each hand-off is one
 # load_goals call and so one bump of `loads` in jd.goal_io_stats(), the writer door's own counter, which the writer reconciliation
-# in _pass reads. The door's _unread arm bumps unreadable_journal with no hand-off. The door's own comment calls the arm unreachable
-# while the journal's rows arrive as lines, which is true of the replay's mark alone: a store file carrying a top-level _unread key
-# reaches it with no code change, since nothing between the parse and the arm strips the key, and the door witness drives it (the
-# unread road, 0 hand-offs, outside any pass). A pass that reached it would red that reconciliation, a bump of a hand-off key over
-# the loads, so it is loud there.
+# in _pass reads; _pass's dup and refuse zero line reads the second keys outside this tuple. The roster pin in TheCountersOneSite
+# derives the keys from the door's AST, the direct bump keys of every statement list whose last statement returns a call of
+# load_goals (_door_hands_off), and asserts them equal to this tuple both ways, so a key that starts handing off, or one of these
+# that stops, reds there (review round 7, the plan's hunt for a seventh hand-written axis: this tuple was pinned by nothing while
+# its three siblings were pinned against the door's AST, and dup added to it, which also narrowed the zero line to refuse alone, or
+# corrupt removed from it left the module green). The door's _unread arm bumps unreadable_journal with no hand-off. The door's own
+# comment calls the arm unreachable while the journal's rows arrive as lines, which is true of the replay's mark alone: a store file
+# carrying a top-level _unread key reaches it with no code change, since nothing between the parse and the arm strips the key, and
+# the door witness drives it (the unread road, 0 hand-offs, outside any pass). The witness reads from the same lists, per bump site,
+# whether its list hands off, ties each road's hand-off column to the count over its sites, and derives the no-hand-off sites of
+# hand-off keys, that arm alone today, which no row of UNDRIVEN_SITES may hold: _pass's writer reconciliation counts every bump of a
+# hand-off key as a load, so a pass that reached such a site reds there, loud, and its only witness is a drive that reads 0 hand-offs
+# at it.
 SHARED_HANDOFF_KEYS = ("absent", "fallback", "corrupt", "unreadable_journal")
 # The door's second bumps, read from load_goals_shared's body (judge.py): below the call-key bumps the fill road, entered after the
 # miss or compare_miss bump, bumps at most one of these and returns (by execution, TheDoorBumpsAtMostOneSecondKeyPerCall).
@@ -1252,6 +1270,18 @@ def _door_bump_key(n):
 def _door_stmt_key(s):
     """The key a bump STATEMENT of the door moves: an Expr whose value is the _shared_bump call, or the AugAssign itself."""
     return _door_bump_key(s.value if isinstance(s, ast.Expr) else s)
+
+
+def _door_hands_off(blk):
+    """Whether a statement list of the door hands its read to load_goals: its last statement is a Return whose value is a Call of
+    the Name load_goals. One predicate for two readers: the roster pin derives SHARED_HANDOFF_KEYS as the direct bump keys of the
+    lists this answers True for, and the door witness's _sites reads it per bump site, so each road's hand-off column is tied to the
+    lists holding its sites (review round 7: the tuple was the one roster pinned by nothing). Reads one form; a hand-off written
+    through a temporary or an alias of the loader answers False here, and both readers red on it (the roster pin naming the key, the
+    witness's hand-off column by the writer door's counter)."""
+    last = blk[-1]
+    return (isinstance(last, ast.Return) and isinstance(last.value, ast.Call) and isinstance(last.value.func, ast.Name)
+            and last.value.func.id == "load_goals")
 
 
 def _door_regions(tree):
@@ -2039,7 +2069,8 @@ class _WalkHarness(unittest.TestCase):
         against WALK, GATE and SWEEP by the caller's function name, the caller named by code identity through the wrappers' hand-off
         lines (_pass_through_lines at setUp); the call keys' delta against the recorded calls; the second keys' sum against the fills
         over SHARED_FILL_KEYS, the keys the roster pin derives from the door's AST; the writer door's loads against the hand-offs over
-        SHARED_HANDOFF_KEYS; the gate's checks against its derives. Bounds: WALK, GATE and SWEEP, the callers the condition names, hand
+        SHARED_HANDOFF_KEYS, the keys the same pin derives from the door's lists that end in a return of a load_goals call; the gate's
+        checks against its derives. Bounds: WALK, GATE and SWEEP, the callers the condition names, hand
         lists; the ceilings (one per sid for the walk and the gate, the owned records for the sweep), the condition's own figures; the
         window, one _auto_nudge_tick call; and the doors recorded, the judge's two, with what setUp replaces pinned there against
         REPLACED_KM and REPLACED_JD both ways, and CASE_KM and CASE_JD, what a case replaces after setUp, pinned by nothing."""
@@ -2138,11 +2169,11 @@ class _WalkHarness(unittest.TestCase):
         handoffs = sum(s1[k] - s0[k] for k in SHARED_HANDOFF_KEYS)
         self.assertEqual(g1 - g0, handoffs,
                          "the writer door's own counter, goal_io loads, moves once per load_goals call (the loader's first line), and the "
-                         "shared door hands a read to load_goals on exactly the absent, fallback, corrupt and unreadable_journal counters; "
-                         "the recorded writer calls are zero here (the assertion above), so the delta must equal those hand-offs alone; a "
-                         "difference is a writer-door load the recorder did not see, through a reference to the real door taken before it "
-                         "stood or written inside the shared door's own body (the fallback skip takes it for the hand-off): loads %d against "
-                         "hand-offs %d" % (g1 - g0, handoffs))
+                         "shared door hands a read to load_goals on exactly the %s counters (SHARED_HANDOFF_KEYS, derived from the door's "
+                         "AST by the roster pin); the recorded writer calls are zero here (the assertion above), so the delta must equal "
+                         "those hand-offs alone; a difference is a writer-door load the recorder did not see, through a reference to the "
+                         "real door taken before it stood or written inside the shared door's own body (the fallback skip takes it for the "
+                         "hand-off): loads %d against hand-offs %d" % (", ".join(SHARED_HANDOFF_KEYS), g1 - g0, handoffs))
         d["writerLoads"] = g1 - g0                        # the writer door's own counter; the recorder's list is asserted empty above, so
         #                                                   it is not returned (a case-level read of it could never fail: review round 2)
         d["parsedSids"] = sorted(self.parsed)
@@ -2469,8 +2500,11 @@ class TheDoorBumpsAtMostOneSecondKeyPerCall(_WalkHarness):
     Derives: the door's bump sites as (key, ordinal) from the real door's source through _door_regions (_sites); the sites each call
     executed, by a trace of the door's own code object (_line_trace); the coverage, the door's sites against the rows' sites plus
     UNDRIVEN_SITES both ways and none in both; the keys ROADS expects against both rosters both ways; the rows against the class's
-    method names both ways; the counters per call from the real _SHARED_STATS and goal_io loads. Bounds: the expected deltas per road
-    and each road's arrangement, hand-written and held by execution; the arrangement's limit, a one-node store for one sid and one
+    method names both ways; per site, whether the statement list holding it hands the read to load_goals (_door_hands_off, the roster
+    pin's predicate), each row's hand-off column against the count over its sites, and the no-hand-off sites of hand-off keys, the
+    _unread arm alone today, each executed by a drive and in no row of UNDRIVEN_SITES; the counters per call from the real
+    _SHARED_STATS and goal_io loads. Bounds: the expected call-key and second-key deltas per road and each road's arrangement,
+    hand-written and held by execution; the arrangement's limit, a one-node store for one sid and one
     call, so a bump conditioned on state no drive arranges is on no driven road; and the trace, which reads the door's own code
     object alone, so a site that executes in the frame of a helper defined inside the door is seen by the counters and not by the
     trace (the two must agree per call, so such a bump reds its drive by the counters, with the site's line unnamed)."""
@@ -2478,9 +2512,11 @@ class TheDoorBumpsAtMostOneSecondKeyPerCall(_WalkHarness):
     # The roads and the deltas each drive asserts: road -> (call keys, second keys, goal_io loads hand-offs, the exception the call
     # propagates or None, the bump SITES the call executes as (key, ordinal) pairs, the ordinal counting that key's sites in the door's
     # source order from 0). The coverage case derives from this table that the call and second keys over every row are exactly both
-    # rosters, that a row's sites name exactly the keys its deltas name, and that the sites over every row plus UNDRIVEN_SITES are
-    # exactly the door's own bump sites (_sites), and from the class's method names that every road here has a method named for it;
-    # each drive asserts by a trace of the door's frame that its call executed exactly its row's sites.
+    # rosters, that a row's sites name exactly the keys its deltas name, that the sites over every row plus UNDRIVEN_SITES are
+    # exactly the door's own bump sites (_sites), that each row's hand-off column is the number of its sites whose statement list ends
+    # in `return load_goals(...)` (_sites reads it from the door's lists through _door_hands_off, the roster pin's predicate), and from
+    # the class's method names that every road here has a method named for it; each drive asserts by a trace of the door's frame that
+    # its call executed exactly its row's sites.
     ROADS = {
         "hit": ({"hit": 1}, {}, 0, None, (("hit", 0),)),
         "miss": ({"miss": 1}, {}, 0, None, (("miss", 0),)),
@@ -2506,17 +2542,23 @@ class TheDoorBumpsAtMostOneSecondKeyPerCall(_WalkHarness):
     UNDRIVEN_SITES = {}
 
     def _sites(self):
-        """The door's bump sites in execution's coordinates: {(key, ordinal): absolute line}, the ordinal counting a key's sites in
-        source order from 0, read from the real door's source through _door_regions (the roster pin's read of the door, a roster row)
-        and mapped to the file's lines as _pass_through_lines maps a hand-off (inspect gives the source with its first line's number).
-        The real door is the one setUp saved before it stood the recorder on the name."""
+        """The door's bump sites in execution's coordinates, two maps over the same (key, ordinal) pairs, the ordinal counting a key's
+        sites in source order from 0: the absolute line of each, read from the real door's source through _door_regions (the roster
+        pin's read of the door, a roster row) and mapped to the file's lines as _pass_through_lines maps a hand-off (inspect gives the
+        source with its first line's number); and whether the statement list holding each as a direct statement hands the read to
+        load_goals (_door_hands_off, the roster pin's predicate over the same lists). A bump that is a direct statement of no list (an
+        assignment's value, say) hands nothing off here, and the row whose drive reads a load at it disagrees with the derivation. The
+        real door is the one setUp saved before it stood the recorder on the name."""
         door = self.saved_jd["load_goals_shared"]
         src, start = inspect.getsourcelines(door)
-        bumps, _blocks, _tries = _door_regions(ast.parse(textwrap.dedent("".join(src))))
+        bumps, blocks, _tries = _door_regions(ast.parse(textwrap.dedent("".join(src))))
+        handing = {(s.lineno, _door_stmt_key(s)): _door_hands_off(blk) for blk in blocks for s in blk if _door_stmt_key(s) is not None}
         by_key = {}
         for rel, key in sorted(bumps):
-            by_key.setdefault(key, []).append(start - 1 + rel)
-        return {(key, i): line for key, lines in by_key.items() for i, line in enumerate(lines)}
+            by_key.setdefault(key, []).append(rel)
+        lines = {(key, i): start - 1 + rel for key, rels in by_key.items() for i, rel in enumerate(rels)}
+        hands = {(key, i): handing.get((rel, key), False) for key, rels in by_key.items() for i, rel in enumerate(rels)}
+        return lines, hands
 
     def _store_path(self):
         return jd.GOALDIR / (SID_C + ".json")
@@ -2530,7 +2572,7 @@ class TheDoorBumpsAtMostOneSecondKeyPerCall(_WalkHarness):
                         "%s drives %r" % (self._testMethodName, road))
         expect_calls, expect_second, expect_loads, raises, expect_sites = self.ROADS[road]
         here = os.path.basename(os.path.realpath(__file__))
-        sites, hit = self._sites(), set()
+        (sites, _hands), hit = self._sites(), set()
         s0, g0 = jd.shared_store_stats(), jd.goal_io_stats()["loads"]
         self.calls.clear(); self.writer.clear()
         err, store, exc = io.StringIO(), None, None
@@ -2599,7 +2641,7 @@ class TheDoorBumpsAtMostOneSecondKeyPerCall(_WalkHarness):
                              "%s: the sites column names exactly the keys the row's deltas name (a site of a key whose counter the road "
                              "does not move, or a moved key with no site, is a row that disagrees with itself): sites %r, deltas %r"
                              % (road, road_sites, sorted(set(calls) | set(second))))
-        sites = self._sites()
+        sites, hands = self._sites()
         driven = {site for _road, row in self.ROADS.items() for site in row[4]}
         stated = set(self.UNDRIVEN_SITES)
         self.assertEqual(sorted(driven & stated), [], "a site a drive executes is stated undriven: remove the statement: %r" % sorted(driven & stated))
@@ -2611,6 +2653,25 @@ class TheDoorBumpsAtMostOneSecondKeyPerCall(_WalkHarness):
                          "site bumping an already driven key is on no driven road; add the drive that reaches it, or a row to "
                          "UNDRIVEN_SITES saying why none does"
                          % "; ".join("%r at line %d" % (site, sites[site]) for site in sorted(set(sites) - (driven | stated))))
+        # the hand-off column (review round 7, the seventh-axis hunt): each row's hand-offs are the count of its sites whose statement
+        # list hands the read to load_goals, read from the door's lists by _sites through the roster pin's predicate, so the column a
+        # drive holds by the writer door's counter and the lists the roster pin derives SHARED_HANDOFF_KEYS from agree per road
+        for road, (_calls, _second, loads, _raises, road_sites) in self.ROADS.items():
+            self.assertEqual(loads, sum(1 for site in road_sites if hands[site]),
+                             "%s: the row's hand-off column, %d, is the number of its sites whose statement list ends in `return load_goals(...)` "
+                             "(_door_hands_off over the door's lists), %d: sites %r (the drive holds the column by goal_io loads, so a "
+                             "disagreement is a hand-off the list does not show, through a temporary or an alias of the loader, or a list "
+                             "that hands off on a road whose drive reads no load)"
+                             % (road, loads, sum(1 for site in road_sites if hands[site]), sorted((site, hands[site]) for site in road_sites)))
+        # a bump of a hand-off key whose list does not hand off (the door's _unread arm today): _pass's writer reconciliation counts
+        # every bump of a hand-off key as a load, so a pass that reached it would red there, and its only witness is a drive that
+        # reads 0 hand-offs at it; such a site is never left to a statement
+        silent = sorted(site for site, off in hands.items() if site[0] in SHARED_HANDOFF_KEYS and not off)
+        self.assertEqual(sorted(set(silent) - driven), [],
+                         "a bump site of a hand-off key whose statement list does not hand the read to load_goals is executed by a drive, "
+                         "which reads 0 hand-offs at it, and is in no row of UNDRIVEN_SITES: a pass that reached it would red _pass's writer "
+                         "reconciliation (every bump of a hand-off key counted as a load), so a drive outside any pass is its one witness; "
+                         "such sites %r, of which undriven %r" % (silent, sorted(set(silent) - driven)))
 
     def test_the_miss_road_a_seeded_store_read_once_fills_and_publishes(self):
         self._seed(SID_C, stamped=False)
@@ -2960,16 +3021,24 @@ class TheCountersOneSite(unittest.TestCase):
         own _unread arm by the unread drive alone, and not by _pass. From the same lists the fill road's entry keys are derived: the call keys whose list does
         not end in a Return or a Raise fall through into the fill, and they must be SHARED_FILL_KEYS, which _pass sums as the bound's
         right-hand side, so a call key that starts falling through, or one of these that stops, reds here rather than leaving _pass
-        summing the wrong keys. Review round 4, tests-2, regression-2 and extra4-1: the pin read the rosters and the order, the
+        summing the wrong keys. From the same lists the hand-off keys are derived: the direct bump keys of every list whose last
+        statement returns a call of load_goals (_door_hands_off) must be SHARED_HANDOFF_KEYS, which _pass counts as loads in the writer
+        reconciliation and leaves out of its dup and refuse zero line (review round 7, the plan's hunt for a seventh hand-written axis:
+        the tuple was pinned by nothing while its three siblings were pinned here, and dup added to it or corrupt removed from it left the
+        module green). Review round 4, tests-2, regression-2 and extra4-1: the pin read the rosters and the order, the
         at-most-one was held by reading the body, and a second second-key bump on one road or a new fill key left the module green
         with the bound no longer following from the body. Added in the consolidation pass beside ruling 1's bound, the fixer's addition
         beyond the ruling's letter. Derives: the door's bumps as (line, key), its statement lists and its try regions from the door's
         AST (_door_regions); the bump keys against both rosters both ways; the order, every second-key bump below every call-key bump;
         per statement list holding a second-key bump, one such bump over its subtrees and a Return or a Raise last; the count of such
-        lists against the second-key bumps; the fill road's entry keys against SHARED_FILL_KEYS both ways; the bumps under a finalbody
-        and the second-key raise lists under a try, none of either. Bounds: the forms these clauses refuse are the ones named here and
-        no others, silent on the rest (the early warning); a callee's body, outside the door's AST; and the hand-off keys,
-        SHARED_HANDOFF_KEYS, which this pin does not read."""
+        lists against the second-key bumps; the fill road's entry keys against SHARED_FILL_KEYS both ways; the hand-off keys, the direct
+        bump keys of every list whose last statement returns a call of load_goals, against SHARED_HANDOFF_KEYS both ways; the bumps
+        under a finalbody and the second-key raise lists under a try, none of either. Bounds: the forms these clauses refuse are the
+        ones named here and no others, silent on the rest (the early warning); a callee's body, outside the door's AST; and the
+        hand-off predicate's one form, a Return of a Call of the Name load_goals last in the list, so a hand-off written through a
+        temporary or an alias of the loader reads here as none and reds the equality naming its key, and with the tuple edited to match
+        it reds the door witness's hand-off column for that road, read from the writer door's counter by execution against the same
+        lists (both by execution on the tree of the round-7 hand-off fix)."""
         door = jd.load_goals_shared
         self.assertEqual((door.__code__.co_name, os.path.basename(os.path.realpath(door.__code__.co_filename))), ("load_goals_shared", JUDGE_FILE),
                          "the door read here is the judge's own (a harness case's recorder is gone by its cleanup)")
@@ -2987,9 +3056,11 @@ class TheCountersOneSite(unittest.TestCase):
                         "compare_miss bump), the structure the bound in _pass rests on; the bumps by line: %r" % sorted(bumps))
         # the at-most-one, over every statement list of the door (`blocks`: each list-valued field whose members are all statements, a
         # body, an orelse, a finalbody, a handler's body; Try.handlers holds ExceptHandler nodes, so no try region is collected twice)
-        holding, fill_entries = 0, set()
+        holding, fill_entries, handoff_keys = 0, set(), set()
         for blk in blocks:
             direct = [k for k in (_door_stmt_key(s) for s in blk) if k is not None]
+            if _door_hands_off(blk):
+                handoff_keys.update(direct)
             if any(k in SHARED_SECOND_KEYS for k in direct):
                 holding += 1
                 deep = [(x.lineno, _door_bump_key(x)) for s in blk for x in _walk(s) if _door_bump_key(x) is not None]
@@ -3016,6 +3087,15 @@ class TheCountersOneSite(unittest.TestCase):
                          "not end in a Return or a Raise), are SHARED_FILL_KEYS, the keys _pass sums as the bound's right-hand side: derived "
                          "%r against %r (a call key that starts falling through, or one of these that stops, changes the bound's derivation "
                          "and the tuple with it)" % (sorted(fill_entries), sorted(SHARED_FILL_KEYS)))
+        self.assertEqual(handoff_keys, set(SHARED_HANDOFF_KEYS),
+                         "the hand-off keys, the direct bump keys of every statement list of the door whose last statement returns a call of "
+                         "load_goals, are SHARED_HANDOFF_KEYS, the keys _pass counts as loads in the writer reconciliation and leaves out of "
+                         "its dup and refuse zero line: hands off with no place in the tuple %r (a load the reconciliation would not expect); "
+                         "in the tuple with no list handing off %r (a bump counted as a load that never comes, and a second key the zero line "
+                         "stops reading); derived %r against %r (a hand-off written through a temporary or an alias of the loader reads here "
+                         "as none: write it as `return load_goals(fsid)`, or widen _door_hands_off with its reason)"
+                         % (sorted(handoff_keys - set(SHARED_HANDOFF_KEYS)), sorted(set(SHARED_HANDOFF_KEYS) - handoff_keys),
+                            sorted(handoff_keys), sorted(SHARED_HANDOFF_KEYS)))
         # the two constructs that leave a clean list and bump again (a verifier of the round-4 fixes): a finalbody runs after its try's
         # body or a handler returned, so a bump under one adds to theirs on the same path; a Raise ending a second-key list can be
         # caught by a handler above, which goes on. A try statement is the one node class with a finalbody field, so the try regions
