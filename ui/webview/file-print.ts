@@ -489,14 +489,19 @@ function authorDisplay(el: FigureNode): string | null {
  *  and paints nothing there; an SVG ancestor this list does not name reads the same way, the safe side, so nothing is
  *  counted for it. */
 const SVG_RENDERS: readonly string[] = ["svg", "g", "a", "switch"];
-/** Whether the author's `display: contents` on the SVG element `el` lets its content render: on a group, and on an svg
- *  nested inside SVG content, it does (measured in Chromium ALONE, file-print-figure-browser.test.ts: the image inside
- *  paints; Firefox and WebKit are not measured for the group or the nested svg); on every other SVG element, an outermost
- *  svg, a link, a switch and an image among them, `contents` computes to none (measured the same way; the outermost svg and
- *  the image in the three engines), so it hides as `none` does. Since the round-4 review (2026-09-20) an element below the
- *  root reads its computed display, so in a browser this rule decides for the root alone (an outermost svg, which never
- *  renders `contents`) and for an element the engine keeps `contents` on; an engine that keeps `contents` on a group it does
- *  not render would be read wrong here, and none of the three is measured to. */
+/** Whether the author's `display: contents` on the SVG element `el` lets its content render, read on the AUTHORED road
+ *  alone (offPaper: the figure's root, and a stand-in under node where nothing computes): on a group, and on an svg nested
+ *  inside SVG content, it does; on an outermost svg, a switch and an image, `contents` computes to none, so it hides as
+ *  `none` does; and on a link the engines differ: Chromium and WebKit compute it to none, Firefox keeps it and paints the
+ *  image inside (file-print-figure-browser.test.ts in the three engines, 2026-09-20: `svg>a[display=contents]>image` paints
+ *  in Firefox alone, `svg>g[display=contents]>image` and the nested svg in all three, the switch and the image in none).
+ *  A link is not named here, the safe side for the one place this table would decide for one, a link that is a figure's
+ *  root, and the gate's media roots are an img, a video, an audio, a picture or an svg (figure-gate.ts), so no link reaches
+ *  this road in the product. Below the root the display the
+ *  browser COMPUTES is read and a computed `contents` is trusted as rendering, since an engine that kept `contents` on an
+ *  element it did not render would leave a picture counted for a print that shows nothing of it, and none of the three
+ *  does that; before the round-5 review (2026-09-20) this table decided below the root as well, so the link Firefox
+ *  paints read off the paper there, its placeholder not counted and its host not named while the print showed it. */
 const contentsRenders = (el: FigureNode): boolean => el.localName === "g" || (el.localName === "svg" && !!el.parentElement && el.parentElement.namespaceURI === SVG_NS);
 /** Whether `el`, an element of a placeholder's figure, takes itself off the paper once the placeholder is restored (`self`)
  *  or takes everything inside it off (`self` false: an ancestor of the element that paints). On an HTML element the
@@ -504,7 +509,9 @@ const contentsRenders = (el: FigureNode): boolean => el.localName === "g" || (el
  *  make); on any element display none, read as the browser computes it for any element below the figure's `root` (the
  *  sheet's none stops at the root: a sheet rule on an author's class is read this way, where the author's declaration alone
  *  missed it; the round-4 review's extra8-3, 2026-09-20) and from the author's own declaration for the root and where nothing
- *  computes (authorDisplay; on an SVG element whose content `contents` does not render, contentsRenders, `contents` as well)
+ *  computes (authorDisplay; on that authored road alone, `contents` as well on an SVG element whose content it does not let
+ *  render, contentsRenders; a computed `contents` below the root is the browser's own and is trusted as rendering, the
+ *  round-5 review's correctness-2, 2026-09-20)
  *  and, where the browser computes it, opacity zero (the computed value: `-0`, `+0`, `0e0`, `0%`, `.0`,
  *  ` 0 `, `calc(0)`, a negative value and one the engine rounds to nothing, `1e-100`, each compute to 0, while `0.0.0` and
  *  `0.`, which the browser refuses and paints at 1, and `1e-9`, which it keeps, do not); and, for the painting element
@@ -515,8 +522,9 @@ const contentsRenders = (el: FigureNode): boolean => el.localName === "g" || (el
 function offPaper(el: FigureNode, self: boolean, root: FigureNode = el): boolean {
   if (isHtml(el) && (el.hasAttribute("hidden") || el.hasAttribute("popover"))) return true;
   const cs = computedOf(el);
-  const display = el !== root && cs !== null ? cs.display : authorDisplay(el);
-  if (display === "none" || (display === "contents" && el.namespaceURI === SVG_NS && !contentsRenders(el))) return true;
+  const authored = el === root || cs === null;
+  const display = authored ? authorDisplay(el) : cs.display;
+  if (display === "none" || (authored && display === "contents" && el.namespaceURI === SVG_NS && !contentsRenders(el))) return true;
   if (cs === null) return false;
   if (Number(cs.opacity) === 0) return true;
   return self && (cs.visibility === "hidden" || cs.visibility === "collapse");

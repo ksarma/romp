@@ -7881,8 +7881,9 @@ sets none on the root alone, and display does not inherit, so each descendant's 
 on an author's class is read this way, which the author's declaration alone missed: the round-4 review's extra8-3,
 2026-09-20) and, for the root itself and wherever nothing computes, from the author's own declaration, the style
 attribute or, on an SVG element, the `display` presentation attribute parsed by the browser (`authorDisplay`), with
-`contents` where it hides (`contentsRenders`: a group and a nested svg render it, measured in Chromium alone, Firefox and
-WebKit not measured for those two, as its docstring says); the `opacity` the browser COMPUTES, zero in
+`contents` where it hides (`contentsRenders`, on the root and where nothing computes alone; below the root a computed
+`contents` is the browser's own and is trusted as rendering, the engines differing on a link, as the docstring states per
+engine: the round-5 review's correctness-2, 2026-09-20); the `opacity` the browser COMPUTES, zero in
 any spelling, `-0`, `+0`, `0e0`, `0%`, `calc(0)` and a negative value among them, where `0.0.0` and `0.`, which the
 browser refuses and paints at 1, are not zero; and, on the painting element itself, the `visibility` the browser
 computes, hidden or collapse; an SVG ancestor below the root whose content never renders, `<defs>`, `<symbol>`,
@@ -7907,7 +7908,7 @@ opacity was matched against one spelling of zero by a pattern and the placeholde
 so a gated svg at `opacity="-0"`, `"+0"` or `"0e0"` was counted, its host named and its picture fetched for a figure the
 browser paints nothing of, `0.0.0`, which the browser paints, read as off the paper, and `<picture><img hidden src>` was
 counted and fetched, the shape the round-2 census had closed for a bare `<img hidden>`
-(file-print-figure-browser.test.ts, in Chromium: every one of 83 gated shapes built twice on one page, 74 at the
+(file-print-figure-browser.test.ts, in Chromium, Firefox and WebKit since the round-5 review: every one of 83 gated shapes built twice on one page, 74 at the
 round-3 review and nine more since the round-4 review, gated through the
 real gate and as an ungated twin at a local URL, the flow's answer for the gated figure held equal to the browser's own
 for the twin, the named spellings of opacity, visibility and display held to the answers the round named, and no remote
@@ -8346,7 +8347,7 @@ under node) `hidden` and `popover` alone are read and nothing fetches there; eve
 the figure on the paper as far as the flow reads, the PERMISSIVE side: an svg's `transform`, `clip-path`, `mask` and
 `filter` can hide its paint and are not read (the `figureHidden` under node case: `hidden` and `popover` on an HTML
 element true and on an SVG element false; a presentation attribute, `display` on an `<img>`, a zero `width`, `inert` and
-a faint `opacity` false; file-print-figure-browser.test.ts in Chromium: the flow's answer equal to the browser's for the
+a faint `opacity` false; file-print-figure-browser.test.ts in the three engines: the flow's answer equal to the browser's for the
 ungated twin of each of 74 gated shapes, the spellings of zero among them; open point 8). `figurePrintable` (P2): both
 must hold, over every painting element of the figure (`paintsOf`), each with its ancestors up to the root (`shows`); an
 SVG ancestor whose content never renders, or one `SVG_RENDERS` does not name, takes the paint off, the safe side; an
@@ -8564,7 +8565,7 @@ _Avoid_ (a review finding, 2026-09-19).
   at its first click, after installFilePrint), under which one Escape reaches the flow first and the re-place cancels
   and the bar disarms together, while the record pin stays green (round 3's refuter measured it at 22 of 22, the
   measurement the leg's title attributes to it).
-- ui/webview/file-print-figure-browser.test.ts, headless Chromium (the round-3 review, 2026-09-20): the figure half of
+- ui/webview/file-print-figure-browser.test.ts, headless Chromium, Firefox and WebKit (the round-3 review, 2026-09-20; one case per engine since the round-5 review): the figure half of
   the printable rule over real elements, every one of 83 gated shapes built twice on one page (74 at the round-3 review,
   nine added since the round-4 review, below), gated on a host the
   gear's list does not name through the real gate on a parser document under the sheets' own gate rule, and as an
