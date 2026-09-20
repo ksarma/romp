@@ -114,10 +114,17 @@ class HostDirRefused(OSError):
     link planted at either name escaped this class, with no problem row, no remedy, and the launch error composed over a
     stale stderr tail. The text is the reason with the path; sdk_backend._host_transport_for files it as a problem row
     with the remedy (worded per shape, a directory's or a file's) and refuses the launch (round 4 of the review,
-    2026-09-20). Built from ONE text argument, always, so `errno` is None on every instance: that is what tells a
-    decided refusal from a filesystem error in write_spawn_spec's wrap of the two path-taking helpers (regression-1 and
-    kernel-4, round 5), which raise their own refusals as single-argument OSErrors and let a real errno (a full disk,
-    an unwritable root) through as the OSError it is."""
+    2026-09-20). Built from ONE text argument, always, so `errno` is None on every instance. What write_spawn_spec's
+    wrap of the two path-taking helpers files under this class (round 7 of the review, 2026-09-20, correcting round
+    5's `errno is None` key, which threw every directory-shape refusal pathlib's mkdir raises before the helper's own
+    lstat out of the class): a refusal the helper decided (a single-argument OSError: a symlink to a directory, a
+    foreign uid, a directory that stays loose) and an errno of the SHAPE CLASS from either helper, EEXIST (a regular
+    file, a FIFO, a dangling symlink or a symlink to a file standing at hosts/ or hosts/<sid>/, which mkdir(exist_ok=True)
+    re-raises because the name is taken by something that is not a directory), ENOTDIR (a component that is not a
+    directory: a state root that is itself a plain file, or hosts/ re-pointed to a file between the two helpers),
+    ELOOP (a symlink loop) and ENOENT (hosts/ re-pointed to a dangling link between the two helpers, the reading the
+    descent already gives ENOENT: "does not exist"); every other errno (ENOSPC, EROFS, EACCES, EPERM, EMFILE) is a
+    filesystem failure and propagates as the OSError it is, with its errno, to the launch error."""
 
     file = None                                  # the file name when the refusal is a link at spawn.json or host.stderr
 
@@ -532,6 +539,38 @@ def spawn_spec(opts, sid: str, name: str, state_dir, version: str, grace_s: floa
     return spec
 
 
+HELPER_SHAPE_ERRNOS = (errno.EEXIST, errno.ENOTDIR, errno.ELOOP, errno.ENOENT)
+# The errnos of the two directory helpers (sh.hosts_dir, sh.owner_only_dir) that mean the directory's SHAPE is wrong,
+# the class write_spawn_spec's wrap files as HostDirRefused with the directory remedy (round 7 of the review, 2026-09-20;
+# the round-6 rulings, C). Keyed on the errno, never on how the shape was planted: EEXIST is pathlib's mkdir(exist_ok=True)
+# re-raising for a name taken by a non-directory (a regular file, a FIFO, a dangling symlink, a symlink to a file, at
+# hosts/ or at hosts/<sid>/), ENOTDIR a component that is not a directory (a plain-file state root, which only the
+# operator can cause and which the same remedy fits; or hosts/ re-pointed to a file between the helpers, which a peer
+# can), ELOOP a symlink loop, and ENOENT a missing component, which between the two helpers is hosts/ re-pointed to a
+# DANGLING link, a peer's one-syscall plant, and which the descent's own open already files as "does not exist"; it joins
+# the class for both reasons. Outside the set, an errno is a filesystem failure and stays the launch error with its
+# errno: ENOSPC and EROFS (only the machine causes them), EACCES and EPERM (a peer CAN cause these too, with hosts/
+# re-pointed to a directory this uid cannot write or, at the chmod leg, to an object it does not own; by the round-6
+# ruling they pass through unchanged, so that road reads the errno's text with the path, no remedy, no refusal row).
+
+
+def helper_shape_refusal(e: OSError, state_dir, sid: str) -> str:
+    """The sentence for a shape errno one of the two helpers raised: the component the failing path names, then what
+    the errno says of it, in the words the helpers' own refusals use."""
+    hosts_path = Path(state_dir) / "hosts"
+    failed = Path(e.filename) if getattr(e, "filename", None) else host_dir(state_dir, sid)
+    what = "hosts directory" if failed == hosts_path else "host directory"
+    if e.errno == errno.EEXIST:
+        why = "is not a directory"
+    elif e.errno == errno.ENOTDIR:
+        why = "is not a directory, or a directory above it is not"
+    elif e.errno == errno.ELOOP:
+        why = "is not a directory (a symlink loop)"
+    else:
+        why = "does not exist (a component is missing, or a symlink there dangles)"
+    return "%s %s %s" % (what, failed, why)
+
+
 def write_spawn_spec(state_dir, sid: str, spec: dict) -> Path:
     """`hosts/<sid>/spawn.json`, the directory at 0700 and the file at 0600: the spec carries the
     environment overlay, minus the credential-shaped names of it as the kernel's split_spawn_secrets draws
@@ -559,15 +598,23 @@ def write_spawn_spec(state_dir, sid: str, spec: dict) -> Path:
     socket-mode fix, 2026-09-19). The residual the helper's docstring states (a re-point between its read-back
     and a path-taking open) is closed for this write since round 4 of the review: the open below takes a name
     relative to a held descriptor, not a path, and a link swapped in after the read-back fails it (the paragraph
-    on the open, below). WHAT STILL TAKES A PATH (correctness-2 and extra5-1, round 5 of the review, 2026-09-20): the
-    two directory helpers themselves. sh.hosts_dir makes and checks hosts/ by path, and sh.owner_only_dir makes and
-    checks hosts/<sid>/ by path, so a hosts/ re-pointed to a symlink after the first returns and before the second's
-    mkdir puts that mkdir, and the chmod that follows it for a loose directory of ours, in the link's target: by
-    execution, an empty 0700 directory named <sid> is created inside the target (or a loose <sid>/ of ours already
-    standing there is tightened to 0700), no content is written, and the descent below then refuses the link before
-    the open. A mkdir and a chmod in a location the attacker chose, under the same precondition as every residual
-    here (a state root a peer can write while a session starts); closing it means making hosts/<sid>/ with mkdir and
-    fchmod relative to a verified descriptor on hosts/, its own change.
+    on the open, below). WHAT STILL TAKES A PATH (correctness-2 and extra5-1, round 5 of the review; restated to the
+    code's window at round 7, correctness-2 and extra6-2, 2026-09-20): the two directory helpers themselves. Each of
+    sh.hosts_dir (hosts/) and sh.owner_only_dir (hosts/<sid>/) makes and checks its directory by PATH, in four
+    syscalls, mkdir, lstat, chmod (only when the lstat read a loose directory of ours) and the read-back lstat, so the
+    window runs from hosts_dir's first syscall to owner_only_dir's read-back, INSIDE each helper as much as between
+    them, and a re-point of hosts/ or of the <sid> leaf landing anywhere in it is followed by the syscalls after it.
+    What each landing does, by execution at round 7: a link swapped in at the leaf between owner_only_dir's lstat
+    (which read a loose directory of ours) and its chmod is followed by that chmod onto whatever the link names, any
+    object this uid owns anywhere, a regular file included, and on a file 0700 is a LOOSENING (a 0400 file outside the
+    state root read 0700 after); the read-back then refuses, its lstat reading the link itself, under the words "stays
+    group/world-accessible". A hosts/ re-pointed between the two helpers to a directory gets an empty 0700 <sid>/ of
+    ours made inside it (or a loose <sid>/ of ours already there tightened), no content, and the descent below then
+    refuses the link. A hosts/ re-pointed between them to a DANGLING link, a regular file or a directory this uid
+    cannot write never reaches the descent: the second helper's mkdir ends with ENOENT, ENOTDIR or EACCES, and the wrap
+    below files the first two under the class and lets EACCES through as the launch error with its errno. Under the
+    same precondition as every residual here (a state root a peer can write while a session starts); closing it means
+    making hosts/<sid>/ with mkdir and fchmod relative to a verified descriptor on hosts/, its own change.
     The file's mode is set on the descriptor BEFORE the write (os.fchmod): a
     pre-existing file keeps its old mode through O_CREAT|O_TRUNC, and the trailing chmod this had until
     2026-09-18 tightened it only after the overlay was already in it (PR 789, review round 1, the same
@@ -586,19 +633,24 @@ def write_spawn_spec(state_dir, sid: str, spec: dict) -> Path:
     refused with the reason (HostDirRefused, which the kernel files as a problem row
     with the remedy). A symlink standing at spawn.json itself fails that O_NOFOLLOW open and is refused under the same
     class, naming the file (_open_file_nofollow; kernel-2, round 5 of the review, 2026-09-20: through round 4 it was a
-    bare OSError outside the class). The two helpers' DECIDED refusals are raised under the class here, and only those:
-    every refusal they decide (a symlink, not a directory, another uid's, stays loose) is a single-argument OSError whose
-    errno is None, and a filesystem failure of theirs (a full disk at the mkdir, an unwritable root) carries an errno and
-    propagates as the OSError it is, so the kernel tells the class apart from any other OSError of the write without
-    reading the text (regression-1 and kernel-4, round 5: round 4's wrap folded every OSError of the helpers into the
-    class, so a full disk reached the operator as a directory refusal with a remedy that was false for it)."""
+    bare OSError outside the class). What the wrap around the two helpers files under the class (round 7 of the
+    review, 2026-09-20, the round-6 rulings' C): a refusal a helper decided (a single-argument OSError, errno None: a
+    symlink to a directory, another uid's, stays loose), in the helper's own words; and an errno of HELPER_SHAPE_ERRNOS
+    (EEXIST, ENOTDIR, ELOOP, ENOENT; the comment above the set says what each is and why), worded by
+    helper_shape_refusal. Every other errno (a full disk, a read-only filesystem, an unwritable target) propagates as
+    the OSError it is, errno and all, to the kernel's launch error. Two earlier keys were each wrong on one side:
+    round 4 folded every OSError into the class (a full disk got the directory remedy), round 5 keyed on `errno is
+    None` (a regular file, a FIFO, a dangling link or a link to a file at either directory got "[Errno 17] File exists"
+    with no row and no remedy, since pathlib's mkdir(exist_ok=True) re-raises before the helper's lstat runs)."""
     try:
         sh.hosts_dir(state_dir)
         sh.owner_only_dir(host_dir(state_dir, sid), "host directory")
     except OSError as e:
-        if e.errno is not None:                      # a filesystem failure, not a refusal the helper decided
+        if e.errno is None:                          # a refusal the helper decided, in its own words
+            raise HostDirRefused(str(e)) from e
+        if e.errno not in HELPER_SHAPE_ERRNOS:       # a filesystem failure (a full disk, a read-only or unwritable target)
             raise
-        raise HostDirRefused(str(e)) from e
+        raise HostDirRefused(helper_shape_refusal(e, state_dir, sid)) from e
     p = host_dir(state_dir, sid) / "spawn.json"
     with open_host_dirs(state_dir, sid) as dirs:
         fd = _open_file_nofollow("spawn.json", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, dirs)

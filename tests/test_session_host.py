@@ -3282,6 +3282,234 @@ class PreludeRefusalRead(unittest.TestCase):
                 self.assertIn("[Errno %d] %s" % (code, os.strerror(code)), rec.get("text", ""), "the card reads the error, not the stale tail: %r" % (rec,))
                 self.assertNotIn("STALE", rec.get("text", ""))
 
+    _DIRECTORY_REMEDY = ("A hosts/ or hosts/<sid>/ that is not a directory this user owns at 0700 is refused; replace it with a "
+                         "directory, or point the state root elsewhere (ROMP_STATE_DIR or XDG_STATE_HOME)")
+
+    def _plant_shape(self, target, shape):
+        peer = Path(self.scratch) / "peer"
+        peer.mkdir(exist_ok=True)
+        if shape == "regular file":
+            target.write_text("")
+        elif shape == "fifo":
+            os.mkfifo(target)
+        elif shape == "symlink to a file":
+            (peer / "theirs.txt").write_text("the peer's own bytes")
+            target.symlink_to(peer / "theirs.txt")
+        else:
+            target.symlink_to(peer / "nowhere")
+
+    def test_a_non_directory_at_hosts_or_at_the_session_directory_is_filed_as_a_refusal_with_the_directory_remedy_and_starts_nothing(self):
+        """Round 7 of the review (2026-09-20; the round-6 rulings' C), on the production road: a regular file, a FIFO, a
+        symlink to a file or a dangling symlink at hosts/ or at hosts/<sid>/ is a directory-shape refusal, filed as one:
+        the launch error names the component and "is not a directory" with the directory remedy, one
+        host.directory-refused row, errno None on the exception, no Popen, the plant standing. Round 5's `errno is None`
+        key filed none of these (the card read "[Errno 17] File exists", no row, no remedy), where round 4's head filed
+        all of them; the wrap now keys on the errno set of the shape class. Red at the round-6 head on every arm: a
+        CLIConnectionErrorLike with errno 17 and no row."""
+        for where in ("hosts", "hosts/<sid>"):
+            for shape in ("regular file", "fifo", "symlink to a file", "dangling symlink"):
+                with self.subTest(where=where, shape=shape):
+                    self.setUp()
+                    state = tempfile.mkdtemp()
+                    self.addCleanup(shutil.rmtree, state, True)
+                    self._harness(state)
+                    if where == "hosts/<sid>":
+                        sh.hosts_dir(state)
+                        target, what = Path(state) / "hosts" / SID, "host directory"
+                    else:
+                        target, what = Path(state) / "hosts", "hosts directory"
+                    self._plant_shape(target, shape)
+                    before = os.lstat(target)
+                    msg = self._connect()
+                    self.assertTrue(msg.startswith("the session host was not started: %s %s is not a directory. " % (what, target)), msg)
+                    self.assertIn(self._DIRECTORY_REMEDY, msg)
+                    self.assertIsInstance(self.last_exc, sb.CLIConnectionErrorLike, repr(self.last_exc))
+                    self.assertIsNone(getattr(self.last_exc, "errno", None), "a refusal carries no errno")
+                    events = self._events()
+                    self.assertEqual([r["kind"] for r in events], ["host.directory-refused"], "one row, the refusal class's kind")
+                    self.assertIn("%s %s is not a directory" % (what, target), events[0]["text"])
+                    self.assertEqual(self.hosts, [], "no host process was started")
+                    self.assertFalse(os.path.exists(self.marker), "the CLI never started")
+                    self.assertEqual(os.lstat(target)[:2], before[:2], "the plant stands as planted")
+
+    def test_a_hosts_re_pointed_between_the_helpers_to_a_dangling_link_is_refused_and_to_an_unwritable_directory_is_the_launch_error_with_its_errno(self):
+        """The two decisions of round 7 (the round-6 rulings' C) on the production road, planted in the window condition 1
+        states (sh.hosts_dir wrapped to re-point hosts/ after it returns, before sh.owner_only_dir's mkdir): a DANGLING
+        link is refused under the class with the directory remedy and one host.directory-refused row (ENOENT joins the
+        class: the descent's own open already words it "does not exist", and a peer plants it with one syscall); a link
+        to a directory this uid cannot write is the launch error with errno 13 and no row (EACCES stays a filesystem
+        failure by the ruling, though a peer can cause it too), the error-centre line naming the spec-write arm. Neither
+        starts a process, and the unwritable target receives nothing."""
+        ht = sb._ht()
+        real_hosts_dir = ht.sh.hosts_dir
+        for arm in ("dangling", "unwritable"):
+            with self.subTest(arm=arm):
+                self.setUp()
+                state = tempfile.mkdtemp()
+                self.addCleanup(shutil.rmtree, state, True)
+                self._harness(state)
+                if arm == "dangling":
+                    target = Path(self.scratch) / "nowhere"
+                else:
+                    target = Path(self.scratch) / "readonly"
+                    target.mkdir(mode=0o500)
+                    self.addCleanup(os.chmod, target, 0o700)
+
+                def repoint(state_dir, target=target):
+                    r = real_hosts_dir(state_dir)
+                    os.rename(r, str(r) + ".aside")
+                    os.symlink(target, r)
+                    return r
+                with mock.patch.object(ht.sh, "hosts_dir", repoint):
+                    msg = self._connect()
+                leaf = Path(state) / "hosts" / SID
+                self.assertIsInstance(self.last_exc, sb.CLIConnectionErrorLike, repr(self.last_exc))
+                self.assertEqual(self.hosts, [], "no host process was started")
+                if arm == "dangling":
+                    self.assertTrue(msg.startswith("the session host was not started: host directory %s does not exist (a component is missing, or a symlink there dangles). " % leaf), msg)
+                    self.assertIn(self._DIRECTORY_REMEDY, msg)
+                    self.assertIsNone(getattr(self.last_exc, "errno", None))
+                    self.assertEqual([r["kind"] for r in self._events()], ["host.directory-refused"])
+                else:
+                    self.assertTrue(msg.startswith("the session host was not started: [Errno %d] %s: " % (errno.EACCES, os.strerror(errno.EACCES))), msg)
+                    self.assertNotIn("replace it with a directory", msg)
+                    self.assertEqual(getattr(self.last_exc, "errno", None), errno.EACCES)
+                    self.assertEqual([r["kind"] for r in self._events()], [], "no row: a filesystem failure is not a refusal")
+                    self.assertTrue(any("the spawn specification could not be written: [Errno %d]" % errno.EACCES in m for m in self.logs), self.logs)
+                    self.assertEqual(sorted(os.listdir(target)), [], "the unwritable target received nothing")
+
+    def test_a_filesystem_failure_at_the_launchers_descent_or_its_host_stderr_open_is_the_launch_error_with_its_errno_and_no_stale_tail(self):
+        """kernel-2, tests-1 and regression-2 (round 6 of the review, 2026-09-20), on the production road: through round 6
+        the launcher's call site caught HostDirRefused alone, so an OSError from its descent, its host.stderr open, the
+        fchmod after it or Popen itself propagated bare to _record_launch_error, whose text prefers the session's stale
+        stderr tail, and the card read a PREVIOUS CLI's line with no row and no errno. Four arms, each on a session whose
+        CLI once wrote a stderr line: a real directory standing at hosts/<sid>/host.stderr (EISDIR from the open, no stub);
+        ENOSPC interposed at ht.host_stderr_open; EPERM interposed at os.fchmod inside the launcher alone, with os.open and
+        os.close recorded to hold host_stderr_open's close-and-reraise on the road (tests-3); and Popen itself raising
+        (a launcher that cannot be started, folded in on purpose). Each: CLIConnectionErrorLike with the errno, the error's
+        own text, no host.directory-refused row, no process, the error-centre line naming the launcher's arm, and
+        _record_launch_error persisting the errno text and not the stale tail. Red at the round-6 head: a bare OSError
+        out of the road and the stale tail persisted, on every arm."""
+        ht = sb._ht()
+        for arm, code in (("directory-at-host.stderr", errno.EISDIR), ("enospc-at-open", errno.ENOSPC),
+                          ("eperm-at-fchmod", errno.EPERM), ("popen-raises", errno.ENOENT)):
+            with self.subTest(arm=arm):
+                self.setUp()
+                state = tempfile.mkdtemp()
+                self.addCleanup(shutil.rmtree, state, True)
+                self._harness(state)
+                self.sess.stderr_tail = lambda: "a STALE stderr tail from a previous CLI"
+                self.sess._stderr_tail = ["a STALE stderr tail from a previous CLI"]
+                sdir = Path(state) / "hosts" / SID
+                sdir.mkdir(parents=True, mode=0o700)
+                sdir.parent.chmod(0o700)
+                sb.write_lease(state, dict(SpawnWaitMessageArms._STALE_LEASE, sid=SID))    # keeps the directory across the launch
+                real_spawn = self.be._spawn_host
+                opened, closed = [], []
+                real_open, real_close, real_fchmod = os.open, os.close, os.fchmod
+
+                def launch(sess, spec_path, secret_env=None, arm=arm):
+                    if arm == "directory-at-host.stderr":
+                        (sdir / "host.stderr").mkdir(mode=0o700)
+                        return real_spawn(sess, spec_path, secret_env)
+                    if arm == "enospc-at-open":
+                        def full(dirs):
+                            raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC), "host.stderr")
+                        with mock.patch.object(ht, "host_stderr_open", full):
+                            return real_spawn(sess, spec_path, secret_env)
+                    if arm == "eperm-at-fchmod":
+                        def open_probe(*a, **k):
+                            fd = real_open(*a, **k)
+                            opened.append(fd)
+                            return fd
+
+                        def close_probe(fd):
+                            closed.append(fd)
+                            return real_close(fd)
+
+                        def refused(fd, mode):
+                            raise PermissionError(errno.EPERM, "fchmod refused (interposed)")
+                        with mock.patch.object(os, "open", open_probe), mock.patch.object(os, "close", close_probe), \
+                                mock.patch.object(os, "fchmod", refused):
+                            return real_spawn(sess, spec_path, secret_env)
+                    with mock.patch.object(sb.subprocess, "Popen", side_effect=FileNotFoundError(errno.ENOENT, "no such launcher", "romp-session-host")):
+                        return real_spawn(sess, spec_path, secret_env)
+                self.be._spawn_host = launch
+                msg = self._connect()
+                self.assertIsInstance(self.last_exc, sb.CLIConnectionErrorLike, "the launch error class, not a bare %r" % (self.last_exc,))
+                self.assertEqual(getattr(self.last_exc, "errno", None), code, "the errno rides on the launch error")
+                self.assertTrue(msg.startswith("the session host was not started: [Errno %d] " % code), msg)
+                self.assertNotIn("STALE", msg)
+                self.assertNotIn("replace it with a directory", msg, "no directory remedy: nothing was refused")
+                self.assertEqual([r["kind"] for r in self._events()], [], "no session-events row: a filesystem failure is not a refusal")
+                self.assertEqual(self.hosts, [], "no host process was started")
+                self.assertFalse(os.path.exists(self.marker), "the CLI never started")
+                self.assertTrue(any("the host process could not be started (its directory descent, its host.stderr open or the process start failed): [Errno %d]" % code in m
+                                    for m in self.logs), "the error-centre line names the launcher's arm: %r" % (self.logs,))
+                if arm == "eperm-at-fchmod":
+                    self.assertEqual(len(opened), 3, "hosts/, hosts/<sid>/ and host.stderr's descriptors: %r" % (opened,))
+                    self.assertEqual(sorted(closed), sorted(opened), "every descriptor the launcher opened was closed on the failure road")
+                self.be._record_launch_error(self.sess, self.last_exc)
+                rec = (sb.read_reg(Path(state), SID) or {}).get("launchError") or {}
+                self.assertIn("[Errno %d]" % code, rec.get("text", ""), "the card reads the error, not the stale tail: %r" % (rec,))
+                self.assertNotIn("STALE", rec.get("text", ""))
+
+    def test_each_arm_of_the_spawn_road_names_itself_in_the_error_centre_line(self):
+        """correctness-4 and kernel-3 (round 6 of the review, 2026-09-20): the handler's one line said the specification
+        could not be written on the arm that runs AFTER the specification is on disk (the road's own descent), and the
+        launcher's arm had no handler. Three arms, one injected failure each: ENOSPC at the spec write's second helper,
+        EACCES at the road's descent (the second open_host_dirs of the connect; the first is write_spawn_spec's own, so
+        spawn.json is on disk when this one fails, which the case reads), ENOSPC at the launcher's host.stderr open. Each
+        line names its arm; each launch error carries the errno; nothing is refused and no process starts."""
+        ht = sb._ht()
+        real_owner = ht.sh.owner_only_dir
+        real_descend = ht.open_host_dirs
+        real_stderr_open = ht.host_stderr_open
+        arms = (("spec", errno.ENOSPC, "the spawn specification could not be written"),
+                ("descent", errno.EACCES, "the descent to the host directory failed after the specification was written"),
+                ("launcher", errno.ENOSPC, "the host process could not be started (its directory descent, its host.stderr open or the process start failed)"))
+        for arm, code, sentence in arms:
+            with self.subTest(arm=arm):
+                self.setUp()
+                state = tempfile.mkdtemp()
+                self.addCleanup(shutil.rmtree, state, True)
+                self._harness(state)
+                calls = []
+
+                def owner(path, what="directory", parents=False):
+                    if what == "host directory":
+                        raise OSError(code, os.strerror(code), os.fspath(path))
+                    return real_owner(path, what, parents)
+
+                def descend(state_dir, sid):
+                    calls.append(1)
+                    if len(calls) == 2:
+                        raise OSError(code, os.strerror(code), os.fspath(Path(state_dir) / "hosts"))
+                    return real_descend(state_dir, sid)
+
+                def stderr_open(dirs):
+                    raise OSError(code, os.strerror(code), "host.stderr")
+                with contextlib.ExitStack() as stack:
+                    if arm == "spec":
+                        stack.enter_context(mock.patch.object(ht.sh, "owner_only_dir", owner))
+                    elif arm == "descent":
+                        stack.enter_context(mock.patch.object(ht, "open_host_dirs", descend))
+                    else:
+                        stack.enter_context(mock.patch.object(ht, "host_stderr_open", stderr_open))
+                    msg = self._connect()
+                self.assertIsInstance(self.last_exc, sb.CLIConnectionErrorLike, repr(self.last_exc))
+                self.assertEqual(getattr(self.last_exc, "errno", None), code)
+                self.assertTrue(msg.startswith("the session host was not started: [Errno %d] " % code), msg)
+                lines = [m for m in self.logs if "%s: [Errno %d]" % (sentence, code) in m]
+                self.assertEqual(len(lines), 1, "the error-centre line names this arm once: %r" % (self.logs,))
+                for other, _, other_sentence in arms:
+                    if other != arm:
+                        self.assertFalse(any(other_sentence in m for m in self.logs), "no other arm's sentence: %r" % (self.logs,))
+                self.assertEqual([r["kind"] for r in self._events()], [], "nothing refused")
+                self.assertEqual(self.hosts, [], "no process")
+                self.assertEqual((Path(state) / "hosts" / SID / "spawn.json").exists(), arm != "spec",
+                                 "the spec is on disk on the arms after its write, absent on the write arm")
+
     def test_a_hosts_swapped_after_the_roads_descent_leaves_the_peers_file_at_the_published_name_and_the_launcher_refuses(self):
         """tests-2 (round 5 of the review, 2026-09-20): the published socket's unlink takes a NAME relative to the held
         hosts/ descriptor, which no case held (moved back onto the path, the recipe stayed green). The fifth plant

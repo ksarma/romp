@@ -13824,6 +13824,11 @@ class SdkBackend:
                           "not spawn.json: %s" % (sess.name, ", ".join(moved)), problem=False)
             try:
                 spec_path = ht.write_spawn_spec(self.state_dir, sess.sid, spec)
+            except ht.HostDirRefused as e:
+                self._refuse_host_directory(sess, e)
+            except OSError as e:
+                self._spawn_road_failed(sess, e, "the spawn specification could not be written")
+            try:
                 # the descent (round 4 of the review, 2026-09-20): descriptors on hosts/ and hosts/<sid>/, each opened
                 # O_DIRECTORY|O_NOFOLLOW and verified (a directory, ours, no group or other bits), held for the whole of
                 # this road and closed in the finally below. Every write or read the kernel makes under those two
@@ -13833,12 +13838,13 @@ class SdkBackend:
                 # re-points none of them: through round 3 the launcher opened host.stderr by path, and the link's
                 # target received the host's traceback, which names the state root. A link found at either component
                 # fails the open (ENOTDIR on Linux under O_DIRECTORY|O_NOFOLLOW, ELOOP elsewhere) and the launch is
-                # refused BEFORE any process starts, filed below.
+                # refused BEFORE any process starts, filed below. Its own try since round 7 of the review (kernel-3,
+                # 2026-09-20), so the launch error's line says which arm failed: here the spec is on disk already.
                 dirs = ht.open_host_dirs(self.state_dir, sess.sid)
             except ht.HostDirRefused as e:
                 self._refuse_host_directory(sess, e)
             except OSError as e:
-                self._spawn_spec_failed(sess, e)
+                self._spawn_road_failed(sess, e, "the descent to the host directory failed after the specification was written")
             sock = ht.host_sock(self.state_dir, sess.sid)
             try:
                 os.unlink(sock.name, dir_fd=dirs.hosts)     # a dead host's published socket, by name under the verified hosts/
@@ -13865,6 +13871,14 @@ class SdkBackend:
                 proc = self._spawn_host(sess, spec_path, secrets)
             except ht.HostDirRefused as e:              # the launcher's own descent refused (a swap between the two descents)
                 self._refuse_host_directory(sess, e)
+            except OSError as e:
+                # the launcher's other failures (round 7 of the review, kernel-2 and tests-1, 2026-09-20): an errno from its
+                # descent, from the host.stderr open (EISDIR for a directory at the name, ENOSPC, EMFILE), from the fchmod
+                # after it (EPERM), or from Popen itself (a launcher that cannot be started), each the launch error with
+                # its errno. Through round 6 this site caught HostDirRefused alone, so any of those propagated bare to
+                # _record_launch_error and the card read the PREVIOUS CLI's stale stderr tail, with no row and no errno,
+                # the road _spawn_road_failed exists to close; Popen's own OSError joining it is intended.
+                self._spawn_road_failed(sess, e, "the host process could not be started (its directory descent, its host.stderr open or the process start failed)")
             deadline = time.time() + ht.SOCKET_WAIT_S
             while not sock.exists():                          # loop-ok: a bounded wait on the socket appearing
                 if proc.poll() is not None:
@@ -13984,9 +13998,13 @@ class SdkBackend:
         directory's, or a file's), then the launch error the registry keeps (CLIConnectionErrorLike:
         _record_launch_error persists it without a stale stderr tail, and it survives a kernel restart, recoverable at
         the next send), never a traceback to the operator. No process was started (round 4 of the review, 2026-09-20).
-        A filesystem failure of the spawn road (a full disk, an unwritable root) never reaches here: write_spawn_spec
-        raises it as the OSError it is, errno and all, and _spawn_spec_failed makes the launch error of it (regression-1
-        and kernel-4, round 5)."""
+        A filesystem failure of the spawn road (a full disk, a read-only filesystem, an unwritable target) never reaches
+        here: write_spawn_spec raises it as the OSError it is, errno and all, and _spawn_road_failed makes the launch
+        error of it on each of the road's three arms (the spec write, the road's descent, the launcher; regression-1 and
+        kernel-4 of round 5, kernel-2 and tests-1 of round 6). What does reach here with an errno behind it, since
+        round 7 (2026-09-20): a directory-shape errno from the two helpers (a regular file, a FIFO, a dangling symlink
+        or a symlink to a file at hosts/ or hosts/<sid>/, a plain-file state root, a re-point to a dangling link), which
+        write_spawn_spec words as a refusal under this class (host_transport.HELPER_SHAPE_ERRNOS)."""
         if getattr(e, "file", None):
             remedy = ("A %s under hosts/<sid>/ that is a symlink is refused; remove the link, or point the state root "
                       "elsewhere (ROMP_STATE_DIR or XDG_STATE_HOME)" % e.file)
@@ -13998,21 +14016,27 @@ class SdkBackend:
                     sid=sess.sid, name=sess.name, log=self._log)
         raise CLIConnectionErrorLike("the session host " + said)
 
-    def _spawn_spec_failed(self, sess, e) -> None:
-        """A filesystem failure while the spawn specification or the descent to its directory was made (an OSError
-        that is not a refusal: a full disk or a read-only filesystem at hosts/<sid>/'s mkdir, an unwritable root), raised
-        as the launch error under its own text, errno and path included, with no directory remedy and under no
-        refusal kind (regression-1 and kernel-4, round 5 of the review, 2026-09-20: round 4's wrap in write_spawn_spec
-        folded every OSError of its two directory helpers into HostDirRefused, so a full disk reached the operator as
-        host.directory-refused with a remedy that was false for it). Not left to propagate bare either: a bare OSError
+    def _spawn_road_failed(self, sess, e, what: str) -> None:
+        """A filesystem failure on the spawn road that is not a refusal: an OSError whose errno is outside the shape
+        class write_spawn_spec files under HostDirRefused (a full disk or a read-only filesystem at a directory's mkdir,
+        a hosts/ re-pointed to a directory this uid cannot write, EISDIR for a directory standing at spawn.json or
+        host.stderr, EPERM from the fchmod of either, and, on the launcher's arm, Popen's own OSError), raised as the
+        launch error under its own text, errno and path included, with no directory remedy and under no refusal kind.
+        Three arms hand here, `what` naming the one that failed (round 7 of the review, correctness-4 and kernel-3,
+        2026-09-20: through round 6 the line said the specification could not be written on the descent arm too, where
+        the spec was already on disk, and the launcher's arm was not wired at all, kernel-2 and tests-1): the spec write
+        (write_spawn_spec: its helpers, its descent, its open, its fchmod, its write), the road's own descent after the
+        spec is on disk (open_host_dirs), and the launcher (_spawn_host: its descent, the host.stderr open, the fchmod on
+        it, the process start). Why not left to propagate bare (regression-1 and kernel-4, round 5): a bare OSError
         reaches _record_launch_error, whose text prefers the session's stale stderr tail over the exception, so on a
-        session whose CLI had ever written a stderr line the card read that tail and the errno reached no one (driven
-        at this round's build). CLIConnectionErrorLike is the class _record_launch_error takes no tail for, so the card
-        reads the error; `errno` rides on it too. No problem row: nothing was refused and no process was started, the
-        shape of a kernel child's own launch failure, which files none either."""
+        session whose CLI had ever written a stderr line the card read that tail and the errno reached no one.
+        CLIConnectionErrorLike is the class _record_launch_error takes no tail for, so the card reads the error, and
+        `errno` rides on it. What is filed: this one error-centre line (problem=True puts it on the ring the error
+        centre reads) and the launch error the registry keeps; no host.directory-refused row and no session-events
+        row, since nothing was refused and no process was started, the shape of a kernel child's own launch failure."""
         err = CLIConnectionErrorLike("the session host was not started: %s" % e)
         err.errno = getattr(e, "errno", None)
-        self._log("host (%s): the spawn specification could not be written: %s" % (sess.name, e), problem=True)
+        self._log("host (%s): %s: %s" % (sess.name, what, e), problem=True)
         raise err from e
 
     def _new_host_transport(self, sess, sock, offset):
@@ -14044,7 +14068,9 @@ class SdkBackend:
         opened by name relative to the second, append-only, 0600. Through round 3 this line was open(<path>, "ab"): a
         hosts/ swapped for a symlink after the spec was written resolved that path into the link's target, which then
         received the host's traceback with the absolute state root in it. Now a link at either component fails the open
-        (HostDirRefused, which _host_transport_for files as a problem row and a launch error) and no process starts. The
+        (HostDirRefused, which _host_transport_for files as a problem row and a launch error) and no process starts; any
+        other OSError of this road (the descent, the open, its fchmod, Popen) is the launch error with its errno through
+        _spawn_road_failed (round 7 of the review, 2026-09-20; through round 6 it propagated bare to the stale-tail card). The
         launcher's descent is its own, beside the one _host_transport_for holds across the spawn wait for its reads: the
         launcher is replaceable in the pins and self-contained, and a swap landing between the two is refused by the
         second, the direction that starts nothing. The descriptor is handed to Popen as the child's stderr and this

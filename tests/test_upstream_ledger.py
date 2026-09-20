@@ -1107,9 +1107,9 @@ class HostSocketModeWhereLine(unittest.TestCase):
 
     ENTRY = "upstream/2026-09-18-host-socket-mode.md"
     FILES = ("docs/reference.md", "kernel/host_transport.py", "kernel/judge.py", "kernel/sdk_backend.py", "kernel/session_host.py",
-             "tests/README.md", "tests/test_host_transport.py", "tests/test_judge_scratch_private.py", "tests/test_session_host.py",
-             "tests/test_session_host_sdk_pin.py", "tests/test_tempdir_hygiene.py", "tests/test_upstream_ledger.py",
-             "upstream/2026-09-18-host-socket-mode.md")
+             "tests/README.md", "tests/test_host_transport.py", "tests/test_hosts_path_census.py", "tests/test_judge_scratch_private.py",
+             "tests/test_session_host.py", "tests/test_session_host_sdk_pin.py", "tests/test_tempdir_hygiene.py",
+             "tests/test_upstream_ledger.py", "upstream/2026-09-18-host-socket-mode.md")
     SEGMENT = re.compile(r"(?P<path>[A-Za-z0-9_./-]+\.(?:py|md)) \((?P<names>[^)]*)\)")
 
     def _segments(self):

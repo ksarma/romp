@@ -370,6 +370,18 @@ class SpawnSpec(unittest.TestCase):
         self.assertEqual(len(opened), 3, "hosts/, hosts/<sid>/ and spawn.json's descriptors: %r" % (opened,))
         self.assertEqual(sorted(closed), sorted(opened), "every descriptor closed on the failure road")
         self.assertEqual(os.stat(ht.host_dir(d, SID)).st_mode & 0o777, 0o700, "the directory's chmod ran")
+        # host_stderr_open's fchmod, the same shape (tests-3, round 6 of the review, 2026-09-20: kernel-1's fchmod landed
+        # with a close-and-reraise nothing held; with it removed, one descriptor leaked per refused launch). The count is
+        # read after the open_host_dirs context has exited, since its two directory descriptors close at that exit.
+        sh.hosts_dir(d)
+        ht.host_dir(d, SID).mkdir(exist_ok=True)
+        opened.clear(); closed.clear()
+        with mock.patch.object(os, "open", open_probe), mock.patch.object(os, "fchmod", fchmod_refused), \
+                mock.patch.object(os, "close", close_probe), self.assertRaises(PermissionError):
+            with ht.open_host_dirs(d, SID) as dirs:
+                ht.host_stderr_open(dirs)
+        self.assertEqual(len(opened), 3, "hosts/, hosts/<sid>/ and host.stderr's descriptors: %r" % (opened,))
+        self.assertEqual(sorted(closed), sorted(opened), "every descriptor closed on host_stderr_open's failure road")
 
     def test_the_spec_is_opened_through_descriptors_so_a_link_swapped_in_after_the_directory_checks_is_refused(self):
         """The round's high, on the kernel's spec write (round 4 of the socket-mode fix, 2026-09-20): through round 3
@@ -500,14 +512,17 @@ class SpawnSpec(unittest.TestCase):
         and kernel-4, round 5 of the review, 2026-09-20: round 4's wrap folded every OSError of the helpers into
         HostDirRefused, so a full disk at the mkdir reached the operator as host.directory-refused with a remedy that
         was false for it, and the errno left the class). Interposed on sh.owner_only_dir, the module attribute both
-        helpers reach: a full disk (ENOSPC) and a read-only filesystem (EROFS) at hosts/<sid>/'s mkdir each reach the
-        caller as the OSError raised, errno and text intact, and not as HostDirRefused; a refusal the helper decides (a
-        single-argument OSError, errno None, the shape every one of its refusals has) is HostDirRefused, errno None.
-        Red before the change: the ENOSPC and EROFS arms arrived as HostDirRefused."""
+        helpers reach: a full disk (ENOSPC), a read-only filesystem (EROFS) and an unwritable target (EACCES, which a
+        peer can cause with hosts/ re-pointed to a directory this uid cannot write; the round-6 ruling keeps it on this
+        road) at hosts/<sid>/'s mkdir each reach the caller as the OSError raised, errno and text intact, and not as
+        HostDirRefused; a refusal the helper decides (a single-argument OSError, errno None) is HostDirRefused, errno
+        None. The errnos of the SHAPE class (EEXIST, ENOTDIR, ELOOP, ENOENT) are the class too, pinned by the two cases
+        below with real plants and no stub (round 7 of the review, 2026-09-20: round 5's `errno is None` key threw them
+        out). Red before the change: the ENOSPC and EROFS arms arrived as HostDirRefused."""
         import errno as _errno
         spec = {"sid": SID, "name": "web", "version": "abc12345", "state_dir": "/state", "protocol": 1, "env": {"FEATURE_FLAG": "1"}}
         real = sh.owner_only_dir
-        for arm, code in (("ENOSPC", _errno.ENOSPC), ("EROFS", _errno.EROFS)):
+        for arm, code in (("ENOSPC", _errno.ENOSPC), ("EROFS", _errno.EROFS), ("EACCES", _errno.EACCES)):
             with self.subTest(arm=arm):
                 root = tempfile.mkdtemp()
                 self.addCleanup(shutil.rmtree, root, True)
@@ -535,7 +550,145 @@ class SpawnSpec(unittest.TestCase):
                 with self.assertRaises(OSError) as cm:
                     ht.write_spawn_spec(root, SID, spec)
             self.assertIsInstance(cm.exception, ht.HostDirRefused, repr(cm.exception))
-            self.assertIsNone(cm.exception.errno, "the class carries no errno: that is how the wrap tells a decided refusal")
+            self.assertIsNone(cm.exception.errno, "the class is built from one text argument, so it carries no errno")
+
+    def test_a_non_directory_at_hosts_or_at_the_session_directory_is_refused_under_the_class_by_the_real_helpers(self):
+        """Round 7 of the review (2026-09-20; the round-6 rulings' C, correctness-1, regression-1, kernel-1, extra6-1,
+        extra7-1): a regular file, a FIFO, a symlink to a file or a DANGLING symlink standing at hosts/ or at hosts/<sid>/
+        when write_spawn_spec runs never reaches owner_only_dir's own lstat, because pathlib's mkdir(exist_ok=True)
+        re-raises FileExistsError (17) first; round 5's wrap, keyed on `errno is None`, let that out of the class, so a
+        peer's one-syscall plant read "[Errno 17] File exists" with no problem row and no remedy where round 4's head
+        filed both. The wrap now keys on the errno set of the shape class (host_transport.HELPER_SHAPE_ERRNOS). Eight
+        arms over the REAL helpers, no stub, plus a symlink loop at hosts/: each is HostDirRefused, errno None, worded
+        as the helpers word a non-directory (`<what> <path> is not a directory`), no spawn.json written anywhere, and
+        the plant left standing. Red at the round-6 head: FileExistsError, errno 17, not the class, on every arm."""
+        spec = {"sid": SID, "name": "web", "version": "abc12345", "state_dir": "/state", "protocol": 1, "env": {"FEATURE_FLAG": "1"}}
+        shapes = ("regular file", "fifo", "symlink to a file", "dangling symlink")
+        for where in ("hosts", "hosts/<sid>"):
+            for shape in shapes:
+                with self.subTest(where=where, shape=shape):
+                    root = tempfile.mkdtemp()
+                    self.addCleanup(shutil.rmtree, root, True)
+                    if where == "hosts/<sid>":
+                        sh.hosts_dir(root)
+                        target, what = ht.host_dir(root, SID), "host directory"
+                    else:
+                        target, what = Path(root) / "hosts", "hosts directory"
+                    peer = Path(root) / "peer"
+                    peer.mkdir(mode=0o755)
+                    if shape == "regular file":
+                        target.write_text("")
+                    elif shape == "fifo":
+                        os.mkfifo(target)
+                    elif shape == "symlink to a file":
+                        (peer / "theirs.txt").write_text("the peer's own bytes")
+                        target.symlink_to(peer / "theirs.txt")
+                    else:
+                        target.symlink_to(peer / "nowhere")
+                    before = os.lstat(target)
+                    with self.assertRaises(OSError) as cm:
+                        ht.write_spawn_spec(root, SID, spec)
+                    self.assertIsInstance(cm.exception, ht.HostDirRefused, "the shape class, not %r" % (cm.exception,))
+                    self.assertIsNone(cm.exception.errno)
+                    self.assertEqual(str(cm.exception), "%s %s is not a directory" % (what, target))
+                    self.assertEqual(os.lstat(target)[:2], before[:2], "the plant stands as planted")
+                    self.assertEqual([str(p) for p in Path(root).rglob("spawn.json")], [], "no spawn.json anywhere under the root")
+        with self.subTest(where="hosts", shape="symlink loop"):
+            root = tempfile.mkdtemp()
+            self.addCleanup(shutil.rmtree, root, True)
+            (Path(root) / "hosts").symlink_to(Path(root) / "hosts")
+            with self.assertRaises(ht.HostDirRefused) as cm:
+                ht.write_spawn_spec(root, SID, spec)
+            self.assertIsNone(cm.exception.errno)
+            self.assertTrue(str(cm.exception).startswith("hosts directory %s is not a directory" % (Path(root) / "hosts")), str(cm.exception))
+
+    def test_a_hosts_re_pointed_between_the_helpers_is_refused_for_a_dangling_or_file_target_and_is_the_errno_for_an_unwritable_one(self):
+        """The two decisions the round-6 rulings asked for in code (C), driven through the window condition 1 states:
+        sh.hosts_dir wrapped to re-point hosts/ after it returns and before sh.owner_only_dir's mkdir. ENOENT (a DANGLING
+        link, a peer's one-syscall plant) joins the shape class: the descent's own open already words ENOENT as "does
+        not exist", and the peer causes it. ENOTDIR (a link to a regular FILE) joins it, as does a state root that is
+        itself a plain file (ENOTDIR at the first helper, which only the operator can cause and which the class's
+        remedy, point the state root elsewhere, fits). EACCES (a link to a directory this uid cannot write) stays the
+        launch error's OSError with errno 13, by the ruling, though a peer can cause it too. The read-only target
+        receives nothing on any arm. Red at the round-6 head: FileNotFoundError 2 and NotADirectoryError 20 outside
+        the class; the EACCES arm green there and pinned here so the decision cannot move unseen."""
+        import errno as _errno
+        spec = {"sid": SID, "name": "web", "version": "abc12345", "state_dir": "/state", "protocol": 1, "env": {"FEATURE_FLAG": "1"}}
+        real_hosts_dir = sh.hosts_dir
+
+        def repoint(target):
+            def wrapped(state_dir):
+                r = real_hosts_dir(state_dir)
+                os.rename(r, str(r) + ".aside")
+                os.symlink(target, r)
+                return r
+            return wrapped
+        for arm in ("dangling", "file", "unwritable"):
+            with self.subTest(arm=arm):
+                root = tempfile.mkdtemp()
+                self.addCleanup(shutil.rmtree, root, True)
+                if arm == "dangling":
+                    target = Path(root) / "nowhere"
+                elif arm == "file":
+                    target = Path(root) / "a-file.txt"
+                    target.write_text("")
+                else:
+                    target = Path(root) / "readonly"
+                    target.mkdir(mode=0o500)
+                    self.addCleanup(os.chmod, target, 0o700)
+                leaf = ht.host_dir(root, SID)
+                with mock.patch.object(sh, "hosts_dir", repoint(target)):
+                    with self.assertRaises(OSError) as cm:
+                        ht.write_spawn_spec(root, SID, spec)
+                if arm == "unwritable":
+                    self.assertNotIsInstance(cm.exception, ht.HostDirRefused, repr(cm.exception))
+                    self.assertEqual(cm.exception.errno, _errno.EACCES)
+                    self.assertEqual(sorted(os.listdir(target)), [], "the unwritable target received nothing")
+                else:
+                    self.assertIsInstance(cm.exception, ht.HostDirRefused, repr(cm.exception))
+                    self.assertIsNone(cm.exception.errno)
+                    why = ("does not exist (a component is missing, or a symlink there dangles)" if arm == "dangling"
+                           else "is not a directory, or a directory above it is not")
+                    self.assertEqual(str(cm.exception), "host directory %s %s" % (leaf, why))
+                self.assertEqual([str(p) for p in Path(root).rglob("spawn.json")], [], "no spawn.json anywhere under the root")
+        with self.subTest(arm="plain-file state root"):
+            scratch = tempfile.mkdtemp()
+            self.addCleanup(shutil.rmtree, scratch, True)
+            root = Path(scratch) / "root-is-a-file"
+            root.write_text("")
+            with self.assertRaises(ht.HostDirRefused) as cm:
+                ht.write_spawn_spec(root, SID, spec)
+            self.assertIsNone(cm.exception.errno)
+            self.assertEqual(str(cm.exception), "hosts directory %s is not a directory, or a directory above it is not" % (root / "hosts"))
+
+    def test_a_directory_at_spawn_json_or_host_stderr_is_the_opens_own_error_with_eisdir_and_not_a_refusal(self):
+        """tests-2 (round 6 of the review, 2026-09-20): _open_file_nofollow narrows the class to ELOOP alone, every other
+        OSError of the open propagating with its errno, and nothing held that narrowing (the ELOOP test mutated to
+        `if True` left every module green). A real directory planted at the file's name under a verified hosts/<sid>/:
+        the open raises IsADirectoryError, errno EISDIR, its own text (the errno's words, not the symlink wording), and
+        not HostDirRefused, at spawn.json through write_spawn_spec and at host.stderr through open_host_dirs and
+        host_stderr_open. Red with the narrowing widened to every OSError: both arms arrive as HostDirRefused."""
+        import errno as _errno
+        spec = {"sid": SID, "name": "web", "version": "abc12345", "state_dir": "/state", "protocol": 1, "env": {"FEATURE_FLAG": "1"}}
+        for name in ("spawn.json", "host.stderr"):
+            with self.subTest(file=name):
+                root = tempfile.mkdtemp()
+                self.addCleanup(shutil.rmtree, root, True)
+                sh.hosts_dir(root)
+                sdir = ht.host_dir(root, SID)
+                sdir.mkdir(mode=0o700)
+                (sdir / name).mkdir(mode=0o700)
+                with self.assertRaises(OSError) as cm:
+                    if name == "spawn.json":
+                        ht.write_spawn_spec(root, SID, spec)
+                    else:
+                        with ht.open_host_dirs(root, SID) as dirs:
+                            os.close(ht.host_stderr_open(dirs))
+                self.assertNotIsInstance(cm.exception, ht.HostDirRefused, repr(cm.exception))
+                self.assertEqual(cm.exception.errno, _errno.EISDIR)
+                self.assertTrue(str(cm.exception).startswith("[Errno %d] %s" % (_errno.EISDIR, os.strerror(_errno.EISDIR))), str(cm.exception))
+                self.assertNotIn("symlink", str(cm.exception))
+                self.assertTrue((sdir / name).is_dir(), "the directory stands")
 
     def test_a_symlink_at_spawn_json_or_host_stderr_is_refused_under_the_class_naming_the_file_and_the_target_is_untouched(self):
         """kernel-2 (round 5 of the review, 2026-09-20): the descent's two FILE-level O_NOFOLLOW opens raised a bare
