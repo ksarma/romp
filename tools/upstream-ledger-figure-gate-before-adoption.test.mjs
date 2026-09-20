@@ -8,7 +8,7 @@
 // both browser legs and the node scene are named in the line and in the body; the body's engine statements match the legs' own headers (the
 // img leg red in WebKit alone at the base, the svg leg red in Firefox and in WebKit, green in Chromium); the reach names
 // Firefox beside Safari, as the chain block's comment in file-view.ts does; no em dash. The file list is the branch's diff
-// at its head, written down: the entry is a record of that branch, so this module reads no git. Named by its subject and
+// at its head (against its merge base with main), written down: the entry is a record of that branch, so this module reads no git. Named by its subject and
 // not by the entry's date: a tools module whose name opens with four digits is read as an ADR's by
 // tools/file-review-plan-sidecar-adr-modules.test.mjs, which requires a docs/adr/<NNNN>-*.md behind it (the branch's
 // first full sweep, 2026-09-20, was red there on the dated name). Synthetic: the repo's own text only.
@@ -28,7 +28,9 @@ const IMG_LEG = 'ui/webview/file-view-figures-gate-adopt-browser.test.ts';
 const SVG_LEG = 'ui/webview/file-view-figures-gate-adopt-svg-browser.test.ts';
 /** The node scene that executes the order where the legs skip (CI installs no engine before npm test). */
 const NODE_SCENE = 'ui/webview/file-view-figures-gate-adopt.test.ts';
-/** `git diff --name-only 2d41e5c9b HEAD` at the branch's head, sorted as git prints it. */
+/** `git diff --name-only origin/main...HEAD` at the branch's head (the branch's own files, from its merge base with main), sorted as git
+ *  prints it. Not the two-dot diff from 2d41e5c9b: the branch merged origin/main once, so that diff also counts what main brought in
+ *  (22 files at the head before the node scene, where the line said 15; found and corrected by the build of the node scene, 2026-09-20). */
 const FILES = [
   'plans/markdown-viewer.md',
   'tools/file-review-viewer-recipe.test.mjs',
@@ -78,7 +80,7 @@ test('the where: line names every file the branch changed, each of which exists 
 });
 
 test('the count the where: line states is the number of files it names, derived at the head', () => {
-  const m = /(\d+) files by `git diff --name-only 2d41e5c9b HEAD` at the head/.exec(where);
+  const m = /(\d+) files by `git diff --name-only origin\/main\.\.\.HEAD` at the head/.exec(where);
   assert.ok(m, 'the line states its count and the command it was derived from, at the head');
   assert.equal(Number(m[1]), FILES.length, 'the stated count is the list\'s length');
   assert.ok(where.includes('this entry among them'), 'the entry counts itself');
