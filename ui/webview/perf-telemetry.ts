@@ -364,7 +364,9 @@ export function pageMarks(marks: Record<string, unknown> | null, paints: readonl
  *  position both detached and silent is left off. Every qualifying position keeps its own key, h1, h2 and so on; no cap,
  *  one number per attached host (the owner's decision of 2026-09-19). A key is carried as matched and never rebuilt from its
  *  parsed ordinal, so an ordinal past 2**53 (which no manager mints; the window slot is read unvalidated) keeps its own key
- *  and its own number rather than a NaN that JSON writes as null. Null when no position qualifies (no remote host attached at
+ *  and its own number rather than a NaN that JSON writes as null; a difference that overflows to Infinity (two finite totals of
+ *  opposite sign near the double's limit, which no manager mints either) leaves the position off the row, as a non-finite total
+ *  does, never as a null. Null when no position qualifies (no remote host attached at
  *  the flush and none received characters in the minute, a page that never attached one included), and the caller leaves
  *  the key off the row. Pure. */
 export function bytesByHost(now: Record<string, unknown> | null, base: Record<string, number>, attached: readonly string[] | null): Record<string, number> | null {
@@ -380,6 +382,7 @@ export function bytesByHost(now: Record<string, unknown> | null, base: Record<st
   const out: Record<string, number> = {};
   for (const [, k] of ords) {
     const d = Math.max(0, Math.round((now[k] as number) - (base[k] || 0)));
+    if (!isFinite(d)) continue;           // two finite totals whose difference overflows: off the row like a non-finite total, never null (round 1)
     if (d <= 0 && !up.has(k)) continue;   // detached at the flush and silent in the minute: no key
     out[k] = d;
   }
