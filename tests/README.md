@@ -63,13 +63,16 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   3.12 cell of run 35518107329), so the pin does not catch a bad transitive
   release, and one of those packages, anyio, ships a pytest plugin that every cell
   would auto-load across the whole suite, which the "Run pytest" step blocks with
-  `-p no:anyio` so a cell's plugin set stays the box's (the step's comment in
-  `ci.yml` has the reasons and the measurement). To execute the gated tests
-  from a plain venv, put romp's SDK
-  venv on the path:
+  `-p no:anyio` so a cell's plugin set stays the box's default run's (the step's
+  comment in `ci.yml` has the reasons and the measurement). To execute the gated
+  tests from a plain venv, put romp's SDK venv on the path:
   `PYTHONPATH=~/.local/state/romp/sdkvenv/lib/python3.12/site-packages python3 -m
-  pytest tests/test_sdk_backend.py -q` (the venv `bin/romp-sdk-setup` creates, at
-  the version the same constant names; match the python version to it).
+  pytest tests/test_sdk_backend.py -q -p no:anyio` (the venv `bin/romp-sdk-setup`
+  creates, at the version the same constant names; match the python version to
+  it). The flag is there because this recipe is the one box road that WOULD load
+  the plugin: `PYTHONPATH` is on `sys.path` before pytest discovers plugins, so
+  without it the header reads `anyio` beside `timeout` and the run's plugin set
+  is not CI's.
   Under pytest-xdist (`python3 -m pytest tests/ -n 4`) two import-time effects of
   `tests/test_host_transport.py` decide what a red means. It puts that same SDK venv
   on `sys.path` at import (the kernel's own idiom), and every worker imports every

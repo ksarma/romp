@@ -143,9 +143,11 @@ jobs:
         # catch one: it compares the SDK's own version and nothing else. One of those packages, anyio,
         # registers a pytest plugin (a pytest11 entry point) that pytest would auto-load in every cell across
         # the whole suite; the pytest step passes -p no:anyio so it does not (2026-09-20). Blocked because:
-        # the box's pytest never loads it (romp's SDK lives in the venv bin/romp-sdk-setup builds, whose site
-        # joins sys.path at tests/test_host_transport.py's import, after plugin autoload, and the box venvs
-        # carry no anyio), so the cells' plugin set equals the box's; nothing under tests/ is marked anyio or
+        # the box's default pytest run never loads it (romp's SDK lives in the venv bin/romp-sdk-setup builds,
+        # whose site joins sys.path at tests/test_host_transport.py's import, after plugin autoload, and the
+        # box venvs carry no anyio; the one box road that would load it, tests/README.md's PYTHONPATH recipe,
+        # which puts that site on the path before pytest starts, passes the same flag), so the cells' plugin
+        # set equals the box's; nothing under tests/ is marked anyio or
         # imports the one thing the plugin serves, the SDK's own pytest-marked conformance suite
         # claude_agent_sdk.testing, so the plugin does no work here; and blocked, a bad anyio release cannot
         # fail every cell at pytest startup before a test runs, it reds the SDK-importing tests with the

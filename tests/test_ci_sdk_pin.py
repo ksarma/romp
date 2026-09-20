@@ -17,8 +17,9 @@ This module holds four things, and it never skips: a pin that skips reports gree
    literal `claude-agent-sdk==<digits>`, and bounds its download with a step timeout as the file's other fetching
    steps do; and the "Run pytest" line passes `-p no:anyio`: the constant pins the SDK alone, its dependency closure
    resolves fresh on every run (26 packages on 2026-09-20, the 3.12 cell of run 35518107329), and one of them, anyio,
-   registers a pytest plugin that every cell would otherwise auto-load across the whole suite, which the box's pytest
-   never does (the step's comment states the decision, why, and the measurement behind it). The pin below does not
+   registers a pytest plugin that every cell would otherwise auto-load across the whole suite, which the box's default
+   run never does and tests/README.md's PYTHONPATH recipe would, so the recipe passes the same flag (the step's
+   comment states the decision, why, and the measurement behind it). The pin below does not
    catch a bad transitive release: a red that no commit explains is one, and the comment says so.
 2. The derivation, executed rather than read: the step's own sed run at the repo root prints one well-formed version
    equal to the constant read as a regex over the file (the installer's and the bats test's read) and as the attribute
