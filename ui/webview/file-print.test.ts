@@ -599,29 +599,45 @@ test("bodyReady reads the element children through `children`, else through `chi
 // bodyReady classes a child it has never seen as UNKNOWN, and an unknown child makes the body not in whatever stands beside
 // it (the safe side: a press that prints what stands is the dangerous one; the person can still close and reopen), so a
 // root the viewer gains would lock Print silently unless something reads the viewer. This census does: it reads file-view.ts
-// and collects EVERY member the viewer reaches on `body` (`body.<member>`, with `document.body` and any other receiver's
-// `.body` aside), then classes each use by what follows the member: a CALL of a seating method has its seated arguments
+// (its comments blanked) and collects EVERY member access on `body` written as `body.<member>`, `body?.<member>`,
+// `body[...]` or `body?.[...]`, across any whitespace and a non-null `!` (with `document.body` and any other receiver's
+// `.body` aside), then classes each by what follows: a CALL of a seating method (`(` or `?.(`) has its seated arguments
 // resolved down to the root element's `el("<tag>", "<class>")` (SEATING: replaceChildren, prepend and append seat every
 // argument; appendChild and insertBefore their first, insertBefore's second being the reference child; insertAdjacentElement
 // its second, the first being the position); a call of a method that seats nothing passes (NON_SEATING_CALLS); an
-// ASSIGNMENT to a scalar passes (NON_SEATING_ASSIGNS: scrollTop, scrollLeft, tabIndex); a bare READ passes, since a read
-// seats nothing; and EVERY OTHER USE FAILS the census with its line: a call it does not know, an assignment it does not
-// know (innerHTML, outerHTML, textContent and insertAdjacentHTML seat what no resolver can read), and a member that reaches
-// a child node (firstChild, children and their kin) followed by a further access, behind which a seat could hide. The file
-// is read once more for a child-level seat anywhere (replaceWith, after, before, replaceChild, insertAdjacentElement,
-// insertAdjacentHTML), which the census cannot attribute to the body and fails on sight; file-view.ts has none. The
-// resolved set is then held equal to the flow's three lists (READY_ROOTS, NOT_READY_ROOTS, LINE_ROOTS) and bodyReady is
-// executed over each root as its list says. Each seated expression resolves as before: a builder call (`mdBlock(...)`) to
-// the `el(...)` assigned to the variable the builder's last `return` names; a bare variable to the expression assigned to it
-// last before the site; a ternary to both its branches; an `el("<tag>", "<class>")` to itself; anything else fails with the
-// expression. The round-3 review (2026-09-20): before this the sites were found by a closed list of three method names
-// (replaceChildren, prepend, appendChild) and its unknown passed, so a root seated by body.append or body.insertBefore was
-// invisible to it and the guarantee the lists state was false; the mutant case below executes both seats and an innerHTML
-// assignment against the census over the same source. What this census cannot see is a seat through another name for the
-// body (a helper handed the body seating under its own parameter name): file-view.ts's body is seated by the one name.
-/** file-view.ts with its trailing `//` comments removed (a space or a tab before the `//`; the newlines stay, so an index
- *  still maps to its line): the test runs in vscode-extension, and reads the tree as real-viewer-leg.ts does. */
-const VIEWER_SRC = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "file-view.ts"), "utf8").replace(/[ \t]\/\/[^\n]*/g, "");
+// ASSIGNMENT (`=` and the compound forms) to a scalar passes (NON_SEATING_ASSIGNS: scrollTop, scrollLeft, tabIndex); a
+// FURTHER ACCESS (`.`, `?.`, `[`) on a scalar or on classList, style or dataset passes (FURTHER_MEMBERS); a bare READ of a
+// scalar, or of a non-seating method as a value (`typeof body.getClientRects`), passes (READ_MEMBERS); and every other
+// member access on `body` FAILS the census with its line: a computed name (`body["append"]`), a call it does not know, an
+// assignment it does not know (innerHTML, outerHTML, textContent and insertAdjacentHTML seat what no resolver can read), a
+// further access on a member that hands out a child node (firstChild, children and their kin), on a seating method
+// (`body.append.call`, `.bind`, `.apply`) or on any member not listed, and a bare read of any member not listed (a seating
+// method handed out, `const seat = body.append`, seats later where no census can follow). The file is read once more for a
+// child-level seat anywhere (replaceWith, after, before, replaceChild, insertAdjacentElement, insertAdjacentHTML), which the
+// census cannot attribute to the body and fails on sight; file-view.ts has none. The resolved set is then held equal to the
+// flow's three lists (READY_ROOTS, NOT_READY_ROOTS, LINE_ROOTS) and bodyReady is executed over each root as its list says.
+// Each seated expression resolves as before: a builder call (`mdBlock(...)`) to the `el(...)` assigned to the variable the
+// builder's last `return` names; a bare variable to the expression assigned to it last before the site; a ternary to both
+// its branches; an `el("<tag>", "<class>")` to itself; anything else fails with the expression. The round-3 review
+// (2026-09-20): before this the sites were found by a closed list of three method names (replaceChildren, prepend,
+// appendChild) and its unknown passed, so a root seated by body.append or body.insertBefore was invisible to it and the
+// guarantee the lists state was false. The round-4 review (2026-09-20): the collect pattern read `body.<member>` alone, so
+// `body?.append(x)` and `body["append"](x)` were outside it, `body.append?.(x)` was a further access refused for NODE_MEMBERS
+// alone, and `body.append.call(body, x)` and a bare `body.append` passed; the mutant case below plants every one of those
+// forms and reads the census red with the planted line. What this census cannot see is the body under ANOTHER NAME: a
+// helper handed the body seating under its own parameter name, a destructuring (`const { append } = body`), or the body as
+// an ARGUMENT (`Element.prototype.append.call(body, x)`): a bare `body` token that no member access follows is not read.
+// file-view.ts's body is seated by the one name, through member accesses this census classes.
+/** file-view.ts with its comments blanked: every block comment (a slash-star to its matching star-slash) and every trailing
+ *  `//` comment (a space or a tab before the `//`), each replaced by spaces of its own length with its newlines kept, so an
+ *  index still maps to its line and no prose is read as code (the collect pattern reads across whitespace, and a
+ *  doc-comment's "the body. The …" would otherwise read as a member access; the round-4 review, 2026-09-20). One pass, left
+ *  to right, with string literals matched and kept as they are, so a comment opener inside a string or inside the other kind
+ *  of comment opens nothing (`image/*` in a `//` comment blanked whole spans of code when the block strip ran first). The
+ *  test runs in vscode-extension, and reads the tree as real-viewer-leg.ts does. */
+const blank = (m: string): string => m.replace(/[^\n]/g, " ");
+const stripComments = (src: string): string => src.replace(/"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`|\/\*[\s\S]*?\*\/|[ \t]\/\/[^\n]*/g, (m) => (m.startsWith("/*") || m.trimStart().startsWith("//") ? blank(m) : m));
+const VIEWER_SRC = stripComments(fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "file-view.ts"), "utf8"));
 /** The text between the bracket at `at` and its match, strings skipped. */
 function balancedAt(src: string, at: number): string {
   let depth = 0;
@@ -696,30 +712,64 @@ const NON_SEATING_CALLS = ["addEventListener", "removeEventListener", "querySele
 const NON_SEATING_ASSIGNS = ["scrollTop", "scrollLeft", "tabIndex"];
 /** The members that hand out a node of the body's tree: a further access on one could seat where the census cannot follow. */
 const NODE_MEMBERS = ["firstChild", "lastChild", "firstElementChild", "lastElementChild", "children", "childNodes", "parentNode", "parentElement", "nextSibling", "previousSibling", "nextElementSibling", "previousElementSibling"];
+/** The scalars of the body the viewer reads: geometry, the scroll offsets, the tab order. */
+const SCALARS = ["clientWidth", "clientHeight", "clientTop", "clientLeft", "scrollHeight", "scrollWidth", "offsetWidth", "offsetHeight", "offsetTop", "offsetLeft", "isConnected", ...NON_SEATING_ASSIGNS];
+/** The members a bare read passes for: a scalar, and a non-seating method read as a value (`typeof body.getClientRects`). A
+ *  bare read of a node member (NODE_MEMBERS) passes inside the argument list of a `body` call the census read (the reference
+ *  child of `body.insertBefore(x, body.firstChild)`) and is refused anywhere else, since a node stored under another name
+ *  (`const first = body.firstChild;`) could seat in the body where the census cannot follow. A bare read of any other member
+ *  is refused: a seating method handed out (`const seat = body.append;`) seats later where the census cannot follow, and a
+ *  member the census has not seen is read by hand and listed here, never passed (the round-4 review, 2026-09-20: before this
+ *  every bare read passed). */
+const READ_MEMBERS = [...SCALARS, ...NON_SEATING_CALLS];
+/** The members a further access (`.`, `?.`, `[`) passes for: a scalar's own methods, and the three objects of the body that
+ *  seat nothing (classList, style, dataset; `body.classList.add(...)` is the plain `.` tail the round-4 review kept passing).
+ *  A further access on a member that hands out a node (NODE_MEMBERS, its own message), on a seating method (`.call`, `.bind`,
+ *  `.apply`, a computed `["call"]`: the seat runs where the census cannot read its arguments) or on any other member is
+ *  refused. */
+const FURTHER_MEMBERS = [...SCALARS, "classList", "style", "dataset"];
 /** The census over `src`: the roots seated, each with the lines that seat it, and every use the census refuses, each with its
- *  line and why. */
+ *  line and why. Every member access on `body` (the collect pattern: `body`, any whitespace, an optional non-null `!`, then
+ *  `.`, `?.`, `[` or `?.[`, then the member name) is classed by what follows the member (the tail pattern: a call `(` or
+ *  `?.(`, an assignment `=` or a compound one, a further access `.`, `?.` or `[`, or nothing, a bare read), and one the
+ *  census cannot class is refused with its line. The `?.(` alternative stands before the general `\??\.` one, so an optional
+ *  call is a call and not a further access; the call and assignment branches stand before the bare-read refusal, so a
+ *  direct call still parses (the round-4 review's two ordering warnings). */
 function census(src: string): { seated: Map<string, number[]>; refused: string[] } {
   const lineAt = (i: number): number => src.slice(0, i).split("\n").length;
   const seated = new Map<string, number[]>();
   const refused: string[] = [];
-  for (const m of src.matchAll(/(?<![\w$.])body\.(\w+)/g)) {
-    const member = m[1], after = m.index! + m[0].length, line = lineAt(m.index!);
-    const tail = /^\s*!?\s*(\(|=(?!=)|\??\.|\[|)/.exec(src.slice(after))![1];   // what follows the member (a non-null `!` skipped): a call, an assignment (not a comparison), a further access, or nothing, a read
-    if (tail === "(") {
+  const argLists: Array<[number, number]> = [];   // the argument list of every `body` call read so far, as [open, close]: a bare node read inside one is a call's argument
+  for (const m of src.matchAll(/(?<![\w$.])body\s*!?\s*(\?\.\s*\[|\[|\?\.|\.)\s*(\w+)?/g)) {
+    const sep = m[1], member = m[2], after = m.index! + m[0].length, line = lineAt(m.index!);
+    if (sep === "[" || sep.startsWith("?.") && sep.endsWith("[")) { refused.push("line " + line + ": body" + sep.replace(/\s+/g, "") + "...] reaches a member by a computed name the census cannot read"); continue; }
+    if (!member) { refused.push("line " + line + ": body" + sep + " is followed by no member name the census can read"); continue; }
+    const tail = /^\s*!?\s*(\?\.\(|\(|(?:[-+*/%&|^]|\*\*|<<|>>>?|\?\?|\|\||&&)?=(?!=)|\??\.|\[|)/.exec(src.slice(after))![1];   // what follows the member (a non-null `!` skipped): a call (`?.(` read before the general `?.`), an assignment (plain or compound, not a comparison), a further access, or nothing, a read
+    const use = "body" + sep + member;
+    if (tail === "(" || tail === "?.(") {
+      const open = src.indexOf("(", after);
+      const inner = balancedAt(src, open);
+      argLists.push([open, open + inner.length + 1]);
       const seats = SEATING[member];
       if (seats) {
-        const args = balancedAt(src, src.indexOf("(", after)).replace(/\s+/g, " ").trim();
+        const args = inner.replace(/\s+/g, " ").trim();
         for (const arg of seats(args ? splitTop(args, ",") : [])) for (const root of rootsOf(src, arg, m.index!)) seated.set(root, [...(seated.get(root) || []), line]);
-      } else if (!NON_SEATING_CALLS.includes(member)) refused.push("line " + line + ": body." + member + "(...) is a call the census does not know");
-    } else if (tail === "=") {
-      if (!NON_SEATING_ASSIGNS.includes(member)) refused.push("line " + line + ": body." + member + " = ... is an assignment the census does not know (innerHTML and its kin seat what no resolver reads)");
-    } else if ((tail === "." || tail === "?." || tail === "[") && NODE_MEMBERS.includes(member)) refused.push("line " + line + ": body." + member + " hands out a node and a further access on it could seat where the census cannot follow");
+      } else if (!NON_SEATING_CALLS.includes(member)) refused.push("line " + line + ": " + use + "(...) is a call the census does not know");
+    } else if (tail.endsWith("=")) {
+      if (!NON_SEATING_ASSIGNS.includes(member)) refused.push("line " + line + ": " + use + " " + tail + " ... is an assignment the census does not know (innerHTML and its kin seat what no resolver reads)");
+    } else if (tail === "." || tail === "?." || tail === "[") {
+      if (NODE_MEMBERS.includes(member)) refused.push("line " + line + ": " + use + " hands out a node and a further access on it could seat where the census cannot follow");
+      else if (SEATING[member]) refused.push("line " + line + ": " + use + tail + "... reaches the seating method through a further access (call, bind, apply, a computed name), which seats where the census cannot read the arguments");
+      else if (!FURTHER_MEMBERS.includes(member)) refused.push("line " + line + ": " + use + tail + "... is a further access on a member the census does not know");
+    } else if (NODE_MEMBERS.includes(member)) {
+      if (!argLists.some(([open, close]) => m.index! > open && m.index! < close)) refused.push("line " + line + ": " + use + " is read bare outside a body call's arguments, and a node stored under another name could seat in the body where the census cannot follow");
+    } else if (!READ_MEMBERS.includes(member)) refused.push("line " + line + ": " + use + " is read bare, and a member the census does not know as a scalar or a non-seating method, handed out, could seat where the census cannot follow");
   }
   for (const m of src.matchAll(/\.(replaceWith|after|before|replaceChild|insertAdjacentElement|insertAdjacentHTML)\(/g)) refused.push("line " + lineAt(m.index!) + ": ." + m[1] + "(...) seats through a node the census cannot attribute to the body");
   return { seated, refused };
 }
 
-test("the census of the body's roots: every use of `body` in file-view.ts is one the census classes (a seating call, resolved; a call, an assignment or a read that seats nothing) and the file seats through no child, else the census FAILS with the line; every element the viewer seats resolves to a root the flow lists (READY_ROOTS, NOT_READY_ROOTS or LINE_ROOTS), every listed root is seated, no root is in two lists, bodyReady answers over each root as its list says, an unlisted child is NOT in (the safe side, so a root the viewer gains fails here until it is listed), and under the PDF kind the loader alone of the wait roots reads as content", (t) => {
+test("the census of the body's roots: every member access on `body` in file-view.ts (`body.`, `body?.`, `body[`, across whitespace) is one the census classes (a seating call, resolved; a call, an assignment, a further access or a bare read the census knows seats nothing) and the file seats through no child, else the census FAILS with the line; every element the viewer seats resolves to a root the flow lists (READY_ROOTS, NOT_READY_ROOTS or LINE_ROOTS), every listed root is seated, no root is in two lists, bodyReady answers over each root as its list says, an unlisted child is NOT in (the safe side, so a root the viewer gains fails here until it is listed), and under the PDF kind the loader alone of the wait roots reads as content", (t) => {
   const { seated, refused } = census(VIEWER_SRC);
   assert.deepEqual(refused, [], "every use of the body is one the census knows how to read: a use it does not is read by hand and the census taught it, never skipped");
   const roots = [...seated.keys()].sort();
@@ -744,9 +794,10 @@ test("the census of the body's roots: every use of `body` in file-view.ts is one
   for (const r of LINE_ROOTS) assert.equal(bodyReady(bodyOf(r), "pdf"), false, r + " alone under the PDF kind: not in");
 });
 
-test("the census refuses its unknown and derives its population, executed over mutants of file-view.ts's source: a root seated by body.append or body.insertBefore is resolved and fails the lists (FAILS BEFORE: the three-name list never saw either, so the census passed over both), a seat through an innerHTML assignment, a call the census does not know, a further access on a child node and a child-level replaceWith each fail with their line, and a read or a scroll assignment passes", () => {
+test("the census refuses its unknown and derives its population, executed over mutants of file-view.ts's source: a root seated by body.append or body.insertBefore is resolved and fails the lists (FAILS BEFORE: the three-name list never saw either, so the census passed over both), a seat through an innerHTML assignment, a call the census does not know, a further access on a child node and a child-level replaceWith each fail with their line, and a read or a scroll assignment passes; the round-4 review's forms each red with the planted line (FAILS BEFORE: body?.append(x) and body[\"append\"](x) were outside the collect pattern, body.append?.(x) was a further access refused for node members alone, body.append.call(body, x), .bind and .apply and a bare body.append passed), a seat written across a newline is read, a doc-comment's prose is not, and body.classList.add(...) still passes", () => {
   const at = (src: string, needle: string): number => { const i = src.indexOf(needle); assert.ok(i >= 0, needle + " is in the source"); return i; };
   const seat = (call: string): string => { const i = at(VIEWER_SRC, "\n  body.appendChild(load);\n"); return VIEWER_SRC.slice(0, i) + "\n  " + call + VIEWER_SRC.slice(i); };   // a line inside the local viewer's open, before its loader is seated
+  const plantedLine = VIEWER_SRC.slice(0, at(VIEWER_SRC, "\n  body.appendChild(load);\n")).split("\n").length + 1;   // the line the planted call lands on
   const before = census(VIEWER_SRC);
   const appended = census(seat('body.append(el("div", "fileview-mutant"));'));
   assert.deepEqual(appended.refused, [], "body.append is a seating call the census knows");
@@ -767,6 +818,45 @@ test("the census refuses its unknown and derives its population, executed over m
   assert.deepEqual([...reads.seated.keys()].sort(), [...before.seated.keys()].sort(), "...and seat no root");
   const unresolvable = (): void => { census(seat('body.appendChild(someRoot);')); };
   assert.throws(unresolvable, /the variable someRoot is assigned before the site/, "an argument the census cannot resolve fails with the expression");
+  // the round-4 review's forms (correctness-2, regression-1), each red with the planted line: two resolve to a root the lists
+  // do not name (the seat is read, so the lists comparison reds with the line), three are refused with the line
+  const seatsMutant = (src: string, form: string): void => {
+    const r = census(src);
+    assert.deepEqual(r.refused, [], form + ": a seating call, read as one (no refusal)");
+    assert.deepEqual([...r.seated.keys()].filter((k) => !before.seated.has(k)), ["div.fileview-mutant"], "FAILS BEFORE: " + form + " was outside the census; now its root is resolved and fails the lists");
+    assert.deepEqual(r.seated.get("div.fileview-mutant"), [plantedLine], form + ": with the planted line");
+  };
+  seatsMutant(seat('body?.append(el("div", "fileview-mutant"));'), "body?.append(x)");
+  seatsMutant(seat('body.append?.(el("div", "fileview-mutant"));'), "body.append?.(x)");
+  seatsMutant(seat('body\n    .append(el("div", "fileview-mutant"));'), "a seat written across a newline");
+  const refusedMutant = (src: string, form: string, want: RegExp): void => {
+    const r = census(src);
+    assert.equal(r.refused.length, 1, form + ": one refusal: " + JSON.stringify(r.refused));
+    assert.ok(r.refused[0].startsWith("line " + plantedLine + ": "), form + ": with the planted line: " + r.refused[0]);
+    assert.match(r.refused[0], want, form);
+    assert.deepEqual([...r.seated.keys()].sort(), [...before.seated.keys()].sort(), form + ": and no root seated");
+  };
+  refusedMutant(seat('body["append"](el("div", "fileview-mutant"));'), 'body["append"](x)', /body\[\.\.\.\] reaches a member by a computed name/);
+  refusedMutant(seat('body?.["append"](el("div", "fileview-mutant"));'), 'body?.["append"](x)', /body\?\.\[\.\.\.\] reaches a member by a computed name/);
+  refusedMutant(seat('body.append.call(body, el("div", "fileview-mutant"));'), "body.append.call(body, x)", /body\.append\.\.\.\. reaches the seating method through a further access/);
+  refusedMutant(seat('body.append.bind(body)(el("div", "fileview-mutant"));'), "body.append.bind(body)(x)", /body\.append\.\.\.\. reaches the seating method through a further access/);
+  refusedMutant(seat('body.append.apply(body, [el("div", "fileview-mutant")]);'), "body.append.apply(body, [x])", /body\.append\.\.\.\. reaches the seating method through a further access/);
+  refusedMutant(seat('body.append["call"](body, el("div", "fileview-mutant"));'), 'body.append["call"](body, x)', /body\.append\[\.\.\. reaches the seating method through a further access/);
+  refusedMutant(seat('const seatLater = body.append;'), "a bare read of body.append", /body\.append is read bare/);
+  refusedMutant(seat('const seatLater = body.insertAdjacentHTML;'), "a bare read of body.insertAdjacentHTML", /body\.insertAdjacentHTML is read bare/);
+  refusedMutant(seat('const first = body.firstChild;'), "a bare read of body.firstChild stored under another name", /body\.firstChild is read bare outside a body call's arguments/);
+  refusedMutant(seat('body.innerHTML += "<div class=\\"fileview-mutant\\"></div>";'), "a compound assignment to innerHTML", /body\.innerHTML \+= \.\.\. is an assignment the census does not know/);
+  refusedMutant(seat('body.shadowRoot!.append(el("div", "fileview-mutant"));'), "a further access on a member the census does not know", /body\.shadowRoot\.\.\.\. is a further access on a member the census does not know/);
+  // what still passes: a plain `.` tail on classList, style and dataset, a scalar's own method, a non-seating method read as a value
+  const passes = census(seat('body.classList.add("fileview-mutant"); body.style.height = "0"; body.dataset.probe = "1"; body.scrollTop.toFixed(0); if (typeof body.getClientRects === "function") body.scrollTop += 0;'));
+  assert.deepEqual(passes.refused, [], "body.classList.add(...), body.style, body.dataset, a scalar's method, a typeof read of a non-seating method and a compound scroll assignment pass");
+  assert.deepEqual([...passes.seated.keys()].sort(), [...before.seated.keys()].sort(), "...and seat no root");
+  // a doc-comment's prose is blanked before the read, so "the body. The next…" is no member access
+  const prose = census(stripComments(seat('/** the body. The next paint seats it. */')));
+  assert.deepEqual(prose.refused, [], "a block comment's prose is not read (the collect pattern reads across whitespace, so unblanked it would read `body. The` as a member)");
+  assert.equal(census(seat('/** the body. The next paint seats it. */')).refused.length, 1, "...where the raw source would have been refused for it: the blanking is load-bearing");
+  assert.deepEqual(census(stripComments(seat('const kind = "image/*"; body.scrollTop = 0;   // image/* files\n  const mark = "/* not a comment */";'))).refused, [], "a comment opener inside a string or inside a line comment opens no block: the code after it is still read");
+  assert.deepEqual([...census(stripComments(seat('const kind = "image/*";   // image/* files\n  body.append(el("div", "fileview-mutant"));'))).seated.keys()].filter((k) => !before.seated.has(k)), ["div.fileview-mutant"], "...and a seat after such a line is still found (before the fix the blanking ran to the next star-slash and dropped three spans of the viewer)");
 });
 
 test("disabled until the body is in: the driver's start, where a press (the button's or the chord's), an Escape, a choice, a prepare, a ready and a printed change nothing; the body arriving rests; the body going out from rest, armed, the wait or the print disarms and disables; the body's arrival elsewhere changes nothing", () => {

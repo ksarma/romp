@@ -2279,7 +2279,11 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // earlier build opened the tab). Before the third review (2026-09-19) each paint here reported the body in or out by
   // hand, and the roads nobody wired were wrong: the plain fallback reported in and printed one clipped page. A root added
   // to this file's body paints must join the flow's lists (file-print.ts READY_ROOTS, NOT_READY_ROOTS, LINE_ROOTS), or
-  // file-print.test.ts's census over this file's seating sites fails. The flow hands the keyboard through takeKeyboard when
+  // file-print.test.ts's census over this file's seating sites fails: it reads every member access on `body` in this file
+  // (`body.`, `body?.`, `body[`), resolves a seating call's roots and refuses every access it cannot class (a computed
+  // name, a bare read of a seating method, a call, bind or apply on one, a member it has not seen). A body handed on under
+  // another name (a helper's parameter, a destructuring, the body as an argument) is outside its read, so seat the body here
+  // by its name. The flow hands the keyboard through takeKeyboard when
   // the body goes out while a word button of its line holds it (dropDiskBar's hand-over), since its button is not enabled
   // then.
   const print = installFilePrint({ card: box, bar, body, typing: typingHere, onClose: (cb) => { closeHooks.push(cb); },
