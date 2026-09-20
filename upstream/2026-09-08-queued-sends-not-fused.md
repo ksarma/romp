@@ -18,5 +18,4 @@ A fix in the SDK feeder, which upstream ships in the same shape: `inputs()` forw
 
 2026-09-19: offered as their PR #1889 at 08:59Z (batch 2 of the 2026-09-18 plan, position 8, the last; stacked on #1883; head 07d655899 on 2378fa77a). One case of the module, the stale-move-arm case, was held back from the offer on romp-manager's ruling: its two held reads rest on a timed settle with no happens-before after the arm's loop callback (the mechanism behind fork PR 833's 3.14t red); the fork fix is in flight as branch settle-race-833-fix and the case is offered separately once it keys on events.
 
-2026-09-19: offered as their PR #1889 at 08:59Z (fix tier, one commit stacked on their #1883's branch; one case of the module held back while the fork's settle-race fix landed).
 2026-09-20: merged upstream at 01:30Z (4d977bedf) by the project's maintainer; the scaffold and branch pair are closed.
