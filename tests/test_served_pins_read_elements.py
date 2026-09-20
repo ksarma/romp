@@ -27,7 +27,10 @@ of the kernel's served TEXTS: a call to one of its page getters, or one of its s
 Name bound to either in the same function (a tuple assignment counts by position; a Name bound to a SLICE of one counts
 too, judged over the whole text, so a literal a comment spells anywhere in the text flags it and the fix is the same), or
 the variable of a `for <name> in (<text>, <text>)` loop over served texts (one row per text, inside the loop's body;
-round 7), or a `self.<attr>` bound to one in any method of the same class (a setUp). The getters are derived from the
+round 7), or a `self.<attr>` bound to one in any method of the same class (a setUp), or a body FETCHED by a literal path
+(round 8, 2026-09-20: `_, body = _serve_get("/sw.js", ...)`, `page = self._get_text("/")`, through `.read(...)` and
+`.decode(...)`, alone or by tuple unpack), which is the text of the getter the kernel's GET dispatch serves at that path
+(route_getters below). The getters are derived from the
 kernel source by rule: the functions named `_landing`, `_<name>_page`, `_<name>_js` or `_<name>_css` that a call with no
 arguments renders (no parameter, or every parameter defaulted; round 7: the served script functions, the service worker,
 the reload and shim cores and the timeline axis, had been outside the getter rule with ten live pins), a page read for
@@ -68,7 +71,20 @@ over a derived constant of each kind. The container NAMES the tests pin are deri
 held to the kernel-derived getters and constants (a getter the tests call or a served str the tests assert over that the
 derivation does not read fails there; round 7).
 
-Bound: a body fetched over HTTP, a page from a dynamically resolved getter (`getattr(km, "_%s_page" % name)()`,
+The fetched route (round 8, 2026-09-20): a fetched body is read as the text of the route it fetched. The (route, getter)
+pairs are derived from the kernel's GET dispatch by an AST walk (route_getters), never restated: an `if` comparing one Name
+against a string literal by EQUALITY (`if p == "/chat": return self._send(200, _chat_page(), ...)`) or by MEMBERSHIP in a
+tuple of literals (`if p in ("/", ""):`, the landing's form) whose body returns a call carrying a call to a derived getter
+with no arguments. The walk is shape-sensitive: it reads those two shapes and no other, so a third shape (a table of routes,
+a `match`, a comparison through a helper) is outside it until a branch is added and pinned in the form-space test below (a
+naive equality walk misses the landing and reports eight routes believing nine). A fetch is a call to a Name or a
+self.<method> (a test helper over the handler or an HTTP client) whose first argument is a string literal beginning with `/`
+that, without its ?query, is such a route; a method call on another object (`path.split("/")`) is not one.
+
+Bound: a body fetched from a formatted URL (`"http://127.0.0.1:%d/?token=testtok" % self.port`, tests/test_kernel.py, whose
+one such pin reads served_css.code and served_css.rules by hand), a fetch of a path the dispatch does not map to a getter
+call (a JSON or text/plain API body, a `/dist/` bundle, a `/media/` file: outside the derivation, and not comment-satisfiable
+only where the body carries no comment syntax), a page from a dynamically resolved getter (`getattr(km, "_%s_page" % name)()`,
 tests/test_kernel_boot_splash.py, which reads served_css.code for the tokens a comment spells), a getter called WITH
 arguments (`_shim_core_js("chat")` renders another text), a text served under a name with none of the suffixes the rules
 read (the web app manifest; the `_reload_core` function), a name bound outside the function, a literal bound by assignment
@@ -128,6 +144,11 @@ _TUPLE_DEF = re.compile(r"^\s*(?P<targets>[A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)+)\
 _ITEM_ONLY = re.compile(r"^" + _ITEM + r"$")
 _FOR_TEXTS = re.compile(r"^(?P<indent>\s*)for\s+(?P<target>[A-Za-z_]\w*)\s+in\s+[(\[]\s*(?P<values>" + _ITEM + r"(?:\s*,\s*" + _ITEM + r")*)\s*,?\s*[)\]]\s*:")
 _TEXT_ITEM = re.compile(r"([A-Za-z_]\w*)\.([A-Za-z_]\w*)(\(\))?")
+# a fetch of a literal path (round 8, 2026-09-20): `<targets> = <helper>("/route"...` or `= self.<helper>("/route"...`, the path a
+# route the dispatch maps (route_getters); and a body read from a fetched name, `<target> = <name>.decode(...)` or
+# `<target> = <name>.read(...).decode(...)`
+_FETCH_DEF = re.compile(r"^\s*(?P<targets>[A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)\s*=\s*(?:self\.)?[A-Za-z_]\w*\(\s*(?P<route>\"/[^\"\\\n]*\"|'/[^'\\\n]*')")
+_DECODE_DEF = re.compile(r"^\s*(?P<target>[A-Za-z_]\w*)\s*=\s*(?P<src>[A-Za-z_]\w*)(?:\.read\([^)]*\))?\.decode\([^)]*\)\s*(?:#.*)?$")
 _DEF_LINE = re.compile(r"^(?P<indent>\s*)(?:async\s+)?def\s")
 _CLASS_LINE = re.compile(r"^class\s")
 
@@ -143,6 +164,34 @@ def page_getters():
     names = [n for n, params in _GETTER.findall(_kernel_source()) if not params.strip() or all("=" in p for p in params.split(","))]
     assert names, "no served-text getter derived from the kernel source"
     return sorted(set(names))
+
+
+@functools.lru_cache(maxsize=None)
+def route_getters(source=None):
+    """{route: getter} for every path the kernel's GET dispatch serves from a served-text getter, by an AST walk over the kernel
+    source (or over `source`, a handler text, for the form-space pin) reading TWO shapes and no other: an `if` whose test compares
+    one Name against a string literal by equality (`if p == "/chat":`) or by membership in a tuple of string literals (`if p in
+    ("/", ""):`, the landing's form), and whose body returns a call carrying a call to a derived getter with no arguments
+    (`return self._send(200, _chat_page(), ...)`). Shape-sensitive by design (round 8, 2026-09-20): a third shape needs a third
+    branch here and a case in the form-space test; an equality-only walk misses the landing."""
+    tree = ast.parse(_kernel_source() if source is None else source)
+    getters = set(page_getters())
+    routes = {}
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.If) and isinstance(node.test, ast.Compare) and len(node.test.ops) == 1 and isinstance(node.test.left, ast.Name)):
+            continue
+        op, right = node.test.ops[0], node.test.comparators[0]
+        if isinstance(op, ast.Eq) and isinstance(right, ast.Constant) and isinstance(right.value, str):
+            paths = [right.value]
+        elif isinstance(op, ast.In) and isinstance(right, ast.Tuple) and right.elts and all(isinstance(e, ast.Constant) and isinstance(e.value, str) for e in right.elts):
+            paths = [e.value for e in right.elts]
+        else:
+            continue
+        served = [a.func.id for st in node.body for n in ast.walk(st) if isinstance(n, ast.Return) and isinstance(n.value, ast.Call)
+                  for a in n.value.args if isinstance(a, ast.Call) and not a.args and not a.keywords and isinstance(a.func, ast.Name) and a.func.id in getters]
+        for path in paths if served else ():
+            routes[path] = served[0]
+    return routes
 
 
 def getter_kind(name):
@@ -224,6 +273,23 @@ def _text(node, getters, constants):
     return None
 
 
+def _fetched(node, names, routes):
+    """The served text a fetched value stands for (round 8, 2026-09-20): a call to a Name or a self.<method> whose first argument
+    is a string literal beginning with `/` that, without its ?query, is a route in `routes` (`_serve_get("/sw.js", ...)`,
+    `self._get_text("/")`); or the `.read(...)` or `.decode(...)` of such a value or of a Name bound to one, through any chain of
+    the two (`body.decode()`, `fetch("/chat").read().decode()`); else None. A bare Name is not followed (as _text does not)."""
+    if not isinstance(node, ast.Call):
+        return None
+    f = node.func
+    if isinstance(f, ast.Attribute) and f.attr in ("read", "decode"):
+        inner = f.value
+        return names.get(inner.id) if isinstance(inner, ast.Name) else _fetched(inner, names, routes)
+    if node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str) and node.args[0].value.startswith("/") \
+            and (isinstance(f, ast.Name) or (isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id == "self")):
+        return routes.get(node.args[0].value.split("?")[0])
+    return None
+
+
 def _resolve(node, names, attrs, getters, constants):
     """The served text a node stands for: a getter call or constant inline, a Name bound in the function, a self.<attr> bound in
     the class; None otherwise."""
@@ -235,9 +301,11 @@ def _resolve(node, names, attrs, getters, constants):
     return t
 
 
-def _bind(targets, value, names, attrs, getters, constants, sliced=None):
-    """Record Name and self.<attr> targets bound to a served text, or to a slice of one; a tuple assignment binds by position.
-    `sliced`, when given, tracks the Names bound through a slice (a form the textual census does not read; round 8)."""
+def _bind(targets, value, names, attrs, getters, constants, sliced=None, routes=None):
+    """Record Name and self.<attr> targets bound to a served text, or to a slice of one; a tuple assignment binds by position; a
+    FETCHED value (_fetched, with `routes`) binds every Name it is unpacked into (`_, body = _serve_get("/sw.js")`: the status
+    too, a name no membership reads). `sliced`, when given, tracks the Names bound through a slice (a form the textual census
+    does not read; round 8)."""
     if isinstance(value, ast.Tuple) and len(targets) == 1 and isinstance(targets[0], ast.Tuple) \
             and len(targets[0].elts) == len(value.elts):
         pairs = list(zip(targets[0].elts, value.elts))
@@ -245,16 +313,25 @@ def _bind(targets, value, names, attrs, getters, constants, sliced=None):
         pairs = [(t, value) for t in targets]
     for t, v in pairs:
         g = _text(v, getters, constants)
-        via_slice = False
+        via_slice = fetched = False
         if not g and isinstance(v, ast.Subscript):   # `fn = html[a:b]`, a slice of a bound text, judged over the whole text
             g = _resolve(v.value, names, attrs, getters, constants)
             via_slice = True
+        if not g and routes:
+            g = _fetched(v, names, routes)
+            fetched = bool(g)
         if not g:
             continue
         if isinstance(t, ast.Name):
             names[t.id] = g
             if sliced is not None:
                 (sliced.add if via_slice else sliced.discard)(t.id)
+        elif isinstance(t, ast.Tuple) and fetched:   # `status, body = fetch("/x")`: every name the fetch binds
+            for e in t.elts:
+                if isinstance(e, ast.Name):
+                    names[e.id] = g
+                    if sliced is not None:
+                        sliced.discard(e.id)
         elif isinstance(t, ast.Attribute) and isinstance(t.value, ast.Name) and t.value.id == "self":
             attrs[t.attr] = g
 
@@ -312,7 +389,7 @@ def _loops(fn):
     return out
 
 
-def rows_of(path, getters, constants):
+def rows_of(path, getters, constants, routes=None):
     """[(line, literal, text, form, readable)] for every membership or position assertion of a literal over a served text in one
     test module; form is "in" for a membership, else the position method; readable is whether the row's form is one the textual
     census reads (round 8, 2026-09-20): the literal's source segment is a plain literal or a run of them (re.fullmatch over _LIT:
@@ -330,12 +407,12 @@ def rows_of(path, getters, constants):
         for fn in fns:   # a setUp's self.<attr> binding is visible to every method
             for st in ast.walk(fn):
                 if isinstance(st, ast.Assign):
-                    _bind(st.targets, st.value, {}, attrs, getters, constants)
+                    _bind(st.targets, st.value, {}, attrs, getters, constants, None, routes)
         for fn in fns:
             names, sliced = {}, set()
             for st in ast.walk(fn):
                 if isinstance(st, ast.Assign):
-                    _bind(st.targets, st.value, names, attrs, getters, constants, sliced)
+                    _bind(st.targets, st.value, names, attrs, getters, constants, sliced, routes)
             text_of = lambda x: _resolve(x, names, attrs, getters, constants)
             readable = lambda lit, x: plain(lit) and not (isinstance(x, ast.Name) and x.id in sliced)
             rows = []
@@ -430,14 +507,15 @@ def _literal(lits):
     return "".join(piece[1:-1] for piece in re.findall(_LIT1, lits))
 
 
-def textual_census(path, getters, constants):
+def textual_census(path, getters, constants, routes=None):
     """(sites, containers): sites is [(line, literal, text, form)] for every membership or position form of a literal over a
     served text this regex census reads in one test module, by logical line and no AST, the second, independent census the
     derived floor rests on: `assertIn("<lit>", X)`, an `assert "<lit>" in X` or `assertTrue("<lit>" in X)` line (every
     conjunct on it), and `X.index("<lit>")` with find, rindex, rfind and count, where X is `<alias>.<getter>()` or
     `<alias>.<CONST>` inline, a Name bound to one by an assignment of its own earlier in the same function (a `self.<attr>`
-    so bound in any method of the class), by a tuple assignment, or by a `for` over served texts inside that loop (one site per
-    text). A binding a later line rebinds keeps the served text, as the derivation reads it. containers is the set of
+    so bound in any method of the class), by a tuple assignment, by a `for` over served texts inside that loop (one site per
+    text), or by a fetch of a literal path the dispatch maps (`_FETCH_DEF`, every target; `_DECODE_DEF` for the body read from
+    one; round 8). A binding a later line rebinds keeps the served text, as the derivation reads it. containers is the set of
     (name, called) for every `<alias>.<name>` the module uses as a container in one of those forms, whatever the name, the
     NAMES the tests pin, read on their own for the check against the kernel-derived getters and constants (round 7)."""
     sites, containers, names, attrs, loops = [], set(), {}, {}, []
@@ -464,6 +542,15 @@ def textual_census(path, getters, constants):
         m = _FOR_TEXTS.match(line)
         if m:
             loops.append((len(m.group("indent")), m.group("target"), _bound_items(m.group("values"))))
+        m = _FETCH_DEF.match(line)
+        if m and routes:
+            getter = routes.get(_literal(m.group("route")).split("?")[0])
+            if getter:
+                for t in m.group("targets").split(","):
+                    names[t.strip()] = [(getter, True)]
+        m = _DECODE_DEF.match(line)
+        if m and m.group("src") in names:
+            names[m.group("target")] = names[m.group("src")]
         bound = dict(names)
         bound.update(attrs)
         for lindent, target, items in loops:
@@ -505,7 +592,11 @@ def _spans(kinds, text):
 
 class ServedPinsReadElements(unittest.TestCase):
     def test_no_assertion_over_a_served_text_is_satisfiable_by_a_comment(self):
-        getters, constants = page_getters(), served_constants()
+        getters, constants, routes = page_getters(), served_constants(), route_getters()
+        # the fetched-route map, derived from the handler by the walk: the landing's membership form and an equality form both read
+        self.assertEqual((routes.get("/"), routes.get("")), ("_landing", "_landing"), "the landing's membership route: %r" % (routes,))
+        self.assertTrue([r for r, g in routes.items() if r not in ("/", "")], "an equality route: %r" % (routes,))
+        self.assertEqual(sorted(set(routes.values()) - set(getters)), [], "every route's getter is a derived getter")
         texts = dict(pages())
         texts.update({c: getattr(km, c) for c in constants})
         kinds = {g: frozenset([getter_kind(g)]) for g in getters}
@@ -537,13 +628,13 @@ class ServedPinsReadElements(unittest.TestCase):
         rows, sites, pinned = [], [], set()
         # this module holds no pin over a served text (asserted, by the derivation, which reads the synthetic module below as
         # the string it is); the line-based textual census cannot tell that string from code, so the module is outside both
-        self.assertEqual(rows_of(__file__, getters, constants), [], "the census module itself pins nothing over a served text")
+        self.assertEqual(rows_of(__file__, getters, constants, routes), [], "the census module itself pins nothing over a served text")
         for path in sorted(glob.glob(os.path.join(HERE, "test_*.py"))):
             fname = os.path.basename(path)
             if os.path.realpath(path) == os.path.realpath(__file__):
                 continue
-            rows += [(fname, line, lit, name, form, readable) for line, lit, name, form, readable in rows_of(path, getters, constants)]
-            found, containers = textual_census(path, getters, constants)
+            rows += [(fname, line, lit, name, form, readable) for line, lit, name, form, readable in rows_of(path, getters, constants, routes)]
+            found, containers = textual_census(path, getters, constants, routes)
             sites += [(fname, line, lit, name, form) for line, lit, name, form in found]
             pinned |= containers
         # the floor, derived: every site the textual census finds is a row the derivation found (so a module the derivation
@@ -598,7 +689,7 @@ class ServedPinsReadElements(unittest.TestCase):
         # constants of every kind the rule derives (a style constant, an HTML constant, a bare script constant and a markup
         # constant outside the round-6 roster), each name derived here, not written; the module is built over EVERY derived
         # getter, so a new getter is pinned by construction, and every expectation fails on an empty derivation
-        getters, constants = page_getters(), served_constants()
+        getters, constants, routes = page_getters(), served_constants(), route_getters()
         css = sorted(c for c in constants if c.endswith("_CSS"))[0]   # one constant of each kind, derived
         html = sorted(c for c in constants if c.endswith("_HTML"))[0]
         script = max((c for c in constants if not _suffix_kind(c) and constants[c] == {"script"}), key=lambda c: len(getattr(km, c)))
@@ -639,6 +730,19 @@ class T(unittest.TestCase):
         self.assertIn("a", dyn)
         self.assertIn("y\\tz", page)
         self.assertIn("""tq""", page)
+        _, body = fetch("/sw.js", headers={})
+        worker = body.decode()
+        self.assertIn("f1", worker)
+        text = fetch("/chat?token=x").read().decode("utf-8", "replace")
+        self.assertIn("f2", text)
+        got = self._get("/")
+        self.assertIn("f3", got)
+        nope = fetch("/nope")
+        self.assertIn("f4", nope)
+        clean = served_css.js_code(body.decode())
+        self.assertIn("f5", clean)
+        parts = path.split("/")
+        self.assertIn("f6", parts)
 '''
         loop = "        for pg in (%s):\n" % ", ".join("km.%s()" % g for g in getters)
         tail = '''            self.assertIn("a1", pg, "one row per text")
@@ -666,8 +770,8 @@ def test_module_level():
         with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
             f.write(src)
         try:
-            rows = rows_of(f.name, getters, constants)
-            sites, containers = textual_census(f.name, getters, constants)
+            rows = rows_of(f.name, getters, constants, routes)
+            sites, containers = textual_census(f.name, getters, constants, routes)
         finally:
             os.unlink(f.name)
         L = head.count("\n") + 1   # the loop line's number: head ends with a newline, so its line count is the loop's line less one
@@ -676,7 +780,8 @@ def test_module_level():
                     (23, "m", "_LANDING_MOBILE_JS", "in"), (25, "l", "_LANDING_MOBILE_JS", "in"), (26, "k", "_feed_page", "in"), (26, "j", "_LANDING_MOBILE_JS", "in"),
                     (28, "h", "_feed_page", "in"), (29, "g", "_feed_page", "index"), (29, "f", "_feed_page", "index"), (30, "e", "_LANDING_MOBILE_JS", "count"),
                     (31, "d", "_feed_page", "find"), (31, "c", "_feed_page", "rindex"), (31, "b", "_feed_page", "rfind"),
-                    (34, "y\tz", "_feed_page", "in"), (35, "tq", "_feed_page", "in")]
+                    (34, "y\tz", "_feed_page", "in"), (35, "tq", "_feed_page", "in"),
+                    (38, "f1", "_sw_js", "in"), (40, "f2", "_chat_page", "in"), (42, "f3", "_landing", "in")]   # the fetched forms (round 8)
         expected += [(L + 1, "a1", g, "in") for g in getters] + [(L + 2, "a2", g, "index") for g in getters]
         expected += [(L + 5, "a4", "_feed_page", "index"), (L + 5, "a5", "_feed_page", "index"), (L + 6, "a6", "_feed_page", "index"), (L + 6, "a7", "_feed_page", "index"),
                      (L + 7, "a8", css, "in"), (L + 8, "a9", html, "in"), (L + 10, "b1", script, "in"), (L + 11, "b2", mark, "in"), (L + 12, "b4b5", "_feed_page", "in"),
@@ -684,6 +789,9 @@ def test_module_level():
         self.assertEqual([r[:4] for r in rows], expected)
         self.assertNotIn(("a3", "in"), {(lit, form) for _, lit, _, form, _ in rows}, "the loop variable is bound to the loop's body only")
         self.assertNotIn(("b3", "in"), {(lit, form) for _, lit, _, form, _ in rows}, "a loop whose iterable mixes a text with something else binds nothing")
+        # round 8 (2026-09-20): a fetch of an unmapped path, a body passed through served_css.js_code, and a method call on another
+        # object with a route-shaped literal (path.split("/")) bind nothing
+        self.assertEqual({lit for _, lit, _, _, _ in rows} & {"f4", "f5", "f6"}, set())
         # round 8 (2026-09-20): the rows the textual census declines, by form: a loop or comprehension literal (p, q, r, a4 to a7),
         # a name bound to a slice (h), a literal with a backslash and a triple-quoted one; every other row is readable
         declined = {(15, "p"), (15, "q"), (17, "r"), (28, "h"), (L + 5, "a4"), (L + 5, "a5"), (L + 6, "a6"), (L + 6, "a7"), (34, "y\tz"), (35, "tq")}
@@ -695,7 +803,8 @@ def test_module_level():
         expected_sites = [(6, "x", "_chat_page", "in"), (8, "y", "_feed_page", "in"), (10, "z", "_timeline_page", "in"), (12, "v", "_landing", "in"),
                           (18, "s", "_landing", "in"), (19, "t", "_feed_page", "in"), (23, "m", "_LANDING_MOBILE_JS", "in"), (25, "l", "_LANDING_MOBILE_JS", "in"),
                           (26, "k", "_feed_page", "in"), (26, "j", "_LANDING_MOBILE_JS", "in"), (29, "g", "_feed_page", "index"), (29, "f", "_feed_page", "index"),
-                          (30, "e", "_LANDING_MOBILE_JS", "count"), (31, "d", "_feed_page", "find"), (31, "c", "_feed_page", "rindex"), (31, "b", "_feed_page", "rfind")]
+                          (30, "e", "_LANDING_MOBILE_JS", "count"), (31, "d", "_feed_page", "find"), (31, "c", "_feed_page", "rindex"), (31, "b", "_feed_page", "rfind"),
+                          (38, "f1", "_sw_js", "in"), (40, "f2", "_chat_page", "in"), (42, "f3", "_landing", "in")]
         expected_sites += [(L + 1, "a1", g, "in") for g in getters] + [(L + 2, "a2", g, "index") for g in getters]
         expected_sites += [(L + 7, "a8", css, "in"), (L + 8, "a9", html, "in"), (L + 10, "b1", script, "in"), (L + 11, "b2", mark, "in"), (L + 12, "b4b5", "_feed_page", "in"),
                            (L + 19, "x1", "_landing", "in"), (L + 19, "x2", "_landing", "in"), (L + 20, "x3", "_landing", "in")]
@@ -703,6 +812,33 @@ def test_module_level():
         self.assertTrue(set(sites) <= {r[:4] for r in rows if r[4]}, "every site is a readable row")
         # the containers the module pins, whatever the name: the getters, the constants, and `other` and `dyn` are not containers
         self.assertEqual(containers, {(g, True) for g in getters} | {("_LANDING_MOBILE_JS", False), (css, False), (html, False), (script, False), (mark, False)})
+
+    def test_the_route_walk_reads_equality_and_membership(self):
+        # round 8 (2026-09-20): the (route, getter) pairs are derived from the handler by a shape-sensitive walk, never restated. A
+        # synthetic handler with both shapes pins the two: the landing's membership tuple and the equality routes; a route
+        # returning json.dumps, a getter called with arguments and a prefix test bind nothing. An equality-only walk misses the
+        # landing here and on the kernel (eight routes believing nine).
+        handler = '''
+def do_GET(self):
+    p = "/x"
+    if p in ("/", ""):
+        return self._send(200, _landing(), "text/html")
+    if p == "/chat":
+        return self._send(200, _chat_page(), "text/html")
+    if p == "/sw.js":
+        return self._send(200, _sw_js(), "text/javascript")
+    if p == "/tunnels/of":
+        return self._send(200, json.dumps({}), "application/json")
+    if p == "/shim":
+        return self._send(200, _shim_core_js("chat"), "text/javascript")
+    if p.startswith("/dist/"):
+        return self._send_file(p)
+'''
+        self.assertEqual(route_getters(handler), {"/": "_landing", "": "_landing", "/chat": "_chat_page", "/sw.js": "_sw_js"})
+        real = route_getters()
+        self.assertEqual((real.get("/"), real.get("")), ("_landing", "_landing"), "the landing's membership form on the kernel: %r" % (real,))
+        self.assertIn("/sw.js", real, "an equality route on the kernel: %r" % (real,))
+        self.assertEqual(sorted(set(real.values()) - set(page_getters())), [], real)
 
 
 if __name__ == "__main__":
