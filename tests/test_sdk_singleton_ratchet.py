@@ -367,10 +367,12 @@ fixture READS and the branch each read feeds, with the case that reds under each
     One.a gets a false report blaming import-time code for the moves setUpModule and setUpClass made for their tests).
   the first window's refusal (_sdk_swapped): deleted (S7's first test shows no refusal line and the run exits 0); keyed
     on the window's before object in place of the start read's (S7: the window's object is None, so the refusal is
-    silent); the reference root rendered from the window's jd.STATE in place of the start read's (S7, S7B, S9: the class
-    root is rendered and the value regex, a path ending in /romp, fails; S10 green, its class leaves jd.STATE alone); the
-    start read's object rendered from the live attribute in place of its recorded state_dir (S11: the refusal names the
-    repointed root); the window value rendered as None whatever the slot holds (S12: the class's build in the slot is said
+    silent); the reference root rendered from the window's jd.STATE in place of the start read's (S7, S7B, S9 and S11: the
+    class root is rendered and the value regex, a path ending in /romp, fails; S10 and S9B green, their scopes leaving
+    jd.STATE where the start read found it; S12 and S14 green, reading the refusal's heads and not its root; S13 green, no
+    refusal there); the start read's object rendered from the live attribute in place of its recorded state_dir (S11: the
+    refusal names the repointed root; S9B: the refusal renders the moved path, and its read of the refusal's root against
+    the report's fails); the window value rendered as None whatever the slot holds (S12: the class's build in the slot is said
     as None (not built); the window value's recorded-text argument is inert, nothing running between the before read and
     the render, annotated at the call and not a cell); the named-object term dropped from its guard (S13: a kept-head
     refusal on the follower's Two.a, a second line on the object module 1's class boundary named, the count 2 against 1);
