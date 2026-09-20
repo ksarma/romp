@@ -69908,8 +69908,9 @@ if(h)document.documentElement.style.setProperty('--app-h',h+'px');
 // the band for a shorter one, by the height difference (round 5, 2026-09-20, disclosed: re-measuring under a zoom only
 // when the height changes is a design call not taken here; the harness and served legs re-raise the same keyboard). Two
 // roads WRITE the hold and each writes the value it publishes: the measured road its measurement, and the 0px road a zero,
-// only in a true no-pan state, one an unzoomed coarse run would have measured as 0: no visual viewport, or one at or under
-// the pinch road's cut (pinched), whose offsetTop rounds to no positive pixel (panPx, the reading the measured road stores;
+// only in a true no-pan state, one an unzoomed coarse run would have measured as 0: no visual viewport, or one under the
+// pinch road's cut (pinched reads the cut itself as a pinch, so the hold stands there), whose offsetTop rounds to no positive
+// pixel (panPx, the reading the measured road stores;
 // round 6 and round 8, 2026-09-20: the 0px road had read the raw offsetTop, so a pan in (0, 0.5) was no pan by this rule and a
 // kept hold by that test). A pointer that turns fine with a pan standing (the keyboard up on iOS) or under a
 // standing zoom leaves the hold for the keyboard it was measured with, so coarse again under that zoom the pinch road

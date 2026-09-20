@@ -739,8 +739,9 @@ out.coarseAgainZoomed = { appTop: appTop(), appH: appH() };
 visualViewport.scale = 1; visualViewport.height = 844; visualViewport.offsetTop = 0; fire(VV, 'resize'); flush();
 out.coarseAgainBack = { appTop: appTop(), appH: appH(), barH: barH() };
 // round 6 (2026-09-20): the 0px road's CONDITION, both sides of every variable in it. The road clears the hold only in a true
-// no-pan state, one an unzoomed coarse run would have measured as 0: no visual viewport, or one at or under the pinch road's
-// cut (pinched: h/(h - 0.5), the scale at which a zoom's own pan can round to a pixel; 1.0006 at the fine road's h of 844) whose
+// no-pan state, one an unzoomed coarse run would have measured as 0: no visual viewport, or one under the pinch road's cut
+// (pinched: h/(h - 0.5), the scale at which a zoom's own pan can round to a pixel, 1.0006 at the fine road's h of 844; the cut
+// itself is a pinch, so the hold stands there) whose
 // offsetTop rounds to no positive pixel, the reading the measured road stores (panPx; round 8, 2026-09-20:
 // the road had read the raw offsetTop, so 0.4 kept the hold here and stored 0 there) (the keyboard gone in the same run the
 // pointer turned fine, the kernel-4 case); a
@@ -762,6 +763,7 @@ flip('noVV', null);                                             // no visual vie
 flip('atRest', { height: 844, offsetTop: 0, scale: 1 });        // the keyboard gone in the flip's own run: cleared
 flip('scaleUnderCut', { height: 843.578, offsetTop: 0, scale: 1.0005 }); // under the cut (a zoom pan of at most 0.42 px), unzoomed: cleared (round 8)
 flip('scaleOverCut', { height: 843.41, offsetTop: 0, scale: 1.0007 });   // over the cut (0.59 px could round to a pixel): a pinch, the hold stands (round 8)
+flip('scaleAtCut', { height: 843.5, offsetTop: 0, scale: 844 / 843.5 });  // AT the cut, the same double the helper computes: a pinch, the hold stands (round 8, the fixer pass)
 flip('scaleAboveCut', { height: 844, offsetTop: 0, scale: 1.02 }); // a standing zoom: the hold stands
 flip('onePixelPan', { height: 460, offsetTop: 1, scale: 1 });   // a standing pan of one pixel: the hold stands
 flip('subPixelPan', { height: 460, offsetTop: 0.4, scale: 1 }); // rounds to no pixel, the measured road would have stored 0: cleared (round 8)
@@ -769,6 +771,18 @@ flip('halfPixelPan', { height: 460, offsetTop: 0.5, scale: 1 }); // rounds up to
 flip('zoomedTop', { height: 422, offsetTop: 0, scale: 2 });     // zoomed with the keyboard gone, at the top: the hold stands
 flip('zoomPan', { height: 422, offsetTop: 200, scale: 2 });     // a zoom pan with the keyboard gone: the hold stands
 out.flips = flips;
+// round 8 (2026-09-20, the fixer pass): the fine road with NO layout height (h 0: innerHeight 0 and the document element's
+// clientHeight 0, LAYOUT.h null). The cut h/(h - 0.5) is undefined there and pinched() counts the report as a pinch, so the hold
+// stands where a resting visual viewport at h 844 (the atRest flip) clears it; the --app-h write is skipped (h 0) and --app-top
+// is written 0px. A cell on the helper's third outcome: the item-1 kernel cleared the hold here and nothing drove it
+visualViewport.scale = 1; visualViewport.height = 460; visualViewport.offsetTop = 83; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+global.innerHeight = 0; Object.assign(visualViewport, { height: 844, offsetTop: 0, scale: 1 });
+global.matchMedia = () => ({ matches: false }); fire(WIN, 'resize'); flush();
+out.h0Fine = { appTop: appTop(), appH: appH(), innerHeight: global.innerHeight, clientHeight: document.documentElement.clientHeight };
+global.innerHeight = 844; global.matchMedia = savedMatchMedia;
+visualViewport.scale = 2; visualViewport.height = 230; visualViewport.offsetTop = 83; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+out.h0CoarseAgainZoomed = { appTop: appTop(), appH: appH() };
+visualViewport.scale = 1; visualViewport.height = 844; visualViewport.offsetTop = 0; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
 // round 7 (2026-09-20): the ENGINE MODEL of innerHeight under a pinch, and every sign of the clamp's difference. The model (Chromium
 // keeps window.innerHeight at the layout viewport's height under a pinch, WebKit shrinks it to the visual viewport's) and the
 // reachability of a pinch on iOS Safari are the two premises kernel.py's fit() comment states, with their evidence status, in one
@@ -1077,7 +1091,7 @@ class MobileFitExecutes(unittest.TestCase):
         self.assertEqual({k: v["fine"] for k, v in flips.items()}, {k: {"appTop": "0px", "appH": "844px"} for k in flips}, "the fine pointer publishes 0px and innerHeight in every state")
         self.assertEqual({k: v["coarseAgainZoomed"] for k, v in flips.items()},
                          {"noVV": {"appTop": "0px", "appH": "460px"}, "atRest": {"appTop": "0px", "appH": "460px"}, "scaleUnderCut": {"appTop": "0px", "appH": "460px"},
-                          "scaleOverCut": {"appTop": "83px", "appH": "460px"},
+                          "scaleOverCut": {"appTop": "83px", "appH": "460px"}, "scaleAtCut": {"appTop": "83px", "appH": "460px"},
                           "scaleAboveCut": {"appTop": "83px", "appH": "460px"}, "onePixelPan": {"appTop": "83px", "appH": "460px"},
                           "subPixelPan": {"appTop": "0px", "appH": "460px"}, "halfPixelPan": {"appTop": "83px", "appH": "460px"},
                           "zoomedTop": {"appTop": "83px", "appH": "460px"}, "zoomPan": {"appTop": "83px", "appH": "460px"}},
@@ -1097,8 +1111,14 @@ class MobileFitExecutes(unittest.TestCase):
         self.assertEqual(self.out["cutBelow"], {"appTop": "90px", "appH": "460px"}, "under the cut the measured road runs and stores its reading")
         self.assertEqual(self.out["cutAbove"], {"appTop": "90px", "appH": "460px"}, "at or over the cut the report is a pinch: the hold stands, the zoomed offsetTop is never published")
         flips = self.out["flips"]
-        self.assertEqual((flips["scaleUnderCut"]["coarseAgainZoomed"]["appTop"], flips["scaleOverCut"]["coarseAgainZoomed"]["appTop"]), ("0px", "83px"),
-                         "the 0px road clears under the cut and keeps the hold over it")
+        self.assertEqual((flips["scaleUnderCut"]["coarseAgainZoomed"]["appTop"], flips["scaleAtCut"]["coarseAgainZoomed"]["appTop"], flips["scaleOverCut"]["coarseAgainZoomed"]["appTop"]),
+                         ("0px", "83px", "83px"), "the 0px road clears under the cut and keeps the hold at it and over it (the fixer pass: the cut is a pinch)")
+        # the fixer pass: the helper's third outcome, no layout height (h 0), where the cut is undefined and the report counts as a pinch:
+        # the fine run writes 0px and skips --app-h, and the hold stands (the item-1 kernel cleared it here; nothing had driven the state)
+        h0 = self.out["h0Fine"]
+        self.assertEqual((h0["innerHeight"], h0["clientHeight"]), (0, 0), "the state driven is h 0 on both reads: %r" % (h0,))
+        self.assertEqual({k: h0[k] for k in ("appTop", "appH")}, {"appTop": "0px", "appH": "460px"}, "0px written, the height write skipped at h 0")
+        self.assertEqual(self.out["h0CoarseAgainZoomed"], {"appTop": "83px", "appH": "460px"}, "the hold stands across a fine run with no layout height")
 
     def test_the_clamp_reads_the_layout_viewport_in_both_engine_models_and_binds_only_below_zero(self):
         # round 7 (2026-09-20). The clamp had read window.innerHeight as the layout viewport's height, which holds in Chromium
