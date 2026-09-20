@@ -52,13 +52,17 @@ export function meanRowHeight(rows: readonly EstRow[]): number | null {
 
 /** The heights of the turns the window holds whole, in order: from each visible user row to the next. The leading rows (a prompt
  *  above the window) and the trailing rows (the turn still open, the one streaming) are not counted; a turn with an unreported row is
- *  dropped rather than counted short. Only turn rows count (spacers, gaps and dividers are not turn content, as before). A turn of NO
- *  height (every row reported at 0: the view has no box, an ancestor hid it) is listed as it is; perTurnEstimate refuses the figure. */
+ *  dropped rather than counted short. Only turn rows count (spacers, gaps and dividers are not turn content, as before). A gap element
+ *  inside the window ENDS the open turn without closing it and starts none: the rows after it are a turn whose prompt lies inside the
+ *  gap (a run opening with no visible user row), so they are no turn until the next visible user row; under the old walk they joined
+ *  the turn before the gap and a partial turn inflated a measured one by its whole height (review round 1b). A turn of NO height
+ *  (every row reported at 0: the view has no box, an ancestor hid it) is listed as it is; perTurnEstimate refuses the figure. */
 export function completeTurnHeights(rows: readonly EstRow[]): number[] {
   const out: number[] = [];
   let open = false;                 // inside a turn (a visible user row has been seen)
   let acc: number | null = null;    // the open turn's height so far; null once a row of it had no height
   for (const r of rows) {
+    if (isSpacerRow(r) && has(r.cls, "tx-gap")) { open = false; acc = null; continue; }   // a gap breaks the turn: the rows after it have no visible prompt
     if (!isTurnRow(r)) continue;
     if (isUserRow(r)) {
       if (open && acc != null) out.push(acc);

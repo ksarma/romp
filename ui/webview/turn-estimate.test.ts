@@ -95,6 +95,21 @@ test("spacers, gap elements and day dividers are not turn content: they neither 
   assert.equal(perTurnEstimate(rows), 100);
 });
 
+test("a gap element inside the window ends the open turn and starts none: the rows after it are no turn until the next visible user row (review round 1b, extra8-4)", () => {
+  // two complete turns (100, 120), then a gap: the rows after it belong to a turn whose prompt lies inside the gap (a run opening with no
+  // visible user row: a stripped record, an unplaced prefix). Under the old walk they joined the 120 px turn, which closed at the third
+  // user row as 1120, so a partial turn inflated a measured one; the gap breaks the turn instead, and the streaming turn after it is
+  // never counted, so the complete turns are the one closed before the gap
+  const rows = [user(30), asst(70), user(30), asst(90), row("tx-gap", 3000), asst(1000), user(30), asst(50)];
+  assert.deepEqual(completeTurnHeights(rows), [100], "the turn open at the gap (120) is dropped with the rows after it, never pushed as 1120");
+  assert.equal(perTurnEstimate(rows), null, "one complete turn: no figure (the old walk read 100 off [100, 1120])");
+  // a gap between two closed turns changes nothing: the turn before it closed at its own user row, and the next user row opens the next
+  const closed = [user(30), asst(70), user(30), asst(90), user(30), row("tx-gap", 3000), user(30), asst(50), user(30)];
+  assert.deepEqual(completeTurnHeights(closed), [100, 120, 80], "the gap drops the turn it interrupts (the 30 px prompt alone before it) and nothing else");
+  // a plain spacer is not a gap: it neither breaks nor starts a turn (the top spacer precedes every window)
+  assert.deepEqual(completeTurnHeights([row("tx-spacer tx-spacer-top", 5000), user(30), asst(70), user(30), asst(90), user(30)]), [100, 120]);
+});
+
 test("the median: the middle value, or at an even count the LOWER of the two middle values, so the figure is always a height some turn has", () => {
   assert.equal(median([]), null);
   assert.equal(median([7]), 7);
