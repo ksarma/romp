@@ -79,6 +79,10 @@ import test_federated_linkdrop_served as L   # noqa: E402  the lab module: the c
 
 CFG_KEYS = ("driverBudgetMs", "pageWaitMs", "phaseSettleMs", "quietTries", "quietStepMs")   # plus waitsMs.<mark>, below
 KNOBS = ("ROMP_LINKDROP_LAB", "ROMP_CORNER_OLD_HUB_ROOT", "ROMP_LINKDROP_OLD_HUB_BUILD", "ROMP_LINKDROP_HUB_ROOT")   # the lab's four
+# every ast node class that is a function definition, derived from the property (a class with args, body, decorator_list and
+# returns: FunctionDef and AsyncFunctionDef on this Python; Lambda has no decorator_list or returns) rather than spelled (round 6,
+# the maintainer's round 5 tests-4: two pins keyed on `ast.FunctionDef` and were blind to `async def`); pinned by name below
+FUNCTION_NODES = tuple(c for c in vars(ast).values() if isinstance(c, type) and issubclass(c, ast.AST) and {"args", "body", "decorator_list", "returns"} <= set(c._fields))
 
 # Every wait form the driver may place, and what caps it (the premise of driver_worst_case_s). "timeout": a playwright wait
 # (the waitFor* family and the navigations goto, reload, goBack and goForward, which wait under the same 30 s default) whose
@@ -252,11 +256,16 @@ def _escaped_receivers(text):
 
 
 def _assert_seen_sites(src):
-    """Every call of _assert_seen in the parsed served module, as (line, key, waited): the key of the record its first argument
+    """Every call of _assert_seen in the parsed served module, as (line, key, waited): the key of the record its `seen` argument
     reads (`D["seenAfterReturn"]`, `self._phase("B")["seen"]`, or a local assigned in the same function from `rec.get("seen")`,
     the `or {}` default stripped), or None when the argument resolves to no such key (an offender), and whether the call passes
     waited=True. A source pin over the SITES (round 5, tests-3: the helper's waited branch had a cell and its wiring none, so
-    removing waited=True from every site left the module green), read from the tree and not from the text."""
+    removing waited=True from every site left the module green), read from the tree and not from the text. Keyed on the CALL
+    (round 6, the maintainer's round 5 extra7-2: a call whose `seen` was keyword-spelled was skipped, since the census read the
+    first positional): the argument is the first positional or the `seen` keyword, and a call with neither (a `**kwargs` pass,
+    a starred positional) is an offender with key None rather than a dropped site. What the census keys on: a call spelled
+    `<x>._assert_seen(...)` inside a function of any kind (FUNCTION_NODES, `def` and `async def`); a call at module level, in a
+    class body or inside a lambda, or one through a name bound to the method or through getattr, is outside it by construction."""
     def key_of(node):
         if isinstance(node, ast.BoolOp):
             node = node.values[0]
@@ -267,12 +276,13 @@ def _assert_seen_sites(src):
         return None
     out = []
     for fn in ast.walk(ast.parse(src)):
-        if not isinstance(fn, ast.FunctionDef):
+        if not isinstance(fn, FUNCTION_NODES):
             continue
         assigned = {t.id: a.value for a in ast.walk(fn) if isinstance(a, ast.Assign) for t in a.targets if isinstance(t, ast.Name)}
         for call in ast.walk(fn):
-            if isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute) and call.func.attr == "_assert_seen" and call.args:
-                arg = call.args[0]
+            if isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute) and call.func.attr == "_assert_seen":
+                kw = {k.arg: k.value for k in call.keywords}
+                arg = call.args[0] if call.args else kw.get("seen")   # None, or a starred positional, resolves to no key: an offender
                 if isinstance(arg, ast.Name):
                     arg = assigned.get(arg.id)
                 waited = any(k.arg == "waited" and isinstance(k.value, ast.Constant) and k.value.value is True for k in call.keywords)
@@ -282,21 +292,29 @@ def _assert_seen_sites(src):
 
 def _since_at_the_sites(src):
     """The `since` each attach reader passes, read from the served module's parse (round 5, extra6-2: the values are read at
-    three sites and a cell reached one helper's): per function, the source text of every second argument handed to
-    _minus_attach_rows or _attaches_since, and of the right side of an assignment to a name `since`, in source order.
-    Widening any site's since changes its text here."""
+    three sites and a cell reached one helper's): per function of any kind (FUNCTION_NODES), the source text of the argument
+    bound to the `since_ms` PARAMETER of every _minus_attach_rows call (its second positional, or the `since_ms` or `since`
+    keyword; the third positional is `slack_s`) and of every _attaches_since call (its first), and of the right side of an
+    assignment to a name `since`, in source order. Widening any site's since changes its text here. Keyed on the call and the
+    parameter (round 6, the maintainer's round 5 extra7-2: the census read the LAST positional, so a keyword-spelled since was
+    skipped and a slack passed positionally was read as the since): a site whose since the census cannot read (a starred
+    positional, a `**kwargs` pass) is recorded as `<a since this census cannot read>` rather than dropped, and reds the pin.
+    A call through a name bound to the method or through getattr is outside the census by construction (it keys on
+    `<x>._minus_attach_rows(...)` and `<x>._attaches_since(...)`)."""
     out = {}
     for fn in ast.walk(ast.parse(src)):
-        if not isinstance(fn, ast.FunctionDef):
+        if not isinstance(fn, FUNCTION_NODES):
             continue
         found = []
         for n in ast.walk(fn):
             if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "since" for t in n.targets):
                 found.append((n.lineno, n.col_offset, "since = " + ast.unparse(n.value)))
-            elif isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr in ("_minus_attach_rows", "_attaches_since") and len(n.args) >= 2:
-                found.append((n.lineno, n.col_offset, "%s(..., %s)" % (n.func.attr, ast.unparse(n.args[-1]))))
-            elif isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == "_attaches_since" and len(n.args) == 1:
-                found.append((n.lineno, n.col_offset, "_attaches_since(%s)" % ast.unparse(n.args[0])))
+            elif isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr in ("_minus_attach_rows", "_attaches_since"):
+                pos = 1 if n.func.attr == "_minus_attach_rows" else 0
+                kw = {k.arg: k.value for k in n.keywords}
+                v = n.args[pos] if len(n.args) > pos else kw.get("since_ms", kw.get("since"))
+                shown = ast.unparse(v) if v is not None and not isinstance(v, ast.Starred) else "<a since this census cannot read>"
+                found.append((n.lineno, n.col_offset, ("_minus_attach_rows(..., %s)" if n.func.attr == "_minus_attach_rows" else "_attaches_since(%s)") % shown))
         if found:
             out[fn.name] = [text for _, _, text in sorted(found)]
     return out
@@ -905,6 +923,33 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
         self.assertEqual(late._return_window_stray(), ([{"rev": 3, "slot": "feed"}], []),
                          "the return window's since is 1.5 s before the resume: an attach 2.5 s before it is none of this window's, so its row is stray (from 3 s before, it would take the row)")
 
+    def test_the_site_censuses_read_every_function_kind_and_every_argument_spelling(self):
+        """The two site censuses (round 6, the maintainer's round 5 tests-4 and extra7-2) over a synthetic source: a call inside
+        an `async def` is a site like one inside a `def` (FUNCTION_NODES is derived from ast's node classes, pinned here by
+        name), a keyword-spelled `seen` or `since_ms` is read, a `**kwargs` pass and a starred positional are offenders
+        (key None; `<a since this census cannot read>`) and not dropped sites, and a slack passed positionally is not read as
+        the since. Red before: the async sites were skipped, the keyword sites skipped, the unreadable sites dropped, and the
+        positional slack read as the since."""
+        self.assertEqual(sorted(c.__name__ for c in FUNCTION_NODES), ["AsyncFunctionDef", "FunctionDef"],
+                         "the function node classes, derived from ast as every class with args, body, decorator_list and returns")
+        src = "\n".join(["class T:",
+                         "    def a(self):",
+                         "        self._assert_seen(D[\"seen\"], True, waited=True)",
+                         "    async def b(self):",
+                         "        self._assert_seen(seen=self._phase(\"B\")[\"seen\"], want_cards=True, waited=True)",
+                         "        return self._minus_attach_rows(stamped, since_ms=self._marks()[\"resume\"] + 5, slack_s=2.0)",
+                         "    def c(self):",
+                         "        self._assert_seen(**kw)",
+                         "        return self._attaches_since(*a)",
+                         "    def d(self):",
+                         "        return self._minus_attach_rows(stamped, since, 2.0)",
+                         ""])
+        self.assertEqual(_assert_seen_sites(src), [(3, "seen", True), (5, "seen", True), (8, None, False)],
+                         "the async site and the keyword-spelled site are read; the **kwargs pass is an offender with no key")
+        self.assertEqual(_since_at_the_sites(src), {"b": ["_minus_attach_rows(..., self._marks()['resume'] + 5)"], "c": ["_attaches_since(<a since this census cannot read>)"],
+                                                    "d": ["_minus_attach_rows(..., since)"]},
+                         "the keyword since is read at the async site, the starred since is unreadable and kept, the positional slack is not the since")
+
     def test_every_waitvisible_read_site_passes_waited_and_no_visible_read_does(self):
         """The wiring of _assert_seen's `waited` (round 5, tests-3: the helper's waited branch had a cell, and removing
         waited=True from every call site, phase D's after-return read included, left the module green). The driver stores a
@@ -912,8 +957,9 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
         text by the spelling it uses (READ_STORE: `<key>: await waitVisible(` in a literal, `.<key> = await waitVisible(` as an
         assignment, the same for visible; `v` is the record waitVisible itself builds from visible), with every call of either
         accounted for by one stored key so a call stored another way is a red. Then every _assert_seen call site in the served
-        module, read from its parse (_assert_seen_sites), reads a key of one tuple or the other and passes waited=True exactly
-        when the key is a waitVisible record's; and both tuples are read whole, so the pin is not vacuous."""
+        module, read from its parse (_assert_seen_sites, over every function kind and both argument spellings), reads a key of
+        one tuple or the other and passes waited=True exactly when the key is a waitVisible record's; and both tuples are read
+        whole, so the pin is not vacuous."""
         driver = _strip_js_comments(L.DRIVER)
         stored = [(m.group("key"), m.group("fn")) for m in READ_STORE.finditer(driver)]
         self.assertEqual({k for k, fn in stored if fn == "waitVisible"}, set(WAITED_READS), "the keys the driver stores a waitVisible record under: %r" % (stored,))
