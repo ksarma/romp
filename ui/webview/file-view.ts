@@ -1481,8 +1481,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     };
     pop.addEventListener("click", (ev) => {
       const t = ev.target as Element | null;
-      const r = t && typeof t.closest === "function" ? t.closest(".fileview-outline-row") as HTMLElement | null : null;
-      if (r) pick(rows.indexOf(r));
+      const row = t && typeof t.closest === "function" ? t.closest(".fileview-outline-row") as HTMLElement | null : null;   // not `r`: the rows' builder above binds that name, and the census holds a seated name to one declaration per function (file-print.test.ts)
+      if (row) pick(rows.indexOf(row));
     });
     pop.addEventListener("keydown", (e: KeyboardEvent) => {
       const take = (): void => { e.preventDefault(); e.stopPropagation(); };
@@ -4451,7 +4451,7 @@ export function rewriteFigureSrcs(root: ParentNode, dir: string, sid: string | n
     if (ref.attr === "srcset") {
       const cands = parseSrcset(ref.value);
       let changed = false;
-      for (const c of cands) { const p = path(c.url); if (p !== null) { c.url = p; changed = true; } }
+      for (const c of cands) { const cp = path(c.url); if (cp !== null) { c.url = cp; changed = true; } }   // its own name: `p` below is the reference's, and the census holds a written value to one declaration per function (file-print.test.ts)
       if (changed) { el.setAttribute(FV_SRCSET, ref.value); el.setAttribute("srcset", serializeSrcset(cands)); }   // the authored candidates beside the rewritten ones, in the same order (parseSrcset reads both back candidate for candidate)
       else el.removeAttribute(FV_SRCSET);                // the attribute means this viewer rewrote this srcset, as data-fv-src does for a src
       continue;
@@ -4645,7 +4645,7 @@ function resolveFigureRefs(root: ParentNode, base: string): void {
     if (ref.attr === "srcset") {
       const cands = parseSrcset(ref.value);
       let changed = false;
-      for (const c of cands) { const abs = resolveDocRelative(c.url, base); if (abs !== c.url) { c.url = abs; changed = true; } }
+      for (const c of cands) { const cabs = resolveDocRelative(c.url, base); if (cabs !== c.url) { c.url = cabs; changed = true; } }   // its own name, as in rewriteFigureSrcs: `abs` below is the reference's
       if (changed) el.setAttribute("srcset", serializeSrcset(cands));
       continue;
     }
@@ -4833,8 +4833,8 @@ export function initFileView(poster: (m: Record<string, unknown>) => void,
       if (onRelay) { onRelay(m); return; }   // this document's own contract (the Files pane) takes the message whole
       openFileView(m.path, typeof m.sid === "string" ? m.sid : null, { at: readAt(m.at) });
     } else if (m.type === "fileGitLink" && gitHooks && m.reqId === gitHooks.reqId) {
-      const h = gitHooks; gitHooks = null;
-      h.apply(String(m.url || ""), String(m.reason || ""));
+      const gh = gitHooks; gitHooks = null;   // its own name: `h` is the edit hooks' in the branches below, and the census holds a seat's receiver to one declaration per function (file-print.test.ts)
+      gh.apply(String(m.url || ""), String(m.reason || ""));
     } else if (m.type === "fileSaved" && editHooks && m.reqId === editHooks.reqId) {
       const h = editHooks; editHooks = null;
       // `logged`: the comments log took the edit (Slice 1; absent on an older kernel = false). `logWarning`:

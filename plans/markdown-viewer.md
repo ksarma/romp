@@ -8262,8 +8262,8 @@ takes the PDF road), the pages' host once page 1 removed the loader, and the Cod
 prints the whole file (6 to 7 pages of a hundred paragraphs) and stays live. The unknown child answers NOT in, the safe
 side (the round-2 review, 2026-09-19: the first derivation read every child it had not seen as content, the permissive
 side for a print button, so an unwired pane would have had a live button and a silent print of whatever stood; the
-census below is what makes a root the viewer gains a red test rather than a dead button: since the round-7 fixes it refuses a seat it has not read on the receiver, argument, verb, assignment and write axes, by name:
-the receiver a seat stands on, read by its binding (a reflection global among them); a node of the tree handed to any callee; a method call, by its name; a member assignment, by its name, a computed name refused wherever it stands; and a write of a URL member from anything but a literal, read for whether the value can reach the network and what gates it, or of an attribute under a name the census cannot read as a literal. A root the viewer seats by any of the five reds until read, and the promise holds on those five axes and on no other: what a listed helper does with a node, what a listed receiver is and what a listed method does by its name are read by hand when listed, never derived). The PDF kind is the one
+census below is what makes a root the viewer gains a red test rather than a dead button: since the round-7 fixes it refuses a seat it has not read on the call, assignment, receiver, argument and write axes, by name:
+a method call, by its name; a member assignment, by its name, a computed name refused wherever it stands; the receiver a seat stands on and each name it seats, read by their bindings (a reflection global among them; a listed name declared twice in a function refused at every seat); a node of the tree handed to any callee, and an element the census can see by its shape handed to a callee the file does not declare, bare or inside a literal; and a write of a URL from anything but a literal, by an assignment, by `setAttribute`, by a method of `location` or by `window.open`, read for whether the value can reach the network and what gates it, or of an attribute under a name the census cannot read as a literal. A root the viewer seats by any of the five reds until read, and the promise holds on those five axes and on no other: what a listed helper does with a node or an element, what a listed receiver is and what a listed method does by its name are read by hand when listed, never derived, and an element the census cannot see by its shape (a call's value it does not know) handed to an imported helper is not read (the author's closing pass over the round-7 build, 2026-09-20: the verifiers found the promise false for an `el()`-built const and a query result handed to an imported helper, and the argument axis was widened to them). The PDF kind is the one
 exception, for the loader: `bodyReady` takes the file's kind (the host's `kind`, read at every observer callback and at
 the press through the driver's `ready`), and for a PDF the loader (`PDF_LOADER_ROOT`, `div.fileview-load`) reads as
 content, so the Comments panel's pages attempt with no frame kept, the loader alone in the body, leaves Print live and a
@@ -8355,20 +8355,34 @@ round-6 head, and the census test's diagnostic derives the count at every run) o
 = ...` and every computed-name write unread); `Object`, `Reflect` and `Function` are read by their binding and pass as the
 receiver of a member call alone, every other read (an alias `const R = Reflect`, a stored `Reflect.set`, an argument)
 failing with its line (before this the global was known by its spelling, so `const R = Reflect; R.set(...)` passed with no
-site and no refusal while the census's header said it failed); and the ARGUMENT axis is read: a node of the tree handed to
-any callee passes only as a site `ARGS_READ_BY_HAND` lists, a URL member written from a value that is not a literal only as
-a site `URL_WRITES_READ_BY_HAND` lists, each read for whether the value can carry a remote URL, whether that road reaches
-the network and what gates it, an attribute set under a name the census cannot read as a literal only as a site
-`ATTR_NAMES_READ_BY_HAND` lists, and a string road (`eval`, a timer's string, `new Function`, `import(...)`, a javascript:
-URL) fails. Item 7's first run, the census over the viewer at the round-7 head with those tables empty, refused 17 sites
-(the count that run printed as its refusals, recorded here as that run's fact; the tables list the same 9 and 8 sites
-today, and the record test counts their entries in the census file and holds these numbers to them): 9
+site and no refusal while the census's header said it failed); and the ARGUMENT and WRITE axes are read: a node of the tree handed to any
+callee, and an element the census can see by its shape (`el(...)`, a `createElement` or `querySelector` result, a local
+builder's result, a parameter typed as an element) handed to a callee the file does not declare, each read bare and inside
+an object literal, an array literal, a spread or a concise arrow's value, pass only as a site `ARGS_READ_BY_HAND` lists,
+one entry per hand-off; a URL written from a value that is not a literal, by an assignment to a member the assignment
+axis's hand read flags as a URL or to a member of `location`, by `setAttribute` under any name but `aria-*`, `data-*` or one
+read as carrying no URL, by a method of `location` or by `window.open`, passes only as a site `URL_WRITES_READ_BY_HAND`
+lists, each read for whether the value can carry a remote URL, whether that road reaches the network and what gates it (the
+author's closing pass over the round-7 build, 2026-09-20, on the verifiers' findings: the URL axis read the assignment
+spelling alone, so eight `setAttribute` writes of the document's own links and figure sources and the tab opener stood
+outside that lens; the argument axis read direct arguments alone, so a node inside an object literal passed, and an object
+literal in a seat's key was spelled `{...}`, so a property added to a listed call was no new seat; the seated name of a seat
+was matched by its spelling alone while the receiver was held to its declaration, so a block's `const body = el(...)`
+seated through the listed `main.appendChild(body)` wore the entry, and a shadow spelled exactly as a listed declaration
+passed the text compare: each seated bare name is held to its declaration now, a declaration of `body` passes only as the
+viewer's own, and a listed name declared twice in a function is refused at every seat); an attribute set under a name the
+census cannot read as a literal only as a site `ATTR_NAMES_READ_BY_HAND` lists, and a string road (`eval`, a timer's string,
+`new Function`, `import(...)`, a javascript: URL) fails. Item 7's first run, the census over the viewer at the round-7 head with those tables empty and the two rules as
+they then stood (a node of the tree handed bare to any callee; a URL member written by an assignment), refused 17 sites: 9
 nodes handed to five callees (`Array.from` over a child list five times, figureAnchor's `oneImg` and `linkAround` over the
 climbing parent, a seat's reference child, boundarySide's `leafIsText`) and 8 URL writes (two object URLs and an object
 URL with a page fragment, no network; two chunk script tags derived from the page's own bundle tag, a fetch from the
 bundle's origin; the download route, a same-origin click the code makes; the GitHub link, a remote host the kernel names,
 reached on the person's click alone; the URL viewer's own document URL, same-origin by the caller's test, reached on a
-click), and no string road; each is listed with the reason. The derived set is printed with its lines as a
+click), and no string road: the count that run printed as its refusals, recorded here as that run's fact and held as a
+literal. The tables have outgrown it since the closing pass widened both rules: they list 27 argument sites over 31
+hand-offs and 17 URL writes today, three numbers the record test counts from the census file and holds this sentence to,
+and the census case prints in its `second read:` diagnostic; each is listed with the reason. The derived set is printed with its lines as a
 diagnostic, held equal to the three lists, and `bodyReady` is executed over each root as its list says, over an unlisted
 child alone and beside every content root (not in), and under the PDF kind over each wait and line root (the loader
 alone in, the rest not). A root the viewer gains fails the census until it is listed, a `body` token the census

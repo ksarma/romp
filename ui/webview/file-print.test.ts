@@ -651,13 +651,13 @@ test("bodyReady reads the element children through `children`, else through `chi
 // SECOND, EVERY MEMBER CALL AND EVERY MEMBER WRITE in the file on ANY receiver, by the compiler's tree (seatSites), each
 // axis the read stands on an allowlist with its default refusing (the branch's verification pass finding census-1, 2026-09-20, and
 // the round-6 review's clusters A to C, 2026-09-20: inverting a default is not one edit, every axis the guard reads on is
-// inverted with it, or the closed list moves to the axis left alone). THE VERB AXIS: a call of a method that seats a node
+// inverted with it, or the closed list moves to the axis left alone). THE CALL AXIS: a call of a method that seats a node
 // (SEAT_CALLS: the six the body's read resolves; replaceWith, after, before, replaceChild and insertAdjacentHTML; a range's
 // insertNode and surroundContents; setHTMLUnsafe; moveBefore; write and writeln) and an assignment to innerHTML or
 // outerHTML (SEAT_ASSIGNS) are SEATS; a call, apply or bind, a mount or render, any method of Object, Reflect or Function
 // (SITE_CALLS, SITE_RECEIVERS) and an add on a receiver that is neither a DOMTokenList nor a Set are calls read BY THEIR
 // SITE; a method by a name NON_SEATING_METHODS lists, each read by hand as seating nothing, passes; and a method by ANY
-// OTHER NAME fails the census with its line. THE WRITE AXIS (the round-6 review's cluster B: before this the second read
+// OTHER NAME fails the census with its line. THE ASSIGNMENT AXIS (the round-6 review's cluster B: before this the second read
 // knew innerHTML and outerHTML and passed every other write on any receiver unread, so `md.innerText = ...`, a
 // computed-name write `md[k] = html` and `document.body = ...` were neither a seat nor a refusal): every assignment, plain
 // or compound, a `++` or `--`, each target of an array or object pattern and a for-of or for-in head, on any receiver but
@@ -676,7 +676,13 @@ test("bodyReady reads the element children through `children`, else through `chi
 // seat lands no child in the body; two seats at one site are two entries; an entry the file has two seats for fails; a
 // second declaration of a listed name inside the entry's function (a block's `const main = md.parentElement!`, a
 // callback's `(main) =>`) fails with its line rather than passing under the entry's claim (the branch's verification pass
-// finding census-2); and a receiver bound by `let` or `var`, or a parameter written to, is REASSIGNABLE and its seat fails
+// finding census-2); each seated argument that is a bare name is held to ITS declaration too (`seatedBy`; the verifiers'
+// census-2 of the round-7 build, 2026-09-20: the seated name was matched by its spelling alone, so a block's `const body =
+// el("div", "fileview-mutant")` seated through the listed `main.appendChild(body)` wore the entry), a declaration named
+// `body` passes only as the viewer's own `el("div", "fileview-body")` or as the parameter of a callee BODY_HANDED_TO lists as
+// reading the body under its own parameter, and a listed name declared twice in the entry's function fails at every seat,
+// hand-off or URL write it stands at, whatever the second declaration spells (a shadow wearing the listed declaration's exact
+// text passed the text compare); and a receiver bound by `let` or `var`, or a parameter written to, is REASSIGNABLE and its seat fails
 // unless the entry pins what the binding HOLDS (`holds`: the one expression every write to it in the file assigns), since
 // its declaration says nothing about what it holds at the seat (the round-6 review's correctness-5; the viewer's session
 // tag moved from a `let` onto a const for it). Object, Reflect and Function are read BY THEIR BINDING (globalOf: the bare
@@ -699,17 +705,31 @@ test("bodyReady reads the element children through `children`, else through `chi
 // INDEX_READS_BY_HAND lists (its function and receiver, with what the receiver is), where one only compared, tested or
 // read further (`rows[i].id`) is an index read and passes. THE ARGUMENT AXIS (the round-6 review's item 7, 2026-09-20; its
 // first run at the round-7 head, with the tables empty, is recorded in the plan's P7): a node of the tree (a NODE_MEMBERS
-// chain, an index into one, or a name bound to either) handed to ANY callee passes only as a site ARGS_READ_BY_HAND lists
-// (the function, the callee, the argument as spelled and a bare name's declaration, a reassignable one held to what it
-// holds), each read by hand for what the callee does with the node; a URL member (href, src, srcdoc, location) written
-// from a value that is not a literal, or from a javascript: literal, passes only as a site URL_WRITES_READ_BY_HAND lists
-// (the function, the target, the value as spelled and a bare name's declaration), each read by hand for whether the value
-// can carry a remote URL, whether that road reaches the network and what gates it; a bare eval, setTimeout, setInterval or
-// Function (by binding) with a first argument that is not a function, `new Function` and `import(...)` are string roads
-// and fail; a setAttribute or setAttributeNS whose name is not a string literal (a constant resolved through its
-// declaration counts as one) or names an on<event> handler passes only as a site ATTR_NAMES_READ_BY_HAND lists; and a
-// destructuring by a computed key fails. A listed site the source no longer has fails too (a stale entry is removed, never
-// kept). The resolved set is then held equal to the flow's three lists (READY_ROOTS, NOT_READY_ROOTS, LINE_ROOTS) and
+// chain, an index into one, or a name bound to either) handed to ANY callee, and an element the census can see by its
+// shape (`el(...)`, a createElement, querySelector, closest, getElementById or cloneNode result, a local builder's result,
+// a parameter typed as an element or a node, or a name bound to any of these) handed to a callee THIS FILE DOES NOT
+// DECLARE (an import or a global; a member call is the call axis's, passed by its name or listed with its arguments as a
+// site), each read where it stands bare and inside an object literal, an array literal, a spread or a concise arrow's
+// value, passes only as a site ARGS_READ_BY_HAND lists (the function, the callee, the argument as spelled with its path
+// into the literal, a bare name's declaration, a reassignable one held to what it holds; one entry per hand-off, `times`
+// for one spelled alike in two branches), each read by hand for what the callee does with the node (the verifiers'
+// records-1 and census-3 of the round-7 build, 2026-09-20: before this the axis knew NODE_MEMBERS chains handed bare, so
+// an imported helper handed the card, the bar or the markdown root, and a node inside an object literal, were read on no
+// axis while the promise named every axis); a bare eval, setTimeout, setInterval or Function (by binding) with a first
+// argument that is not a function, `new Function` and `import(...)` are string roads and fail; and a destructuring by a
+// computed key fails. THE WRITE AXIS (the URL roads; the verifiers' census-1 and census-4 of the round-7 build, 2026-09-20:
+// before this the axis read the assignment spelling alone, so `a.setAttribute("href", x)`, `location.replace(x)` under
+// String.prototype.replace's listing and `window.open(x)` under the browser's `open` passed): a URL written from a value
+// that is not a literal, or from a javascript: literal, passes only as a site URL_WRITES_READ_BY_HAND lists (the function,
+// the target, the value as spelled and a bare name's declaration; one entry per write), each read by hand for whether the
+// value can carry a remote URL, whether that road reaches the network and when, and what gates it, where a URL is written
+// by an assignment to a member the assignment axis's hand read flags as a URL (NON_SEATING_WRITES' `url`: href, src) or to
+// a member of `location`, by setAttribute or setAttributeNS under any name but an `aria-*` or `data-*` one (neither fetched
+// nor navigated by) or one NON_URL_ATTRS lists as carrying no URL, by a method of `location` (assign, replace, reload, any)
+// or by `window.open` (the global's `open` by binding), each call's first argument the value; and a setAttribute or
+// setAttributeNS whose NAME is not a string literal (a constant resolved through its declaration counts as one) or names an
+// on<event> handler passes only as a site ATTR_NAMES_READ_BY_HAND lists. A listed site the source no longer has fails too (a
+// stale entry is removed, never kept). The resolved set is then held equal to the flow's three lists (READY_ROOTS, NOT_READY_ROOTS, LINE_ROOTS) and
 // bodyReady is executed over each root as its list says. Each seated expression resolves as before: a builder call
 // (`mdBlock(...)`) to the `el(...)` assigned to the variable the builder's last `return` names; a bare variable to the
 // expression assigned to it last before the site; a ternary to both its branches; an `el("<tag>", "<class>")` to itself;
@@ -960,11 +980,14 @@ function census(src: string, table: SeatRead[] = SEATS_READ_BY_HAND, indexTable:
       continue;
     }
     used.set(entry, [...(used.get(entry) ?? []), s.line]);
+    if (s.seatedBy !== entry.seatedBy) { refused.push("line " + s.line + ": " + s.text + " seats `" + s.seats + "` bound by `" + (s.seatedBy ?? "no bare name") + "`, where SEATS_READ_BY_HAND read `" + (entry.seatedBy ?? "no bare name") + "`: what is seated is not the binding read by hand (the entry names each seated bare name's declaration in `seatedBy`)"); continue; }
+    if (s.decl !== undefined && s.decl !== entry.decl) { refused.push("line " + s.line + ": " + s.text + " seats on `" + s.on + "` in " + s.fn + ", bound to `" + s.decl + "`, where SEATS_READ_BY_HAND read `" + (entry.decl ?? "no binding") + "`: the receiver is not the one read by hand"); continue; }
+    if (s.shadowed) { refused.push("line " + s.line + ": " + s.text + " in " + s.fn + ": " + s.shadowed); continue; }   // the declarations' text agreed: a same-spelled second declaration is what the compare cannot see
     if (s.decl === undefined) continue;   // a member chain (`document.body`) has no binding; its spelling is the read
-    if (s.decl !== entry.decl) { refused.push("line " + s.line + ": " + s.text + " seats on `" + s.on + "` in " + s.fn + ", bound to `" + s.decl + "`, where SEATS_READ_BY_HAND read `" + (entry.decl ?? "no binding") + "`: the receiver is not the one read by hand"); continue; }
     const why = reassignable(s, entry.holds, "`" + s.on + "`");
     if (why) refused.push("line " + s.line + ": " + s.text + " seats on " + why);
   }
+  for (const d of second.bodyDecls) refused.push("line " + d.line + ": " + d.text + " " + d.why);
   for (const [e, lines] of used) if (lines.length !== (e.times ?? 1)) refused.push("SEATS_READ_BY_HAND's entry `" + e.on + "." + form(e.via) + "` seating `" + e.seats + "` in " + e.in + " matches " + lines.length + " seats (lines " + lines.join(", ") + ") where it reads " + (e.times ?? 1) + ": one entry is one seat, read by hand where it stands; a seat spelled alike in two branches says `times` and is read at each");
   for (const c of second.computed) refused.push("line " + c.line + ": " + c.text + " calls through a computed name the census cannot read, and a seating method called that way seats where the census cannot follow");
   for (const u of second.unknown) refused.push("line " + u.line + ": " + u.text + " calls " + u.name + " on `" + u.on + "`, a method the census does not list as seating or as seating nothing: read it by hand and list it (SEAT_CALLS, SITE_CALLS or NON_SEATING_METHODS)");
@@ -995,23 +1018,36 @@ function census(src: string, table: SeatRead[] = SEATS_READ_BY_HAND, indexTable:
     const e = argTable.find((x) => argKey(h, x));
     if (!e) { refused.push("line " + h.line + ": " + h.text + " hands `" + h.arg + "`, a node of the tree read through " + h.member + (h.decl ? " (bound by `" + h.decl + "`)" : "") + ", to " + h.to + "(...) in " + h.fn + ", a callee the census has not read by hand for what it does with a node it is handed (it could seat the node in the body, or seat into it, where the census cannot follow): read it and list the site in ARGS_READ_BY_HAND, or read the node inside a call the census reads"); continue; }
     if (h.decl !== e.decl) { refused.push("line " + h.line + ": " + h.text + " hands `" + h.arg + "` bound to `" + (h.decl ?? "no binding") + "`, where ARGS_READ_BY_HAND read `" + (e.decl ?? "no binding") + "`: the argument is not the one read by hand"); continue; }
+    if (h.shadowed) { refused.push("line " + h.line + ": " + h.text + " in " + h.fn + ": " + h.shadowed); continue; }
     const why = reassignable(h, e.holds, "`" + h.arg + "`");
     if (why) refused.push("line " + h.line + ": " + h.text + " hands " + why);
   }
-  for (const e of argTable) if (!second.handedNodes.some((h) => argKey(h, e))) refused.push("ARGS_READ_BY_HAND lists `" + e.arg + "` handed to " + e.to + " in " + e.in + ", and the source has no such hand-off: the entry is stale, remove it or read the site again");
+  for (const e of argTable) { const n = [...second.handedNodes, ...second.elementsHanded].filter((h) => argKey(h, e)).length; if (n === 0) refused.push("ARGS_READ_BY_HAND lists `" + e.arg + "` handed to " + e.to + " in " + e.in + ", and the source has no such hand-off: the entry is stale, remove it or read the site again"); else if (n !== (e.times ?? 1)) refused.push("ARGS_READ_BY_HAND's entry `" + e.arg + "` handed to " + e.to + " in " + e.in + " matches " + n + " hand-offs where it reads " + (e.times ?? 1) + ": one entry is one hand-off, read where it stands; one spelled alike in two branches says `times` and is read at each"); }
   for (const r of second.stringRoads) refused.push("line " + r.line + ": " + r.text + " calls " + r.callee + " with a first argument that is not a function: a string road (eval, a timer's string, Function, import) runs code the census cannot read, and the kernel's page sends no script-src to stop it");
   const urlKey = (u: { fn: string; on: string; value: string }, e: UrlWriteRead): boolean => e.in === u.fn && e.on === u.on && e.value === u.value;
   for (const u of second.urlWrites) {
     const e = urlTable.find((x) => urlKey(u, x));
-    if (!e) { refused.push("line " + u.line + ": " + u.text + " writes " + u.on + " from `" + u.value + "` in " + u.fn + ", a URL member (href, src, srcdoc, location) written from a value that is not a literal, or from a javascript: literal, and a javascript: URL runs code the census cannot read: read the site for what the value can be, whether it can carry a remote URL and what gates that road, and list it in URL_WRITES_READ_BY_HAND"); continue; }
+    if (!e) { refused.push("line " + u.line + ": " + u.text + " writes " + u.on + " from `" + u.value + "` in " + u.fn + ", a URL write (a member the write axis's hand read flags as a URL, a member of location, an attribute set under a name that is not aria-* or data-* and not listed as carrying no URL, a method of location, or window.open) from a value that is not a literal, or from a javascript: literal, and a javascript: URL runs code the census cannot read: read the site for what the value can be, whether it can carry a remote URL and what gates that road, and list it in URL_WRITES_READ_BY_HAND"); continue; }
     if (u.decl !== e.decl) { refused.push("line " + u.line + ": " + u.text + " writes from `" + u.value + "` bound to `" + (u.decl ?? "no binding") + "`, where URL_WRITES_READ_BY_HAND read `" + (e.decl ?? "no binding") + "`: the value is not the one read by hand"); continue; }
+    if (u.shadowed) { refused.push("line " + u.line + ": " + u.text + " in " + u.fn + ": " + u.shadowed); continue; }
     const why = reassignable(u, e.holds, "`" + u.value + "`");
     if (why) refused.push("line " + u.line + ": " + u.text + " writes from " + why);
   }
-  for (const e of urlTable) if (!second.urlWrites.some((u) => urlKey(u, e))) refused.push("URL_WRITES_READ_BY_HAND lists `" + e.on + "` written from `" + e.value + "` in " + e.in + ", and the source has no such write: the entry is stale, remove it or read the site again");
+  for (const e of urlTable) { const n = second.urlWrites.filter((u) => urlKey(u, e)).length; if (n === 0) refused.push("URL_WRITES_READ_BY_HAND lists `" + e.on + "` written from `" + e.value + "` in " + e.in + ", and the source has no such write: the entry is stale, remove it or read the site again"); else if (n !== (e.times ?? 1)) refused.push("URL_WRITES_READ_BY_HAND's entry `" + e.on + "` written from `" + e.value + "` in " + e.in + " matches " + n + " writes where it reads " + (e.times ?? 1) + ": one entry is one write, read where it stands; one spelled alike in two branches says `times` and is read at each"); }
   const attrKey = (a: { fn: string; on: string; name: string }, e: AttrNameRead): boolean => e.in === a.fn && e.on === a.on && e.name === a.name;
   for (const a of second.attrNames) if (!attrTable.some((e) => attrKey(a, e))) refused.push("line " + a.line + ": " + a.text + " sets an attribute on `" + a.on + "` in " + a.fn + " under a name (`" + a.name + "`) the census cannot read as a literal, or one naming an on<event> handler: a handler attribute holds a string that runs as code, a string road the census cannot read; read the site for what the name can be and list it in ATTR_NAMES_READ_BY_HAND, or name the attribute by a literal");
   for (const e of attrTable) if (!second.attrNames.some((a) => attrKey(a, e))) refused.push("ATTR_NAMES_READ_BY_HAND lists `" + e.name + "` set on `" + e.on + "` in " + e.in + ", and the source has no such write: the entry is stale, remove it or read the site again");
+  for (const e of NON_URL_ATTRS) if (!second.attrWrites.some((a) => a.name === e.name)) refused.push("NON_URL_ATTRS lists " + e.name + ", and the source sets no such attribute from a value that is not a literal: the entry is stale, remove it or read the write again");
+  // an element the census can see by its shape, handed to a callee the file does not declare: read by hand and listed in
+  // ARGS_READ_BY_HAND like a node of the tree (the verifiers' records-1 of the round-7 build)
+  for (const h of second.elementsHanded) {
+    const e = argTable.find((x) => argKey(h, x));
+    if (!e) { refused.push("line " + h.line + ": " + h.text + " hands `" + h.arg + "`, " + h.member + (h.decl ? " (bound by `" + h.decl + "`)" : "") + ", to " + h.to + "(...) in " + h.fn + ", a callee this file does not declare and the census has not read by hand for what it does with an element it is handed (it could seat the element in the body, or seat into it, where the census cannot follow): read it and list the site in ARGS_READ_BY_HAND"); continue; }
+    if (h.decl !== e.decl) { refused.push("line " + h.line + ": " + h.text + " hands `" + h.arg + "` bound to `" + (h.decl ?? "no binding") + "`, where ARGS_READ_BY_HAND read `" + (e.decl ?? "no binding") + "`: the argument is not the one read by hand"); continue; }
+    if (h.shadowed) { refused.push("line " + h.line + ": " + h.text + " in " + h.fn + ": " + h.shadowed); continue; }
+    const why = reassignable(h, e.holds, "`" + h.arg + "`");
+    if (why) refused.push("line " + h.line + ": " + h.text + " hands " + why);
+  }
   return { seated, refused };
 }
 /** The seating forms the census reads on ANY receiver, by the compiler's tree (seatSites): a call of a method that seats a node
@@ -1056,7 +1092,11 @@ const SITE_RECEIVERS = ["Object", "Reflect", "Function"];
  *  ALONE (seatSites.addSeatsNothing reads the receiver): an HTMLSelectElement's add and an HTMLOptionsCollection's add seat
  *  an option, so `add` on any other receiver is a call read by its site, listed in SEATS_READ_BY_HAND or refused (the
  *  round-6 review's extra6-4, 2026-09-20: the name stood here as seating nothing for every receiver, with no probe; the
- *  mutant case plants a select's add and reads the census red). The body token's own calls are the first read's
+ *  mutant case plants a select's add and reads the census red). `replace` passes by this name on any receiver but
+ *  `location`, and `open` on any but the global (window, globalThis, self, or the bare name): a method of `location` and
+ *  `window.open` are navigations, the write axis's, read by their site through URL_WRITES_READ_BY_HAND before this list is
+ *  consulted (the verifiers' census-4 of the round-7 build, 2026-09-20: `location.replace(x)` passed under the string
+ *  method's listing and `window.open(href, ...)` under the browser's). The body token's own calls are the first read's
  *  (NON_SEATING_CALLS, a shorter list). */
 const NON_SEATING_METHODS = [
   // the DOM
@@ -1082,7 +1122,7 @@ const NON_SEATING_METHODS = [
  *  (MemberWrite's `through`): neither object can hold an element child, whatever the property (the body's first read
  *  passes a further access on the same two, FURTHER_MEMBERS). The `body` token's own writes are the first read's
  *  (NON_SEATING_ASSIGNS, a shorter list that refuses textContent on the body). */
-const NON_SEATING_WRITES: Array<{ name: string; why: string }> = [
+const NON_SEATING_WRITES: Array<{ name: string; why: string; url?: true }> = [
   // the DOM's text and attribute reflectors: none makes an element child
   { name: "textContent", why: "sets the element's text: one text node replaces its children, no element is made (on a body root it empties the root and seats nothing)" },
   { name: "title", why: "the tooltip text" },
@@ -1099,8 +1139,8 @@ const NON_SEATING_WRITES: Array<{ name: string; why: string }> = [
   { name: "download", why: "an anchor's download hint" },
   { name: "target", why: "an anchor's target window name" },
   { name: "rel", why: "an anchor's link relation" },
-  { name: "href", why: "an anchor's URL: the write seats nothing; what the value can be is the URL axis's read (URL_WRITES_READ_BY_HAND)" },
-  { name: "src", why: "a script's or a frame's or an img's URL: the write seats nothing; what the value can be is the URL axis's read (URL_WRITES_READ_BY_HAND)" },
+  { name: "href", url: true, why: "an anchor's URL: the write seats nothing; what the value can be is the URL axis's read (URL_WRITES_READ_BY_HAND)" },
+  { name: "src", url: true, why: "a script's or a frame's or an img's URL: the write seats nothing; what the value can be is the URL axis's read (URL_WRITES_READ_BY_HAND)" },
   { name: "scrollTop", why: "a scroll offset (the outline popover's; the body's is the first read's)" },
   // handler members: the value is held to a function by the census (a string there is a string road)
   { name: "onclick", why: "the overlay wrapper's click handler, a function" },
@@ -1130,9 +1170,14 @@ const NON_SEATING_WRITES: Array<{ name: string; why: string }> = [
  *  2026-09-20: before this a site was its function, receiver and form, and one entry admitted every seat sharing that
  *  triple, so a second call on a listed receiver seated an unlisted root under an entry hand-read at another seat; now
  *  the seated arguments as spelled, joined by a comma and a space: for a seating call the arguments the form seats
- *  (SEATED_ARGS), for an assignment the value, and for a site-read call every argument, an object literal, an array
- *  literal or a function among them abbreviated to `{...}`, `[...]` or `() => ...`, since the claim there is about where
- *  the call seats into, an argument spelled by a name or a member), whether the form is an assignment (`assign`), the
+ *  (SEATED_ARGS), for an assignment the value, and for a site-read call every argument, an object literal among them
+ *  spelled by its property names (`{text, ext, onChange}`, a spread by its expression; the verifiers' census-3 of the
+ *  round-7 build: `{...}` let a property added to a listed call pass as the same seat), an array literal or a function
+ *  abbreviated to `[...]` or `() => ...`, since the claim there is about where the call seats into, an argument spelled
+ *  by a name or a member), the binding of each seated argument that is a bare name (`seatedBy`, seatedBy: `name = decl`,
+ *  a reassignable one with its writes, joined by "; "; the verifiers' census-2 of the round-7 build), why the receiver's
+ *  or a seated name's binding cannot be held to one declaration (`shadowed`, shadowOf: the entry's function declares the
+ *  name more than once), whether the form is an assignment (`assign`), the
  *  call or assignment's text, whether the receiver is the sanctioned `body` token (the identifier alone; `(body)` and a
  *  cast are not it), and, for a receiver that is a bare identifier, its BINDING (the branch's verification pass finding
  *  census-2, 2026-09-20): the declaration the name resolves to by the language's scopes (`decl`: the declaration as
@@ -1148,7 +1193,7 @@ const NON_SEATING_WRITES: Array<{ name: string; why: string }> = [
 type BindingKind = "const" | "let" | "var" | "parameter" | "function" | "import" | "class" | "other";
 type Write = { text: string; line: number };
 type Binding = { decl: string; bindingAt: number; kind: BindingKind; writes: Write[] };
-type SeatSite = { line: number; fn: string; on: string; via: string; seats: string; assign: boolean; text: string; body: boolean } & Partial<Binding>;
+type SeatSite = { line: number; fn: string; on: string; via: string; seats: string; assign: boolean; text: string; body: boolean; seatedBy?: string; shadowed?: string } & Partial<Binding>;
 /** A use of a member the census reads only by its site or refuses: its line and text. */
 type Use = { line: number; text: string };
 /** A member written on a receiver other than the `body` token: its function, receiver and the member's name; `through` names
@@ -1161,9 +1206,10 @@ type SecondRead = {
   handedNodes: HandedNode[]; stringRoads: Array<Use & { callee: string }>; urlWrites: UrlWrite[];
   writes: MemberWrite[]; computedWrites: MemberWrite[]; handlerStrings: MemberWrite[]; oddTargets: Use[]; bodyWrites: number;
   reflectionReads: Array<Use & { name: string; as: string }>; attrNames: MemberWrite[]; destructured: Use[];
+  attrWrites: MemberWrite[]; bodyDecls: Array<Use & { why: string }>; elementsHanded: HandedNode[];
 };
 /** Every seat in `src` on any receiver, and every other form the second read classes, each axis an allowlist with its default
- *  refusing (the branch's verification pass finding census-1; the round-6 review's clusters A to C). THE VERB AXIS: every
+ *  refusing (the branch's verification pass finding census-1; the round-6 review's clusters A to C). THE CALL AXIS: every
  *  CALL of a member (`x.m(...)`, `x?.m(...)`, `x["m"](...)`) is classed by the member's NAME: a seating name (SEAT_CALLS) or
  *  a site-read one (SITE_CALLS, any method of a SITE_RECEIVERS global by its binding, an `add` on a receiver that is neither
  *  a DOMTokenList nor a Set) is a site, passed only through the table; a name NON_SEATING_METHODS lists passes; any other
@@ -1176,7 +1222,7 @@ type SecondRead = {
  *  further (an operand, a condition, a `.member` on it, which this read classes in turn), and where it is stored or handed
  *  on (a declaration, an assignment, an argument, a return, an array or object literal, a branch's value) it is an
  *  `indexRead` passed only as a site INDEX_READS_BY_HAND lists, since `const f = md[m]; f(x)` seats where no name says so.
- *  THE WRITE AXIS (the round-6 review's cluster B: before this the second read knew innerHTML and outerHTML and passed every
+ *  THE ASSIGNMENT AXIS (the round-6 review's cluster B: before this the second read knew innerHTML and outerHTML and passed every
  *  other write unread): every assignment, plain or compound, a `++` or `--`, each leaf target of an array or object pattern
  *  and a for-of or for-in head, whose target is a member of a receiver other than the `body` token (the first read's,
  *  counted in `bodyWrites`), is classed by the member's NAME: a seat (SEAT_ASSIGNS) is a site passed only through the
@@ -1191,14 +1237,22 @@ type SecondRead = {
  *  BINDING (globalOf: the bare global, an alias through its declaration, a member of globalThis, window or self) other
  *  than as the receiver of a member call is a `reflectionRead` and refused: the alias declaration itself, a stored
  *  method (`const s = Reflect.set`), an argument, an array element, a return; as a call's receiver the call is a site the
- *  table must list. THE ARGUMENT AXIS (the round-6 review's item 7): a node of the tree handed to any callee is a
- *  `handedNode` (nodeHanded), passed only as a site ARGS_READ_BY_HAND lists; a bare eval, setTimeout, setInterval or
- *  Function by its binding with a first argument that is not a function, `new Function`, and `import(...)` are
- *  `stringRoads` and refused; a URL member written from a value that is not a literal, or from a javascript: literal, is a
- *  `urlWrite` passed only as a site URL_WRITES_READ_BY_HAND lists; a setAttribute or setAttributeNS whose name is not a
- *  string literal (a constant resolved through its declaration counts as one) or names an `on<event>` handler is an
- *  `attrName` passed only as a site ATTR_NAMES_READ_BY_HAND lists. The tree is the compiler's, so a receiver of any shape
- *  (a query result, a parentElement chain, a variable, a call's value) is one text the table can hold or refuse. */
+ *  table must list. THE ARGUMENT AXIS (the round-6 review's item 7; the verifiers' records-1 and census-3 of the round-7
+ *  build): a node of the tree handed to any callee is a `handedNode` (nodeHanded), and an element the census can see by
+ *  its shape (elementShape) handed to a bare callee this file does not declare (foreignCallee) is an `elementHanded`, each
+ *  read bare and inside an object literal, an array literal, a spread or a concise arrow's value (handedIn), passed only as
+ *  a site ARGS_READ_BY_HAND lists; a bare eval, setTimeout, setInterval or Function by its binding with a first argument
+ *  that is not a function, `new Function`, and `import(...)` are `stringRoads` and refused. THE WRITE AXIS (the URL roads;
+ *  the verifiers' census-1 and census-4 of the round-7 build): an assignment to a member NON_SEATING_WRITES flags as a URL
+ *  or to a member of `location`, a setAttribute or setAttributeNS under a name that is neither `aria-*` nor `data-*` nor
+ *  listed in NON_URL_ATTRS, a method of `location` and `window.open`, each from a value (the call's first argument) that
+ *  is not a literal or is a javascript: literal, is a `urlWrite` passed only as a site URL_WRITES_READ_BY_HAND lists; an
+ *  `aria-*` or `data-*` attribute set from a non-literal is an `attrWrite`, classed and passed; a setAttribute or
+ *  setAttributeNS whose name is not a string literal (a constant resolved through its declaration counts as one) or names
+ *  an `on<event>` handler is an `attrName` passed only as a site ATTR_NAMES_READ_BY_HAND lists. A declaration named `body`
+ *  other than the viewer's own, or a parameter of the name in a function BODY_HANDED_TO does not list as its own, is a
+ *  `bodyDecl` and refused. The tree is the compiler's, so a receiver of any shape (a query result, a parentElement chain,
+ *  a variable, a call's value) is one text the table can hold or refuse. */
 function seatSites(src: string): SecondRead {
   const sf = ts.createSourceFile("file-view.ts", src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   const lineOf = (n: ts.Node): number => sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1;
@@ -1344,7 +1398,7 @@ function seatSites(src: string): SecondRead {
   };
   const isNullish = (a: ts.Expression): boolean => { const r = peel(a); return r.kind === ts.SyntaxKind.NullKeyword || (ts.isIdentifier(r) && r.text === "undefined"); };
   /** The members a URL is written to, and whether an assignment's target reaches `location` (the global, or a member so named). */
-  const URL_MEMBERS = ["href", "src", "srcdoc"];
+  const URL_MEMBERS = NON_SEATING_WRITES.filter((e) => e.url).map((e) => e.name);   // the members whose hand read says the value is a URL (the write axis lists every written name; the URL axis reads the flagged ones)
   const touchesLocation = (e: ts.Expression): boolean => {
     let r = peel(e);
     for (;;) {
@@ -1378,19 +1432,123 @@ function seatSites(src: string): SecondRead {
     const r = peel(a);
     if (ts.isPropertyAccessExpression(r) && NODE_MEMBERS.includes(r.name.text)) return isBodyToken(peel(r.expression)) ? null : { member: r.name.text };
     if (ts.isElementAccessExpression(r)) { const o = peel(r.expression); return ts.isPropertyAccessExpression(o) && NODE_MEMBERS.includes(o.name.text) && !isBodyToken(peel(o.expression)) ? { member: o.name.text } : null; }
-    if (ts.isIdentifier(r) && depth < 8) { const d = declNodeOf(r); if (d && ts.isVariableDeclaration(d) && d.initializer) { const h = nodeHanded(d.initializer, depth + 1); return h ? { member: h.member, ...bindingOf(r) } : null; } }
+    if (ts.isIdentifier(r) && depth < 8) { const d = declNodeOf(r); if (d && ts.isVariableDeclaration(d) && d.initializer) { const h = nodeHanded(d.initializer, depth + 1); return h ? { member: h.member, ...bindingOf(r), ...(shadowOf(r) ? { shadowed: shadowOf(r)! } : {}) } : null; } }
     return null;
   };
   const sites: SeatSite[] = [], computed: Use[] = [], unknown: Array<Use & { name: string; on: string }> = [], handedOut: Array<Use & { name: string }> = [], oddCallee: Use[] = [], indexReads: Array<Use & { fn: string; on: string }> = [];
   const handedNodes: HandedNode[] = [], stringRoads: Array<Use & { callee: string }> = [], urlWrites: UrlWrite[] = [];
   const writes: MemberWrite[] = [], computedWrites: MemberWrite[] = [], handlerStrings: MemberWrite[] = [], oddTargets: Use[] = [], reflectionReads: Array<Use & { name: string; as: string }> = [], attrNames: MemberWrite[] = [], destructured: Use[] = [];
+  const attrWrites: MemberWrite[] = [], bodyDecls: Array<Use & { why: string }> = [], elementsHanded: HandedNode[] = [];
+  /** A call of a method of `location` or of `window.open` (or the bare global `open`): a navigation to its first argument, read
+   *  as a URL write whose target is the call (`location.replace`, `window.open`) and whose value is that argument; a string
+   *  literal there that is not a javascript: URL passes, as an assignment's does. */
+  const urlCall = (n: ts.CallExpression, target: string): void => {
+    const v = n.arguments[0];
+    const lit = v ? literalText(v) : null;
+    if (v && lit !== null && !/^\s*javascript:/i.test(lit)) return;
+    const u: UrlWrite = { line: lineOf(n), text: text(n), fn: fnOf(n), on: target, value: v ? flat(v.getText(sf)) : "" };
+    if (v) { const pv = peel(v); if (ts.isIdentifier(pv)) { Object.assign(u, bindingOf(pv)); const sh = shadowOf(pv); if (sh) u.shadowed = sh; } }
+    urlWrites.push(u);
+  };
+  /** Whether a call's callee is a BARE name this file does not declare: an import (`addCopyBtn`, `installFilePrint`) or a
+   *  global (`Array.from` is a member; a bare `structuredClone`). A local function's seats are read in this file; a member
+   *  call is the call axis's (its name passes only as NON_SEATING_METHODS lists it, whatever it is handed, or as a site the
+   *  table lists with its arguments). */
+  const foreignCallee = (n: ts.CallExpression | ts.NewExpression): boolean => {
+    const c = peel(n.expression);
+    if (!ts.isIdentifier(c)) return false;   // a member call is the call axis's: its name passes only as NON_SEATING_METHODS lists it, or as a site the table lists
+    const d = declNodeOf(c);
+    return d === undefined || (!!d && (ts.isImportSpecifier(d) || ts.isImportClause(d)));
+  };
+  /** The methods whose value is an element or a node the census can see by the call's spelling. */
+  const ELEMENT_MAKERS = ["createElement", "createElementNS", "querySelector", "closest", "getElementById", "cloneNode", "importNode", "createTextNode", "createDocumentFragment"];
+  /** The element an expression is, by its shape (the verifiers' records-1 of the round-7 build: a root gained through an imported
+   *  helper handed an el()-built const or a query result was read on no axis, while the argument axis knew NODE_MEMBERS chains
+   *  alone): `el(...)`, a call of an ELEMENT_MAKERS method, a call of a local builder whose last return is an el()-built variable
+   *  (rootsOf's rule), a name bound to any of these by its declaration, a parameter typed as an element or a node, each
+   *  through parentheses, casts and `!`; null for anything else. */
+  const elementShape = (a: ts.Expression, depth = 0): string | null => {
+    const r = peel(a);
+    if (depth > 8) return null;
+    if (ts.isCallExpression(r)) {
+      const c = r.expression;
+      if (ts.isIdentifier(c)) { if (c.text === "el") return "el(...)"; const d = declNodeOf(c); if (d && ts.isFunctionDeclaration(d) && d.body) { const rets = d.body.statements.filter(ts.isReturnStatement); const last = rets[rets.length - 1]; if (last && last.expression && ts.isIdentifier(last.expression)) { const v = last.expression; const shape = elementShape(v, depth + 1); if (shape) return "a call of the builder " + c.text + ", which returns " + shape; } } return null; }
+      const name = memberName(c);
+      return name !== null && ELEMENT_MAKERS.includes(name) ? "a " + name + "(...) result" : null;
+    }
+    if (ts.isIdentifier(r)) {
+      const d = declNodeOf(r);
+      if (d && ts.isVariableDeclaration(d) && d.initializer) { const shape = elementShape(d.initializer, depth + 1); return shape ? shape + " bound to `" + r.text + "`" : null; }
+      if (d && ts.isParameter(d) && d.type && /\b(?:HTML\w*Element|SVG\w*Element|Element|Node|ParentNode|ChildNode)\b/.test(d.type.getText(sf))) return "a parameter typed " + flat(d.type.getText(sf)) + " bound to `" + r.text + "`";
+      return null;
+    }
+    return null;
+  };
+  /** One argument of a call, or a node inside it (the verifiers' census-3 of the round-7 build: the argument axis read direct
+   *  arguments alone, so a node handed inside an object literal passed): an object literal's property values, an array
+   *  literal's elements, a spread's expression and a concise arrow's value are read in turn, each spelled with its path
+   *  (`{ hostParent: host.parentElement }`); a node of the tree (nodeHanded) is a handedNode; an element the census can see by
+   *  shape (elementShape) handed to a callee the file does not declare is an elementHanded. Not read: a node returned from a
+   *  block-bodied callback, or built inside one. */
+  const handedIn = (n: ts.CallExpression | ts.NewExpression, a: ts.Expression, spell: (inner: string) => string, foreign: boolean): void => {
+    if (ts.isSpreadElement(a)) { handedIn(n, a.expression, (s) => spell("..." + s), foreign); return; }
+    const r = peel(a);
+    if (ts.isObjectLiteralExpression(r)) { for (const p of r.properties) { if (ts.isPropertyAssignment(p)) handedIn(n, p.initializer, (s) => spell("{ " + flat(p.name.getText(sf)) + ": " + s + " }"), foreign); else if (ts.isShorthandPropertyAssignment(p)) handedIn(n, p.name, (s) => spell("{ " + s + " }"), foreign); else if (ts.isSpreadAssignment(p)) handedIn(n, p.expression, (s) => spell("{ ..." + s + " }"), foreign); } return; }
+    if (ts.isArrayLiteralExpression(r)) { for (const e of r.elements) if (!ts.isOmittedExpression(e)) handedIn(n, e, (s) => spell("[ " + s + " ]"), foreign); return; }
+    if (ts.isArrowFunction(r) && !ts.isBlock(r.body)) { handedIn(n, r.body, (s) => spell("() => " + s), foreign); return; }
+    const h = nodeHanded(a);
+    if (h) { handedNodes.push({ line: lineOf(n), text: text(n), fn: fnOf(n), to: calleeText(n), arg: spell(flat(a.getText(sf)).slice(0, 80)), ...h }); return; }
+    if (!foreign) return;
+    const shape = elementShape(a);
+    if (shape) { const e = peel(a); if (ts.isIdentifier(e) && isBodyToken(e)) return; const b = ts.isIdentifier(e) ? { ...bindingOf(e), ...(shadowOf(e) ? { shadowed: shadowOf(e)! } : {}) } : {}; elementsHanded.push({ line: lineOf(n), text: text(n), fn: fnOf(n), to: calleeText(n), arg: spell(flat(a.getText(sf)).slice(0, 80)), member: shape, ...b }); }
+  };
   let bodyWrites = 0;
   /** An argument as the seat key spells it: an object literal, an array literal or a function abbreviated, the rest as written. */
-  const abbreviate = (a: ts.Expression): string => { const r = peel(a); return ts.isObjectLiteralExpression(r) ? "{...}" : ts.isArrayLiteralExpression(r) ? "[...]" : ts.isArrowFunction(r) || ts.isFunctionExpression(r) ? "() => ..." : flat(a.getText(sf)); };
-  const site = (n: ts.Node, recv: ts.Expression, via: string, seats: string, assign = false): void => {
+  const abbreviate = (a: ts.Expression): string => { const r = peel(a); return ts.isObjectLiteralExpression(r) ? "{" + r.properties.map((p) => ts.isSpreadAssignment(p) ? "..." + flat(p.expression.getText(sf)) : p.name ? flat(p.name.getText(sf)) : "?").join(", ") + "}" : ts.isArrayLiteralExpression(r) ? "[...]" : ts.isArrowFunction(r) || ts.isFunctionExpression(r) ? "() => ..." : flat(a.getText(sf)); };
+  /** The nearest named function around `n` (the one fnOf names), or the file. */
+  const fnNodeOf = (n: ts.Node): ts.Node => { for (let p: ts.Node | undefined = n.parent; p; p = p.parent) if (nameOfFn(p)) return p; return sf; };
+  /** Every declaration of `name` inside `fn` (a block's, a loop's, a callback's parameter), not descending into a nested
+   *  named function, which is another entry's `in`. */
+  const declsInFn = (fn: ts.Node, name: string): ts.Node[] => {
+    const out: ts.Node[] = [];
+    const walk = (x: ts.Node): void => { if (x !== fn && nameOfFn(x)) return; if (declares(x, name)) out.push(x); ts.forEachChild(x, walk); };
+    walk(fn);
+    return out;
+  };
+  /** Why a bare name at a seat cannot be held to one binding by its declaration's text, or null: the entry's function declares
+   *  the name more than once (a block's `const wrap = el("div")` beside the listed one, spelled alike), or declares it once while
+   *  the name at the seat is bound outside the function (a shadow elsewhere in the function). The census refuses the seat
+   *  rather than pin the binding by its line (the verifiers' finding census-2 of the round-7 build: a shadow wearing the listed
+   *  declaration's exact spelling passed on the text compare). */
+  const shadowOf = (id: ts.Identifier): string | null => {
+    const fn = fnNodeOf(id), inside = declsInFn(fn, id.text), d = declNodeOf(id);
+    const expected = d && inside.includes(d) ? 1 : 0;
+    if (inside.length === expected) return null;
+    return "`" + id.text + "` is declared " + inside.length + " times in " + (fn === sf ? "the module" : nameOfFn(fn)) + " (lines " + inside.map(lineOf).join(", ") + ")" + (expected === 0 && d ? " while the name here is bound outside it" : "") + ": a second declaration of a listed name in the entry's function is refused, whatever it spells";
+  };
+  /** The binding of each seated argument that is a bare name (the branch's verification pass finding census-2, and the
+   *  verifiers' census-2 of the round-7 build: the receiver was held to its declaration while the SEATED name was matched by
+   *  its spelling alone, so `{ const body = el("div", "x"); main.appendChild(body); }` wore the listed seat): `name = decl`,
+   *  a spread's name with its dots, a reassignable one with every write to it, joined by "; "; undefined when no seated
+   *  argument is a bare name, the `body` token among them (the viewer's own declaration, so a block's `const body` seated at
+   *  the listed site is another binding). */
+  const seatedBy = (args: ts.Expression[]): string | undefined => {
+    const parts: string[] = [];
+    for (const a of args) {
+      const spread = ts.isSpreadElement(a), e = peel(spread ? (a as ts.SpreadElement).expression : a);
+      if (!ts.isIdentifier(e)) continue;   // the `body` token too: the entry pins that what is seated IS the viewer's body (a block's `const body` is another binding)
+      const b = bindingOf(e);
+      parts.push((spread ? "..." : "") + e.text + " = " + b.decl + (b.kind === "const" || b.kind === "function" || b.kind === "import" || b.kind === "class" || b.kind === "other" ? "" : "; writes: " + ((b.writes ?? []).map((w) => "`" + w.text + "` at line " + w.line).join(", ") || "none")));
+    }
+    return parts.length ? parts.join("; ") : undefined;
+  };
+  const site = (n: ts.Node, recv: ts.Expression, via: string, seats: string, assign = false, seatedArgs: ts.Expression[] = []): void => {
     const r = strip(recv);
     const s: SeatSite = { line: lineOf(n), fn: fnOf(n), on: flat(r.getText(sf)), via, seats, assign, text: text(n), body: ts.isIdentifier(r) && r.text === "body" };
-    if (ts.isIdentifier(r) && !s.body) Object.assign(s, bindingOf(r));
+    if (ts.isIdentifier(r) && !s.body) { Object.assign(s, bindingOf(r)); const sh = shadowOf(r); if (sh) s.shadowed = sh; }
+    const by = seatedBy(seatedArgs);
+    if (by !== undefined) s.seatedBy = by;
+    for (const a of seatedArgs) { const e = peel(ts.isSpreadElement(a) ? (a as ts.SpreadElement).expression : a); if (ts.isIdentifier(e) && !isBodyToken(e)) { const sh = shadowOf(e); if (sh) s.shadowed = (s.shadowed ? s.shadowed + "; " : "") + sh; } }
     sites.push(s);
   };
   const isCallee = (n: ts.Node): boolean => ts.isCallExpression(n.parent) && n.parent.expression === n;
@@ -1448,17 +1606,28 @@ function seatSites(src: string): SecondRead {
       if (ts.isPropertyAccessExpression(c) || ts.isElementAccessExpression(c) && name !== null) {
         const obj = memberObject(c);
         if (ts.isElementAccessExpression(c)) computed.push({ line: lineOf(n), text: text(n) });
-        else if (isSite(name!, obj)) { if (!(SITE_CALLS.includes(name!) && ownedByFirstRead(obj))) site(n, obj, name!, SEAT_CALLS.includes(name!) ? SEATED_ARGS[name!](n.arguments.map((a) => flat(a.getText(sf)))).join(", ") : n.arguments.map(abbreviate).join(", ")); }   // `body.append.call(...)` is the first read's refusal
-        else if (name === "add" && !isBodyToken(obj) && !addSeatsNothing(obj)) site(n, obj, "add", n.arguments.map(abbreviate).join(", "));   // add on a receiver that is neither a class list nor a Set: a site
+        else if (touchesLocation(obj) || (name === "open" && GLOBAL_OBJECTS.includes(globalOf(obj) ?? ""))) urlCall(n, flat(strip(obj).getText(sf)) + "." + name);   // a method of `location` (assign, replace, reload, any), or window.open: a navigation to its first argument, the URL axis's (the verifiers' census-4 of the round-7 build: `location.replace(x)` passed under String.prototype.replace's listing, `window.open(href, ...)` under the browser's `open`)
+        else if (isSite(name!, obj)) { if (!(SITE_CALLS.includes(name!) && ownedByFirstRead(obj))) { const seated = SEAT_CALLS.includes(name!) ? SEATED_ARGS[name!](n.arguments.map((_, i) => String(i))).map((i) => n.arguments[Number(i)]) : [...n.arguments]; site(n, obj, name!, SEAT_CALLS.includes(name!) ? seated.map((a) => flat(a.getText(sf))).join(", ") : n.arguments.map(abbreviate).join(", "), false, seated); } }   // `body.append.call(...)` is the first read's refusal
+        else if (name === "add" && !isBodyToken(obj) && !addSeatsNothing(obj)) site(n, obj, "add", n.arguments.map(abbreviate).join(", "), false, [...n.arguments]);   // add on a receiver that is neither a class list nor a Set: a site
         else if (!NON_SEATING_METHODS.includes(name!) && !isBodyToken(obj)) unknown.push({ line: lineOf(n), text: text(n), name: name!, on: flat(strip(obj).getText(sf)) });
         if ((name === "setAttribute" || name === "setAttributeNS") && !isBodyToken(obj)) {   // the attribute's name: a literal (a constant resolved through its declaration counts) not naming a handler passes; the rest is a site read by hand
-          const a = n.arguments[name === "setAttributeNS" ? 1 : 0];
+          const ai = name === "setAttributeNS" ? 1 : 0, a = n.arguments[ai], v = n.arguments[ai + 1];
           const init = a ? initOf(a) : null;
           const lit = a ? literalText(a) ?? (init !== null ? literalText(init) : null) : null;
-          if (lit === null || /^on/i.test(lit)) attrNames.push({ line: lineOf(n), text: text(n), fn: fnOf(n), on: flat(strip(obj).getText(sf)), name: a ? flat(a.getText(sf)) : "" });
+          const on = flat(strip(obj).getText(sf));
+          if (lit === null || /^on/i.test(lit)) attrNames.push({ line: lineOf(n), text: text(n), fn: fnOf(n), on, name: a ? flat(a.getText(sf)) : "" });
+          // the attribute's VALUE (the verifiers' census-1 of the round-7 build: the URL axis read the assignment spelling alone, so
+          // `a.setAttribute("href", path)` passed): a value that is not a literal, or a javascript: literal, under a name the census
+          // cannot read as a literal or one it does not know as carrying no URL, is a URL write read by hand; a handler name is the
+          // attribute rule's above; an aria-* or data-* name, or one NON_URL_ATTRS lists, carries no URL and passes, classed
+          const vlit = v ? literalText(v) : null;
+          if (v && !(lit !== null && /^on/i.test(lit)) && (vlit === null || /^\s*javascript:/i.test(vlit))) {
+            if (lit !== null && (/^(?:aria|data)-/.test(lit) || NON_URL_ATTRS.some((e) => e.name === lit))) attrWrites.push({ line: lineOf(n), text: text(n), fn: fnOf(n), on, name: lit });
+            else { const pv = peel(v); const u: UrlWrite = { line: lineOf(n), text: text(n), fn: fnOf(n), on: on + "." + name + "(" + (lit !== null ? JSON.stringify(lit) : flat(a.getText(sf))) + ")", value: flat(v.getText(sf)) }; if (ts.isIdentifier(pv)) { Object.assign(u, bindingOf(pv)); const sh = shadowOf(pv); if (sh) u.shadowed = sh; } urlWrites.push(u); }
+          }
         }
       } else if (ts.isElementAccessExpression(c)) computed.push({ line: lineOf(n), text: text(n) });
-      else if (ts.isIdentifier(c)) { const g = globalOf(c); if (g !== null && STRING_ROAD_CALLEES.includes(g) && !isFunction(n.arguments[0])) stringRoads.push({ line: lineOf(n), text: text(n), callee: c.text + (g === c.text ? "" : " (bound to " + g + ")") }); }
+      else if (ts.isIdentifier(c)) { const g = globalOf(c); if (g !== null && STRING_ROAD_CALLEES.includes(g) && !isFunction(n.arguments[0])) stringRoads.push({ line: lineOf(n), text: text(n), callee: c.text + (g === c.text ? "" : " (bound to " + g + ")") }); else if (g === "open") urlCall(n, c.text); }
       else if (c.kind === ts.SyntaxKind.ImportKeyword) stringRoads.push({ line: lineOf(n), text: text(n), callee: "import" });
       else if (c.kind !== ts.SyntaxKind.SuperKeyword) oddCallee.push({ line: lineOf(n), text: text(n) });
     } else if (ts.isNewExpression(n)) {
@@ -1468,12 +1637,16 @@ function seatSites(src: string): SecondRead {
       if (ts.isArrayLiteralExpression(left) || ts.isObjectLiteralExpression(left)) for (const { target, key } of targetsOf(left)) { if (key) keyRead(key, n); classWrite(n, target, "a value destructured from `" + value + "`", op); }
       else {
         classWrite(n, left, value, op, n.right);
-        if (isUrlTarget(n.left)) { const lit = literalText(n.right); if (lit === null || /^\s*javascript:/i.test(lit)) { const v = peel(n.right); const u: UrlWrite = { line: lineOf(n), text: text(n), fn: fnOf(n), on: flat(strip(n.left).getText(sf)), value }; if (ts.isIdentifier(v)) Object.assign(u, bindingOf(v)); urlWrites.push(u); } }
+        if (isUrlTarget(n.left)) { const lit = literalText(n.right); if (lit === null || /^\s*javascript:/i.test(lit)) { const v = peel(n.right); const u: UrlWrite = { line: lineOf(n), text: text(n), fn: fnOf(n), on: flat(strip(n.left).getText(sf)), value }; if (ts.isIdentifier(v)) { Object.assign(u, bindingOf(v)); const sh = shadowOf(v); if (sh) u.shadowed = sh; } urlWrites.push(u); } }
       }
     } else if (isIncDec(n)) classWrite(n, n.operand, "", n.operator === ts.SyntaxKind.PlusPlusToken ? "++" : "--");
     else if ((ts.isForOfStatement(n) || ts.isForInStatement(n)) && !ts.isVariableDeclarationList(n.initializer)) for (const { target, key } of targetsOf(n.initializer)) { if (key) keyRead(key, n); classWrite(n, target, "each of `" + flat(n.expression.getText(sf)) + "`", "of"); }
     if (ts.isBindingElement(n) && ts.isObjectBindingPattern(n.parent)) keyRead(n.propertyName ?? (n.name as ts.PropertyName), n.parent);
-    if (ts.isCallExpression(n) || ts.isNewExpression(n)) for (const a of n.arguments ?? []) { const h = nodeHanded(ts.isSpreadElement(a) ? a.expression : a); if (h) handedNodes.push({ line: lineOf(n), text: text(n), fn: fnOf(n), to: calleeText(n), arg: flat(a.getText(sf)).slice(0, 80), ...h }); }
+    if (ts.isCallExpression(n) || ts.isNewExpression(n)) { const foreign = foreignCallee(n); for (const a of n.arguments ?? []) handedIn(n, a, (x) => x, foreign); }
+    if ((ts.isVariableDeclaration(n) || ts.isParameter(n)) && ts.isIdentifier(n.name) && n.name.text === "body" && !ts.isFunctionTypeNode(n.parent) && !ts.isMethodSignature(n.parent)) {   // a declaration of the sanctioned name: the viewer's own alone
+      if (ts.isVariableDeclaration(n)) { if (!n.initializer || flat(n.initializer.getText(sf)) !== BODY_DECL_INIT) bodyDecls.push({ line: lineOf(n), text: text(n.parent.parent), why: "declares `body` as " + (n.initializer ? "`" + flat(n.initializer.getText(sf)).slice(0, 80) + "`" : "nothing") + ", not the viewer's own `" + BODY_DECL_INIT + "`: a second binding of the sanctioned name wears the first read's every pass (a declaration, a listed callee's argument) and the second read's seat key" }); }
+      else { const f = nameOfFn(n.parent); if (!f || !BODY_HANDED_TO.some((h) => h.own && h.callee.split(".").pop() === f)) bodyDecls.push({ line: lineOf(n), text: text(n), why: "declares a parameter named `body` in " + (f ?? "an unnamed function") + ", which BODY_HANDED_TO does not list as reading the body under its own parameter: the census reads that function's member accesses as the viewer's, so the name passes only where the hand read says the parameter IS the body" }); }
+    }
     if ((ts.isIdentifier(n) && isReference(n)) || ts.isPropertyAccessExpression(n)) { const g = globalOf(n); if (g !== null && SITE_RECEIVERS.includes(g) && !receiverOfMemberCall(n)) reflectionReads.push({ line: lineOf(n), text: text(effectiveParent(n)), name: g, as: flat(n.getText(sf)) }); }
     if ((ts.isPropertyAccessExpression(n) || ts.isElementAccessExpression(n)) && !isCallee(n)) {
       const name = memberName(n);
@@ -1483,7 +1656,7 @@ function seatSites(src: string): SecondRead {
     ts.forEachChild(n, visit);
   };
   visit(sf);
-  return { sites, computed, unknown, handedOut, oddCallee, indexReads, handedNodes, stringRoads, urlWrites, writes, computedWrites, handlerStrings, oddTargets, bodyWrites, reflectionReads, attrNames, destructured };
+  return { sites, computed, unknown, handedOut, oddCallee, indexReads, handedNodes, stringRoads, urlWrites, writes, computedWrites, handlerStrings, oddTargets, bodyWrites, reflectionReads, attrNames, destructured, attrWrites, bodyDecls, elementsHanded };
 }
 /** A seat in file-view.ts on a receiver other than the `body` token, READ BY HAND and listed as ONE seat (the round-6 review's
  *  cluster A, 2026-09-20): the nearest named function around it (`in`), the receiver's spelling (`on`), the form (`via`) and
@@ -1492,7 +1665,9 @@ function seatSites(src: string): SecondRead {
  *  body; for a receiver that is a bare name, the declaration it is bound to (`decl`), and for one bound by `let` or `var`
  *  the one expression every write to it assigns (`holds`), without which the seat is refused as reassignable; and, for the
  *  one case of a seat spelled byte for byte alike more than once in one function (codeBlock's two branches), how many
- *  times (`times`, each read; one otherwise). A seat the
+ *  times (`times`, each read; one otherwise); and the declaration of each seated argument that is a bare name (`seatedBy`,
+ *  as SeatSite spells it; the verifiers' census-2 of the round-7 build, 2026-09-20: without it a second binding wearing the
+ *  seated name passed on the receiver's read alone). A seat the
  *  table does not list fails the census with its line, whatever produced the receiver and however close a listed entry
  *  stands (a second seat at a listed site is a second entry, read where it stands), an entry the source has no seat for
  *  fails it too, and an entry two seats match fails, so the table is the live set of seats and nothing more (the round-5
@@ -1500,99 +1675,112 @@ function seatSites(src: string): SecondRead {
  *  the round-6 review: keyed on the function, receiver and form, one entry covered every seat on its binding). A body
  *  root's own children (a hint inside the failure pane, the glyph inside a loader) are seats inside the root, not beside
  *  it, and are listed as such. */
-type SeatRead = { in: string; on: string; via: string; seats: string; is: string; decl?: string; holds?: string; times?: number };
+type SeatRead = { in: string; on: string; via: string; seats: string; is: string; decl?: string; holds?: string; times?: number; seatedBy?: string };
 const SEATS_READ_BY_HAND: SeatRead[] = [
-  { in: "<module>", on: "Object", via: "entries", seats: "{...}", is: "Object.entries over the highlighter's language table at module load, a literal record of grammars; each is registered with hljs; no element is touched", decl: "a global" },
+  { in: "<module>", on: "Object", via: "entries", seats: "{bash, sh, shell, python, py, javascript, js, typescript, ts, json, xml, html, css, markdown, md, diff, yaml, yml}", is: "Object.entries over the highlighter's language table at module load, a literal record of grammars; each is registered with hljs; no element is touched", decl: "a global" },
   { in: "textSizeControl", on: "trigger", via: "innerHTML =", seats: "ICON_ZOOM", is: "the zoom button, built here by el(); its glyph (ICON_ZOOM, a constant SVG string from icons.ts) goes inside it", decl: "const trigger = el(\"button\", \"fileview-btn fileview-icon fileview-zoom-btn\") as HTMLButtonElemen" },
-  { in: "textSizeControl", on: "menu", via: "appendChild", seats: "b", is: "the zoom flyout, built here by el(); a step button (b, built in the loop over the steps) goes inside it", decl: "const menu = el(\"div\", \"fileview-zoom-menu\")" },
-  { in: "textSizeControl", on: "wrap", via: "appendChild", seats: "trigger", is: "the control's own span, built here by el() and seated in the bar's actions by the viewers (viewGroup, acts); the zoom button goes inside it", decl: "const wrap = el(\"span\", \"fileview-zoom\")" },
-  { in: "textSizeControl", on: "wrap", via: "appendChild", seats: "menu", is: "the same span; the flyout goes inside it", decl: "const wrap = el(\"span\", \"fileview-zoom\")" },
+  { in: "textSizeControl", on: "menu", via: "appendChild", seats: "b", seatedBy: "b = const b of buttons", is: "the zoom flyout, built here by el(); a step button (b, built in the loop over the steps) goes inside it", decl: "const menu = el(\"div\", \"fileview-zoom-menu\")" },
+  { in: "textSizeControl", on: "wrap", via: "appendChild", seats: "trigger", seatedBy: "trigger = const trigger = el(\"button\", \"fileview-btn fileview-icon fileview-zoom-btn\") as HTMLButtonElemen", is: "the control's own span, built here by el() and seated in the bar's actions by the viewers (viewGroup, acts); the zoom button goes inside it", decl: "const wrap = el(\"span\", \"fileview-zoom\")" },
+  { in: "textSizeControl", on: "wrap", via: "appendChild", seats: "menu", seatedBy: "menu = const menu = el(\"div\", \"fileview-zoom-menu\")", is: "the same span; the flyout goes inside it", decl: "const wrap = el(\"span\", \"fileview-zoom\")" },
   { in: "loaderEl", on: "load", via: "innerHTML =", seats: "'<img src=\"/media/romp-swirl-glyph.svg\" alt=\"\"><span>romp</span>' + '<i class=\"fileview-dot\"></i><i class=\"fileview-dot\"></i><i class=\"fileview-dot\"></i>'", is: "the loader this builder returns, div.fileview-load; its glyph markup (a literal string: the swirl img, the word, three dots) goes inside it", decl: "const load = el(\"div\", \"fileview-load\")" },
   { in: "apply", on: "unit", via: "replaceChildren", seats: "", is: "the action's own span (div.fileview-gh), built in its mount and returned to the viewer, which seats it in the bar; emptied when the kernel answers with no URL", decl: "const unit = el(\"span\", \"fileview-gh\")" },
-  { in: "apply", on: "unit", via: "replaceChildren", seats: "a", is: "the same span; the GitHub link anchor (a, built here by el()) goes inside it", decl: "const unit = el(\"span\", \"fileview-gh\")" },
-  { in: "openFileView", on: "bar", via: "appendChild", seats: "back", is: "the title bar, a child of the card beside main; the back button goes in it", decl: "const bar = el(\"div\", \"fileview-bar\")" },
-  { in: "openFileView", on: "name", via: "appendChild", seats: "dir", is: "the file name in the bar; its directory span goes in it", decl: "const name = el(\"div\", \"fileview-name\")" },
-  { in: "openFileView", on: "name", via: "appendChild", seats: "base", is: "the same name; its base-name span goes in it", decl: "const name = el(\"div\", \"fileview-name\")" },
+  { in: "apply", on: "unit", via: "replaceChildren", seats: "a", seatedBy: "a = const a = el(\"a\", \"fileview-btn\") as HTMLAnchorElement", is: "the same span; the GitHub link anchor (a, built here by el()) goes inside it", decl: "const unit = el(\"span\", \"fileview-gh\")" },
+  { in: "openFileView", on: "bar", via: "appendChild", seats: "back", seatedBy: "back = const back = el(\"button\", \"fileview-btn fileview-back\") as HTMLButtonElement", is: "the title bar, a child of the card beside main; the back button goes in it", decl: "const bar = el(\"div\", \"fileview-bar\")" },
+  { in: "openFileView", on: "name", via: "appendChild", seats: "dir", seatedBy: "dir = const dir = el(\"span\", \"fileview-dir\")", is: "the file name in the bar; its directory span goes in it", decl: "const name = el(\"div\", \"fileview-name\")" },
+  { in: "openFileView", on: "name", via: "appendChild", seats: "base", seatedBy: "base = const base = el(\"span\", \"fileview-base\")", is: "the same name; its base-name span goes in it", decl: "const name = el(\"div\", \"fileview-name\")" },
   { in: "openFileView", on: "sess", via: "replaceChildren", seats: "...hostNameNodes(owner.name, sid)", is: "the session tag in the bar, a const built by el() when the file was opened from a session (the round-6 review's correctness-5: it was a let assigned inside the branch, whose declaration said nothing about what it held here); the host and name nodes go in it", decl: "const sess = owner ? el(\"span\", \"fileview-sess\") : null" },
-  { in: "openFileView", on: "seg", via: "appendChild", seats: "b", is: "the Rendered|Raw pair in the view group; a format button (b, built in the loop) goes in it", decl: "const seg = el(\"span\", \"fileview-seg\")" },
-  { in: "openFileView", on: "viewGroup", via: "appendChild", seats: "seg", is: "the view group of the actions row; the format pair goes in it", decl: "const viewGroup = el(\"span\", \"fileview-group fileview-group-view\")" },
-  { in: "openFileView", on: "viewGroup", via: "appendChild", seats: "outlineBtn", is: "the same group; the outline button goes in it", decl: "const viewGroup = el(\"span\", \"fileview-group fileview-group-view\")" },
-  { in: "openOutline", on: "pop", via: "appendChild", seats: "r", is: "the headings popover, built here by el(); a row (r, built in the loop over the headings) goes in it", decl: "const pop = el(\"div\", \"fileview-outline\")" },
-  { in: "openOutline", on: "box", via: "appendChild", seats: "pop", is: "the card; the popover goes in it, beside the bar and main", decl: "const box = el(\"div\", \"fileview\")" },
+  { in: "openFileView", on: "seg", via: "appendChild", seats: "b", seatedBy: "b = const b = el(\"button\", \"fileview-btn\") as HTMLButtonElement", is: "the Rendered|Raw pair in the view group; a format button (b, built in the loop) goes in it", decl: "const seg = el(\"span\", \"fileview-seg\")" },
+  { in: "openFileView", on: "viewGroup", via: "appendChild", seats: "seg", seatedBy: "seg = const seg = el(\"span\", \"fileview-seg\")", is: "the view group of the actions row; the format pair goes in it", decl: "const viewGroup = el(\"span\", \"fileview-group fileview-group-view\")" },
+  { in: "openFileView", on: "viewGroup", via: "appendChild", seats: "outlineBtn", seatedBy: "outlineBtn = const outlineBtn = el(\"button\", \"fileview-btn fileview-outline-btn\") as HTMLButtonElement", is: "the same group; the outline button goes in it", decl: "const viewGroup = el(\"span\", \"fileview-group fileview-group-view\")" },
+  { in: "openOutline", on: "pop", via: "appendChild", seats: "r", seatedBy: "r = const r = el(\"div\", \"fileview-outline-row\")", is: "the headings popover, built here by el(); a row (r, built in the loop over the headings) goes in it", decl: "const pop = el(\"div\", \"fileview-outline\")" },
+  { in: "openOutline", on: "box", via: "appendChild", seats: "pop", seatedBy: "pop = const pop = el(\"div\", \"fileview-outline\")", is: "the card; the popover goes in it, beside the bar and main", decl: "const box = el(\"div\", \"fileview\")" },
   { in: "openFileView", on: "viewGroup", via: "appendChild", seats: "textSize.wrap", is: "the same group; the zoom control's span goes in it", decl: "const viewGroup = el(\"span\", \"fileview-group fileview-group-view\")" },
-  { in: "openFileView", on: "viewGroup", via: "appendChild", seats: "srcBtn", is: "the same group; the source button goes in it", decl: "const viewGroup = el(\"span\", \"fileview-group fileview-group-view\")" },
+  { in: "openFileView", on: "viewGroup", via: "appendChild", seats: "srcBtn", seatedBy: "srcBtn = const srcBtn = el(\"button\", \"fileview-btn\") as HTMLButtonElement", is: "the same group; the source button goes in it", decl: "const viewGroup = el(\"span\", \"fileview-group fileview-group-view\")" },
   { in: "openFileView", on: "editBtn", via: "innerHTML =", seats: "ICON_EDIT", is: "the Edit button in the file group; its glyph (ICON_EDIT, a constant SVG string) goes inside it", decl: "const editBtn = el(\"button\", \"fileview-btn\") as HTMLButtonElement" },
-  { in: "openFileView", on: "fileGroup", via: "appendChild", seats: "editBtn", is: "the file group of the actions row; the Edit button goes in it", decl: "const fileGroup = el(\"span\", \"fileview-group fileview-group-file\")" },
-  { in: "openFileView", on: "fileGroup", via: "appendChild", seats: "saveBtn", is: "the same group; the Save button goes in it", decl: "const fileGroup = el(\"span\", \"fileview-group fileview-group-file\")" },
-  { in: "openFileView", on: "fileGroup", via: "appendChild", seats: "cancelBtn", is: "the same group; the Cancel button goes in it", decl: "const fileGroup = el(\"span\", \"fileview-group fileview-group-file\")" },
+  { in: "openFileView", on: "fileGroup", via: "appendChild", seats: "editBtn", seatedBy: "editBtn = const editBtn = el(\"button\", \"fileview-btn\") as HTMLButtonElement", is: "the file group of the actions row; the Edit button goes in it", decl: "const fileGroup = el(\"span\", \"fileview-group fileview-group-file\")" },
+  { in: "openFileView", on: "fileGroup", via: "appendChild", seats: "saveBtn", seatedBy: "saveBtn = const saveBtn = el(\"button\", \"fileview-btn\") as HTMLButtonElement", is: "the same group; the Save button goes in it", decl: "const fileGroup = el(\"span\", \"fileview-group fileview-group-file\")" },
+  { in: "openFileView", on: "fileGroup", via: "appendChild", seats: "cancelBtn", seatedBy: "cancelBtn = const cancelBtn = el(\"button\", \"fileview-btn\") as HTMLButtonElement", is: "the same group; the Cancel button goes in it", decl: "const fileGroup = el(\"span\", \"fileview-group fileview-group-file\")" },
   { in: "openFileView", on: "load", via: "innerHTML =", seats: "'<img src=\"/media/romp-swirl-glyph.svg\" alt=\"\"><span>romp</span>' + '<i class=\"fileview-dot\"></i><i class=\"fileview-dot\"></i><i class=\"fileview-dot\"></i>'", is: "the open's loader (a body root: body.appendChild(load) is resolved by the body's read); its glyph markup (a literal string) goes inside it", decl: "const load = el(\"div\", \"fileview-load\")" },
-  { in: "openFileView", on: "main", via: "appendChild", seats: "body", is: "the card's main column, the body's PARENT: the body itself is seated in it, so this seat is the body's, not a child in it", decl: "const main = el(\"div\", \"fileview-main\")" },
-  { in: "aside", on: "main", via: "appendChild", seats: "node", is: "the same column, through the seam's aside hook: an action's aside (node, the element the action hands the hook) is seated beside the body, in main, not in the body", decl: "const main = el(\"div\", \"fileview-main\")" },
-  { in: "openFileView", on: "a", via: "mount", seats: "ctx", is: "a registered action's mount (the GitHub link, the Comments panel), handed the action context and returning the element the viewer then seats in the file group (fileGroup.appendChild(n), listed here); the mount seats nothing itself", decl: "const a of fileViewActions" },
-  { in: "openFileView", on: "fileGroup", via: "appendChild", seats: "n", is: "the same group; a registered action's mount result (n, the element a.mount(ctx) returned: the GitHub link's span, the Comments panel's button) goes in it", decl: "const fileGroup = el(\"span\", \"fileview-group fileview-group-file\")" },
+  { in: "openFileView", on: "main", via: "appendChild", seats: "body", seatedBy: "body = const body = el(\"div\", \"fileview-body\")", is: "the card's main column, the body's PARENT: the body itself is seated in it, so this seat is the body's, not a child in it", decl: "const main = el(\"div\", \"fileview-main\")" },
+  { in: "aside", on: "main", via: "appendChild", seats: "node", seatedBy: "node = a parameter of aside; writes: none", is: "the same column, through the seam's aside hook: an action's aside (node, the element the action hands the hook) is seated beside the body, in main, not in the body", decl: "const main = el(\"div\", \"fileview-main\")" },
+  { in: "openFileView", on: "a", via: "mount", seats: "ctx", seatedBy: "ctx = const ctx = { path, sid: sid || null, todoId: opts?.todoId ?? null, body: () => body, mode: ", is: "a registered action's mount (the GitHub link, the Comments panel), handed the action context and returning the element the viewer then seats in the file group (fileGroup.appendChild(n), listed here); the mount seats nothing itself", decl: "const a of fileViewActions" },
+  { in: "openFileView", on: "fileGroup", via: "appendChild", seats: "n", seatedBy: "n = const n = a.mount(ctx)", is: "the same group; a registered action's mount result (n, the element a.mount(ctx) returned: the GitHub link's span, the Comments panel's button) goes in it", decl: "const fileGroup = el(\"span\", \"fileview-group fileview-group-file\")" },
   { in: "openFileView", on: "dl", via: "innerHTML =", seats: "ICON_DOWNLOAD", is: "the Download button in the file group; its glyph (ICON_DOWNLOAD, a constant SVG string) goes inside it", decl: "const dl = el(\"button\", \"fileview-btn\") as HTMLButtonElement" },
-  { in: "openFileView", on: "fileGroup", via: "appendChild", seats: "dl", is: "the same group; the Download button goes in it", decl: "const fileGroup = el(\"span\", \"fileview-group fileview-group-file\")" },
+  { in: "openFileView", on: "fileGroup", via: "appendChild", seats: "dl", seatedBy: "dl = const dl = el(\"button\", \"fileview-btn\") as HTMLButtonElement", is: "the same group; the Download button goes in it", decl: "const fileGroup = el(\"span\", \"fileview-group fileview-group-file\")" },
   { in: "openFileView", on: "fileGroup", via: "appendChild", seats: "print.button", is: "the same group; the Print button (installFilePrint's) goes in it", decl: "const fileGroup = el(\"span\", \"fileview-group fileview-group-file\")" },
   { in: "openFileView", on: "copy", via: "innerHTML =", seats: "ICON_COPY", is: "the Copy button in the file group; its glyph (ICON_COPY, a constant SVG string) goes inside it", decl: "const copy = el(\"button\", \"fileview-btn fileview-icon\") as HTMLButtonElement" },
   { in: "copySay", on: "copy", via: "innerHTML =", seats: "icon", is: "the same Copy button; the acknowledgement swaps its glyph (icon, one of the constant SVG strings copySay is handed)", decl: "const copy = el(\"button\", \"fileview-btn fileview-icon\") as HTMLButtonElement" },
-  { in: "openFileView", on: "fileGroup", via: "appendChild", seats: "copy", is: "the same group; the Copy button goes in it", decl: "const fileGroup = el(\"span\", \"fileview-group fileview-group-file\")" },
-  { in: "openFileView", on: "acts", via: "appendChild", seats: "viewGroup", is: "the actions row in the bar; the view group goes in it", decl: "const acts = el(\"div\", \"fileview-acts\")" },
-  { in: "openFileView", on: "acts", via: "appendChild", seats: "fileGroup", is: "the same row; the file group goes in it", decl: "const acts = el(\"div\", \"fileview-acts\")" },
-  { in: "openFileView", on: "acts", via: "appendChild", seats: "close", is: "the same row; the close button goes in it", decl: "const acts = el(\"div\", \"fileview-acts\")" },
-  { in: "openFileView", on: "bar", via: "appendChild", seats: "name", is: "the same bar; the file name goes in it", decl: "const bar = el(\"div\", \"fileview-bar\")" },
-  { in: "openFileView", on: "bar", via: "appendChild", seats: "sess", is: "the same bar; the session tag goes in it (when the file was opened from a session)", decl: "const bar = el(\"div\", \"fileview-bar\")" },
-  { in: "openFileView", on: "bar", via: "appendChild", seats: "acts", is: "the same bar; the actions row goes in it", decl: "const bar = el(\"div\", \"fileview-bar\")" },
-  { in: "openFileView", on: "box", via: "appendChild", seats: "bar", is: "the card (div.fileview); the bar goes in it", decl: "const box = el(\"div\", \"fileview\")" },
-  { in: "openFileView", on: "box", via: "appendChild", seats: "main", is: "the same card; main goes in it", decl: "const box = el(\"div\", \"fileview\")" },
-  { in: "openFileView", on: "wrap", via: "appendChild", seats: "box", is: "the overlay wrapper; the card goes in it", decl: "const wrap = el(\"div\")" },
-  { in: "openFileView", on: "document.body", via: "appendChild", seats: "wrap", is: "the page's body, not the viewer's; the overlay wrapper goes in it" },
-  { in: "noteBar", on: "box", via: "insertBefore", seats: "bar2", is: "the card; a notice bar (bar2, div.fileview-err built here) goes in it above main, outside the body (a body root of the same class is seated by the body's own replaceChildren, read separately)", decl: "const box = el(\"div\", \"fileview\")" },
-  { in: "imgFailed", on: "why", via: "appendChild", seats: "hint", is: "the picture failure pane (div.fileview-err), a body root; its hint goes inside it", decl: "const why = el(\"div\", \"fileview-err\")" },
-  { in: "imgFailed", on: "why", via: "appendChild", seats: "offer", is: "the same pane; its download offer goes inside it", decl: "const why = el(\"div\", \"fileview-err\")" },
-  { in: "editorChunk", on: "document.head", via: "appendChild", seats: "sc", is: "the page's head; the editor chunk's script tag goes in it" },
-  { in: "pdfChunkLoad", on: "document.head", via: "appendChild", seats: "sc", is: "the page's head; the PDF chunk's script tag goes in it" },
-  { in: "fallback", on: "col", via: "prepend", seats: "note", is: "the kept frame's parent (col = kept ? kept.parentElement : null; shownFrame finds the frame the body holds, and pdfBlock seats its frame inside its div.fileview-pdffall column and nowhere else), so the column, a body root; the notice goes inside it", decl: "const col = kept ? kept.parentElement : null" },
-  { in: "fallback", on: "fall", via: "prepend", seats: "note", is: "a fresh pdfBlock column (a body root: body.replaceChildren(fall) is resolved by the body's read); the notice goes inside it", decl: "const fall = pdfBlock(url, path)" },
+  { in: "openFileView", on: "fileGroup", via: "appendChild", seats: "copy", seatedBy: "copy = const copy = el(\"button\", \"fileview-btn fileview-icon\") as HTMLButtonElement", is: "the same group; the Copy button goes in it", decl: "const fileGroup = el(\"span\", \"fileview-group fileview-group-file\")" },
+  { in: "openFileView", on: "acts", via: "appendChild", seats: "viewGroup", seatedBy: "viewGroup = const viewGroup = el(\"span\", \"fileview-group fileview-group-view\")", is: "the actions row in the bar; the view group goes in it", decl: "const acts = el(\"div\", \"fileview-acts\")" },
+  { in: "openFileView", on: "acts", via: "appendChild", seats: "fileGroup", seatedBy: "fileGroup = const fileGroup = el(\"span\", \"fileview-group fileview-group-file\")", is: "the same row; the file group goes in it", decl: "const acts = el(\"div\", \"fileview-acts\")" },
+  { in: "openFileView", on: "acts", via: "appendChild", seats: "close", seatedBy: "close = const close = el(\"button\", \"fileview-btn fileview-close\") as HTMLButtonElement", is: "the same row; the close button goes in it", decl: "const acts = el(\"div\", \"fileview-acts\")" },
+  { in: "openFileView", on: "bar", via: "appendChild", seats: "name", seatedBy: "name = const name = el(\"div\", \"fileview-name\")", is: "the same bar; the file name goes in it", decl: "const bar = el(\"div\", \"fileview-bar\")" },
+  { in: "openFileView", on: "bar", via: "appendChild", seats: "sess", seatedBy: "sess = const sess = owner ? el(\"span\", \"fileview-sess\") : null", is: "the same bar; the session tag goes in it (when the file was opened from a session)", decl: "const bar = el(\"div\", \"fileview-bar\")" },
+  { in: "openFileView", on: "bar", via: "appendChild", seats: "acts", seatedBy: "acts = const acts = el(\"div\", \"fileview-acts\")", is: "the same bar; the actions row goes in it", decl: "const bar = el(\"div\", \"fileview-bar\")" },
+  { in: "openFileView", on: "box", via: "appendChild", seats: "bar", seatedBy: "bar = const bar = el(\"div\", \"fileview-bar\")", is: "the card (div.fileview); the bar goes in it", decl: "const box = el(\"div\", \"fileview\")" },
+  { in: "openFileView", on: "box", via: "appendChild", seats: "main", seatedBy: "main = const main = el(\"div\", \"fileview-main\")", is: "the same card; main goes in it", decl: "const box = el(\"div\", \"fileview\")" },
+  { in: "openFileView", on: "wrap", via: "appendChild", seats: "box", seatedBy: "box = const box = el(\"div\", \"fileview\")", is: "the overlay wrapper; the card goes in it", decl: "const wrap = el(\"div\")" },
+  { in: "openFileView", on: "document.body", via: "appendChild", seats: "wrap", seatedBy: "wrap = const wrap = el(\"div\")", is: "the page's body, not the viewer's; the overlay wrapper goes in it" },
+  { in: "noteBar", on: "box", via: "insertBefore", seats: "bar2", seatedBy: "bar2 = const bar2 = el(\"div\", \"fileview-err\")", is: "the card; a notice bar (bar2, div.fileview-err built here) goes in it above main, outside the body (a body root of the same class is seated by the body's own replaceChildren, read separately)", decl: "const box = el(\"div\", \"fileview\")" },
+  { in: "imgFailed", on: "why", via: "appendChild", seats: "hint", seatedBy: "hint = const hint = el(\"div\", \"fileview-err-hint\")", is: "the picture failure pane (div.fileview-err), a body root; its hint goes inside it", decl: "const why = el(\"div\", \"fileview-err\")" },
+  { in: "imgFailed", on: "why", via: "appendChild", seats: "offer", seatedBy: "offer = const offer = el(\"button\", \"fileview-btn fileview-err-dl\") as HTMLButtonElement", is: "the same pane; its download offer goes inside it", decl: "const why = el(\"div\", \"fileview-err\")" },
+  { in: "editorChunk", on: "document.head", via: "appendChild", seats: "sc", seatedBy: "sc = const sc = document.createElement(\"script\")", is: "the page's head; the editor chunk's script tag goes in it" },
+  { in: "pdfChunkLoad", on: "document.head", via: "appendChild", seats: "sc", seatedBy: "sc = const sc = document.createElement(\"script\")", is: "the page's head; the PDF chunk's script tag goes in it" },
+  { in: "fallback", on: "col", via: "prepend", seats: "note", seatedBy: "note = const note = el(\"div\", \"fileview-err\")", is: "the kept frame's parent (col = kept ? kept.parentElement : null; shownFrame finds the frame the body holds, and pdfBlock seats its frame inside its div.fileview-pdffall column and nowhere else), so the column, a body root; the notice goes inside it", decl: "const col = kept ? kept.parentElement : null" },
+  { in: "fallback", on: "fall", via: "prepend", seats: "note", seatedBy: "note = const note = el(\"div\", \"fileview-err\")", is: "a fresh pdfBlock column (a body root: body.replaceChildren(fall) is resolved by the body's read); the notice goes inside it", decl: "const fall = pdfBlock(url, path)" },
   { in: "showPdfPages", on: "wait", via: "innerHTML =", seats: "'<img src=\"/media/romp-swirl-glyph.svg\" alt=\"\"><span>romp</span>' + '<i class=\"fileview-dot\"></i><i class=\"fileview-dot\"></i><i class=\"fileview-dot\"></i>'", is: "the pages loader (div.fileview-load: a body root through body.replaceChildren(wait, host), or inside the column through col.prepend(wait)); its glyph markup (a literal string) goes inside it", decl: "const wait = el(\"div\", \"fileview-load\")" },
-  { in: "showPdfPages", on: "col", via: "prepend", seats: "wait", is: "the kept frame's parent, the same column as fallback's; the pages loader goes inside it", decl: "const col = kept ? kept.parentElement : null" },
-  { in: "showPdfPages", on: "pdf", via: "render", seats: "bytes, host, {...}", is: "the PDF chunk's render, handed the bytes, the host (div.fileview-pdfhost, a body root: body.replaceChildren(wait, host) is resolved by the body's read) and its options; the page canvases go inside that root", decl: "a destructured binding of a parameter of the callback handed to Promise.all([pdfChunkLoad(), blob.arrayBuffer()]).then" },
+  { in: "showPdfPages", on: "col", via: "prepend", seats: "wait", seatedBy: "wait = const wait = el(\"div\", \"fileview-load\")", is: "the kept frame's parent, the same column as fallback's; the pages loader goes inside it", decl: "const col = kept ? kept.parentElement : null" },
+  { in: "showPdfPages", on: "pdf", via: "render", seats: "bytes, host, {maxBytes, signal, onPage, onPageError}", seatedBy: "bytes = a destructured binding of a parameter of the callback handed to Promise.all([pdfChunkLoad(), blob.arrayBuffer()]).then; writes: none; host = const host = el(\"div\", \"fileview-pdfhost\")", is: "the PDF chunk's render, handed the bytes, the host (div.fileview-pdfhost, a body root: body.replaceChildren(wait, host) is resolved by the body's read) and its options; the page canvases go inside that root", decl: "a destructured binding of a parameter of the callback handed to Promise.all([pdfChunkLoad(), blob.arrayBuffer()]).then" },
   { in: "enterEdit", on: "wait", via: "innerHTML =", seats: "'<img src=\"/media/romp-swirl-glyph.svg\" alt=\"\"><span>romp</span>' + '<i class=\"fileview-dot\"></i><i class=\"fileview-dot\"></i><i class=\"fileview-dot\"></i>'", is: "the chunk loader (div.fileview-load, a body root: body.replaceChildren(wait) is resolved by the body's read); its glyph markup (a literal string) goes inside it", decl: "const wait = el(\"div\", \"fileview-load\")" },
-  { in: "enterEdit", on: "ed", via: "mount", seats: "host, {...}", is: "the editor chunk's mount into host, the div.fileview-cm root (a body root: body.replaceChildren(host) is resolved by the body's read), with its options; the CodeMirror editor goes inside that root, not beside it", decl: "a parameter of the callback handed to editorChunk().then" },
-  { in: "showSaveError", on: "bar2", via: "appendChild", seats: "re", is: "noteBar's notice bar in the card; its retry button goes in it", decl: "const bar2 = noteBar(err)" },
-  { in: "raiseDiskBar", on: "bar2", via: "appendChild", seats: "re", is: "noteBar's notice bar in the card; its reload button goes in it", decl: "const bar2 = noteBar(words)" },
-  { in: "fetchFile", on: "Object", via: "assign", seats: "new Error(t || (\"HTTP \" + r.status)), {...}", is: "Object.assign onto a fresh Error, setting its status for the failure road; the target is the Error, never an element", decl: "a global" },
-  { in: "fetchFile", on: "why", via: "appendChild", seats: "hint", is: "the fetch failure pane (div.fileview-err), a body root; its hint goes inside it", decl: "const why = el(\"div\", \"fileview-err\")" },
-  { in: "fetchFile", on: "why", via: "appendChild", seats: "offer", is: "the same pane; its download offer goes inside it", decl: "const why = el(\"div\", \"fileview-err\")" },
-  { in: "openUrlView", on: "name", via: "appendChild", seats: "dir", is: "the file name in the URL viewer's bar; its directory span goes in it", decl: "const name = el(\"div\", \"fileview-name\")" },
-  { in: "openUrlView", on: "name", via: "appendChild", seats: "base", is: "the same name; its base-name span goes in it", decl: "const name = el(\"div\", \"fileview-name\")" },
-  { in: "openUrlView", on: "acts", via: "appendChild", seats: "b", is: "the URL viewer's actions row in the bar; a format button (b, built in the loop) goes in it", decl: "const acts = el(\"div\", \"fileview-acts\")" },
+  { in: "enterEdit", on: "ed", via: "mount", seats: "host, {text, ext, onChange, onSave, ...(pending ? { track: { suggestions: pending.records, authorColor: pending.authorColor, onDecisions: () => { dirty = cm!.value() !== norm(text!) || decided(); } } } : {})}", seatedBy: "host = const host = el(\"div\", \"fileview-cm\")", is: "the editor chunk's mount into host, the div.fileview-cm root (a body root: body.replaceChildren(host) is resolved by the body's read), with its options; the CodeMirror editor goes inside that root, not beside it", decl: "a parameter of the callback handed to editorChunk().then" },
+  { in: "showSaveError", on: "bar2", via: "appendChild", seats: "re", seatedBy: "re = const re = el(\"button\", \"fileview-btn fileview-err-dl\") as HTMLButtonElement", is: "noteBar's notice bar in the card; its retry button goes in it", decl: "const bar2 = noteBar(err)" },
+  { in: "raiseDiskBar", on: "bar2", via: "appendChild", seats: "re", seatedBy: "re = const re = el(\"button\", \"fileview-btn fileview-err-act\") as HTMLButtonElement", is: "noteBar's notice bar in the card; its reload button goes in it", decl: "const bar2 = noteBar(words)" },
+  { in: "fetchFile", on: "Object", via: "assign", seats: "new Error(t || (\"HTTP \" + r.status)), {status}", is: "Object.assign onto a fresh Error, setting its status for the failure road; the target is the Error, never an element", decl: "a global" },
+  { in: "fetchFile", on: "why", via: "appendChild", seats: "hint", seatedBy: "hint = const hint = el(\"div\", \"fileview-err-hint\")", is: "the fetch failure pane (div.fileview-err), a body root; its hint goes inside it", decl: "const why = el(\"div\", \"fileview-err\")" },
+  { in: "fetchFile", on: "why", via: "appendChild", seats: "offer", seatedBy: "offer = const offer = el(\"button\", \"fileview-btn fileview-err-dl\") as HTMLButtonElement", is: "the same pane; its download offer goes inside it", decl: "const why = el(\"div\", \"fileview-err\")" },
+  { in: "openUrlView", on: "name", via: "appendChild", seats: "dir", seatedBy: "dir = const dir = el(\"span\", \"fileview-dir\")", is: "the file name in the URL viewer's bar; its directory span goes in it", decl: "const name = el(\"div\", \"fileview-name\")" },
+  { in: "openUrlView", on: "name", via: "appendChild", seats: "base", seatedBy: "base = const base = el(\"span\", \"fileview-base\")", is: "the same name; its base-name span goes in it", decl: "const name = el(\"div\", \"fileview-name\")" },
+  { in: "openUrlView", on: "acts", via: "appendChild", seats: "b", seatedBy: "b = const b = el(\"button\", \"fileview-btn\") as HTMLButtonElement", is: "the URL viewer's actions row in the bar; a format button (b, built in the loop) goes in it", decl: "const acts = el(\"div\", \"fileview-acts\")" },
   { in: "openUrlView", on: "acts", via: "appendChild", seats: "textSize.wrap", is: "the same row; the zoom control's span goes in it", decl: "const acts = el(\"div\", \"fileview-acts\")" },
   { in: "openUrlView", on: "acts", via: "appendChild", seats: "linkOut()", is: "the same row; the link out to the URL goes in it", decl: "const acts = el(\"div\", \"fileview-acts\")" },
-  { in: "openUrlView", on: "acts", via: "appendChild", seats: "copy", is: "the same row; the Copy button goes in it", decl: "const acts = el(\"div\", \"fileview-acts\")" },
-  { in: "openUrlView", on: "acts", via: "appendChild", seats: "close", is: "the same row; the close button goes in it", decl: "const acts = el(\"div\", \"fileview-acts\")" },
-  { in: "openUrlView", on: "bar", via: "appendChild", seats: "name", is: "the URL viewer's title bar, a child of the card beside the body; the name goes in it", decl: "const bar = el(\"div\", \"fileview-bar\")" },
-  { in: "openUrlView", on: "bar", via: "appendChild", seats: "acts", is: "the same bar; the actions row goes in it", decl: "const bar = el(\"div\", \"fileview-bar\")" },
+  { in: "openUrlView", on: "acts", via: "appendChild", seats: "copy", seatedBy: "copy = const copy = el(\"button\", \"fileview-btn\") as HTMLButtonElement", is: "the same row; the Copy button goes in it", decl: "const acts = el(\"div\", \"fileview-acts\")" },
+  { in: "openUrlView", on: "acts", via: "appendChild", seats: "close", seatedBy: "close = const close = el(\"button\", \"fileview-btn fileview-close\") as HTMLButtonElement", is: "the same row; the close button goes in it", decl: "const acts = el(\"div\", \"fileview-acts\")" },
+  { in: "openUrlView", on: "bar", via: "appendChild", seats: "name", seatedBy: "name = const name = el(\"div\", \"fileview-name\")", is: "the URL viewer's title bar, a child of the card beside the body; the name goes in it", decl: "const bar = el(\"div\", \"fileview-bar\")" },
+  { in: "openUrlView", on: "bar", via: "appendChild", seats: "acts", seatedBy: "acts = const acts = el(\"div\", \"fileview-acts\")", is: "the same bar; the actions row goes in it", decl: "const bar = el(\"div\", \"fileview-bar\")" },
   { in: "openUrlView", on: "acts", via: "insertBefore", seats: "print.button", is: "the same row; the Print button goes in it before Copy", decl: "const acts = el(\"div\", \"fileview-acts\")" },
-  { in: "openUrlView", on: "box", via: "appendChild", seats: "bar", is: "the URL viewer's card (div.fileview), the body's PARENT there; the bar goes in it", decl: "const box = el(\"div\", \"fileview\")" },
-  { in: "openUrlView", on: "box", via: "appendChild", seats: "body", is: "the same card: the body itself is seated in it, so this seat is the body's, not a child in it", decl: "const box = el(\"div\", \"fileview\")" },
-  { in: "openUrlView", on: "wrap", via: "appendChild", seats: "box", is: "the overlay wrapper; the card goes in it", decl: "const wrap = el(\"div\")" },
-  { in: "openUrlView", on: "document.body", via: "appendChild", seats: "wrap", is: "the page's body, not the viewer's; the overlay wrapper goes in it" },
-  { in: "fail", on: "why", via: "appendChild", seats: "hint", is: "the URL viewer's failure pane (div.fileview-err), a body root; its hint goes inside it", decl: "const why = el(\"div\", \"fileview-err\")" },
+  { in: "openUrlView", on: "box", via: "appendChild", seats: "bar", seatedBy: "bar = const bar = el(\"div\", \"fileview-bar\")", is: "the URL viewer's card (div.fileview), the body's PARENT there; the bar goes in it", decl: "const box = el(\"div\", \"fileview\")" },
+  { in: "openUrlView", on: "box", via: "appendChild", seats: "body", seatedBy: "body = const body = el(\"div\", \"fileview-body\")", is: "the same card: the body itself is seated in it, so this seat is the body's, not a child in it", decl: "const box = el(\"div\", \"fileview\")" },
+  { in: "openUrlView", on: "wrap", via: "appendChild", seats: "box", seatedBy: "box = const box = el(\"div\", \"fileview\")", is: "the overlay wrapper; the card goes in it", decl: "const wrap = el(\"div\")" },
+  { in: "openUrlView", on: "document.body", via: "appendChild", seats: "wrap", seatedBy: "wrap = const wrap = el(\"div\")", is: "the page's body, not the viewer's; the overlay wrapper goes in it" },
+  { in: "fail", on: "why", via: "appendChild", seats: "hint", seatedBy: "hint = const hint = el(\"div\", \"fileview-err-hint\")", is: "the URL viewer's failure pane (div.fileview-err), a body root; its hint goes inside it", decl: "const why = el(\"div\", \"fileview-err\")" },
   { in: "fail", on: "why", via: "appendChild", seats: "linkOut()", is: "the same pane; the link out to the URL (linkOut() builds an anchor) goes inside it", decl: "const why = el(\"div\", \"fileview-err\")" },
-  { in: "startDownload", on: "document.body", via: "appendChild", seats: "a", is: "the page's body; a temporary anchor for the download click goes in it and is removed" },
+  { in: "startDownload", on: "document.body", via: "appendChild", seats: "a", seatedBy: "a = const a = document.createElement(\"a\")", is: "the page's body; a temporary anchor for the download click goes in it and is removed" },
   { in: "codeBlock", on: "code", via: "innerHTML =", seats: "wrapNumberedHtml(hl !== null ? hl : escapeHtml(text))", is: "the code element inside the code root's pre (the numbered branch); the highlighted or escaped HTML, wrapped in numbered rows, goes in it", decl: "const code = el(\"code\", \"hljs\")" },
-  { in: "codeBlock", on: "pre", via: "appendChild", seats: "code", is: "the pre inside the code root; the code element goes in it (written alike in the numbered and the plain branch, each read)", times: 2, decl: "const pre = el(\"pre\", \"fileview-pre\")" },
-  { in: "codeBlock", on: "wrap", via: "appendChild", seats: "pre", is: "the code root itself (div.fileview-code), which this builder returns; the pre goes inside it (written alike in the numbered and the plain branch, each read)", times: 2, decl: "const wrap = el(\"div\", \"fileview-code\")" },
+  { in: "codeBlock", on: "pre", via: "appendChild", seats: "code", seatedBy: "code = const code = el(\"code\", \"hljs\")", is: "the pre inside the code root; the code element goes in it (written alike in the numbered and the plain branch, each read)", times: 2, decl: "const pre = el(\"pre\", \"fileview-pre\")" },
+  { in: "codeBlock", on: "wrap", via: "appendChild", seats: "pre", seatedBy: "pre = const pre = el(\"pre\", \"fileview-pre\")", is: "the code root itself (div.fileview-code), which this builder returns; the pre goes inside it (written alike in the numbered and the plain branch, each read)", times: 2, decl: "const wrap = el(\"div\", \"fileview-code\")" },
   { in: "codeBlock", on: "code", via: "innerHTML =", seats: "hl", is: "the same code element (the plain branch, when the highlighter answered); the highlighted HTML goes in it", decl: "const code = el(\"code\", \"hljs\")" },
-  { in: "codeBlock", on: "wrap", via: "appendChild", seats: "gutter", is: "the same code root; the line-number gutter goes inside it (the plain branch)", decl: "const wrap = el(\"div\", \"fileview-code\")" },
-  { in: "mdBlock", on: "base", via: "call", seats: "marked, t", is: "marked's default walkTokens, called with marked as this over each token (base = marked.defaults.walkTokens): it walks the token tree and seats nothing", decl: "const base = marked.defaults.walkTokens" },
+  { in: "codeBlock", on: "wrap", via: "appendChild", seats: "gutter", seatedBy: "gutter = const gutter = el(\"div\", \"fileview-gutter\")", is: "the same code root; the line-number gutter goes inside it (the plain branch)", decl: "const wrap = el(\"div\", \"fileview-code\")" },
+  { in: "mdBlock", on: "base", via: "call", seats: "marked, t", seatedBy: "marked = an import; t = a parameter of the callback handed to viewerHtml; writes: none", is: "marked's default walkTokens, called with marked as this over each token (base = marked.defaults.walkTokens): it walks the token tree and seats nothing", decl: "const base = marked.defaults.walkTokens" },
   { in: "mdBlock", on: "box", via: "replaceChildren", seats: "...Array.from(sanitizeMd(dirty, mintHeadingIds).childNodes)", is: "the markdown root itself (div.fileview-md), which this builder returns; the sanitized document's nodes go inside it", decl: "const box = el(\"div\", \"fileview-md\")" },
   { in: "mdBlock", on: "codeEl", via: "innerHTML =", seats: "hljs.highlight(raw, { language: lang }).value", is: "a code element of the sanitized document inside the markdown root; the highlighted HTML goes in it", decl: "const codeEl = node as HTMLElement" },
-  { in: "onError", on: "parent", via: "insertBefore", seats: "label", is: "the parent of a failed figure's anchor (parent = anchor.parentNode): figureOf takes an img inside .fileview-md alone and figureAnchor climbs wrappers around that img, so the parent is inside the markdown root or is the root itself, never the body; the label goes beside the anchor (the reference child, anchor.nextSibling, is the argument axis's read)", decl: "const parent = anchor.parentNode" },
-  { in: "imgBlock", on: "box", via: "appendChild", seats: "img", is: "the picture root itself (div.fileview-imgbox), which this builder returns; the img goes inside it", decl: "const box = el(\"div\", \"fileview-imgbox\")" },
-  { in: "pdfBlock", on: "col", via: "appendChild", seats: "frame", is: "the PDF column itself (div.fileview-pdffall), which this builder returns; the frame goes inside it", decl: "const col = el(\"div\", \"fileview-pdffall\")" },
-  { in: "initFileView", on: "h", via: "apply", seats: "String(m.url || \"\"), String(m.reason || \"\")", is: "the git-link hooks' apply, told the URL and the reason the kernel answered (h = gitHooks); an object's method, not Function.prototype.apply", decl: "const h = gitHooks" },
+  { in: "onError", on: "parent", via: "insertBefore", seats: "label", seatedBy: "label = const label = el(\"span\", FIGERR_CLASS)", is: "the parent of a failed figure's anchor (parent = anchor.parentNode): figureOf takes an img inside .fileview-md alone and figureAnchor climbs wrappers around that img, so the parent is inside the markdown root or is the root itself, never the body; the label goes beside the anchor (the reference child, anchor.nextSibling, is the argument axis's read)", decl: "const parent = anchor.parentNode" },
+  { in: "imgBlock", on: "box", via: "appendChild", seats: "img", seatedBy: "img = const img = el(\"img\", \"fileview-img\") as HTMLImageElement", is: "the picture root itself (div.fileview-imgbox), which this builder returns; the img goes inside it", decl: "const box = el(\"div\", \"fileview-imgbox\")" },
+  { in: "pdfBlock", on: "col", via: "appendChild", seats: "frame", seatedBy: "frame = const frame = el(\"iframe\", \"fileview-frame\") as HTMLIFrameElement", is: "the PDF column itself (div.fileview-pdffall), which this builder returns; the frame goes inside it", decl: "const col = el(\"div\", \"fileview-pdffall\")" },
+  { in: "initFileView", on: "gh", via: "apply", seats: "String(m.url || \"\"), String(m.reason || \"\")", is: "the git-link hooks' apply, told the URL and the reason the kernel answered (gh = gitHooks, its own name since the census holds a receiver to one declaration per function: `h` is the edit hooks' in the branches below); an object's method, not Function.prototype.apply", decl: "const gh = gitHooks" },
 ];
+/** The one initializer a declaration named `body` may carry in file-view.ts, the viewer's own body element (both viewers build
+ *  it so); a declaration of the name with any other initializer, or a parameter of the name in a function BODY_HANDED_TO does
+ *  not list as reading the body under its own parameter, fails the census with its line (the verifiers' census-2 of the round-7
+ *  build, 2026-09-20: the first read passed every declaration and every parameter of the name, so a block's `const body =
+ *  el("div", "fileview-mutant")` seated through the listed `main.appendChild(body)` wore the entry). */
+const BODY_DECL_INIT = 'el("div", "fileview-body")';
+/** An attribute name file-view.ts sets from a value that is not a literal, read by hand as carrying no URL: the browser fetches
+ *  nothing and navigates nowhere by it. An `aria-*` or `data-*` name passes by that rule without an entry (assistive
+ *  technology reads the first; the second is inert to the browser); every other name set from a non-literal value is the URL
+ *  axis's (URL_WRITES_READ_BY_HAND) unless listed here, and a listed name the file no longer sets from a non-literal fails as
+ *  stale. Empty at this head: the viewer's non-literal attribute values go to aria-*, data-*, srcset, href and the figure
+ *  reference's own name, and the last three are URL writes. */
+const NON_URL_ATTRS: Array<{ name: string; why: string }> = [];
 /** A member of a receiver read by a COMPUTED name and stored or handed on (`const at = rows[cur]`), READ BY HAND and listed by
  *  its site: the nearest named function (`in`) and the receiver's spelling (`on`), with what the receiver is (`is`), the
  *  hand read's claim that the value is no seating method of an element (the branch's verification pass finding census-1, 2026-09-20: a
@@ -1609,17 +1797,20 @@ const INDEX_READS_BY_HAND: IndexRead[] = [
 /** A node of the tree handed to a callee (seatSites.nodeHanded): its line and text, the nearest named function (`fn`), the
  *  callee as spelled (`to`), the argument as spelled (`arg`), the NODE_MEMBERS member it reads through, and, for a name,
  *  its binding (the declaration, its kind and every write to it). */
-type HandedNode = Use & { fn: string; to: string; arg: string; member: string } & Partial<Binding>;
+type HandedNode = Use & { fn: string; to: string; arg: string; member: string; shadowed?: string } & Partial<Binding>;
 /** A URL member written from a value that is not a literal (seatSites): its line and text, the function, the target as
  *  spelled (`on`), the value as spelled (`value`) and, for a bare name, its binding. */
-type UrlWrite = Use & { fn: string; on: string; value: string } & Partial<Binding>;
-/** A node of the tree handed to a callee in file-view.ts, READ BY HAND and listed by its site: the nearest named function
- *  (`in`), the callee (`to`) and the argument as spelled (`arg`), with a bare name's declaration (`decl`) and, for one bound
- *  by `let`, the one expression every write to it assigns (`holds`), and what the callee does with the node (`is`), which
- *  is the hand read's claim: that it seats nothing in the body through it. The round-6 review's item 7 (2026-09-20): the
- *  argument axis, whose first run is the census (the plan's P7 records the count); a hand-off the table does not list
- *  fails with its line, one bound elsewhere than the entry says fails, and an entry the source has no hand-off for fails too. */
-type ArgRead = { in: string; to: string; arg: string; is: string; decl?: string; holds?: string };
+type UrlWrite = Use & { fn: string; on: string; value: string; shadowed?: string } & Partial<Binding>;
+/** A node of the tree handed to a callee in file-view.ts, or an element the census can see by its shape handed to a callee
+ *  the file does not declare, READ BY HAND and listed by its site: the nearest named function (`in`), the callee (`to`) and
+ *  the argument as spelled (`arg`, with its path into a literal: `{ card: box }`), with a bare name's declaration (`decl`)
+ *  and, for one bound by `let`, the one expression every write to it assigns (`holds`), how many hand-offs spelled alike the
+ *  function has (`times`, one otherwise), and what the callee does with the node (`is`), which is the hand read's claim:
+ *  that it seats nothing in the body through it. The round-6 review's item 7 (2026-09-20): the argument axis, whose first
+ *  run is the census (the plan's P7 records the count); a hand-off the table does not list fails with its line, one bound
+ *  elsewhere than the entry says fails, an entry two hand-offs match fails unless it says `times`, and an entry the source
+ *  has no hand-off for fails too. */
+type ArgRead = { in: string; to: string; arg: string; is: string; decl?: string; holds?: string; times?: number };
 const ARGS_READ_BY_HAND: ArgRead[] = [
   // Array.from over a node list: the language's copy into an array, whose elements are then only read (a tag name, a text, a style property set); the array seats nothing and is handed to no seat
   { in: "stamp", to: "Array.from", arg: "md.children", is: "the markdown root's element children copied into an array so the top-level tables among them get the body's width as a CSS variable (style.setProperty); read and styled, never seated (watchBodyWidth's stamp)" },
@@ -1634,16 +1825,41 @@ const ARGS_READ_BY_HAND: ArgRead[] = [
   { in: "onError", to: "parent.insertBefore", arg: "anchor.nextSibling", is: "the reference child of the label's seat (parent.insertBefore(label, anchor.nextSibling), the seat listed in SEATS_READ_BY_HAND): insertBefore reads its second argument for where to put the first and seats nothing through it" },
   // a selection boundary's neighbour, read for whether it is a text leaf
   { in: "boundarySide", to: "leafIsText", arg: "after", decl: "const after = node.childNodes[offset]", is: "the child node at a selection boundary's offset (a const), asked whether its first leaf is text (leafIsText walks down through firstChild and reads nodeType); it reads and seats nothing" },
+  // an element the census can see by its shape (el(), a query result, a parameter typed as an element), handed to a callee this
+  // file does not declare (an import): each callee read in its own module for what it does with the element (the verifiers'
+  // records-1 of the round-7 build, 2026-09-20: before this the argument axis knew NODE_MEMBERS chains alone, so an imported
+  // helper handed the card, the bar or the markdown root was read on no axis while the promise said every axis was)
+  { in: "openFileView", to: "flash", arg: "outlineBtn", decl: "const outlineBtn = el(\"button\", \"fileview-btn fileview-outline-btn\") as HTMLButtonElement", is: "actions.ts flash: toggles the class romp-acted on the element it is handed (remove, a reflow read, add, a timed remove); the Outline button's press pulse; seats nothing" },
+  { in: "openFileView", to: "pressHold", arg: "box", decl: "const box = el(\"div\", \"fileview\")", is: "actions.ts pressHold: installs a pointerdown listener on the surface (the card) and release listeners on the window, and parks a run handed to its defer until the release; seats nothing (the runs it defers are the viewer's own paints, read in this file)" },
+  { in: "openFileView", to: "pressHold", arg: "main", decl: "const main = el(\"div\", \"fileview-main\")", is: "the same helper over main (the reload under a press); seats nothing" },
+  { in: "openFileView", to: "selectionOpenIn", arg: "box", decl: "const box = el(\"div\", \"fileview\")", is: "path-links.ts selectionOpenIn: reads window.getSelection() and asks box.contains(anchorNode); a boolean, seats nothing" },
+  { in: "openFileView", to: "installFilePrint", arg: "{ card: box }", decl: "const box = el(\"div\", \"fileview\")", is: "file-print.ts installFilePrint: the card is where the print line is seated (host.card.insertBefore(row, host.bar.nextSibling): after the bar, beside main, never in the body) and where its click, keydown and toggle listeners go; the body it is handed under the `body` key is the first read's (BODY_HANDED_TO), read by bodyReady and observed, never seated into; the button it builds is returned and seated by this file (fileGroup.appendChild(print.button), listed)" },
+  { in: "openFileView", to: "installFilePrint", arg: "{ bar }", decl: "const bar = el(\"div\", \"fileview-bar\")", is: "the same call: the bar is read for where the print line goes (its nextSibling) and never written" },
+  { in: "openUrlView", to: "installFilePrint", arg: "{ card: box }", decl: "const box = el(\"div\", \"fileview\")", is: "the URL viewer's install of the same flow: the print line is seated in the card after the bar (host.card.insertBefore(row, host.bar.nextSibling)); the body is read, never seated into; the button is returned and seated by this file (acts.insertBefore(print.button, copy), listed)" },
+  { in: "openUrlView", to: "installFilePrint", arg: "{ bar }", decl: "const bar = el(\"div\", \"fileview-bar\")", is: "the same call: the bar is read for where the line goes and never written" },
+  { in: "scrollToOffset", to: "rawRowForOffset", arg: "code", decl: "const code = body.querySelector(\"code.hljs\")", is: "anchor-map.ts rawRowForOffset: indexes the code element's rows against the source (rawIndex) and returns the row whose span holds the offset; the caller scrolls that row into view; reads, seats nothing" },
+  { in: "revealRemembered", to: "renderedBlockElements", arg: "md", decl: "const md = body.querySelector(\".fileview-md\")", is: "anchor-map.ts renderedBlockElements: the elements a source block renders as, from the rendered index over the markdown root; the caller reveals each (revealFragmentTarget opens the folds around it); reads, seats nothing" },
+  { in: "scrollToSourceOffset", to: "renderedBlockElements", arg: "md", decl: "const md = body.querySelector(\".fileview-md\")", times: 2, is: "the same helper, called twice in the scroll (the block's elements and, when it has none, the next block's); reads, seats nothing" },
+  { in: "codeBlock", to: "linkifyFileText", arg: "code", decl: "const code = el(\"code\", \"hljs\")", times: 2, is: "file-view-links.ts linkifyFileText: marks the URLs and path tokens in the element's text nodes as anchors and path links, INSIDE the code element it is handed (url-links.ts linkifyUrls and path-links.ts linkifyPathTokens split text nodes and wrap the token); the code element is inside the code root this builder returns, so every seat it makes is inside that root and none lands as a child of the body (written alike in the numbered and the plain branch, each read)" },
+  { in: "mdBlock", to: "linkifyFileText", arg: "box", decl: "const box = el(\"div\", \"fileview-md\")", is: "the same helper over the markdown root (a URL document, or a caller with no location): its seats are inside the root this builder returns, none beside it" },
+  { in: "mdBlock", to: "linkMarkdownAnchors", arg: "box", decl: "const box = el(\"div\", \"fileview-md\")", is: "file-view-links.ts linkMarkdownAnchors: walks every `a` inside the markdown root and writes its attributes (class, title, data-path, data-line, data-frag, target, rel; href removed off a path link and a dead link); it dresses the anchor it finds and makes no element, so it seats nothing anywhere" },
+  { in: "mdBlock", to: "gateRemoteFigures", arg: "box", decl: "const box = el(\"div\", \"fileview-md\")", times: 2, is: "figure-gate.ts gateRemoteFigures: wraps each media root inside the markdown root whose sources name a host outside the allowed set in a placeholder span (gate: the figure's fetch attributes moved onto data-fv-gated-* names, the wrapper put where the figure stood, inside the root), and installs once a settings listener that re-judges the document's placeholders; every seat it makes is inside the root this builder returns (the URL kind's call with the document's own host, and the file kind's, each read)" },
+  { in: "rewriteFigureSrcs", to: "figureRefs", arg: "root", decl: "a parameter of rewriteFigureSrcs", is: "figure-gate.ts figureRefs: querySelectorAll over the media elements under the root and a read of each fetching attribute (FETCH_ATTRS); returns the references; seats nothing" },
+  { in: "resolveFigureRefs", to: "figureRefs", arg: "root", decl: "a parameter of resolveFigureRefs", is: "the same read over a URL document's root; seats nothing" },
+  { in: "failedSource", to: "pictureDest", arg: "img", decl: "a parameter of failedSource", times: 2, is: "file-comments.ts pictureDest: reads the picture's data-fv-src, else its src, and returns the string; seats nothing (called in two branches of the label's source read, each read)" },
 ];
-/** A URL member (href, src, srcdoc, location) written from a value that is not a literal in file-view.ts, READ BY HAND and
- *  listed by its site: the nearest named function (`in`), the target as spelled (`on`), the value as spelled (`value`) and
- *  a bare name's declaration (`decl`), with the hand read's claim (`is`), which answers three questions for the round-6
+/** A URL written from a value that is not a literal in file-view.ts (an assignment to a member flagged `url` in
+ *  NON_SEATING_WRITES or to a member of `location`; a setAttribute or setAttributeNS under a name that is neither `aria-*`
+ *  nor `data-*` nor listed in NON_URL_ATTRS, spelled `el.setAttribute("href")` or `el.setAttribute(ref.attr)`; a method
+ *  of `location`; `window.open`), READ BY HAND and listed by its site: the nearest named function (`in`), the target as
+ *  spelled (`on`), the value as spelled (`value`), a bare name's declaration (`decl`) and how many writes spelled alike the
+ *  function has (`times`, one otherwise), with the hand read's claim (`is`), which answers three questions for the round-6
  *  review's lens on URL writes: whether the value can carry a REMOTE URL (an object URL or a same-origin route is a
  *  different answer from a value that can name another host), whether that road reaches the NETWORK and when (at the
  *  write, at an insertion, at the person's click) and what GATES it, and how each was established (the declaration, the
  *  callers, the code read). Never a javascript: URL: a javascript: literal is refused whatever the table says, and a
  *  javascript: value at run time is what the gate named here excludes. */
-type UrlWriteRead = { in: string; on: string; value: string; is: string; decl?: string; holds?: string };
+type UrlWriteRead = { in: string; on: string; value: string; is: string; decl?: string; holds?: string; times?: number };
 const URL_WRITES_READ_BY_HAND: UrlWriteRead[] = [
   { in: "apply", on: "a.href", value: "url", decl: "a parameter of apply", is: "the GitHub link's URL, the kernel's answer to the viewer's fileGitLink ask (initFileView's message handler calls h.apply(String(m.url || \"\"), String(m.reason || \"\")), the one caller; read by the parameter's declaration and that call): it CAN carry a remote URL, the repository host the kernel derives from the file's git remote. The network is reached by no fetch at the write; the anchor navigates only on the person's click, in a new tab (target _blank, rel noopener). The gate is the kernel's answer, built server-side from the repository's remote and never from page input, plus the click" },
   { in: "editorChunk", on: "sc.src", value: "self.replace(/\\/(render|feed|files)\\.js/, \"/editor-chunk.js\")", is: "the editor chunk's URL, the page's own bundle URL with the file name swapped: `self` is the src of the page's script tag whose URL matches the bundle names (Array.from(document.querySelectorAll(\"script[src]\")) mapped to src, the first matching /\\/(render|feed|files)\\.js/; read by the declaration two lines above). It carries the ORIGIN THAT SERVED THE PAGE'S BUNDLE and no other host: the value is derived from that tag, not from the file or the person. The network IS reached, a script fetch at document.head.appendChild(sc); the gate is the bundle tag the kernel's page (or the VS Code webview) wrote, the same origin the running code came from" },
@@ -1653,6 +1869,20 @@ const URL_WRITES_READ_BY_HAND: UrlWriteRead[] = [
   { in: "startDownload", on: "a.href", value: "url", decl: "a parameter of startDownload", is: "the kernel's download route: every caller hands `dlUrl`, fileUrl(path, sid) + \"&download=1\" (three call sites, read by grep of startDownload(), each with dlUrl), a same-origin path the kernel answers with Content-Disposition: attachment. The network IS reached at the press, since the code clicks the anchor itself (a.click()), a same-origin cookie-authed request the browser's downloader owns; the gate is fileUrl, which builds the route from the file's path against the page's origin, never from page input" },
   { in: "imgBlock", on: "img.src", value: "objUrl", decl: "a parameter of imgBlock", is: "an object URL over the fetched bytes: the one caller hands the open's objUrl (imgBlock(objUrl, path, imgFailed) in renderBody, with objUrl minted by URL.createObjectURL(t); read by the parameter's declaration and grep of imgBlock(). No network: a blob: URL resolves in the browser to bytes already fetched. The gate is URL.createObjectURL" },
   { in: "pdfBlock", on: "frame.src", value: "objUrl", decl: "a parameter of pdfBlock", is: "an object URL over the fetched bytes: the callers hand the open's objUrl (pdfBlock(objUrl, path) in renderBody; pdfBlock(url, path) in showPdfPages's fallback with `const url = objUrl` read null-checked above it), objUrl minted by URL.createObjectURL(t); read by the parameter's declaration and grep of pdfBlock(). No network: the frame's PDF viewer reads the blob the browser holds. The gate is URL.createObjectURL" },
+  // the setAttribute spelling and window.open (the verifiers' census-1 and census-4 of the round-7 build, 2026-09-20: the URL
+  // axis read the assignment spelling alone, so eight setAttribute writes from author-controlled values and the tab opener stood
+  // outside the network lens). The value of each is the DOCUMENT's (a link or a figure source the author wrote), so each can
+  // carry a remote host; what gates the road is the sanitizer's URI rule before the write, the figure gate after it, and the
+  // person's click
+  { in: "openUrlTab", on: "window.open", value: "href", decl: "a parameter of openUrlTab", is: "the href of a URL anchor inside the body (openLink, the one caller: openUrlTab(x.getAttribute(\"href\") || \"\") for an anchor wearing URL_LINK_CLASS, the document's own web links as file-view-links.ts stamped them): it CAN carry a remote host, the author's. The network is reached by a navigation in a NEW TAB on the person's MODIFIED click alone (own = wantsOwnTab: Ctrl, Cmd or the middle button; a plain click is the browser's own open of the anchor, target _blank and rel noopener stamped on it), and only where canPreview() (the web dashboard; the VS Code webview posts openLink to the host instead). The gate is the sanitizer's URI rule on the href before the stamp (DOMPurify's allowed-URI test over every href, so a javascript: value never reaches the anchor), the modified click and canPreview; established by reading openLink and the two stamps" },
+  { in: "mdBlock", on: "a.setAttribute(\"href\")", value: "xl", decl: "const xl = a.getAttributeNS(XLINK_NS, \"href\")", is: "an SVG anchor's xlink:href moved to a plain href, after the sanitize (box.replaceChildren(...sanitizeMd(...)) above this loop): the author's value, so it CAN carry a remote host. The network is reached on a click alone (an anchor navigates when clicked; for a file document linkMarkdownAnchors then stamps a web link target _blank and takes the href off a path link, and a URL document's links are stamped _blank below), never at the write. The gate is DOMPurify's allowed-URI test over xlink:href (dompurify's _isValidAttribute reads every attribute's value against IS_ALLOWED_URI, so a javascript: value is gone before this loop) plus the click; established by the sanitize call above and the sanitizer's source" },
+  { in: "mdBlock", on: "a.setAttribute(\"href\")", value: "resolveDocRelative(href, doc.href)", is: "a URL document's relative link made absolute against the document's own URL (doc.href, the page's origin by the caller's isMarkdownUrl test, render.ts): a relative reference resolves to the document's host; a protocol-relative `//host/path` takes the document's scheme with the AUTHOR's host, so the value CAN name another host; an absolute reference, a `#fragment` and an empty value return early above (the scheme test) and are not written here. The network is reached on a click alone: the chat page's anchor delegate opens a same-origin .md in this viewer and every other link in a new tab (target _blank, rel noopener stamped on every link element below). The gate is the sanitizer's URI rule before the loop (a javascript: scheme never reaches this branch, and DOMPurify dropped it anyway), the click and the delegate; established by reading the loop's early return, md-links.ts resolveDocRelative and render.ts's delegate" },
+  { in: "rewriteFigureSrcs", on: "el.setAttribute(\"srcset\")", value: "serializeSrcset(cands)", is: "a file document's figure srcset with each relative candidate re-pointed at the kernel's /file route (fileUrl over the file's directory, the page's origin) and every absolute, protocol-relative, data: or empty candidate left AS WRITTEN (path() returns null for those): the serialized value CAN carry a remote host, the author's. The network is reached when the picture lays out, for the page's origin at once; for a host outside the gear's list the figure gate runs after this rewrite (mdBlock: rewriteFigureSrcs, then gateRemoteFigures) and moves the attribute into the placeholder, so the fetch waits for the person's click on the placeholder or Print with them. The gate is fileUrl for the relative candidates and figure-gate's allowed-host list plus the click or the print for the rest; established by reading path(), mdBlock's order and gateRemoteFigures" },
+  { in: "rewriteFigureSrcs", on: "el.setAttribute(\"href\")", value: "p === null ? ref.value : p", is: "an svg image's xlink:href folded into href in a file document: the /file route when the value was relative (p), else the value as written (an absolute, protocol-relative, data: or empty href), so it CAN carry a remote host. The network is reached when the image renders, for the page's origin at once; a host outside the list is gated by gateRemoteFigures after this rewrite (figureRefs reads href on an svg image) until the click or the print. The gate is fileUrl, DOMPurify's URI rule before the rewrite (a javascript: value is gone), and the figure gate plus the click or the print; established by reading path(), mdBlock's order and figure-gate's FETCH_ATTRS" },
+  { in: "rewriteFigureSrcs", on: "el.setAttribute(ref.attr)", value: "p", decl: "const p = path(ref.value)", is: "the figure reference's attribute (src or poster here: srcset, xlink:href and a null p returned above) written from the /file route path() built with fileUrl over the file's directory and the session: the page's origin and no other host (a value with a scheme, a `//` or nothing returns null and never reaches this line). The network is reached when the element lays out, a same-origin request the kernel answers from the session's disk, never gated since the page's own origin is never a gated host. The gate is fileUrl; established by reading path() and the continue above" },
+  { in: "resolveFigureRefs", on: "el.setAttribute(\"srcset\")", value: "serializeSrcset(cands)", is: "a URL document's figure srcset with each candidate resolved against the document's URL (resolveDocRelative over base = doc.href): a relative candidate resolves to the document's host (the page's origin by the caller's isMarkdownUrl test), an absolute one stays as written and a protocol-relative one takes the document's scheme with the author's host, so the value CAN carry a remote host. The network is reached at layout; gateRemoteFigures(box, document.baseURI, [own]) runs after this resolve (mdBlock) and gates every host but the document's own and the gear's list behind the click or Print with them. The gate is the figure gate plus the click or the print; established by reading resolveDocRelative and mdBlock's order" },
+  { in: "resolveFigureRefs", on: "el.setAttribute(\"href\")", value: "abs", decl: "const abs = resolveDocRelative(ref.value, base)", is: "an svg image's xlink:href folded into href in a URL document, resolved against the document's URL: the document's host for a relative value, the author's host for an absolute or protocol-relative one, so it CAN carry a remote host. The network is reached when the image renders, gated by gateRemoteFigures after this resolve for every host but the document's own and the gear's list. The gate is DOMPurify's URI rule before (a javascript: value is gone), the figure gate and the click or the print; established as the srcset entry above" },
+  { in: "resolveFigureRefs", on: "el.setAttribute(ref.attr)", value: "abs", decl: "const abs = resolveDocRelative(ref.value, base)", is: "the figure reference's attribute (src or poster here: srcset and xlink:href are handled above) resolved against the document's URL and written back under its own name when it changed: the document's host for a relative value, the author's host for an absolute or protocol-relative one, so it CAN carry a remote host. The network is reached at layout, gated by gateRemoteFigures after this resolve for every host but the document's own and the gear's list. The gate is the figure gate plus the click or the print; established as the srcset entry above" },
 ];
 /** An attribute set under a name the census cannot read as a string literal (or one naming an on<event> handler) in
  *  file-view.ts, READ BY HAND and listed by its site: the nearest named function (`in`), the receiver as spelled (`on`) and
@@ -1732,7 +1962,7 @@ test("the census of the body's roots, its default refusing: every `body` token i
   const roots = [...seated.keys()].sort();
   t.diagnostic("census: " + roots.map((r) => r + " (line " + seated.get(r)!.join(", ") + ")").join("; "));
   const second = seatSites(VIEWER_SRC);
-  t.diagnostic("second read: " + second.sites.length + " seats and site-read calls (" + second.sites.filter((s) => s.body).length + " on the body token, " + second.sites.filter((s) => !s.body).length + " on other receivers, " + SEATS_READ_BY_HAND.length + " entries listed over " + SEATS_READ_BY_HAND.reduce((n, e) => n + (e.times ?? 1), 0) + " seats, one entry per seat), " + second.indexReads.length + " stored index reads (" + INDEX_READS_BY_HAND.length + " distinct sites listed), " + NON_SEATING_METHODS.length + " method names listed as seating nothing; member writes on receivers other than the body token: " + (second.writes.length + second.sites.filter((s) => !s.body && s.assign).length) + " over " + new Set([...second.writes.map((w) => w.name), ...second.sites.filter((s) => !s.body && s.assign).map((s) => s.via.split(" ")[0])]).size + " distinct names (" + second.sites.filter((s) => !s.body && s.assign).length + " seats, " + second.writes.filter((w) => w.through === undefined).length + " by " + NON_SEATING_WRITES.length + " names listed as seating nothing, " + second.writes.filter((w) => w.through !== undefined).length + " through style or dataset by the rule), the body token's " + second.bodyWrites + "; " + second.handedNodes.length + " nodes handed to callees (" + ARGS_READ_BY_HAND.length + " listed), " + second.urlWrites.length + " URL writes (" + URL_WRITES_READ_BY_HAND.length + " listed), " + second.attrNames.length + " attribute names read by hand (" + ATTR_NAMES_READ_BY_HAND.length + " listed)");
+  t.diagnostic("second read: " + second.sites.length + " seats and site-read calls (" + second.sites.filter((s) => s.body).length + " on the body token, " + second.sites.filter((s) => !s.body).length + " on other receivers, " + SEATS_READ_BY_HAND.length + " entries listed over " + SEATS_READ_BY_HAND.reduce((n, e) => n + (e.times ?? 1), 0) + " seats, one entry per seat), " + second.indexReads.length + " stored index reads (" + INDEX_READS_BY_HAND.length + " distinct sites listed), " + NON_SEATING_METHODS.length + " method names listed as seating nothing; member writes on receivers other than the body token: " + (second.writes.length + second.sites.filter((s) => !s.body && s.assign).length) + " over " + new Set([...second.writes.map((w) => w.name), ...second.sites.filter((s) => !s.body && s.assign).map((s) => s.via.split(" ")[0])]).size + " distinct names (" + second.sites.filter((s) => !s.body && s.assign).length + " seats, " + second.writes.filter((w) => w.through === undefined).length + " by " + NON_SEATING_WRITES.length + " names listed as seating nothing, " + second.writes.filter((w) => w.through !== undefined).length + " through style or dataset by the rule), the body token's " + second.bodyWrites + "; " + second.handedNodes.length + " nodes handed to callees and " + second.elementsHanded.length + " elements handed to callees the file does not declare (" + ARGS_READ_BY_HAND.length + " entries listed over " + ARGS_READ_BY_HAND.reduce((n, e) => n + (e.times ?? 1), 0) + " hand-offs), " + second.urlWrites.length + " URL writes (" + URL_WRITES_READ_BY_HAND.length + " entries listed over " + URL_WRITES_READ_BY_HAND.reduce((n, e) => n + (e.times ?? 1), 0) + " writes), " + second.attrNames.length + " attribute names read by hand (" + ATTR_NAMES_READ_BY_HAND.length + " listed), " + second.attrWrites.length + " attributes set from a non-literal under an aria-* or data-* name (" + NON_URL_ATTRS.length + " names listed as carrying no URL)");
   t.diagnostic("live seats on receivers other than the body token: " + JSON.stringify(second.sites.filter((s) => !s.body).map((s) => ({ in: s.fn, on: s.on, via: s.via, seats: s.seats, decl: s.decl, kind: s.kind, writes: s.writes, line: s.line }))));
   assert.ok([...seated.values()].reduce((n, ls) => n + ls.length, 0) >= 10, "the seating sites are found in file-view.ts");
   const listed = [...READY_ROOTS, ...NOT_READY_ROOTS, ...LINE_ROOTS].sort();
@@ -1747,7 +1977,7 @@ test("the census of the body's roots, its default refusing: every `body` token i
     assert.equal(bodyReady(bodyOf(r)), false, r + " alone: not in");
     for (const c of READY_ROOTS) assert.equal(bodyReady(bodyOf(r, c)), true, r + " over " + c + ": a line over content, in");
   }
-  assert.equal(bodyReady(bodyOf("div.fileview-unlisted")), false, "FAILS BEFORE: a child none of the lists names is not in; this census is what turns a new root into a red test rather than a dead button, on the receiver, argument, verb, assignment and write axes since the round-7 fixes (a seat's receiver by its binding, a node handed to a callee, a method call's name, a member assignment's name, a URL member written from a non-literal or an attribute set under a non-literal name)");
+  assert.equal(bodyReady(bodyOf("div.fileview-unlisted")), false, "FAILS BEFORE: a child none of the lists names is not in; this census is what turns a new root into a red test rather than a dead button, on the call, assignment, receiver, argument and write axes since the round-7 fixes (a method call's name; a member assignment's name; a seat's receiver and each seated name by their bindings; a node of the tree handed to any callee, and an element the census can see by shape handed to a callee the file does not declare; a URL written from a non-literal by an assignment, setAttribute, a method of location or window.open, or an attribute set under a non-literal name)");
   for (const c of READY_ROOTS) assert.equal(bodyReady(bodyOf(c, "div.fileview-unlisted")), false, "an unlisted child beside " + c + ": not in");
   for (const r of NOT_READY_ROOTS) assert.equal(bodyReady(bodyOf(r), "pdf"), r === PDF_LOADER_ROOT, r + " alone under the PDF kind: " + (r === PDF_LOADER_ROOT ? "in (the pages attempt's loader; the PDF road reads nothing from the body)" : "not in"));
   assert.ok(NOT_READY_ROOTS.includes(PDF_LOADER_ROOT), "the PDF kind's exception is one of the wait roots");
@@ -1813,10 +2043,10 @@ test("the census refuses its unknown and derives its population, executed over m
   refusedMutant(seat('(body).append(el("div", "fileview-mutant"));'), "(body).append(x)", /body is written bare where the census cannot class it \(a parenthesised receiver or operand\)/, 2);   // the token, and the seat on `(body)`, not the sanctioned token
   refusedMutant(seat('(body as HTMLElement).append(el("div", "fileview-mutant"));'), "(body as HTMLElement).append(x)", /body is written bare where the census cannot class it \(a cast receiver\)/, 2);
   refusedMutant(seat('const seatLater = body;'), "an alias, const b = body", /body is written bare where the census cannot class it \(an alias\)/);
-  refusedMutant(seat('[body].forEach((b) => b.prepend(el("div", "fileview-mutant")));'), "[body].forEach(b => b.prepend(x))", /body is written bare where the census cannot class it \(an array element\)/, 2);   // and b.prepend, a seat on a receiver the table does not list
+  refusedMutant(seat('[body].forEach((bx) => bx.prepend(el("div", "fileview-mutant")));'), "[body].forEach(bx => bx.prepend(x))", /body is written bare where the census cannot class it \(an array element\)/, 2);   // and bx.prepend, a seat on a receiver the table does not list (not `b`: a second declaration of that listed name in openFileView is its own refusal, below)
   refusedMutant(seat('Element.prototype.append.call(body, el("div", "fileview-mutant"));'), "Element.prototype.append.call(body, x)", /body is handed to Element\.prototype\.append\.call\(\.\.\.\), a callee the census does not list/, 3);   // the token, and the second read's two: a call read by its site and not listed, and append read without being called (round 6)
-  refusedMutant(seat('seatInto(body, el("div", "fileview-mutant"));'), "a helper handed the body", /body is handed to seatInto\(\.\.\.\), a callee the census does not list/);
-  refusedMutant(seat('seatInto({ body, root: el("div", "fileview-mutant") });'), "a helper handed the body as a property", /body is handed to seatInto\(\.\.\.\) as a property of its argument, a callee the census does not list/);
+  refusedMutant(seat('seatInto(body, el("div", "fileview-mutant"));'), "a helper handed the body", /body is handed to seatInto\(\.\.\.\), a callee the census does not list/, 2);   // and the el() it is handed beside the body, an element handed to a callee the file does not declare (the author's closing pass over the round-7 build)
+  refusedMutant(seat('seatInto({ body, root: el("div", "fileview-mutant") });'), "a helper handed the body as a property", /body is handed to seatInto\(\.\.\.\) as a property of its argument, a callee the census does not list/, 2);   // as above, the el() inside the literal
   refusedMutant(seat('const target = wrap ? body : main;'), "a ternary operand", /body is written bare where the census cannot class it \(a ternary operand\)/);
   refusedMutant(seat('const target = held ?? body;'), "a logical operand", /body is written bare where the census cannot class it \(a logical operand\)/);
   refusedMutant(seat('const target = () => body;'), "an arrow's value outside the accessor", /body is written bare where the census cannot class it \(an arrow's value\)/);
@@ -1861,12 +2091,23 @@ test("the census refuses its unknown and derives its population, executed over m
   // the branch's verification pass finding census-2 (2026-09-20): an entry is held to ONE binding, so a second declaration of a listed
   // name inside the entry's function is refused rather than read under the entry's claim (the seat spelled as the entry's,
   // `main.appendChild(body)`, so the binding rule is what reds, not the seat key)
+  /** The refusals a second declaration of `main` inside openFileView draws on the LIVE seats and hand-offs of that name (the
+   *  author's closing pass over the round-7 build, the verifiers' census-2: a listed name declared twice in the entry's
+   *  function is refused at every seat it stands at, whatever the second declaration spells), set apart from the planted
+   *  line's own. */
+  const MAIN_SHADOW = /^line \d+: .* in openFileView: `main` is declared 2 times in openFileView \(lines \d+, \d+\)/;
+  const splitShadows = (refused: string[], form: string): string[] => {
+    const shadows = refused.filter((x) => MAIN_SHADOW.test(x));
+    assert.deepEqual(shadows.map((x) => / (\S+\(.*?\)|[\w.]+\([^)]*\)) in openFileView:/.exec(x)?.[1] ?? x).sort(), ["box.appendChild(main)", "main.appendChild(body)", "pressHold(main)"], form + ": the live seats and hand-offs of `main` are refused under the second declaration: " + JSON.stringify(shadows));
+    return refused.filter((x) => !MAIN_SHADOW.test(x));
+  };
   const rebound = (src: string, form: string, decl: RegExp): void => {
     const r = census(src);
-    assert.equal(r.refused.length, 2, form + ": the seat's binding and the entry's two seats: " + JSON.stringify(r.refused));
-    assert.ok(r.refused[0].startsWith("line " + plantedLine + ": "), form + ": with the planted line: " + r.refused[0]);
-    assert.match(r.refused[0], decl, form); assert.match(r.refused[0], /where SEATS_READ_BY_HAND read `const main = el\("div", "fileview-main"\)`: the receiver is not the one read by hand/, form);
-    assert.match(r.refused[1], /^SEATS_READ_BY_HAND's entry `main\.appendChild` seating `body` in openFileView matches 2 seats \(lines \d+, \d+\) where it reads 1: one entry is one seat/, form);
+    const own = splitShadows(r.refused, form);
+    assert.equal(own.length, 2, form + ": the seat's binding and the entry's two seats: " + JSON.stringify(own));
+    assert.ok(own[0].startsWith("line " + plantedLine + ": "), form + ": with the planted line: " + own[0]);
+    assert.match(own[0], decl, form); assert.match(own[0], /where SEATS_READ_BY_HAND read `const main = el\("div", "fileview-main"\)`: the receiver is not the one read by hand/, form);
+    assert.match(own[1], /^SEATS_READ_BY_HAND's entry `main\.appendChild` seating `body` in openFileView matches 2 seats \(lines \d+, \d+\) where it reads 1: one entry is one seat/, form);
     assert.deepEqual([...r.seated.keys()].sort(), [...before.seated.keys()].sort(), form + ": and no root seated");
   };
   rebound(seat('{ const main = md.parentElement!; main.appendChild(body); }'), "a block's const main = md.parentElement!", /seats on `main` in openFileView, bound to `const main = md\.parentElement!`/);
@@ -1878,7 +2119,7 @@ test("the census refuses its unknown and derives its population, executed over m
   // tag pinned its declaration and nothing about what it held at the seat
   const WEARING = /seats `el\("div", "fileview-mutant"\)` on `main` by appendChild in openFileView, a seat the census has not read by hand \(the table's entry for `main\.appendChild` in openFileView seats `body`, not this: a second seat at a listed site is a second entry, read by hand\)/;
   refusedMutant(seat('main.appendChild(el("div", "fileview-mutant"));'), "FAILS BEFORE: a second seat on the listed binding of main, seating an unlisted root", WEARING);
-  refusedMutant(seat('{ const main = md.parentElement!; main.appendChild(el("div", "fileview-mutant")); }'), "a block's const main seating an unlisted root: the seat key reds before the binding rule is reached", WEARING);
+  { const r = census(seat('{ const main = md.parentElement!; main.appendChild(el("div", "fileview-mutant")); }')); const own = splitShadows(r.refused, "a block's const main seating an unlisted root"); assert.equal(own.length, 1, "a block's const main seating an unlisted root: the seat key reds before the binding rule is reached: " + JSON.stringify(own)); assert.ok(own[0].startsWith("line " + plantedLine + ": ")); assert.match(own[0], WEARING); }
   const plantAfter = (needle: string, code: string): { src: string; line: number } => { const i = at(VIEWER_SRC, needle) + needle.length; return { src: VIEWER_SRC.slice(0, i) + "      " + code + "\n" + VIEWER_SRC.slice(i), line: VIEWER_SRC.slice(0, i).split("\n").length }; };   // a line planted right after a given line of the viewer, where `seat` cannot reach (another function's scope)
   const refusedAt = (planted: { src: string; line: number }, form: string, want: RegExp, count = 1): string[] => {
     const r = census(planted.src);
@@ -1888,9 +2129,9 @@ test("the census refuses its unknown and derives its population, executed over m
     return r.refused;
   };
   const secondMount = plantAfter('\n      const host = el("div", "fileview-cm");\n', "ed.mount(wait, {});");
-  refusedAt(secondMount, "FAILS BEFORE: a second ed.mount beside the listed one, into another host", /ed\.mount\(wait, \{\}\) calls mount on `ed` into `wait, \{\.\.\.\}` in enterEdit, a call the census reads by its site \([^)]*\) and has not read by hand \(the table's entry for `ed\.mount` in enterEdit seats `host, \{\.\.\.\}`, not this/);
+  refusedAt(secondMount, "FAILS BEFORE: a second ed.mount beside the listed one, into another host", /ed\.mount\(wait, \{\}\) calls mount on `ed` into `wait, \{\}` in enterEdit, a call the census reads by its site \([^)]*\) and has not read by hand \(the table's entry for `ed\.mount` in enterEdit seats `host, \{text, ext, onChange, onSave, /);   // an object literal in a seats key is spelled by its property names (the author's closing pass over the round-7 build, the verifiers' census-3)
   const secondUrl = plantAfter("\n  img.src = objUrl;\n", "img.src = path;");
-  refusedAt(secondUrl, "a second URL write at a listed target, from another value", /img\.src = path writes img\.src from `path` in imgBlock, a URL member/);
+  refusedAt(secondUrl, "a second URL write at a listed target, from another value", /img\.src = path writes img\.src from `path` in imgBlock, a URL write/);
   // correctness-5: a receiver bound by `let` is reassignable, and its declaration says nothing about what it holds at the seat;
   // the entry for it is refused unless it pins what every write assigns (`holds`), and the viewer's session tag moved onto a const
   const LET_SEAT = { in: "openFileView", on: "sess2", via: "replaceChildren", seats: 'el("span", "fileview-mutant")', is: "a probe's entry for a let-bound receiver", decl: 'let sess2 = el("div", "fileview-mutant")' };
@@ -1908,8 +2149,9 @@ test("the census refuses its unknown and derives its population, executed over m
   assert.ok(VIEWER_SRC.includes(SESS_CONST), "the session tag is a const built by el() in the branch that shows it");
   const sessEntry = SEATS_READ_BY_HAND.find((e) => e.on === "sess")!;
   const sessLet = census(VIEWER_SRC.replace(SESS_CONST, '\n  let sess: HTMLElement | null = null;\n  if (owner) {\n    sess = el("span", "fileview-sess");\n    sess.replaceChildren(...hostNameNodes(owner.name, sid));'), SEATS_READ_BY_HAND.map((e) => (e === sessEntry ? { ...e, decl: "let sess = null" } : e)));
-  assert.equal(sessLet.refused.length, 1, "FAILS BEFORE: the viewer's `let sess = null`, assigned in the branch, under an entry pinning that declaration: " + JSON.stringify(sessLet.refused));
+  assert.equal(sessLet.refused.length, 2, "FAILS BEFORE: the viewer's `let sess = null`, assigned in the branch, under an entry pinning that declaration: " + JSON.stringify(sessLet.refused));
   assert.match(sessLet.refused[0], /sess\.replaceChildren\(\.\.\.hostNameNodes\(owner\.name, sid\)\) seats on `sess` is bound by `let sess = null`, a reassignable binding \(let; the writes: `null` at line \d+, `el\("span", "fileview-sess"\)` at line \d+\)/, "...is refused as reassignable, naming both writes");
+  assert.match(sessLet.refused[1], /bar\.appendChild\(sess\) seats `sess` bound by `sess = let sess = null; writes: `null` at line \d+, `el\("span", "fileview-sess"\)` at line \d+`, where SEATS_READ_BY_HAND read `sess = const sess = owner \? el\("span", "fileview-sess"\) : null`/, "...and the tag's own seat in the bar is refused too: the seated name's binding is not the entry's (the author's closing pass over the round-7 build, the verifiers' census-2)");
   const timesDropped = SEATS_READ_BY_HAND.find((e) => e.in === "codeBlock" && e.on === "pre")!;
   const untimed = census(VIEWER_SRC, SEATS_READ_BY_HAND.map((e) => (e === timesDropped ? { ...e, times: undefined } : e)));
   assert.deepEqual(untimed.refused.map((r) => r.replace(/lines \d+, \d+/, "lines N, M")), ["SEATS_READ_BY_HAND's entry `pre.appendChild` seating `code` in codeBlock matches 2 seats (lines N, M) where it reads 1: one entry is one seat, read by hand where it stands; a seat spelled alike in two branches says `times` and is read at each"], "an entry two seats match is refused unless it says so: one entry is one seat");
@@ -1954,7 +2196,7 @@ test("the census refuses its unknown and derives its population, executed over m
   const aliased = refusedMutant(seat('const R = Reflect; R.set(md, "innerHTML", ' + MUTANT_HTML + ');'), "const R = Reflect; R.set(md, ...)", /calls set on `R` into `md, "innerHTML", "<div class=\\"fileview-mutant\\"><\/div>"` in openFileView, a call the census reads by its site/, 2);   // R.set is a site read by its binding and not listed, and the alias declaration reads Reflect
   assert.match(aliased[1], REFLECTION, "...the alias declaration `const R = Reflect` is a read of Reflect other than as a call's receiver");
   refusedMutant(seat('window.Reflect.set(md, "innerHTML", ' + MUTANT_HTML + ');'), "window.Reflect.set(md, ...)", /calls set on `window\.Reflect` into `md, "innerHTML", "<div class=\\"fileview-mutant\\"><\/div>"` in openFileView, a call the census reads by its site/);
-  refusedMutant(seat('globalThis.Object.assign(md, { innerHTML: ' + MUTANT_HTML + ' });'), "globalThis.Object.assign(md, { innerHTML })", /calls assign on `globalThis\.Object` into `md, \{\.\.\.\}` in openFileView, a call the census reads by its site/);
+  refusedMutant(seat('globalThis.Object.assign(md, { innerHTML: ' + MUTANT_HTML + ' });'), "globalThis.Object.assign(md, { innerHTML })", /calls assign on `globalThis\.Object` into `md, \{innerHTML\}` in openFileView, a call the census reads by its site/);
   refusedMutant(seat('const s = Reflect.set; s(md, "innerHTML", ' + MUTANT_HTML + ');'), "const s = Reflect.set; s(md, ...)", REFLECTION);
   refusedMutant(seat('[Reflect].forEach((R2) => R2.set(md, "innerHTML", ' + MUTANT_HTML + '));'), "[Reflect].forEach(...)", REFLECTION);
   refusedMutant(seat('const seatWith = (r: typeof Reflect) => r.set(md, "innerHTML", ' + MUTANT_HTML + '); seatWith(Reflect);'), "Reflect handed as an argument", REFLECTION);
@@ -1969,14 +2211,79 @@ test("the census refuses its unknown and derives its population, executed over m
   refusedMutant(seat('setInterval("md.append(el(\'div\', \'fileview-mutant\'))", 1);'), "setInterval(string)", STRING_ROAD);
   refusedMutant(seat('void import("data:text/javascript,md.append(el(\'div\', \'fileview-mutant\'))");'), "a dynamic import", STRING_ROAD);
   refusedMutant(seat('const F = new Function("m", "m.append(document.createElement(\'div\'))"); F(md);'), "new Function(...)", REFLECTION, 2);   // Function read other than as a call's receiver, and the string road
-  refusedMutant(seat('location.href = "javascript:md.append(el(\'div\', \'fileview-mutant\'))";'), "location.href = a javascript: literal", /writes location\.href from `"javascript:[^`]*"` in openFileView, a URL member/);
-  refusedMutant(seat('const a2 = el("a") as HTMLAnchorElement; a2.href = "javascript:void md.append(el(\'div\', \'fileview-mutant\'))"; a2.click();'), "an anchor's href = a javascript: literal, then click", /writes a2\.href from `"javascript:[^`]*"` in openFileView, a URL member/);
-  refusedMutant(seat('const u = mediaUrlLive; const a3 = el("a") as HTMLAnchorElement; a3.href = u!;'), "an anchor's href from a value that is not a literal", /writes a3\.href from `u!` in openFileView, a URL member/);
+  refusedMutant(seat('location.href = "javascript:md.append(el(\'div\', \'fileview-mutant\'))";'), "location.href = a javascript: literal", /writes location\.href from `"javascript:[^`]*"` in openFileView, a URL write/);
+  refusedMutant(seat('const a2 = el("a") as HTMLAnchorElement; a2.href = "javascript:void md.append(el(\'div\', \'fileview-mutant\'))"; a2.click();'), "an anchor's href = a javascript: literal, then click", /writes a2\.href from `"javascript:[^`]*"` in openFileView, a URL write/);
+  refusedMutant(seat('const u = mediaUrlLive; const a3 = el("a") as HTMLAnchorElement; a3.href = u!;'), "an anchor's href from a value that is not a literal", /writes a3\.href from `u!` in openFileView, a URL write/);
   // extra6-4: `add` seats an option on a select or an options collection, so it is a site read by hand there, while a class
   // list's and a Set's add pass by the name (NON_SEATING_METHODS); the item-7 commit gave the rule, this is its red-before
   refusedMutant(seat('const sel = el("select") as HTMLSelectElement; sel.add(el("option") as HTMLOptionElement);'), "FAILS BEFORE: a select's add", /calls add on `sel` into `el\("option"\) as HTMLOptionElement` in openFileView, a call the census reads by its site/);
   refusedMutant(seat('const sel2 = el("select") as HTMLSelectElement; sel2.options.add(el("option") as HTMLOptionElement);'), "FAILS BEFORE: an options collection's add", /calls add on `sel2\.options` into `el\("option"\) as HTMLOptionElement` in openFileView, a call the census reads by its site/);
   assert.deepEqual(census(seat('const seen = new Set<string>(); seen.add("x"); md.classList.add("fileview-mutant");')).refused, [], "a Set's add and a class list's add pass by the name");
+  // the author's closing pass over the round-7 build (the verifiers' findings, 2026-09-20). census-1: the URL axis read the
+  // assignment spelling alone, so a URL member written through setAttribute passed (FAILS BEFORE: each of the four below green)
+  const URL_ATTR = (name: string, value: string): RegExp => new RegExp("writes bar\\.setAttribute\\(" + name.replace(/[()[\].]/g, "\\$&") + "\\) from `" + value.replace(/[()[\].]/g, "\\$&") + "` in openFileView, a URL write \\(a member the write axis's hand read flags as a URL, a member of location, an attribute set under a name that is not aria-\\* or data-\\* and not listed as carrying no URL, a method of location, or window\\.open\\)");
+  refusedMutant(seat('bar.setAttribute("href", path);'), 'FAILS BEFORE: bar.setAttribute("href", path)', URL_ATTR('"href"', "path"));
+  refusedMutant(seat('bar.setAttribute("href", "javascript:alert(1)");'), 'FAILS BEFORE: bar.setAttribute("href", "javascript:...")', URL_ATTR('"href"', '"javascript:alert(1)"'));
+  refusedMutant(seat('bar.setAttribute("srcdoc", path);'), 'FAILS BEFORE: bar.setAttribute("srcdoc", path)', URL_ATTR('"srcdoc"', "path"));
+  refusedMutant(seat('bar.setAttribute("src", path);'), 'FAILS BEFORE: bar.setAttribute("src", path)', URL_ATTR('"src"', "path"));
+  assert.match(refusedMutant(seat('bar.setAttributeNS(null, "href", path);'), 'bar.setAttributeNS(null, "href", path)', /calls setAttributeNS on `bar`, a method the census does not list/, 2)[1], /writes bar\.setAttributeNS\("href"\) from `path` in openFileView, a URL write/, "the namespaced spelling is a URL write too (and its name is unlisted, since the viewer never calls it: the call axis's own refusal comes first)");
+  refusedMutant(seat('bar.setAttribute("role", path);'), 'an attribute under a name that is neither aria-* nor data-* nor listed as carrying no URL, from a non-literal: refused until read (the inverted default on the attribute-value axis)', URL_ATTR('"role"', "path"));
+  const attrClassed = seat('bar.setAttribute("aria-label", path); bar.setAttribute("data-fv-probe", path); bar.setAttribute("href", "/files"); bar.setAttribute("open", "");');
+  assert.deepEqual(census(attrClassed).refused, [], "an aria-* or data-* attribute set from a non-literal passes by the rule, and a URL attribute set from a literal that is not javascript: passes");
+  assert.deepEqual(seatSites(attrClassed).attrWrites.filter((a) => a.line === plantedLine).map((a) => a.name), ["aria-label", "data-fv-probe"], "...and each passing non-literal attribute write is CLASSED, never silent");
+  // census-4: a method of `location` passed under String.prototype.replace's listing, and window.open under the browser's `open`
+  refusedMutant(seat('location.replace(path);'), "FAILS BEFORE: location.replace(path)", /writes location\.replace from `path` in openFileView, a URL write/);
+  refusedMutant(seat('window.location.assign(path);'), "window.location.assign(path)", /writes window\.location\.assign from `path` in openFileView, a URL write/);
+  refusedMutant(seat('location.reload();'), "location.reload(), no argument: a navigation the census cannot read the target of, refused until listed", /writes location\.reload from `` in openFileView, a URL write/);
+  refusedMutant(seat('window.open(path);'), "FAILS BEFORE: window.open(path)", /writes window\.open from `path` in openFileView, a URL write/);
+  refusedMutant(seat('globalThis.open("javascript:alert(1)");'), 'globalThis.open("javascript:...")', /writes globalThis\.open from `"javascript:alert\(1\)"` in openFileView, a URL write/);
+  assert.deepEqual(census(seat('location.assign("/files"); window.open("/files", "_blank");')).refused, [], "a literal that is not javascript: passes at both, as an assignment's literal does");
+  // census-3: the argument axis read direct arguments alone, so a node handed inside an object literal, an array literal or a
+  // concise arrow passed, and an object literal in a seats key was `{...}`, so a property added to a listed call was no new seat
+  refusedMutant(seat('wrapCodeLines({ up: main.parentElement } as any);'), "FAILS BEFORE: a node inside an object literal handed to a callee", /hands `\{ up: main\.parentElement \}`, a node of the tree read through parentElement, to wrapCodeLines\(\.\.\.\) in openFileView, a callee the census has not read by hand/);
+  refusedMutant(seat('wrapCodeLines([main.parentElement] as any);'), "a node inside an array literal", /hands `\[ main\.parentElement \]`, a node of the tree read through parentElement, to wrapCodeLines/);
+  refusedMutant(seat('wrapCodeLines((() => main.parentElement) as any);'), "a node as a concise arrow's value", /hands `\(\) => main\.parentElement`, a node of the tree read through parentElement, to wrapCodeLines/);
+  refusedMutant(seat('wrapCodeLines({ deep: { up: [main.parentElement] } } as any);'), "a node nested two literals deep", /hands `\{ deep: \{ up: \[ main\.parentElement \] \} \}`, a node of the tree/);
+  const MOUNT_LINE = "ed.mount(host, {\n        text: norm(text!), ext:";
+  assert.equal(VIEWER_SRC.split(MOUNT_LINE).length, 2, "the editor mount is written once");
+  const mountProp = census(VIEWER_SRC.replace(MOUNT_LINE, "ed.mount(host, { hostParent: host.parentElement,\n        text: norm(text!), ext:"));
+  assert.equal(mountProp.refused.length, 3, "FAILS BEFORE: a property added to a listed site-read call's object literal: a new seats key, a handed node inside the literal, and the entry gone stale: " + JSON.stringify(mountProp.refused));
+  assert.match(mountProp.refused[0], /calls mount on `ed` into `host, \{hostParent, text, ext, onChange, onSave, /, "the seats key spells the literal's property names, so the added property is a new seat");
+  assert.match(mountProp.refused[1], /^SEATS_READ_BY_HAND lists `ed\.mount` seating `host, \{text, ext, onChange, onSave, .* in enterEdit, and the source has no such seat: the entry is stale/, "...the entry for the old key is stale");
+  assert.match(mountProp.refused[2], /hands `\{ hostParent: host\.parentElement \}`, a node of the tree read through parentElement, to ed\.mount/, "...and the node inside the literal is a hand-off read on its own");
+  // census-2: the receiver was held to its declaration while the SEATED name was matched by its spelling alone, and a shadow
+  // wearing the listed declaration's exact spelling passed the text compare
+  const SEAT_BODY = "\n  main.appendChild(body);\n";
+  assert.equal(VIEWER_SRC.split(SEAT_BODY).length, 2, "the body's seat in main is written once");
+  const shadowBody = census(VIEWER_SRC.replace(SEAT_BODY, '\n  { const body = el("div", "fileview-mutant"); main.appendChild(body); }\n'));
+  assert.equal(shadowBody.refused.length, 2, "FAILS BEFORE: a block's `const body = el(...)` seated through the listed main.appendChild(body): " + JSON.stringify(shadowBody.refused));
+  assert.match(shadowBody.refused[0], /main\.appendChild\(body\) seats `body` bound by `body = const body = el\("div", "fileview-mutant"\)`, where SEATS_READ_BY_HAND read `body = const body = el\("div", "fileview-body"\)`: what is seated is not the binding read by hand/, "the seated name's binding is not the entry's: the entry pins the viewer's own body");
+  assert.match(shadowBody.refused[1], /const body = el\("div", "fileview-mutant"\); declares `body` as `el\("div", "fileview-mutant"\)`, not the viewer's own `el\("div", "fileview-body"\)`/, "...and the declaration itself is refused: the sanctioned name is declared by the viewer alone");
+  refusedMutant(seat('const keep = (body: HTMLElement): void => { readPlace(body, ""); };'), "a parameter named body in a function BODY_HANDED_TO does not list as reading the body under its own parameter", /declares a parameter named `body` in keep, which BODY_HANDED_TO does not list as reading the body under its own parameter/);
+  const SEAT_BOX = "\n  box.appendChild(bar); box.appendChild(main);\n  wrap.appendChild(box);\n";
+  assert.equal(VIEWER_SRC.split(SEAT_BOX).length, 2, "the card's seat in the wrapper is written once in the local viewer");
+  const shadowWrap = census(VIEWER_SRC.replace(SEAT_BOX, '\n  box.appendChild(bar); box.appendChild(main);\n  { const wrap = el("div"); wrap.appendChild(box); }\n'));
+  assert.equal(shadowWrap.refused.length, 2, "FAILS BEFORE: the listed seat replaced by one on a block's `const wrap = el(\"div\")`, spelled exactly as the listed declaration: the seat, and the wrapper's own seat in the page's body, which seats the name: " + JSON.stringify(shadowWrap.refused));
+  assert.match(shadowWrap.refused[0], /wrap\.appendChild\(box\) in openFileView: `wrap` is declared 2 times in openFileView \(lines \d+, \d+\): a second declaration of a listed name in the entry's function is refused, whatever it spells/, "a second declaration of a listed receiver name in the entry's function is refused, so the text compare is never the last word");
+  assert.match(shadowWrap.refused[1], /document\.body\.appendChild\(wrap\) in openFileView: `wrap` is declared 2 times in openFileView/, "...and so is every seat of the name in that function");
+  const shadowSeated = census(seat('{ const outlineBtn = el("button", "fileview-mutant"); viewGroup.appendChild(outlineBtn); }'));
+  assert.equal(shadowSeated.refused.length, 4, "a second declaration of a listed SEATED name, spelled otherwise: the live seat and the live hand-off of the name under the second declaration, the planted seat's binding, and the entry's two seats: " + JSON.stringify(shadowSeated.refused));
+  assert.match(shadowSeated.refused[0], /^line \d+: viewGroup\.appendChild\(outlineBtn\) in openFileView: `outlineBtn` is declared 2 times in openFileView \(lines \d+, \d+\)/, "the live seat of the name is refused under the second declaration");
+  assert.match(shadowSeated.refused[1], new RegExp("^line " + plantedLine + ": viewGroup\\.appendChild\\(outlineBtn\\) seats `outlineBtn` bound by `outlineBtn = const outlineBtn = el\\(\"button\", \"fileview-mutant\"\\)`, where SEATS_READ_BY_HAND read `outlineBtn = const outlineBtn = el\\(\"button\", \"fileview-btn fileview-outline-btn\"\\) as HTMLButtonElement`"), "the planted seat's seated binding is not the entry's");
+  assert.match(shadowSeated.refused[2], /^SEATS_READ_BY_HAND's entry `viewGroup\.appendChild` seating `outlineBtn` in openFileView matches 2 seats/, "the entry's two seats");
+  assert.match(shadowSeated.refused[3], /^line \d+: flash\(outlineBtn\) in openFileView: `outlineBtn` is declared 2 times in openFileView/, "and the live hand-off of the name to an imported helper is refused under it too");
+  // records-1: an element the census can see by its shape, handed to a callee this file does not declare, was read on no axis
+  const ELEMENT_HANDED = /to addCopyBtn\(\.\.\.\) in openFileView, a callee this file does not declare and the census has not read by hand for what it does with an element it is handed/;
+  refusedMutant(seat('addCopyBtn(main, "");'), "FAILS BEFORE: an el()-built const handed to an imported helper", /hands `main`, el\(\.\.\.\) bound to `main` \(bound by `const main = el\("div", "fileview-main"\)`\), to addCopyBtn/);
+  refusedMutant(seat('const wrap2 = document.querySelector(".fileview-body") as HTMLElement; addCopyBtn(wrap2, "");'), "FAILS BEFORE: a query result handed to an imported helper", /hands `wrap2`, a querySelector\(\.\.\.\) result bound to `wrap2`/);
+  refusedMutant(seat('addCopyBtn(loaderEl(), "");'), "a local builder's result handed to an imported helper", /hands `loaderEl\(\)`, a call of the builder loaderEl, which returns el\(\.\.\.\) bound to `load`, to addCopyBtn/);
+  refusedMutant(seat('[main].forEach((m: HTMLElement) => addCopyBtn(m, ""));'), "a parameter typed as an element handed to an imported helper", /hands `m`, a parameter typed HTMLElement bound to `m`/);
+  refusedMutant(seat('addCopyBtn(document.createElement("div"), "");'), "a createElement result handed to an imported helper", /hands `document\.createElement\("div"\)`, a createElement\(\.\.\.\) result, to addCopyBtn/);
+  refusedMutant(seat('addCopyBtn({ box } as any, "");'), "an element inside an object literal handed to an imported helper", /hands `\{ box \}`, el\(\.\.\.\) bound to `box`/);
+  assert.match(census(seat('addCopyBtn(main, "");')).refused[0], ELEMENT_HANDED, "...the refusal names the callee as one the file does not declare");
+  const secondFlash = census(seat('flash(outlineBtn);'));
+  assert.deepEqual(secondFlash.refused, ["ARGS_READ_BY_HAND's entry `outlineBtn` handed to flash in openFileView matches 2 hand-offs where it reads 1: one entry is one hand-off, read where it stands; one spelled alike in two branches says `times` and is read at each"], "a second hand-off of a listed element to a listed callee is a second entry: the argument table is one entry per site, as the seat table is");
+  assert.deepEqual(census(seat('noteBar("x"); const nb = noteBar("y"); copySay(ICON_CHECK, "x"); imgFailed(main);')).refused, [], "an element handed to a LOCAL function passes: its seats are read in this file (imgFailed's are listed)");
   // the argument and URL tables are keyed on the seat too and held live: a stale entry, and a hand-off bound elsewhere than the entry says
   const staleArg = census(VIEWER_SRC, undefined, undefined, [...ARGS_READ_BY_HAND, { in: "openFileView", to: "gone", arg: "x.parentElement", is: "an entry the source has no hand-off for" }]);
   assert.deepEqual(staleArg.refused, ["ARGS_READ_BY_HAND lists `x.parentElement` handed to gone in openFileView, and the source has no such hand-off: the entry is stale, remove it or read the site again"]);
@@ -1998,10 +2305,10 @@ test("the census refuses its unknown and derives its population, executed over m
   refusedMutant(seat('const acc = () => ({ body: () => body });'), "the accessor in a function's returned literal", ACCESSOR_ELSEWHERE);
   refusedMutant(seat('let held = { path, body: () => body, open: true };'), "the accessor in a variable's literal", ACCESSOR_ELSEWHERE);
   refusedMutant(seat('const ctx2: FileViewActionCtx = { path, body: () => body };'), "the accessor under a renamed ctx const", ACCESSOR_ELSEWHERE);
-  refusedMutant(seat('installFilePrint({ card: box, bar, body: () => body, typing: typingHere, onClose: (cb) => { closeHooks.push(cb); } });'), "the accessor moved into a callee's argument", ACCESSOR_ELSEWHERE);
+  refusedMutant(seat('installFilePrint({ card: null, bar: null, body: () => body, typing: typingHere, onClose: (cb) => { closeHooks.push(cb); } });'), "the accessor moved into a callee's argument", ACCESSOR_ELSEWHERE);   // nulls for the card and the bar: the listed elements handed a second time would be their own refusals (the argument table is one entry per hand-off)
   assert.ok(VIEWER_SRC.includes("\n  const ctx: FileViewActionCtx = {\n"), "the sanctioned site is declared as the census expects");
   const ctxRenamed = census(VIEWER_SRC.replace("\n  const ctx: FileViewActionCtx = {\n", "\n  const actions: FileViewActionCtx = {\n"));
-  assert.deepEqual(ctxRenamed.refused.filter((r) => !ACCESSOR_ELSEWHERE.test(r)), ["the census passes the action-context accessor `body: () => body` inside the object literal declared `const ctx: FileViewActionCtx = {`, and the source declares no such literal: read the hand-out by hand again"], "the ctx declaration renamed: the census holds the source to it");
+  assert.deepEqual(ctxRenamed.refused.filter((r) => !ACCESSOR_ELSEWHERE.test(r)).map((r) => r.replace(/^line \d+: /, "")), ["the census passes the action-context accessor `body: () => body` inside the object literal declared `const ctx: FileViewActionCtx = {`, and the source declares no such literal: read the hand-out by hand again", "a.mount(ctx) seats `ctx` bound by `ctx = a global`, where SEATS_READ_BY_HAND read `ctx = const ctx = { path, sid: sid || null, todoId: opts?.todoId ?? null, body: () => body, mode: `: what is seated is not the binding read by hand (the entry names each seated bare name's declaration in `seatedBy`)"], "the ctx declaration renamed: the census holds the source to it, and the mount seated `ctx` is bound to no declaration now (the seated name's binding, the author's closing pass over the round-7 build)");
   assert.equal(ctxRenamed.refused.filter((r) => ACCESSOR_ELSEWHERE.test(r)).length, 1, "...and the live accessor is refused with its line, since its literal is no longer the declared one");
   // the table is read, not decorative: a live site whose entry is removed reds with its line, and an entry with no site reds
   const dropped = SEATS_READ_BY_HAND.find((e) => e.in === "mdBlock" && e.on === "box" && e.via === "replaceChildren" && e.seats.startsWith("...Array.from("))!;
@@ -2036,8 +2343,8 @@ test("the census refuses its unknown and derives its population, executed over m
   const passes = census(seat('body.classList.add("fileview-mutant"); body.style.height = "0"; body.dataset.probe = "1"; body.scrollTop.toString(); if (typeof body.getClientRects === "function") body.scrollTop += 0;'));
   assert.deepEqual(passes.refused, [], "body.classList.add(...), body.style, body.dataset, a scalar's method, a typeof read of a non-seating method and a compound scroll assignment pass");
   assert.deepEqual([...passes.seated.keys()].sort(), [...before.seated.keys()].sort(), "...and seat no root");
-  const bare = census(seat('if (document.activeElement === body || body !== null) foldKeeper(body); const keep = (body: HTMLElement): void => { readPlace(body, ""); }; installFilePrint({ card: box, bar, body, typing: typingHere, onClose: (cb) => { closeHooks.push(cb); } }); const fold = { key: "k", body: "text", open: true };'));
-  assert.deepEqual(bare.refused, [], "a comparison, a listed callee's argument, a parameter, a property key and a listed callee's shorthand property pass");
+  const bare = census(seat('if (document.activeElement === body || body !== null) foldKeeper(body); readPlace(body, ""); seatPlaceOutcome({ body, place: null } as any); const fold = { key: "k", body: "text", open: true };'));
+  assert.deepEqual(bare.refused, [], "a comparison, a listed callee's argument, a property key and a listed callee's shorthand property pass (a parameter named body passes in a listed own callee alone, and a second installFilePrint is a second hand-off of the card and the bar: the author's closing pass over the round-7 build)");
   assert.deepEqual([...bare.seated.keys()].sort(), [...before.seated.keys()].sort(), "...and seat no root");
   // a comment's prose is blanked before the read, wherever the comment stands, so "the body. The next…" is no member access and a seat quoted in a comment is no seat
   const prose = census(stripComments(seat('/** the body. The next paint seats it. */')));

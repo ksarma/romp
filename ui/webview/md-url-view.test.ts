@@ -280,7 +280,7 @@ test("mdBlock takes the document's location and resolves relative figure referen
   assert.doesNotMatch(MD_FN, /querySelectorAll\("img\[src\]"\)/, "no img-only arm is left in mdBlock");
   const RF = VIEW.split("function resolveFigureRefs(root: ParentNode, base: string): void {")[1].split("\n}")[0];
   assert.match(RF, /for \(const ref of figureRefs\(root\)\) \{/, "the gate's own walk names the attributes");
-  assert.match(RF, /const abs = resolveDocRelative\(c\.url, base\); if \(abs !== c\.url\) \{ c\.url = abs; changed = true; \}/, "each srcset candidate resolved");
+  assert.match(RF, /const cabs = resolveDocRelative\(c\.url, base\); if \(cabs !== c\.url\) \{ c\.url = cabs; changed = true; \}/, "each srcset candidate resolved (its own name, not `abs`: file-print.test.ts's census holds a written URL value to one declaration per function)");
   assert.match(RF, /if \(changed\) el\.setAttribute\("srcset", serializeSrcset\(cands\)\);/, "written back with its descriptors");
   assert.match(RF, /const abs = resolveDocRelative\(ref\.value, base\);/, "every other attribute resolved through the one helper");
   assert.match(RF, /el\.removeAttributeNS\(XLINK_NS, "href"\);\n\s*if \(!el\.hasAttribute\("href"\)\) el\.setAttribute\("href", abs\);/, "xlink:href folded into href, href winning when both stand");
