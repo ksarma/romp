@@ -610,6 +610,10 @@ visualViewport.scale = 2; visualViewport.height = 230; visualViewport.offsetTop 
 out.pinchPanned = { appTop: appTop(), appH: appH(), barH: barH() };
 visualViewport.height = 422; visualViewport.offsetTop = 200; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
 out.kbDownZoomed = { appTop: appTop(), appH: appH(), barH: barH() };
+// round 6 (2026-09-20): a height report the run refuses (0) UNDER the zoom: the pinch road publishes no pan either (the guard's
+// other half, held by source text alone before), so --app-top and --app-h stay where the run above put them
+visualViewport.height = 0; visualViewport.offsetTop = 200; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+out.refusedZoomed = { appTop: appTop(), appH: appH(), barH: barH() };
 // round 4 (2026-09-20): the keyboard raised AGAIN while the zoom still holds. The clamp bounded what the run above published
 // and left the hold standing, so this run publishes the pan the keyboard was measured with (83, slack under the clamp:
 // 844 - 460). A clamp that wrote its result back had lowered the hold to 0 and laid the shell out at pan 0 under a
@@ -685,12 +689,15 @@ visualViewport.height = 844; visualViewport.offsetTop = 0; fire(VV, 'resize'); f
 // 0px whatever the visual viewport says (no soft keyboard to pan for), so a fine-pointer window the mobile query still
 // matches by width alone (at or under 820 px) takes the fixed body at top 0. From a panned state, the pointer turns fine
 // (the stub answers the coarse probe; the layout query object was captured at parse and is not re-read). The stub is a
-// module-scope global, restored before the next step. --mtabs-h is not read here: its value on a fine pointer under a fake pan
-// is an open question of the review (the strip's reading carries no coarse guard), not settled by this change.
+// module-scope global, restored before the next step. --mtabs-h IS read here (round 6, 2026-09-20): on the fine-pointer road
+// the published band is 0 to innerHeight whatever the visual viewport says, the bar's box (800..844) is wholly inside it, and
+// the strip is the bar's whole height, 44. That is a behaviour change from upstream's pointer-ungated kbOpen, which read
+// 844 - 460 > 120 as a keyboard and collapsed the strip, the bar over the composer, on a fine pointer whose visual viewport
+// was shorter than the layout viewport (a desktop zoom reported at scale 1).
 visualViewport.height = 460; visualViewport.offsetTop = 83; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
 const savedMatchMedia = global.matchMedia; global.matchMedia = () => ({ matches: false });
 fire(WIN, 'resize'); flush();
-out.finePointer = { appTop: appTop(), appH: appH() };
+out.finePointer = { appTop: appTop(), appH: appH(), barH: barH() };
 global.matchMedia = savedMatchMedia;
 visualViewport.height = 844; visualViewport.offsetTop = 0; fire(VV, 'resize'); flush();
 out.finePointerBack = { appTop: appTop(), appH: appH(), barH: barH() };
@@ -852,6 +859,9 @@ class MobileFitExecutes(unittest.TestCase):
         self.assertEqual(self.out["panAgain"], {"appTop": "83px", "appH": "460px", "barH": "0px"})
         self.assertEqual(self.out["pinchPanned"], {"appTop": "83px", "appH": "460px", "barH": "0px"}, "the hold, from a pan")
         self.assertEqual(self.out["kbDownZoomed"], {"appTop": "0px", "appH": "844px", "barH": "44px"}, "the clamp")
+        # round 6 (2026-09-20): the validity guard's pinch half. A height report of 0 under the zoom publishes no pan: the
+        # values stand where the clamp put them (a pinch road without the guard published min(83, 844 - 0) = 83px here)
+        self.assertEqual(self.out["refusedZoomed"], {"appTop": "0px", "appH": "844px", "barH": "44px"}, "a refused height report under the zoom publishes no pan")
         # round 4 (2026-09-20): the clamp bounds what is published and leaves the hold standing, so the keyboard raised again
         # under the same zoom finds the pan it was measured with. A clamp that wrote its result back (the round-2 shape) had
         # lowered the hold to 0 the first time it bound, and this run then published 0px under a keyboard-sized --app-h.
@@ -937,7 +947,10 @@ class MobileFitExecutes(unittest.TestCase):
         # fine-pointer window at or under 820 px takes the fixed body and gets the 0px this branch writes (from a panned state,
         # so a held or stale value would show), with the height read from innerHeight; the served populations leg drives the
         # real query at 800 px. The base tree's only pin on this branch was its source text.
-        self.assertEqual(self.out["finePointer"], {"appTop": "0px", "appH": "844px"})
+        # round 6 (2026-09-20): the strip too. The band a fine pointer publishes is 0 to innerHeight, so the bar is wholly
+        # inside it and the strip is its whole height; upstream's pointer-ungated kbOpen read the short visual viewport as a
+        # keyboard and collapsed the strip over the composer (0px at the base tree), a behaviour change disclosed here
+        self.assertEqual(self.out["finePointer"], {"appTop": "0px", "appH": "844px", "barH": "44px"})
         self.assertEqual(self.out["finePointerBack"], {"appTop": "0px", "appH": "844px", "barH": "44px"})
 
     def test_the_0px_road_clears_the_hold_only_where_no_pan_stands(self):

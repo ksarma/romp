@@ -327,6 +327,11 @@ class KeyboardGap(unittest.TestCase):
         self.assertAlmostEqual(up["body"]["top"], 0, delta=0.5, msg=where + "%r" % (up,))
         self.assertAlmostEqual(up["body"]["bottom"], 900, delta=0.5, msg=where + "%r" % (up,))
         self.assertEqual(up["bar"]["display"], "flex", where + "the phone layout, by width")
+        # round 6 (2026-09-20): the strip on this road. The band is 0 to innerHeight, the fixed bar's box is inside it, and the
+        # strip is the bar's measured height, the same as at rest: upstream's pointer-ungated kbOpen read the short visual
+        # viewport as a keyboard here and collapsed the strip over the composer
+        self.assertGreater(_px(fine["rest"]["mtabsH"]), 0, where + "the bar's height is measured at rest: %r" % (fine["rest"],))
+        self.assertEqual(_px(up["mtabsH"]), _px(fine["rest"]["mtabsH"]), where + "the strip is the bar's height on a fine pointer whatever the visual viewport says: %r" % (up,))
         # a coarse pointer at 1200 px: outside the query (its coarse term stops at 1024 px). The pan IS published, the writer
         # being pointer-gated, and no rule consumes it: the body stays in flow at layout y 0, sized by --app-h as on every layout
         wide = self._drive(engine, {"device": "iPhone 14", "viewport": {"width": 1200, "height": 900}}, "-coarse1200")
