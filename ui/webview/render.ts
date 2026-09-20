@@ -15357,11 +15357,15 @@ function landActive(content: HTMLElement | null, v: View): void {
   // result too. The take is decided on what is ARMED, not on the outcome: a land whose anchor misses (nowhere in the transcript, the wrong
   // kind, a fetch armed) falls through to the saved-place restore below with the spacers re-sized, so the row the SAVED place held is
   // captured here, at that place (the scroller does not hold it yet on a switch: the leaving tab's position is still under the viewport),
-  // and the fallback puts it back at its offset (anchor-restore). The raw land-saved write stands when nothing was armed (no take: the
-  // saved scrollTop is exact, and the figures wait for keepPlaceAcrossWindow, which showActive runs after this land with the reader's own
-  // row, or for the next tail paint) or when no row was at the saved place (inside a spacer). land-active-keep.test.ts executes the
-  // roads (PR E, review round 1b: a figure is taken only by a paint that anchors, and every anchoring paint takes one; review round 2:
-  // the missed land took and wrote raw, moving the reader by the spacer's delta, while this comment said the road could not happen)
+  // and the fallback puts it back at its offset (anchor-restore). The raw land-saved write stands whenever that restore finds no row to
+  // put back, three roads: nothing was armed (no take: the saved scrollTop is exact, and the figures wait for keepPlaceAcrossWindow,
+  // which showActive runs after this land with the reader's own row, or for the next tail paint); no row was at the saved place (inside
+  // a spacer); or the captured row is gone, because the attempt's window build around the anchor's unit (scrollToAnchor's
+  // pointer-not-rendered and pointer-wrong-kind roads) replaced the rows before its re-query missed, which leaves the reader in that
+  // window at the pre-resize scrollTop, the residual the body names beside keepPlaceAcrossWindow's double miss after a rebuild.
+  // land-active-keep.test.ts executes the roads (PR E, review round 1b: a figure is taken only by a paint that anchors, and every
+  // anchoring paint takes one; review round 2: the missed land took and wrote raw, moving the reader by the spacer's delta, while this
+  // comment said the road could not happen; review round 3: the comment then named two raw roads where there are three)
   const saved = !pendingAnchor && pendingAnchorT == null && !(seek && seek.sid === activeId) && v.shown && !v.stick && takeReloadScroll(pendingReloadScroll, activeId) == null;
   const held = !saved && v.shown && !v.stick ? captureScrollAnchor(content, v, v.scrollTop) : null;   // the row at the saved place, for a land that misses
   if (!saved && applyMeasure(v)) redrawGapUnits(v);
@@ -15453,7 +15457,8 @@ function landActive(content: HTMLElement | null, v: View): void {
     }
     else if (!v.shown || v.stick) writeScroll(content, content.scrollHeight, "land-bottom", true);
     // an armed land that missed: the row the saved place held goes back at its offset over the spacers the take re-sized; the raw write
-    // when nothing was armed (nothing taken: the saved scrollTop is exact) or no row was at the saved place (review round 2)
+    // whenever the restore has no row to put back: nothing armed (nothing taken: the saved scrollTop is exact), no row at the saved
+    // place, or the captured row gone with the attempt's window build (review round 2; the third road named in review round 3)
     else if (!(held && restoreScrollAnchor(content, v, held))) writeScroll(content, v.scrollTop, "land-saved");
   }
   v.shown = true;

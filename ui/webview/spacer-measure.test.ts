@@ -430,8 +430,9 @@ test("render.ts: the render task's spacer code holds no layout read; the unit ob
   // anchoring paint takes one. The takers: syncViewInner under the `anchored` flag (appendActive's follow or the anchor its restore holds,
   // `stick || !!anchor`; the toggle's keep when it captured a row, `!!anchor`), a window build under the same flag from its caller (a deep
   // link's or a moment's land, the re-window, a fill with a row or a point to put back), landActive on every road but the nothing-armed
-  // re-show (land-saved, the one raw write; an ARMED land that misses takes and puts the saved place's row back, anchor-restore: review
-  // round 2, executed in land-active-keep.test.ts), and keepPlaceAcrossWindow over its restore. A switch's, a landing's or a hidden prebuild's sync passes no flag and applies
+  // re-show (land-saved, the raw write; an ARMED land that misses takes and puts the saved place's row back, anchor-restore, and writes
+  // raw only when that restore finds no row to put back: review round 2, the third such road named in round 3, executed in
+  // land-active-keep.test.ts), and keepPlaceAcrossWindow over its restore. A switch's, a landing's or a hidden prebuild's sync passes no flag and applies
   // nothing (a 55 px move of a bottom reader in the landing lab), a fill that can only restore its raw top passes false, and a paint whose
   // only restore is a raw scrollTop (appendActive with no capturable row, the toggle for a bottom or row-less reader) passes false too.
   assert.match(RENDER, /function syncViewInner\(id: string, atBottom\?: boolean, anchored: boolean = atBottom !== undefined\): View \{/, "the flag defaults to 'atBottom was passed'");
@@ -440,7 +441,7 @@ test("render.ts: the render task's spacer code holds no layout read; the unit ob
   const land = RENDER.slice(RENDER.indexOf("function landActive(content: HTMLElement | null, v: View): void {"), RENDER.indexOf("\n}\n", RENDER.indexOf("function landActive(content: HTMLElement | null, v: View): void {")));
   assert.match(land, /const saved = !pendingAnchor && pendingAnchorT == null && !\(seek && seek\.sid === activeId\) && v\.shown && !v\.stick && takeReloadScroll\(pendingReloadScroll, activeId\) == null;\s*\n\s*const held = !saved && v\.shown && !v\.stick \? captureScrollAnchor\(content, v, v\.scrollTop\) : null;[^\n]*\n\s*if \(!saved && applyMeasure\(v\)\) redrawGapUnits\(v\);\s*\n\s*sizeSpacers\(v\);/,
     "landActive takes on every road but the nothing-armed re-show, BEFORE its landing attempt (the gate reads what is armed, not the outcome), captures the row at the saved place first, and sizes the spacers after the take; an armed land that misses puts that row back (the fallback below, executed in land-active-keep.test.ts)");
-  assert.match(land, /else if \(!\(held && restoreScrollAnchor\(content, v, held\)\)\) writeScroll\(content, v\.scrollTop, "land-saved"\);/, "the saved-place fallback restores the captured row; the raw write stands when nothing was armed or no row was at the saved place");
+  assert.match(land, /else if \(!\(held && restoreScrollAnchor\(content, v, held\)\)\) writeScroll\(content, v\.scrollTop, "land-saved"\);/, "the saved-place fallback restores the captured row; the raw write stands whenever that restore finds no row to put back: nothing armed (nothing taken), no row at the saved place, or the captured row gone with the attempt's window build (land-active-keep.test.ts executes the three)");
   assert.equal((land.match(/applyMeasure\(v\)/g) || []).length, 1, "one take in the land");
   const keep = RENDER.slice(RENDER.indexOf("function keepPlaceAcrossWindow("), RENDER.indexOf("\n}\n", RENDER.indexOf("function keepPlaceAcrossWindow(")));
   assert.match(keep, /const under = captureScrollAnchor\(content, v\);\s*\n\s*if \(applyMeasure\(v\)\) \{ redrawGapUnits\(v\); sizeSpacers\(v\); \}\s*\n\s*if \(restoreScrollAnchor\(content, v, keep\)\) return true;/,

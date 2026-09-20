@@ -69,6 +69,7 @@ test("landActive's landing consumes the record for the active tab first, then fa
   // session sends no frame for another; a row outside the fresh window asks its window here and stays armed for the reply
   assert.match(body, /landTrail = \[\];\s*\n\s*const landedNow = scrollToAnchor\(rs\.anchor\.uuid\);\s*\n\s*if \(landedNow \|\| !anchorPendingOlder\) \{ pendingAnchor = null; pendingAnchorKeepY = null; \}/, "landed or asked at once; the arm is kept only for a window in flight");
   // the ordinary rule: the bottom, else the saved place (the row the saved place held, put back over the spacers an armed land's take
-  // re-sized, PR E review round 2; the raw scrollTop when nothing was armed or no row was there: land-active-keep.test.ts executes both)
+  // re-sized, PR E review round 2; the raw scrollTop when that restore has no row to put back, nothing armed, no row at the saved place
+  // or the row gone with the attempt's window build: land-active-keep.test.ts executes the roads)
   assert.match(body, /else if \(!v\.shown \|\| v\.stick\) writeScroll\(content, content\.scrollHeight, "land-bottom", true\);\s*\n(?:\s*\/\/[^\n]*\n)*\s*else if \(!\(held && restoreScrollAnchor\(content, v, held\)\)\) writeScroll\(content, v\.scrollTop, "land-saved"\);/);
 });
