@@ -8126,8 +8126,11 @@ rulings are kept outside the repo in the maintainer's notes, one pair per round)
 round's fixes, by a verifier of the author's, is named the author's closing pass after that round, never a round of either
 review, and its findings carry the ids behaviour-N, records-N, coverage-N, guards-N and attribution-and-gates-N, which no
 fixlist of the file review holds. A record naming a
-round names the review it belongs to first (ui/webview/linknav-records-attribution.test.ts holds this over every record the
-branch wrote).
+round names the review it belongs to first (ui/webview/linknav-records-attribution.test.ts holds this, in every checkout,
+over every unit of the files the branch created and over every unit in the tree that names the file review or carries an id
+of the author's family, a phrase outside the created files judged where the review named nearest before it is the file
+review or the author's pass; the file review's round 5, extra5-2: the sentence had claimed every record the branch wrote,
+which held only on a road that read the diff, and that road runs in no CI checkout).
 
 **What existed.** A link in a rendered file to another file (`[x](other.md)`, `other.md:7`, `other.md#section`, a
 picture or PDF path, a wikilink, an embed chip) opened that file in the SAME viewer card: re-opening replaced whatever
@@ -8529,12 +8532,15 @@ bypassed: no request reaches a host the gate still holds. The build's record her
 the contract said the same; the claim was false, and the follow-on is a privacy surface, landing on the owner's word
 (open point 11). The verifications: `git diff --stat $(git merge-base origin/main HEAD) HEAD -- kernel/` is empty and
 `git diff --name-only $(git merge-base origin/main HEAD) HEAD` lists files under ui/webview, docs, plans, tools,
-upstream or tests alone (38 files, the ledger entry's where line; run 2026-09-20 at the commit that built the one
-reader for the file review's round 4 and again at the head that closed the author's closing pass after the file review's
-round 4, the merge-base 0d7723d34 both times; tools/markdown-viewer-plan-linknav.test.mjs runs both behind the two-part
-gate the Tests paragraph names, the merge-base not `origin/main` itself and the diff since it adding the module, reads the
-count off this sentence where they run, and otherwise says which part held them, or holds the prose alone without the
-ref). The build's record ran both against 34142c262, the branch point, and the merge of main into the branch
+upstream or tests alone (39 files, the ledger entry's where line; run 2026-09-20 at the head after the merge of the fork's
+main for the file review's round 5, where the merge-base is the fork's main itself and the listing is the branch's whole
+delta over it; the two earlier runs, at the commit that built the one reader for the file review's round 4 and at the head
+that closed the author's closing pass after the file review's round 4, listed 38 from the older merge-base they shared,
+before the merge made main's tools/markdown-viewer-plan-gate-adopt.test.mjs a file the branch edits;
+tools/markdown-viewer-plan-linknav.test.mjs runs both behind the two-part gate the Tests paragraph names, the merge-base
+not `origin/main` itself and the diff since it adding the module, reads the count off this sentence where they run, and
+otherwise says which part held them, or holds the prose alone without the ref; the Tests paragraph says where that is).
+The build's record ran both against 34142c262, the branch point, and the merge of main into the branch
 (f694e5974) made that commit an ancestor of main, so at the merged head the same stat named four kernel files and the
 same list reached kernel/ and vscode-extension/ (the file review, fresh-1): a verification is derived from the
 merge-base with main, never from a fixed sha a merge can move behind. The files under tests are
@@ -8630,7 +8636,16 @@ review's round 4, attribution-and-gates-2 with records-2); the guide's two sente
 wording is gone; the browser plan's pointer stands in its navigation-stack section; and the module list is two-way
 (every module the listing above produces is named here and the count in that sentence is the listing's, read from the
 sentence; every test module under ui/webview, tools or tests whose own text names this follow-on is named here; every
-module named here exists, this one included). tools/markdown-viewer-plan-linknav-review.test.mjs holds the review's
+module named here exists, this one included). L6's two verifications and the attribution module's second road (below) run
+in no checkout that gates landing, and in none after the merge: the fork's CI checks the pull request out at depth 1 in the
+jobs that run `node --test tools/*.test.mjs` and `npm test` (no `origin/main` there, so the gate's first part holds them
+off; only the secrets job fetches history, and tools/markdown-viewer-plan-linknav.test.mjs holds those two jobs to a
+checkout with no `fetch-depth: 0`, so a change there names this sentence), and once the follow-on has landed every later
+branch's diff since its merge-base adds that branch's files and not these modules, so the guard that lands is the
+attribution module's first road, the rule over the tree, and L6's two claims about the delta hold by the prose alone,
+re-derived by hand at the merged head (the file review's round 5, extra5-1 with tests-1, correctness-4 and extra5-3: this
+page had stated the gate and the stand-down apart and never composed them, so a reader was never told what the enduring
+guard is). tools/markdown-viewer-plan-linknav-review.test.mjs holds the review's
 corrections to this record: L3 names the floor by the source's constant and the number the source gives it, its two
 exclusions with their functions, the web test's place before the join and the click's yield to an anchor with an href,
 the floor's re-read at each reflow of the figure by its function and the click's stand-down on an answered
@@ -8648,12 +8663,22 @@ this section's opening paragraph (the file review's round 3, tests-2, re-ruled o
 rules-1, after a pin keyed on one string missed the misattribution in the commits that built it: a round belongs to the
 review named nearest before it in its unit of text and is one the convention enumerates for that review; a pass of the
 author's has no rounds; an id of the author's family stands only after a pass is named; a round with no review named
-fails), reading the files the branch created, this section, the guide's paragraph, the browser plan's pointer and
-file-view.ts's units naming the file review in every checkout, and every unit the branch added or touched since the
-merge-base behind the same two-part gate (the merge-base not `origin/main` itself and the diff adding the module; the
-file review's round 4, extra8-1: before the gate the roster equality would have failed every later branch in the repo
-once the follow-on landed, and a gate on the module's presence alone would have passed a batch head), with the roster
-of created files checked against the diff's added files there. It and ui/webview/file-view-figure-shapes.test.ts read TS and JS through
+fails), reading in every checkout, as a rule over the tree, every file git lists at the repo root, tracked or untracked
+and not ignored, whose text names the file review or carries an id of the author's family, together with the files the
+branch created (an existence roster, each judged in full, every unit of it) and this section, the guide's paragraph and
+the browser plan's pointer (judged in full), a phrase outside those judged only where the review named nearest before it
+is the file review or the author's pass, so another review's round in the shared file-view.ts, or in a file another PR
+brought in, is left alone and counted in the diagnostic (the file review's round 5, extra5-1 with tests-1, and
+regression-2: the first road had read a roster of eighteen files, checked against the diff only by the second road, which
+runs in no CI job, and had judged file-view.ts's units naming any review's round against this follow-on's enumeration),
+a new uncommitted file among the population (correctness-5 with tests-6: the second road's diff lists tracked paths
+alone, so a phrase planted in a new file was a false green), and the count of this follow-on's units in file-view.ts held
+equal to the derived count at the swept head (correctness-6 with tests-5 and extra8-4: a floor of ten had stood against
+fourteen); and, kept and disclosed above (it runs in no CI job and in none after the merge), every unit the branch added
+or touched since the merge-base behind the same two-part gate (the merge-base not `origin/main` itself and the diff
+adding the module; the file review's round 4, extra8-1: before the gate the roster equality would have failed every later
+branch in the repo once the follow-on landed, and a gate on the module's presence alone would have passed a batch head),
+the diff's added files printed beside the created files there for a human to compare. It and ui/webview/file-view-figure-shapes.test.ts read TS and JS through
 ui/webview/source-units.ts, the compiler's parser (comments as text with wrapped lines joined; each string the program
 sees as one value as one unit with that value, in either quote, escapes resolved, a `+` chain of literals folded into the
 value it computes and a template's spans joined with each hole kept as its source text, so a phrase split across tokens

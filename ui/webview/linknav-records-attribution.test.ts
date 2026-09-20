@@ -36,49 +36,73 @@
 // tokens had sat in no unit); what stays outside the read, a value assembled at run time (a join, a concat, a hole's value,
 // the part of a chain after a non-literal operand), the reader's header lists and the messages say; a Markdown file as
 // paragraphs, a Python file as paragraphs with its literals cooked as Python cooks them and adjacent literals glued (the
-// compiler does not read Python), which the message says. Two roads, as the author's closing pass after the file review's round 3 (behaviour-6) set
-// them: (1) in every checkout the files the branch created (a roster), the plan's section, the guide's Links paragraph, the
-// browser plan's pointer paragraph and the units of file-view.ts that name the file review or carry an id of the author's
-// family (the author's closing pass after the file review's round 4, records-1: a pass misnamed as a round beside its id, in
-// a figure comment naming no review, passed road 1 wherever road 2 stood down; file-view.ts also carries the viewer
-// project's own review, whose rounds this section does not enumerate, so its units naming only "the review" are road
-// 2's); (2) where the merge-base with origin/main tells this branch's delta from main's tip, every "round N" and every id
-// on a line the branch added since the merge-base, in every file it changed, judged in the unit that carries it (a modified
-// file's untouched lines are context, never the charge: a stylesheet's block carries other projects' rounds around the lines
-// this branch added), and the roster checked against the diff's added files. The gate on road 2 has two parts, both read
-// off git (the file review's round 4, extra8-1, taking its refuter's correction): the merge-base is not origin/main itself,
-// and the diff since the merge-base adds this module. One part alone is not the gate. With the merge-base at origin/main
-// the diff is the whole history over main's tip, which is what main itself, a branch or a batch head cut from main's tip
-// and this branch right after merging origin/main all look like, and the roster equality would fail on each for a reason
-// that is not a defect; and once the follow-on has landed, a later branch whose fork point main has moved past has a
-// merge-base off origin/main too, while its diff adds that branch's files and not this module, so the roster equality would
-// fail on every such branch in the repo (the pin before this gate did, in both refuters' scratch repos). So road 2 runs on
-// this follow-on's open PR branch in a clone where origin/main has moved past the branch's last merge of it, and the
-// diagnostic says which road ran and, when road 2 stood down, which part of the gate held it. The gate's residual,
+// compiler does not read Python), which the message says. Two roads. Road 1, in every checkout, is a RULE over the tree
+// (the file review's round 5, extra5-1 with tests-1, extra5-2 and correctness-5, in the refuters' corrected form: the road had
+// read a hand-written roster of eighteen files, and the road that checked the roster against the diff ran in no checkout
+// that CI makes, so the roster was the guard). The population is every path git lists at the repo root, tracked or
+// untracked and not ignored (`git ls-files --cached --others --exclude-standard`), read from the WORKING TREE, so a new
+// uncommitted file is judged like a committed one (road 2's diff lists tracked paths alone, so a phrase planted in a new
+// file was a false green there; the file review's round 5, correctness-5 with tests-6); a path that is not a regular file
+// or a symlink to one is skipped and counted (a dangling symlink; a symlink to a directory, which crashed the prototype's
+// read), and a file with a NUL byte in its first 8 KiB is binary and skipped. The candidates are the files whose text
+// names the file review or carries an id of the author's family (roadOneViewerUnit over the whole text, the narrow
+// predicate: a loose one, every "round N" in the tree, faulted about 871 records of other projects' rounds by the round's
+// count) and the files the branch created (CREATED, kept as an existence roster: each must be in the population, and each
+// is judged in FULL, every unit of it, since the predicate alone drops the units naming only "the review"); the plan's
+// follow-on section, the guide's Links paragraph and the browser plan's pointer are this follow-on's records by their place
+// and are judged in full too. Every other candidate's units that carry the vocabulary are judged KEYED on the review named
+// (the file review's round 5, regression-2: file-view.ts is shared, and a unit there naming another review's round, or a
+// unit in a file another PR brought in, had been judged against this follow-on's enumeration, a red for everyone on a
+// record that was not ours): a round or an id is this follow-on's only where the review named nearest before it is the
+// file review or the author's pass as the convention names it (the author's closing pass, a verifier's pass; not any word
+// "pass", since a caller's own pass is code); a phrase whose nearest review is another (a Slice N review, a fork PR review,
+// the bare "review" outside the roster) or none is that review's or no one's, left alone and counted in the diagnostic
+// (the gate-before-adoption fix the merge of the fork's main brought in names its rounds the fork PR review's and its
+// findings guards-N, the same family word). Floors that fail on an empty derivation: the population at least a
+// thousand files, the candidates at least ten, the units judged at least two hundred; and the count of this follow-on's
+// units in file-view.ts is asserted equal to the derived count at the swept head, the lines printed beside it, so a deleted
+// or an added attribution there moves it and the fix is to re-derive, never to fit (the file review's round 5,
+// correctness-6 with tests-5 and extra8-4: a floor of ten stood against fourteen). The diagnostic prints the candidate list
+// for a human to compare with the PR's added files, which the roster equality of road 2 did where it ran. Road 2 is kept and
+// disclosed: it runs in no CI job and in none after the merge (the plan's Tests paragraph states this once, with the
+// checkouts). Where the merge-base with origin/main tells this branch's delta from main's tip, it judges every "round N"
+// and every id on a line the branch added since the merge-base, in every tracked file it changed, in the unit that carries
+// it under the full rule (a modified file's untouched lines are context, never the charge: a stylesheet's block carries
+// other projects' rounds around the lines this branch added). The gate on road 2 has two parts, both read off git (the
+// file review's round 4, extra8-1, taking its refuter's correction): the merge-base is not origin/main itself, and the
+// diff since the merge-base adds this module. One part alone is not the gate. With the merge-base at origin/main the diff
+// is the whole history over main's tip, which is what main itself, a branch or a batch head cut from main's tip and this
+// branch right after merging origin/main all look like; and once the follow-on has landed, a later branch whose fork point
+// main has moved past has a merge-base off origin/main too, while its diff adds that branch's files and not this module
+// (the roster equality before this gate failed on every such branch in the repo, in both refuters' scratch repos). So road
+// 2 runs on this follow-on's open PR branch in a clone where origin/main has moved past the branch's last merge of it, and
+// the diagnostic says which road ran and, when road 2 stood down, which part of the gate held it. The gate's residual,
 // disclosed and not closed: a batch head that main has moved under (a commit landed on main after the batch was cut from
-// its tip) has its merge-base off origin/main and a diff that adds this module, so road 2 runs over the batch's whole delta
-// and the roster equality fails on the other PRs' files. A third part would close it, every first-parent merge since the
-// merge-base merging main alone, and is named for the maintainer in the PR body rather than built unruled (the author's
-// closing pass after the file review's round 4, attribution-and-gates-2 with records-2). Road 2 diffs the WORKING TREE
-// against the merge-base, not HEAD, so the line ranges and the units it reads come from the same bytes and an uncommitted
-// edit in a scratch copy is charged like a committed one (the same pass, guards-3: a diff against HEAD read no added line
-// for an uncommitted planted phrase, a false green for a verifier who edits a copy without committing). Synthetic values
-// only.
+// its tip) has its merge-base off origin/main and a diff that adds this module, so road 2 runs over the batch's whole
+// delta. A third part would close it, every first-parent merge since the merge-base merging main alone, and is named for
+// the maintainer in the PR body rather than built unruled (the author's closing pass after the file review's round 4,
+// attribution-and-gates-2 with records-2). Road 2 diffs the WORKING TREE against the merge-base, not HEAD, so the line
+// ranges and the units it reads come from the same bytes and an uncommitted EDIT in a scratch copy is charged like a
+// committed one (the same pass, guards-3: a diff against HEAD read no added line for an uncommitted planted phrase, a false
+// green for a verifier who edits a copy without committing); an uncommitted NEW file is road 1's, through the population's
+// untracked paths, since no diff lists it. Synthetic values only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { execFileSync } from "node:child_process";
 import { comments, lineAt, literals, proseUnits, scriptUnits, unitsOf, type Unit } from "./source-units";
 
 const REPO = path.resolve(process.cwd(), "..");
 const read = (rel: string): string => fs.readFileSync(path.join(REPO, rel), "utf8");
-const exists = (rel: string): boolean => fs.existsSync(path.join(REPO, rel));
 
 /** This module's own path: road 2 runs only where the diff since the merge-base adds it (the second part of its gate). */
 const THIS_MODULE = "ui/webview/linknav-records-attribution.test.ts";
 
-/** The files the branch created (road 2 checks this roster against the diff's added files where it runs). */
+/** The files the branch created: an existence roster (each must be in road 1's population) whose files are judged in full,
+ *  every unit of them, where the tree rule's predicate selects units by their vocabulary. Road 2 prints the diff's added
+ *  files beside it where it runs, for a human to compare. */
 export const CREATED = [
   "tests/test_guide_trail_chords_and_figure_button.py",
   "tools/markdown-viewer-plan-linknav-review.test.mjs",
@@ -133,17 +157,21 @@ export function conventionOf(paragraph: string): Reviews {
 }
 
 type Who = "file" | "branch" | "other" | "pass";
+/** The reviews a unit can name, each by its own words: the file review; another project's review by a qualifier (a Slice N
+ *  review); the bare "review" (the branch's, inside this follow-on's records); and the author's pass as the convention names
+ *  it, the author's closing pass or a verifier's pass, never any word "pass" (the file review's round 5, regression-2: "the
+ *  caller's own pass" in a shared test is code, and had anchored a round after it as a pass's). */
 const ANCHORS: [RegExp, Who][] = [
   [/\bfile review\b/g, "file"],
   [/\bSlice \d+ review\b/g, "other"],
   [/\breview\b/g, "branch"],
-  [/\b(?:closing|verification|verifier's|author's|own) pass(?:es)?\b|\bverifier\b/g, "pass"],
+  [/\b(?:closing|verification|verifier's|author's) pass(?:es)?\b|\bverifier's\b/g, "pass"],
 ];
 /** A pass named by the round it followed ("the author's closing pass after the file review's round 4") is one name, its span
  *  through the round's digits, and an id after the whole name has the pass as the review named nearest before it. The name is
  *  an anchor for the id road alone: the round inside the name, and a round named after it (a record's "the round-N
  *  condition" after the pass's name), are judged against the review the name says, whose anchor stands inside the name. */
-const PASS_NAME_RE = /\b(?:closing|verification|verifier's|author's|own) pass(?:es)?\b after (?:the |its |that )?(?:file review's |review's )?rounds?[- ]\d+(?:(?:,\s*|\s+(?:and|or|to)\s+)\d+)*/g;
+const PASS_NAME_RE = /\b(?:closing|verification|verifier's|author's) pass(?:es)?\b after (?:the |its |that )?(?:file review's |review's )?rounds?[- ]\d+(?:(?:,\s*|\s+(?:and|or|to)\s+)\d+)*/g;
 /** A round phrase as the set of rounds it names: `round N` or `round-N`, the digits after a hyphen or any whitespace (a
  *  line break inside a literal too) and bare or wrapped in Markdown emphasis or code markers; after the plural, a comma list
  *  or a `to` range (`rounds N, M and K`, `rounds N to M`, the range expanded). Digits only: an ordinal, a spelled-out number
@@ -170,9 +198,16 @@ export const roadOneViewerUnit = (text: string, reviews: Reviews): boolean => /\
  *  anchor whose span ends last before the phrase): the faults, each a sentence with the offset in `text` of the phrase it is
  *  about. The id road reads the same nearest anchor as the round road (the file review's round 5, correctness-3 with
  *  regression-1: it had accepted an id when ANY pass was named earlier in the unit, so the pass's finding credited to a round
- *  of the file review passed in every unit that also named the pass, the round-4 HIGH restated as a green). */
+ *  of the file review passed in every unit that also named the pass, the round-4 HIGH restated as a green). With `keyed`
+ *  (the tree rule outside this follow-on's own files) a phrase is judged only where the review named nearest before it is
+ *  the file review or the author's pass; a phrase whose nearest review is another, or none, is counted as `foreign` or
+ *  `unanchored` and left alone (the file review's round 5, regression-2). */
 export type Fault = { at: number; fault: string };
-export function roundFaults(text: string, reviews: Reviews): Fault[] {
+export type Judgement = { faults: Fault[]; judged: number; foreign: number; unanchored: number };
+export function roundFaults(text: string, reviews: Reviews, keyed = false): Fault[] {
+  return judgeUnit(text, reviews, keyed).faults;
+}
+export function judgeUnit(text: string, reviews: Reviews, keyed = false): Judgement {
   type Anchor = { at: number; end: number; who: Who };
   const anchors: Anchor[] = [];
   for (const [re, who] of ANCHORS) for (const m of text.matchAll(re)) anchors.push({ at: m.index!, end: m.index! + m[0].length, who });
@@ -187,6 +222,14 @@ export function roundFaults(text: string, reviews: Reviews): Fault[] {
   };
   const forIds = [...kept, ...passNames];
   const faults: Fault[] = [];
+  let judged = 0, foreign = 0, unanchored = 0;
+  /** Under the keyed rule, whether the phrase is this follow-on's to judge: the review named nearest before it is the file
+   *  review or the author's pass. Another review's phrase, or one naming no review, is counted and left alone. */
+  const ours = (near: Anchor | null): boolean => {
+    if (!keyed || (near && (near.who === "file" || near.who === "pass"))) { judged++; return true; }
+    if (near) foreign++; else unanchored++;
+    return false;
+  };
   const quoteAt = (m: RegExpMatchArray): string => {
     const at = Math.max(0, m.index! - 60);
     return JSON.stringify((at > 0 ? "..." : "") + text.slice(at, m.index! + m[0].length + 30));
@@ -196,6 +239,7 @@ export function roundFaults(text: string, reviews: Reviews): Fault[] {
     const ns = roundsOf(m);
     const list = ns.join(", ");
     const near = nearest(m.index!, kept);
+    if (!ours(near)) continue;
     if (!near) faults.push({ at: m.index!, fault: quoteAt(m) + ": names round " + list + " of no review (nothing is named before it in this unit); write the file review's round " + list + ", the review's round " + list + ", or the author's closing pass after the file review's round M" });
     else if (near.who === "pass") faults.push({ at: m.index!, fault: quoteAt(m) + ": a pass of the author's has no rounds; it is the author's closing pass after the file review's round M, with the finding's id kept" });
     else if (near.who === "file") {
@@ -210,15 +254,56 @@ export function roundFaults(text: string, reviews: Reviews): Fault[] {
   const named: Record<Who, string> = { file: "the file review", branch: "the branch's review", other: "another review", pass: "the author's pass" };
   for (const m of text.matchAll(idRe)) {
     const near = nearest(m.index!, forIds);
+    if (!ours(near)) continue;
     if (!near || near.who !== "pass") faults.push({ at: m.index!, fault: quoteAt(m) + ": an id of the author's family (" + reviews.ids.map((p) => p + "-N").join(", ") + ") where the review named nearest before it is " + (near ? named[near.who] : "no review") + "; the finding is the author's closing pass's, never a round's of the file review, and the pass is named nearest before its id (the author's closing pass after the file review's round M, the id)" });
   }
-  return faults;
+  return { faults, judged, foreign, unanchored };
 }
 
-/** The faults of a set of units, each prefixed with its label and the line of the phrase; `keep` narrows them to the lines a
- *  road is about (road 2: the lines the branch added), the unit still the context every phrase is judged in. */
-const faultsOf = (label: string, units: Unit[], reviews: Reviews, keep: (line: number) => boolean = () => true): string[] =>
-  units.flatMap((u) => roundFaults(u.text, reviews).map((f) => ({ line: lineAt(u, f.at), fault: f.fault })).filter((f) => keep(f.line)).map((f) => label + ":" + f.line + " " + f.fault));
+/** The judgement of a set of units under one label: the faults, each prefixed with the label and the line of the phrase, and
+ *  the counts summed; `keep` narrows the faults to the lines a road is about (road 2: the lines the branch added), the unit
+ *  still the context every phrase is judged in; `keyed` is the tree rule's scope outside this follow-on's own files. */
+type Tally = { faults: string[]; units: number; judged: number; foreign: number; unanchored: number };
+function judgeUnits(label: string, units: Unit[], reviews: Reviews, keyed = false, keep: (line: number) => boolean = () => true): Tally {
+  const t: Tally = { faults: [], units: units.length, judged: 0, foreign: 0, unanchored: 0 };
+  for (const u of units) {
+    const j = judgeUnit(u.text, reviews, keyed);
+    t.judged += j.judged; t.foreign += j.foreign; t.unanchored += j.unanchored;
+    t.faults.push(...j.faults.map((f) => ({ line: lineAt(u, f.at), fault: f.fault })).filter((f) => keep(f.line)).map((f) => label + ":" + f.line + " " + f.fault));
+  }
+  return t;
+}
+const faultsOf = (label: string, units: Unit[], reviews: Reviews, keep: (line: number) => boolean = () => true): string[] => judgeUnits(label, units, reviews, false, keep).faults;
+
+/** Road 1's population: every path git lists at `repo`'s root, tracked or untracked and not ignored (`git ls-files --cached
+ *  --others --exclude-standard`), that is a regular file or a symlink to one, relative to `repo` and sorted; a path that is
+ *  not (a dangling symlink, a symlink to a directory, a tracked path missing from the working tree) is returned in `skipped`
+ *  (the file review's round 5, correctness-5 with tests-6: a new uncommitted file is in the population, which no diff lists;
+ *  the prototype's read of a directory symlink crashed the run). */
+export function populationOf(repo: string): { files: string[]; skipped: string[] } {
+  const listed = execFileSync("git", ["-C", repo, "ls-files", "--cached", "--others", "--exclude-standard", "-z"], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+  const files: string[] = [];
+  const skipped: string[] = [];
+  for (const rel of new Set(listed.split("\0").filter(Boolean))) {
+    let st: fs.Stats;
+    try { st = fs.statSync(path.join(repo, rel)); } catch { skipped.push(rel); continue; }   // stat follows a symlink; a dangling one throws
+    (st.isFile() ? files : skipped).push(rel);
+  }
+  return { files: files.sort(), skipped: skipped.sort() };
+}
+/** Binary by git's own rule of thumb: a NUL byte in the first 8 KiB. */
+const isBinary = (buf: Buffer): boolean => { const i = buf.indexOf(0); return i >= 0 && i < 8192; };
+/** The 1-based line of an offset in a text. */
+const lineOfOffset = (text: string, at: number): number => text.slice(0, at).split("\n").length;
+/** The paragraph of a prose file that starts at `marker`, its units numbered in the file's lines, with the span it covers. */
+function paragraphAt(text: string, marker: string, what: string): { units: Unit[]; span: [number, number] } {
+  const at = text.indexOf(marker);
+  assert.ok(at >= 0, what);
+  const end = text.indexOf("\n\n", at);
+  const first = lineOfOffset(text, at);
+  const units = proseUnits(text.slice(at, end < 0 ? text.length : end)).map((u) => ({ ...u, line: u.line + first - 1, endLine: u.endLine + first - 1, starts: u.starts.map((s) => ({ line: s.line + first - 1, at: s.at })) }));
+  return { units, span: [first, units.length ? units[units.length - 1].endLine : first] };
+}
 
 const convention = (): Reviews => {
   const para = sectionUnits().find((u) => u.text.includes("named below as the review's round 1 and round 2"));
@@ -361,48 +446,91 @@ test("the convention: the branch's review has rounds 1 and 2, the file review's 
   const pronoun = "its round " + n(4) + " (behaviour-" + n(2) + ", records-" + n(1) + ") measured this";
   const pf = roundFaults(pronoun, two);
   assert.ok(roadOneViewerUnit(pronoun, two) && pf.length === 3 && /of no review/.test(pf[0].fault), "the pronoun form: a round of no review and two ids with no pass");
-  assert.ok(!roadOneViewerUnit("the review's round " + n(3) + " found it", two), "a unit naming only the review is road 2's");
+  assert.ok(!roadOneViewerUnit("the review's round " + n(3) + " found it", two), "a unit naming only the review is not selected by the vocabulary (inside a created file it is judged with the file, in full)");
+  // the keyed rule (the file review's round 5, regression-2): outside this follow-on's own files a phrase is judged only where
+  // the review named nearest before it is the file review or the author's pass; another review's phrase, or one naming no
+  // review, is counted and left alone, so a later review's round in the shared file-view.ts, or a record another PR brought
+  // in, cannot red this module; the same texts under the full rule show what the key withholds
+  const other = "the fork PR review's round " + n(9) + " (its records-" + n(7) + ") found it";
+  assert.deepEqual(judgeUnit(other, two, true), { faults: [], judged: 0, foreign: 2, unanchored: 0 }, "another review's round and its finding, named by that review: left alone and counted");
+  assert.equal(roundFaults(other, two).length, 2, "the same text under the full rule: the branch's review had no ninth round, and the id has no pass");
+  assert.equal(roundFaults(F + n(9) + " found it", two, true).length, 1, "the file review's round past the enumeration is ours wherever it stands");
+  assert.equal(roundFaults(misnamed, two, true).length, 1, "the pass named as a round beside its id is ours wherever it stands (the pass is the review named nearest before the round)");
+  assert.deepEqual(judgeUnit("measured in the Slice 7 review's round " + n(9), two, true), { faults: [], judged: 0, foreign: 1, unanchored: 0 });
+  assert.deepEqual(judgeUnit("since round " + n(2) + " a failed figure opens nothing", two, true), { faults: [], judged: 0, foreign: 0, unanchored: 1 }, "a round naming no review is no one's outside our files (the full rule faults it)");
+  assert.deepEqual(judgeUnit("the caller's own pass ran first; the round-" + n(1) + " ruling of the fork PR's review kept its finding records-" + n(3), two, true), { faults: [], judged: 0, foreign: 1, unanchored: 1 }, "a caller's own pass is code and no anchor; the round before the review is named by nothing, the id after it is that review's");
+  assert.equal(roundFaults(P + "after " + F + 3 + " measured it; " + F + 4 + " (records-" + 2 + ") ruled it", two, true).length, 1, "the fourth round's HIGH, the misattribution beside a pass, is ours under the key too: the file review is the review named nearest before the id");
+  assert.deepEqual(judgeUnit(F + 3 + " ruled it; the fork PR review's round " + n(9) + " (records-" + n(7) + ") did too", two, true), { faults: [], judged: 1, foreign: 2, unanchored: 0 }, "one unit, two reviews: the file review's round is judged, the other review's round and id are left alone");
 });
 
-test("road 1, every checkout: the files the branch created, the plan's section, the guide's Links paragraph, the browser plan's pointer and file-view.ts's units naming the file review or carrying an id of the author's family name no round outside the convention and no finding of the author's outside a pass; road 2, on the open PR branch where main has moved past its last merge (the merge-base off origin/main and the diff adding this module): every unit the branch added or touched, the working tree against the merge-base, and the roster is the diff's added files", (t) => {
+/** The count of this follow-on's units in the shared ui/webview/file-view.ts at the swept head: the units selected by the
+ *  vocabulary that name the file review or carry a phrase the keyed rule judges as ours. Derived, never fitted: a deleted or an added
+ *  attribution comment there moves it, and the fix is to re-derive this number at the new head (the file review's round 5,
+ *  correctness-6 with tests-5 and extra8-4: a floor of ten had stood against fourteen, so four could go with the guard green). */
+const VIEWER_UNITS = 14;
+
+test("road 1, every checkout, a rule over the tree: every file git lists at the repo root, tracked or untracked and not ignored, whose text names the file review or carries an id of the author's family, plus the files the branch created, the plan's section, the guide's Links paragraph and the browser plan's pointer; the created files and the three records in full, the rest keyed on the review named, so another review's rounds are left alone; no round outside the convention and no finding of the author's outside a pass; road 2, on the open PR branch where main has moved past its last merge (the merge-base off origin/main and the diff adding this module): every unit the branch added or touched, the working tree against the merge-base", (t) => {
   const reviews = convention();
+  const vocabulary = (text: string): boolean => roadOneViewerUnit(text, reviews);
+  const pop = populationOf(REPO);
+  assert.ok(pop.files.length >= 1000, "the population is the tree: " + pop.files.length + " files (a derivation that reads nothing is red)");
+  for (const f of CREATED) assert.ok(pop.files.includes(f), f + " is in the population (a created file of the branch; a rename moves it here too)");
+  // this follow-on's records by their place, judged in full and numbered in their files' lines; their spans are left out of
+  // the keyed walk over the same files so no phrase is judged twice
+  const full = new Map<string, { label: string; units: Unit[]; span: [number, number] }>();
+  const sec = sectionUnits();
+  full.set("plans/markdown-viewer.md", { label: "plans/markdown-viewer.md (the follow-on section)", units: sec, span: [sectionLine, sec[sec.length - 1].endLine] });
+  const links = paragraphAt(read("docs/guide.md"), "**Links in a file.**", "the guide's Links in a file paragraph");
+  full.set("docs/guide.md", { label: "docs/guide.md (Links in a file)", units: links.units, span: links.span });
+  const pointer = paragraphAt(read("plans/file-browser.md"), "Since 2026-09-19 the viewer keeps a trail of its own", "the browser plan's pointer paragraph");
+  full.set("plans/file-browser.md", { label: "plans/file-browser.md (the pointer)", units: pointer.units, span: pointer.span });
   const faults: string[] = [];
-  for (const f of CREATED) {
-    assert.ok(exists(f), f + " exists (a created file of the branch; a rename moves it here too)");
-    faults.push(...faultsOf(f, unitsOf(f, read(f)), reviews));
+  const tally = { units: 0, judged: 0, foreign: 0, unanchored: 0 };
+  const add = (x: Tally): void => { faults.push(...x.faults); tally.units += x.units; tally.judged += x.judged; tally.foreign += x.foreign; tally.unanchored += x.unanchored; };
+  for (const r of full.values()) add(judgeUnits(r.label, r.units, reviews));
+  const candidates: string[] = [];
+  const another: string[] = [];   // files with a phrase left alone as another review's or no review's
+  let binary = 0;
+  let viewerOwn: number[] = [];
+  for (const f of pop.files) {
+    const buf = fs.readFileSync(path.join(REPO, f));
+    if (isBinary(buf)) { binary++; continue; }
+    const text = buf.toString("utf8");
+    const whole = CREATED.includes(f);
+    if (!whole && !vocabulary(text)) continue;
+    candidates.push(f);
+    const place = full.get(f);
+    const units = unitsOf(f, text).filter((u) => !(place && u.line >= place.span[0] && u.endLine <= place.span[1]) && (whole || vocabulary(u.text)));
+    const x = judgeUnits(f, units, reviews, !whole);
+    add(x);
+    if (x.foreign + x.unanchored > 0) another.push(f + " (" + x.foreign + " another review's, " + x.unanchored + " naming none)");
+    if (f === "ui/webview/file-view.ts") viewerOwn = units.filter((u) => /\bfile review\b/.test(u.text) || judgeUnit(u.text, reviews, true).judged > 0).map((u) => u.line);
   }
-  faults.push(...faultsOf("plans/markdown-viewer.md (the follow-on section)", sectionUnits(), reviews));
-  const guide = read("docs/guide.md");
-  const linksAt = guide.indexOf("**Links in a file.**");
-  assert.ok(linksAt >= 0, "the guide's Links in a file paragraph");
-  faults.push(...faultsOf("docs/guide.md (Links in a file)", proseUnits(guide.slice(linksAt, guide.indexOf("\n\n", linksAt))), reviews));
-  const browserPlan = read("plans/file-browser.md");
-  const pointerAt = browserPlan.indexOf("Since 2026-09-19 the viewer keeps a trail of its own");
-  assert.ok(pointerAt >= 0, "the browser plan's pointer paragraph");
-  faults.push(...faultsOf("plans/file-browser.md (the pointer)", proseUnits(browserPlan.slice(pointerAt, browserPlan.indexOf("\n\n", pointerAt))), reviews));
-  const viewer = read("ui/webview/file-view.ts");
-  const viewerUnits = unitsOf("ui/webview/file-view.ts", viewer).filter((u) => roadOneViewerUnit(u.text, reviews));
-  assert.ok(viewerUnits.length >= 10, "file-view.ts names the file review or carries an id of the author's family in its figure and trail comments: " + viewerUnits.length);
-  faults.push(...faultsOf("ui/webview/file-view.ts (units naming the file review or carrying an id of the author's family)", viewerUnits, reviews));
-  assert.deepEqual(faults, [], "every round a record names is a round the convention gives the review it names, and every finding of the author's family follows a pass (TS and JS read by the compiler, comments joined and each string the program sees as one value one unit, a + chain of literals and a template's spans folded, a join, a concat and a hole's run-time value outside the read; Markdown as paragraphs; Python as paragraphs with its literals cooked as Python cooks them; a round is read as the word round or rounds, a hyphen or whitespace and digits, bare or in Markdown emphasis or code markers, with a comma list or a to-range after rounds as the set, and not as an ordinal, a spelled-out number or an abbreviation; an id as the family word, a hyphen and digits, never spaced)");
-  // road 2
+  assert.ok(candidates.length >= 10, "the candidates, the files naming the file review or carrying an id of the family, and the created files: " + candidates.length);
+  assert.ok(tally.units >= 200, "the units judged: " + tally.units);
+  assert.deepEqual(faults, [], "every round a record names is a round the convention gives the review it names, and every finding of the author's family follows a pass (TS and JS read by the compiler, comments joined and each string the program sees as one value one unit, a + chain of literals and a template's spans folded, a join, a concat and a hole's run-time value outside the read; Markdown as paragraphs; Python as paragraphs with its literals cooked as Python cooks them; a round is read as the word round or rounds, a hyphen or whitespace and digits, bare or in Markdown emphasis or code markers, with a comma list or a to-range after rounds as the set, and not as an ordinal, a spelled-out number or an abbreviation; an id as the family word, a hyphen and digits, never spaced; outside the created files and the three records a phrase is judged only where the review named nearest before it is the file review or the author's pass)");
+  assert.equal(viewerOwn.length, VIEWER_UNITS, "ui/webview/file-view.ts carries " + VIEWER_UNITS + " units of this follow-on's (naming the file review, or the author's pass before a round or an id); derived: " + viewerOwn.length + " at lines " + viewerOwn.join(", ") + ". A deleted or an added attribution there moves this count; re-derive VIEWER_UNITS at the new head, never fit the records to it");
+  t.diagnostic("road 1 ran over the tree: " + pop.files.length + " files in the population (" + pop.skipped.length + " paths skipped as no regular file, " + binary + " binary), " + candidates.length + " candidates, " + tally.units + " units judged, " + tally.judged + " phrases ours, " + tally.foreign + " another review's and " + tally.unanchored + " naming no review left alone" + (another.length ? " in " + another.join("; ") : "") + ". Candidates (compare with the PR's added files): " + candidates.join(", "));
+  // road 2 (kept and disclosed: it runs in no CI job and in none after the merge; the plan's Tests paragraph says why)
   const git = (...args: string[]): string => execFileSync("git", args, { cwd: REPO, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
   let base: string | null = null;
   let main: string | null = null;
   try { base = git("merge-base", "origin/main", "HEAD"); main = git("rev-parse", "origin/main"); } catch { base = null; }
-  if (!base) { t.diagnostic("road 2 did not run: origin/main is not known in this checkout (CI's default-depth checkout); road 1 read the created files, the section, the guide, the pointer and file-view.ts's file-review units"); return; }
+  if (!base) { t.diagnostic("road 2 did not run: origin/main is not known in this checkout (CI's default-depth checkout: road 2 runs in no CI job and in none after the merge, the plan's Tests paragraph); road 1 ran over the tree"); return; }
   if (base === main) {
-    t.diagnostic("road 2 did not run: the merge-base with origin/main is origin/main itself (main itself, a branch or a batch head cut from main's tip, or this branch just after merging origin/main), so the diff since it is the whole history over main's tip and not this follow-on's delta; road 2 runs on the open PR branch once main has moved past the branch's last merge of it. Road 1 ran.");
+    t.diagnostic("road 2 did not run: the merge-base with origin/main is origin/main itself (main itself, a branch or a batch head cut from main's tip, or this branch just after merging origin/main), so the diff since it is the whole history over main's tip and not this follow-on's delta; road 2 runs on the open PR branch once main has moved past the branch's last merge of it, and in no CI job and in none after the merge (the plan's Tests paragraph). Road 1 ran over the tree.");
     return;
   }
-  // the working tree against the merge-base (no HEAD argument): the ranges and the units read come from the same bytes
+  // the working tree against the merge-base (no HEAD argument): the ranges and the units read come from the same bytes; the
+  // diff lists tracked paths alone, so a new uncommitted file is road 1's
   const status = git("diff", "--name-status", base).split("\n").filter(Boolean).map((l) => l.split("\t"));
   const created = status.filter((s) => s[0] === "A").map((s) => s[1]).sort();
   if (!created.includes(THIS_MODULE)) {
-    t.diagnostic("road 2 did not run: the diff since the merge-base " + base + " does not add " + THIS_MODULE + " (a later branch after this follow-on landed, whose fork point main has moved past; or HEAD is main), so the diff is that branch's delta and not this follow-on's; road 2 runs on the open PR branch once main has moved past the branch's last merge of it. Road 1 ran.");
+    t.diagnostic("road 2 did not run: the diff since the merge-base " + base + " does not add " + THIS_MODULE + " (a later branch after this follow-on landed, whose fork point main has moved past; or HEAD is main), so the diff is that branch's delta and not this follow-on's; road 2 runs on the open PR branch once main has moved past the branch's last merge of it, and in no CI job and in none after the merge (the plan's Tests paragraph). Road 1 ran over the tree.");
     return;
   }
-  assert.deepEqual(created, [...CREATED].sort(), "the roster is the diff's added files since " + base + " (a file created later joins the roster)");
+  const notInRoster = created.filter((f) => !CREATED.includes(f));
+  const notAdded = CREATED.filter((f) => !created.includes(f));
   const touched = status.filter((s) => s[0] !== "A" && s[0] !== "D").map((s) => s[s.length - 1]);
   const faults2: string[] = [];
   for (const f of touched) {
@@ -417,5 +545,28 @@ test("road 1, every checkout: the files the branch created, the plan's section, 
   }
   assert.ok(touched.length > 0, "the branch touched files since " + base);
   assert.deepEqual(faults2, [], "every round and every id on a line the branch added since " + base + " (the working tree against the merge-base, so an uncommitted edit is charged like a committed one) is judged in its unit and passes (road 2; a round is read as the word round or rounds followed by digits, a comma list or a to-range after rounds as the set, never an ordinal, a spelled-out number or an abbreviation; an id as the family word, a hyphen and digits)");
-  t.diagnostic("road 2 ran: " + touched.length + " touched files read since " + base + ", the working tree's added lines (committed or not) judged in their units");
+  t.diagnostic("road 2 ran: " + touched.length + " touched files read since " + base + ", the working tree's added lines (committed or not) judged in their units; the diff adds " + created.length + " files" + (notInRoster.length ? ", not in CREATED: " + notInRoster.join(", ") : "") + (notAdded.length ? "; in CREATED and not added by the diff: " + notAdded.join(", ") : "") + " (for a human to compare; nothing here gates landing)");
+});
+
+test("the population helper (road 1): a temp repo with a tracked file, an untracked file, an ignored file, a symlink to a file, a dangling symlink and a symlink to a directory lists the tracked, the untracked and the file symlink, and skips the two other symlinks", () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "linknav-pop-"));
+  try {
+    const git = (...args: string[]): void => { execFileSync("git", ["-C", repo, "-c", "user.email=t@example.test", "-c", "user.name=t", ...args], { stdio: "ignore" }); };
+    git("init", "-q", ".");
+    fs.mkdirSync(path.join(repo, "sub"));
+    fs.writeFileSync(path.join(repo, "tracked.md"), "a\n");
+    fs.writeFileSync(path.join(repo, "sub", "untracked.ts"), "b\n");
+    fs.writeFileSync(path.join(repo, ".gitignore"), "ignored.md\n");
+    fs.writeFileSync(path.join(repo, "ignored.md"), "c\n");
+    fs.symlinkSync("tracked.md", path.join(repo, "link-to-file.md"));
+    fs.symlinkSync("nowhere.md", path.join(repo, "dangling.md"));
+    fs.symlinkSync("sub", path.join(repo, "link-to-dir"));
+    git("add", "tracked.md");
+    git("commit", "-q", "-m", "x");
+    const pop = populationOf(repo);
+    assert.deepEqual(pop.files, [".gitignore", "link-to-file.md", "sub/untracked.ts", "tracked.md"], "the tracked file, the untracked ones (the .gitignore itself among them) and the symlink to a file; the ignored file is not listed");
+    assert.deepEqual(pop.skipped, ["dangling.md", "link-to-dir"], "the dangling symlink and the symlink to a directory are skipped, not read");
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
 });

@@ -21,7 +21,12 @@
 // names the part of the gate that held them; before the gate they ran there and failed on a delta that was not this one's;
 // a batch head that main has moved under passes both parts and fails the count on the other PRs' files, the gate's
 // residual, disclosed here and in the plan and not closed, with a third part named for the maintainer in the PR body: the
-// author's closing pass after the file review's round 4, attribution-and-gates-2 with records-2); the guide's two sentences are whole, the old wording
+// author's closing pass after the file review's round 4, attribution-and-gates-2 with records-2; and the verifications run
+// in no CI job and in none after the merge, since the shell job that runs this module checks the pull request out at depth
+// 1 with no origin/main and a landed follow-on's diff is some later branch's, so where landing is gated the prose alone
+// carries L6, re-derived by hand at the merged head: the file review's round 5, correctness-4, the plan's Tests paragraph
+// stating it once with the checkouts, and this module holding the two CI jobs that run the tools and the UI tests to a
+// checkout with no fetch-depth: 0, so a change there names the plan's sentence); the guide's two sentences are whole, the old wording
 // is gone, and the sentence that says a link opens the file in place still stands (it is still true); the browser
 // plan's pointer stands in its navigation-stack section; and the module list is two-way (every module the section's
 // `ls` produces is named in the section and the count the section gives is the listing's, read from its sentence rather
@@ -251,7 +256,7 @@ test('L4: the browser leg reads the bar\'s name and the Back title after Enter o
 
 // ── L5 and L6: no history API, nothing new leaves the machine ──────────────────────────────────────
 
-test('L5 and L6: no history API call in the trail or the viewer; the trail module imports nothing and fetches nothing; L6 names its two verifications from the merge-base with origin/main, and they hold on the open PR branch where main has moved past its last merge (the merge-base off origin/main and the diff adding this module)', (t) => {
+test('L5 and L6: no history API call in the trail or the viewer; the trail module imports nothing and fetches nothing; L6 names its two verifications from the merge-base with origin/main, and they hold on the open PR branch where main has moved past its last merge (the merge-base off origin/main and the diff adding this module), in no CI job and in none after the merge, which the plan says once and this module holds CI to', (t) => {
   for (const [name, src] of [['file-trail.ts', trail], ['file-view.ts', viewer]]) {
     assert.ok(!/\b(?:pushState|replaceState|hashchange)\b/.test(src), name + ': no pushState, replaceState or hashchange');
     assert.ok(!/\bhistory\.(?:back|forward|go)\(/.test(src), name + ': no history step of its own');
@@ -271,7 +276,21 @@ test('L5 and L6: no history API call in the trail or the viewer; the trail modul
   // saying which part held them: with the merge-base at origin/main (main itself, a branch or a batch head cut from main's
   // tip, this branch right after merging origin/main) the diff is the whole history over main's tip; on a later branch after the follow-on has landed the
   // diff adds that branch's files and not this module, however far main has moved. A checkout with no origin/main (CI's
-  // default-depth checkout of a pull request) holds the prose alone.
+  // default-depth checkout of a pull request) holds the prose alone. So the verifications run in no CI job and in none after
+  // the merge (the file review's round 5, correctness-4): the plan's Tests paragraph says so once, with the checkouts, and the
+  // premise is held here off ci.yml itself, the jobs whose steps run the tools tests and npm test checking out with no
+  // fetch-depth: 0, so a job that starts fetching history names the plan's sentence to reword.
+  assert.ok(section.includes('L6\'s two verifications and the attribution module\'s second road (below) run in no checkout that gates landing, and in none after the merge'), 'the plan states once that the verifications run in no checkout that gates landing');
+  const ci = read('.github', 'workflows', 'ci.yml');
+  const jobsAt = ci.indexOf('\njobs:\n');
+  assert.ok(jobsAt >= 0, 'ci.yml has a jobs: block');
+  const jobs = ci.slice(jobsAt + 7).split(/\n(?=  [a-z][a-z-]*:\n)/).map((block) => block.replace(/^[ \t]*#.*$/gm, ''));
+  const gating = jobs.filter((block) => /run: node --test tools\/\*\.test\.mjs/.test(block) || /run: npm test\b/.test(block));
+  assert.equal(gating.length, 2, 'two CI jobs run the tools tests and npm test: ' + gating.map((b) => b.split('\n')[0].trim()).join(', '));
+  for (const block of gating) {
+    assert.ok(/uses: actions\/checkout@/.test(block), block.split('\n')[0].trim() + ' checks the repository out');
+    assert.ok(!/fetch-depth:\s*0\b/.test(block), block.split('\n')[0].trim() + ' checks out at the default depth, with no origin/main, so the merge-base gate holds L6\'s verifications off there; a job that fetches history now runs them, and the plan\'s sentence that they run in no checkout that gates landing is to be reworded');
+  }
   assert.ok(section.includes('`git diff --stat $(git merge-base origin/main HEAD) HEAD -- kernel/` is empty'), 'L6 names the kernel stat from the merge-base');
   assert.ok(section.includes('`git diff --name-only $(git merge-base origin/main HEAD) HEAD` lists files under ui/webview, docs, plans, tools, upstream or tests alone'), 'and the listing from the merge-base');
   assert.ok(!section.includes('git diff --stat 34142c262') && !section.includes('git diff --name-only 34142c262'), 'no verification against the branch point remains');
@@ -282,11 +301,12 @@ test('L5 and L6: no history API call in the trail or the viewer; the trail modul
   let base = null;
   let main = null;
   try { base = git('merge-base', 'origin/main', 'HEAD'); main = git('rev-parse', 'origin/main'); } catch { base = null; }
-  if (!base) { t.diagnostic('L6\'s verifications did not run: origin/main is not known in this checkout (CI\'s default-depth checkout); the prose alone holds them here'); return; }
-  if (base === main) { t.diagnostic('L6\'s verifications did not run: the merge-base with origin/main is origin/main itself (main itself, a branch or a batch head cut from main\'s tip, or this branch just after merging origin/main), so the diff since it is the whole history over main\'s tip and not this follow-on\'s delta; they run on the open PR branch once main has moved past the branch\'s last merge of it'); return; }
+  const NOWHERE = '; the verifications run in no CI job and in none after the merge (the plan\'s Tests paragraph)';
+  if (!base) { t.diagnostic('L6\'s verifications did not run: origin/main is not known in this checkout (CI\'s default-depth checkout); the prose alone holds them here' + NOWHERE); return; }
+  if (base === main) { t.diagnostic('L6\'s verifications did not run: the merge-base with origin/main is origin/main itself (main itself, a branch or a batch head cut from main\'s tip, or this branch just after merging origin/main), so the diff since it is the whole history over main\'s tip and not this follow-on\'s delta; they run on the open PR branch once main has moved past the branch\'s last merge of it' + NOWHERE); return; }
   const status = git('diff', '--name-status', base, 'HEAD').split('\n').filter(Boolean).map((l) => l.split('\t'));
   const files = status.map((s) => s[s.length - 1]);
-  if (!status.some((s) => s[0] === 'A' && s[1] === THIS_MODULE)) { t.diagnostic('L6\'s verifications did not run: the diff since the merge-base ' + base + ' does not add ' + THIS_MODULE + ' (a later branch after this follow-on landed, whose fork point main has moved past; or HEAD is main), so the diff is that branch\'s delta and not this follow-on\'s; they run on the open PR branch once main has moved past the branch\'s last merge of it'); return; }
+  if (!status.some((s) => s[0] === 'A' && s[1] === THIS_MODULE)) { t.diagnostic('L6\'s verifications did not run: the diff since the merge-base ' + base + ' does not add ' + THIS_MODULE + ' (a later branch after this follow-on landed, whose fork point main has moved past; or HEAD is main), so the diff is that branch\'s delta and not this follow-on\'s; they run on the open PR branch once main has moved past the branch\'s last merge of it' + NOWHERE); return; }
   assert.equal(git('diff', '--stat', base, 'HEAD', '--', 'kernel/'), '', 'no kernel change since the merge-base ' + base);
   const DIRS = ['ui/webview/', 'docs/', 'plans/', 'tools/', 'upstream/', 'tests/'];
   for (const f of files) assert.ok(DIRS.some((d) => f.startsWith(d)), f + ' lies under one of the six directories L6 names');
