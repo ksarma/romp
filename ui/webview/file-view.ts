@@ -5071,7 +5071,8 @@ function armFigureControls(body: HTMLElement, filePath: string): () => void {
  *  needs to be none, since the floor refused it at its load (figureBox reads its laid-out box; the file review's round 3,
  *  correctness-1: the skip's reason had claimed the show or the restore reports every such figure's real box). The residual the
  *  skip leaves: a figure hidden AFTER its load by any other road keeps a standing control until its next report with a box. The
- *  product has one such road, an expanded callout (`> [!note]+`, a `<details open>` in md-config.ts) folded by the reader, and
+ *  product has one such road, a `<details>` folded by the reader (an expanded callout, `> [!note]+`, renders as a `<details open>`
+ *  in md-config.ts), and
  *  the control is harmless there, by a mechanism that is not this skip: the fold reports nothing (the engines report no box for
  *  skipped content, so nothing reaches the observer while the callout is folded), the control is folded with the figure, so
  *  neither is visible or hit-testable and the control stands over no prose, and the first report with a box after the reopen
@@ -5101,8 +5102,9 @@ function watchFigureBoxes(body: HTMLElement, filePath: string, onRendered: (cb: 
       // it stands, and the skip is no guard for it and needs to be none, since the floor refused it at its load, figureBox
       // reading the laid-out box of a figure in the document as it is (the file review's round 3, correctness-1). The residual
       // the skip leaves: a figure hidden after its load by any other road keeps a standing control until its next report with
-      // a box; the product's one such road, an expanded callout folded by the reader, reports nothing while folded and folds
-      // the control with the figure, and the first report with a box after the reopen decides the figure again (the docstring
+      // a box; the product's one such road, a `<details>` folded by the reader (an expanded callout renders as one), reports
+      // nothing while folded and folds the control with the figure, and the first report with a box after the reopen decides
+      // the figure again (the docstring
       // above; the file review's round 4, ui-1).
       if (e.contentRect.width === 0 || e.contentRect.height === 0) continue;
       const img = e.target;

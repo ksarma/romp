@@ -8010,8 +8010,8 @@ author hid; the same read makes a load while the viewer is hidden a decision ove
 at that load and the show's report of the real box brings it back, where before the control stood through the hidden
 load; the floor leg drives both authored shapes beside prose, the click on the words, and the hidden load); the
 residual the skip leaves, a figure hidden after its load by any road but the viewer's own keeping a standing control
-until its next report with a box, has one road in the product, an expanded callout (`> [!note]+`, a `<details open>`)
-folded by the reader, on which the control is harmless by a mechanism that is not the skip: the fold reports nothing, so
+until its next report with a box, has one road in the product, a `<details>` folded by the reader (an expanded callout,
+`> [!note]+`, renders as a `<details open>`), on which the control is harmless by a mechanism that is not the skip: the fold reports nothing, so
 nothing reaches the observer while the callout is folded, the control is folded with the figure and stands over no prose,
 and the first report with a box after the reopen decides the figure again (the file review's round 4, ui-1, measured in
 the three engines from plain authored markdown: folded, the figure kept its box and its control, both out of the

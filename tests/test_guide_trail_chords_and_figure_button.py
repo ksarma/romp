@@ -164,7 +164,9 @@ class TheHiddenPairIsOneLineWithTwoClaims(GuideSentences):
     that quote those sentences are read for the clauses too (the file review's round 4, extra8-3)."""
 
     def test_the_hide_line_stands_with_the_guide_clause_and_the_browser_plan_clause_it_makes_true(self):
-        self.assertIn(HIDE_LINE, self.viewer,
+        # assertTrue, not assertIn: on a revert the failure opens with the two sentences, not with the viewer's whole source as
+        # the haystack before them (the author's closing pass after the file review's round 4, attribution-and-gates-9)
+        self.assertTrue(HIDE_LINE in self.viewer,
                       "openFileView's hide of the Back and Forward pair is gone. Two sentences claim it and go false with it: the guide's "
                       "(docs/guide.md, Links in a file) %r and the browser plan's (plans/file-browser.md, the navigation-stack pointer) %r; "
                       "a revert of the hide rewrites both, and the tools pins FIRST and POINTER that quote them, beside the pins and legs "
