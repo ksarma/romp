@@ -2854,15 +2854,15 @@ class TheStatedLimitIsWorded(unittest.TestCase):
         argument, whatever the quote spelling; a comment, a string carrying the call's spelling, the name in a later
         argument, or another name is not a loader; a text with the name that does not parse raises naming the file."""
         name = PRIVATE_KERNEL_NAME
-        p = "os.path.join(BIN, 'romp-kernel')"
+        loaded_path_expr = "os.path.join(FIXTURES, 'a_loaded_module.py')"   # the second positional: not read by the census
         sources = {
-            "tests/test_double_quoted.py": 'km = load_source("%s", %s)\n' % (name, p),
-            "tests/test_single_quoted.py": "km = load_source('%s', %s)\n" % (name, p),
-            "tests/test_prefixed.py": "km = romp_load.load_source('%s', %s)\n" % (name, p),
+            "tests/test_double_quoted.py": 'km = load_source("%s", %s)\n' % (name, loaded_path_expr),
+            "tests/test_single_quoted.py": "km = load_source('%s', %s)\n" % (name, loaded_path_expr),
+            "tests/test_prefixed.py": "km = romp_load.load_source('%s', %s)\n" % (name, loaded_path_expr),
             "tests/test_comment_only.py": "# %s is loaded elsewhere\n" % name,
             "tests/test_in_a_string.py": "PROBE = 'load_source(\"%s\", p)'\n" % name,
-            "tests/test_second_argument.py": 'km = load_source(%s, "%s")\n' % (p, name),
-            "tests/test_other_name.py": 'km = load_source("romp_kernel_other", %s)\n' % p,
+            "tests/test_second_argument.py": 'km = load_source(%s, "%s")\n' % (loaded_path_expr, name),
+            "tests/test_other_name.py": 'km = load_source("romp_kernel_other", %s)\n' % loaded_path_expr,
         }
         self.assertEqual(private_kernel_loaders(sources),
                          ["tests/test_double_quoted.py", "tests/test_prefixed.py", "tests/test_single_quoted.py"],
