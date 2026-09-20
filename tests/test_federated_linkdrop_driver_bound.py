@@ -496,8 +496,8 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
         class Rec(L.LinkDropOldLocal):
             driver_error = None
 
-        def record(fleet_frames, feed_frames=(), socks=None, rows=()):
-            outline = list(socks) if socks is not None else [{"relay": True, "frames": list(fleet_frames)}]   # no openAt: never open
+        def record(outline_frames, feed_frames=(), socks=None, rows=()):
+            outline = list(socks) if socks is not None else [{"relay": True, "frames": list(outline_frames)}]   # no openAt: never open
             Rec.result = {"marks": {"A0": A0, "A1": A1, "end": A1 + 1}, "died": None,
                           "pages": {"fleet": {"socks": outline}, "feed": {"socks": [{"relay": True, "frames": list(feed_frames)}]}}}
             Rec.changes_made = [dict(made)]
