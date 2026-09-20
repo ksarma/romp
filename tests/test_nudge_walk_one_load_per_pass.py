@@ -951,6 +951,14 @@ def _walk(tree):
 # (TheGrammarIsTheOneTheWalkersClassify); the finder is silent on a walk under an unlisted name, and the walk contract itself is
 # carried by execution (TheWalkersRefuseAStrangerByExecution).
 _TRAVERSAL = ("walk", "iter_child_nodes", "NodeVisitor", "NodeTransformer")
+# _FINDER_FORMS: the forms _traversal_references reads, a roster like _TRAVERSAL (which forms the finder reads is a policy, not a
+# population the module can compute). The finder case derives the forms the finder reports from the finder's own source and the
+# forms the samples cover from the rows, and holds each equal to this roster both ways (review round 7, the seventh-axis verifier: the
+# forms were pinned one way, so the getattr rows removed left the finder's getattr branch pinned by nothing; the round's close: the
+# source derivation held against the samples alone agreed with them when the branch and the rows were removed together, so this
+# roster is the copy that names the loss). A form removed from the finder, the samples and this roster at once is unseen, as a name
+# removed from _TRAVERSAL with its samples is.
+_FINDER_FORMS = ("attribute", "from-import", "getattr")
 # Every reference to a traversal name outside _walk, keyed (enclosing def, name) with the reason it walks nothing around _walk. The
 # pin asserts each row is used (a stale row reds) and that nothing else refers to one; a new legitimate reference gets a row here.
 _WALK_EXEMPT = {
@@ -967,7 +975,7 @@ _WALK_EXEMPT = {
 
 def _traversal_references(tree):
     """Every reference in `tree` to one of the ast module's traversal names (_TRAVERSAL), as sorted (line, name, form, spelling,
-    owner) tuples, in three forms keyed on the NAME and never on the road to the module: `attribute`, an Attribute named like one on
+    owner) tuples, in three forms (_FINDER_FORMS) keyed on the NAME and never on the road to the module: `attribute`, an Attribute named like one on
     any base at all (`ast.walk`; `_a.walk` after `import ast as _a`; `importlib.import_module("ast").walk`, `__import__("ast").walk`,
     `sys.modules["ast"].walk`; `_m.walk` after `_m = ast`; a NodeVisitor or NodeTransformer base is spelled this way too), the base
     spelled by ast.unparse for the message; `from-import`, keyed on the imported name alone whatever module the road names (`from
@@ -4143,13 +4151,15 @@ class TheGrammarIsTheOneTheWalkersClassify(unittest.TestCase):
         new one with no walker involved, so the version demand does not rest on this pin alone. Derives: every reference in this
         module's AST in the three forms, from the module's own text; the _WALK_EXEMPT rows both ways (every row used, nothing
         outside them); the roster's names against the interpreter (each an attribute of ast) and against the samples both ways; and
-        the finder's forms from its own source, the third element of every tuple it appends to out, against the forms the samples
-        cover, both ways (until the round-7 close the samples pinned the roster by name both ways and by form one way, so a form
-        whose rows were all removed left its branch of the finder pinned by nothing). Bounds: the four names (the ruling's stop, a
-        policy: a list of syntax does not converge); the forms, the finder's, a policy read off its source and not counted here; the
-        samples and the limits as the independent source, literal rows the module cannot compute without spelling the names they
-        test; and the roads per form, which no derivation counts (a road with no sample row is pinned by the plants the history
-        paragraphs record alone)."""
+        the finder's forms from its own source, the third element of every tuple it appends to out, and the forms the samples cover,
+        each against _FINDER_FORMS both ways (until the round-7 close the samples pinned the roster by name both ways and by form one
+        way, so a form whose rows were all removed left its branch of the finder pinned by nothing; the close's first pin held the
+        source derivation against the samples alone, and the branch deleted with its rows removed left them agreeing, so the roster
+        is the copy that names the loss). Bounds: the four names and the three forms (the ruling's stop and the finder's policy, two
+        rosters: a list of syntax does not converge, and a form removed from the finder, the samples and the roster at once is unseen,
+        as a name removed from _TRAVERSAL with its samples is); the samples and the limits as the independent source, literal rows the
+        module cannot compute without spelling the names they test; and the roads per form, which no derivation counts (a road with
+        no sample row is pinned by the plants the history paragraphs record alone)."""
         refs = _traversal_references(ast.parse(Path(os.path.realpath(__file__)).read_text(encoding="utf-8")))
         outside = [r for r in refs if r[4] != "_walk"]
         stray = [r for r in outside if (r[4], r[1]) not in _WALK_EXEMPT]
@@ -4222,10 +4232,17 @@ class TheGrammarIsTheOneTheWalkersClassify(unittest.TestCase):
                  and len(c.args[0].elts) > 2 and isinstance(c.args[0].elts[2], ast.Constant)}
         self.assertTrue(forms, "the finder's forms are derived from its source, the third element of every tuple it appends to out, and "
                                "the derivation answered none: the finder's shape changed, so read it again here")
+        self.assertEqual(forms, set(_FINDER_FORMS),
+                         "the forms the finder reports, derived from its source, are exactly _FINDER_FORMS: a form the roster names and the "
+                         "finder does not report, %r, lost its branch (the round-7 close: with the derivation held against the samples "
+                         "alone, the getattr branch deleted with its rows removed left the two agreeing on two forms); a form the finder "
+                         "reports and the roster does not name, %r, needs its roster entry and its sample rows"
+                         % (sorted(set(_FINDER_FORMS) - forms), sorted(forms - set(_FINDER_FORMS))))
         covered = {expected[2] for _source, expected in samples}
-        self.assertEqual(covered, forms, "the forms the samples cover are exactly the forms the finder reports: a form of the finder with no "
-                                         "sample, %r, has its branch pinned by nothing (add a row per road); a sample naming a form the finder "
-                                         "never reports, %r, is a row the loop below reds" % (sorted(forms - covered), sorted(covered - forms)))
+        self.assertEqual(covered, set(_FINDER_FORMS),
+                         "the forms the samples cover are exactly _FINDER_FORMS: a form with no sample, %r, has its branch of the finder "
+                         "pinned by nothing (add a row per road); a sample naming a form outside the roster, %r, is a row the loop below "
+                         "reds" % (sorted(set(_FINDER_FORMS) - covered), sorted(covered - set(_FINDER_FORMS))))
         for source, expected in samples:
             got = _traversal_references(ast.parse(source))
             self.assertEqual(got, [expected], "the finder reads %r as one reference, %r, and answers %r" % (source, expected, got))
