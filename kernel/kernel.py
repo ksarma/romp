@@ -54316,12 +54316,18 @@ def _resolve_reconnect(c, chat_list):
         # window (the shell's /reveal at boot beats the chat pane's socket on the ack and vanish roads, and on sw when the browser opens the
         # installed app on its own start URL) names the session the user tapped, and the consume behind this strip will focus it. When the
         # tab list carries it, the one full is ITS, not the last-shown tab's: before this the phone's skeleton first dial spent the full on
-        # the dial's hint and the notified session arrived as a skeleton and cost a skeleton-click round trip. The entry read is the one
-        # _consume_pending_reveal lands (the window's, else the no-wid one); a parked sid the list lacks (an ended session, another host's
-        # id) leaves the hint as before; no hint keeps the fail-safe whole push below. A dict read under this slot lock and no second lock:
-        # the park is one dict write (_reveal_request, _send_focus_to_view), and a park landing after this read is served as today, its
-        # consume behind the strip landing the focus on a skeleton tab the page then asks for. The ruled release+wake half is DEFERRED by
-        # the reviewer, not landed: executed, it added a duplicate full on the live road and closed nothing.
+        # the dial's hint and the notified session arrived as a skeleton, shown only after a skeleton-click round trip. What this buys is
+        # that time-to-show, NOT a full or an ask saved (the round-4b verify; settled by execution in the ack-road leg of
+        # tests/test_notification_tap_resume_browser.py): the strip lands ahead of the focus, so the page restores the tab its blob stored,
+        # a skeleton now, and asks for it (activeTab, then needFull skeleton-click) before it processes the focus; the ask is answered
+        # (the activeTab's release, _release_skeleton) and the tab is whole at a later tap. The round trip moves from the notified session
+        # to the stored tab. By reading, not driven: on a warm redial with a park, render.ts noteSkeletonTabOrder re-shows the shown tab
+        # that became a skeleton, a loader until the focus switches. The entry read is the one _consume_pending_reveal lands (the
+        # window's, else the no-wid one); a parked sid the list lacks (an ended session, another host's id) leaves the hint as before; no
+        # hint keeps the fail-safe whole push below. A dict read under this slot lock and no second lock: the park is one dict write
+        # (_reveal_request, _send_focus_to_view), and a park landing after this read is served as today, its consume behind the strip
+        # landing the focus on a skeleton tab the page then asks for. The ruled release+wake half is DEFERRED by the reviewer, not landed:
+        # executed, it added a duplicate full on the live road and closed nothing.
         if act:
             _pk = str(c.get("wid") or "")
             _pr = _PENDING_REVEAL.get(_pk)

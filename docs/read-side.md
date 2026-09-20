@@ -288,16 +288,18 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   never while the tab is hidden; one `skeleton` client-diag row (count, active)
   records the regime. On the phone layout the chat pane's first dial declares
   `skeleton=1` too (since 2026-09-18), so a cold open there is served the same
-  way: the strip, one full for the stored tab and a status per other tab, and
-  the `skeleton` row records it. The idle chain's start gate runs on every
-  layout (the desktop's panes and dial are unchanged; a desktop redial's first
-  background ask follows the active tab's full instead of the strip's paint):
-  the chain starts from the moment the stored tab's full has applied, from a tap
-  onto a tab already served whole, or from the local strip when it lists no such
-  local tab, because the stored tab ended while the phone was away or because it
-  is another host's, whose full arrives on that host's relay socket and is not
-  waited for (as before). On the phone the chain also waits for the chat pane to
-  be on screen: a phone opened on another tab arms it when the Chat tab is shown.
+  way: the strip, one full for the stored tab (or, when a notification tap is
+  parked for the window, for the tapped session: review round 4b) and a status
+  per other tab, and the `skeleton` row records it. The idle chain's start gate
+  runs on every layout (the desktop's panes and dial are unchanged; a desktop
+  redial's first background ask follows the active tab's full instead of the
+  strip's paint): the chain starts from the moment the stored tab's full has
+  applied, from a tap onto a tab already served whole, or from the local strip
+  when it lists no such local tab, because the stored tab ended while the phone
+  was away or because it is another host's, whose full arrives on that host's
+  relay socket and is not waited for (as before). On the phone the chain also
+  waits for the chat pane to be on screen: a phone opened on another tab arms it
+  when the Chat tab is shown.
   A return on the phone (the redial that follows a socket the background left
   dead; the owner's decision of 2026-09-19) reloads the visible tab alone: the
   kernel re-skeletons the other tabs on the new socket as before, and each of
