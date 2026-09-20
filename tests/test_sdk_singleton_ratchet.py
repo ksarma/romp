@@ -458,12 +458,14 @@ is that run's, at the head it prints, and none is written here.
     another value; derive: boundary-link-dropped); the link keyed on the rendered text in place of the object, the
     refusal recording its object's rendered path and the boundary testing the found object's live rendering against
     that list (red: every case whose refused object is repointed between the module start read and the scope's reads,
-    the two paths then differing; derive: boundary-link-by-path); the clause emitted on every start-to-end verdict
-    (red: every case that reads a start-to-end boundary verdict on a found object no refusal named for the clause's
-    absence, or reads one to its last words; the last-object and put-back roads carry no gate and are untouched;
-    derive: boundary-link-unconditional); the link keyed on any refusal in the worker in place of the found object,
-    membership by existence (red: every case with a refusal followed by a start-to-end boundary verdict whose found
-    object is not the refused one; derive: boundary-link-by-existence); the clause keyed on the found object on every
+    the two paths then differing; derive: boundary-link-by-path); the clause emitted on every start-to-end verdict, the
+    whole gate gone (red: every case that reads a start-to-end boundary verdict on a found object no refusal named for
+    the clause's absence, or reads one to its last words, and every case that reads the reload verdict of a scope that
+    found the refused object for the clause's absence, the changed-marker term going with the gate; the last-object and
+    put-back roads carry no gate and are untouched; derive: boundary-link-unconditional); the link keyed on any refusal
+    in the worker in place of the found object, membership by existence (red: every case with a refusal followed by a
+    start-to-end boundary verdict whose found object is not the refused one; derive: boundary-link-by-existence); the
+    clause keyed on the found object on every
     road, the gate moved from the start-to-end call to the boundary fixture (red: every case whose scope found the
     refused object and whose verdict renders another object, the last-object roads; derive:
     boundary-link-on-start-object); the clause moved into _sdk_judge, the boundary's call bare and the changed-object
@@ -3525,8 +3527,9 @@ class TheScopeThatFoundTheRefusedObjectEndsOnAReExecution(_NestedRun, unittest.T
     after value alone against jd.STATE as the reload re-bound it (over a root that is not jd.STATE, the sandbox remedy)
     and no before value: a clause there would say the object the scope found is the refused one on a line that shows no
     found object, and the gate's changed-marker term keeps it off. The refusal and the verdict are One.a's one teardown
-    report, one error; the module end is quiet on the object the class end named. Kill cell: the term dropped from the
-    gate (derive: boundary-link-marker-term-dropped), under which the reload verdict carries the clause."""
+    report, one error; the module end is quiet on the object the class end named. Kill cells: the term dropped from
+    the gate (derive: boundary-link-marker-term-dropped) and the whole gate gone (derive: boundary-link-unconditional),
+    under either of which the reload verdict carries the clause."""
     SCRATCH = SCRATCH_S16
     ERRORS = 1
     FIRST = "One.test_a_builds_over_the_run_root"
