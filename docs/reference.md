@@ -739,35 +739,34 @@ turn in flight so the reconnect follows at once; while the session compacts
 or moves, `--now` is refused (exit 1), and the same command without `--now`
 queues the pick behind the compaction or the move (`default` never queues:
 during a compaction it applies at once and the session reconnects when the
-compaction ends; during a move it is refused). A pick queued earlier for
-the session (the dashboard's, mid-turn, or a plain `romp billing` that
-queued) is dropped by `--now` and by `default`, since it would otherwise
-apply over the newer pick at the session's next quiet moment, and the output
-says so. The
-pick `default` has no Billing menu counterpart: it clears the session's own
-pick, so the session follows the machine default again and reconnects when
-it runs the other side, at its turn on the spawn budget the default's walk
-uses (its CLI keeps serving until then, and the output says so); it never
-queues, so during a move it is refused. `romp
-billing --all-following <pick>` writes the pick on every running session
-that follows the machine default, with the roster and filter of the walk
-that reconnects the followers when the default changes and a per-session
-pick's own schedule; those sessions then carry their own pick and stop
-following the default, and the output names the ones moved and which of
-them reconnect (one already running the side needs none; one whose CLI no
-landing has stamped yet is left to that landing, and one attached to a
-surviving CLI that has not reported which side it bills is left to that
-CLI's first report; the relaunches take turns on the same spawn budget the
-default's walk uses, each CLI serving until its turn), the ones skipped for a
-pick of their own, any whose record would not read (nothing was written
-for those), any whose step failed (one session's fault leaves the walk
-to the rest; that session keeps following the default with no change, and
-the Log names the fault), and any whose move is in flight (the pick is
-parked behind the move and applies when it finishes, as a plain pick parks;
-the walk the machine default's own change runs has no such park). A session an attached machine runs is changed by that machine's
-kernel, and the walk covers this machine's sessions only; a kernel there
-from a release before these routes answers `the kernel on <host> predates
-romp billing's routes`, with the remedy.
+compaction ends; during a move it is refused). A pick queued earlier for the
+session (the dashboard's, mid-turn, or a plain `romp billing` that queued)
+is dropped by `--now` and by `default`, since it would otherwise apply over
+the newer pick at the session's next quiet moment, and the output says so.
+The pick `default` has no Billing menu counterpart: it clears the session's
+own pick, so the session follows the machine default again and reconnects
+when it runs the other side, at its turn on the spawn budget the default's
+walk uses (its CLI keeps serving until then, and the output says so); it
+never queues, so during a move it is refused. `romp billing --all-following
+<pick>` writes the pick on every running session that follows the machine
+default, with the roster and filter of the walk that reconnects the
+followers when the default changes and a per-session pick's own schedule;
+those sessions then carry their own pick and stop following the default, and
+the output names the ones moved and which of them reconnect (one already
+running the side needs none; one whose CLI no landing has stamped yet is
+left to that landing, and one attached to a surviving CLI that has not
+reported which side it bills is left to that CLI's first report; the
+relaunches take turns on the same spawn budget the default's walk uses, each
+CLI serving until its turn), the ones skipped for a pick of their own, any
+whose record would not read (nothing was written for those), any whose step
+failed (one session's fault leaves the walk to the rest; that session keeps
+following the default with no change, and the Log names the fault), and any
+whose move is in flight (the pick is parked behind the move and applies when
+it finishes, as a plain pick parks; the walk the machine default's own
+change runs has no such park). A session an attached machine runs is changed
+by that machine's kernel, and the walk covers this machine's sessions only;
+a kernel there from a release before these routes answers `the kernel on
+<host> predates romp billing's routes`, with the remedy.
 
 On a one-auth box the picker never chooses the missing side. A remembered
 default that names the side this box cannot bill is set aside at spawn and the

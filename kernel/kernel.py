@@ -40013,7 +40013,7 @@ def _save_pending_ops():
                           json.dumps({k: [list(o) for o in v] for k, v in _pending_ops.items() if v}),
                           mode=0o600)
         except Exception:
-            sys.stderr.write("pending-ops save: %s\n" % traceback.format_exc())
+            _exit_log("pending-ops save: %s\n" % traceback.format_exc())   # the swallowed save's own line must not raise either (2026-09-20)
 
 
 _pending_ops = _load_pending_ops()   # sid -> [("send", text, echo[, qid]) | ("command", text, echo[, qid]) | ("model", v) | ("effort", v) | ("fast", v) | ("env", {…}) | ("cwd", path, busy_retries) | ("compact",), …] in park order
@@ -40247,9 +40247,12 @@ def _park_op_locked(sid, op):
     _save_pending_ops()               # mirror the park to disk (survives a kernel death)
     # one line per park (2026-09-09): a pick that queued behind an open turn and fired minutes later left
     # no trace here, so the backend's own setter line was the first sign the pick had happened at all
-    sys.stderr.write("parked-op: %s parked for %s (%s; depth %d)\n"
-                     % (op[0], str(sid)[:8], "replaced the earlier %s in place" % op[0] if replaced else "queued",
-                        len(q)))
+    # best-effort, through _exit_log (round 2 of the billing verb's review, 2026-09-20; its kernel-2): the op is queued and
+    # mirrored above, and a dead stderr raised out of the park with the op in the queue, so the plain road of POST /billing
+    # answered a traceback for a pick it had parked, and the walk's park hook aborted the walk
+    _exit_log("parked-op: %s parked for %s (%s; depth %d)\n"
+              % (op[0], str(sid)[:8], "replaced the earlier %s in place" % op[0] if replaced else "queued",
+                 len(q)))
 
 
 def _parked_md(op):
@@ -41067,6 +41070,17 @@ def _set_auth_or_park_verdict(be, sid, value, park=True):
         return "refused"
     if park and _gate_or_park(sid, ("auth", value)):
         return "parked"
+    # THE GUARDED DOOR (round 2 of the billing verb's review, 2026-09-20; its kernel-1, ruled high, both refuters): the SDK
+    # backend's set_auth_guarded runs set_auth through the one guarded entry point every follower step takes
+    # (_follow_default_guarded), so a record write it cannot make (a full or read-only state directory) is answered as a
+    # refusal with the live pick pair and pending restored and the failure's own sentence left for _auth_refusal, where the
+    # bare call raised out of POST /billing's --now and plain roads into do_POST's catch-all: an HTTP 500 whose body was the
+    # traceback with this box's absolute paths, the live object moved onto the new pick while the record read the old one
+    # with no arm behind it. The census below stays at the helper and the replay: a backend without the door (a fake, the
+    # Codex backend) takes set_auth as before
+    door = getattr(be, "set_auth_guarded", None)
+    if door is not None:
+        return "ok" if door(sid, value) else "refused"
     return "ok" if be.set_auth(sid, value) else "refused"
 
 
@@ -41108,7 +41122,7 @@ def _drop_parked_auth(sid, why):
     with --now) fired at the drain's next quiet cycle OVER the pick the verb had just applied, so the session ended on
     the OLDER pick although the verb answered that it bills the newer one from now, and a parked ("auth", "key") fired
     after `default` and gave the session a pick again. The newer gesture supersedes the parked one: it is dropped here,
-    counted in the answer (`superseded`) and said on stderr in the ✕ path's form (_cancel_parked). The op at
+    counted in the answer (`superseded`) and said on stderr in the ✕ path's form (_cancel_parked), best-effort. The op at
     _inflight_slot is with the backend already and cannot be unsaid (the drain's `took` False path tolerates a removal,
     but the call has run), so it stays and fires after this pick, the one race left. Locked as every queue mutation
     is: the removal and the mirror write under _pending_ops_lock, the pusher wake after the release; an emptied queue
@@ -41133,7 +41147,11 @@ def _drop_parked_auth(sid, why):
             _pending_ops.pop(sid, None)
             _drain_hold.pop(sid, None)
         _save_pending_ops()
-    sys.stderr.write("parked-op cancel: %s auth (%d superseded by %s)\n" % (sid, len(gone), why))
+    # best-effort, through _exit_log (round 2 of the billing verb's review, 2026-09-20; its kernel-2 and tests-1, both
+    # refuters): written bare, a dead stderr (a reset journal stream, a closed tty, a full log disk) raised out of this
+    # function on the `default` and `--now` roads and out of the walk's after_write hook, and POST /billing answered the
+    # traceback; the drop had happened, and the line is not worth the answer
+    _exit_log("parked-op cancel: %s auth (%d superseded by %s)\n" % (sid, len(gone), why))
     _mark_views_dirty()
     return len(gone)
 
@@ -41286,8 +41304,8 @@ def _billing_request(b):
         if not be.record_reads(sid):
             return {"ok": False, "error": "%s's record would not read, so nothing was changed" % who, "_status": 409}
         superseded = _drop_parked_auth(sid, "the default pick")
-        # A REFUSED CLEAR ANSWERS 409 IN ITS OWN WORDS, NEVER A TRACEBACK (round 2 of the billing verb's review, 2026-09-19;
-        # its fresh-2): follow_default_auth's clear and its reg mirror are one guarded unit now, so a record write that fails
+        # A REFUSED CLEAR ANSWERS 409 IN ITS OWN WORDS, NEVER A TRACEBACK (round 1 of the billing verb's review, 2026-09-19,
+        # the reviewer's 17:14Z takes; its fresh-2): follow_default_auth's clear and its reg mirror are one guarded unit now, so a record write that fails
         # (a full or read-only state directory) restores the live pick, files a row and answers False with a sentence of
         # its own (pop_auth_refusal, read by `sid`); until then the raise escaped into do_POST's catch-all, an HTTP 500 whose
         # body was the traceback with this box's absolute paths, and the live object was following the default while the
@@ -41298,19 +41316,23 @@ def _billing_request(b):
             return _billing_refusal(be, who, pick, dropped=superseded, sid=sid)
         out["default"] = _billing_default(be)["value"]   # what it follows now, for the caller's line
     elif now:
-        # the box's reason came first, above, with the queue untouched (round 2 of the review): a --now pick this box
+        # the box's reason came first, above, with the queue untouched (round 2 of the review, 2026-09-18): a --now pick this box
         # cannot bill (a stored login gone) must not also discard the user's valid parked pick; and the second refusal
         # reason, a record that would not read, is probed ahead of the drop the same way (the `default` road's comment)
         if not be.record_reads(sid):
             return _billing_refusal(be, who, pick)
         superseded = _drop_parked_auth(sid, "the --now pick")
-        # the one door every explicit pick takes, with the FIFO gate off (the helper's docstring, 2026-09-18)
+        # the one door every explicit pick takes, with the FIFO gate off (the helper's docstring, 2026-09-18). A REFUSED
+        # RECORD WRITE ANSWERS 409 IN ITS OWN WORDS HERE TOO (round 2 of the billing verb's review, 2026-09-20; its kernel-1):
+        # the helper takes the backend's guarded door, and `sid` lets _auth_refusal read the sentence that door left, so the
+        # answer names the write, never the record-unreadable sentence; the drop stays ahead of the write (the default road's
+        # paragraph), so the refusal names what was dropped
         if _set_auth_or_park_verdict(be, sid, pick, park=False) == "refused":
-            return _billing_refusal(be, who, pick, dropped=superseded)
+            return _billing_refusal(be, who, pick, dropped=superseded, sid=sid)
     else:
         verdict = _set_auth_or_park_verdict(be, sid, pick)
         if verdict == "refused":
-            return _billing_refusal(be, who, pick)
+            return _billing_refusal(be, who, pick, sid=sid)   # `sid`: the refused write's own sentence (kernel-1, above)
         queued = verdict == "parked"
     if queued:
         # the park names the reason it waits (round 1 of the review, 2026-09-18): every park answered "at the next
@@ -41370,11 +41392,12 @@ def _park_reason(be, sid):
 def _auth_refusal(be, who, pick, sid=None):
     """The sentence a billing pick the backend refused is answered with: the box's reason for the side and the stored
     login (auth_unavailable_why, the one vocabulary every Billing surface uses), else the sentence the backend left for
-    THIS call when it refused a write (`sid`; round 2 of the billing verb's review, 2026-09-19, its fresh-2: the `default`
-    road's clear whose record write failed, SdkBackend.pop_auth_refusal, popped so a later refusal never reads a stale
-    one; a backend without the door answers as before), else the one other way set_auth and follow_default_auth answer
-    False, a record that would not read. Until fresh-2 a refused WRITE took the record-unreadable sentence, which
-    misdescribes it. POST /billing's 409 and the parked-op drain's auth arm (round 1 of the review, 2026-09-18: the
+    THIS call when it refused a write (`sid`; round 1 of the billing verb's review, 2026-09-19, the reviewer's 17:14Z
+    takes, its fresh-2: the `default` road's clear whose record write failed, and since round 2 of that review, 2026-09-20,
+    its kernel-1, a `--now` or plain pick whose record write failed, SdkBackend.set_auth_guarded; SdkBackend.pop_auth_refusal,
+    popped so a later refusal never reads a stale one; a backend without the door answers as before), else the one other
+    way set_auth and follow_default_auth answer False, a record that would not read. Until fresh-2 a refused WRITE took the
+    record-unreadable sentence, which misdescribes it. POST /billing's 409 and the parked-op drain's auth arm (round 1 of the review, 2026-09-18: the
     drain discarded set_auth's verdict) say the same words."""
     side, lid = lg.parse_pick(pick)
     why = str(getattr(be, "auth_unavailable_why", lambda *a: "")(side, lid) or "")
@@ -41387,8 +41410,9 @@ def _billing_refusal(be, who, pick, dropped=0, sid=None):
     2026-09-19; its regression-2 and kernel-2): how many parked picks the `default` or `--now` road dropped before the
     backend refused, the residual window between the record's readability probe and the write. "Nothing was changed" is
     false then, so the sentence says what went and the count rides the body as `superseded`; the verb prints the
-    kernel's sentence, so it needs no arm of its own. `sid` (round 2 of that review; fresh-2) lets the sentence be the
-    one the backend left for this call: the `default` road's refused clear."""
+    kernel's sentence, so it needs no arm of its own. `sid` (round 1 of that review, 2026-09-19, its fresh-2; every
+    per-session road since round 2, 2026-09-20, its kernel-1) lets the sentence be the one the backend left for this call:
+    a refused clear on the `default` road, a refused record write on the `--now` and plain roads."""
     err = _auth_refusal(be, who, pick, sid=sid)
     if dropped:
         err = err.replace("so nothing was changed", "so the pick was not applied")   # _auth_refusal's one record-unreadable sentence

@@ -744,7 +744,7 @@ class DefaultPick(_RouteServer):
         self.assertEqual((resp["reconnect"], resp["queued"], resp["cut"]), ("at the end of the open turn", False, False))
 
     def test_a_default_whose_clear_will_not_write_answers_409_in_the_writes_own_words_with_no_traceback(self):
-        # round 2 of the billing verb's review (2026-09-19; fresh-2, the DISCLOSURE half, both refuters): follow_default_auth's
+        # round 1 of the billing verb's review (2026-09-19, the 17:14Z takes; fresh-2, the DISCLOSURE half, both refuters): follow_default_auth's
         # bare mirror raised out of POST /billing into do_POST's catch-all, an HTTP 500 whose body was traceback.format_exc()
         # with this box's absolute paths, on a kernel reachable over the tailnet. A REAL backend behind the real handler, a
         # live picked session, and the fault on the clear's own mirror (the write carrying the cleared pair, not gated on
@@ -788,7 +788,7 @@ class DefaultPick(_RouteServer):
         self.assertNotIn(SID, km._pending_ops, "the parked pick went before the write, and the sentence said so")
 
     def test_a_default_refused_for_its_record_answers_the_records_sentence_never_a_stale_one_an_earlier_refusal_left(self):
-        # the second pass of round 2 (2026-09-19): the fresh-2 sentence is popped by the route call that refused, so a later
+        # the owner's second pass over round 1's takes (2026-09-19): the fresh-2 sentence is popped by the route call that refused, so a later
         # refusal of another kind on the same sid must never read it. Pinned on the one road that reaches _auth_refusal's
         # pop with nothing of its own: a sentence left in the slot by a clear nobody read (follow_default_auth called by
         # something other than the route and refused), then the route's `default` whose record reads at the probe and is
@@ -827,7 +827,160 @@ class DefaultPick(_RouteServer):
         self.assertEqual((s.auth, s.auth_login), ("login", ""), "the live object keeps its pick")
 
 
+class RefusedRecordWrites(_RouteServer):
+    """Round 2 of the billing verb's review (2026-09-20, the reviewer's 02:25Z rulings; its kernel-1, ruled HIGH, both
+    refuters): a refused registry write answers as a REFUSAL REPLY on every road of POST /billing. The guard round 1's
+    fresh-2 put on the `default` road stopped there: on the `--now` and plain roads set_auth's raise at its record mirror
+    went up through do_POST's catch-all, an HTTP 500 whose body was traceback.format_exc() with this box's absolute state
+    paths, the live object moved onto the new pick while the record read the old one with no arm behind it, and on `--now`
+    the user's parked pick already dropped. A REAL backend behind the real handler on each road, each fault the ruling
+    names injected in turn: the record write refused as EACCES, EROFS and ENOSPC; a record that reads at the route's probe
+    and not at the backend's own read; a record that does not parse. The answer is a 409 in the failure's own words, no
+    traceback and no absolute path in the body, the live object's pick pair and pending equal to the record's afterwards,
+    the parked pick where the road's contract puts it (dropped before the write and named on `default` and `--now`, whose
+    probe read the record; untouched on the plain road and wherever the probe refused first), and one problem row for a
+    refused write. Red on the round-2 head for the `--now` and plain write faults: `500 != 409`, the body a traceback."""
+
+    ROADS = (("default", {"target": "web", "pick": "default"}),
+             ("now", {"target": "web", "pick": "key", "now": True}),
+             ("plain", {"target": "web", "pick": "key"}))
+    WRITE_FAULTS = (("EACCES", PermissionError(13, "Permission denied")), ("EROFS", OSError(30, "Read-only file system")),
+                    ("ENOSPC", OSError(28, "No space left on device")))
+    NOT_WRITTEN = {"default": "web's pick was not cleared: its record would not write (%s), so it keeps its own pick",
+                   "now": "web's pick key was not applied: its record would not write (%s), so the session bills as it did",
+                   "plain": "web's pick key was not applied: its record would not write (%s), so the session bills as it did"}
+    DROPPED = "; 1 earlier queued pick was dropped before the refusal"
+    ROW = {"default": "auth (web): its own pick was NOT cleared: the record write failed (%s: ",
+           "now": "auth (web): the pick key was asked of this session, but its step failed (%s: ",
+           "plain": "auth (web): the pick key was asked of this session, but its step failed (%s: "}
+
+    def _picked(self):
+        """A live session picked onto the login, its CLI running it, one earlier pick parked in its FIFO; a real backend over
+        its own state root (hosts off), owning SID for the handler."""
+        d = tempfile.mkdtemp()
+        Path(d, "session-hosts").write_text("off")   # a test that mints its own state root pins hosts off (2026-09-11)
+        be = sb.SdkBackend(d, "/bin/true", lambda *a, **k: None, log=lambda m: None)
+        be.login_ok = lambda: True
+        be.key_state = lambda: "ok"
+        reg = {"sid": SID, "name": "web", "cwd": d, "alive": True, "lastSid": SID, "auth": "login"}
+        sb.write_reg(Path(d), SID, reg)
+        s = sb.SdkSession(be, dict(reg))
+        s._launched_auth = "login"
+        s.auth_live = "login"
+        be.sessions[SID] = s
+        km._pending_ops.pop(SID, None)
+        km._inflight_ops.pop(SID, None)
+        km._park_op(SID, ("auth", "login"))
+        self.addCleanup(lambda: (km._pending_ops.pop(SID, None), km._inflight_ops.pop(SID, None), km._save_pending_ops()))
+        return be, s, Path(d)
+
+    def _reply_is_a_refusal(self, road, code, resp, s):
+        text = json.dumps(resp)
+        self.assertEqual(code, 409, (road, code, text[:400]))
+        self.assertNotIn("Traceback", text)
+        self.assertNotRegex(text, r"/[A-Za-z0-9_.-]+/", "no absolute path reaches the caller")
+        self.assertEqual((s.auth, s.auth_login, bool(s._auth_pending)), ("login", "", False), "%s: the live object is as it was" % road)
+
+    def test_a_refused_record_write_answers_409_in_its_own_words_on_every_road_and_leaves_the_live_pair_as_the_record(self):
+        for road, body in self.ROADS:
+            for label, err in self.WRITE_FAULTS:
+                with self.subTest(road=road, fault=label):
+                    be, s, d = self._picked()
+                    real_write = sb.write_reg
+
+                    def refused(state_dir, sid, reg, err=err):
+                        if sid == SID:   # every write of this record from here on, the guard's retry included
+                            raise type(err)(err.errno, err.strerror, str(sb._reg_path(state_dir, sid)))
+                        return real_write(state_dir, sid, reg)
+                    seq0 = be._problem_seq
+                    a, b = self._local(be)
+                    with a, b, mock.patch.object(sb, "write_reg", refused):
+                        code, resp = self._post(body)
+                    self._reply_is_a_refusal(road, code, resp, s)
+                    cls = type(err).__name__
+                    want = self.NOT_WRITTEN[road] % cls + (self.DROPPED if road != "plain" else "")
+                    self.assertEqual(resp, dict({"ok": False, "error": want}, **({"superseded": 1} if road != "plain" else {})), road)
+                    reg = sb.read_reg(d, SID)
+                    self.assertEqual((s.auth, s.auth_login, bool(s._auth_pending)),
+                                     (reg["auth"], reg.get("authLogin", ""), bool(reg.get("authPending"))),
+                                     "%s: the live object and the record agree" % road)
+                    self.assertEqual(km._pending_ops.get(SID, []), [] if road != "plain" else [("auth", "login")],
+                                     "%s: dropped before the write on the probing roads and named; untouched on the plain road" % road)
+                    rows = [p["text"] for p in be.problems(10) if p["seq"] > seq0]
+                    self.assertEqual(len(rows), 1, (road, rows))
+                    self.assertTrue(rows[0].startswith(self.ROW[road] % cls), (road, rows[0]))
+                    self.assertEqual(be.pop_auth_refusal(SID), "", "the sentence was popped by the answer: nothing stale is left")
+
+    def test_a_record_that_will_not_read_answers_409_in_the_records_words_on_every_road(self):
+        real_read = sb.read_reg
+        for road, body in self.ROADS:
+            with self.subTest(road=road, fault="unreadable at the backend's read"):
+                # the route's probe read it (the check-then-act window the roads accept), the backend's own read finds it gone
+                be, s, d = self._picked()
+                be.record_reads = lambda sid: True
+                a, b = self._local(be)
+                with a, b, mock.patch.object(sb, "read_reg", lambda state_dir, sid: None if sid == SID else real_read(state_dir, sid)):
+                    code, resp = self._post(body)
+                self._reply_is_a_refusal(road, code, resp, s)
+                if road == "plain":
+                    self.assertEqual(resp, {"ok": False, "error": "web's record would not read, so nothing was changed"})
+                    self.assertEqual(km._pending_ops.get(SID), [("auth", "login")], "no probe, no drop: the queue is untouched")
+                else:
+                    self.assertEqual(resp, {"ok": False, "superseded": 1,
+                                            "error": "web's record would not read, so the pick was not applied" + self.DROPPED})
+                    self.assertNotIn(SID, km._pending_ops, "the probe passed, so the drop ran before the refusal, and the sentence says so")
+                self.assertEqual(sb.read_reg(d, SID)["auth"], "login", "the record itself is as it was")
+            with self.subTest(road=road, fault="unparseable"):
+                be, s, d = self._picked()
+                sb._reg_path(d, SID).write_text("{not a record")
+                a, b = self._local(be)
+                with a, b:
+                    code, resp = self._post(body)
+                self._reply_is_a_refusal(road, code, resp, s)
+                self.assertEqual(resp, {"ok": False, "error": "web's record would not read, so nothing was changed"}, road)
+                self.assertEqual(km._pending_ops.get(SID), [("auth", "login")], "%s: refused ahead of the drop, the queue untouched" % road)
+                self.assertEqual(sb._reg_path(d, SID).read_text(), "{not a record", "nothing wrote over it")
+
+    def test_a_dead_stderr_never_turns_an_answer_into_a_500_on_any_road(self):
+        # kernel-2 of the same round (2026-09-20; both refuters of tests-1 and kernel-2): _drop_parked_auth's cancel line and
+        # _park_op_locked's park line were bare sys.stderr.write calls, the one raise road left inside the three roads once
+        # the record writes were guarded: a dead stderr (a reset journal stream, a closed tty, a full log disk) raised out of
+        # the drop on `default` and `--now`, out of the park on the plain road, and out of the walk's after_write hook, and
+        # do_POST's catch-all answered the traceback. Both lines go through _exit_log now, the kernel's best-effort writer,
+        # and the two writers return normally under a stderr whose write raises
+        class _Dead:
+            def write(self, text):
+                raise OSError(9, "Bad file descriptor")
+
+            def flush(self):
+                pass
+        fake = _FakeBackend(outlooks={"web": "now", "tests": "now"})
+        parks = lambda sid, op: km._park_op(sid, op) is None      # the plain road's park, through the real _park_op and its line
+        cases = (("default", {"target": "web", "pick": "default"}, {}),
+                 ("now", {"target": "web", "pick": "key", "now": True}, {}),
+                 ("plain, parked", {"target": "web", "pick": "key"}, {"_gate_or_park": parks}),
+                 ("all-following", {"pick": "key", "allFollowing": True}, {}))
+        self.addCleanup(lambda: (km._pending_ops.pop(SID, None), km._pending_ops.pop(FAR_SID, None), km._save_pending_ops()))
+        for label, body, stubs in cases:
+            with self.subTest(road=label):
+                km._pending_ops.pop(SID, None)
+                km._pending_ops.pop(FAR_SID, None)
+                km._park_op(SID, ("auth", "login"))       # the drop's line runs only with something to drop
+                km._park_op(FAR_SID, ("auth", "login"))
+                a, b = self._local(fake, **stubs)
+                with a, b, mock.patch.object(km, "_sdk", lambda: fake), mock.patch.object(km.sys, "stderr", _Dead()):
+                    code, resp = self._post(body)
+                self.assertEqual(code, 200, (label, code, json.dumps(resp)[:400]))
+        km._pending_ops.pop(SID, None)
+        with mock.patch.object(km.sys, "stderr", _Dead()):
+            km._park_op(SID, ("auth", "login"))            # returns: the line is best-effort
+            self.assertEqual(km._pending_ops[SID], [("auth", "login")], "parked all the same")
+            self.assertEqual(km._drop_parked_auth(SID, "the test"), 1, "dropped all the same, and counted")
+        self.assertNotIn(SID, km._pending_ops)
+
+
 class AllFollowing(_RouteServer):
+
     """POST /billing {pick, allFollowing}: the walk over this kernel's live followers."""
 
     def test_the_walk_answers_the_names_moved_and_skipped(self):
@@ -919,8 +1072,9 @@ class AllFollowing(_RouteServer):
         # set_cwd answer, a quiet session) was written and asked, and the arm tore its client down under the move. Both
         # refuters took PARK over skip: the plain road's park in its own words (_BILLING_PARK_WORDS["move"]), applied by
         # the drain when the move ends, where a skipped follower stays on the default with nothing to retry. The walk's
-        # `park` hook is the kernel's: it parks the pick in the follower's FIFO and the follower is filed apart, never in
-        # movedSids, so its own parked picks are not dropped. The compaction half was refuted (a compacting session is
+        # `park` hook is the kernel's: it parks the pick in the follower's FIFO and the follower is filed apart; it never
+        # reaches the walk's after_write hook (the `continue` after the park), so its own parked picks are not dropped. The
+        # compaction half was refuted (a compacting session is
         # never quiet, so the walk's request defers to the compaction's settle on its own) and has no gate
         fake = _FakeBackend(outlooks={"web": "now", "tests": "now"})
         km._pending_ops.pop(SID, None)
@@ -1206,9 +1360,15 @@ class BackendHelpers(unittest.TestCase):
         web = self._sess("web", launched="login")
         docs = self._sess("docs", launched="login")
         sb._reg_path(Path(self.d), docs.sid).write_text("{not a record")
-        out = self.be.set_auth_followers("key")
+        # THE RECORD-READ GATE OF THE WALK'S DROP (round 2 of the billing verb's review, 2026-09-20; its extra8-1, both
+        # refuters): the after_write hook, the kernel's drop of a follower's parked picks, runs only after a write that
+        # LANDED, so a follower whose record would not read keeps its queued pick; the spy's call list is the pin, since a
+        # hook returning 0 would leave `superseded` at 0 under the mutation that moves the hook above the `written` guard
+        seen = []
+        out = self.be.set_auth_followers("key", after_write=lambda sid: seen.append(sid) or 1)
         self.assertEqual(out, {"moved": ["web"], "skipped": [], "unwritten": ["docs"], "failed": [], "parked": [], "movedSids": [web.sid],
-                               "outlook": {"web": "next-launch"}, "superseded": 0})
+                               "outlook": {"web": "next-launch"}, "superseded": 1})
+        self.assertEqual(seen, [web.sid], "the hook ran for the written follower alone: nothing landed for docs, so nothing is dropped")
         self.assertIs(docs._relaunch_bounded, False, "nothing written, nothing asked, no slot")
         self.assertTrue(any("1 record would not read (docs)" in m for m in self.logs), self.logs[-2:])
         self.assertFalse(any("skipped with a pick of their own (docs)" in m for m in self.logs), self.logs[-2:])
@@ -1830,7 +1990,21 @@ class BackendHelpers(unittest.TestCase):
 
     # ---- the rebase onto round 1 of the reviewer's review of the auth-default fix (2026-09-18): the verb follows its
     # invariants (the pending's login beside it, the slot flag in the pending's hold, the cannot-tell class, the walk's
-    # per-session try, the stagger in the words). Each test was red on the rebased tree before the follow-up
+    # per-session try, the stagger in the words). THE RED-BEFORE RECORD OF THIS BLOCK, RE-DERIVED BY RUNNING (round 2 of
+    # the billing verb's review, 2026-09-20; its extra6-2 with tests-2 and extra7-1): this file, as committed, run on a
+    # detached checkout of the rebase follow-up's parent, the tree the follow-up's tests were written against; the block
+    # holds 19 tests from four commits, the follow-up's ten, the rebase onto the reviewer's round 2's three, and the six the
+    # two later commits appended (their own header below). RED there, at an assertion of its own, 12: the follow-up's
+    # never-landed login, slot-flag-in-the-hold, unlanded pair, leased-follower pick, leased-follower ask, staggered outlook,
+    # report outlook and stagger-clause tests; the rebase onto round 2's census pin (the_follower_step_is_reached_only...);
+    # and three of the appended six (the_init_closes_a_pick..., after_the_close_the_door_refuses...,
+    # a_raise_in_the_closers_compose_read...). ERROR BEFORE ITS ASSERTION, 6, which says nothing about the defect each
+    # pins: billing_view_names_a_surviving_cli... (KeyError: the read had no cannotTell field yet) and
+    # set_auth_followers_survives_one_followers_fault... (TypeError on this round's after_write spy; without the spy the
+    # PermissionError the follow-up's per-session try now contains); the rebase onto round 2's two guard tests and two of
+    # the appended six (a_refusal_sentence_a_caller_left_unread..., follow_default_auth_whose_clear_will_not_write...), all
+    # four a PermissionError escaping the call the guard now contains. GREEN there, 1: request_reconnect_runs_on_the_loop...,
+    # green by design (the ordering it pins shipped before this PR; red with _call_on_loop running its callable inline)
 
     STAGGER = ', staggered: the relaunch waits for a spawn slot and the CLI serves until its turn'
 
@@ -2064,9 +2238,11 @@ class BackendHelpers(unittest.TestCase):
             if sid == api.sid and reg.get("auth") == "key":
                 raise PermissionError(13, "Permission denied", str(sb._reg_path(state_dir, sid)))
             return real_write(state_dir, sid, reg)
+        seen = []   # the after_write hook's call list (extra8-1, 2026-09-20): a follower whose step RAISED is not written, so no drop
         with mock.patch.object(sb, "write_reg", refused):
-            out = self.be.set_auth_followers("key")
+            out = self.be.set_auth_followers("key", after_write=lambda sid: seen.append(sid) or 1)
         self.assertEqual((out["moved"], out["failed"], out["unwritten"], sorted(out["outlook"])), (["tests", "web"], ["api"], [], ["tests", "web"]))
+        self.assertEqual((seen, out["superseded"]), ([web.sid, tests.sid], 2), "the hook ran for the two written followers, never for the failed one")
         for s in (web, tests):
             self.assertEqual((s.auth, s._auth_pending, self._reg(s.sid)["auth"]), ("key", "key", "key"), s.name)
         self.assertEqual((api.auth, api.auth_login, api._auth_pending, api._auth_pending_login, api._relaunch_bounded, api._landing_ask_bounded),
@@ -2164,8 +2340,8 @@ class BackendHelpers(unittest.TestCase):
         return leased
 
     def _picked_survivor_on(self, name, launched, pick, leased):
-        """The object the CLI's first init finds, built through real code with no hand-set stamps (round 2 of the billing
-        verb's review, 2026-09-19; extra5-1 and its second pass): a survivor the previous kernel launched on the stored
+        """The object the CLI's first init finds, built through real code with no hand-set stamps (round 1 of the billing
+        verb's review, 2026-09-19, the 17:14Z takes; extra5-1, and the owner's second pass over those takes): a survivor the previous kernel launched on the stored
         login `launched` (the reg's launchedLogin), a live host lease and no report (the cannot-tell class), the user's
         pick of the stored login `pick` parked on it before the boot re-attach composes (set_auth's never-landed branch),
         the real compose and the cannot-tell attach landing, the pending standing. Returns the session and its recording
@@ -2191,8 +2367,17 @@ class BackendHelpers(unittest.TestCase):
         self.assertEqual((s._launched_auth, s._auth_pending_target()), (None, ("login", pick["id"])), name)
         return s, q
 
+    # ---- round 1 of the billing verb's review, the reviewer's 17:14Z takes, and the owner's second pass over them (2026-09-19):
+    # the six tests the two commits that took them appended here (extra6-2, 2026-09-20: recorded apart from the follow-up's
+    # block they sit in). At their own parent, the round-1 addendum's head, with this file copied in: RED at an assertion of
+    # its own, 3 (the_init_closes_a_pick..., after_the_close_the_door_refuses..., a_raise_in_the_closers_compose_read...);
+    # ERROR BEFORE ITS ASSERTION, 2 (a_refusal_sentence_a_caller_left_unread... and follow_default_auth_whose_clear_will_not_
+    # write...: the PermissionError fresh-2's guard now contains escaped the call); GREEN by design, 1
+    # (request_reconnect_runs_on_the_loop...). The_follower_step_is_reached_only... and the_verbs_ask_lines... after them
+    # belong to the block above
+
     def test_the_init_closes_a_pick_whose_relaunch_would_carry_the_token_this_report_refused_and_asks_one_of_another_login(self):
-        # round 2 of the billing verb's review (2026-09-19; extra5-1, in both refuters' narrowed form). The full chain through
+        # round 1 of the billing verb's review (2026-09-19, the 17:14Z takes; extra5-1, in both refuters' narrowed form). The full chain through
         # real code, no hand-set stamps: a survivor launched by the previous kernel on stored login A (the reg's launchedLogin),
         # a live host lease and no report (the cannot-tell class), the user's pick parked on it before the boot re-attach
         # composes (set_auth's never-landed branch), the real compose, the cannot-tell attach landing, then the CLI's first
@@ -2240,7 +2425,7 @@ class BackendHelpers(unittest.TestCase):
             self.assertEqual((shape["auth"], shape["login"]), ("login", a["id"]))
 
     def test_after_the_close_the_door_refuses_the_refused_login_and_no_later_report_relaunch_or_restart_re_asks(self):
-        # the second pass of round 2 (2026-09-19), two claims the lens left unpinned on the close above. ONE ROW PER KERNEL
+        # the owner's second pass over round 1's takes (2026-09-19), two claims the lens left unpinned on the close above. ONE ROW PER KERNEL
         # LIFE: the close row is filed unkeyed (no repeat suffix), so a second firing in one life would be a second ring
         # row, and none is reachable: the pick's only way back is set_auth, whose door refuses a refused stored login
         # (auth_unavailable_why through logins.why_unavailable, the record the wrong-landing branch marked), and a later
@@ -2306,11 +2491,19 @@ class BackendHelpers(unittest.TestCase):
         self.assertEqual((s2._launched_auth, s2._auth_pending, len(q2), len(closes()), asks()), ("key", "", 0, 1, []))
 
     def test_a_raise_in_the_closers_compose_read_is_contained_by_the_guard_and_the_pending_stands_for_the_next_pick(self):
-        # the second pass of round 2 (2026-09-19): the closer's gate reads what the relaunch would compose (_launch_shape: the
-        # operator's settings and the login records, file I/O) inside the guarded step, so a raise there is the guard's to
-        # contain (_follow_default_guarded: the pending pair restored to what stood, the mirror retried, one row naming the
-        # pick's next deciding event) and the init handler's tail still runs. Round 5 pinned that for the served branch's
-        # mirror; this pins it for the new read: the pending stands for the next pick, nothing is asked, nothing is closed
+        # the owner's second pass over round 1's takes (2026-09-19): the closer's gate reads what the relaunch would compose
+        # (_launch_shape) inside the guarded step, so a raise there is the guard's to contain (_follow_default_guarded: the
+        # pending pair restored to what stood, the mirror retried, one row naming the pick's next deciding event) and the
+        # init handler's tail still runs. Round 5 pinned that for the served branch's mirror; this pins it for the new read:
+        # the pending stands for the next pick, nothing is asked, nothing is closed. A REQUIREMENT PIN, not a
+        # characterisation (round 2 of the billing verb's review, 2026-09-20; its correctness-1 and the refuted extra6-1,
+        # both refuters of the latter): the read has a production road. The settings read decodes the operator's Claude Code
+        # settings file as UTF-8 inside credentials._read_settings, whose guards convert OSError and json's ValueError to
+        # CredentialError and let UnicodeDecodeError through, so a settings file that is not UTF-8 (a torn rewrite of one
+        # holding a non-ASCII byte included) raises out of _launch_shape with nothing patched, through key_state and
+        # _helper_source_read, which catch CredentialError alone; the login records' read catches its own faults
+        # (OSError, ValueError). The OSError injected here stands in for that class at the same site: the row formats the
+        # exception's class name, which is what the assertion below pins
         a = self._stored_login("Alpha")
         leased = self._box_with_nothing_to_fall_to()
         s, q = self._picked_survivor_on("web", a, a, leased)
@@ -2334,7 +2527,7 @@ class BackendHelpers(unittest.TestCase):
                          "the report is the stamp and the init's tail ran")
 
     def test_request_reconnect_runs_on_the_loop_after_its_caller_returns_never_inline(self):
-        # the second pass of round 2 (2026-09-19): the ordering the enumeration's loop double models (OneAskPerInit._Loop
+        # the owner's second pass over round 1's takes (2026-09-19): the ordering the enumeration's loop double models (OneAskPerInit._Loop
         # queues each callback and runs it when the handler that scheduled it has returned). request_reconnect reaches
         # _do_request_reconnect only through _call_on_loop's call_soon_threadsafe, so a request made inside a loop callback
         # (the init handler's wrong-landing branch; the closer's ask a few lines later) runs after that callback returns,
@@ -2364,7 +2557,7 @@ class BackendHelpers(unittest.TestCase):
         self.assertEqual(seen, {"at return": False, "after a yield": True, "helper at return": [], "helper after a yield": [1]})
 
     def test_a_refusal_sentence_a_caller_left_unread_is_gone_at_the_next_clear_so_no_later_refusal_reads_it_stale(self):
-        # the second pass of round 2 (2026-09-19): pop_auth_refusal's promise (a caller never reads a refusal another call
+        # the owner's second pass over round 1's takes (2026-09-19): pop_auth_refusal's promise (a caller never reads a refusal another call
         # left) rested on the route being follow_default_auth's one caller and popping on every refusal. The door no longer
         # rests on that: follow_default_auth clears the sid's slot at entry, before its reg read, so what a caller pops after
         # a False is this call's own sentence or nothing. A sentence left by a refused clear nobody read is gone at the next
@@ -2401,7 +2594,7 @@ class BackendHelpers(unittest.TestCase):
         self.assertEqual(calls, {"_billing_request": 1})
 
     def test_follow_default_auth_whose_clear_will_not_write_restores_the_pick_and_refuses_in_its_own_words(self):
-        # round 2 of the billing verb's review (2026-09-19; fresh-2, the STATE half, both refuters): the clear of the pick pair
+        # round 1 of the billing verb's review (2026-09-19, the 17:14Z takes; fresh-2, the STATE half, both refuters): the clear of the pick pair
         # ran under the hold and its reg mirror ran bare, OUTSIDE the one-guard rule the step below it takes, so a reg write
         # that failed (a full or read-only state directory) left the live object following the machine default, the status
         # rows and the verb's read with it, while the reg and a kernel restart still carried the pick: the caller was told
@@ -2512,9 +2705,29 @@ class BackendHelpers(unittest.TestCase):
         self.assertFalse(line[0].endswith(self.STAGGER), line[0])
 
 
-    # ---- round 1 of the billing verb's review (2026-09-19): the high, the gap cases, the reachable injectors, the walk's
-    # hooks, the memo's life and the quiet tail. Each test was red on 1100d3f0f (the body's round-1 section names the reds)
-    # except the two labelled characterisation pins
+    # ---- round 1 of the billing verb's review (2026-09-19, the rulings of 13:45Z): the high, the gap cases, the reachable
+    # injectors, the walk's hooks, the memo's life and the quiet tail. THE RED-BEFORE RECORD, RE-DERIVED BY RUNNING (round 2
+    # of the review, 2026-09-20; its tests-2, extra6-2 and extra7-1): this file, as committed, run on a detached checkout of
+    # the round-1 commit's parent (the rebased twin of 1100d3f0f), ten tests. RED there, at an assertion of its own, 2:
+    # the_walks_slot_memo_dies... and the_asks_tail_and_the_served_line... (a CHARACTERISATION PIN whose first leg was red
+    # all the same: its label speaks for its injector's missing production road, not for a green base). GREEN there, 4: the
+    # two gap cases (a_launch_that_lands_in_the_gap... and a_landing_in_the_gap_that_matches...: coverage of code already
+    # right, each red under its own mutation of the branch, the re-check and the fresh read after the gap) and the two other
+    # labelled pins (a_walk_step_that_raises_after_its_mirror..., billing_view_names_the_stored_login...). ERROR BEFORE ITS
+    # ASSERTION, 4, an EMPTY red that says nothing about the defect: the high's two tests (AttributeError: _stamp_compose
+    # lands with the fix, so the committed form cannot run at the parent), the_walk_drops_each_followers_parked_picks...
+    # (TypeError: the after_write hook lands with the fix) and record_reads_is_the_records_own_read... (AttributeError:
+    # record_reads lands with the fix). THE HIGH'S RED IS ESTABLISHED TWO WAYS (extra7-1, both refuters): by the MUTATION
+    # at the fixed head, _connect_landed's picked-branch guard reverted to its pre-fix spelling
+    # `(self._launched_auth is None and not attach) or self._launched_unkeyed_pick`, which reds the high's two tests,
+    # OneAskPerInit and the quiet-tail pin (its landing leg rides the same road) and nothing else: on the round-2 head 4
+    # failed, 127 passed against a 131-passed control, and on this commit the same four against the module's own count (the
+    # PR body's round-2 section pastes both); and by a PRE-FIX RED THAT REACHES ITS ASSERTION: the parent with a copy of
+    # _options's compose block standing in for _stamp_compose (the helper lands with the fix) reds the three committed
+    # tests on the defect itself, (('', ''), False, 0) != (('login', ''), True, 0) (the pending cleared as served across the
+    # cannot-tell attach), (('', ''), 0, False) != (('key', ''), 1, True) (nothing asked at the landing that could tell), and
+    # the enumeration's wrong-silent set 12 states over the pinned residual. The defect's pre-existence is the enumeration
+    # at 1100d3f0f in the body's round-1 section
 
     def _composed(self, s):
         """The compose's stamps as _options writes them (_decide_auth, then _stamp_compose: the shape, _launching,
@@ -2606,7 +2819,7 @@ class BackendHelpers(unittest.TestCase):
             self.assertEqual(s._launched_auth, report, name)
             self.assertEqual((s._auth_pending_target(), len(q), self._reg(s.sid)["authPending"]), (want, 1, True),
                              "%s: unserved and asked at the landing" % name)
-            runs = ("the %s login" % self.be.login_display(rec["id"])) if False else "the %s" % report
+            runs = "the %s" % report   # the survivors here launched on the machine login or the key: no stored login (tests-4, 2026-09-20)
             self.assertTrue(any("auth (%s): attached to this session's surviving CLI, which runs on %s while its pick is" % (name, runs) in m
                                 and "left to this landing, so it is asked now" in m for m in self.logs), (name, self.logs))
             with mock.patch.object(s, "_recover_picked_pending_at_init", wraps=s._recover_picked_pending_at_init) as closer:
@@ -2732,7 +2945,8 @@ class BackendHelpers(unittest.TestCase):
                          "web's drop ran before api's write and api's after it: per follower, in the roster's order")
         self.assertEqual(out["superseded"], 3, "the count rides through the callback, never summed afterwards")
         # the park hook (tests-1's move half with extra8-2): a follower the kernel parks is written nothing and asked nothing,
-        # filed apart, and never in movedSids, so its own parked picks are not dropped
+        # filed apart, and never reaches the after_write hook (the `continue` after the park), so its own parked picks are
+        # not dropped
         docs, tests = self._sess("docs", launched="login"), self._sess("tests", launched="login")
         dq, tq = self._queue_loop(docs), self._queue_loop(tests)
         dropped = []
@@ -2929,6 +3143,68 @@ class BackendHelpers(unittest.TestCase):
         p.write_text(json.dumps({"sid": s.sid, "name": "web"}))
         self.assertIs(self.be.record_reads(s.sid), True, "healed, it reads again")
         self.assertIs(self.be.record_reads("11111111-2222-3333-4444-999999999999"), False, "no record at all: the absent file")
+
+    # ---- round 2 of the billing verb's review (2026-09-20, the reviewer's 02:25Z rulings): the walk's hooks inside its
+    # containment. Red on the round-2 head 676054c2f (the raise escaped set_auth_followers)
+
+    def test_a_raising_after_write_or_park_hook_never_aborts_the_walk_and_each_follower_keeps_its_true_outcome(self):
+        # CHARACTERISATION PIN at this commit (the injector census, 2026-09-20): the kernel's hooks had ONE raise road on the
+        # round-2 head, the bare sys.stderr.write in _drop_parked_auth and _park_op_locked, and kernel-2's half of this fix
+        # routes it through _exit_log, so with the kernel's wiring no hook raises here now; what this pins is the walk's own
+        # containment against any hook a caller passes, red on the round-2 head where the road was real.
+        # tests-1 with kernel-2 (both refuters): the two kernel hooks ran OUTSIDE the per-follower containment the loop states
+        # two lines above them, so a raise from either (the kernel's after_write, _drop_parked_auth, had one: its bare
+        # sys.stderr.write) aborted the walk mid-roster: the followers after it were never written, the summary Log line was
+        # never filed, and the raise escaped POST /billing as a 500. Both hooks run inside the loop's own containment now,
+        # and each follower is filed by what HAPPENED, never as `failed` (the guard's rollback bucket, which tells the user
+        # the pick was not written): a follower whose after_write raised HAS the pick (its write succeeded), so it stays in
+        # moved with a problem row saying its parked picks may still fire; a follower whose park hook raised has the pick
+        # QUEUED already (the kernel's hook appends and mirrors before the line that raises), so it is filed under parked
+        # with a row and never falls through to set_auth, which would apply the pick twice, once now and once at the drain
+        web, api, tests = self._sess("web", launched="login"), self._sess("api", launched="login"), self._sess("tests", launched="login")
+        for s in (web, api, tests):
+            self._queue_loop(s)
+        seen = []
+
+        def after_write(sid):
+            seen.append(sid)
+            if sid == web.sid:
+                raise OSError(9, "Bad file descriptor")
+            return 1
+        seq0 = self.be._problem_seq
+        out = self.be.set_auth_followers("key", after_write=after_write)
+        self.assertEqual((out["moved"], out["failed"], out["parked"], out["unwritten"], out["superseded"]), (["api", "tests", "web"], [], [], [], 2),
+                         "the raise on the first follower's hook: the rest written and counted, nobody filed as failed")
+        self.assertEqual(seen, [web.sid, api.sid, tests.sid], "the hook ran for every written follower, the raising one included")
+        for s in (web, api, tests):
+            self.assertEqual((s.auth, s._auth_pending, self._reg(s.sid)["auth"]), ("key", "key", "key"), s.name)
+        rows = [p["text"] for p in self.be.problems(10) if p["seq"] > seq0]
+        self.assertEqual(rows, ["auth (web): the pick key is written, but the hook that drops this session's parked picks failed (OSError: "
+                                "[Errno 9] Bad file descriptor); a pick parked earlier for it may still fire at its next quiet moment"])
+        self.assertTrue(any("3 sessions following the default now carry the pick key (api, tests, web)" in m for m in self.logs), self.logs[-1:])
+        # the park hook: the raise on the first follower, the two after it written, the raiser parked and not written
+        docs, notes, more = self._sess("docs", launched="login"), self._sess("notes", launched="login"), self._sess("more", launched="login")
+        for s in (docs, notes, more):
+            self._queue_loop(s)
+
+        def park(sid):
+            if sid == docs.sid:
+                raise OSError(9, "Bad file descriptor")
+            return False
+        seq0 = self.be._problem_seq
+        dropped = []
+        out = self.be.set_auth_followers("key", park=park, after_write=lambda sid: dropped.append(sid) or 0)
+        self.assertEqual((out["moved"], out["parked"], out["failed"], out["unwritten"]), (["more", "notes"], ["docs"], [], []))
+        self.assertEqual((docs.auth, docs._auth_pending, docs._relaunch_bounded, docs._landing_ask_bounded), ("", "", False, False),
+                         "filed as parked: nothing written or asked for it, so the queued pick is not applied twice")
+        self.assertNotIn("auth", self._reg(docs.sid))
+        self.assertEqual((notes.auth, more.auth, dropped), ("key", "key", [notes.sid, more.sid]))
+        rows = [p["text"] for p in self.be.problems(10) if p["seq"] > seq0]
+        self.assertEqual(rows, ["auth (docs): the walk's park hook failed (OSError: [Errno 9] Bad file descriptor) after the kernel queued the "
+                                "pick behind this session's move, so it is filed as parked and nothing is written here, which would apply the "
+                                "pick twice"])
+        self.assertTrue(any("2 sessions following the default now carry the pick key (more, notes)" in m
+                            and "1 parked behind a move in flight (docs), the pick applies when the move finishes" in m for m in self.logs), self.logs[-1:])
 
 
 class ParkedPickRefusedAtTheDrain(unittest.TestCase):
@@ -3148,7 +3424,7 @@ class VerbWords(unittest.TestCase):
                                              "1 skipped (api): it has its own pick", "a skipped session has its own pick and follows nothing")
 
     def test_the_walk_whose_every_reached_follower_failed_does_not_deny_the_followers(self):
-        # round 2 of the review (2026-09-19; extra7-2, both refuters): with nothing moved and every reached follower's step
+        # round 1 of the billing verb's review (2026-09-19, the 17:14Z takes; extra7-2, both refuters): with nothing moved and every reached follower's step
         # failed, the head said "no running session follows the machine default" while the tail named the two followers the
         # walk reached and could not move; the head's guard was widened for `unwritten` in round 2 and `failed` was added
         # after it. The whole line, since only the head changes
@@ -3225,7 +3501,7 @@ class VerbWords(unittest.TestCase):
                          "launched: no CLI is up under this kernel; the CLI last reported: API key")
         # a client up whose landing attached a surviving CLI with no report (the reviewer's cannot-tell class; the rebase
         # follow-up, 2026-09-18): "no CLI is up" was false for it, and its first report decides which side it bills (the clause
-        # completed in round 2 of the review, 2026-09-19, its fresh-3: it ended mid-sentence, and this pin held it so)
+        # completed in round 1 of the billing verb's review, 2026-09-19 (the 17:14Z takes), its fresh-3: it ended mid-sentence, and this pin held it so)
         view.update(live="", cannotTell=True)
         self.assertEqual(self._romp("web", reply=(200, view)).stdout.splitlines()[0],
                          "launched: a surviving CLI is attached that has not reported which side it bills; its first report decides which side it bills")
@@ -3428,7 +3704,7 @@ class OneAskPerInit(unittest.TestCase):
         records the callback, and _drive runs the queue when the handler that scheduled it has returned, which is the
         loop's order: request_reconnect reaches _do_request_reconnect only through _call_on_loop's call_soon_threadsafe,
         never inline (BackendHelpers.test_request_reconnect_runs_on_the_loop_after_its_caller_returns_never_inline pins
-        it against a real loop). Until the second pass of round 2 (2026-09-19) this double ran each callback at once,
+        it against a real loop). Until the owner's second pass over round 1's takes (2026-09-19) this double ran each callback at once,
         inside the handler, where the loop never runs one: the wrong-landing branch's bare request then armed before the
         closer, a few lines later in the same init handler, read the flags, and the closer read armed where the loop has
         it ask (one init ask and one arm, the ask's request withdrawn by the served check as the fall's relaunch); the
@@ -3594,7 +3870,7 @@ class OneAskPerInit(unittest.TestCase):
         self.assertEqual(max(arm_hist), 1)
 
     def test_on_a_box_with_nothing_to_fall_to_the_init_closes_a_pick_whose_relaunch_would_land_wrong_again_with_a_row(self):
-        # round 2 of fork PR #813's review (2026-09-19; its extra5-1, in both refuters' narrowed form). The closer's gate on what
+        # round 1 of fork PR #813's review (2026-09-19, the 17:14Z takes; its extra5-1, in both refuters' narrowed form). The closer's gate on what
         # the relaunch would compose never fires in the product above: that harness box always has a fall (login_ok True, the
         # operator's settings readable), so a wrong landing's branch REQUESTS the relaunch onto the fall (bare-init=1 in every
         # loginA/*/key state of its table) and the relaunch composes the fall, never the refused pair. The gate's own box is

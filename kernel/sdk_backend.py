@@ -8191,10 +8191,15 @@ class SdkSession:
         pick parked on a never-landed object (set_auth) and spent only where that pick is ASKED (_ask_parked_pick),
         outlived a pick that was SERVED instead, or withdrawn, or reverted, and the next landing that asked an
         ordinary pick's relaunch drew the walk's spawn-stagger slot from it and told the user so. So every disposal of
-        the pending clears the memo beside the slot flag: this clear, the served check's withdrawal, set_auth's revert
-        and unchanged branches, the follower step's withdrawals and the unlanded step's clear of a moot pending; the
-        guard's restore puts it back with the pair (_follow_default_guarded), and set_auth's request branch writes it
-        from the same `bounded` its slot flag comes from, so a new pending never inherits an old pending's memo."""
+        the pending clears the memo: beside the slot flag at this clear, the served check's withdrawal, set_auth's revert
+        branch, the follower step's withdrawals and the unlanded step's clear of a moot pending; ALONE at set_auth's
+        unchanged branch (round 2 of the billing verb's review, 2026-09-20; its regression-4, the refuter's correction),
+        which disposes of the pending without withdrawing the request armed for it (a re-pick of the side the CLI runs
+        while a connect composing the other side is in flight leaves that arm standing), so the slot flag there still
+        belongs to the relaunch that is coming, the walk's bounded one whenever it is set, and clearing it would send that
+        relaunch to a boot slot instead of the spawn stagger. The guard's restore puts the memo back with the pair
+        (_follow_default_guarded), and set_auth's request branch writes it from the same `bounded` its slot flag comes
+        from, so a new pending never inherits an old pending's memo."""
         with self._hold_write():
             if self._auth_pending_target() == tuple(pending):
                 self._auth_pending = ""
@@ -8230,8 +8235,8 @@ class SdkSession:
             exactly as set_auth's own request would be), so the relaunch composes the pick and its landing serves it.
             No loop follows: the relaunch stamps _launched_auth at its landing and the entry gate below is on None;
           * UNLESS THE RELAUNCH WOULD COMPOSE WHAT THIS SAME REPORT REFUSED (`refused`, the (side, stored login) pair
-            the wrong-landing branch of the init handler marked refused a few lines before this runs; round 2 of the
-            billing verb's review, 2026-09-19, its extra5-1, in both refuters' narrowed form). The ask's own guard reads
+            the wrong-landing branch of the init handler marked refused a few lines before this runs; round 1 of the
+            billing verb's review, 2026-09-19, the reviewer's 17:14Z takes, its extra5-1, in both refuters' narrowed form). The ask's own guard reads
             the reconnect flags alone, so after that branch DECLINED a relaunch (nothing to fall to on this box, or the
             one fall already taken) the ask re-armed the very relaunch it declined: the compose reads the pick (the same
             stored login) and the refusal leaves it nothing to fall to, so the relaunch carried the same token, landed
@@ -13453,7 +13458,8 @@ class SdkBackend:
         self._drain_wake_timer = None
         self.login_ok = lambda: True              # the kernel wires its credential-store probe (T124); permissive unwired
         self.last_auth_refusal = ""               # why the last set_auth refused (auth_unavailable_why) → the kernel's toast names it
-        self._auth_refusals = {}                  # sid → the sentence a refused `default` clear left for its caller (pop_auth_refusal)
+        self._auth_refusals = {}                  # sid → the sentence a refused record write left for its caller: a `default` clear's
+        #                                           (_refuse_default_clear) or a per-session pick's (set_auth_guarded); pop_auth_refusal
         self._usage_all_keyed = False             # refresh_usage's one-shot: the last refresh found only
         #                                           keyed candidates (already logged); reset when a
         #                                           pollable session exists again, so the 60s rail timer
@@ -15754,8 +15760,8 @@ class SdkBackend:
                 # branch), the cannot-tell attach leaves it, and this report decides it. The verb's rebase follow-up had run
                 # its closer bare here, since the guard's restore puts a served pick's pending back on a raise; the guard's
                 # row names that pending's next deciding event, the next pick, so the closer takes the one door like every
-                # other step. The pair the wrong-landing branch above refused rides along (round 2 of the billing verb's
-                # review, 2026-09-19; its extra5-1): the closer's ask is gated on what the relaunch would compose, and a
+                # other step. The pair the wrong-landing branch above refused rides along (round 1 of the billing verb's
+                # review, 2026-09-19, the reviewer's 17:14Z takes; its extra5-1): the closer's ask is gated on what the relaunch would compose, and a
                 # relaunch composing the refused pair is closed with a row instead of asked
                 self._follow_default_guarded(sess, landing="init",
                                              step=lambda: sess._recover_picked_pending_at_init(refused=refused))
@@ -16206,13 +16212,16 @@ class SdkBackend:
         shape = self._launch_shape(sess, auth=side, login_id=login_id)   # what this connect hands the CLI; stamped as _launching below
         launch_keyed = shape["auth"] == "key"     # the box's helper bills this launch (no login pick, a helper configured)
         with sess._hold_write():
-            # settings file below is composed with, and what _fast_unlocked is stamped from. Until round 6 the
+            # ONE read of the fast ask (review round 6, 2026-09-10; the review's regression-1): what _options composes
+            # the flag-settings file with from the returned fast_opt, and what _fast_unlocked is stamped from (this
+            # opening sentence was lost when the block moved out of _options in round 1 of the billing verb's review,
+            # 2026-09-19, and restored in round 2, 2026-09-20: its correctness-2, regression-2 and kernel-3). Until round 6 the
             # reconnect loop snapshotted _fast_unlocked from fast_opt AFTER this returned, so a set_fast landing
             # between this read and that snapshot made a flagless connect read as flagged: the served check
             # then dropped the fast pick, and the next fast on sent a literal /fast to a CLI that refused it.
             # THE STAMPS LAND HERE, AT THE READ (review round 7; the review's correctness-2 and kernel-3), not at
-            # the end of the compose: the body below is file I/O and, on a key-billed launch, a network probe
-            # (helper_fast_org_env), and a set_fast landing inside it read the OLD connection's flag. An on
+            # the end of the compose: the body of _options after this returns is file I/O and, on a key-billed launch,
+            # a network probe (helper_fast_org_env), and a set_fast landing inside it read the OLD connection's flag. An on
             # inside a flagless compose on a previously flagged session took the live send (lost: the new
             # process refuses the literal /fast), an off inside a flagged compose took the spawn-window branch
             # and left the new process running fast against a reg saying off. set_fast decides against these
@@ -19531,8 +19540,8 @@ class SdkBackend:
         [names], "movedSids": [sids], "outlook": {name: word}}, the name lists sorted: the followers written, the
         sessions with a pick of their own, and the followers whose record would not read (nothing written, said apart
         since round 1 of the review: filed under skipped, the log and the verb called such a session's silence a pick of
-        its own); the moved sids in the names' order, for the kernel to drop their parked auth picks (round 2 of the
-        review); and each moved session's outlook (auth_apply_outlook, read right after its set_auth, the read the
+        its own); the moved sids in the names' order (`movedSids`: no kernel road reads the field since the drop moved
+        into the `after_write` hook, round 1 of the billing verb's review, 2026-09-19); and each moved session's outlook (auth_apply_outlook, read right after its set_auth, the read the
         per-session route makes), so the verb says which sessions reconnect, which already bill the pick and which
         apply it at their next launch (round 2 of the review: the verb told the user every moved session reconnects,
         and a walk onto the side every follower already ran promised switching dots that never came). None for a
@@ -19556,7 +19565,12 @@ class SdkBackend:
         "superseded" (its correctness-2): the kernel drops the follower's parked auth picks there, per follower, since
         a drop before the write lost a still-parked pick for a follower the walk then skipped or failed, and a drop
         after the whole walk left every earlier follower's parked pick to fire over the walk's write at the drain's
-        next quiet cycle. A parked follower is not in movedSids, so its own parked picks are never dropped."""
+        next quiet cycle. A parked follower never reaches the hook (the `continue` after the park), so its own parked picks
+        are never dropped. Both hooks run inside the loop's per-follower containment (round 2 of the billing verb's review,
+        2026-09-20; its tests-1 and kernel-2, both refuters): a raise from `after_write` leaves the follower in "moved" (its
+        write landed) with a problem row saying its parked picks may still fire; a raise from `park` files it under
+        "parked" (the kernel's hook queues the op before its own raise road) with a row and writes nothing for it; neither
+        aborts the walk, skips the summary line or reaches "failed", the guard's rollback bucket."""
         side, login_id = _logins.parse_pick(value)
         if not side:
             return None
@@ -19569,15 +19583,31 @@ class SdkBackend:
             sessions = list(self.sessions.values())
         moved, skipped, unwritten, failed, parked, outlook = [], [], [], [], [], {}
         superseded = 0
+        label = self.login_display(login_id) if login_id else side
         for s in sessions:
             if s.ended:
                 continue
             if s.auth in ("login", "key"):
                 skipped.append(s.name)
                 continue
-            if park is not None and park(s.sid):
-                parked.append(s.name)          # the kernel parked the pick behind this follower's move (the docstring's hook)
-                continue
+            if park is not None:
+                # THE HOOKS RUN INSIDE THE LOOP'S OWN CONTAINMENT (round 2 of the billing verb's review, 2026-09-20; its tests-1
+                # and kernel-2, both refuters): called bare, a raise from either kernel hook aborted the walk mid-roster, the
+                # followers after it never written, the summary line below never filed and the raise out of POST /billing as
+                # a 500, against the invariant the comment below states. Not through _follow_default_guarded, whose restore
+                # rolls a SUCCESSFUL pick back. A park hook that raised has queued the op already (the kernel's hook appends
+                # and mirrors before the line that raised), so the follower is filed as parked, with a row, and never falls
+                # through to set_auth, which would apply the pick twice: once now, once when the drain fires the queued op
+                try:
+                    parked_now = bool(park(s.sid))
+                except Exception as e:
+                    self._log("auth (%s): the walk's park hook failed (%s: %s) after the kernel queued the pick behind this session's "
+                              "move, so it is filed as parked and nothing is written here, which would apply the pick twice"
+                              % (s.name, type(e).__name__, _mask_ids(e)), problem=True)
+                    parked_now = True
+                if parked_now:
+                    parked.append(s.name)      # the kernel parked the pick behind this follower's move (the docstring's hook)
+                    continue
             # ONE FOLLOWER'S FAULT NEVER ABORTS THE WALK (round 1 of the reviewer's review, 2026-09-18, its regression-4 and
             # kernel-2, the default walk's rule carried into this walk by the rebase follow-up): a reg write refused
             # mid-step (a read-only or full state directory) raised out of the walk, so every follower after it was never
@@ -19602,11 +19632,17 @@ class SdkBackend:
                 unwritten.append(s.name)   # its record would not read (the side was checked above): nothing was written
                 continue
             if after_write is not None:
-                superseded += int(after_write(s.sid) or 0)   # this follower's parked picks go now, before the next follower's write
+                try:
+                    superseded += int(after_write(s.sid) or 0)   # this follower's parked picks go now, before the next follower's write
+                except Exception as e:
+                    # the write LANDED, so the follower is moved (never `failed`, the guard's rollback bucket, which tells the user
+                    # the pick was not written); the drop may not have happened, and the row says so (the containment above)
+                    self._log("auth (%s): the pick %s is written, but the hook that drops this session's parked picks failed (%s: %s); "
+                              "a pick parked earlier for it may still fire at its next quiet moment"
+                              % (s.name, label, type(e).__name__, _mask_ids(e)), problem=True)
             moved.append((s.name, s.sid))
             outlook[s.name] = word
         moved.sort()
-        label = self.login_display(login_id) if login_id else side
         n = len(moved)
         asked = sorted(name for name, w in outlook.items() if w not in ("none", "next-launch", "landing", "report"))
         # the head promises no moment the stagger delays (round 1 of the reviewer's review, 2026-09-18): an asked relaunch
@@ -19649,9 +19685,9 @@ class SdkBackend:
         authPending False for a picked session, and a session picked onto the login and running it under its host kept
         billing the login after `default` while every reader said it followed the default. No /auth chip: the session
         made no pick. False for a record that will not read, and for a record whose write is refused (the clear and its
-        mirror as one unit, below; round 2 of the billing verb's review, its fresh-2), with the pick left standing and the
-        sentence for the caller left at pop_auth_refusal. That slot is cleared at entry, before the read (the second pass
-        of that round): what a caller pops after a False is this call's own sentence or nothing, whatever an earlier caller
+        mirror as one unit, below; round 1 of the billing verb's review, 2026-09-19, the reviewer's 17:14Z takes, its
+        fresh-2), with the pick left standing and the sentence for the caller left at pop_auth_refusal. That slot is cleared
+        at entry, before the read (the owner's second pass over those takes, 2026-09-19): what a caller pops after a False is this call's own sentence or nothing, whatever an earlier caller
         left unread there, so the door does not rest on the route being the one caller that pops on every refusal."""
         self._auth_refusals.pop(str(sid), None)   # a sentence an earlier call left unread never answers for this one
         reg = read_reg(self.state_dir, sid)
@@ -19677,8 +19713,8 @@ class SdkBackend:
                 self._log("auth (%s): its own pick is cleared; it follows the machine default again (%s) from its next launch%s"
                           % (name, label, ("; its CLI last reported the %s, which the default resolves to" % ran) if ran else ""))
             return True
-        # THE CLEAR AND ITS MIRROR ARE ONE GUARDED UNIT WITH A REFUSAL OF THEIR OWN (round 2 of the billing verb's review,
-        # 2026-09-19; its fresh-2, both refuters). The pair was cleared under the hold and mirrored bare, outside the one-guard
+        # THE CLEAR AND ITS MIRROR ARE ONE GUARDED UNIT WITH A REFUSAL OF THEIR OWN (round 1 of the billing verb's review,
+        # 2026-09-19, the reviewer's 17:14Z takes; its fresh-2, both refuters). The pair was cleared under the hold and mirrored bare, outside the one-guard
         # rule this PR adopted for the step below, so a reg write that failed (a full or read-only state directory) left the
         # LIVE object following the machine default, the dashboard's status and the verb's read with it, while the reg and a
         # kernel restart still carried the pick, with the parked picks the route had dropped already gone: the inverse of
@@ -19721,7 +19757,8 @@ class SdkBackend:
         return True
 
     def _refuse_default_clear(self, sid: str, name: str, e: BaseException) -> bool:
-        """follow_default_auth's own refusal (round 2 of the billing verb's review, 2026-09-19; its fresh-2): the record write
+        """follow_default_auth's own refusal (round 1 of the billing verb's review, 2026-09-19, the reviewer's 17:14Z takes; its
+        fresh-2): the record write
         that mirrors the clear failed, the live pair is back as it was (the live road) or was never touched (the dormant
         road), so the caller is told the pick stands, in a sentence of this failure's own. The sentence names the failure's
         class only: the route hands it to a caller over HTTP, and an OSError's text carries the record's absolute path,
@@ -19734,11 +19771,66 @@ class SdkBackend:
 
     def pop_auth_refusal(self, sid: str) -> str:
         """The sentence the last refused billing write on `sid` left for its caller (a `default` clear whose record write
-        failed, _refuse_default_clear), popped: "" when none. Popped, keyed by sid, and cleared again when follow_default_auth
-        next enters for the sid (the second pass of round 2), so a caller never reads a refusal another call or another
-        session left, and a sentence a caller left unread is gone before the next call's own answer is decided
-        (last_auth_refusal, set_auth's toast reason, is one slot and is not read here)."""
+        failed, _refuse_default_clear; a per-session pick whose record write failed, set_auth_guarded, since round 2 of the
+        billing verb's review, 2026-09-20), popped: "" when none. Popped, keyed by sid, and cleared again when either door
+        next enters for the sid (the owner's second pass over round 1's takes, 2026-09-19), so a caller never reads a refusal
+        another call or another session left, and a sentence a caller left unread is gone before the next call's own answer
+        is decided (last_auth_refusal, set_auth's toast reason, is one slot and is not read here)."""
         return str(self._auth_refusals.pop(str(sid), "") or "")
+
+    def set_auth_guarded(self, sid: str, value: str) -> bool:
+        """set_auth through THE ONE GUARDED ENTRY POINT, for the kernel's per-session pick helper (_set_auth_or_park_verdict:
+        POST /billing's `--now` and plain roads, the dashboard's setAuth arm; round 2 of the billing verb's review, 2026-09-20,
+        its kernel-1, ruled high, both refuters). set_auth writes the live pick pair and the pending under the hold and mirrors
+        them to the record after it, so a record write it could not make (a full or read-only state directory) raised out of
+        the helper with the live object moved onto the new pick, the record on the old one and no arm behind the pending, and
+        POST /billing's catch-all answered an HTTP 500 whose body was the traceback with this box's absolute paths; the
+        `default` road had its guard (follow_default_auth, round 1's fresh-2) and these roads had none. A raise here is
+        contained as a follower step's is (_follow_default_guarded, `road` "pick": the pick pair, the pending pair and the
+        slot flags restored to what stood when the step began, the mirror retried once, one problem row), and this leaves the
+        failure's own sentence for the route (pop_auth_refusal; the slot cleared at entry as follow_default_auth clears it, so
+        a caller never pops another call's sentence) and answers False, the verdict the route already answers 409 with.
+        set_auth's own False (the box's reason, a record that would not read) rides through as it is: those have their own
+        sentences. A dormant session (no object) has nothing to snapshot, and set_auth's record write is its whole change:
+        wrapped as follow_default_auth's dormant road is, the record untouched by the failure. Not the walk's door:
+        set_auth_followers runs set_auth inside its own guarded step, where a raise means `failed` and a False `unwritten`,
+        two different sentences to the user, and nothing here changes that. Never raises for a fault in the step."""
+        self._auth_refusals.pop(str(sid), None)   # a sentence an earlier call left unread never answers for this one
+        side, login_id = _logins.parse_pick(value)
+        label = (self.login_display(login_id) if login_id else side) or value
+        s = self.sessions.get(sid)
+        if s is None:
+            try:
+                return self.set_auth(sid, value)
+            except Exception as e:
+                reg = read_reg(self.state_dir, sid) or {}
+                return self._refuse_pick_write(sid, reg.get("name") or str(sid)[:8], label, e, row=True)
+        out, err = [], []
+
+        def step():
+            try:
+                out.append(self.set_auth(sid, value))
+            except Exception as e:
+                err.append(e)   # the class for the sentence; the guard files the row and restores the session
+                raise
+        ok = self._follow_default_guarded(s, step=step, road="pick",
+                                          head="auth (%s): the pick %s was asked of this session, but its step failed" % (s.name, label))
+        if not ok:
+            return self._refuse_pick_write(sid, s.name, label, err[0] if err else RuntimeError("the step failed"), row=False)
+        return bool(out and out[0])
+
+    def _refuse_pick_write(self, sid: str, name: str, label: str, e: BaseException, row: bool) -> bool:
+        """set_auth_guarded's refusal (round 2 of the billing verb's review, 2026-09-20; its kernel-1), the twin of
+        _refuse_default_clear: the record write that would have carried the pick failed and the session bills as it did, said
+        to the caller in a sentence naming the failure's class alone (the route hands it over HTTP; an OSError's text carries
+        the record's absolute path, which is this box's business). `row`: the dormant road files its own problem row here,
+        with the masked text for the Log; the live road's row is the guard's. Always False."""
+        why = "%s's pick %s was not applied: its record would not write (%s), so the session bills as it did" % (name, label, type(e).__name__)
+        self._auth_refusals[str(sid)] = why
+        if row:
+            self._log("auth (%s): the pick %s was NOT applied: the record write failed (%s: %s); the session bills as it did"
+                      % (name, label, type(e).__name__, _mask_ids(e)), problem=True)
+        return False
 
     def _follow_default_unlanded(self, s, label, because=None) -> None:
         """follow_default_auth's step for a live session with NO running side (no CLI report, no landed stamp), the state
@@ -20046,7 +20138,7 @@ class SdkBackend:
             # problem row, and the walk goes on to the next follower
             self._follow_default_guarded(s, label)
 
-    def _follow_default_guarded(self, s, label=None, landing=None, because=None, step=None, head=None) -> bool:
+    def _follow_default_guarded(self, s, label=None, landing=None, because=None, step=None, head=None, road=None) -> bool:
         """THE ONE GUARDED ENTRY POINT for a step that writes a session's billing ask (the reviewer's round 2, 2026-09-19;
         its kernel-1): every caller (set_auth_default's walk, the attach and launch landings in _connect_landed, the CLI's
         first init in _note_auth_source for a follower, since round 5 of the reviewer's review the same init for a
@@ -20097,7 +20189,15 @@ class SdkBackend:
         slot flag and leaves the pair) and a step's retry mirrors the pair too (_mirror_auth);
         until then the walk carried the round-1 handler this guard replaced, which wiped a standing ask the step had not
         written (a follower's carried ask stood before the walk reached it, and was gone after its fault). `head` is a
-        caller's own opening for the row when the two shapes here fit no road of its; the rest of the row is the same."""
+        caller's own opening for the row when the two shapes here fit no road of its; the rest of the row is the same.
+
+        THE PER-SESSION PICK TAKES THE SAME DOOR (round 2 of the billing verb's review, 2026-09-20; its kernel-1, ruled high):
+        set_auth_guarded runs set_auth through this for the kernel's pick helper (POST /billing's `--now` and plain roads,
+        the dashboard's setAuth arm), `road` "pick" with `step` and no `landing`, so a refused record write leaves the
+        session as the pick found it, the pick pair included, and the row's subject and event follow the restored pair: a
+        picked session keeps its own pick until the next pick, a follower keeps following the default until the next
+        default write. Until then those roads called set_auth bare, and a refused mirror raised out of the route with the
+        live object on the new pick and the record on the old one."""
         with s._hold_lock:
             before = (s._auth_pending_target(), bool(getattr(s, "_relaunch_bounded", False)),
                       (getattr(s, "auth", None), getattr(s, "auth_login", "") or ""), bool(getattr(s, "_landing_ask_bounded", False)))
@@ -20144,7 +20244,9 @@ class SdkBackend:
                     "pick's" if step is not None else "follower's")
                 subject = "the connect goes on with the CLI it has, and it"
             if step is not None and landing is None:
-                subject = "it keeps following the machine default and"   # the restore put the walk's pick back: a follower still
+                # the restore put the step's pick back: the walk's follower is a follower still; the per-session door's session
+                # (road "pick") keeps whatever it had, its own pick or the default it followed
+                subject = ("it keeps its own pick and" if road == "pick" and before[2][0] else "it keeps following the machine default and")
             # the next event that decides a follower's ask is a default write; a pick's is the next pick (a re-pick of the
             # side the CLI bills clears it in set_auth's unchanged branch, a pick of the other side asks). The verb's walk
             # step (`step` with no `landing`, fork PR #813) asked a follower's pick and the restore made it a follower again,
@@ -20152,7 +20254,8 @@ class SdkBackend:
             self._log("%s (%s: %s); %s stays on %s until its next connect or %s, with %s"
                       % (head, type(e).__name__, _mask_ids(e), subject,
                          ("the %s" % stays) if stays in ("login", "key") else "the side it is on",
-                         "the next pick" if (step is not None and landing is not None) else "the next default write",
+                         "the next pick" if (step is not None and (landing is not None or (road == "pick" and before[2][0])))
+                         else "the next default write",
                          ("the %s ask it already carried standing for that event" % standing) if standing else "no ask standing"),
                       problem=True)
             return False

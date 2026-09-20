@@ -1019,6 +1019,77 @@ def _git(repo, *args, date=None, check=True):
     return subprocess.run(["git", "-C", str(repo), *args], check=check, capture_output=True, text=True, env=env)
 
 
+class WhereDerivedFromTheDiff(unittest.TestCase):
+    """The `where:` line is generated from the branch's diff and checked against it (2026-09-20: a hand-kept line was
+    under-derived three times on one PR, each re-derivation by hand missing a method the delta had added). `touched` names
+    every changed file and, for a Python file outside tests/, the def, method or module-level assignment each touched line
+    belongs to (a closure belongs to its def; a test module is named as a whole); `where_missing` reds on any of them the
+    line omits; the working tree stands in for a commit about to be made."""
+
+    def _repo(self):
+        d = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, d)
+        _git(d, "init", "-q", "-b", "main")
+        (d / "kernel").mkdir()
+        (d / "tests").mkdir()
+        (d / "kernel" / "x.py").write_text(
+            "import os\n\nLIMIT = 1\n\n\ndef f1():\n    return 1\n\n\ndef f2():\n    def inner():\n        return 2\n    return inner()\n\n\n"
+            "class C:\n    ROWS = 3\n\n    def m(self):\n        return 4\n\n    def n(self):\n        return 5\n", encoding="utf-8")
+        (d / "tests" / "test_x.py").write_text("def test_a():\n    pass\n", encoding="utf-8")
+        (d / "notes.md").write_text("one\n", encoding="utf-8")
+        _git(d, "add", "-A")
+        _git(d, "commit", "-q", "-m", "base", date="2026-01-10T12:00:00+00:00")
+        base = _git(d, "rev-parse", "HEAD").stdout.strip()
+        src = (d / "kernel" / "x.py").read_text(encoding="utf-8")
+        src = src.replace("        return 2\n", "        return 20\n")          # inside f2's closure: f2 is named, inner is not
+        src = src.replace("        return 4\n", "        return 40\n")          # C.m
+        src = src.replace("LIMIT = 1\n", "LIMIT = 10\n")                        # a module-level assignment
+        src = src.replace("    ROWS = 3\n", "")                                 # a class-level assignment deleted outright
+        (d / "kernel" / "x.py").write_text(src, encoding="utf-8")
+        (d / "tests" / "test_x.py").write_text("def test_a():\n    pass\n\n\ndef test_b():\n    pass\n", encoding="utf-8")
+        (d / "notes.md").write_text("one\ntwo\n", encoding="utf-8")
+        return d, base
+
+    def test_touched_names_the_defs_the_diff_touches_and_nothing_else(self):
+        d, base = self._repo()
+        self.assertEqual(L.touched(d, base, None), {"kernel/x.py": ["LIMIT", "f2", "m"], "notes.md": [], "tests/test_x.py": []},
+                         "f1 and n untouched, inner folded into f2, the deleted ROWS line lands in C's body outside any method")
+        _git(d, "add", "-A")
+        _git(d, "commit", "-q", "-m", "change", date="2026-01-11T12:00:00+00:00")
+        self.assertEqual(L.touched(d, base, "HEAD"), L.touched(d, base, None), "the commit derives what its tree derived")
+        self.assertEqual(L.derive_where(L.touched(d, base, "HEAD")), "kernel/x.py (LIMIT, f2, m), notes.md, tests/test_x.py")
+
+    def test_where_missing_reds_on_an_omitted_def_or_file_and_passes_the_derived_line(self):
+        d, base = self._repo()
+        t = L.touched(d, base, None)
+        self.assertEqual(L.where_missing("kernel/x.py (f2), notes.md", t), ["kernel/x.py: LIMIT", "kernel/x.py: m", "tests/test_x.py"])
+        self.assertEqual(L.where_missing("kernel/x.py (`f2`, the `m` method and LIMIT), notes.md, tests/test_x.py", t), [],
+                         "prose around the names is fine; the names are matched as whole words")
+        self.assertEqual(L.where_missing("kernel/x.py (f2, m, LIMITS), notes.md, tests/test_x.py", t), ["kernel/x.py: LIMIT"],
+                         "a longer word does not stand in for the name")
+        self.assertEqual(L.where_missing(L.derive_where(t), t), [])
+
+    def test_the_verbs_print_the_line_and_refuse_an_entry_that_omits_a_touched_def(self):
+        d, base = self._repo()
+        entries = d / "upstream"
+        entries.mkdir()
+        L.new_entry(entries, "x-thing", "The x thing", "kernel/x.py (f2), notes.md, tests/test_x.py", added="2026-01-11")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = L.main(["--root", str(d), "where-check", "x-thing", base, "--head", "WORKTREE"])
+        self.assertEqual((rc, out.getvalue()), (1, "where: omits kernel/x.py: LIMIT\nwhere: omits kernel/x.py: m\n"))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(L.main(["--root", str(d), "touched", base, "--head", "WORKTREE"]), 0)
+        line = out.getvalue().strip()
+        self.assertEqual(line, "kernel/x.py (LIMIT, f2, m), notes.md, tests/test_x.py")
+        L.main(["--root", str(d), "set", "x-thing", "where", line])
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = L.main(["--root", str(d), "where-check", "x-thing", base, "--head", "WORKTREE"])
+        self.assertEqual((rc, out.getvalue().startswith("ok: the where: line names every file and definition")), (0, True))
+
+
 class AddedDate(unittest.TestCase):
     """`added` is the author date of the first commit whose diff introduced the row; a row first
     written while resolving a merge is found too (`-m`), and a row no commit introduced says so."""

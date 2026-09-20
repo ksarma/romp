@@ -9946,7 +9946,7 @@ class DefaultBillingMovesItsFollowers(unittest.TestCase):
         self.assertEqual([str(m) for m in self.logs if "reported its billing" in str(m)],
                          ["auth (web): this session's surviving CLI reported its billing, the key, which its pick names: the pick is served, "
                           "no reconnect"])   # said since round 5 (2026-09-19), the served half of the closer
-        # THE SERVED LEG IS DISCRIMINATED FROM THE ASK-THEN-WITHDRAW ROAD (round 2 of fork PR #813's review, 2026-09-19; its
+        # THE SERVED LEG IS DISCRIMINATED FROM THE ASK-THEN-WITHDRAW ROAD (round 1 of fork PR #813's review, 2026-09-19, the 17:14Z takes; its
         # extra6-1, strengthening this test of fork PR #787's closer): with the closer's ask leg load-bearing, a closer that ASKED
         # here instead of serving also ends with the pending cleared and no relaunch, since the ask's own request is withdrawn by
         # the served check (_served_by_connect: the running process already runs the key), which clears the pending the same
@@ -10021,7 +10021,7 @@ class DefaultBillingMovesItsFollowers(unittest.TestCase):
             self.assertEqual(s._auth_pending, "" if served else "login", "served for A's own pending; B's stands for its reconnect")
             self.assertEqual(bool(self._reg(s).get("authPending")), not served)
             if served:
-                # the served leg discriminated from the ask-then-withdraw road (round 2 of fork PR #813's review, 2026-09-19; its
+                # the served leg discriminated from the ask-then-withdraw road (round 1 of fork PR #813's review, 2026-09-19, the 17:14Z takes; its
                 # extra6-1, strengthening this test of fork PR #787's closer): the closer's line, no ask line, and the report kept
                 self.assertEqual(len([str(m) for m in self.logs if "the pick is served, no reconnect" in str(m)]), 1, self.logs)
                 self.assertEqual([str(m) for m in self.logs if "so it is asked now" in str(m)], [], "served, not asked and withdrawn")
@@ -10056,8 +10056,8 @@ class DefaultBillingMovesItsFollowers(unittest.TestCase):
             self.be._note_auth_source(s, "apiKeyHelper")
         self.assertEqual(closer.call_count, 0, "no pending, no closer")
         self.assertEqual((s.auth_live, s._auth_pending), ("key", ""))
-        # THE FIRST-INIT ROAD STAMPS THE SIDE FOR A PICKED SESSION WITH NO PENDING TOO (round 2 of fork PR #813's review,
-        # 2026-09-19; its extra6-2): fork PR #787's picked-init gate stamped only when a pending stood, and the rebase of fork
+        # THE FIRST-INIT ROAD STAMPS THE SIDE FOR A PICKED SESSION WITH NO PENDING TOO (round 1 of fork PR #813's review,
+        # 2026-09-19, the 17:14Z takes; its extra6-2): fork PR #787's picked-init gate stamped only when a pending stood, and the rebase of fork
         # PR #813 widened it to every first init of a session whose landing could not tell (the verb's status reads the stamp).
         # The widening is load-bearing: with the stamp narrowed back, a later pick on this session finds an object no landing
         # stamped, parks with no request (set_auth's never-landed branch), and nothing applies it. So the stamp is pinned

@@ -2232,11 +2232,11 @@ if [[ "${1:-}" == "billing" ]]; then
             echo "  again): the same change the dashboard's Billing menu makes; the session reconnects to apply it"
             echo "  at its next quiet moment, at once when it is quiet, and the output says when. --now cuts the"
             echo "  turn in flight and reconnects at once; while the session compacts or moves, --now is refused"
-            echo "  (exit 1): run it without --now to queue the pick behind the compaction or the move (default"
-            echo "  never queues: during a compaction it applies at once and the session reconnects when the"
-            echo "  compaction ends; during a move it is refused). A pick queued earlier for the session is"
-            echo "  dropped by --now and by default, and the output says so. Live"
-            echo "  subagents and background tasks still hold the pick until they finish, and the output says so."
+            echo "  (exit 1): run it without --now to queue the pick behind the compaction or the move"
+            echo "  (default never queues: during a compaction it applies at once and the session reconnects"
+            echo "  when the compaction ends; during a move it is refused). A pick queued earlier for the"
+            echo "  session is dropped by --now and by default, and the output says so. Live subagents and"
+            echo "  background tasks still hold the pick until they finish, and the output says so."
             echo "  --all-following <pick> writes the pick on every running session that follows the machine"
             echo "  default (they stop following it) and prints the names moved, which of them reconnect (each"
             echo "  relaunch waits its turn on the machine's spawn budget, the CLI serving until then), the names"
@@ -2315,10 +2315,11 @@ if moved:
         n, "" if one(n) else "s", "ies" if one(n) else "y", "its" if one(n) else "their", words(r.get("pick") or ""), ", ".join(moved))
     if isinstance(outlooks, dict):
         # one clause per bucket, in this order; every word the kernel answers falls in one (kernel.py's _BILLING_WORDS): the
-        # words named in `buckets` take their own clause, and every other word, the ones that arm at once or at the settle
-        # of the open turn, falls through to the reconnecting clause (no count kept here: a hand-kept count drifted once,
-        # round 1 of the review, 2026-09-19). Each clause is a function of its subject (the pronoun when one bucket holds
-        # every moved session, else the names) and whether it is plural
+        # words named in `buckets` take their own clause, and every word not named there falls through to the reconnecting
+        # clause (no count and no characterisation of that set kept here: a hand-kept count drifted once, round 1 of the
+        # review, 2026-09-19, and a hand-kept description of the fall-through words drifted next, round 2 of the review,
+        # 2026-09-20, its fresh-3). Each clause is a function of its subject (the pronoun when one bucket holds every moved
+        # session, else the names) and whether it is plural
         def reconnecting(s, p): return "%s reconnect%s at %s next quiet moment" % (s, "" if p else "s", "their" if p else "its")
         def already(s, p): return "%s already bill%s it, no reconnect" % (s, "" if p else "s")
         def next_launch(s, p): return "%s appl%s it at %s next launch" % (s, "y" if p else "ies", "their" if p else "its")
@@ -2342,7 +2343,7 @@ if moved:
             head += "; " + say(subject, plural)
 elif unwritten or parked or failed:
     # followers were reached and none was moved: a record that would not read (round 2 of the review), a follower parked
-    # behind its move (round 1 of the review, 2026-09-19), or every reached follower's step failed (round 2 of that review,
+    # behind its move (round 1 of the review, 2026-09-19), or every reached follower's step failed (the same round's 17:14Z takes,
     # its extra7-2: the failed bucket came after this guard, and the head denied the followers the tail then named); the
     # tail says why, and the head must not deny them
     head = "no follower moved to %s" % words(r.get("pick") or "")
@@ -2412,7 +2413,7 @@ if r.get("launched") is None and r.get("cannotTell"):
     # a client is up whose landing attached a surviving CLI with no report on record (the reviewer's cannot-tell class,
     # 2026-09-18; the rebase follow-up): a process runs, and what it bills is its first init's to say, which a resumed
     # session streams at its first turn; "no CLI is up" was false for it. The clause ends the way the walk's report bucket
-    # and the pick's "report" tail say it (round 2 of the review, 2026-09-19, its fresh-3: it used to end mid-sentence)
+    # and the pick's "report" tail say it (round 1 of the review, 2026-09-19, the 17:14Z takes, its fresh-3: it used to end mid-sentence)
     launched = "launched: a surviving CLI is attached that has not reported which side it bills; its first report decides which side it bills"
 elif r.get("launched") is None:
     # no landed launch stands under this kernel: a dormant session, a client torn down, or a connect composed and not landed
