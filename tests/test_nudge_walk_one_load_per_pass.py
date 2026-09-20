@@ -3594,20 +3594,27 @@ class TheGrammarIsTheOneTheWalkersClassify(unittest.TestCase):
         fixes: keyed on the names the module was imported under, the attribute and getattr forms let a walk through importlib,
         __import__, sys.modules or a rebound module name pass, the list shape once more). Every reference sits inside _walk but for
         the rows of _WALK_EXEMPT, each with its reason, and every row is used, so a stale exemption reds too; _walk itself holds
-        exactly one, the standard walk by attribute. _TRAVERSAL is tied to the interpreter first: every name it holds is an attribute
-        of the ast module (review round 5, extra5-3: the names were assembled from halves and the samples below were built from the
-        same constants, so a misassembled name matched its own sample and the case stayed green with that form guarded by nothing).
-        The three forms are then run over synthetic sources spelled literally, with a source of their own and no reference to
-        _TRAVERSAL, one per form and per road to the module, so the refused inputs are pinned here and not only by the plants the
-        history paragraphs record, and the stated limit is run the same way and answers no reference, so it is held on its side
-        (the finder reads a string constant only as getattr's second argument, so a sample spelling a name is no reference of this
-        module's). Outside these forms: a traversal name read
+        exactly one, the standard walk by attribute. _TRAVERSAL is pinned in both directions: the interpreter pins the spelling, every
+        name it holds an attribute of the ast module (review round 5, extra5-3: the names were assembled from halves and the samples
+        below were built from the same constants, so a misassembled name matched its own sample and the case stayed green with that
+        form guarded by nothing), and the samples pin the membership both ways, the set of names the samples spell, less the star
+        row, equal to the roster (review round 6, extra7-1: the samples loop reads each row's expected name off the row, so a sample
+        naming a name outside the roster red as no reference while a roster name with no sample was read by nothing, and a fifth
+        name this module spells nowhere, added to _TRAVERSAL, left the module green). The three forms are then run over synthetic
+        sources spelled literally, with a source of their own and no reference to _TRAVERSAL, one per form and per road to the
+        module, so the refused inputs are pinned here and not only by the plants the history paragraphs record, and the stated limit
+        is run the same way and answers no reference, so it is held on its side (the finder reads a string constant only as
+        getattr's second argument, so a sample spelling a name is no reference of this module's). Outside these forms: a traversal name read
         from the module's namespace by string (vars(ast), ast.__dict__, operator.attrgetter) or assembled at run time, a getattr
         reached under another name (a rebinding, builtins.getattr: the form keys on the bare Name getattr as the callee), and any
         traversal under an unlisted name, a recursion over ast.iter_fields, node._fields or ast.dump, a whole walk this finder never
         sees (the witness's negative control runs two such recursions over a planted tree and asserts this finder answers no
         reference over either); the interpreter check beside this case scans vars(ast) for every node class and reds by name on a
-        new one with no walker involved, so the version demand does not rest on this pin alone."""
+        new one with no walker involved, so the version demand does not rest on this pin alone. Derives: every reference in this
+        module's AST in the three forms, from the module's own text; the _WALK_EXEMPT rows both ways (every row used, nothing
+        outside them); the roster's names against the interpreter (each an attribute of ast) and against the samples both ways.
+        Bounds: the four names (the ruling's stop, a policy: a list of syntax does not converge); the three forms; the samples and
+        the limits as the independent source, literal rows the module cannot compute without spelling the names they test."""
         refs = _traversal_references(ast.parse(Path(os.path.realpath(__file__)).read_text(encoding="utf-8")))
         outside = [r for r in refs if r[4] != "_walk"]
         stray = [r for r in outside if (r[4], r[1]) not in _WALK_EXEMPT]
@@ -3619,9 +3626,10 @@ class TheGrammarIsTheOneTheWalkersClassify(unittest.TestCase):
         self.assertEqual(stale, [], "an exemption with no reference: %r (the row outlived the code it excused; remove it)" % stale)
         self.assertEqual([(r[1], r[2]) for r in refs if r[4] == "_walk"], [("walk", "attribute")],
                          "_walk holds exactly one traversal reference, the standard walk by attribute: %r" % [r for r in refs if r[4] == "_walk"])
-        # the roster is derived against the interpreter, not asserted: a misspelled or renamed name also fails its sample row below
-        # (the samples spell the names independently since the round-5 fixes), and this line names the misspelling directly instead
-        # of leaving the sample's mismatch to say it (a verifier of the round-5 fixes: this comment said the samples could not catch it)
+        # the roster is derived against the interpreter, not asserted: a misspelled or renamed name also reds the membership line below
+        # the samples (the samples spell the names independently since the round-5 fixes, so it has no row), and this line names the
+        # misspelling directly instead of leaving that line to say it (a verifier of the round-5 fixes: this comment said the samples
+        # could not catch it)
         self.assertEqual([n for n in _TRAVERSAL if not hasattr(ast, n)], [],
                          "every name in _TRAVERSAL is an attribute of the ast module; these are not: %r (a misspelled or renamed traversal "
                          "name is guarded by nothing, since no source can spell it)" % [n for n in _TRAVERSAL if not hasattr(ast, n)])
@@ -3658,6 +3666,15 @@ class TheGrammarIsTheOneTheWalkersClassify(unittest.TestCase):
             ("import sys\ndef census(t):\n    return list(getattr(sys.modules['ast'], 'walk')(t))\n",
              (3, "walk", "getattr", "getattr(sys.modules['ast'], 'walk')", "census")),
         )
+        # the roster and the samples pin each other both ways (review round 6, extra7-1): the loop below reads each row's expected name
+        # off the row, so a sample naming a name outside the roster reds there as no reference, but a roster name no sample spells was
+        # read by nothing, and a fifth name this module spells nowhere added to _TRAVERSAL left the module green; the star row is the
+        # from-import form's every-name report, not a roster name, so it is set aside (the shape of the door witness's keys == rosters)
+        spelled = {expected[1] for _source, expected in samples}
+        self.assertEqual(set(_TRAVERSAL), spelled - {"*"},
+                         "the names the samples spell are exactly the roster's: a roster name with no sample, %r, is a name this case pins "
+                         "by nothing (add its row per form); a sample naming a name outside the roster, %r, is a row the finder cannot "
+                         "read as a reference (the loop below reds it)" % (sorted(set(_TRAVERSAL) - spelled), sorted(spelled - {"*"} - set(_TRAVERSAL))))
         for source, expected in samples:
             got = _traversal_references(ast.parse(source))
             self.assertEqual(got, [expected], "the finder reads %r as one reference, %r, and answers %r" % (source, expected, got))
