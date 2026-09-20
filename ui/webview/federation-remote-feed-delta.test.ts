@@ -911,9 +911,21 @@ test("federation.ts states once what the pair does today (no kernel in this repo
   const home = "no kernel in this repo stamps a gen yet, so nothing declares one today";
   assert.equal(fedSrc.split("What the pair does today, stated here once").length, 2, "the home statement, once, at Conn.feedHeld");
   assert.ok(fedSrc.includes(home) && vdSrc.includes(home), "both files carry the statement's words");
+  // the forbidden CLASS, not the wordings the round removed (the fixer's pass: a comment of the class in other words passed
+  // the two exact regexes): kernel.py, or "the kernel" unqualified, said in the present tense to read a pair, member, gen,
+  // rev or "it" at the compose. "A kernel that stamps its frames reads the member at the compose" is the qualified
+  // statement the sites make and passes; "reads no pair" is the negation and passes.
+  const claim = /\b(kernel\.py|the kernel)\b(?![^.;]{0,30}?\bthat stamps\b)[^.;]{0,30}?\breads\b(?! no\b)[^.;]{0,40}?\b(pair|member|gen|rev|it)\b[^.;]{0,40}?\bat the compose\b/;
+  for (const shape of ["(kernel.py reads it at the compose)", "the kernel reads the member at the compose on either", "; kernel.py reads the held pair at the compose",
+                       "kernel.py, which reads the pair at the compose", "the kernel's handler reads the ask's gen and rev at the compose"]) {
+    assert.match(shape, claim, "the pin's own reach: " + shape);
+  }
+  for (const shape of ["a kernel that stamps its frames reads the member at the compose on either", "the kernel that stamps its frames reads the member at the compose",
+                       "kernel.py's handler above serves a full frame at once whatever the ask carries and reads no pair", "that kernel would read the declared member at the compose"]) {
+    assert.doesNotMatch(shape, claim, "the pin's own reach, the allowed side: " + shape);
+  }
   for (const [name, src] of [["federation.ts", fedSrc], ["view-deltas.ts", vdSrc]]) {
-    assert.doesNotMatch(src, /kernel\.py reads (it|the (pair|member)) at the compose/, name + ": kernel.py is not said to read the pair");
-    assert.doesNotMatch(src, /\bthe kernel reads the member at the compose\b/, name + ": no unqualified present-tense read");
+    assert.doesNotMatch(src, claim, name + ": kernel.py is not said to read the pair at the compose, in any words");
   }
 });
 
