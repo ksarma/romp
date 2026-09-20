@@ -4184,7 +4184,50 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
   // of plans/file-review.md: one holding an inline start tag with no end tag in it (`## Results <b>`), which the rule
   // above renders as literal text, so the slug takes the tag's characters too (md-results-b), where GitHub reads the
   // tag as HTML (results).
-  box.replaceChildren(...Array.from(sanitizeMd(dirty, mintHeadingIds).childNodes));
+  const clean = sanitizeMd(dirty, mintHeadingIds);   // the sanitized <body>: DOMPurify's own document's, which never loads (below)
+  // The figure chain runs HERE, on the sanitizer's body, BEFORE its nodes are adopted into `box` (2026-09-20). That body is
+  // DOMPurify's (md-sanitize.ts sanitizeMd, RETURN_DOM): its _initDocument parses the markup with `new
+  // DOMParser().parseFromString`, or into `implementation.createDocument` when that fails, and either document has no
+  // browsing context (`defaultView` is null), so nothing in it loads whatever attributes its elements carry; the math fill
+  // has always run there. `box` is the LIVE document's, and WebKit starts an <img>'s fetch synchronously the moment the
+  // element's node document becomes one with a render tree (adoption is enough; a place in the tree is not needed), so
+  // with the chain after the adoption the bytes had left for the unlisted host by the time the gate's placeholder said
+  // "Click to load", and a figure of the file's folder was requested against the PAGE, as the attribute read before
+  // rewriteFigureSrcs repointed it, and then again through /file. Chromium and Firefox defer that fetch to a microtask,
+  // which the chain's synchronous attribute moves beat, so only WebKit fetched: the kernel-served pages (the dashboard, and
+  // the iOS web app, which is the same page in Safari's engine) were reachable, the VS Code panes not (their CSP names no
+  // remote img-src). Every pass that sets, repoints or moves a fetching attribute is in this block; the passes after the
+  // adoption write a video's style, a list item's class, anchors' attributes, fences' markup and the prose's links (found
+  // by the review of the link-navigation follow-on, 2026-09-20; file-view-figures-gate-adopt-browser.test.ts reads real
+  // servers' request logs in all three engines).
+  if (doc && doc.kind === "url") {
+    // Every attribute a figure fetches through resolves against the document (resolveFigureRefs, below): this arm read
+    // `img[src]` alone, so a relative `srcset` candidate, a video's `src` or `poster`, an audio's, a `source`'s or a
+    // track's `src` in a URL document stayed relative and the browser resolved it against the PAGE, fetching the
+    // dashboard's directory instead of the document's and 404ing, the gap rewriteFigureSrcs closed for the file kind
+    // (the Slice 4 review, round 2).
+    resolveFigureRefs(clean, doc.href);
+    // Decision 8 for a URL document: the document's own host loads on open beside the gear's list; every other host
+    // is gated behind a click that names it (figure-gate.ts; the same placeholder, restored by the same action).
+    let own = "";
+    try { own = new URL(doc.href, document.baseURI).hostname; } catch { /* an unparseable location: the list alone */ }
+    gateRemoteFigures(clean, document.baseURI, [own]);
+  } else if (doc) {
+    // Figures on the session's disk: re-pointed at the kernel's /file route by rewriteFigureSrcs (below), which
+    // keeps the authored src in `data-fv-src` for the comments panel's embed matching and joins the path the way
+    // every other reader of an embed's destination does (a relative src under the file's directory, an absolute
+    // one as itself, `..` left to the kernel), so the picture shown is the file the poll watches.
+    rewriteFigureSrcs(clean, doc.path.slice(0, doc.path.lastIndexOf("/") + 1), doc.sid);
+    // Then decision 8 (plans/markdown-viewer.md; figure-gate.ts): a figure whose source is on a host the gear's list
+    // does not name, and that the person has not loaded in this document, is wrapped in a placeholder naming the host
+    // and fetches nothing until the placeholder is clicked. The kernel's own route, being the page's origin, is never
+    // gated, so a file's own attachments load on open; the list is read at every paint (loadSettings inside), so a
+    // change in the gear reaches the next paint, and an open document through the settings listener the gate installs.
+    gateRemoteFigures(clean, document.baseURI);
+  }
+  // Adopted as they are, no re-parse, every fetching attribute gated or repointed above, so the adoption itself starts no
+  // fetch in any engine (the leg's logs: no line for the gated host, one line through /file for the folder's figure).
+  box.replaceChildren(...Array.from(clean.childNodes));
   // A pixel-sized <video> keeps the author's shape (keepVideoShape, below): the sheets give it `height: auto` so it
   // shrinks in ratio with the column, and the browser's own `aspect-ratio: auto W / H` would hand that ratio to the poster.
   keepVideoShape(box);
@@ -4225,12 +4268,7 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
     a.removeAttributeNS(XLINK_NS, "href");
   });
   if (doc && doc.kind === "url") {
-    // Every attribute a figure fetches through resolves against the document (resolveFigureRefs, below): this arm read
-    // `img[src]` alone, so a relative `srcset` candidate, a video's `src` or `poster`, an audio's, a `source`'s or a
-    // track's `src` in a URL document stayed relative and the browser resolved it against the PAGE, fetching the
-    // dashboard's directory instead of the document's and 404ing, the gap rewriteFigureSrcs closed for the file kind
-    // (the Slice 4 review, round 2).
-    resolveFigureRefs(box, doc.href);
+    // A URL document's links resolve against the document too (its figures did above, before the adoption).
     box.querySelectorAll(LINK_SEL).forEach((node) => {
       const a = node as HTMLElement | SVGElement;
       const href = linkHref(a);
@@ -4239,23 +4277,6 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
       // .md target opens in this viewer (isMarkdownUrl), everything else in a new tab.
       a.setAttribute("href", resolveDocRelative(href, doc.href));
     });
-    // Decision 8 for a URL document: the document's own host loads on open beside the gear's list; every other host
-    // is gated behind a click that names it (figure-gate.ts; the same placeholder, restored by the same action).
-    let own = "";
-    try { own = new URL(doc.href, document.baseURI).hostname; } catch { /* an unparseable location: the list alone */ }
-    gateRemoteFigures(box, document.baseURI, [own]);
-  } else if (doc) {
-    // Figures on the session's disk: re-pointed at the kernel's /file route by rewriteFigureSrcs (below), which
-    // keeps the authored src in `data-fv-src` for the comments panel's embed matching and joins the path the way
-    // every other reader of an embed's destination does (a relative src under the file's directory, an absolute
-    // one as itself, `..` left to the kernel), so the picture shown is the file the poll watches.
-    rewriteFigureSrcs(box, doc.path.slice(0, doc.path.lastIndexOf("/") + 1), doc.sid);
-    // Then decision 8 (plans/markdown-viewer.md; figure-gate.ts): a figure whose source is on a host the gear's list
-    // does not name, and that the person has not loaded in this document, is wrapped in a placeholder naming the host
-    // and fetches nothing until the placeholder is clicked. The kernel's own route, being the page's origin, is never
-    // gated, so a file's own attachments load on open; the list is read at every paint (loadSettings inside), so a
-    // change in the gear reaches the next paint, and an open document through the settings listener the gate installs.
-    gateRemoteFigures(box, document.baseURI);
   }
   if (doc && doc.kind === "file") {
     // A file on the session's disk: its links are sorted by file-view-links.ts (linkMarkdownAnchors). A link to the

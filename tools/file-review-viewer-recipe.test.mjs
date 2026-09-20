@@ -72,7 +72,8 @@ test('file-view.ts exports viewerHtml, the five statements in order and nothing 
   assert.ok(mdBlock.indexOf('const base = marked.defaults.walkTokens;') < mdBlock.indexOf(WALK), 'the base is read before the parse that runs it');
   for (const s of ['marked.parse(', 'marked.lexer(', 'marked.parser(', 'marked.walkTokens(', 'literalizeUnclosedTags(']) assert.ok(!mdBlock.includes(s), `mdBlock holds no ${s} of its own`);
   assert.equal((view.match(/literalizeUnclosedTags\(/g) || []).length, 1, 'one call in the viewer, the recipe\'s');
-  assert.ok(view.includes('\n  box.replaceChildren(...Array.from(sanitizeMd(dirty, mintHeadingIds).childNodes));\n'), 'the sanitizer stays mdBlock\'s own step after the recipe');
+  assert.ok(view.includes('\n  const clean = sanitizeMd(dirty, mintHeadingIds);'), 'the sanitizer stays mdBlock\'s own step after the recipe');
+  assert.ok(view.includes('\n  box.replaceChildren(...Array.from(clean.childNodes));\n'), 'and its body is adopted as a step of its own, after the figure chain ran on it (2026-09-20)');
   assert.ok(view.includes('import { marked, type Token, type Tokens } from "marked";'), 'the walk\'s parameter type comes from marked');
 });
 

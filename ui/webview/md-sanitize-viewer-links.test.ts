@@ -80,10 +80,14 @@ test("target and rel are written with setAttribute: the `target` property is rea
 
 test("an SVG anchor's xlink:href is moved to a plain href before either pass (copied when the anchor has none, then removed), so the delegates and the browser read one attribute", () => {
   const norm = MD_FN.indexOf('querySelectorAll("a[*|href]").forEach((a) => {');
-  const docGate = MD_FN.indexOf('if (doc && doc.kind === "url") {');   // mdBlock's first doc gate (fork PR #347 split the two kinds)
   const sanitize = MD_FN.indexOf("sanitizeMd(");
+  const adopt = MD_FN.indexOf("box.replaceChildren(...Array.from(clean.childNodes));");   // the figure chain runs between the sanitize and this line, on the sanitizer's body; it touches no anchor
+  const urlLinks = MD_FN.indexOf("resolveDocRelative(href, doc.href)");    // the URL kind's link pass
+  const fileLinks = MD_FN.indexOf("linkMarkdownAnchors(box, doc.path)");   // the file kind's
+  const stamp = MD_FN.indexOf('a.dataset.act = "fv-anchor"');              // the arm every other document takes
   assert.ok(norm > -1, "the normalisation pass exists");
-  assert.ok(sanitize < norm && norm < docGate, "after the sanitize (the attribute must survive DOMPurify first), before the doc gate (both passes see it)");
+  assert.ok(sanitize < adopt && adopt < norm, "after the sanitize (the attribute must survive DOMPurify first) and after the adoption");
+  assert.ok(urlLinks > norm && fileLinks > norm && stamp > norm, "before every link pass (all three see it)");
   assert.match(VIEW, /import \{[^}]*\bXLINK_NS\b[^}]*\} from "\.\/md-links";/, "the namespace is the shared constant, not a second spelling");
   // the copy only when no href is present (an author's href beside the xlink wins, as in the browser), then the removal on every
   // anchor that carried the XLink spelling: linkMarkdownAnchors takes `href` off a path link and a dead link, and the browser

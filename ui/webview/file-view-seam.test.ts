@@ -1088,11 +1088,18 @@ test("source: the Slice 3 seam members exist with their doc comments; the media 
   assert.match(VIEW, /body\.replaceChildren\(rendered \? mdBlock\(text, \{ kind: "file", path, sid: sid \|\| null \}\) : codeBlock\(text, path, true\)\);/,
     "mdBlock knows the open file's path and sid (as a MdDocLoc since the 2026-09-07 fold: the URL viewer shares the renderer)");
   const mdFn = VIEW.split("function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {")[1].split("\n}\n")[0];
-  const sanitizeAt = mdFn.indexOf("box.replaceChildren(...Array.from(sanitizeMd(dirty, mintHeadingIds).childNodes));");   // the shared sanitizer, md-sanitize.ts, with the heading ids as its caller pass (before the fill)
-  const rewriteAt = mdFn.indexOf('rewriteFigureSrcs(box, doc.path.slice(0, doc.path.lastIndexOf("/") + 1), doc.sid);');
+  const sanitizeAt = mdFn.indexOf("const clean = sanitizeMd(dirty, mintHeadingIds);");   // the shared sanitizer, md-sanitize.ts, with the heading ids as its caller pass (before the fill)
+  const rewriteAt = mdFn.indexOf('rewriteFigureSrcs(clean, doc.path.slice(0, doc.path.lastIndexOf("/") + 1), doc.sid);');
+  const gateAt = mdFn.indexOf("gateRemoteFigures(clean, document.baseURI);");
+  const adoptAt = mdFn.indexOf("box.replaceChildren(...Array.from(clean.childNodes));");
   assert.equal(mdFn.indexOf("box.textContent = text;"), -1, "no fallback in mdBlock: the caller keeps the content (file-view.test.ts pins the try)");
-  assert.ok(sanitizeAt >= 0 && rewriteAt > sanitizeAt, "sanitize, then rewrite, in that order, on `box`");
-  assert.ok(mdFn.indexOf("return box;") > rewriteAt);
+  // the figure chain runs on the sanitizer's own body, DOMPurify's inert document, and the adoption into the live document's
+  // box comes after it (2026-09-20): WebKit starts an img's fetch the moment its node document is one with a render tree, so
+  // a chain after the adoption fetched a gated figure while its placeholder stood (file-view-figures-gate-adopt-browser.test.ts)
+  assert.ok(sanitizeAt >= 0 && rewriteAt > sanitizeAt && gateAt > rewriteAt && adoptAt > gateAt, "sanitize, then rewrite, then gate, on `clean`, and only then the adoption into `box`");
+  assert.doesNotMatch(mdFn, /(resolveFigureRefs|rewriteFigureSrcs|gateRemoteFigures)\(box,/, "no figure pass runs on the live document's box");
+  assert.ok(mdFn.indexOf("resolveFigureRefs(clean, doc.href);") >= 0 && mdFn.indexOf("resolveFigureRefs(clean, doc.href);") < adoptAt, "the URL kind's resolution runs on `clean` too, before the adoption");
+  assert.ok(mdFn.indexOf("return box;") > adoptAt);
   const rw = VIEW.split("export function rewriteFigureSrcs(root: ParentNode, dir: string, sid: string | null | undefined): void {")[1].split("\n}\n")[0];
   // Slice 4 of plans/markdown-viewer.md widened the walk from `img[src]` to every attribute a figure fetches through
   // (figure-gate.ts figureRefs: img src and srcset, source, video src and poster, audio, track, an svg image's href); the
