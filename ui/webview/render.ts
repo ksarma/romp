@@ -14251,18 +14251,29 @@ function renderNoticeGroup(evs: ChatEvent[], anchor: ChatEvent, prevEpoch: numbe
   return turn;
 }
 
-// Toggle a collapsed tool run open/closed and repaint the active view in place (scroll preserved).
+// Toggle a collapsed tool run open/closed and repaint the active view in place, keeping the reader's place the way appendActive keeps
+// it (PR E review round 1, high). The repaint is a window build (syncView over a stale view: renderWindowItems), and a build takes the
+// figures the unit observer parked since the last paint (applyMeasure), so the head spacer above the viewport can change height under
+// the reader by the re-measured per-turn figure times the head gap's turns; the raw restore of the pre-toggle scrollTop that stood here
+// moved a scrolled-up reader by that delta on every toggle. A reader at the bottom keeps the raw write: a collapse makes the transcript
+// shorter, the browser clamps them at the forced layout before the write runs, and the write claims that move with `top` as its origin
+// (a write that read the clamped value would move nothing, file no row and set no marker, leaving the clamp's own scroll event to file
+// as a gesture: see writeScroll); an expand leaves the run's head where it was, its rows opening under it, rather than following to the
+// bottom (a bottom reader's parked figures are taken by the paint the frame-end take asks for, so their toggle rarely finds one). Anyone
+// else has the first visible row's offset captured before the build and restored after it (captureScrollAnchor / restoreScrollAnchor,
+// the anchor keep appendActive uses); when no row is capturable, or the anchor row was inside the run that collapsed and is gone, the
+// raw write stands as the fallback, `top` its origin.
 function toggleToolGroup(key: string): void {
   if (openFolds.has(key)) openFolds.delete(key); else openFolds.add(key);
   const content = document.getElementById("content");
   const top = content ? content.scrollTop : 0;
+  const v = activeId ? views.get(activeId) : undefined;
+  const stick = !!content && content.scrollHeight > content.clientHeight + 2 && atBottom(content);
+  const anchor = content && v && !stick ? captureScrollAnchor(content, v) : null;
   // the expand/collapse changes the DOM without changing the event set, so mark the view stale to force
   // the compact rebuild past the cache guard (a plain tab switch leaves stale false → reuses the cache).
-  if (activeId) { const v = views.get(activeId); if (v) v.stale = true; syncView(activeId); }
-  // `top` is also the write's origin: a collapse makes the transcript shorter, the browser clamps a bottom reader at the forced
-  // layout before this write runs, and a write that read the clamped value would move nothing, file no row and set no marker,
-  // leaving the clamp's own scroll event to file as a gesture (see writeScroll)
-  if (content) writeScroll(content, top, "toolgroup-toggle", false, top);
+  if (activeId) { if (v) v.stale = true; syncView(activeId); }
+  if (content && !(anchor && v && restoreScrollAnchor(content, v, anchor, top))) writeScroll(content, top, "toolgroup-toggle", false, top);
   refillOpenCommentPop();   // the popover renders the same units — its copy of this run must flip too
   scheduleRailSticky();
 }
