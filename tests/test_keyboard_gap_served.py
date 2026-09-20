@@ -298,10 +298,16 @@ class KeyboardGap(unittest.TestCase):
         # 0px (a pan is a soft-keyboard thing), the height is innerHeight, so this window lays out exactly as before the pan
         fine = self._drive(engine, {"device": None, "viewport": {"width": 800, "height": 900}}, "-fine800")
         up = fine["kbUp"]
+        # the premise first (round 4, 2026-09-20): every geometric assertion below is satisfied identically by a page whose fake
+        # viewport was never installed or never panned (a real, unpanned viewport reads offsetTop 0), so the emulation is
+        # pinned the way the phone leg pins it: the fake is what the shell reads, its install raised nothing, and it was panned
+        self.assertTrue(up["vv"]["fake"], where + "the shell's visualViewport is the fake: %r" % (up["vv"],))
+        self.assertIsNone(up["labVVError"], where + "%r" % (up,))
+        self.assertEqual(up["vv"]["offsetTop"], KB_PAN, where + "the fake was panned: %r" % (up["vv"],))
         self.assertEqual((up["innerWidth"], up["coarse"], up["mobile"]), (800, False, True), where + "the emulation held, a fine pointer inside the query: %r" % (up,))
         self.assertEqual(up["body"]["position"], "fixed", where + "the fixed body applies by width alone: %r" % (up,))
         self.assertEqual(_px(up["appTop"]), 0, where + "a fine pointer writes 0px whatever the visual viewport says: %r" % (up,))
-        self.assertEqual(_px(up["appH"]), 900, where + "the height is innerHeight off a coarse pointer: %r" % (up,))
+        self.assertEqual(_px(up["appH"]), 900, where + "the height is innerHeight when the pointer is not coarse: %r" % (up,))
         self.assertAlmostEqual(up["body"]["top"], 0, delta=0.5, msg=where + "%r" % (up,))
         self.assertAlmostEqual(up["body"]["bottom"], 900, delta=0.5, msg=where + "%r" % (up,))
         self.assertEqual(up["bar"]["display"], "flex", where + "the phone layout, by width")
@@ -309,6 +315,9 @@ class KeyboardGap(unittest.TestCase):
         # being pointer-gated, and no rule consumes it: the body stays in flow at layout y 0, sized by --app-h as on every layout
         wide = self._drive(engine, {"device": "iPhone 14", "viewport": {"width": 1200, "height": 900}}, "-coarse1200")
         up = wide["kbUp"]
+        self.assertTrue(up["vv"]["fake"], where + "the shell's visualViewport is the fake: %r" % (up["vv"],))
+        self.assertIsNone(up["labVVError"], where + "%r" % (up,))
+        self.assertEqual(up["vv"]["offsetTop"], KB_PAN, where + "the fake was panned: %r" % (up["vv"],))
         self.assertEqual((up["innerWidth"], up["coarse"], up["mobile"]), (1200, True, False), where + "the emulation held, a coarse pointer outside the query: %r" % (up,))
         self.assertEqual(up["body"]["position"], "static", where + "no fixed body outside the query: %r" % (up,))
         self.assertEqual(_px(up["appTop"]), KB_PAN, where + "the pan is published off a coarse pointer at any width, consumed by nothing here: %r" % (up,))
