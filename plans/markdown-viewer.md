@@ -7897,7 +7897,10 @@ name (`figureHasPicture`: `loaded`, the browser having answered with a picture, 
 node suites' DOM, decided from its source), the rule `figureWantsControl` withholds the control on too, so a state
 `figureState` gains later is refused by both readers with no edit to either (before the file review's round 3 each
 reader named the two states it refused, a list a new value passes; a guard refuses on its safe side for any value it
-does not know); the target is read again at the click; the failed figure's label, `failedSource`,
+does not know; the three pins that hold the refused states' literals absent read every line of file-view.ts but the type
+line and `figureState`, and the three pins are file-wide on purpose, so a literal `"failed"` or `"fetching"` for
+anything else in the module must be spelled another way, which the file review's round 4 recorded); the target is read
+again at the click; the failed figure's label, `failedSource`,
 delegates to it; read from the src alone, the control opened the fallback src a `<picture>` or a srcset figure had
 skipped), joined by the model's `figurePath` (file-comments-model.ts, the join rewriteFigureSrcs fetched through, so the
 picture opened is the one shown and its request is the paint's), through the figure's own door,
@@ -7945,7 +7948,10 @@ address, which the file review's round 3 found the record could not show; Chromi
 `strict-origin-when-cross-origin` sends the origin on a cross-origin request; the kernel-served dashboard sends
 `Referrer-Policy: same-origin`, kernel.py, so there the image request names no referer), and each tab's document request
 (`sec-fetch-dest: document`, `sec-fetch-mode: navigate`) came with the Lax cookie, without the Strict one, and with no
-referer, in both probes. So the follow-on is a privacy surface and lands on the owner's word whatever its tier, with the two roads
+referer, in both probes (the tab is opened by `window.open(href, "_blank", "noopener,noreferrer")`, `openUrlTab` in
+file-view.ts, and `noreferrer` sends none; the policy alone would have sent the origin on the cross-origin navigation as
+it did on the image request, so the record rules the policy out as the cause, which the file review's round 4 found the
+earlier sentence had named). So the follow-on is a privacy surface and lands on the owner's word whatever its tier, with the two roads
 priced in open point 11. A gated
 placeholder (figure-gate.ts) gets none until its figure is loaded: `armFigureControls`, one capture-phase pair of `load`
 and `error` listeners on the body per open beside the labels', runs the decision at the load and at the error (the
@@ -7965,11 +7971,12 @@ file-view-figure-floor-browser.test.ts); and the floor is read
 again at each change of the figure's own laid-out box (`watchFigureBoxes`: one ResizeObserver per open over the
 figures of the Rendered box, armed beside the load and error pair, re-armed at each text paint through the seam's
 onRendered and dropped with the viewer, running the same decision for the figure whose box changed; a report of 0 by 0
-runs no decision: it is the transient box of a figure the viewer hides or of a gated placeholder's img until its click,
-the show or the restore reports the real box, which is decided, and a decision over the transient report would take a
-standing control off a figure that is merely hidden and the show would put it back, a remove and an add the reader never
-sees (found before the file review's round 3: decided over it, `figureBox` then fell back to the picture's own size and a
-figure hidden under the floor at its real width gained a control while hidden and lost it at the show); the skip decides
+runs no decision; the roads the product has to such a report are the viewer's hide and a gated placeholder's img until
+its click, and on both the show or the restore reports the real box, which is decided, while a decision over the hide's
+report would take a standing control off a figure that is merely hidden and the show would put it back, a remove and an
+add the reader never sees (found before the file review's round 3: decided over it, `figureBox` then fell back to the
+picture's own size and a figure hidden under the floor at its real width gained a control while hidden and lost it at
+the show); the skip decides
 nothing, so a LOADED figure whose real box is 0 by 0, an author's `<img hidden>` or `<img width="0">`, both kept by the
 sanitizer, gets no control by the floor and not by the skip: `figureBox` reads the laid-out box of a figure in the
 document as it is, 0 by 0 included, and falls back to the picture's own size only for a figure not in the document
@@ -7978,7 +7985,13 @@ correctness-1: the fallback ran for any zero-sided rect, the hidden picture was 
 and its control lay 28 px into the words before it, where it took the click meant for them and opened the picture the
 author hid; the same read makes a load while the viewer is hidden a decision over 0 by 0, so a standing control leaves
 at that load and the show's report of the real box brings it back, where before the control stood through the hidden
-load; the floor leg drives both authored shapes beside prose, the click on the words, and the hidden load); the watch
+load; the floor leg drives both authored shapes beside prose, the click on the words, and the hidden load); the
+residual the skip leaves, a figure hidden after its load by any road but the viewer's own keeping a standing control
+over the prose before it until its next report with a box, has no road in the product (the sanitizer keeps an author's
+colour declarations alone, no sheet rule hides an author's figure by a class the author can write, and no viewer feature
+toggles an img after its load) and was reached in the file review's round 4 only by a stylesheet its probe injected, the
+control kept at the hide and a click on it opening the picture, so a road added later decides the figure itself or lifts
+the skip for it (recorded, not built against); the watch
 is armed at each text paint and not before the first, since the body is empty when the open arms it (the file review's
 round 3, tests-4: an arm there observed nothing on any road, measured in Chromium over the fresh open, the replace, Back,
 Forward and a reopen, and was removed), which is the

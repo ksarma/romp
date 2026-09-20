@@ -111,9 +111,11 @@ test('L3 opens on the exceptions it names, and names the floor by the source\'s 
   assert.ok(L3.includes('a value measured once against a condition that can change is re-read on the event that changes it'), 'L3 states the class');
   const watch = between(viewer, 'function watchFigureBoxes(body: HTMLElement, filePath: string, onRendered: (cb: (why?: FileViewRenderWhy) => void) => void): (() => void) | null {', '\n}\n');
   inOrder(watch, ['if (typeof ResizeObserver !== "function") return null;', 'if (e.contentRect.width === 0 || e.contentRect.height === 0) continue;', 'if (img.isConnected && figureState(img) !== "standin") decideFigureControl(img, filePath);', 'body.querySelectorAll(".fileview-md img").forEach((img) => { ro.observe(img); });', 'onRendered((why) => { if (why !== "reflow") rearm(); });'], 'watchFigureBoxes: the guard, the 0 by 0 report skipped, the one decision per reported figure, every figure observed, re-armed at each text paint');
-  // a 0 by 0 report (the viewer hidden, a gated placeholder's img) is a box not laid out and runs no decision (found before the
-  // file review's round 3: decided over it, a hidden figure gained a control while hidden and lost it at the show); L3 says so
-  assert.ok(L3.includes('a report of 0 by 0 runs no decision: it is the transient box of a figure the viewer hides or of a gated placeholder\'s img until its click, the show or the restore reports the real box, which is decided'), 'L3 records the 0 by 0 report and its narrowed reason');
+  // a 0 by 0 report runs no decision (found before the file review's round 3: decided over it, a hidden figure gained a control
+  // while hidden and lost it at the show); L3 states the skip as a rule with its residual (the file review's round 4, behaviour-4):
+  // the roads the product has to the report, what the skip is no guard for, and the figure hidden after its load by another road
+  assert.ok(L3.includes('a report of 0 by 0 runs no decision; the roads the product has to such a report are the viewer\'s hide and a gated placeholder\'s img until its click, and on both the show or the restore reports the real box, which is decided'), 'L3 records the 0 by 0 report and the roads to it');
+  assert.ok(L3.includes('the residual the skip leaves, a figure hidden after its load by any road but the viewer\'s own keeping a standing control over the prose before it until its next report with a box, has no road in the product'), 'L3 records the residual and that no road reaches it');
   assert.ok(L3.includes('the skip decides nothing, so a LOADED figure whose real box is 0 by 0'), 'L3 says what the skip is not (the file review\'s round 3, correctness-1)');
   assert.ok(L3.includes('`figureBox` reads the laid-out box of a figure in the document as it is, 0 by 0 included'), 'L3 names the read that refuses the boxless figure');
   assert.ok(read('ui', 'webview', 'file-view-figure-floor-browser.test.ts').includes('a loaded `<img hidden>` and a loaded `<img width=\\"0\\">` beside prose'), 'the floor leg drives both authored shapes');
@@ -237,7 +239,8 @@ test('the file review: L3 names the one decision, its verdict and the state it r
   const refused = members.filter((m) => !allowed.includes(m));
   assert.ok(allowed.length >= 1 && refused.length >= 1, 'a derived refused set: ' + JSON.stringify({ members, allowed, refused }));
   const elsewhere = viewer.replace(domain[0], '\n').replace(state, '');
-  for (const m of refused) assert.equal((elsewhere.match(new RegExp('"' + m + '"', 'g')) || []).length, 0, 'no reader names the refused state "' + m + '" (its literal stands only on the type line and in figureState)');
+  for (const m of refused) assert.equal((elsewhere.match(new RegExp('"' + m + '"', 'g')) || []).length, 0, 'no reader names the refused state "' + m + '" (its literal stands only on the type line and in figureState; the pin is file-wide on purpose, so a literal "' + m + '" for anything else in file-view.ts must be spelled another way)');
+  assert.ok(L3.includes('the three pins are file-wide on purpose'), 'L3 says the pins are file-wide (the file review\'s round 4, records-3)');
   assert.ok(L3.includes('the two are the refused states of ONE rule, a target only for a state with a picture to name (`figureHasPicture`: `loaded`, the browser having answered with a picture, or a stand-in outside a browser'), 'L3 states the rule');
   assert.ok(L3.includes('so a state `figureState` gains later is refused by both readers with no edit to either'), 'L3: why the rule and not the list');
   assert.ok(read('ui', 'webview', 'file-view-figure-state-browser.test.ts').includes('a FAILED local figure with a box (a non-empty alt, laid out as text) wears no control, and its plain click opens nothing'), 'the state leg drives a failed figure with a box');
@@ -349,15 +352,49 @@ test('the file review: L2 hides the pair when neither direction has a target, on
 });
 
 // ── the attributions: the branch's review ran two rounds, the file review is named as such (the file review's round 3, tests-2) ──
-test("no line the branch added since the merge-base names \"the review's round N\" with N above 2: the section's convention names the branch's two-round adversarial review \"the review\" and the maintainer's review of the PR \"the file review\", so a third or later round can only be the file review's and must say so", (t) => {
+// Two roads, so the pin checks something in every checkout (the file review's round 4, behaviour-6 with records-2 and
+// coverage-2: the first form returned green after a diagnostic wherever origin/main was unknown, which is CI's default-depth
+// checkout of the tools job, and on main after the merge). (1) Always: the files the branch created, read as they stand, and
+// the plan's follow-on section. (2) Where origin/main is known and is not HEAD (a local checkout of the branch): every line the
+// branch added since the merge-base, the modified files included, and the roster of (1) checked against the diff's added files,
+// so a module created later joins the roster or reds here. On CI and on main only road (1) runs, and the test says so.
+const CREATED = [
+  'tests/test_guide_trail_chords_and_figure_button.py',
+  'tools/markdown-viewer-plan-linknav-review.test.mjs',
+  'tools/markdown-viewer-plan-linknav.test.mjs',
+  'ui/webview/file-figure-open-browser.test.ts',
+  'ui/webview/file-figure-open.test.ts',
+  'ui/webview/file-trail-browser.test.ts',
+  'ui/webview/file-trail.test.ts',
+  'ui/webview/file-trail.ts',
+  'ui/webview/file-view-figure-chosen-browser.test.ts',
+  'ui/webview/file-view-figure-chosen.test.ts',
+  'ui/webview/file-view-figure-floor-browser.test.ts',
+  'ui/webview/file-view-figure-recent-browser.test.ts',
+  'ui/webview/file-view-figure-shapes-browser.test.ts',
+  'ui/webview/file-view-figure-shapes.test.ts',
+  'ui/webview/file-view-figure-state-browser.test.ts',
+  'upstream/2026-09-19-linknav-trail-back-forward.md',
+];
+const WRONG_ROUND = /\bthe review's round (?:[3-9]|\d{2,})\b/i;
+test("no line the branch wrote names \"the review's round N\" with N above 2: the section's convention names the branch's two-round adversarial review \"the review\" and the maintainer's review of the PR \"the file review\", so a third or later round can only be the file review's and must say so; read from the files the branch created and the plan's section in every checkout, and from every added line since the merge-base where origin/main is known", (t) => {
   assert.ok(flat(section).includes("The branch's adversarial review before the PR ran two rounds, named below as the review's round 1 and round 2; the maintainer session's review of the PR (2026-09-20) is named the file review."), 'the naming convention stands in the section');
+  // road (1): the created files and the section, as they stand
+  const wrongLines = [];
+  const scan = (label, text) => { text.split('\n').forEach((l, i) => { if (WRONG_ROUND.test(l)) wrongLines.push(label + ':' + (i + 1) + ': ' + l.trim()); }); };
+  for (const f of CREATED) { assert.ok(exists(f), f + ' exists (a created file of the branch; a rename moves it here too)'); scan(f, read(f)); }
+  scan('plans/markdown-viewer.md (the follow-on section)', plan.slice(headAt, nextAt < 0 ? plan.length : nextAt));
+  assert.deepEqual(wrongLines, [], "lines naming the branch's review with a round it never had (write \"the file review's round N\")");
+  // road (2): every added line since the merge-base, and the roster against the diff
   const git = (...args) => execFileSync('git', args, { cwd: REPO, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
   let base = null;
   try { base = git('merge-base', 'origin/main', 'HEAD'); } catch { base = null; }
-  if (!base) { t.diagnostic('origin/main is not known in this checkout: the attribution rule is held by its prose alone here'); return; }
-  if (base === git('rev-parse', 'HEAD')) { t.diagnostic('HEAD is the merge-base (the branch is merged, or this is main): no added lines to read'); return; }
+  if (!base) { t.diagnostic('origin/main is not known in this checkout (CI\'s default-depth checkout): the created files and the section were read; the added lines since the merge-base were not'); return; }
+  if (base === git('rev-parse', 'HEAD')) { t.diagnostic('HEAD is the merge-base (the branch is merged, or this is main): the created files and the section were read; there are no added lines to read'); return; }
+  const created = git('diff', '--name-status', base, 'HEAD').split('\n').filter((l) => l.startsWith('A\t')).map((l) => l.slice(2)).sort();
+  assert.deepEqual(created, [...CREATED].sort(), 'the roster is the diff\'s added files since ' + base + ' (a file created later joins the roster)');
   const added = git('diff', '-U0', base, 'HEAD').split('\n').filter((l) => l.startsWith('+') && !l.startsWith('+++'));
   assert.ok(added.length > 0, 'the branch added lines since ' + base);
-  const wrong = added.filter((l) => /\bthe review's round (?:[3-9]|\d{2,})\b/i.test(l));
+  const wrong = added.filter((l) => WRONG_ROUND.test(l));
   assert.deepEqual(wrong, [], "added lines naming the branch's review with a round it never had (the file review's round 3 found two: write \"the file review's round N\")");
 });

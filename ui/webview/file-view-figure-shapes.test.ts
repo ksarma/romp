@@ -97,7 +97,9 @@ test("the one decision: figureWantsControl reads the figure's state by one rule 
   // over `state === "fetching" || state === "failed"` passed the same two in the other order): the refused set is derived, the
   // domain's members less the ones the allowance names, and each refused member's string literal stands nowhere in the file but
   // the type line and figureState's body (the two places that must name every member), comments included, so a reader that
-  // names one in any form (a comparison in either order, a `case`, an array or a Set) fails here
+  // names one in any form (a comparison in either order, a `case`, an array or a Set) fails here; the pin is file-wide on
+  // purpose (the file review's round 4, records-3), so a literal "failed" or "fetching" for anything else in the module must be
+  // spelled another way
   const domain = VIEW.match(/\ntype FigureState = ((?:"[a-z]+"(?: \| )?)+);\n/);
   assert.ok(domain, "the FigureState type line");
   const members = Array.from(domain![1].matchAll(/"([a-z]+)"/g), (m) => m[1]);
@@ -105,7 +107,7 @@ test("the one decision: figureWantsControl reads the figure's state by one rule 
   const refused = members.filter((m) => !allowed.includes(m));
   assert.ok(members.length >= 3 && allowed.length >= 1 && refused.length >= 1 && allowed.every((a) => members.includes(a)), "a derived refused set: " + JSON.stringify({ members, allowed, refused }));
   const elsewhere = VIEW.replace(domain![0], "\n").replace(state, "");
-  for (const m of refused) assert.equal((elsewhere.match(new RegExp('"' + m + '"', "g")) || []).length, 0, "no reader names the refused state \"" + m + "\": its literal stands only on the type line and in figureState (a comparison in any order, a case, an array or a Set names it, and so does a comment quoting it; write `" + m + "` in prose)");
+  for (const m of refused) assert.equal((elsewhere.match(new RegExp('"' + m + '"', "g")) || []).length, 0, "no reader names the refused state \"" + m + "\": its literal stands only on the type line and in figureState (a comparison in any order, a case, an array or a Set names it, and so does a comment quoting it; write `" + m + "` in prose; the pin is file-wide on purpose, so a literal \"" + m + "\" for anything else in file-view.ts must be spelled another way)");
   assert.match(VIEW, /\nconst FIGOPEN_MIN_PX = 48;\n/, "the floor: the control's 22px box, its 6px inset and as much figure again");
   const small = between(VIEW, "function figureTooSmall(img: Element): boolean {", "\n}\n");
   assert.match(small, /const b = figureBox\(img\);\n\s*return b !== null && \(b\.w < FIGOPEN_MIN_PX \|\| b\.h < FIGOPEN_MIN_PX\);/, "under the floor on EITHER side (a badge is wide and short)");
@@ -145,11 +147,17 @@ test("the one decision: figureWantsControl reads the figure's state by one rule 
   // substring inside the onRendered line before it
   assert.doesNotMatch(watch, /^\s*rearm\(\);\s*$/m, "no standalone arm: the paint's arm is the only one, and a line that observes nothing carries no pin");
   assert.equal((watch.match(/rearm\(\)/g) || []).length, 1, "rearm is called from the onRendered hook alone (its definition aside)");
-  // a 0 by 0 report is skipped: the transient box of a figure the viewer hides or of a gated placeholder's img, whose show or
-  // restore reports the real box; the skip is no guard for a figure whose REAL box is 0 by 0, which the floor refuses at its load
-  // (the file review's round 3, correctness-1); file-view-figure-floor-browser.test.ts drives the hide, the show and both authored shapes
-  assert.match(watch, /A 0 by 0 report is skipped: it is the transient box of a figure the viewer hides/, "the comment says what the report is");
-  assert.match(watch, /The skip decides nothing, so it is no guard for a figure whose real box is 0 by 0/, "and what it is not: the loaded figure with no box is the floor's");
+  // a 0 by 0 report is skipped, and the comment states the skip as a rule with its residual, not as a list of what a 0 by 0
+  // report is (the file review's round 4, behaviour-4): the roads the product has to such a report (the viewer's hide, a gated
+  // placeholder's img), whose show or restore reports the real box; what the skip is no guard for (a figure whose REAL box is
+  // 0 by 0, which the floor refuses at its load; the file review's round 3, correctness-1); and the residual, a figure hidden
+  // after its load by any other road keeping its control, which no road in the product reaches; the comment's prose is read with
+  // its line breaks collapsed, so a rewrap holds; file-view-figure-floor-browser.test.ts drives the hide, the show and both
+  // authored shapes
+  const skipProse = watch.replace(/^\s*\/\/ ?/gm, "").replace(/\s+/g, " ");
+  assert.match(skipProse, /A 0 by 0 report is skipped\. The roads the product has to such a report are the viewer's hide/, "the comment names the roads to the report");
+  assert.match(skipProse, /The skip decides nothing, so it is no guard for a figure whose real box is 0 by 0/, "and what it is not: the loaded figure with no box is the floor's");
+  assert.match(skipProse, /The residual the skip leaves: a figure hidden after its load by any other road keeps a standing control over the prose before it/, "and the residual it leaves");
   assert.match(VIEW, /const figureWatch = watchFigureBoxes\(body, path, ctx\.onRendered\);\n\s*if \(figureWatch\) ctx\.onClose\(figureWatch\);/, "armed once per open beside the load and error pair, dropped through the close hooks");
   const paint = between(VIEW, "function addFigureControls(box: HTMLElement, filePath: string): void {", "\n}\n");
   assert.match(paint, /box\.querySelectorAll\("img"\)\.forEach\(\(img\) => \{ decideFigureControl\(img, filePath\); \}\);/, "the paint runs the same decision (a stand-in's only one)");

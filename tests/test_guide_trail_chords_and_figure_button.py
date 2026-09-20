@@ -227,7 +227,7 @@ class PicturesWithoutTheButton(GuideSentences):
         state_fn = _body(self.viewer, "function figureState(img: Element): FigureState {", "}")
         elsewhere = self.viewer.replace(domain.group(0), "\n").replace(state_fn, "")
         for m in refused:
-            self.assertEqual(elsewhere.count('"%s"' % m), 0, "no reader names the refused state %r: its literal stands only on the type line and in figureState" % m)
+            self.assertEqual(elsewhere.count('"%s"' % m), 0, "no reader names the refused state %r: its literal stands only on the type line and in figureState (the pin is file-wide on purpose, so a literal %r for anything else in file-view.ts must be spelled another way)" % (m, m))
         target = _body(self.viewer, "function figureTarget(img: Element, filePath: string): FigureTarget | null {", "}")
         self.assertIn("const state = figureState(img);", target)
         self.assertIn("if (!figureHasPicture(state)) return null;", target, "no target for a state without a picture to name")
