@@ -1,20 +1,22 @@
 // The second vector of the gate-before-adoption fix (file-view-figures-gate-adopt-browser.test.ts holds the first): an
-// inline svg's `<image>`, whose `href` or `xlink:href` names a host outside the allowed list. The first leg's two scenes hold
-// an HTML <img>, and at the base 2d41e5c9b (the chain after the adoption) only WebKit fetched one; an svg image is loaded by
-// another path, and at the base Firefox requested a gated one, in either spelling, while its placeholder stood when the
-// chain's work between the adoption and that element's strip (the anchor pass over the note, rewriteFigureSrcs, the gate's
-// walk to the element) was long, and WebKit requested the `xlink:href` spelling on the adoption where it had not requested
-// the `href` one. The note here is that shape: a long run
-// of paragraphs, then one svg image spelt `href` on `remote.test` and one spelt `xlink:href` on `other.test`, a host each,
-// since a click loads a HOST and restores every placeholder waiting on it (figure-gate.ts loadGatedHost). The instrument
-// is the first leg's: the REAL Files bundle in each of Playwright's three engines, three real servers on 127.0.0.1 (one
-// figure server answering for both unlisted hosts, a harness server for romp.test with the kernel's Referrer-Policy on every
-// response, an HTTP forward proxy the browser is launched through, which logs every request and forwards by hostname), and
-// the servers' request logs read, never page.route or context.route. The scene: the note opens through the pane's own
-// relay, the leg waits for both placeholders to be on screen, drains the network with a sentinel fetch and asserts that
-// neither log holds a request for either figure; then it clicks the placeholders one at a time and asserts exactly one
-// request per click, with the method, the path and the Host header the figure server saw and no Referer, the other figure
-// still unrequested between the clicks.
+// inline svg's `<image>`, whose `href` or `xlink:href` names a host outside the allowed list. The first leg's three scenes
+// hold HTML <img> figures, and at the base 2d41e5c9b (the chain after the adoption) only WebKit fetched one; an svg image
+// is loaded by another path, and at the base Firefox requested a gated one, in either spelling, while its placeholder
+// stood when the chain's work between the adoption and that element's strip (the anchor pass over the note,
+// rewriteFigureSrcs, the gate's walk to the element) was long, and WebKit requested the `xlink:href` spelling in every run
+// and the `href` one in none: a probe in the review adopted an svg image alone and WebKit requested nothing in either
+// spelling, then wrote `href` on the adopted element and WebKit requested it, so the fetch there is the repoint pass's
+// fold of `xlink:href` into `href`, written over the adopted element before the gate's strip in the next statement. The
+// note here is that shape: a long run of paragraphs, then one svg image spelt `href` on `remote.test` and one spelt
+// `xlink:href` on `other.test`, a host each, since a click loads a HOST and restores every placeholder waiting on it
+// (figure-gate.ts loadGatedHost). The instrument is the first leg's: the REAL Files bundle in each of Playwright's three
+// engines, three real servers on 127.0.0.1 (one figure server answering for both unlisted hosts, a harness server for
+// romp.test with the kernel's Referrer-Policy on every response, an HTTP forward proxy the browser is launched through,
+// which logs every request and forwards by hostname), and the servers' request logs read, never page.route or
+// context.route. The scene: the note opens through the pane's own relay, the leg waits for both placeholders to be on
+// screen, drains the network with a sentinel fetch and asserts that neither log holds a request for either figure; then it
+// clicks the placeholders one at a time and asserts exactly one request per click, with the method, the path and the Host
+// header the figure server saw and no Referer, the other figure still unrequested between the clicks.
 // Measured 2026-09-20 at the base 2d41e5c9b, this leg copied there: red in Firefox (both svg figures requested while the
 // placeholders stood; the assertion names the engine and the lines) and red in WebKit (the `xlink:href` figure requested
 // while its placeholder stood, the `href` one not), green in Chromium; at the fix, green in all three engines. Each engine
@@ -151,7 +153,7 @@ function proxyServer(map: Record<string, number>, log: Line[]): http.Server {
 
 type Scene = { page: any; errors: string[]; figureLog: Line[]; proxyLog: Line[]; open: (p: string) => Promise<void>; drain: () => Promise<void> };
 /** The three servers, the engine launched through the proxy, the pane page open. `open` posts the pane's relay for a note and
- *  awaits a fresh rendered box; `drain` makes one round trip through the proxy to the harness and waits a beat, so a request
+ *  awaits a fresh rendered box; `drain` makes one round trip through the proxy to the harness and waits 250 ms, so a request
  *  the engine issued before it has reached the logs. */
 async function inEngine(t: any, engine: "chromium" | "firefox" | "webkit", body: (s: Scene) => Promise<void>): Promise<void> {
   if (!pw) { t.skip("playwright is not installed under vscode-extension; the browser legs need it (CI installs no browsers)"); return; }

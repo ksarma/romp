@@ -4203,7 +4203,7 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
   // app, which is the same page in Safari's engine) were reachable, the VS Code panes not (their CSP names no remote
   // img-src). Every pass that sets, repoints or moves a fetching attribute is in this block; the passes after the adoption
   // write a video's style, a list item's class, anchors' attributes, fences' markup and the prose's links (found by the
-  // review of the link-navigation follow-on, 2026-09-20; file-view-figures-gate-adopt-browser.test.ts, an HTML img in two
+  // review of the link-navigation follow-on, 2026-09-20; file-view-figures-gate-adopt-browser.test.ts, an HTML img in three
   // scenes, and file-view-figures-gate-adopt-svg-browser.test.ts, two inline svg images at the end of a long note, read real
   // servers' request logs in all three engines; the section "Fix: the gate before adoption (2026-09-20)" of
   // plans/markdown-viewer.md records the hole, the instrument and the scope).
