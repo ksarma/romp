@@ -13,6 +13,7 @@ temp transcript files (the size is the kernel's ranking); synthetic only (the no
 import inspect
 import json
 import os
+import sys
 import tempfile
 import time
 from unittest import mock
@@ -63,7 +64,27 @@ def _sess(sid, n, state):
             "status": {"state": state, "sinceEpoch": None}, "ledger": None}
 
 
-class ColdTabGate(unittest.TestCase):
+class _HoldCountingLock:
+    """Stands in for a client's slot RLock (`dlock`, what _client_lock returns) and counts its holds, so the gate's lock
+    is pinned by execution and not by its source text (round two, 2026-09-19, tests-3)."""
+
+    def __init__(self):
+        self.holds = 0
+
+    def __enter__(self):
+        self.holds += 1
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+class _ColdTabFixture(unittest.TestCase):
+    """The gate's world, with no test of its own (regression-2, 2026-09-19 round-2 review): four tabs with transcripts of
+    distinct sizes, fake clients, build_session stubbed and counted, a private state root. ColdTabGate and
+    CensusOncePerPush both inherit it; the census class inherited ColdTabGate before and so collected and ran that class's
+    tests a second time. FixtureShape below holds the shape and states the counts."""
+
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
         self.paths = {}
@@ -119,6 +140,11 @@ class ColdTabGate(unittest.TestCase):
 
     def _skipped(self):
         return km._PERF_STATS.snapshot()["builds"]["chat"]["coldSkipped"]
+
+
+class ColdTabGate(_ColdTabFixture):
+    """The cold-tab gate over the real _push and _push_session_now (the module docstring): the sixteen tests of the
+    2026-09-14 change and its review rounds."""
 
     def test_01_a_skeleton_page_on_a_cold_kernel_gets_only_its_tab_built(self):
         c = self._client(reconnect=True, active=S1)          # the restart reload's dial: the diet, and the tab on screen
@@ -326,8 +352,14 @@ class ColdTabGate(unittest.TestCase):
         self.assertEqual(sorted(self.built), sorted(TAB_ORDER), "a connected Sessions pane disables the gate for every push")
 
     def test_08_the_gate_reads_each_set_under_the_clients_lock_and_the_docs_name_the_counter(self):
-        src = inspect.getsource(km._held_as_skeleton_by_all)
-        self.assertIn("with _client_lock(c):", src)
+        # the lock by EXECUTION (round two, 2026-09-19, tests-3): the text pin that stood here, `with _client_lock(c):` in
+        # the gate's inspect.getsource, was met by a comment carrying the literal with the lock gone; a client whose slot
+        # lock counts its holds reads one hold per gate read (the ordering half, the predicate under the hold, is pinned in
+        # tests/test_chat_skeleton_reconnect.py test_11f)
+        lock = _HoldCountingLock()
+        c = self._client(skeleton={S2}, dlock=lock)
+        self.assertTrue(km._held_as_skeleton_by_all(S2, [c]), "premise: the one client holds S2 as a skeleton")
+        self.assertEqual(lock.holds, 1, "the gate reads the client's set under exactly one hold of its slot lock")
         self.assertFalse(km._held_as_skeleton_by_all(S2, []), "no client, no gate")
         for fn in (km._push, km._push_session_now):
             self.assertIn("_held_as_skeleton_by_all(", inspect.getsource(fn), fn.__name__)
@@ -336,6 +368,124 @@ class ColdTabGate(unittest.TestCase):
                         "the gate stands before the signature and the build")
         doc = open(os.path.join(os.path.dirname(HERE), "docs", "reference.md"), encoding="utf-8").read()
         self.assertIn("`coldSkipped`", doc)
+
+
+class CensusOncePerPush(_ColdTabFixture):
+    """The skeleton question is asked ONCE per tab per push (2026-09-19 review, kernel-3 and correctness-1): the cold gate asks
+    it live for the tabs it walks (a click landing mid-loop must still build its tab in the same push), and the warm-tab
+    census (memos.chatSig) asks it once after the loop for the tabs the gate did not walk. Four tabs with transcripts and
+    four chat pages each holding every tab as a skeleton, over the REAL km._push, with spies on the per-client leaf
+    (_skeleton_held_here), the census helper and the gate's walk: a one-tab harness could not tell a census before the loop
+    from one inside it, nor the gate's walk from the census's (the census once asked about every tab before the loop and
+    the gate asked again about the cold ones, 32 leaf calls per cold push here against 16). Inherits the test-less
+    fixture, not ColdTabGate (regression-2, round two): as a subclass of ColdTabGate it collected and ran that class's
+    tests a second time for no coverage (FixtureShape states the counts). Subclassing a test-bearing class is a
+    suite-wide idiom on main, untouched by this branch; by the rulings this module alone changes, and no sweep is made."""
+
+    def _four_transcripts(self):
+        with open(self.paths[S4], "w") as f:              # the fixture's S4 has none: give every tab one
+            f.write("x" * 500)
+
+    def _holders(self, n=4):
+        return [self._client(skeleton=set(TAB_ORDER), proto=2, ready=True, handshake=True) for _ in range(n)]
+
+    def _spies(self):
+        leaf, census, by_all = [], [], []
+        real_leaf, real_census, real_by_all = km._skeleton_held_here, km._skeleton_census, km._held_as_skeleton_by_all
+
+        def spy_leaf(c, sid):
+            leaf.append(sid); return real_leaf(c, sid)
+
+        def spy_census(sids, clients):
+            census.append(list(sids)); return real_census(sids, clients)
+
+        def spy_by_all(sid, clients):
+            by_all.append(sid); return real_by_all(sid, clients)
+        patches = (mock.patch.object(km, "_skeleton_held_here", spy_leaf), mock.patch.object(km, "_skeleton_census", spy_census),
+                   mock.patch.object(km, "_held_as_skeleton_by_all", spy_by_all))
+        return (leaf, census, by_all), patches
+
+    def test_a_cold_push_asks_the_gate_alone_and_the_census_about_no_tab(self):
+        self._four_transcripts()
+        holders = self._holders()
+        km._clients[:] = holders
+        (leaf, census, by_all), (p1, p2, p3) = self._spies()
+        before = km._chat_sig_stats_report()
+        with p1, p2, p3:
+            km._push(holders)
+        after = km._chat_sig_stats_report()
+        self.assertEqual(self.built, [], "every tab cold, unwatched and held by all four pages: none built")
+        self.assertEqual(self._skipped(), 4)
+        self.assertEqual(sorted(by_all), sorted(TAB_ORDER), "the gate asked once per tab, live")
+        self.assertEqual(census, [[]], "one census per push, over the tabs the gate did not walk: none on a cold push")
+        self.assertEqual(len(leaf), 4 * 4, "the leaf ran tabs x clients times, the gate's 16 alone (the census's 16 more before the change)")
+        self.assertEqual(after["pushes"] - before["pushes"], 1, "memos.chatSig.pushes: one per push, whatever the tab count")
+        self.assertEqual(after["warmEligible"] - before["warmEligible"], 0, "a cold tab is not warm")
+
+    def test_a_warm_push_asks_the_census_alone_once_over_every_tab(self):
+        self._four_transcripts()
+        fresh = self._client(active=S1, ready=True, proto=2)   # the same render floor as the holders below: the cached signatures hold
+        km._clients[:] = [fresh]
+        km._push([fresh])                                    # warms _built_chat for every tab
+        self.assertEqual(sorted(self.built), sorted(TAB_ORDER))
+        del self.built[:]
+        holders = self._holders()
+        km._clients[:] = holders
+        (leaf, census, by_all), (p1, p2, p3) = self._spies()
+        before = km._chat_sig_stats_report()
+        with p1, p2, p3:
+            km._push(holders)
+        after = km._chat_sig_stats_report()
+        self.assertEqual(self.built, [], "every tab served from the cache")
+        self.assertEqual(by_all, [], "the gate walked nothing: every tab is built")
+        self.assertEqual(census, [TAB_ORDER], "one census per push, over every tab the gate did not walk, in build order")
+        self.assertEqual(len(leaf), 4 * 4, "the census's 4 x 4 (a census inside the loop would run once per tab: 4 calls, 64 leaf reads)")
+        self.assertEqual(after["pushes"] - before["pushes"], 1)
+        self.assertEqual(after["warmEligible"] - before["warmEligible"], 4, "four cached tabs, unwatched, held by every page, with transcripts")
+
+    def test_a_skeleton_released_by_an_earlier_tabs_build_is_built_in_the_same_push(self):
+        """The live gate (the refiner's probe C): the page's click lands during the loop, as a side effect of an earlier tab's
+        build here (the activeTab handler's shape: the set changes, no push). S4 has no transcript and is built first; its
+        build releases S2's skeleton; S2, next in build order, must be built in the SAME push. A gate fed from a census
+        taken at the push's start would still skip it."""
+        c = self._client(skeleton={S1, S2, S3}, proto=2, ready=True, handshake=True)
+        km._clients[:] = [c]
+        real_build = km.build_session
+
+        def build(sid, now, live_map=None, **kw):
+            if sid == S4:
+                km._release_skeleton(c, S2)
+            return real_build(sid, now, live_map, **kw)
+        km.build_session = build
+        km._push([c])
+        self.assertEqual(self.built, [S4, S2], "S4 first (no transcript), then S2 in the same push: the gate reads the set live")
+        self.assertEqual(self._skipped(), 2, "S1 and S3 stay skipped")
+
+
+class FixtureShape(unittest.TestCase):
+    def test_no_class_here_inherits_a_same_file_class_that_carries_tests(self):
+        """regression-2 (2026-09-19 round-2 review): CensusOncePerPush subclassed ColdTabGate and so collected and ran its
+        sixteen tests a second time: `pytest --collect-only tests/test_cold_tab_gate.py` at the round-2 head collected 41 tests
+        for 25 distinct, the sixteen twice (the refuters' AST sweep counted 29 same-file instances of the idiom on main,
+        untouched by this branch; by the rulings this module alone changes, so this pin reads this module and no other).
+        The fixture is the test-less _ColdTabFixture now and both classes inherit it. Pinned by introspection over the
+        classes this module defines, not over their source: for every TestCase here, no other same-module class that
+        defines a test_ method is in its MRO (an alias of a test-bearing class as the base is the same class object, so it
+        is caught, where an AST walk over base names was not: the round-3 review), the fixture defines no test, and
+        ColdTabGate defines the sixteen the docstrings here name, so a test added to the gate updates this count and them.
+        Re-inheriting ColdTabGate, or moving a test_ method into the fixture, reds it."""
+        mod = sys.modules[__name__]
+        classes = {c for c in vars(mod).values()
+                   if isinstance(c, type) and issubclass(c, unittest.TestCase) and c.__module__ == __name__}
+
+        def own_tests(c):
+            return sorted(k for k, v in vars(c).items() if k.startswith("test_") and callable(v))
+        carrying = {c for c in classes if own_tests(c)}
+        self.assertIn(ColdTabGate, carrying, "premise: the walk sees the test-bearing classes")
+        offenders = sorted((c.__name__, b.__name__) for c in classes for b in c.__mro__[1:] if b in carrying)
+        self.assertEqual(offenders, [], "a class inheriting a same-file test-bearing class collects its tests twice: %r" % (offenders,))
+        self.assertEqual(own_tests(_ColdTabFixture), [], "the fixture defines no test")
+        self.assertEqual(len(own_tests(ColdTabGate)), 16, "ColdTabGate defines the sixteen tests the docstrings here name")
 
 
 class ProvisionalLegsMatchBuilt(unittest.TestCase):

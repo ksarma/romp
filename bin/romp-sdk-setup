@@ -7,11 +7,48 @@
 # sys.path (see _ensure_sdk_on_path in bin/romp-kernel). The venv is built with the SAME python the
 # kernel runs (pick_python below matches bin/romp-serve's), so the ABI matches. Both pickers follow
 # the venv's own recorded interpreter once one exists, so a re-run keeps the interpreter and only
-# upgrades the SDK; the venv is REBUILT for a different python only when ROMP_PYTHON names one or the
-# recorded interpreter is gone, loudly (see below). Idempotent. Re-run to upgrade.
+# installs the SDK; the venv is REBUILT for a different python only when ROMP_PYTHON names one or the
+# recorded interpreter is gone, loudly (see below). Idempotent. Re-run after a pull that moves the pin.
+#
+# The SDK is installed at ONE version, never upgraded open-endedly: kernel/session_host.py imports the SDK's
+# private internals (claude_agent_sdk._internal) with no fallback, and a release that moves one fails every
+# hosted session launch. Until 2026-09-18 this line ran `pip install --upgrade claude-agent-sdk`, so a routine
+# re-run could install that release with nothing here to say so (the box admin's hazard review of the
+# pull-in, 2026-09-16). The version is declared once, as SDK_TESTED_VERSION in kernel/session_host.py, beside
+# the imports it was verified against; this script reads that line and pins pip to it, and the host refuses to
+# start on another version whose internals are gone (see sdk_internals there).
 set -euo pipefail
 STATE="${ROMP_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/romp}"
 VENV="$STATE/sdkvenv"
+# Resolve the repo root through any symlink (matches bin/romp-serve and the other bin/ consumers; regression-2,
+# round 1 of the review, 2026-09-18: a bare dirname "$0" resolved the LINK's directory, so a symlinked invocation
+# looked for kernel/session_host.py beside the link and died at the sed below).
+src="${BASH_SOURCE[0]}"
+while [[ -L "$src" ]]; do
+    tgt="$(readlink "$src")"
+    case "$tgt" in
+        /*) src="$tgt" ;;
+        *)  src="$(cd "$(dirname "$src")" && pwd)/$tgt" ;;
+    esac
+done
+ROMP_DIR="$(cd "$(dirname "$src")/.." && pwd)"
+SDK_PIN_SOURCE="$ROMP_DIR/kernel/session_host.py"
+# The pin read is gated on a readable file and never lets the assignment end the shell (kernel-2, round 1 of the
+# review, 2026-09-18): under set -euo pipefail a sed over a missing or unreadable file ended the script here with
+# a bare "sed: can't read ..." at exit 2, and the guidance below, which names the line and where it belongs, was
+# never reached. sed's own reason still prints (no 2>/dev/null) above the guidance when it fails another way.
+SDK_VERSION=""
+if [[ -r "$SDK_PIN_SOURCE" ]]; then
+    SDK_VERSION="$(sed -n 's/^SDK_TESTED_VERSION = "\([^"]*\)".*$/\1/p' "$SDK_PIN_SOURCE" | head -1 || true)"
+fi
+if [[ ! "$SDK_VERSION" =~ ^[0-9]+\.[0-9]+ ]]; then
+    if [[ ! -r "$SDK_PIN_SOURCE" ]]; then
+        echo "romp-sdk-setup: no readable kernel/session_host.py at $SDK_PIN_SOURCE (a partial checkout, or a copy of this script outside one?). The SDK is installed at the version the session host is written against, declared as SDK_TESTED_VERSION in that file; nothing is installed without it." >&2
+    else
+        echo "romp-sdk-setup: no SDK_TESTED_VERSION line in $SDK_PIN_SOURCE (read: '${SDK_VERSION}'). The SDK is installed at the version the session host is written against, declared on that line; nothing is installed without it." >&2
+    fi
+    exit 1
+fi
 
 # The Agent SDK needs python >= 3.10; some hosts pin the system python3 older (Ubuntu 20.04 = 3.8)
 # with a newer one alongside (e.g. a uv-managed 3.12 in ~/.local/bin, probed explicitly because a
@@ -235,7 +272,11 @@ if [ ! -x "$VENV/bin/python" ] || [ ! -x "$VENV/bin/pip" ]; then
   fi
 fi
 "$VENV/bin/pip" install -q --upgrade pip >/dev/null
-"$VENV/bin/pip" install -q --upgrade claude-agent-sdk
+# Pinned (the header says why): `==`, so a re-run moves the venv to the tested version in either direction and
+# never past it. The message names the version and where it is declared, so an operator reading the install
+# output knows what a later `pip list` should show and where to change it.
+echo "romp-sdk-setup: installing claude-agent-sdk==$SDK_VERSION, the version the session host is written against (SDK_TESTED_VERSION in kernel/session_host.py)"
+"$VENV/bin/pip" install -q "claude-agent-sdk==$SDK_VERSION"
 # cryptography: what phone and browser notifications (Web Push: VAPID signing, payload encryption)
 # need on the kernel host, the kernel's one soft dependency beyond the SDK (_push_crypto in
 # kernel/kernel.py reads it from this venv). Nothing installed it until 2026-09-14, so a fresh
@@ -247,9 +288,65 @@ fi
 if ! "$VENV/bin/pip" install -q --upgrade cryptography; then
   echo "romp-sdk-setup: could not install 'cryptography' (the line above says why). romp runs without it, but phone and browser notifications stay off until it is installed:  $VENV/bin/pip install cryptography" >&2
 fi
-ROMP_SDK_VENV="$VENV" "$VENV/bin/python" - <<'PY'
-import claude_agent_sdk as m, os, sys
-print("romp-sdk-setup: claude-agent-sdk %s ready (python %s)" % (m.__version__, ".".join(map(str, sys.version_info[:3]))))
+# The verify step reads the version THE WAY THE HOST READS IT (extra7-3 and extra8-1, round 3 of the review,
+# 2026-09-19): kernel/session_host.py is loaded by path under the venv's python and its installed_sdk_version()
+# is called, so the installer and every host launch share one implementation and one preference order (the
+# imported module's own __version__ first, the package metadata as the fallback for a package that exports
+# none). Until round 3 this step read importlib.metadata alone while the host had moved to the module, so a
+# site whose module and dist-info disagree (a checkout or vendored copy ahead of the venv on the import path)
+# was reported ready here, at the pin, and then refused or flagged at every host launch. The metadata is still
+# read, as a SECOND check with its own words: a venv whose own record names another version is not ready even
+# when the module that imports happens to be the pin. One implementation is not one interpreter (extra7-2, round 4
+# of the review, 2026-09-19): this step runs under the venv's python, a host under the kernel's, and
+# bin/romp-session-host adds the venv's site only when claude_agent_sdk is not already importable, so an SDK on
+# the kernel interpreter's own site is what every host reads and this step never sees. The class of "ready here,
+# refused at every launch" is narrowed by this check, not closed; reading under the kernel's interpreter is its
+# own change.
+ROMP_SDK_VENV="$VENV" ROMP_SDK_PIN="$SDK_VERSION" ROMP_SDK_PIN_SOURCE="$SDK_PIN_SOURCE" "$VENV/bin/python" - <<'PY'
+import importlib.metadata, importlib.util, os, sys
+src = os.environ["ROMP_SDK_PIN_SOURCE"]
+spec = importlib.util.spec_from_file_location("romp_session_host_verify", src)
+host = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(host)                        # the host's own reader, not a copy of it
+want = os.environ.get("ROMP_SDK_PIN", "")
+pyver = ".".join(map(str, sys.version_info[:3]))
+try:
+    import claude_agent_sdk as m
+except Exception as e:                               # the host's next step, the internals import, raises the same
+    print("romp-sdk-setup: claude-agent-sdk does not import under the venv's python (%s) after an install of ==%s: %s: %s. pip's output above says why; fix that and re-run." % (pyver, want, type(e).__name__, e), file=sys.stderr)
+    sys.exit(1)
+where = getattr(m, "__file__", None) or "(a package with no file)"
+have = host.installed_sdk_version()                  # what a host launched on this venv would read and compare to the pin
+try:
+    meta = importlib.metadata.version(host.SDK_DIST)
+except importlib.metadata.PackageNotFoundError:
+    meta = None
+if have is None:
+    print("romp-sdk-setup: claude-agent-sdk imports from %s but says no version (no __version__ on the module, no package metadata); the session host would run it as an unknown version and file a problem row at every launch. pip's output above says why; fix that and re-run." % where, file=sys.stderr)
+    sys.exit(1)
+if want and have != want:
+    if meta is not None and meta != have:
+        # the split the host's read exists to catch: the module that imports is not the package the venv's metadata describes
+        print("romp-sdk-setup: the claude_agent_sdk that imports under the venv's python is %s (from %s) while the venv's package metadata says %s; the session host reads the module, as this check does, so every host launch would run %s and not the %s this script installed. Something ahead of the venv's site on the import path (PYTHONPATH, a checkout, a vendored copy) shadows the install; remove it or point it at the venv, then re-run." % (have, where, meta, have, want), file=sys.stderr)
+    else:
+        print("romp-sdk-setup: the venv holds claude-agent-sdk %s after an install of ==%s; the session host is written against %s and refuses to start on another version whose internals moved. pip's output above says why; fix that and re-run." % (have, want, want), file=sys.stderr)
+    sys.exit(1)
+if meta is not None and meta != have:
+    # the second check: the module is the pin, the venv's own record is not; the host would run, on a copy that is not this venv's install
+    print("romp-sdk-setup: claude_agent_sdk %s imports (from %s), the pinned version, but the venv's package metadata says %s: the module that runs is not the one pip installed here. pip's output above says why the venv holds %s; fix that and re-run." % (have, where, meta, meta), file=sys.stderr)
+    sys.exit(1)
+# The provenance, per branch, by the rule installed_sdk_version applies (a non-empty string __version__ on the
+# module wins, else the metadata; round 4 of the review, 2026-09-19: one sentence served both branches and on
+# the metadata branch named the module's file as the source of a version it had just said the module does not
+# carry). The module branch names the module's file. The metadata branch names the site that holds the
+# distribution's record, and the module's file under its own label, since that file is where a shadowing copy shows.
+mv = getattr(m, "__version__", None)
+if isinstance(mv, str) and mv:
+    source = "the module's __version__, from %s" % where
+else:
+    site = str(importlib.metadata.distribution(host.SDK_DIST).locate_file(""))     # the site that holds the record, one level above the dist-info
+    source = "the package metadata for %s under %s, since the module at %s exports no usable __version__" % (host.SDK_DIST, site, where)
+print("romp-sdk-setup: claude-agent-sdk %s ready (python %s), the version kernel/session_host.py is written against, read as the session host reads it (%s)" % (have, pyver, source))
 try:
     import cryptography
     print("romp-sdk-setup: cryptography %s ready (phone and browser notifications)" % cryptography.__version__)
