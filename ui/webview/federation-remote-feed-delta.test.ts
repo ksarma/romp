@@ -49,7 +49,7 @@ function terms(): any {
   return { app: "fleet", iid: PAGE_IID, active: "", col: "", skeleton: 0, provrows: 1, proto: null, delta: 1 };
 }
 
-interface Rig { fm: any; emitted: any[]; sent: any[] }
+interface Rig { fm: any; emitted: any[]; sent: any[]; notified: any[] }
 
 /** `terms` replaces the page's __rompDialTerms (a function, or null for a page without the shim's seam). */
 async function withManager(fn: (rig: Rig) => void | Promise<void>, opts: { terms?: (() => any) | null } = {}): Promise<void> {
@@ -59,6 +59,7 @@ async function withManager(fn: (rig: Rig) => void | Promise<void>, opts: { terms
   FakeWS.made = [];
   const emitted: any[] = [];   // what the merge hands the pane (no direct-delivery handler registered: emit dispatches on window)
   const sent: any[] = [];      // what goes to the LOCAL kernel (__rompLocalSend): diag rows, and a needFullFeed if the local path asks
+  const notified: any[] = [];  // what the manager posts to the shell (window.parent.postMessage): the apply-throw refusal's visible message (tellShell), hostsPending, reveal
   const realNow = Date.now;
   Date.now = () => clock;
   set("WebSocket", FakeWS);
@@ -68,14 +69,15 @@ async function withManager(fn: (rig: Rig) => void | Promise<void>, opts: { terms
     dispatchEvent: (ev: any) => { if (ev && ev.data) emitted.push(ev.data); },
     __rompLocalSend: (m: any) => sent.push(m),
     sessionStorage: { getItem: () => "" },
-    parent: { postMessage: () => {} },
+    parent: { postMessage: (m: any) => notified.push(m) },
   };
+  win.parent.postMessage = (m: any) => notified.push(m);
   if (opts.terms !== null) win.__rompDialTerms = opts.terms || (() => terms());
   set("window", win);
   try {
     const fm: any = new FederationManager();
     fm.app = "fleet";
-    await fn({ fm, emitted, sent });
+    await fn({ fm, emitted, sent, notified });
   } finally {
     Date.now = realNow;
     for (const [k, r] of Object.entries(saved)) { if (r.had) g[k] = r.v; else delete g[k]; }
@@ -1042,6 +1044,181 @@ test("a gen of exactly GEN_MAX characters is a stamp: the pair holds and the red
     ws.readyState = 3;
     heldTimers(() => ws.onclose!({ code: 1006, wasClean: false }))[0]();
     assert.equal(qOf(last(FakeWS.made).url).get("caps"), "feedDelta,held:feed:" + atCap + ".0", "declared at the cap");
+    fm.conns.get(HOST).closed = true;
+  });
+});
+
+// ── the apply-throw refusal, BOTH roads (the maintainer's round 5, refusals-2, and the 19:31Z ruling: the local road guarded
+// too, with its own recovery, road word and bound) ──────────────────────────────────────────────────────────────────────────
+// applyFeedDelta guards nothing but the two list shapes it upserts into, so a malformed delta throws out of upsertById; until this
+// pass the throw escaped ws.onmessage (a TypeError out of the handler, no ask, no row, the pane on its last frame) and, on the
+// local road, inbound into the shim's FIFO drain. Now feed-delta.ts's tryApplyFeedDelta catches it for both callers and each road
+// refuses it: nothing written (the base and the pair stand), one BARE needFullFeed per stall (the base's own content is a
+// suspect: a full carrying a null ask lands, and every well-formed delta after it throws in upsertById's walk of the base), a
+// feedDelta-apply row with its own word (asked, stopped) and its road (wire, local), latched per word; and the BOUND, keyed on
+// progress: a second throw while the ask is out asks nothing; a throw after the answering full landed (the feed arm) stops the
+// asking and tells the shell once, through the {romp: "notify"} post the shell's error center reads; a delta that applies clears
+// the latch; the remote latch resets with the socket (connect()), the local one lives for the page. The shell message is what
+// the person sees: their cards frozen at the last update, and the way out named.
+const notifies = (notified: any[]) => notified.filter((m) => m && m.romp === "notify");
+const badDelta = (buildId: number) => ({ type: "feedDelta", now: 510, buildId, asks: { not: "a list" } });   // ups.map is not a function
+const poisonedFull = (buildId: number) => ({ ...remoteFull(), buildId, asks: [null] });   // lands whole; the next delta's walk of the base throws
+const applyRows = (sent: any[]) => diagRows(sent, "feedDelta-apply");
+
+test("a remote feedDelta whose apply throws is REFUSED: one bare needFullFeed on the arriving conn, a feedDelta-apply row with why asked and road wire, nothing emitted, the base and the pair standing, no TypeError out of the handler; a second throw while the ask is out asks nothing and files nothing; the latch clears when a delta applies, and a later throw asks once more with the row latched", async () => {
+  for (const withPair of [false, true]) {
+    await withManager(({ fm, emitted, sent, notified }) => {
+      const ws = attached(fm);
+      if (withPair) { ws.frame(stamped({ buildId: 2 })); ws.frame(cycle(G, 0, 2)); assert.deepEqual(heldOf(fm), { gen: G, rev: 1 }); }
+      const before = feeds(emitted).length, raw = fm.conns.get(HOST).feedRaw, held = heldOf(fm);
+      ws.frame(withPair ? { ...cycle(G, 1, 3), asks: { not: "a list" } } : badDelta(2));   // no throw escapes: the rig would fail here
+      assert.deepEqual(ws.sent, [{ type: "needFullFeed" }], "one BARE ask, never the held pair (the base's content is a suspect): pair=" + withPair);
+      assert.deepEqual(applyRows(sent), [{ host: HOST, buildId: withPair ? 13 : 2, why: "asked", road: "wire" }], "its own row: the word asked, the road wire");
+      assert.deepEqual(diagRows(sent, "feedDelta-stale"), []); assert.deepEqual(diagRows(sent, "feedDelta-nobase"), []);
+      assert.equal(feeds(emitted).length, before, "nothing emitted");
+      assert.equal(fm.conns.get(HOST).feedRaw, raw, "the base stands (nothing was written)");
+      assert.deepEqual(heldOf(fm), held, "and the pair stands");
+      assert.equal(fm.conns.get(HOST).feedApply, "asked");
+      assert.deepEqual(notifies(notified), [], "nothing told to the shell yet: the ask may repair it");
+      ws.frame(withPair ? { ...cycle(G, 1, 4), asks: [null] } : { type: "feedDelta", now: 511, buildId: 3, asks: [null] });   // a second throw while the ask is out
+      assert.equal(ws.sent.length, 1, "a second throw while the ask is out asks nothing (a second ask is a second full, the flood the bound stops)");
+      assert.equal(applyRows(sent).length, 1, "and files nothing");
+      ws.frame(withPair ? stamped({ buildId: 4 }) : { ...remoteFull(), buildId: 4 });   // the full the ask earned
+      assert.equal(fm.conns.get(HOST).feedApply, "answered", "the full landed: answered (the feed arm)");
+      ws.frame(withPair ? cycle(G, 0, 5) : { type: "feedDelta", now: 520, buildId: 5, asks: [card(SID_A, 5)] });   // a good delta applies
+      assert.equal(fm.conns.get(HOST).feedApply, undefined, "a delta that applies clears the latch: the stream is healthy again");
+      assert.equal(feeds(emitted).length, before + 2, "the full and the delta each emitted");
+      ws.frame(withPair ? { ...cycle(G, 1, 6), asks: { not: "a list" } } : badDelta(6));   // a later stall
+      assert.equal(ws.sent.length, 2, "a later throw asks once more (the bound is per stall)");
+      assert.deepEqual(last(ws.sent), { type: "needFullFeed" });
+      assert.equal(applyRows(sent).length, 1, "the row is latched per word and build (sayDeltaOnce): no second asked row");
+      assert.deepEqual(notifies(notified), [], "still nothing told: every stall so far was repaired or is being asked about");
+      fm.conns.get(HOST).closed = true;
+    });
+  }
+});
+
+test("the BOUND on the remote road: after the answering full lands a second throw stops the asking and tells the shell once (a feedDelta-apply row with why stopped, one notify naming the host); further throws ask nothing, file nothing and tell nothing; a clean full and an applying delta clear it", async () => {
+  await withManager(({ fm, emitted, sent, notified }) => {
+    const ws = attached(fm);
+    ws.frame(badDelta(2));
+    assert.equal(ws.sent.length, 1, "the rig: asked");
+    ws.frame(poisonedFull(3));   // the full the kernel sent back, itself poisoned: lands (prefixInbound and the merge take a null ask)
+    const before = feeds(emitted).length;
+    assert.equal(fm.conns.get(HOST).feedApply, "answered");
+    ws.frame({ type: "feedDelta", now: 520, buildId: 4, asks: [card(SID_A, 2)] });   // well-formed, and it throws in upsertById's walk of the poisoned base
+    assert.equal(ws.sent.length, 1, "the asking STOPPED: the full the kernel sent back did not repair the stream, and a second ask would earn the same full");
+    assert.deepEqual(applyRows(sent).map((r: any) => r.why), ["asked", "stopped"], "the rows: asked, then stopped, each once");
+    assert.deepEqual(applyRows(sent)[1], { host: HOST, buildId: 4, why: "stopped", road: "wire" });
+    assert.equal(fm.conns.get(HOST).feedApply, "stopped");
+    const told = notifies(notified);
+    assert.equal(told.length, 1, "the shell told once");
+    assert.equal(told[0].kind, "error");
+    assert.match(told[0].text, /^TESTHOST: its cards are frozen at their last update\./, "the message names the host and what the person sees");
+    assert.match(told[0].text, /reconnects\.$/, "and the way out");
+    assert.equal(feeds(emitted).length, before, "nothing emitted for the refused delta");
+    ws.frame({ type: "feedDelta", now: 521, buildId: 5, asks: [card(SID_A, 3)] });
+    ws.frame(badDelta(6));
+    assert.equal(ws.sent.length, 1, "two more throws: no ask");
+    assert.equal(applyRows(sent).length, 2, "no row");
+    assert.equal(notifies(notified).length, 1, "no second notify (the shell's center folds a repeat anyway; this side sends none)");
+    ws.frame({ ...remoteFull(), buildId: 7 });   // a clean full (a kernel restart, or the stream recovering)
+    assert.equal(fm.conns.get(HOST).feedApply, "stopped", "a full alone does not clear a stop (the last full did not repair it either)");
+    ws.frame({ type: "feedDelta", now: 530, buildId: 8, asks: [card(SID_A, 4)] });   // and a delta that applies
+    assert.equal(fm.conns.get(HOST).feedApply, undefined, "an applying delta clears the latch: progress is the reset");
+    assert.equal(feeds(emitted).length, before + 2);
+    fm.conns.get(HOST).closed = true;
+  });
+});
+
+test("the remote latch resets with the socket: from stopped, the redial's replacement socket serves a full and a throwing delta asks exactly once again (one ask per socket life for a stall the fulls never repair)", async () => {
+  await withManager(({ fm, sent, notified }) => {
+    fm.outbound({ type: "ready", proto: 2 });
+    fm.openRemote(HOST, true);
+    const ws = last(FakeWS.made);
+    ws.open();
+    ws.frame({ type: "caps" });
+    ws.frame(remoteFull());
+    ws.frame(badDelta(2)); ws.frame(poisonedFull(3)); ws.frame({ type: "feedDelta", now: 520, buildId: 4, asks: [card(SID_A, 2)] });
+    assert.equal(fm.conns.get(HOST).feedApply, "stopped", "the rig: stopped");
+    assert.equal(notifies(notified).length, 1);
+    ws.readyState = 3;
+    heldTimers(() => ws.onclose!({ code: 1006, wasClean: false }))[0]();
+    const ws2 = last(FakeWS.made);
+    assert.notEqual(ws2, ws, "the rig: a fresh socket on the same conn");
+    assert.equal(fm.conns.get(HOST).feedApply, undefined, "connect() reset the latch with the socket: a new stream for the bound to judge");
+    ws2.open();
+    ws2.frame(remoteFull());
+    ws2.frame(badDelta(9));
+    assert.deepEqual(ws2.sent.filter((x: any) => x.type !== "ready"), [{ type: "needFullFeed" }], "asked once again on the new socket");
+    assert.equal(applyRows(sent).length, 2, "the rows stay latched per word and build (the same build: no third row)");
+    ws2.frame(badDelta(10));
+    assert.equal(ws2.sent.filter((x: any) => x.type !== "ready").length, 1, "and not twice");
+    fm.conns.get(HOST).closed = true;
+  });
+});
+
+test("the LOCAL road's twin: a local feedDelta whose apply throws is refused with one bare needFullFeed to the LOCAL kernel (its recovery, the same handler the no-base arm asks), a feedDelta-apply row with host local and road local, nothing emitted, the merge's frame standing; a second throw asks nothing; an applying delta clears the latch", async () => {
+  await withManager(({ fm, emitted, sent, notified }) => {
+    attached(fm);
+    fm.inbound("", { type: "feed", now: 420, buildId: 9, asks: [card(SID_L, 1)], ledgers: [ledger(SID_L, "web")] });
+    const before = feeds(emitted).length, local = fm.perHostFeed[""];
+    fm.inbound("", { type: "feedDelta", now: 430, buildId: 10, asks: { not: "a list" } });   // no throw escapes inbound
+    assert.deepEqual(sent.filter((x) => x && x.type === "needFullFeed"), [{ type: "needFullFeed" }], "one bare ask to the local kernel");
+    assert.deepEqual(applyRows(sent), [{ host: "local", buildId: 10, why: "asked", road: "local" }], "its own row: the word local under host, the road local");
+    assert.equal(feeds(emitted).length, before, "nothing emitted");
+    assert.equal(fm.perHostFeed[""], local, "the merge's frame stands");
+    assert.equal(fm.localFeedApply, "asked");
+    fm.inbound("", { type: "feedDelta", now: 431, buildId: 11, asks: [null] });
+    assert.equal(sent.filter((x) => x && x.type === "needFullFeed").length, 1, "a second throw while the ask is out asks nothing");
+    assert.equal(applyRows(sent).length, 1);
+    fm.inbound("", { type: "feed", now: 440, buildId: 12, asks: [card(SID_L, 1)], ledgers: [ledger(SID_L, "web")] });   // the full the ask earned
+    assert.equal(fm.localFeedApply, "answered");
+    fm.inbound("", { type: "feedDelta", now: 450, buildId: 13, asks: [card(SID_L, 1, { text: "changed" })] });
+    assert.equal(fm.localFeedApply, undefined, "an applying delta clears the local latch");
+    assert.equal(last(feeds(emitted)).asks.find((a: any) => a.sid === SID_L).text, "changed", "and applied");
+    assert.deepEqual(notifies(notified), [], "nothing told");
+    fm.conns.get(HOST).closed = true;
+  });
+});
+
+test("the LOCAL bound: after the local full landed a second throw stops the asking and tells the shell once, with the page reload as the way out; further throws are silent; the local road implicates no peer (host local, road local) and touches no remote socket", async () => {
+  await withManager(({ fm, emitted, sent, notified }) => {
+    const ws = attached(fm);
+    fm.inbound("", { type: "feed", now: 420, buildId: 9, asks: [card(SID_L, 1)], ledgers: [ledger(SID_L, "web")] });
+    fm.inbound("", { type: "feedDelta", now: 430, buildId: 10, asks: { not: "a list" } });
+    fm.inbound("", { type: "feed", now: 440, buildId: 11, asks: [null] });   // the answering full, poisoned
+    assert.equal(fm.localFeedApply, "answered", "the rig: answered");
+    const before = feeds(emitted).length;
+    fm.inbound("", { type: "feedDelta", now: 450, buildId: 12, asks: [card(SID_L, 2)] });   // throws in the walk of the poisoned base
+    assert.equal(sent.filter((x) => x && x.type === "needFullFeed").length, 1, "the asking stopped");
+    assert.deepEqual(applyRows(sent).map((r: any) => [r.host, r.why, r.road]), [["local", "asked", "local"], ["local", "stopped", "local"]]);
+    assert.equal(fm.localFeedApply, "stopped");
+    const told = notifies(notified);
+    assert.equal(told.length, 1, "the shell told once");
+    assert.equal(told[0].kind, "error");
+    assert.match(told[0].text, /^The cards are frozen at their last update\./);
+    assert.match(told[0].text, /Reload the page to refresh them\.$/, "the local road's way out is the page reload (the local socket's life is the page's)");
+    assert.equal(feeds(emitted).length, before);
+    fm.inbound("", { type: "feedDelta", now: 451, buildId: 13, asks: { not: "a list" } });
+    assert.equal(sent.filter((x) => x && x.type === "needFullFeed").length, 1); assert.equal(applyRows(sent).length, 2); assert.equal(notifies(notified).length, 1);
+    assert.deepEqual(ws.sent, [], "the remote socket carried nothing for any of it");
+    assert.equal(fm.conns.get(HOST).feedApply, undefined, "and the remote conn's latch is untouched");
+    fm.conns.get(HOST).closed = true;
+  });
+});
+
+test("the two roads' latches are independent: a remote stall does not move the local latch and a local stall does not move the remote's, and each files under its own host and road", async () => {
+  await withManager(({ fm, sent }) => {
+    const ws = attached(fm);
+    fm.inbound("", { type: "feed", now: 420, buildId: 9, asks: [card(SID_L, 1)], ledgers: [ledger(SID_L, "web")] });
+    ws.frame(badDelta(2));
+    assert.equal(fm.conns.get(HOST).feedApply, "asked"); assert.equal(fm.localFeedApply, undefined);
+    fm.inbound("", { type: "feedDelta", now: 430, buildId: 10, asks: { not: "a list" } });
+    assert.equal(fm.localFeedApply, "asked"); assert.equal(fm.conns.get(HOST).feedApply, "asked");
+    assert.deepEqual(applyRows(sent).map((r: any) => [r.host, r.road]), [[HOST, "wire"], ["local", "local"]]);
+    assert.deepEqual(ws.sent, [{ type: "needFullFeed" }], "the remote ask on the remote socket");
+    assert.deepEqual(sent.filter((x) => x && x.type === "needFullFeed"), [{ type: "needFullFeed" }], "the local ask to the local kernel");
     fm.conns.get(HOST).closed = true;
   });
 });

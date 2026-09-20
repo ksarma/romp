@@ -136,11 +136,12 @@ CENSUS = {
         "decision": (NONE, _ENUM),
         "hiddenMs": (NONE, _INT), "quietMs": (NONE, _INT), "attempts": (NONE, _INT), "firstFailMs": (NONE, _INT), "ms": (NONE, _INT),
     },
-    "federation": {   # federation.ts diag(): hostconn, feedDelta-nobase, feedDelta-stale, feedmerge, sendqueue, senddrop
-        "host": (BARE, "the conn's host on every hostconn, feedDelta-nobase, feedDelta-stale, sendqueue and senddrop row (federation_host_row_kinds, "
-                       "derived from federation.ts); empty on the poll rows, local on the local nobase row"),
+    "federation": {   # federation.ts diag(): hostconn, feedDelta-nobase, feedDelta-stale, feedDelta-apply, feedmerge, sendqueue, senddrop
+        "host": (BARE, "the conn's host on every hostconn, feedDelta-nobase, feedDelta-stale, feedDelta-apply, sendqueue and senddrop row (federation_host_row_kinds, "
+                       "derived from federation.ts); empty on the poll rows, local on the local nobase and local apply rows"),
         "ev": (NONE, "the hostconn event word"),
-        "why": (NONE, "a cause word at each literal writer (watchdog-close's quiet or connecting, dial-deferred's local-down, senddrop's no-conn on its bookkeeping arm, the feedDelta-stale ladder's words); "
+        "why": (NONE, "a cause word at each literal writer (watchdog-close's quiet or connecting, dial-deferred's local-down, senddrop's no-conn on its bookkeeping arm, the feedDelta-stale ladder's words, "
+                      "feedDelta-apply's asked or stopped at refuseRemoteApply and refuseLocalApply); "
                       "on delta-unknown-slot the peer frame's own slot string as parsed off the remote socket, cut at 32 (UNKNOWN_SLOT_CUT: the remote kernel's choice, a fixed "
                       "word for every kernel in this repo), then the peer's sha as the hub's /version poll validated it (_peer_sha) or nothing; on delta-unkeyed-base this bundle's "
                       "slot, collection and shape words with the same tail; or the page's own /tunnels fetch failure text, cut at 200 by the poster and 64 here. NONE on the census's "
@@ -152,8 +153,10 @@ CENSUS = {
         "code": (NONE, "the close code"), "clean": (NONE, _BOOL), "detached": (NONE, _BOOL),
         "pendingDropped": (NONE, "detach: pendingTypes(c), each a KERNEL_SETTING word or a BOOKKEEPING type; moot: needFull alone (dropAsksTheReadyServes); type words on every writer this "
                                  "field ever had (no writer posted a count)"),
-        "buildId": (NONE, "feedDelta-nobase and feedDelta-stale: the feedDelta frame's buildId as its kernel sent it, posted raw: the LOCAL kernel's on the local nobase row, the "
-                          "remote's on the remote rows; _next_feed_build_id's integer counter on every kernel in this repo"),
+        "buildId": (NONE, "feedDelta-nobase, feedDelta-stale and feedDelta-apply: the feedDelta frame's buildId as its kernel sent it, posted raw: the LOCAL kernel's on the local nobase and "
+                          "local apply rows, the remote's on the remote rows; _next_feed_build_id's integer counter on every kernel in this repo"),
+        "road": (NONE, "feedDelta-apply: which road the throwing delta arrived on, one of two fixed words at the two writers, wire (refuseRemoteApply, a remote conn's socket) "
+                       "or local (refuseLocalApply, the local socket); never host content (the host rides the host key)"),
         "counts": (KEYED, "feedmerge: the merged feed's ask count per host, keyed by the host name (local for the local kernel), every row"),
         "gt": (NONE, _INT), "superseded": (NONE, "sendqueue: the replaced queued pick's gt, the gesture-clock stamp it was posted with (a number at or above the wall clock in ms), or "
                                                  "true when that pick carried no numeric gt (an older emitter)"),
@@ -529,12 +532,20 @@ def federation_fixture_rows(host):
         ("feedDelta-nobase", {"host": host, "buildId": 7}),
         ("feedDelta-nobase", {"host": "local", "buildId": 7}),   # the local socket's frame with no base: the LOCAL kernel's counter (the census, federation.buildId)
         ("feedDelta-stale", {"host": host, "buildId": 7, "why": "gen"}),   # a stamped remote feedDelta refused by the gen gate: the ask carries the held pair (2026-09-19). The why is one of STALE_WHY_WORDS (a word per field failure, a word per relation between valid fields); each is driven in test_the_stale_rows_why_words_pass_whole_and_a_foreign_key_on_the_row_is_dropped
+        ("feedDelta-apply", {"host": host, "buildId": 7, "why": "asked", "road": "wire"}),   # a remote feedDelta whose apply threw: refused with one bare needFullFeed (the maintainer's round 5, refusals-2; federation.ts refuseRemoteApply)
+        ("feedDelta-apply", {"host": host, "buildId": 8, "why": "stopped", "road": "wire"}),   # a throw after the answering full landed: the asking stopped, the shell told once
+        ("feedDelta-apply", {"host": "local", "buildId": 7, "why": "asked", "road": "local"}),   # the local road's twin (refuseLocalApply): the LOCAL kernel's counter, the word local under host
+        ("feedDelta-apply", {"host": "local", "buildId": 8, "why": "stopped", "road": "local"}),
         ("feedmerge", {"counts": {host: 4}}),
         ("sendqueue", {"host": host, "msgType": "setAutoNudge", "gt": 1700000000002, "rs": 0, "superseded": True}),   # an older emitter's pick replaced: no numeric gt
         ("sendqueue", {"host": host, "msgType": "setJudgeModel", "gt": 1700000000002, "rs": 0, "superseded": 1700000000001}),   # a stamped pick replaced: its gesture-clock stamp
         ("senddrop", {"host": host, "msgType": "activeTab", "why": "no-conn"}),   # the bookkeeping arm: a host this page holds no conn for (federation.ts; federation-send-queue.test.ts pins the row)
         ("senddrop", {"host": host, "msgType": "prompt"}),   # the default drop: the outbound gesture's own type, no why (federation.ts, the last arm of sendRemote)
     ]
+
+
+def fed_src():
+    return open(os.path.join(os.path.dirname(HERE), "ui", "webview", "federation.ts"), encoding="utf-8").read()
 
 
 def federation_writer_tables():
@@ -1253,8 +1264,8 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         # the bare-name example is derived, not hand-kept: every federation row kind that carries the conn's host, read from
         # federation.ts's diag call sites, is named by every copy (round 1, 2026-09-20: the copies named hostconn alone)
         kinds = federation_host_row_kinds()
-        self.assertEqual(kinds, {"hostconn", "feedDelta-nobase", "feedDelta-stale", "sendqueue", "senddrop"},
-                         "the federation row kinds carrying a host, as derived; a change here is a change to the disclosure copies")
+        self.assertEqual(kinds, {"hostconn", "feedDelta-nobase", "feedDelta-stale", "feedDelta-apply", "sendqueue", "senddrop"},
+                         "the federation row kinds carrying a host, as derived (feedDelta-apply since the maintainer's round 5, refusals-2); a change here is a change to the disclosure copies")
         for name, text in sorted(copies.items()):
             for kind in sorted(kinds):
                 self.assertIsNotNone(re.search(r"\b%s\b" % re.escape(kind), text), "%s: the disclosure does not name federation's %s rows" % (name, kind))
@@ -1394,8 +1405,19 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         for d in (d for what, d in rows if what == "sendqueue"):
             self.assertIn(d["msgType"], kernel_setting, "sendqueue queues KERNEL_SETTING frames alone: %r" % (d,))
         why_reason, msg_reason = CENSUS["federation"]["why"][1], CENSUS["federation"]["msgType"][1]
-        for lit in ("quiet", "connecting", "local-down", "no-conn"):
+        for lit in ("quiet", "connecting", "local-down", "no-conn", "asked", "stopped"):
             self.assertIn(lit, why_reason, "the why reason names the writer literal %r" % lit)
+        # the apply-throw row's road word (round 5, refusals-2): two fixed words at two writers, derived from federation.ts and named by the reason
+        roads = sorted(set(re.findall(r'this\.diag\("feedDelta-apply", \{[^}]*\broad: "(\w+)"', fed_src())))
+        self.assertEqual(roads, ["local", "wire"], "the two writers of feedDelta-apply post the two road words")
+        road_reason = CENSUS["federation"]["road"][1]
+        for lit in roads:
+            self.assertIn(lit, road_reason, "the road reason names the writer literal %r" % lit)
+        apply_rows = [d for what, d in rows if what == "feedDelta-apply"]
+        self.assertEqual(sorted(set(d["road"] for d in apply_rows)), roads, "the fixture rows post both roads")
+        self.assertEqual(sorted(set(d["why"] for d in apply_rows)), ["asked", "stopped"], "and both words")
+        for d in apply_rows:
+            self.assertEqual(d["host"] == "local", d["road"] == "local", "the local road's rows carry the word local under host, the wire road's a host name: %r" % (d,))
         self.assertNotIn("closed", why_reason, "no writer sends closed")
         for phrase in ("KERNEL_SETTING", "BOOKKEEPING", "gesture's own type"):
             self.assertIn(phrase, msg_reason, "the msgType reason names the class: %s" % phrase)

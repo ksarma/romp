@@ -179,7 +179,13 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   the frame the merge reads and a remote host's delta onto the raw frame it
   holds for that host (`applyRemoteFeedDelta`), and re-emits a merged full
   frame, so every consumer still sees whole `feed` frames; a delta it cannot
-  apply gets a `needFullFeed` to the kernel that sent it and a re-base. A
+  apply gets a `needFullFeed` to the kernel that sent it and a re-base, and
+  since 2026-09-20 a delta whose apply THROWS (a malformed frame) is refused
+  the same way on both roads, bounded by progress: one bare ask per stall,
+  a `feedDelta-apply` row naming the road (wire or local), and after the
+  answering full a second throw stops the asking and tells the shell once,
+  the pane staying on its last frame until a delta applies (or, on the local
+  road, the page reloads). A
   remote host's view-delta patches (the timeline's bars; the feed from a kernel
   too old to read the caps term) are reassembled per relay socket
   (`Conn.viewDeltas`) before the merge. A build that carries no `ledgers`

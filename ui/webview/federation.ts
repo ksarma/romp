@@ -13,7 +13,7 @@
 
 import { adoptArrivals, applyViewOrder, applyViewOrderTo, churnSwaps, healOrder, pruneViewOrder,
          readViewOrder, writeViewOrder, VIEW_ORDER_KEY, VIEW_ORDER_EVENT } from "./view-order";
-import { applyFeedDelta } from "./feed-delta";
+import { tryApplyFeedDelta } from "./feed-delta";
 import { ViewDeltas, VIEW_DELTA_KINDS, genOf } from "./view-deltas";
 import { adoptViews, capsAdopts, announcedSeq, announcedAfter } from "./views-writes";
 import { hostOf, bareId, hostDialLive } from "./host-prefix";
@@ -927,7 +927,7 @@ interface Conn {
   readyAcked?: boolean; // the remote answered this page's `ready` with a `caps` frame at least once (the shim's readyAcked): the redial gate's latch that the remote served this page whole and holds its sessions
   dialedReconnect?: boolean; // the CURRENT socket was dialed with reconnect=1, so its open must post NO `ready`: the redial's dial term IS the handshake, and a `ready` would make the remote's ready reset pop `reconnect` and serve the whole board (the shim posts no ready on a redial for the same reason)
   deferred?: boolean; // a dial connect() put off because the pane's LOCAL socket is down (window.__rompLocalUp false): set with the one dial-deferred row per down spell, cleared by the dial that finally runs
-  saidDelta?: Set<string>; // the delta breadcrumbs this conn has filed (delta-unkeyed-base, delta-unknown-slot, and since round 4 of the wsBytesByHost review the feed road's feedDelta-stale), keyed on the EVENT and not the conn's life (sayDeltaOnce, 2026-09-19): the same event again, however many patches, reposts or redials produce it, files nothing (a row per frame would be a row a minute per host); a different reason, or the same reason from a remote that redialed on another build, is news and files. Bounded, and not by the peer: the refused-base row's key is the row itself (ev and why: the slot, one of the EIGHT refusals this side's table can produce (VIEW_DELTA_KINDS, view-deltas.ts split: a list where a kind says dictlist or not, a non-list where it says a list, a dictlist lane whose name carries the separator), and the remote's build as the /tunnels row last named it, peerSha); the unknown-slot row's key holds ONE marker for every slot this bundle does not decode (UNKNOWN_SLOT_KEY), the peer's slot name riding in the row and never in the key. So at most eighteen keys per distinct kernelSha the row has named on this conn: those nine, and the feed road's stale row's key, the row itself again (ev and the why word: one of the NINE words applyRemoteFeedDelta's ladder mints, plus the build), the ask beside that row unlatched as the bars road's needSlot is; and a remote that names a new slot in every frame spends one row, one console line and one key per build. The conn's, so a detach ends it. The two rows' conditions differ in what they are a property of: the unknown slot is this bundle's (it lasts the page, whatever the remote sends); the refused seed is the remote's frames' (it holds only while that kernel keeps sending a shape this table cannot key, and it is checked per FRAME: one refused whole frame drops a base an earlier frame seeded, and the next whole frame that keys seeds again), which is why the key is the row and not the conn's life
+  saidDelta?: Set<string>; // the delta breadcrumbs this conn has filed (delta-unkeyed-base, delta-unknown-slot, and since round 4 of the wsBytesByHost review the feed road's feedDelta-stale), keyed on the EVENT and not the conn's life (sayDeltaOnce, 2026-09-19): the same event again, however many patches, reposts or redials produce it, files nothing (a row per frame would be a row a minute per host); a different reason, or the same reason from a remote that redialed on another build, is news and files. Bounded, and not by the peer: the refused-base row's key is the row itself (ev and why: the slot, one of the EIGHT refusals this side's table can produce (VIEW_DELTA_KINDS, view-deltas.ts split: a list where a kind says dictlist or not, a non-list where it says a list, a dictlist lane whose name carries the separator), and the remote's build as the /tunnels row last named it, peerSha); the unknown-slot row's key holds ONE marker for every slot this bundle does not decode (UNKNOWN_SLOT_KEY), the peer's slot name riding in the row and never in the key. So at most twenty keys per distinct kernelSha the row has named on this conn: those nine, the feed road's stale row's key, the row itself again (ev and the why word: one of the NINE words applyRemoteFeedDelta's ladder mints, plus the build), the ask beside that row unlatched as the bars road's needSlot is, and the feed road's apply-throw row's two (feedDelta-apply, asked or stopped, plus the build: refuseRemoteApply, whose ask is bounded by Conn.feedApply and not by this set); and a remote that names a new slot in every frame spends one row, one console line and one key per build. The conn's, so a detach ends it. The two rows' conditions differ in what they are a property of: the unknown slot is this bundle's (it lasts the page, whatever the remote sends); the refused seed is the remote's frames' (it holds only while that kernel keeps sending a shape this table cannot key, and it is checked per FRAME: one refused whole frame drops a base an earlier frame seeded, and the next whole frame that keys seeds again), which is why the key is the row and not the conn's life
   peerSha?: string; // the remote kernel's build as the hub's /tunnels row last named it (kernelSha: the sha it booted from, "-dirty" included), read by poll() every 4 s; "" when the row names none (an older remote, or before the hub's supervisor has read the peer's /version; a rig without the poll). The delta breadcrumbs carry it in their why and key their latch on it, so a redial across the remote's deploy says its row again (2026-09-19)
   // KERNEL_SETTING messages (newest per type) and the pane's own BOOKKEEPING (newest per key, see
   // BOOKKEEPING) that arrived while this host's socket was down — flushed on the socket's open event
@@ -977,6 +977,16 @@ interface Conn {
   // would seed the pair at its stamped full, advance it as above, read the declared member at the compose and answer
   // with a composed frame; nothing in this repo does any of that.
   feedHeld?: { gen: string; rev: number };
+  // The apply-throw latch (the maintainer's round 5 of the wsBytesByHost review, refusals-2, 2026-09-20): a feedDelta whose apply
+  // threw (feed-delta.ts tryApplyFeedDelta) is refused with a needFullFeed ask, and the asking is BOUNDED by progress, not time.
+  // asked: the throw happened and the bare ask went, once per stall (a second throw while the ask is out asks nothing: a second
+  // ask is a second full from the kernel, the flood the bound exists to stop); answered: a full landed after the ask (the feed
+  // arm); stopped: a delta threw again after that full, so the full the kernel sent back did not repair the stream, no further
+  // ask goes and the shell is told once (refuseRemoteApply). Cleared by a delta that applies (progress is the reset); reset with
+  // the socket in connect() (a fresh socket's first frame is whole or composed from the declared pair, a new stream for the bound
+  // to judge, so a stall across redials costs one ask per socket life); gone with the conn in closeRemote. The local road's twin
+  // is FederationManager.localFeedApply, since the local socket has no conn.
+  feedApply?: "asked" | "answered" | "stopped";
 }
 
 /** The TYPES held on a conn's queue, for the hostconn rows (flush-halt's `held`, detach's `pendingDropped`):
@@ -1021,6 +1031,13 @@ export class FederationManager {
   private perHostSids: Record<string, Set<string>> = {};
   private perHostFeed: Record<string, any> = {}; // last feed snapshot per host — merged so they don't clobber
   private perHostFeedAt: Record<string, number> = {}; // host -> local ms its snapshot ARRIVED (feed or the delta that updated it): the merged frame's clock anchor (mergeHostFeeds `nowAt`), so a re-emit anchors exactly as the arrival did
+  // The LOCAL road's apply-throw latch (Conn.feedApply's twin; the 19:31Z ruling of the maintainer's round 5: the local road has no
+  // conn, so its bound is the manager's, per document, the page's life): the same three states, moved by the local feedDelta arm
+  // (a throw: asked, then stopped after the answering full; an apply: cleared) and the feed arm (a local full after the ask:
+  // answered); a page reload is its reset, since the local socket's life is the page's. saidLocalDelta latches the two rows the
+  // road files, one per word per document, as Conn.saidDelta does per conn for the remote road.
+  private localFeedApply?: "asked" | "answered" | "stopped";
+  private saidLocalDelta = new Set<string>();
   private perHostTl: Record<string, any> = {}; //   last timeline lanes payload ({type:"data"}.data) per host
   private perHostTlBars: Record<string, any> = {}; // last timeline {type:"bars"} detail per host
   private tlBarsHeld = false; // a bars emission waited for the LOCAL lanes skeleton: their arrival emits it (emitMergedTimeline)
@@ -1429,8 +1446,9 @@ export class FederationManager {
           c.feedRaw = msg;   // the frame as sent, the base for that conn's deltas (applyRemoteFeedDelta)
           const g = genOf(msg.gen);   // the full's gen, when the kernel stamps one: the pair the redial declares (Conn.feedHeld)
           c.feedHeld = g !== undefined ? { gen: g, rev: 0 } : undefined;   // a full carrying none clears it (a kernel before the stamp, or one rolled back to)
+          if (c.feedApply === "asked") c.feedApply = "answered";   // the full the apply-throw ask earned landed: a throw after it stops the asking (Conn.feedApply)
         }
-      }
+      } else if (this.localFeedApply === "asked") this.localFeedApply = "answered";   // the local road's twin (localFeedApply)
       this.perHostFeed[host] = m;
       this.perHostFeedAt[host] = Date.now();   // the wire arrival: the one moment the frame's `now` was current
       this.ensureHost(host);
@@ -1456,8 +1474,11 @@ export class FederationManager {
         if (typeof s === "function") s({ type: "needFullFeed" });
         return;
       }
-      this.perHostFeed[host] = applyFeedDelta(base, m);
+      const r = tryApplyFeedDelta(base, m);
+      if (!r.ok) { this.refuseLocalApply(m, r.error); return; }
+      this.perHostFeed[host] = r.next;
       this.perHostFeedAt[host] = Date.now();   // the delta carries the kernel's `now` too: this is when it arrived
+      this.localFeedApply = undefined;   // a delta applied: the local stream is healthy again (the latch localFeedApply, which refuseLocalApply moves)
       this.emitMergedFeed();
       return;
     }
@@ -1580,8 +1601,11 @@ export class FederationManager {
         return;
       }
     }
-    const next = applyFeedDelta(raw, d);
+    const r = tryApplyFeedDelta(raw, d);
+    if (!r.ok) { this.refuseRemoteApply(c, host, d, r.error); return; }
+    const next = r.next;
     c.feedRaw = next;
+    c.feedApply = undefined;   // a delta applied: the stream is healthy again (the latch Conn.feedApply, which refuseRemoteApply moves)
     if (gen !== undefined) {
       // the pair after the frame: (newGen, rev) after a composed frame, (gen, rev) after a per-cycle delta; rev is the
       // frame's through by the gate (a stamped delta's two are equal or it was refused above), so the pair advances to
@@ -1595,6 +1619,65 @@ export class FederationManager {
     this.perHostFeed[host] = prefixInbound(host, next);
     this.perHostFeedAt[host] = Date.now();   // the delta's arrival, as on the local path: the merge's clock anchor when no local frame anchors it
     this.emitMergedFeed();
+  }
+
+  /** A remote feedDelta whose apply THREW (feed-delta.ts tryApplyFeedDelta; the maintainer's round 5 of the wsBytesByHost review,
+   *  refusals-2). A throw out of the apply is a malformed delta or a bug of ours, and the gate above cannot say which: its own
+   *  row, feedDelta-apply, never one of the stale words (the stamp was fine; the row's why is asked or stopped and its road is
+   *  wire, since only this road implicates a peer; the console line carries the error, where the stack tells bad input from a
+   *  bug). Nothing was written, so the base and the pair stand. One BARE ask per stall: the whole frame is the one repair that
+   *  rests on neither the base, whose own content is a suspect (a full carrying a null ask lands and makes every later delta
+   *  throw), nor the stream, and this repo's needFullFeed handler serves the full frame now whatever the ask carries. A second
+   *  throw while the ask is out asks nothing; a throw after the answering full landed (Conn.feedApply answered, the feed arm)
+   *  stops the asking and tells the shell once, since the full the kernel sent back did not repair the stream. The row is
+   *  latched per word and per remote build (sayDeltaOnce), the ask is bounded by the latch itself. Before this a throw escaped
+   *  the socket's message handler: the pane stayed on its last frame with nothing said and nothing asked. */
+  private refuseRemoteApply(c: Conn, host: string, d: any, error: unknown): void {
+    const state = c.feedApply;
+    if (state !== undefined && state !== "answered") return;   // asked: the ask is out; stopped: said once, nothing further
+    const why = state === undefined ? "asked" : "stopped";
+    c.feedApply = why;
+    if (this.sayDeltaOnce(c, "feedDelta-apply", why + this.peerTag(c))) {
+      try { console.error("federation: a feedDelta from " + host + this.peerWord(c) + " could not be applied" + (why === "asked" ? ": asking that kernel for its full feed" : " after the full it sent back: no further ask"), error); } catch (e) { /* nothing to report to */ }
+      this.diag("feedDelta-apply", { host, buildId: d.buildId, why, road: "wire" });
+    }
+    if (why === "asked") this.sendRemote(host, { type: "needFullFeed" });
+    else this.tellShell("error", host + ": its cards are frozen at their last update. An update from it could not be applied, and neither could the whole feed it sent back. They refresh when the connection reconnects.");
+  }
+
+  /** The LOCAL road's twin (the 19:31Z ruling of the maintainer's round 5: the local road is guarded in this PR, with its own
+   *  recovery, its own road word and its own bound). The recovery, established from the code: the local kernel's needFullFeed
+   *  handler forgets what it believes this socket holds and serves the full frame now (kernel.py), the repair the no-base arm
+   *  above already asks for through __rompLocalSend, so the catch asks it once per stall. The bound has no conn to live on, so it
+   *  is the manager's, per document (localFeedApply): asked until the local full lands (the feed arm: answered), then a second
+   *  throw stops the asking and tells the shell once, with a message that names the page reload as the way out; a delta that
+   *  applies clears it. The row's road is local (this kernel's, no peer implicated), latched per word per document. Before this
+   *  the throw escaped inbound into the shim's FIFO drain, which dropped the frame, delivered the rest of the burst and rethrew at
+   *  the end of the task: console only, the pane on its last frame, nothing asked. */
+  private refuseLocalApply(m: any, error: unknown): void {
+    const state = this.localFeedApply;
+    if (state !== undefined && state !== "answered") return;
+    const why = state === undefined ? "asked" : "stopped";
+    this.localFeedApply = why;
+    if (!this.saidLocalDelta.has(why)) {
+      this.saidLocalDelta.add(why);
+      try { console.error("federation: a feedDelta from the local kernel could not be applied" + (why === "asked" ? ": asking it for its full feed" : " after the full it sent back: no further ask"), error); } catch (e) { /* nothing to report to */ }
+      this.diag("feedDelta-apply", { host: "local", buildId: m.buildId, why, road: "local" });
+    }
+    if (why === "asked") {
+      const s = (window as any).__rompLocalSend;
+      if (typeof s === "function") s({ type: "needFullFeed" });
+    } else this.tellShell("error", "The cards are frozen at their last update. An update from the kernel could not be applied, and neither could the whole feed it sent back. Reload the page to refresh them.");
+  }
+
+  /** A message for the person, through the shell's error center: the {romp: "notify"} post render.ts, waiting.ts and feed.ts make
+   *  to the same parent this manager posts hostsPending and reveal to; the shell's listener hands it to __rompNotify (kernel.py),
+   *  which appends a Log entry and folds a repeat of the same kind and text into a counter, so the message is visible, persistent,
+   *  deduped and bounded. A standalone page has no parent, and the console line beside the row stands alone there. */
+  private tellShell(kind: string, text: string): void {
+    try {
+      if (window.parent && window.parent !== window) window.parent.postMessage({ romp: "notify", kind, text }, "*");
+    } catch (e) { /* a cross-origin parent throws on access: nothing there to tell */ }
   }
 
   // The viewer's own session order, re-read per emit. It is a handful of strings out of localStorage and
@@ -2264,6 +2347,7 @@ export class FederationManager {
     // raw feed base holding none. The conn-scoped latches are cleared or kept by connect() above, not here.
     if (!conn.viewDeltas.held("bars")) conn.viewDeltas = this.mintReceiver(conn.host);
     if (!conn.feedRaw || !conn.feedHeld) { conn.feedRaw = undefined; conn.feedHeld = undefined; }
+    conn.feedApply = undefined;   // the apply-throw latch is the socket's: a fresh socket's first frame is whole (or composed from the declared pair), a new stream for the bound to judge (Conn.feedApply)
     // a REDIAL only when the remote served this page whole before (everOpened && readyAcked) and the page has a
     // proto to name, mirroring the shim's everConnected && bundleReady && readyAcked gate; then reconnect=1 rides
     // the URL and this socket's open posts NO ready (the redial's dial term IS the handshake, see onopen)

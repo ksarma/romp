@@ -3560,8 +3560,9 @@ CLIENT_DIAG_KEYS = {
                                             # content, following each value to its producers (a field is a carrier if any producer chain can put a host name
                                             # in it, classified by that chain's range and never by the field's typical content), so a new key fails there
                                             # until classified: a bare name under a `host` key (the shell's push-test row; every federation row that carries
-                                            # its conn's host, the hostconn, feedDelta-nobase, feedDelta-stale, sendqueue and senddrop rows (the poll rows
-                                            # carry an empty host), a set the same test derives from federation.ts's diag call sites; and the kernel's own
+                                            # its conn's host, the hostconn, feedDelta-nobase, feedDelta-stale, feedDelta-apply, sendqueue and senddrop rows
+                                            # (the poll rows carry an empty host, the local nobase and apply rows the word local), a set the same test
+                                            # derives from federation.ts's diag call sites; and the kernel's own
                                             # wsopen row for a spliced relay, written by _note_ws_open); a host-prefixed session id, <host>:<uuid>, when the
                                             # row concerns a remote session (the chat surface's sid, id, ids and active: federation.ts prefixes every remote
                                             # session id the page holds, and the cut at CLIENT_DIAG_STR_MAX keeps the head, prefix included; and the shell's
@@ -3605,7 +3606,8 @@ CLIENT_DIAG_KEYS = {
                         "sub", "rows", "err", "getNotifications", "displayed", "vanished", "superseded", "sid8", "ageS", "shape", "kind", "sw",
                         "decision", "hiddenMs", "quietMs", "attempts", "firstFailMs", "ms")),                    # D3 (2026-09-18): the shell socket's return-probe row (all fixed identifiers / enum members)
     "federation": frozenset(("host", "ev", "why", "quietMs", "foreground", "msgType", "rs", "flushed", "held", "unread", "endedUnread",
-                             "code", "clean", "detached", "pendingDropped", "buildId", "counts", "gt", "superseded")),
+                             "code", "clean", "detached", "pendingDropped", "buildId", "counts", "gt", "superseded",
+                             "road")),   # feedDelta-apply (the maintainer's round 5 of wsBytesByHost, refusals-2): which road the throwing delta arrived on, wire or local, a fixed word
     "chat": frozenset(("sid", "error", "held", "got", "distVer", "path", "mdLen", "queuedLeft", "ids", "n", "active", "ts", "len", "route",
                        "id", "load", "first", "recovered", "hadRestore", "perMinute",
                        "writer", "before", "after", "delta", "stick", "gesture", "sh", "ch",

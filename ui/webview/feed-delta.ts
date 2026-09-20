@@ -33,6 +33,22 @@ export function applyFeedDelta(base: any, d: FeedDelta): any {
   return out;
 }
 
+/** The apply with its throw CAUGHT, for both roads federation.ts runs it on, the local socket's and each remote conn's: `ok` with
+ *  `next` when it applied, else `ok: false` with the `error` (for the console line beside the diag row). applyFeedDelta guards
+ *  nothing but the two list shapes it upserts into, so a malformed delta (asks not a list, a null item, removeAsks not iterable)
+ *  throws out of upsertById, and until the maintainer's round 5 of the wsBytesByHost review (refusals-2, 2026-09-20) the throw
+ *  escaped the socket handler on either road: the pane stayed on its last frame with nothing said and nothing asked. The catch
+ *  lives HERE and not at a call site, so every caller is covered by construction (the ruling: a catch at one call site leaves the
+ *  other bare; tests/test_federated_dial_terms_served.py holds federation.ts to this function alone); each caller owns its own
+ *  recovery, row and bound (federation.ts refuseRemoteApply and refuseLocalApply). A throw mutates nothing: the base stands. */
+export function tryApplyFeedDelta(base: any, d: FeedDelta): { ok: true; next: any } | { ok: false; error: unknown } {
+  try {
+    return { ok: true, next: applyFeedDelta(base, d) };
+  } catch (e) {
+    return { ok: false, error: e };
+  }
+}
+
 /** Replace in place by id (order preserved), drop the removed, append the new. */
 export function upsertById(prev: any[], ups: any[], gone: string[], key: string): any[] {
   const drop = new Set(gone);

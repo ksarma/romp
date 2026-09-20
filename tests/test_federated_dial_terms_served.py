@@ -181,9 +181,10 @@ def held_pair(frames, slot):
     pair included, and the delta after it finds no base; this rule reads (gen, 0) from the recorded full and advances on the
     delta;
     (3) the feed road's content refusals, which are applyFeedDelta's throws (ui/webview/feed-delta.ts: asks not a list, an ask
-    or a ledger item null, removeAsks not iterable): the throw escapes ws.onmessage before Conn.feedHeld is written, so the
-    client's pair STANDS and it asks for nothing, where this rule advances it, the one direction in which expected_relay_caps
-    would demand a held term the client never sends. The gate itself refuses nothing on content.
+    or a ledger item null, removeAsks not iterable): caught in tryApplyFeedDelta and refused before Conn.feedHeld is written
+    (the maintainer's round 5, refusals-2), so the client's pair STANDS while it asks once, bare, per stall and stops asking
+    after the answering full, where this rule advances it, the one direction in which expected_relay_caps would demand a held
+    term the client never sends. The gate itself refuses nothing on content.
     A base or rev of a type no recorder keeps reads as absent on both sides and is refused on both. The authorities are the two
     receivers, never a list kept here (the maintainer's round 3, tests-3: a hand list here went stale twice in one day); the
     words the feed gate files are stale_why_words()'s derivation in tests/test_client_diag_allowlist.py. None when no pair is
@@ -622,8 +623,9 @@ RECEIVER_BLIND = [
     ('bars-full-unkeyable-lane-sep', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}], None, (GEN, 0)),  # a lane holding the separator (the kernel's twin refusal)
     ('bars-full-unkeyable-after-pair', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}, {"t": "delta", "slot": "bars", "base": 0, "rev": 1}, {"t": "bars", "slot": "", "gen": GEN2, "genKey": True}], None, (GEN2, 0)),  # an unkeyable full after a held pair drops the base; this rule reseeds
     ('bars-full-unkeyable-then-delta', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}, {"t": "delta", "slot": "bars", "base": 0, "rev": 1}], None, (GEN, 1)),  # the delta after an unkeyable full finds no base (R2, needSlot); this rule applies it
-    # the feed road's content refusals (class 3): applyFeedDelta's throws escape ws.onmessage before Conn.feedHeld is written, so
-    # the client's pair STANDS with no ask, where this rule advances it (the direction expected_relay_caps would over-demand)
+    # the feed road's content refusals (class 3): applyFeedDelta's throws, caught since the maintainer's round 5 (refusals-2) in
+    # feed-delta.ts and refused before Conn.feedHeld is written, so the client's pair STANDS (this rule advances it, the direction
+    # expected_relay_caps would over-demand); the client asks once, bare, per stall and stops after the answering full
     ('feed-apply-throw-asks-object', 'feed', [{"t": "feed", "slot": "", "gen": GEN, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 0, "rev": 1, "through": 1, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 1, "rev": 2, "through": 2, "genKey": True}], (GEN, 1), (GEN, 2)),  # asks an object: ups.map is not a function
     ('feed-apply-throw-asks-null-item', 'feed', [{"t": "feed", "slot": "", "gen": GEN, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 0, "rev": 1, "through": 1, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 1, "rev": 2, "through": 2, "genKey": True}], (GEN, 1), (GEN, 2)),  # an ask that is null: reading itemId of null
     ('feed-apply-throw-removeAsks-number', 'feed', [{"t": "feed", "slot": "", "gen": GEN, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 0, "rev": 1, "through": 1, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 1, "rev": 2, "through": 2, "genKey": True}], (GEN, 1), (GEN, 2)),  # removeAsks a number: not iterable (new Set)
@@ -835,8 +837,9 @@ class HeldPairRule(unittest.TestCase):
         # the refusals a receiver makes on what a hook does not keep, three classes (the docstring's bound): the bars receiver's
         # content checks on a patch and a rev field of a type the hooks do not copy (the client drops the base, this rule
         # applies); the bars receiver's refusal of a whole frame it cannot key (the client holds no pair, this rule reads the
-        # recorded full as a seed); the feed road's applyFeedDelta throws (the client's pair STANDS with no ask, this rule
-        # advances it). This rule cannot see any of them; this pins each measured reading so the divergence is never silent, and
+        # recorded full as a seed); the feed road's applyFeedDelta throws (the client's pair STANDS and it asks once, bare, then
+        # stops after the answering full: round 5's bounded refusal; this rule advances it). This rule cannot see any of them; this
+        # pins each measured reading so the divergence is never silent, and
         # the direction per road, since the third class diverges the other way from the first two.
         self.assertGreaterEqual(len(RECEIVER_BLIND), 21)
         for cid, slot, frames, client, mirror in RECEIVER_BLIND:
@@ -846,7 +849,7 @@ class HeldPairRule(unittest.TestCase):
             if slot == "bars":
                 self.assertIsNone(client, "%s: on the bars road the client drops the base (or seeds none), and holds no pair" % cid)
             else:
-                self.assertEqual(client, held_pair(frames[:-1], slot), "%s: on the feed road the client's pair stands as it was before the frame (the throw escapes before Conn.feedHeld is written)" % cid)
+                self.assertEqual(client, held_pair(frames[:-1], slot), "%s: on the feed road the client's pair stands as it was before the frame (the throw is caught and refused before Conn.feedHeld is written)" % cid)
         ids = [r[0] for r in RECEIVER_BLIND]
         self.assertIn("bars-through-string", ids, "the one rev-field divergence, a through the hook does not copy")
         self.assertIn("bars-rest-restall-type-dropped", ids, "the frame-type throw (view-deltas.ts:260), enumerated and probed")
@@ -871,16 +874,31 @@ class HeldPairRule(unittest.TestCase):
         fed = open(os.path.join(ROOT, "ui", "webview", "federation.ts"), encoding="utf-8").read()
         m2 = re.search(r"^  private applyRemoteFeedDelta\(host: string, d: any\): void \{\n(.*?)^  \}\n", fed, re.S | re.M)
         self.assertIsNotNone(m2, "federation.ts applyRemoteFeedDelta was not found: re-aim this census")
-        self.assertEqual(m2.group(1).count('"needFullFeed"'), 3, "the feed road's two refusal sites: nobase (a bare ask) and the gate (the ask with the held pair, or bare when none is held)")
-        self.assertEqual(m2.group(1).count("this.diag("), 2, "the two rows the refusals file: feedDelta-nobase and feedDelta-stale (its words are stale_why_words()'s derivation)")
-        # the feed road's content refusals (class 3): applyFeedDelta's throws, which nothing between the socket and the pair write
-        # catches, so a throw leaves the pair standing with no ask. A try around the call, or a throw of the gate's own, moves
-        # the reading and reds here until the rows above say what the client then holds
-        self.assertEqual(m2.group(1).count("const next = applyFeedDelta(raw, d);"), 1, "the apply, once, before the pair write")
-        self.assertEqual(m2.group(1).count("try"), 0, "nothing in applyRemoteFeedDelta catches the apply's throw (the feed-apply-throw rows read the pair standing)")
+        self.assertEqual(m2.group(1).count('"needFullFeed"'), 3, "the feed road's two stamp-and-base refusal sites: nobase (a bare ask) and the gate (the ask with the held pair, or bare when none is held)")
+        self.assertEqual(m2.group(1).count("this.diag("), 2, "the two rows those refusals file: feedDelta-nobase and feedDelta-stale (its words are stale_why_words()'s derivation)")
+        # the feed road's content refusals (class 3): applyFeedDelta's throws. Since the maintainer's round 5 (refusals-2) the throw
+        # is CAUGHT, in feed-delta.ts's tryApplyFeedDelta (the one wrapper both roads call, so both are covered by construction),
+        # and each road refuses it with its own recovery and bound (refuseRemoteApply, refuseLocalApply): the pair still stands
+        # (nothing was written), one bare needFullFeed goes per stall, and the asking stops after the answering full. A bare
+        # applyFeedDelta call anywhere in federation.ts, a second catch, or a throw of the gate's own moves the reading and reds here
+        self.assertEqual(m2.group(1).count("const r = tryApplyFeedDelta(raw, d);"), 1, "the checked apply, once, before the pair write")
+        self.assertEqual(m2.group(1).count("if (!r.ok) { this.refuseRemoteApply(c, host, d, r.error); return; }"), 1, "a throw is the remote road's refusal, before any write")
+        self.assertEqual(len(re.findall(r"[^A-Za-z]applyFeedDelta\(", fed)), 0, "federation.ts calls the bare apply nowhere (the local arm and the remote road both go through tryApplyFeedDelta)")
+        self.assertEqual(fed.count("tryApplyFeedDelta("), 2, "the two roads, one call each: the local feedDelta arm and applyRemoteFeedDelta")
+        self.assertEqual(m2.group(1).count("try"), 1, "one try in applyRemoteFeedDelta, and it is the checked apply's name (the catch itself is feed-delta.ts's)")
         self.assertEqual(m2.group(1).count("throw "), 0, "and the gate itself throws nothing: its refusals are the asks and the rows above")
+        m4 = re.search(r"^  private refuseRemoteApply\(c: Conn, host: string, d: any, error: unknown\): void \{\n(.*?)^  \}\n", fed, re.S | re.M)
+        self.assertIsNotNone(m4, "federation.ts refuseRemoteApply was not found: re-aim this census")
+        self.assertEqual(m4.group(1).count('"needFullFeed"'), 1, "the apply-throw refusal's one bare ask (never the held pair: the base's own content is a suspect)")
+        self.assertEqual(m4.group(1).count("this.diag("), 1, "and its one row, feedDelta-apply")
+        self.assertEqual(m4.group(1).count("this.tellShell("), 1, "and the visible message once the answering full did not repair the stream")
+        m5 = re.search(r"^  private refuseLocalApply\(m: any, error: unknown\): void \{\n(.*?)^  \}\n", fed, re.S | re.M)
+        self.assertIsNotNone(m5, "federation.ts refuseLocalApply was not found: re-aim this census")
+        self.assertEqual(m5.group(1).count('"needFullFeed"'), 1, "the local twin's one bare ask, through the local send hook")
+        self.assertEqual(m5.group(1).count("this.diag("), 1); self.assertEqual(m5.group(1).count("this.tellShell("), 1)
         fd = open(os.path.join(ROOT, "ui", "webview", "feed-delta.ts"), encoding="utf-8").read()
-        self.assertEqual(fd.count("try"), 0, "applyFeedDelta catches nothing of its own")
+        self.assertEqual(fd.count("try"), 2, "feed-delta.ts: the checked apply's one try and its name (tryApplyFeedDelta); applyFeedDelta itself catches nothing")
+        self.assertRegex(fd, r"export function tryApplyFeedDelta\(base: any, d: FeedDelta\)[^\n]*\{\n  try \{\n    return \{ ok: true, next: applyFeedDelta\(base, d\) \};\n  \} catch \(e\) \{\n    return \{ ok: false, error: e \};", "the wrapper's shape: the throw caught and returned, the base untouched")
         self.assertEqual(fd.count("upsertById("), 3, "the two upserts (asks by itemId, ledgers by sid) and the function: the throw-capable sites are their reads of an item's id, a null item, and the Set over the removals (the four feed-apply-throw rows)")
         m3 = re.search(r"^    ws\.onmessage = \(ev: MessageEvent\) => \{\n(.*?)^    \};\n", fed, re.S | re.M)
         self.assertIsNotNone(m3, "federation.ts ws.onmessage was not found: re-aim this census")

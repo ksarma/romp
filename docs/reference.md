@@ -4908,8 +4908,9 @@ The two rows, as the kernel writes them (`t` its clock, `wid` the dashboard id):
   file wherever an admitted value can hold one, in four forms: a bare name
   under a `host` key (the shell's push-test row; every federation row that
   carries its conn's host, the `hostconn`, `feedDelta-nobase`,
-  `feedDelta-stale`, `sendqueue` and `senddrop` rows, with the poll rows
-  carrying an empty host; and the kernel's own `wsopen` row for a spliced
+  `feedDelta-stale`, `feedDelta-apply`, `sendqueue` and `senddrop` rows, with
+  the poll rows carrying an empty host and the local nobase and apply rows the
+  word local; and the kernel's own `wsopen` row for a spliced
   relay, `kind` `hub`, above); a host-prefixed session id, `<host>:<uuid>`,
   when the row concerns a remote session (the chat surface's `sid`, `id`,
   `ids` and `active`: every remote session id a federated page holds carries
