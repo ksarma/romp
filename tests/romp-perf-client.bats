@@ -250,6 +250,9 @@ assert f["loaf"] == {"per_min": 0.0, "blocking_ms_per_min": 0.0, "worst_ms": 0, 
     # plus the pane's app when the row had one. The reader used to fold a marker as a pane with one zero-ms minute,
     # and a marker without app landed under a pane named "?"; a shed row read as an empty minute with nothing said.
     # Now the markers are skipped and both kinds are counted, in the header and in --json, so the loss is visible.
+    # The header counts the shed rows by WHAT they dropped (capped.dropped; shed_keys in --json): since the round-1
+    # ladder sheds the map first, a row can lose wsBytesByHost alone with its frames intact and folded, and the old
+    # wording, "shed frames", called that row's frames lost when they were not (review round 1, 2026-09-20).
     run "$ROMP_SCRIPT" perf client
     [ "$status" -eq 0 ]
     [[ "$output" != *"capped whole"* ]]                  # nothing lost: the clause is absent, not zeroed
@@ -271,16 +274,29 @@ shed = {"app": "chat", "since": (now - 75) * 1000, "span_ms": 60000,
         "loaf": {"n": 0, "blocking_ms": 0, "worst_ms": 0, "top": [], "src": "none"},
         "slow": {"sent": 0, "suppressed": 0, "suppressed_worst_ms": 0}, "heap_mb": 90.0, "dom": 3000, "visible": True, "hidden_pane": True, "ua": "chrome-desktop",
         "nav": {"ttfb": 120}, "capped": {"bytes": 30000, "dropped": ["frames"]}}
+# a timeline minute row the kernel shed the wsBytesByHost map from, the ladder's first step: its frames stayed and fold
+mapshed = {"app": "timeline", "since": (now - 70) * 1000, "span_ms": 60000,
+           "frames": {"tlBars": {"n": 6, "ms_sum": 60, "ms_max": 20, "n16": 1, "n100": 0, "hist": [0, 0, 0, 4, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0]}},
+           "free": {"n": 6, "p50": 10, "p90": 20, "max": 30},
+           "loaf": {"n": 0, "blocking_ms": 0, "worst_ms": 0, "top": [], "src": "none"},
+           "slow": {"sent": 0, "suppressed": 0, "suppressed_worst_ms": 0}, "heap_mb": 60.0, "dom": 1500, "visible": True, "hidden_pane": False, "ua": "chrome-desktop",
+           "capped": {"bytes": 25000, "dropped": ["wsBytesByHost"]}}
 with open(sys.argv[1], "a") as f:
     f.write(row(now - 15, W1, "minute", shed) + "\n"
             + row(now - 8, W1, "minute", {"capped": True, "bytes": 40000, "app": "chat"}) + "\n"
-            + row(now - 5, W1, "slowframe", {"capped": True, "bytes": 30000}) + "\n")
+            + row(now - 5, W1, "slowframe", {"capped": True, "bytes": 30000}) + "\n"
+            + row(now - 9, W1, "minute", mapshed) + "\n")
 PY
     run "$ROMP_SCRIPT" perf client
     [ "$status" -eq 0 ]
     [[ "$output" != *"· ?"* ]]                           # the marker without app makes no phantom pane
-    # the shed row counts as a minute row, the two markers count as capped, and neither marker counts as a row of either kind
-    [[ "$output" == *"2 dashboards, 3 panes, 6 minute rows, 1 slow frame row; 1 minute row shed frames, 2 rows capped whole"* ]]
+    # the two shed rows count as minute rows, the two markers count as capped, and neither marker counts as a row of either kind;
+    # the header says what each shed row dropped: the chat row its frames, the timeline row the wsBytesByHost map alone
+    [[ "$output" == *"2 dashboards, 4 panes, 7 minute rows, 1 slow frame row; 2 minute rows shed keys (frames on 1, wsBytesByHost on 1), 2 rows capped whole"* ]]
+    [[ "$output" != *"rows shed frames"* && "$output" != *"row shed frames"* ]]   # the old sentence, which called the map-shed row's frames lost
+    # the timeline pane's frames folded: the map-shed row kept them
+    [[ "$output" == *"dashboard 11111111 · timeline   chrome-desktop   1 min reported   heap 60.0 MB   dom 1500   visible"* ]]
+    [[ "$output" == *"tlBars          6.0/min     60 ms/min   p50 <8   p90 <16   p99 <16 ms   max 20   >16.7 ms 17%   >=100 ms 0%"* ]]
     # the chat pane folds the shed row by its span: one minute became two, with the last sample's heap and DOM unchanged
     [[ "$output" == *"dashboard 11111111 · chat   chrome-desktop   2 min reported   heap 90.0 MB   dom 3000   hidden (no viewport)"* ]]
     [[ "$output" == *"chatTail       15.0/min     30 ms/min"* ]]   # 30 frames and 60 ms over two minutes now
@@ -291,9 +307,12 @@ PY
     echo "$output" | python3 -c '
 import json, sys
 d = json.load(sys.stdin)
-assert d["shed_minute_rows"] == 1 and d["capped_rows"] == 2, (d["shed_minute_rows"], d["capped_rows"])
+assert d["shed_minute_rows"] == 2 and d["capped_rows"] == 2, (d["shed_minute_rows"], d["capped_rows"])
+assert d["shed_keys"] == {"frames": 1, "wsBytesByHost": 1}, d["shed_keys"]   # per key, the rows that dropped it
 panes = {(p["wid"], p["app"]): p for p in d["panes"]}
-assert set(panes) == {("11111111", "feed"), ("11111111", "chat"), ("22222222", "feed")}, set(panes)
+assert set(panes) == {("11111111", "feed"), ("11111111", "chat"), ("11111111", "timeline"), ("22222222", "feed")}, set(panes)
+tl = panes[("11111111", "timeline")]
+assert tl["rows"] == 1 and tl["frames"]["tlBars"]["n"] == 6 and tl["total_ms_per_min"] == 60, tl   # the frames of the row that shed the map fold
 assert not any(p["app"] == "?" for p in d["panes"]), [p["app"] for p in d["panes"]]
 c = panes[("11111111", "chat")]
 assert c["minutes"] == 2 and c["rows"] == 2 and c["frames"]["chatTail"]["n"] == 30 and c["heap_mb"] == 90.0 and c["dom"] == 3000, c

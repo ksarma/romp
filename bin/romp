@@ -458,7 +458,10 @@ for key, r in sorted(rows.items(), key=order):
     # not fit even bare, becomes a cap marker ({"capped": true, "bytes": N}, plus the pane's app when the row
     # had one). This reads both files, skips the markers (nothing in them folds) and counts both kinds in its
     # header line and in --json (shed_minute_rows, capped_rows), so the loss is visible and never silent; a
-    # shed minute row still folds by its span, heap and DOM, with no frames. It folds the last <n>
+    # shed minute row still folds by its span, heap and DOM, and by its frames when the map alone was shed
+    # (capped.dropped names what went, and the header counts the shed rows by it: "shed keys (frames on %d,
+    # wsBytesByHost on %d)", shed_keys in --json, since the round-1 ladder put the map ahead of the frames a row
+    # shed alone before it). It folds the last <n>
     # minutes per dashboard and pane (window percentiles from the summed histograms, the worst minute, the
     # slowest frames) and prints one screen. No kernel round trip: the files are read directly, so it works
     # with the kernel down. An absent file or one with no perf rows is said plainly: the bundles predate the
@@ -496,6 +499,7 @@ now = time.time()
 cutoff = now - minutes * 60
 rows, newest, files = [], 0, []
 shed_minute_rows, capped_rows = 0, 0       # the kernel's two cap shapes (kernel.py _client_diag_line), counted inside the window like the rest
+shed_keys = {}                             # key -> the shed minute rows that dropped it (capped.dropped), so the header says WHAT went, not "frames"
 for fp in (older, path):
     try:
         f = open(fp, encoding="utf-8", errors="replace")
@@ -521,7 +525,10 @@ for fp in (older, path):
                 capped_rows += 1                # in it folds, so it is counted and skipped; folded, it read as a pane with one zero-ms minute,
                 continue                        # and a marker without app landed under a pane named "?" (review find, 2026-09-18)
             if r.get("what") == "minute" and isinstance(capped, dict):
-                shed_minute_rows += 1           # a minute row stored without its per-minute figures (capped names them): its span, heap and DOM still fold
+                shed_minute_rows += 1           # a minute row stored without some of its figures (capped.dropped names them): its span, heap and DOM
+                for k in capped.get("dropped") or []:   # still fold, and so do its frames when the ladder shed the wsBytesByHost map alone (its first
+                    if isinstance(k, str):              # step since 2026-09-20), so the header is worded from what each row dropped
+                        shed_keys[k] = shed_keys.get(k, 0) + 1
             rows.append(r)
 if not files:
     sys.stderr.write("romp perf client: %s (%s does not exist)\n" % (RELOAD, path))
@@ -675,15 +682,16 @@ if as_json:
         if p["worst_minute"]:
             p["worst_minute"] = {k: p["worst_minute"][k] for k in ("t", "since", "total_ms", "loaf_n", "blocking_ms")}
     print(json.dumps({"window_min": minutes, "path": path, "files": files, "panes": panes,
-                      "shed_minute_rows": shed_minute_rows, "capped_rows": capped_rows}, indent=1, sort_keys=True))
+                      "shed_minute_rows": shed_minute_rows, "shed_keys": shed_keys, "capped_rows": capped_rows}, indent=1, sort_keys=True))
     sys.exit(0)
 
 n_slow = sum(len(p["slow"]) for p in panes)
 n_dash = len({p["wid"] for p in panes})
 capped_note = ""                            # said only when the file lost something, so the loss is visible and never silent
-if shed_minute_rows or capped_rows:
-    capped_note = "; %d minute row%s shed frames, %d row%s capped whole" % (
-        shed_minute_rows, "" if shed_minute_rows == 1 else "s", capped_rows, "" if capped_rows == 1 else "s")
+if shed_minute_rows or capped_rows:         # by what was dropped: a row that shed the wsBytesByHost map alone kept its frames, which folded above
+    capped_note = "; %d minute row%s shed keys (frames on %d, wsBytesByHost on %d), %d row%s capped whole" % (
+        shed_minute_rows, "" if shed_minute_rows == 1 else "s", shed_keys.get("frames", 0), shed_keys.get("wsBytesByHost", 0),
+        capped_rows, "" if capped_rows == 1 else "s")
 print("romp perf client: browser telemetry from the last %d min (%s): %d dashboard%s, %d pane%s, %d minute row%s, %d slow frame row%s%s"
       % (minutes, shown, n_dash, "" if n_dash == 1 else "s", len(panes), "" if len(panes) == 1 else "s",
          len(rows) - n_slow, "" if len(rows) - n_slow == 1 else "s", n_slow, "" if n_slow == 1 else "s", capped_note))
