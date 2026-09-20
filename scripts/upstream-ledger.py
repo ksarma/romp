@@ -27,6 +27,10 @@ Markdown and its first paragraph is the rendered Notes cell.
 
     Anything longer goes here. The upstream session appends a dated line whenever it acts on the entry.
 
+`where-check <slug> --base <sha>` (2026-09-20) compares the entry's `where` line with the paths the branch changed
+against its base (`git diff --name-only`, the ledger directory excluded) and fails on drift either way, since the line
+had been written once and kept while the branch grew (four filings named a site the head no longer touched).
+
 Commands (stdlib only):
     new <slug> --title T --where W [--pr N] [--tier t] [--status s] [--notes text]
     check                        every rule the guard test runs; exit 1 with the problems
@@ -527,6 +531,54 @@ def set_key(path, key, value):
     return path
 
 
+# ---------------------------------------------------------------- the where line against the branch
+
+PATH_TOKEN = re.compile(r"(?<![\w/.-])((?:[\w.-]+/)+[\w.-]+\.[A-Za-z0-9]+)(?![\w/])")
+
+
+def where_paths(where):
+    """The repository paths a `where` line names: every token with at least one directory and a suffix
+    (`kernel/kernel.py`, `tests/x.mjs`), inside or outside a code span, in the order first named."""
+    out = []
+    for p in PATH_TOKEN.findall(where):
+        if p not in out:
+            out.append(p)
+    return out
+
+
+def changed_paths(root, base, head="HEAD"):
+    """The paths a branch changed against its base, `git diff --name-only <base>..<head>`, the ledger's own
+    directory excluded (the entry is not a place the change lives). Refuses an empty diff: a where line
+    derived from nothing would name nothing and pass."""
+    r = subprocess.run(["git", "-C", str(root), "diff", "--name-only", f"{base}..{head}"], capture_output=True, text=True)
+    if r.returncode != 0:
+        raise SystemExit(f"git diff --name-only {base}..{head}: {r.stderr.strip()}")
+    paths = sorted(p for p in r.stdout.split() if not p.startswith(DIR + "/"))
+    if not paths:
+        raise SystemExit(f"no path changed between {base} and {head} outside {DIR}/: nothing to derive a where line from")
+    return paths
+
+
+def where_drift(where, changed):
+    """(missing, stale): the changed paths the where line does not name, and the paths it names that the
+    branch did not change. Both empty when the line names exactly the changed paths (2026-09-20: four
+    filings in a row found a where line naming a site the head did not touch and five of thirteen files)."""
+    named = set(where_paths(where))
+    return sorted(set(changed) - named), sorted(named - set(changed))
+
+
+def where_check(root, path, base, head="HEAD"):
+    """Lines describing how the entry's where line drifts from the branch's changed paths; empty when it
+    names exactly those paths."""
+    entry, problems = parse_entry(Path(path).name, Path(path).read_text(encoding="utf-8"), path)
+    if problems:
+        raise SystemExit("\n".join(problems))
+    missing, stale = where_drift(entry.get("where", ""), changed_paths(root, base, head))
+    out = [f"{Path(path).name}: where does not name a changed path: {p}" for p in missing]
+    out += [f"{Path(path).name}: where names a path the branch did not change: {p}" for p in stale]
+    return out
+
+
 # ---------------------------------------------------------------- the table import
 
 _ESCAPED_PIPE = re.compile(r"\\\|")
@@ -878,6 +930,11 @@ def main(argv=None):
     p.add_argument("key")
     p.add_argument("value")
 
+    p = sub.add_parser("where-check", help="the entry's where line must name exactly the paths the branch changed against --base (the ledger directory excluded)")
+    p.add_argument("slug")
+    p.add_argument("--base", required=True, help="the branch's base commit (the merge base with main)")
+    p.add_argument("--head", default="HEAD")
+
     p = sub.add_parser("import", help="the table migration, or one straggler row")
     p.add_argument("paths", nargs="*", metavar="PATH",
                    help="the migration: <UPSTREAM.md> <dir>; with --row: at most one, the entry directory (default: the root's upstream/)")
@@ -923,6 +980,14 @@ def main(argv=None):
                               "added": e.get("added"), "closed": e.get("closed") or None}, ensure_ascii=False))
     elif a.cmd == "set":
         print(set_key(resolve(entries_dir, a.slug), a.key, a.value))
+    elif a.cmd == "where-check":
+        path = resolve(entries_dir, a.slug)
+        drift = where_check(root, path, a.base, a.head)
+        if drift:
+            print("\n".join(drift))
+            print("changed: " + "; ".join(changed_paths(root, a.base, a.head)))
+            return 1
+        print(f"ok: {path.name} names exactly the {len(changed_paths(root, a.base, a.head))} paths changed since {a.base}")
     elif a.cmd == "import":
         if a.row is not None:
             if len(a.paths) > 1:   # `source` used to take the first and the named directory was ignored (2026-09-06)
