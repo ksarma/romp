@@ -15,7 +15,9 @@ before the mint, after it and after teardown, with no locked record at any of th
 and borrows the source's objects; an interrupted mint (git killed as the clone starts, the failure path) raises with git's
 words and leaves the source's records untouched; every git command the mint runs is either the clone, which reads the
 source, or bound by -C to a path under the lab, and none names a worktree, a record clearing or an object collection; the
-class's teardown runs no command at all (the lab's rmtree takes the checkout), spied the same way; and no string constant
+class's teardown, spied the same way WITH a minted checkout present (round 3: spied with none, a teardown step conditioned
+on the mint, the round-1 defect's own shape, was never exercised), runs no command at all (the lab's rmtree takes the
+checkout); and no string constant
 in the lab module's source, in either quoting, is such an argv token (an ast walk, so a spelling cannot slip past it; a
 token assembled at run time or joined into one shell string is what the two spies are for, not this census).
 
@@ -174,16 +176,24 @@ class OldHubMintIsPrivate(unittest.TestCase):
         self.assertEqual(self.src.records(), self.before)
 
     def test_the_teardown_runs_no_command(self):
-        """The class's teardown with nothing to stop (no procs, no door, no splice) runs no subprocess at all: the lab's
-        rmtree takes the checkout, and no git command of the class names the source (round 1's teardown ran a repo-wide
-        record clearing there). Behavioural, so the spelling of an argv token cannot matter."""
+        """The class's teardown with a MINTED checkout present and nothing to stop (no procs, no door, no splice) runs no
+        subprocess at all: the lab's rmtree takes the checkout, and no git command of the class names the source (round 1's
+        teardown ran a repo-wide record clearing there). The mint runs first under the spy, so a teardown step conditioned
+        on the mint (old_hub_wt set, the round-1 defect's own shape) is exercised; round 3 found the pin spied a teardown
+        with nothing minted, which such a step never entered. Behavioural, so the spelling of an argv token cannot matter."""
         real = subprocess.run
         seen, run = self._spy(real)
         with mock.patch.object(L.subprocess, "run", run):
+            wt = self.Mint._mint_old_hub()
+        self._assert_commands_are_private(seen)
+        self.assertEqual(self.Mint.old_hub_wt, wt, "the mint recorded its checkout")
+        self.assertTrue(os.path.isdir(os.path.join(wt, ".git")), "…and the checkout exists under the lab when the teardown runs: %r" % (wt,))
+        del seen[:]
+        with mock.patch.object(L.subprocess, "run", run):
             self.Mint.tearDownClass()
         self._assert_commands_are_private(seen, expect_commands=False)
-        self.assertEqual(seen, [], "a clean teardown runs no command: %r" % (seen,))
-        self.assertFalse(os.path.exists(self.lab), "…and the lab is gone")
+        self.assertEqual(seen, [], "a teardown with the minted checkout present runs no command: %r" % (seen,))
+        self.assertFalse(os.path.exists(self.lab), "…and the lab is gone, the checkout with it")
         self.assertEqual(self.src.records(), self.before, "the source's worktree records are byte-identical after teardown")
 
     def test_the_lab_module_names_no_forbidden_git_command(self):
