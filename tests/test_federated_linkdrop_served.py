@@ -53,10 +53,13 @@ write dropped from the feed arm, the local-down gate dropped from connect(), and
 one (ROMP_LINKDROP_HUB_ROOT, the base-hub lever).
 
 Knobs. LinkDropBothNew needs none: it runs wherever this checkout's served labs run, CI's served job included (about
-a minute: two supervisor waits and a hub restart). ROMP_LINKDROP_HUB_ROOT boots its hub from another checkout with its
+a minute and a half: two supervisor waits, the 30 s down dwell and a hub restart; 82 s for its setUpClass in the drive
+of 2026-09-20, `ROMP_LINKDROP_LAB=1 ROMP_LINKDROP_OLD_HUB_BUILD=1 pytest tests/test_federated_linkdrop_served.py
+--durations=20`). ROMP_LINKDROP_HUB_ROOT boots its hub from another checkout with its
 PREBUILT vscode-extension/dist (the fails-before lever for the new-hub class). The old-hub class, the storm's own
-witness (the pre-815 half), runs under ROMP_LINKDROP_LAB=1 (about three minutes more; skipped as optional without it,
-and the skip reason names what then goes unexecuted and where the mechanisms PR 815 fixed are pinned) with one of two
+witness (the pre-815 half), runs under ROMP_LINKDROP_LAB=1 (about two minutes more: 112 s for its setUpClass, the mint
+and its build included, in the same drive, the module whole at 195 s; skipped as optional without it, and the skip
+reason names what then goes unexecuted and where the mechanisms PR 815 fixed are pinned) with one of two
 hub knobs: ROMP_CORNER_OLD_HUB_ROOT (the corners lab's knob: a checkout of a hub kernel and prebuilt bundle from
 before PR 815) boots the hub from that checkout as it is; ROMP_LINKDROP_OLD_HUB_BUILD=1 makes the class mint its own
 private clone of this repository under its scratch directory, checked out detached at OLD_HUB_SHA (a main before PR
@@ -74,13 +77,19 @@ What the old hub showed (2026-09-19, the bundle at 01d4fbe43): the old bundle di
 its Outline files one delta-unapplied row per remote feed patch. That correspondence is what the class pins: in each
 window and over the whole drive, the rows equal, by rev, the feed slot patches the Outline's own relay sockets
 received (the hook records a delta frame's rev; the row files the same rev). The count is one drive's, not a
-property of the bundle: 3 / 0 / 3 / 3 across phase A, the link down, phase B and phase C in the recorded drive at the
-round-2 head (ROMP_LINKDROP_LAB=1 ROMP_LINKDROP_OLD_HUB_BUILD=1 pytest tests/test_federated_linkdrop_served.py). One
-reviewer drive at round 1's head gave 3 / 0 / 1 / 3 (two relay sockets churned inside phase B and absorbed two
-notices into whole frames: no patch, so no row, and the equality held at 7 / 7), as did one verifier drive at the
-round-2 head whose hook was mutated for a red (its hub rows are real); every other recorded drive of the unmutated
-module, the reviewers' further drives at round 1's head and the builder's earlier drives at three pre-PR vintages
-(two with a hand-built old hub), gave 3 / 0 / 3 / 3. ZERO while the link was down in every recorded drive. The storm
+property of the bundle: 3 / 0 / 3 / 3 across phase A, the link down, phase B and phase C in most recorded drives
+(ROMP_LINKDROP_LAB=1 ROMP_LINKDROP_OLD_HUB_BUILD=1 pytest tests/test_federated_linkdrop_served.py). One reviewer
+drive at round 1's head gave 3 / 0 / 1 / 3 (two relay sockets churned inside phase B and absorbed two notices into
+whole frames: no patch, so no row, and the equality held at 7 / 7), as did one verifier drive at the round-2 head
+whose hook was mutated for a red (its hub rows are real); and one builder drive at the round-3 head gave 0 / 0 / 3 / 3
+(the Outline's relay socket churned 0.7 s into phase A and its retry's whole frame absorbed all three notices: phase A
+0 rows to 0 patches, the drive 6 / 6 by rev), RED at that head on the per-phase at-least-one-patch floors of the storm
+test and the phase-A drops test with the correspondence intact, the datum that asked for the churn-keyed allowance
+(_outline_caught_up_whole: an empty phase is excused only by a whole keyed feed frame the Outline received inside it,
+and that drive is green under it). Every other recorded drive of the unmutated module, the reviewers' further drives
+at round 1's head and the builder's earlier drives at three pre-PR vintages (two with a hand-built old hub), gave
+3 / 0 / 3 / 3 (the per-window table over the builder's report JSONs outside the repo, `python3 analyse.py
+<report.json>...`, with _rows_in's 1.5 s pad). ZERO while the link was down in every recorded drive. The storm
 is gated on remote patches arriving, which is gated on the link: with phase D due while the link was down, no row
 filed until the link returned, the return's whole frame carried D and filed no row for it, and the next patch (phase
 B's) filed a row again. A relay redial does not end the storm but restarts it: each redial's one whole frame catches
@@ -163,8 +172,9 @@ BAD_EVS = ("delta-unknown-slot", "delta-unkeyed-base")
 # before the drive, the readers after: 55 s measured for the whole setUpClass), and the driver's own worst case
 # (driver_worst_case_s: its wait budget plus the bounded work between the waits) sits under the subprocess timeout, so a
 # degraded drive returns through its wait budget with the expired waits recorded or, for a hang in the control door,
-# through driver_error ("driver timed out"), and the labs after this one still run. The sibling labs' child timeouts are
-# 240 s and 300 s. tests/test_federated_linkdrop_driver_bound.py pins the arithmetic, the budget and the bytes sent.
+# through driver_error ("driver timed out"), and the labs after this one still run.
+# tests/test_federated_linkdrop_driver_bound.py pins the arithmetic, the budget, the bytes sent and the premise that every
+# wait the driver places draws on the budget or is a fixed dwell the arithmetic counts.
 CI_TEST_TIMEOUT_S = 600      # pytest --timeout on CI's served step
 BOOT_ROOM_S = 120            # setUpClass outside the drive: the kernels' boots, the dist copy, the readers after the drive
 DRIVER_TIMEOUT_S = 480       # the node driver's subprocess timeout: CI_TEST_TIMEOUT_S - BOOT_ROOM_S
@@ -622,11 +632,14 @@ class _LinkDrop(unittest.TestCase):
     changes = ("notice", "todo", "append")
     local_drop = True
     wait_ms = 20000           # each point's visibles after a change (the card, the todo, the provisional row), waited for concurrently
-    # The driver's waitFor caps by the mark each wait ends at, sized at three to six times the measured wait: the held sockets
-    # closing (0.01 s), the row leaving up (6 to 14 s: the supervisor's silent-poll window, longest under the old bundle's
-    # churn), the row returning to up (1 to 9 s), a fresh relay socket per page with a whole frame (1 to 5 s), the local
-    # sockets reopening (4 s), the relay after the local return (under 1 s). Every one draws on driver_budget_ms as well
-    # (BUDGET_JS), which is the binding bound.
+    # The driver's waitFor caps by the mark each wait ends at: each a floor set well above the slowest wait recorded, not a
+    # ratio of it (the ratios run from 2.8x to over 600x), with driver_budget_ms as the binding bound (BUDGET_JS: every wait
+    # draws on it). The spans by mark pair over 25 recorded unmutated drives (14 new-bundle, 11 old-hub; `python3
+    # waits_census.py <report.json>...` over the builder's reports outside the repo, 2026-09-20): closed, drop -> closed,
+    # 0.008 to 0.030 s; rowDown, closed -> rowDown, 4.6 to 14.5 s (the supervisor's silent-poll window, longest under the
+    # old bundle's churn); rowUp, resume -> rowUp, 0.8 to 13.2 s; redialed, rowUp -> redialed, 0.8 to 4.6 s; localUp,
+    # restarted -> localUp, 0.014 to 0.30 s (the restart itself, SIGTERM and the 3 s held down, is the control door's and
+    # not this wait's); redialed2, localUp -> redialed2, 0.014 to 0.81 s.
     waits_ms = {"closed": 20000, "rowDown": 40000, "rowUp": 40000, "redialed": 30000, "localUp": 30000, "redialed2": 30000}
     page_wait_ms = 30000      # the start, per page: its load, its first relay socket, that socket's whole frame
     driver_budget_ms = 240000  # every wait the driver places draws on this one budget: between two and a half and five times a healthy
@@ -636,8 +649,9 @@ class _LinkDrop(unittest.TestCase):
     # comes DOWN_WINDOW_MARGIN times the drive's own slowest link-up delivery after the post, asserted by both classes' gate legs
     # (_assert_the_down_window_outlasts_the_drives_slowest_delivery). The slowest recorded delivery is the old bundle's, whose
     # frozen feed page shows a change only at the next churned socket's whole frame (one churn interval plus the 2 s retry):
-    # 12,885 ms over ten recorded unmutated old-hub drives (`python3 analyse.py <report.json>...` over the builder's reports
-    # outside the repo, max of phases' seen.waitedMs; the new bundle's is under 1.4 s). At 30 s the span holds the margin for
+    # 12,885 ms over eleven recorded unmutated old-hub drives, the first at this dwell included (`python3 analyse.py
+    # <report.json>...` over the builder's reports outside the repo, max of the phases' seen.waitedMs; the new bundle's is
+    # under 1.4 s). At 30 s the span holds the margin for
     # any delivery under 15.0 s, 2.1 s over the slowest recorded, and driver_worst_case_s stays under DRIVER_TIMEOUT_S (475.5 s
     # for the new class, 455.5 s for the old-hub class: tests/test_federated_linkdrop_driver_bound.py). A margin fitted to the
     # data at hand would be the 18 ms window again; the dwell is widened instead, never the margin softened. It is also a
@@ -1452,8 +1466,8 @@ class LinkDropOldLocal(_LinkDrop):
         super()._knobs()
         if (os.environ.get("ROMP_LINKDROP_LAB") or "").strip() != "1":
             raise unittest.SkipTest("optional: ROMP_LINKDROP_LAB unset: the old-hub class waits out the hub's supervisor twice and restarts its "
-                                    "hub kernel against a pre-815 bundle (about three minutes), so %s; set it to 1 with one of the hub knobs to run"
-                                    % cls.UNEXECUTED)
+                                    "hub kernel against a pre-815 bundle (about two minutes, the mint and its build included), so %s; set it to 1 "
+                                    "with one of the hub knobs to run" % cls.UNEXECUTED)
         cls.hub_root = _root_knob("ROMP_CORNER_OLD_HUB_ROOT")
         if cls.hub_root:
             cls.hub_knob = "ROMP_CORNER_OLD_HUB_ROOT"
