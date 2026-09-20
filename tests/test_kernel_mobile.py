@@ -584,6 +584,11 @@ const appTop = () => PROPS['--app-top'];
 out.restTop = appTop();
 visualViewport.height = 460; visualViewport.offsetTop = 83; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
 out.pan = { appTop: appTop(), appH: appH(), barH: barH() };
+// round 8 (2026-09-20): the measured road's rounding (panPx, the one reading both writing roads share): 0.4 rounds to no pixel and
+// 0.5 up to one; the 0px road's flips below drive the same two values on its side
+visualViewport.offsetTop = 0.4; fire(VV, 'scroll'); flush(); out.subPixelMeasured = appTop();
+visualViewport.offsetTop = 0.5; fire(VV, 'scroll'); flush(); out.halfPixelMeasured = appTop();
+visualViewport.offsetTop = 83; fire(VV, 'scroll'); flush();
 // round 4 (2026-09-20): a height report the run REFUSES (h 0) publishes no pan either. The pan belongs to the height it was
 // measured with, so a report of height 0 with offsetTop 300 leaves --app-top and --app-h where the last valid run put them
 // (83 and 460); publishing the pan alone had moved the fixed body 300 px down under a height that never followed
@@ -724,7 +729,9 @@ visualViewport.scale = 1; visualViewport.height = 844; visualViewport.offsetTop 
 out.coarseAgainBack = { appTop: appTop(), appH: appH(), barH: barH() };
 // round 6 (2026-09-20): the 0px road's CONDITION, both sides of every variable in it. The road clears the hold only in a true
 // no-pan state, one an unzoomed coarse run would have measured as 0: no visual viewport, or one at or under the pinch road's
-// cut (scale 1.01) with no positive offsetTop (the keyboard gone in the same run the pointer turned fine, the kernel-4 case); a
+// cut (scale 1.01) whose offsetTop rounds to no positive pixel, the reading the measured road stores (panPx; round 8, 2026-09-20:
+// the road had read the raw offsetTop, so 0.4 kept the hold here and stored 0 there) (the keyboard gone in the same run the
+// pointer turned fine, the kernel-4 case); a
 // standing pan (one pixel) or a standing zoom (scale 1.02) leaves it. Each state: the hold from a pan (83), the pointer turns
 // fine in the given visual-viewport state (one run), coarse again under the slack zoom so the pinch road publishes the hold
 const flips = {};
@@ -744,6 +751,8 @@ flip('atRest', { height: 844, offsetTop: 0, scale: 1 });        // the keyboard 
 flip('scaleAtCut', { height: 844, offsetTop: 0, scale: 1.01 }); // at the pinch road's cut, unzoomed: cleared
 flip('scaleAboveCut', { height: 844, offsetTop: 0, scale: 1.02 }); // a standing zoom: the hold stands
 flip('onePixelPan', { height: 460, offsetTop: 1, scale: 1 });   // a standing pan of one pixel: the hold stands
+flip('subPixelPan', { height: 460, offsetTop: 0.4, scale: 1 }); // rounds to no pixel, the measured road would have stored 0: cleared (round 8)
+flip('halfPixelPan', { height: 460, offsetTop: 0.5, scale: 1 }); // rounds up to one pixel, a pan on both roads: the hold stands (round 8)
 flip('zoomedTop', { height: 422, offsetTop: 0, scale: 2 });     // zoomed with the keyboard gone, at the top: the hold stands
 flip('zoomPan', { height: 422, offsetTop: 200, scale: 2 });     // a zoom pan with the keyboard gone: the hold stands
 out.flips = flips;
@@ -1004,8 +1013,12 @@ class MobileFitExecutes(unittest.TestCase):
         # again under a zoom then published the 0 the fine window laid out), and that reopened this change's own band: with
         # the keyboard up and its pan standing the pinch road published 0px under a keyboard-sized --app-h. The road now clears
         # the hold only in a true no-pan state, one an unzoomed coarse run would have measured as 0 (no visual viewport, or
-        # one at or under the pinch road's cut, scale 1.01, with no positive offsetTop); with a pan standing, or under a standing zoom, the hold stands for the keyboard it
-        # was measured with. Every writing road writes the value it publishes; the clamp road writes nothing.
+        # one at or under the pinch road's cut, scale 1.01, whose offsetTop rounds to no positive pixel); with a pan standing, or under a standing zoom, the hold stands for the keyboard it
+        # was measured with. Every writing road writes the value it publishes; the clamp road writes nothing. Round 8
+        # (2026-09-20): the no-pan test reads the value the measured road stores, one helper (panPx) for both roads, so a
+        # sub-pixel offsetTop is the same answer on both: 0.4 is no pan (cleared here, 0px stored there) and 0.5 a pan (the
+        # hold stands here, 1px stored there); the road had read the raw offsetTop, so 0.4 kept the hold the measured road
+        # would have zeroed.
         self.assertEqual(self.out["fineFromPan"], "0px", "the fine pointer published 0px from the pan")
         self.assertEqual(self.out["coarseAgainZoomed"], {"appTop": "83px", "appH": "460px"}, "the hold stands across a flip with the keyboard's pan standing")
         self.assertEqual(self.out["coarseAgainBack"], {"appTop": "0px", "appH": "844px", "barH": "44px"})
@@ -1014,8 +1027,11 @@ class MobileFitExecutes(unittest.TestCase):
         self.assertEqual({k: v["coarseAgainZoomed"] for k, v in flips.items()},
                          {"noVV": {"appTop": "0px", "appH": "460px"}, "atRest": {"appTop": "0px", "appH": "460px"}, "scaleAtCut": {"appTop": "0px", "appH": "460px"},
                           "scaleAboveCut": {"appTop": "83px", "appH": "460px"}, "onePixelPan": {"appTop": "83px", "appH": "460px"},
+                          "subPixelPan": {"appTop": "0px", "appH": "460px"}, "halfPixelPan": {"appTop": "83px", "appH": "460px"},
                           "zoomedTop": {"appTop": "83px", "appH": "460px"}, "zoomPan": {"appTop": "83px", "appH": "460px"}},
                          "cleared where no pan stands and the viewport is unzoomed; kept under a standing pan or zoom")
+        self.assertEqual((self.out["subPixelMeasured"], self.out["halfPixelMeasured"]), ("0px", "1px"),
+                         "the measured road stores the same reading: 0.4 rounds to no pixel, 0.5 up to one")
 
     def test_the_clamp_reads_the_layout_viewport_in_both_engine_models_and_binds_only_below_zero(self):
         # round 7 (2026-09-20). The clamp had read window.innerHeight as the layout viewport's height, which holds in Chromium

@@ -69845,6 +69845,10 @@ function wid(){try{return sessionStorage.getItem('romp:wid')||'';}catch(e){retur
 // bounded at use (the clamp inside fit) and never adjusted in place, so a keyboard raised again under a standing zoom finds
 // the pan it was measured with, not a value the clamp lowered (round 4, 2026-09-20).
 var lastPan=0;
+// [fork] round 8 (2026-09-20): the ONE reading of the pan both writing roads share: the measured road stores it and the 0px road's
+// no-pan test reads it, so an offsetTop that rounds to no pixel (0.4) is no pan on both roads and one that rounds up (0.5) a pan on
+// both. The 0px road had read the raw offsetTop, so a pan in (0, 0.5) was a standing hold there and a stored 0 here.
+function panPx(vv){return Math.round(vv.offsetTop||0);}
 function fit(){try{var vv=window.visualViewport;
 var coarse=window.matchMedia&&matchMedia('(pointer: coarse)').matches;
 var h=(!coarse||!vv)?window.innerHeight:Math.round(vv.height*(vv.scale||1));
@@ -69893,8 +69897,10 @@ if(h)document.documentElement.style.setProperty('--app-h',h+'px');
 // the band for a shorter one, by the height difference (round 5, 2026-09-20, disclosed: re-measuring under a zoom only
 // when the height changes is a design call not taken here; the harness and served legs re-raise the same keyboard). Two
 // roads WRITE the hold and each writes the value it publishes: the measured road its measurement, and the 0px road a zero,
-// only in a true no-pan state, one an unzoomed coarse run would have measured as 0 (no visual viewport, or one at or under
-// the pinch road's cut, scale 1.01, with no positive offsetTop; round 6, 2026-09-20). A pointer that turns fine with a pan standing (the keyboard up on iOS) or under a
+// only in a true no-pan state, one an unzoomed coarse run would have measured as 0: no visual viewport, or one at or under
+// the pinch road's cut, scale 1.01, whose offsetTop rounds to no positive pixel (panPx, the reading the measured road stores;
+// round 6 and round 8, 2026-09-20: the 0px road had read the raw offsetTop, so a pan in (0, 0.5) was no pan by this rule and a
+// kept hold by that test). A pointer that turns fine with a pan standing (the keyboard up on iOS) or under a
 // standing zoom leaves the hold for the keyboard it was measured with, so coarse again under that zoom the pinch road
 // publishes the keyboard's pan and not a 0 the fine window never measured (round 4 had written the zero on every fine run,
 // and the pinch road then laid the shell out at pan 0 under a keyboard-sized --app-h, the band reopened); a flip with the
@@ -69905,8 +69911,8 @@ if(h)document.documentElement.style.setProperty('--app-h',h+'px');
 // beside the prior height rather than moving the fixed body by a pan measured against nothing; the 0px road has no height
 // to belong to and publishes unconditionally (only its write into the hold carries the no-pan condition above). The visual
 // viewport's scroll event, where a pan lands, is already bound below, so no new listener.
-if(!coarse||!vv){if(!vv||((vv.scale||1)<=1.01&&!(vv.offsetTop>0)))lastPan=0;document.documentElement.style.setProperty('--app-top','0px');}
-else if(h&&(vv.scale||1)<=1.01)document.documentElement.style.setProperty('--app-top',(lastPan=Math.round(vv.offsetTop||0))+'px');
+if(!coarse||!vv){if(!vv||((vv.scale||1)<=1.01&&!(panPx(vv)>0)))lastPan=0;document.documentElement.style.setProperty('--app-top','0px');}
+else if(h&&(vv.scale||1)<=1.01)document.documentElement.style.setProperty('--app-top',(lastPan=panPx(vv))+'px');
 else if(h)document.documentElement.style.setProperty('--app-top',Math.min(lastPan,Math.max(0,document.documentElement.clientHeight-h))+'px');
 // iOS ignores interactive-widget and reveals a focused input by SCROLLING this overflow:hidden page
 // (a UA scroll bypasses the clamp) — the shell then sits a keyboard-height up until dragged back

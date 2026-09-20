@@ -447,7 +447,8 @@ class RefitsWhenTheVisibleHeightChanges(unittest.TestCase):
         # so the hold decayed to 0 the first time the clamp bound and a keyboard raised again under the zoom reopened the
         # band). Every road that WRITES the hold writes the value it publishes: the measured road its measurement, the 0px
         # road a zero, and that only in a true no-pan state (no visual viewport, or one at or under the pinch road's cut, scale
-        # 1.01, with no positive offsetTop; round 6, 2026-09-20: written on every fine run, the zero had reopened the band after a pointer flip under a keyboard or a
+        # 1.01, whose offsetTop rounds to no positive pixel, panPx, the one reading the measured road stores too, so a sub-pixel
+        # pan is the same answer on both roads, round 8, 2026-09-20; round 6, 2026-09-20: written on every fine run, the zero had reopened the band after a pointer flip under a keyboard or a
         # zoom); the clamp road publishes a bound of the hold and stores nothing, so --app-top can sit below the hold until a
         # writing road runs next (round 6: this comment had said the hold is the last value published on every road, which
         # the clamp road contradicts whenever it binds, and the harness asserts that state). Both coarse branches sit under
@@ -455,9 +456,11 @@ class RefitsWhenTheVisibleHeightChanges(unittest.TestCase):
         # publishes no pan either, so the prior pan stands beside the prior height (round 4, 2026-09-20, as round 1
         # confirmed it); the 0px road has no height to belong to and publishes unconditionally. Behaviour:
         # test_kernel_mobile.MobileFitExecutes.
-        self.assertIn("\nvar lastPan=0;\nfunction fit(){", self.js)
-        self.assertIn("if(!coarse||!vv){if(!vv||((vv.scale||1)<=1.01&&!(vv.offsetTop>0)))lastPan=0;document.documentElement.style.setProperty('--app-top','0px');}", self.js)
-        self.assertIn("else if(h&&(vv.scale||1)<=1.01)document.documentElement.style.setProperty('--app-top',(lastPan=Math.round(vv.offsetTop||0))+'px');\n"
+        self.assertIn("\nvar lastPan=0;\n", self.js)
+        self.assertIn("\nfunction panPx(vv){return Math.round(vv.offsetTop||0);}\nfunction fit(){", self.js, "the one reading of the pan, declared before fit()")
+        self.assertIn("if(!coarse||!vv){if(!vv||((vv.scale||1)<=1.01&&!(panPx(vv)>0)))lastPan=0;document.documentElement.style.setProperty('--app-top','0px');}", self.js)
+        self.assertNotIn("vv.offsetTop>0", self.js, "the 0px road reads the shared rounding, never the raw offsetTop")
+        self.assertIn("else if(h&&(vv.scale||1)<=1.01)document.documentElement.style.setProperty('--app-top',(lastPan=panPx(vv))+'px');\n"
                       "else if(h)document.documentElement.style.setProperty('--app-top',Math.min(lastPan,Math.max(0,document.documentElement.clientHeight-h))+'px');", self.js)
         self.assertNotIn("innerHeight-h", self.js, "the clamp reads the layout viewport (clientHeight), not innerHeight, which WebKit shrinks under a pinch")
         self.assertNotIn("lastPan=Math.min", self.js, "the clamp is at use: nothing writes its result back into the hold")
