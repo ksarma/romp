@@ -7,6 +7,7 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import * as ts from "typescript";   // the census blanks file-view.ts's comments with the compiler's own read of them (the round-5 fix; writer-census.ts is the precedent, a runtime require of the test bundle)
 import { hideEdges } from "../test-dom-shim";   // every stand-in below that carries a tree edge (parentElement, children, childNodes, firstElementChild) hides it, the shared module's rule (ui/test-dom-shim.test.ts's ratchet)
 import { step, RESTING, DISABLED, armedWords, preparingWords, waitingWords, stalledWords, anywayWords, ANYWAY_TITLE, isPrintChord, isPrintKeys, settlePictures, collectPictures, bodyReady, rootKind, PRINT_SETTLE_MS, setPrintSettleMs, printSettleMs,
   WITH_WORDS, WITHOUT_WORDS, ANYWAY_WORDS, KEEP_WORDS, TAB_WORDS, NO_TAB_WORDS, pdfFrameWindow, READY_ROOTS, NOT_READY_ROOTS, LINE_ROOTS, PDF_LOADER_ROOT, printable, figurePrintable, figureHidden, rendered, SVG_NS, PAINTS_SEL,
@@ -599,45 +600,84 @@ test("bodyReady reads the element children through `children`, else through `chi
 // bodyReady classes a child it has never seen as UNKNOWN, and an unknown child makes the body not in whatever stands beside
 // it (the safe side: a press that prints what stands is the dangerous one; the person can still close and reopen), so a
 // root the viewer gains would lock Print silently unless something reads the viewer. This census does: it reads file-view.ts
-// (its comments blanked) and collects EVERY member access on `body` written as `body.<member>`, `body?.<member>`,
-// `body[...]` or `body?.[...]`, across any whitespace and a non-null `!` (with `document.body` and any other receiver's
-// `.body` aside), then classes each by what follows: a CALL of a seating method (`(` or `?.(`) has its seated arguments
-// resolved down to the root element's `el("<tag>", "<class>")` (SEATING: replaceChildren, prepend and append seat every
-// argument; appendChild and insertBefore their first, insertBefore's second being the reference child; insertAdjacentElement
-// its second, the first being the position); a call of a method that seats nothing passes (NON_SEATING_CALLS); an
-// ASSIGNMENT (`=` and the compound forms) to a scalar passes (NON_SEATING_ASSIGNS: scrollTop, scrollLeft, tabIndex); a
-// FURTHER ACCESS (`.`, `?.`, `[`) on a scalar or on classList, style or dataset passes (FURTHER_MEMBERS); a bare READ of a
-// scalar, or of a non-seating method as a value (`typeof body.getClientRects`), passes (READ_MEMBERS); and every other
-// member access on `body` FAILS the census with its line: a computed name (`body["append"]`), a call it does not know, an
-// assignment it does not know (innerHTML, outerHTML, textContent and insertAdjacentHTML seat what no resolver can read), a
-// further access on a member that hands out a child node (firstChild, children and their kin), on a seating method
-// (`body.append.call`, `.bind`, `.apply`) or on any member not listed, and a bare read of any member not listed (a seating
-// method handed out, `const seat = body.append`, seats later where no census can follow). The file is read once more for a
-// child-level seat anywhere (replaceWith, after, before, replaceChild, insertAdjacentElement, insertAdjacentHTML), which the
-// census cannot attribute to the body and fails on sight; file-view.ts has none. The resolved set is then held equal to the
-// flow's three lists (READY_ROOTS, NOT_READY_ROOTS, LINE_ROOTS) and bodyReady is executed over each root as its list says.
-// Each seated expression resolves as before: a builder call (`mdBlock(...)`) to the `el(...)` assigned to the variable the
-// builder's last `return` names; a bare variable to the expression assigned to it last before the site; a ternary to both
-// its branches; an `el("<tag>", "<class>")` to itself; anything else fails with the expression. The round-3 review
-// (2026-09-20): before this the sites were found by a closed list of three method names (replaceChildren, prepend,
-// appendChild) and its unknown passed, so a root seated by body.append or body.insertBefore was invisible to it and the
-// guarantee the lists state was false. The round-4 review (2026-09-20): the collect pattern read `body.<member>` alone, so
-// `body?.append(x)` and `body["append"](x)` were outside it, `body.append?.(x)` was a further access refused for NODE_MEMBERS
-// alone, and `body.append.call(body, x)` and a bare `body.append` passed; the mutant case below plants every one of those
-// forms and reads the census red with the planted line. What this census cannot see is the body under ANOTHER NAME: a
-// helper handed the body seating under its own parameter name, a destructuring (`const { append } = body`), or the body as
-// an ARGUMENT (`Element.prototype.append.call(body, x)`): a bare `body` token that no member access follows is not read.
-// file-view.ts's body is seated by the one name, through member accesses this census classes.
-/** file-view.ts with its comments blanked: every block comment (a slash-star to its matching star-slash) and every trailing
- *  `//` comment (a space or a tab before the `//`), each replaced by spaces of its own length with its newlines kept, so an
- *  index still maps to its line and no prose is read as code (the collect pattern reads across whitespace, and a
- *  doc-comment's "the body. The …" would otherwise read as a member access; the round-4 review, 2026-09-20). One pass, left
- *  to right, with string literals matched and kept as they are, so a comment opener inside a string or inside the other kind
- *  of comment opens nothing (`image/*` in a `//` comment blanked whole spans of code when the block strip ran first). The
- *  test runs in vscode-extension, and reads the tree as real-viewer-leg.ts does. */
+// with its comments blanked by the compiler (every comment range the TypeScript parser reports, wherever it stands: a doc
+// comment, a `//` at the start of a line or after a `;`, a trailing one) and classes EVERY `body` token in it outside a
+// string, template or regular-expression literal. A token a member access follows (`body.<member>`, `body?.<member>`,
+// `body[...]` or `body?.[...]`, across any whitespace and a non-null `!`; `document.body` and any other receiver's `.body`
+// are not the token) is classed by what follows the member: a CALL of a seating method (`(` or `?.(`) has its seated
+// arguments resolved down to the root element's `el("<tag>", "<class>")` (SEATING: replaceChildren, prepend and append seat
+// every argument; appendChild and insertBefore their first, insertBefore's second being the reference child;
+// insertAdjacentElement its second, the first being the position); a call of a method that seats nothing passes
+// (NON_SEATING_CALLS); an ASSIGNMENT (`=` and the compound forms) to a scalar passes (NON_SEATING_ASSIGNS: scrollTop,
+// scrollLeft, tabIndex); a FURTHER ACCESS (`.`, `?.`, `[`) on a scalar or on classList, style or dataset passes
+// (FURTHER_MEMBERS); a bare READ of a scalar, or of a non-seating method as a value (`typeof body.getClientRects`), passes
+// (READ_MEMBERS); and every other member access on `body` FAILS the census with its line: a computed name
+// (`body["append"]`), a call it does not know, an assignment it does not know (innerHTML, outerHTML, textContent and
+// insertAdjacentHTML seat what no resolver can read), a further access on a member that hands out a child node (firstChild,
+// children and their kin), on a seating method (`body.append.call`, `.bind`, `.apply`) or on any member not listed, and a
+// bare read of any member not listed (a seating method handed out, `const seat = body.append`, seats later where no census
+// can follow). A token NO member access follows is classed by its context: a declaration, a parameter, a declared type or
+// a property key (`const body =`, `(body: HTMLElement)`, `body: string;`, `body: foldBody(d)`), a comparison operand
+// (`activeElement === body`) and the viewer's action-context accessor (`body: () => body`, the one hand-out to the Comments
+// panel, read by hand) pass; an argument, or a property of an argument, passes when the callee is one BODY_HANDED_TO lists
+// (each read by hand for what it does with the body; a callee whose own parameter is named `body` has its member accesses
+// read by this census like the viewer's own, and the census holds its declaration to that name); and EVERY OTHER `body`
+// TOKEN FAILS the census with its line: an alias (`const b = body`), a return, an arrow's value, an array element, a ternary
+// or logical operand, a parenthesised or cast receiver (`(body).append`, `(body as HTMLElement).append`), an argument to a
+// callee the census does not list (`Element.prototype.append.call(body, x)`, a helper of its own). The file is read once
+// more for a child-level seat anywhere (replaceWith, after, before, replaceChild, insertAdjacentElement,
+// insertAdjacentHTML), which the census cannot attribute to the body and fails on sight; file-view.ts has none. The
+// resolved set is then held equal to the flow's three lists (READY_ROOTS, NOT_READY_ROOTS, LINE_ROOTS) and bodyReady is
+// executed over each root as its list says. Each seated expression resolves as before: a builder call (`mdBlock(...)`) to
+// the `el(...)` assigned to the variable the builder's last `return` names; a bare variable to the expression assigned to
+// it last before the site; a ternary to both its branches; an `el("<tag>", "<class>")` to itself; anything else fails
+// with the expression. The round-3 review (2026-09-20): before this the sites were found by a closed list of three method
+// names (replaceChildren, prepend, appendChild) and its unknown passed, so a root seated by body.append or
+// body.insertBefore was invisible to it and the guarantee the lists state was false. The round-4 review (2026-09-20): the
+// collect pattern read `body.<member>` alone, so `body?.append(x)` and `body["append"](x)` were outside it,
+// `body.append?.(x)` was a further access refused for NODE_MEMBERS alone, and `body.append.call(body, x)` and a bare
+// `body.append` passed. The round-5 fix (2026-09-20): the census read member accesses on the `body` token alone, so a
+// parenthesised or cast receiver (`(body).append(x)`) and the body under another name (`const b = body; b.append(x)`, the
+// body as an argument) seated with no refusal and no root, while the roster sentences said every other member access
+// failed; and its comment strip blanked a `//` only after a space or a tab, so a seat quoted in a comment at the start of a
+// line counted as a seat and a real seat moved into one kept the census green. The mutant case below plants every one of
+// those forms and reads the census red with the planted line. What this census cannot see is what a LISTED callee does
+// with the body it is handed: that is read by hand when the callee is listed, never derived, and a new callee fails the
+// census until it is read and listed.
+/** file-view.ts with its comments blanked: every comment range the TypeScript parser reports (leading and trailing trivia of
+ *  every token, a doc comment, a `//` at the start of a line or after a `;`, a `//` after a space or a tab, a block comment
+ *  anywhere), each replaced by spaces of its own length with its newlines kept, so an index still maps to its line and no
+ *  prose is read as code (the collect pattern reads across whitespace, and a doc-comment's "the body. The …" would
+ *  otherwise read as a member access; the round-4 review, 2026-09-20). String, template and regular-expression literals are
+ *  kept as they are (the census resolves `el("div", "fileview-md")` through its strings) and the census skips a token
+ *  inside one; a comment opener inside a literal opens nothing, since the parser reads the literal (the round-5 fix,
+ *  2026-09-20: before this a pattern blanked a block comment and a `//` after a space or a tab, so a `//` line starting at
+ *  column 0 was read as code, 415 such lines in file-view.ts at the round-5 verifiers' read). The test runs in vscode-extension, and reads the tree as real-viewer-leg.ts does. */
 const blank = (m: string): string => m.replace(/[^\n]/g, " ");
-const stripComments = (src: string): string => src.replace(/"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`|\/\*[\s\S]*?\*\/|[ \t]\/\/[^\n]*/g, (m) => (m.startsWith("/*") || m.trimStart().startsWith("//") ? blank(m) : m));
-const VIEWER_SRC = stripComments(fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "file-view.ts"), "utf8"));
+/** The comment ranges and the literal ranges of `src`, as the compiler parses them. */
+function textRanges(src: string): { comments: Array<[number, number]>; literals: Array<[number, number]> } {
+  const sf = ts.createSourceFile("file-view.ts", src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const comments: Array<[number, number]> = [], literals: Array<[number, number]> = [];
+  const seen = new Set<number>();
+  const visit = (n: ts.Node): void => {
+    if (n.kind >= ts.SyntaxKind.FirstJSDocNode && n.kind <= ts.SyntaxKind.LastJSDocNode) return;   // a doc comment's own tree: its range is already a comment range
+    for (const r of [...(ts.getLeadingCommentRanges(src, n.getFullStart()) || []), ...(ts.getTrailingCommentRanges(src, n.getEnd()) || [])]) if (!seen.has(r.pos)) { seen.add(r.pos); comments.push([r.pos, r.end]); }
+    if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n) || ts.isTemplateHead(n) || ts.isTemplateMiddle(n) || ts.isTemplateTail(n) || ts.isRegularExpressionLiteral(n)) literals.push([n.getStart(sf), n.getEnd()]);
+    for (const c of n.getChildren(sf)) visit(c);
+  };
+  visit(sf);
+  const byStart = (a: [number, number], b: [number, number]): number => a[0] - b[0];
+  return { comments: comments.sort(byStart), literals: literals.sort(byStart) };
+}
+const stripComments = (src: string): string => {
+  const out: string[] = [];
+  let last = 0;
+  for (const [a, b] of textRanges(src).comments) { if (a < last) continue; out.push(src.slice(last, a), blank(src.slice(a, b))); last = b; }
+  out.push(src.slice(last));
+  return out.join("");
+};
+const VIEWER_RAW = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "file-view.ts"), "utf8");
+const VIEWER_SRC = stripComments(VIEWER_RAW);
 /** The text between the bracket at `at` and its match, strings skipped. */
 function balancedAt(src: string, at: number): string {
   let depth = 0;
@@ -728,20 +768,65 @@ const READ_MEMBERS = [...SCALARS, ...NON_SEATING_CALLS];
  *  `.apply`, a computed `["call"]`: the seat runs where the census cannot read its arguments) or on any other member is
  *  refused. */
 const FURTHER_MEMBERS = [...SCALARS, "classList", "style", "dataset"];
+/** The callees file-view.ts hands the body to bare, as an argument (`foldKeeper(body)`) or as a property of one
+ *  (`installFilePrint({ body, ... })`), each READ BY HAND for what it does with the body it is handed (the round-5 fix,
+ *  2026-09-20; the reason is the read). One whose own parameter is named `body` (`own`) has its member accesses read by
+ *  this census like the viewer's own, and the census holds file-view.ts to declaring that parameter under that name, so a
+ *  rename fails the census until the callee is read again. A callee not listed fails the census with its line: it is read
+ *  by hand and listed, never passed. The census cannot derive what a listed callee does; that is the hand read's claim. */
+const BODY_HANDED_TO: Array<{ callee: string; own?: true; why: string }> = [
+  { callee: "foldKeeper", own: true, why: "notes and restores the folds' open state" },
+  { callee: "armFigureLabels", own: true, why: "labels the gated figures inside the body" },
+  { callee: "openFoldOrdinals", own: true, why: "reads which folds are open" },
+  { callee: "textSize.bindWheel", own: true, why: "binds the wheel to the text size" },
+  { callee: "watchBodyWidth", own: true, why: "observes the body's width (ro.observe(body) is its own use, below)" },
+  { callee: "gateKeys", own: true, why: "the keyboard over a gated placeholder" },
+  { callee: "scrollToFragment", why: "file-view.ts: scrolls the body to a fragment's target; reads and scrolls" },
+  { callee: "sectionHidden", why: "file-view.ts: asks whether a fragment's section is hidden; reads" },
+  { callee: "ringOf", why: "file-view.ts: reads whether the focus ring shows" },
+  { callee: "keepPoint", why: "file-view.ts: keeps a selection point across a paint; reads" },
+  { callee: "pointBack", why: "file-view.ts: finds a kept point again; reads" },
+  { callee: "readPlace", why: "reader-place.ts: reads the reader's place" },
+  { callee: "seatPlaceOutcome", why: "reader-place.ts: scrolls to a kept place; reads and scrolls" },
+  { callee: "gateOf", why: "figure-gate.ts: finds the placeholder an event target is in; reads" },
+  { callee: "delegate", why: "actions.ts: installs one click listener" },
+  { callee: "ro.observe", why: "a ResizeObserver's observe" },
+  { callee: "main.appendChild", why: "seats the body in its parent, not a child in the body" },
+  { callee: "box.appendChild", why: "seats the body in its parent, not a child in the body" },
+  { callee: "installFilePrint", why: "file-print.ts: reads the body's children and pictures, observes it; seats nothing" },
+];
 /** The census over `src`: the roots seated, each with the lines that seat it, and every use the census refuses, each with its
- *  line and why. Every member access on `body` (the collect pattern: `body`, any whitespace, an optional non-null `!`, then
- *  `.`, `?.`, `[` or `?.[`, then the member name) is classed by what follows the member (the tail pattern: a call `(` or
- *  `?.(`, an assignment `=` or a compound one, a further access `.`, `?.` or `[`, or nothing, a bare read), and one the
- *  census cannot class is refused with its line. The `?.(` alternative stands before the general `\??\.` one, so an optional
- *  call is a call and not a further access; the call and assignment branches stand before the bare-read refusal, so a
- *  direct call still parses (the round-4 review's two ordering warnings). */
+ *  line and why. Every `body` token outside a literal (the token pattern: `body` with no identifier character or `.` before
+ *  it and none after) is read. One a member access follows (an optional non-null `!`, then `.`, `?.`, `[` or `?.[`, then
+ *  the member name) is classed by what follows the member (the tail pattern: a call `(` or `?.(`, an assignment `=` or a
+ *  compound one, a further access `.`, `?.` or `[`, or nothing, a bare read). The `?.(` alternative stands before the
+ *  general `\??\.` one, so an optional call is a call and not a further access; the call and assignment branches stand
+ *  before the bare-read refusal, so a direct call still parses (the round-4 review's two ordering warnings). A token no
+ *  member access follows is classed by its context (bareContext), and one the census cannot class is refused with its
+ *  line. */
 function census(src: string): { seated: Map<string, number[]>; refused: string[] } {
   const lineAt = (i: number): number => src.slice(0, i).split("\n").length;
   const seated = new Map<string, number[]>();
   const refused: string[] = [];
   const argLists: Array<[number, number]> = [];   // the argument list of every `body` call read so far, as [open, close]: a bare node read inside one is a call's argument
-  for (const m of src.matchAll(/(?<![\w$.])body\s*!?\s*(\?\.\s*\[|\[|\?\.|\.)\s*(\w+)?/g)) {
-    const sep = m[1], member = m[2], after = m.index! + m[0].length, line = lineAt(m.index!);
+  const { literals } = textRanges(src);
+  const inLiteral = (i: number): boolean => literals.some(([a, b]) => i >= a && i < b);
+  const tokens = [...src.matchAll(/(?<![\w$.])body(?![\w$])/g)].map((m) => m.index!).filter((i) => !inLiteral(i));
+  const { openerAt, parentOf } = bracketMap(src, literals, tokens);
+  for (const own of BODY_HANDED_TO) {
+    if (!own.own) continue;
+    const last = own.callee.split(".").pop()!;
+    if (!new RegExp("(?:function " + last + "\\(|const " + last + " = \\()body(?:: |\\))").test(src)) refused.push("BODY_HANDED_TO lists " + own.callee + " as reading the body under its own parameter named body, and the source declares no such parameter: read it by hand again");
+  }
+  for (const at of tokens) {
+    const line = lineAt(at);
+    const access = /^\s*!?\s*(\?\.\s*\[|\[|\?\.|\.)\s*(\w+)?/.exec(src.slice(at + 4));
+    if (!access) {
+      const why = bareContext(src, at, openerAt, parentOf);
+      if (why) refused.push("line " + line + ": " + why);
+      continue;
+    }
+    const sep = access[1], member = access[2], after = at + 4 + access[0].length;
     if (sep === "[" || sep.startsWith("?.") && sep.endsWith("[")) { refused.push("line " + line + ": body" + sep.replace(/\s+/g, "") + "...] reaches a member by a computed name the census cannot read"); continue; }
     if (!member) { refused.push("line " + line + ": body" + sep + " is followed by no member name the census can read"); continue; }
     const tail = /^\s*!?\s*(\?\.\(|\(|(?:[-+*/%&|^]|\*\*|<<|>>>?|\?\?|\|\||&&)?=(?!=)|\??\.|\[|)/.exec(src.slice(after))![1];   // what follows the member (a non-null `!` skipped): a call (`?.(` read before the general `?.`), an assignment (plain or compound, not a comparison), a further access, or nothing, a read
@@ -753,7 +838,7 @@ function census(src: string): { seated: Map<string, number[]>; refused: string[]
       const seats = SEATING[member];
       if (seats) {
         const args = inner.replace(/\s+/g, " ").trim();
-        for (const arg of seats(args ? splitTop(args, ",") : [])) for (const root of rootsOf(src, arg, m.index!)) seated.set(root, [...(seated.get(root) || []), line]);
+        for (const arg of seats(args ? splitTop(args, ",") : [])) for (const root of rootsOf(src, arg, at)) seated.set(root, [...(seated.get(root) || []), line]);
       } else if (!NON_SEATING_CALLS.includes(member)) refused.push("line " + line + ": " + use + "(...) is a call the census does not know");
     } else if (tail.endsWith("=")) {
       if (!NON_SEATING_ASSIGNS.includes(member)) refused.push("line " + line + ": " + use + " " + tail + " ... is an assignment the census does not know (innerHTML and its kin seat what no resolver reads)");
@@ -762,14 +847,69 @@ function census(src: string): { seated: Map<string, number[]>; refused: string[]
       else if (SEATING[member]) refused.push("line " + line + ": " + use + tail + "... reaches the seating method through a further access (call, bind, apply, a computed name), which seats where the census cannot read the arguments");
       else if (!FURTHER_MEMBERS.includes(member)) refused.push("line " + line + ": " + use + tail + "... is a further access on a member the census does not know");
     } else if (NODE_MEMBERS.includes(member)) {
-      if (!argLists.some(([open, close]) => m.index! > open && m.index! < close)) refused.push("line " + line + ": " + use + " is read bare outside a body call's arguments, and a node stored under another name could seat in the body where the census cannot follow");
+      if (!argLists.some(([open, close]) => at > open && at < close)) refused.push("line " + line + ": " + use + " is read bare outside a body call's arguments, and a node stored under another name could seat in the body where the census cannot follow");
     } else if (!READ_MEMBERS.includes(member)) refused.push("line " + line + ": " + use + " is read bare, and a member the census does not know as a scalar or a non-seating method, handed out, could seat where the census cannot follow");
   }
-  for (const m of src.matchAll(/\.(replaceWith|after|before|replaceChild|insertAdjacentElement|insertAdjacentHTML)\(/g)) refused.push("line " + lineAt(m.index!) + ": ." + m[1] + "(...) seats through a node the census cannot attribute to the body");
+  for (const m of src.matchAll(/\.(replaceWith|after|before|replaceChild|insertAdjacentElement|insertAdjacentHTML)\(/g)) if (!inLiteral(m.index!)) refused.push("line " + lineAt(m.index!) + ": ." + m[1] + "(...) seats through a node the census cannot attribute to the body");
   return { seated, refused };
 }
+/** For every `body` token of `tokens`, the index of the innermost bracket (`(`, `[`, `{`) open around it, or -1, and for
+ *  every bracket the index of the one open around it: one pass over `src` with the literal ranges skipped. */
+function bracketMap(src: string, literals: Array<[number, number]>, tokens: number[]): { openerAt: Map<number, number>; parentOf: Map<number, number> } {
+  const openerAt = new Map<number, number>(), parentOf = new Map<number, number>();
+  const stack: number[] = [];
+  let lit = 0, tok = 0;
+  for (let i = 0; i < src.length; i++) {
+    while (lit < literals.length && literals[lit][1] <= i) lit++;
+    if (lit < literals.length && i >= literals[lit][0]) { i = literals[lit][1] - 1; continue; }
+    while (tok < tokens.length && tokens[tok] < i) tok++;
+    if (tok < tokens.length && tokens[tok] === i) openerAt.set(i, stack.length ? stack[stack.length - 1] : -1);
+    const c = src[i];
+    if (c === "(" || c === "[" || c === "{") { parentOf.set(i, stack.length ? stack[stack.length - 1] : -1); stack.push(i); }
+    else if (c === ")" || c === "]" || c === "}") stack.pop();
+  }
+  return { openerAt, parentOf };
+}
+const HANDED_OUT = "body is written bare where the census cannot class it";
+/** Why the bare `body` token at `at` (one no member access follows) is refused, or null when its context passes: a
+ *  declaration, a parameter, a declared type or a property key; a comparison operand; the action-context accessor
+ *  `body: () => body`; an argument, or a property of an argument, to a callee BODY_HANDED_TO lists. Every other context is
+ *  refused with what it is: a callee not listed by its name, and the rest (an alias, a return, an arrow's value, an array
+ *  element, a ternary or logical operand, a parenthesised or cast receiver) as handed out. */
+function bareContext(src: string, at: number, openerAt: Map<number, number>, parentOf: Map<number, number>): string | null {
+  const before = src.slice(0, at), rest = src.slice(at + 4);
+  const pre = /(===|!==|==|!=|=>|\?\?|\|\||&&|\b(?:const|let|var|return|typeof|await|yield|throw|case|in|of|instanceof|new|void|delete)|[^\s])\s*$/.exec(before)?.[1] ?? "";
+  const post = /^\s*(?:!(?!=))?\s*(===|!==|==|!=|=>|\?\?|\|\||&&|\(\)\s*:|\bas\b|[^\s])/.exec(rest)?.[1] ?? "";
+  const lineStart = /(?:^|\n)[ \t]*$/.test(before);
+  const snippet = (): string => ": " + src.slice(before.lastIndexOf("\n") + 1, at + 4 + rest.indexOf("\n")).trim().slice(0, 100);
+  if (post === ":" && (lineStart || ["{", ",", ";", "(", "const", "let", "var"].includes(pre))) return null;   // a declaration's or a parameter's type, a property key
+  if (["const", "let", "var"].includes(pre)) return null;   // the declaration
+  if (/^\(\)\s*:$/.test(post)) return null;   // a method signature in a type
+  const compare = ["===", "!==", "==", "!="];
+  if (compare.includes(pre) || compare.includes(post)) return null;   // an identity comparison hands nothing out
+  if (pre === "=>") return /body\s*:\s*\(\)\s*=>\s*$/.test(before) ? null : HANDED_OUT + " (an arrow's value)" + snippet();   // the action-context accessor alone
+  if (post === "as") return HANDED_OUT + " (a cast receiver)" + snippet();
+  const open = openerAt.get(at) ?? -1;
+  if (open >= 0 && src[open] === "(") {
+    const close = open + balancedAt(src, open).length + 1;
+    if (/^\s*(?::[^=;]*?)?=>/.test(src.slice(close + 1)) || /\bfunction\b(?:\s+[\w$]+)?\s*$/.test(src.slice(0, open))) return null;   // a parameter
+    const callee = /([\w$]+(?:\s*(?:\?\.|!\.|\.)\s*[\w$]+)*)\s*!?\s*$/.exec(src.slice(0, open))?.[1]?.replace(/\s+|!/g, "");
+    if (!callee || /^(?:if|for|while|switch|return|typeof|await|void|delete|new|else|do|case|throw|yield|catch|with|in|of)$/.test(callee)) return HANDED_OUT + " (a parenthesised receiver or operand)" + snippet();
+    return BODY_HANDED_TO.some((h) => h.callee === callee) ? null : "body is handed to " + callee + "(...), a callee the census does not list: read it by hand for a seat in the body and list it in BODY_HANDED_TO, or seat the body here by its name" + snippet();
+  }
+  if (open >= 0 && src[open] === "{" && ["{", ","].includes(pre) && [",", "}"].includes(post)) {   // a shorthand property of an object literal
+    const outer = parentOf.get(open) ?? -1;
+    if (outer >= 0 && src[outer] === "(") {
+      const callee = /([\w$]+(?:\s*(?:\?\.|!\.|\.)\s*[\w$]+)*)\s*!?\s*$/.exec(src.slice(0, outer))?.[1]?.replace(/\s+|!/g, "");
+      if (callee && BODY_HANDED_TO.some((h) => h.callee === callee)) return null;
+      return "body is handed to " + (callee || "a parenthesised expression") + "(...) as a property of its argument, a callee the census does not list: read it by hand for a seat in the body and list it in BODY_HANDED_TO" + snippet();
+    }
+    return HANDED_OUT + " (a property of an object literal handed nowhere the census can name)" + snippet();
+  }
+  return HANDED_OUT + " (" + (open >= 0 && src[open] === "[" ? "an array element" : pre === "=" ? "an alias" : pre === "return" ? "a return" : pre === "?" || pre === ":" ? "a ternary operand" : ["??", "||", "&&"].includes(pre) || ["??", "||", "&&"].includes(post) ? "a logical operand" : "after `" + pre + "`") + ")" + snippet();
+}
 
-test("the census of the body's roots: every member access on `body` in file-view.ts (`body.`, `body?.`, `body[`, across whitespace) is one the census classes (a seating call, resolved; a call, an assignment, a further access or a bare read the census knows seats nothing) and the file seats through no child, else the census FAILS with the line; every element the viewer seats resolves to a root the flow lists (READY_ROOTS, NOT_READY_ROOTS or LINE_ROOTS), every listed root is seated, no root is in two lists, bodyReady answers over each root as its list says, an unlisted child is NOT in (the safe side, so a root the viewer gains fails here until it is listed), and under the PDF kind the loader alone of the wait roots reads as content", (t) => {
+test("the census of the body's roots: every `body` token in file-view.ts outside a literal is one the census classes (a member access by what follows the member: a seating call, resolved; a call, an assignment, a further access or a bare read the census knows seats nothing; a bare token by its context: a declaration, a parameter, a property key, a comparison, the action-context accessor, an argument to a callee read by hand and listed) and the file seats through no child, else the census FAILS with the line; every element the viewer seats resolves to a root the flow lists (READY_ROOTS, NOT_READY_ROOTS or LINE_ROOTS), every listed root is seated, no root is in two lists, bodyReady answers over each root as its list says, an unlisted child is NOT in (the safe side, so a root the viewer gains fails here until it is listed), and under the PDF kind the loader alone of the wait roots reads as content", (t) => {
   const { seated, refused } = census(VIEWER_SRC);
   assert.deepEqual(refused, [], "every use of the body is one the census knows how to read: a use it does not is read by hand and the census taught it, never skipped");
   const roots = [...seated.keys()].sort();
@@ -794,7 +934,7 @@ test("the census of the body's roots: every member access on `body` in file-view
   for (const r of LINE_ROOTS) assert.equal(bodyReady(bodyOf(r), "pdf"), false, r + " alone under the PDF kind: not in");
 });
 
-test("the census refuses its unknown and derives its population, executed over mutants of file-view.ts's source: a root seated by body.append or body.insertBefore is resolved and fails the lists (FAILS BEFORE: the three-name list never saw either, so the census passed over both), a seat through an innerHTML assignment, a call the census does not know, a further access on a child node and a child-level replaceWith each fail with their line, and a read or a scroll assignment passes; the round-4 review's forms each red with the planted line (FAILS BEFORE: body?.append(x) and body[\"append\"](x) were outside the collect pattern, body.append?.(x) was a further access refused for node members alone, body.append.call(body, x), .bind and .apply and a bare body.append passed), a seat written across a newline is read, a doc-comment's prose is not, and body.classList.add(...) still passes", () => {
+test("the census refuses its unknown and derives its population, executed over mutants of file-view.ts's source: a root seated by body.append or body.insertBefore is resolved and fails the lists (FAILS BEFORE: the three-name list never saw either, so the census passed over both), a seat through an innerHTML assignment, a call the census does not know, a further access on a child node and a child-level replaceWith each fail with their line, and a read or a scroll assignment passes; the round-4 review's forms each red with the planted line (FAILS BEFORE: body?.append(x) and body[\"append\"](x) were outside the collect pattern, body.append?.(x) was a further access refused for node members alone, body.append.call(body, x), .bind and .apply and a bare body.append passed); the round-5 fix's forms each red with the planted line (FAILS BEFORE: (body).append(x), (body as HTMLElement).append(x), an alias const b = body, [body].forEach(...), Element.prototype.append.call(body, x) and a helper handed the body passed with no refusal and no root; a seat quoted in a column-0 // comment or after ;// counted as a seat, and a listed root's seat moved into one kept the census green); a seat written across a newline is read, a comment's prose is not, a declaration, a comparison and a listed callee's argument pass, and body.classList.add(...) still passes", () => {
   const at = (src: string, needle: string): number => { const i = src.indexOf(needle); assert.ok(i >= 0, needle + " is in the source"); return i; };
   const seat = (call: string): string => { const i = at(VIEWER_SRC, "\n  body.appendChild(load);\n"); return VIEWER_SRC.slice(0, i) + "\n  " + call + VIEWER_SRC.slice(i); };   // a line inside the local viewer's open, before its loader is seated
   const plantedLine = VIEWER_SRC.slice(0, at(VIEWER_SRC, "\n  body.appendChild(load);\n")).split("\n").length + 1;   // the line the planted call lands on
@@ -829,34 +969,66 @@ test("the census refuses its unknown and derives its population, executed over m
   seatsMutant(seat('body?.append(el("div", "fileview-mutant"));'), "body?.append(x)");
   seatsMutant(seat('body.append?.(el("div", "fileview-mutant"));'), "body.append?.(x)");
   seatsMutant(seat('body\n    .append(el("div", "fileview-mutant"));'), "a seat written across a newline");
-  const refusedMutant = (src: string, form: string, want: RegExp): void => {
+  const refusedMutant = (src: string, form: string, want: RegExp, count = 1): void => {   // count: a form that hands the body to its own seating method (`body.append.call(body, x)`) is refused twice, once per token, each with the line
     const r = census(src);
-    assert.equal(r.refused.length, 1, form + ": one refusal: " + JSON.stringify(r.refused));
-    assert.ok(r.refused[0].startsWith("line " + plantedLine + ": "), form + ": with the planted line: " + r.refused[0]);
+    assert.equal(r.refused.length, count, form + ": " + count + " refusal(s): " + JSON.stringify(r.refused));
+    for (const one of r.refused) assert.ok(one.startsWith("line " + plantedLine + ": "), form + ": with the planted line: " + one);
     assert.match(r.refused[0], want, form);
     assert.deepEqual([...r.seated.keys()].sort(), [...before.seated.keys()].sort(), form + ": and no root seated");
   };
   refusedMutant(seat('body["append"](el("div", "fileview-mutant"));'), 'body["append"](x)', /body\[\.\.\.\] reaches a member by a computed name/);
   refusedMutant(seat('body?.["append"](el("div", "fileview-mutant"));'), 'body?.["append"](x)', /body\?\.\[\.\.\.\] reaches a member by a computed name/);
-  refusedMutant(seat('body.append.call(body, el("div", "fileview-mutant"));'), "body.append.call(body, x)", /body\.append\.\.\.\. reaches the seating method through a further access/);
-  refusedMutant(seat('body.append.bind(body)(el("div", "fileview-mutant"));'), "body.append.bind(body)(x)", /body\.append\.\.\.\. reaches the seating method through a further access/);
-  refusedMutant(seat('body.append.apply(body, [el("div", "fileview-mutant")]);'), "body.append.apply(body, [x])", /body\.append\.\.\.\. reaches the seating method through a further access/);
-  refusedMutant(seat('body.append["call"](body, el("div", "fileview-mutant"));'), 'body.append["call"](body, x)', /body\.append\[\.\.\. reaches the seating method through a further access/);
+  refusedMutant(seat('body.append.call(body, el("div", "fileview-mutant"));'), "body.append.call(body, x)", /body\.append\.\.\.\. reaches the seating method through a further access/, 2);
+  refusedMutant(seat('body.append.bind(body)(el("div", "fileview-mutant"));'), "body.append.bind(body)(x)", /body\.append\.\.\.\. reaches the seating method through a further access/, 2);
+  refusedMutant(seat('body.append.apply(body, [el("div", "fileview-mutant")]);'), "body.append.apply(body, [x])", /body\.append\.\.\.\. reaches the seating method through a further access/, 2);
+  refusedMutant(seat('body.append["call"](body, el("div", "fileview-mutant"));'), 'body.append["call"](body, x)', /body\.append\[\.\.\. reaches the seating method through a further access/, 2);
   refusedMutant(seat('const seatLater = body.append;'), "a bare read of body.append", /body\.append is read bare/);
   refusedMutant(seat('const seatLater = body.insertAdjacentHTML;'), "a bare read of body.insertAdjacentHTML", /body\.insertAdjacentHTML is read bare/);
   refusedMutant(seat('const first = body.firstChild;'), "a bare read of body.firstChild stored under another name", /body\.firstChild is read bare outside a body call's arguments/);
   refusedMutant(seat('body.innerHTML += "<div class=\\"fileview-mutant\\"></div>";'), "a compound assignment to innerHTML", /body\.innerHTML \+= \.\.\. is an assignment the census does not know/);
   refusedMutant(seat('body.shadowRoot!.append(el("div", "fileview-mutant"));'), "a further access on a member the census does not know", /body\.shadowRoot\.\.\.\. is a further access on a member the census does not know/);
-  // what still passes: a plain `.` tail on classList, style and dataset, a scalar's own method, a non-seating method read as a value
+  // the round-5 fix's forms (the round-4 review's verifiers: a parenthesised or cast receiver passed the census green with no
+  // root; the body under another name was a disclosed blind spot), each refused with the planted line and no root seated
+  refusedMutant(seat('(body).append(el("div", "fileview-mutant"));'), "(body).append(x)", /body is written bare where the census cannot class it \(a parenthesised receiver or operand\)/);
+  refusedMutant(seat('(body as HTMLElement).append(el("div", "fileview-mutant"));'), "(body as HTMLElement).append(x)", /body is written bare where the census cannot class it \(a cast receiver\)/);
+  refusedMutant(seat('const seatLater = body;'), "an alias, const b = body", /body is written bare where the census cannot class it \(an alias\)/);
+  refusedMutant(seat('[body].forEach((b) => b.prepend(el("div", "fileview-mutant")));'), "[body].forEach(b => b.prepend(x))", /body is written bare where the census cannot class it \(an array element\)/);
+  refusedMutant(seat('Element.prototype.append.call(body, el("div", "fileview-mutant"));'), "Element.prototype.append.call(body, x)", /body is handed to Element\.prototype\.append\.call\(\.\.\.\), a callee the census does not list/);
+  refusedMutant(seat('seatInto(body, el("div", "fileview-mutant"));'), "a helper handed the body", /body is handed to seatInto\(\.\.\.\), a callee the census does not list/);
+  refusedMutant(seat('seatInto({ body, root: el("div", "fileview-mutant") });'), "a helper handed the body as a property", /body is handed to seatInto\(\.\.\.\) as a property of its argument, a callee the census does not list/);
+  refusedMutant(seat('const target = wrap ? body : main;'), "a ternary operand", /body is written bare where the census cannot class it \(a ternary operand\)/);
+  refusedMutant(seat('const target = held ?? body;'), "a logical operand", /body is written bare where the census cannot class it \(a logical operand\)/);
+  refusedMutant(seat('const target = () => body;'), "an arrow's value outside the accessor", /body is written bare where the census cannot class it \(an arrow's value\)/);
+  // a listed callee whose parameter the census reads under the body's name: renamed, the census fails until it is read again
+  const renamed = census(VIEWER_SRC.replace("\nfunction foldKeeper(body: HTMLElement)", "\nfunction foldKeeper(root: HTMLElement)"));
+  assert.deepEqual(renamed.refused.filter((r) => r.startsWith("BODY_HANDED_TO lists foldKeeper")), ["BODY_HANDED_TO lists foldKeeper as reading the body under its own parameter named body, and the source declares no such parameter: read it by hand again"], "the own-parameter claim is held to the source");
+  // what still passes: a plain `.` tail on classList, style and dataset, a scalar's own method, a non-seating method read as a value; a bare
+  // token as a declaration, a parameter, a property key, a comparison, an argument to a listed callee and as a property of one
   const passes = census(seat('body.classList.add("fileview-mutant"); body.style.height = "0"; body.dataset.probe = "1"; body.scrollTop.toFixed(0); if (typeof body.getClientRects === "function") body.scrollTop += 0;'));
   assert.deepEqual(passes.refused, [], "body.classList.add(...), body.style, body.dataset, a scalar's method, a typeof read of a non-seating method and a compound scroll assignment pass");
   assert.deepEqual([...passes.seated.keys()].sort(), [...before.seated.keys()].sort(), "...and seat no root");
-  // a doc-comment's prose is blanked before the read, so "the body. The next…" is no member access
+  const bare = census(seat('if (document.activeElement === body || body !== null) foldKeeper(body); const keep = (body: HTMLElement): void => { readPlace(body, ""); }; installFilePrint({ card: box, bar, body, typing: typingHere, onClose: (cb) => { closeHooks.push(cb); } }); const fold = { key: "k", body: "text", open: true };'));
+  assert.deepEqual(bare.refused, [], "a comparison, a listed callee's argument, a parameter, a property key and a listed callee's shorthand property pass");
+  assert.deepEqual([...bare.seated.keys()].sort(), [...before.seated.keys()].sort(), "...and seat no root");
+  // a comment's prose is blanked before the read, wherever the comment stands, so "the body. The next…" is no member access and a seat quoted in a comment is no seat
   const prose = census(stripComments(seat('/** the body. The next paint seats it. */')));
   assert.deepEqual(prose.refused, [], "a block comment's prose is not read (the collect pattern reads across whitespace, so unblanked it would read `body. The` as a member)");
   assert.equal(census(seat('/** the body. The next paint seats it. */')).refused.length, 1, "...where the raw source would have been refused for it: the blanking is load-bearing");
+  const seatCol0 = (text: string): string => { const i = at(VIEWER_SRC, "\n  body.appendChild(load);\n"); return VIEWER_SRC.slice(0, i) + "\n" + text + VIEWER_SRC.slice(i); };   // the same line, written from column 0 (seat indents by two spaces, and a space before `//` is what the old strip keyed on)
+  for (const [form, planted] of [["a column-0 // comment", seatCol0('//body.append(el("div", "fileview-mutant"));')], ["a // comment after a ;", seat('load.tabIndex = 0;// body.append(el("div", "fileview-mutant"));')], ["an indented // comment", seat('// body.append(el("div", "fileview-mutant"));')], ["a block comment", seat('/* body.append(el("div", "fileview-mutant")); */')]]) {
+    const quoted = census(stripComments(planted));
+    assert.deepEqual(quoted.refused, [], form + ": no refusal");
+    assert.deepEqual([...quoted.seated.keys()].sort(), [...before.seated.keys()].sort(), "FAILS BEFORE for the first two: a seat quoted in " + form + " is not a seat");
+  }
+  assert.deepEqual([...census(seatCol0('//body.append(el("div", "fileview-mutant"));')).seated.keys()].filter((k) => !before.seated.has(k)), ["div.fileview-mutant"], "...where the unblanked source counts the quoted seat: the compiler's strip is load-bearing");
+  const cmLine = "\n      body.replaceChildren(host);";
+  assert.equal(VIEWER_RAW.split(cmLine).length, 2, "the CodeMirror host's seat is written once in file-view.ts, on a line of its own");
+  const phantom = census(stripComments(VIEWER_RAW.replace(cmLine, "\n//body.replaceChildren(host);")));
+  assert.equal(phantom.seated.has("div.fileview-cm"), false, "FAILS BEFORE: a listed root's seat moved into a column-0 comment is gone from the derived set, so the lists comparison reds (before this the comment was read as code and the census stayed green over a seat that no longer ran)");
+  assert.equal(before.seated.has("div.fileview-cm"), true, "...and the real seat is derived");
   assert.deepEqual(census(stripComments(seat('const kind = "image/*"; body.scrollTop = 0;   // image/* files\n  const mark = "/* not a comment */";'))).refused, [], "a comment opener inside a string or inside a line comment opens no block: the code after it is still read");
   assert.deepEqual([...census(stripComments(seat('const kind = "image/*";   // image/* files\n  body.append(el("div", "fileview-mutant"));'))).seated.keys()].filter((k) => !before.seated.has(k)), ["div.fileview-mutant"], "...and a seat after such a line is still found (before the fix the blanking ran to the next star-slash and dropped three spans of the viewer)");
+  assert.deepEqual(census(seat('const label = "the body. The next paint seats it: body.append(x)"; const re = /body\\.append\\(/;')).refused, [], "a body token inside a string or a regular-expression literal is text, not code");
 });
 
 test("disabled until the body is in: the driver's start, where a press (the button's or the chord's), an Escape, a choice, a prepare, a ready and a printed change nothing; the body arriving rests; the body going out from rest, armed, the wait or the print disarms and disables; the body's arrival elsewhere changes nothing", () => {

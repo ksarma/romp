@@ -8241,10 +8241,12 @@ pages flow over a kept frame, over page 1 and through a reload with the pages up
 with the kind a PDF, a press and the chord each opening the tab). The lists are guarded by a census, so a root the
 viewer gains is classed on purpose or not at all (the shared-host
 probe, 2026-09-19; the round-2 review turned the unknown side to not in; the round-3 review, 2026-09-20, made the census
-derive its population and refuse its unknown): file-print.test.ts's census reads file-view.ts with its comments blanked (block and trailing `//` alike, in one
-left-to-right pass that keeps string literals) and collects every member access on `body` (`body.<member>`,
-`body?.<member>`, `body[...]` and `body?.[...]`, across any whitespace and a non-null `!`, with `document.body` and any
-other receiver's `.body` set aside), then classes each use by what follows the member: a call of a seating method (`(`
+derive its population and refuse its unknown): file-print.test.ts's census reads file-view.ts with its comments blanked by the TypeScript compiler's own read of
+them (every comment range the parser reports, a `//` at the start of a line or after a `;` among them; string, template
+and regular-expression literals kept, and a `body` inside one skipped as text) and classes every `body` token in it. A
+token a member access follows (`body.<member>`, `body?.<member>`, `body[...]` and `body?.[...]`, across any whitespace
+and a non-null `!`, with `document.body` and any other receiver's `.body` set aside) is classed by what follows the
+member: a call of a seating method (`(`
 or `?.(`) has its seated arguments resolved down to the `el("<tag>", "<class>")` that builds them (`replaceChildren`,
 `prepend` and `append` seat every argument; `appendChild` and `insertBefore` their first; `insertAdjacentElement` its
 second), a call of a method that seats nothing passes (`addEventListener`, `querySelector`, `focus`, `contains`, the
@@ -8254,12 +8256,19 @@ of a non-seating method as a value passes, and EVERY OTHER MEMBER ACCESS ON `bod
 computed name (`body["append"]`), a call it does not know, an assignment it does not know (`innerHTML` and its kin seat
 what no resolver reads), a further access on a member that hands out a child node, on a seating method (`.call`,
 `.bind`, `.apply`) or on a member it does not list, and a bare read of a member it does not list (a seating method
-handed out); the file is read once more for a
-child-level seat anywhere (`replaceWith`, `after`, `before`, `replaceChild`, `insertAdjacentElement`,
+handed out). A token no member access follows is classed by its context: a declaration, a parameter, a declared type
+or a property key, a comparison operand and the viewer's action-context accessor (`body: () => body`, the one hand-out
+to the Comments panel, read by hand) pass; an argument, or a property of an argument, passes when its callee is one the
+census lists as read by hand (`BODY_HANDED_TO`: `foldKeeper`, `readPlace`, `installFilePrint` and the rest of the
+viewer's helpers that take the body; one whose own parameter is named `body` has its member accesses read like the
+viewer's own, and the census holds its declaration to that name); and EVERY OTHER `body` TOKEN FAILS the census with its
+line: an alias (`const b = body`), a return, an arrow's value, an array element, a ternary or logical operand, a
+parenthesised or cast receiver (`(body).append(x)`), an argument to a callee it does not list. The file is read once
+more for a child-level seat anywhere (`replaceWith`, `after`, `before`, `replaceChild`, `insertAdjacentElement`,
 `insertAdjacentHTML`), refused on sight, and file-view.ts has none. The derived set is printed with its lines as a
 diagnostic, held equal to the three lists, and `bodyReady` is executed over each root as its list says, over an unlisted
 child alone and beside every content root (not in), and under the PDF kind over each wait and line root (the loader
-alone in, the rest not). A root the viewer gains fails the census until it is listed, a use of the body the census
+alone in, the rest not). A root the viewer gains fails the census until it is listed, a `body` token the census
 cannot class fails it with the line, and file-view.ts's own comment at the install says so. Before the round-3 review
 the sites were found by a closed list of three method names, `replaceChildren`, `prepend` and `appendChild`, and the
 census's unknown passed, so a root seated by `body.append` or `body.insertBefore` was invisible to it and that guarantee
@@ -8270,10 +8279,17 @@ recorded in its title). Before the round-4 review (2026-09-20) the collect patte
 out a node, and `body.append.call(body, x)`, `.bind`, `.apply` and a bare `body.append` passed, while this record, the
 census's own header, the READY_ROOTS comment in file-print.ts, file-view.ts's install comment and the record pin all
 said every other use failed: the census and those sentences were corrected together, and the mutant case plants every
-one of those forms and reads the census red with the planted line (FAILS BEFORE in its title). What the census cannot
-see is a seat through another name for the body (a helper handed the body under its own parameter name, a destructuring,
-the body as an argument: a bare `body` token that no member access follows); file-view.ts seats the body by the one
-name. Today the census derives nine roots:
+one of those forms and reads the census red with the planted line (FAILS BEFORE in its title). Before the round-5 fix
+(2026-09-20) the census read member accesses on the `body` token alone and disclosed the body under another name as what
+it could not see, and its comment strip blanked a `//` only after a space or a tab: a parenthesised or cast receiver
+(`(body).append(x)`) and an alias (`const b = body; b.append(x)`) seated with no refusal and no root, a seat quoted in a
+`//` comment at the start of a line counted as a seat (415 such comment lines in file-view.ts at the round-5 verifiers'
+read, one of them matched by the collect pattern) and a listed root's seat moved into one kept the census green, while
+this record, the census's header, the READY_ROOTS comment, the install comment and the record pin said every other
+member access failed; the census now classes every token and blanks every comment, the mutant case plants each of those
+forms and the phantom, and the sentences were corrected with it. What the census cannot see is what a listed callee does
+with the body it is handed: that is read by hand when the callee is listed, never derived, and a callee not listed fails
+the census until it is. Today the census derives nine roots:
 `div.fileview-md`, `div.fileview-code`,
 `div.fileview-imgbox`, `div.fileview-pdffall`, `div.fileview-pdfhost`, `div.fileview-cm`, `div.fileview-load`,
 `textarea.fileview-editor` and `div.fileview-err`.

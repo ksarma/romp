@@ -701,15 +701,18 @@ function elementChildren(body: BodyLike): BodyChild[] {
  *  body is in with one standing and no wait root beside it), a wait (NOT_READY_ROOTS: not in while one stands, whatever
  *  else does, the PDF kind's loader aside) or a line (LINE_ROOTS: alone not in, over content a notice above it). The lists
  *  are CLOSED: a child matching none is unknown, and the body is not in over it (rootKind, bodyReady). The sites are every
- *  member access on the viewer's `body` that file-print.test.ts's census can read (the rule, not a roster of method names):
- *  a call of a seating method has each seated argument read down to the `el("<tag>", "<class>")` that builds it, a call, an
- *  assignment, a further access or a bare read the census knows seats nothing passes, and every other member access on
- *  `body` fails the census with its line (a computed name, a seating method handed out or reached through call, bind or
- *  apply, a member it has not seen). The census derives the seated set from file-view.ts, holds it equal to these three
+ *  `body` token in the viewer's source that file-print.test.ts's census can class (the rule, not a roster of method names):
+ *  a call of a seating method has each seated argument read down to the `el("<tag>", "<class>")` that builds it; a call, an
+ *  assignment, a further access or a bare read the census knows seats nothing passes; a bare `body` passes as a
+ *  declaration, a parameter, a property key, a comparison operand or an argument to a callee the census lists as read by
+ *  hand; and every other `body` token fails the census with its line (a computed name, a seating method handed out or
+ *  reached through call, bind or apply, a member it has not seen, an alias, a parenthesised or cast receiver, a callee it
+ *  does not list). The census derives the seated set from file-view.ts, holds it equal to these three
  *  lists, and executes bodyReady over each root as its list says, so a root the viewer gains fails that test until it is
  *  listed here, rather than being answered by a guess (the round-2 review, 2026-09-19: the first derivation answered content
  *  for every child it had not seen, the permissive side for a print button; the round-4 review, 2026-09-20: this comment
- *  named three method names as the sites, a roster the census itself had outgrown). */
+ *  named three method names as the sites, a roster the census itself had outgrown; the round-5 fix: the census read member
+ *  accesses on the token alone, so a parenthesised receiver or an alias seated unseen). */
 export const READY_ROOTS: readonly string[] = ["div.fileview-md", "div.fileview-code", "div.fileview-imgbox", "div.fileview-pdffall", "div.fileview-pdfhost", "div.fileview-cm"];
 export const NOT_READY_ROOTS: readonly string[] = ["div.fileview-load", "textarea.fileview-editor"];
 export const LINE_ROOTS: readonly string[] = ["div.fileview-err"];
