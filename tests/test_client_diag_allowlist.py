@@ -911,17 +911,24 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         """Round 3 (2026-09-20), the fifth word. The feedDelta-stale row carries host, buildId and why and nothing else, so
         its word is the whole signal a reader of the file has. Every word of STALE_WHY_WORDS is driven through the real
         dispatch, the road the fixture test posts through, and stored whole: the admit filters a row's top-level KEYS against
-        the surface's table and reads no value, so a new WORD under the admitted `why` key needs no table change where a new
-        KEY does (PR 861: a pane-side marker under a key the table did not name was dropped). Green at the head before the
-        word existed in federation.ts, by that mechanism; the failing-before is the control: the same row carrying `rev` and
-        `through`, keys the minter does not send and the table does not admit, is stored without them and each is said once,
-        so a minter that grew a field to explain its word would lose the field here, and a kernel that stopped dropping
-        would fail this test."""
+        the surface's table and tests no value for admission (an admitted key's value is stored through _client_diag_scrub,
+        a string cut at CLIENT_DIAG_STR_MAX, 64 characters, which no word approaches: the 65-character word below is stored
+        cut to 64 with nothing said, so the value is read and never gated), so a new WORD under the admitted `why` key needs
+        no table change where a new KEY does (PR 861: a pane-side marker under a key the table did not name was dropped).
+        Green at the head before the word existed in federation.ts, by that mechanism; the failing-before is the control: the
+        same row carrying `rev` and `through`, keys the minter does not send and the table does not admit, is stored without
+        them and each is said once, so a minter that grew a field to explain its word would lose the field here, and a kernel
+        that stopped dropping would fail this test."""
         for i, word in enumerate(STALE_WHY_WORDS):
             row = {"host": "TESTHOST", "buildId": "b%d" % i, "why": word}
             self.assertEqual(self.post("federation", "feedDelta-stale", row), "", "%s: admitted with no stderr line" % word)
             self.assertEqual(self.rows()[-1]["data"], row, "%s: the row is stored whole, the word whole among it" % word)
         self.assertEqual(len(self.rows()), len(STALE_WHY_WORDS))
+        long_word = "d" * (km.CLIENT_DIAG_STR_MAX + 1)
+        self.assertEqual(self.post("federation", "feedDelta-stale", {"host": "TESTHOST", "buildId": "b8", "why": long_word}), "",
+                         "an over-long word under the admitted key: nothing said, the admit gates on no value")
+        self.assertEqual(self.rows()[-1]["data"], {"host": "TESTHOST", "buildId": "b8", "why": long_word[:km.CLIENT_DIAG_STR_MAX]},
+                         "and stored cut at CLIENT_DIAG_STR_MAX: the value is read, so the five words are whole because they are short")
         err = self.post("federation", "feedDelta-stale", {"host": "TESTHOST", "buildId": "b9", "why": "disagree", "rev": 2, "through": 7})
         self.assertEqual(self.rows()[-1]["data"], {"host": "TESTHOST", "buildId": "b9", "why": "disagree"},
                          "the control: the two foreign keys dropped, the word kept; the file never learns which two revs disagreed")

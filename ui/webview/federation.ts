@@ -1539,9 +1539,11 @@ export class FederationManager {
         // relation, so a frame below the held rev reads "through" whatever its rev, "rev" is read only once gen, base and
         // through have each passed, and "disagree" only once every field has. Five words, the stale row's whole
         // vocabulary: four field words, each covering every failure of its field, and one relation word. The kernel's
-        // admit road (kernel.py _client_diag_admit) filters the row's KEYS against CLIENT_DIAG_KEYS and reads no value, so
-        // a new word needs no allowlist change where a new key does; tests/test_client_diag_allowlist.py drives each word
-        // through it and holds the list to this ladder.
+        // admit road (kernel.py _client_diag_admit) filters the row's top-level KEYS against CLIENT_DIAG_KEYS and tests no
+        // value for admission (an admitted key's value is stored as posted, a string cut at CLIENT_DIAG_STR_MAX, 64
+        // characters, which no word here approaches), so a new word needs no allowlist change where a new key does;
+        // tests/test_client_diag_allowlist.py drives each word through it, and a 65-character word through the cut, and
+        // holds the list to this ladder.
         const why = !held || gen !== held.gen ? "gen" : !Number.isSafeInteger(d.base) || d.base > held.rev ? "base"
                     : !Number.isSafeInteger(d.through) || d.through < held.rev ? "through" : !Number.isSafeInteger(d.rev) ? "rev" : "disagree";
         this.diag("feedDelta-stale", { host, buildId: d.buildId, why });
