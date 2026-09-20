@@ -19,6 +19,13 @@ client reads as none would otherwise skip for good). The leg lives in PR C in sk
 kernel that stamps its frames (the design's sequencing item (iii), as the design's author edits it); the client half's own
 pins are the federation tests under ui/webview.
 
+CI's served step names this module by file (its name is plain on purpose, so tests/conftest.py's ROMP_SERVED_TESTS_REQUIRE
+rule, which reads served file names, leaves the gen-key skip a skip). The module therefore holds its own preconditions
+under that switch: with ROMP_SERVED_TESTS_REQUIRE=1 a skip raised by lab_dist.copy_dist (no built dist: node_modules
+incomplete, esbuild failing) or by the hermetic kernel boot (never served /healthz) is a FAILURE carrying the skip's reason,
+so the executed part cannot go unrun with the job green (review round 1, 2026-09-20); the gen-key skip is the one skip
+that stays a skip there. PreconditionSkipsUnderRequire below drives that.
+
 Loads no romp code in-process (the kernel is a subprocess), so this module carries no state-isolation preamble and is not
 scanned by tests/test_state_isolation_order.py. Synthetic only: placeholder uuids, hostname TESTHOST, the notes-api demo's
 session name.
@@ -136,6 +143,15 @@ class RelayDialDeclaresHeldPair(unittest.TestCase):
             cls.port, cls.token = _dial._free_port(), "testtok-remote-rd"
             proc, cls.log = _dial._kernel(cls.lab, "testhost", cls.port, cls.token, [(SID, "api", 1)])
             cls.procs.append(proc)
+        except unittest.SkipTest as e:
+            cls.tearDownClass()
+            if os.environ.get("ROMP_SERVED_TESTS_REQUIRE") == "1":
+                # the conftest's REQUIRE rule reads served file names and this module's is plain (the module docstring), so the
+                # precondition skips are made failures here: the served job has the deps and a kernel that boots, and a skip
+                # there would leave the executed part unrun with the job green (review round 1, 2026-09-20)
+                raise AssertionError("ROMP_SERVED_TESTS_REQUIRE=1: a precondition of this module skipped where it must hold "
+                                     "(the module holds its own preconditions under the switch; only the gen-key skip stays a skip): %s" % e) from e
+            raise
         except BaseException:
             cls.tearDownClass()
             raise
@@ -228,6 +244,57 @@ class RelayDialDeclaresHeldPair(unittest.TestCase):
             rows = self._wsopen_rows(wid)
             self.assertEqual([(r.get("kind"), r.get("reconnect")) for r in rows], [("relay", bool(extra))],
                              "the declaring dial is classed a relay (the relay class this leg closes) and its reconnect term is read (%r): %r" % (extra, rows))
+
+
+class PreconditionSkipsUnderRequire(unittest.TestCase):
+    """RelayDialDeclaresHeldPair.setUpClass under the served step's switch: a precondition skip (lab_dist.copy_dist raising
+    SkipTest, stubbed here; the kernel boot's skip takes the same road) is a failure carrying the skip's reason with
+    ROMP_SERVED_TESTS_REQUIRE=1, and stays a skip without it (the Python matrix runners' road). No dist, no kernel: the stub
+    raises before either. The class's tearDownClass runs on both roads, so the lab directory it minted is removed."""
+
+    def _stub(self, require):
+        saved = os.environ.get("ROMP_SERVED_TESTS_REQUIRE")
+        def restore():
+            if saved is None:
+                os.environ.pop("ROMP_SERVED_TESTS_REQUIRE", None)
+            else:
+                os.environ["ROMP_SERVED_TESTS_REQUIRE"] = saved
+        self.addCleanup(restore)
+        if require is None:
+            os.environ.pop("ROMP_SERVED_TESTS_REQUIRE", None)
+        else:
+            os.environ["ROMP_SERVED_TESTS_REQUIRE"] = require
+        real = lab_dist.copy_dist
+        def skipping(dest):
+            raise unittest.SkipTest("esbuild failed here: the stub's reason")
+        lab_dist.copy_dist = skipping
+        self.addCleanup(setattr, lab_dist, "copy_dist", real)
+
+    @staticmethod
+    def _setup_outcome():
+        # the outcome as a word, so a skip cannot end THIS test as a skip (a pin that skips reports green)
+        try:
+            RelayDialDeclaresHeldPair.setUpClass()
+        except unittest.SkipTest as e:
+            return "skip", str(e)
+        except AssertionError as e:
+            return "fail", str(e)
+        return "ran", ""
+
+    def test_a_precondition_skip_is_a_failure_carrying_its_reason_under_the_switch(self):
+        self._stub("1")
+        outcome, text = self._setup_outcome()
+        self.assertEqual(outcome, "fail", "under ROMP_SERVED_TESTS_REQUIRE=1 the precondition skip must be a failure: %s %r" % (outcome, text))
+        self.assertIn("the stub's reason", text, "the failure carries the skip's own reason")
+        self.assertIn("ROMP_SERVED_TESTS_REQUIRE=1", text)
+        self.assertFalse(os.path.exists(RelayDialDeclaresHeldPair.lab), "the minted lab directory is removed on the failure road")
+
+    def test_a_precondition_skip_stays_a_skip_without_the_switch(self):
+        self._stub(None)
+        outcome, text = self._setup_outcome()
+        self.assertEqual(outcome, "skip", "without the switch the matrix runners skip as before: %s %r" % (outcome, text))
+        self.assertIn("the stub's reason", text)
+        self.assertFalse(os.path.exists(RelayDialDeclaresHeldPair.lab), "the minted lab directory is removed on the skip road")
 
 
 if __name__ == "__main__":

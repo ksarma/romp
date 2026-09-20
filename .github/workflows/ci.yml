@@ -354,7 +354,9 @@ jobs:
         # (the wsBytesByHost review, round 1), both pinned by tests/test_served_labs_under_ci.py: the pytest line
         # names tests/test_relay_dial_declares_held_pair.py by file, a raw-socket kernel leg that needs the built
         # dist this job has and no browser, so no glob names it and it ran in no job (its filename is plain on
-        # purpose, so its gen-key skip stays a skip here rather than a REQUIRE failure); and ROMP_CORNER_TWO_HOSTS
+        # purpose, so the conftest's REQUIRE rule does not read it; the module itself turns its precondition
+        # skips, no built dist or a kernel that never served, into failures under the switch, and its gen-key
+        # skip alone stays a skip here); and ROMP_CORNER_TWO_HOSTS
         # runs the two-host lab (TwoHostsBytesByHost in the corners module), about a minute of three kernels
         # and Chromium, whose knob keeps every other runner unchanged.
         working-directory: ${{ github.workspace }}

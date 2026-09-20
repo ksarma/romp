@@ -31,6 +31,7 @@ ROOT = os.path.dirname(HERE)
 CI_YML = os.path.join(ROOT, ".github", "workflows", "ci.yml")
 CONTROL = "test_served_tests_require.py"
 CONFTEST = os.path.join(HERE, "conftest.py")
+CORNERS = os.path.join(HERE, "test_federated_capability_corners_served.py")
 
 
 def conftest_module():
@@ -105,6 +106,19 @@ def ci_served_files():
     return [tok for tok in step["pytest"] if tok.startswith("tests/") and "*" not in tok]
 
 
+def two_host_lab_knob():
+    """The env name TwoHostsBytesByHost's gate reads, derived from the corners module's source (the class body, up to the next
+    class), so a renamed knob moves this pin with it instead of leaving the workflow's env stale and the pin green; None when the
+    class or its one `os.environ.get("ROMP_CORNER_...")` gate is not found, and a caller fails on None."""
+    with open(CORNERS, encoding="utf-8") as f:
+        src = f.read()
+    m = re.search(r"^class TwoHostsBytesByHost\b.*?(?=^class |\Z)", src, re.S | re.M)
+    if not m:
+        return None
+    gates = re.findall(r'os\.environ\.get\("(ROMP_CORNER_[A-Z0-9_]+)"\)', m.group(0))
+    return gates[0] if len(gates) == 1 else None
+
+
 class _Item:
     """The shape conftest._is_served_test_file reads: an item with a path."""
 
@@ -136,10 +150,11 @@ class ServedLabsUnderCI(unittest.TestCase):
         built dist (lab_dist), which the Python matrix runners never have, so there it skips; no browser drives it, so the
         census above leaves it out and no glob names it, and it ran in no CI job (review round 1 of the wsBytesByHost
         change, 2026-09-20). The served step names it by file: the one job with the deps runs its executed part (the first
-        dials and their wsopen rows), and its gen-key skip stays a plain skip there, since the conftest's REQUIRE rule reads
-        file names and this module carries no served suffix on purpose (the precedent is tests/test_session_host_restart.py,
-        whose docstring records the same decision): `optional:` is a runner-declared capability gap, and a kernel vintage
-        that stamps no gen is a condition every runner shares."""
+        dials and their wsopen rows). The conftest's REQUIRE rule reads file names and this module carries no served suffix
+        on purpose (the precedent is tests/test_session_host_restart.py, whose docstring records the same decision), so the
+        module holds its own preconditions under the switch: a skip from lab_dist.copy_dist or the kernel boot is a failure
+        there (its PreconditionSkipsUnderRequire drives that), and only the gen-key skip stays a plain skip: `optional:` is a
+        runner-declared capability gap, and a kernel vintage that stamps no gen is a condition every runner shares."""
         files = ci_served_files()
         self.assertIn("tests/test_relay_dial_declares_held_pair.py", files, "the served step no longer names the handler-parse leg")
         for f in files:
@@ -155,7 +170,12 @@ class ServedLabsUnderCI(unittest.TestCase):
         step = ci_served_step()
         self.assertIsNotNone(step, "ci.yml has no served step: re-aim ci_served_step()")
         self.assertEqual(step["env"].get("ROMP_SERVED_TESTS_REQUIRE"), "1")
-        self.assertEqual(step["env"].get("ROMP_CORNER_TWO_HOSTS"), "1", "the served step does not set the two-host lab's knob: %r" % (step["env"],))
+        # the knob is derived from the lab's own gate, so a renamed knob fails here instead of leaving the workflow's env stale
+        # while the lab skips as optional: in CI (round 1 of the same review)
+        knob = two_host_lab_knob()
+        self.assertIsNotNone(knob, "the corners module's TwoHostsBytesByHost gate was not found: re-aim two_host_lab_knob()")
+        self.assertTrue((step["env"].get(knob) or "").strip(),
+                        "the served step does not set the two-host lab's knob %s (the gate reads any non-blank value): %r" % (knob, step["env"]))
 
     def test_the_ci_globs_are_the_conftest_suffixes(self):
         self.assertEqual(sorted(ci_served_globs()), ["tests/test_*_browser.py", "tests/test_*_served.py"])
