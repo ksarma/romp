@@ -23,6 +23,7 @@ import time
 import types
 import unittest
 from romp_load import load_source
+from tests.conftest import restore_env
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
@@ -69,12 +70,17 @@ class _HealthzStub:
 class KernelUp(unittest.TestCase):
     def setUp(self):
         self._base = pm.KERNEL_BASE
+        # The seam is popped for the class and put back by a cleanup registered right here, restore-or-delete
+        # (review round 1 of the peers-leak fix, 2026-09-18). tearDown put it back only when a prior value existed,
+        # so with the variable unset at setUp the "/nonexistent" the seam test writes outlived the class, and a set
+        # value means "a test with no live kernel" to every postal call on the worker afterwards. Masked in a full
+        # xdist run: ten postal modules write the seam at import, so conftest's guard saw no unset-to-set change. The
+        # module alone, and KernelUpSeamRestore below, are the fails-before.
         self._seam = os.environ.pop("ROMP_SESSIONS_FILE", None)
+        self.addCleanup(restore_env, "ROMP_SESSIONS_FILE", self._seam)
 
     def tearDown(self):
         pm.KERNEL_BASE = self._base
-        if self._seam is not None:
-            os.environ["ROMP_SESSIONS_FILE"] = self._seam
 
     def test_true_when_healthz_answers(self):
         with _HealthzStub() as base:
@@ -93,6 +99,23 @@ class KernelUp(unittest.TestCase):
             pm.KERNEL_BASE = base
             os.environ["ROMP_SESSIONS_FILE"] = "/nonexistent"
             self.assertFalse(pm._kernel_up())
+
+
+class KernelUpSeamRestore(unittest.TestCase):
+    """Executed pin for the restore above (review round 1, 2026-09-18): KernelUp's seam test is run through unittest
+    with ROMP_SESSIONS_FILE unset, and the variable must be unset afterwards. Red on a tearDown that puts back only a
+    prior value ('/nonexistent' is not None), whatever else is collected; conftest's _shared_state_restored names the
+    same leftover, but only in a run that collects no module writing the seam at import."""
+
+    def test_the_seam_test_leaves_the_variable_unset_when_it_found_it_unset(self):
+        prior = os.environ.pop("ROMP_SESSIONS_FILE", None)
+        self.addCleanup(restore_env, "ROMP_SESSIONS_FILE", prior)
+        result = unittest.TestResult()
+        KernelUp("test_false_under_the_no_kernel_test_seam").run(result)
+        self.assertTrue(result.wasSuccessful(), result.errors + result.failures)
+        # the key is named: an assertNotIn over os.environ prints the whole environment when it fails
+        self.assertIsNone(os.environ.get("ROMP_SESSIONS_FILE"),
+                          "KernelUp's seam test put ROMP_SESSIONS_FILE back the way it found it, unset")
 
 
 ALPHA = "11111111-2222-3333-4444-555555555555"

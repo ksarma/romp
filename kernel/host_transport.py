@@ -19,9 +19,15 @@ import time
 from pathlib import Path
 
 try:  # the SDK's abstract base when present; a plain object otherwise (the six methods are the contract)
-    from claude_agent_sdk._internal.transport import Transport as _Base    # type: ignore
-    from claude_agent_sdk._errors import CLIConnectionError, ProcessError   # type: ignore
-except Exception:  # pragma: no cover - the SDK-less test venv
+    # From the PUBLIC package (fresh-2, round 1 of the review, 2026-09-18): all three are public exports at the pinned
+    # version (session_host.py, SDK_TESTED_VERSION), and until round 1 they were read from the private modules
+    # _internal.transport and _errors inside a bare except Exception, the same silent stand-in for a moved private
+    # name that the pin exists to make loud. Not added to SDK_INTERNALS on purpose: that check runs in the HOST
+    # process at spawn time, after this module has already bound these names in the kernel process, so listing
+    # them there would protect nothing here and only make hosts refuse sessions more broadly. The fallback below
+    # is for a machine with no SDK at all (the hermetic tests, CI), hence ImportError, not Exception.
+    from claude_agent_sdk import Transport as _Base, CLIConnectionError, ProcessError    # type: ignore
+except ImportError:  # pragma: no cover - the SDK-less test venv
     class _Base:  # type: ignore
         pass
 
@@ -97,6 +103,108 @@ def host_sock(state_dir, sid: str) -> Path:
     return Path(state_dir) / "hosts" / (str(sid)[:8] + ".sock")
 
 
+def host_log_mark(state_dir, sid: str) -> int:
+    """The size of hosts/<sid>/host.log in bytes, or 0 without one: the watermark the kernel takes right before it
+    spawns a host, so every read of what THAT host wrote (host_exit_reason, the untested-version row the refused
+    roads file) starts past everything already in the file. The closing check of the review (2026-09-18) replaced
+    the previous bound, the last host-started row, with this one: a marker is the host's own claim to have run,
+    and a host that died before writing anything (an OOM, a refused transient scope, a python that never got to
+    main) left none, so a launch whose host wrote nothing read back to the previous host's marker and carried
+    that host's reason and remedy onto the card and into the ledger. The kernel knows when it spawned; that fact
+    cannot be absent, and this repo keys on the event rather than on a proxy for it. A byte offset rather than a
+    line count so a line a dying host left unterminated stays with that host's run. Nothing truncates host.log
+    between the mark and the read: the host appends, the kernel only reads.
+
+    The mark's reach (extra6-1, round 3 of the review, 2026-09-19; corrected in round 4): the two REFUSED-road
+    reads named above, and only those. The served road, sdk_backend._file_host_log_rows at the hello and at the
+    exit, reads from a LINE position the registry keeps under the host's identity (hostLogPos) and starts at zero
+    for an identity it has not seen, never from this mark. Over a host.log that survived a previous launch (a
+    stale kernel-held lease keeps the directory) that has two consequences, both pinned as the head's behaviour
+    in tests/test_session_host_sdk_pin.py: with no refused launch since, a fresh host that serves files the
+    previous host's rows as its own problem rows; after a refused launch, the served road starts past the
+    position that launch recorded, which is host.log's WHOLE line count at the refusal
+    (sdk_backend._record_refused_launch_position), so a previous host's row that no road had filed (a
+    reader-behind, an end-forced) is skipped by every road and VANISHES: no problem row, anywhere. Bounding the
+    served road on this mark is the queued served-road change, where that behaviour is fixed, not this one."""
+    try:
+        return os.stat(host_dir(state_dir, sid) / "host.log").st_size
+    except OSError:
+        return 0
+
+
+def host_log_rows(state_dir, sid: str, since: int = 0) -> list:
+    """The parsed rows of hosts/<sid>/host.log from byte `since` on (a host_log_mark; 0 is the whole file), in
+    order; [] for a missing or unreadable log. A line that is not a JSON object is skipped."""
+    try:
+        with open(host_dir(state_dir, sid) / "host.log", "rb") as f:
+            f.seek(int(since or 0))
+            data = f.read()
+    except OSError:
+        return []
+    rows = []
+    for ln in data.decode("utf-8", "replace").splitlines():
+        try:
+            row = json.loads(ln)
+        except ValueError:
+            continue
+        if isinstance(row, dict):
+            rows.append(row)
+    return rows
+
+
+def host_exit_reason(state_dir, sid: str, since: int = 0) -> str:
+    """What a host that exited before serving its socket said last: the `error` of its final `host-crashed` or
+    `cli-spawn-failed` row, for the kernel's launch error; "" when no row says (an unreadable log, a host that
+    died without one). `since` is the host_log_mark the kernel took before the spawn: the rows read are the ones
+    this host wrote, and a previous host's rows in the same file are never this launch's reason (the closing check
+    of the review, 2026-09-18; the round-2 bound at the last host-started row left the no-row case reading the
+    previous run, see host_log_mark). Added 2026-09-18 so an SDK pin mismatch (session_host.py,
+    SdkInternalsMismatch) reaches the card with both versions and the repin command instead of "see host.log"
+    (the box admin's hazard review of the pull-in, 2026-09-16).
+
+    What the text is (correctness-2 and kernel-3, round 1 of the review, 2026-09-18): a host-composed row (the SDK
+    mismatch) is carried whole, and its text is the host's own prose (two version strings, a module path, the
+    remedy). The generic host-crashed row is not prose the host authored: it is the last line of a Python
+    traceback, capped at 200 characters by main(), so it can read "OSError: AF_UNIX path too long" and, in
+    principle, whatever an exception message carries. It is carried anyway, because that line is what diagnoses
+    a real failure (the path-too-long case was hit on 2026-09-18). The host writes no spec field and no
+    environment value to host.log (its module docstring); that is the guarantee, not "prose".
+
+    A cli-spawn-failed row is a bare exception type name, and it stays the first word. When this host also wrote
+    an sdk-version-untested row (the SDK imports at a version other than the pin, and its internals resolved), the
+    version fact follows as a second statement, in parentheses, for EVERY spawn failure alike, and the remedy is
+    not here: it is in the host.sdk-untested problem row the kernel files from the same row on its own
+    (sdk_backend.py, _file_sdk_untested_row), once per kernel life per version pair. So the card reads
+    "TypeError (this host ran claude-agent-sdk 9.9.9, newer than the 0.2.156 the session host is written against)",
+    a failure and a fact beside it, never a diagnosis. Two shapes came before this one (the closing check, ruling on
+    fresh-1 of round 2, 2026-09-18): round 1 attached the sentence and "run bin/romp-sdk-setup" to every spawn
+    failure after an untested row, so a missing binary was told to reinstall the SDK; round 2 gated it on an
+    allowlist of type names (TypeError, AttributeError, ImportError, ModuleNotFoundError), which was wrong in both
+    directions at 0.2.156, where _build_command, _find_cli and _check_claude_version run outside connect's try: a
+    ValueError from option validation under an untested version reached the user with no version context, while a
+    TypeError from a dependency's signature composed the remedy. A type name is not a diagnosis. The fact is
+    recorded whenever it holds, the remedy rides with the fact, and no failure is attributed by its type. The
+    untested row is the one gate left: the host writes it only when the SDK is importable and the version differs,
+    so a machine with no SDK at all (the pipe transport's spawn failing the same arm) keeps the bare type name."""
+    rows = host_log_rows(state_dir, sid, since)
+    for i in range(len(rows) - 1, -1, -1):
+        row = rows[i]
+        if row.get("kind") not in ("host-crashed", "cli-spawn-failed") or not row.get("error"):
+            continue
+        error = str(row["error"])
+        if row.get("kind") != "cli-spawn-failed":
+            return error
+        for prior in reversed(rows[:i]):
+            if prior.get("kind") == "sdk-version-untested":
+                relation = prior.get("relation")
+                return ("%s (this host ran %s %s, %s the %s the session host is written against)"
+                        % (error, sh.SDK_DIST, prior.get("installed"),
+                           ("%s than" % relation) if relation in ("newer", "older") else "other than",
+                           prior.get("tested")))
+        return error
+    return ""
+
+
 def host_scope_unit(sid: str, t: int | None = None) -> str:
     """The host's own transient scope on Linux: `romp-host-<sid8>-<t>.scope` (the pid is not known before
     the spawn; the sweep keys on the sid's lease, not on a pid)."""
@@ -158,15 +266,28 @@ def write_spawn_spec(state_dir, sid: str, spec: dict) -> Path:
     be written, and the shape is deliberately not widened to catch them, since no such name has a road into
     the overlay today and a legitimate TOKEN_BUDGET or PRIVATE_KEY_PATH would be moved out of the file for
     nothing. A credential never lives in a file, the fork's rule, and the box admin's hazard review of the
-    pull-in, 2026-09-16, found the first cut moving the three login names alone."""
+    pull-in, 2026-09-16, found the first cut moving the three login names alone.
+    The file's mode is set on the descriptor BEFORE the write (os.fchmod): a
+    pre-existing file keeps its old mode through O_CREAT|O_TRUNC, and the trailing chmod this had until
+    2026-09-18 tightened it only after the overlay was already in it (PR 789, review round 1, the same
+    write-then-tighten window the reg and the parked-ops mirror lost). fchmod is exact under any umask. The published
+    inode is rewritten in place (O_TRUNC on the path; no temp, no os.replace, unlike write_reg), so the tightening is
+    not retroactive for a descriptor another uid opened while the file sat at its old looser mode: it reads the new
+    overlay through it. The 0700 directory above, and the 0700 state root above that, close that road today (review
+    round 2, 2026-09-19). A raising fchmod closes the descriptor before the error propagates (round 2 too: os.fdopen
+    was the only close)."""
     d = host_dir(state_dir, sid)
     d.mkdir(parents=True, exist_ok=True)
     os.chmod(d, 0o700)
     p = d / "spawn.json"
     fd = os.open(str(p), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.fchmod(fd, 0o600)
+    except BaseException:
+        os.close(fd)          # closed and re-raised, not a finally: the file object closes it on the success road
+        raise
     with os.fdopen(fd, "w") as f:
         json.dump(spec, f)
-    os.chmod(p, 0o600)
     return p
 
 

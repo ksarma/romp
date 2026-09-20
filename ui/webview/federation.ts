@@ -14,6 +14,7 @@
 import { adoptArrivals, applyViewOrder, applyViewOrderTo, churnSwaps, healOrder, pruneViewOrder,
          readViewOrder, writeViewOrder, VIEW_ORDER_KEY, VIEW_ORDER_EVENT } from "./view-order";
 import { applyFeedDelta } from "./feed-delta";
+import { ViewDeltas, VIEW_DELTA_KINDS } from "./view-deltas";
 import { adoptViews, capsAdopts, announcedSeq, announcedAfter } from "./views-writes";
 import { hostOf, bareId, hostDialLive } from "./host-prefix";
 import { installPerfTelemetry, classifyFrame, type RompPerf } from "./perf-telemetry";
@@ -118,7 +119,13 @@ const K = "\u001f";   // the key separator: a control character no session id, p
 export const BOOKKEEPING: ReadonlyMap<string, (m: any) => string | null> = new Map<string, (m: any) => string | null>([
   ["activeTab",      ()  => "activeTab"],                          // render.ts notifyActive: the tab this pane is looking at
   ["needFull",       (m) => "needFull" + K + m.id],                // render.ts requestFullSession: a session's re-send (gap / nobase / skeleton / prefetch)
-  ["needSlot",       (m) => "needSlot" + K + m.slot],              // fleet.ts: a view slot's re-send after a rejected delta
+  ["needSlot",       (m) => "needSlot" + K + m.slot],              // fleet.ts, and each remote conn's view-delta receiver (view-deltas.ts via Conn.viewDeltas): a view slot's re-send after a rejected delta
+  // needFullFeed (2026-09-19): applyRemoteFeedDelta's ask to a remote host for its full feed when a delta finds no
+  // base; one per conn, like needSlot per slot. Registered for the classification, not for repair: a browser's
+  // message task never dispatches a frame on a socket that has left OPEN, so today the ask is raised only on an
+  // open socket and goes at once; applyRemoteFeedDelta re-asks on the next delta anyway. Should remote dispatch
+  // ever leave the socket handler, the ask holds here and never toasts, as its twins do.
+  ["needFullFeed",   ()  => "needFullFeed"],                       // federation.ts applyRemoteFeedDelta: a remote host's full feed re-send when a delta finds no base
   ["loadOlder",      (m) => "loadOlder" + K + m.id],               // render.ts: the head's older page on a scroll-up or a deep link into it
   ["loadAround",     (m) => "loadAround" + K + m.id],              // render.ts: a window around a deep-link anchor past the resident list (proto 2)
   ["loadTurns",      (m) => "loadTurns" + K + m.id + K + m.lo + K + m.hi],   // render.ts requestTurns: a gap's page by turn span (T386 stage 2); flushed on the open like loadOlder, one per span
@@ -337,6 +344,20 @@ export interface Route {
 export function stripHost(host: string, id: string): string {
   return host && typeof id === "string" && id.startsWith(host + ":") ? id.slice(host.length + 1) : id;
 }
+
+/** The jump ops a kernel answers with a chat focus (kernel.py _reveal_chat_for, or _reveal_or_confirm for a dead
+ *  session's revive prompt). A jump routed to a REMOTE host posts the shell's chat reveal from the sending pane
+ *  (FederationManager.outbound): the remote kernel tells its OWN shell clients to reveal the chat and has none here.
+ *  The set is the KERNEL's, derived by AST in tests/test_remote_chat_reveal_ops.py (every arm of _dispatch_ws and _drive
+ *  that reaches either function) and pinned equal to this constant, so an op the kernel gains fails there until it is
+ *  listed here (review round 3 of the parked-pane change, 2026-09-18; round 2 hand-listed the first five, a list no test
+ *  could fail for a missing name). The last five leave the chat pane's own bundle alone (the + modal, the picker, the fork
+ *  and promote menus), where the pane is already forward and the post duplicates render.ts revealSelfPane, idempotently;
+ *  they are listed so the constant is what its name says. */
+export const REMOTE_CHAT_REVEAL_OPS: ReadonlySet<string> = new Set([
+  "openSession", "showOnTimeline", "deepLink", "viewReadOnly", "reviveSession",
+  "createSession", "pickResult", "openByName", "forkSession", "commentPromote",
+]);
 
 export function routeOutbound(msg: any, knownHosts?: ReadonlySet<string>): Route[] {
   if (!msg || typeof msg !== "object") return [{ host: LOCAL, msg }];
@@ -844,6 +865,19 @@ export const REMOTE_REDIAL_MS = 8000;
 // end stays open), and only the kernel's next frame can tell; until one lands the watchdog runs at this bound
 // instead of REMOTE_STALE_MS.
 export const REMOTE_PROVISIONAL_MS = 15000;
+// The capabilities a REMOTE socket announces (its `caps` dial term), this manager's own statement about what it
+// can apply to a frame from that host: feedDelta, because the feedDelta branch below decodes one for any host
+// (kernel.py FEED_DELTA_CAP; the shim announces the same for its local socket on the feed, Outline and Waiting
+// pages). Not the page's caps (readyGate is the shim's hold, and this manager posts its own ready), and not read
+// from the shim's __rompDialTerms: the decoder lives here, so the announcement does too. Without the term a
+// remote kernel served the feed on its view-delta slot path ({type:"delta", slot:"feed"}, which nothing on this
+// side decoded then: the shim's reassembler reads its LOCAL socket alone), so a remote Outline froze after its first
+// full frame, each dropped frame filing a `delta-unapplied` row and a needSlot the LOCAL kernel could not answer
+// (86 rows in 2.4 minutes on the user's phone, 2026-09-18). Each conn now carries a view-delta receiver of its own
+// (Conn.viewDeltas, later that day: the timeline's bars have no other path, and a remote too old to read this term
+// still serves the feed as slot patches), but the feed stays on feedDelta where the remote reads the term: the slot
+// path re-encodes every card per build on the remote (kernel.py memos.wire feed_slot_split).
+export const REMOTE_DIAL_CAPS = "feedDelta";
 
 /** What the watchdog should do about ONE remote socket, from its state alone (pure, unit-tested):
  *  "close" — force-close so the onclose→redial chain runs (open but silent past the keepalive bound,
@@ -891,12 +925,36 @@ interface Conn {
   readyAcked?: boolean; // the remote answered this page's `ready` with a `caps` frame at least once (the shim's readyAcked): the redial gate's latch that the remote served this page whole and holds its sessions
   dialedReconnect?: boolean; // the CURRENT socket was dialed with reconnect=1, so its open must post NO `ready`: the redial's dial term IS the handshake, and a `ready` would make the remote's ready reset pop `reconnect` and serve the whole board (the shim posts no ready on a redial for the same reason)
   deferred?: boolean; // a dial connect() put off because the pane's LOCAL socket is down (window.__rompLocalUp false): set with the one dial-deferred row per down spell, cleared by the dial that finally runs
+  saidDelta?: Set<string>; // the delta breadcrumbs this conn has filed (delta-unkeyed-base, delta-unknown-slot), keyed on the EVENT and not the conn's life (sayDeltaOnce, 2026-09-19): the same event again, however many patches, reposts or redials produce it, files nothing (a row per frame would be a row a minute per host); a different reason, or the same reason from a remote that redialed on another build, is news and files. Bounded, and not by the peer: the refused-base row's key is the row itself (ev and why: the slot, one of the EIGHT refusals this side's table can produce (VIEW_DELTA_KINDS, view-deltas.ts split: a list where a kind says dictlist or not, a non-list where it says a list, a dictlist lane whose name carries the separator), and the remote's build as the /tunnels row last named it, peerSha); the unknown-slot row's key holds ONE marker for every slot this bundle does not decode (UNKNOWN_SLOT_KEY), the peer's slot name riding in the row and never in the key. So at most nine keys per distinct kernelSha the row has named on this conn, and a remote that names a new slot in every frame spends one row, one console line and one key per build. The conn's, so a detach ends it. The two rows' conditions differ in what they are a property of: the unknown slot is this bundle's (it lasts the page, whatever the remote sends); the refused seed is the remote's frames' (it holds only while that kernel keeps sending a shape this table cannot key, and it is checked per FRAME: one refused whole frame drops a base an earlier frame seeded, and the next whole frame that keys seeds again), which is why the key is the row and not the conn's life
+  peerSha?: string; // the remote kernel's build as the hub's /tunnels row last named it (kernelSha: the sha it booted from, "-dirty" included), read by poll() every 4 s; "" when the row names none (an older remote, or before the hub's supervisor has read the peer's /version; a rig without the poll). The delta breadcrumbs carry it in their why and key their latch on it, so a redial across the remote's deploy says its row again (2026-09-19)
   // KERNEL_SETTING messages (newest per type) and the pane's own BOOKKEEPING (newest per key, see
   // BOOKKEEPING) that arrived while this host's socket was down — flushed on the socket's open event
   // (sendRemote/flushPending). Bounded by construction: one entry per setting type, per bookkeeping
   // key. Lives on the CONN, not the socket, so it survives every re-dial — the onclose retry, the
   // poll's, and the liveness watchdog's abandon-and-dial (watchdog()).
   pending: Map<string, any>;
+  // The view-delta receiver for THIS conn's CURRENT socket (ui/webview/view-deltas.ts, the class VS Code's pipe uses). The
+  // relay dial carries the page's delta=1 (remoteDialUrl), so after the first full frame the remote kernel serves its
+  // _DELTA_SLOTS as {type:"delta", slot} patches: the timeline's bars, and the feed on a kernel too old to read the caps
+  // term. The kernel's inline shim reassembles only its own LOCAL socket's frames, so a remote patch reached the pane
+  // raw and the timeline dropped it without a row: a remote host's bars froze on the phone where its first full frame
+  // put them (2026-09-18). One instance per SOCKET, the module's contract and the extension pipe's practice: minted with
+  // the conn (openRemote), re-minted on every dial in connect() beside the socket's other per-dial resets, and gone with
+  // the conn (closeRemote), so neither a re-attached host's nor a redialed socket's first patch finds a stale base
+  // (2026-09-19; the conn is the page's identity for the host and outlives its sockets). A patch it cannot apply asks the
+  // kernel that sent it for the whole slot on this conn (sendRemote), never the local kernel, which holds nothing for
+  // this host.
+  viewDeltas: ViewDeltas;
+  // The remote's last FEED frame as its kernel sent it, ids unprefixed: the base its feedDelta frames apply onto
+  // (applyRemoteFeedDelta); the prefixed copy the merge reads is perHostFeed. The CONN's, not a per-host map's (2026-09-19,
+  // review round 5): closeRemote cancels no retry timer, so a DETACHED conn's 2 s redial can call connect() after the host
+  // was re-attached on a new Conn, and a base keyed by host was one shared slot that the dead conn's call could have
+  // cleared from under the live one had the reset sat above connect()'s guards; on the conn, a reset reaches only the
+  // conn it was called for, whatever its place. Written by the host's CURRENT conn at the store site, the one whose OPEN
+  // socket the frame arrived on (closeRemote closes a socket before it deletes its conn, and the watchdog's abandon nulls
+  // a dead socket's handlers before it dials, so a dead socket writes no live conn's base); cleared per dial in connect()
+  // beside the receiver, and with the conn in closeRemote.
+  feedRaw?: any;
 }
 
 /** The TYPES held on a conn's queue, for the hostconn rows (flush-halt's `held`, detach's `pendingDropped`):
@@ -904,6 +962,15 @@ interface Conn {
 function pendingTypes(c: Conn): string[] {
   return [...c.pending.values()].map((m) => (m && typeof m.type === "string" ? m.type : ""));
 }
+
+// The unknown-slot breadcrumb's latch (sayDeltaOnce, inboundNow): every slot name this bundle does not decode, the slotless
+// patch included, is ONE key per build the /tunnels row names, so a peer's slot names never widen Conn.saidDelta (review
+// round 4, 2026-09-19: keyed on the wire name, 200 invented slot names from one remote were 200 rows, 200 console lines
+// and 200 Set entries, and the bound was the peer's); the first name seen rides in the row for the admin, cut so the
+// kernel's 64-character cut of `why` (CLIENT_DIAG_STR_MAX) never eats the " @<sha>" build tag behind it (the peer's short
+// sha, 7 to 12 hex, plus -dirty).
+const UNKNOWN_SLOT_KEY = "?";
+const UNKNOWN_SLOT_CUT = 32;
 
 export class FederationManager {
   app = "chat";
@@ -1160,6 +1227,56 @@ export class FederationManager {
   }
 
   private inboundNow(host: string, msg: any): void {
+    // A REMOTE socket's frame goes through its conn's view-delta receiver first, on the RAW frame: a patch's keys are
+    // the kernel's own ids (a bars key is the bare sid, the unit separator and the bar id), so prefixing first would
+    // miss every held key. A full frame of a delta slot seeds the receiver and continues unchanged; a patch continues
+    // as the reassembled whole frame, down the same bars/feed arms below and prefixed exactly as a full frame is; null
+    // means the receiver asked THAT kernel for the whole slot (needSlot on this conn) and there is nothing to emit.
+    // The LOCAL socket's frames arrive reassembled already (the shim applies its own deltas before __rompFed.inbound)
+    // and pass untouched, as does a frame for a host this manager holds no conn for (a detached host's straggler).
+    if (host !== LOCAL) {
+      const c = this.conns.get(host);
+      const vd = c?.viewDeltas;
+      if (c && vd) {
+        // A patch for a slot this receiver has no table for (a kernel newer than this bundle, serving a slot it does
+        // not know) is the one frame neither path decodes: the receiver asks that kernel for the whole slot and yields
+        // nothing, and the drop is said here first, the way every other drop on this layer is (a hostconn row under the
+        // keys the family already has, and the console), never silently.
+        // The row and the console line are LATCHED, on the same latch as the refused-base row (sayDeltaOnce over
+        // Conn.saidDelta; the sibling files in mintReceiver): at most one per conn per build of the remote. The key is
+        // [ev, UNKNOWN_SLOT_KEY + " @<sha>"] and not the row, because the why carries a slot name the PEER chose: one
+        // marker stands for every slot this bundle does not decode, the slotless patch included; the first name seen
+        // rides in the row, cut to UNKNOWN_SLOT_CUT so the kernel's cut of `why` keeps the build tag; a remote that names
+        // a new slot in every patch spends one row (test 18 of federation-remote-view-delta.test.ts: 200 names). The
+        // sibling's key is its row, [ev, slot + reason + build], at most eight per build, the table's refusals. A row per
+        // patch would be the flood this layer exists to end (the phone's 86 rows), and a row per name would be the
+        // peer's to flood (review round 4). Measured (review round 7, 2026-09-19, the caps-ignored corner of
+        // tests/test_federated_capability_corners_served.py with seven notices, then with a private remote sending three
+        // `lanes` patches beside each feed patch): 21 feed patches per socket, 0 rows; 21 lanes patches per socket, one
+        // row per page's conn and one console line.
+        // The ASK is not latched: needSlot goes to that kernel per patch (view-deltas.ts recover), on purpose. The kernel
+        // answers a needSlot only for a slot in its own _DELTA_SLOTS (kernel.py, the ws dispatch's needSlot arm;
+        // tests/test_view_deltas.py HandlerWiring pins an unknown slot ignored) and any other op with a small unknownOp
+        // frame, which no pane on this side reads. A slot patch only ever comes from a kernel that patches that slot, so
+        // on the wire the ask is answered by the WHOLE frame, which needs no table (receive() passes a whole frame of a
+        // type it has no table for through unchanged, and the dispatch below hands it to the pane that renders that
+        // type): when a kernel newer than this bundle patches a frame type this bundle renders whole, that whole frame is
+        // the pane's only repair, and without the ask the pane freezes at its first frame. The kernel coalesces (the
+        // client's resync is a set; one whole frame per push), so the cost is one small ask per patch, bounded by the
+        // remote's change rate, and nothing in client-diag. A known slot's patch that cannot apply is the receiver's own
+        // resync (needSlot on this conn) and needs no row: the full frame it earns is the repair.
+        if (msg && msg.type === "delta" && !(typeof msg.slot === "string" && Object.prototype.hasOwnProperty.call(VIEW_DELTA_KINDS, msg.slot))) {
+          const slot = typeof msg.slot === "string" ? msg.slot : "";
+          const why = slot.slice(0, UNKNOWN_SLOT_CUT) + this.peerTag(c);
+          if (this.sayDeltaOnce(c, "delta-unknown-slot", why, UNKNOWN_SLOT_KEY + this.peerTag(c))) {
+            try { console.error("federation: a delta frame from " + host + this.peerWord(c) + " names a slot this bundle does not decode (" + (slot || "no slot") + "): asking that kernel for the whole slot"); } catch (e) { /* nothing to report to */ }
+            this.diag("hostconn", { host, ev: "delta-unknown-slot", why });
+          }
+        }
+        msg = vd.receive(msg);
+        if (msg === null) return;
+      }
+    }
     const m = prefixInbound(host, msg);
     if (m && m.type === "session" && typeof m.id === "string") {
       (this.perHostSids[host] ||= new Set()).add(m.id);
@@ -1255,6 +1372,10 @@ export class FederationManager {
       return;
     }
     if (m && m.type === "feed") {
+      if (host !== LOCAL) {
+        const c = this.conns.get(host);   // the host's current conn, whose OPEN socket this frame arrived on (Conn.feedRaw)
+        if (c) c.feedRaw = msg;   // the frame as sent, the base for that conn's deltas (applyRemoteFeedDelta)
+      }
       this.perHostFeed[host] = m;
       this.perHostFeedAt[host] = Date.now();   // the wire arrival: the one moment the frame's `now` was current
       this.ensureHost(host);
@@ -1263,17 +1384,21 @@ export class FederationManager {
     }
     if (m && m.type === "feedDelta") {
       // The kernel streams the feed as DELTAS to a caught-up socket that announced it can take them (the
-      // shim's ?caps=feedDelta, 2026-09-02). Only the LOCAL socket announces — remote sockets never do,
-      // so a delta from one is a protocol error (its ids would also have escaped prefixInbound). Apply
-      // onto the last full frame held for the host and re-emit the merge exactly as a full frame would:
-      // every consumer downstream keeps seeing whole `feed` frames. No base to apply onto (a delta before
-      // any full frame on this socket) cannot be repaired here: say so and ask for a full frame, the way
+      // shim's ?caps=feedDelta on the LOCAL socket, 2026-09-02; this manager's REMOTE_DIAL_CAPS on each
+      // remote socket, 2026-09-18). Apply onto the last full frame held for the host and re-emit the merge
+      // exactly as a full frame would: every consumer downstream keeps seeing whole `feed` frames. A remote
+      // host's delta names its kernel's own ids (bare sids under ledgers and removeLedgers, bare itemIds
+      // under removeAsks), so it applies onto the RAW frame held for that host, and the result is prefixed
+      // whole, as a full frame from it is (applyRemoteFeedDelta); the local host's applies onto the frame
+      // the merge reads, the identity prefix. No base to apply onto (a delta before any full frame on this
+      // socket) cannot be repaired here: say so and ask THE KERNEL THAT SENT IT for a full frame, the way
       // the chat asks (needFull) when a chatTail starts past what it holds.
-      const base = host === LOCAL ? this.perHostFeed[host] : null;
+      if (host !== LOCAL) { this.applyRemoteFeedDelta(host, msg); return; }
+      const base = this.perHostFeed[host];
       if (!base) {
-        this.diag("feedDelta-nobase", { host: host || "local", buildId: m.buildId });
+        this.diag("feedDelta-nobase", { host: "local", buildId: m.buildId });
         const s = (window as any).__rompLocalSend;
-        if (host === LOCAL && typeof s === "function") s({ type: "needFullFeed" });
+        if (typeof s === "function") s({ type: "needFullFeed" });
         return;
       }
       this.perHostFeed[host] = applyFeedDelta(base, m);
@@ -1307,6 +1432,31 @@ export class FederationManager {
       return;
     }
     window.dispatchEvent(new MessageEvent("message", { data: m }));
+  }
+
+  /** A REMOTE host's {type:"feedDelta"}, as its kernel sent it (`d` is the raw frame, before prefixInbound). It
+   *  applies onto the raw full frame the host's conn holds (Conn.feedRaw), and the whole result is prefixed the way
+   *  a full frame from the host is, so the merge reads exactly what a full frame would have given it. Applying onto
+   *  the PREFIXED frame instead would miss every removal (removeLedgers names bare sids, the held ledgers carry
+   *  "host:sid") and append every upserted ledger beside its prefixed twin. No raw base (a delta before any full
+   *  frame on this socket, or after a detach dropped the host's conn): the local kernel holds nothing for this
+   *  host, so the ask goes to the kernel that sent the delta, on its own conn (needFullFeed: it forgets what it
+   *  believes this socket holds and serves a full frame at once, kernel.py's handler), and the merge is left as it
+   *  was, never emitted from a half-applied state. The socket is open (the frame just arrived on it), so the send
+   *  goes now. */
+  private applyRemoteFeedDelta(host: string, d: any): void {
+    const c = this.conns.get(host);
+    const raw = c ? c.feedRaw : undefined;
+    if (!c || !raw) {
+      this.diag("feedDelta-nobase", { host, buildId: d.buildId });
+      this.sendRemote(host, { type: "needFullFeed" });
+      return;
+    }
+    const next = applyFeedDelta(raw, d);
+    c.feedRaw = next;
+    this.perHostFeed[host] = prefixInbound(host, next);
+    this.perHostFeedAt[host] = Date.now();   // the delta's arrival, as on the local path: the merge's clock anchor when no local frame anchors it
+    this.emitMergedFeed();
   }
 
   // The viewer's own session order, re-read per emit. It is a handful of strings out of localStorage and
@@ -1509,17 +1659,38 @@ export class FederationManager {
     if (m && (m.type === "askClear" || m.type === "askClearMany" || m.type === "clearAll")) {
       this.lastClearHosts = routes.length ? routes.map((r) => r.host) : [LOCAL];
     }
-    for (const r of routes) this.sendTo(r.host, r.msg);
+    let delivered = false;   // a remote route whose socket was OPEN took the op (sendTo's word; the local route says nothing)
+    for (const r of routes) delivered = this.sendTo(r.host, r.msg) || delivered;
+    // A jump to a REMOTE host's session brings the chat pane forward from HERE (review round 2 of the parked-pane
+    // change, 2026-09-18). The kernel that answers a jump with a chat focus also tells its OWN shell clients to reveal
+    // the chat, and a remote kernel has none (the shell socket is local-only), so a tap on a remote session from the
+    // feed, Sessions or Outline reached the shell through one road alone: the chat pane's revealSelfPane when the focus
+    // landed on its relay. On the phone a chat pane parked since a return holds its local socket down and defers its
+    // relay dials until it is shown (the shim's park; this module's __rompLocalUp gate), so the remote's focus found no
+    // chat client, parked at that kernel, and the Chat tab never came forward. The pane that sends the jump posts the
+    // reveal waiting.ts openSession and render.ts revealSelfPane post: the shell shows the chat pane, the parked pane
+    // dials, its romp:wsup runs localUp() and the relay dials, and the remote's parked copy lands on the relay's first
+    // strip. Once per outbound, whatever the route count; a local route needs none (the local kernel's shell line does
+    // it), and a chat pane posting for itself duplicates revealSelfPane, idempotently. On the desktop the shell's reveal
+    // un-hides a collapsed chat pane, what the local kernel's shell line already does for a local tap. Only for a jump a
+    // remote socket TOOK (review round 3, 2026-09-18): sendRemote drops a jump whose host's socket is not open, with its
+    // toast, and a reveal posted for it moved the phone's tab and un-collapsed a desktop chat pane for an op that reached
+    // no kernel, on a session the user never tapped; the local road posts nothing in that case, the parity that settles it.
+    if (m && REMOTE_CHAT_REVEAL_OPS.has(m.type) && delivered) {
+      try { if (window.parent && window.parent !== window) window.parent.postMessage({ romp: "reveal", pane: "chat" }, "*"); } catch (e) { /* standalone page: no shell to ask */ }
+    }
   }
 
-  /** One send to one kernel: the local one through the page's own socket, a remote one through its conn. */
-  private sendTo(host: string, msg: any): void {
+  /** One send to one kernel: the local one through the page's own socket, a remote one through its conn. Says whether a
+   *  REMOTE socket took the message, OPEN at the send (sendRemote's word); the local route says nothing, since the local
+   *  kernel's own shell line follows a local jump (review round 3, 2026-09-18). */
+  private sendTo(host: string, msg: any): boolean {
     if (host === LOCAL) {
       const s = (window as any).__rompLocalSend;
       if (typeof s === "function") s(msg);
-    } else {
-      this.sendRemote(host, msg);
+      return false;
     }
+    return this.sendRemote(host, msg);
   }
 
   // The ONE remote send path (the user 2026-08-28, whose mid-restart Edit consent never reached the
@@ -1543,11 +1714,13 @@ export class FederationManager {
   //   minutes later can be worse than dropping it — a deliberate non-goal) but the drop lands a
   //   client-diag breadcrumb naming the type and host, beside the existing warn toast: a drop is never
   //   silent.
-  private sendRemote(host: string, msg: any): void {
+  // Returns whether the message went out on an OPEN socket now: a queued setting, a held bookkeeping row and a drop
+  // all say false (outbound posts the shell's chat reveal for a jump only on true; review round 3, 2026-09-18).
+  private sendRemote(host: string, msg: any): boolean {
     const c = this.conns.get(host);
     if (c && c.ws && c.ws.readyState === 1) {
       c.ws.send(JSON.stringify(msg));
-      return;
+      return true;
     }
     if (c && msg && typeof msg.type === "string" && KERNEL_SETTING.has(msg.type)) {
       // not dropped — it rides the next open, so no toast; but never silent either: the breadcrumb
@@ -1559,7 +1732,7 @@ export class FederationManager {
       this.diag("sendqueue", { host, msgType: msg.type, gt: typeof msg.gt === "number" ? msg.gt : 0,
                                rs: c.ws ? c.ws.readyState : -1,
                                ...(prev ? { superseded: typeof prev.gt === "number" ? prev.gt : true } : {}) });
-      return;
+      return false;
     }
     const key = bookkeepingKey(msg);
     if (key !== null) {
@@ -1568,13 +1741,14 @@ export class FederationManager {
       // dialed, or detached since) has nothing to hold it on: dropped with the breadcrumb alone. Journaled
       // once per KEY, at the not-held → held transition, in the hostconn family: a hover held per pointer
       // move would otherwise write a row per move; the open row names everything that flushed.
-      if (!c) { this.diag("senddrop", { host, msgType: msg.type, why: "no-conn" }); return; }
+      if (!c) { this.diag("senddrop", { host, msgType: msg.type, why: "no-conn" }); return false; }
       if (!c.pending.has(key)) this.diag("hostconn", { host, ev: "hold", msgType: msg.type, rs: c.ws ? c.ws.readyState : -1 });
       c.pending.set(key, msg);
-      return;
+      return false;
     }
     this.diag("senddrop", { host, msgType: (msg && msg.type) || "" });
     this.dropWarn(host, msg);
+    return false;
   }
 
   /** Deliver the settings that arrived while this host's socket was down, on the open event itself —
@@ -1680,6 +1854,9 @@ export class FederationManager {
       const c = this.conns.get(host);
       if (!c) continue;
       c.live = t.status === "up";
+      // …and the remote's build as the row names it (kernelSha; "" until the kernel's supervisor has read the peer's
+      // /version, and a stale row keeps the last one): the delta breadcrumbs' latch key (sayDeltaOnce, Conn.peerSha)
+      c.peerSha = typeof t.kernelSha === "string" ? t.kernelSha : "";
       if (c.live && (!c.ws || c.ws.readyState === 3)) this.connect(c);
     }
     // Publish reachability for the panes. The kernel's own tunnel health is the authority (it dials and
@@ -1724,11 +1901,67 @@ export class FederationManager {
     // credential is added by the relay (_remote_ws), so this URL carries no token at all. The URL is
     // built fresh on every dial (remoteDialUrl, called from connect) so a redial reflects the page's
     // current terms, exactly as the pane's own local socket rebuilds its ?active=/reconnect on each open.
-    const conn: Conn = { host, ws: null, url: "", closed: false, live, lastRecv: 0, resumeProvisional: 0, connT: 0, pending: new Map() };
+    const conn: Conn = { host, ws: null, url: "", closed: false, live, lastRecv: 0, resumeProvisional: 0, connT: 0, pending: new Map(),
+                         viewDeltas: this.mintReceiver(host) };   // for the type; connect() below mints the first socket's own
     this.conns.set(host, conn);
     this.ensureHost(host);
     this.connect(conn);
   }
+
+  /** The view-delta receiver for one of `host`'s sockets (Conn.viewDeltas): a patch it cannot apply asks THIS host's
+   *  kernel for the whole slot, routed by host through sendRemote so the ask rides the conn's CURRENT socket. A patch
+   *  that finds no base because the slot's whole frame was refused as one (a collection the receiver's table cannot key:
+   *  a kernel before T278c keying judging as a flat list, or a future collection keyed by another table) is said: a
+   *  hostconn row under the keys the family already has (ev delta-unkeyed-base; why the slot, the collection and shape
+   *  the table could not key, and the remote's build when the /tunnels row names one) and a console line, the one row
+   *  that names why that host's slot crosses whole per change (view-deltas.ts, its header). Said at the PATCH and not
+   *  at the refused seed: the seed alone cannot tell a remote that never patches (one before the slot protocol, whose
+   *  whole frames render as they always did) from one that will, and a row there would name a remote behaving as
+   *  designed. Said once per distinct row (sayDeltaOnce): the receiver reports every such patch, and the resync's
+   *  re-sent whole frame is refused again, so the same reason from the same build files nothing more, however many
+   *  patches, reposts or redials; a different reason (another collection or shape), or a redial that finds the remote
+   *  on a new build, files again. */
+  private mintReceiver(host: string): ViewDeltas {
+    return new ViewDeltas(
+      (slot) => this.sendRemote(host, { type: "needSlot", slot }),
+      (slot, reason) => {
+        const c = this.conns.get(host);   // the conn whose receiver is running: inboundNow reads it off the live conn
+        if (!c) return;
+        const why = slot + " " + reason + this.peerTag(c);
+        if (!this.sayDeltaOnce(c, "delta-unkeyed-base", why)) return;
+        try { console.error("federation: a " + slot + " patch from " + host + this.peerWord(c) + " arrived for a slot whose whole frame this side did not key (" + reason + "): that kernel is asked for the whole slot, and each change to its " + slot + " crosses whole until a whole frame from it keys"); } catch (e) { /* nothing to report to */ }
+        this.diag("hostconn", { host, ev: "delta-unkeyed-base", why });
+      });
+  }
+
+  /** Whether a delta breadcrumb (the row `ev` would file, with its `why`) is new to this conn, and latch it. The key is
+   *  the row itself, ev and why, the why carrying the slot, the reason and the remote's build (peerTag), so the latch is
+   *  keyed on the EVENT the row describes and not on the conn's life: the same row files once, however many frames or
+   *  redials produce it; a changed reason, or a redial that finds the remote on another build, files its own row
+   *  (Conn.saidDelta). A caller whose why carries a string the PEER chose passes its own `key` in place of the why (the
+   *  unknown-slot row: UNKNOWN_SLOT_KEY and the build), so the set's size is this side's to bound (Conn.saidDelta says
+   *  the bound). No time window: the event is what a window would approximate. The build is the /tunnels row's as
+   *  poll() last read it, one supervisor pass and one poll behind the remote's real build, so a reason that first fires on
+   *  a redialed socket inside that lag files under the old build and again under the new one when the poll lands it: at
+   *  most one extra row per (conn, slot, reason) per change of the row's sha (a deploy the hub's row records), never per
+   *  poll window (a poll that re-reads the same sha adds no key) and never a third through "" (the row keeps the last
+   *  successful probe's sha while the peer is down: kernel.py _remote_public). A fix followed by a rollback is the design,
+   *  not a limitation: the key names a state (this conn, slot, reason and build), and a rollback to a build with the same
+   *  reason returns to a state already said, so no row. */
+  private sayDeltaOnce(conn: Conn, ev: string, why: string, key: string = why): boolean {
+    const k = JSON.stringify([ev, key]);
+    const said = (conn.saidDelta ||= new Set<string>());
+    if (said.has(k)) return false;
+    said.add(k);
+    return true;
+  }
+
+  /** The remote's build for a breadcrumb's `why` (" @<sha>", the /tunnels row's kernelSha as poll() last read it;
+   *  Conn.peerSha), "" when the row names none. Inside `why` and not a field of its own: the family's admitted keys have
+   *  none for a peer's build (buildId is the feed counter's), and the kernel's table is untouched. */
+  private peerTag(c: Conn): string { return c.peerSha ? " @" + c.peerSha : ""; }
+  /** The same for a console line: " (its kernel at <sha>)", or "". */
+  private peerWord(c: Conn): string { return c.peerSha ? " (its kernel at " + c.peerSha + ")" : ""; }
 
   // The remote socket's URL, carrying THIS page's own dial terms for its app so a federated pane is served
   // the way the local pane is (the design in plans/federated-pane-dial-terms.md): a bare
@@ -1744,7 +1977,13 @@ export class FederationManager {
   // remote knows. reconnect=1&proto rides a REDIAL that already got a ready acked (the shim's
   // everConnected && bundleReady && readyAcked gate: the remote served this page whole and holds its
   // sessions), so the remote holds what it served this page and skeletons the rest; a socket that opened but
-  // never got a ready acked dials as a first dial, holding nothing to reconnect to.
+  // never got a ready acked dials as a first dial, holding nothing to reconnect to. `caps` is this manager's
+  // own term, not one of the page's (REMOTE_DIAL_CAPS): it names what THIS side decodes on a frame from that
+  // host, so the remote kernel serves its feed as feedDelta frames, which the feedDelta branch applies per
+  // host, instead of the view-delta slot frames (2026-09-18; the conn's receiver reassembles those too since later
+  // that day, but the slot path costs the remote a re-encode of every card per build). `delta` stays among the
+  // page's terms on purpose: it puts the remote's timeline bars on the view-delta path, where a change costs one
+  // patch instead of the whole bars frame and its 60 s repost (kernel.py _DEDUP_REPOST_S) per remote host.
   private remoteDialUrl(conn: Conn, redial: boolean): string {
     const host = conn.host;
     const proto = location.protocol === "https:" ? "wss://" : "ws://";
@@ -1752,7 +1991,8 @@ export class FederationManager {
     let t: any = null;
     try { const f = (window as any).__rompDialTerms; if (typeof f === "function") t = f(); } catch (e) { /* no terms → the bare dial, the pre-2026-09-15 behaviour */ }
     let url = `${proto}${location.host}/remote/${encodeURIComponent(host)}/ws?app=${encodeURIComponent(this.app)}`
-      + (w ? `&wid=${encodeURIComponent(w)}` : "");
+      + (w ? `&wid=${encodeURIComponent(w)}` : "")
+      + `&caps=${encodeURIComponent(REMOTE_DIAL_CAPS)}`;
     if (t) {
       if (t.delta) url += "&delta=1";
       if (t.iid) url += `&iid=${encodeURIComponent(this.iidNamespace() + ":" + t.iid)}`;
@@ -1811,6 +2051,28 @@ export class FederationManager {
     conn.connT = Date.now();
     conn.lastRecv = 0;
     conn.resumeProvisional = 0;   // a fresh socket starts unmarked: the provisional rule was the resumed socket's
+    // …and with no base: the slot receiver and the raw feed base belong to the SOCKET (view-deltas.ts, one instance per
+    // socket, as the extension's pipe mints one per dial), so a replacement socket's first patch cannot apply onto the
+    // dead socket's half-assembled slot (2026-09-19). Latent against every kernel in this repo, whose dstate is per
+    // connection and whose first frame on a fresh socket is whole; the reset costs nothing there and holds the
+    // contract for a peer that resumes a stream across a reconnect. Both fields are the CONN's (Conn.viewDeltas,
+    // Conn.feedRaw), so this reset reaches only the conn it was called for wherever it sits: a DETACHED conn's late
+    // retry (closeRemote cancels no timer, and a re-attach mints a new Conn) touches the dead conn's fields and never
+    // the re-attached conn's base. Until review round 5 the raw base was keyed by host, one slot for every conn the
+    // host ever had, and that same call above the guards would have deleted the live conn's base.
+    // HERE, below the guards, and not at the top: the poll, localUp and the watchdog dial only a conn whose socket is
+    // null or CLOSED, but a 2 s retry timer does not look first, and one can land on a conn whose socket is LIVE: the
+    // onclose redial armed by a dead socket whose conn the watchdog's "redial" verdict or a poll dialed again in the
+    // meantime, or the constructor-throw retry below after the same. Such a call returns at the connecting/open guard
+    // (the conn's own replacement socket is CONNECTING or OPEN), or at the first guard when the conn is detached
+    // (closed) or its /tunnels row went down (live false: poll() marks the conn down without closing its socket, so
+    // frames still arrive on it). Above either guard the reset would wipe the LIVE socket's base under the patches
+    // applying onto it, and the next patch would ask that kernel for the whole slot for nothing. Not in ws.onclose
+    // alone either: the watchdog's abandon nulls the dead socket's handlers before dialing, so an onclose reset never
+    // runs on that road. This reset is the socket's: it re-mints the receiver and drops the raw feed base. The
+    // conn-scoped latches are cleared or kept by connect() above, not here.
+    conn.viewDeltas = this.mintReceiver(conn.host);
+    conn.feedRaw = undefined;
     // a REDIAL only when the remote served this page whole before (everOpened && readyAcked) and the page has a
     // proto to name, mirroring the shim's everConnected && bundleReady && readyAcked gate; then reconnect=1 rides
     // the URL and this socket's open posts NO ready (the redial's dial term IS the handshake, see onopen)
@@ -1828,21 +2090,31 @@ export class FederationManager {
     ws.onopen = () => {
       this.dialEvent(conn.host, false);
       conn.everOpened = true;   // a socket for this conn has opened (the shim's everConnected): part of the redial gate in connect()
-      // settings queued while the socket was down go out FIRST — on the open event itself, never a
-      // timer — so nothing sent after the reconnect can overtake them (see flushPending). That is
-      // also why the relay-up dispatch below comes AFTER the flush: the chat's upload re-ship rides
-      // that event, and a re-shipped dropFile must not get ahead of a queued setting on this socket.
-      const flushed = this.flushPending(conn);
       // the chat wire this page speaks, told to THIS host's kernel once the page has said it (T323 stage 4b): the
       // bundle's own ready reaches the local kernel alone, so a remote kernel would otherwise never learn the protocol
       // and serve index frames over a floor'd list; an older remote kernel ignores the field and answers as before.
+      // FIRST on the open, before the pending flush below (2026-09-18): a kernel since that date takes the first frame
+      // of an unhandshaken chat socket of older vintage as a proto-1 handshake, and this page's dial (its namespaced
+      // iid) keeps its socket out of that rule; the order is the page's own closure all the same, so no kernel of any
+      // vintage can read a flushed setting as this socket's first word and serve it index frames before the ready.
+      // pageProto is known here whenever the bundle has said ready (it posts the ready synchronously at evaluation).
       // NOT on a REDIAL socket (dialedReconnect): its reconnect=1&proto in the URL IS the handshake, and a `ready`
       // here would run the remote's ready reset (_client_reset_chat_base), which pops `reconnect` with nothing to
       // re-arm the skeleton set, so the redial would be served the whole board (2026-09-15, the shim posts no ready
       // on its own redial for the same reason).
       if (this.pageProto !== null && !conn.dialedReconnect) { try { ws.send(JSON.stringify({ type: "ready", proto: this.pageProto })); } catch (e) { /* the next frame says */ } }   // the proto the page speaks, 1 included (low 2)
+      // a held needFull the ready's connect push answers is not flushed behind it, where it would serve the same session
+      // frame a second time (dropAsksTheReadyServes: every held ask on a dial with no skeleton term, the active tab's alone
+      // on a skeleton dial). Only when a ready went out just now: a redial posts none and keeps every ask (2026-09-18).
+      const moot = this.pageProto !== null && !conn.dialedReconnect ? this.dropAsksTheReadyServes(conn) : [];
+      // settings queued while the socket was down go out next, behind the ready and ahead of everything else, on the
+      // open event itself, never a timer, so nothing sent after the reconnect can overtake them (see flushPending). That
+      // is also why the relay-up dispatch below comes AFTER the flush: the chat's upload re-ship rides that event, and a
+      // re-shipped dropFile must not get ahead of a queued setting on this socket.
+      const flushed = this.flushPending(conn);
       this.diag("hostconn", flushed.length ? { host: conn.host, ev: "open", flushed }
                                            : { host: conn.host, ev: "open" });
+      if (moot.length) this.diag("hostconn", { host: conn.host, ev: "moot", pendingDropped: moot });   // the asks the ready served, by type, beside the open row: an entry never leaves the queue unjournaled
       conn.lastRecv = Date.now();   // the watchdog measures this socket's silence from ITS open
       // this host's owed replies just became reachable again — the chat re-ships its pending
       // uploads on exactly this event (T215 review finding 2026-09-01: a remote kernel's restart
@@ -1881,6 +2153,29 @@ export class FederationManager {
     };
   }
 
+  /** The held needFull asks the ready this open just posted makes moot, removed from the conn's queue before the flush;
+   *  returns their types for the journal. The remote's ready arm answers a ready with a connect push: on a dial with no
+   *  skeleton term that push serves this socket every session whole, so a needFull flushed behind the ready would reset
+   *  that session's base at the remote and serve the same frame a second time (one tail frame per held ask); on a
+   *  skeleton dial the push serves the dial's active tab alone, so only that tab's ask is moot, and a held ask for any
+   *  other tab (a click, or the idle prefetch, while the socket was down) is that tab's only load and stays, as does
+   *  every ask on a skeleton dial that names no active (the remote skeletons every tab then). Read from the dial this
+   *  socket made (conn.url), the terms the remote read. A redial posts no ready and drops nothing (2026-09-18, review
+   *  round 2 of the ready-first open). */
+  private dropAsksTheReadyServes(conn: Conn): string[] {
+    const q = new URLSearchParams(conn.url.split("?")[1] || "");
+    const skeleton = q.get("skeleton") === "1";
+    const active = q.get("active") || "";
+    const dropped: string[] = [];
+    for (const [k, m] of conn.pending) {   // deleting the current entry mid-iteration is spec-safe on a Map
+      if (!m || m.type !== "needFull") continue;
+      if (skeleton && (!active || m.id !== active)) continue;
+      conn.pending.delete(k);
+      dropped.push(m.type);
+    }
+    return dropped;
+  }
+
   /** One host's dial state changed: its relay socket's dial began (CONNECTING) or ended (open, closed, or
    *  abandoned by the watchdog), or the kernel's /tunnels poll reported its `dialing` flipping. The chat's
    *  host-down notice repaints its swirl on this event alone (render.ts syncHostOfflineFoot); the state
@@ -1901,6 +2196,7 @@ export class FederationManager {
     this.diag("hostconn", c.pending.size ? { host, ev: "detach", pendingDropped: pendingTypes(c) }
                                          : { host, ev: "detach" });
     c.closed = true;
+    c.feedRaw = undefined;   // the raw feed base goes with the conn (a late retry's closure holds the conn for 2 s; the frame need not ride along)
     try {
       c.ws && c.ws.close();
     } catch (e) {}
@@ -1927,6 +2223,8 @@ export class FederationManager {
     delete this.perHostSids[host];
     delete this.perHostFeed[host];
     delete this.perHostFeedAt[host];
+    // (the conn's view-delta receiver, the bars and feed slot bases it held, and its raw feed base went with the conn:
+    // this.conns.delete above, so a re-attach's first delta finds no stale base to apply onto)
     const hadTl = host in this.perHostTl || host in this.perHostTlBars;
     delete this.perHostTl[host];
     delete this.perHostTlBars[host];

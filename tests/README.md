@@ -61,12 +61,42 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   with a PytestConfigWarning (every worker until the venv path is inserted, the
   controller always, CI always); a module-level `warnings.filterwarnings` does not
   survive pytest's per-test `catch_warnings`. So `-p no:warnings` is no longer part of an
-  `-n` run. One more import-time leak reaches the postal suite the same way:
-  `tests/test_kernel_tunnels.py` sets `ROMP_POSTAL_PEERS=0` at module level and the
-  postal service reads it per call, so `test_postal_via_dedupe.py`'s
-  PeerRoutePrefersDirect resolve case answers an error instead of a relay in any run
-  that collects both. A red in one of these under `-n` is judged by the module
-  alone: `python3 -m pytest tests/<module>.py -q`.
+  `-n` run. One more import-time leak reached the postal suite the same way until
+  2026-09-18: `tests/test_kernel_tunnels.py` set `ROMP_POSTAL_PEERS=0` at module
+  level, the kernel and the postal service read it per call, and every worker imports
+  every collected module before it runs a test, so in any run that collected the
+  tunnels module `test_postal_via_dedupe.py`'s PeerRoutePrefersDirect resolve case
+  answered an error instead of a relay and `test_kernel_remote_identity.py`'s absorb
+  case missed its bus notice (5 of 6 full runs). The tunnels module now sets the value
+  per test (a setUp that saves what it found and registers the restore as a cleanup; a
+  tearDown restore is skipped when a subclass's setUp fails part-way, and the value
+  leaks the same way), both readers pin the default the same way (review round 2,
+  2026-09-18, moved their restores, `RemoteIdentity`'s and the dedupe module's
+  `_Seeded`'s, from tearDown onto a cleanup too, each with an executed pin that runs a
+  subclass setUp that raises), and `tests/test_hermetic_kernel_postal.py` holds the
+  placement. The rule from now on has two halves, held differently. The import-time half
+  is pinned for every `.py` under `tests/`, walked recursively so `fixtures/` is read too
+  (941 files on 2026-09-18: 925 `test_*.py`, 13 helpers beside them and 3 under
+  `fixtures/`; the test checks its glob against an independent walk, so no file is
+  silently unscanned): no module-level write of `ROMP_POSTAL_PEERS`, module-level `if`,
+  `try`, `for` and `with` bodies included, in every shape a write takes (a subscript
+  assignment, `setdefault`, `update` of a dict literal, of keywords or of a module-level
+  name bound to a dict literal, `|=`, `os.putenv`, through `os.environ` or any name bound
+  to it), and a write whose keys the scan cannot read fails the test naming the file and
+  line rather than passing unread (review round 2: the subscript and `setdefault` alone
+  had left a module-level `update` invisible). A module-level `pop` is outside that pin:
+  unset is the production default and what a clean shell gives every module. The
+  per-test half, set in setUp and put back by a cleanup registered right after the write
+  (`restore_env` from `tests/conftest.py`, or a method of the class), is a convention and
+  not a pinned rule: the hermetic module checks it for the tunnels module alone. The same
+  shape leaked `ROMP_SESSIONS_FILE` from `test_postal_bus_lifetime.py` (a tearDown that
+  put back only a prior value; fixed 2026-09-18 with a cleanup and a pin that runs the
+  case). conftest's
+  `_shared_state_restored` names such a leftover, but only in a run that collects no
+  module writing the seam at import, so the module alone is the run that shows it.
+  `ROMP_POSTAL_PORT` is the one postal leg the kernel reads at import, and it stays
+  before the load. A red in one of these under `-n` is still judged by the module alone:
+  `python3 -m pytest tests/<module>.py -q`.
 - **`*.bats`** — the shell surfaces: `bin/romp`, the launch chain, hooks,
   postal CLI. Keep them GNU/BSD-portable (CI runs bats on ubuntu).
   Run: `bats tests/*.bats`.
@@ -111,7 +141,13 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   BOTH this and pytest on every kernel change.
 - **`manager-*.test.js`** — the node supervisor (`bin/romp-manager`): restart
   gating, the kernel registry, and the drain-poll handshake. Run:
-  `node --test tests/manager-*.test.js`.
+  `node --test tests/manager-*.test.js`. The runner runs the files
+  concurrently, so a file that starts a real manager takes its ports from
+  `tests/manager-ports.js` (`freePort(__filename)`), which owns a disjoint
+  block per file and probes inside it; a listen-on-zero pick was handed to two
+  files at once in the window between its close and the manager's bind.
+  `manager-ports.test.js` pins the table against the files on disk, so a new
+  `manager-*.test.js` needs a block there before it runs.
 - **`ui-bench.test.mjs`** — the dashboard pane bench (`tools/ui-bench.mjs`):
   the classifier, synthesizer, temp-path guard, recording client, front
   server, Handler-subprocess isolation, in-page instrument, profile fold, and

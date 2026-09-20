@@ -3,17 +3,18 @@
 // state-changing door (/restart-all, /restart, /stop, /ensure) now requires the kernel's serve token in
 // X-Romp-Token, read fresh per request from the same 0600 file the kernel gates its own writes with;
 // GET /status stays open; a manager that cannot read the token refuses writes (503), never opens them.
-// A real manager on an ephemeral loopback port with a stand-in kernel (tests/manager-down.test.js's
-// shape), a private state root, and invented tokens. Run: node --test tests/manager-token.test.js
+// A real manager on a loopback port from this file's own block (tests/manager-ports.js) with a stand-in
+// kernel (tests/manager-down.test.js's shape), a private state root, and invented tokens.
+// Run: node --test tests/manager-token.test.js
 'use strict';
 const { test, after } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const net = require('node:net');
 const http = require('node:http');
 const { spawn, spawnSync } = require('node:child_process');
+const { freePort } = require(path.join(__dirname, 'manager-ports'));
 
 const MGR = path.join(__dirname, '..', 'bin', 'romp-manager');
 // The module's STATE_ROOT is fixed at require time: a private root, and no env spelling of the token, so
@@ -26,15 +27,10 @@ const { writeGate, serveToken, readTokenFile, acceptedTokens, mintServeTokenIfAb
 
 const TOKEN = 'zq9-not-a-real-token-zq9';   // synthetic; the tests assert it never reaches a log or a body
 
-// A loopback port nothing holds right now: bound, then released. The window to the manager's own bind
-// is milliseconds; a fixed literal collides with a peer checkout's run every time.
-function freePort() {
-  return new Promise((resolve, reject) => {
-    const s = net.createServer();
-    s.on('error', reject);
-    s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => resolve(p)); });
-  });
-}
+// Every port a manager or a client below is given comes from freePort(__filename): a port in this file's
+// block that nothing holds, and never one this process was handed before. A local listen-on-zero probe
+// stood here until 2026-09-18, when manager-down.test.js's probe, running concurrently, was handed the
+// same number in the window between this probe's close and the manager's bind (the helper's header).
 
 // A real manager in a private world: its own state root (with or without a token file),
 // a stand-in kernel that stays up, and no ROMP_SERVE_TOKEN in its environment, so the FILE is the token.
@@ -56,14 +52,14 @@ async function manager({ token, profile, unreadable, symlink } = {}) {
   }
   const serve = path.join(dir, 'fake-serve');
   fs.writeFileSync(serve, `#!/bin/sh\nexec "${process.execPath}" -e "setInterval(() => {}, 1000)"\n`, { mode: 0o755 });
-  const port = await freePort(), servePort = await freePort();
+  const port = await freePort(__filename), servePort = await freePort(__filename);
   let profileRoot = '';
   if (profile) {
     profileRoot = path.join(dir, 'profile-state');
     fs.mkdirSync(profileRoot);
     fs.writeFileSync(path.join(profileRoot, 'serve-token'), profile.token + '\n', { mode: 0o600 });
     fs.writeFileSync(path.join(state, 'kernels.json'),
-      JSON.stringify({ kernels: [{ id: profile.id, port: await freePort(), stateDir: profileRoot }] }));
+      JSON.stringify({ kernels: [{ id: profile.id, port: await freePort(__filename), stateDir: profileRoot }] }));
   }
   const env = Object.assign({}, process.env, {
     PATH: bin, ROMP_CLI_SCOPE: '0',
@@ -319,7 +315,7 @@ test('every write door is behind the gate: /restart, /ensure and /stop without a
   const h = await manager({ token: TOKEN });
   try {
     const before = await h.kernel();
-    const extra = await freePort();
+    const extra = await freePort(__filename);
     for (const p of ['/restart', `/ensure?port=${extra}`, '/stop']) assert.equal((await h.req(p, 'POST')).code, 401, p);
     await h.sleep(400);
     const st = JSON.parse((await h.req('/status', 'GET')).body);   // the manager still answers: /stop did nothing
@@ -549,7 +545,7 @@ test('the control client with a token to send names the file it read and the way
 });
 
 test('the control client exits 1, not 3, when nothing answers: a closed port is no refusal', async () => {
-  const port = await freePort();
+  const port = await freePort(__filename);
   const env = Object.assign({}, process.env, { ROMP_MANAGER_PORT: String(port), ROMP_STATE_DIR: MODULE_STATE, ROMP_SERVE_TOKEN: 'zq9-any-zq9' });
   const r = await runClient(['down'], env);
   assert.equal(r.status, 1, r.stderr);

@@ -958,21 +958,21 @@ class ReadyGate(_DefaultPalette):
     def test_a_reveal_aimed_at_a_held_chat_pane_parks_and_lands_at_its_ready(self):
         # a targeted send to a page that is not listening is lost the same way; the reveal already had a
         # parking slot for "its chat pane has not connected yet", and a held pane is exactly "not yet"
-        saved = km._PENDING_REVEAL[0]
+        saved = dict(km._PENDING_REVEAL)
         c, sent = _client(caps=("readyGate",), app="chat")
         c["wid"] = "w5"; c["ready"] = False
         with km._clients_lock:
             km._clients.append(c)
         try:
-            km._PENDING_REVEAL[0] = None
+            km._PENDING_REVEAL.clear()
             self.assertFalse(km._reveal_request(SID, "w5"), "not delivered to a page with no listener…")
             self.assertEqual(sent, [])
-            self.assertEqual(km._PENDING_REVEAL[0], {"sid": SID, "wid": "w5"}, "…parked")
+            self.assertEqual(km._PENDING_REVEAL.get("w5"), {"sid": SID, "wid": "w5"}, "…parked")
             h = self._handler()
             h._dispatch_ws({"type": "ready"}, c)
             self.assertEqual(h.pushed, [c], "a chat pane gets its connect push")
             self.assertEqual([json.loads(x)["id"] for x in sent], [SID], "the parked reveal lands after it")
-            self.assertIsNone(km._PENDING_REVEAL[0])
+            self.assertEqual(km._PENDING_REVEAL, {})
             c2, sent2 = _client(caps=(), app="chat"); c2["wid"] = "w6"
             c2["ready"] = True     # a cap-less socket is stamped ready at the accept (the fixture skips it); T312's reveal
                                    # targeting reads that stamp (upstream's `c.get("ready")`, 2026-09-15)
@@ -987,7 +987,7 @@ class ReadyGate(_DefaultPalette):
         finally:
             with km._clients_lock:
                 km._clients[:] = [x for x in km._clients if x is not c]
-            km._PENDING_REVEAL[0] = saved
+            km._PENDING_REVEAL.clear(); km._PENDING_REVEAL.update(saved)
 
     def test_the_ask_poll_and_the_parked_create_retry_skip_a_held_chat_pane(self):
         # The two pusher-side paths that reach chat clients outside _push — the live-ask poll and the

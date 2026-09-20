@@ -2,19 +2,19 @@
 // of tabs into four spaces a tab before it tokenizes, so a code token's text, and the code element's textContent mdBlock
 // copies from, carry spaces where the file has tabs: a Makefile recipe copied out of the rendered view pasted back with
 // spaces. The module reads each token's lines back out of the file through the rewrite. Exercised over the REAL marked: the
-// tokens come from marked.parse's walkTokens, the way mdBlock collects them, so the cases pin marked's own transformations
-// (the expansion, a list item's indent slice, a quote's stripped `> `, an indented block's four columns, CRLF) beside the
-// module's reading of them. Self-contained: marked and the module only. Synthetic documents throughout.
+// tokens come from the viewer's own parse (file-view.ts viewerHtml) through the walk mdBlock hands it, the way mdBlock collects
+// them, so the cases pin marked's own transformations (the expansion, a list item's indent slice, a quote's stripped `> `, an
+// indented block's four columns, CRLF) beside the module's reading of them. Synthetic documents throughout.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
-import { marked } from "marked";
+import { viewerHtml } from "./file-view";   // the viewer's parse, which runs the walk below as mdBlock's
 import { fenceSources, fenceCopyQueue, markedView, renderedFenceText, type Fence } from "./fence-source";
 
 const F = "```";
 /** The code tokens of `src` in document order, as mdBlock's walkTokens collects them. */
 const tokens = (src: string): Fence[] => {
   const out: Fence[] = [];
-  marked.parse(src, { walkTokens: (t) => { if (t.type === "code") { const c = t as { text: string; codeBlockStyle?: string }; out.push({ text: c.text, indented: c.codeBlockStyle === "indented" }); } } });
+  viewerHtml(src, (t) => { if (t.type === "code") { const c = t as { text: string; codeBlockStyle?: string }; out.push({ text: c.text, indented: c.codeBlockStyle === "indented" }); } });
   return out;
 };
 /** marked's own preprocessing, as its Lexer spells it: line endings to LF, then a line's leading tabs to four spaces each. */

@@ -2,10 +2,13 @@
 """T304: `romp restart-metrics` (cli/restart_metrics.py), the read-only reader of what kernel restarts do to
 the sessions. Hermetic: synthetic ledgers under a private state directory (placeholder uuids, TESTHOST, no
 live reads), every row kind the reader parses, the window arithmetic, the summary text, the live helpers on
-synthetic cgroup files and ps lines, and the JSON document's shape. Nothing here touches a kernel."""
+synthetic cgroup files and ps lines, and the JSON document's shape. Nothing here touches a kernel, and no test
+reads the machine's own hostname, login or home: every `--public` run replaces machine_probes with SYNTHETIC_PROBES
+or a probe list of its own."""
 import io
 import json
 import os
+import re
 import sys
 import tempfile
 import unittest
@@ -19,10 +22,62 @@ BIN = os.path.join(os.path.dirname(HERE), "bin")
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)
 rm = load_source("romp_restart_metrics", os.path.join(BIN, "romp-restart-metrics"))
+pp = rm.perf_public          # the public shape the --public flag applies (cli/perf_public.py)
 
 SID = "11111111-2222-4333-8444-000000000304"
 SID2 = "22222222-3333-4444-8555-000000000304"
 TZ = "UTC"
+# What the identifier scan learns in a `--public` run here, instead of this machine's strings: a run that read the
+# real hostname would refuse the print on any machine whose name is a token of the document (round 2 of the export's
+# review found two tests doing so)
+SYNTHETIC_PROBES = [("hostname", "testhost"), ("username", "tester"), ("home directory", "/home/tester")]
+
+
+def _keys_named(doc, name):
+    """The key paths of every dict holding a key named `name`, at any depth of `doc`; empty when none does."""
+    out = []
+
+    def walk(node, where):
+        if isinstance(node, dict):
+            if name in node:
+                out.append("/".join(str(p) for p in where))
+            for k, v in node.items():
+                walk(v, where + (k,))
+        elif isinstance(node, (list, tuple)):
+            for i, v in enumerate(node):
+                walk(v, where + (i,))
+    walk(doc, ())
+    return out
+
+
+# A clock stamp is a number inside a PLAUSIBLE EPOCH WINDOW: the seconds from 2017 to 2033, or the same span in
+# milliseconds; every stamp the fixture writes (2026) sits in the first, and no count or duration of the fixture reaches
+# either. The same windows as tests/test_perf_export.py, worded there over a floor of 1.5e9 until the served kernel's
+# glibc allocator figures passed it on CI's runner (round 5 of the export's review, 2026-09-18): a large number outside
+# the windows is a measurement the public form keeps on purpose, not a stamp.
+EPOCH_WINDOWS = ((1.5e9, 2.0e9), (1.5e12, 2.0e12))
+
+
+def _numbers(doc):
+    """[(path, value)] for every numeric leaf of `doc` (a bool is not a number)."""
+    out = []
+
+    def walk(node, where):
+        if isinstance(node, dict):
+            for k, v in node.items():
+                walk(v, where + (k,))
+        elif isinstance(node, (list, tuple)):
+            for i, v in enumerate(node):
+                walk(v, where + (i,))
+        elif isinstance(node, (int, float)) and not isinstance(node, bool):
+            out.append(("/".join(str(p) for p in where), node))
+    walk(doc, ())
+    return out
+
+
+def _stamps(doc):
+    """The numeric leaves of `doc` that read as an absolute clock stamp: inside one of the EPOCH_WINDOWS."""
+    return [(p, v) for p, v in _numbers(doc) if any(lo <= v <= hi for lo, hi in EPOCH_WINDOWS)]
 D0 = rm.day_start("2026-09-10", TZ)          # the anchor day, midnight UTC
 
 
@@ -308,19 +363,24 @@ class Document(unittest.TestCase):
         hostname is a personal identifier, so the default header names 'this machine' and the hostname
         appears nowhere unless --label passes it; and no em-dash anywhere in the summary."""
         import socket
-        host = (socket.gethostname() or "").split(".")[0]
-        doc = rm.collect(self.state, kind="week", anchor="2026-09-10", tz=TZ, live=False)
+        # the hostname is pinned to a synthetic one for the read AND for the collect and the summary, so the test reads
+        # no real machine string (the module docstring's promise) and cannot fail on a machine named after a token of
+        # the document (round 3 of the export's review: a first label of `web` failed it, the fixture's session name)
+        with mock.patch.object(socket, "gethostname", return_value="TESTHOST.example"):
+            host = (socket.gethostname() or "").split(".")[0]
+            doc = rm.collect(self.state, kind="week", anchor="2026-09-10", tz=TZ, live=False)
+            text = rm.summary(doc)
+            labelled = rm.collect(self.state, kind="week", anchor="2026-09-10", tz=TZ, live=False, label="web box")
+            labelled_text = rm.summary(labelled)
+        self.assertEqual(host, "TESTHOST")
         self.assertEqual(doc["label"], "this machine")
         self.assertNotIn("host", doc, "no host field at all: the document names itself by label only")
-        text = rm.summary(doc)
         self.assertIn("restart metrics: this machine, week windows", text)
-        if host:
-            self.assertNotIn(host, text)
-            self.assertNotIn(host, json.dumps(doc))
+        self.assertNotIn(host, text)
+        self.assertNotIn(host, json.dumps(doc))
         self.assertNotIn("\u2014", text)
         self.assertNotIn("\u2014", json.dumps(doc))
-        labelled = rm.collect(self.state, kind="week", anchor="2026-09-10", tz=TZ, live=False, label="web box")
-        self.assertIn("restart metrics: web box,", rm.summary(labelled))
+        self.assertIn("restart metrics: web box,", labelled_text)
 
     def test_no_em_dash_in_any_string_of_the_reader_or_the_report(self):
         """Every string literal of the two modules, docstrings included (--help prints the module docstring's
@@ -371,6 +431,318 @@ class Document(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIn("restart metrics", out.getvalue())
         self.assertEqual(rm.main(["--since", "not-a-date", "--no-live", "--state", str(self.state)]), 2)
+
+
+def _plant_free_text(state: Path):
+    """The restart document's free-text fields on the fixture's rows, as ONE-TOKEN values: a cut row's drainError
+    and reasonError (exception messages) and an event row's text (problem_row's prose). A longer message folds to
+    `other` by the grammar alone; a one-token message of at most 32 characters passes it, so only the denylist
+    keeps the fields out (the export's review, 2026-09-18). Planted on the second cut row and the drain event, so
+    no count the other cases assert moves."""
+    for name, match, fields in (("restart-cuts.jsonl", ("reason", "p2p-update"), {"drainError": "TESTHOST", "reasonError": "boom42"}),
+                                ("session-events.jsonl", ("kind", "drain.unjoined"), {"text": "TESTHOST"})):
+        rows = (state / name).read_text().splitlines()
+        out = []
+        for ln in rows:
+            try:
+                r = json.loads(ln)
+            except ValueError:
+                out.append(ln)
+                continue
+            if isinstance(r, dict) and r.get(match[0]) == match[1]:
+                r.update(fields)
+            out.append(json.dumps(r))
+        (state / name).write_text("\n".join(out) + "\n")
+
+
+# The three opaque ids of the user's conversation objects a host fault row relays: kernel/session_host.py's
+# hook-self-answered line carries them, sdk_backend forwards the line through problem_row into session-events.jsonl,
+# and events.recent is those rows raw. Each fits the ident grammar, the tool use's id at its 32-character limit,
+# so only the denylist keeps them out (the fourth review round, 2026-09-18).
+HOST_FAULT_IDS = {"requestId": "req_7_c0ffee", "callbackId": "hook_3", "toolUseId": "toolu_01Ab3dEf5gHi7jKl9mNo1pQr3s"}
+
+
+def _plant_host_fault_row(state: Path, t):
+    """One host.hook-self-answered row in the relay's shape (append_session_event: t, pid, kind, sid, name, the prose
+    under text, then the host line's own fields), appended to the fixture so no count the other cases assert moves."""
+    row = {"t": t, "pid": 102, "kind": "host.hook-self-answered", "sid": SID, "name": "web",
+           "text": "the host answered a PreToolUse hook for web itself after 4.5 s with no kernel attached",
+           "event": "PreToolUse", "parkedS": 4.5}
+    row.update(HOST_FAULT_IDS)
+    with open(state / "session-events.jsonl", "a") as f:
+        f.write(json.dumps(row) + "\n")
+
+
+class PublicForm(unittest.TestCase):
+    """`--json --public` (2026-09-18): the document's paste-safe form through cli/perf_public.py, the shape `romp perf
+    export --public` writes. The fixture's session names (web, api) ride the cut rows' cutSessions lists and the
+    buckets' cutSessions counts, the sids and pids ride the events, the label is free text, and a cut row's
+    drainError and reasonError and an event row's text are planted as one-token messages (_plant_free_text), and one
+    case appends a host fault row carrying the three opaque conversation ids (_plant_host_fault_row); none may
+    survive, while the counts they stood beside do. Before the flag, argparse refused `--public`. Since 2026-09-18
+    every ABSOLUTE clock stamp goes too, whatever its key (`t`, the second of each restart, boot, quiet window,
+    kernel-series point and event, and the same stamps under other names: auditT, firstServe, reconcileDone, a quiet
+    window's since and restartT, the range's since and until), the live block's port goes, and the kernel's uptime is
+    rounded down to whole minutes; the bucket bounds (start, end: day or week boundaries in the chosen zone) are the one
+    stamp kept. The rule (round 3): the public form is paste-safe, not unlinkable. Durations (outageS, settleS, waitedS)
+    and every count and distribution stay, so two documents from one machine remain linkable through them by design."""
+
+    def setUp(self):
+        self.state = Path(tempfile.mkdtemp())
+        _fixture(self.state)
+        _plant_free_text(self.state)
+
+    def _public(self, *extra):
+        out = io.StringIO()
+        with redirect_stdout(out), mock.patch.object(pp, "machine_probes", return_value=SYNTHETIC_PROBES):
+            rc = rm.main(["--json", "--public", "--anchor", "2026-09-10", "--tz", TZ, "--no-live", "--state", str(self.state)] + list(extra))
+        self.assertEqual(rc, 0)
+        return json.loads(out.getvalue())
+
+    def test_no_session_name_id_pid_scope_or_label_survives_and_the_counts_do(self):
+        doc = self._public("--label", "TESTHOST")
+        text = json.dumps(doc)
+        for planted in ('"web"', '"api"', SID, SID2, SID[:8], "TESTHOST", "this machine", "cutSessions", '"label"', '"pids"', '"sid"', '"name"',
+                        "boom42", "drainError", "reasonError", '"text"'):
+            self.assertNotIn(planted, text, planted)     # the names as JSON tokens: `api` is a substring of the apiS latency key
+        self.assertIs(doc["public"], True)
+        self.assertEqual(doc["schema"], 1)
+        self.assertNotIn("generatedAt", doc)
+        first = doc["restarts"][0]
+        self.assertEqual((first["cutTurns"], first["stopped"], first["reason"]), (2, 5, "other"), "the count stays, the names go, free text folds")
+        self.assertNotIn("pid", first)
+        self.assertEqual(doc["restarts"][1]["reason"], "p2p-update", "a reason that is an identifier stays")
+        self.assertEqual(sorted(k for k in doc["restarts"][1] if k in ("drainError", "reasonError", "stopped")), ["stopped"],
+                         "the two exception-message fields go whatever their value; the count beside them stays")
+        drains = [e for e in doc["events"]["recent"] if e.get("kind") == "drain.unjoined"]
+        self.assertEqual(drains, [{"kind": "drain.unjoined", "inflight": 1, "reaped": True}],
+                         "the event row's prose and its stamp go, its flat counters stay")
+        self.assertEqual(_keys_named(doc, "t"), [], "no row keeps its wall-clock second")
+        self.assertEqual(len(doc["restarts"]), 3, "the rows themselves stay, in order")
+        self.assertEqual(doc["restarts"][0]["boot"]["settleS"], 0.2)
+        self.assertEqual(rm.public_form({"restarts": [{"drainError": "boom", "reasonError": "TESTHOST", "stopped": 1}],
+                                         "events": {"recent": [{"kind": "crash.heal", "text": "boom", "attempt": 1}]}}),
+                         {"restarts": [{"stopped": 1}], "events": {"recent": [{"kind": "crash.heal", "attempt": 1}]}, "public": True})
+        b = [x for x in doc["buckets"] if x["key"] == "2026-09-10"][0]
+        self.assertEqual((b["restarts"], b["cutTurns"], b["cleanRestarts"]), (2, 3, 0))
+        self.assertEqual(b["reasons"], {"manager-sigterm": 1, "p2p-update": 1})
+        self.assertEqual(doc["window"], {"kind": "day", "anchor": "2026-09-10", "tz": TZ})
+        self.assertEqual(sorted(doc["sources"]["turns"]), ["present", "rows"], "the file NAME is a path key and goes")
+        recent = doc["events"]["recent"]
+        self.assertTrue(recent and all("sid" not in e and "name" not in e and "pids" not in e for e in recent), recent)
+        # the host.attached rows carry hostPid and cliPid, the stale-heartbeat row a leasePid: a pid under any spelling
+        # goes wherever it sits (a substring test over the JSON, so a nested one is caught too)
+        for spelled in ("hostPid", "cliPid", "leasePid", '"pid"', '"ppid"', "managerPid"):
+            self.assertNotIn(spelled, text, spelled)
+        attached = [e for e in recent if e.get("kind") == "host.attached"]
+        self.assertEqual(len(attached), 3, "the rows stay, their pids go")
+        self.assertEqual(attached[0], {"kind": "host.attached", "boot": True, "replayFrom": 3}, "the row's second goes with its pids")
+        self.assertEqual(doc["events"]["byKind"]["reconcile.duplicate-cli"], 1)
+        self.assertEqual(doc["notes"], ["other", "other"], "prose is not an identifier")
+        problems = pp.paste_problems(doc, planted=(SID, SID2, "TESTHOST", "this machine", "boom42"))   # the walk's probes are substrings
+        self.assertEqual(problems, [], "%d leak(s):\n  %s" % (len(problems), "\n  ".join(map(str, problems))))
+
+    def test_no_absolute_clock_stamp_survives_except_the_bucket_bounds(self):
+        """The rule (round 3, 2026-09-18): the public form removes every ABSOLUTE clock stamp under whatever key. Denying
+        `t` alone left the same stamps under other names: a quiet window's restartT was the released restart's t
+        verbatim, its since the parked stamp (since plus waitedS is the row's t), a restart's auditT, a boot's firstServe
+        and reconcileDone (firstServe minus outageS is the denied cut's t), the range's since and until. Pinned as the
+        PROPERTY, not as key names: a walk over the printed document finds no numeric leaf inside an epoch window
+        (EPOCH_WINDOWS) outside buckets[].start and buckets[].end, the day or week bounds in the chosen zone, coarse and
+        documented (they do reveal the zone's UTC offset). Durations stay, and so does a large number outside the
+        windows, a measurement. Fails before: fifteen leaves survived."""
+        doc = self._public("--since", "2026-09-10", "--until", "2026-09-13")
+        bounds = sorted("buckets/%d/%s" % (i, k) for i in range(len(doc["buckets"])) for k in ("start", "end"))
+        self.assertTrue(bounds, "the fixture fills buckets")
+        survivors = _stamps(doc)
+        self.assertEqual(sorted(p for p, _ in survivors), bounds,
+                         "an absolute stamp survives outside the bucket bounds (a large number outside the epoch windows is a "
+                         "measurement the public form keeps on purpose and is not listed here):\n  %s"
+                         % "\n  ".join("%s = %r" % s for s in survivors))
+        for i, b in enumerate(doc["buckets"]):
+            self.assertEqual((b["end"] - b["start"]) % 86400, 0, "a bound pair spans whole days")
+        # the raw document's stamps (every number inside an epoch window off the bucket bounds) equal no number the public form keeps
+        out = io.StringIO()
+        with redirect_stdout(out):
+            rm.main(["--json", "--anchor", "2026-09-10", "--tz", TZ, "--no-live", "--state", str(self.state),
+                     "--since", "2026-09-10", "--until", "2026-09-13"])
+        raw = json.loads(out.getvalue())
+        raw_stamps = {v for p, v in _stamps(raw) if p not in bounds}
+        self.assertGreaterEqual(len(raw_stamps), 15, "the raw document carries the stamps the public form must not")
+        kept = {v for p, v in _numbers(doc) if p not in bounds}
+        self.assertEqual(raw_stamps & kept, set(), "a raw stamp survives under some key")
+        # durations and counts stay: they are the data, and two documents from one machine stay linkable through them
+        self.assertEqual(doc["restarts"][0]["boot"]["outageS"], 2.5)
+        self.assertEqual(doc["restarts"][0]["boot"]["settleS"], 0.2)
+        self.assertEqual([q["waitedS"] for q in doc["quietWindows"]], [297, 900])
+        self.assertEqual([q["cutTurns"] for q in doc["quietWindows"]], [2, 1], "the joined restart's count stays, its stamp goes")
+        self.assertEqual(doc["range"], {}, "since and until are user-typed day bounds the buckets already carry")
+        self.assertEqual(doc["buckets"][0]["start"], D0, "the bucket bounds are the documented exception")
+        for key in ("auditT", "firstServe", "reconcileDone", "restartT", "prevCutT", "since", "until"):
+            self.assertIn(key, pp.DENY_KEYS, key)
+        self.assertNotIn(("since",), pp.DENY_PATHS, "since is denied by key now, at any depth")
+
+    def test_week_buckets_keep_distinct_keys(self):
+        # the raw key is "week of YYYY-MM-DD", which the ident grammar folds to `other`, so every week would collapse
+        # into one unreadable bucket; the public form spells it week-of-YYYY-MM-DD before the fold
+        doc = self._public("--window", "week")
+        keys = [b["key"] for b in doc["buckets"]]
+        self.assertTrue(keys and all(re.fullmatch(r"week-of-\d{4}-\d{2}-\d{2}", k) for k in keys), keys)
+        self.assertEqual(len(set(keys)), len(keys))
+        self.assertEqual(doc["buckets"][0]["restarts"], 3)
+        self.assertEqual(doc["window"]["kind"], "week")
+
+    def test_the_generation_second_goes_with_generated_at(self):
+        # live.t is generatedAt under another key, to the second, and goes with every other `t` (the denylist's key);
+        # the kernel's uptime (a duration the counters are read against) stays, rounded down to whole minutes (to the
+        # second, beside the paste time, it placed the boot within a minute, a stamp constant for the life of the
+        # process), its start stamp and pid go; the port goes too (a kernel on a non-default ROMP_KERNEL_PORT made it a
+        # per-install constant no reader needs; round 3)
+        out = rm.public_form({"schema": 1, "generatedAt": 1757500000, "label": "TESTHOST",
+                              "live": {"t": 1757500000, "platform": "Linux", "sessionsCounted": 2,
+                                       "kernel": {"port": 29855, "pid": 4242, "started": 1757400000.0, "uptimeS": 100000.0,
+                                                  "kernelSha": "0123456789abcdef0123456789abcdef01234567", "bootId": "b1"}}})
+        self.assertEqual(out, {"schema": 1, "public": True,
+                               "live": {"platform": "Linux", "sessionsCounted": 2, "kernel": {"uptimeS": 99960}}})
+        self.assertIn("port", pp.DENY_KEYS)
+        self.assertEqual(rm.public_form({"live": {"skipped": True}})["live"], {"skipped": True})
+
+    def test_the_raw_document_still_carries_the_names_so_the_flag_is_what_removes_them(self):
+        out = io.StringIO()
+        with redirect_stdout(out):
+            rc = rm.main(["--json", "--anchor", "2026-09-10", "--tz", TZ, "--no-live", "--state", str(self.state)])
+        self.assertEqual(rc, 0)
+        doc = json.loads(out.getvalue())
+        self.assertEqual(doc["restarts"][0]["cutSessions"], ["web", "api"])
+        self.assertEqual((doc["restarts"][1]["drainError"], doc["restarts"][1]["reasonError"]), ("TESTHOST", "boom42"))
+        self.assertEqual([e["text"] for e in doc["events"]["recent"] if e.get("kind") == "drain.unjoined"], ["TESTHOST"])
+        self.assertNotIn("public", doc)
+
+    def test_the_opaque_ids_a_host_fault_row_relays_go_and_its_event_and_wait_stay(self):
+        """A session host's hook-self-answered line carries requestId, callbackId and toolUseId, opaque ids of the
+        user's conversation objects (a hook request, a hook callback, a tool use); the kernel relays the line into
+        session-events.jsonl through problem_row, and events.recent is those rows raw. Each id is one token of at
+        most 32 characters, so the grammar keeps it and only the denylist removes it (the fourth review round,
+        2026-09-18: a pre-existing pass-through this verb owns). Fails before: the three keys and their values were
+        printed verbatim in the public form. The row itself stays, with its hook event and its wait."""
+        for key, value in HOST_FAULT_IDS.items():
+            self.assertTrue(pp.IDENT.fullmatch(value), "%s fits the grammar, so only the denylist can keep it out" % key)
+        self.assertEqual(len(HOST_FAULT_IDS["toolUseId"]), 32, "a tool use's id sits at the grammar's length limit")
+        _plant_host_fault_row(self.state, D0 + 7200 + 120)
+        doc = self._public()
+        text = json.dumps(doc)
+        for key, value in HOST_FAULT_IDS.items():
+            self.assertNotIn('"%s"' % key, text, key)
+            self.assertNotIn(value, text, key)
+        rows = [e for e in doc["events"]["recent"] if e.get("kind") == "host.hook-self-answered"]
+        self.assertEqual(rows, [{"kind": "host.hook-self-answered", "event": "PreToolUse", "parkedS": 4.5}],
+                         "the row stays with its hook event and its wait; the ids, the prose, the pid and the stamp go")
+        self.assertEqual(doc["events"]["byKind"]["host.hook-self-answered"], 1)
+        for key, value in HOST_FAULT_IDS.items():
+            self.assertTrue(pp.denied(key, value), key)
+            self.assertIn(key, pp.DENY_KEYS, key)
+        # the raw document carries all three, so the flag is what removes them
+        out = io.StringIO()
+        with redirect_stdout(out):
+            rm.main(["--json", "--anchor", "2026-09-10", "--tz", TZ, "--no-live", "--state", str(self.state)])
+        raw = [e for e in json.loads(out.getvalue())["events"]["recent"] if e.get("kind") == "host.hook-self-answered"]
+        self.assertEqual([(e["requestId"], e["callbackId"], e["toolUseId"]) for e in raw],
+                         [(HOST_FAULT_IDS["requestId"], HOST_FAULT_IDS["callbackId"], HOST_FAULT_IDS["toolUseId"])])
+
+    def test_a_32_hex_token_on_an_event_row_refuses_the_print_the_way_the_export_refuses_the_write(self):
+        """events.recent is the one place raw ledger rows pass through, and a 32-hex token fits the identifier grammar,
+        so the fold keeps it as a key and as a value; the identifier scan does not know it. `romp perf export` refuses
+        such a document through check_document, which runs the paste walk beside the scan; this verb ran the scan alone
+        and PRINTED the token (the export PR's closing check, 2026-09-18). Both verbs now run
+        check_document: the print is refused, exit 1, nothing on stdout, and the refusal names the kind and the key
+        path of the shallowest finding (a value's own path; a key's the dict holding it) and never the token. Fails
+        before: the public run returned 0 with both tokens in its document. No writer today carries a nested object or
+        such a token on a session-events row; the fixture is the defensive case the check exists for."""
+        key_token, value_token = "d" * 32, "e" * 32
+        for token in (key_token, value_token):
+            self.assertTrue(pp.IDENT.fullmatch(token), "the token fits the grammar, so the fold keeps it")
+        self.assertEqual(pp.fold({"detail": {key_token: 1, "token": value_token}}), {"detail": {key_token: 1, "token": value_token}})
+
+        def plant(detail, t):
+            row = {"t": t, "pid": 102, "kind": "host.hook-self-answered", "sid": SID, "name": "web",
+                   "event": "PreToolUse", "parkedS": 1.0, "detail": detail}
+            with open(self.state / "session-events.jsonl", "a") as f:
+                f.write(json.dumps(row) + "\n")
+
+        def run(*flags):
+            err, out = io.StringIO(), io.StringIO()
+            with mock.patch("sys.stderr", err), redirect_stdout(out), \
+                    mock.patch.object(pp, "machine_probes", return_value=SYNTHETIC_PROBES):
+                rc = rm.main(["--json"] + list(flags) + ["--anchor", "2026-09-10", "--tz", TZ, "--no-live", "--state", str(self.state)])
+            return rc, out.getvalue(), err.getvalue()
+
+        def planted_rows(raw_text):
+            return [i for i, e in enumerate(json.loads(raw_text)["events"]["recent"]) if "detail" in e]
+
+        # the value alone: named by its own path
+        plant({"token": value_token}, D0 + 7200 + 130)
+        rc, raw, err = run()
+        self.assertEqual((rc, err), (0, ""), "the raw document is not checked")
+        self.assertIn(value_token, raw, "the raw run carries the value, so the flag is what refuses it")
+        (i,) = planted_rows(raw)
+        rc, out, err = run("--public")
+        self.assertEqual(rc, 1)
+        self.assertEqual(out, "", "nothing printed")
+        self.assertEqual(err, "romp restart-metrics: refused: the public form still fails the walk (a 32-hex token, "
+                              "the value at events/recent/%d/detail/token); nothing printed\n" % i)
+        # a second row with the token as a key: the dict holding it is one component shallower than the first row's
+        # value, so the key finding is the one named, whichever row came first
+        plant({key_token: 1, "token": value_token}, D0 + 7200 + 140)
+        rc, raw, err = run()
+        self.assertEqual(rc, 0)
+        i, j = planted_rows(raw)
+        self.assertIn('"%s": 1' % key_token, raw, "the raw run carries the key")
+        rc, out, err = run("--public")
+        self.assertEqual(rc, 1)
+        self.assertEqual(out, "", "nothing printed")
+        self.assertEqual(err, "romp restart-metrics: refused: the public form still fails the walk (a 32-hex token, "
+                              "a key under events/recent/%d/detail); nothing printed\n" % j)
+        for token in (key_token, value_token):
+            self.assertNotIn(token, out + err, "the token never reaches stdout or stderr")
+
+    def test_public_without_json_is_refused(self):
+        err = io.StringIO()
+        with mock.patch("sys.stderr", err):
+            rc = rm.main(["--public", "--no-live", "--state", str(self.state)])
+        self.assertEqual(rc, 2)
+        self.assertIn("--json --public", err.getvalue())
+
+    def test_a_machine_string_that_survives_the_fold_refuses_the_print(self):
+        # a real document has no machine string left after the fold (the label is dropped by the denylist before the
+        # scan), so the refusal leg is reached by patching public_form to plant a hostname-shaped key past the fold;
+        # the first leg pins that the label alone does not refuse, the third that a value the fold keeps (the
+        # window's tz, an identifier) is scanned too, through identifier_hits' value branch
+        probes = [("hostname", "testhost")]
+        with mock.patch.object(pp, "machine_probes", return_value=probes):
+            err, out = io.StringIO(), io.StringIO()
+            with mock.patch("sys.stderr", err), redirect_stdout(out):
+                rc = rm.main(["--json", "--public", "--anchor", "2026-09-10", "--tz", TZ, "--no-live", "--state", str(self.state),
+                              "--label", "TESTHOST"])
+            self.assertEqual(rc, 0, "the label is dropped by the denylist before the scan: nothing to refuse")
+            self.assertNotIn("TESTHOST", out.getvalue())
+            err, out = io.StringIO(), io.StringIO()
+            with mock.patch("sys.stderr", err), redirect_stdout(out), \
+                    mock.patch.object(rm, "public_form", side_effect=lambda d: dict(rm.perf_public.fold(d), TESTHOST=1)):
+                rc = rm.main(["--json", "--public", "--no-live", "--state", str(self.state)])
+            self.assertEqual(rc, 1)
+            self.assertEqual(out.getvalue(), "", "nothing printed")
+            self.assertIn("hostname", err.getvalue())
+            self.assertIn("a key under the root", err.getvalue())
+            self.assertNotIn("TESTHOST", err.getvalue(), "never the value")
+        # a value the fold keeps: the window's tz is an identifier, and a machine named like it is found there
+        with mock.patch.object(pp, "machine_probes", return_value=[("hostname", TZ.lower())]):
+            err, out = io.StringIO(), io.StringIO()
+            with mock.patch("sys.stderr", err), redirect_stdout(out):
+                rc = rm.main(["--json", "--public", "--anchor", "2026-09-10", "--tz", TZ, "--no-live", "--state", str(self.state)])
+        self.assertEqual(rc, 1)
+        self.assertEqual(out.getvalue(), "")
+        self.assertIn("(hostname) survives as the value at window/tz; nothing printed", err.getvalue())
+        self.assertNotIn(TZ, err.getvalue(), "the value is never printed")
 
 
 class LiveHelpers(unittest.TestCase):

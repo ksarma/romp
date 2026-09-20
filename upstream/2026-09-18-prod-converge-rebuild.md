@@ -1,11 +1,17 @@
 ---
 title: The in-place converge rebuild builds the production profile
-status: candidate
+status: merged
 where: kernel/kernel.py _rebuild_dist; tests/test_bundle_build_mode.py
 added: 2026-09-18
 pr:
 tier: fix
-offered:
-closed:
+offered: their PR #1881
+closed: 2026-09-19
 ---
 A bare node esbuild.js in _rebuild_dist served unminified bundles with sourcemaps after every fast-forward, and _ensure_bundles never re-minified them (mtime staleness, not profile). Same --production and ROMP_EXT_DEV_BUILD knob as the two other builders; test fails before.
+
+2026-09-18: approved for offer by the user (batch 2 of the 2026-09-18 plan; his answer covers the fix and docs entries of batches 2 to 7, batch by batch, features excluded). Filed stacked on new-route-effort-refusal-echo (shared file kernel/kernel.py); bar-wire-comment-fix's one line rides in this PR.
+
+2026-09-19: offered as their PR #1881 (batch 2 of the 2026-09-18 plan, stacked on #1872); the bar-wire-comment-fix entry rides in the same PR.
+
+2026-09-19: merged upstream at 09:14Z (01e7cf19e) by the project's maintainer; the scaffold and branch pair are closed and deleted.

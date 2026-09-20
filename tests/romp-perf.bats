@@ -10,7 +10,11 @@
 # processes (a restart inside the window) are not subtracted into negative rates, and a refused
 # token is named as such rather than reported as a dead kernel. Nothing here touches a real kernel:
 # curl is a stub that serves synthetic snapshots in turn and emits the status trailer the real one
-# is asked for (-w).
+# is asked for (-w). The one verb that does not go through curl is `romp perf export`, which delegates
+# to romp-perf-export (python, urllib): its cases pin ROMP_KERNEL_PORT at 1, a port nothing answers
+# on, so a case that reads the kernel fails loudly there instead of dialling the live port setup()
+# exports for the curl stub's URL assertions. --from reads no kernel: that a --from case passes on
+# the dead port is the proof.
 
 ROMP_SCRIPT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../bin" && pwd)/romp"
 
@@ -34,7 +38,9 @@ setup() {
     export SNAP_S="$TEST_DIR/s.json"
     export SNAP_OLD="$TEST_DIR/old.json"
     # A and B: the same kernel process ten seconds apart. Over the window: 20 cycles, 60 wakes, 6 s of
-    # cycle time (4 s of it in push, 3 s of that in the chat block), 300 ms of pusher CPU and 50 ms of
+    # cycle time (4 s of it in push, 3 s of that in the chat block), three connect pushes (a reload of
+    # three panes) totalling 21.5 s of handler-thread wall with 20 s of it in the chat block, which is
+    # apart from the pusher's cycle time and never a share of it, 300 ms of pusher CPU and 50 ms of
     # judge CPU inside 500 ms of process CPU, 2 chat rebuilds (one of the watched tab, one of a background
     # tab whose store component moved) against 18 cache hits, 3 builds not cached because an input moved
     # while they ran, 1 MB sent as chat
@@ -53,7 +59,9 @@ setup() {
              "allocated_blocks": 1000000, "gc_gen2": 10, "malloc": {"arena": 104857600, "hblkhd": 209715200, "uordblks": 83886080, "fordblks": 20971520}},
  "pusher": {"cycles": 100, "wakes": 300, "wakes_event": 250, "wakes_backstop": 50, "cycle_ms_sum": 30000.0,
             "cycle_ms_max": 900.0, "cycle_ms_last": 200.0, "cycle_cpu_ms_sum": 10000.0,
-            "cycle_ms_p50": 180.0, "cycle_ms_p90": 400.0, "cycle_ms_ring_max": 900.0, "ring_n": 100},
+            "cycle_ms_p50": 180.0, "cycle_ms_p90": 400.0, "cycle_ms_ring_max": 900.0, "ring_n": 100,
+            "connectPush": {"count": 10, "ms_sum": 5000.0, "ms_max": 900.0, "ms_last": 400.0, "byApp": {},
+                            "stagesMs": {"push.chat": 4000.0, "push.feed": 500.0, "push.timeline": 200.0, "push.send": 100.0}}},
  "stages_ms": {"jobs": 5000.0, "push": 20000.0, "push.chat": 15000.0, "push.feed": 3000.0, "push.timeline": 1000.0, "push.send": 500.0},
  "builds": {"chat": {"cached": 80, "built": 20, "ms": 800.0, "active_built": 12, "bg_built": 8, "moved": 0, "bg_miss": {"transcript": 5, "states": 2, "store": 1, "tasks": 0, "cut": 0, "row": 0, "cold": 1, "nosig": 0}}, "feed": {"cached": 90, "built": 10, "ms": 5000.0}, "timeline": {"cached": 95, "built": 5, "ms": 4000.0}, "feedJson": {"cached": 5, "built": 1, "ms": 300.0}},
  "sends": {"full": {"chat": {"count": 10, "bytes": 1000000}}, "delta": {"chat": {"count": 100, "bytes": 50000}}, "deduped": {"feed": {"count": 90, "bytes": 9000000}}},
@@ -84,7 +92,9 @@ JSON
  "pusher": {"cycles": 120, "wakes": 360, "wakes_event": 300, "wakes_backstop": 60, "cycle_ms_sum": 36000.0,
             "cycle_ms_max": 900.0, "cycle_ms_last": 250.0, "cycle_cpu_ms_sum": 10300.0,
             "wakes_live": 30, "held": 10, "held_ms": 3000.0, "exempt": 4,
-            "cycle_ms_p50": 190.0, "cycle_ms_p90": 420.0, "cycle_ms_ring_max": 700.0, "ring_n": 120},
+            "cycle_ms_p50": 190.0, "cycle_ms_p90": 420.0, "cycle_ms_ring_max": 700.0, "ring_n": 120,
+            "connectPush": {"count": 13, "ms_sum": 26500.0, "ms_max": 9000.0, "ms_last": 7000.0, "byApp": {},
+                            "stagesMs": {"push.chat": 24000.0, "push.feed": 1500.0, "push.timeline": 500.0, "push.send": 300.0}}},
  "stages_ms": {"jobs": 6000.0, "push": 24000.0, "push.chat": 18000.0, "push.feed": 3600.0, "push.timeline": 1200.0, "push.send": 600.0},
  "builds": {"chat": {"cached": 98, "built": 22, "ms": 880.0, "active_built": 13, "bg_built": 9, "moved": 3, "bg_miss": {"transcript": 5, "states": 2, "store": 2, "tasks": 0, "cut": 0, "row": 0, "cold": 1, "nosig": 0}}, "feed": {"cached": 108, "built": 12, "ms": 6000.0}, "timeline": {"cached": 114, "built": 6, "ms": 4800.0}, "feedJson": {"cached": 9, "built": 2, "ms": 450.0}},
  "sends": {"full": {"chat": {"count": 12, "bytes": 2048576}}, "delta": {"chat": {"count": 120, "bytes": 60000}}, "deduped": {"feed": {"count": 108, "bytes": 10800000}}},
@@ -170,6 +180,28 @@ teardown() { rm -rf "$TEST_DIR"; }
     [ "$status" -eq 0 ]
     # 0.5 s of process CPU in 10 s; 300 ms of it on the pusher thread, 50 ms in the judge threads
     [[ "$output" == *"cpu 5.0% of one core (pusher 3.0%, judge 0.5%, other 1.5%)"* ]]
+    [[ "$output" != *"not reported"* ]]                  # the fixtures' judge blocks carry cpu_ms_workers: the figure is the whole
+}
+
+@test "romp perf: a judge block with no cpu_ms_workers prints its CPU as not the workers' share, never 0.0 as fact" {
+    # the kernel opens judge.cpu_ms_workers when it arms judge.py's worker-CPU sink at load and serves it exactly while
+    # its collector holds the sink, so a block without the key is from a collector that is not the sink now (nothing
+    # armed it, or a later kernel load displaced it; a test process) and no workers' share lands in it from then on; the
+    # figure beside the note may still carry a share that landed while armed (a window that straddles the displacement),
+    # so the process line's judge share and the judge line's cpu/pass both say the share is not reported rather than
+    # print the figure as measured whole (the review ruling on the write-time fold, 2026-09-18; review round 2,
+    # 2026-09-19, aligned this copy with bin/romp's, kernel.py's and docs/reference.md's)
+    python3 - "$SNAP_A" "$SNAP_B" <<'PY'
+import json, sys
+for p in sys.argv[1:]:
+    d = json.load(open(p))
+    del d["judge"]["cpu_ms_workers"]
+    json.dump(d, open(p, "w"))
+PY
+    run "$ROMP_SCRIPT" perf --interval 0
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"cpu 5.0% of one core (pusher 3.0%, judge 0.5% (workers' share not reported), other 1.5%)"* ]]
+    [[ "$output" == *"cpu/pass 25 ms (workers' share not reported)   chain memo"* ]]
 }
 
 @test "romp perf: the memory line carries the window's deltas beside the levels, and the caches line the levels" {
@@ -252,14 +284,34 @@ PY
     [[ "$output" != *"max 900"* ]]                       # the lifetime max is not printed as a window figure
 }
 
-@test "romp perf: the stage line shows each stage's share of cycle time" {
+@test "romp perf: the stage line shows each stage's share of the pusher's cycle time, and the connect pushes apart" {
     run "$ROMP_SCRIPT" perf --interval 0
     [ "$status" -eq 0 ]
-    # 1 s of jobs, 4 s of push (3 s chat, 0.6 s feed, 0.2 s timeline, 0.1 s send) out of 6 s of cycles
+    # 1 s of jobs, 4 s of push (3 s chat, 0.6 s feed, 0.2 s timeline, 0.1 s send) out of 6 s of cycles: the pusher's own.
+    # The 20 s of chat the three connect pushes spent on handler threads is in no share (as one it would read 333% of the
+    # cycle time, or lift the chat share to 383%, the fold the stages_ms rows carried until 2026-09-18) and prints apart,
+    # as wall, beside the pushes' count and whole wall
     [[ "$output" == *"jobs  17%"* ]]
     [[ "$output" == *"push  67%"* ]]
     [[ "$output" == *"chat  50%"* ]]
     [[ "$output" == *"feed  10%"* ]]
+    [[ "$output" == *"send   2%)   connect pushes 3 in 21500 ms (chat 20000  feed 1000  timeline 300  send 200)"* ]]
+    [[ "$output" != *"333%"* ]]
+    [[ "$output" != *"383%"* ]]
+}
+
+@test "romp perf: a kernel from before the connect-stage table prints the connect pushes' count and wall and says the split is missing" {
+    python3 - "$SNAP_A" "$SNAP_B" <<'PY'
+import json, sys
+for p in sys.argv[1:]:
+    d = json.load(open(p))
+    del d["pusher"]["connectPush"]["stagesMs"]
+    json.dump(d, open(p, "w"))
+PY
+    run "$ROMP_SCRIPT" perf --interval 0
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"connect pushes 3 in 21500 ms (no stage split: a kernel from before 2026-09-18)"* ]]
+    [[ "$output" == *"chat  50%"* ]]                     # the pusher's shares print as before
 }
 
 @test "romp perf: builds, sends, goals, judge and http lines carry the window's deltas" {
@@ -421,4 +473,55 @@ assert lines[i + 1:i + 6] == ["    _pusher (kernel.py:100)", "    _job_stage (ke
     run "$ROMP_SCRIPT" help
     [ "$status" -eq 0 ]
     [[ "$output" == *"romp perf"* ]]
+    # the restart-metrics row names the flag this branch adds, the way docs/reference.md's row and the verb's
+    # own --help do (2026-09-18: the rendered row spelled [--json|--window day|week] and never said --public,
+    # so a user reading `romp help` had no way to learn the paste-safe form existed)
+    [[ "$output" == *"romp restart-metrics [--json [--public]|--window day|week]"* ]]
+    [[ "$output" == *"--public with --json: the paste-safe form"* ]]
+}
+
+@test "romp perf export: dispatches to romp-perf-export with its flags, which writes the public form of a saved snapshot" {
+    ROMP_KERNEL_PORT=1 run "$ROMP_SCRIPT" perf export --public --from "$SNAP_A" --out "$TEST_DIR/public.json"
+    [ "$status" -eq 0 ]                                  # on a dead port: --from reached no kernel
+    [[ "$output" == "$TEST_DIR/public.json ("*" bytes)" ]]
+    python3 - "$TEST_DIR/public.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert d["schema"] == "romp-perf-export/1", d.get("schema")
+assert "pid" not in d["perf"]["process"] and "now" not in d["perf"] and "log" not in d["perf"], sorted(d["perf"])
+assert d["perf"]["pusher"]["cycles"] == 100 and d["perf"]["http"]["GET /sessions"]["count"] == 5
+assert "GET /tick" not in d["perf"]["http"] and d["perf"]["http"]["other"]["count"] == 50, sorted(d["perf"]["http"])   # /tick is a POST route: a GET of it is outside the register
+assert "usage" not in d
+PY
+}
+
+@test "romp perf export: without --public the verb refuses with one line, exit 2, and writes nothing" {
+    ROMP_KERNEL_PORT=1 run "$ROMP_SCRIPT" perf export --from "$SNAP_A" --out "$TEST_DIR/public.json"
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"--public"* ]]
+    [[ "$output" == *"no raw mode"* ]]
+    [ "$(printf '%s\n' "$output" | wc -l)" -eq 1 ]
+    [ ! -f "$TEST_DIR/public.json" ]
+}
+
+@test "romp perf export: --usage adds the usage block, and the usage line names the verb" {
+    ROMP_KERNEL_PORT=1 run "$ROMP_SCRIPT" perf export --public --usage --from "$SNAP_A" --out "$TEST_DIR/public.json"
+    [ "$status" -eq 0 ]
+    python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["usage"]["kernelUptime"] == "lt1h", d["usage"]' "$TEST_DIR/public.json"
+    run "$ROMP_SCRIPT" perf --nope
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"romp perf export --public"* ]]
+    run "$ROMP_SCRIPT" help
+    [[ "$output" == *"romp perf export --public"* ]]
+}
+
+@test "romp perf export: without --from it dials ROMP_KERNEL_PORT, and a dead kernel fails LOUDLY with nothing written" {
+    ROMP_KERNEL_PORT=1 run "$ROMP_SCRIPT" perf export --public --out "$TEST_DIR/public.json"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"kernel not reachable on :1"* ]]
+    [ ! -f "$TEST_DIR/public.json" ]
+    ROMP_KERNEL_PORT=" 1" run "$ROMP_SCRIPT" perf export --public --out "$TEST_DIR/public.json"
+    [ "$status" -eq 1 ]                                  # not a port number: refused, never the default port instead
+    [[ "$output" == *"ROMP_KERNEL_PORT"* ]]
+    [ ! -f "$TEST_DIR/public.json" ]
 }

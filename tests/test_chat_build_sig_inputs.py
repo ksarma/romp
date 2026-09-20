@@ -34,6 +34,8 @@ import itertools
 import json
 import os
 import re
+import shutil
+import subprocess
 import tempfile
 import time
 import types
@@ -1517,10 +1519,26 @@ class Pusher(unittest.TestCase):
             return err.getvalue().count("push build: chat signature %s" % SID_B[:8])
         try:
             c0 = self._chat()
+            cs0 = km._chat_sig_stats_report()
             self.assertEqual(push(), 1, "the first cycle says it")
             self.assertEqual(push(), 0, "the second cycle, same fault: not again")
             self.assertEqual(push(), 0)
             self.assertEqual(self.built.count(SID_B), 3, "the tab builds every cycle while its key cannot be taken")
+            d = {k: v - cs0[k] for k, v in km._chat_sig_stats_report().items()}
+            self.assertEqual((d["pre"], d["nosig"], d["post"]), (6, 3, 1),
+                             "memos.chatSig (2026-09-18 review, low 11): a pre-build signature per tab per push, the raising tab's "
+                             "three under nosig; one post-build signature, the other tab's first build (a tab with no signature "
+                             "takes no post-build one)")
+            # the raising signature's reads fold too (_chat_sig_scope's finally): a direct call that raises moves stats and
+            # none of the loop's counts
+            b0 = km._chat_sig_stats_report()
+            with self.assertRaises(OSError):
+                km._chat_build_sig({"sid": SID_B, "name": "api", "path": str(self.tx[SID_B]), "anchor": SID_B}, None,
+                                   int(time.time()), live_map={})
+            d2 = {k: v - b0[k] for k, v in km._chat_sig_stats_report().items()}
+            self.assertFalse(km._CHAT_SIG_TL.active, "the scope closed on the raise: a stat after it on this thread counts on no signature")
+            self.assertGreaterEqual(d2["stats"], 2, "the transcript and the states file were stat'ed before the watch component raised")
+            self.assertEqual((d2["pre"], d2["post"], d2["nosig"]), (0, 0, 0), "a signature outside the push loop is not a loop count")
             self.assertEqual(self.built.count(SID_A), 1, "the other tab is served")
             self.assertNotIn(SID_B, km._built_chat, "never cached")
             self.assertEqual(self._delta(c0, self._chat())["bg_miss"].get("nosig"), 3)
@@ -1909,6 +1927,84 @@ class RecordedDependencies(unittest.TestCase):
         km._push([self.chat])
         ev = next(e for e in km._built_chat[SID_R][1]["events"] if e.get("uuid") == u)
         self.assertIn("notes/report.md", ev.get("pathLinks") or {}, "verified on its own text, not a prior message's")
+
+
+class GitChildrenForkedInsideASignature(_World):
+    """extra7-1 (2026-09-19 round-2 review): the uncountable-stats disclosure (the kernel's memos.chatSig block comment and
+    _PerfStats docstring, docs/reference.md, the ledger entry and the PR body) names the stats a signature's git CHILDREN
+    make, in another process, as outside memos.chatSig.stats, and the first cut attributed every such child to the cold
+    cwd memo (the kernel's block comment listing its two, rev-parse and remote get-url), missing the dependency tail's
+    own `git ls-files -co --exclude-standard` (_repo_file_index, forked by the tail's pre-check whenever the repo-index
+    key moved and no index is cached under it). The prose now
+    states the class, any git child a signature forks; this test is the derivation behind that sentence, by execution:
+    a spy on subprocess.Popen, the constructor every subprocess API goes through (run, call, check_output, Popen), records
+    every git child with whether the signature was open when it forked, over the real
+    _chat_build_sig through _World, in a git cwd (one commit, no remote) with a dependency record carrying one pending
+    path token. The cold pass forks the cwd components' three (`rev-parse --show-toplevel` for the tree, `rev-parse
+    --abbrev-ref HEAD` for the branch, `remote get-url origin` for the repository) and the tail's `ls-files`; the warm
+    pass none; a new top-level file moving the repo-index key exactly `ls-files`. Every fork ran with the signature open:
+    its wall lands on the row of the part that forked it (the tail's `ls-files` on `push.chat.sig.deps`, whose bracket
+    holds the pre-check) and its CPU on no row (`RUSAGE_THREAD` excludes a child). A new git child on the signature's
+    road must join the sets here while the prose class stays true."""
+
+    def _git(self, *args):
+        env = dict(os.environ, GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull, GIT_TERMINAL_PROMPT="0",
+                   GIT_AUTHOR_NAME="tester", GIT_AUTHOR_EMAIL="tester@example.invalid",
+                   GIT_COMMITTER_NAME="tester", GIT_COMMITTER_EMAIL="tester@example.invalid")
+        r = subprocess.run(["git", "-C", str(self.cdir), "-c", "init.defaultBranch=main", "-c", "commit.gpgsign=false"] + list(args),
+                           capture_output=True, text=True, timeout=60, env=env)
+        self.assertEqual(r.returncode, 0, "git %s: %s" % (" ".join(args), (r.stderr or "").strip()))
+
+    def test_the_git_children_a_signature_forks_are_pinned_by_execution(self):
+        if shutil.which("git") is None:
+            self.skipTest("git is not installed")
+        self._git("init", "-q")
+        (self.cdir / "notes.txt").write_text("the plan\n")
+        self._git("add", "notes.txt")
+        self._git("commit", "-q", "-m", "notes")
+        cwd = str(self.cdir)
+        top = os.path.realpath(cwd)
+        for memo in (km._tree_cache, km._repo_index_cache):        # the tree and index memos are keyed by the cwd string
+            memo.pop(cwd, None)
+        for memo in (km._top_shape, km._head_path_cache, km._repo_cache, km._config_path_cache, km._branch_cache):
+            memo.pop(top, None)                                    # the per-tree memos by the toplevel git names
+        self.assertEqual(km._cwd_of(SID), cwd, "premise: the names registry names this world's cwd, so the cwd components and the tail read this tree")
+        deps = {"task_outs": [], "pl_pending": [(SID, "see notes.txt for the plan")], "pl_at": (), "pl_check": None,
+                "postal_any": False, "postal_cards": [], "at_build": ((), (), None)}
+        forks, real_popen = [], subprocess.Popen
+
+        class SpyPopen(real_popen):
+            """The constructor every subprocess API goes through (run, call, check_call, check_output and Popen itself), so
+            a git child forked by any of them is recorded; a spy on subprocess.run alone missed a Popen child, and the kernel
+            forks git through Popen elsewhere (the round-3 review, 2026-09-19)."""
+
+            def __init__(self, argv, *a, **kw):
+                if isinstance(argv, (list, tuple)) and argv and argv[0] == "git":
+                    forks.append((list(argv), bool(km._CHAT_SIG_TL.active)))
+                super().__init__(argv, *a, **kw)
+
+        def subcommand(argv):
+            rest = list(argv[1:])
+            while rest[:1] == ["-C"]:
+                rest = rest[2:]
+            return tuple(rest)
+
+        def signature_pass():
+            del forks[:]
+            with mock.patch.object(km.subprocess, "Popen", SpyPopen):
+                self.assertIsNotNone(self.sig(deps=deps), "premise: the signature was taken")
+            self.assertEqual([subcommand(a) for a, inside in forks if not inside], [],
+                             "every git child the pass forked ran with the signature open")
+            return {subcommand(a) for a, _inside in forks}
+        ls_files = ("ls-files", "-co", "--exclude-standard")
+        self.assertEqual(signature_pass(), {("rev-parse", "--show-toplevel"), ("rev-parse", "--abbrev-ref", "HEAD"),
+                                            ("remote", "get-url", "origin"), ls_files},
+                         "the cold pass: the cwd components' three children and the dependency tail's ls-files")
+        self.assertEqual(signature_pass(), set(), "the warm pass: every memo holds, no child")
+        (self.cdir / "plan.md").write_text("# plan\n")           # a new top-level file: the repo-index key moves
+        os.utime(self.cdir)
+        self.assertEqual(signature_pass(), {ls_files}, "the moved-key pass: the tail re-lists the tree and nothing else forks")
+        self.assertEqual(signature_pass(), set(), "and the key holds again")
 
 
 if __name__ == "__main__":

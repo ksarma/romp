@@ -360,8 +360,10 @@ test("both outbound remote send sites route through sendRemote — no raw inline
   const outb = FED.slice(FED.indexOf("outbound(m: any): void {"), FED.indexOf("private dropWarn"));
   // T286: both sites go through the one sendTo helper, whose remote arm is sendRemote
   assert.match(outb, /for \(const h of hosts\) this\.sendTo\(h, m\);/);
-  assert.match(outb, /for \(const r of routes\) this\.sendTo\(r\.host, r\.msg\);/);
-  assert.match(outb, /private sendTo\(host: string, msg: any\): void \{[\s\S]*?this\.sendRemote\(host, msg\);/);
+  // the route loop keeps sendTo's word per route (a remote socket took the op) for the chat reveal outbound posts on a
+  // delivered jump alone (review round 3 of the parked-pane change, 2026-09-18); the remote arm is still sendRemote
+  assert.match(outb, /for \(const r of routes\) delivered = this\.sendTo\(r\.host, r\.msg\) \|\| delivered;/);
+  assert.match(outb, /private sendTo\(host: string, msg: any\): boolean \{[\s\S]*?return this\.sendRemote\(host, msg\);/);
   assert.doesNotMatch(outb, /readyState === 1\) c\.ws\.send/,
     "the old drop-if-not-open inline sends must not come back");
 });
@@ -526,7 +528,7 @@ test("redial stays LOCAL with its host INTACT: the local kernel owns the tunnel,
 });
 
 test("the classes are an explicit list: every held type is in BOOKKEEPING, a gesture and an unknown type are not, and a key never leaks a type-only collision across sessions", () => {
-  for (const t of ["activeTab", "needFull", "needSlot", "loadOlder", "loadAround", "loadTurns", "loadEpisode", "imgRequest", "commentSeen",
+  for (const t of ["activeTab", "needFull", "needSlot", "needFullFeed", "loadOlder", "loadAround", "loadTurns", "loadEpisode", "imgRequest", "commentSeen",
                    "dotHover", "hoverHighlight", "showAskPath", "timelineHover", "dirComplete",
                    "cardOpened", "locateDiag", "orderAudit"])
     assert.ok(BOOKKEEPING.has(t), t + " is held, not toasted");

@@ -514,8 +514,11 @@ class DeadWaitBlock(_HermeticDeadWait):
                           "a substantive ask keeps waiting for the real briefer")
 
     def test_wake_goal_routes_its_dormant_branch_here(self):
+        # The pin names the branch's current shape: the corroboration runs first and the block is filed on a confirmed death
+        # alone (jobs stage 1, review round 1: the dormantOwner clock note moved below the check, and the two calls became one
+        # condition on the firing return; the walk-gate tests pin the note's place, this one pins the routing).
         src = open(os.path.join(BIN, "romp-kernel")).read()
-        self.assertIn("return _dead_wait_block(sid, gid, at, why, nudged, now)", src)
+        self.assertIn("_dead_wait_corroborated(sid) is True and _dead_wait_block(sid, gid, at, why, nudged, now)", src)
         self.assertIn("_dead_wait_sweep(alive_ids, nudged, now)", src)
 
 

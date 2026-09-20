@@ -5,7 +5,9 @@ brings the chat forward. Pure-HTML + routing asserts; no real session data.
 """
 import json
 import os
+import shutil
 import subprocess
+import sys
 import unittest
 from romp_load import load_source
 import tempfile
@@ -18,6 +20,8 @@ os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 km = load_source("romp_kernel_mobile", os.path.join(BIN, "romp-kernel"))
+sys.path.insert(0, HERE)
+from test_pane_shim_return import HARNESS as _PANE_HARNESS   # noqa: E402  the pane shim's node fakes (never its TestCases), for the linked runs below
 
 
 def _mobile_js():
@@ -466,6 +470,7 @@ global.innerHeight = 844; global.innerWidth = 390; global.scrollY = 0;
 global.scrollTo = () => {};
 global.matchMedia = () => ({ matches: true });                 // a coarse pointer: the phone
 global.requestAnimationFrame = (f) => { RAF.push(f); return RAF.length; };
+global.setInterval = () => 0;   // D3 (2026-09-18): the shell socket's watchdog tick; a no-op here so node exits (ShellLinkProbe drives its own)
 global.addEventListener = on(WIN);
 global.visualViewport = { height: 844, scale: 1, addEventListener: on(VV) };
 const pane = (id) => ({ id, classList: { toggle() {} }, contentDocument: {},
@@ -657,6 +662,7 @@ global.window = global;
 global.innerHeight = 844; global.innerWidth = 390; global.scrollY = 0; global.scrollTo = () => {};
 global.matchMedia = () => ({ matches: true });
 global.requestAnimationFrame = () => 1;
+global.setInterval = () => 0;   // D3 (2026-09-18): the shell socket's watchdog tick, a no-op here so node exits
 global.addEventListener = on(WIN);
 global.visualViewport = { height: 844, scale: 1, addEventListener() {} };
 global.document = { visibilityState: 'visible', addEventListener() {}, body,
@@ -889,6 +895,481 @@ class MobileShellDiagExecutes(unittest.TestCase):
 
     def test_the_switch_is_read_at_each_row(self):
         self.assertEqual(self.out["e"], ["probe-i"])
+
+
+# ── the shell socket as the page's link probe (D3, 2026-09-18) ──────────────────────────────────────
+# The shell script runs under node against the fit harness's window plus controllable timers, a fake WebSocket
+# and a mutable clock (the pattern MobileShellDiagExecutes uses at PR 762's head). D3 makes the shell socket the
+# page's ONE link probe: one attempt in flight, a 15 s connect cut (SH_CONNECT_MS), the refused ladder 1/2/4/4 s
+# reset by an open, a return-probe row filed per return, and window.__rompLink for the panes to follow.
+_SHELL_PROBE_HARNESS = r"""
+var SHNOW=1000000;Date.now=function(){return SHNOW;};
+var SHTIMERS=[];global.setTimeout=function(fn,ms){SHTIMERS.push({fn:fn,ms:ms,live:true,at:SHNOW+ms});return SHTIMERS.length;};   // at: when the timer is due on the fake clock (shRunRefused walks them in order)
+global.clearTimeout=function(id){if(id&&SHTIMERS[id-1])SHTIMERS[id-1].live=false;};
+var SHINTERVALS=[];global.setInterval=function(fn,ms){SHINTERVALS.push({fn:fn,ms:ms});return SHINTERVALS.length;};
+global.location={protocol:'https:',host:'TESTHOST',search:''};
+global.sessionStorage={getItem:function(k){return k==='romp:wid'?'W1':'';}};
+var SHSOCKS=[];global.WebSocket=function(u){this.url=u;this.readyState=0;this.sent=[];SHSOCKS.push(this);};
+global.WebSocket.prototype.send=function(s){this.sent.push(s);};global.WebSocket.prototype.close=function(){this.readyState=3;};
+var TELLS=0,TELLLINKS=[];window.__rompPanesTell=function(){TELLS++;TELLLINKS.push(window.__rompLink().up);};   // count the shell's re-tells of the panes word (D3: open/close/abandon) and record the link each tell reads (review round 1: the publication order, the link reads up before the open's word)
+var LOST=0;window.__rompApiSocketLost=function(){LOST++;};   // the API health detail's hook: a press pending on the socket cannot be answered (review round 1: an abandon tells it too)
+function shSock(){return SHSOCKS[SHSOCKS.length-1];}
+function shOpen(){var s=shSock();s.readyState=1;s.onopen();return s;}
+function shRecv(m){shSock().onmessage({data:JSON.stringify(m)});}
+function shTick(){SHINTERVALS.forEach(function(iv){iv.fn();});}
+function shFireDoc(t){(DOC[t]||[]).forEach(function(f){f({type:t});});}
+function shHide(){document.visibilityState='hidden';shFireDoc('visibilitychange');}
+function shShow(){document.visibilityState='visible';shFireDoc('visibilitychange');}
+function shProbeRows(){var all=[];SHSOCKS.forEach(function(s){s.sent.forEach(function(x){var m=JSON.parse(x);if(m.type==='clientDiag'&&m.surface==='shell'&&m.what==='return-probe')all.push(m.data);});});return all;}
+function shDialTimers(){return SHTIMERS.filter(function(t){return t.live&&t.fn.name==='shellWS';});}
+function shFireDials(){shDialTimers().forEach(function(t){t.live=false;t.fn();});}
+// walk the fake clock timer by timer until `until`, refusing every dial the moment it is made (a fast-refusing path);
+// returns the most live shellWS timers seen at any moment (one chain reads 1; a doubled chain 2)
+function shRunRefused(until){var maxLive=0;function peek(){var n=shDialTimers().length;if(n>maxLive)maxLive=n;}
+peek();for(var guard=0;guard<1000;guard++){var live=shDialTimers();if(!live.length)break;
+var next=live[0];live.forEach(function(t){if(t.at<next.at)next=t;});if(next.at>until)break;
+SHNOW=Math.max(SHNOW,next.at);next.live=false;next.fn();var s=shSock();if(s.readyState===0){s.readyState=3;s.onclose({code:1006});}peek();}
+return maxLive;}
+function shRefuseNow(){var s=shSock();if(s.readyState===0){s.readyState=3;s.onclose({code:1006});}}
+function shOut(o){process.stdout.write(JSON.stringify(o));}
+"""
+
+
+def _run_probe(scenario):
+    node = shutil.which("node")
+    if not node:
+        raise unittest.SkipTest("node not installed")
+    fx = tempfile.mkdtemp()
+    path = os.path.join(fx, "run.js")
+    with open(path, "w") as f:
+        f.write(_FIT_HARNESS + _SHELL_PROBE_HARNESS + _mobile_js() + "\n" + scenario)
+    r = subprocess.run([node, path], capture_output=True, text=True, timeout=60)
+    if r.returncode != 0:
+        raise AssertionError("node failed:\n" + r.stderr)
+    return json.loads(r.stdout.strip().splitlines()[-1])
+
+
+# The shell script AND one pane's shim in one node process on one fake clock (review round 3, 2026-09-18): the pane's
+# parentLink() reads the window.__rompLink the shell really publishes, and the shell's tell hands the pane the panes
+# word broadcastAll builds (panesMsg's link field, up or down), so a case asserts the PANE's response to the shell's
+# stamp (a link-backstop row and a dial, or neither) rather than a connT number alone. The shell runs first, at module
+# scope against the global fakes, exactly as _run_probe runs it; the pane harness and the shim core run inside a
+# function scope, so their `var window`, `var document`, `var setInterval` and `function WebSocket` shadow nothing the
+# shell reads. From the scenario the shell's helpers (shOpen, shRecv, shTick, shHide, shShow, shSock, SHSOCKS,
+# shDialTimers) and the pane's (open, recv, tick, hide, show, sock, rows, sockets, awaitLink) are both in reach; the
+# shell's own publication is global.__rompLink(). One clock: advance NOW only (the glue points both at it).
+_LINK_GLUE = r"""
+SHNOW=NOW;Date.now=function(){return NOW;};   // one clock for the page (the shell's boot dial ran at SHNOW, the same 1,000,000)
+Object.defineProperty(window.parent,"__rompLink",{configurable:true,get:function(){return global.__rompLink;}});   // the pane reads the shell's real publication
+var shellTell=global.__rompPanesTell;global.__rompPanesTell=function(){shellTell();fireWin("message",{romp:"panes",on:{},link:global.__rompLink().up?"up":"down"});};   // the shell's tell reaches the pane as the panes word broadcastAll builds
+"""
+
+
+def _run_linked(scenario):
+    node = shutil.which("node")
+    if not node:
+        raise unittest.SkipTest("node not installed")
+    fx = tempfile.mkdtemp()
+    path = os.path.join(fx, "run.js")
+    with open(path, "w") as f:
+        f.write(_FIT_HARNESS + _SHELL_PROBE_HARNESS + _mobile_js() + "\n(function(){\n" + _PANE_HARNESS + km._shim_core_js() + "\n" + _LINK_GLUE + scenario + "\n})();\n")
+    r = subprocess.run([node, path], capture_output=True, text=True, timeout=60)
+    if r.returncode != 0:
+        raise AssertionError("node failed:\n" + r.stderr)
+    return json.loads(r.stdout.strip().splitlines()[-1])
+
+
+class ShellLinkProbe(unittest.TestCase):
+    """D3 (2026-09-18): the shell socket is the page's one link probe. It gets the shim's liveness rules with the
+    shell's OWN copy of the constants (romp-manager's ruling; tests/test_kernel_ws_heartbeat.py pins the two copies to
+    agree), files ONE return-probe row per return, and publishes window.__rompLink for the panes to follow. Run under
+    node against a fake WebSocket and controllable timers, the way MobileShellDiagExecutes runs the shell script.
+
+    Review round 1 (2026-09-18) added the executed cases the refuters found missing: the one-live-attempt guard, the
+    standing socket that files no probe, the watchdog's OPEN-quiet arm with the freeze and resume stamps, the two 250 ms
+    cadences, the publication order, the probe row's integers; and the three shell fixes of that round: one pending
+    redial timer (a dial clears it), the CLOSED arm that can fire (onclose keeps shWs), and the abandon that tells the
+    API health detail.
+
+    Review round 3 (2026-09-18) added the two linked cases at the tail (_run_linked: the shell script and one pane's shim
+    in one node process, the pane reading the shell's real publication), the loop-alive stamp's two halves, each pinned
+    by the pane's own response."""
+
+    def test_the_shell_dials_one_socket_with_the_dashboards_wid_and_publishes_the_link(self):
+        r = _run_probe(r"""
+var before=window.__rompLink();var tell0=TELLS;
+shOpen();var atOpen=window.__rompLink();var tellOnOpen=TELLS-tell0;
+shRecv({type:'ka'});
+SHNOW+=40000;var whenStale=window.__rompLink();   // no frame for >SH_STALE_MS: link reads down though the socket is OPEN
+shOut({socks:SHSOCKS.length,url:SHSOCKS[0].url,before:before,atOpen:atOpen,whenStale:whenStale,tellOnOpen:tellOnOpen});""")
+        self.assertEqual(r["socks"], 1, "one shell socket dialed at load (one live attempt)")
+        self.assertTrue(r["url"].startswith("wss://TESTHOST/ws?app=shell&wid="), r["url"])
+        self.assertIs(r["before"]["up"], False, "no link before the socket opens")
+        self.assertIs(r["atOpen"]["up"], True, "the socket open publishes the link up")
+        self.assertGreaterEqual(r["tellOnOpen"], 1, "the open re-tells the panes word")
+        self.assertIs(r["whenStale"]["up"], False, "__rompLink reads up only for an OPEN socket fresh within SH_STALE_MS")
+
+    def test_the_visibility_fast_path_probes_the_path_and_files_one_return_probe_row(self):
+        r = _run_probe(r"""
+shOpen();shRecv({type:'ka'});
+shHide();SHSOCKS[0].readyState=3;   // the socket died while the app was in the background
+SHNOW+=100;shShow();
+var dialedAtReturn=SHSOCKS.length;   // the fast path abandoned the dead socket and dialed a fresh one
+shOpen();   // the fresh socket opens: the return-probe row files at its open
+shOut({dialedAtReturn:dialedAtReturn,probe:shProbeRows()});""")
+        self.assertEqual(r["dialedAtReturn"], 2, "the fast path put the dead socket down and dialed at once")
+        self.assertEqual(len(r["probe"]), 1, "ONE shell return-probe row per return")
+        self.assertEqual(sorted(r["probe"][0].keys()), sorted(["decision", "hiddenMs", "quietMs", "attempts", "firstFailMs", "ms"]))
+        self.assertEqual(r["probe"][0]["decision"], "redial-closed", "a dead socket at the return")
+
+    def test_a_hung_attempt_is_cut_at_15s_and_one_attempt_is_in_flight(self):
+        r = _run_probe(r"""
+shOpen();shRecv({type:'ka'});
+shHide();SHSOCKS[0].readyState=3;SHNOW+=100;shShow();   // dial a fresh socket; the path hangs, so it stays CONNECTING
+var dialed=SHSOCKS.length;
+SHNOW+=5000;shTick();var beforeCut=SHSOCKS.length;      // <15 s: no cut, still ONE attempt in flight
+SHNOW+=11000;shTick();var cutRs=SHSOCKS[1].readyState;  // >15 s since the dial: the tick closes the CONNECTING socket
+SHSOCKS[1].onclose({code:1006});var armedAfterCut=SHSOCKS.length;   // the browser's onclose then arms the redial
+shFireDials();var afterRedial=SHSOCKS.length;
+shOut({dialed:dialed,beforeCut:beforeCut,cutRs:cutRs,armedAfterCut:armedAfterCut,afterRedial:afterRedial});""")
+        self.assertEqual(r["dialed"], 2, "one fresh attempt at the return")
+        self.assertEqual(r["beforeCut"], 2, "the tick does not dial a second while one attempt is in flight and young")
+        self.assertEqual(r["cutRs"], 3, "the 15 s connect cut closes the hung CONNECTING socket")
+        self.assertEqual(r["armedAfterCut"], 2, "its onclose arms a redial, no new socket yet")
+        self.assertEqual(r["afterRedial"], 3, "the redial dials the next single attempt")
+
+    def test_one_live_attempt_a_late_timer_calling_in_on_a_connecting_or_open_socket_dials_nothing(self):
+        # review round 1 (tests-2): the guard at the top of shellWS, exercised directly. A refused attempt arms the
+        # ladder timer; a return then dials at once and clears it (one chain), but a browser that had already queued
+        # the timer's callback can still call in late: with an attempt CONNECTING, and again with it OPEN, the guard
+        # dials nothing. Without the guard the same calls dial a second and a third concurrent socket.
+        r = _run_probe(r"""
+shOpen();shRecv({type:'ka'});
+shHide();SHSOCKS[0].readyState=3;SHNOW+=100;shShow();   // the fast path dials socket 2
+shRefuseNow();                                          // refused: the ladder timer arms (1 s)
+var late=shDialTimers()[0];                             // the callback a browser could still deliver late
+shHide();SHNOW+=100;shShow();                           // a second return: the fast path dials socket 3 (CONNECTING) and clears the timer
+var afterReturn=SHSOCKS.length,timerLive=late.live;
+late.fn();var afterLateCall=SHSOCKS.length;             // the late call finds one attempt CONNECTING: nothing
+shOpen();late.fn();shTick();var afterOpen=SHSOCKS.length;   // and OPEN: nothing (the tick's arms leave a fresh OPEN socket alone too)
+shOut({afterReturn:afterReturn,timerLive:timerLive,afterLateCall:afterLateCall,afterOpen:afterOpen});""")
+        self.assertEqual(r["afterReturn"], 3, "the second return dialed one fresh attempt")
+        self.assertIs(r["timerLive"], False, "the return's dial cleared the pending ladder timer (one chain)")
+        self.assertEqual(r["afterLateCall"], 3, "a late call into shellWS with an attempt CONNECTING dials nothing: one live attempt")
+        self.assertEqual(r["afterOpen"], 3, "...and with it OPEN, nothing")
+
+    def test_a_standing_socket_at_the_return_is_kept_and_files_no_return_probe(self):
+        # review round 1 (tests-3): the body's claim that `keep` never posts. The socket is OPEN and fresh at the
+        # return, so the fast path keeps it: no dial, no row. Reading the rows at the return alone would be vacuous (a
+        # probe files on the NEXT open), so a wrongly dialed socket is given the open that would file its row.
+        r = _run_probe(r"""
+shOpen();shRecv({type:'ka'});
+shHide();SHNOW+=100;shShow();                           // a short background with the socket standing
+var socks=SHSOCKS.length,rs=SHSOCKS[0].readyState;
+if(SHSOCKS.length>1)shOpen();                           // a socket the return should not have dialed gets its open
+shOut({socks:socks,rs:rs,rows:shProbeRows()});""")
+        self.assertEqual(r["socks"], 1, "the standing socket is kept: no dial at the return")
+        self.assertEqual(r["rs"], 1)
+        self.assertEqual(r["rows"], [], "and no return-probe row: a keep never posts")
+
+    def test_the_return_probe_row_carries_the_ladders_integers_with_the_clock_advanced(self):
+        # review round 1 (tests-7): the row's integers, asserted with the fake clock moving (with it still, firstFailMs
+        # and ms both read 0 and a kernel that hard-coded them would pass). Four refusals 500 ms apart, then the open.
+        r = _run_probe(r"""
+shOpen();shRecv({type:'ka'});SHNOW+=300;
+shHide();SHSOCKS[0].readyState=3;SHNOW+=100;shShow();   // hidden 100 ms, quiet 400 ms (review round 2: two gaps that differ, so no constant satisfies both); the fast path dials at once
+function refuse(){SHNOW+=500;shRefuseNow();shFireDials();}
+refuse();refuse();refuse();refuse();                    // four refusals: the ladder, each 500 ms after its dial
+SHNOW+=500;shOpen();                                    // the fifth attempt opens 2500 ms after the foreground
+shOut({probe:shProbeRows()});""")
+        self.assertEqual(len(r["probe"]), 1)
+        self.assertEqual(r["probe"][0], {"decision": "redial-closed", "hiddenMs": 100, "quietMs": 400, "attempts": 4, "firstFailMs": 2000, "ms": 2500},
+                         "hiddenMs and quietMs from the return, attempts the refusals, firstFailMs from the first refusal, ms foreground to open")
+
+    def test_a_refused_attempt_backs_off_on_the_1_2_4_4s_ladder_reset_by_an_open(self):
+        r = _run_probe(r"""
+shOpen();shRecv({type:'ka'});
+shHide();SHSOCKS[0].readyState=3;SHNOW+=100;shShow();
+var delays=[];
+function refuse(){var s=shSock();s.readyState=3;s.onclose({code:1006});delays.push(SHTIMERS[SHTIMERS.length-1].ms);shFireDials();}
+refuse();refuse();refuse();refuse();   // four fast refusals within the connect cut: the ladder
+var laddered=delays.slice();
+shOpen();   // an open resets the rung
+var s=shSock();s.readyState=3;s.onclose({code:1006});shFireDials();   // the opened socket drops (not a refusal): arms and redials
+var fresh=shSock();fresh.readyState=3;fresh.onclose({code:1006});   // the fresh dial is refused: rung reset to 1000
+var afterReset=SHTIMERS[SHTIMERS.length-1].ms;
+shOut({laddered:laddered,afterReset:afterReset});""")
+        self.assertEqual(r["laddered"], [1000, 2000, 4000, 4000], "the refused ladder 1/2/4/4 s")
+        self.assertEqual(r["afterReset"], 1000, "an open resets the rung, so the next refusal is 1 s again")
+
+    def test_rompLink_reads_up_only_for_an_open_socket_fresh_within_stale_ms(self):
+        r = _run_probe(r"""
+shOpen();shRecv({type:'ka'});var open1=window.__rompLink().up;
+SHNOW+=40000;var stale1=window.__rompLink().up;
+shRecv({type:'ka'});var fresh=window.__rompLink().up;
+shSock().readyState=3;var closed=window.__rompLink().up;
+shOut({open1:open1,stale1:stale1,fresh:fresh,closed:closed});""")
+        self.assertEqual([r["open1"], r["stale1"], r["fresh"], r["closed"]], [True, False, True, False])
+
+    def test_the_open_and_close_re_tell_the_panes_word_and_the_word_reads_the_link_as_it_stands(self):
+        # review round 1 (tests-5): the publication order. The open stamps shLastRecv BEFORE it re-tells, so the word
+        # the panes hear at the open reads the link up (a tell ahead of the stamp would read a stale clock: down); the
+        # close's tell reads down. The stale-return shape, the phone's case: hide, the socket dies, a long gap, the
+        # return abandons (a tell reading down) and the fresh open tells up.
+        r = _run_probe(r"""
+var n0=TELLLINKS.length;shOpen();var atOpen=TELLLINKS.slice(n0);
+var n1=TELLLINKS.length;SHSOCKS[0].readyState=3;SHSOCKS[0].onclose({code:1006});var atClose=TELLLINKS.slice(n1);
+shFireDials();shOpen();shRecv({type:'ka'});             // the blind redial opens
+shHide();shSock().readyState=3;SHNOW+=100000;           // dead while hidden, a long gap
+var n2=TELLLINKS.length;shShow();var atReturn=TELLLINKS.slice(n2);   // the abandon's tell
+var n3=TELLLINKS.length;shOpen();var atFreshOpen=TELLLINKS.slice(n3);
+shOut({atOpen:atOpen,atClose:atClose,atReturn:atReturn,atFreshOpen:atFreshOpen});""")
+        self.assertEqual(r["atOpen"], [True], "the socket open re-tells the panes word once, and the word reads the link UP (the stamp lands before the tell)")
+        self.assertEqual(r["atClose"], [False], "the socket close re-tells it once, reading down")
+        self.assertEqual(r["atReturn"], [False], "the return's abandon re-tells it, reading down")
+        self.assertEqual(r["atFreshOpen"], [True], "the fresh open after a stale return tells up")
+
+    # ---- review round 1 (tests-4): the watchdog's OPEN-quiet arm, the freeze and resume stamps, the two 250 ms cadences,
+    # all executed (the source-text pin in tests/test_kernel_ws_heartbeat.py is the parity check alone)
+    def test_the_watchdogs_open_quiet_arm_abandons_and_redials_a_socket_quiet_past_stale_ms(self):
+        r = _run_probe(r"""
+shOpen();shRecv({type:'ka'});var t0=TELLS,l0=LOST;
+SHNOW+=29000;shTick();var before=SHSOCKS.length;        // quiet 29 s: inside the bound, kept
+SHNOW+=2000;shTick();                                   // quiet 31 s: past SH_STALE_MS
+shOut({before:before,socks:SHSOCKS.length,rs0:SHSOCKS[0].readyState,tells:TELLS-t0,lost:LOST-l0});""")
+        self.assertEqual(r["before"], 1, "quiet inside the bound: kept")
+        self.assertEqual(r["socks"], 2, "quiet past SH_STALE_MS: the arm abandons the socket and redials at once")
+        self.assertEqual(r["rs0"], 3, "the quiet socket was closed by the abandon")
+        self.assertGreaterEqual(r["tells"], 1, "the abandon re-told the panes (link down)")
+        self.assertEqual(r["lost"], 1, "and told the API health detail once (a press pending on it cannot be answered)")
+
+    def test_a_resume_stamps_a_fresh_open_socket_and_the_kept_socket_runs_at_the_provisional_bound(self):
+        # the freeze/resume window sits strictly inside the stale bound (10 s frozen, 26 s since the last frame at the
+        # deciding tick), so the redial can come from the resume stamp's PROVISIONAL bound alone: 14 s after the stamp
+        # nothing, 16 s after it the abandon. Without the stamp the socket reads 26 s quiet under the 30 s bound: kept.
+        r = _run_probe(r"""
+shOpen();shRecv({type:'ka'});
+shFireDoc('freeze');SHNOW+=10000;shFireDoc('resume');   // a Chromium thaw: the OPEN socket is stamped, provisionally
+SHNOW+=14000;shTick();var at14=SHSOCKS.length;
+SHNOW+=2000;shTick();var at16=SHSOCKS.length;
+shOut({at14:at14,at16:at16});""")
+        self.assertEqual(r["at14"], 1, "14 s after the resume stamp: inside SH_PROVISIONAL_MS, kept")
+        self.assertEqual(r["at16"], 2, "16 s after it: the provisional keep no frame confirmed is abandoned and redialed")
+
+    def test_a_socket_already_stale_at_the_freeze_is_not_re_stamped_by_the_resume(self):
+        r = _run_probe(r"""
+shOpen();shRecv({type:'ka'});
+SHNOW+=35000;shFireDoc('freeze');                       // 35 s quiet when the tab froze: already past SH_STALE_MS
+SHNOW+=5000;shFireDoc('resume');shTick();               // the thaw must not make it fresh
+shOut({socks:SHSOCKS.length});""")
+        self.assertEqual(r["socks"], 2, "a socket 30 s overdue when the tab froze is not stamped: the tick abandons and redials it")
+
+    def test_an_announced_restart_keeps_the_250ms_redial(self):
+        r = _run_probe(r"""
+shOpen();shRecv({type:'ka'});shRecv({type:'restarting',boot:'1'});
+SHNOW+=100;shSock().readyState=3;shSock().onclose({code:1006});
+var t=SHTIMERS[SHTIMERS.length-1];
+shOut({fn:t.fn.name,ms:t.ms,live:t.live});""")
+        self.assertEqual([r["fn"], r["ms"], r["live"]], ["shellWS", 250, True], "the kernel's own word: a tight redial")
+
+    def test_a_hung_attempt_cut_inside_the_return_window_redials_at_250ms(self):
+        r = _run_probe(r"""
+shOpen();shRecv({type:'ka'});
+shHide();SHSOCKS[0].readyState=3;SHNOW+=100;shShow();   // the fast path dials; the path hangs
+SHNOW+=16000;shTick();var cut=SHSOCKS[1].readyState;    // past the 15 s cut: the tick closes it
+SHSOCKS[1].onclose({code:1006});var t=SHTIMERS[SHTIMERS.length-1];   // the browser's onclose, 16 s into the return window
+shOut({cut:cut,fn:t.fn.name,ms:t.ms});""")
+        self.assertEqual(r["cut"], 3)
+        self.assertEqual([r["fn"], r["ms"]], ["shellWS", 250], "a hung attempt the cut paced, inside the window: the prompt 250 ms redial")
+
+    # ---- review round 1: the three shell fixes of that round
+    def test_a_return_during_an_outage_makes_one_redial_chain_the_dial_clears_the_pending_blind_timer(self):
+        # fresh-1: the pre-return close's blind 2 s timer is still pending when the page returns (a page whose timers
+        # keep running while hidden: this harness, a desktop tab, Android Chrome before its throttle). The return's
+        # direct dial must cancel it, or two chains run the ladder side by side for the whole outage (before the fix:
+        # two live timers after the return and eighteen dials in 30 s of refusals; after: one and about ten).
+        r = _run_probe(r"""
+shOpen();shRecv({type:'ka'});
+shHide();var held=SHSOCKS[0];held.readyState=3;held.onclose({code:1006});   // the held socket's close reaches the page while hidden: the blind redial arms
+var timersBeforeReturn=shDialTimers().length;
+SHNOW+=100;shShow();shRefuseNow();                      // the return dials at once; the path refuses it
+var liveAfterReturn=shDialTimers().length;
+var maxLive=shRunRefused(SHNOW+30000);                  // 30 s of refusals on the fake clock
+shOut({timersBeforeReturn:timersBeforeReturn,liveAfterReturn:liveAfterReturn,maxLive:maxLive,dials:SHSOCKS.length-1});""")
+        self.assertEqual(r["timersBeforeReturn"], 1, "the close while hidden armed the blind redial")
+        self.assertEqual(r["liveAfterReturn"], 1, "the return's dial cleared it: the refusal's ladder timer is the ONE pending timer")
+        self.assertEqual(r["maxLive"], 1, "at no moment in 30 s of refusals is more than one redial timer live: one chain")
+        self.assertLessEqual(r["dials"], 10, "about ten dials from the return in 30 s on the ladder (a doubled chain made eighteen)")
+        self.assertGreaterEqual(r["dials"], 8)
+
+    def test_the_watchdogs_closed_arm_recovers_a_lost_redial_timer(self):
+        # correctness-2: a CLOSED socket whose redial timer the browser lost. onclose keeps shWs (it nulled it before,
+        # so the tick returned on !shWs and this arm could never fire).
+        r = _run_probe(r"""
+shOpen();shRecv({type:'ka'});
+SHNOW+=100;shSock().readyState=3;shSock().onclose({code:1006});   // an ordinary drop: the blind redial arms
+var armed=shDialTimers().length,armedMs=shDialTimers()[0].ms,linkAfterClose=window.__rompLink().up;
+SHNOW+=8001;shTick();                                   // the timer never fired; SH_REDIAL_MS (8 s) past the dial, the CLOSED arm dials
+var dialed=SHSOCKS.length,liveAfter=shDialTimers().length;
+shOut({armed:armed,armedMs:armedMs,linkAfterClose:linkAfterClose,dialed:dialed,liveAfter:liveAfter});""")
+        self.assertEqual(r["armed"], 1)
+        self.assertEqual(r["armedMs"], 2000, "the blind redial after an ordinary drop outside any window is SH_BLIND_MS (2 s), the cadence the pane's 25 s backstop derivation rests on (review round 2: pinned by text alone before)")
+        self.assertIs(r["linkAfterClose"], False, "a CLOSED shWs publishes the link down")
+        self.assertEqual(r["dialed"], 2, "the CLOSED arm dials once the redial bound has passed")
+        self.assertEqual(r["liveAfter"], 0, "and its dial cleared the lost timer, so no second chain follows")
+
+    def test_an_abandon_tells_the_api_health_detail_once_as_a_browser_reported_close_does(self):
+        # regression-1 / kernel-1: shAbandon detaches onclose, so the detail's hook (window.__rompApiSocketLost) was
+        # never called on the return's abandon or the watchdog's; a pause press pending on that socket stayed
+        # acknowledged through the redial. Now each abandon of the socket the detail rides tells it, once.
+        r = _run_probe(r"""
+shOpen();shRecv({type:'ka'});var l0=LOST;
+shHide();SHSOCKS[0].readyState=3;SHNOW+=100;shShow();   // the return's abandon of a socket the browser never reported closed
+var onReturnAbandon=LOST-l0;
+shOpen();shRecv({type:'ka'});var l1=LOST;
+SHNOW+=31000;shTick();                                  // the watchdog's OPEN-quiet abandon
+var onWatchdogAbandon=LOST-l1;
+shOpen();shRecv({type:'ka'});var l2=LOST;
+SHNOW+=100;shSock().readyState=3;shSock().onclose({code:1006});   // a browser-reported close, for comparison
+var onBrowserClose=LOST-l2;
+shOut({onReturnAbandon:onReturnAbandon,onWatchdogAbandon:onWatchdogAbandon,onBrowserClose:onBrowserClose});""")
+        self.assertEqual(r["onReturnAbandon"], 1, "the return's abandon tells the detail once")
+        self.assertEqual(r["onWatchdogAbandon"], 1, "the watchdog's abandon tells it once")
+        self.assertEqual(r["onBrowserClose"], 1, "as a browser-reported close always did")
+
+    # ---- review round 2 (2026-09-18): the three shell fixes of that round
+    def test_a_long_standing_open_socket_crossing_the_quiet_bound_publishes_the_tick_stamp_as_connT_not_the_dial_time(self):
+        # regression-1: connT is the loop-alive stamp, the later of the last dial and the watchdog's last tick with a socket
+        # to watch. An OPEN socket that dialed an hour ago and then goes quiet past SH_STALE_MS reads down for up to one tick
+        # before the watchdog puts it down; in that tick the pane's backstop read the DIAL time, 3,631,000 ms stale, called
+        # the shell's loop dead and dialed on its own. Now it reads the last tick, 1 s old.
+        r = _run_probe(r"""
+shOpen();shRecv({type:'ka'});
+for(var i=0;i<720;i++){SHNOW+=5000;shRecv({type:'ka'});shTick();}   // an hour of frames and ticks on the one socket
+for(var j=0;j<6;j++){SHNOW+=5000;shTick();}                        // 30 s quiet with the tick running: at the bound, kept
+SHNOW+=1000;                                                        // 31 s quiet: the link reads down, the tick not yet run
+var L=window.__rompLink();
+var before={up:L.up,stale:SHNOW-L.connT,socks:SHSOCKS.length};
+shTick();                                                           // the OPEN-quiet arm puts the socket down and redials
+var after=window.__rompLink();
+shOut({before:before,socks:SHSOCKS.length,afterStale:SHNOW-after.connT});""")
+        self.assertIs(r["before"]["up"], False, "31 s quiet: the link reads down")
+        self.assertEqual(r["before"]["socks"], 1, "...before the tick puts the socket down")
+        self.assertLess(r["before"]["stale"], 25000, "connT is the loop-alive stamp: under the pane's 25 s bound while the tick runs (the dial time alone read 3,631,000 ms stale here)")
+        self.assertEqual(r["before"]["stale"], 1000, "the last tick, one second ago")
+        self.assertEqual(r["socks"], 2, "the tick abandons the quiet socket and redials")
+        self.assertEqual(r["afterStale"], 0, "the redial stamps connT afresh")
+
+    def test_a_page_loaded_hidden_keeps_its_boot_dial_at_its_first_foreground_and_files_no_probe(self):
+        # kernel-1: the shim's not-yet-connected guard, in the shell's fast path. A dashboard opened in a background tab has
+        # its boot dial CONNECTING when it first comes to the foreground; the fast path read that as a dead socket, abandoned
+        # the boot dial, dialed a second socket and filed a return-probe row (hiddenMs -1, quietMs -1) for a return that
+        # never happened. The guard sits after the foreground stamp and the ring reset, as the shim's does, so a drop after
+        # the foreground still redials at the in-window cadence.
+        r = _run_probe(r"""
+var boot={socks:SHSOCKS.length,rs:SHSOCKS[0].readyState};           // the boot dial, CONNECTING; the page was never hidden
+var t0=TELLS,l0=LOST;
+shShow();                                                            // the first foreground, before the boot dial opened
+var atShow={socks:SHSOCKS.length,rs:SHSOCKS[0].readyState,tells:TELLS-t0,lost:LOST-l0};
+shOpen();                                                            // the boot dial opens
+var rows=shProbeRows();
+SHNOW+=100;shSock().readyState=3;shSock().onclose({code:1006});     // a drop 100 ms after the foreground: inside the window
+var t=SHTIMERS[SHTIMERS.length-1];
+shOut({boot:boot,atShow:atShow,rows:rows,drop:{fn:t.fn.name,ms:t.ms}});""")
+        self.assertEqual(r["boot"], {"socks": 1, "rs": 0})
+        self.assertEqual(r["atShow"], {"socks": 1, "rs": 0, "tells": 0, "lost": 0}, "the foreground leaves the CONNECTING boot dial alone: no abandon, no second socket, no tell")
+        self.assertEqual(r["rows"], [], "no return-probe row: there was no return")
+        self.assertEqual([r["drop"]["fn"], r["drop"]["ms"]], ["shellWS", 250], "the foreground was stamped before the guard: a drop inside the window redials at the in-window cadence")
+
+    def test_a_return_whose_probe_never_opened_before_the_next_return_files_its_row_at_that_return(self):
+        # fresh-3: the fast path overwrote a pending probe and reset the failure counters, so a return the path outlasted
+        # left no row and read-side.md's one row per return overstated. The pending row is filed at the next return (queued
+        # until the open) with ms and firstFailMs at the row's -1 sentinels and the attempts as they stand.
+        r = _run_probe(r"""
+shOpen();shRecv({type:'ka'});
+shHide();SHSOCKS[0].readyState=3;SHNOW+=100;shShow();                // return 1: the fast path dials
+SHNOW+=500;shRefuseNow();                                            // refused once: attempts 1, the ladder timer arms
+shHide();SHNOW+=100;shShow();                                        // return 2 before any open
+var socks=SHSOCKS.length;
+SHNOW+=200;shOpen();                                                 // return 2's dial opens: both rows flush onto it
+shOut({socks:socks,rows:shProbeRows()});""")
+        self.assertEqual(r["socks"], 3, "return 2 dialed afresh (the refused socket is CLOSED, so the guard lets it)")
+        self.assertEqual(len(r["rows"]), 2, "one row per return: the first filed at the second")
+        self.assertEqual(r["rows"][0], {"decision": "redial-closed", "hiddenMs": 100, "quietMs": 100, "attempts": 1, "firstFailMs": -1, "ms": -1},
+                         "return 1's row: its decision and gaps, the one refusal, ms and firstFailMs -1 (the next return came before the open)")
+        self.assertEqual(r["rows"][1], {"decision": "redial-closed", "hiddenMs": 100, "quietMs": 700, "attempts": 0, "firstFailMs": -1, "ms": 200},
+                         "return 2's row: its own gaps and counters, reset at the return")
+
+    # ---- review round 3 (2026-09-18): the loop-alive stamp's two halves, the pane following the shell's real publication
+    def test_a_shell_whose_loop_died_with_no_socket_goes_stale_and_the_panes_backstop_dials_with_its_row(self):
+        # tests-1 and kernel-1: the half of the stamp that keeps a DEAD shell from reading alive. The stamp sits AFTER the
+        # tick's no-socket guard (round 2, item 2), so a shell left with no socket at all stops renewing connT and the
+        # pane's 25 s link-backstop can call its loop dead. The phone's shape: both sockets quiet in the background; at
+        # the return the path is so broken that the WebSocket constructor itself throws, so the shell's abandon dials
+        # nothing and arms nothing (no socket, no timer: a dead loop). The pane, its socket dead and the link down,
+        # awaits; each tick the shell's watchdog runs first (a no-op with no socket) and the pane's poll follows. connT
+        # ages 5 s a tick; at 30 s the pane dials on its own and files its link-backstop row. With the stamp one line up,
+        # before the guard, every tick renews connT with no socket to watch: the walk reads 0 for good and the backstop
+        # never fires, a dead shell reading alive forever.
+        r = _run_linked(r"""
+shOpen();shRecv({type:'ka'});open();recv({type:"ka"});               // the shell's socket and the pane's, both OPEN and fresh
+NOW+=5000;shTick();tick();                                            // one tick each with a socket: the shell's stamp is set once
+shHide();hide();                                                      // the phone goes to the background (no ticks run while hidden)
+NOW+=40000;sock().readyState=3;                                       // 45 s quiet: the pane's socket dead, the shell's quiet past the bound
+global.WebSocket=function(){throw new Error('no socket');};         // the shell's redial cannot even construct a socket
+shShow();                                                             // the shell's fast path: redial-stale, abandon, the dial throws
+var shell={socks:SHSOCKS.length,timers:shDialTimers().length,up:global.__rompLink().up,stale:NOW-global.__rompLink().connT};
+show();                                                               // the pane's return: its socket dead, the link down: await
+var pane={sockets:sockets.length,awaiting:awaitLink};
+var walk=[];
+for(var i=0;i<6;i++){NOW+=5000;shTick();tick();walk.push({stale:NOW-global.__rompLink().connT,sockets:sockets.length,awaiting:awaitLink});}
+if(sockets.length>1)open();                                           // the backstop's socket opens: its queued link-backstop row flushes onto it
+out({shell:shell,pane:pane,walk:walk,backstop:rows(sock(),"link-backstop").length});""")
+        self.assertEqual(r["shell"], {"socks": 1, "timers": 0, "up": False, "stale": 0},
+                         "the shell's loop is dead: no socket, no pending redial, the link down, connT the abandon's dial time")
+        self.assertEqual(r["pane"], {"sockets": 1, "awaiting": True}, "the pane awaits the link")
+        self.assertEqual([w["stale"] for w in r["walk"]], [5000, 10000, 15000, 20000, 25000, 30000],
+                         "with no socket to watch the tick does not renew connT: the stamp sits after the no-socket guard")
+        self.assertEqual([w["sockets"] for w in r["walk"]], [1, 1, 1, 1, 1, 2], "at the bound (25,000 ms) no dial; past it the pane's backstop dials on its own")
+        self.assertIs(r["walk"][5]["awaiting"], False)
+        self.assertEqual(r["backstop"], 1, "...and files its loud link-backstop row")
+
+    def test_a_shell_whose_loop_is_alive_publishes_its_fresh_dial_as_connT_and_the_pane_files_no_backstop(self):
+        # tests-1: the dial half of the published maximum, connT: Math.max(shConnT, shTickT). Two reads where the halves
+        # differ: the boot dial before any tick (the stamp unset: connT is the dial's age, 0), and the phone's return after
+        # an hour in the background with no ticks (the stamp an hour old, the return's dial fresh). The pane returns in the
+        # same dispatch, finds the link down (the shell's dial is CONNECTING) and awaits; its 5 s poll lands before the
+        # shell's own watchdog has ticked since the return, a phase the two intervals can take, and reads connT 5 s old: no
+        # backstop, no dial. The shell's socket then opens, the tell hands the pane the link-up word, and the pane dials
+        # once on it (linkUpMs 5000) with no link-backstop row. With the dial half dropped (connT: shTickT) the boot read
+        # is the unset stamp (1,000,000 ms) and the return read the hour-old tick: the pane's first poll files a false
+        # link-backstop row and dials while the shell's loop is alive and dialing.
+        r = _run_linked(r"""
+var boot={stale:NOW-global.__rompLink().connT,socks:SHSOCKS.length,rs:SHSOCKS[0].readyState};   // the boot dial, CONNECTING, before any tick
+shOpen();shRecv({type:'ka'});open();recv({type:"ka"});
+for(var i=0;i<3;i++){NOW+=5000;shRecv({type:'ka'});recv({type:"ka"});shTick();tick();}   // 15 s of frames and ticks on both sockets: the stamp is set
+shHide();hide();                                                      // the phone goes to the background: no ticks run while hidden
+NOW+=3600000;SHSOCKS[0].readyState=3;sock().readyState=3;            // an hour later both sockets are dead
+shShow();                                                             // the shell's fast path: redial-closed, a fresh dial (CONNECTING)
+var atReturn={socks:SHSOCKS.length,rs:shSock().readyState,up:global.__rompLink().up,stale:NOW-global.__rompLink().connT};
+show();                                                               // the pane's return: the link down, so it awaits
+var pane={sockets:sockets.length,awaiting:awaitLink};
+NOW+=5000;tick();                                                     // the pane's poll, before the shell's watchdog has ticked since the return
+var afterPoll={sockets:sockets.length,awaiting:awaitLink,stale:NOW-global.__rompLink().connT};
+shTick();                                                             // the shell's tick: its dial 5 s in, under the cut, kept
+shOpen();                                                             // the shell's socket opens: the tell hands the pane the link-up word
+var afterOpen={sockets:sockets.length,awaiting:awaitLink,up:global.__rompLink().up};
+open();NOW+=50;recv({type:"feed",asks:[]});                           // the pane's socket opens; its return-fresh files on the first real frame
+out({boot:boot,atReturn:atReturn,pane:pane,afterPoll:afterPoll,afterOpen:afterOpen,backstop:rows(sock(),"link-backstop").length,
+rf:rows(sock(),"return-fresh").map(function(x){return x.data;})});""")
+        self.assertEqual(r["boot"], {"stale": 0, "socks": 1, "rs": 0}, "before the first tick connT is the boot dial's age (the dial half of the max), not the unset stamp")
+        self.assertEqual(r["atReturn"], {"socks": 2, "rs": 0, "up": False, "stale": 0}, "the return's fresh dial is connT, not the hour-old tick stamp")
+        self.assertEqual(r["pane"], {"sockets": 1, "awaiting": True}, "the pane awaits the link (the shell's dial is CONNECTING)")
+        self.assertEqual(r["afterPoll"], {"sockets": 1, "awaiting": True, "stale": 5000}, "the pane's poll reads the shell's dial 5 s old: the loop is alive, no backstop dial")
+        self.assertEqual(r["afterOpen"], {"sockets": 2, "awaiting": False, "up": True}, "the link-up word dials the pane once")
+        self.assertEqual(r["backstop"], 0, "no link-backstop row: the shell's loop was alive throughout")
+        self.assertEqual(len(r["rf"]), 1)
+        self.assertEqual(r["rf"][0]["linkUpMs"], 5000, "the word's time")
 
 
 if __name__ == "__main__":

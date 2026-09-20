@@ -42,13 +42,13 @@ test("the profile forbids style and textarea; the difference in what happens to 
   assert.ok(!MD_FORBID_TAGS.includes("script"), "script is not in the profile at all: the html profile never allowed it, and its text went before this slice");
 });
 
-/** marked with the viewer's options (file-view.ts; the fixture has no strikethrough, so its del tokenizer plays no part),
- *  the real md-sanitize.ts and the real anchor-map.ts, bundled for a page. */
+/** The viewer's own parse (file-view.ts viewerHtml; the fixture has no strikethrough, so the configuration's del tokenizer plays no
+ *  part), the real md-sanitize.ts and the real anchor-map.ts, bundled for a page. */
 function bundleProbe(): string {
   const esbuild = requireCjs("esbuild");
   const contents = [
-    'import { marked } from "marked";',
     'import { applyMdConfig } from "./md-config";',
+    'import { viewerHtml } from "./file-view";',
     'import { sanitizeMd } from "./md-sanitize";',
     'import { mapRenderedSelection } from "./anchor-map";',
     "applyMdConfig();",
@@ -56,7 +56,7 @@ function bundleProbe(): string {
     "  const body = document.createElement('div');",
     "  const before = document.createElement('div'); before.textContent = 'Rendered · Raw';",
     "  const box = document.createElement('div'); box.className = 'fileview-md';",
-    "  box.replaceChildren(...Array.from(sanitizeMd(marked.parse(source) as string).childNodes));",   // mdBlock, file-view.ts
+    "  box.replaceChildren(...Array.from(sanitizeMd(viewerHtml(source)).childNodes));",   // mdBlock, file-view.ts
     "  body.append(before, box); document.body.append(body);",
     "  const paras = Array.from(box.querySelectorAll('p'));",
     "  return paras.map((p, i) => {",

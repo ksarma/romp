@@ -9,3 +9,5 @@ offered:
 closed:
 ---
 Fix tier. Picking effort, permission mode (bypass), fast mode or billing on a session with live subagents, harness background tasks or Workflow runs killed all of them: the reconnect arm read only the open turn (inflight and the untaken hold), never the live sets, and a session idle between its own turns reconnected at once. 26 subagents and 10 background tasks were lost across four sessions on 2026-09-09 to picks that changed nothing. Now a settings-driven reconnect arms only at a turn's settle that finds the live sets empty; a task's end never arms it at its own frame, since the CLI starts a turn of its own to deliver the result, and the removal only logs that the pick waits; a rewind keeps its old behaviour. Tests fail before the fix.
+
+2026-09-18: the user agrees: wait for https://github.com/romp-on/romp/pull/1827 to land, then re-port on top.

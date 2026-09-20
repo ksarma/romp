@@ -56,13 +56,22 @@ class OpeningChipDecidingEvent(unittest.TestCase):
         # _sessions()/discover() reads km.jd. Patching only the test's jd leaves discovery scanning the
         # real ~/.claude/projects, and the fixture transcript is never found (chip stuck "opening").
         self.saved = [(m, k, getattr(m, k)) for m in (jd, km.jd)
-                      for k in ("NAMES", "PROJECTS", "CAPDIR", "ARCHDIR", "GOALDIR", "STATE")]
+                      for k in ("NAMES", "PROJECTS", "CAPDIR", "ARCHDIR", "GOALDIR", "STATE", "SDKDIR")]
         self.saved += [(km, "NAMES", km.NAMES), (km, "_live_map", km._live_map),
                        (km, "_GLOBAL_CLAUDE_MD", km._GLOBAL_CLAUDE_MD)]
         for m in (jd, km.jd):
             m.NAMES, m.PROJECTS = names, proj
             m.CAPDIR, m.ARCHDIR, m.GOALDIR = td / "captions", td / "archive", td / "goals"
             m.STATE = td
+            m.SDKDIR = td / "sdk"
+        # The SDK registry DIRECTORY moves with the state and EXISTS, empty: the kernel's boot pass
+        # creates sdk/ (_death_boot_pass), so a running kernel never lacks it, and a MISSING sdk/ beside
+        # a names entry reads to _sdk_records_blind as blindness (a registry moved aside), on which
+        # Sessions.live() serves its previous rows instead of the backend's. Left at the import-bound
+        # root, the directory exists only when an earlier test in the same process created it, and the
+        # live-merge case below failed alone (the same fixture as tests/test_kernel_awaiting_stamp.py's
+        # dormant case, 2026-09-16).
+        (td / "sdk").mkdir()
         km.NAMES = names
         km._GLOBAL_CLAUDE_MD = td / "no-global-claude.md"
         self.tm = {"state": "waiting", "since": NOW - 5, "model": "Opus 5", "effort": "xhigh",

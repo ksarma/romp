@@ -137,6 +137,10 @@ withStoreLock(store, () => {
 process.stdout.write(JSON.stringify(out) + '\\n');
 `;
 
+// The holder's stamp, "pid ts", as the first line of its lock: what the maker's release must find
+// there before it appends its line, and what the appended line must follow.
+const STAMP_FIRST = /^\d+ \d+\n/;
+
 test('the maker of the folder writes the line into a real holder\'s lock at release, and that holder removes the folder at its own', async () => {
   const w = world(true);
   const sibling = path.join(w.dir, 'docs%2Fnotes.md.json');
@@ -158,10 +162,23 @@ test('the maker of the folder writes the line into a real holder\'s lock at rele
   });
   // This process makes the folder (a first write in a fresh root) and, while it holds its lock, the
   // sibling's holder arrives and takes its own lock in the folder this process made.
+  // The wait is for the holder's STAMP, not for the lock's existence. withStoreLock creates the lock
+  // (an O_EXCL open) and writes its "pid ts" stamp in a second call, and store-io lets a handover
+  // line land between the two and keep its place (the header on the lock). Waited on existence
+  // alone (2026-09-18, the fork's CI, on a change that touched none of this), this process released
+  // in that window, appended the line to the empty lock and read the line back alone, with no
+  // stamp before it: the assertion below on the line's place after the stamp needs the stamp
+  // there first, so the wait reads the file until its first line has the stamp's shape (a read
+  // that finds no file yet, or an empty one, is one more turn of the wait).
+  const stamped = () => {
+    let raw = '';
+    try { raw = fs.readFileSync(siblingLock, 'utf8'); } catch (e) { if (!e || e.code !== 'ENOENT') throw e; }
+    return STAMP_FIRST.test(raw);
+  };
   withStoreLock(w.storePath, () => {
     const until = Date.now() + 8000;
-    while (!fs.existsSync(siblingLock) && Date.now() < until) sleepMs(5);
-    assert.ok(fs.existsSync(siblingLock), 'the sibling\'s holder took its lock while this one held');
+    while (!stamped() && Date.now() < until) sleepMs(5);
+    assert.ok(stamped(), 'the sibling\'s holder took its lock, and stamped it, while this one held');
     inside = fs.readdirSync(w.dir).sort();
   });
   assert.deepEqual(inside, [path.basename(w.lockPath), path.basename(siblingLock)].sort(), 'two locks, nothing else');
@@ -170,7 +187,7 @@ test('the maker of the folder writes the line into a real holder\'s lock at rele
   assert.equal(fs.existsSync(w.lockPath), false, 'this lock is gone');
   const handed = fs.readFileSync(siblingLock, 'utf8');
   assert.ok(handed.split('\n').includes(HANDOVER), `the line ${JSON.stringify(HANDOVER)} was appended to the sibling's lock: ${JSON.stringify(handed)}`);
-  assert.match(handed, /^\d+ \d+\n/, 'appended after the holder\'s own stamp, not over it');
+  assert.match(handed, STAMP_FIRST, 'appended after the holder\'s own stamp, not over it');
   fs.writeFileSync(marker, '');
   const out = await done;
   assert.equal(out.err, undefined, out.err);
