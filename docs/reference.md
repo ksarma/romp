@@ -1119,8 +1119,8 @@ yes. The gear reports a machine that is missing node or the comment tools.
   `raw.githubusercontent.com`, a third-party host, with no credential, and
   keeps the rows it matched in memory until the next restart. Set the
   variable where the kernel's service sees it (`service.env`, then a manager
-  restart), and no request goes to that host at all. With the variable set,
-  the modal prices from the baked-in defaults and says so: the line under its
+  restart), and the kernel sends no request to that host. With the variable set,
+  the table is the baked-in defaults and the modal says so: the line under its
   footnote reads `prices: baked-in defaults; live feed off (ROMP_PRICE_FEED=off)`,
   `/version` carries a `priceFeed` block that says the same beside
   `modelCatalog`, and the kernel logs one line, naming the variable, the
@@ -1129,7 +1129,11 @@ yes. The gear reports a machine that is missing node or the comment tools.
   defaults, with the switch or without it. A rate you want current with the
   feed off goes in `~/.config/romp/model-prices.json`, a JSON object keyed
   by model id whose rows carry `in`, `out`, `cache_w` and `cache_r` in
-  dollars per token; a row there wins over the feed and the defaults alike.
+  dollars per token; a row there replaces that model's row in the feed's
+  table and the defaults alike, and a rate the row omits keeps the table's.
+  The line under the footnote and the `priceFeed` block count the rows the
+  file puts in effect: with one row in the file, the line ends
+  `; 1 row overridden by model-prices.json`, whichever table it names.
 
 ### Fast mode for the judges
 

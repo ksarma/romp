@@ -7,8 +7,12 @@ _refresh_remote_prices, the one place a fetch can start), and the Token usage mo
 variable and the line's text, and nothing else ties the doc to the code, so these pins hold it there: the
 reference carries the subsection (beside Judge concurrency) and the analytics sentence; the fragments it quotes
 are the ones gear.js renders and kernel.py reads; the six-hour, host and override-file claims are the kernel's
-constants; and the new prose carries no em or en dash and not the word the repo's CLAUDE.md bans. A wording
-change in gear.js or a moved constant reddens here before the reference goes stale.
+constants; the entry's word that the line and the block count the override file's rows in effect is tied to
+_price_feed_status counting them from the merge (_model_prices, which applies the file last) and to the gear.js
+clause the entry quotes (review round 1, 2026-09-20: a row in the file prices its model whichever table the line
+names, and the line says so instead of reading as the table alone); and the new prose carries no em or en dash
+and not the word the repo's CLAUDE.md bans. A wording change in gear.js or a moved constant reddens here before
+the reference goes stale.
 
 Text only: the behaviour is pinned in tests/test_price_feed_off.py (the kernel) and
 ui/webview/analytics-price-source.test.ts (the view). The doc and the sources are read as files; nothing loads
@@ -45,6 +49,12 @@ def _paragraph(doc, opening):
         if para.startswith(opening):
             return para
     return ""
+
+
+def _pydef(src, name):
+    """The text of top-level `def name(...)` up to the next top-level def or class; "" when absent."""
+    m = re.search(r"^def " + re.escape(name) + r"\(.*?(?=^(?:def|class) |\Z)", src, re.S | re.M)
+    return m.group(0) if m else ""
 
 
 REFERENCE = _read("docs", "reference.md")
@@ -141,6 +151,30 @@ class TheReferenceCarriesTheSubsection(_Pins):
         for key in ROW_KEYS:
             self.assertQuoted("`%s`" % key, SECTION, self.DOC, "a row's four rates")
         self.assertQuoted('("in", "out", "cache_w", "cache_r")', KERNEL, "kernel/kernel.py", "the keys _model_prices reads from a row")
+
+    def test_it_says_the_line_counts_the_override_rows_and_the_status_counts_them_from_the_merge(self):
+        # The line and the priceFeed block come from _price_feed_status. A row in the override file prices its model
+        # whichever table the line names (_model_prices applies the file after the defaults and the feed), so the
+        # status counts the rows in effect from that merge (`overrides`, through _model_prices with refresh=False,
+        # the road that never fetches) and the line ends with the count; the entry says so rather than promising
+        # the baked-in defaults. Review round 1: the first draft documented the line as blind to the file, which
+        # left the visible statement false in the configuration the entry itself recommends.
+        self.assertSection()
+        flat = _flat(SECTION)
+        self.assertQuoted("count the rows the file puts in effect", flat, self.DOC)
+        self.assertQuoted("`; 1 row overridden by model-prices.json`", flat, self.DOC)
+        self.assertQuoted("a rate the row omits keeps the table's", flat, self.DOC)
+        status, prices = _pydef(KERNEL, "_price_feed_status"), _pydef(KERNEL, "_model_prices")
+        self.assertTrue(status and prices, "kernel/kernel.py defines _price_feed_status and _model_prices at the top level")
+        self.assertQuoted("_model_prices(now, refresh=False)", status, "kernel/kernel.py _price_feed_status",
+                          "the count comes from the merge that prices, never a second parse of the file")
+        self.assertQuoted('"overrides": overrides', status, "kernel/kernel.py _price_feed_status", "the block carries the count")
+        self.assertQuoted("' row' : ' rows') + ' overridden by model-prices.json'", GEAR, "ui/webview/gear.js",
+                          "the clause the doc quotes, on either source")
+        self.assertQuoted("PRICE_CONFIG.read_text()", prices, "kernel/kernel.py _model_prices")
+        self.assertLess(prices.find('_price_cache["remote"]'), prices.find("PRICE_CONFIG.read_text()"),
+                        "the override is applied after the feed's rows, so a row there replaces the table's")
+        self.assertQuoted("v.get(kk, base.get(kk, 0))", prices, "kernel/kernel.py _model_prices", "a rate the row omits keeps the table's")
 
 
 class TheAnalyticsParagraphPointsAtTheLine(_Pins):

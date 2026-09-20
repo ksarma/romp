@@ -27,15 +27,18 @@ const note = (pf: unknown): string => {
 test("live feed: the line names the feed and the fetch's age in plain words, minutes then hours", () => {
   assert.equal(note({ off: false, source: "feed", ageS: 240, fetchedAt: 1_700_000_000, rows: 6, lastError: null }), "prices: live feed, fetched 4 minutes ago");
   assert.equal(note({ source: "feed", ageS: 30 }), "prices: live feed, fetched just now", "under a minute");
+  assert.equal(note({ source: "feed", ageS: 0 }), "prices: live feed, fetched just now",
+    "zero, what a read in the second the fetch landed carries (the kernel's ageS is now minus fetchedAt on one clock): the age is said whenever the block has a number, and 0 is a number, not an absence");
   assert.equal(note({ source: "feed", ageS: 60 }), "prices: live feed, fetched 1 minute ago", "singular");
   assert.equal(note({ source: "feed", ageS: 3599 }), "prices: live feed, fetched 59 minutes ago", "whole minutes up to the hour");
   assert.equal(note({ source: "feed", ageS: 3600 }), "prices: live feed, fetched 1 hour ago", "singular hour");
   assert.equal(note({ source: "feed", ageS: 7_200 }), "prices: live feed, fetched 2 hours ago");
   assert.equal(note({ source: "feed", ageS: 90_000 }), "prices: live feed, fetched 25 hours ago", "hours keep counting; the feed's TTL is six, a cache kept under the switch can be older");
   assert.equal(note({ source: "feed" }), "prices: live feed", "no age in the block (an older kernel's shape): the source alone, never a made-up age");
-  // a cache kept while the switch is on still prices from the feed, and the line says the feed, with its age: the
-  // user stopped the traffic, not the data
-  assert.equal(note({ off: true, source: "feed", ageS: 600 }), "prices: live feed, fetched 10 minutes ago");
+  // a cache kept while the switch is on still prices from the feed, and the line says the feed, with its age, and
+  // why no refresh will come: the user stopped the traffic, not the data (analytics-price-source-states.test.ts
+  // drives the feed line's other tails: a failed refresh, the share a partial feed priced)
+  assert.equal(note({ off: true, source: "feed", ageS: 600 }), "prices: live feed, fetched 10 minutes ago; refresh off (ROMP_PRICE_FEED=off)");
 });
 
 test("the feed is off: baked-in defaults, and the switch is named so the reader knows what to flip", () => {
@@ -44,21 +47,52 @@ test("the feed is off: baked-in defaults, and the switch is named so the reader 
 });
 
 test("the last fetch failed: baked-in defaults with the reason the kernel recorded, never a fetched body", () => {
-  assert.equal(note({ off: false, source: "defaults", reason: "failed", lastError: "HTTPError: HTTP Error 500: Internal Server Error" }),
-    "prices: baked-in defaults; the last feed fetch failed (HTTPError: HTTP Error 500: Internal Server Error)");
-  assert.equal(note({ source: "defaults", reason: "failed", lastError: "URLError: <urlopen error [Errno 111] Connection refused>" }),
-    "prices: baked-in defaults; the last feed fetch failed (URLError: <urlopen error [Errno 111] Connection refused>)",
-    "the reason is placed as text by the render (textContent), so angle brackets are no hazard");
+  // The two reasons are the kernel's own outputs: _price_feed_error_class (kernel.py) run over the exceptions its test
+  // builds, an HTTPError 500 and a URLError wrapping ConnectionRefusedError 111. That function joins the exception
+  // type, the HTTP status and the wrapped socket error's type and errno, and never str(e), the response body or the
+  // URL, so a lastError is short and carries no status text; these literals are what the kernel sends and the only
+  // shape a reader should take from here (tests/test_price_feed_off.py pins them on the kernel's side, the socket one by
+  // its prefix, since the errno's text after it is the platform's; a literal fed to a pure function needs no such care).
+  assert.equal(note({ off: false, source: "defaults", reason: "failed", lastError: "HTTPError: HTTP 500" }),
+    "prices: baked-in defaults; the last feed fetch failed (HTTPError: HTTP 500)");
+  assert.equal(note({ source: "defaults", reason: "failed", lastError: "URLError: ConnectionRefusedError: errno 111 (Connection refused)" }),
+    "prices: baked-in defaults; the last feed fetch failed (URLError: ConnectionRefusedError: errno 111 (Connection refused))");
+  // NOT a shape the kernel emits (its reason class has no angle brackets): this one pins that the formatter relays
+  // the string as given and interprets none of it; the render places the line as text (textContent, the executed
+  // node case below), so a bracket in a reason would be no hazard
+  assert.equal(note({ source: "defaults", reason: "failed", lastError: "<a shape the kernel never sends>" }),
+    "prices: baked-in defaults; the last feed fetch failed (<a shape the kernel never sends>)",
+    "a deliberately foreign reason: relayed verbatim");
   assert.equal(note({ source: "defaults", reason: "failed" }), "prices: baked-in defaults; the last feed fetch failed", "a failure with no recorded reason says that much and no more");
 });
 
-test("nothing fetched yet: baked-in defaults, whether the fetch has not started or is in flight", () => {
+test("nothing landed yet: baked-in defaults, a fetch in flight worded apart from none attempted, and a landed-empty feed by what it left", () => {
   assert.equal(note({ off: false, source: "defaults", reason: "unfetched", fetchedAt: null, rows: 0 }), "prices: baked-in defaults; nothing fetched from the feed yet");
-  assert.equal(note({ source: "defaults", reason: "inflight" }), "prices: baked-in defaults; nothing fetched from the feed yet",
-    "the first open of the modal: the payload is built before the fetch it started lands");
+  assert.equal(note({ source: "defaults", reason: "inflight" }), "prices: baked-in defaults; fetching the feed now",
+    "the first open of the modal: the payload is built before the fetch it started lands, and the next open shows the feed (review round 1: one wording for both states read 'nothing fetched yet' during a re-attempt after a landed or failed fetch)");
+  assert.equal(note({ source: "defaults", reason: "empty", rows: 0, matched: 0 }), "prices: baked-in defaults; the feed matched no known model",
+    "a fetch that landed and named no known model is not 'not fetched yet'");
+  assert.equal(note({ source: "defaults", reason: "empty", rows: 0, matched: 2 }), "prices: baked-in defaults; the feed's rows for 2 known models could not be read",
+    "the kernel's `matched` above 0 with no row in the cache: the feed named known models and their rows did not parse (a schema change at the feed), which is not a feed that renamed its ids");
+  assert.equal(note({ source: "defaults", reason: "empty", rows: 0, matched: 1 }), "prices: baked-in defaults; the feed's rows for 1 known model could not be read", "singular");
   assert.equal(note({ source: "defaults", reason: "empty", rows: 0 }), "prices: baked-in defaults; the feed matched no known model",
-    "a fetch that landed and matched nothing is not 'not fetched yet'");
+    "no `matched` in the block (an older kernel): the one wording that kernel could stand behind");
   assert.equal(note({ source: "defaults", reason: "someday" }), "prices: baked-in defaults", "a reason this view does not know: the source, which the block did say, and no invented why");
+});
+
+test("rows from model-prices.json: the count is said on either source, since those rows price their models whichever table the line names", () => {
+  assert.equal(note({ off: true, source: "defaults", reason: "off", overrides: 1 }),
+    "prices: baked-in defaults; live feed off (ROMP_PRICE_FEED=off); 1 row overridden by model-prices.json",
+    "the reference tells a person with the feed off to keep a rate current in the file: the line says the row took");
+  assert.equal(note({ source: "defaults", reason: "failed", lastError: "HTTPError: HTTP 500", overrides: 2 }),
+    "prices: baked-in defaults; the last feed fetch failed (HTTPError: HTTP 500); 2 rows overridden by model-prices.json", "plural, after the reason");
+  assert.equal(note({ source: "feed", ageS: 240, overrides: 1 }), "prices: live feed, fetched 4 minutes ago; 1 row overridden by model-prices.json",
+    "the feed's table too: a row in the file wins over the feed's row for that model");
+  assert.equal(note({ source: "feed", ageS: 7_200, lastError: "HTTPError: HTTP 500", overrides: 1 }),
+    "prices: live feed, fetched 2 hours ago; the last refresh failed (HTTPError: HTTP 500); 1 row overridden by model-prices.json", "last, after the refresh's state");
+  assert.equal(note({ source: "defaults", reason: "off", overrides: 0 }), "prices: baked-in defaults; live feed off (ROMP_PRICE_FEED=off)", "no row in effect: nothing said about the file");
+  assert.equal(note({ source: "defaults", reason: "off" }), "prices: baked-in defaults; live feed off (ROMP_PRICE_FEED=off)", "no `overrides` in the block (an older kernel): nothing claimed");
+  assert.equal(note({ source: "defaults", reason: "off", overrides: "1" }), "prices: baked-in defaults; live feed off (ROMP_PRICE_FEED=off)", "the kernel's count is a number; a string is not read as one");
 });
 
 test("absent: a payload without the block (an older kernel) words nothing, so the modal renders no node", () => {
@@ -131,11 +165,13 @@ test("wired: raRender places the line from the payload's block in both metrics, 
   assert.ok(GEAR.includes("'<div id=ra-note class=ra-note></div>' +\n  '</div></div>';"), "the footnote stays the panel's last markup child");
   assert.ok(!GEAR.includes("id=ra-price class=ra-price"), "no empty #ra-price in the markup");
   assert.ok(GEAR.includes("raPrice.id = 'ra-price'; raPrice.className = 'ra-price'; raNote.parentNode.insertBefore(raPrice, raNote.nextSibling);"));
-  // the four wordings and the absent case, as the source spells them
-  assert.match(GEAR, /if \(pf\.source === 'feed'\) return 'prices: live feed' \+ \(typeof pf\.ageS === 'number' \? ', fetched ' \+ raAgo\(pf\.ageS\) : ''\);/);
+  // the wordings and the absent case, as the source spells them (the executed cases above pin what they produce)
+  assert.match(GEAR, /if \(pf\.source === 'feed'\) \{\n(?:[^\n]*\n){2}\s*var partial = typeof pf\.rows === 'number' && typeof pf\.known === 'number' && pf\.rows < pf\.known;\n\s*var line = 'prices: live feed' \+ \(partial \? ' for ' \+ pf\.rows \+ ' of ' \+ pf\.known \+ ' models' : ''\)\n\s*\+ \(typeof pf\.ageS === 'number' \? ', fetched ' \+ raAgo\(pf\.ageS\) : ''\);/,
+    "the feed branch: the head, the share when the block carries both counts, the age when the block has a number");
   assert.match(GEAR, /pf\.reason === 'off' \? 'live feed off \(ROMP_PRICE_FEED=off\)'/, "the switch is named where the user looks");
   assert.match(GEAR, /pf\.reason === 'failed' \? 'the last feed fetch failed' \+ \(pf\.lastError \? ' \(' \+ pf\.lastError \+ '\)' : ''\)/);
-  assert.match(GEAR, /\(pf\.reason === 'unfetched' \|\| pf\.reason === 'inflight'\) \? 'nothing fetched from the feed yet'/);
+  assert.match(GEAR, /pf\.reason === 'inflight' \? 'fetching the feed now'/, "a fetch in flight, worded apart from none attempted");
+  assert.match(GEAR, /pf\.reason === 'unfetched' \? 'nothing fetched from the feed yet'/);
   assert.match(GEAR, /if \(!pf \|\| typeof pf !== 'object'\) return '';/, "absent: no block, no text");
   // the line wears the footnote's muted 11px (the font-size rule: reuse a size already on the surface)
   assert.match(GEAR_CSS, /\.ra-note \{ color: var\(--text-muted, #9aa0a6\); font-size: 11px;/);

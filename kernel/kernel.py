@@ -3381,7 +3381,7 @@ def _version_info():
             # where the cost view's per-model price table came from: the live feed (when, how old) or the
             # baked-in defaults and why (ROMP_PRICE_FEED=off, a failed fetch by reason class, none yet); the
             # same block the /analytics payload carries, so a table served from the defaults is a visible
-            # fact in `romp version` and a curl too, never a guess
+            # fact at /version for a curl too, never a guess (`romp version` prints no price field)
             "priceFeed": _price_feed_status(),
             "autoNudge": _mv["autoNudge"],   # server-side toggle state → the gear checkbox reflects the kernel
             "compactSuggest": _mv["compactSuggest"],   # T208+: its gear checkbox rides the same read
@@ -52402,12 +52402,14 @@ DEFAULT_MODEL_PRICES = {   # $/token: input, output, cache write (5m), cache rea
 _price_cache = {"t": 0, "remote": {}}   # remote feed prices, refreshed on a TTL in the background
 # The feed's STATUS beside its cache (the _catalog_status idiom: single-key writes, no compound invariant, so no
 # lock): when a fetch was last attempted and last landed (the attempt's clock, the one the TTL stamp uses, so
-# the age and the TTL agree), how many baked-in ids the feed matched, why the last fetch failed (a reason CLASS,
-# never the response body: /version is auth-exempt), whether one is in flight, and whether the off line has
-# been written this kernel life. The cost view (/analytics `priceFeed`) and /version read it through
-# _price_feed_status, so a table served from the baked-in defaults is a visible fact where the user looks,
+# the age and the TTL agree), how many baked-in ids the feed's rows signed to (`matched`) and how many of those
+# parsed into the cache (`rows`; the two differ when the feed's schema moved under the parser), why the last fetch
+# failed (a reason CLASS, never the response body: /version is auth-exempt), whether one is in flight, and whether
+# the off line has been written this kernel life. The cost view (/analytics `priceFeed`) and /version read it
+# through _price_feed_status, so a table served from the baked-in defaults is a visible fact where the user looks,
 # never a figure that reads as live. There is no cache FILE: this is process memory and dies with the kernel.
-_price_feed = {"fetchedAt": None, "attemptedAt": None, "lastError": None, "rows": 0, "inflight": False, "offSaid": False}
+_price_feed = {"fetchedAt": None, "attemptedAt": None, "lastError": None, "rows": 0, "matched": 0, "inflight": False,
+               "offSaid": False}
 
 
 def _price_feed_off():
@@ -52420,9 +52422,18 @@ def _price_feed_off():
 
 def _price_feed_error_class(e):
     """The reason CLASS of a failed feed fetch, for `lastError` and the stderr line: the exception's type, the
-    HTTP status when it carries one (urllib's HTTPError), the wrapped socket error's type and errno when it
-    carries one (a URLError holds the OSError as `reason`). Never str(e), the response body or the URL: the
-    status rides the auth-exempt /version route, and a third party's error page is not ours to relay."""
+    HTTP status when it carries one (urllib's HTTPError), the wrapped error's type and its code when it carries
+    one (a URLError holds the OSError as `reason`), the code labelled from the table the code BELONGS to. A
+    socket errno reads through os.strerror (`ConnectionRefusedError: errno 111 (Connection refused)`). Two
+    OSError families carry LIBRARY codes in `errno`, which os.strerror would mislabel with an unrelated system
+    message (an SSL_ERROR_SSL of 1 as EPERM's "Operation not permitted", an EAI_NONAME of -2 as "Unknown
+    error -2"): an ssl.SSLError is labelled with OpenSSL's reason token and, for a certificate failure, its
+    verify message (`SSLCertVerificationError: CERTIFICATE_VERIFY_FAILED (self-signed certificate)`), both
+    fixed identifiers from OpenSSL's own tables; a resolver error with the EAI_ constant's name and libc's
+    gai_strerror text (`gaierror: EAI_NONAME (Name or service not known)`). Never str(e), the response body or
+    the URL: the status rides the auth-exempt /version route, and a third party's error page is not ours to
+    relay."""
+    import ssl
     parts = [type(e).__name__]
     code = getattr(e, "code", None)                  # HTTPError: the status line's code, never its body
     if isinstance(code, int):
@@ -52432,7 +52443,22 @@ def _price_feed_error_class(e):
         parts.append(type(inner).__name__)
         e = inner
     eno = getattr(e, "errno", None)
-    if isinstance(eno, int):
+    if isinstance(e, ssl.SSLError):                  # errno is an SSL_ERROR_* code: OpenSSL's reason token labels it
+        reason, verify = getattr(e, "reason", None), getattr(e, "verify_message", None)
+        label = reason if isinstance(reason, str) and reason else ("ssl error %d" % eno if isinstance(eno, int) else "")
+        if isinstance(verify, str) and verify:
+            label = "%s (%s)" % (label, verify) if label else verify
+        if label:
+            parts.append(label)
+    elif isinstance(e, (socket.gaierror, socket.herror)):   # errno is an EAI_* / h_errno code: the resolver's table
+        names = {getattr(socket, n): n for n in dir(socket) if n.startswith("EAI_")}
+        label = names.get(eno) or ("resolver error %d" % eno if isinstance(eno, int) else "")
+        msg = getattr(e, "strerror", None)           # libc's gai_strerror text, a fixed table, never the host name
+        if isinstance(msg, str) and msg:
+            label = "%s (%s)" % (label, msg) if label else msg
+        if label:
+            parts.append(label)
+    elif isinstance(eno, int):
         try:
             parts.append("errno %d (%s)" % (eno, os.strerror(eno)))
         except (ValueError, OverflowError):
@@ -52446,12 +52472,25 @@ def _price_feed_status(now=None):
     looks, never as though it were the live feed. `off` is the switch's current value (_price_feed_off).
     `source` is "feed" while the in-memory cache holds rows (served under off too: the switch stops traffic,
     not data, and `ageS` says how old they are), else "defaults" with `reason` naming why: "off"
-    (ROMP_PRICE_FEED=off), "inflight" (a fetch started and has not landed: the view's first open, whose
-    payload is built before the worker returns), "failed" (the last fetch failed; `lastError` is its reason
-    class, _price_feed_error_class), "empty" (a fetch landed and matched no baked-in id, so a renamed feed id
-    never masquerades as live), "unfetched" (no attempt this kernel life). `fetchedAt` and `attemptedAt` are
-    epochs on the caller's clock; `rows` counts the matched ids. No paths, no body text: /version is auth-exempt.
-    Computed here and nowhere else, so the view, /version and `romp version` cannot disagree."""
+    (ROMP_PRICE_FEED=off), "failed" (the last fetch failed, or its worker thread could not start; `lastError` is
+    the reason class, _price_feed_error_class), "empty" (a fetch landed and left no usable row: `matched` 0 means
+    no feed row signed to a baked-in id, so a renamed feed id never masquerades as live; `matched` above 0 means
+    the rows that did sign failed to parse, a schema change at the feed), "inflight" (a fetch started and has not
+    landed, and no earlier attempt landed or failed this kernel life: the view's first open, whose payload is
+    built before the worker returns), "unfetched" (no attempt this kernel life). A landed or failed result
+    outranks a fetch in flight, so the TTL re-attempt's payload keeps saying "failed" with its `lastError`, or
+    "empty", for the seconds the new worker runs instead of hiding the result behind "inflight" (review round 1).
+    `fetchedAt` and `attemptedAt` are epochs on the caller's clock; `rows` counts the
+    ids the cache holds, `matched` the ids the feed's rows signed to, parsed or not, and `known` the ids a feed
+    row CAN sign to (the distinct signatures in DEFAULT_MODEL_PRICES, the refresh's `want`), so `rows` below
+    `known` is a feed that priced some of the table and left the rest to the defaults. `overrides` counts the model
+    ids whose row the user's PRICE_CONFIG (~/.config/romp/model-prices.json) changed or added, the table's THIRD
+    layer: a row there wins over the feed and the defaults alike, so a figure it priced must not read as the
+    table's. Counted from the merge itself (_model_prices with refresh=False, the spend guard's road, which never
+    starts a fetch, T350) against the defaults under the cached rows, never from a second parse of the file that
+    could drift from the one that prices. A count, not the ids: the file's keys are the user's own text and
+    /version is auth-exempt. No paths, no body text. Computed here and nowhere else, so the view and /version
+    cannot disagree."""
     if now is None:
         now = int(time.time())
     off = _price_feed_off()
@@ -52460,11 +52499,38 @@ def _price_feed_status(now=None):
         source, reason = "feed", None
     else:
         source = "defaults"
-        reason = ("off" if off else "inflight" if _price_feed["inflight"] else "failed" if err is not None
-                  else "empty" if fetched is not None else "unfetched")
+        reason = ("off" if off else "failed" if err is not None else "empty" if fetched is not None
+                  else "inflight" if _price_feed["inflight"] else "unfetched")
+    table = {k: dict(v) for k, v in DEFAULT_MODEL_PRICES.items()}
+    table.update({k: dict(v) for k, v in _price_cache["remote"].items()})
+    overrides = sum(1 for k, v in _model_prices(now, refresh=False).items() if table.get(k) != v)
+    known = len({_price_sig(k) for k in DEFAULT_MODEL_PRICES if _price_sig(k)})
     return {"off": off, "source": source, "reason": reason, "fetchedAt": fetched,
             "ageS": (int(now) - int(fetched)) if fetched is not None else None,
-            "attemptedAt": _price_feed["attemptedAt"], "lastError": err, "rows": _price_feed["rows"]}
+            "attemptedAt": _price_feed["attemptedAt"], "lastError": err, "rows": _price_feed["rows"],
+            "matched": _price_feed["matched"], "known": known, "overrides": overrides}
+
+
+def _price_feed_line(now, head):
+    """One stderr line about the price feed, in the catalog's idiom (`_refresh_model_catalog`: the event, then what
+    is SERVED instead, read from the live status rather than a fixed phrase): `<head>; the cost view prices tokens
+    from <the feed rows in memory, fetched N ago | the baked-in defaults>[, N row(s) overridden by
+    model-prices.json]`, the head `price feed: <event>` written whole at each call so the lines read whole in the
+    source. The tail is _price_feed_status(now), the block the view and /version carry, so the line
+    and the line under the modal's footnote cannot disagree: under off with rows already in memory, or after a
+    refresh that failed while a landed table is still cached (stale-while-revalidate keeps it), the tail names
+    those rows and their age, and a user override is counted wherever it is in effect. `now` is the caller's
+    clock, the attempt's inside the worker."""
+    st = _price_feed_status(now)
+    if st["source"] == "feed":
+        a = st["ageS"]
+        age = None if a is None else ("%d s" % a if a < 60 else "%d min" % (a // 60) if a < 3600 else "%d h" % (a // 3600))
+        served = "the feed rows in memory" + (", fetched %s ago" % age if age is not None else "")
+    else:
+        served = "the baked-in defaults"
+    if st["overrides"]:
+        served += ", %d row%s overridden by model-prices.json" % (st["overrides"], "" if st["overrides"] == 1 else "s")
+    sys.stderr.write("%s; the cost view prices tokens from %s\n" % (head, served))
 
 
 def _price_sig(name):
@@ -52490,11 +52556,15 @@ def _refresh_remote_prices(now):
     swallowed: one stderr line per kernel life at the first refused attempt (the attempt is the event, not
     boot: a kernel where nobody opens the cost view says nothing), and _price_feed_status reports it to the
     view and /version. A fetch that fails is said the same way, once per failed fetch (the TTL bounds that
-    to one line per six hours), naming the reason class and never the response body."""
+    to one line per six hours), naming the reason class and never the response body; so is a fetch that landed
+    and left no usable row (a renamed or reshaped feed), and a worker thread that could not start (the start is
+    guarded, so nothing reads "inflight" for the TTL with no worker to clear it, and this never raises). Every
+    line's tail names what prices tokens NOW, read from the status (_price_feed_line): the cached rows and
+    their age when the cache holds them, else the baked-in defaults, plus any user override in effect."""
     if _price_feed_off():
         if not _price_feed["offSaid"]:
             _price_feed["offSaid"] = True
-            sys.stderr.write("price feed: off (ROMP_PRICE_FEED=off); the cost view prices tokens from the baked-in table\n")
+            _price_feed_line(now, "price feed: off (ROMP_PRICE_FEED=off)")
         return
     if now - _price_cache["t"] < PRICE_TTL:
         return
@@ -52511,16 +52581,16 @@ def _refresh_remote_prices(now):
                     feed = json.loads(r.read().decode("utf-8", "replace"))
             except Exception as e:
                 _price_feed["lastError"] = _price_feed_error_class(e)
-                sys.stderr.write("price feed: fetch failed (%s); the cost view prices tokens from the baked-in table\n"
-                                 % _price_feed["lastError"])
+                _price_feed_line(now, "price feed: fetch failed (%s)" % _price_feed["lastError"])
                 return
-            out = {}
+            out, matched = {}, set()
             for k, v in (feed.items() if isinstance(feed, dict) else []):
                 if not str(k).lower().startswith("claude") or not isinstance(v, dict):
                     continue
                 sig = _price_sig(k)
                 if sig not in want or want[sig] in out:
                     continue
+                matched.add(want[sig])               # signed to a baked-in id, parsed or not: the status tells the two apart
                 try:
                     inp = float(v["input_cost_per_token"])
                     out[want[sig]] = {"in": inp, "out": float(v["output_cost_per_token"]),
@@ -52531,11 +52601,20 @@ def _refresh_remote_prices(now):
             _price_cache["remote"] = out
             _price_feed["fetchedAt"] = now           # the attempt's clock, the TTL stamp's, so age and TTL agree
             _price_feed["rows"] = len(out)
+            _price_feed["matched"] = len(matched)
             _price_feed["lastError"] = None
+            if not out:                              # landed and left nothing usable: said once per such fetch, like a failure
+                _price_feed_line(now, "price feed: fetch landed with no usable row (%d signed to a baked-in id, none parsed)"
+                                 % len(matched))
         finally:
             _price_feed["inflight"] = False
 
-    threading.Thread(target=work, name="price-refresh", daemon=True).start()
+    try:
+        threading.Thread(target=work, name="price-refresh", daemon=True).start()
+    except Exception as e:                           # the worker never ran, so its finally never will: say it here, and
+        _price_feed["inflight"] = False              # leave nothing reading "inflight" for the TTL's six hours
+        _price_feed["lastError"] = _price_feed_error_class(e)
+        _price_feed_line(now, "price feed: fetch failed (%s), the worker thread did not start" % _price_feed["lastError"])
 
 
 def _model_prices(now=None, refresh=True):

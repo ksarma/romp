@@ -2225,21 +2225,51 @@ function initGear(post, opts) {
 // switch): the kernel's /analytics payload carries `priceFeed`, the state of the per-model price table, and this
 // words it in the payload's own terms. Pure: the block in, the line's text out, '' for a payload without the block
 // (an older kernel) or with a `source` this view does not know (absent beats a false statement). The block's shape
-// is the kernel's _price_feed_status: `source` 'feed' (the live table; `ageS` seconds since it landed) or 'defaults'
-// (the baked-in table) with a `reason`: 'off' (ROMP_PRICE_FEED=off), 'failed' (`lastError`, the kernel's short reason
-// for the failure, never the response body), 'unfetched' or 'inflight' (nothing has landed this kernel life),
-// 'empty' (a feed that matched no known model). The first open of the modal reads "nothing fetched yet": the
-// payload is built before the fetch it starts lands, and the next open shows the feed.
+// is the kernel's _price_feed_status: `source` 'feed' (the live table; `ageS` seconds since it landed; `rows` the
+// baked-in ids it matched, of the `known` the table holds, so a feed that matched some of them is said to price
+// those and no more; `off` and `lastError` say whether the next refresh is refused by the switch or the last one
+// failed, the rows serving either way: the switch stops traffic, not data) or 'defaults' (the baked-in defaults)
+// with a `reason`: 'off' (ROMP_PRICE_FEED=off), 'failed' (`lastError`, the kernel's short reason for the failure,
+// never the response body), 'empty' (a landed feed left no usable row: `matched` 0 is a feed naming no known model,
+// above 0 is rows for known models that could not be read), 'inflight' (a fetch is under way and nothing has landed
+// or failed before it: the first open of the modal, whose payload is built before the fetch it starts lands, so the
+// next open shows the feed), 'unfetched' (no attempt yet). Each reason is worded on its own: a fetch in flight is
+// not "nothing fetched yet", which after a landed or failed fetch would be false (review round 1). On either source
+// `overrides` counts the rows the user's model-prices.json put in effect, and the line says so: those rows price
+// their models whichever table the line names. A block without a newer key (an older kernel) is worded as the
+// older shape. tests/test_price_feed_vocabulary.py holds these words and the kernel's to one set.
 function raPriceNote(pf) {
   if (!pf || typeof pf !== 'object') return '';
-  if (pf.source === 'feed') return 'prices: live feed' + (typeof pf.ageS === 'number' ? ', fetched ' + raAgo(pf.ageS) : '');
+  // rows from the user's model-prices.json price their models whichever table the line names, so the count is said
+  // on either source, last (a block without `overrides`, an older kernel, says nothing about the file)
+  var ovr = typeof pf.overrides === 'number' && pf.overrides > 0
+    ? pf.overrides + (pf.overrides === 1 ? ' row' : ' rows') + ' overridden by model-prices.json' : '';
+  if (pf.source === 'feed') {
+    // fewer matched than the table knows: the rest are priced from the baked-in defaults, and the line says so instead
+    // of calling the whole table live (a block without `known`, an older kernel, is the plain line)
+    var partial = typeof pf.rows === 'number' && typeof pf.known === 'number' && pf.rows < pf.known;
+    var line = 'prices: live feed' + (partial ? ' for ' + pf.rows + ' of ' + pf.known + ' models' : '')
+      + (typeof pf.ageS === 'number' ? ', fetched ' + raAgo(pf.ageS) : '');
+    var tails = [];
+    if (partial) tails.push('baked-in defaults for the rest');
+    // the refresh's own state beside the rows it did not or will not replace: the switch outranks a failure it predates
+    if (pf.off === true) tails.push('refresh off (ROMP_PRICE_FEED=off)');
+    else if (pf.lastError) tails.push('the last refresh failed (' + pf.lastError + ')');
+    if (ovr) tails.push(ovr);
+    return line + (tails.length ? '; ' + tails.join('; ') : '');
+  }
   if (pf.source !== 'defaults') return '';
   var why = pf.reason === 'off' ? 'live feed off (ROMP_PRICE_FEED=off)'
     : pf.reason === 'failed' ? 'the last feed fetch failed' + (pf.lastError ? ' (' + pf.lastError + ')' : '')
-    : pf.reason === 'empty' ? 'the feed matched no known model'
-    : (pf.reason === 'unfetched' || pf.reason === 'inflight') ? 'nothing fetched from the feed yet'
+    // a landed feed that left nothing usable: rows that named known models and did not parse are a schema change at
+    // the feed, not a feed that renamed its ids, and the kernel's `matched` tells the two apart
+    : pf.reason === 'empty' ? (typeof pf.matched === 'number' && pf.matched > 0
+      ? 'the feed\'s rows for ' + pf.matched + ' known model' + (pf.matched === 1 ? '' : 's') + ' could not be read'
+      : 'the feed matched no known model')
+    : pf.reason === 'inflight' ? 'fetching the feed now'
+    : pf.reason === 'unfetched' ? 'nothing fetched from the feed yet'
     : '';
-  return 'prices: baked-in defaults' + (why ? '; ' + why : '');
+  return 'prices: baked-in defaults' + (why ? '; ' + why : '') + (ovr ? '; ' + ovr : '');
 }
 function raAgo(s) {   // an age in seconds as plain words: 'just now' under a minute, then whole minutes, then whole hours
   s = Math.max(0, Math.floor(Number(s) || 0));
