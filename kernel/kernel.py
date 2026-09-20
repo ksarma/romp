@@ -8540,7 +8540,8 @@ _user_todos_bad = {}     # str(path) -> (mtime_ns, size) of a file VERSION that 
 #                          errno) of a read that FAILED for a reason other than absence (_UT_FAULT_KINDS): one flagged state
 #                          either way (_user_todos reads it as empty, loudly; _write_user_todos refuses to overwrite it; the
 #                          prune touches nothing). A version flag lifts when the file's stat key changes and the new version
-#                          reads as a store; a fault flag when a stat or read succeeds again, or the file is gone
+#                          reads as a store; a fault flag when a stat or read succeeds again, or the file is gone. The
+#                          lift re-reads the file, so a version flag the fault displaced from the slot comes back
 _user_todos_lock = threading.RLock()  # store read-modify-writes run on route, WS and housekeeping threads:
 #                                       every mutation below reads, edits a copy and publishes under this
 #                                       lock, or two buses registering concurrently lose confirmed rows
@@ -8562,6 +8563,9 @@ def _user_todos():
     fault is said ONCE per errno (the said-once key is the failure itself, _user_todos_on's shape, since a
     failed stat has no file version to key by), and the flag stands until a stat or read succeeds again, so
     every writer refuses meanwhile (_write_user_todos) and the prune touches nothing (_prune_user_todos). The
+    lift READS the file again rather than answering it from the cache: the two flags share one slot, so a
+    version the shape guard had flagged lost its flag to the fault, and the re-read is what flags it again
+    (said once more, the one exception to once per version). The
     bare `except OSError: return {}` this replaces read a stat raising EIO as no store at all: the prune then
     read that as no records and spent every arm record, and a writer's copy of the stand-in would have
     replaced the store. The readers that must not answer a definite state off the stand-in ask
@@ -8576,9 +8580,16 @@ def _user_todos():
         _user_todos_fault(p, "stat", e)
         return {}
     flag = _user_todos_bad.get(str(p))
-    if _ut_flag_is_fault(flag) and flag[0] == "stat":
-        _user_todos_bad.pop(str(p), None)            # the stat succeeds again: that fault is spent (a read fault lifts only
-        #                                              when the read below succeeds, so it is said once, not once per retry)
+    if _ut_flag_is_fault(flag):
+        # the stat succeeds again under a fault flag. The file is READ again below, never answered from the cache: the
+        # fault's flag took the one slot in _user_todos_bad, so a version the shape guard had flagged as not a store lost
+        # its flag to the fault, and the cached stand-in of that version would otherwise read as a healthy EMPTY store
+        # with nothing left for the writer to refuse on (the next write would have replaced the file the guard protects).
+        # The re-read re-flags such a version, said once more. A stat fault is spent here; a read fault lifts only when
+        # the read below succeeds, so it is said once, not once per retry
+        _user_todos_cache.pop(str(p), None)
+        if flag[0] == "stat":
+            _user_todos_bad.pop(str(p), None)
     hit = _user_todos_cache.get(str(p))
     if hit is not None and hit[0] == key:
         return hit[1]

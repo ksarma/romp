@@ -306,6 +306,33 @@ class UnreadableStore(_StoreSandbox):
             self.assertEqual(km._user_todo_fp(SID2), "unreadable")
         self.assertNotIn("resolved", km._user_todos()[SID][0])
 
+    def test_a_stat_fault_lifting_on_a_file_that_is_not_a_store_keeps_that_version_flagged(self):
+        # the two flags share one slot in _user_todos_bad: a stat fault on a file the shape guard had flagged took the
+        # version flag's place, and the fault's lift (a stat succeeding again) popped the slot while the cache still
+        # answered that version's empty stand-in, so the not-a-store file read as a healthy EMPTY store with no flag
+        # left for the writer to refuse on, and the next write would have replaced the very file the guard protects.
+        # The lift reads the file again, never answers it from the cache; the version is said again, once, after the
+        # outage, because the re-read is what re-flags it
+        p = jd.STATE / "user-todos.json"
+        junk = json.dumps({"enabled": True})
+        p.write_text(junk)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(km._user_todos(), {})
+            self.assertTrue(km._user_todos_unreadable(), "the shape guard's flag")
+            with _store_stat_fails():
+                self.assertEqual(km._user_todos(), {})
+                self.assertTrue(km._user_todos_unreadable(), "the fault's flag")
+            # the disk back, the file untouched: still not a store
+            self.assertEqual(km._user_todos(), {})
+            self.assertTrue(km._user_todos_unreadable(), "the version stays flagged after the fault lifts")
+            with self.assertRaises(RuntimeError):
+                km._write_user_todos({})
+        self.assertEqual(p.read_text(), junk, "the not-a-store file is never replaced")
+        said = [l for l in err.getvalue().splitlines() if "top-level keys must be session ids" in l]   # the reader's line
+        self.assertEqual(len(said), 2, "the version is re-flagged by a read after the outage, and said once more")
+        self.assertEqual(sum("Fix or remove the file first" in l for l in err.getvalue().splitlines()), 1, "the writer's own line")
+
 
 class RegistrationCaps(_StoreSandbox):
     """`text` and `detail` are agent-supplied and ride every chat payload and every chat-signature component of the
