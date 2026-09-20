@@ -23,14 +23,19 @@
 // them: (1) in every checkout the files the branch created (a roster), the plan's section, the guide's Links paragraph, the
 // browser plan's pointer paragraph and the units of file-view.ts that name the file review (file-view.ts also carries the
 // viewer project's own review, whose rounds this section does not enumerate, so its units naming only "the review" are road
-// 2's); (2) where origin/main is known and the merge-base with it is neither origin/main nor HEAD, every "round N" and every id on a line the branch
-// added since the merge-base, in every file it changed, judged in the unit that carries it (a modified file's untouched
-// lines are context, never the charge: a stylesheet's block carries other projects' rounds around the lines this branch
-// added), and the roster checked against the diff's added files. The gate
-// on the merge-base (the file review's round 4, extra8-1): with the merge-base at origin/main the diff would be the whole
-// history over main's tip, which is what a later local branch, a batch head, main itself, or this branch right after merging
-// origin/main all look like, and on each the roster equality would fail for a reason that is not a defect; road 2 runs on the
-// open PR branch once main has moved past the branch's last merge, and the diagnostic says which road ran. Synthetic values
+// 2's); (2) where the merge-base with origin/main tells this branch's delta from main's tip, every "round N" and every id
+// on a line the branch added since the merge-base, in every file it changed, judged in the unit that carries it (a modified
+// file's untouched lines are context, never the charge: a stylesheet's block carries other projects' rounds around the lines
+// this branch added), and the roster checked against the diff's added files. The gate on road 2 has two parts, both read
+// off git (the file review's round 4, extra8-1, taking its refuter's correction): the merge-base is not origin/main itself,
+// and the diff since the merge-base adds this module. One part alone is not the gate. With the merge-base at origin/main
+// the diff is the whole history over main's tip, which is what a batch head, main itself, a branch cut from main's tip and
+// this branch right after merging origin/main all look like, and the roster equality would fail on each for a reason that
+// is not a defect; and once the follow-on has landed, a later branch whose fork point main has moved past has a merge-base
+// off origin/main too, while its diff adds that branch's files and not this module, so the roster equality would fail on
+// every such branch in the repo (the pin before this gate did, in both refuters' scratch repos). So road 2 runs in one kind
+// of checkout: this follow-on's open PR branch, in a clone where origin/main has moved past the branch's last merge of it,
+// and the diagnostic says which road ran and, when road 2 stood down, which part of the gate held it. Synthetic values
 // only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
@@ -42,6 +47,9 @@ import { comments, lineAt, literals, proseUnits, unitsOf, type Unit } from "./so
 const REPO = path.resolve(process.cwd(), "..");
 const read = (rel: string): string => fs.readFileSync(path.join(REPO, rel), "utf8");
 const exists = (rel: string): boolean => fs.existsSync(path.join(REPO, rel));
+
+/** This module's own path: road 2 runs only where the diff since the merge-base adds it (the second part of its gate). */
+const THIS_MODULE = "ui/webview/linknav-records-attribution.test.ts";
 
 /** The files the branch created (road 2 checks this roster against the diff's added files where it runs). */
 export const CREATED = [
@@ -180,7 +188,7 @@ test("the convention: the branch's review has rounds 1 and 2, the file review's 
   assert.deepEqual(roundFaults("the review ran two rounds; the pin holds a round-trip", two), [], "no round number, no claim");
 });
 
-test("road 1, every checkout: the files the branch created, the plan's section, the guide's Links paragraph, the browser plan's pointer and file-view.ts's units naming the file review name no round outside the convention and no finding of the author's outside a pass; road 2, where the merge-base tells the branch's delta from main's tip: every unit the branch added or touched, and the roster is the diff's added files", (t) => {
+test("road 1, every checkout: the files the branch created, the plan's section, the guide's Links paragraph, the browser plan's pointer and file-view.ts's units naming the file review name no round outside the convention and no finding of the author's outside a pass; road 2, on the open PR branch where main has moved past its last merge (the merge-base off origin/main and the diff adding this module): every unit the branch added or touched, and the roster is the diff's added files", (t) => {
   const reviews = convention();
   const faults: string[] = [];
   for (const f of CREATED) {
@@ -207,13 +215,16 @@ test("road 1, every checkout: the files the branch created, the plan's section, 
   let main: string | null = null;
   try { base = git("merge-base", "origin/main", "HEAD"); main = git("rev-parse", "origin/main"); } catch { base = null; }
   if (!base) { t.diagnostic("road 2 did not run: origin/main is not known in this checkout (CI's default-depth checkout); road 1 read the created files, the section, the guide, the pointer and file-view.ts's file-review units"); return; }
-  const head = git("rev-parse", "HEAD");
-  if (base === main || base === head) {
-    t.diagnostic("road 2 did not run: the merge-base with origin/main is " + (base === head ? "HEAD (main, or a branch merged into it)" : "origin/main itself (a branch cut from main's tip, a batch head, or this branch just after merging origin/main)") + ", so the diff since it is not this follow-on's delta alone; road 2 runs on the open PR branch once main has moved past the branch's last merge. Road 1 ran.");
+  if (base === main) {
+    t.diagnostic("road 2 did not run: the merge-base with origin/main is origin/main itself (a batch head, main itself, a branch cut from main's tip, or this branch just after merging origin/main), so the diff since it is the whole history over main's tip and not this follow-on's delta; road 2 runs on the open PR branch once main has moved past the branch's last merge of it. Road 1 ran.");
     return;
   }
   const status = git("diff", "--name-status", base, "HEAD").split("\n").filter(Boolean).map((l) => l.split("\t"));
   const created = status.filter((s) => s[0] === "A").map((s) => s[1]).sort();
+  if (!created.includes(THIS_MODULE)) {
+    t.diagnostic("road 2 did not run: the diff since the merge-base " + base + " does not add " + THIS_MODULE + " (a later branch after this follow-on landed, whose fork point main has moved past; or HEAD is main), so the diff is that branch's delta and not this follow-on's; road 2 runs on the open PR branch once main has moved past the branch's last merge of it. Road 1 ran.");
+    return;
+  }
   assert.deepEqual(created, [...CREATED].sort(), "the roster is the diff's added files since " + base + " (a file created later joins the roster)");
   const touched = status.filter((s) => s[0] !== "A" && s[0] !== "D").map((s) => s[s.length - 1]);
   const faults2: string[] = [];

@@ -12,7 +12,13 @@
 // listener); the words quoted in the section and the guide are the sources' literals; both sheets carry L3's rules
 // under `screen` and the print block names the control nowhere; no history API call stands in the trail or the viewer
 // (L5); the trail module imports nothing and fetches nothing, and L6's two verifications are run from the merge-base with
-// origin/main wherever that ref is known (L6); the guide's two sentences are whole, the old wording
+// origin/main where that base tells this branch's delta from main's tip, behind a two-part gate read off git: the
+// merge-base is not origin/main itself, and the diff since it adds this module (the file review's round 4, extra8-1: the
+// verifications are claims about this follow-on's delta, and the diff since the merge-base is that delta only on the open
+// PR branch in a clone where origin/main has moved past the branch's last merge of it; a batch head, main itself and this
+// branch right after merging origin/main have their merge-base at origin/main, and a later branch after the follow-on has
+// landed adds its own files and not this module, so on each the checks stand down and the diagnostic names the part of
+// the gate that held them; before the gate they ran there and failed on a delta that was not this one's); the guide's two sentences are whole, the old wording
 // is gone, and the sentence that says a link opens the file in place still stands (it is still true); the browser
 // plan's pointer stands in its navigation-stack section; and the module list is two-way (every module the section's
 // `ls` produces is named in the section and the count the section gives is the listing's, read from its sentence rather
@@ -33,6 +39,8 @@ const REPO = path.resolve(HERE, '..');
 const read = (...parts) => fs.readFileSync(path.join(REPO, ...parts), 'utf8');
 const exists = (...parts) => fs.existsSync(path.join(REPO, ...parts));
 const flat = (s) => s.replace(/\s+/g, ' ');
+/** This module's own path: L6's verifications run only where the diff since the merge-base adds it (the second part of their gate). */
+const THIS_MODULE = 'tools/markdown-viewer-plan-linknav.test.mjs';
 
 const plan = read('plans', 'markdown-viewer.md');
 const browserPlan = read('plans', 'file-browser.md');
@@ -240,7 +248,7 @@ test('L4: the browser leg reads the bar\'s name and the Back title after Enter o
 
 // ── L5 and L6: no history API, nothing new leaves the machine ──────────────────────────────────────
 
-test('L5 and L6: no history API call in the trail or the viewer; the trail module imports nothing and fetches nothing; L6 names its two verifications from the merge-base with origin/main, and they hold here wherever that ref is known', (t) => {
+test('L5 and L6: no history API call in the trail or the viewer; the trail module imports nothing and fetches nothing; L6 names its two verifications from the merge-base with origin/main, and they hold on the open PR branch where main has moved past its last merge (the merge-base off origin/main and the diff adding this module)', (t) => {
   for (const [name, src] of [['file-trail.ts', trail], ['file-view.ts', viewer]]) {
     assert.ok(!/\b(?:pushState|replaceState|hashchange)\b/.test(src), name + ': no pushState, replaceState or hashchange');
     assert.ok(!/\bhistory\.(?:back|forward|go)\(/.test(src), name + ': no history step of its own');
@@ -251,8 +259,15 @@ test('L5 and L6: no history API call in the trail or the viewer; the trail modul
   assert.ok(!/\bfetch\(/.test(trail), 'and fetches nothing');
   // L6's verifications are derived from the merge-base with main, never from a fixed sha: the build's record read the branch
   // point (34142c262), which the merge of main into the branch made an ancestor of main, so the same command named four kernel
-  // files at the merged head (the file review, fresh-1). The prose names the command; here it is run, wherever origin/main is
-  // known (a clone with the ref; a shallow CI checkout of a pull request has none and holds the prose alone, said so below).
+  // files at the merged head (the file review, fresh-1). The prose names the command; here it is run behind the two-part gate
+  // the file review's round 4 (extra8-1) ruled for this module and the attribution test alike: the merge-base is not
+  // origin/main itself, and the diff since it adds this module. Both parts hold on one kind of checkout, this follow-on's
+  // open PR branch in a clone where origin/main has moved past the branch's last merge of it, and there the diff is the
+  // delta L6 speaks of. Elsewhere the diff is some other delta and the checks stand down, saying which part held them: with
+  // the merge-base at origin/main (a batch head, main itself, a branch cut from main's tip, this branch right after merging
+  // origin/main) the diff is the whole history over main's tip; on a later branch after the follow-on has landed the
+  // diff adds that branch's files and not this module, however far main has moved. A checkout with no origin/main (CI's
+  // default-depth checkout of a pull request) holds the prose alone.
   assert.ok(section.includes('`git diff --stat $(git merge-base origin/main HEAD) HEAD -- kernel/` is empty'), 'L6 names the kernel stat from the merge-base');
   assert.ok(section.includes('`git diff --name-only $(git merge-base origin/main HEAD) HEAD` lists files under ui/webview, docs, plans, tools, upstream or tests alone'), 'and the listing from the merge-base');
   assert.ok(!section.includes('git diff --stat 34142c262') && !section.includes('git diff --name-only 34142c262'), 'no verification against the branch point remains');
@@ -261,15 +276,18 @@ test('L5 and L6: no history API call in the trail or the viewer; the trail modul
   assert.ok(exists('upstream', '2026-09-19-linknav-trail-back-forward.md'), 'the ledger entry the section names');
   const git = (...args) => execFileSync('git', args, { cwd: REPO, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
   let base = null;
-  try { base = git('merge-base', 'origin/main', 'HEAD'); } catch { base = null; }
-  if (!base) { t.diagnostic('origin/main is not known in this checkout: L6\'s verifications are held by their prose alone here'); return; }
-  const head = git('rev-parse', 'HEAD');
+  let main = null;
+  try { base = git('merge-base', 'origin/main', 'HEAD'); main = git('rev-parse', 'origin/main'); } catch { base = null; }
+  if (!base) { t.diagnostic('L6\'s verifications did not run: origin/main is not known in this checkout (CI\'s default-depth checkout); the prose alone holds them here'); return; }
+  if (base === main) { t.diagnostic('L6\'s verifications did not run: the merge-base with origin/main is origin/main itself (a batch head, main itself, a branch cut from main\'s tip, or this branch just after merging origin/main), so the diff since it is the whole history over main\'s tip and not this follow-on\'s delta; they run on the open PR branch once main has moved past the branch\'s last merge of it'); return; }
+  const status = git('diff', '--name-status', base, 'HEAD').split('\n').filter(Boolean).map((l) => l.split('\t'));
+  const files = status.map((s) => s[s.length - 1]);
+  if (!status.some((s) => s[0] === 'A' && s[1] === THIS_MODULE)) { t.diagnostic('L6\'s verifications did not run: the diff since the merge-base ' + base + ' does not add ' + THIS_MODULE + ' (a later branch after this follow-on landed, whose fork point main has moved past; or HEAD is main), so the diff is that branch\'s delta and not this follow-on\'s; they run on the open PR branch once main has moved past the branch\'s last merge of it'); return; }
   assert.equal(git('diff', '--stat', base, 'HEAD', '--', 'kernel/'), '', 'no kernel change since the merge-base ' + base);
-  const files = git('diff', '--name-only', base, 'HEAD').split('\n').filter(Boolean);
   const DIRS = ['ui/webview/', 'docs/', 'plans/', 'tools/', 'upstream/', 'tests/'];
   for (const f of files) assert.ok(DIRS.some((d) => f.startsWith(d)), f + ' lies under one of the six directories L6 names');
-  if (base === head) { t.diagnostic('HEAD is the merge-base (the branch is merged, or this is main): the count is not re-derived'); return; }
   assert.equal(files.length, Number(count[1]), 'L6 says the listing since the merge-base has ' + count[1] + ' files; it has ' + files.length + ': ' + files.join(', '));
+  t.diagnostic('L6\'s verifications ran: ' + files.length + ' files since the merge-base ' + base + ', none under kernel/, all under the six directories');
 });
 
 // ── the guide and the browser plan ─────────────────────────────────────────────────────────────────

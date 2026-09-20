@@ -8218,9 +8218,12 @@ scope" and carries the ask, what existed, the six decisions, the tests and the o
 module exists with the functions L1 names and the viewer calls it where L1 and L2 say; the words quoted here and in the
 guide are the sources' literals; the sheets carry L3's rules under `screen` in both sheets and the print block names the
 control nowhere; no history API call stands in the trail or the viewer; L6's two verifications are run from the
-merge-base with `origin/main` wherever that ref is known (a repository with the ref: the kernel stat empty, every
-changed file under the six directories, and the count L6 gives the listing's while the branch is unmerged; without the
-ref, the prose alone); the guide's two sentences are whole and the old
+merge-base with `origin/main` behind a two-part gate read off git, the merge-base not `origin/main` itself and the
+diff since it adding the module (the file review's round 4, extra8-1: the kernel stat empty, every changed file under
+the six directories, and the count L6 gives the listing's, on the open PR branch in a clone where `origin/main` has
+moved past the branch's last merge of it; on a batch head, on main, on this branch right after merging `origin/main`
+and on any later branch once the follow-on has landed the checks stand down and the diagnostic names the part of the
+gate that held them, and without the ref the prose alone holds); the guide's two sentences are whole and the old
 wording is gone; the browser plan's pointer stands in its navigation-stack section; and the module list is two-way
 (every module the listing above produces is named here and the count in that sentence is the listing's, read from the
 sentence; every test module under ui/webview, tools or tests whose own text names this follow-on is named here; every
@@ -8241,8 +8244,10 @@ review named nearest before it in its unit of text and is one the convention enu
 author's has no rounds; an id of the author's family stands only after a pass is named; a round with no review named
 fails), reading the files the branch created, this section, the guide's paragraph, the browser plan's pointer and
 file-view.ts's units naming the file review in every checkout, and every unit the branch added or touched since the
-merge-base where that base is neither `origin/main` nor HEAD, with the roster of created files checked against the
-diff's added files there. It and ui/webview/file-view-figure-shapes.test.ts read TS and JS through
+merge-base behind the same two-part gate (the merge-base not `origin/main` itself and the diff adding the module; the
+file review's round 4, extra8-1: before the gate the roster equality would have failed every later branch in the repo
+once the follow-on landed, and a gate on the module's presence alone would have passed a batch head), with the roster
+of created files checked against the diff's added files there. It and ui/webview/file-view-figure-shapes.test.ts read TS and JS through
 ui/webview/source-units.ts, the compiler's parser (comments as text with wrapped lines joined, string literals by value
 in either quote, template spans, escapes resolved), Markdown as paragraphs and Python as paragraphs with backslash
 escapes folded: the one reader for both pins, since the file review's round 4 ruled that a guard against a form is
