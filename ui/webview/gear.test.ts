@@ -25,7 +25,8 @@ test("the feed bundle builds and wires the gear where it hosts it (VS Code's fee
   assert.ok(FEED.includes("if (hostsGear(window)) initGear("), "feed.ts inits the gear on its kernel channel, unless the kernel's feed page said the gear is on /settings");
   const PAGE = read("ui", "webview", "settings-page.ts");
   assert.ok(PAGE.includes('require("./gear.js")') && PAGE.includes("initGear("), "the settings page is the dashboard's gear host");
-  assert.ok(GEAR.includes("module.exports = { initGear }"));
+  assert.ok(GEAR.includes("module.exports = { initGear, raPriceNote }"),
+    "initGear is the wiring entry; raPriceNote is the Token usage modal's pure price-source formatter, exported so analytics-price-source.test.ts runs it as shipped");
 });
 
 test("the gear opens on the shared {romp:'openSettings'} message on BOTH hosts", () => {

@@ -2132,9 +2132,18 @@ function initGear(post, opts) {
     else { JORDER.forEach(function (k) { var bj = (j.byJudge || {})[k]; if (bj) segs.push({ label: k, color: JCOL[k] || '#888', in: bj.in || 0, out: bj.out || 0, calls: bj.calls || 0, cost: bj.cost || 0 }); });
       Object.keys(j.byJudge || {}).forEach(function (k) { if (JORDER.indexOf(k) < 0 && k !== '?') { var bj = j.byJudge[k]; segs.push({ label: k, color: '#888', in: bj.in || 0, out: bj.out || 0, calls: bj.calls || 0, cost: bj.cost || 0 }); } }); }
     return segs.filter(function (s) { return (s.in + s.out) > 0; }); }
+  // The price-source line's node, under #ra-note. It EXISTS exactly while there is text for it (the payload named a
+  // source): a payload without the block leaves no node behind, empty or hidden, so an older kernel's modal is
+  // byte-for-byte what it was. One node across re-renders (the metric and group buttons re-render in place).
+  var raPrice = null;
+  function raPriceLine(text) {
+    if (!text) { if (raPrice) { raPrice.remove(); raPrice = null; } return; }
+    if (!raPrice) { raPrice = document.createElement('div'); raPrice.id = 'ra-price'; raPrice.className = 'ra-price'; raNote.parentNode.insertBefore(raPrice, raNote.nextSibling); }
+    raPrice.textContent = text;
+  }
   function raRender() {
-    if (raState.loading) { raChart.innerHTML = '<div class=ra-empty>loading…</div>'; raLegend.innerHTML = ''; raNote.textContent = ''; return; }
-    var d = raState.data; if (!d) { raChart.innerHTML = '<div class=ra-empty>no data</div>'; return; }
+    if (raState.loading) { raChart.innerHTML = '<div class=ra-empty>loading…</div>'; raLegend.innerHTML = ''; raNote.textContent = ''; raPriceLine(''); return; }
+    var d = raState.data; if (!d) { raChart.innerHTML = '<div class=ra-empty>no data</div>'; raPriceLine(''); return; }
     var sess = d.sessions || { in: 0, out: 0, cost: 0 };
     // Two session-dollar figures can arrive: `ledger` is the CLI's own per-turn cost as the rail's
     // recorder folded it (spend.json), `cost` is tokens × a price table over the whole period. The CLI's
@@ -2186,9 +2195,12 @@ function initGear(post, opts) {
                              + (ledFrom ? ' from ' + ledFrom + ' (' + fmtUsd(led.usd) + ') plus a token-price estimate for the time before ' + ledFrom + ' (' + fmtUsd(before) + '); recording began partway through that ' + (dayB ? 'day' : 'hour') + ', so turns earlier in it are in neither figure' : '')
                              + (led.keyed ? '; key-billed turns only, login turns left out' : '')
                              + (led.preFix ? '; includes days recorded before the per-turn fix' : '')
-                         : ' · session $ estimated from token prices; fast mode draws more than shown') : ''); }
+                         : ' · session $ estimated from token prices; fast mode draws more than shown') : '');
+    // Where the dollar figures' prices came from, on its own line under the footnote, in both metrics: the payload's
+    // priceFeed block worded by raPriceNote, or no node at all when the payload carries none (an older kernel).
+    raPriceLine(raPriceNote(d.priceFeed)); }
   function raFetch() { raState.loading = true; raRender();
-    fetch(ku('/analytics?window=' + raState.window), { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (d) { raState.loading = false; raState.data = d; raRender(); }).catch(function () { raState.loading = false; raChart.innerHTML = '<div class=ra-empty>analytics unavailable</div>'; raLegend.innerHTML = ''; raNote.textContent = ''; }); }
+    fetch(ku('/analytics?window=' + raState.window), { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (d) { raState.loading = false; raState.data = d; raRender(); }).catch(function () { raState.loading = false; raChart.innerHTML = '<div class=ra-empty>analytics unavailable</div>'; raLegend.innerHTML = ''; raNote.textContent = ''; raPriceLine(''); }); }
   if (raOpen) raOpen.onclick = function (e) { e.stopPropagation(); endDrags(); raBack.hidden = false; p.hidden = true; raFetch(); };   // the card hides here too: a drag in flight ends first (the migration read's low 2)
   // the panel's every close returns to the CARD it was opened from (the T409 tidy's read found the gap): a bare hide of the layer
   // left the card hidden too, and with nothing posting settings off the shell kept its transparent full-window frame over the
@@ -2209,4 +2221,31 @@ function initGear(post, opts) {
   document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && raBack && !raBack.hidden) raHide(); });
 }
 
-module.exports = { initGear };
+// The Token usage modal says where its dollar figures' prices came from (the user 2026-09-20, with the feed's off
+// switch): the kernel's /analytics payload carries `priceFeed`, the state of the per-model price table, and this
+// words it in the payload's own terms. Pure: the block in, the line's text out, '' for a payload without the block
+// (an older kernel) or with a `source` this view does not know (absent beats a false statement). The block's shape
+// is the kernel's _price_feed_status: `source` 'feed' (the live table; `ageS` seconds since it landed) or 'defaults'
+// (the baked-in table) with a `reason`: 'off' (ROMP_PRICE_FEED=off), 'failed' (`lastError`, the kernel's short reason
+// for the failure, never the response body), 'unfetched' or 'inflight' (nothing has landed this kernel life),
+// 'empty' (a feed that matched no known model). The first open of the modal reads "nothing fetched yet": the
+// payload is built before the fetch it starts lands, and the next open shows the feed.
+function raPriceNote(pf) {
+  if (!pf || typeof pf !== 'object') return '';
+  if (pf.source === 'feed') return 'prices: live feed' + (typeof pf.ageS === 'number' ? ', fetched ' + raAgo(pf.ageS) : '');
+  if (pf.source !== 'defaults') return '';
+  var why = pf.reason === 'off' ? 'live feed off (ROMP_PRICE_FEED=off)'
+    : pf.reason === 'failed' ? 'the last feed fetch failed' + (pf.lastError ? ' (' + pf.lastError + ')' : '')
+    : pf.reason === 'empty' ? 'the feed matched no known model'
+    : (pf.reason === 'unfetched' || pf.reason === 'inflight') ? 'nothing fetched from the feed yet'
+    : '';
+  return 'prices: baked-in defaults' + (why ? '; ' + why : '');
+}
+function raAgo(s) {   // an age in seconds as plain words: 'just now' under a minute, then whole minutes, then whole hours
+  s = Math.max(0, Math.floor(Number(s) || 0));
+  if (s < 60) return 'just now';
+  var m = Math.floor(s / 60); if (m < 60) return m + (m === 1 ? ' minute ago' : ' minutes ago');
+  var h = Math.floor(m / 60); return h + (h === 1 ? ' hour ago' : ' hours ago');
+}
+
+module.exports = { initGear, raPriceNote };

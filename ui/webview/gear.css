@@ -185,6 +185,9 @@ body.rs-lifted.rs-pane-gone::before { display: none; }
 .ra-li b { color: var(--text-bright, #e8eaed); font-weight: 600; }
 .ra-sw { width: 10px; height: 10px; border-radius: 2px; display: inline-block; flex: 0 0 auto; }
 .ra-note { color: var(--text-muted, #9aa0a6); font-size: 11px; border-top: 1px solid var(--hairline, #3a3a3a); padding-top: 7px; }
+/* the price-source line under the footnote (gear.js raPriceLine): the footnote's muted 11px, no second rule line;
+   the node exists only while the payload names a source, so there is nothing to hide */
+.ra-price { color: var(--text-muted, #9aa0a6); font-size: 11px; padding-top: 4px; }
 /* settingStale toasts (gear.js staleToast): the kernel stood a settings gesture down because a
    newer one had already applied — the same top-right warn-toast treatment the chat uses, carried
    HERE because the gear ships to panes that load only this sheet. Above the modal dim (z 60/70)
