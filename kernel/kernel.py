@@ -69850,22 +69850,52 @@ var lastPan=0;
 // no-pan test reads it, so an offsetTop that rounds to no pixel (0.4) is no pan on both roads and one that rounds up (0.5) a pan on
 // both. The 0px road had read the raw offsetTop, so a pan in (0, 0.5) was a standing hold there and a stored 0 here.
 function panPx(vv){return Math.round(vv.offsetTop||0);}
+// [fork] round 9 (2026-09-20): a pure ZOOM's share of that reading, in the same pixels. What panPx reads is vv.offsetTop, the visual
+// viewport's top edge in the layout viewport's coordinates, and the visual viewport lies inside the layout viewport: over a layout
+// viewport L px tall a report at scale s with no keyboard behind it has a visual viewport L/s tall whose top ranges over
+// [0, L - L/s], so a zoom alone pans by at most L(1 - 1/s), 0 at scale 1, 2.5 px at 1.003 and 8.4 px at 1.01 over 844. A keyboard
+// shortens the visual viewport further, to h/s (h the band's unzoomed height the coarse road computes below), and that shortening
+// is what lets the top sit lower than a zoom alone could put it: the part of the reading below the zoom's share is a keyboard's.
+// L is the LAYOUT viewport, read once per run below (document.documentElement.clientHeight; innerHeight stands in only where the
+// document element has no clientHeight, a node stub, a real standards-mode document always has one), never the coarse road's
+// h = round(vv.height*scale): with the keyboard up that h is the band, L less the keyboard, a height no zoom pans over, and
+// h(1 - 1/s) would understate the share by the keyboard's height times (1 - 1/s). Round 8 had derived the cut below from "an 844
+// px layout viewport" while the coarse road passed its h of 460 to it, so the two roads took the cut at two heights.
+function zoomPx(vv,L){return Math.round(L*(1-1/(vv.scale||1)));}
 // [fork] round 8 (2026-09-20): the pinch CUT, derived from the measured road's own rounding (it had been the literal 1.01, with no
-// derivation anywhere and no cell driven inside (1, 1.01)). A zoom at scale s pans the visual viewport by at most h(1 - 1/s) with no
-// keyboard behind it, and the measured road stores round(offsetTop), so the cut is the scale at which that largest zoom pan reaches
-// the half pixel that rounds up: s = h/(h - 0.5), 1.0006 in an 844 px layout viewport and 1.0011 at 460. Below it a pure zoom
-// stores 0 and the measured road is safe to run; at or above it a zoom could store a pixel as a keyboard pan, so the report is a
-// pinch: offsetTop is never published and the last pan holds. Both engines report exactly 1 at rest (Playwright's WebKit and
-// Chromium, eight descriptor contexts). With no layout height (h 0) the cut is undefined and the report counts as pinched, so the
-// hold stands rather than being cleared against a height that is not there.
-function pinched(vv,h){return !(h>0&&(vv.scale||1)<h/(h-0.5));}
+// derivation anywhere and no cell driven inside (1, 1.01)): the scale at which a zoom's own share first rounds to a pixel,
+// L(1 - 1/s) = 0.5, s = L/(L - 0.5), 1.0006 over an 844 px layout viewport, on both roads at the layout viewport (round 9). Below it
+// a pure zoom's pan stores as 0, so a reading of 0 there is a resting viewport (the 0px road clears the hold on that) and a
+// positive reading is a keyboard's whole; at or above it a zoom could put a pixel into the reading, so the report is a PINCH: the
+// 0px road leaves the hold standing, and the measured road publishes the reading less the zoom's share (kbPx below) rather than
+// standing down (round 8 had it fall to the hold road there, and with no hold standing that road publishes 0: a keyboard raised
+// under a light zoom, a scale between the cut and the old 1.01, laid the shell out at pan 0 and reopened the band; the maintainer's
+// round 5 ruling). Both engines report exactly 1 at rest (Playwright's WebKit and Chromium, eight descriptor contexts). With no
+// layout height (L 0) the cut is undefined and the report counts as pinched, so the hold stands rather than being cleared against a
+// height that is not there.
+function pinched(vv,L){return !(L>0&&(vv.scale||1)<L/(L-0.5));}
+// [fork] round 9 (2026-09-20): the pan a pure zoom CANNOT explain, the keyboard's: the measured pixels less the zoom's share in
+// pixels, never below 0. Below the cut the share is no pixel and this is panPx itself, the one reading the 0px road's no-pan test
+// shares (round 8); at or above it the error against the keyboard's own pan is one-sided (the share may have been smaller than its
+// bound) and at most the share, 8 px at 1.01 over 844, where standing down cost the whole keyboard pan, about 80 px. Under a real
+// pinch a keyboard's pan of 83 lies inside the share (422 at scale 2 over 844), so the measured road does not run and the hold road
+// publishes the pan of the keyboard the hold was measured with; a visual viewport dragged lower under that pinch than a pure zoom
+// could put it publishes the excess. The share's bound rests on the visual viewport lying inside the layout viewport (inside
+// below): a report it does not fit, the stale one a rotation leaves until the visual viewport re-reports, is outside the derivation
+// and takes the hold road, whose clamp binds at 0 there.
+function kbPx(vv,L){return Math.max(0,panPx(vv)-zoomPx(vv,L));}
+function inside(vv,L){return (vv.offsetTop||0)+(vv.height||0)<=L;}
 function fit(){try{var vv=window.visualViewport;
 var coarse=window.matchMedia&&matchMedia('(pointer: coarse)').matches;
 var h=(!coarse||!vv)?window.innerHeight:Math.round(vv.height*(vv.scale||1));
-// [fork] round 8 (2026-09-20): the layout viewport on this road too, read as the clamp below reads it (the reasoning and the engine
-// premise are in the fit() comment below the --app-h write); innerHeight stands in only where the document element has no
-// clientHeight (a node stub), a real standards-mode document always has one
-if(!coarse||!vv)h=document.documentElement.clientHeight||h;
+// [fork] round 8 (2026-09-20): the LAYOUT viewport, read once here for every road below (round 9: the fine road's height, the cut
+// and the zoom's share on both roads, and the clamp), as document.documentElement.clientHeight (the reasoning and the engine premise
+// are in the fit() comment below the --app-h write); innerHeight stands in only where the document element has no clientHeight
+// (a node stub), a real standards-mode document always has one. On the fine road h IS the layout viewport (this line re-reads
+// upstream's innerHeight as clientHeight); on the coarse road h stays upstream's round(vv.height*scale), the visible band's
+// unzoomed height, which the keyboard shortens, so the two are the same number only with no keyboard up.
+var L=document.documentElement.clientHeight||window.innerHeight;
+if(!coarse||!vv)h=L;
 if(h)document.documentElement.style.setProperty('--app-h',h+'px');
 // [fork] D1 (2026-09-19): the visual viewport's PAN. iOS reveals a focused input by moving the visual viewport down the
 // layout viewport (offsetTop > 0; no document scroll for the scrollTo below to undo) while the layout viewport keeps its
@@ -69880,13 +69910,16 @@ if(h)document.documentElement.style.setProperty('--app-h',h+'px');
 // fine-pointer window at or under 820 px takes the fixed body at top 0 and lays out as before, and a coarse document wider
 // than 1024 px publishes a pan no rule consumes and keeps its body in flow (tests/test_keyboard_gap_served.py drives
 // both; test_kernel_mobile's harness turns the pointer fine from a panned state). A PINCH (pinched: a scale at or above the
-// cut h/(h - 0.5), the smallest zoom whose own pan can round to a pixel, derived beside the helper) pans
-// the visual viewport too, with no keyboard behind it, so its offsetTop is never published and the last pan holds (a zoom
-// never re-lays the shell, the pinch-aware note above), CLAMPED AT USE to the layout viewport's height less h (round 2,
+// cut L/(L - 0.5), the smallest zoom whose own pan can round to a pixel, derived beside the helper) pans
+// the visual viewport too, with no keyboard behind it, so the part of offsetTop a pure zoom can explain (its share, zoomPx,
+// derived beside it) is never published: the measured road publishes the reading less that share where anything is left
+// (kbPx; round 9, 2026-09-20: it had stood down at the cut, which with no hold standing published 0 and reopened the band under
+// a light zoom) and otherwise the last pan holds (a zoom alone never re-lays the shell, the pinch-aware note above: its share is
+// the whole of its pan), CLAMPED AT USE to the layout viewport's height less h (round 2,
 // 2026-09-19): the same run recomputes --app-h from the zoomed viewport, so a pan measured under a keyboard that has since
 // gone would otherwise place the body's bottom, the composer row, below the layout viewport until the zoom ended. The layout
 // height is document.documentElement.clientHeight, on this road (round 7, 2026-09-20) and on the fine-pointer road above
-// (round 8, 2026-09-20); both had read window.innerHeight. TWO PREMISES rest here and nowhere else in this file: the other
+// (round 8, 2026-09-20; one read for every road since round 9); both had read window.innerHeight. TWO PREMISES rest here and nowhere else in this file: the other
 // sites point here, and the upstream lines that state the contrary (the "pinch-immune in every browser" paragraph above;
 // the meta comment in _landing) stay as written. ENGINE MODEL: Chromium keeps innerHeight at the layout viewport under a
 // pinch and WebKit shrinks it to the visual viewport's height, so a clamp reading innerHeight there had innerHeight - h
@@ -69907,10 +69940,12 @@ if(h)document.documentElement.style.setProperty('--app-h',h+'px');
 // under its own height until the zoom ends, a band under the composer for a taller keyboard and the body's bottom below
 // the band for a shorter one, by the height difference (round 5, 2026-09-20, disclosed: re-measuring under a zoom only
 // when the height changes is a design call not taken here; the harness and served legs re-raise the same keyboard). Two
-// roads WRITE the hold and each writes the value it publishes: the measured road its measurement, and the 0px road a zero,
-// only in a true no-pan state, one an unzoomed coarse run would have measured as 0: no visual viewport, or one under the
-// pinch road's cut (pinched reads the cut itself as a pinch, so the hold stands there), whose offsetTop rounds to no positive
-// pixel (panPx, the reading the measured road stores;
+// roads WRITE the hold and each writes the value it publishes: the measured road its measurement less the zoom's share (kbPx,
+// the measurement itself below the cut), and the 0px road a zero, only in a true no-pan state, one the measured road would
+// store as 0: no visual viewport, or one under the cut, taken at the layout viewport L on both roads (round 9, 2026-09-20: the
+// coarse road had taken it at its own h, the band's height with the keyboard up, so the two roads' cuts differed; pinched reads
+// the cut itself as a pinch, so the hold stands there), whose offsetTop rounds to no positive pixel (panPx, the reading the
+// measured road stores there;
 // round 6 and round 8, 2026-09-20: the 0px road had read the raw offsetTop, so a pan in (0, 0.5) was no pan by this rule and a
 // kept hold by that test). A pointer that turns fine with a pan standing (the keyboard up on iOS) or under a
 // standing zoom leaves the hold for the keyboard it was measured with, so coarse again under that zoom the pinch road
@@ -69924,9 +69959,9 @@ if(h)document.documentElement.style.setProperty('--app-h',h+'px');
 // beside the prior height rather than moving the fixed body by a pan measured against nothing; the 0px road has no height
 // to belong to and publishes unconditionally (only its write into the hold carries the no-pan condition above). The visual
 // viewport's scroll event, where a pan lands, is already bound below, so no new listener.
-if(!coarse||!vv){if(!vv||(!pinched(vv,h)&&!(panPx(vv)>0)))lastPan=0;document.documentElement.style.setProperty('--app-top','0px');}
-else if(h&&!pinched(vv,h))document.documentElement.style.setProperty('--app-top',(lastPan=panPx(vv))+'px');
-else if(h)document.documentElement.style.setProperty('--app-top',Math.min(lastPan,Math.max(0,document.documentElement.clientHeight-h))+'px');
+if(!coarse||!vv){if(!vv||(!pinched(vv,L)&&!(panPx(vv)>0)))lastPan=0;document.documentElement.style.setProperty('--app-top','0px');}
+else if(h&&(!pinched(vv,L)||(inside(vv,L)&&kbPx(vv,L)>0)))document.documentElement.style.setProperty('--app-top',(lastPan=kbPx(vv,L))+'px');
+else if(h)document.documentElement.style.setProperty('--app-top',Math.min(lastPan,Math.max(0,L-h))+'px');
 // iOS ignores interactive-widget and reveals a focused input by SCROLLING this overflow:hidden page
 // (a UA scroll bypasses the clamp) — the shell then sits a keyboard-height up until dragged back
 // (the user 2026-09-02). The layout must never scroll: undo any stray offset on the same events.

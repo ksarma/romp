@@ -125,11 +125,12 @@ class LandingShell(unittest.TestCase):
         self.assertIn("function kbOpen(){var vv=window.visualViewport;return vv?(window.innerHeight-vv.height*(vv.scale||1)>120):false;}", js)
         # the fine-pointer road: upstream's line reads innerHeight (its premise, "pinch-immune in every browser", and the fork's
         # contrary engine model both live in kernel.py's fit() comment, the one home, with their evidence status; round 8,
-        # 2026-09-20), and the fork line after it re-reads the layout viewport as documentElement.clientHeight; the visual
-        # viewport drives the fit only on coarse-pointer devices, where keyboards/toolbars live
+        # 2026-09-20), and the fork lines after it read the layout viewport once, as documentElement.clientHeight, for every
+        # road (round 9, 2026-09-20) and take it as this road's height; the visual viewport drives the fit only on
+        # coarse-pointer devices, where keyboards/toolbars live
         self.assertIn("var coarse=window.matchMedia&&matchMedia('(pointer: coarse)').matches;", js)
         self.assertIn("var h=(!coarse||!vv)?window.innerHeight:Math.round(vv.height*(vv.scale||1));", js)
-        self.assertIn("if(!coarse||!vv)h=document.documentElement.clientHeight||h;", js)   # the fork's re-read of the layout viewport (round 8, 2026-09-20)
+        self.assertIn("var L=document.documentElement.clientHeight||window.innerHeight;\nif(!coarse||!vv)h=L;", js)   # the fork's re-read of the layout viewport (round 8; one read for every road, round 9)
         self.assertIn("--mtabs-h',(kbOpen()?0:(bar.offsetHeight||0))+'px'", js)   # upstream's write: the fallback road's own pin
 
     def test_usage_modal_dismisses_via_a_real_backdrop_not_a_document_click(self):
@@ -590,15 +591,50 @@ visualViewport.offsetTop = 0.4; fire(VV, 'scroll'); flush(); out.subPixelMeasure
 visualViewport.offsetTop = 0.5; fire(VV, 'scroll'); flush(); out.halfPixelMeasured = appTop();
 visualViewport.offsetTop = 83; fire(VV, 'scroll'); flush();
 // round 8 (2026-09-20): the pinch CUT, derived from the measured road's rounding: a zoom at scale s pans the visual viewport by at
-// most h(1 - 1/s) with no keyboard behind it, and the measured road stores round(offsetTop), so the cut is the scale at which that
-// largest zoom pan reaches the half pixel that rounds up, s = h/(h - 0.5): 1.00109 at h 460 (the keyboard up). Below it (1.0009,
-// the largest zoom pan 0.41 px) the measured road runs and stores the pan it reads; at or above it (1.0012, 0.55 px) the report is
-// a pinch and the hold stands, where the measured road would have published the zoomed offsetTop (98)
-visualViewport.scale = 1.0009; visualViewport.height = 459.59; visualViewport.offsetTop = 90.4; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
-out.cutBelow = { appTop: appTop(), appH: appH() };
-visualViewport.scale = 1.0012; visualViewport.height = 459.45; visualViewport.offsetTop = 97.6; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
-out.cutAbove = { appTop: appTop(), appH: appH() };
+// most L(1 - 1/s) with no keyboard behind it, L the LAYOUT viewport the visual viewport's top ranges over, and the measured road
+// stores round(offsetTop), so the cut is the scale at which that largest zoom pan reaches the half pixel that rounds up,
+// s = L/(L - 0.5): 1.00059 at L 844. Round 9 (2026-09-20): these cells had taken the cut at the coarse road's h of 460, the band's
+// height with the keyboard up, which is not the height a zoom pans over; both roads take it at L now (kernel.py, beside pinched).
+// Below the cut (1.0005: the largest zoom pan 0.42 px, no pixel) the measured road stores the pan it reads, 90 from 90.4; at or
+// above it (1.0007: 0.59 px, one pixel) the report is a pinch and the road publishes the pan LESS the zoom's pixel, 97 from 97.6,
+// not the hold (90) and not the raw reading (98). Round 8 had held 90 there (driven at 1.0012 with the same reading); the
+// maintainer's round 5 ruling re-ruled it: refusing the pan cost the whole keyboard pan where the zoom's share was a pixel
+visualViewport.scale = 1.0005; visualViewport.height = 459.77; visualViewport.offsetTop = 90.4; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+out.cutBelow = { appTop: appTop(), appH: appH(), zoomShare: 844 * (1 - 1 / 1.0005) };
+visualViewport.scale = 1.0007; visualViewport.height = 459.68; visualViewport.offsetTop = 97.6; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+out.cutAbove = { appTop: appTop(), appH: appH(), zoomShare: 844 * (1 - 1 / 1.0007) };
 visualViewport.scale = 1; visualViewport.height = 460; visualViewport.offsetTop = 83; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+// round 9 (2026-09-20): the state round 8's cut REGRESSED (the maintainer's round 5 ruling): the keyboard raised under a LIGHT zoom,
+// a scale between the cut and the 1.01 the literal had allowed, with NO hold standing. From rest at scale 1 the measured road
+// stores 0, so the hold is 0; the keyboard then comes up at scale 1.003 (h 460: the visual viewport 458.62 tall, panned 83.7).
+// Round 8's road read the report as a pinch and fell to the hold, 0px, the band under the composer this change exists to close.
+// The measured road now publishes the pan a pure zoom CANNOT explain: the measured pixels (84) less the zoom's share at that
+// scale, 844(1 - 1/1.003) = 2.52 px, 3 in pixels: 81px, at most the share below the keyboard's pan and never 0
+visualViewport.scale = 1; visualViewport.height = 844; visualViewport.offsetTop = 0; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+out.restBeforeLightZoom = appTop();
+visualViewport.scale = 1.003; visualViewport.height = 458.62; visualViewport.offsetTop = 83.7; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+out.kbUpLightZoomNoHold = { appTop: appTop(), appH: appH(), zoomShare: 844 * (1 - 1 / 1.003) };
+// the two states that must not regress with it. A REAL pinch with no keyboard publishes no band, driven at the deepest pan a pure
+// zoom of the layout viewport can reach (scale 2: the visual viewport 422 tall at offsetTop 422, exactly the zoom's share, so the
+// bound is tight and nothing is left over for a keyboard); the hold stands at 0
+visualViewport.scale = 1; visualViewport.height = 844; visualViewport.offsetTop = 0; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+visualViewport.scale = 2; visualViewport.height = 422; visualViewport.offsetTop = 422; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+out.zoomDeepestNoHold = { appTop: appTop(), appH: appH() };
+// a keyboard raised UNDER a real pinch with no hold: its pan (83) is inside the zoom's share (422), so the road cannot tell it from a
+// zoom's and publishes the hold, 0 (the outcome before this round too, kept: the band shows until the zoom ends or the keyboard is
+// raised at scale 1, where the measured road stores its pan); a keyboard raised BEFORE the pinch is the pinchPanned pin below
+visualViewport.scale = 1; visualViewport.height = 844; visualViewport.offsetTop = 0; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+visualViewport.scale = 2; visualViewport.height = 230; visualViewport.offsetTop = 83; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+out.kbUnderZoomNoHold = { appTop: appTop(), appH: appH() };
+// the visual viewport dragged LOWER under that pinch than a pure zoom could put it (offsetTop 500 against a share of 422; the band
+// 500..730 lies inside the layout viewport): the excess, 78, is a keyboard's, published and stored; dragged back to 83 the hold road
+// publishes that 78 (the excess became the hold, an estimate of the keyboard's pan within the zoom's share; disclosed)
+visualViewport.offsetTop = 500; fire(VV, 'scroll'); flush();
+out.kbUnderZoomDragged = { appTop: appTop(), appH: appH() };
+visualViewport.offsetTop = 83; fire(VV, 'scroll'); flush();
+out.kbUnderZoomDraggedBack = { appTop: appTop(), appH: appH() };
+visualViewport.scale = 1; visualViewport.height = 844; visualViewport.offsetTop = 0; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+visualViewport.height = 460; visualViewport.offsetTop = 83; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
 // round 4 (2026-09-20): a height report the run REFUSES (h 0) publishes no pan either. The pan belongs to the height it was
 // measured with, so a report of height 0 with offsetTop 300 leaves --app-top and --app-h where the last valid run put them
 // (83 and 460); publishing the pan alone had moved the fixed body 300 px down under a height that never followed
@@ -739,9 +775,9 @@ out.coarseAgainZoomed = { appTop: appTop(), appH: appH() };
 visualViewport.scale = 1; visualViewport.height = 844; visualViewport.offsetTop = 0; fire(VV, 'resize'); flush();
 out.coarseAgainBack = { appTop: appTop(), appH: appH(), barH: barH() };
 // round 6 (2026-09-20): the 0px road's CONDITION, both sides of every variable in it. The road clears the hold only in a true
-// no-pan state, one an unzoomed coarse run would have measured as 0: no visual viewport, or one under the pinch road's cut
-// (pinched: h/(h - 0.5), the scale at which a zoom's own pan can round to a pixel, 1.0006 at the fine road's h of 844; the cut
-// itself is a pinch, so the hold stands there) whose
+// no-pan state, one the measured road would store as 0: no visual viewport, or one under the cut (pinched: L/(L - 0.5), the scale
+// at which a zoom's own pan can round to a pixel, 1.0006 at the layout viewport L of 844, the height both roads take the cut at
+// since round 9, 2026-09-20, when the coarse road had taken it at its own h; the cut itself is a pinch, so the hold stands there) whose
 // offsetTop rounds to no positive pixel, the reading the measured road stores (panPx; round 8, 2026-09-20:
 // the road had read the raw offsetTop, so 0.4 kept the hold here and stored 0 there) (the keyboard gone in the same run the
 // pointer turned fine, the kernel-4 case); a
@@ -1077,8 +1113,9 @@ class MobileFitExecutes(unittest.TestCase):
         # round 6 (2026-09-20). Round 4 had the 0px road write the hold on every fine run (a pointer that turns fine and coarse
         # again under a zoom then published the 0 the fine window laid out), and that reopened this change's own band: with
         # the keyboard up and its pan standing the pinch road published 0px under a keyboard-sized --app-h. The road now clears
-        # the hold only in a true no-pan state, one an unzoomed coarse run would have measured as 0 (no visual viewport, or
-        # one under the pinch road's cut, whose offsetTop rounds to no positive pixel); with a pan standing, or under a standing zoom, the hold stands for the keyboard it
+        # the hold only in a true no-pan state, one the measured road would store as 0 (no visual viewport, or one under the
+        # cut, taken at the layout viewport L on both roads since round 9, 2026-09-20, whose offsetTop rounds to no positive
+        # pixel); with a pan standing, or under a standing zoom, the hold stands for the keyboard it
         # was measured with. Every writing road writes the value it publishes; the clamp road writes nothing. Round 8
         # (2026-09-20): the no-pan test reads the value the measured road stores, one helper (panPx) for both roads, so a
         # sub-pixel offsetTop is the same answer on both: 0.4 is no pan (cleared here, 0px stored there) and 0.5 a pan (the
@@ -1101,15 +1138,22 @@ class MobileFitExecutes(unittest.TestCase):
 
     def test_the_pinch_cut_is_the_scale_at_which_a_zooms_own_pan_can_round_to_a_pixel(self):
         # round 8 (2026-09-20): the cut between an unzoomed report and a pinch had been the literal 1.01, undriven inside (1, 1.01)
-        # and derived nowhere (its origin commit said only "above 1"). It is derived from the measured road's own rounding now: a
-        # zoom at scale s pans by at most h(1 - 1/s) with no keyboard behind it, and the measured road stores round(offsetTop), so
-        # the cut is s = h/(h - 0.5), the scale at which the largest zoom pan reaches the half pixel that rounds up (1.00109 at h
-        # 460, 1.00059 at 844). Cells on both sides on both roads: the measured road runs under the cut and stores the pan it reads
-        # (90 from 90.4 at 1.0009), and at or over it the report is a pinch, the hold stands and the zoomed offsetTop (97.6, which
-        # the measured road would have published as 98px) is never published; the 0px road's flips clear under the cut (1.0005 at h
-        # 844) and keep the hold over it (1.0007). A cut of 1.01 publishes 98px here and clears the hold at 1.0007.
-        self.assertEqual(self.out["cutBelow"], {"appTop": "90px", "appH": "460px"}, "under the cut the measured road runs and stores its reading")
-        self.assertEqual(self.out["cutAbove"], {"appTop": "90px", "appH": "460px"}, "at or over the cut the report is a pinch: the hold stands, the zoomed offsetTop is never published")
+        # and derived nowhere (its origin commit said only "above 1"). It is derived from the measured road's own rounding: a zoom
+        # at scale s pans by at most L(1 - 1/s) with no keyboard behind it, L the layout viewport the visual viewport's top ranges
+        # over, and the measured road stores round(offsetTop), so the cut is s = L/(L - 0.5), the scale at which the largest zoom
+        # pan reaches the half pixel that rounds up (1.00059 at L 844). Round 9 (2026-09-20, the maintainer's round 5 ruling): both
+        # roads take the cut at L (the cells had taken it at the coarse road's h of 460, the band's height with the keyboard up, a
+        # height no zoom pans over), and at or over the cut the measured road no longer stands down: it publishes the measured
+        # pixels less the zoom's share in pixels (round 8 held the hold there, which with no hold standing was the band). Cells on
+        # both sides on both roads: under the cut the zoom's share is no pixel and the road stores the pan it reads (90 from 90.4 at
+        # 1.0005); at or over it the share is one pixel and the road publishes 97 from 97.6 (not the hold, 90; not the raw 98); the
+        # 0px road's flips clear under the cut (1.0005 at 844) and keep the hold over it (1.0007). The shares are derived here from
+        # the driven scales, so the pixel the cell subtracts is the cell's own arithmetic.
+        below, above = self.out["cutBelow"], self.out["cutAbove"]
+        self.assertEqual((round(below["zoomShare"]), round(above["zoomShare"])), (0, 1), "the zoom's share in pixels on each side of the cut: %r %r" % (below, above))
+        self.assertEqual({k: below[k] for k in ("appTop", "appH")}, {"appTop": "90px", "appH": "460px"}, "under the cut the measured road stores its reading")
+        self.assertEqual({k: above[k] for k in ("appTop", "appH")}, {"appTop": "%dpx" % (98 - round(above["zoomShare"])), "appH": "460px"},
+                         "at or over the cut the road publishes the reading less the zoom's pixel: not the hold (90), not the raw reading (98)")
         flips = self.out["flips"]
         self.assertEqual((flips["scaleUnderCut"]["coarseAgainZoomed"]["appTop"], flips["scaleAtCut"]["coarseAgainZoomed"]["appTop"], flips["scaleOverCut"]["coarseAgainZoomed"]["appTop"]),
                          ("0px", "83px", "83px"), "the 0px road clears under the cut and keeps the hold at it and over it (the fixer pass: the cut is a pinch)")
@@ -1119,6 +1163,28 @@ class MobileFitExecutes(unittest.TestCase):
         self.assertEqual((h0["innerHeight"], h0["clientHeight"]), (0, 0), "the state driven is h 0 on both reads: %r" % (h0,))
         self.assertEqual({k: h0[k] for k in ("appTop", "appH")}, {"appTop": "0px", "appH": "460px"}, "0px written, the height write skipped at h 0")
         self.assertEqual(self.out["h0CoarseAgainZoomed"], {"appTop": "83px", "appH": "460px"}, "the hold stands across a fine run with no layout height")
+
+    def test_a_keyboard_raised_under_a_light_zoom_with_no_hold_publishes_its_pan(self):
+        # round 9 (2026-09-20), the maintainer's round 5 ruling: round 8's derived cut (1.0006 at 844) had every scale between it and
+        # the literal 1.01 it replaced fall to the hold road, and with no hold standing (the state after any rest at scale 1) the hold
+        # road publishes 0px: a keyboard raised while a light zoom held left the band under the composer bare, the defect D1 exists to
+        # close. The measured road publishes the pan a pure zoom cannot explain, the measured pixels less the zoom's share L(1 - 1/s)
+        # in pixels (kbPx in kernel.py, derived beside it): 81px here (84 less 3), never 0, and the error against the keyboard's own
+        # pan is one-sided and at most the share. The share is derived from the driven scale, so the bound the cell checks is the
+        # cell's own arithmetic, not a figure copied from the kernel.
+        r = self.out["kbUpLightZoomNoHold"]
+        px = lambda v: int(v[:-2])
+        self.assertEqual(self.out["restBeforeLightZoom"], "0px", "the hold is 0: the measured road stored 0 at rest")
+        share = round(r["zoomShare"])
+        self.assertTrue(0 < share <= 8, "a light zoom's share, between a pixel and the 8 px of the old 1.01 literal: %r" % (r,))
+        self.assertEqual({k: r[k] for k in ("appTop", "appH")}, {"appTop": "%dpx" % (84 - share), "appH": "460px"},
+                         "the keyboard's pan less the zoom's share, not the hold (0): %r" % (r,))
+        self.assertTrue(83 - share <= px(r["appTop"]) <= 84, "within the zoom's share of the keyboard's pan, one-sided: %r" % (r,))
+        # the two states that must not regress with it
+        self.assertEqual(self.out["zoomDeepestNoHold"], {"appTop": "0px", "appH": "844px"}, "a real pinch at the deepest pan a pure zoom can reach: the share is tight, nothing is published")
+        self.assertEqual(self.out["kbUnderZoomNoHold"], {"appTop": "0px", "appH": "460px"}, "a keyboard under a real pinch with no hold: its pan is inside the zoom's share, the hold (0) is published")
+        self.assertEqual(self.out["kbUnderZoomDragged"], {"appTop": "78px", "appH": "460px"}, "dragged below the zoom's share under the pinch: the excess is a keyboard's and is published")
+        self.assertEqual(self.out["kbUnderZoomDraggedBack"], {"appTop": "78px", "appH": "460px"}, "the excess became the hold")
 
     def test_the_clamp_reads_the_layout_viewport_in_both_engine_models_and_binds_only_below_zero(self):
         # round 7 (2026-09-20). The clamp had read window.innerHeight as the layout viewport's height, which holds in Chromium

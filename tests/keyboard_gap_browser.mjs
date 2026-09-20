@@ -146,6 +146,12 @@ try {
   out.kbDown = await move(844, 0);       // the keyboard down: the pan is gone with it
   out.kbNoPan = await move(508, 0);      // a keyboard that does not pan (Android under resizes-visual)
   out.settled = await move(844, 0);
+  // round 9 (2026-09-20), the maintainer's round 5 ruling: the keyboard raised under a LIGHT zoom with no hold standing (the rest
+  // above stored 0): scale 1.003, the visual viewport 506.48 tall (508 / 1.003) panned 83.7, so h is 508 again. Round 8's cut read
+  // the report as a pinch and published the hold, 0px, the band. The measured road publishes the pan less the zoom's share,
+  // 844(1 - 1/1.003) = 2.52 px, 3 in pixels: 81px, at most the share below the keyboard's pan
+  out.kbUpLightZoom = await move(506.48, 83.7, 1.003);
+  out.settledLight = await move(844, 0);
   // round 3 (2026-09-19): the keyboard up with the visual viewport dragged to the layout viewport's bottom (height 508,
   // offsetTop 336: the band 336..844), so the fixed bottom:0 bar is inside the band and the fixed body, at the pan, ends at
   // the bar; the strip must be reserved there or the bar paints over the composer

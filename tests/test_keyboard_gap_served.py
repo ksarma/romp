@@ -165,7 +165,7 @@ class KeyboardGap(unittest.TestCase):
         rest, up, down, nopan, settled = r["rest"], r["kbUp"], r["kbDown"], r["kbNoPan"], r["settled"]
         # the emulation held: the shell read the fake visual viewport, in a layout viewport of the descriptor's height
         for name, g in (("rest", rest), ("kbUp", up), ("pickerUp", r["pickerUp"]), ("kbDown", down), ("kbNoPan", nopan),
-                        ("kbUpDeep", r["kbUpDeep"]), ("deepZoomed", r["deepZoomed"]), ("kbUpMid", r["kbUpMid"]),
+                        ("kbUpDeep", r["kbUpDeep"]), ("deepZoomed", r["deepZoomed"]), ("kbUpMid", r["kbUpMid"]), ("kbUpLightZoom", r["kbUpLightZoom"]),
                         ("pinchPanned", r["pinchPanned"]), ("kbDownZoomed", r["kbDownZoomed"]), ("kbUpAgainZoomed", r["kbUpAgainZoomed"])):
             self.assertTrue(g["vv"]["fake"], where + name + ": the shell's visualViewport is the fake")
             self.assertIsNone(g["labVVError"], where + name)
@@ -227,6 +227,22 @@ class KeyboardGap(unittest.TestCase):
         self.assertEqual(_px(nopan["mtabsH"]), 0, where + "%r" % (nopan,))
         self.assertAlmostEqual(KB_H - nopan["composerBottom"], rest_gap, delta=1, msg=where + "flush above the band with no pan: %r" % (nopan,))
         self.assertAlmostEqual(settled["composerBottom"], rest["composerBottom"], delta=0.5, msg=where + "%r" % (settled,))
+        # round 9 (2026-09-20), the maintainer's round 5 ruling: the keyboard raised under a LIGHT zoom with no hold standing. Round
+        # 8's derived cut (1.0006 at 844) put every scale between it and the old literal 1.01 on the hold road, and with the hold 0
+        # (the state after any rest at scale 1) that road published 0px: the band under the composer, the defect this leg exists to
+        # close, back under a zoom the eye cannot see. The measured road publishes the pan a pure zoom cannot explain, the measured
+        # pixels less the zoom's share L(1 - 1/s) in pixels, derived here from the driven scale (the kernel's derivation sits beside
+        # its zoomPx helper); the composer then sits within that share of its resting distance from the band's bottom
+        lz, lz_back = r["kbUpLightZoom"], r["settledLight"]
+        share = LAYOUT_H * (1 - 1 / 1.003)
+        self.assertEqual(lz["vv"]["scale"], 1.003, where + "the shell read the light zoom: %r" % (lz["vv"],))
+        self.assertTrue(0 < round(share) <= 8, where + "a light zoom's share is a few pixels: %r" % (share,))
+        self.assertEqual(_px(lz["appH"]), KB_H, where + "--app-h is the band's unzoomed height under the light zoom: %r" % (lz,))
+        self.assertEqual(_px(lz["appTop"]), 84 - round(share), where + "the keyboard's pan less the zoom's share, not the hold (0): %r" % (lz,))
+        lz_band_bottom = 83.7 + 506.48
+        self.assertAlmostEqual(lz_band_bottom - lz["composerBottom"], rest_gap, delta=share + 1,
+                               msg=where + "the composer keeps its distance from the band's bottom to within the zoom's share, no band: %r" % (lz,))
+        self.assertAlmostEqual(lz_back["composerBottom"], rest["composerBottom"], delta=0.5, msg=where + "%r" % (lz_back,))
         # the visual viewport at the layout viewport's bottom with the keyboard up (round 3, 2026-09-19): the band is 336..844,
         # the fixed bottom:0 bar is inside it, and the fixed body, at the pan, ends where the bar does. The bar's box decides:
         # visible, so its strip is reserved and the composer sits above the bar at its resting distance. The first cut read

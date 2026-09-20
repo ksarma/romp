@@ -497,17 +497,20 @@ class RefitsWhenTheVisibleHeightChanges(unittest.TestCase):
         # with innerHeight parted from clientHeight.
         self.assertIn("var coarse=window.matchMedia&&matchMedia('(pointer: coarse)').matches;", self.js)
         self.assertIn("var h=(!coarse||!vv)?window.innerHeight:Math.round(vv.height*(vv.scale||1));", self.js)
-        self.assertIn("if(!coarse||!vv)h=document.documentElement.clientHeight||h;\nif(h)document.documentElement.style.setProperty('--app-h',h+'px');", self.js,
-                      "the fork's re-read of the layout viewport on the fine-pointer road, right before the --app-h write")
+        self.assertIn("\nvar L=document.documentElement.clientHeight||window.innerHeight;\nif(!coarse||!vv)h=L;\nif(h)document.documentElement.style.setProperty('--app-h',h+'px');", self.js,
+                      "the layout viewport read once for every road (round 9, 2026-09-20), and the fork's re-read of it on the fine-pointer road, right before the --app-h write")
         self.assertIn("setProperty('--app-h',h+'px')", self.js)
         # D1 (2026-09-19): the visual viewport's PAN rides beside the height. iOS reveals a focused input by moving the
         # visual viewport down the layout viewport (offsetTop > 0) with no document scroll to undo, so a body sized to
         # vv.height at layout y 0 left the bottom offsetTop pixels of the screen bare under the composer. fit() publishes
         # the pan as --app-top under the same coarse guard (a fine pointer writes 0px whatever the visual viewport says; the
         # consumer is gated on the layout query, a different population, see the fit() comment). Under a pinch (pinched: a scale at or
-        # above h/(h - 0.5), the smallest zoom whose own pan can round to a pixel, derived in the kernel beside the helper; round 8,
-        # 2026-09-20, it had been the literal 1.01) the last pan
-        # holds, a zoom pans too and never re-lays the shell, CLAMPED AT USE to the layout viewport less the height the same
+        # above L/(L - 0.5), the smallest zoom whose own pan can round to a pixel, L the layout viewport both roads take the cut at,
+        # derived in the kernel beside the helper; round 8, 2026-09-20, it had been the literal 1.01; round 9, the coarse road had
+        # taken it at its own h, the band's height with the keyboard up) the measured road publishes the part of the pan a pure
+        # zoom cannot explain, the measured pixels less the zoom's share L(1 - 1/s) in pixels (kbPx; round 9: it had stood down at
+        # the cut, and with no hold standing that published 0, the band under a light zoom), and where nothing is left the last pan
+        # holds, a zoom alone pans too and never re-lays the shell, CLAMPED AT USE to the layout viewport less the height the same
         # run publishes, so a keyboard dismissed while zoomed cannot leave the body hanging below the viewport (round 2,
         # 2026-09-19); the layout viewport is document.documentElement.clientHeight, the same height in both engine models
         # (round 7, 2026-09-20: it had read window.innerHeight, which WebKit shrinks to the visual viewport's height under a
@@ -515,9 +518,10 @@ class RefitsWhenTheVisibleHeightChanges(unittest.TestCase):
         # there and restates nothing), so there the difference was below 0 on every zoomed
         # run and the road published 0px whatever the hold; the harness drives both models); the clamp bounds what is published and never writes back into the hold (round 4, 2026-09-20: it had,
         # so the hold decayed to 0 the first time the clamp bound and a keyboard raised again under the zoom reopened the
-        # band). Every road that WRITES the hold writes the value it publishes: the measured road its measurement, the 0px
-        # road a zero, and that only in a true no-pan state (no visual viewport, or one under the pinch road's cut,
-        # whose offsetTop rounds to no positive pixel, panPx, the one reading the measured road stores too, so a sub-pixel
+        # band). Every road that WRITES the hold writes the value it publishes: the measured road its measurement less the zoom's
+        # share (the measurement itself below the cut), the 0px road a zero, and that only in a true no-pan state, one the
+        # measured road would store as 0 (no visual viewport, or one under the cut, taken at the layout viewport on both roads,
+        # whose offsetTop rounds to no positive pixel, panPx, the one reading the measured road stores there, so a sub-pixel
         # pan is the same answer on both roads, round 8, 2026-09-20; round 6, 2026-09-20: written on every fine run, the zero had reopened the band after a pointer flip under a keyboard or a
         # zoom); the clamp road publishes a bound of the hold and stores nothing, so --app-top can sit below the hold until a
         # road WRITES it, the measured road or the 0px road in a no-pan state (round 8, 2026-09-20: the 0px road runs without
@@ -529,13 +533,18 @@ class RefitsWhenTheVisibleHeightChanges(unittest.TestCase):
         # test_kernel_mobile.MobileFitExecutes.
         self.assertIn("\nvar lastPan=0;\n", self.js)
         self.assertIn("\nfunction panPx(vv){return Math.round(vv.offsetTop||0);}\n", self.js, "the one reading of the pan, declared before fit()")
-        self.assertIn("\nfunction pinched(vv,h){return !(h>0&&(vv.scale||1)<h/(h-0.5));}\nfunction fit(){", self.js,
-                      "the pinch cut, derived from the measured road's rounding (round 8, 2026-09-20), declared before fit()")
+        self.assertIn("\nfunction zoomPx(vv,L){return Math.round(L*(1-1/(vv.scale||1)));}\n", self.js,
+                      "a pure zoom's share of the reading in pixels, over the layout viewport L (round 9, 2026-09-20), declared before fit()")
+        self.assertIn("\nfunction pinched(vv,L){return !(L>0&&(vv.scale||1)<L/(L-0.5));}\n", self.js,
+                      "the pinch cut, derived from the measured road's rounding (round 8, 2026-09-20), at the layout viewport (round 9), declared before fit()")
+        self.assertIn("\nfunction kbPx(vv,L){return Math.max(0,panPx(vv)-zoomPx(vv,L));}\nfunction inside(vv,L){return (vv.offsetTop||0)+(vv.height||0)<=L;}\nfunction fit(){", self.js,
+                      "the pan a pure zoom cannot explain, and the premise its bound rests on (round 9, 2026-09-20), declared before fit()")
         self.assertNotIn("1.01", served_css.js_code(self.js), "the cut is derived, not a literal (the code, comments blanked: the derivation's comment names the old literal)")
-        self.assertIn("if(!coarse||!vv){if(!vv||(!pinched(vv,h)&&!(panPx(vv)>0)))lastPan=0;document.documentElement.style.setProperty('--app-top','0px');}", self.js)
+        self.assertIn("if(!coarse||!vv){if(!vv||(!pinched(vv,L)&&!(panPx(vv)>0)))lastPan=0;document.documentElement.style.setProperty('--app-top','0px');}", self.js)
         self.assertNotIn("vv.offsetTop>0", self.js, "the 0px road reads the shared rounding, never the raw offsetTop")
-        self.assertIn("else if(h&&!pinched(vv,h))document.documentElement.style.setProperty('--app-top',(lastPan=panPx(vv))+'px');\n"
-                      "else if(h)document.documentElement.style.setProperty('--app-top',Math.min(lastPan,Math.max(0,document.documentElement.clientHeight-h))+'px');", self.js)
+        self.assertIn("else if(h&&(!pinched(vv,L)||(inside(vv,L)&&kbPx(vv,L)>0)))document.documentElement.style.setProperty('--app-top',(lastPan=kbPx(vv,L))+'px');\n"
+                      "else if(h)document.documentElement.style.setProperty('--app-top',Math.min(lastPan,Math.max(0,L-h))+'px');", self.js)
+        self.assertNotIn("pinched(vv,h)", served_css.js_code(self.js), "both roads take the cut at the layout viewport L, never at the coarse road's h (round 9, 2026-09-20)")
         self.assertNotIn("innerHeight-h", self.js, "the clamp reads the layout viewport (clientHeight), not innerHeight, which WebKit shrinks under a pinch")
         self.assertNotIn("lastPan=Math.min", self.js, "the clamp is at use: nothing writes its result back into the hold")
         # the write sits inside fit(), after the --app-h write and before the stray-scroll reset, so one frame publishes both
