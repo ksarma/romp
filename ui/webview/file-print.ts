@@ -501,9 +501,10 @@ const SVG_RENDERS: readonly string[] = ["svg", "g", "a", "switch"];
  *  `none` does; and on a link the engines differ: Chromium and WebKit compute it to none, Firefox keeps it and paints the
  *  image inside (file-print-figure-browser.test.ts in the three engines, 2026-09-20: `svg>a[display=contents]>image` paints
  *  in Firefox alone, `svg>g[display=contents]>image` and the nested svg in all three, the switch and the image in none).
- *  A link is not named here, the safe side for the one place this table would decide for one, a link that is a figure's
- *  root, and the gate's media roots are an img, a video, an audio, a picture or an svg (figure-gate.ts), so no link reaches
- *  this road in the product. Below the root the display the
+ *  A link is not named here, the safe side for the places this table decides for one: a link that is a figure's root in a
+ *  browser (the gate's media roots are an img, a video, an audio, a picture or an svg, figure-gate.ts, so none reaches this
+ *  road in the product), and any link under a stand-in where nothing computes, where no engine paints (the round-6
+ *  review's engines-2, 2026-09-20: the sentence named the root alone). Below the root the display the
  *  browser COMPUTES is read and a computed `contents` is trusted as rendering, since an engine that kept `contents` on an
  *  element it did not render would leave a picture counted for a print that shows nothing of it, and none of the three
  *  does that; before the round-5 review (2026-09-20) this table decided below the root as well, so the link Firefox
