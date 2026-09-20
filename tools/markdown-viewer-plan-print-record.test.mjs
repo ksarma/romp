@@ -54,6 +54,7 @@ function figureRows() {
 }
 /** A count in the section's words, for a pin that derives the number and reads the sentence. */
 const WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve'];
+const ORDINALS = ['', 'first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth', 'tenth', 'eleventh', 'twelfth'];
 /** A TypeScript source without its comments: a block comment that opens a line, a full-line `//` comment and a trailing
  *  `//` comment that a space precedes (a `//` inside a URL literal follows a colon and stays; a `/*` inside a regex or a
  *  string is mid-line and stays). */
@@ -953,6 +954,15 @@ test('P2, P6, open point 8 and the guide carry the figure-level grant sentence: 
   assert.ok(fig.includes('name: "svg>image[a]+defs>image[b]"') && fig.includes('fetches: ["a", "b"]') && fig.includes('name: "picture>source[a]+img[b]"') && fig.includes('fetches: ["a"]'), 'the figure leg holds the fetched URLs per shape, two hosts among them');
   assert.ok(TESTS.includes('a second oracle keyed on the URL, every placeholder whose figure paints restored the way "Print with them" restores it (`loadGatedFigure`, one at a time) and the remote URLs the page then asks for held per shape equal to the table\'s `fetches` column'));
   assert.ok(TESTS.includes('every one of 83 gated shapes built twice on one page (74 at the round-3 review, nine added since the round-4 review, below)'));
+  // the two-URL qualifier (the round-5 review's regression-5 and extra6-4): the number of added shapes with two URLs is
+  // derived from the rows the leg builds whose html takes the second URL, not spelled by hand (the `fetches:` column no
+  // longer marks them alone: since the round-6 Firefox fix two one-URL rows carry it per engine), and the ninth is the
+  // display read below the root, the one added row with one URL
+  const twoUrl = figureRows().filter((r) => r.html('URL', 'URL2').includes('URL2'));
+  assert.ok(twoUrl.length >= 2 && twoUrl.length < WORDS.length, 'two-URL rows exist and their count has a word: ' + twoUrl.length);
+  assert.ok(twoUrl.every((r) => r.fetches !== undefined), 'every two-URL row carries a measured `fetches` column');
+  assert.ok(TESTS.includes('over ' + WORDS[twoUrl.length] + ' added shapes with two URLs on two hosts, and a ' + ORDINALS[twoUrl.length + 1] + ' for the display read below the root: an svg image beside an image, beside one at opacity zero, beside one under `<defs>`, beside one at display none, and a sheet-hidden group over an image beside an image'), 'the Tests list counts the two-URL shapes as the leg builds them (' + twoUrl.length + ') and the one-URL addition as the next');
+  assert.ok(!TESTS.includes('over nine added shapes with two URLs'), 'the count that enumerated eight and said nine is gone');
   assert.ok(TESTS.includes('A node case in the same module holds `paperMismatches`, the leg\'s disagreement message, to name each disagreeing shape with its own expected value'));
   assert.ok(fig.includes('function paperMismatches(rows: Array<{ name: string; twinPaints: boolean | null }>, expected: boolean[]): string[] {'), 'the message carries the expectation with the row');
   // the guide's consent clause

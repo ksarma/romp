@@ -8601,7 +8601,7 @@ _Avoid_ (a review finding, 2026-09-19).
   (2026-09-20, extra8-2 and extra8-3): a second oracle keyed on the URL, every placeholder whose figure paints restored
   the way "Print with them" restores it (`loadGatedFigure`, one at a time) and the remote URLs the page then asks for
   held per shape equal to the table's `fetches` column, measured rather than derived (a `<picture>` fetches the
-  `<source>` it picks and not the `<img>`'s src), over nine added shapes with two URLs on two hosts: an svg image beside
+  `<source>` it picks and not the `<img>`'s src), over eight added shapes with two URLs on two hosts, and a ninth for the display read below the root: an svg image beside
   an image, beside one at opacity zero, beside one under `<defs>`, beside one at display none, and a sheet-hidden group
   over an image beside an image (each fetching both URLs, the non-painting element's among them: P2's figure-level
   rule), an svg at opacity zero over two images (fetching none), a `<picture>` with a `<source>` and an `<img>`
