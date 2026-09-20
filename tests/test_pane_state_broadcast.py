@@ -734,10 +734,63 @@ def _js_code(ln):
     return ln
 
 
+def _neutral(text):
+    """The text with every string literal's contents blanked at the same length, so a brace, a paren or a semicolon inside a string counts
+    for nothing and every offset stands."""
+    return re.sub(r"'(?:[^'\\\n]|\\.)*'|\"(?:[^\"\\\n]|\\.)*\"", lambda m: m.group(0)[0] + " " * (len(m.group(0)) - 2) + m.group(0)[-1], text)
+
+
+def _gate_encloses(text, gate_at, call_at):
+    """Whether the call at `call_at` runs under the `if(` whose condition holds the gate literal at `gate_at` (offsets into `text`): the
+    statement that `if` guards, a braced block to its balancing `}` or a single statement to its `;` at depth zero, holds the call. A
+    block that has not closed by the end of the text runs on past the call and holds it. A call after the guarded statement's end, or
+    ahead of the condition, is not under the gate."""
+    t = _neutral(text)
+    i = t.rfind("if(", 0, gate_at)
+    if i < 0:
+        return False
+    depth, j = 0, i + 2
+    while j < len(t):
+        if t[j] == "(":
+            depth += 1
+        elif t[j] == ")":
+            depth -= 1
+            if depth == 0:
+                break
+        j += 1
+    if j >= len(t) or call_at <= j:
+        return False
+    body = j + 1
+    depth, k = 0, body
+    if t[body:body + 1] == "{":
+        while k < len(t):
+            if t[k] == "{":
+                depth += 1
+            elif t[k] == "}":
+                depth -= 1
+                if depth == 0:
+                    break
+            k += 1
+    else:
+        while k < len(t):
+            c = t[k]
+            if c in "({[":
+                depth += 1
+            elif c in ")}]":
+                depth -= 1
+            elif c == ";" and depth == 0:
+                break
+            k += 1
+    return body < call_at < k
+
+
 def _mobile_show_roads():
-    """The call sites, each {kind, line, above, cls}: kind `hook` (a `__rompMobileTab(` call anywhere in the served page) or the mobile
-    script's `show`, `userSwitch`, `reveal`; `above` is the two lines before a hook site (a relay arm opens its gate on the line above the
-    call); `cls` the classification: `gated` (the layout probe on the site's line or the lines above), `through userSwitch` (reveal, the
+    """The call sites, each {kind, line, text, call_at, cls}: kind `hook` (a `__rompMobileTab(` call anywhere in the served page) or the
+    mobile script's `show`, `userSwitch`, `reveal`; `text` is the hook site's line with the two lines before it (a relay arm opens its
+    gate on the line above the call) and `call_at` the call's offset in it; `cls` the classification: `gated` (the layout probe's `if(`
+    guards the call: the statement it opens, braced or single, holds the call, whether it opens on the site's line or on one of the two
+    above; a gate that has CLOSED before the call gates nothing, however near, so a call on the line after a gated arm's close is
+    unclassified until it says which layout it serves; review round 6, 2026-09-20), `through userSwitch` (reveal, the
     toggleFleet arm and the bar's buttons all pass through userSwitch, whose fork declaration reads the layout), `userSwitch declaration,
     gated` and `userSwitch declaration, shadowed` (the fork's and the project's: the later binds, pinned apart), `phone-only by
     construction` (the failed overlay's retry, an element the desktop stylesheet hides, pinned apart), `both layouts by design` (the boot
@@ -747,18 +800,21 @@ def _mobile_show_roads():
     sites = []
     for i, raw in enumerate(hlines):
         ln = _js_code(raw)
-        for _ in re.finditer(r"__rompMobileTab\(", ln):
-            sites.append({"kind": "hook", "line": ln, "above": "\n".join(_js_code(x) for x in hlines[max(0, i - 2):i])})
+        for m in re.finditer(r"__rompMobileTab\(", ln):
+            above = "\n".join(_js_code(x) for x in hlines[max(0, i - 2):i])
+            text = above + "\n" + ln if above else ln
+            sites.append({"kind": "hook", "line": ln, "text": text, "call_at": len(text) - len(ln) + m.start()})
     for raw in km._LANDING_MOBILE_JS.split("\n"):
         ln = _js_code(raw)
         for m in re.finditer(r"(?<![A-Za-z0-9_.$])(show|userSwitch|reveal)\(", ln):
             if ln[max(0, m.start() - 9):m.start()] == "function ":
                 continue   # the declaration, not a call
-            sites.append({"kind": m.group(1), "line": ln, "above": ""})
+            sites.append({"kind": m.group(1), "line": ln, "text": ln, "call_at": m.start()})
     for s in sites:
         ln, kind = s["line"], s["kind"]
         if kind == "hook":
-            s["cls"] = "gated" if (_MOBILE_ON_GATE in ln or _MOBILE_ON_GATE in s["above"]) else "both layouts by design" if _RECONCILE_SWITCH in ln else "UNCLASSIFIED"
+            gated = any(_gate_encloses(s["text"], g.start(), s["call_at"]) for g in re.finditer(re.escape(_MOBILE_ON_GATE), s["text"]))
+            s["cls"] = "gated" if gated else "both layouts by design" if _RECONCILE_SWITCH in ln else "UNCLASSIFIED"
         elif kind == "reveal":
             s["cls"] = "through userSwitch"   # reveal() un-hides and calls userSwitch
         elif kind == "userSwitch":
@@ -778,6 +834,24 @@ def _mobile_show_roads():
 
 
 class MobileShowRoads(unittest.TestCase):
+    def test_a_gate_reaches_a_call_only_inside_the_statement_it_guards(self):
+        """The census's form space (review round 6, 2026-09-20): the classifier read the gate literal anywhere in the two lines above a
+        call, so a call on the line after a gated arm's close inherited the arm's gate. The gate guards one statement; the call is gated
+        inside it and nowhere else."""
+        G = _MOBILE_ON_GATE
+        arm = "  try{if(%s){var cur=document.body.getAttribute('data-tab')||'chat';\n    if(cur!=='files'){window.__rompFilesTabFrom=cur;window.__rompMobileTab&&window.__rompMobileTab('files');}}}catch(e){}" % G
+        self.assertTrue(_gate_encloses(arm, arm.index(G), arm.index("window.__rompMobileTab(")), "the Files arm's shape: the gate opens on the line above, the call is inside its block")
+        after = arm + "\n  try{window.__rompMobileTab&&window.__rompMobileTab('chat');}catch(e){}"
+        self.assertFalse(_gate_encloses(after, after.index(G), after.rindex("window.__rompMobileTab(")), "a call on the line after the arm's close runs on both layouts: the gate in the lines above gates nothing")
+        single = "try{if(%s)window.__rompMobileTab&&window.__rompMobileTab('feed');}catch(e){}" % G
+        self.assertTrue(_gate_encloses(single, single.index(G), single.index("window.__rompMobileTab(")), "a single statement under the if, no braces (the Log row's and the browse arm's shape)")
+        second = "if(%s)a();window.__rompMobileTab('feed');" % G
+        self.assertFalse(_gate_encloses(second, second.index(G), second.index("window.__rompMobileTab(")), "the statement after the guarded one's `;` is outside the gate")
+        quoted = "if(%s){var s='}';\nwindow.__rompMobileTab('feed');}" % G
+        self.assertTrue(_gate_encloses(quoted, quoted.index(G), quoted.index("window.__rompMobileTab(")), "a brace inside a string literal closes nothing")
+        before = "window.__rompMobileTab('feed');if(%s){a();}" % G
+        self.assertFalse(_gate_encloses(before, before.index(G), before.index("window.__rompMobileTab(")), "a call ahead of the condition is not under it")
+
     def test_every_road_into_show_is_classified_and_a_desktop_gesture_reaches_it_through_a_gate(self):
         sites = _mobile_show_roads()
         self.assertEqual([s["line"] for s in sites if s["cls"] == "UNCLASSIFIED"], [], "every call into show() says which layout it serves; a new caller is classified here, not left to run on both")

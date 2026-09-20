@@ -1,5 +1,6 @@
 // The shell's link word in a split chat column's frame handler (D3, review round 2, 2026-09-18). The shell posts
-// {romp:'link', link:'up'|'down'} to every iframe outside the six pane frames on its socket's open, close and abandon
+// {romp:'link', link:'up'|'down', mob} to every iframe outside the six pane frames on its socket's open, close and abandon
+// (the tests here drive the link alone; the layout term, mob, is the link block's layout-word arm's, review round 4, kernel-3)
 // (kernel.py _LANDING_COLLAPSE_JS tellLink), so a split column's pane shim can end its return await on it. The shim reads
 // the word on window itself; render.ts's chat frame handler (the one listenForFrames installs) has nothing to do with it,
 // and it is not a kernel message. Before this round the handler had no branch for it, so the word fell through to the

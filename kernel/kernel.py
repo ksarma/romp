@@ -69027,7 +69027,8 @@ if(window.__rompMobileOn&&window.__rompMobileOn())return 1;
 var raw=JSON.parse(localStorage.getItem('romp-chat-cols')||'null');var n=Array.isArray(raw)?raw.length:((raw&&typeof raw==='object'&&raw.v===2&&Array.isArray(raw.cols))?raw.cols.length:0);return 1+n;}catch(e){return 0;}}
 function land(sid,kind,cardId,boot,via){
 boot=!!boot||!(chatUp||activeSid());   // booting, or our chat pane has not connected yet: the kernel parks for it and its ready delivers, never a same-wid socket the previous page left; via: which road the tap took, for the kernel's log line. The pane's rendered tabs (activeSid, the same-origin read above) are proof its socket was up even when its wsState message beat this listener (2026-09-09: the served shell's parser can yield to that message before this script runs, and every landing then said booting and parked for a ready that had already come)
-var body={sid:sid,wid:wid(),via:via};if(boot)body.boot=true;var cc=cols();if(cc>0)body.cols=cc;   // cols: the window's chat column count (above), the kernel's parked-reveal preference reads it
+var body={sid:sid,wid:wid(),via:via};if(boot)body.boot=true;
+var cc=cols();if(cc>0)body.cols=cc;   // [fork] cols: the window's chat column count (above), the kernel's parked-reveal preference reads it; its own line after the project's body line, which is inserted around and never edited (review round 6, 2026-09-20)
 if(sid)fetch('/reveal',{method:'POST',body:JSON.stringify(body)}).then(function(r){
 diag('reveal-post',{status:r.status,via:via,boot:!!boot});
 if(!r.ok)return r.text().then(function(t){throw new Error(t||('HTTP '+r.status));});},
