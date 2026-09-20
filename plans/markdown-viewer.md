@@ -8121,7 +8121,7 @@ credentialed request (L3, L6), on the owner's word as a privacy surface whatever
 review before the PR ran two rounds, named below as the review's round 1 and round 2; the maintainer session's review
 of the PR (2026-09-20) is named the file review. Its contract is kept outside the repo; this section records what was built,
 with the build's deliberate departures from that contract recorded as the decisions, and what is left for the owner to
-rule on. The file review's rounds are named the file review's round 1 to round 4, the rounds it has ruled (its fixlists and
+rule on. The file review's rounds are named the file review's round 1 to round 5, the rounds it has ruled (its fixlists and
 rulings are kept outside the repo in the maintainer's notes, one pair per round); the author's own verification after each
 round's fixes, by a verifier of the author's, is named the author's closing pass after that round, never a round of either
 review, and its findings carry the ids behaviour-N, records-N, coverage-N, guards-N and attribution-and-gates-N, which no
@@ -8665,7 +8665,7 @@ or abbreviated form, and an id as the family word, a hyphen and digits), had the
 working tree against the merge-base so an uncommitted planted phrase is charged like a committed one (guards-3), charged a
 fault in this section to its plan line rather than a section-relative one (attribution-and-gates-4), and widened its first
 road's read of file-view.ts to the units carrying an id of the author's family beside those naming the file review, so a
-pass misnamed as a round in a figure comment is judged in every checkout (records-1). The census
+pass misnamed as a round in a figure comment is judged in every checkout (the same closing pass, records-1). The census
 those two pins grew out of, every line the branch added since the merge-base 3711863c9 that names a review, run for the
 file review's round 3, tests-2, with the corrections it produced: the commit that recorded it said 173 lines over 19
 files at this head, and 173 is the count at that commit's parent, 677b0e1c8; at the commit's own head, 2a35d92c9, the same

@@ -10,10 +10,13 @@
 // where: line, a comment wrapped over two lines and the PR body; a string the pin did not hold could not fail it. The rule
 // here, every part of it read off the convention paragraph: every "round N" a record names belongs to the review named
 // nearest before it in the same unit of text, and N is a round the convention enumerates for that review; a pass of the
-// author's has no rounds, so "round N" after a pass anchor fails; an id of the author's family stands only in a unit that has
-// named a pass before it, so crediting the pass's finding to a round of the file review fails whatever the round; and a
-// "round N" with no review named before it in its unit fails, since nothing can be checked about it. A review outside the
-// section's convention (a "Slice 7 review") is not the section's to enumerate and is left alone.
+// author's has no rounds, so "round N" after a pass anchor fails; an id of the author's family stands only where the review
+// named nearest before it is the author's pass (a pass named by the round it followed, "the author's closing pass after the
+// file review's round 4", is one name through its digits), so crediting the pass's finding to a round of the file review
+// fails whatever the round, in a unit that names the pass elsewhere too (the file review's round 5, correctness-3 with
+// regression-1: the id had stood after ANY pass named earlier in the unit, and the round-4 HIGH's exact misattribution passed
+// beside a pass); and a "round N" with no review named before it in its unit fails, since nothing can be checked about it. A
+// review outside the section's convention (a "Slice 7 review") is not the section's to enumerate and is left alone.
 // What the reader takes as a round, stated so a green here is read for what it covers (the author's closing pass after the
 // file review's round 4, guards-2 with attribution-and-gates-3: the plural form passed silently while the message claimed
 // every round): the word round or rounds followed by digits, spaced or hyphenated, and after rounds a comma list or a
@@ -128,6 +131,11 @@ const ANCHORS: [RegExp, Who][] = [
   [/\breview\b/g, "branch"],
   [/\b(?:closing|verification|verifier's|author's|own) pass(?:es)?\b|\bverifier\b/g, "pass"],
 ];
+/** A pass named by the round it followed ("the author's closing pass after the file review's round 4") is one name, its span
+ *  through the round's digits, and an id after the whole name has the pass as the review named nearest before it. The name is
+ *  an anchor for the id road alone: the round inside the name, and a round named after it (a record's "the round-N
+ *  condition" after the pass's name), are judged against the review the name says, whose anchor stands inside the name. */
+const PASS_NAME_RE = /\b(?:closing|verification|verifier's|author's|own) pass(?:es)?\b after (?:the |its |that )?(?:file review's |review's )?rounds?[- ]\d+(?:(?:,\s*|\s+(?:and|or|to)\s+)\d+)*/g;
 /** A round phrase as the set of rounds it names: `round N` or `round-N`; after the plural, a comma list or a `to` range
  *  (`rounds N, M and K`, `rounds N to M`, the range expanded). Digits only: an ordinal, a spelled-out number and an
  *  abbreviation are outside the reader, which the messages say. */
@@ -148,15 +156,26 @@ const idPattern = (reviews: Reviews, flags = ""): RegExp => new RegExp("\\b(?:" 
  *  author's closing pass after the file review's round 4, records-1); a unit naming only "the review" is the viewer project's
  *  and road 2's. */
 export const roadOneViewerUnit = (text: string, reviews: Reviews): boolean => /\bfile review\b/.test(text) || idPattern(reviews).test(text);
-/** Every round phrase and every id of the author's family in a unit, judged against the reviews named before it: the faults,
- *  each a sentence with the offset in `text` of the phrase it is about. */
+/** Every round phrase and every id of the author's family in a unit, judged against the review named NEAREST before it (the
+ *  anchor whose span ends last before the phrase): the faults, each a sentence with the offset in `text` of the phrase it is
+ *  about. The id road reads the same nearest anchor as the round road (the file review's round 5, correctness-3 with
+ *  regression-1: it had accepted an id when ANY pass was named earlier in the unit, so the pass's finding credited to a round
+ *  of the file review passed in every unit that also named the pass, the round-4 HIGH restated as a green). */
 export type Fault = { at: number; fault: string };
 export function roundFaults(text: string, reviews: Reviews): Fault[] {
-  const anchors: { at: number; end: number; who: Who }[] = [];
+  type Anchor = { at: number; end: number; who: Who };
+  const anchors: Anchor[] = [];
   for (const [re, who] of ANCHORS) for (const m of text.matchAll(re)) anchors.push({ at: m.index!, end: m.index! + m[0].length, who });
   // "review" inside "file review" or "Slice 7 review" is that anchor, not the branch's
   const kept = anchors.filter((a) => a.who !== "branch" || !anchors.some((b) => b.who !== "branch" && b.at <= a.at && a.end <= b.end));
-  kept.sort((a, b) => a.at - b.at);
+  const passNames: Anchor[] = Array.from(text.matchAll(PASS_NAME_RE), (m) => ({ at: m.index!, end: m.index! + m[0].length, who: "pass" as Who }));
+  /** The review named nearest before `pos` among `among`: the anchor ending last at or before it. */
+  const nearest = (pos: number, among: Anchor[]): Anchor | null => {
+    let near: Anchor | null = null;
+    for (const a of among) if (a.end <= pos && (!near || a.end > near.end)) near = a;
+    return near;
+  };
+  const forIds = [...kept, ...passNames];
   const faults: Fault[] = [];
   const quoteAt = (m: RegExpMatchArray): string => {
     const at = Math.max(0, m.index! - 60);
@@ -166,8 +185,7 @@ export function roundFaults(text: string, reviews: Reviews): Fault[] {
   for (const m of text.matchAll(ROUND_RE)) {
     const ns = roundsOf(m);
     const list = ns.join(", ");
-    const before = kept.filter((a) => a.end <= m.index!);
-    const near = before.length ? before[before.length - 1] : null;
+    const near = nearest(m.index!, kept);
     if (!near) faults.push({ at: m.index!, fault: quoteAt(m) + ": names round " + list + " of no review (nothing is named before it in this unit); write the file review's round " + list + ", the review's round " + list + ", or the author's closing pass after the file review's round M" });
     else if (near.who === "pass") faults.push({ at: m.index!, fault: quoteAt(m) + ": a pass of the author's has no rounds; it is the author's closing pass after the file review's round M, with the finding's id kept" });
     else if (near.who === "file") {
@@ -179,8 +197,10 @@ export function roundFaults(text: string, reviews: Reviews): Fault[] {
     }
   }
   const idRe = idPattern(reviews, "g");
+  const named: Record<Who, string> = { file: "the file review", branch: "the branch's review", other: "another review", pass: "the author's pass" };
   for (const m of text.matchAll(idRe)) {
-    if (!kept.some((a) => a.who === "pass" && a.end <= m.index!)) faults.push({ at: m.index!, fault: quoteAt(m) + ": an id of the author's family (" + reviews.ids.map((p) => p + "-N").join(", ") + ") with no pass named before it in this unit; the finding is the author's closing pass's, never a round's of the file review" });
+    const near = nearest(m.index!, forIds);
+    if (!near || near.who !== "pass") faults.push({ at: m.index!, fault: quoteAt(m) + ": an id of the author's family (" + reviews.ids.map((p) => p + "-N").join(", ") + ") where the review named nearest before it is " + (near ? named[near.who] : "no review") + "; the finding is the author's closing pass's, never a round's of the file review, and the pass is named nearest before its id (the author's closing pass after the file review's round M, the id)" });
   }
   return faults;
 }
@@ -235,6 +255,14 @@ test("the convention: the branch's review has rounds 1 and 2, the file review's 
   assert.equal(roundFaults("the verifier's round-" + 6 + " probe", two).length, 1, "a verifier's pass named as a round");
   assert.equal(roundFaults("since round " + 2 + " a failed figure opens nothing", two).length, 1, "a round with no review named");
   assert.equal(roundFaults("(" + F + 4 + ", records-" + 3 + ")", two).length, 1, "the pass's finding credited to a round of the file review: the id has no pass before it");
+  // the review named NEAREST before the id decides, not any pass named earlier in the unit (the file review's round 5,
+  // correctness-3 with regression-1: the shape below passed with 0 faults, the round-4 HIGH's misattribution beside a pass)
+  const credited = roundFaults(P + "after " + F + 3 + " measured it; " + F + 4 + " (records-" + 2 + ") ruled it", two);
+  assert.ok(credited.length === 1 && /nearest before it is the file review/.test(credited[0].fault) && credited[0].at === (P + "after " + F + 3 + " measured it; " + F + 4 + " (").length, "a pass named, then the pass's finding credited to a round of the file review: one fault, the id's, at the id");
+  assert.equal(roundFaults(P + "(records-" + 1 + ") found it; " + F + 4 + " (records-" + 2 + ") ruled it", two).length, 1, "the id after the pass stands; the id after the file review's round, later in the same unit, faults");
+  assert.deepEqual(roundFaults(F + 3 + " found it; " + P + "after " + F + 3 + " (records-" + 3 + ") fixed it", two), [], "a file-review round, then the pass named by the round it followed with its id: the pass is the review named nearest before the id, its own name through the digits");
+  assert.deepEqual(roundFaults(P + "after the review's round " + 2 + " (behaviour-" + 1 + ") measured it", two), [], "the pass named by the branch review's round it followed: the round is the branch's, the id the pass's");
+  assert.equal(roundFaults(P + "after " + F + 7 + " (records-" + 1 + ") measured it", two).length, 1, "the round inside the pass's name is judged against the file review's enumeration");
   assert.equal(roundFaults("recorded by " + F + 4 + " (rules-" + 1 + ")", two).length, 0, "the maintainer's own ids are not the family's");
   assert.deepEqual(roundFaults("the review ran two rounds; the pin holds a round-trip", two), [], "no round number, no claim");
   // the plural and the range (the author's closing pass after the file review's round 4, guards-2: the plural form passed the
