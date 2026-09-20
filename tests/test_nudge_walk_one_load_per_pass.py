@@ -4120,7 +4120,7 @@ class TheGrammarIsTheOneTheWalkersClassify(unittest.TestCase):
         naming a name outside the roster red as no reference while a roster name with no sample was read by nothing, and a fifth
         name this module spells nowhere, added to _TRAVERSAL, left the module green). The three forms are then run over synthetic
         sources spelled literally, with a source of their own and no reference to _TRAVERSAL, one per form and per road to the
-        module, so the refused inputs are pinned here and not only by the plants the history paragraphs record, and the stated limit
+        module, the forms covered held equal to the finder's own both ways, so the refused inputs are pinned here and not only by the plants the history paragraphs record, and the stated limit
         is run the same way and answers no reference, so it is held on its side (the finder reads a string constant only as
         getattr's second argument, so a sample spelling a name is no reference of this module's). Outside these forms: a traversal name read
         from the module's namespace by string (vars(ast), ast.__dict__, operator.attrgetter) or assembled at run time, a getattr
@@ -4130,9 +4130,14 @@ class TheGrammarIsTheOneTheWalkersClassify(unittest.TestCase):
         reference over either); the interpreter check beside this case scans vars(ast) for every node class and reds by name on a
         new one with no walker involved, so the version demand does not rest on this pin alone. Derives: every reference in this
         module's AST in the three forms, from the module's own text; the _WALK_EXEMPT rows both ways (every row used, nothing
-        outside them); the roster's names against the interpreter (each an attribute of ast) and against the samples both ways.
-        Bounds: the four names (the ruling's stop, a policy: a list of syntax does not converge); the three forms; the samples and
-        the limits as the independent source, literal rows the module cannot compute without spelling the names they test."""
+        outside them); the roster's names against the interpreter (each an attribute of ast) and against the samples both ways; and
+        the finder's forms from its own source, the third element of every tuple it appends to out, against the forms the samples
+        cover, both ways (until the round-7 close the samples pinned the roster by name both ways and by form one way, so a form
+        whose rows were all removed left its branch of the finder pinned by nothing). Bounds: the four names (the ruling's stop, a
+        policy: a list of syntax does not converge); the forms, the finder's, a policy read off its source and not counted here; the
+        samples and the limits as the independent source, literal rows the module cannot compute without spelling the names they
+        test; and the roads per form, which no derivation counts (a road with no sample row is pinned by the plants the history
+        paragraphs record alone)."""
         refs = _traversal_references(ast.parse(Path(os.path.realpath(__file__)).read_text(encoding="utf-8")))
         outside = [r for r in refs if r[4] != "_walk"]
         stray = [r for r in outside if (r[4], r[1]) not in _WALK_EXEMPT]
@@ -4193,6 +4198,22 @@ class TheGrammarIsTheOneTheWalkersClassify(unittest.TestCase):
                          "the names the samples spell are exactly the roster's: a roster name with no sample, %r, is a name this case pins "
                          "by nothing (add its row per form); a sample naming a name outside the roster, %r, is a row the finder cannot "
                          "read as a reference (the loop below reds it)" % (sorted(set(_TRAVERSAL) - spelled), sorted(spelled - {"*"} - set(_TRAVERSAL))))
+        # and the samples cover every form the finder reports, both ways (review round 7, the seventh-axis verifier: the names were
+        # pinned both ways and the forms one way, so the four getattr rows removed with the finder's getattr branch deleted left the
+        # module green). The finder's forms are derived from its own source: the string constant in the third position of every tuple
+        # it appends to `out`, read through _walk over its parsed def, so a form added to the finder with no sample row reds here, as
+        # does a sample naming a form the finder does not report
+        finder = ast.parse(textwrap.dedent(inspect.getsource(_traversal_references)))
+        forms = {c.args[0].elts[2].value for c in _walk(finder)
+                 if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute) and c.func.attr == "append"
+                 and isinstance(c.func.value, ast.Name) and c.func.value.id == "out" and c.args and isinstance(c.args[0], ast.Tuple)
+                 and len(c.args[0].elts) > 2 and isinstance(c.args[0].elts[2], ast.Constant)}
+        self.assertTrue(forms, "the finder's forms are derived from its source, the third element of every tuple it appends to out, and "
+                               "the derivation answered none: the finder's shape changed, so read it again here")
+        covered = {expected[2] for _source, expected in samples}
+        self.assertEqual(covered, forms, "the forms the samples cover are exactly the forms the finder reports: a form of the finder with no "
+                                         "sample, %r, has its branch pinned by nothing (add a row per road); a sample naming a form the finder "
+                                         "never reports, %r, is a row the loop below reds" % (sorted(forms - covered), sorted(covered - forms)))
         for source, expected in samples:
             got = _traversal_references(ast.parse(source))
             self.assertEqual(got, [expected], "the finder reads %r as one reference, %r, and answers %r" % (source, expected, got))
@@ -4392,8 +4413,9 @@ class TheWalkersRefuseAStrangerByExecution(unittest.TestCase):
             "TheGrammarIsTheOneTheWalkersClassify.test_a_walker_refuses_a_node_it_does_not_classify_by_name":
                 ["_walk", "ast.parse"],                      # the refusal case's control over a synthetic grammar tree (the _WALK_EXEMPT row)
             "TheGrammarIsTheOneTheWalkersClassify.test_no_reference_to_a_traversal_name_sits_outside_walk":
-                ["ast.parse"],                               # parses this module's text and the samples for _traversal_references, a row:
-                                                             # the parse is the row's argument
+                ["_walk", "ast.parse", "inspect.getsource"], # parses this module's text and the samples for _traversal_references, a row
+                                                             # (the parse is the row's argument), and reads the finder's own def through
+                                                             # _walk for the forms it reports, a subtree of that def and no census
             "TheWalkersRefuseAStrangerByExecution.test_every_census_entry_point_refuses_a_planted_stranger_and_returns_unplanted":
                 ["ast.parse"],                               # keeps the real parse as a value: the accept side hands it to every drive and
                                                              # the planting parse wraps it; the case parses nothing itself
