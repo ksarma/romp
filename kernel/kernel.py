@@ -3484,9 +3484,15 @@ def _client_diag_append(fp, line):
 # CLIENT_DIAG_ROW_SAY_MAX are named and one more line counts the rest, and the latch holds CLIENT_DIAG_SAID_MAX pairs in
 # all, then says so once and falls silent, so neither one wide row nor a poster with an unbounded key vocabulary can
 # grow it or silence the other surfaces (review finds, 2026-09-18). Every string value is cut at CLIENT_DIAG_STR_MAX
-# characters, at any depth. A row whose JSON runs past CLIENT_DIAG_ROW_MAX bytes keeps its surface, what and app and
+# characters, at any depth, and a value nested past CLIENT_DIAG_DEPTH_MAX is stored as null; a row any value of which
+# was cut or nulled so carries CLIENT_DIAG_CUT_KEY, the admitted keys under which it happened (a kernel-written marker
+# beside `capped`, admitted by no surface, so a poster cannot forge one), and the kernel says so once per surface and key
+# on stderr, as it says a dropped key (review round 3 of the wsBytesByHost field, 2026-09-20: a value-level loss was the
+# one silent loss on this road, and a cut string looked like a whole one to every reader). A row whose JSON runs past
+# CLIENT_DIAG_ROW_MAX bytes keeps its surface, what and app and
 # carries {"capped": true, "bytes": N} as its data (said once per surface and what), except a perf minute row, which
-# sheds its per-minute figures first (CLIENT_DIAG_MINUTE_SHED, _client_diag_line): the collector sends nav, res, marks
+# sheds keys in a fixed order first (CLIENT_DIAG_MINUTE_SHED, _client_diag_line: the uncapped wsBytesByHost map, then its
+# per-minute figures): the collector sends nav, res, marks
 # and env exactly once per page, and a whole-row marker lost them for the page's life (review find, 2026-09-18). The
 # bound is derived from the collector's own caps (perf-telemetry.ts), so no row it can build is shed or capped while
 # its wsBytesByHost map, the one key without a cap, is under the crossing derived below; past it the map alone is
@@ -3517,6 +3523,9 @@ CLIENT_DIAG_ROW_MAX = 24 * 1024   # above the collector's worst case with share 
 CLIENT_DIAG_DEPTH_MAX = 8      # nesting past this reads null: the rows are flat or two deep
 CLIENT_DIAG_SAID_MAX = 512     # (surface, key) pairs the stderr latch holds; at the bound one more line says so and nothing else is said
 CLIENT_DIAG_ROW_SAY_MAX = 8    # foreign keys of ONE row said by name; the rest are one counting line, so a row spends at most this many latch entries and one
+CLIENT_DIAG_CUT_KEY = "cut"    # the marker a row carries when a value under an admitted key was cut or nulled by _client_diag_scrub: the list of those keys,
+                               # written by the kernel after the admit and admitted by no surface (a poster's key of this name is dropped as foreign),
+                               # so a reader can tell a stored value from a whole one (review round 3 of wsBytesByHost, 2026-09-20)
 # a perf minute row over CLIENT_DIAG_ROW_MAX sheds these, in this order, until its line fits, and `capped` names what was
 # shed. wsBytesByHost goes first (review round 1, 2026-09-20): it is the one key the collector does not cap (one position
 # per attached host), so a row the collector builds is over the bound only through it, and shedding it whole returns the
@@ -3545,7 +3554,8 @@ CLIENT_DIAG_KEYS = {
                                             # none); the kernel admits the top-level key and does not inspect the map's keys, as it inspects no
                                             # nested key of any admitted object (marks, env, nav, res, frames, loaf and federation's counts alike): a
                                             # nested string VALUE is cut at CLIENT_DIAG_STR_MAX, a nested key is stored as posted (_client_diag_admit,
-                                            # _client_diag_scrub). Host names reach this file wherever an admitted VALUE
+                                            # _client_diag_scrub), and a row a value of which was cut carries the cut marker naming the key
+                                            # (CLIENT_DIAG_CUT_KEY, said once on stderr). Host names reach this file wherever an admitted VALUE
                                             # can hold one, in three forms, and tests/test_client_diag_allowlist.py classifies every admitted key of
                                             # every surface by content, so a new key fails there until classified: a bare name under a `host` key (the
                                             # shell's push-test row; every federation row that carries its conn's host, the hostconn, feedDelta-nobase,
@@ -3618,19 +3628,38 @@ def _client_diag_say(surface, key, text):
     print("[client-diag] %s: surface %r, %s" % (text, surface, key), file=sys.stderr)
 
 
-def _client_diag_scrub(v, depth=0):
+# what _client_diag_scrub can do to a value short of keeping it whole, by the word it records in its `losses` list, and the
+# clause the one stderr line per (surface, key) says for it
+_CLIENT_DIAG_LOSS = {
+    "cut": "a string over %d characters is stored as its first %d" % (CLIENT_DIAG_STR_MAX, CLIENT_DIAG_STR_MAX),
+    "depth": "a value nested past depth %d is stored as null" % CLIENT_DIAG_DEPTH_MAX,
+    "type": "a value of no JSON type is stored as null",
+}
+
+
+def _client_diag_scrub(v, losses=None, depth=0):
     """A value as the file keeps it: strings cut at CLIENT_DIAG_STR_MAX, numbers, booleans and null as they are,
-    objects and lists walked to CLIENT_DIAG_DEPTH_MAX (deeper reads null), anything else null."""
+    objects and lists walked to CLIENT_DIAG_DEPTH_MAX (deeper reads null), anything else null. `losses`, when the caller
+    passes a list, gets a word from _CLIENT_DIAG_LOSS appended for every value this did not keep whole, at any depth, so
+    the caller can say the loss and mark the row (_client_diag_admit; review round 3 of wsBytesByHost, 2026-09-20: a value
+    cut here looked like a whole one to every reader). The "type" arm is unreachable on the posted road, whose data is
+    json.loads output (every value is of a JSON type), and stands for a direct caller."""
     if isinstance(v, str):
+        if len(v) > CLIENT_DIAG_STR_MAX and losses is not None:
+            losses.append("cut")
         return v[:CLIENT_DIAG_STR_MAX]
     if v is None or isinstance(v, (bool, int, float)):
         return v
     if depth >= CLIENT_DIAG_DEPTH_MAX:
+        if losses is not None:
+            losses.append("depth")
         return None
     if isinstance(v, dict):
-        return {k: _client_diag_scrub(x, depth + 1) for k, x in v.items()}
+        return {k: _client_diag_scrub(x, losses, depth + 1) for k, x in v.items()}
     if isinstance(v, list):
-        return [_client_diag_scrub(x, depth + 1) for x in v]
+        return [_client_diag_scrub(x, losses, depth + 1) for x in v]
+    if losses is not None:
+        losses.append("type")
     return None
 
 
@@ -3639,18 +3668,33 @@ def _client_diag_admit(surface, data):
     null for a data that is not an object. Every foreign key is dropped; of one row's, at most CLIENT_DIAG_ROW_SAY_MAX
     are said by name (once each on stderr) and one more line counts the rest, so a single row carrying hundreds of
     foreign keys spends a handful of the kernel-wide latch's entries, not all of them, and the other surfaces are
-    still said afterwards (review find, 2026-09-18: one 600-key row used to silence the latch for the kernel's life)."""
+    still said afterwards (review find, 2026-09-18: one 600-key row used to silence the latch for the kernel's life).
+    A value the scrub did not keep whole (a string cut at CLIENT_DIAG_STR_MAX, a nesting past CLIENT_DIAG_DEPTH_MAX or a
+    value of no JSON type stored as null, at any depth under the key) is said once per surface and key too, and the row
+    carries CLIENT_DIAG_CUT_KEY naming the admitted keys it happened under, in the row's key order (attributed to the
+    top-level key: the scrub sees no key), so a stored value can be told from a whole one, which no reader could before
+    (review round 3 of wsBytesByHost, 2026-09-20). The marker is written after the admit and admitted by no surface, so a
+    poster's own key of that name is dropped as foreign and never lands as a forged marker."""
     if not isinstance(data, dict):
         if data is not None:
             _client_diag_say(surface, "data", "a row's data is not an object and is stored as null")
         return None
     allowed = CLIENT_DIAG_KEYS.get(surface)
-    out, dropped = {}, []
+    out, dropped, cut = {}, [], []
     for k, v in data.items():
         if allowed is not None and k in allowed:
-            out[k] = _client_diag_scrub(v)
+            losses = []
+            out[k] = _client_diag_scrub(v, losses)
+            if losses:
+                cut.append(k)
+                kinds = sorted(set(losses), key=list(_CLIENT_DIAG_LOSS).index)
+                _client_diag_say(surface, "key %r, cut" % str(k)[:CLIENT_DIAG_STR_MAX],
+                                 "a value under the key is not stored whole (%s; the row's %s key names it)"
+                                 % ("; ".join(_CLIENT_DIAG_LOSS[x] for x in kinds), CLIENT_DIAG_CUT_KEY))
         else:
             dropped.append(k)
+    if cut:
+        out[CLIENT_DIAG_CUT_KEY] = cut
     if dropped:
         why = ("dropping a key the surface's allowlist does not admit" if allowed is not None
                else "dropping a key of a surface no allowlist names")

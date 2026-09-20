@@ -2,7 +2,9 @@
 """The clientDiag handler admits each surface's known top-level data keys and bounds the row (2026-09-18, the beacon
 extension). The file used to take whatever a page posted, of any shape and size. Now: a key outside the surface's
 allowlist (CLIENT_DIAG_KEYS) is dropped and said once on stderr per surface and key; a data that is not an object is
-stored as null; every string value is cut at CLIENT_DIAG_STR_MAX characters at any depth; a row whose JSON runs past
+stored as null; every string value is cut at CLIENT_DIAG_STR_MAX characters at any depth, and a row a value of which was cut,
+or nulled past CLIENT_DIAG_DEPTH_MAX, carries CLIENT_DIAG_CUT_KEY naming the admitted keys it happened under, said once per
+surface and key (review round 3 of wsBytesByHost, 2026-09-20: the one silent loss on this road); a row whose JSON runs past
 CLIENT_DIAG_ROW_MAX bytes keeps its surface, what and app and carries {"capped": true, "bytes": N, "app": ...} as its
 data, except a perf minute row, which sheds CLIENT_DIAG_MINUTE_SHED's keys in order (the uncapped wsBytesByHost map first
 and whole, then its per-minute figures) until it fits and names them under `capped`, so the once-per-page nav, res, marks
@@ -161,6 +163,16 @@ CENSUS = {
     },
 }
 
+# The kernel-written marker keys (round 4, 2026-09-20), classified as the admitted keys are: written AFTER the admit by the
+# kernel alone and admitted from no poster (test_the_constants_and_the_table pins that for every surface), so a page cannot
+# forge either; neither can carry a host name, since both hold positions of keys in the row and a byte count.
+MARKERS = {
+    "capped": (NONE, "_client_diag_line: true (the whole-row marker, beside bytes) or {bytes, dropped}, the shed perf minute row's byte count and the "
+                     "names of the keys it shed (CLIENT_DIAG_MINUTE_SHED's words), positions of keys and a number, no host"),
+    "cut": (NONE, "_client_diag_admit: the admitted keys of the row under which _client_diag_scrub cut a string or nulled a nesting, in the "
+                  "row's key order: positions of keys in the row, taken from the surface's own table, no host"),
+}
+
 
 def host_carrying_keys():
     """The census's host-carrying keys by surface, {surface: {key: class}}, derived from the rows whose class is not NONE."""
@@ -267,6 +279,10 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         self.assertTrue(set(km.CLIENT_DIAG_MINUTE_SHED) <= km.CLIENT_DIAG_KEYS["perf"])
         self.assertEqual(km.CLIENT_DIAG_SAID_MAX, 512)
         self.assertEqual(km.CLIENT_DIAG_ROW_SAY_MAX, 8, "the foreign keys of one row said by name; the rest are counted in one line")
+        self.assertEqual(km.CLIENT_DIAG_CUT_KEY, "cut", "the value-loss marker's key (round 4)")
+        for marker in (km.CLIENT_DIAG_CUT_KEY, "capped"):
+            for surface, keys in km.CLIENT_DIAG_KEYS.items():
+                self.assertNotIn(marker, keys, "%s: a kernel-written marker is admitted from no poster, or a page could forge one" % surface)
 
     def test_todays_rows_pass_whole_and_quietly(self):
         err = self.post("perf", "minute", MINUTE)
@@ -355,38 +371,78 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         self.assertEqual(self.post("perf", "minute", dict(MINUTE, other_thing=2)), "")
         self.assertEqual(len(self.rows()), 4)
 
-    def test_strings_are_cut_at_the_cap_at_any_depth(self):
+    def test_strings_are_cut_at_the_cap_at_any_depth_and_the_row_carries_the_cut_marker_said_once(self):
+        # the cut is the standing rule; since round 4 (2026-09-20) it is never silent: the row carries CLIENT_DIAG_CUT_KEY
+        # naming the admitted keys a value was cut under, and the kernel says so once per surface and key, as it says a
+        # dropped key, so a stored value can be told from a whole one (a cut string looked like a whole one to every reader)
         long = "x" * 200
-        self.post("pane-shim", "wsclose", {"app": "feed", "code": 1006, "reason": long, "wasClean": False, "sinceOpenMs": 1, "quietMs": 1, "everConnected": True, "bundleReady": True})
+        err = self.post("pane-shim", "wsclose", {"app": "feed", "code": 1006, "reason": long, "wasClean": False, "sinceOpenMs": 1, "quietMs": 1, "everConnected": True, "bundleReady": True})
         row = self.rows()[-1]["data"]
         self.assertEqual(row["reason"], "x" * 64)
         self.assertEqual(row["code"], 1006)
         self.assertIs(row["wasClean"], False)
+        self.assertEqual(row[km.CLIENT_DIAG_CUT_KEY], ["reason"], "the marker names the key the cut happened under")
+        lines = [l for l in err.splitlines() if l]
+        self.assertEqual(len(lines), 1, err)
+        self.assertIn("key 'reason', cut", lines[0])
+        self.assertIn("a string over 64 characters is stored as its first 64", lines[0])
+        self.assertIn("the row's cut key names it", lines[0])
+        self.assertEqual(self.post("pane-shim", "wsclose", {"app": "feed", "code": 1006, "reason": long, "wasClean": False, "sinceOpenMs": 1, "quietMs": 1, "everConnected": True, "bundleReady": True}), "",
+                         "said once per surface and key: the latch's budget, the one a dropped key spends")
+        self.assertEqual(self.rows()[-1]["data"][km.CLIENT_DIAG_CUT_KEY], ["reason"], "the marker rides every such row, said or not")
         nested = dict(MINUTE, loaf={"n": 1, "blocking_ms": 1, "worst_ms": 1, "src": "loaf",
                                     "top": [{"k": "a" * 100, "ms": 1, "n": 1, "inv": "b" * 70}]})
-        self.post("perf", "minute", nested)
-        top = self.rows()[-1]["data"]["loaf"]["top"][0]
+        err = self.post("perf", "minute", nested)
+        d = self.rows()[-1]["data"]
+        top = d["loaf"]["top"][0]
         self.assertEqual(top["k"], "a" * 64)
         self.assertEqual(top["inv"], "b" * 64)
         self.assertEqual(top["ms"], 1)
-        # the dict's own keys are not values and stay whole (the row cap bounds them); null stays null
-        self.post("perf", "minute", dict(MINUTE, frames={"k" * 70: {"n": 1}}, free=None))
+        self.assertEqual(d[km.CLIENT_DIAG_CUT_KEY], ["loaf"], "a nested cut is attributed to the top-level admitted key (the scrub sees no key)")
+        self.assertEqual(len(err.splitlines()), 1, err)
+        self.assertIn("'perf'", err); self.assertIn("key 'loaf', cut", err)
+        # the dict's own keys are not values and stay whole (the row cap bounds them); null stays null; and a row nothing
+        # was cut under carries no marker and says nothing
+        self.assertEqual(self.post("perf", "minute", dict(MINUTE, frames={"k" * 70: {"n": 1}}, free=None)), "")
         d = self.rows()[-1]["data"]
         self.assertEqual(list(d["frames"]), ["k" * 70])
         self.assertIsNone(d["free"])
+        self.assertNotIn(km.CLIENT_DIAG_CUT_KEY, d, "no value was cut: no marker")
+        # a poster's own key of the marker's name is a foreign key: dropped and said as one, never stored as a marker, and the
+        # kernel's marker wins the name on a row that was cut
+        err = self.post("federation", "senddrop", {"host": "TESTHOST", "msgType": "prompt", "why": "closed", km.CLIENT_DIAG_CUT_KEY: ["host"]})
+        self.assertNotIn(km.CLIENT_DIAG_CUT_KEY, self.rows()[-1]["data"], "the forged marker is dropped")
+        self.assertIn("dropping a key the surface's allowlist does not admit", err); self.assertIn("'%s'" % km.CLIENT_DIAG_CUT_KEY, err)
+        self.post("federation", "senddrop", {"host": "TESTHOST", "msgType": "prompt", "why": "w" * 65, km.CLIENT_DIAG_CUT_KEY: ["host"]})
+        self.assertEqual(self.rows()[-1]["data"][km.CLIENT_DIAG_CUT_KEY], ["why"], "the kernel's list, not the poster's")
 
-    def test_nesting_past_the_depth_cap_reads_null(self):
+    def test_nesting_past_the_depth_cap_reads_null_and_the_row_carries_the_cut_marker(self):
         deep = 1
         for _ in range(20):
             deep = [deep]
-        self.post("perf", "minute", dict(MINUTE, frames=deep))
-        v = self.rows()[-1]["data"]["frames"]
+        err = self.post("perf", "minute", dict(MINUTE, frames=deep))
+        d = self.rows()[-1]["data"]
+        v = d["frames"]
         depth = 0
         while isinstance(v, list):
             v = v[0]
             depth += 1
         self.assertIsNone(v)
         self.assertEqual(depth, km.CLIENT_DIAG_DEPTH_MAX, "lists at depths 0 to the cap less one, then null")
+        self.assertEqual(d[km.CLIENT_DIAG_CUT_KEY], ["frames"], "a nulled nesting is a value loss too: the marker names the key (round 4)")
+        self.assertEqual(len(err.splitlines()), 1, err)
+        self.assertIn("a value nested past depth 8 is stored as null", err)
+        # a value of no JSON type is the third loss the scrub records; unreachable on the posted road (its data is json.loads
+        # output), so driven at the admit step alone
+        losses = []
+        self.assertIsNone(km._client_diag_scrub(object(), losses))
+        self.assertEqual(losses, ["type"])
+        km._client_diag_said.clear()
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            out = km._client_diag_admit("perf", {"app": "chat", "dom": object()})
+        self.assertEqual(out, {"app": "chat", "dom": None, km.CLIENT_DIAG_CUT_KEY: ["dom"]})
+        self.assertIn("a value of no JSON type is stored as null", err.getvalue())
 
     def test_a_row_over_the_cap_is_stored_capped_with_its_surface_and_what_and_said_once(self):
         # a slowframe row whose long-frame report grew past the cap, a shape the collector never builds (its top is five
@@ -759,6 +815,13 @@ class ClientDiagAllowlistTest(unittest.TestCase):
             for key, (cls, why) in sorted(table.items()):
                 self.assertIn(cls, (BARE, PREFIXED, KEYED, NONE), (surface, key))
                 self.assertTrue(isinstance(why, str) and why, "%s.%s: a class names its reason" % (surface, key))
+        # the kernel-written markers: the two the kernel writes after the admit (CLIENT_DIAG_CUT_KEY and the row cap's), each
+        # classified NONE with its writer named, and admitted from no poster (the constants test)
+        self.assertEqual(sorted(MARKERS), sorted([km.CLIENT_DIAG_CUT_KEY, "capped"]))
+        for key, (cls, why) in MARKERS.items():
+            self.assertEqual(cls, NONE, key)
+            self.assertIn("_client_diag_", why, "%s: the marker's reason names its kernel writer" % key)
+            self.assertTrue(all(key not in keys for keys in km.CLIENT_DIAG_KEYS.values()), key)
         carrying = host_carrying_keys()
         self.assertTrue(carrying, "the derivation found no host-carrying key: the census is reading nothing")
         self.assertEqual(carrying, {"chat": {"active": PREFIXED, "id": PREFIXED, "ids": PREFIXED, "sid": PREFIXED},
@@ -794,6 +857,7 @@ class ClientDiagAllowlistTest(unittest.TestCase):
                           r"no page-life correlation", r"attached-host order",   # the fourth road's whole statement (round 3, extra8-1)
                           r"older than", r"most frequent", r"routine use", r"not from chat rows alone",
                           r"\bmints\b", r"does not inspect the map's keys", r"nested key",
+                          r"a value of which was cut carries",   # the cut marker: a stored value can be told from a whole one (round 4)
                           r"regular-expression test in the page bundle", r"the kernel has none"):   # the enforcement named (round 3, extra8-3)
                 self.assertIsNotNone(re.search(token, text, re.I), "%s: the disclosure no longer states %r" % (name, token))
             # one grain per copy (round 3, the fixer's pass): the copies state the per-document grain and its consequence, so no
@@ -915,7 +979,7 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         dispatch, the road the fixture test posts through, and stored whole: the admit filters a row's top-level KEYS against
         the surface's table and tests no value for admission (an admitted key's value is stored through _client_diag_scrub,
         a string cut at CLIENT_DIAG_STR_MAX, 64 characters, which no word approaches: the 65-character word below is stored
-        cut to 64 with nothing said, so the value is read and never gated), so a new WORD under the admitted `why` key needs
+        cut to 64, the row marked and the cut said once (round 4), so the value is read and never gated), so a new WORD under the admitted `why` key needs
         no table change where a new KEY does (PR 861: a pane-side marker under a key the table did not name was dropped).
         Green at the head before the word existed in federation.ts, by that mechanism; the failing-before is the control: the
         same row carrying `rev` and `through`, keys the minter does not send and the table does not admit, is stored without
@@ -927,10 +991,14 @@ class ClientDiagAllowlistTest(unittest.TestCase):
             self.assertEqual(self.rows()[-1]["data"], row, "%s: the row is stored whole, the word whole among it" % word)
         self.assertEqual(len(self.rows()), len(STALE_WHY_WORDS))
         long_word = "d" * (km.CLIENT_DIAG_STR_MAX + 1)
-        self.assertEqual(self.post("federation", "feedDelta-stale", {"host": "TESTHOST", "buildId": "b8", "why": long_word}), "",
-                         "an over-long word under the admitted key: nothing said, the admit gates on no value")
-        self.assertEqual(self.rows()[-1]["data"], {"host": "TESTHOST", "buildId": "b8", "why": long_word[:km.CLIENT_DIAG_STR_MAX]},
-                         "and stored cut at CLIENT_DIAG_STR_MAX: the value is read, so the ladder's words are whole because they are short")
+        err = self.post("federation", "feedDelta-stale", {"host": "TESTHOST", "buildId": "b8", "why": long_word})
+        self.assertEqual(self.rows()[-1]["data"], {"host": "TESTHOST", "buildId": "b8", "why": long_word[:km.CLIENT_DIAG_STR_MAX], km.CLIENT_DIAG_CUT_KEY: ["why"]},
+                         "an over-long word under the admitted key is admitted (the admit gates on no value) and stored cut at CLIENT_DIAG_STR_MAX, "
+                         "the row carrying the cut marker naming the key (round 4: a cut must not look like a whole value), so the ladder's words are whole because they are short")
+        lines = [l for l in err.splitlines() if l]
+        self.assertEqual(len(lines), 1, err)
+        self.assertIn("key 'why', cut", lines[0]); self.assertIn("'federation'", lines[0]); self.assertIn("stored as its first 64", lines[0])
+        self.assertEqual(self.post("federation", "feedDelta-stale", {"host": "TESTHOST", "buildId": "b8", "why": long_word}), "", "the one say per surface and key")
         err = self.post("federation", "feedDelta-stale", {"host": "TESTHOST", "buildId": "b9", "why": "disagree", "rev": 2, "through": 7})
         self.assertEqual(self.rows()[-1]["data"], {"host": "TESTHOST", "buildId": "b9", "why": "disagree"},
                          "the control: the two foreign keys dropped, the word kept; the file never learns which two revs disagreed")

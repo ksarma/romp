@@ -4732,7 +4732,10 @@ frames it received is measured in the panes themselves, by
   per surface and key on stderr, at most eight of one row's by name plus one
   line counting the rest, and the whole latch holds 512 pairs, then says so
   once), cuts every string value at 64 characters at any depth, reads nesting
-  past 8 levels as `null`, stores a `data` that is not an object as `null`,
+  past 8 levels as `null` (a row a value of which was cut or nulled so carries
+  `cut`, the admitted keys it happened under, written by the kernel and admitted
+  from no poster, and the kernel says so once per surface and key on stderr, so a
+  stored value can be told from a whole one), stores a `data` that is not an object as `null`,
   keeps no key for a surface the table does not name, refuses a page's row
   under the kernel's own surface `kernel`, and appends the row to
   `client-diag.jsonl` under the state directory with the dashboard id (`wid`)
@@ -4800,7 +4803,7 @@ The two rows, as the kernel writes them (`t` its clock, `wid` the dashboard id):
   p50, p90, max} | null, loaf: {n, blocking_ms, worst_ms, top: [{k, ms, n,
   inv}], src}, slow: {sent, suppressed, suppressed_worst_ms}, heap_mb?, dom,
   visible, hidden_pane, ua, nav?, res?, marks?, env?, vis?, wsBytes?,
-  wsBytesByHost?, rafGap?, capped?}}`. `app` is the pane (`chat`, `feed`, `fleet`,
+  wsBytesByHost?, rafGap?, capped?, cut?}}`. `app` is the pane (`chat`, `feed`, `fleet`,
   `waiting`, `timeline`, `files`), or `shell` for the top-level window; `since`
   is the minute's start on the browser's clock (epoch ms) and `span_ms` its
   length (shorter than a minute when the page was hidden or closed); `hist` is
@@ -4897,7 +4900,8 @@ The two rows, as the kernel writes them (`t` its clock, `wid` the dashboard id):
   does not inspect the map's keys, as it
   inspects no nested key of any admitted object (`marks`, `env`, `nav`,
   `res`, `frames`, `loaf` and federation's `counts` alike): a nested string
-  value is cut at 64 characters, a nested key is stored as posted. Host names reach the file wherever
+  value is cut at 64 characters, a nested key is stored as posted, and a row a
+  value of which was cut carries `cut` naming the key. Host names reach the file wherever
   an admitted value can hold one, in three forms: a bare name under a `host`
   key (the shell's push-test row; every federation row that carries its
   conn's host, the `hostconn`, `feedDelta-nobase`, `feedDelta-stale`,
@@ -4922,7 +4926,9 @@ The two rows, as the kernel writes them (`t` its clock, `wid` the dashboard id):
   `{n, worst}`, the animation-frame gaps over 50 ms while the document was
   visible, from a loop that runs only while share is on and the document
   visible. `capped` is present only on a row the kernel shed or replaced
-  (the bound above).
+  (the bound above); `cut`, on any surface's row, only when a value under one
+  of its admitted keys was cut at 64 characters or nulled past depth 8, and it
+  lists those keys.
 - `{"t", "wid", "surface": "perf", "what": "slowframe", "data": {app, type, ms,
   dom, loaf?: {ms, blocking_ms, top: [{k, ms, inv}]}}}`. `type` is the frame
   as received on the wire and `ms` its whole synchronous handling, the
