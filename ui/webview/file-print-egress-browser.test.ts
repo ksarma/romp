@@ -100,7 +100,7 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import { inBrowser, openViewer, frames, requireCjs, REPORT, ROOT, ORIGIN, SID, MT2, type Mode } from "./real-viewer-leg";
 import { fileUrl } from "./preview";
-import { WITH_WORDS, WITHOUT_WORDS, ANYWAY_WORDS, KEEP_WORDS, TAB_WORDS } from "./file-print";
+import { WITH_WORDS, WITHOUT_WORDS, ANYWAY_WORDS, KEEP_WORDS, TAB_WORDS, waitingWords, stalledWords } from "./file-print";
 
 const SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8" fill="black"/></svg>';
 const QUICK = "fig.svg";                       // a local picture the route answers at once
@@ -184,8 +184,8 @@ const KEEP_BTN = '#fileview-print-line button:has-text("' + KEEP_WORDS + '")';
 const ARMED_TWO = "2 pictures from other hosts are not loaded.";
 const ARMED_ONE = "1 picture from another host is not loaded.";
 const PREPARING_ONE = "Preparing 1 picture…";
-const WAITING_ONE = "Waiting for 1 picture…";   // Keep waiting's open-ended wait, whose line carries Print anyway (romp-manager's ruling, 2026-09-20)
-const STALLED_ONE = "1 picture has not loaded.";
+const WAITING_ONE = waitingWords(1);   // Keep waiting's open-ended wait, whose line carries Print anyway (romp-manager's ruling, 2026-09-20) and ends with what that button does (the round-4 review, 2026-09-20)
+const STALLED_ONE = stalledWords(1);
 const titleFor = (hosts: string[]): string => "Load the pictures from " + (hosts.length === 1 ? hosts[0] : hosts.slice(0, -1).join(", ") + " and " + hosts[hosts.length - 1]) + ", then print";
 
 // ── the page's stubs and probes ────────────────────────────────────────────────────────────────────

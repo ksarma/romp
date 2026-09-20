@@ -56,7 +56,7 @@
 //     row, so the accessibility tree lost the wait's live region and gained another at the transition).
 // (15) Keep waiting's open-ended wait carries one word button, "Print anyway" (romp-manager's ruling, 2026-09-20, on the
 //     round-2 review's fresh-2 and the round-3 review's tests-4, ui-2 and extra5-3): after Keep waiting the line reads
-//     "Waiting for 1 picture…" beside the loader with Print anyway alone, which prints at once with what has loaded, the
+//     "Waiting for 1 picture… Print anyway prints without it." beside the loader with Print anyway alone, which prints at once with what has loaded, the
 //     parked picture incomplete and the placeholder on the paper, the request still parked; a Reload landing under that
 //     wait rewrites the count in the same row with the button staying, and the landing's pictures released print as
 //     before; no timer. Before this the line read "Preparing 1 picture…" with no button, so the wait had no way through
@@ -75,7 +75,7 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { inBrowser, openViewer, frames, REPORT, ROOT, ORIGIN, SID, MT2, UI, requireCjs, type Mode } from "./real-viewer-leg";
-import { isPrintKeys, isPrintChord, withTitle, WITHOUT_TITLE, OWN_ESCAPE_SEL, ANYWAY_WORDS, KEEP_WORDS, ANYWAY_TITLE, KEEP_TITLE, waitingWords } from "./file-print";
+import { isPrintKeys, isPrintChord, withTitle, WITHOUT_TITLE, OWN_ESCAPE_SEL, ANYWAY_WORDS, KEEP_WORDS, ANYWAY_TITLE, KEEP_TITLE, waitingWords, stalledWords, anywayWords } from "./file-print";
 import { DEFAULT_CHORDS } from "./commands";
 
 const SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8" fill="black"/></svg>';
@@ -439,7 +439,7 @@ test("(3) a Reload landing during the wait re-aims it: a picture the new body br
     b = await bar(page);
     assert.equal(b.phase, "preparing", "the wait goes on over the landing's picture"); assert.equal(b.line, "Preparing 1 picture…");
     assert.equal((await prints(page)).length, 0);
-    await page.waitForFunction(() => (document.getElementById("fileview-print-line")?.firstChild?.textContent || "") === "1 picture has not loaded.", null, { timeout: 6000 });
+    await page.waitForFunction((w: string) => (document.getElementById("fileview-print-line")?.firstChild?.textContent || "") === w, stalledWords(1), { timeout: 6000 });
     const t2 = await nowOnPage(page);
     assert.ok(t2 - t0 >= 1900 && t2 - t0 < 3000, "the ask came at the press's deadline (" + Math.round(t2 - t0) + " ms after the press)");
     assert.ok(t2 - tLand < 1600, "…not at a deadline restarted at the landing (" + Math.round(t2 - tLand) + " ms after it; a restart would read about 2000)");
@@ -530,7 +530,7 @@ test("(5) a press and the chord during the wait change nothing over the driver: 
     const k = await chords(page);
     assert.equal(k.length, 1); assert.equal(k[0].prevented, true, "the chord during the wait is still prevented");
     assert.equal((await prints(page)).length, 0, "no print before the deadline");
-    await page.waitForFunction(() => (document.getElementById("fileview-print-line")?.firstChild?.textContent || "") === "1 picture has not loaded.", null, { timeout: 5000 });
+    await page.waitForFunction((w: string) => (document.getElementById("fileview-print-line")?.firstChild?.textContent || "") === w, stalledWords(1), { timeout: 5000 });
     const t2 = await nowOnPage(page);
     assert.ok(t2 - t0 >= 1400 && t2 - t0 < 2400, "the ask came at the press's deadline (" + Math.round(t2 - t0) + " ms after the choice)");
     assert.ok(t2 - t1 < 1300, "…not at a deadline restarted at the second press (" + Math.round(t2 - t1) + " ms after it; a restart would read about 1500)");
@@ -541,7 +541,7 @@ test("(5) a press and the chord during the wait change nothing over the driver: 
     await page.click('#fileview-print-line button:has-text("' + ANYWAY_WORDS + '")');
     const p = await prints(page);
     assert.equal(p.length, 1, "exactly one print, at the answer");
-    assert.equal(p[0].gates, 1); assert.equal(p[0].incomplete.length, 1, "the parked picture is still loading at the print: Print anyway prints it as the browser has it");
+    assert.equal(p[0].gates, 1); assert.equal(p[0].incomplete.length, 1, "the parked picture is still loading at the print: Print anyway prints without it, as its line said");
     await frames(page, 1);
     b = await bar(page);
     assert.equal(b.phase, null, "the bar rested");
@@ -852,7 +852,7 @@ test("(12) the settle's re-aim runs under the press's deadline, never a restarte
     assert.equal((await prints(page)).length, 0, "no print at the settle: the settle's re-aim found the inserted picture loading");
     b = await bar(page);
     assert.equal(b.phase, "preparing", "the wait goes on over the inserted picture"); assert.equal(b.line, "Preparing 1 picture…"); assert.equal(b.lines, 1, "the line rewritten in place");
-    await page.waitForFunction(() => (document.getElementById("fileview-print-line")?.firstChild?.textContent || "") === "1 picture has not loaded.", null, { timeout: 6000 });
+    await page.waitForFunction((w: string) => (document.getElementById("fileview-print-line")?.firstChild?.textContent || "") === w, stalledWords(1), { timeout: 6000 });
     const t2 = await nowOnPage(page);
     assert.ok(t2 - t0 >= 1900 && t2 - t0 < 3000, "the ask came at the press's deadline (" + Math.round(t2 - t0) + " ms after the press)");
     assert.ok(t2 - tSettle < 1600, "…not at a deadline restarted at the settle (" + Math.round(t2 - tSettle) + " ms after it; a restart would read about 2000)");
@@ -874,8 +874,8 @@ test("(12) the settle's re-aim runs under the press's deadline, never a restarte
 
 // ── (13) a repaint under the deadline's ask ────────────────────────────────────────────────────────
 
-const STALLED_ONE = "1 picture has not loaded.";
-const STALLED_TWO = "2 pictures have not loaded.";
+const STALLED_ONE = stalledWords(1);   // "1 picture has not loaded. Print anyway prints without it."
+const STALLED_TWO = stalledWords(2);
 const askReached = (page: any): Promise<unknown> => page.waitForFunction((w: string) => (document.getElementById("fileview-print-line")?.firstChild?.textContent || "") === w, STALLED_ONE, { timeout: 6000 });
 const markLine = (page: any): Promise<void> => page.evaluate(() => { document.getElementById("fileview-print-line")!.setAttribute("data-probe", "1"); });
 const lineMarked = (page: any): Promise<boolean> => page.evaluate(() => document.getElementById("fileview-print-line")?.getAttribute("data-probe") === "1");
@@ -1244,6 +1244,75 @@ test("(15) Keep waiting's open-ended wait carries one word button, Print anyway:
     assert.equal((await prints(page)).length, 0, "the release after the Escape prints nothing: nothing waits");
     await page.evaluate(() => { (window as any).FV.setPrintSettleMs(null); });
     assert.equal(await page.evaluate(() => (window as any).FV.printSettleMs()), 8000, "the seam restored");
+    assert.deepEqual(s.errors, [], "no script error");
+    await page.close();
+  });
+});
+
+// ── (15a) what reaches the paper under the ask and the open-ended wait: the print-media boxes ──────────────────
+
+/** A note with a placeholder, a parked markdown picture with no declared size, and a parked <img> with width and height. */
+const SIZED_NOTE = "# Figures\n\nA local picture ![](" + QUICK + ") and a slow one ![](" + SLOW + ").\n\nA sized slow one <img src=\"" + SLOW2 + "\" width=\"120\" height=\"80\" alt=\"\">\n\nA remote one ![](" + REMOTE + ").\n\nLast line.\n";
+type Box = { w: number; h: number };
+type Paper = { media: string; parked: Box | null; sized: Box | null; gate: Box | null; line: Box | null; parkedComplete: boolean | null };
+/** The boxes of the parked picture, the sized parked picture, the placeholder and the line under `media` (the page's media
+ *  emulated, then released), each as getBoundingClientRect's width and height. */
+async function paper(page: any, media: "print" | "screen"): Promise<Paper> {
+  await page.emulateMedia({ media });
+  const read: Paper = await page.evaluate((m: string) => {
+    const box = (el: Element | null): Box | null => { if (!el) return null; const r = el.getBoundingClientRect(); return { w: r.width, h: r.height }; };
+    const imgs = Array.from(document.querySelectorAll("#romp-fileview img")) as HTMLImageElement[];
+    const parked = imgs.find((i) => decodeURIComponent(i.src).includes("/docs/slow.svg")) || null;
+    const sized = imgs.find((i) => decodeURIComponent(i.src).includes("/docs/slow2.svg")) || null;
+    return { media: m, parked: box(parked), sized: box(sized), gate: box(document.querySelector('#romp-fileview [data-act="fv-load"]')), line: box(document.getElementById("fileview-print-line")), parkedComplete: parked ? parked.complete : null };
+  }, media);
+  await page.emulateMedia({ media: null });
+  return read;
+}
+test("(15a) what reaches the paper: under the deadline's ask and under Keep waiting's open-ended wait, with print media emulated, the parked markdown picture with no declared size has a 0 by 0 box (nothing where the picture was: no box, no gap, no label), the parked <img> with width and height a box of that size and nothing in it, and the gated placeholder a box with width and height (its dress prints); the line itself is off the paper; the same read on screen media beside it, and the picture's `complete` false at both reads (the round-4 review, 2026-09-20: case (15) pinned `complete`, which is not what reaches the paper)", { timeout: 120000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const KEEP_BTN = '#fileview-print-line button:has-text("' + KEEP_WORDS + '")';
+    const s = await scene(browser, "pane", SIZED_NOTE, { held: [SLOW, SLOW2] });
+    const { page } = s;
+    await waitGates(page, 1); await parked(s, [SLOW, SLOW2]);
+    await page.evaluate(() => { (window as any).FV.setPrintSettleMs(600); });
+    await page.click(PRINT_BTN);
+    await page.click(WITHOUT_BTN);
+    await page.waitForFunction((w: string) => (document.getElementById("fileview-print-line")?.firstChild?.textContent || "") === w, STALLED_TWO, { timeout: 6000 });   // the ask over the two parked pictures
+    let b = await bar(page);
+    assert.deepEqual({ line: b.line, buttons: b.buttons, titles: b.titles }, { line: "2 pictures have not loaded. Print anyway prints without them.", buttons: [ANYWAY_WORDS, KEEP_WORDS], titles: [ANYWAY_TITLE, KEEP_TITLE] }, "the ask's line, read before any press: the count, then the button's own sentence (FAILS BEFORE: the line ended at the count)");
+    assert.ok(b.line!.endsWith(" " + anywayWords(2)), "the sentence is the line's last words, beside the button");
+    const askScreen = await paper(page, "screen"), askPrint = await paper(page, "print");
+    for (const p of [askScreen, askPrint]) t.diagnostic("paper | ask | " + JSON.stringify(p));
+    assert.equal((await bar(page)).phase, "stalled", "the ask stands after the reads");
+    await page.click(KEEP_BTN);
+    await page.waitForFunction((w: string) => (document.getElementById("fileview-print-line")?.firstChild?.textContent || "") === w, waitingWords(2), { timeout: 6000 });
+    b = await bar(page);
+    assert.deepEqual({ line: b.line, buttons: b.buttons, titles: b.titles }, { line: "Waiting for 2 pictures… Print anyway prints without them.", buttons: [ANYWAY_WORDS], titles: [ANYWAY_TITLE] }, "the open-ended wait's line, read before any press: the count, then the button's own sentence");
+    const waitScreen = await paper(page, "screen"), waitPrint = await paper(page, "print");
+    for (const p of [waitScreen, waitPrint]) t.diagnostic("paper | open-ended wait | " + JSON.stringify(p));
+    // the count is the aim's: one of the two pictures landing settles nothing, so the line still reads two (extra7-2: the
+    // wait's promise resolves once, when every picture it listened on has settled)
+    await s.release([SLOW]);
+    await page.waitForFunction(() => (Array.from(document.querySelectorAll("#romp-fileview img")) as HTMLImageElement[]).filter((i) => !i.complete).length === 1, null, { timeout: 6000 });
+    await frames(page, 3);
+    assert.deepEqual({ line: (await bar(page)).line, prints: (await prints(page)).length, incomplete: await page.evaluate(() => (Array.from(document.querySelectorAll("#romp-fileview img")) as HTMLImageElement[]).filter((i) => !i.complete).length) }, { line: waitingWords(2), prints: 0, incomplete: 1 },
+      "one of two pictures landed: the count is the aim's and does not fall per settle; nothing printed");
+    for (const [site, p] of [["the ask", askPrint], ["the open-ended wait", waitPrint]] as Array<[string, Paper]>) {
+      assert.equal(p.parkedComplete, false, site + ": the parked picture is still loading at the read");
+      assert.deepEqual(p.parked, { w: 0, h: 0 }, site + ", print media: the parked picture with no declared size is a 0 by 0 box, nothing where the picture was");
+      assert.ok(p.sized && p.sized.w === 120 && p.sized.h === 80, site + ", print media: the parked picture with width and height is a box of that size: " + JSON.stringify(p.sized));
+      assert.ok(p.gate && p.gate.w > 0 && p.gate.h > 0, site + ", print media: the placeholder has a box: " + JSON.stringify(p.gate));
+      assert.deepEqual(p.line, { w: 0, h: 0 }, site + ", print media: the line is off the paper (the sheets hide .fileview > .fileview-err in print)");
+    }
+    assert.equal((await prints(page)).length, 0, "nothing printed: the reads pressed nothing");
+    await page.keyboard.press("Escape");
+    await frames(page, 1);
+    assert.equal((await bar(page)).phase, null, "Escape ended the open-ended wait");
+    await s.release([SLOW2]);
+    await frames(page, 4);
+    assert.equal((await prints(page)).length, 0, "the last release after the Escape prints nothing: nothing waits");
+    await page.evaluate(() => { (window as any).FV.setPrintSettleMs(null); });
     assert.deepEqual(s.errors, [], "no script error");
     await page.close();
   });

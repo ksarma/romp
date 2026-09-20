@@ -72,28 +72,41 @@
 //      settle from a deadline: a settle prints, a deadline with a picture still loading ASKS instead of printing (the
 //      `stalled` phase), and a deadline that finds nothing loading is a settle in effect and prints (the third review: the
 //      first build fed one bare `ready` for both ends, and the deadline's print said nothing). The ask (the third review,
-//      2026-09-19): the line reads "N pictures have not loaded." with two word buttons in the armed line's shape, "Print
-//      anyway", which prints at once with the picture as the browser has it (in Chromium an empty box), and "Keep
-//      waiting", which waits on the load and error events alone, with no timer, until every picture settles, then prints.
-//      That open-ended wait's line reads "Waiting for N pictures…" beside the loader with ONE word button, "Print anyway"
-//      (the ask's words and title), which prints at once with what has loaded; a re-aim under it rewrites the count in
-//      place and keeps the button (romp-manager's ruling, 2026-09-20, on the round-2 review's fresh-2 and the round-3
-//      review's tests-4, ui-2 and extra5-3: the person chose to wait and the button completes that gesture with what
-//      has loaded, the pictures still loading printing as the browser has them; NOT an exit control, since Escape already
-//      left the wait, and NO timer, since a timer would print a chosen picture missing with nothing said, the defect the
-//      ask closed; before this the line read "Preparing N pictures…" with no button, so the wait had no way through but
-//      the load). Escape or a second press under the ask disarms as under the armed line, and Escape during that
+//      2026-09-19): the line reads "N pictures have not loaded. Print anyway prints without them." with two word buttons
+//      in the armed line's shape, "Print anyway", which prints at once WITHOUT the pictures still loading (a markdown
+//      picture with no declared size prints as a 0 by 0 box, nothing where it was, no gap and no label; one with width
+//      and height as an empty box of that size; measured in Chromium under print media, file-print-driver-browser.test.ts
+//      case (15a); the round-4 review, 2026-09-20: before this the prose here said an empty box for every shape), and
+//      "Keep waiting", which waits on the load and error events alone, with no timer, until every picture settles, then
+//      prints. That open-ended wait's line reads "Waiting for N pictures… Print anyway prints without them." beside the
+//      loader with ONE word button, "Print anyway" (the ask's words and title), which prints at once with what has loaded;
+//      a re-aim under it rewrites the count in place and keeps the button (romp-manager's ruling, 2026-09-20, on the
+//      round-2 review's fresh-2 and the round-3 review's tests-4, ui-2 and extra5-3: the person chose to wait and the
+//      button completes that gesture with what has loaded, the pictures still loading left off the paper; NOT an exit
+//      control, since Escape already left the wait, and NO timer, since a timer would print a chosen picture missing
+//      with nothing said, the defect the ask closed; before this the line read "Preparing N pictures…" with no button,
+//      so the wait had no way through but the load). The second sentence of both lines (anywayWords) is the button's
+//      own: it stands beside "Print anyway" from the moment the line appears, so the person reads what the press does and
+//      presses once, rather than a confirmation step after the press (the round-4 review's ruling, 2026-09-20: the press
+//      must tell the person, at the moment they press, that the pictures still loading will not appear on the paper; a
+//      sentence in place before the press says it at that moment with no second click). Escape or a second press under the ask disarms as under the armed line, and Escape during that
 //      open-ended wait cancels it, the bar at rest and nothing printed (established by execution in Chromium on the code
 //      before the button, 2026-09-20: the card stayed up, the line went, the parked request stayed parked and its release
 //      printed nothing; file-print-driver-browser.test.ts case (15) executes both the button and that Escape; the timed
 //      wait's Escape stays the viewer's, which closes the card: that wait ends by itself). Nothing
 //      listens under the ask; Keep waiting reads the body as it stands then, so a picture that landed meanwhile is not
 //      waited on again and with none left loading the print runs at once. Before this the print ran at the deadline and a
-//      picture still loading printed as an empty box with nothing said: a route that never answers raises no error event,
-//      so no label stood in for it either (a failed picture, its error event, settles and prints as its label, then as now).
+//      picture still loading printed as nothing where it stood (a markdown picture with no declared size; one with width
+//      and height as an empty box of that size) with nothing said: a route that never answers raises no error event, so no
+//      label stood in for it either (a failed picture, its error event, settles and prints as its label, then as now).
 //      The line reads "Preparing N pictures…" meanwhile, beside the viewer's loader (the swirl, the wordmark and the
 //      three dots, .fileview-load inline in the row: ui/CLAUDE.md's loading-state rule, which puts the romp loader on every
-//      wait; the first build showed the words alone). With no gated placeholder and every picture complete the press
+//      wait; the first build showed the words alone). N is the count at the AIM (the press, a choice, or a re-aim after a
+//      repaint or a settle), not a count that falls as each picture settles: the wait's promise resolves once when every
+//      picture it listened on has settled, so a line over three pictures reads three until all three have landed, and the
+//      open-ended wait's line has the same property (the round-4 review's extra7-2, 2026-09-20, which preferred the property
+//      stated to a per-picture callback; file-print-driver-browser.test.ts case (15a) reads the count after one of two
+//      pictures landed). With no gated placeholder and every picture complete the press
 //      prints at once, in the click's own task. The wait is AIMED at the body as it stands, and re-aimed when the
 //      body is repainted under it (the host's `body` report: a reload's landing, a format pick; the pictures listened on
 //      were the old body's, detached by the swap; entering the editor seats the viewer's loader, which takes the body out
@@ -287,25 +300,37 @@ export function step(s: PrintState, ev: PrintEvent): { state: PrintState; act: P
 export function armedWords(n: number): string {
   return n === 1 ? "1 picture from another host is not loaded." : n + " pictures from other hosts are not loaded.";
 }
-/** The wait's words for `n` pictures still loading. */
+/** The wait's words for `n` pictures still loading: the count at the aim, which does not fall as pictures settle (the
+ *  header). */
 export function preparingWords(n: number): string {
   return n === 1 ? "Preparing 1 picture…" : "Preparing " + n + " pictures…";
 }
-/** The open-ended wait's words for `n` pictures still loading: Keep waiting's line, which carries Print anyway beside the
- *  loader (the timed wait's line reads preparingWords and carries no button: its deadline asks). */
-export function waitingWords(n: number): string {
-  return n === 1 ? "Waiting for 1 picture…" : "Waiting for " + n + " pictures…";
+/** The sentence that stands beside "Print anyway" wherever that button stands (the ask's line and Keep waiting's), the last
+ *  words of the line's text, so the person reads what the press does before pressing: the `n` pictures still loading are
+ *  left off the paper when it prints (a markdown picture with no declared size prints as a 0 by 0 box, one with width and
+ *  height as an empty box of that size: measured in Chromium under print media, file-print-driver-browser.test.ts case
+ *  (15a)). The round-4 review's ruling (2026-09-20): a press that silently drops the pictures the person chose to wait for is
+ *  an omission; a sentence in place before the press makes it an informed choice, with no second click and no paint at
+ *  print time. The count is the line's, so "it" and "them" name the pictures the first sentence counted. */
+export function anywayWords(n: number): string {
+  return n === 1 ? "Print anyway prints without it." : "Print anyway prints without them.";
 }
-/** The ask's words at the deadline: `n` pictures still loading. */
+/** The open-ended wait's words for `n` pictures still loading: Keep waiting's line, which carries Print anyway beside the
+ *  loader (the timed wait's line reads preparingWords and carries no button: its deadline asks), so anywayWords follows the
+ *  count. The count is the aim's, as preparingWords' is. */
+export function waitingWords(n: number): string {
+  return (n === 1 ? "Waiting for 1 picture…" : "Waiting for " + n + " pictures…") + " " + anywayWords(n);
+}
+/** The ask's words at the deadline: `n` pictures still loading, then what Print anyway does (anywayWords). */
 export function stalledWords(n: number): string {
-  return n === 1 ? "1 picture has not loaded." : n + " pictures have not loaded.";
+  return (n === 1 ? "1 picture has not loaded." : n + " pictures have not loaded.") + " " + anywayWords(n);
 }
 export const WITH_WORDS = "Print with them";
 export const WITHOUT_WORDS = "Print without them";
 /** The ask's two word buttons and their titles. */
 export const ANYWAY_WORDS = "Print anyway";
 export const KEEP_WORDS = "Keep waiting";
-export const ANYWAY_TITLE = "Print now; a picture still loading prints as the browser has it";
+export const ANYWAY_TITLE = "Print now; a picture still loading is left out";
 export const KEEP_TITLE = "Wait for every picture to load, then print";
 /** "Print with them"'s title: the hosts the placeholders name, in the order they appear, so the hosts one press asks can be
  *  read together before the press (for this print alone: loadGatedFigure grants a host nothing for the page, which a click

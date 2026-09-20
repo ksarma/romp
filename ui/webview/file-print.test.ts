@@ -8,7 +8,7 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { hideEdges } from "../test-dom-shim";   // every stand-in below that carries a tree edge (parentElement, children, childNodes, firstElementChild) hides it, the shared module's rule (ui/test-dom-shim.test.ts's ratchet)
-import { step, RESTING, DISABLED, armedWords, preparingWords, waitingWords, stalledWords, isPrintChord, isPrintKeys, settlePictures, collectPictures, bodyReady, rootKind, PRINT_SETTLE_MS, setPrintSettleMs, printSettleMs,
+import { step, RESTING, DISABLED, armedWords, preparingWords, waitingWords, stalledWords, anywayWords, ANYWAY_TITLE, isPrintChord, isPrintKeys, settlePictures, collectPictures, bodyReady, rootKind, PRINT_SETTLE_MS, setPrintSettleMs, printSettleMs,
   WITH_WORDS, WITHOUT_WORDS, ANYWAY_WORDS, KEEP_WORDS, TAB_WORDS, NO_TAB_WORDS, pdfFrameWindow, READY_ROOTS, NOT_READY_ROOTS, LINE_ROOTS, PDF_LOADER_ROOT, printable, figurePrintable, figureHidden, rendered, SVG_NS, PAINTS_SEL,
   type PrintState, type Picture, type Timers, type BodyLike, type PrintableNode, type FigureNode } from "./file-print";
 
@@ -75,15 +75,20 @@ test("ready during the wait prints; printed rests; a press, an Escape, a choice 
   assert.equal(step(RESTING, { kind: "printed" }).act, "none");
 });
 
-test("the words: one picture and many, for the armed line, the wait, the open-ended wait and the ask; the four buttons' words", () => {
+test("the words: one picture and many, for the armed line, the wait, the open-ended wait and the ask; the four buttons' words; the ask's line and the open-ended wait's line each end with the button's own sentence, what Print anyway does (FAILS BEFORE: neither line said, and the press dropped the pictures still loading with nothing said)", () => {
   assert.equal(armedWords(1), "1 picture from another host is not loaded.");
   assert.equal(armedWords(2), "2 pictures from other hosts are not loaded.");
   assert.equal(preparingWords(1), "Preparing 1 picture…");
   assert.equal(preparingWords(3), "Preparing 3 pictures…");
-  assert.equal(waitingWords(1), "Waiting for 1 picture…");
-  assert.equal(waitingWords(3), "Waiting for 3 pictures…");
-  assert.equal(stalledWords(1), "1 picture has not loaded.");
-  assert.equal(stalledWords(3), "3 pictures have not loaded.");
+  assert.equal(anywayWords(1), "Print anyway prints without it.");
+  assert.equal(anywayWords(3), "Print anyway prints without them.");
+  assert.equal(waitingWords(1), "Waiting for 1 picture… Print anyway prints without it.");
+  assert.equal(waitingWords(3), "Waiting for 3 pictures… Print anyway prints without them.");
+  assert.equal(stalledWords(1), "1 picture has not loaded. Print anyway prints without it.");
+  assert.equal(stalledWords(3), "3 pictures have not loaded. Print anyway prints without them.");
+  for (const n of [1, 2, 7]) for (const [site, words] of [["the ask", stalledWords(n)], ["the open-ended wait", waitingWords(n)]] as Array<[string, string]>) assert.ok(words.endsWith(" " + anywayWords(n)), site + " over " + n + ": the line ends with the button's own sentence");
+  assert.equal(ANYWAY_TITLE, "Print now; a picture still loading is left out");
+  assert.ok(!ANYWAY_TITLE.includes("as the browser has it"), "the title no longer says the picture prints as the browser has it: a still-loading picture with no declared size prints as nothing (case (15a))");
   assert.equal(WITH_WORDS, "Print with them");
   assert.equal(WITHOUT_WORDS, "Print without them");
   assert.equal(ANYWAY_WORDS, "Print anyway");
