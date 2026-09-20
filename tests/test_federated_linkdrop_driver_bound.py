@@ -34,9 +34,17 @@ kernel or a browser:
   and 27.5 s); `evaluate` is allowed on a page receiver only, since a locator's evaluate auto-waits. The fixer pass of that
   round closed the walk's own gap: the walk follows chains on the names it knows (page, pages, context, browser, chromium),
   so a receiver or a locator reachable under any other name was invisible to it and a bound locator's read left the census
-  green; the three ways a receiver leaves the walk (a binding or assignment to a name outside WALKED_NAMES, a locator-making
-  call whose chain ends on it, a receiver passed bare to anything but Object.keys or a driver helper whose one parameter is a
-  walked name) are refused by name.
+  green; it refuses a binding or assignment to a name outside WALKED_NAMES, a locator-making call whose chain ends on it and
+  a receiver passed bare to anything but Object.keys or a driver helper whose one parameter is a walked name. Those are the
+  SPELLINGS this module's censuses check, and the rule (round 5) is that a census over a form is keyed on the property, or
+  it parses, or its message says which spellings it checks: these are regular expressions over the driver text, so a
+  receiver reached any other way (an object literal, an array, a ternary, `null ||`, a helper's return, an awaited argument,
+  optional chaining, bracket access, a space or a comment before the member, a second browser type), a member read followed
+  by a call (`pages.feed.request.get(url)`) and a wait spelled `. waitFor`, `["goto"]` or `goto?.()` are outside them by
+  construction, and the census that reads those is tests/test_federated_linkdrop_driver_parsed_served.py, the same driver
+  through the typescript compiler's parse with every receiver known by its TYPE (it runs where the extension's node deps
+  are, CI's served job; this module runs on the Python matrix, which has none). The two are read together: this one is the
+  matrix's backstop and says what it checks; that one refuses the rest.
 
 Three more pins ride here because the module they pin has no kernel-free test of its own: LinkDropBothNew gates on no
 knob, wherever such a gate could sit (a class-level skip, setUpClass, _knobs), and LinkDropOldLocal skips as optional
@@ -100,11 +108,13 @@ LOCATOR_MAKERS = ("locator", "first", "last", "nth", "filter", "and", "or", "get
 RECEIVERS = re.compile(r"\b(?P<recv>pages\.\w+|pages\[(?:[^\[\]]|\[[^\[\]]*\])*\]|page|context|browser|chromium)(?=\s*\.)")
 MEMBER = re.compile(r"\s*\.\s*(?P<name>[\w$]+)\s*")
 # The names the walk follows: a playwright receiver, or a locator made from one, reachable under any OTHER name is invisible to
-# it, so the census refuses the three ways a receiver leaves the walk (round 4's fixer pass: `const row = pages.feed.locator(sel);
-# await row.textContent();` and `const fp = pages.feed; await fp.locator(sel).textContent();` left the allow-list green): a binding
-# or assignment whose target is not a walked name (BINDING against WALKED_TARGET), a locator-making call whose chain ends on it
-# (stored, returned or passed on; _receiver_calls reports it), and a receiver passed bare as an argument (PASSED_BARE), allowed
-# only to BARE_CALLEES or to a driver helper whose one parameter is itself a walked name (HELPER_PARAM: snap's is `page`).
+# it, so the census refuses the spellings of a receiver leaving the walk that these expressions read (round 4's fixer pass:
+# `const row = pages.feed.locator(sel); await row.textContent();` and `const fp = pages.feed; await fp.locator(sel).textContent();`
+# left the allow-list green): a binding or assignment whose target is not a walked name (BINDING against WALKED_TARGET), a
+# locator-making call whose chain ends on it (stored, returned or passed on; _receiver_calls reports it), and a receiver passed
+# bare as an argument (PASSED_BARE), allowed only to BARE_CALLEES or to a driver helper whose one parameter is itself a walked
+# name (HELPER_PARAM: snap's is `page`). Not an exhaustive list of the ways a receiver can leave the walk (round 5 measured
+# fourteen others): the class outside these spellings is the parsed census's, tests/test_federated_linkdrop_driver_parsed_served.py.
 WALKED_NAMES = ("page", "pages", "context", "browser", "chromium")
 RECV_EXPR = r"pages(?:\.\w+|\[[^\[\]]*\])?|page|context|browser|chromium"
 BINDING = re.compile(r"(?:\b(?:const|let|var)\s+)?(?P<target>[\w$]+(?:\s*(?:\.\s*[\w$]+|\[[^\[\]]*\]))*|[\[{][^=;]*[\]}])\s*(?<![=!<>])=(?![=>])\s*(?:await\s+)?(?P<recv>%s)(?![\w$])" % RECV_EXPR)
@@ -157,7 +167,10 @@ def _wait_sites(text):
     """Every call site of a wait-shaped name in the (comment-stripped) driver: (form, args, line), the navigations included
     (round 3: `page.reload()` waited under playwright's default and was neither listed nor flagged). `.waitFor(` on a locator
     is the form ".waitFor"; a bare `waitFor(` or `budget.waitFor(` is the budget's poll, the receiver compared whole across its
-    dots (WAIT_SITE), so a receiver merely ending in budget, or whose last segment is budget (`obj.budget`), is a locator's."""
+    dots (WAIT_SITE), so a receiver merely ending in budget, or whose last segment is budget (`obj.budget`), is a locator's.
+    The spelling read: the name immediately after a dot (`recv.name(`) or bare (`name(`); a wait written with a space after
+    the dot, by bracket (`["goto"](`) or as an optional call (`goto?.(`) is not a site to this expression and is the parsed
+    census's."""
     out = []
     for m in WAIT_SITE.finditer(text):
         name = m.group("name")
@@ -172,7 +185,8 @@ def _receiver_calls(text, escapes=None):
     The receivers are the driver's names for them (`page`, `pages.<app>`, `pages[...]`: a page; `context`; `browser`;
     `chromium`), the chain is walked call by call with _call_args skipping each call's arguments, and the kind becomes
     `locator` after a locator-making call (LOCATOR_MAKERS), so `pages.feed.locator(sel).first().waitFor({...})` yields
-    (page, locator), (locator, first), (locator, waitFor). A member read without a call ends the chain. A chain that ends
+    (page, locator), (locator, first), (locator, waitFor). A member read without a call ends the chain SILENTLY here (so a
+    call on that member's value, `pages.feed.request.get(url)`, is not seen: the parsed census refuses the read). A chain that ends
     ON a locator-making call left that locator unconsumed (stored, returned or passed on, to be read under a name the walk
     does not follow) and is appended to `escapes` as (line, what) when a list is given (round 4's fixer pass)."""
     out = []
@@ -201,8 +215,10 @@ def _escaped_receivers(text):
     only when its target is a walked name (WALKED_TARGET: `const context = await browser.newContext(...)`, `pages[app] = page`),
     while a chain ending on any other call binds a value, not a receiver (`const c = await pages.feed.locator(s).count()`), and
     is not a binding here; a receiver passed bare as an argument is allowed only to BARE_CALLEES or to a driver helper whose one
-    parameter is a walked name (HELPER_PARAM), since the walk follows the parameter by its name. Everything else here is a
-    receiver reaching a name the walk does not follow."""
+    parameter is a walked name (HELPER_PARAM), since the walk follows the parameter by its name. Any other binding or bare
+    pass these expressions match is a receiver reaching a name the walk does not follow; a receiver leaving the walk by a
+    spelling they do not match (through an object literal, an array, a ternary, a helper's return, an awaited argument, a
+    computed or optional member) is not read here at all and is the parsed census's to refuse."""
     out = []
     for m in BINDING.finditer(text):
         j, last = m.end("recv"), None
@@ -287,10 +303,14 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
         # The premise (round 2, fresh-1): the sum is an upper bound only if every wait the driver places is one it counts.
         driver = _strip_js_comments(L.DRIVER)
         self.assertNotIn("//", driver, "a // the comment stripper cannot see past (a new comment shape, or // inside a string): teach _strip_js_comments")
+        self.assertEqual(driver.count("const waitFor = budget.waitFor;"), 1, "the bare waitFor( sites the census reads as the budget's poll are that one alias of "
+                                                                             "budget.waitFor at the driver's module level (round 5, extra8-3: a bare waitFor bound to anything else "
+                                                                             "would read as the poll here; the parsed census classifies the bare call by the binding the tree holds)")
         sites = _wait_sites(driver)
         self.assertTrue(sites, "the census saw the driver's wait sites")
         unlisted = sorted({(name, ln) for name, _, ln in sites if name not in WAIT_FORMS})
-        self.assertEqual(unlisted, [], "a wait form WAIT_FORMS does not list (name it there with what caps it, and count it in driver_worst_case_s if fixed): %r" % (unlisted,))
+        self.assertEqual(unlisted, [], "a wait form WAIT_FORMS does not list (name it there with what caps it, and count it in driver_worst_case_s if fixed); "
+                                       "the sites read are the spellings WAIT_SITE matches, a wait name right after a dot or bare: %r" % (unlisted,))
         uncapped, dwells = [], set()
         for name, args, ln in sites:
             rule = WAIT_FORMS[name]
@@ -331,12 +351,14 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
                              "the walk is not vacuous: every receiver call the driver makes today is seen, by kind: %r" % (sorted({(kind, name) for kind, name, _ in calls}),))
         # the walk's own gap (round 4's fixer pass): a receiver or a locator reaching a name the walk does not follow is refused
         self.assertEqual(escapes, [], "a locator made on a playwright receiver and not consumed by a call in its own chain (stored, returned or passed on) is read "
-                                      "under a name the walk does not follow, so its reads never reach the allow-list: %r" % (escapes,))
+                                      "under a name the walk does not follow, so its reads never reach the allow-list (the spellings this walk reads: a receiver written "
+                                      "page, pages.<app>, pages[...], context, browser or chromium, then `.name(` members; the parsed census reads the rest): %r" % (escapes,))
         leaves = _escaped_receivers(driver)
         self.assertEqual([(ln, what) for ln, what, ok in leaves if not ok], [],
                          "a playwright receiver, or a locator made from one, reaching a name the walk does not follow (bound or assigned to a name outside "
-                         "WALKED_NAMES, or passed bare to anything but Object.keys or a driver helper whose one parameter is a walked name); a call on that name "
-                         "is invisible to the allow-list: %r" % ([(ln, what) for ln, what, ok in leaves if not ok],))
+                         "WALKED_NAMES, or passed bare to anything but Object.keys or a driver helper whose one parameter is a walked name; the spellings BINDING "
+                         "and PASSED_BARE match, the other roads being the parsed census's); a call on that name is invisible to the allow-list: %r"
+                         % ([(ln, what) for ln, what, ok in leaves if not ok],))
         self.assertLessEqual({"context = browser", "page = context", "pages[app] = page", "snap(pages[app])"}, {what for _, what, ok in leaves if ok},
                              "the census is not vacuous: the driver's bindings of the context and the page, the page table's assignment and snap's argument "
                              "are seen: %r" % (sorted({what for _, what, ok in leaves if ok}),))
@@ -404,7 +426,8 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
         self.assertEqual(refused("const snap = async (page) => 1; const g = function (page, x) {}; const h = async (a, page) => 1;"), [], "a parameter list declares a name, it passes nothing")
         self.assertEqual(refused("let p2 = page; const { feed } = pages;"), ["p2 = page", "{feed} = pages"])
         self.assertEqual(refused("const p = await context.newPage(); const b = await chromium.launch({}); const u = page.url;"), ["b = chromium", "p = context", "u = page"],
-                         "a receiver-making call binds a receiver; a member read without a call is refused on the safe side")
+                         "a receiver-making call binds a receiver; a member read bound to a name is refused on the safe side (a member read then CALLED, "
+                         "`page.request.get(u)`, ends the chain here unseen and is the parsed census's)")
         self.assertEqual(refused("await read(pages.feed.locator(sel)); return pages[app].locator(sel).first();"), ["first(...) left its chain unconsumed", "locator(...) left its chain unconsumed"])
         self.assertEqual(refused("const read = async (p) => p.locator(sel).textContent(); await read(pages.feed);"), ["read(pages.feed)"])
         self.assertEqual(refused("await read(pages[app]); await f(1, page);"), ["<a later argument>(page)", "read(pages[app])"])
