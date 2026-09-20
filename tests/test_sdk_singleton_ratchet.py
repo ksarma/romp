@@ -3569,14 +3569,18 @@ class TheDerivationIsRunnable(unittest.TestCase):
     text this test redded on derive's exact-once count, a pin's red printed with no case id) and a real mkdtemp under
     the test's directory, it prints the cell, the head, the plant, the run line, the red lines, the summary and the
     cell's text, runs derive_command()'s argv in the added tree under the recipe's environment, and removes the tree
-    and the scratch directory. Before this class no test called derive: the round-7 review found the
+    and the scratch directory; and its three loud errors over the same fakes (a run exiting neither 0 nor 1, an old
+    text occurring 0 times or twice in the tree's file, a plant that does not parse) each raise naming the cell with
+    the tree removed and no run made where the error comes before the run (the round-8 review found the three
+    branches executed by no test). Before this class no test called derive: the round-7 review found the
     two behaviours last added to it (the second --deselect and the refusal) executed by no run of the suite, so
     derive replaced by a raiser left the module green. The module's --derive arm (its __main__ block, compiled from
     this file's source by main_block and run with derive replaced by a recorder over a synthetic table written out
     of order) calls derive once per key in sorted order for `all` and once for a named cell, and an argv the arms
     do not name falls through to unittest.main; before that test the dispatch ran only when the file was the
-    script. Not read here: a real pytest run and a real worktree; the plant's exact-once count and the --count arm,
-    run as a process, are TheMutationCellsApply's."""
+    script. Not read here: a real pytest run and a real worktree; the real table's exact-once count and parse over
+    the checkout's fixture, and the --count arm run as a process, are TheMutationCellsApply's (derive's own count,
+    parse and exit-code checks run here over the synthetic text alone)."""
 
     def test_every_deselected_node_names_a_test_of_this_module(self):
         module = sys.modules[__name__]
@@ -3661,17 +3665,19 @@ class TheDerivationIsRunnable(unittest.TestCase):
     FAKE_CONFTEST = "PLANT = 'old'\nKEPT = 1\n"          # the synthetic tests/conftest.py the faked worktree add writes
     FAKE_SUBS = [("PLANT = 'old'\n", "PLANT = 'new'\n")]  # the synthetic substitution the table's entry is replaced by
 
-    def _derive_over_fakes(self, cell, conftest_text=FAKE_CONFTEST, subs=FAKE_SUBS, returncode=1, stdout=""):
+    def _derive_over_fakes(self, cell, conftest_text=FAKE_CONFTEST, subs=FAKE_SUBS, returncode=1, stdout="", seen=None):
         """derive(cell) over a faked subprocess.run, a real mkdtemp under a directory of the test's own, and the table's
         entry for the cell replaced by `subs` over tests/conftest.py: rev-parse answers a fabricated head, worktree add
         makes the tree and writes `conftest_text` as its tests/conftest.py (a synthetic text, so no conftest of this
         checkout is read), status answers clean, the module's run is recorded with the planted text and answers
         `returncode` and `stdout`, worktree remove is recorded, and any other git call is an AssertionError. Returns
         (seen, out): the trees added and removed, the pytest argv and keyword arguments (None when derive never ran
-        it), the planted text, and derive's stdout; the scratch directory is asserted removed whatever derive raised,
-        and the exception, when derive raised one, is re-raised after that assertion."""
+        it), the planted text (None when it never ran), and derive's stdout; `seen` may be the caller's dict, filled
+        in place, so a derive that raises leaves its record readable. The scratch directory is asserted removed
+        whatever derive raised, and the exception, when derive raised one, propagates after that assertion."""
         head = "1111111122222222333333334444444455555555"
-        seen = {"added": [], "removed": [], "pytest": None, "planted": None, "head": head}
+        seen = {} if seen is None else seen
+        seen.update({"added": [], "removed": [], "pytest": None, "planted": None, "head": head})
         real_mkdtemp = tempfile.mkdtemp
 
         def fake_run(argv, **kw):
@@ -3737,6 +3743,46 @@ class TheDerivationIsRunnable(unittest.TestCase):
                          + ["summary: 4 failed, 191 passed in 60.00s (0:01:00)", "cell: %s" % mutation_cell_text(__doc__, cell)],
                          "derive's output differs (its stdout lines over the faked run: the cell, the head, the plant, the "
                          "run line, the red lines, the summary and the cell's text)")
+
+    def test_a_run_not_finishing_an_old_text_not_once_and_a_plant_not_parsing_are_loud_and_leave_no_tree(self):
+        """derive's three loud errors, each over the fakes (_derive_over_fakes) and each leaving the tree removed and
+        the scratch directory gone: the module's run answering an exit code that is neither 0 nor 1 is a SystemExit
+        naming the cell and the code (the check on the recorded run's returncode); a synthetic conftest carrying the
+        old text 0 times, or twice, is a SystemExit naming the cell, the count and the file, raised before any run
+        (derive's exact-once count over the tree's file); a substitution whose new text does not parse is a
+        SyntaxError before any run (derive's ast.parse of the planted text). The round-8 review found the three
+        branches executed by no test: each made unreachable, the class stayed green."""
+        cell = sorted(MUTATIONS)[0]
+        seen = {}
+        with self.assertRaises(SystemExit) as refused:
+            self._derive_over_fakes(cell, returncode=2, stdout="INTERNALERROR> boom\n", seen=seen)
+        self.assertTrue(str(refused.exception).startswith("%s: pytest exited 2, not 0 or 1:\n" % cell),
+                        "a run exiting 2 is not refused naming the cell and the code (derive's returncode check, its "
+                        "SystemExit text): %r" % str(refused.exception))
+        self.assertIsNotNone(seen["pytest"], "the run exiting 2 was never made (the pytest call the fakes saw)")
+        self.assertEqual((len(seen["added"]), seen["removed"]), (1, seen["added"]),
+                         "the tree was not added once and removed after the run exiting 2 (the worktree add and remove "
+                         "calls the fakes saw): %r" % (seen,))
+        for text, n in (("KEPT = 1\n", 0), ("PLANT = 'old'\nPLANT = 'old'\n", 2)):
+            seen = {}
+            with self.assertRaises(SystemExit) as refused:
+                self._derive_over_fakes(cell, conftest_text=text, seen=seen)
+            self.assertEqual(str(refused.exception),
+                             "%s: the old text occurs %d times in conftest.py, not once: %r" % (cell, n, self.FAKE_SUBS[0][0]),
+                             "an old text occurring %d times is not refused naming the cell, the count and the file "
+                             "(derive's exact-once count over the tree's file, its SystemExit text)" % n)
+            self.assertIsNone(seen["pytest"], "the module ran over a tree whose old text occurs %d times (the pytest call "
+                              "the fakes saw)" % n)
+            self.assertEqual((len(seen["added"]), seen["removed"]), (1, seen["added"]),
+                             "the tree was not added once and removed after the exact-once refusal over %d occurrences "
+                             "(the worktree add and remove calls the fakes saw): %r" % (n, seen))
+        seen = {}
+        with self.assertRaises(SyntaxError):
+            self._derive_over_fakes(cell, subs=[("PLANT = 'old'\n", "PLANT = 'new\n")], seen=seen)
+        self.assertIsNone(seen["pytest"], "the module ran over a plant that does not parse (the pytest call the fakes saw)")
+        self.assertEqual((len(seen["added"]), seen["removed"]), (1, seen["added"]),
+                         "the tree was not added once and removed after the plant that does not parse (the worktree add "
+                         "and remove calls the fakes saw): %r" % (seen,))
 
     def test_the_derive_arm_calls_derive_once_per_sorted_key_for_all_and_once_for_a_named_cell(self):
         """The __main__ block (main_block) run over this module's globals with derive replaced by a recorder, MUTATIONS
