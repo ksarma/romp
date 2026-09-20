@@ -825,7 +825,7 @@ class MobileFitExecutes(unittest.TestCase):
     # D1 (2026-09-19): the empty band between the composer and the keyboard on the installed iPhone app (the user
     # 2026-09-18 and 2026-09-19, with a screenshot). Two causes, both closed: the visual viewport's PAN, which fit() now
     # publishes as --app-top for the mobile body rule to sit at; and the bar's reservation surviving a keyboard that
-    # shrinks the layout viewport too, which kbOpen now reads from the bar's own box against the visible band.
+    # shrinks the layout viewport too, which the rebound barfit now reads from the bar's own box against the band the shell published (upstream's kbOpen untouched).
     def test_the_visual_viewports_pan_is_published_for_the_body_to_sit_at(self):
         self.assertEqual(self.out["restTop"], "0px", "no pan at rest")
         self.assertEqual(self.out["pan"], {"appTop": "83px", "appH": "460px", "barH": "0px"})
