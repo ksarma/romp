@@ -34,7 +34,9 @@
 // /rel.png before GET /notes/rel.png. In Chromium and Firefox both logs held no line for any of these figures before the
 // chain ran, so every scene was green there (measured 2026-09-20 at the base 2d41e5c9b; the engines' scheduling of the
 // fetch was not instrumented, the logs were read). Each engine is its own test and skips, saying so, when its binary is
-// absent. Synthetic values only: an invented note, TESTHOST paths, a placeholder sid, .test hosts.
+// absent. Where it skips (CI installs no engine before npm test), file-view-figures-gate-adopt.test.ts executes the
+// order under plain node, the attributes at the adoption and every write of one, with no bytes to see. Synthetic values
+// only: an invented note, TESTHOST paths, a placeholder sid, .test hosts.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -178,7 +180,7 @@ type Scene = { page: any; errors: string[]; figureLog: Line[]; proxyLog: Line[];
  *  `drain` makes one round trip through the proxy to the harness and waits 250 ms, so a request the engine issued before it
  *  has reached the logs. */
 async function inEngine(t: any, engine: "chromium" | "firefox" | "webkit", body: (s: Scene) => Promise<void>): Promise<void> {
-  if (!pw) { t.skip("playwright is not installed under vscode-extension; the browser legs need it (CI installs no browsers)"); return; }
+  if (!pw) { t.skip("playwright is not installed under vscode-extension; the browser legs need it (CI installs no browsers); file-view-figures-gate-adopt.test.ts, the node scene, is the guard that runs where this leg skips"); return; }
   const figureLog: Line[] = [], proxyLog: Line[] = [], harnessLog: Line[] = [];
   const figures = figureServer(figureLog);
   const harness = harnessServer(filesBundle(), harnessLog);
@@ -188,7 +190,7 @@ async function inEngine(t: any, engine: "chromium" | "firefox" | "webkit", body:
   let browser: any = null;
   try {
     try { browser = await pw[engine].launch({ proxy: { server: "http://127.0.0.1:" + proxyPort } }); }
-    catch (e) { t.skip("no playwright " + engine + " on this box; this leg needs it (CI installs none): " + String((e as Error).message).split("\n")[0]); return; }
+    catch (e) { t.skip("no playwright " + engine + " on this box; this leg needs it (CI installs none; file-view-figures-gate-adopt.test.ts, the node scene, runs where this leg skips): " + String((e as Error).message).split("\n")[0]); return; }
     const errors: string[] = [];
     const page = await browser.newPage({ viewport: { width: 900, height: 700 } });
     page.on("pageerror", (e: Error) => { errors.push(e.message); });

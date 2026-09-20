@@ -20,8 +20,9 @@
 // Measured 2026-09-20 at the base 2d41e5c9b, this leg copied there: red in Firefox (both svg figures requested while the
 // placeholders stood; the assertion names the engine and the lines) and red in WebKit (the `xlink:href` figure requested
 // while its placeholder stood, the `href` one not), green in Chromium; at the fix, green in all three engines. Each engine
-// is its own test and skips, saying so, when its binary is absent. Synthetic values only: an invented note, TESTHOST paths,
-// a placeholder sid, .test hosts.
+// is its own test and skips, saying so, when its binary is absent. Where it skips (CI installs no engine before npm test),
+// file-view-figures-gate-adopt.test.ts executes the order under plain node, the attributes at the adoption and every write of
+// one, with no bytes to see. Synthetic values only: an invented note, TESTHOST paths, a placeholder sid, .test hosts.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -44,9 +45,11 @@ const NOTE_PATH = DIR + "drawings.md";
 const HREF_FIGURE = "http://remote.test/drawing-href.png";
 const XLINK_FIGURE = "http://other.test/drawing-xlink.png";
 /** The paragraphs before the figures, a link in each: at the base the anchor pass over them (`a[*|href]`, between the adoption
- *  and the gate) is the chain's work that put the strip past Firefox's cancel window in every run that sized this; 400 plain
+ *  and the gate) is the chain's work that put the strip past Firefox's cancel window in the runs that sized this: 400 plain
  *  paragraphs, 2000 plain ones, 400 with a link, code and emphasis each, and forty svg figures before these two each left the
- *  request out in one run of three or none, 3000 paragraphs with a link each in three of three. */
+ *  request out in one run of three or none, 3000 paragraphs with a link each in three of three (the `href` figure, Firefox
+ *  alone). The leg's own three base runs, both figures, are at the top of this file; the plan section "Fix: the gate before
+ *  adoption (2026-09-20)" holds every count under "Run counts, the svg vectors". */
 const PARAGRAPHS = 3000;
 const NOTE = "# Drawings at the end of a long note\n\n"
   + Array.from({ length: PARAGRAPHS }, (_, i) => "Paragraph " + (i + 1) + " with a [link](https://example.test/p/" + (i + 1) + "), prose the reader scrolls past on the way to the drawings.\n\n").join("")
@@ -156,7 +159,7 @@ type Scene = { page: any; errors: string[]; figureLog: Line[]; proxyLog: Line[];
  *  awaits a fresh rendered box; `drain` makes one round trip through the proxy to the harness and waits 250 ms, so a request
  *  the engine issued before it has reached the logs. */
 async function inEngine(t: any, engine: "chromium" | "firefox" | "webkit", body: (s: Scene) => Promise<void>): Promise<void> {
-  if (!pw) { t.skip("playwright is not installed under vscode-extension; the browser legs need it (CI installs no browsers)"); return; }
+  if (!pw) { t.skip("playwright is not installed under vscode-extension; the browser legs need it (CI installs no browsers); file-view-figures-gate-adopt.test.ts, the node scene, is the guard that runs where this leg skips"); return; }
   const figureLog: Line[] = [], proxyLog: Line[] = [], harnessLog: Line[] = [];
   const figures = figureServer(figureLog);
   const harness = harnessServer(filesBundle(), harnessLog);
@@ -166,7 +169,7 @@ async function inEngine(t: any, engine: "chromium" | "firefox" | "webkit", body:
   let browser: any = null;
   try {
     try { browser = await pw[engine].launch({ proxy: { server: "http://127.0.0.1:" + proxyPort } }); }
-    catch (e) { t.skip("no playwright " + engine + " on this box; this leg needs it (CI installs none): " + String((e as Error).message).split("\n")[0]); return; }
+    catch (e) { t.skip("no playwright " + engine + " on this box; this leg needs it (CI installs none; file-view-figures-gate-adopt.test.ts, the node scene, runs where this leg skips): " + String((e as Error).message).split("\n")[0]); return; }
     const errors: string[] = [];
     const page = await browser.newPage({ viewport: { width: 900, height: 700 } });
     page.on("pageerror", (e: Error) => { errors.push(e.message); });
