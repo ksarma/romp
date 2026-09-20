@@ -15,6 +15,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { CENSUS, census } from './romp-track-bash-guard-census.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, '..');
@@ -133,7 +134,7 @@ test('decision 47 states what passes, and the hook agrees: reads, opaque command
   assert.ok(d47.includes('`bash -O extglob -c') && hook.includes("(shell === 'bash' && (t === '-O' || t === '+O'))"));
   assert.ok(d47.includes('nested past 64 substitutions or brace lists') && hook.includes('const RECURSION_CAP = 64;') && hook.includes('const BRACE_DEPTH_CAP = 64;'));
   assert.ok(d47.includes('a `$(date)` in a log\'s name among them, a cost stated to the user rather than solved'), 'the residual false refusal is stated, not claimed solved');
-  assert.ok(d47.includes('the hook reads no variable named in the command to resolve the word'));
+  assert.ok(d47.includes('the hook reads no variable of the ENVIRONMENT named in the command to') && d47.includes('since B2, below, it does read a name the command\'s OWN TEXT sets to a plain string'), 'the privacy sentence, corrected in round 5 to what B2 made true');
   assert.ok(d47.includes('TRACKCHANGES_ROOT, which stands in for the root search only for a directory under it') && hook.includes('const fromEnv = !!env && !outside(d, env);'));
   assert.ok(d47.includes('of those only HOME\'s value can appear in a refusal, and only as a path the hook resolved through it') && d47.includes('TRACKCHANGES_ROOT is named by the variable, never by its value, and ROMP_SID is never printed') && hook.includes("hit.fromEnv ? 'the project TRACKCHANGES_ROOT names' : hit.root"));
   assert.ok(!d47.includes('no value read there reaches a refusal'), 'the round-1 clause, false for a `$HOME` target, is gone');
@@ -218,7 +219,8 @@ test('the install guide, the hook\'s README row and the ledger entry say a name 
   assert.ok(row, 'the hook has a row in hooks/README.md');
   assert.ok(row.includes('a target whose only expansions are `$$` or `${$}`, the shell\'s process id, at an absolute path outside every project in play is allowed, and nothing else is'), 'hooks/README.md: the exception');
   assert.ok(row.includes('since `$RANDOM`, `$SECONDS` and every other name can be unset or shadowed by the command and then hold a path, so a `log.$RANDOM` inside a tracked project is refused in every shell, a deliberate false refusal recoverable in one step'), 'hooks/README.md: the refused names, with the reason');
-  assert.ok(ledger.includes('a target whose only expansions are `$$` or `${$}`, the shell\'s process id, at an absolute path outside every project in play is allowed, and nothing else is'), 'the ledger entry: the exception');
+  assert.ok(ledger.includes('a target whose only expansions are `$$` or `${$}`, the shell\'s process id, at an absolute path outside every project in play is allowed, and no other expansion is numeric'), 'the ledger entry: the exception (round 5: no other expansion is numeric; a name the guard resolves is allowed by the path it names, which the old "nothing else is" denied)');
+  assert.ok(ledger.includes('the process id is the one OPAQUE expansion allowed inside a tracked project'), 'the ledger entry says what the exception is the one of');
   assert.ok(ledger.includes('so a `log.$RANDOM` inside a tracked project is refused in every shell, a deliberate false refusal recoverable in one step'), 'the ledger entry: the refused names');
   assert.ok(hook.includes("const NUMERIC_EXPANSIONS = ['$$', '${$}'];"), 'the set every clause describes');
 });
@@ -252,7 +254,7 @@ test('the best-effort contract and its unmodelled-writer list are stated identic
   // the unbounded wrapper class and a link made by an unmodelled writer to the list; B2 as ruled added the resolution
   // sentence and restated the residual with its boundary, an opaque expansion from a cwd outside every project)
   const CONTRACT_PARAGRAPH = 'this guard is best-effort against known write forms: it refuses the shell writes it models and, by design, allows anything it does not recognise, so it never blocks ordinary work it cannot read; it is a backstop, not a complete boundary. the allow-by-default for an unmodelled writer is deliberately not flipped, since flipping it would refuse almost all normal work. what it does refuse, while a tracked project is in play, is a write it reads but cannot place: a target it cannot read, a path it cannot check (a stat error other than not-found), an option on a modelled writer or wrapper it does not parse in full, an env -s string, a shell option it does not know to be inert for paths, a link whose source it cannot read, a `~` or `$home` write beside a mention of home or beside a variable name the shell fills in, a template or format string as an interpreter\'s write path, and, from any working directory, a write through an alias the command makes (a hard link, `cp -l`, `cp -s`, `link`, a link whose source it cannot read) whose source lies in a tracked project or is one it cannot read. a value it can read is resolved first and the real path judged. a name is readable only when every write to it in the command is a plain top-level `name=plain-string` the shell performs as spelled: no tilde opening the value, no declaration flag that transforms it, no nameref reaching it, no name the shell fills in, no subshell, pipeline, piped group or body scope, no wrapper argument, no call of a function the command defines in any spelling, no subscript; any other construct that can write the name, listed here or not, leaves it unreadable, the doctrine a `read` and a loop variable already had. home, pwd, oldpwd, `~+` and `~-` are read the same way: home after a plain top-level `home=<path>` assignment of its own, and none of the three once the command names or may fill in the name in any other form. ';
-  const LIST = 'these write forms are not modelled and still reach a tracked file: rsync; awk with a redirect inside its program; ed; ex; make; find with -delete or -exec; a git subcommand that writes the working tree (checkout, stash, apply, reset, rm, clean, mv); a computed or escaped path inside an interpreter (a name, sys.argv, os.environ or process.env, a concatenation or an escape sequence in the string, in python3 -c or node -e); a script the shell reads from elsewhere (eval, xargs, a sourced file, trap, a command whose name is an expansion, a script held in a variable); a command that runs another command and is outside the guard\'s wrapper set (unshare, nsenter, script, setarch, setpriv, strace, coproc and their kin); a link made by a writer outside the model (python, tar, rsync) that a later modelled write follows; shuf -o; a cd through cdpath; and an opaque expansion from a cwd outside every project, leading or after a literal head outside every project (a `..` inside the value could climb into a project; from a cwd in a tracked project the same word is refused as not literal).';
+  const LIST = 'these write forms are not modelled and still reach a tracked file: rsync; awk with a redirect inside its program; ed; ex; make; find with -delete or -exec; a git subcommand that writes the working tree (checkout, stash, apply, reset, rm, clean, mv); a computed or escaped path inside an interpreter (a name, sys.argv, os.environ or process.env, a concatenation that does not open with a string literal, or an escape sequence in the string, in python3 -c or node -e); a script the shell reads from elsewhere (eval, xargs, a sourced file, trap, a command whose name is an expansion, a script held in a variable); a command that runs another command and is outside the guard\'s wrapper set (unshare, nsenter, script, setarch, setpriv, strace, coproc and their kin); a link made by a writer outside the model (python, tar, rsync) that a later modelled write follows; shuf -o; a cd through cdpath; and an opaque expansion from a cwd outside every project, leading or after a literal head outside every project (a `..` inside the value could climb into a project; from a cwd in a tracked project the same word is refused as not literal).';
   const CONTRACT = 'best-effort against known write forms';
   const surfaces = {
     'hook header': read('hooks', 'romp-track-bash-guard.mjs'),
@@ -321,9 +323,9 @@ test('decision 47 records the pin addendum, each fix tied to its hook function',
   assert.ok(d47.includes('The pin addendum (2026-09-19;'));
   assert.ok(d47.includes('`cp --parents`') && hook.includes("nameL === 'parents'") && hook.includes('const under = (dirText, s) => {'), 'cp --parents lands the whole spelling');
   assert.ok(hook.includes("if (ch === 'c') { inline = j < a.text.length - 1 ? sliceWord(a, j + 1) : (args[k + 1] || null);") && !hook.includes('/^-[A-Za-z]*c$/'), "python's option cluster is walked; the end-of-word match is gone");
-  assert.ok(hook.includes('/^--eval=/.test(a.text)') && !hook.includes('/^--(?:eval|print)=/'), "node's --eval= is its code and --print= a flag");
+  assert.ok(hook.includes('/^--eval=/.test(a.text)'), "node's --eval= is its code (the --print= behaviour is executed in tools/romp-track-bash-guard.test.mjs; round 5 dropped an absence pin here that no head had ever matched)");
   assert.ok(d47.includes('`pyStringArg`') && hook.includes('([\\s\\S]*?)\\2([\\s\\S]*)$/);') && hook.includes("('''|"), 'a triple-quoted python string is a plain string: the delimiter is three quotes or one');
-  assert.ok(d47.includes('`nodeStr`') && hook.includes('const nodeStr = (g) =>') && hook.includes('take(nodeStringArg(m[3], m[4]))'), 'a JS string body runs to the next quote of its own kind');
+  assert.ok(d47.includes('`nodeStr`') && hook.includes('const nodeStr = (g) =>') && hook.includes("take(nodeStringArg(m[3], m[4], m[5] || ''))"), 'a JS string body runs to the next quote of its own kind (round 5: the continuation after the literal is the third argument)');
   assert.ok(!d47.includes(String.fromCharCode(0x2014)), 'no em dash in decision 47');
 });
 
@@ -352,10 +354,16 @@ test('decision 47 records the walk-around lens third pass, each rule tied to its
   assert.ok(d47.includes('UNKNOWN OPTION REFUSES EVERYWHERE') && hook.includes('function optionCandidates(args)') && hook.includes("if (parsed.unknown) { markAllCandidates('mv'); return; }"));
   // the corpus and the lists audit
   assert.ok(d47.includes('`tools/romp-track-bash-guard-corpus.json`') && fs.existsSync(path.join(REPO, 'tools', 'romp-track-bash-guard-corpus.json')));
-  assert.ok(hook.includes('THE LISTS THAT REMAIN, each with the side its GAP falls on'), 'the hook header audits the lists');
-  for (const list of ['PREFIXES', 'WRAPPER_OPT', 'COPY_OPT', 'INERT_SET_LETTERS', 'EXPANDED_NAMES', 'NUMERIC_EXPANSIONS', 'ANSI_C_SHELLS']) {
-    assert.ok(new RegExp(`//   ${list}[^\\n]*: gap = `).test(hook), `the audit names ${list} with its gap side`);
+  // round 5 (2026-09-20): the census is derived from the source at test time (tools/romp-track-bash-guard-census.mjs), the header
+  // points at it, and the lists the third pass named are classified there with a side and a consumer line that exists
+  assert.ok(hook.includes('THE LISTS THAT REMAIN are not written here') && hook.includes('tools/romp-track-bash-guard-census.mjs'), 'the hook header points at the derived census');
+  assert.ok(!hook.includes('THE LISTS THAT REMAIN, each with the side its GAP falls on'), 'the hand-written census is gone');
+  const c = census(hook);
+  assert.deepEqual([c.unnamed, c.stale, c.unclassified, c.missingConsumer], [[], [], [], []], `the census holds over the hook: ${JSON.stringify(c)}`);
+  for (const list of ['PREFIXES', 'WRAPPER_OPT', 'COPY_OPT', 'INERT_SET_LETTERS_WHY', 'EXPANDED_NAMES', 'NUMERIC_EXPANSIONS', 'ANSI_C_SHELLS', 'BODY_CLOSER', 'CLOSERS']) {
+    assert.ok(CENSUS[list] && ['WRITE', 'REFUSE', 'NONE'].includes(CENSUS[list].side) && hook.includes(CENSUS[list].consumer), `the census names ${list} with its gap side and its consumer line`);
   }
+  assert.equal(CENSUS.BODY_CLOSER.side, 'WRITE'); assert.equal(CENSUS.CLOSERS.side, 'WRITE'); assert.equal(CENSUS.PREFIXES.side, 'WRITE');
   assert.ok(!/\u2014/.test(d47), 'no em dash in decision 47');
 });
 
@@ -393,7 +401,44 @@ test('decision 47 and the hook header record the seventh pass: the readability r
   assert.ok(hook.includes('a bare `pushd` is no such move: bash and dash stay, zsh goes home'), 'the hook header records the bare pushd');
   assert.ok(d47.includes('a bare `pushd`, which bash and dash fail and zsh takes home, leaves the directory unknown'), 'decision 47 records the bare pushd');
   assert.ok(hook.includes("kind: 'homePrefix'") && hook.includes('function readableHomeWrites(segments)'), 'the prefix form has its own reason and the plain HOME= write its pre-pass');
+  // round 5 (tests-3): the correction that landed is pinned PRESENT on both surfaces first (the hook wraps the sentence across a
+  // comment line, so the needles are the two phrases that fit inside one); the absence conjunct alone had matched at every head
+  const hookFlat = hook.replace(/\n\/\/ ?/g, ' ').replace(/\s+/g, ' ');
+  for (const needle of ['read as no finding', 'said the attacker filed none']) assert.ok(hookFlat.includes(needle) && d47.includes(needle), `both surfaces carry the correction: ${needle}`);
   assert.ok(!hook.includes('the attacker filed no finding') && !d47.includes('the attacker filed no finding'), 'neither surface repeats the false sentence');
+  // round 5 (extra7-4): the addendum's item 4 is pinned on both prose surfaces like items 1 to 3, and tied to the reported text
+  const ITEM4 = 'through one probe that reports a shell that is missing or too old with a `NOT RUN` line per leg, never a silent pass';
+  assert.ok(d47.includes(ITEM4), 'decision 47 carries the item-4 sentence');
+  assert.ok(hook.replace(/\n\/\/ ?/g, ' ').includes(ITEM4), 'the hook header carries the item-4 sentence');
+  const guardTest = read('tools', 'romp-track-bash-guard.test.mjs');
+  assert.ok(guardTest.includes('`NOT RUN: real ${sh} ${probeWhy(present, sh)}, so its evidence leg did not run') && guardTest.includes("why: 'is not on this runner'"), 'the test file reports the line the two sentences describe');
+  // round 5 (correctness-4, tests-5): the rule's canonical statement names the live predicate, five parts, and no function that is gone
+  const statement = hook.slice(hook.indexOf('// THE READABILITY RULE (the sixth pass\'s attacker'), hook.indexOf('const RESOLVED_NAME = '));
+  assert.ok(statement.length > 1000, 'the statement is where it was');
+  assert.ok(statement.includes('plainSequence, plainValue, recordPlainWord, recordSegment, taintWord'), 'the statement names the five parts');
+  assert.ok(!statement.includes('recordAssignments'), 'the statement no longer points at the function befa93b3f removed');
+  assert.ok(hook.includes('(resolveWord, valueOf, and since the\n// seventh pass recordPlainWord and recordSegment)') && hook.includes('and recordSegment (taintWord) reads each as a write it does not follow'), 'the two other present-tense mentions name the live parts');
+  assert.ok(!/\u2014/.test(d47), 'no em dash in decision 47');
+});
+
+// Round 5 of the review (2026-09-20): decision 47 records the two root causes and the riders, each tied to the hook function
+// or table that implements it, so a mechanism dropped from the code fails here by name.
+test('decision 47 and the hook header record round 5: the frame on parsed structure from one table, the freeze unwrapped, the catch-all refusing, the census derived, the draw widened, and the riders', () => {
+  assert.ok(d47.includes('Round 5 of the review (2026-09-20;'), 'decision 47 records the round');
+  for (const fn of ['peelIndex', 'compoundHeadOf', 'FRAME_PEEL', 'TIME_OPTIONS', 'BODY_CLOSER', 'judge', 'internalErrorRefusal', 'nodeStringArg', 'pyStringArg']) {
+    assert.ok(d47.includes(`\`${fn}\``), `decision 47 names ${fn}`);
+    assert.ok(new RegExp(`(const|function) ${fn}\\b`).test(hook), `the hook defines ${fn}`);
+  }
+  assert.ok(hook.includes("const BODY_CLOSER = { if: 'fi', while: 'done', until: 'done', for: 'done', case: 'esac', select: 'done' };"), 'the one table, select in it');
+  assert.ok(hook.includes("const COMPOUND_HEADS = new Set([...Object.keys(BODY_CLOSER), 'function']);") && hook.includes('for (const [head, closer] of Object.entries(BODY_CLOSER)) (CLOSERS[closer] = CLOSERS[closer] || []).push(head);'), 'CLOSERS and COMPOUND_HEADS read the table');
+  assert.ok(!hook.includes("const CLOSERS = { fi: ['if'], done: ['while', 'until', 'for'], esac: ['case'] };") && !hook.includes("head === 'if' || head === 'while' || head === 'until' || head === 'for' || head === 'case'"), 'no restated subset of the heads remains');
+  assert.ok(hook.includes('if (head != null && Object.hasOwn(CLOSERS, head)) closeCompound(CLOSERS[head]);') && hook.includes('else if (head != null && Object.hasOwn(BODY_CLOSER, head)) frames.push({ kind: head, moved: false });') && !hook.includes('if (head in CLOSERS)'), 'the lookups are own-property lookups on the peeled head');
+  assert.ok(hook.includes("const frozen = !cmd.wrapped && (cmd.name === 'readonly' ||") && hook.includes('PEEL FOR THE FRAME, NOT FOR THE FREEZE'), 'the freeze needs the segment\'s own unwrapped declaration, the reason beside it');
+  assert.ok(hook.includes('if (cmd.wrapped) { taint(name, wroteThrough(name, `a \\`${cmd.name}\\` behind the wrapper'), 'a declaration behind a wrapper taints its names');
+  assert.ok(hook.includes('try { return judge(command, cwd); }') && hook.includes('catch (e) { return internalErrorRefusal(e, cwd); }') && !hook.includes(": statErrorRefusal(e.why && e.why.how ? e.why.how : 'write', e.why && e.why.raw ? e.why.raw : 'the path', e) : null; }") && !hook.includes('statErrorRefusal(u.how, u.raw, e); hit = null; }'), 'the catch-all refuses and the two allows that swallowed a throw are gone');
+  assert.ok(hook.includes("const dup = op === '>' ? (src.slice(i).match(/^(?:[0-9]+|-)(?=$|[\\s;&|()<>])/) || [null])[0] : null;"), 'the dup rule: a digit run or a dash before a delimiter, never for >>&');
+  assert.ok(hook.includes("if (rest !== '') return { template: s };") && hook.includes("const nodeStringArg = (quote, body, after = '') =>"), 'a literal that goes on is a template in both interpreters');
+  assert.ok(d47.includes('`tools/romp-track-bash-guard-census.mjs`') && fs.existsSync(path.join(REPO, 'tools', 'romp-track-bash-guard-census.mjs')), 'decision 47 names the census module and it exists');
   assert.ok(!/\u2014/.test(d47), 'no em dash in decision 47');
 });
 

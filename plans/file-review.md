@@ -3648,13 +3648,16 @@ document stands on its own, each with the reasoning it was given.
     into a tracked folder the other); `bash -O extglob -c '...'` and an option cluster holding `o` or `O` take their
     word, so the script is read (round 3; it was taken as the operand); a command nested past 64 substitutions or
     brace lists is marked opaque rather than followed, so it cannot overflow the stack, which evaluate read as allow
-    (round 3); the hook reads no variable named in the command to
+    (round 3); the hook reads no variable of the ENVIRONMENT named in the command to
     resolve the word, which would read names shaped like secrets and guess at the cwd (of the environment it
     reads HOME, for `~` and a leading `$HOME` as the shell does, TRACKCHANGES_ROOT, which stands in for the root
     search only for a directory under it, and ROMP_SID; of those only HOME's value can appear in a refusal, and
     only as a path the hook resolved through it, the target a `~/` or a leading `$HOME` names or the project
     root a bare `cd` lands in, while TRACKCHANGES_ROOT is named by the variable, never by its value, and
-    ROMP_SID is never printed); a glob is otherwise
+    ROMP_SID is never printed; since B2, below, it does read a name the command's OWN TEXT sets to a plain string,
+    and PWD and OLDPWD from its own directory model, and a refusal can show such a value, so the sentence as it
+    stood before round 5 of the review, that no variable the command names is read and only HOME's value can
+    appear, was false from B2 on); a glob is otherwise
     expanded against the filesystem as the shell expands it (a redirection onto several matches or brace
     alternatives names each, as zsh's multios writes them; bash writes none), a brace list is expanded before
     the operands are read, a here-string is scanned like a heredoc and a process substitution's command is read
@@ -3770,7 +3773,8 @@ document stands on its own, each with the reasoning it was given.
     PR #780's cb0b15422 and 24acdce20): a literal head outside every project bounds nothing once an opaque expansion
     follows it (the matrix's `x='../sub-on/p$abc'; printf poison > <out>/$x/rep.md` from a cwd in no project). `extract`
     now RESOLVES every expansion whose value it can read before judging a word (`resolveWord`, `valueOf`): a name the
-    command set to a plain string earlier, at the top level in plain sequence (`recordAssignments`, which marks a name
+    command set to a plain string earlier, at the top level in plain sequence (`recordPlainWord` and `recordSegment`
+    since the seventh pass, the readability rule's predicate, which mark a name
     set in a body, a subshell or after `&&`/`||`, by a `read`, a loop, a nameref, an unset or a `+=`, or any name once
     an eval, a source, an unknown wrapper option or a call of a function the command defines ran, as unreadable); HOME
     through the guard's home; PWD through the directory it knows; OLDPWD, `~+` and `~-` through the directory before a
@@ -3880,8 +3884,10 @@ document stands on its own, each with the reasoning it was given.
     cmd's `$HOME` and `~` before the prefix applies and cmd runs under the new HOME; the refusal for a cd under `builtin`,
     `command` or `time` says what each shell does (`WRAPPED_CD_WHY`: bash and zsh move under `builtin`, bash and dash under
     `command`, bash and zsh under `time`; the verdict stays unknown) where it said the shell does not move; the prefix
-    form's own text; and the test file's real-zsh evidence legs run through one probe that reports a missing zsh with a
-    `NOT RUN` line per leg, never a silent pass.
+    form's own text; and the test file's real-shell evidence legs run through one probe that reports a shell that is
+    missing or too old with a `NOT RUN` line per leg, never a silent pass (zsh since the addendum; dash, the bash legs and
+    a bash below the 4.3 the legs need since round 5 of the review, whose `spawnSync` wrapper throws by name when a leg
+    reaches a shell the probe declined).
     The seventh pass's attacker (2026-09-19; on 93bb93b68, at the rule's own boundary) found two misses, 0 structural, each
     a construct the lexer already produced that the implementation realised at one level only, and the close found a
     sibling beside its readonly rows. F2, a `{ }` group nested in a piped or backgrounded group (13 live rows in bash, zsh
@@ -3927,6 +3933,43 @@ document stands on its own, each with the reasoning it was given.
     `tools/file-review-plan-bash-guard.test.mjs` holds this decision to the hook and the installer, and
     `tools/file-review-plan-bash-guard-review.test.mjs` its cost sentence to the hook's closure and every
     `romp-track-bash-guard…` module under `tools/` to this decision and the Tests bullet.
+    Round 5 of the review (2026-09-20; romp-manager's round-4 ruling over the seventh pass's head: twenty-nine findings,
+    seven highs, six of them one defect, and none refuted) closed two root causes and their riders. THE FRAME ON PARSED
+    STRUCTURE: the frame decision (a body that may not run: its names unreadable, its `cd` unknown at the closer) was keyed
+    on the segment's FIRST word, so a leading `!`, `time`, `{`, a `then` or `do` before a nested head, and `select`, which
+    COMPOUND_HEADS listed and neither the push nor CLOSERS did, hid the head, no frame opened, and the body was walked as
+    this shell's own plain sequence (the name adopted, the `cd` followed, so the wrapped spelling walked around round 3's
+    unknown-directory refusal by being confidently wrong instead of unknown). The head is read after a peel of everything
+    the shell reads past before a reserved word (`peelIndex`, `compoundHeadOf`, `FRAME_PEEL`, `TIME_OPTIONS`: `!`, `time`
+    and its `-p` and `--`, the braces, `then`, `do`, `else`, `elif`, the wrapper words and assignment-prefix words), at the
+    brace scan, at both head reads and at the function-name reads (`! f() {` and `{ f() {}; } | cat` are definitions),
+    re-peeling between braces; the push, CLOSERS and COMPOUND_HEADS read ONE table (`BODY_CLOSER`), so `select` fell out of
+    it; and a function body's closing brace is counted once (`braces` returns the enclosing scope's index; it was counted by
+    the group scan too, closing a piped group one brace early). PEEL FOR THE FRAME, NOT FOR THE FREEZE: `frozen` was read
+    from the peeled command, so `env readonly x=..` froze a name no shell froze and the guard kept a stale value while the
+    later plain write went through, the one place the rule's failure was an allow; the freeze now needs the segment's own
+    unwrapped `readonly`, `declare -r` or `typeset -r` (`!cmd.wrapped`), and a declaration behind any wrapper taints its
+    names (the shells differ on whether it ran: `command readonly` freezes in bash and dash, `builtin readonly` in bash and
+    zsh, `noglob readonly` in zsh, the external wrappers nowhere, measured). THE CATCH-ALL REFUSES: `Object.hasOwn` at the
+    CLOSERS and BODY_CLOSER lookups (a command word that is an Object.prototype key threw inside a body), and any exception
+    evaluate did not anticipate refuses while a tracked project is in play, naming it (`judge`, `internalErrorRefusal`; the
+    three catches that allowed rethrow). THE CENSUS DERIVED: the hand-written census of the lists that remain, which omitted
+    the two write-side lists this round's highs lived in, is replaced by one computed from the hook's source at test time
+    (`tools/romp-track-bash-guard-census.mjs`: every top-level Set, array, object table and regex alternation, the writer
+    cases and the root markers, each classified against its consumer line; a list the census does not name reds the test;
+    it corrected one stated side, an interpreter option not on `INTERPRETER_OPERANDS` being a write gap, measured, not an
+    over-count, disclosed and unfixed). THE DRAW WIDENED: the rule pin's UNLISTED set spans the scope half of the rule (a
+    body behind `{`, `!`, `time`, a select body, a function body in a group, a subshell, each closer). The riders: a node
+    or python path that opens with a string literal and goes on is a template (`nodeStringArg`, `pyStringArg`; the base
+    refused it and round 4's head let it through); a `>&` dup is exactly a digit run or `-` before a delimiter and `>>&`
+    is never one (`printf x >&2-3` in a tracked folder was invisible while bash and zsh wrote `2-3`); the guide's Files
+    sentence and its pin say the class the code refuses, a target the guard cannot read; the ledger entry corrects the
+    clauses B2 made false and this decision's own privacy sentence above says so; the vendored skill names the two
+    escalated false refusals and patch 0009 is regenerated; the rule's statement names the five-part predicate where it
+    named a function befa93b3f removed; the corpus's `since` labels are swept against the passes' heads and pinned (one
+    dropped, one re-anchored, one relabelled); the priced costs say what each shell does by execution; and every
+    real-shell evidence leg, dash and bash included, goes through the one probe, which reports a shell that is missing or
+    below the bash 4.3 floor with a `NOT RUN` line and whose `spawnSync` wrapper throws by name otherwise.
 48. **Sessions commit the comments folder** (2026-09-10). The user found that their sessions never added
     `.trackchanges/` to git, so the user's comments on the sessions' files and the record of the tracked changes
     were not archived with the work. Decision 25 is unchanged: romp does no git operation, and a `.gitignore` line is the

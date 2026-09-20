@@ -252,6 +252,13 @@ test('P9 the skill says a shell write whose target is not a literal path is refu
   assert.ok(!section.includes('at an absolute path outside the project, is allowed') && !section.includes('`$$`, `$RANDOM` or `$SECONDS`') && !section.includes('$BASHPID'), 'the round-2 promise is gone');
   assert.ok(section.includes('a relative path after a `cd` the guard cannot follow'), 'the round-3 refusal class');
   assert.ok(section.includes('Spell the path out') && section.includes('name a temp file with `$$`') && section.includes('give a folder a literal name of your own, or write outside the tracked project'), 'what to do');
+  // round 5 of that review (2026-09-20, its rules-1): the two deliberate false refusals escalated with the change are named here
+  // as on the hook header, hooks/README.md and decision 47 (round 3 ruled the skill the surface to land them on first, and it was
+  // the one surface that still lacked them), so this surface cannot drift from the other three in silence again
+  const flatAll = section.replace(/\s+/g, ' ');
+  assert.ok(flatAll.includes('Two deliberate false refusals of this exception, escalated with the change and stated in decision 47 of plans/file-review.md'), 'the escalated classes are introduced as such');
+  assert.ok(flatAll.includes('a `$$` name whose folder is one where a tracked file could land (`<root>/x-$$/y.md`, `<root>/docs/build-$$.log`) is refused from any working directory while its literal spelling may pass, the refusal naming the folder'), 'the unknown-folder class');
+  assert.ok(flatAll.includes('a `$$` name in a folder of more than 2000 entries inside a tracked project is refused without a scan of that folder (`LANDING_SCAN_CAP`)'), 'the landing-scan cap class');
   // round 4 (2026-09-19): the skill states the wrapper set, env -C, the unknown-option refusal, the HOME
   // reassignment and the parent/under-root rule, and the best-effort contract with the unmodelled-writer list
   assert.ok(section.includes('`setsid`, `flock`, `taskset`, `chrt` and') && section.includes('`numactl`'), 'the wrapper set');

@@ -57,11 +57,19 @@
 # paragraph saying so.
 # The seventh pass's attacker (2026-09-19) adds zsh's precommand modifiers (noglob, nocorrect, `-`) to the wrapper list the
 # third-pass sentence names, since they hid the writer behind them; nothing else in the skill moves.
+# Round 5 of the review (2026-09-20) names, in the paragraph that states the numeric exception, the two deliberate false
+# refusals escalated with the change (a `$$` name in a folder where a tracked file could land, refused from any working
+# directory while its literal spelling may pass, and a `$$` name in a folder of more than 2000 entries inside a tracked
+# project, LANDING_SCAN_CAP), which the hook header, hooks/README.md and decision 47 already named and this skill did not
+# (round 3's rules-1, whose ruling put this surface first, since it is the one that changes what a session does); and the
+# contract paragraph's interpreter clause says a concatenation that does not OPEN with a string literal stays out of model,
+# since a literal-first one is a template the guard refuses since that round (its regression-1). The hunk header's line
+# count moves with the text; nothing else in the skill moves.
 diff --git a/skill/SKILL.md b/skill/SKILL.md
-index f7d8bc9..7fd2338 100644
+index f7d8bc9..9a12473 100644
 --- a/skill/SKILL.md
 +++ b/skill/SKILL.md
-@@ -59,6 +59,173 @@ heredoc included), no `sed -i` or `perl -i`, no python `open(..., 'w')` or node
+@@ -59,6 +59,180 @@ heredoc included), no `sed -i` or `perl -i`, no python `open(..., 'w')` or node
  the write: its status is 0 when tracking is ON, so `track-config ... && cp ...` runs
  the copy on exactly the file it must not touch.
  
@@ -78,7 +86,13 @@ index f7d8bc9..7fd2338 100644
 +file there), is allowed: `/tmp/build-$$.log` runs. Nothing else is: `$RANDOM`,
 +`$SECONDS` and every other name can be unset or shadowed and then hold a path, so
 +`log.$RANDOM` inside a tracked project is refused, in every shell, with the reason
-+and a way forward. Each refusal says what to do. Spell the path out (a tracked file
++and a way forward. Two deliberate false refusals of this exception, escalated with
++the change and stated in decision 47 of plans/file-review.md: a `$$` name whose
++folder is one where a tracked file could land (`<root>/x-$$/y.md`,
++`<root>/docs/build-$$.log`) is refused from any working directory while its
++literal spelling may pass, the refusal naming the folder; and a `$$` name in a
++folder of more than 2000 entries inside a tracked project is refused without a
++scan of that folder (`LANDING_SCAN_CAP`). Each refusal says what to do. Spell the path out (a tracked file
 +then takes its change through `track-edit`, a file outside the project an ordinary
 +write), name a temp file with `$$`, give a folder a literal name of your own, or
 +write outside the tracked project.
@@ -219,9 +233,10 @@ index f7d8bc9..7fd2338 100644
 +its program; ed; ex; make; find with -delete or -exec; a git subcommand that
 +writes the working tree (checkout, stash, apply, reset, rm, clean, mv); a
 +computed or escaped path inside an interpreter (a name, sys.argv, os.environ or
-+process.env, a concatenation or an escape sequence in the string, in python3 -c
-+or node -e); a script the shell reads from elsewhere (eval, xargs, a sourced
-+file, trap, a command whose name is an expansion, a script held in a variable);
++process.env, a concatenation that does not open with a string literal, or an
++escape sequence in the string, in python3 -c or node -e); a script the shell
++reads from elsewhere (eval, xargs, a sourced file, trap, a command whose name is
++an expansion, a script held in a variable);
 +a command that runs another command and is outside the guard's wrapper set
 +(unshare, nsenter, script, setarch, setpriv, strace, coproc and their kin); a
 +link made by a writer outside the model (python, tar, rsync) that a later

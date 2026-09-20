@@ -11,8 +11,11 @@ edits still come as changes. Each shell form the sentence names is checked again
 (hooks/romp-track-bash-guard.mjs), and the remedy it names against the refusal the hook writes, so a
 verb the hook stops reading or a renamed remedy fails here. Synthetic: the repo's own text only.
 """
+import json
 import os
 import re
+import subprocess
+import tempfile
 import unittest
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -23,9 +26,13 @@ SENTENCE = ("A session that tries to write a tracked file any other way, with it
             "so its edits still come to you as changes.")
 # The sentence after it, since the round-1 review of the non-literal-target rule (2026-09-18): a shell write whose
 # target the hook cannot read is refused in a tracking project too, and the guide says so where the rule above is
-# stated, in the same voice (the behavior, not the mechanism).
-SENTENCE_2 = ("In a project that tracks files, a shell write whose target is not spelled out (a variable or a "
-              "substitution standing for the path) is refused too, and the session is asked for the literal path.")
+# stated, in the same voice (the behavior, not the mechanism). Round 5 of that review (2026-09-20) re-pointed it: the
+# class the code refuses is a target the guard cannot READ (docs/install.md's wording), not any variable, since the
+# hook resolves a name the command sets to a plain string and judges the real path (B2, 2026-09-19); the old sentence
+# was pinned here verbatim, a test holding a false user-facing claim in place.
+SENTENCE_2 = ("In a project that tracks files, a shell write whose target Romp cannot read (a substitution, a name the "
+              "command never sets to a plain string, or a glob it cannot expand) is refused too, and the session is asked "
+              "for the literal path.")
 
 
 def _read(*parts):
@@ -68,6 +75,37 @@ class TrackChangesParagraphNamesTheRefusal(unittest.TestCase):
     def test_the_remedy_named_is_the_one_the_hook_writes(self):
         self.assertIn("Make the change with track-edit", self.hook)
         self.assertIn("node ~/.claude/hooks/track-edit.mjs --file", self.hook)
+
+    def test_the_class_the_sentence_names_is_the_behaviour(self):
+        """The hook as a process on a synthetic project: a name the command sets to a plain string is read and judged by
+        the path it resolves to (refused onto a tracked file, allowed onto an untracked one), and a target it cannot
+        read (a variable the command never sets) is refused: the class SENTENCE_2 states, run rather than quoted."""
+        env = dict(os.environ, ROMP_SID="11111111-2222-3333-4444-555555555555")
+        with tempfile.TemporaryDirectory(prefix="romp-guide-bash-guard-") as root:
+            proj = os.path.realpath(os.path.join(root, "notes-api"))
+            for d in (".trackchanges", "docs", "base"):
+                os.makedirs(os.path.join(proj, d))
+            with open(os.path.join(proj, ".trackchanges", "config.json"), "w", encoding="utf-8") as f:
+                json.dump({"v": 2, "tracked": ["docs/report.md"]}, f)
+            for rel, text in (("docs/report.md", "tracked\n"), ("base/report.md", "base\n"), ("docs/other.md", "plain\n")):
+                with open(os.path.join(proj, rel), "w", encoding="utf-8") as f:
+                    f.write(text)
+
+            def verdict(command):
+                payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": command}, "cwd": proj})
+                r = subprocess.run(["node", os.path.join(ROOT, "hooks", "romp-track-bash-guard.mjs")], input=payload,
+                                   capture_output=True, text=True, env=env, timeout=60)
+                return r.returncode, r.stderr
+
+            rc, why = verdict("x=docs/report.md; cp base/report.md $x")
+            self.assertEqual(rc, 2, "a readable name resolving onto the tracked file is refused: %s" % why)
+            self.assertIn("Track-changes is ON for", why)
+            rc, why = verdict("x=other.md; cp base/report.md docs/$x")
+            self.assertEqual(rc, 0, "a readable name resolving onto an untracked file is allowed: %s" % why)
+            rc, why = verdict('cp base/report.md "$DST"')
+            self.assertEqual(rc, 2, "a target the guard cannot read is refused: %s" % why)
+            self.assertIn("which is not a literal path", why)
+            self.assertIn("Spell the path out", why)
 
     def test_the_sentence_speaks_to_the_person_and_names_no_hook(self):
         # the guide describes the behavior, not the mechanism: no hook, guard, matcher or PreToolUse

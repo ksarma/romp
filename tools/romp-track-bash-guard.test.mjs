@@ -13,11 +13,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn, spawnSync as _spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 import * as guard from '../hooks/romp-track-bash-guard.mjs';
+import { CENSUS, census, enumerateLists } from './romp-track-bash-guard-census.mjs';
 
 // a namespace import, so a run of this file against an older hook (the red-on-base check) reports each test on its own
 // rather than failing the whole file on a missing export
@@ -53,17 +54,48 @@ const payload = (command, cwd = proj, tool = 'Bash') => JSON.stringify({ tool_na
 const targets = (command, cwd = proj) => extractWriteTargets(command, cwd).targets.map((t) => t.path).sort();
 const ROMP_NOUNS = /\b(romp|card|board|column|goal|nudge|dashboard|panel|viewer|dismiss\w*|cleared)\b/i;
 
-// The shells this runner has. Every real-shell evidence leg below asks shellsFor for the shells it wants: a shell that is
-// missing is reported LOUDLY on stderr, once per leg with the leg's line, and its leg does not run; it never passes in silence
-// (the seventh pass's addendum, item 4, 2026-09-19: CI's shell job has no zsh and failed on unguarded zsh legs at 50e85deec).
+// The shells this runner has, through ONE probe. Every real-shell evidence leg below asks shellsFor for the shells it wants: a
+// shell that is missing, or present but below the version floor the file's legs need, is reported LOUDLY on stderr, once per
+// leg with the leg's line, and its leg does not run; it never passes in silence and never reds with a value mismatch (the
+// seventh pass's addendum, item 4, 2026-09-19: CI's shell job has no zsh and failed on unguarded zsh legs at 50e85deec; round 5,
+// 2026-09-20: two dash legs sat outside the probe, one skipping its assertion in silence and one throwing a bare TypeError, the
+// bash legs ran outside it too, and a bash that starts but is too old declined with a value-mismatch red, since the probe asked
+// only whether the shell starts: 45 lines of this file spell a bash 4.x construct, `declare -n` the newest at 4.3, counted by
+// grep -c -E "declare -[a-zA-Z]*[nlugA]|typeset -[a-zA-Z]*[nlug]|mapfile|readarray|\|&" over its non-comment lines, and the
+// CI Shell job's macOS cell ships bash 3.2.57). Every spawn of a shell in this file goes through the `spawnSync` wrapper below,
+// which throws by name when the probe declined that shell, so a leg that reaches a shell without asking shellsFor is a loud red
+// naming the shell, whatever its list is called or how it loops, never a silent run and never a red naming nothing.
 // The refusable case is run by hand with a `zsh` stub that exits 1 first on PATH: the file passes and prints the NOT RUN lines.
-const HAS_SHELL = Object.fromEntries(['bash', 'zsh', 'dash'].map((sh) => [sh, spawnSync(sh, ['-c', 'true'], { encoding: 'utf8' }).status === 0]));
-// `present` and `report` are parameters so the line itself is pinned in-process (the seventh pass's close): a runner without a
-// shell gets exactly one line per missing shell per leg, on stderr, and the leg's list without it
-const shellsFor = (list, what = null, present = HAS_SHELL, report = (line) => console.error(line)) => {
-  for (const sh of list) if (!present[sh]) report(`NOT RUN: real ${sh} is not on this runner, so its evidence leg did not run${what ? `: ${what}` : ''} (${(new Error().stack.split('\n')[2] || '').trim().replace(/^at /, '')})`);
-  return list.filter((sh) => present[sh]);
+const SHELL_FLOOR = { bash: [4, 3] };   // bash 4.3 for `declare -n`; nothing here needs a zsh or dash newer than the oldest CI build
+const probeShell = (sh) => {
+  const r = _spawnSync(sh, ['-c', sh === 'bash' ? 'printf %s "$BASH_VERSION"' : 'true'], { encoding: 'utf8' });
+  if (r.status !== 0) return { ok: false, why: 'is not on this runner' };
+  const floor = SHELL_FLOOR[sh];
+  if (!floor) return { ok: true, why: null };
+  const v = String(r.stdout || '').trim();
+  const m = v.match(/^(\d+)\.(\d+)/);
+  const below = !m || Number(m[1]) < floor[0] || (Number(m[1]) === floor[0] && Number(m[2]) < floor[1]);
+  return below ? { ok: false, why: `is ${v || 'of a version it did not print'} on this runner, below the ${floor.join('.')} its legs need`, version: v } : { ok: true, why: null, version: v };
 };
+const SHELL_PROBE = Object.fromEntries(['bash', 'zsh', 'dash'].map((sh) => [sh, probeShell(sh)]));
+const HAS_SHELL = Object.fromEntries(Object.entries(SHELL_PROBE).map(([sh, p]) => [sh, p.ok]));
+// `present` and `report` are parameters so the line itself is pinned in-process (the seventh pass's close): a runner without a
+// shell gets exactly one line per missing or too-old shell per leg, on stderr, and the leg's list without it. `present` holds,
+// per shell, a boolean (present or missing) or the probe's own record (`{ ok, why }`, a too-old shell naming the version found).
+const probeOk = (present, sh) => (present[sh] !== null && typeof present[sh] === 'object' ? present[sh].ok : !!present[sh]);
+const probeWhy = (present, sh) => (present[sh] !== null && typeof present[sh] === 'object' && present[sh].why ? present[sh].why : 'is not on this runner');
+const shellsFor = (list, what = null, present = SHELL_PROBE, report = (line) => console.error(line)) => {
+  for (const sh of list) if (!probeOk(present, sh)) report(`NOT RUN: real ${sh} ${probeWhy(present, sh)}, so its evidence leg did not run${what ? `: ${what}` : ''} (${(new Error().stack.split('\n')[2] || '').trim().replace(/^at /, '')})`);
+  return list.filter((sh) => probeOk(present, sh));
+};
+// THE LIVE-VALUE CHECK (round 5): the spawnSync every leg of this file calls. A shell the probe declined throws by name, so a leg
+// written outside shellsFor cannot run that shell in silence, however its list is spelled; `table` and `raw` are parameters so
+// the wrapper is pinned in-process against a synthetic table.
+const guardedSpawn = (table, raw) => (cmd, ...rest) => {
+  if (Object.hasOwn(table, cmd) && !probeOk(table, cmd)) throw new Error(`a real-shell leg ran ${cmd} outside the probe: real ${cmd} ${probeWhy(table, cmd)}; ask shellsFor first`);
+  return raw(cmd, ...rest);
+};
+const spawnSync = guardedSpawn(SHELL_PROBE, _spawnSync);
 
 // ── refusals: the contract's cases ─────────────────────────────────
 
@@ -280,9 +312,10 @@ test('a command the lexer cannot see through and that names no target is allowed
 // tracked file with no change recorded, while the same cp spelled out was refused: the hook dropped every
 // target it could not read. Since 2026-09-18 such a target is refused while a project that tracks anything
 // is in play (the session's cwd, the directory a cd moved to, or the folder a copy lands in); of the
-// session's environment the hook reads HOME, TRACKCHANGES_ROOT and ROMP_SID, never a variable the command
-// names; of those only HOME's value can appear in a refusal, as a path resolved through it (review round 2,
-// 2026-09-18). With no such project in play the word is dropped as before, and a literal target keeps its
+// session's environment the hook reads HOME, TRACKCHANGES_ROOT and ROMP_SID and no other variable, whatever the
+// command names (since B2 it reads a name the command's own text sets to a plain string, never one from the
+// environment); of the environment's values only HOME's can appear in a refusal, as a path resolved through it (review round 2,
+// 2026-09-18; the resolved value of a name the command set can appear too since B2). With no such project in play the word is dropped as before, and a literal target keeps its
 // verdict. Review round 1 (2026-09-18) bounded the rule in four places, each pinned below: a target whose
 // only expansions the running shell keeps unassignable and whose text is an absolute path outside the
 // project is allowed; a copy's landing folder counts only when a tracked file could land there; a project
@@ -413,11 +446,13 @@ test('what stays refused by the review\'s ruling: a substitution or a variable i
     assert.deepEqual(verdicts(shapes), allOf(shapes, REFUSED));
     // the real shell shows why the variable case must stay refused: the value carries the write back onto the
     // tracked file, and nothing in the word's literal text says so
-    const shell = spawnSync('bash', ['-c', 'echo poison > "$OUT"/"$NAME"'], {
-      encoding: 'utf8', env: { PATH: process.env.PATH, OUT: out, NAME: `../${path.basename(proj)}/docs/report.md` },
-    });
-    assert.equal(shell.status, 0, shell.stderr);
-    assert.equal(fs.readFileSync(report, 'utf8'), 'poison\n', 'the tracked file was overwritten through the outside prefix');
+    for (const sh of shellsFor(['bash'], 'the variable case in real bash')) {
+      const shell = spawnSync(sh, ['-c', 'echo poison > "$OUT"/"$NAME"'], {
+        encoding: 'utf8', env: { PATH: process.env.PATH, OUT: out, NAME: `../${path.basename(proj)}/docs/report.md` },
+      });
+      assert.equal(shell.status, 0, shell.stderr);
+      assert.equal(fs.readFileSync(report, 'utf8'), 'poison\n', 'the tracked file was overwritten through the outside prefix');
+    }
   } finally { fs.rmSync(out, { recursive: true, force: true }); }
 });
 
@@ -519,9 +554,11 @@ test('the numeric narrowing: a target whose only expansions are $$ or ${$} and w
     assert.equal(crossed.status, 2, 'the second project, as a process');
     assert.ok(crossed.stderr.includes(second) && !crossed.stderr.includes(proj), 'naming the project the write lands in');
     // the real shell shows what the refused fold would do: the write lands on the tracked file through the link
-    const shell = spawnSync('bash', ['-c', `mkdir -p ${out}/run-$$ && echo poison > ${out}/run-$$/../linkdocs/report.md`], { encoding: 'utf8', env: { PATH: process.env.PATH } });
-    assert.equal(shell.status, 0, shell.stderr);
-    assert.equal(fs.readFileSync(report, 'utf8'), 'poison\n', 'the tracked file was overwritten through the link after the fold');
+    for (const sh of shellsFor(['bash'], 'the fold through the link in real bash')) {
+      const shell = spawnSync(sh, ['-c', `mkdir -p ${out}/run-$$ && echo poison > ${out}/run-$$/../linkdocs/report.md`], { encoding: 'utf8', env: { PATH: process.env.PATH } });
+      assert.equal(shell.status, 0, shell.stderr);
+      assert.equal(fs.readFileSync(report, 'utf8'), 'poison\n', 'the tracked file was overwritten through the link after the fold');
+    }
   } finally { fs.rmSync(out, { recursive: true, force: true }); }
 });
 
@@ -601,12 +638,14 @@ test('review round 2 addendum: a numeric folder name in the first segment under 
     assert.equal(run(`echo x > ${second}/x-4242/y.md`, out).status, 0, 'the literal spelling, as a process');
     // what the refused command does in real bash: the folder takes the shell's pid for its name, a name the
     // hook could not have read, and the write lands in an untracked folder; the refusal is the deliberate one
-    const shell = spawnSync('bash', ['-c', `mkdir -p ${second}/x-$$ && echo x > ${second}/x-$$/y.md`], { encoding: 'utf8', env: { PATH: process.env.PATH } });
-    assert.equal(shell.status, 0, shell.stderr);
-    const made = fs.readdirSync(second).filter((n) => /^x-\d+$/.test(n) && n !== 'x-4242');
-    assert.equal(made.length, 1, 'one folder named by the pid');
-    assert.equal(fs.readFileSync(path.join(second, made[0], 'y.md'), 'utf8'), 'x\n');
-    assert.equal(fs.readFileSync(path.join(second, 'docs', 'report.md'), 'utf8'), 'tracked prose\n', 'the tracked file is untouched');
+    for (const sh of shellsFor(['bash'], 'the pid-named folder in real bash')) {
+      const shell = spawnSync(sh, ['-c', `mkdir -p ${second}/x-$$ && echo x > ${second}/x-$$/y.md`], { encoding: 'utf8', env: { PATH: process.env.PATH } });
+      assert.equal(shell.status, 0, shell.stderr);
+      const made = fs.readdirSync(second).filter((n) => /^x-\d+$/.test(n) && n !== 'x-4242');
+      assert.equal(made.length, 1, 'one folder named by the pid');
+      assert.equal(fs.readFileSync(path.join(second, made[0], 'y.md'), 'utf8'), 'x\n');
+      assert.equal(fs.readFileSync(path.join(second, 'docs', 'report.md'), 'utf8'), 'tracked prose\n', 'the tracked file is untouched');
+    }
   } finally { fs.rmSync(out, { recursive: true, force: true }); }
 });
 
@@ -683,13 +722,15 @@ test('the numeric set is $$ and ${$} in every shell, and nothing else: RANDOM, S
       assert.equal(fs.readFileSync(report, 'utf8'), 'an older copy\n', `${why}: the tracked file was overwritten`);
       restore();
     };
-    overwrites('bash', 'unset RANDOM; RANDOM="$BACK"; cp base/report.md "$OUT/$RANDOM"', 'bash, unset then assign');
-    overwrites('bash', 'unset SECONDS; SECONDS="$BACK"; cp base/report.md "$OUT/$SECONDS"', 'bash, SECONDS');
-    overwrites('bash', 'f(){ local RANDOM="$BACK"; cp base/report.md "$OUT/$RANDOM"; }; f', 'bash, local inside a function');
-    fs.writeFileSync(path.join(proj, 'setenv.sh'), 'unset RANDOM; RANDOM="$BACK"\n');
-    overwrites('bash', '. ./setenv.sh; cp base/report.md "$OUT/$RANDOM"', 'bash, the unset in a sourced file');
-    run('bash', 'RANDOM="$BACK"; echo x > "$OUT/$RANDOM"');
-    assert.equal(fs.readFileSync(report, 'utf8'), original, 'the bare assignment alone is the one form bash refuses, the form round 2 measured');
+    for (const b of shellsFor(['bash'], 'the RANDOM roads in real bash')) {
+      overwrites(b, 'unset RANDOM; RANDOM="$BACK"; cp base/report.md "$OUT/$RANDOM"', 'bash, unset then assign');
+      overwrites(b, 'unset SECONDS; SECONDS="$BACK"; cp base/report.md "$OUT/$SECONDS"', 'bash, SECONDS');
+      overwrites(b, 'f(){ local RANDOM="$BACK"; cp base/report.md "$OUT/$RANDOM"; }; f', 'bash, local inside a function');
+      fs.writeFileSync(path.join(proj, 'setenv.sh'), 'unset RANDOM; RANDOM="$BACK"\n');
+      overwrites(b, '. ./setenv.sh; cp base/report.md "$OUT/$RANDOM"', 'bash, the unset in a sourced file');
+      run(b, 'RANDOM="$BACK"; echo x > "$OUT/$RANDOM"');
+      assert.equal(fs.readFileSync(report, 'utf8'), original, 'the bare assignment alone is the one form bash refuses, the form round 2 measured');
+    }
     for (const z of shellsFor(['zsh'], 'the RANDOM roads in real zsh')) {
       overwrites(z, 'f(){ typeset -h RANDOM; RANDOM="$BACK"; cp base/report.md "$OUT/$RANDOM"; }; f', 'zsh, typeset -h inside a function');
       const zr = run(z, 'unset RANDOM; RANDOM="$BACK"; echo x > "$OUT/$RANDOM"');
@@ -934,10 +975,12 @@ test('review round 3: a literal relative target after a cd the hook cannot follo
     assert.match(refused.stderr, UNKNOWN_DIR);
     assert.equal(run('cd docs && echo x > other.md').status, 0);
     for (const cmd of ['cd "$D" && cp base/report.md docs/report.md', 'cd nosuchdir; cp base/report.md docs/report.md']) {
-      const shell = spawnSync('bash', ['-c', cmd], { cwd: proj, encoding: 'utf8', env: { PATH: process.env.PATH } });
-      assert.equal(shell.status, 0, shell.stderr);
-      assert.equal(fs.readFileSync(report, 'utf8'), 'an older copy\n', `the tracked file was overwritten where the command started: ${cmd}`);
-      fs.writeFileSync(report, original);
+      for (const sh of shellsFor(['bash'], cmd)) {
+        const shell = spawnSync(sh, ['-c', cmd], { cwd: proj, encoding: 'utf8', env: { PATH: process.env.PATH } });
+        assert.equal(shell.status, 0, shell.stderr);
+        assert.equal(fs.readFileSync(report, 'utf8'), 'an older copy\n', `the tracked file was overwritten where the command started: ${cmd}`);
+        fs.writeFileSync(report, original);
+      }
     }
   } finally { fs.chmodSync(path.join(proj, 'locked'), 0o755); }
 });
@@ -1013,10 +1056,12 @@ test('review round 3: a path is judged as the kernel opens it: a `..` after a li
     assert.equal(run(`mkdir -p ${out}/run-$$ && echo x > ${out}/run-$$/../linkfile`).status, 2);
     assert.equal(run(`echo x > ${out}/x-$$/report.md`).status, 2);
     assert.equal(run(`echo x > ${out}/run-$$/../plain.log`).status, 0);
-    const shell = spawnSync('bash', ['-c', `cp base/report.md ${out}/ld/../docs/report.md`], { cwd: proj, encoding: 'utf8', env: { PATH: process.env.PATH } });
-    assert.equal(shell.status, 0, shell.stderr);
-    assert.equal(fs.readFileSync(report, 'utf8'), 'an older copy\n', 'the kernel climbed from the link target: the tracked file was overwritten');
-    fs.writeFileSync(report, original);
+    for (const sh of shellsFor(['bash'], 'the climb from the link target in real bash')) {
+      const shell = spawnSync(sh, ['-c', `cp base/report.md ${out}/ld/../docs/report.md`], { cwd: proj, encoding: 'utf8', env: { PATH: process.env.PATH } });
+      assert.equal(shell.status, 0, shell.stderr);
+      assert.equal(fs.readFileSync(report, 'utf8'), 'an older copy\n', 'the kernel climbed from the link target: the tracked file was overwritten');
+      fs.writeFileSync(report, original);
+    }
   } finally { fs.rmSync(out, { recursive: true, force: true }); }
 });
 
@@ -1068,8 +1113,12 @@ test('review round 3: $\'...\' is ANSI-C quoting in bash and zsh, a literal word
       assert.equal(fs.readFileSync(report, 'utf8'), 'an older copy\n', `${sh}: the tracked file was overwritten through $'...'`);
       fs.writeFileSync(report, original);
     }
-    const d = spawnSync('dash', ['-c', "printf '%s' $'/x/y.md'"], { encoding: 'utf8' });
-    if (d.status === 0) assert.equal(d.stdout, '$/x/y.md', 'dash reads a literal dollar and a single-quoted string');
+    // round 5: through the probe, the assertion unconditional (it was skipped in silence, with no NOT RUN line, when dash was absent)
+    for (const dsh of shellsFor(['dash'], 'the literal dollar in real dash')) {
+      const d = spawnSync(dsh, ['-c', "printf '%s' $'/x/y.md'"], { encoding: 'utf8' });
+      assert.equal(d.status, 0, d.stderr);
+      assert.equal(d.stdout, '$/x/y.md', 'dash reads a literal dollar and a single-quoted string');
+    }
   } finally { fs.rmSync(out, { recursive: true, force: true }); }
 });
 
@@ -1122,10 +1171,12 @@ test('review round 3: a copy whose name the hook cannot read into a folder no pr
     assert.equal(run(`cp "$SRC" ${out}/`, proj).status, 2);
     assert.equal(run(`cp "$SRC" ${plain}/`, proj).status, 0);
     const original = fs.readFileSync(report, 'utf8');
-    const shell = spawnSync('bash', ['-c', `cp "$SRC" ${out}/`], { cwd: proj, encoding: 'utf8', env: { PATH: process.env.PATH, SRC: 'base/report.md' } });
-    assert.equal(shell.status, 0, shell.stderr);
-    assert.equal(fs.readFileSync(report, 'utf8'), 'an older copy\n', 'the tracked file was overwritten through the link in the outside folder');
-    fs.writeFileSync(report, original);
+    for (const sh of shellsFor(['bash'], 'the copy into the outside folder in real bash')) {
+      const shell = spawnSync(sh, ['-c', `cp "$SRC" ${out}/`], { cwd: proj, encoding: 'utf8', env: { PATH: process.env.PATH, SRC: 'base/report.md' } });
+      assert.equal(shell.status, 0, shell.stderr);
+      assert.equal(fs.readFileSync(report, 'utf8'), 'an older copy\n', 'the tracked file was overwritten through the link in the outside folder');
+      fs.writeFileSync(report, original);
+    }
   } finally { fs.rmSync(out, { recursive: true, force: true }); }
 });
 
@@ -1270,10 +1321,12 @@ test('review round 3 addendum: a directory before a `..` that exists but cannot 
   assert.match(refused.stderr, UNRESOLVABLE);
   assert.equal(run(`echo x > ${proj}/loop/../../x-$$.md`).status, 2);
   // in real bash the kernel refuses the path too: nothing is written through a link that loops
-  const shell = spawnSync('bash', ['-c', 'cp base/report.md loop/../../plain.md; cp base/report.md loop/../docs/report.md'], { cwd: proj, encoding: 'utf8', env: { PATH: process.env.PATH } });
-  assert.notEqual(shell.status, 0);
-  assert.match(shell.stderr, /Too many levels of symbolic links/);
-  assert.equal(fs.readFileSync(report, 'utf8'), 'The api session cut tail latency by 40%.\n', 'the tracked file is untouched');
+  for (const sh of shellsFor(['bash'], 'the looping link in real bash')) {
+    const shell = spawnSync(sh, ['-c', 'cp base/report.md loop/../../plain.md; cp base/report.md loop/../docs/report.md'], { cwd: proj, encoding: 'utf8', env: { PATH: process.env.PATH } });
+    assert.notEqual(shell.status, 0);
+    assert.match(shell.stderr, /Too many levels of symbolic links/);
+    assert.equal(fs.readFileSync(report, 'utf8'), 'The api session cut tail latency by 40%.\n', 'the tracked file is untouched');
+  }
 });
 
 test('review round 3 addendum: the own-project cut for a word with an expansion the hook does not read is at the first expansion mark, not the first dollar in the text: a variable under a root whose name holds a dollar is refused naming that project, from a cwd in none and from another project\'s', () => {
@@ -1820,7 +1873,7 @@ test('the hook is executable with a node shebang, as the settings.json command r
 // A tracked file's sha before and after running a command in a real shell, restored after: proves the command the
 // hook refuses is a live overwrite (the pre-fix hook allowed it), the shape the existing round tests use.
 const shaOf = (p) => crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
-const overwrites = (cmd, file, cwd = proj, shell = 'bash') => {
+const overwrites = (cmd, file, cwd = proj, shell) => {   // `shell` comes from shellsFor at every call (round 5: no default, so no leg runs a shell the probe did not pass)
   const before = fs.readFileSync(file);
   const r = spawnSync(shell, ['-c', cmd], { cwd, encoding: 'utf8', env: { PATH: process.env.PATH } });
   const changed = shaOf(file) !== crypto.createHash('sha256').update(before).digest('hex');
@@ -1850,8 +1903,7 @@ test('walk-around A: cp/mv/install/ln read a per-writer option table; a flag tha
   assert.equal(evaluate(payload('cp --frobnicate base/report.md docs/report.md', outsideDir())), null, 'an unknown option from a cwd in no project passes');
   assert.equal(evaluate(payload('cp base/report.md docs/other.md')), null, 'and the same copy without the option, onto an untracked file, is allowed');
   // real bash: cp -Z onto the tracked file overwrites it, the pre-fix hook allowed it
-  const ov = overwrites('cp -Z base/report.md docs/report.md', report);
-  assert.equal(ov.changed, true, 'cp -Z overwrites the tracked file in real bash');
+  for (const sh of shellsFor(['bash'], 'cp -Z in real bash')) assert.equal(overwrites('cp -Z base/report.md docs/report.md', report, proj, sh).changed, true, 'cp -Z overwrites the tracked file in real bash');
   assert.equal(runHook('cp -Z base/report.md docs/report.md').status, 2, 'and the hook refuses it');
   assert.equal(fs.readFileSync(report, 'utf8'), 'The api session cut tail latency by 40%.\n', 'the tracked file is intact after the hook run');
 });
@@ -1879,8 +1931,7 @@ test('walk-around B: env -C DIR, env --chdir=DIR and sudo -D DIR run the inner c
     assert.ok(nonLit && /the directory it is relative to is not known/.test(nonLit) && nonLit.includes('env -C'), `non-literal DIR refuses with the reason: ${nonLit}`);
     // the redirection of an env -C command stays in the shell's cwd, not DIR
     assert.deepEqual(targets(`env -C ${out} cp base/report.md docs/report.md > log.txt`, proj), [path.join(out, 'docs', 'report.md'), path.join(proj, 'log.txt')].sort(), 'the operand resolves under DIR, the redirect in the cwd');
-    const ov = overwrites(`env -C ${proj} cp base/report.md docs/report.md`, report, out);
-    assert.equal(ov.changed, true, 'env -C into the project overwrites the tracked file in real bash');
+    for (const sh of shellsFor(['bash'], 'env -C in real bash')) assert.equal(overwrites(`env -C ${proj} cp base/report.md docs/report.md`, report, out, sh).changed, true, 'env -C into the project overwrites the tracked file in real bash');
     assert.equal(runHook(`env -C ${proj} cp base/report.md docs/report.md`, out).status, 2);
     assert.equal(fs.readFileSync(report, 'utf8'), 'The api session cut tail latency by 40%.\n');
   } finally { fs.rmSync(out, { recursive: true, force: true }); }
@@ -1901,8 +1952,7 @@ test('walk-around C: the wrapper set gains setsid, flock, taskset, chrt and numa
   assert.equal(evaluate(payload("flock -x . -c 'cp base/report.md docs/other.md'")), null, 'flock -c onto an untracked file allowed');
   assert.ok(evaluate(payload('nice -n 19 setsid -w cp base/report.md docs/report.md')), 'nice composing with setsid');
   assert.ok(evaluate(payload('numactl -C 0 cp base/report.md docs/report.md')), 'numactl with a separate option argument');
-  const ov = overwrites('setsid -w cp base/report.md docs/report.md', report);
-  assert.equal(ov.changed, true, 'setsid -w cp overwrites the tracked file in real bash');
+  for (const sh of shellsFor(['bash'], 'setsid -w in real bash')) assert.equal(overwrites('setsid -w cp base/report.md docs/report.md', report, proj, sh).changed, true, 'setsid -w cp overwrites the tracked file in real bash');
   assert.equal(runHook('setsid -w cp base/report.md docs/report.md').status, 2);
   assert.equal(fs.readFileSync(report, 'utf8'), 'The api session cut tail latency by 40%.\n');
 });
@@ -1933,8 +1983,7 @@ test('walk-around D: a same-command assignment to HOME makes $HOME and ~ unreada
     assert.equal(evaluate(payload('printf x > ~/seed.md')), null, 'the tilde spelling too');
   } finally { process.env.HOME = home; fs.rmSync(out, { recursive: true, force: true }); }
   fs.writeFileSync(path.join(proj, 'notes', 'n1.md'), 'a tracked note\n');
-  const ov = overwrites('HOME=notes; printf poison > $HOME/n1.md', path.join(proj, 'notes', 'n1.md'));
-  assert.equal(ov.changed, true, 'the HOME reassignment overwrites a tracked note in real bash');
+  for (const sh of shellsFor(['bash'], 'the HOME reassignment in real bash')) assert.equal(overwrites('HOME=notes; printf poison > $HOME/n1.md', path.join(proj, 'notes', 'n1.md'), proj, sh).changed, true, 'the HOME reassignment overwrites a tracked note in real bash');
   assert.equal(runHook('HOME=notes; printf poison > $HOME/n1.md').status, 2);
 });
 
@@ -1957,8 +2006,7 @@ test('walk-around E: a word whose literal head parents one or more tracked roots
     }
     assert.equal(evaluate(payload(`printf x > ${roots}/$$.log`, out)), null, 'a numeric-only word in the parent folder is allowed');
     assert.equal(evaluate(payload(`printf x > ${roots}/plainfile.log`, out)), null, 'a literal file in the parent folder is allowed');
-    const ov = overwrites('abc=\'$abc\'; printf poison > roots/p$abc/docs/report.md', path.join(pabc, 'docs', 'report.md'), R);
-    assert.equal(ov.changed, true, 'the expansion spelling the root name overwrites the tracked file in real bash');
+    for (const sh of shellsFor(['bash'], 'the root-spelling expansion in real bash')) assert.equal(overwrites('abc=\'$abc\'; printf poison > roots/p$abc/docs/report.md', path.join(pabc, 'docs', 'report.md'), R, sh).changed, true, 'the expansion spelling the root name overwrites the tracked file in real bash');
     assert.equal(runHook(`printf poison > ${roots}/p$abc/docs/report.md`, out).status, 2);
   } finally { fs.rmSync(R, { recursive: true, force: true }); }
 });
@@ -1977,8 +2025,7 @@ test('walk-around F: an unreadable expansion anywhere under a tracked root refus
     }
     assert.equal(evaluate(payload(`printf x > ${proj}/scratch/$$.md`, out)), null, 'a numeric-only name under the root is allowed');
     assert.equal(evaluate(payload(`cp ${out}/src.md ${proj}/scratch/plain.md`, out)), null, 'the documented untracked-subfolder literal twin is allowed');
-    const ov = overwrites("v='../notes/seed'; printf poison > scratch/$v.md", path.join(proj, 'notes', 'seed.md'));
-    assert.equal(ov.changed, true, 'the ../ inside the value overwrites a tracked note in real bash');
+    for (const sh of shellsFor(['bash'], 'the climbing value in real bash')) assert.equal(overwrites("v='../notes/seed'; printf poison > scratch/$v.md", path.join(proj, 'notes', 'seed.md'), proj, sh).changed, true, 'the ../ inside the value overwrites a tracked note in real bash');
     assert.equal(runHook(`printf poison > ${proj}/scratch/$v.md`, out).status, 2);
   } finally { fs.rmSync(out, { recursive: true, force: true }); }
 });
@@ -1997,8 +2044,7 @@ test('walk-around G, folded into family 4: a directory the hook cannot search be
     fs.chmodSync(path.join(proj, 'locked'), 0o755);
     assert.deepEqual(targets('cp base/report.md locked/inner/../../docs/report.md'), [report], 'a searchable dir folds to docs/report.md');
     fs.chmodSync(path.join(proj, 'locked'), 0);
-    const ov = overwrites('chmod 755 locked && cp base/report.md locked/inner/../../docs/report.md', report);
-    assert.equal(ov.changed, true, 'the command overwrites the tracked file in real bash once locked is chmod-ed');
+    for (const sh of shellsFor(['bash'], 'the chmod then the climb in real bash')) assert.equal(overwrites('chmod 755 locked && cp base/report.md locked/inner/../../docs/report.md', report, proj, sh).changed, true, 'the command overwrites the tracked file in real bash once locked is chmod-ed');
     fs.chmodSync(path.join(proj, 'locked'), 0);
     assert.equal(runHook('chmod 755 locked && cp base/report.md locked/inner/../../docs/report.md').status, 2);
   } finally { fs.chmodSync(path.join(proj, 'locked'), 0o755); }
@@ -2011,8 +2057,7 @@ test('walk-around H: a symlink the same command makes redirects a later literal 
   }
   assert.equal(evaluate(payload('ln -s base mylink && cp base/report.md mylink/other.md')), null, 'a link to an untracked folder is allowed');
   assert.deepEqual(targets('ln -s docs mydocs && cp base/report.md mydocs/report.md'), [path.join(proj, 'mydocs'), report].sort(), 'the link entry and the redirected copy');
-  const ov = overwrites('ln -s docs mydocs && cp base/report.md mydocs/report.md', report);
-  assert.equal(ov.changed, true, 'the in-command link overwrites the tracked file in real bash');
+  for (const sh of shellsFor(['bash'], 'the in-command link in real bash')) assert.equal(overwrites('ln -s docs mydocs && cp base/report.md mydocs/report.md', report, proj, sh).changed, true, 'the in-command link overwrites the tracked file in real bash');
   assert.equal(runHook('ln -s docs mydocs && cp base/report.md mydocs/report.md').status, 2);
   assert.equal(fs.readFileSync(report, 'utf8'), 'The api session cut tail latency by 40%.\n');
 });
@@ -2036,8 +2081,7 @@ test('family 1: the option tables accept a glued short form (sort -oFILE), and e
   }
   assert.equal(evaluate(payload('sort -odocs/other.md base/report.md')), null, 'sort -oFILE onto the untracked twin is allowed');
   assert.deepEqual(targets('sort -o docs/report.md base/report.md'), [report], 'the separate form still names it');
-  const ov = overwrites("env -S'cp base/report.md docs/report.md'", report);
-  assert.equal(ov.changed, true, 'env -S overwrites the tracked file in real bash');
+  for (const sh of shellsFor(['bash'], 'env -S in real bash')) assert.equal(overwrites("env -S'cp base/report.md docs/report.md'", report, proj, sh).changed, true, 'env -S overwrites the tracked file in real bash');
   assert.equal(runHook("env -S'cp base/report.md docs/report.md'").status, 2, 'and the hook refuses it');
   assert.equal(fs.readFileSync(report, 'utf8'), 'The api session cut tail latency by 40%.\n');
 });
@@ -2069,8 +2113,7 @@ test('family 2: an assignment to HOME in any form the shells offer makes $HOME a
   try {
     assert.equal(evaluate(payload('printf x > $HOME/seed.md')), null, 'no reassignment, a write under the real home outside the project');
   } finally { process.env.HOME = home; fs.rmSync(out, { recursive: true, force: true }); }
-  const ov = overwrites('read HOME <<< notes; printf poison > "$HOME/n1.md"', path.join(proj, 'notes', 'n1.md'));
-  assert.equal(ov.changed, true, 'the read HOME reassignment overwrites a tracked note in real bash');
+  for (const sh of shellsFor(['bash'], 'read HOME in real bash')) assert.equal(overwrites('read HOME <<< notes; printf poison > "$HOME/n1.md"', path.join(proj, 'notes', 'n1.md'), proj, sh).changed, true, 'the read HOME reassignment overwrites a tracked note in real bash');
   assert.equal(runHook('read HOME <<< notes; printf poison > "$HOME/n1.md"').status, 2);
   assert.equal(runHook('HOME+=/notes; printf poison > "$HOME/n1.md"').status, 2, 'and the HOME+= form is refused too');
 });
@@ -2097,8 +2140,7 @@ test('family 3: a remove, rename or hard/symbolic link earlier in the command ma
   assert.equal(evaluate(payload('rm -f scratch/old.md && cp base/report.md scratch/new.md')), null, 'a remove and write clear of tracked files is allowed');
   assert.equal(evaluate(payload('cp -l docs/report.md scratch/h.md && echo x > docs/other.md')), null, 'the write after the mutation lands on an untracked file');
   assert.match(evaluate(payload('ln -s docs mydocs && cp base/report.md mydocs/report.md')), /^Track-changes is ON for /, 'a plain ln -s with an untouched name is still resolved by class H');
-  const ov = overwrites('ln docs/report.md hard.md && cp base/report.md hard.md', report);
-  assert.equal(ov.changed, true, 'the hard link overwrites the tracked file in real bash');
+  for (const sh of shellsFor(['bash'], 'the hard link in real bash')) assert.equal(overwrites('ln docs/report.md hard.md && cp base/report.md hard.md', report, proj, sh).changed, true, 'the hard link overwrites the tracked file in real bash');
   assert.equal(runHook('ln docs/report.md hard.md && cp base/report.md hard.md').status, 2);
 });
 
@@ -2137,8 +2179,7 @@ test('family 4: a stat error other than ENOENT anywhere on a judged path refuses
     try { r2 = evaluate(payload(`cp ${out}/src.md ${out}/ol/y.md`, out)); } finally { fs.chmodSync(path.join(out, 'ol'), 0o755); }
     assert.ok(r2 && /could not check/.test(r2), 'a mode-000 directory outside every project is refused too (the documented cost)');
   } finally { fs.rmSync(out, { recursive: true, force: true }); }
-  const ov = overwrites('chmod 755 notes && cp base/report.md notes/n1.md', path.join(proj, 'notes', 'n1.md'), proj);
-  assert.equal(ov.changed, true, 'the mode-000 tracked folder overwrite runs in real bash');
+  for (const sh of shellsFor(['bash'], 'the mode-000 folder in real bash')) assert.equal(overwrites('chmod 755 notes && cp base/report.md notes/n1.md', path.join(proj, 'notes', 'n1.md'), proj, sh).changed, true, 'the mode-000 tracked folder overwrite runs in real bash');
   fs.chmodSync(path.join(proj, 'notes'), 0);
   try { assert.equal(runHook('chmod 755 notes && cp base/report.md notes/n1.md').status, 2); } finally { fs.chmodSync(path.join(proj, 'notes'), 0o755); }
 });
@@ -2161,8 +2202,7 @@ test('family 5: a marker between a tracked root and the target refuses, naming b
   // no marker between: the write is refused by name as ever
   assert.match(evaluate(payload('cp base/report.md docs/report.md')), /^Track-changes is ON for /, 'with no nested marker the write is judged by name');
   fs.mkdirSync(path.join(proj, 'docs', '.git'), { recursive: true });
-  const ov = overwrites('cp base/report.md docs/report.md', report);
-  assert.equal(ov.changed, true, 'the copy overwrites the tracked file in real bash even with a nested .git');
+  for (const sh of shellsFor(['bash'], 'the nested .git in real bash')) assert.equal(overwrites('cp base/report.md docs/report.md', report, proj, sh).changed, true, 'the copy overwrites the tracked file in real bash even with a nested .git');
   assert.equal(runHook('cp base/report.md docs/report.md').status, 2);
   fs.rmSync(path.join(proj, 'docs', '.git'), { recursive: true, force: true });
 });
@@ -2194,10 +2234,12 @@ test('family 6: a cd the guard cannot know ran in this shell leaves the director
   assert.equal(evaluate(payload('cd docs && echo x > other.md')), null, 'a plain cd then an untracked relative write is allowed');
   assert.match(evaluate(payload('cd notes; cp ../base/report.md ../docs/report.md')), /^Track-changes is ON for /, 'a plain cd in sequence keeps its handling, refused by name');
   const original = fs.readFileSync(report, 'utf8');
-  const shell = spawnSync('bash', ['-c', 'false && cd docs; cp base/report.md docs/report.md'], { cwd: proj, encoding: 'utf8', env: { PATH: process.env.PATH } });
-  assert.equal(shell.status, 0, shell.stderr);
-  assert.equal(fs.readFileSync(report, 'utf8'), 'an older copy\n', 'the skipped cd leaves the copy on the tracked file in real bash');
-  fs.writeFileSync(report, original);
+  for (const sh of shellsFor(['bash'], 'the skipped cd in real bash')) {
+    const shell = spawnSync(sh, ['-c', 'false && cd docs; cp base/report.md docs/report.md'], { cwd: proj, encoding: 'utf8', env: { PATH: process.env.PATH } });
+    assert.equal(shell.status, 0, shell.stderr);
+    assert.equal(fs.readFileSync(report, 'utf8'), 'an older copy\n', 'the skipped cd leaves the copy on the tracked file in real bash');
+    fs.writeFileSync(report, original);
+  }
   assert.equal(runHook('false && cd docs; cp base/report.md docs/report.md').status, 2, 'and the hook refuses it');
 });
 
@@ -2269,8 +2311,7 @@ test('rule (a) bare identifier: the identifier HOME anywhere in the command outs
   // real bash: the nameref reassigns HOME and the write lands on the tracked note; the hook refuses it
   const n1 = path.join(proj, 'notes', 'n1.md');
   for (const cmd of [`declare -n r=HOME; r=${proj}/notes; printf poison > "$HOME/n1.md"`, `select HOME in ${proj}/notes; do break; done <<< 1; printf poison > "$HOME/n1.md"`, `printf -vHOME '%s' ${proj}/notes; printf poison > "$HOME/n1.md"`]) {
-    const ov = overwrites(cmd, n1);
-    assert.equal(ov.changed, true, `overwrites the tracked note in real bash: ${cmd}`);
+    for (const sh of shellsFor(['bash'], cmd)) assert.equal(overwrites(cmd, n1, proj, sh).changed, true, `overwrites the tracked note in real bash: ${cmd}`);
     assert.equal(runHook(cmd).status, 2, `and the hook refuses it: ${cmd}`);
   }
 });
@@ -2341,8 +2382,7 @@ test('rule (b) fully parsed or refused: a wrapper option outside its table refus
     assert.ok(/`env -S` hands/.test(evaluate(payload(`env -S 'cp ${proj}/base/report.md ${proj}/docs/report.md'`, R)) || ''), 'env -S naming a path inside the project refuses from a cwd in none');
     // real bash: the glued chdir and the env -S string beginning with env's own option each overwrite the tracked file; the hook refuses both
     for (const cmd of ['env -Cdocs cp ../base/report.md report.md', "env -S '-u FOO cp base/report.md docs/report.md'", 'env -C docs env -C .. cp base/report.md docs/report.md']) {
-      const ov = overwrites(cmd, report);
-      assert.equal(ov.changed, true, `overwrites the tracked file in real bash: ${cmd}`);
+      for (const sh of shellsFor(['bash'], cmd)) assert.equal(overwrites(cmd, report, proj, sh).changed, true, `overwrites the tracked file in real bash: ${cmd}`);
       assert.equal(runHook(cmd).status, 2, `and the hook refuses it: ${cmd}`);
     }
     assert.equal(fs.readFileSync(report, 'utf8'), 'The api session cut tail latency by 40%.\n');
@@ -2376,8 +2416,7 @@ test('rule (c) non-literal link source: an ln -s whose source the guard cannot r
   assert.equal(evaluate(payload('ln -s $(echo base) md6; cp base/report.md scratch.md')), null, 'the same, another spelling');
   // real bash: the link to $PWD/docs carries the copy onto the tracked file; the hook refuses it
   for (const cmd of ['ln -s "$PWD/docs" mydocs && cp base/report.md mydocs/report.md', 'ln -s $(echo docs) md3 && cp base/report.md md3/report.md']) {
-    const ov = overwrites(cmd, report);
-    assert.equal(ov.changed, true, `overwrites the tracked file in real bash: ${cmd}`);
+    for (const sh of shellsFor(['bash'], cmd)) assert.equal(overwrites(cmd, report, proj, sh).changed, true, `overwrites the tracked file in real bash: ${cmd}`);
     for (const l of ['mydocs', 'md3']) fs.rmSync(path.join(proj, l), { force: true });
     assert.equal(runHook(cmd).status, 2, `and the hook refuses it: ${cmd}`);
   }
@@ -2473,8 +2512,7 @@ test('rule (e) any-depth parent prefix: a literal head that is a proper ancestor
     assert.equal(evaluate(payload(`printf x > ../../$$.log`, cwd)), null, 'a numeric-only expansion is not class E');
     assert.equal(evaluate(payload(`printf x > ../../plain.log`, cwd)), null, 'a literal name in the grandparent is allowed');
     // real bash: the two-segment expansion reaches the root one level down and overwrites the tracked file; the hook refuses it
-    const ov = overwrites(`x=f/notes-api; cp ${R}/src.md ../../$x/docs/report.md`, path.join(na, 'docs', 'report.md'), cwd);
-    assert.equal(ov.changed, true, 'the two-segment expansion overwrites the tracked file in real bash');
+    for (const sh of shellsFor(['bash'], 'the two-segment expansion in real bash')) assert.equal(overwrites(`x=f/notes-api; cp ${R}/src.md ../../$x/docs/report.md`, path.join(na, 'docs', 'report.md'), cwd, sh).changed, true, 'the two-segment expansion overwrites the tracked file in real bash');
     assert.equal(runHook(`cp ${R}/src.md ../../$x/docs/report.md`, cwd).status, 2, 'and the hook refuses it');
   } finally { fs.rmSync(R, { recursive: true, force: true }); }
 });
@@ -2503,8 +2541,7 @@ test('rule (f) unknown option refuses everywhere: cp --targ refuses direct, wrap
     assert.ok(linked.some((u) => u.why && u.why.kind === 'mutated' && u.why.verb === 'ln'), 'the symlink recorder yields to the mutation recorder on an unknown option');
     assert.ok(!extractWriteTargets('mv -f docs d2; echo x > base/x.md', proj).unresolved.some((u) => u.why && u.why.kind === 'mutated'), 'a known option marks the operands it places, not a write elsewhere');
     // real bash: the abbreviation resolves to --target-directory and the copy lands on the tracked file; the hook refuses it
-    const ov = overwrites(abs, report, R);
-    assert.equal(ov.changed, true, 'cp --targ overwrites the tracked file in real bash from a cwd in no project');
+    for (const sh of shellsFor(['bash'], 'cp --targ in real bash')) assert.equal(overwrites(abs, report, R, sh).changed, true, 'cp --targ overwrites the tracked file in real bash from a cwd in no project');
     assert.equal(runHook(abs, R).status, 2, 'and the hook refuses it');
     assert.equal(fs.readFileSync(report, 'utf8'), 'The api session cut tail latency by 40%.\n');
   } finally { fs.rmSync(R, { recursive: true, force: true }); }
@@ -2522,8 +2559,7 @@ test('the third pass also closed chdir (a cd the guard cannot know) and link (a 
   assert.ok(r2 && /an earlier `link` in the same command linked /.test(r2), `link is a family-3 mutation: ${r2}`);
   assert.match(evaluate(payload('link base/report.md notes/n2.md')), /^Track-changes is ON for .*notes\/n2\.md/, 'the link name is a write target');
   assert.equal(evaluate(payload('link base/report.md scratch.md && echo x > docs/other.md')), null, 'a link clear of tracked files, then an untracked write: allowed');
-  const ov = overwrites('link docs/report.md hardL.md && cp base/report.md hardL.md', report);
-  assert.equal(ov.changed, true, 'the hard link carries the copy onto the tracked file in real bash');
+  for (const sh of shellsFor(['bash'], 'coreutils link in real bash')) assert.equal(overwrites('link docs/report.md hardL.md && cp base/report.md hardL.md', report, proj, sh).changed, true, 'the hard link carries the copy onto the tracked file in real bash');
   fs.rmSync(path.join(proj, 'hardL.md'), { force: true });
   assert.equal(runHook('link docs/report.md hardL.md && cp base/report.md hardL.md').status, 2);
 });
@@ -2621,8 +2657,7 @@ test('M1 a variable name the shell fills in: an assignment, declaration, nameref
   // real shells: the assembled name reassigns HOME and the write lands on the tracked note; the hook refuses each
   const bashForms = [forms[0], forms[1], forms[2], forms[3], forms[4], forms[5], forms[7]];
   for (const cmd of bashForms) {
-    const ov = overwrites(cmd, n1);
-    assert.equal(ov.changed, true, `overwrites the tracked note in real bash: ${cmd}`);
+    for (const sh of shellsFor(['bash'], cmd)) assert.equal(overwrites(cmd, n1, proj, sh).changed, true, `overwrites the tracked note in real bash: ${cmd}`);
     assert.equal(runHook(cmd).status, 2, `and the hook refuses it: ${cmd}`);
   }
   for (const zsh of shellsFor(['zsh'], 'the HOME assignment forms in real zsh')) for (const cmd of [forms[0], forms[2], forms[3], forms[4]]) {
@@ -2657,14 +2692,13 @@ test("M2 zsh's clobber-override redirections: >! >>! &>! &>>! >&! >>&! and their
   fs.writeFileSync(path.join(proj, '.trackchanges', 'config.json'), JSON.stringify({ v: 2, tracked: ['docs/report.md', 'notes/', 'figs/plot.png', '!'] }));
   const bang = evaluate(payload('echo poison >! docs/other.md'));
   assert.ok(bang && bang.includes(path.join(proj, '!')), `bash's reading, a file named !, is judged: ${bang}`);
-  assert.equal(overwrites('echo poison >! docs/other.md', path.join(proj, '!')).changed, true, 'real bash writes the file named !');
+  for (const sh of shellsFor(['bash'], 'the file named ! in real bash')) assert.equal(overwrites('echo poison >! docs/other.md', path.join(proj, '!'), proj, sh).changed, true, 'real bash writes the file named !');
   fs.writeFileSync(path.join(proj, '.trackchanges', 'config.json'), JSON.stringify({ v: 2, tracked: ['docs/report.md', 'notes/', 'figs/plot.png'] }));
   fs.rmSync(path.join(proj, '!'), { force: true });
   // real zsh: each form writes (or appends to) the tracked file; real bash does not touch it; the hook refuses each
   for (const cmd of ['echo poison >! docs/report.md', 'echo poison >!docs/report.md', 'echo poison >>! docs/report.md', 'echo poison &>! docs/report.md', 'echo poison >&! docs/report.md', 'echo poison >>| docs/report.md', 'echo poison >&| docs/report.md', 'echo poison &>| docs/report.md', 'echo poison >>& docs/report.md', 'echo poison {fd}>! docs/report.md']) {
     for (const zsh of shellsFor(['zsh'], `the clobber form ${cmd} in real zsh`)) assert.equal(overwrites(cmd, report, proj, zsh).changed, true, `real zsh writes the tracked file: ${cmd}`);
-    const b = overwrites(cmd, report, proj, 'bash');
-    assert.equal(b.changed, false, `real bash does not write the tracked file (a file named !, or a syntax error): ${cmd}`);
+    for (const sh of shellsFor(['bash'], `the clobber form ${cmd} in real bash`)) assert.equal(overwrites(cmd, report, proj, sh).changed, false, `real bash does not write the tracked file (a file named !, or a syntax error): ${cmd}`);
     fs.rmSync(path.join(proj, '!'), { force: true });
     assert.equal(runHook(cmd).status, 2, `the hook refuses: ${cmd}`);
   }
@@ -2693,11 +2727,13 @@ test("M3 a link made before a numeric segment: the command's own links are follo
     assert.ok(opaque && /an earlier `ln -s` in the same command linked/.test(opaque) && /a source I cannot read/.test(opaque), `a link whose source is not literal refuses with the family-3 reason from a cwd in no project: ${opaque}`);
     assert.ok(opaque.includes('Run the `ln -s` in a command of its own'), 'the remedy');
     // real bash: the link is made and the numeric name lands in the tracked folder, unrecorded; the hook refuses
-    const r = spawnSync('bash', ['-c', cmd], { cwd: out, encoding: 'utf8', env: { PATH: process.env.PATH } });
-    assert.equal(r.status, 0, r.stderr);
-    const landed = fs.readdirSync(path.join(proj, 'notes')).filter((n) => /^x-\d+\.md$/.test(n));
-    assert.equal(landed.length, 1, 'the write landed in the tracked folder in real bash');
-    fs.rmSync(path.join(out, 'd'), { force: true });
+    for (const sh of shellsFor(['bash'], 'the link then the numeric name in real bash')) {
+      const r = spawnSync(sh, ['-c', cmd], { cwd: out, encoding: 'utf8', env: { PATH: process.env.PATH } });
+      assert.equal(r.status, 0, r.stderr);
+      const landed = fs.readdirSync(path.join(proj, 'notes')).filter((n) => /^x-\d+\.md$/.test(n));
+      assert.equal(landed.length, 1, 'the write landed in the tracked folder in real bash');
+      fs.rmSync(path.join(out, 'd'), { force: true });
+    }
     assert.equal(runHook(cmd, out).status, 2, 'and the hook refuses it');
     assert.equal(runHook(cmd, proj).status, 2);
   } finally { fs.rmSync(out, { recursive: true, force: true }); }
@@ -2744,9 +2780,12 @@ test("M4 an interpreter's literal path is judged by its name whatever it holds (
   // the computed forms stay out of model, by the contract (a name, os.environ, sys.argv, a concatenation)
   const out = outsideDir();
   try {
-    for (const cmd of [`python3 -c "p='p\\$abc/rep.md'; open(p,'w').write('poison')"`, `python3 -c "import os; open(os.environ['T'],'w')"`, `node -e "require('fs').writeFileSync(process.env.T,'x')"`, `node -e "require('fs').writeFileSync('p\\$abc/' + 'rep.md','x')"`]) {
+    // round 5 (regression-1): a concatenation that OPENS with a string literal is a template now (the base refused it, round 4's
+    // head let it through); the contract's boundary is a concatenation that does not, a name first
+    for (const cmd of [`python3 -c "p='p\\$abc/rep.md'; open(p,'w').write('poison')"`, `python3 -c "import os; open(os.environ['T'],'w')"`, `node -e "require('fs').writeFileSync(process.env.T,'x')"`, `node -e "d='p\\$abc/'; require('fs').writeFileSync(d + 'rep.md','x')"`]) {
       assert.equal(evaluate(payload(cmd)), null, `a computed path is allowed, the contract's boundary: ${cmd}`);
     }
+    assert.match(evaluate(payload(`node -e "require('fs').writeFileSync('p\\$abc/' + 'rep.md','x')"`)), /a string literal with more appended to it/, 'a literal-first concatenation is a template, refused (round 5)');
     assert.equal(evaluate(payload(`python3 -c "d='x'; open(f'{d}/rep.md','w')"`, out)), null, 'a template path from a cwd in no project is dropped, as every unreadable word is');
   } finally { fs.rmSync(out, { recursive: true, force: true }); }
   // real shells: the literal forms write the tracked folder (a new file under p$abc/); the hook refuses each
@@ -2761,9 +2800,11 @@ test("M4 an interpreter's literal path is judged by its name whatever it holds (
     assert.equal(runHook(cmd).status, 2, `and the hook refuses it: ${cmd}`);
   }
   // and the untracked twin runs, writing beside it
-  const q = spawnSync('bash', ['-c', untracked[0]], { cwd: proj, encoding: 'utf8', env: { PATH: process.env.PATH } });
-  assert.equal(q.status, 0, q.stderr);
-  assert.equal(fs.readFileSync(path.join(proj, 'q$abc', 'rep.md'), 'utf8'), 'poison');
+  for (const sh of shellsFor(['bash'], 'the untracked twin in real bash')) {
+    const q = spawnSync(sh, ['-c', untracked[0]], { cwd: proj, encoding: 'utf8', env: { PATH: process.env.PATH } });
+    assert.equal(q.status, 0, q.stderr);
+    assert.equal(fs.readFileSync(path.join(proj, 'q$abc', 'rep.md'), 'utf8'), 'poison');
+  }
   assert.equal(runHook(untracked[0]).status, 0, 'the hook allows the untracked twin');
 });
 
@@ -2774,20 +2815,23 @@ test("M5 the inert lists carry their criterion: every entry is a real option of 
   const names = (text) => new Map(text.split('\n').map((l) => l.trim().split(/\s+/)).filter((f) => f[0]).map((f) => [norm(f[0]), f[1] || '']));
   // zsh lists an option that is on by default under its `no` spelling (`noevallineno off`), so membership ignores the prefix both ways
   const lists = (m, n) => m.has(n) || m.has('no' + n) || (n.startsWith('no') && m.has(n.slice(2)));
-  const bashSetO = names(sh('bash', 'set -o').stdout);
-  const bashShopt = names(sh('bash', 'shopt').stdout);
-  const zshSetO = HAS_SHELL.zsh ? names(sh('zsh', 'set -o').stdout) : null;   // null on a runner without zsh (shellsFor reports it below)
-  const dashSetO = names(sh('dash', 'set -o').stdout);
-  assert.ok(bashSetO.size > 20 && bashShopt.size > 40 && (zshSetO == null || zshSetO.size > 150) && dashSetO.size > 10, 'the shells list their options');
-  if (!zshSetO) shellsFor(['zsh'], 'the inert set -o names against real zsh');
+  // round 5: every shell's option list comes through the probe (dash's minter threw a bare TypeError on a runner without dash, and
+  // a bash below the floor would have too); a shell the probe declined is null here, reported once, and every consumer below
+  // tolerates the null, so the runner's shells are what they judge
+  const bashSetO = HAS_SHELL.bash ? names(sh('bash', 'set -o').stdout) : null;
+  const bashShopt = HAS_SHELL.bash ? names(sh('bash', 'shopt').stdout) : null;
+  const zshSetO = HAS_SHELL.zsh ? names(sh('zsh', 'set -o').stdout) : null;
+  const dashSetO = HAS_SHELL.dash ? names(sh('dash', 'set -o').stdout) : null;
+  assert.ok((bashSetO == null || bashSetO.size > 20) && (bashShopt == null || bashShopt.size > 40) && (zshSetO == null || zshSetO.size > 150) && (dashSetO == null || dashSetO.size > 10), 'the shells list their options');
+  for (const [table, probed] of [[bashSetO, 'bash'], [zshSetO, 'zsh'], [dashSetO, 'dash']]) if (!table) shellsFor([probed], `the inert option names against real ${probed}`);
   // every set -o entry is an option of bash, zsh or dash, every shopt entry one of bash, each with a reason
   for (const [name, why] of Object.entries(INERT_OPTIONS.set)) {
     assert.ok(typeof why === 'string' && why.length >= 10 && !/\u2014/.test(why) && !why.includes('\n'), `${name}: a one-line reason`);
-    assert.ok(lists(bashSetO, norm(name)) || (zshSetO ? lists(zshSetO, norm(name)) : true) || lists(dashSetO, norm(name)), `${name}: an option of bash, zsh or dash on this box`);   // without zsh a name not bash's or dash's is taken as zsh's (shellsFor said the zsh leg did not run)
+    assert.ok((bashSetO ? lists(bashSetO, norm(name)) : true) || (zshSetO ? lists(zshSetO, norm(name)) : true) || (dashSetO ? lists(dashSetO, norm(name)) : true), `${name}: an option of bash, zsh or dash on this box`);   // a shell the probe declined is taken as the one that has the name (shellsFor said its leg did not run)
   }
   for (const [name, why] of Object.entries(INERT_OPTIONS.shopt)) {
     assert.ok(typeof why === 'string' && why.length >= 10 && !/\u2014/.test(why) && !why.includes('\n'), `${name}: a one-line reason`);
-    assert.ok(bashShopt.has(norm(name)), `${name}: a shopt option of bash on this box`);
+    if (bashShopt) assert.ok(bashShopt.has(norm(name)), `${name}: a shopt option of bash on this box`);
   }
   // the eleven and the criterion's other removals are off the tables
   for (const name of ['noglob', 'nomatch', 'badpattern', 'numericglobsort', 'markdirs', 'cdsilent', 'pushdsilent', 'pushdignoredups', 'pushdminus', 'keyword', 'histexpand', 'shwordsplit', 'ksharrays', 'histsubstpattern', 'correct', 'correctall', 'shortloops', 'localpatterns', 'multibyte']) assert.ok(!(name in INERT_OPTIONS.set), `${name} is off the set -o table`);
@@ -2809,7 +2853,7 @@ test("M5 the inert lists carry their criterion: every entry is a real option of 
     for (const shell of shellsFor(['bash', 'zsh'])) {
       const want = spec[shell];
       const got = flipped(shell, L);
-      if (got == null) { assert.ok(want == null || lists(shell === 'bash' ? bashSetO : zshSetO || new Map(), norm(want)), `-${L} in ${shell}: the letter stops or is refused by the shell, and the table's option is one the shell lists`); continue; }
+      if (got == null) { assert.ok(want == null || lists((shell === 'bash' ? bashSetO : zshSetO) || new Map(), norm(want)), `-${L} in ${shell}: the letter stops or is refused by the shell, and the table's option is one the shell lists`); continue; }
       assert.deepEqual(got, want == null ? [] : [norm(want)], `-${L} in ${shell} flips exactly the table's option`);
       if (want != null) assert.ok(norm(want) in INERT_OPTIONS.set, `-${L} in ${shell}: ${want} is itself on the inert table`);
     }
@@ -2828,8 +2872,10 @@ test("M5 the inert lists carry their criterion: every entry is a real option of 
   // bash's keyword mode, measured: `set -k` makes a trailing X=1 an assignment, so cp gets two operands and writes the
   // tracked file; the guard reads the operands both ways and refuses; the twin onto an untracked absolute path passes
   const kw = 'set -k; cp base/report.md docs/report.md X=1';
-  assert.equal(overwrites(kw, report).changed, true, 'set -k: real bash writes the tracked file through a cp the guard read as writing nothing');
-  assert.equal(overwrites('cp base/report.md docs/report.md X=1', report).changed, false, 'without -k the third operand makes cp fail');
+  for (const sh of shellsFor(['bash'], 'set -k in real bash')) {
+    assert.equal(overwrites(kw, report, proj, sh).changed, true, 'set -k: real bash writes the tracked file through a cp the guard read as writing nothing');
+    assert.equal(overwrites('cp base/report.md docs/report.md X=1', report, proj, sh).changed, false, 'without -k the third operand makes cp fail');
+  }
   assert.equal(runHook(kw).status, 2, 'the hook refuses it');
   assert.match(evaluate(payload(`set -k; cp ${proj}/base/report.md ${proj}/docs/report.md X=1`)), /^Track-changes is ON for /, 'the absolute spelling is refused by name under the keyword reading');
   assert.equal(evaluate(payload(`set -k; cp ${proj}/base/report.md ${proj}/docs/other.md X=1`)), null, 'the untracked absolute twin passes');
@@ -2870,8 +2916,7 @@ test('B1 an alias made in the command puts the project its SOURCE lies in in pla
     assert.equal(extractWriteTargets(`rm -f ${out}/x.md && printf poison > ${out}/x.md`, out).unresolved[0].why.alias, false, 'a remove aliases nothing');
     // real bash: the alias carries the write onto the tracked note; the hook refuses
     for (const cmd of [rows[0][0], rows[1][0], rows[2][0], rows[5][0]]) {
-      const ov = overwrites(cmd, seed, out);
-      assert.equal(ov.changed, true, `overwrites the tracked note in real bash from a cwd in no project: ${cmd}`);
+      for (const sh of shellsFor(['bash'], cmd)) assert.equal(overwrites(cmd, seed, out, sh).changed, true, `overwrites the tracked note in real bash from a cwd in no project: ${cmd}`);
       for (const a of ['s-alias', 'h3', 'h4', 'h7']) fs.rmSync(path.join(out, a), { force: true });
       assert.equal(runHook(cmd, out).status, 2, `and the hook refuses it: ${cmd}`);
     }
@@ -2969,7 +3014,7 @@ test("B2 as ruled: the values the guard can read are resolved and the real path 
     }
     assert.equal(runHook(row, out).status, 2, 'the hook refuses the row');
     const p11 = `cd ${proj}; cd ${out}; echo poison > ~-/docs/report.md`;
-    assert.equal(overwrites(p11, report, out).changed, true, 'P11 overwrites the tracked file in real bash from a cwd in no project');
+    for (const sh of shellsFor(['bash'], 'P11 in real bash')) assert.equal(overwrites(p11, report, out, sh).changed, true, 'P11 overwrites the tracked file in real bash from a cwd in no project');
     assert.equal(runHook(p11, out).status, 2, 'and the hook refuses it');
     assert.equal(runHook(`echo x > ${out}/scratch/$name.log`, out).status, 0, 'the process allows the opaque word from a cwd in no project (the cwd rule)');
     assert.equal(runHook(`echo x > ${out}/scratch/$name.log`, proj).status, 2, 'and refuses it from the tracked cwd');
@@ -3077,7 +3122,7 @@ test('a mention of PWD or OLDPWD outside an expansion, or a variable name the sh
 
 // A command run unguarded in a real shell from `cwd` that creates `file` (a new entry in a tracked folder): whether it
 // landed; the file is removed after, so the next row starts clean.
-const lands = (cmd, file, cwd, shell = 'bash') => {
+const lands = (cmd, file, cwd, shell) => {   // `shell` from shellsFor, as overwrites (round 5)
   const r = spawnSync(shell, ['-c', cmd], { cwd, encoding: 'utf8', env: { PATH: process.env.PATH } });
   const there = fs.existsSync(file);
   fs.rmSync(file, { force: true });
@@ -3134,7 +3179,7 @@ test("the fifth pass's unpinned B2 claims are pinned from the tracked cwd, where
     allowed(`n=a; read m <<< b; echo x > ${out}/scratch/$n.md`);   // a read into another name
     residual(readRow);
     for (const shell of shellsFor(['bash', 'zsh'])) assert.equal(lands(readRow, landing, out, shell).landed, true, `${shell} lands x.md through the read`);
-    assert.equal(lands(`n=a; mapfile -t n <<< ../../${P}/notes/x; echo x > ${out}/scratch/$n.md`, landing, out, 'bash').landed, true, 'bash lands x.md through the mapfile');
+    for (const sh of shellsFor(['bash'], 'the mapfile')) assert.equal(lands(`n=a; mapfile -t n <<< ../../${P}/notes/x; echo x > ${out}/scratch/$n.md`, landing, out, sh).landed, true, 'bash lands x.md through the mapfile');
     // B2q: a $(...) inherits a COPY of the names: resolved inside it, and its own assignments do not come back
     const subRows = [`n=sub; echo $(echo x > ${out}/scratch/$n.log)`, `n=a; x=$(n=b); echo x > ${out}/scratch/$n.log`];
     for (const cmd of subRows) allowed(cmd);
@@ -3289,8 +3334,10 @@ test("an interpreter's option cluster is read as the interpreter reads it: pytho
   // the twins and the flag-only forms run and touch nothing tracked
   const before = shaOf(report);
   for (const cmd of [...untracked, ...flagOnly]) {
-    const r = spawnSync('bash', ['-c', cmd], { cwd: proj, encoding: 'utf8', env: { PATH: process.env.PATH } });
-    if (!cmd.startsWith('python3 -Wc')) assert.equal(r.status, 0, `bash: ${cmd}: ${r.stderr}`);   // -Wc names a script file that is not there: python exits 2 and writes nothing
+    for (const sh of shellsFor(['bash'], cmd)) {
+      const r = spawnSync(sh, ['-c', cmd], { cwd: proj, encoding: 'utf8', env: { PATH: process.env.PATH } });
+      if (!cmd.startsWith('python3 -Wc')) assert.equal(r.status, 0, `bash: ${cmd}: ${r.stderr}`);   // -Wc names a script file that is not there: python exits 2 and writes nothing
+    }
     assert.equal(runHook(cmd).status, 0, `the hook allows: ${cmd}`);
   }
   assert.equal(shaOf(report), before, 'the twins left the tracked file as it was');
@@ -3299,7 +3346,7 @@ test("an interpreter's option cluster is read as the interpreter reads it: pytho
   // interpreter decodes and the guard does not (it is named on the four surfaces beside the other computed forms)
   const escaped = `python3 -c 'open("docs\\x2freport.md","w").write("poison")'`;
   assert.equal(evaluate(payload(escaped)), null, 'an escaped path is out of model, by the contract');
-  assert.equal(overwrites(escaped, report, proj).changed, true, 'and it lands when run: the stated residual');
+  for (const sh of shellsFor(['bash'], 'the escaped path in real bash')) assert.equal(overwrites(escaped, report, proj, sh).changed, true, 'and it lands when run: the stated residual');
 });
 
 // ── the false-refusal corpus: ordinary developer commands and the known false refusals, pinned both ways ──
@@ -3312,11 +3359,11 @@ test("an interpreter's option cluster is read as the interpreter reads it: pytho
 // later change that widens the cost shows here by name, and every allowed entry stays allowed.
 const CORPUS = JSON.parse(fs.readFileSync(fileURLToPath(new URL('./romp-track-bash-guard-corpus.json', import.meta.url)), 'utf8'));
 
-test('the corpus (tools/romp-track-bash-guard-corpus.json): more than 80 ordinary commands stay allowed, the recorded false refusals keep their verdict, and every entry runs from the cwd it names', () => {
+// The corpus world (shared by the corpus test and round 5's since sweep): the scratch project of beforeEach with a few more entries
+const corpusWorld = () => {
   const B = outsideDir();
-  // the corpus world: the scratch project of beforeEach with a few more entries, an outside folder beside a second
-  // tracked project (for the class-E entries), and a home folder holding a tracked project two levels down (for the
-  // rule-(e) cost entry)
+  // an outside folder beside a second tracked project (for the class-E entries), and a home folder holding a tracked
+  // project two levels down (for the rule-(e) cost entry)
   fs.mkdirSync(path.join(proj, 'scratch'));
   fs.mkdirSync(path.join(proj, 'sub'));
   fs.writeFileSync(path.join(proj, 'scratch', 'copy.md'), 'c\n');
@@ -3333,6 +3380,11 @@ test('the corpus (tools/romp-track-bash-guard-corpus.json): more than 80 ordinar
   trackedProjectAt(home, path.join('code', 'proj3'));
   const cwds = { proj, docs: path.join(proj, 'docs'), out: path.join(B, 'scratch'), home };
   const fill = (s) => s.replace(/<proj>/g, proj).replace(/<out>/g, B).replace(/<home>/g, home);
+  return { B, home, cwds, fill };
+};
+
+test('the corpus (tools/romp-track-bash-guard-corpus.json): more than 80 ordinary commands stay allowed, the recorded false refusals keep their verdict, and every entry runs from the cwd it names', () => {
+  const { B, home, cwds, fill } = corpusWorld();
   const savedHome = process.env.HOME;
   process.env.HOME = home;
   try {
@@ -3443,7 +3495,7 @@ test("the sixth pass, the names: a nameref declaration, a `printf -v` and a `rea
     // `declare -n n=other` makes n a nameref, so $n is other's value, not the plain string n held (bash; zsh has no -n)
     const namerefRow = `other=../../${P}/notes/x; n=a; declare -n n=other; echo x > ${out}/scratch/$n.md`;
     refused(namerefRow);
-    assert.equal(lands(namerefRow, landing, out, 'bash').landed, true, 'bash lands x.md in the tracked folder through the nameref');
+    for (const sh of shellsFor(['bash'], 'the nameref')) assert.equal(lands(namerefRow, landing, out, sh).landed, true, 'bash lands x.md in the tracked folder through the nameref');
     // `printf -v n` assigns n
     const printfRow = `n=a; printf -v n ../../${P}/notes/x; echo x > ${out}/scratch/$n.md`;
     refused(printfRow);
@@ -3451,7 +3503,7 @@ test("the sixth pass, the names: a nameref declaration, a `printf -v` and a `rea
     // `readarray` (mapfile's synonym) assigns n (bash; zsh has no readarray)
     const readarrayRow = `n=a; readarray -t n <<< ../../${P}/notes/x; echo x > ${out}/scratch/$n.md`;
     refused(readarrayRow);
-    assert.equal(lands(readarrayRow, landing, out, 'bash').landed, true, 'bash lands x.md through readarray');
+    for (const sh of shellsFor(['bash'], 'readarray')) assert.equal(lands(readarrayRow, landing, out, sh).landed, true, 'bash lands x.md through readarray');
     // a `$(...)` sees a COPY of the names, so an assignment inside it does not come back: n keeps its plain string and the
     // write is judged where the outer value lands (allowed, under <out>/scratch); with the map shared, the inner assignment
     // would carry the climb out and refuse the write by name, a false refusal
@@ -3639,7 +3691,7 @@ test("the sixth pass's attacker: its 77 in-model rows, run through the hook as a
   const savedHome = process.env.HOME;
   process.env.HOME = w.HOME;
   try {
-    const daemonHome = spawnSync('bash', ['-c', 'echo ~daemon'], { encoding: 'utf8' }).stdout.trim();
+    const daemonHome = HAS_SHELL.bash ? spawnSync('bash', ['-c', 'echo ~daemon'], { encoding: 'utf8' }).stdout.trim() : '';
     const hasDaemon = daemonHome !== '' && daemonHome !== '~daemon' && fs.existsSync(daemonHome);
     const A = ['bash', 'zsh', 'dash'];
     const BZ = ['bash', 'zsh'];
@@ -3837,18 +3889,34 @@ test("the attacker's twins keep their verdicts, and the reviewer's four false re
         else assert.ok(NOT_LITERAL.test(h.reason) || BY_NAME_RE.test(h.reason), `${id}: refused (as not literal, or by name where the value the shell keeps is the tracked file): ${h.reason.split('\n')[0]}`);
       }
     }
-    // the costs the reviewer asked to see priced (17:24Z): each measured at this head. (1) a `~/` value: resolved, no cost (R1-T2
-    // above). (2) `declare -i x=5` then $x, and -a: refused as not literal, the reason naming the flag, while the shells write
-    // scratch/5, an untracked file. (3) a pipeline-tail assignment: refused, while zsh keeps the tail's assignment (b.log) and bash
-    // and dash do not (a.log), all untracked. (4) a piped plain group: refused, while every shell keeps the old value (a.log). And
-    // `let x=5` then $x, a construct of the same shape: refused, while bash and zsh write scratch/5.
+    // the costs the reviewer asked to see priced (17:24Z), each shell's behaviour by EXECUTION (round 5, 2026-09-20, bash 5.2, zsh
+    // 5.9, dash 0.5.12; the comment here had said zsh writes scratch/report.md for -a, which it does not). (1) a `~/` value:
+    // resolved, no cost (R1-T2 above). (2) `declare -i x=5` then $x: refused as not literal, the reason naming the flag, while bash
+    // and zsh write scratch/5 and dash, which has no declare, copies onto scratch/report.md (x empty); `declare -a x=5` and
+    // `declare -A x=5`: bash writes scratch/5, zsh rejects the scalar value for an array ("inconsistent type for assignment") and
+    // stops the command list, writing nothing, dash copies onto scratch/report.md. (3) a pipeline-tail assignment: refused, while
+    // zsh keeps the tail's assignment (b.log) and bash and dash do not (a.log), all untracked. (4) a piped plain group: refused,
+    // while every shell keeps the old value (a.log). And `let x=5` then $x, a construct of the same shape: refused, while bash and
+    // zsh write scratch/5 and dash, which has no let, copies onto scratch/other.md.
+    // [command, the construct the reason names, the shells run (each writes nothing tracked), the untracked file that shell writes, or null]
     const costs = [
       ['declare -i x=5; cp base/report.md scratch/$x', 'a `declare` flag that can change the value or what the name is (-i)', ['bash', 'zsh'], path.join(NA, 'scratch', '5')],
-      ['declare -a x=5; cp base/report.md scratch/$x', 'a `declare` flag that can change the value or what the name is (-a)', ['bash'], path.join(NA, 'scratch', '5')],   // zsh rejects a scalar value for -a and writes scratch/report.md
+      ['declare -i x=5; cp base/report.md scratch/$x', 'a `declare` flag that can change the value or what the name is (-i)', ['dash'], path.join(NA, 'scratch', 'report.md')],
+      ['declare -a x=5; cp base/report.md scratch/$x', 'a `declare` flag that can change the value or what the name is (-a)', ['bash'], path.join(NA, 'scratch', '5')],
+      ['declare -a x=5; cp base/report.md scratch/$x', 'a `declare` flag that can change the value or what the name is (-a)', ['zsh'], null],   // zsh stops on the flag: nothing written (asserted below)
+      ['declare -a x=5; cp base/report.md scratch/$x', 'a `declare` flag that can change the value or what the name is (-a)', ['dash'], path.join(NA, 'scratch', 'report.md')],
+      ['declare -A x=5; cp base/report.md scratch/$x', 'a `declare` flag that can change the value or what the name is (-A)', ['bash'], path.join(NA, 'scratch', '5')],
+      ['declare -A x=5; cp base/report.md scratch/$x', 'a `declare` flag that can change the value or what the name is (-A)', ['zsh'], null],
+      ['declare -A x=5; cp base/report.md scratch/$x', 'a `declare` flag that can change the value or what the name is (-A)', ['dash'], path.join(NA, 'scratch', 'report.md')],
       ['x=other.md; let x=5; cp base/report.md scratch/$x', 'an assignment-shaped word of `let`', ['bash', 'zsh'], path.join(NA, 'scratch', '5')],
+      ['x=other.md; let x=5; cp base/report.md scratch/$x', 'an assignment-shaped word of `let`', ['dash'], path.join(NA, 'scratch', 'other.md')],
       ['x=a; cat </dev/null | x=b; printf x > {OUT}/scratch/$x.log', 'a pipeline, whose members bash and dash run in a subshell', ['bash', 'zsh', 'dash'], null],
       ['x=a; { x=b; } | cat; printf x > {OUT}/scratch/$x.log', 'a `{ }` group that is piped', ['bash', 'zsh', 'dash'], null],
-      ['x=scratch/kept.md; export x; cp base/report.md $x', 'a `export` of the name alone, which may change how it is read', ['bash', 'zsh', 'dash'], path.join(NA, 'scratch', 'kept.md')],   // the shells keep the value (measured: the copy lands on the untracked kept.md): a priced cost of the name-alone rule
+      // the `export x` item (tests-1, round 4): the plain `x=..; export x` was refused before the readability rule too, as not
+      // literal, so the rule changed its REASON here and did not add the refusal; the spelling it newly refuses is the export
+      // followed by a later plain write, where every shell holds the later value (the corpus row re-anchored on it)
+      ['x=scratch/kept.md; export x; cp base/report.md $x', 'a `export` of the name alone, which may change how it is read', ['bash', 'zsh', 'dash'], path.join(NA, 'scratch', 'kept.md')],
+      ['x=a; export x; x=scratch/kept.md; cp base/report.md $x', 'a `export` of the name alone, which may change how it is read', ['bash', 'zsh', 'dash'], path.join(NA, 'scratch', 'kept.md')],
     ];
     for (const [raw, construct, shells, lands] of costs) {
       const cmd = w.fill(raw);
@@ -3859,6 +3927,7 @@ test("the attacker's twins keep their verdicts, and the reviewer's four false re
         const r = w.run(cmd, NA, shell);
         assert.equal(r.changed, false, `${shell}: the shell wrote nothing tracked (a false refusal, recoverable in one step): ${cmd}: ${r.stderr}`);
         if (lands) assert.ok(fs.existsSync(lands), `${shell} wrote the untracked ${path.basename(lands)}: the shell's value differs from the guard's reading`);
+        else if (shell === 'zsh' && /^declare -[aA]/.test(raw)) { assert.notEqual(r.status, 0, `zsh rejects the scalar value for the array flag: ${r.stderr}`); assert.deepEqual(fs.readdirSync(path.join(NA, 'scratch')).sort(), ['keep.md', 'other.md'], 'and writes nothing'); }
       }
     }
     const tail = w.fill('x=a; cat </dev/null | x=b; printf x > {OUT}/scratch/$x.log');
@@ -3884,6 +3953,21 @@ test('the readability rule itself, not its thirteen classes: a construct that wr
       { cmd: 'x=other.md; : $(( x = 5 )); cp base/report.md scratch/$x', shells: ['bash', 'zsh'], construct: 'an arithmetic body, which may assign it', tracked: false },
       { cmd: 'x=other.md; integer x=5; cp base/report.md scratch/$x', shells: ['zsh'], construct: 'an assignment-shaped word of `integer`', tracked: false },
       { cmd: 'x=other.md; float x=5; cp base/report.md scratch/$x', shells: ['zsh'], construct: 'an assignment-shaped word of `float`', tracked: false },
+      // round 5 (extra4-5): the SCOPE half of the rule (no if, loop, case, select, subshell or function body), which the six rows
+      // above could not see: a body that may not run, behind each construct that hid its head at round 4's head (`{`, `!`, `time`,
+      // a select body, a function body inside a group, a subshell) and under each closer (fi, done, esac). Every row was a live
+      // false ALLOW at that head; the shells listed keep the tracked path and write the tracked file (dash rejects `time` before a
+      // compound command and has no select).
+      { cmd: 'x=../docs/report.md; { if false; then x=other.md; fi; }; cp base/report.md scratch/$x', shells: ['bash', 'zsh', 'dash'], construct: 'an if, loop, case or function body, or a subshell', tracked: true },
+      { cmd: 'x=../docs/report.md; ! if false; then x=other.md; fi; cp base/report.md scratch/$x', shells: ['bash', 'zsh', 'dash'], construct: 'an if, loop, case or function body, or a subshell', tracked: true },
+      { cmd: 'x=../docs/report.md; time if false; then x=other.md; fi; cp base/report.md scratch/$x', shells: ['bash', 'zsh'], construct: 'an if, loop, case or function body, or a subshell', tracked: true },
+      { cmd: 'x=../docs/report.md; select y in a; do x=other.md; done </dev/null; cp base/report.md scratch/$x', shells: ['bash', 'zsh'], construct: 'an if, loop, case or function body, or a subshell', tracked: true },
+      { cmd: 'x=../docs/report.md; { f() { x=other.md; }; }; cp base/report.md scratch/$x', shells: ['bash', 'zsh', 'dash'], construct: 'an if, loop, case or function body, or a subshell', tracked: true },
+      { cmd: 'x=../docs/report.md; (x=other.md); cp base/report.md scratch/$x', shells: ['bash', 'zsh', 'dash'], construct: 'an if, loop, case or function body, or a subshell', tracked: true },
+      { cmd: 'x=../docs/report.md; ! while false; do x=other.md; done; cp base/report.md scratch/$x', shells: ['bash', 'zsh', 'dash'], construct: 'an if, loop, case or function body, or a subshell', tracked: true },
+      { cmd: 'x=../docs/report.md; ! until true; do x=other.md; done; cp base/report.md scratch/$x', shells: ['bash', 'zsh', 'dash'], construct: 'an if, loop, case or function body, or a subshell', tracked: true },
+      { cmd: 'x=../docs/report.md; ! case a in b) x=other.md;; esac; cp base/report.md scratch/$x', shells: ['bash', 'zsh', 'dash'], construct: 'an if, loop, case or function body, or a subshell', tracked: true },
+      { cmd: 'x=../docs/report.md; ! for y in; do x=other.md; done; cp base/report.md scratch/$x', shells: ['bash', 'zsh', 'dash'], construct: 'an if, loop, case or function body, or a subshell', tracked: true },
     ];
     const pick = UNLISTED[crypto.randomInt(UNLISTED.length)];
     console.log(`# the rule pin's random pick: ${pick.cmd}`);
@@ -4001,38 +4085,78 @@ test("the addendum, item 2: a cd under `builtin`, `command` or `time` is still r
   } finally { process.env.HOME = savedHome; w.rm(); }
 });
 
-// The self-check reads this file's lines: a zsh leg is a call whose first or last argument is the literal 'zsh', a spawnSync
-// of it, or a for-of over a literal list holding 'zsh' or over a shell-list identifier, on a line without shellsFor or
-// HAS_SHELL (a comment line does not count). The seventh pass's mutation lens found `for (const zsh of ['zsh'])` escaping
-// the earlier spelling-bound pattern, so the loop variable is any identifier now, and the scan is a function pinned
-// against synthetic lines below.
-const zshLegsOutsideProbe = (lines) => lines.map((l, i) => `${i + 1}: ${l.trim()}`).filter((l) => /spawnSync\(\s*'zsh'|\w+\(\s*'zsh'\s*,|,\s*'zsh'\s*\)|for \(const \w+ of \[[^\]]*'zsh'|for \(const \w+ of (shells|SHELLS|A|B|BZ|BD|Z)\)|has\('zsh'\)/.test(l) && !/HAS_SHELL|shellsFor\(/.test(l) && !/^\d+: \/\//.test(l));
+// The self-check reads this file's lines, keyed on the RULE since round 5 (2026-09-20; it was keyed on a closed list of shell-list
+// identifiers, `shells|SHELLS|A|B|BZ|BD|Z`, plus two call shapes, so a leg over a list by any other name, a `.forEach` or `.map`,
+// or a ternary-picked shell escaped it while the test claimed every leg was covered). A real-shell leg is a call of a shell runner
+// (spawnSync, overwrites, lands, w.run, sh, out) on a line that spells a shell ('bash', 'zsh' or 'dash'; a comparison such as
+// `shell === 'zsh'` is not a spelling), or a loop (for-of, .forEach, .map) over a literal list holding one or over an identifier
+// this file declares as such a list, on a line without shellsFor, HAS_SHELL or SHELL_PROBE (a comment line does not count). The
+// scan is the HINT that names the line; the GUARANTEE is the live-value wrapper on spawnSync at the top of this file, which
+// throws by name when any call reaches a shell the probe declined, whatever the list is called and however the leg loops.
+const legsOutsideProbe = (lines) => {
+  const declared = new Set();
+  for (const l of lines) { const m = l.match(/^\s*(?:const|let) ([A-Za-z_$][\w$]*) = \[[^\]]*'(?:bash|zsh|dash)'[^\]]*\]/); if (m) declared.add(m[1]); }
+  const names = [...declared].map((n) => n.replace(/\$/g, '\\$')).join('|');
+  const overDeclared = names ? new RegExp(`for \\(const \\w+ of (?:${names})\\)|\\b(?:${names})\\.(?:forEach|map)\\(`) : null;
+  const spellsShell = (l) => /'(?:bash|zsh|dash)'/.test(l.replace(/[!=]==? '(?:bash|zsh|dash)'/g, ''));
+  return lines.map((l, i) => `${i + 1}: ${l.trim()}`).filter((l) => {
+    if (/^\d+: \/\//.test(l) || /HAS_SHELL|shellsFor\(|SHELL_PROBE/.test(l)) return false;
+    if (/\b(?:spawnSync|overwrites|lands|run|sh|out)\(/.test(l) && spellsShell(l)) return true;
+    if (/for \(const \w+ of \[[^\]]*'(?:bash|zsh|dash)'|\[[^\]]*'(?:bash|zsh|dash)'[^\]]*\]\.(?:forEach|map)\(/.test(l)) return true;
+    return !!(overDeclared && overDeclared.test(l));
+  });
+};
 
-test('the addendum, item 4: every real-shell evidence leg of this file goes through shellsFor or HAS_SHELL, so a runner without zsh prints a NOT RUN line per leg and never passes a leg in silence; the scan catches a loop under any variable name and a call with the literal shell (pinned against synthetic lines); the line itself is pinned in-process through the probe\'s parameters and as a process, this file run with a zsh stub that exits 1 first on PATH, which prints the line per leg and passes', () => {
+test('the addendum, item 4, and round 5: every real-shell evidence leg of this file goes through the one probe, whose spawnSync wrapper throws by name for a shell it declined (pinned against a synthetic table), so a runner without a shell, or with a bash below the 4.3 floor, prints a NOT RUN line naming the shell and the version per leg and never passes a leg in silence or reds with a value mismatch; the scan over the source is keyed on the rule (a runner call spelling a shell, a loop over a shell list by any name) and pinned against synthetic lines; the line itself is pinned in-process and as a process, this file run with a zsh stub that exits 1 first on PATH', () => {
   const src = fs.readFileSync(fileURLToPath(import.meta.url), 'utf8').split('\n');
-  assert.deepEqual(zshLegsOutsideProbe(src), [], 'a zsh leg outside the probe');
+  assert.deepEqual(legsOutsideProbe(src), [], 'a real-shell leg outside the probe');
+  assert.equal(typeof HAS_SHELL.bash, 'boolean');
   assert.equal(typeof HAS_SHELL.zsh, 'boolean');
-  assert.deepEqual(shellsFor(['bash']), ['bash'], 'bash is always here');
-  // the scan against synthetic lines: the seventh pass's escapes (a loop variable not named shell or sh, a w.run with the literal shell) are caught, a guarded line and a comment are not
-  // (the literal shell is spelled Q here and filled in at run time, so the scan of this file does not read these lines as legs)
+  assert.equal(typeof HAS_SHELL.dash, 'boolean');
+  assert.ok(SHELL_PROBE.bash.ok ? /^\d+\.\d+/.test(SHELL_PROBE.bash.version) : /is not on this runner|below the 4\.3/.test(SHELL_PROBE.bash.why), 'the probe read bash\'s version, or says why bash is declined');
+  // the scan against synthetic lines: round 4's escapes (a list by another name, .forEach and .map, a ternary-picked shell, a bare
+  // identifier list) are caught beside the seventh pass's, a guarded line, a comment and a comparison are not (the literal shell is
+  // spelled Q here and filled in at run time, so the scan of this file does not read these lines as legs)
+  // (every shell is spelled apart here, QB, QZ and QD, and filled in at run time, so the scan of this file does not read these lines as legs)
   const synthetic = [
-    "for (const zsh of [Q]) go(zsh);",
-    "for (const s of ['bash', Q, 'dash']) go(s);",
+    "const AZ2 = [QB, QZ];",
+    "const LIST = [QB, QD];",
+    "for (const s of AZ2) go(s);",
+    "for (const zsh of [QZ]) go(zsh);",
+    "for (const s of [QB, QZ, QD]) go(s);",
     "for (const shell of LIST) go(shell);",
-    "spawnSync(Q, ['-c', 'true']);",
-    "w.run(cmd, NA, Q);",
-    "overwrites(Q, 'a; b', 'why');",
-    "for (const shell of shellsFor([Q], 'x')) go(shell);",
-    "// spawnSync(Q, ['-c', 'true']) in a comment",
-    "const ok = HAS_SHELL.zsh ? run(Q, x) : null;",
-  ].map((l) => l.replaceAll('Q', `'${['z', 'sh'].join('')}'`).replaceAll('LIST', 'A'));
-  assert.deepEqual(zshLegsOutsideProbe(synthetic).map((l) => Number(l.split(':')[0])), [1, 2, 3, 4, 5, 6], 'six unguarded legs flagged, the guarded line and the comment not');
-  // the line itself, in-process: a missing shell is reported once per leg through the reporter and dropped from the leg's list
+    "spawnSync(QZ, ['-c', 'true']);",
+    "w.run(cmd, NA, QZ);",
+    "overwrites(QZ, 'a; b', 'why');",
+    "AZ2.forEach((s) => go(s));",
+    "[QB, QZ].map((s) => run(s, x));",
+    "run(flag ? QZ : QB, x);",
+    "for (const shell of shellsFor([QZ], 'x')) go(shell);",
+    "// spawnSync(QZ, ['-c', 'true']) in a comment",
+    "const ok = HAS_SHELL.zsh ? run(QZ, x) : null;",
+    "const sh = (shell, cmd) => spawnSync(shell, shell === QZ ? ['-f', '-c', cmd] : ['-c', cmd]);",
+  ].map((l) => l.replaceAll('QB', `'${['ba', 'sh'].join('')}'`).replaceAll('QZ', `'${['z', 'sh'].join('')}'`).replaceAll('QD', `'${['da', 'sh'].join('')}'`));
+  assert.deepEqual(legsOutsideProbe(synthetic).map((l) => Number(l.split(':')[0])), [3, 4, 5, 6, 7, 8, 9, 10, 11, 12], 'ten unguarded legs flagged: the two declarations, the guarded line, the comment and the comparison not');
+  // the line itself, in-process: a missing shell is reported once per leg through the reporter and dropped from the leg's list; a
+  // present but too-old shell (the probe's record) is reported with the version found, the same loud line, never a value mismatch
   const lines = [];
   assert.deepEqual(shellsFor(['bash', 'zsh', 'dash'], 'a synthetic leg', { bash: true, zsh: false, dash: true }, (l) => lines.push(l)), ['bash', 'dash']);
   assert.equal(lines.length, 1, 'one line for the one missing shell');
   assert.match(lines[0], /^NOT RUN: real zsh is not on this runner, so its evidence leg did not run: a synthetic leg \(/, 'the loud line names the shell and the leg');
   assert.deepEqual(shellsFor(['zsh'], 'x', { zsh: true }, () => assert.fail('a present shell is not reported')), ['zsh']);
+  const old = [];
+  assert.deepEqual(shellsFor(['bash', 'dash'], 'a nameref leg', { bash: { ok: false, why: 'is 3.2.57(1)-release on this runner, below the 4.3 its legs need', version: '3.2.57(1)-release' }, dash: { ok: true, why: null } }, (l) => old.push(l)), ['dash']);
+  assert.equal(old.length, 1);
+  assert.match(old[0], /^NOT RUN: real bash is 3\.2\.57\(1\)-release on this runner, below the 4\.3 its legs need, so its evidence leg did not run: a nameref leg \(/, 'a too-old shell declines with the loud line naming the version');
+  assert.deepEqual([probeShell('bash').ok, typeof probeShell('bash').version], [SHELL_PROBE.bash.ok, 'string'], 'the probe reads bash\'s version');
+  // the live-value check: a spawn of a shell the probe declined throws by name, whatever the call shape; a shell it passed runs
+  const calls = [];
+  const guarded = guardedSpawn({ bash: true, zsh: false, dash: { ok: false, why: 'is 0.5.12 on this runner, below the 9.9 its legs need' } }, (...a) => { calls.push(a); return { status: 0 }; });
+  assert.throws(() => guarded(['z', 'sh'].join(''), ['-c', 'true']), /a real-shell leg ran zsh outside the probe: real zsh is not on this runner; ask shellsFor first/);
+  assert.throws(() => guarded('dash', ['-c', 'true']), /real dash is 0\.5\.12 on this runner, below the 9\.9 its legs need/);
+  assert.equal(guarded('bash', ['-c', 'true']).status, 0);
+  assert.equal(guarded(process.execPath, ['-e', '1']).status, 0, 'a command that is no shell passes through');
+  assert.deepEqual(calls.map((a) => a[0]), ['bash', process.execPath]);
   // as a process: this file, run on `the addendum, item 2` alone with a zsh stub first on PATH, prints the line for each of that test's four legs and passes
   const stub = fs.mkdtempSync(path.join(os.tmpdir(), 'romp-bash-guard-zshstub-'));
   const stubShell = ['z', 'sh'].join('');   // the stub's file name, spelled apart so this line is no leg to the scan above
@@ -4322,4 +4446,336 @@ test("the seventh pass's mutation lens: the unpinned claims of the readability r
     assert.deepEqual(extractWriteTargets('x=~+/scratch/keep.md; cp base/report.md $x', w.NA).targets.map((t) => t.path), [path.join(w.NA, 'scratch', 'keep.md')]);
     assert.deepEqual(extractWriteTargets('eval true; x=~+/scratch/keep.md; cp base/report.md $x', w.NA).targets, []);
   } finally { process.env.HOME = savedHome; w.rm(); }
+});
+
+// ── round 5 of the review (2026-09-20): the frame on parsed structure, the freeze unwrapped, the catch-all refusing, the census derived ──
+//
+// Round 4 (romp-manager's ruling over the seventh pass's head) found seven highs, six of them one defect: the frame decision
+// was keyed on the segment's FIRST word, so a leading `!`, `time`, `{`, a `then` or `do` before a nested head, and `select`
+// (in COMPOUND_HEADS, in neither the push nor CLOSERS) hid the compound head, no frame opened, and a body that may not run
+// was walked as this shell's own plain sequence: the name assigned in it stayed readable and was the write target, and a
+// `cd` in it was followed, so the write resolved against a directory the shell never entered (round 3's unknown-directory
+// refusal walked around by being confidently wrong instead of unknown). The second root cause pulled the other way: the
+// readonly skip was computed from the PEELED command, so a `readonly` behind a wrapper that runs an external command froze
+// a name no shell froze and the guard kept a stale value while the later write went through. Every row below runs through
+// the hook as a process from its cwd and then unguarded in bash, zsh and dash over a fresh world, the tracked subset
+// fingerprinted, the test asserting EXACTLY which shells write; the rows were red at round 4's head (a36e34832, run in a
+// scratch copy of this file against that hook: the allowed status where a refusal is asserted, or the reverse), by
+// construction, since the head had no frame to open and froze the wrapped name.
+
+const BODY = ['literal', 'an if, loop, case or function body, or a subshell'];
+const PIPED_GROUP = ['literal', 'a `{ }` group that is piped, which the shells run in a subshell'];
+const UNKNOWN_BODY_CD = ['dir', 'sits in an if, loop or case body that may not run'];
+
+test("round 5, the frame on parsed structure: a compound head behind `!` (a run of them), `time` and its options, `{`, a `then` or `do` (a nested body), a select loop, a function definition behind `!` or inside a group, and each closer opens its frame, so the name a body that may not run assigns is unreadable (the name face) and a cd there leaves the directory unknown at the closer (the cd face); the twins (a plain group behind `!` or `time`, a piped group behind `!` whose cd is undone) keep the shell's own reading; each refused row writes the tracked subset in the shells that accept the spelling and each allowed row leaves it", () => {
+  const w = sixthPassWorld();
+  const savedHome = process.env.HOME;
+  process.env.HOME = w.HOME;
+  try {
+    const A = ['bash', 'zsh', 'dash'];
+    const B = ['bash'];
+    const BZ = ['bash', 'zsh'];
+    // [id, command, the shells that write the tracked subset when run unguarded (the others reject the spelling and run nothing), the verdict]
+    const rows = [
+      // the name face: x holds the tracked path; the body that may not run reassigns it; the copy lands where the shell's x says
+      ['N1', 'x=docs/report.md; ! if false; then x=scratch/keep.md; fi; cp base/report.md $x', A, BODY],
+      ['N2', 'x=docs/report.md; ! ! if false; then x=scratch/keep.md; fi; cp base/report.md $x', B, BODY],            // zsh and dash: a parse error on the second `!`
+      ['N3', 'x=docs/report.md; time if false; then x=scratch/keep.md; fi; cp base/report.md $x', BZ, BODY],          // dash: time is an external command, `then` a syntax error
+      ['N4', 'x=docs/report.md; time -p if false; then x=scratch/keep.md; fi; cp base/report.md $x', B, BODY],
+      ['N5', 'x=docs/report.md; time -- if false; then x=scratch/keep.md; fi; cp base/report.md $x', B, BODY],
+      ['N6', 'x=docs/report.md; time -p -- if false; then x=scratch/keep.md; fi; cp base/report.md $x', B, BODY],
+      ['N7', 'x=docs/report.md; { if false; then x=scratch/keep.md; fi; }; cp base/report.md $x', A, BODY],
+      ['N8', 'x=docs/report.md; if false; then if true; then :; fi; x=scratch/keep.md; fi; cp base/report.md $x', A, BODY],   // the inner fi closed the OUTER frame at round 4's head
+      ['N9', 'x=docs/report.md; while false; do while false; do :; done; x=scratch/keep.md; done; cp base/report.md $x', A, BODY],
+      ['N10', 'x=docs/report.md; select y in a; do x=scratch/keep.md; done </dev/null; cp base/report.md $x', BZ, BODY],   // stdin at EOF: the body never runs; dash has no select
+      ['N11', 'x=docs/report.md; ! select y in a; do x=scratch/keep.md; done </dev/null; cp base/report.md $x', BZ, BODY],
+      ['N12', 'x=docs/report.md; ! f() { x=scratch/keep.md; }; cp base/report.md $x', A, BODY],                      // a definition, not a run: read as a subshell then a plain group before
+      ['N13', 'x=docs/report.md; { f() { x=scratch/keep.md; }; }; cp base/report.md $x', A, BODY],
+      ['N14', 'x=docs/report.md; { function f { x=scratch/keep.md; }; }; cp base/report.md $x', BZ, BODY],           // dash has no `function`
+      ['N15', 'y=docs/report.md; { y=scratch/keep.md; f() { :; }; } | cat; cp base/report.md $y', A, PIPED_GROUP],   // the body's `}` closed the piped group one brace early
+      ['N16', 'x=docs/report.md; ! { ! { x=scratch/keep.md; }; } | cat; cp base/report.md $x', A, PIPED_GROUP],
+      ['N17', 'x=docs/report.md; time { x=scratch/keep.md; } | cat; cp base/report.md $x', BZ, ['literal', /a `\{ \}` group that is piped|an argument of the wrapper `time`/]],   // commandOf reads `time` as a wrapper and taints x as its argument first; the piped group's taint would follow: a refusal either way
+      ['N18', 'x=docs/report.md; ! case a in b) x=scratch/keep.md;; esac; cp base/report.md $x', A, BODY],
+      ['N19', 'x=docs/report.md; ! until true; do x=scratch/keep.md; done; cp base/report.md $x', A, BODY],
+      ['N20', 'x=docs/report.md; ! for y in; do x=scratch/keep.md; done; cp base/report.md $x', A, BODY],
+      ['N21', 'x=docs/report.md; ! while false; do x=scratch/keep.md; done; cp base/report.md $x', A, BODY],
+      // the cd face: the cd in the body never runs, the copy lands in the tracked folder from the cwd the shell never left
+      ['D1', '! if false; then cd scratch; fi; cp base/report.md notes/n1.md', A, UNKNOWN_BODY_CD],
+      ['D2', 'time if false; then cd scratch; fi; cp base/report.md notes/n1.md', BZ, UNKNOWN_BODY_CD],
+      ['D3', '{ if false; then cd scratch; fi; }; cp base/report.md notes/n1.md', A, UNKNOWN_BODY_CD],
+      ['D4', 'select y in a; do cd scratch; done </dev/null; cp base/report.md notes/n1.md', BZ, UNKNOWN_BODY_CD],
+      ['D5', '! while false; do cd scratch; done; cp base/report.md notes/n1.md', A, UNKNOWN_BODY_CD],
+      ['D6', '! until true; do cd scratch; done; cp base/report.md notes/n1.md', A, UNKNOWN_BODY_CD],
+      ['D7', '! case a in b) cd scratch;; esac; cp base/report.md notes/n1.md', A, UNKNOWN_BODY_CD],
+      ['D8', '! for y in; do cd scratch; done; cp base/report.md notes/n1.md', A, UNKNOWN_BODY_CD],
+      ['D9', 'if false; then if true; then :; fi; cd scratch; fi; cp base/report.md notes/n1.md', A, UNKNOWN_BODY_CD],
+      ['D10', '! { cd scratch; } | cat; cp base/report.md notes/n1.md', A, 'name'],   // the piped group's cd is undone: judged from the cwd, by name
+      // the twins: a plain group behind `!` or `time` runs in this shell, so its assignment is the shell's own; a piped group's cd is undone, so the write beside it is untracked
+      ['T1', 'x=docs/report.md; ! { x=scratch/keep.md; }; cp base/report.md $x', [], 'allow'],
+      ['T2', 'x=docs/report.md; time { x=scratch/keep.md; }; cp base/report.md $x', ['zsh'], ['literal', 'an argument of the wrapper `time`']],   // not a twin, a true refusal: bash runs the timed group in this shell (x is keep.md, the copy untracked), zsh runs it in a subshell and keeps the tracked path (measured 2026-09-20: zsh wrote the tracked file), dash rejects the `}`; commandOf's wrapper-argument taint (C5e) holds the refusal
+      ['T3', '! { cd docs; } | cat; cp base/report.md scratch/keep.md', [], 'allow'],                 // the mirrored false refusal round 4's refuters found at that head
+    ];
+    let n = 0;
+    for (const [id, raw, writers, expect] of rows) {
+      const cmd = w.fill(raw);
+      const h = w.hook(cmd, w.NA);
+      n++;
+      if (expect === 'allow') assert.equal(h.status, 0, `${id}: allowed: ${cmd}: ${h.reason}`);
+      else {
+        assert.equal(h.status, 2, `${id}: refused: ${cmd}: ${h.reason}`);
+        assert.ok(!/\u2014/.test(h.reason) && !ROMP_NOUNS.test(h.reason.split(w.W).join('<w>')), `${id}: no em dash, no romp noun`);
+        if (expect === 'name') assert.match(h.reason, BY_NAME_RE, `${id}: by name: ${h.reason.split('\n')[0]}`);
+        else if (expect[0] === 'dir') assert.ok(/the directory it is relative to is not known/.test(h.reason) && h.reason.includes(expect[1]), `${id}: the directory is unknown at the closer, the reason naming the body: ${h.reason.split('\n')[0]}`);
+        else assert.ok(NOT_LITERAL.test(h.reason) && (expect[1] instanceof RegExp ? expect[1].test(h.reason) : h.reason.includes(expect[1])), `${id}: refused as not literal, the reason naming the construct (${expect[1]}): ${h.reason.split('\n')[0]}`);
+      }
+      for (const shell of shellsFor(A, id)) {
+        const r = w.run(cmd, w.NA, shell);
+        assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
+      }
+    }
+    assert.equal(n, 34);
+    // the grammar: the head is read after the peel and from the one table; a select body closes on `done`
+    const ex = extractWriteTargets('x=docs/report.md; ! if false; then x=scratch/keep.md; fi; cp base/report.md $x', w.NA);
+    assert.deepEqual([ex.targets.length, ex.unresolved.map((u) => u.raw)], [0, ['$x']], 'the body behind `!` leaves x unreadable');
+    assert.deepEqual(extractWriteTargets('select y in a; do cd scratch; done; cp base/report.md notes/n1.md', w.NA).unresolved.map((u) => u.why && u.why.kind), ['unknownDir'], 'the select frame closes on done and its cd makes the directory unknown');
+    assert.deepEqual(extractWriteTargets('x=docs/report.md; ! { x=scratch/keep.md; }; cp base/report.md $x', w.NA).targets.map((t) => t.path), [path.join(w.NA, 'scratch', 'keep.md')], 'a plain group behind `!` is this shell\'s own');
+  } finally { process.env.HOME = savedHome; w.rm(); }
+});
+
+test("round 5, peel for the frame, not for the freeze: a `readonly`, `declare -r` or `typeset -r` behind a wrapper freezes nothing in the shells that run the wrapper as an external command, so the name is tainted rather than frozen and the later write is judged (it was skipped, the guard keeping the stale value while bash, zsh and dash performed the write); a declaration of any kind behind a wrapper taints its names, since the shells differ on whether it ran; the readonly value kept by an UNWRAPPED freeze still resolves; each wrapper spelling is run in each shell and exactly the shells where no freeze happened write the tracked file", () => {
+  const w = sixthPassWorld();
+  const savedHome = process.env.HOME;
+  process.env.HOME = w.HOME;
+  try {
+    const A = ['bash', 'zsh', 'dash'];
+    const wrapped = (wr, verb) => ['literal', `a \`${verb}\` behind the wrapper \`${wr}\`, which runs the shell's own ${verb} in some shells and an external command that assigns nothing in others`];
+    // [id, command, the shells that write the tracked subset (the freeze did not happen there), the verdict]
+    const rows = [
+      // a readonly behind an external wrapper: no shell freezes; behind a shell word, the shells that have the word freeze and stop
+      ['W1', 'x=scratch/keep.md; env readonly x=scratch/keep.md; x=docs/report.md; cp base/report.md $x', A, wrapped('env', 'readonly')],
+      ['W2', 'x=scratch/keep.md; nice readonly x=scratch/keep.md; x=docs/report.md; cp base/report.md $x', A, wrapped('nice', 'readonly')],
+      ['W3', 'x=scratch/keep.md; nohup readonly x=scratch/keep.md; x=docs/report.md; cp base/report.md $x', A, wrapped('nohup', 'readonly')],
+      ['W4', 'x=scratch/keep.md; timeout 5 readonly x=scratch/keep.md; x=docs/report.md; cp base/report.md $x', A, wrapped('timeout', 'readonly')],
+      ['W5', 'x=scratch/keep.md; setsid readonly x=scratch/keep.md; x=docs/report.md; cp base/report.md $x', A, wrapped('setsid', 'readonly')],
+      ['W6', 'x=scratch/keep.md; stdbuf -o0 readonly x=scratch/keep.md; x=docs/report.md; cp base/report.md $x', A, wrapped('stdbuf', 'readonly')],
+      ['W7', 'x=scratch/keep.md; command readonly x=scratch/keep.md; x=docs/report.md; cp base/report.md $x', ['zsh'], wrapped('command', 'readonly')],      // bash and dash run the builtin and freeze; zsh runs an external readonly
+      ['W8', 'x=scratch/keep.md; builtin readonly x=scratch/keep.md; x=docs/report.md; cp base/report.md $x', ['dash'], wrapped('builtin', 'readonly')],    // dash has no builtin
+      ['W9', 'x=scratch/keep.md; noglob readonly x=scratch/keep.md; x=docs/report.md; cp base/report.md $x', ['bash', 'dash'], wrapped('noglob', 'readonly')],   // zsh alone has the modifier
+      ['W10', 'x=scratch/keep.md; env declare -r x=scratch/keep.md; x=docs/report.md; cp base/report.md $x', A, wrapped('env', 'declare')],
+      ['W11', 'x=scratch/keep.md; command typeset -r x=scratch/keep.md; x=docs/report.md; cp base/report.md $x', ['zsh', 'dash'], wrapped('command', 'typeset')],   // dash has no typeset either
+      ['W12', 'x=scratch/keep.md; builtin declare -r x=scratch/keep.md; x=docs/report.md; cp base/report.md $x', ['dash'], wrapped('builtin', 'declare')],
+      ['W13', 'x=scratch/keep.md; noglob typeset -r x=scratch/keep.md; x=docs/report.md; cp base/report.md $x', ['bash', 'dash'], wrapped('noglob', 'typeset')],
+      // any declaration behind a wrapper: the guard adopted the value at round 4's head while the shells kept the old one, or differed
+      ['W14', 'x=docs/report.md; env export x=scratch/keep.md; cp base/report.md $x', A, wrapped('env', 'export')],
+      ['W15', 'x=docs/report.md; command declare x=scratch/keep.md; cp base/report.md $x', ['zsh', 'dash'], wrapped('command', 'declare')],   // bash's command runs the builtin and assigns
+      ['W16', 'x=docs/report.md; builtin export x=scratch/keep.md; cp base/report.md $x', ['dash'], wrapped('builtin', 'export')],
+      ['W17', 'x=docs/report.md; noglob typeset x=scratch/keep.md; cp base/report.md $x', ['bash', 'dash'], wrapped('noglob', 'typeset')],
+      // the order: a name frozen by an UNWRAPPED readonly keeps its value through a wrapped declaration (every shell keeps it too)
+      ['W18', 'readonly x=docs/report.md; command declare x=scratch/keep.md; cp base/report.md $x', A, 'name'],
+      ['W19', 'x=scratch/keep.md; readonly x; x=docs/report.md; cp base/report.md $x', [], 'allow'],   // the unwrapped freeze holds: every shell stops on the reassignment
+    ];
+    let n = 0;
+    for (const [id, raw, writers, expect] of rows) {
+      const cmd = w.fill(raw);
+      const h = w.hook(cmd, w.NA);
+      n++;
+      if (expect === 'allow') assert.equal(h.status, 0, `${id}: allowed: ${cmd}: ${h.reason}`);
+      else {
+        assert.equal(h.status, 2, `${id}: refused: ${cmd}: ${h.reason}`);
+        assert.ok(!/\u2014/.test(h.reason) && !ROMP_NOUNS.test(h.reason.split(w.W).join('<w>')), `${id}: no em dash, no romp noun`);
+        if (expect === 'name') assert.match(h.reason, BY_NAME_RE, `${id}: by the readonly value: ${h.reason.split('\n')[0]}`);
+        else assert.ok(NOT_LITERAL.test(h.reason) && h.reason.includes(expect[1]), `${id}: refused as not literal, the reason naming the wrapper (${expect[1]}): ${h.reason.split('\n')[0]}`);
+      }
+      for (const shell of shellsFor(A, id)) {
+        const r = w.run(cmd, w.NA, shell);
+        assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'performs the later write onto the tracked file (no freeze there, so the guard must not skip it)' : 'froze the name or ran nothing, and left the tracked subset'}: ${cmd}: ${r.stderr}`);
+      }
+    }
+    assert.equal(n, 19);
+    // the grammar: a wrapped readonly leaves the name unreadable (no target, the word opaque), an unwrapped one resolves the frozen value
+    assert.deepEqual(extractWriteTargets('x=scratch/keep.md; env readonly x=scratch/keep.md; x=docs/report.md; cp base/report.md $x', w.NA).targets, [], 'behind env the name is not frozen and not read');
+    assert.deepEqual(extractWriteTargets('readonly x=docs/report.md; x=scratch/keep.md; cp base/report.md $x', w.NA).targets.map((t) => t.path), [path.join(w.NA, 'docs', 'report.md')], 'unwrapped, the readonly value resolves');
+  } finally { process.env.HOME = savedHome; w.rm(); }
+});
+
+test('round 5, the catch-all refuses: a command word that is an Object.prototype key inside a body no longer throws (an own-property lookup on the compound tables), so the write after it is refused by name where the throw was swallowed into an allow; and an exception planted inside the walk refuses while a tracked project is in play, naming the exception, and passes with no project in play', () => {
+  const w = sixthPassWorld();
+  const savedHome = process.env.HOME;
+  process.env.HOME = w.HOME;
+  try {
+    for (const word of ['toString', 'constructor', '__proto__', 'valueOf', 'hasOwnProperty']) {
+      for (const cmd of [`if true; then ${word}; fi; cp base/report.md docs/report.md`, `{ ${word}; }; cp base/report.md docs/report.md`, `case a in a) ${word};; esac; cp base/report.md docs/report.md`]) {
+        const h = w.hook(cmd, w.NA);
+        assert.equal(h.status, 2, `${word} in a body throws nothing and the copy is refused: ${cmd}: ${h.reason}`);
+        assert.match(h.reason, BY_NAME_RE, `by name: ${h.reason.split('\n')[0]}`);
+        assert.ok(!h.reason.includes('an error of my own'), 'no internal error was hit');
+      }
+      assert.equal(w.hook(`if true; then ${word}; fi; cp base/report.md scratch/keep.md`, w.NA).status, 0, `${word} in a body, the untracked twin: allowed`);
+    }
+    // the planted throw: the walk's command reader calls path.basename, replaced here by a throw (the default export of node:path is
+    // the object the hook holds, so the plant reaches it); the refusal names the exception and the project, and the throw is not swallowed
+    const real = path.basename;
+    try {
+      path.basename = () => { throw new Error('planted by the test'); };
+      const inPlay = evaluate(payload('cp base/report.md scratch/keep.md', w.NA));
+      assert.ok(inPlay && inPlay.includes('an error of my own (Error: planted by the test)') && inPlay.includes(w.NA) && inPlay.includes('track-edit'), `the planted throw refuses, naming it and the project: ${inPlay}`);
+      assert.ok(!/\u2014/.test(inPlay) && !ROMP_NOUNS.test(inPlay.split(w.W).join('<w>')), 'no em dash, no romp noun');
+      assert.equal(evaluate(payload('cp x.md y.md', w.OUT)), null, 'from a cwd in no project the same throw passes: the guard\'s subject is not there');
+    } finally { path.basename = real; }
+    assert.equal(evaluate(payload('cp base/report.md scratch/keep.md', w.NA)), null, 'with the plant removed the copy is judged as ever');
+  } finally { process.env.HOME = savedHome; w.rm(); }
+});
+
+test("round 5, regression-1: a node or python write whose path argument opens with a string literal and goes on (a `+`, a method call, python's adjacent literals) is a template the interpreter fills in, refused while a project is in play with the reason naming the appended part, where round 4's head matched neither list and allowed it; a concatenation that opens with a name stays out of model; from a cwd in no project the template is dropped like every unreadable word; the interpreters write the tracked file when the row runs", () => {
+  const w = sixthPassWorld();
+  const savedHome = process.env.HOME;
+  process.env.HOME = w.HOME;
+  try {
+    const refused = [
+      `node -e "require('fs').writeFileSync('docs/' + 'report.md', 'x')"`,
+      `node -e "require('fs').writeFileSync('docs/report.md'.trim(), 'x')"`,
+      `node -e "require('fs').copyFileSync('base/report.md', 'docs/' + 'report.md')"`,
+      `node -e "require('fs').copyFileSync('base/' + 'report.md', 'docs/' + 'report.md')"`,
+      `node -e "require('fs').openSync('docs/' + 'report.md', 'w')"`,
+      `python3 -c "open('docs/' + 'report.md', 'w').write('x')"`,
+      `python3 -c "open('docs/report' '.md', 'w').write('x')"`,
+      `python3 -c "import shutil; shutil.copy('base/report.md', 'docs/' + 'report.md')"`,
+    ];
+    for (const cmd of refused) {
+      const h = w.hook(cmd, w.NA);
+      assert.equal(h.status, 2, `refused: ${cmd}: ${h.reason}`);
+      assert.ok(/a path built from a template or format string/.test(h.reason) && /a string literal with more appended to it, a `\+` or a method call/.test(h.reason), `the reason names the appended part: ${h.reason.split('\n')[0]}`);
+      assert.equal(w.hook(cmd, w.OUT).status, 0, `from a cwd in no project the template is dropped: ${cmd}`);
+    }
+    for (const cmd of [`node -e "d='docs/'; require('fs').writeFileSync(d + 'report.md', 'x')"`, `python3 -c "d='docs/'; open(d + 'report.md', 'w').write('x')"`]) {
+      assert.equal(w.hook(cmd, w.NA).status, 0, `a concatenation that opens with a name is out of model, the contract's boundary: ${cmd}`);
+    }
+    // the grammar: the template carries the appended part; a plain literal stays literal
+    assert.deepEqual(scriptTemplateTargets('node', "fs.writeFileSync('docs/' + name, x)"), ["'docs/' + name"]);
+    assert.deepEqual(scriptTemplateTargets('python', "open('docs/' + name, 'w')"), ["'docs/' + name"]);
+    assert.deepEqual(scriptWriteTargets('node', "fs.writeFileSync('docs/report.md', x)"), ['docs/report.md']);
+    assert.deepEqual(scriptTemplateTargets('node', "fs.writeFileSync('docs/report.md', x)"), []);
+    // the interpreters run the literal-first rows through real bash and write the tracked file
+    for (const shell of shellsFor(['bash'], 'the literal-first concatenations')) for (const cmd of [refused[0], refused[5]]) assert.equal(w.run(cmd, w.NA, shell).changed, true, `${shell} runs the interpreter and the tracked file is written: ${cmd}`);
+  } finally { process.env.HOME = savedHome; w.rm(); }
+});
+
+test("round 5, regression-4: after `>&` a word is a descriptor duplication only when it is exactly a digit run or `-` and a delimiter follows, so a glued write onto a file whose name opens with a digit or a dash (`>&2-3`, `>&2-`, `>&-2`, `>&1-`) is a write, refused in a tracked folder where it was invisible; `>>&` is never a duplication (`>>&2` appends to a file named 2 in zsh); the dups keep their reading; the shells write the files the rule names", () => {
+  const w = sixthPassWorld();
+  const savedHome = process.env.HOME;
+  process.env.HOME = w.HOME;
+  try {
+    const A = ['bash', 'zsh', 'dash'];
+    // [id, command from the tracked folder, the shells that create the file, the file]
+    const rows = [
+      ['G1', 'cd notes; printf poison >&2-3', ['bash', 'zsh'], '2-3'],
+      ['G2', 'cd notes; printf poison >&2-', ['zsh'], '2-'],         // bash: a move of fd 2 (no file); dash: a syntax error
+      ['G3', 'cd notes; printf poison >&-2', ['zsh'], '-2'],
+      ['G4', 'cd notes; printf poison >&1-', ['zsh'], '1-'],
+      ['G5', 'cd notes; printf poison >>&2', ['zsh'], '2'],          // zsh alone has >>&, and it has no dup form: a file named 2
+      ['G6', 'cd notes; printf poison >>&2-3', ['zsh'], '2-3'],
+      ['G7', 'cd notes; printf poison >&2x', ['bash', 'zsh'], '2x'],   // dash: "Bad fd number", nothing written
+    ];
+    for (const [id, cmd, writers, file] of rows) {
+      const h = w.hook(cmd, w.NA);
+      assert.equal(h.status, 2, `${id}: refused: ${cmd}: ${h.reason}`);
+      assert.match(h.reason, BY_NAME_RE, `${id}: by name, the file in the tracked folder: ${h.reason.split('\n')[0]}`);
+      assert.ok(h.reason.includes(path.join(w.NA, 'notes', file)), `${id}: the refusal names notes/${file}`);
+      for (const shell of shellsFor(A, id)) {
+        const r = w.run(cmd, w.NA, shell);
+        assert.equal(r.changed, writers.includes(shell), `${id}: ${shell} ${writers.includes(shell) ? 'creates' : 'does not create'} notes/${file}: ${r.stderr}`);
+        if (writers.includes(shell)) assert.equal(fs.existsSync(path.join(w.NA, 'notes', file)), true, `${id}: ${shell} wrote the file`);
+      }
+    }
+    for (const cmd of ['cd notes; printf poison >&2', 'cd notes; printf poison 2>&1', 'cd notes; printf poison >&-', 'cd notes; printf poison >&23', 'cd notes; printf poison >&2;']) {
+      assert.equal(w.hook(cmd, w.NA).status, 0, `a duplication is no write: ${cmd}`);
+      for (const shell of shellsFor(A, cmd)) assert.equal(w.run(cmd, w.NA, shell).changed, false, `${shell} creates nothing: ${cmd}`);
+    }
+    // the grammar
+    assert.deepEqual(lex('printf x >&2-3').segments[0].redirects.map((r) => [r.op, r.target.text]), [['>&', '2-3']]);
+    assert.deepEqual(lex('printf x >>&2').segments[0].redirects.map((r) => [r.op, r.target.text]), [['>>&', '2']]);
+    assert.deepEqual(lex('printf x >&2').segments[0].redirects, []);
+    assert.deepEqual(lex('printf x >&-').segments[0].redirects, []);
+  } finally { process.env.HOME = savedHome; w.rm(); }
+});
+
+test('round 5, the census of the lists that remain is derived from the hook\'s source: every top-level list is enumerated, named in the census with a side and a consumer line that exists, no named list is gone; a list planted in the source reds it, a list removed reds it, a consumer line moved reds it; the enumeration reads the shapes it claims and not the blind spots it states; the two write-side tables round 4 named are there with their side', () => {
+  const src = fs.readFileSync(HOOK, 'utf8');
+  const c = census(src);
+  assert.ok(c.lists.length >= 30, `the enumeration finds the lists: ${c.lists.length}`);
+  assert.deepEqual([c.unnamed, c.stale, c.unclassified, c.missingConsumer], [[], [], [], []], `the census holds: ${JSON.stringify({ unnamed: c.unnamed, stale: c.stale, unclassified: c.unclassified, missingConsumer: c.missingConsumer })}`);
+  for (const name of ['BODY_CLOSER', 'CLOSERS', 'PREFIXES', 'FRAME_PEEL', 'WRITER_CASES']) assert.equal(CENSUS[name].side, 'WRITE', `${name}: a gap on the write side`);
+  for (const name of ['WRAPPER_OPT', 'COPY_OPT', 'INERT_DECLARATION_FLAGS', 'VAR_ASSIGNERS']) assert.equal(CENSUS[name].side, 'REFUSE', `${name}: a gap on the refuse side`);
+  assert.ok(c.lists.find((l) => l.name === 'WRITER_CASES').items.includes('cp') && c.lists.find((l) => l.name === 'ROOT_MARKERS').items.includes('.trackchanges'), 'the pseudo-lists carry their items');
+  // planted: a list the census does not name reds
+  const planted = census(src + "\nconst PLANTED_WRAPPERS = new Set(['unshare']);\n");
+  assert.deepEqual(planted.unnamed, [`PLANTED_WRAPPERS (line ${src.split('\n').length + 1})`], 'a planted list is unnamed');
+  // removed: a named list that is gone reds
+  const removed = census(src.replace("const TIME_OPTIONS = new Set(['-p', '--']);", ''));
+  assert.deepEqual(removed.stale, ['TIME_OPTIONS']);
+  // moved: a consumer rewritten without the table reds
+  const moved = census(src.replace(CENSUS.BODY_CLOSER.consumer, "else if (head === 'if') frames.push({ kind: head, moved: false });"));
+  assert.deepEqual(moved.missingConsumer, ['BODY_CLOSER']);
+  // the shapes read, and the blind spots stated: a comment, an indented declaration and a Map are not lists here
+  const shapes = enumerateLists("const A = new Set(['a']);\nexport const B = ['b'];\nconst C = { c: 1 };\nconst D = Object.fromEntries([]);\nconst E = new RegExp('x|y');\n// const F = new Set(['f']);\n  const G = new Set(['g']);\nconst H = new Map();\nlet I = [];\n");
+  assert.deepEqual(shapes.map((l) => l.name), ['A', 'B', 'C', 'D', 'E', 'I']);
+  assert.equal(Object.keys(CENSUS).length, c.lists.length, 'the census names exactly the lists enumerated');
+});
+
+// The since sweep (round 5, tests-2 and extra6-2). A corpus entry's `since` names the pass at which it NEWLY refuses: at that
+// pass's head the row refuses and at the head before it the row is allowed. Round 4 replayed every row against the branch and
+// found three labels false (the plain `export n` row and the PWD row refused since the first commit, the prefix-HOME row turned
+// at the walk-around lens); no test caught it. This sweep runs every since row through the hook AS IT WAS at the labelled pass's
+// head and at that head's parent, taken from this checkout's history with `git archive`; the label `round 5` is this tree's hook
+// against the previous head. A checkout without the history (CI's shallow checkout) prints a loud NOT RUN line and runs the
+// history-free half alone: every since label in the corpus is one the table knows.
+const SINCE_HEADS = {
+  'third pass': '50e85deec133b2ef5a83fb4f0971d6f65e9253b6',
+  'walk-around lens': '19a69742dd7e740d69a769b0c3eff60c2696c47a',
+  'fifth commit': '9c20cdff7a091b83c2f948073be141caf1e81d49',
+  'B2 as ruled': 'fbfc151f729431d881af125b93f524182455975c',
+  'seventh pass': 'befa93b3f2b37bf3cc830ac9459a8fdb1becda51',
+  'seventh pass, the attacker': 'a36e34832173180184fb595ca1c6d0e8b85b8a55',
+  'round 5': null,   // this tree; its previous head is the attacker's
+};
+test("round 5, the since sweep: every corpus row marked `since` newly refuses at the pass it names (allowed by the hook at the head before that pass, refused at the pass's head, both hooks taken from this checkout's history and run as processes over the corpus world); every label is one the sweep's table knows; a checkout without the history says so loudly", () => {
+  const since = CORPUS.filter((e) => e.since);
+  assert.ok(since.length >= 20, `since rows: ${since.length}`);
+  for (const e of since) assert.ok(Object.hasOwn(SINCE_HEADS, e.since), `a since label the sweep knows: ${e.since}: ${e.command}`);
+  const REPO = path.resolve(path.dirname(HOOK), '..');
+  const git = (...args) => spawnSync('git', ['-C', REPO, ...args], { encoding: 'utf8' });
+  const shas = Object.values(SINCE_HEADS).filter(Boolean);
+  const missing = shas.filter((sha) => git('cat-file', '-e', `${sha}^{commit}`).status !== 0);
+  if (missing.length || git('rev-parse', '--is-inside-work-tree').stdout.trim() !== 'true') {
+    console.error(`NOT RUN: the since sweep needs this branch's history and ${missing.length ? `${missing.length} of its ${shas.length} pass heads are not in this checkout` : 'this is not a git checkout'}, so it did not run (the label check above ran)`);
+    return;
+  }
+  const { home, cwds, fill } = corpusWorld();
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'romp-bash-guard-since-'));
+  const savedHome = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    const hookAt = (sha) => {
+      if (sha == null) return HOOK;
+      const dir = path.join(scratch, sha.slice(0, 12));
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir);
+        const ar = spawnSync('git', ['-C', REPO, 'archive', sha, 'hooks/romp-track-bash-guard.mjs', 'vendor/track-changents'], { maxBuffer: 64 * 1024 * 1024 });   // no shell: the probe rule holds for plumbing too
+        assert.equal(ar.status, 0, `git archive ${sha}: ${String(ar.stderr)}`);
+        const un = spawnSync('tar', ['-x', '-C', dir], { input: ar.stdout });
+        assert.equal(un.status, 0, `tar for ${sha}: ${String(un.stderr)}`);
+      }
+      return path.join(dir, 'hooks', 'romp-track-bash-guard.mjs');
+    };
+    const parentOf = (sha) => (sha == null ? SINCE_HEADS['seventh pass, the attacker'] : git('rev-parse', `${sha}^`).stdout.trim());
+    const verdict = (hook, e) => spawnSync(process.execPath, [hook], { input: payload(fill(e.command), cwds[e.cwd]), encoding: 'utf8', env: { PATH: process.env.PATH, HOME: home, ROMP_SID } }).status;
+    const bad = [];
+    for (const e of since) {
+      const at = verdict(hookAt(SINCE_HEADS[e.since]), e);
+      const before = verdict(hookAt(parentOf(SINCE_HEADS[e.since])), e);
+      if (!(at === 2 && before === 0)) bad.push(`${e.since}: ${e.command} (at the pass: ${at}, before it: ${before})`);
+    }
+    assert.deepEqual(bad, [], `every since row flips at the pass it names (2 at the pass, 0 before)`);
+    console.log(`# the since sweep: ${since.length} rows, ${Object.keys(SINCE_HEADS).length} labels, every row newly refuses at its pass`);
+  } finally { process.env.HOME = savedHome; fs.rmSync(scratch, { recursive: true, force: true }); }
 });

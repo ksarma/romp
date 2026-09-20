@@ -272,8 +272,9 @@ the clone updates it:
   other form. These write forms are not modelled and still reach a tracked file: rsync; awk with a
   redirect inside its program; ed; ex; make; find with -delete or -exec; a git subcommand that
   writes the working tree (checkout, stash, apply, reset, rm, clean, mv); a computed or escaped path
-  inside an interpreter (a name, sys.argv, os.environ or process.env, a concatenation or an escape
-  sequence in the string, in python3 -c or node -e); a script the shell reads from elsewhere (eval,
+  inside an interpreter (a name, sys.argv, os.environ or process.env, a concatenation that does not
+  open with a string literal, or an escape sequence in the string, in python3 -c or node -e); a
+  script the shell reads from elsewhere (eval,
   xargs, a sourced file, trap, a command whose name is an expansion, a script held in a variable); a
   command that runs another command and is outside the guard's wrapper set (unshare, nsenter,
   script, setarch, setpriv, strace, coproc and their kin); a link made by a writer outside the model

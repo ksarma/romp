@@ -72,7 +72,13 @@ project you are working in, and not in a folder of another project that tracks a
 file there), is allowed: `/tmp/build-$$.log` runs. Nothing else is: `$RANDOM`,
 `$SECONDS` and every other name can be unset or shadowed and then hold a path, so
 `log.$RANDOM` inside a tracked project is refused, in every shell, with the reason
-and a way forward. Each refusal says what to do. Spell the path out (a tracked file
+and a way forward. Two deliberate false refusals of this exception, escalated with
+the change and stated in decision 47 of plans/file-review.md: a `$$` name whose
+folder is one where a tracked file could land (`<root>/x-$$/y.md`,
+`<root>/docs/build-$$.log`) is refused from any working directory while its
+literal spelling may pass, the refusal naming the folder; and a `$$` name in a
+folder of more than 2000 entries inside a tracked project is refused without a
+scan of that folder (`LANDING_SCAN_CAP`). Each refusal says what to do. Spell the path out (a tracked file
 then takes its change through `track-edit`, a file outside the project an ordinary
 write), name a temp file with `$$`, give a folder a literal name of your own, or
 write outside the tracked project.
@@ -213,9 +219,10 @@ not modelled and still reach a tracked file: rsync; awk with a redirect inside
 its program; ed; ex; make; find with -delete or -exec; a git subcommand that
 writes the working tree (checkout, stash, apply, reset, rm, clean, mv); a
 computed or escaped path inside an interpreter (a name, sys.argv, os.environ or
-process.env, a concatenation or an escape sequence in the string, in python3 -c
-or node -e); a script the shell reads from elsewhere (eval, xargs, a sourced
-file, trap, a command whose name is an expansion, a script held in a variable);
+process.env, a concatenation that does not open with a string literal, or an
+escape sequence in the string, in python3 -c or node -e); a script the shell
+reads from elsewhere (eval, xargs, a sourced file, trap, a command whose name is
+an expansion, a script held in a variable);
 a command that runs another command and is outside the guard's wrapper set
 (unshare, nsenter, script, setarch, setpriv, strace, coproc and their kin); a
 link made by a writer outside the model (python, tar, rsync) that a later
