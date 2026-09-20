@@ -1,8 +1,9 @@
 """The served WINDOW LAB base (T366; T386 stage 2): a hermetic kernel over a synthetic transcript long enough that older history
 stays on the server and the page's run is a tail, driven by Playwright through the driver head below (DRIVER_HEAD: the pad, sentOf,
 state and frame hooks). The regions labs (test_history_regions_browser.py, test_landing_notice_browser.py)
-build on WindowLab; this module holds no tests of its own since stage 2 retired the paused strip and the detached client (the tail
-run is always resident and live, so no window ever pauses live updates: plans/chat-history-regions.md Part B).
+build on WindowLab; stage 2 retired the paused strip and the detached client (the tail run is always resident and live, so no
+window ever pauses live updates: plans/chat-history-regions.md Part B), so the one test here is the driver head's own: a misspelled
+ROMP_LAB_ENGINE fails the lab instead of skipping it (UnknownEngineFailsLoudly; PR E review round 1b).
 """
 import json
 import os
@@ -51,10 +52,12 @@ const require = createRequire(process.env.EXT_PKG);
 const playwright = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
 // the engine: Chromium unless ROMP_LAB_ENGINE names another Playwright engine (webkit: the phone's engine, which has no scroll
-// anchoring; the compact stream lab runs under both)
+// anchoring; the compact stream lab runs under both). An UNKNOWN name exits 1, a failure: exit 3 is the harness's "no playwright
+// browser on this box", a skip unless ROMP_SERVED_TESTS_REQUIRE=1, and a misspelled engine once turned the whole lab into that
+// silent skip (review round 1b); a launch that fails keeps 3 (the browser is missing, which is what 3 says)
 const engineName = process.env.ROMP_LAB_ENGINE || "chromium";
 const engine = playwright[engineName];
-if (!engine) { console.error("unknown ROMP_LAB_ENGINE: " + engineName); process.exit(3); }
+if (!engine) { console.error("unknown ROMP_LAB_ENGINE: " + engineName); process.exit(1); }
 let browser;
 try { browser = await engine.launch(cfg.launch || {}); }   // a lab may ask for classic scrollbars (the settle lab's drag road): Playwright hides them headless by default
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -248,6 +251,8 @@ class WindowLab(unittest.TestCase):
         shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
 
     def _drive(self, script, name, extra=None):
+        # exit 3 below is the driver's "no browser" (the launch failed): a skip, or a failure under ROMP_SERVED_TESTS_REQUIRE=1. An unknown
+        # engine NAME is not that and exits 1, so it reaches the assertion below with its stderr (review round 1b)
         cfg = os.path.join(self.lab, name + ".json")
         with open(cfg, "w") as f:
             json.dump({"chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token), "sid": SID,
@@ -276,6 +281,31 @@ class WindowLab(unittest.TestCase):
         if isinstance(r, dict):
             r["_klog"] = klog[-1500:]   # the kernel's own words for the run, beside the measure (a passing run's log is otherwise lost with the lab dir)
         return r
+
+
+class UnknownEngineFailsLoudly(unittest.TestCase):
+    """PR E review round 1b (fresh-4): a misspelled ROMP_LAB_ENGINE must FAIL the served lab, never skip it. The driver head exits 3 for a
+    browser that will not launch, which _drive reads as "no playwright browser on this box" (a skip unless ROMP_SERVED_TESTS_REQUIRE=1);
+    an unknown engine name once took the same exit, so `ROMP_LAB_ENGINE=Webkit` made every lab under it a silent skip and nothing checked
+    in ever ran the WebKit leg the body's claims rest on. The head's engine lines run alone here (the head sliced before its launch), so
+    this needs the extension's deps and no browser; the only skip is the deps-absent one, and a misspelled engine never skips."""
+
+    def test_a_misspelled_engine_exits_one_and_names_itself(self):
+        if not os.path.isdir(os.path.join(EXT, "node_modules", "playwright")):
+            WindowLab._skip("extension deps absent (npm ci not run here) — the served guard needs them")
+        head = DRIVER_HEAD[:DRIVER_HEAD.index("let browser;")]
+        lab = tempfile.mkdtemp(prefix="lab-engine-")
+        try:
+            cfg = os.path.join(lab, "cfg.json")
+            Path(cfg).write_text("{}")
+            driver = os.path.join(lab, "engine.mjs")
+            Path(driver).write_text(head)
+            p = subprocess.run(["node", driver], capture_output=True, text=True, timeout=120,
+                               env=dict(os.environ, EXT_PKG=os.path.join(EXT, "package.json"), CFG=cfg, ROMP_LAB_ENGINE="Webkit"))
+        finally:
+            shutil.rmtree(lab, ignore_errors=True)
+        self.assertEqual(p.returncode, 1, "an unknown engine is the lab's failure, never the no-browser skip (3):\n" + p.stdout[-1000:] + p.stderr[-2000:])
+        self.assertIn("unknown ROMP_LAB_ENGINE: Webkit", p.stderr)
 
 
 if __name__ == "__main__":
