@@ -143,7 +143,9 @@ NOTICES_PER_PHASE = 3        # cards per phase, a second apart: several patches 
 # A main before PR 815 (the merge of PR 818): its bundle reassembles remote feed slot patches with no per-connection state
 # and dials no caps, so a remote at this checkout serves it slot patches it drops. The old-hub class mints a private clone
 # checked out detached here under ROMP_LINKDROP_OLD_HUB_BUILD=1; ROMP_CORNER_OLD_HUB_ROOT names a built checkout of it (or
-# of any other pre-815 main) instead.
+# of any other pre-815 main) instead. The sha is an ancestor of the fork's main (`git merge-base --is-ancestor <sha>
+# origin/main` exits 0, 2026-09-20), so the objects the private clone borrows through its alternates file stay reachable
+# in the clone it borrows from and no `git gc` there can prune them from under the checkout.
 OLD_HUB_SHA = "01d4fbe43eed1226a1a3615c74f8d2ece79e5252"
 NOTICE_GAP_S = 1.0
 HUB_DOWN_S = 3.0             # the hub stays down this long before its respawn: past the relay's 2 s onclose retry, so that
@@ -1403,8 +1405,10 @@ class LinkDropBothNew(_LinkDrop):
 class LinkDropOldLocal(_LinkDrop):
     """OLD local (a hub kernel and prebuilt bundle from before PR 815: a built checkout named by ROMP_CORNER_OLD_HUB_ROOT,
     or the private clone this class mints at OLD_HUB_SHA under ROMP_LINKDROP_OLD_HUB_BUILD=1), a new remote (this
-    checkout): the storm's own witness, the pre-815 half. The old bundle dials no caps (verified from the dial
-    URL, not a grep of the minified dist) and has no per-conn view-delta receiver, so the remote serves the feed as
+    checkout): the storm's own witness, the pre-815 half. The mint borrows this clone's objects through an alternates
+    file, which is safe while OLD_HUB_SHA is reachable there: it is an ancestor of the fork's main (the merge of PR 818),
+    so a `git gc` of the shared clone keeps every object the checkout needs. The old bundle dials no caps (verified from
+    the dial URL, not a grep of the minified dist) and has no per-conn view-delta receiver, so the remote serves the feed as
     {type:delta, slot:feed} patches and the old Outline DROPS each one, filing a delta-unapplied row and posting a
     needSlot to the LOCAL kernel (the corners lab's CornerOldLocal freeze, pinned against this same checkout). The
     change bundle is completed notice cards ALONE (no todo, no needs-you): a todo moves the frame's remainder and the
