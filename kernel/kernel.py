@@ -8641,6 +8641,129 @@ def _withdraw_user_todo(sid, tid):
                 "at": int(at) if isinstance(at, (int, float)) else None, "owner": True}
 
 
+def _user_todo_register_route(body):
+    """POST /usertodo's answer, (status, body), for a parsed JSON object `body` ({"id": <sid>, "text": <one short
+    line>, "detail"?: <longer context>, "blocking"?: true|false}); 200 {"ok": true, "todoId": "ut-..."} when the
+    request was filed. One function for the two roads a request arrives by: the route itself (the postal bus's
+    add_user_todo, posting as the calling session) and the Codex postal tool (the kernel filing AS the thread's
+    session), so the two cannot drift on a check. The shape errors come first, then the switch, then
+    the caps, then the forward: the sid check sits BEFORE the switch and the forward because this is the one writer
+    that can mint a top-level key the store's reader refuses (one such key flags the whole file), and a malformed id
+    is never relayed to another kernel."""
+    sid = str(body.get("id") or "")
+    text = str(body.get("text") or "").strip()
+    if not sid or not text:
+        return 400, {"ok": False, "error": "id and text required"}
+    if not _safe_id(sid):
+        return 400, {"ok": False, "error": "id must be a session id"}
+    blocking, ferr = _as_bool(body.get("blocking"), "blocking")
+    if ferr:
+        return 400, {"ok": False, "error": ferr}
+    if not _user_todos_on():
+        # the switch: refuse in one plain line, never a silent no-op the bus would echo back as saved.
+        # Nothing is written; rows already stored stay on disk for the day the switch flips back on.
+        # Checked on the kernel the bus asked, before any forward: the switch is per machine, and the
+        # remote kernel's own copy of this route applies its own answer to a forwarded request.
+        return 409, {"ok": False, "error": _USER_TODOS_OFF_ERR}
+    try:
+        _user_todo_check_size(text, str(body.get("detail") or ""))
+    except ValueError as e:
+        # over the caps: a shape error worded for the agent, answered here before any forward (the bulk
+        # never crosses a tunnel, and the remote's own caps are not what the bus can word)
+        return 400, {"ok": False, "error": str(e)}
+    r = _host_for_sid(sid)
+    if r is not None:                                   # remote session: forward over its -L tunnel
+        st, res = _remote_forward_status(r, "/usertodo", {"id": sid, "text": text,
+                                                          "detail": str(body.get("detail") or ""),
+                                                          "blocking": blocking})
+        tid = str(res.get("todoId") or "") if isinstance(res, dict) else ""
+        if tid:
+            return 200, {"ok": True, "todoId": tid}
+        # No id came back, so nothing was filed, and the STATUS says why: a 200 {"ok": false} here read
+        # at the bus as "try again shortly" whatever the cause. A remote 409 is that kernel's own switch,
+        # relayed as the refusal it is; everything else is a 502 with the cause named (0: a dead tunnel,
+        # the redial already demanded; 404: a remote kernel that predates the route; another status; a
+        # 200 without a request id). Out of the postal tool's reach (its host's kernel owns its session),
+        # API all the same.
+        host = r.get("host") or "that host"
+        if st == 409:
+            return 409, {"ok": False, "host": host, "error": "requests from sessions are turned off on %s" % host}
+        if st == 0:
+            why = "the tunnel to %s is not answering (re-dialing)" % host
+        elif st == 404:
+            why = "the kernel on %s predates /usertodo: update romp there and restart it" % host
+        elif st != 200:
+            why = "the kernel on %s answered HTTP %d" % (host, st)
+        else:
+            why = "the kernel on %s answered without a request id" % host
+        sys.stderr.write("user-todos: register for %s not forwarded: %s\n" % (sid[:8], why))
+        return 502, {"ok": False, "error": why, "host": host}
+    if _user_todos_unreadable():
+        # the store on disk is the version its shape guard flagged: the writer would refuse (RuntimeError)
+        # and the generic handler would turn that into a 500 traceback. A plain 503 with the cause.
+        return 503, {"ok": False, "error": _USER_TODOS_UNREADABLE_ERR}
+    try:
+        tid = _add_user_todo(sid, text, str(body.get("detail") or ""), blocking=blocking)
+    except ValueError as e:                             # the writer's own refusal (caps, sid)
+        return 400, {"ok": False, "error": str(e)}
+    except RuntimeError:                                # the store went bad under the check
+        return 503, {"ok": False, "error": _USER_TODOS_UNREADABLE_ERR}
+    # ack-fast (the push-architecture rule): wake the pusher, never build the whole payload set
+    # synchronously on the caller's thread (the route's handler, the Codex backend's reader thread); the postal bus
+    # times its POST out at 2 s, and an inline build turned a SAVED request into a loud false failure at the agent,
+    # whose retry filed a duplicate
+    _push_soon()                                        # the card shows the new row at once
+    return 200, {"ok": True, "todoId": tid}
+
+
+def _user_todo_withdraw_route(body):
+    """POST /usertodo/withdraw's answer, (status, body), for a parsed JSON object `body` ({"id": <sid>, "todoId":
+    <the minted id>}): 200 with the ACCOUNT (_withdraw_user_todo) when the kernel could look, `ok` true iff this
+    call stamped the row; the shape errors' 400, the switch's 409, the flagged store's 503, and a remote session's
+    call forwarded to the machine that owns it, status kept. Shared by the route and the Codex postal tool, as
+    _user_todo_register_route is."""
+    sid = str(body.get("id") or "")
+    tid = str(body.get("todoId") or "")
+    if not sid or not tid:
+        return 400, {"ok": False, "error": "id and todoId required"}
+    if not _user_todos_on():
+        # the switch, as on /usertodo: a loud 409, nothing stamped, the row stays open
+        return 409, {"ok": False, "error": _USER_TODOS_OFF_ERR}
+    r = _host_for_sid(sid)
+    if r is not None:                                   # remote session: forward over its -L tunnel
+        st, res = _remote_forward_status(r, "/usertodo/withdraw", {"id": sid, "todoId": tid})
+        if not isinstance(res, dict):
+            # The remote gave no account, so this kernel has none to give: the row, if there is one, still
+            # stands over there. A 200 {"ok": false} here would read at the tool as already closed; a 502
+            # makes the tool say the withdraw did not happen, which is true. The status names the cause.
+            host = r.get("host") or "that host"
+            if st == 0:
+                why = "the tunnel to %s is not answering (re-dialing)" % host
+            elif st == 404:
+                why = "the kernel on %s predates /usertodo/withdraw: update romp there and restart it" % host
+            elif st != 200:
+                why = "the kernel on %s answered HTTP %d" % (host, st)
+            else:
+                why = "the kernel on %s answered a body that is not JSON" % host
+            sys.stderr.write("user-todos: withdraw of %s for %s not forwarded: %s\n" % (tid, sid[:8], why))
+            return 502, {"ok": False, "error": why, "host": host}
+        out = {"ok": bool(res.get("ok"))}
+        for k in ("state", "at", "owner", "error"):   # the remote's account rides through when it gives one
+            if k in res:
+                out[k] = res[k]
+        return 200, out
+    try:
+        acct = _withdraw_user_todo(sid, tid)
+    except RuntimeError:                                # the store went bad under the account's own check
+        return 503, {"ok": False, "error": _USER_TODOS_UNREADABLE_ERR}
+    if not acct["ok"]:
+        # the account's own error (a malformed stamp; the unreadable store, owner null) outranks the
+        # one-size line
+        return 200, dict({"error": "no open request with that id"}, **acct)
+    _push_soon()                                        # ack-fast: the row leaves the card on the woken cycle
+    return 200, acct
+
+
 def _reopen_user_todo(sid, tid):
     """Lift an 'answered' stamp: the ONE un-stamp, and only when the answer's own DELIVERY came undone: the
     recall of its send (the queued bubble's cancel before the message reached the agent), or the
@@ -69824,133 +69947,26 @@ class Handler(BaseHTTPRequestHandler):
                 # it works for while it keeps working. The postal bus's add_user_todo posts here the way set_working
                 # posts /working. Body: {"id": <sid>, "text": <one short line>, "detail"?: <longer context>,
                 # "blocking"?: true|false}, answered {"ok": true, "todoId": "ut-..."}. Only answer, dismiss and
-                # withdraw ever clear it; no judge writes this store. The shape errors come first, then the switch,
-                # then the caps, then the forward: the sid check sits BEFORE the switch and the forward because this
-                # route is the one writer that can mint a top-level key the store's reader refuses (one such key
-                # flags the whole file), and a malformed id is never relayed to another kernel.
+                # withdraw ever clear it; no judge writes this store. The answer is _user_todo_register_route's, the
+                # one function this route and the Codex postal tool share.
                 body, berr = _json_object_body(raw_body)
                 if berr:
                     return self._send(400, json.dumps({"ok": False, "error": berr}), "application/json")
-                sid = str(body.get("id") or "")
-                text = str(body.get("text") or "").strip()
-                if not sid or not text:
-                    return self._send(400, json.dumps({"ok": False, "error": "id and text required"}), "application/json")
-                if not _safe_id(sid):
-                    return self._send(400, json.dumps({"ok": False, "error": "id must be a session id"}), "application/json")
-                blocking, ferr = _as_bool(body.get("blocking"), "blocking")
-                if ferr:
-                    return self._send(400, json.dumps({"ok": False, "error": ferr}), "application/json")
-                if not _user_todos_on():
-                    # the switch: refuse in one plain line, never a silent no-op the bus would echo back as saved.
-                    # Nothing is written; rows already stored stay on disk for the day the switch flips back on.
-                    # Checked on the kernel the bus asked, before any forward: the switch is per machine, and the
-                    # remote kernel's own copy of this route applies its own answer to a forwarded request.
-                    return self._send(409, json.dumps({"ok": False, "error": _USER_TODOS_OFF_ERR}), "application/json")
-                try:
-                    _user_todo_check_size(text, str(body.get("detail") or ""))
-                except ValueError as e:
-                    # over the caps: a shape error worded for the agent, answered here before any forward (the bulk
-                    # never crosses a tunnel, and the remote's own caps are not what the bus can word)
-                    return self._send(400, json.dumps({"ok": False, "error": str(e)}), "application/json")
-                r = _host_for_sid(sid)
-                if r is not None:                                   # remote session: forward over its -L tunnel
-                    st, res = _remote_forward_status(r, "/usertodo", {"id": sid, "text": text,
-                                                                      "detail": str(body.get("detail") or ""),
-                                                                      "blocking": blocking})
-                    tid = str(res.get("todoId") or "") if isinstance(res, dict) else ""
-                    if tid:
-                        return self._send(200, json.dumps({"ok": True, "todoId": tid}), "application/json")
-                    # No id came back, so nothing was filed, and the STATUS says why: a 200 {"ok": false} here read
-                    # at the bus as "try again shortly" whatever the cause. A remote 409 is that kernel's own switch,
-                    # relayed as the refusal it is; everything else is a 502 with the cause named (0: a dead tunnel,
-                    # the redial already demanded; 404: a remote kernel that predates the route; another status; a
-                    # 200 without a request id). Out of the postal tool's reach (its host's kernel owns its session),
-                    # API all the same.
-                    host = r.get("host") or "that host"
-                    if st == 409:
-                        return self._send(409, json.dumps({"ok": False, "host": host,
-                                                           "error": "requests from sessions are turned off on %s" % host}),
-                                          "application/json")
-                    if st == 0:
-                        why = "the tunnel to %s is not answering (re-dialing)" % host
-                    elif st == 404:
-                        why = "the kernel on %s predates /usertodo: update romp there and restart it" % host
-                    elif st != 200:
-                        why = "the kernel on %s answered HTTP %d" % (host, st)
-                    else:
-                        why = "the kernel on %s answered without a request id" % host
-                    sys.stderr.write("user-todos: register for %s not forwarded: %s\n" % (sid[:8], why))
-                    return self._send(502, json.dumps({"ok": False, "error": why, "host": host}), "application/json")
-                if _user_todos_unreadable():
-                    # the store on disk is the version its shape guard flagged: the writer would refuse (RuntimeError)
-                    # and the generic handler would turn that into a 500 traceback. A plain 503 with the cause.
-                    return self._send(503, json.dumps({"ok": False, "error": _USER_TODOS_UNREADABLE_ERR}),
-                                      "application/json")
-                try:
-                    tid = _add_user_todo(sid, text, str(body.get("detail") or ""), blocking=blocking)
-                except ValueError as e:                             # the writer's own refusal (caps, sid)
-                    return self._send(400, json.dumps({"ok": False, "error": str(e)}), "application/json")
-                except RuntimeError:                                # the store went bad under the check
-                    return self._send(503, json.dumps({"ok": False, "error": _USER_TODOS_UNREADABLE_ERR}),
-                                      "application/json")
-                # ack-fast (the push-architecture rule): wake the pusher, never build the whole payload set
-                # synchronously on this handler thread; the postal bus times its POST out at 2 s, and an inline
-                # build turned a SAVED request into a loud false failure at the agent, whose retry filed a duplicate
-                _push_soon()                                        # the card shows the new row at once
-                return self._send(200, json.dumps({"ok": True, "todoId": tid}), "application/json")
+                st, out = _user_todo_register_route(body)
+                return self._send(st, json.dumps(out), "application/json")
             if u.path == "/usertodo/withdraw":
                 # The agent takes back its own request, by id: the ONE agent-side clearing event. The answer carries
                 # the ACCOUNT (_withdraw_user_todo): `state` (withdrawn | answered | dismissed | unknown), `at` (the
                 # epoch of the closing stamp, or null) and `owner` (is the id among the asker's rows; null when the
                 # store could not be read), so the tool can say WHICH kind of nothing-to-do this was: a row the
                 # person already answered or dismissed is the need met, not the agent's error. `ok` means this call
-                # stamped it. An unknown or already-cleared id answers ok:false and the tool says so loudly.
+                # stamped it. An unknown or already-cleared id answers ok:false and the tool says so loudly. The
+                # answer is _user_todo_withdraw_route's, shared with the Codex postal tool.
                 body, berr = _json_object_body(raw_body)
                 if berr:
                     return self._send(400, json.dumps({"ok": False, "error": berr}), "application/json")
-                sid = str(body.get("id") or "")
-                tid = str(body.get("todoId") or "")
-                if not sid or not tid:
-                    return self._send(400, json.dumps({"ok": False, "error": "id and todoId required"}), "application/json")
-                if not _user_todos_on():
-                    # the switch, as on /usertodo above: a loud 409, nothing stamped, the row stays open
-                    return self._send(409, json.dumps({"ok": False, "error": _USER_TODOS_OFF_ERR}), "application/json")
-                r = _host_for_sid(sid)
-                if r is not None:                                   # remote session: forward over its -L tunnel
-                    st, res = _remote_forward_status(r, "/usertodo/withdraw", {"id": sid, "todoId": tid})
-                    if not isinstance(res, dict):
-                        # The remote gave no account, so this kernel has none to give: the row, if there is one, still
-                        # stands over there. A 200 {"ok": false} here would read at the tool as already closed; a 502
-                        # makes the tool say the withdraw did not happen, which is true. The status names the cause.
-                        host = r.get("host") or "that host"
-                        if st == 0:
-                            why = "the tunnel to %s is not answering (re-dialing)" % host
-                        elif st == 404:
-                            why = "the kernel on %s predates /usertodo/withdraw: update romp there and restart it" % host
-                        elif st != 200:
-                            why = "the kernel on %s answered HTTP %d" % (host, st)
-                        else:
-                            why = "the kernel on %s answered a body that is not JSON" % host
-                        sys.stderr.write("user-todos: withdraw of %s for %s not forwarded: %s\n" % (tid, sid[:8], why))
-                        return self._send(502, json.dumps({"ok": False, "error": why, "host": host}),
-                                          "application/json")
-                    out = {"ok": bool(res.get("ok"))}
-                    for k in ("state", "at", "owner", "error"):   # the remote's account rides through when it gives one
-                        if k in res:
-                            out[k] = res[k]
-                    return self._send(200, json.dumps(out), "application/json")
-                try:
-                    acct = _withdraw_user_todo(sid, tid)
-                except RuntimeError:                                # the store went bad under the account's own check
-                    return self._send(503, json.dumps({"ok": False, "error": _USER_TODOS_UNREADABLE_ERR}),
-                                      "application/json")
-                if not acct["ok"]:
-                    # the account's own error (a malformed stamp; the unreadable store, owner null) outranks the
-                    # one-size line
-                    return self._send(200, json.dumps(dict({"error": "no open request with that id"}, **acct)),
-                                      "application/json")
-                _push_soon()                                        # ack-fast: the row leaves the card on the woken cycle
-                return self._send(200, json.dumps(acct), "application/json")
+                st, out = _user_todo_withdraw_route(body)
+                return self._send(st, json.dumps(out), "application/json")
             if u.path == "/usertodo/context":
                 # The read the SessionStart hook (hooks/romp-usertodo-context.sh) stands on (plans/user-todos.md,
                 # segment C): {"id": <sid>} -> 200 {"ok": true, "enabled": <the switch>, "block": <text or "">},

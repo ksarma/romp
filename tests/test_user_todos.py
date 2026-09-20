@@ -2095,8 +2095,9 @@ class NoInferenceWritesTheStore(unittest.TestCase):
         # the helpers calling each other: the tier's own plumbing
         "_add_user_todo", "_resolve_user_todo", "_reopen_user_todo", "_stamp_user_todo_answered",
         "_user_todo_answer_lost", "_withdraw_user_todo", "_prune_user_todos",
-        # the routes (the agent's tool call) and the drive handler (the person's click)
-        "Handler.do_POST", "_drive",
+        # the routes' own functions (the agent's tool call, by the postal bus's POST or the Codex postal tool's
+        # direct call) and the drive handler (the person's click)
+        "_user_todo_register_route", "_user_todo_withdraw_route", "_drive",
         # the drain's handover report (the delivery verdict)
         "_parked_answer_handed_over",
         # the person's own recall of a queued answer
