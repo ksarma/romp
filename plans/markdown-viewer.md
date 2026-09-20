@@ -8639,6 +8639,9 @@ L3 and in L6, the cookie classes the leg measures, the failed figure opening not
 that starts on the control, each carried by the source or by a leg; L3 and this paragraph name the two shapes modules and the floor module, which
 exist; L6 names tests among the directories and the two files
 under it, which this paragraph names too, and derives its verifications from the merge-base.
+tools/markdown-viewer-plan-gate-adopt.test.mjs, the pin of the "Fix: the gate before adoption (2026-09-20)" section
+above, names this follow-on for one fact about its own section, that it follows "## Out of scope" and is not held to be
+the plan's last because this section lands at the same place; it pins nothing of this follow-on's.
 ui/webview/linknav-records-attribution.test.ts holds the rounds every record of this follow-on names to the convention in
 this section's opening paragraph (the file review's round 3, tests-2, re-ruled onto the structural rule in its round 4,
 rules-1, after a pin keyed on one string missed the misattribution in the commits that built it: a round belongs to the

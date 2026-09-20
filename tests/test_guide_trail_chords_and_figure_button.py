@@ -329,7 +329,8 @@ class PicturesWithoutTheButton(GuideSentences):
         """The guide's clause: a link with no address left, or an anchor that only marks a place, leaves the click to the
         picture. The figure listener yields to linkOf's links (a path link, a web address the viewer dressed, a section link)
         and to an anchor with an href; a dead anchor (file-view-links.ts DEAD_LINK_CLASS, its href taken off) and a named
-        target (`<a id>`, never dressed) are neither, so the plain click reaches openFigure. The control is withheld there
+        target (`<a id>`, never dressed unless it still carries the plain `xlink:href` of a split svg anchor, which was a link
+        and is dressed dead) are neither, so the plain click reaches openFigure. The control is withheld there
         all the same (linkAbove reads any anchor), which the sentence's "four kinds" count relies on."""
         link_of = _body(self.viewer, "const linkOf = (t: Element | null): HTMLElement | null => {", "  };")
         self.assertIn("t.closest('[data-act=\"openpath\"], a.' + URL_LINK_CLASS + \", a.\" + FRAG_LINK_CLASS)", link_of, "linkOf's selector: the three dressed links")
@@ -337,7 +338,9 @@ class PicturesWithoutTheButton(GuideSentences):
         self.assertNotIn("fv-dead", link_of)
         links = _read("ui", "webview", "file-view-links.ts")
         self.assertIn('export const DEAD_LINK_CLASS = "fv-dead";', links)
-        self.assertIn('if (a.hasAttribute("name") || a.hasAttribute("id")) return;', links, "a named target is never dressed, and keeps no href")
+        self.assertIn('if ((a.hasAttribute("name") || a.hasAttribute("id")) && !a.hasAttribute("xlink:href")) return;', links,
+                      "a named target is never dressed, and keeps no href (the one exception, a target still carrying the plain "
+                      "xlink:href the fence pass's re-parse leaves on a split svg anchor, is dressed dead: it was a link)")
         self.assertIn("a picture inside a link that holds more than the picture (a caption beside it), where a click follows the link (a link with no "
                       "address left, or an anchor that only marks a place, leaves the click to the picture, which opens)", self.links)
         above = _body(self.viewer, "function linkAbove(anchor: Element): Element | null {", "}")
