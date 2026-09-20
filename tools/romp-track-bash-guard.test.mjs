@@ -803,7 +803,7 @@ test('review round 3: every target the hook cannot read is measured against the 
       assert.ok(folder && /cannot tell which folder/.test(folder) && folder.includes('x-$$') && folder.includes(`and ${projD} tracks files`), `${where}, the relative folder spelling names the project: ${folder}`);
       // (2) a variable, a brace parameter, a substitution, a backtick, a brace list past the cap, and (3) a glob with no match
       for (const cmd of [
-        `cp src.md ${projD}/notes/$N.md`, `cp src.md ${projD}/notes/\${N}.md`, `cp src.md ${projD}/notes/$(date +%s).md`, `cp src.md ${projD}/notes/\`echo n\`.md`,
+        `cp src.md ${projD}/notes/$N.md`, `cp src.md ${projD}/notes/\${N}.md`, `cp src.md ${projD}/notes/$(date +%s).md`, `cp src.md ${projD}/notes/\`echo n | cat\`.md`,   // a pipeline: `echo n` alone resolves since the third fix-up (the rows test pins that twin by name)
         `tee ${projD}/notes/$N.md < src.md`, `sed -i s/a/b/ ${projD}/notes/$N.md`, `install -m 644 src.md ${projD}/docs/$N.md`, `echo poison > ${projD}/docs/$N.md`,
         `cp src.md ${projD}/notes/log-{1..600}.md`, `cp src.md ${projD}/notes/nomatch*.md`, `cp src.md ${projD}/x-$N/y.md`, `cp src.md ${rel}/notes/$N.md`,
       ]) refusedNaming(cmd, cwd, projD, `${where}, an unreadable name whose literal prefix is a tracked folder`);
@@ -816,7 +816,7 @@ test('review round 3: every target the hook cannot read is measured against the 
       }
       // class E (round 4, 2026-09-19): `out` holds projD, so its literal head is a PARENT of a tracked root and the
       // expansion could spell it; both the whole-word variable and the substitution are refused naming projD beneath.
-      for (const cmd of [`cp src.md ${out}/$N.md`, `cp src.md ${out}/$(echo ../projD)/notes/x.md`]) {
+      for (const cmd of [`cp src.md ${out}/$N.md`, `cp src.md ${out}/$(echo ../projD | cat)/notes/x.md`]) {   // a pipeline: `$(echo ../projD)` alone resolves since the third fix-up to a literal path outside every project, allowed (the rows test pins that twin)
         const reason = evaluate(payload(cmd, cwd));
         assert.ok(reason && reason.includes(`sits above the tracked project`) && reason.includes(projD), `${where}, class E names the project beneath: ${cmd}: ${reason}`);
       }
@@ -2400,7 +2400,7 @@ test('rule (c) non-literal link source: an ln -s whose source the guard cannot r
   const cases = [
     'ln -s "$(pwd)/docs" mydocs && cp base/report.md mydocs/report.md',    // the third pass, #59 (its `$PWD` spelling resolves since B2, below)
     'ln -sf "$(pwd)/docs" md2 && cp base/report.md md2/report.md',         // N1
-    'ln -s $(echo docs) md3 && cp base/report.md md3/report.md',            // N2
+    'ln -s $(echo docs | cat) md3 && cp base/report.md md3/report.md',      // N2 (a pipeline: `$(echo docs)` alone resolves since the third fix-up and class H follows the link; the rows test pins that twin)
     'ln -s "$D" md4; echo x > md4/n1.md',
     'ln -s -t sub "$SRC"; echo x > sub/report.md',                          // the name is the source\'s basename, unreadable: the folder is unknown
     'ln -s "$A" "$B" sub; echo x > sub/report.md',                          // several sources into a directory
@@ -2420,7 +2420,7 @@ test('rule (c) non-literal link source: an ln -s whose source the guard cannot r
   assert.equal(evaluate(payload('ln -s "$PWD/base" mylink2 && cp base/report.md docs/other.md')), null, 'a non-literal link the later write does not pass through changes nothing');
   assert.equal(evaluate(payload('ln -s $(echo base) md6; cp base/report.md scratch.md')), null, 'the same, another spelling');
   // real bash: the link to $PWD/docs carries the copy onto the tracked file; the hook refuses it
-  for (const cmd of ['ln -s "$PWD/docs" mydocs && cp base/report.md mydocs/report.md', 'ln -s $(echo docs) md3 && cp base/report.md md3/report.md']) {
+  for (const cmd of ['ln -s "$PWD/docs" mydocs && cp base/report.md mydocs/report.md', 'ln -s $(echo docs | cat) md3 && cp base/report.md md3/report.md']) {
     for (const sh of shellsFor(['bash'], cmd)) assert.equal(overwrites(cmd, report, proj, sh).changed, true, `overwrites the tracked file in real bash: ${cmd}`);
     for (const l of ['mydocs', 'md3']) fs.rmSync(path.join(proj, l), { force: true });
     assert.equal(runHook(cmd).status, 2, `and the hook refuses it: ${cmd}`);
@@ -2621,9 +2621,9 @@ test('M1 a variable name the shell fills in: an assignment, declaration, nameref
     `h=HO; m=ME; printf -v "\${h}\${m}" %s ${proj}/notes; printf poison > "$HOME/n1.md"`,
     `h=HO; m=ME; typeset \${h}\${m}=${proj}/notes; printf poison > "$HOME/n1.md"`,
     `h=HO; m=ME; read \${h}\${m} <<< ${proj}/notes; printf poison > "$HOME/n1.md"`,
-    `export "$(printf 'HOME=${proj}/notes')"; printf poison > $HOME/n1.md`,                  // the matrix's three (rows 2842 to 2844)
-    `declare "$(printf 'HOME=${proj}/notes')"; printf poison > ~/n1.md`,
-    `read -r "$(printf HOME)" <<< ${proj}/notes; printf poison > $HOME/n1.md`,
+    `export "$(printf 'HOME=${proj}/notes' | cat)"; printf poison > $HOME/n1.md`,            // the matrix's three (rows 2842 to 2844), each through a pipeline: a literal printf alone resolves since the third fix-up (the rows test pins that twin, refused by the mention)
+    `declare "$(printf 'HOME=${proj}/notes' | cat)"; printf poison > ~/n1.md`,
+    `read -r "$(printf HOME | cat)" <<< ${proj}/notes; printf poison > $HOME/n1.md`,
     `h=HO; m=ME; local \${h}\${m}=${proj}/notes; printf poison > ~/n1.md`,                  // the rest of the construct's family
     `h=HO; m=ME; readonly \${h}\${m}=${proj}/notes; printf poison > ~/n1.md`,
     `h=HO; m=ME; unset \${h}\${m}; printf poison > "$HOME/n1.md"`,
@@ -2898,7 +2898,7 @@ test('B1 an alias made in the command puts the project its SOURCE lies in in pla
       [`ln ${seed} ${out}/h3 && printf poison > ${out}/h3`, /an earlier `ln` in the same command linked/],
       [`cp -l ${seed} ${out}/h4 && printf poison > ${out}/h4`, /an earlier `cp -l` in the same command linked/],
       [`cp -s ${seed} ${out}/s-alias; printf poison > ${out}/s-alias`, /an earlier `cp -l` in the same command linked/],
-      [`ln -s "$(printf '${proj}/notes')" ${out}/lnk4 && printf poison > ${out}/lnk4/rep.md`, /an earlier `ln -s` in the same command linked .* to a source I cannot read/],
+      [`ln -s "$(printf '${proj}/notes' | cat)" ${out}/lnk4 && printf poison > ${out}/lnk4/rep.md`, /an earlier `ln -s` in the same command linked .* to a source I cannot read/],   // a pipeline: a literal printf alone resolves since the third fix-up (the rows test pins that twin by name)
       [`link ${seed} ${out}/h7 && printf poison > ${out}/h7`, /an earlier `link` in the same command linked/],
       [`ln -t ${out} ${seed} && printf poison > ${out}/seed.md`, /an earlier `ln` in the same command linked/],
       [`cp -l ${seed} ${out}/ && cat base/report.md > ${out}/seed.md`, /an earlier `cp -l` in the same command linked/],
@@ -3750,7 +3750,7 @@ test("the sixth pass's attacker: its 77 in-model rows, run through the hook as a
       ['R4-c', 'na', 'x=other.md; h=x; typeset $h=../docs/report.md; cp base/report.md scratch/$x', BZ, ['literal', 'a `typeset`, which dash has no command for']],
       ['R4-d', 'na', 'x=other.md; h=x; readonly $h=../docs/report.md; cp base/report.md scratch/$x', A, 'name'],
       ['R4-e', 'na', 'x=other.md; h=x; export "$h=../docs/report.md"; cp base/report.md scratch/$x', A, 'name'],
-      ['R4-f', 'na', 'x=other.md; export $(echo x)=../docs/report.md; cp base/report.md scratch/$x', A, ['literal', 'takes a variable name the shell fills in when it runs']],
+      ['R4-f', 'na', 'x=other.md; export $(echo x)=../docs/report.md; cp base/report.md scratch/$x', A, 'name'],   // the third fix-up: `$(echo x)` resolves to x, the export is read as spelled and the value resolves (before, the name was one the shell fills in)
       ['R4-i', 'na', 'x=other.md; h=x; export ${h}=../docs/report.md; cp base/report.md scratch/$x', A, 'name'],
       ['R4-j', 'out', 'x=../../notes-api/docs/other.md; h=x; export $h=../../notes-api/docs/report.md; cp {WEB}/base/report.md {OUT}/scratch/$x', A, 'name'],
       // C5a: an assignment as the tail of a pipeline
@@ -3833,7 +3833,7 @@ test("the sixth pass's attacker: its 77 in-model rows, run through the hook as a
     }
     console.log(`# the sixth pass's attacker: ${n} rows run; refused by name ${tally.name}, refused as not literal with the construct named ${tally.literal}, the ruled residual from a cwd in no project ${tally.residual}`);
     assert.equal(n, hasDaemon ? 77 : 75);
-    if (hasDaemon) assert.deepEqual(tally, { name: 15, literal: 52, residual: 10 });   // round 5's addendum: R1-i, R4-b and R4-c moved from by-name to not-literal (the declare or typeset taint fires before the value resolves)
+    if (hasDaemon) assert.deepEqual(tally, { name: 16, literal: 51, residual: 10 });   // round 5's addendum: R1-i, R4-b and R4-c moved from by-name to not-literal (the declare or typeset taint fires before the value resolves); the fifth addendum's third fix-up: R4-f moved to by-name (`$(echo x)` resolves)
   } finally { process.env.HOME = savedHome; w.rm(); }
 });
 
@@ -4013,12 +4013,12 @@ test('found with the fix, four more live overwrites of the same rule at 86c0643e
   const savedHome = process.env.HOME;
   process.env.HOME = w.HOME;
   try {
-    const evalRow = w.fill("e=$(printf 'HO%s' ME={NA}/notes); eval \"$e\"; printf poison > ~/n1.md");
+    const evalRow = w.fill("e=$(printf 'HO%s' ME={NA}/notes | cat); eval \"$e\"; printf poison > ~/n1.md");   // a pipeline: a literal printf alone resolves since the third fix-up, and the mention of HOME in the resolved value refuses before the eval is reached (the rows test pins that twin)
     const h1 = w.hook(evalRow, w.NA);
     assert.equal(h1.status, 2, `refused: ${evalRow}: ${h1.reason}`);
     assert.ok(/an earlier `eval` may assign any name/.test(h1.reason) && /(I cannot read here|no longer name a directory I can read)/.test(h1.reason), `the reason names the eval: ${h1.reason.split('\n')[0]}`);
     for (const shell of shellsFor(['bash', 'zsh', 'dash'], 'the eval HOME row')) assert.equal(w.run(evalRow, w.NA, shell).changed, true, `${shell} writes the tracked note through the eval'd HOME`);
-    assert.equal(w.hook(w.fill("e=$(printf 'HO%s' ME={NA}/notes); echo \"$e\"; printf x > ~/n1.md"), w.NA).status, 0, 'the twin that only echoes the string resolves ~ through the guard\'s home, outside every project: allowed');
+    assert.equal(w.hook(w.fill("e=$(printf 'HO%s' ME={NA}/notes | cat); echo \"$e\"; printf x > ~/n1.md"), w.NA).status, 0, 'the twin that only echoes the string resolves ~ through the guard\'s home, outside every project: allowed');
     const groupRow = '{ cd docs; } | cat; cp base/report.md docs/report.md';
     const h2 = w.hook(groupRow, w.NA);
     assert.equal(h2.status, 2, `refused: ${groupRow}: ${h2.reason}`);
@@ -4437,18 +4437,18 @@ test("the seventh pass's mutation lens: the unpinned claims of the readability r
     // [id, command, the shells that write the tracked subset, the verdict]
     const rows = [
       ['U1', 'x=scratch:~/k; cp base/report.md $x', [], lit('a value with a tilde after a colon, which bash, zsh and dash expand')],
-      ['U2', 'y=scratch/keep.md; f=$(printf n); declare -$f x=y; x=docs/report.md; cp base/report.md $y', B, lit("the command's `declare` takes a variable name the shell fills in when it runs (-$f), and a name I cannot read may be any name")],   // bash: declare -n x=y, then x=.. writes y
-      ['U2b', 'y=scratch/keep.md; f=$(printf -- -n); declare $f x=y; x=docs/report.md; cp base/report.md $y', B, lit("the command's `declare` takes a variable name the shell fills in when it runs ($f), and a name I cannot read may be any name")],
+      ['U2', 'y=scratch/keep.md; f=$(printf n | cat); declare -$f x=y; x=docs/report.md; cp base/report.md $y', B, lit("the command's `declare` takes a variable name the shell fills in when it runs (-$f), and a name I cannot read may be any name")],   // bash: declare -n x=y, then x=.. writes y
+      ['U2b', 'y=scratch/keep.md; f=$(printf -- -n | cat); declare $f x=y; x=docs/report.md; cp base/report.md $y', B, lit("the command's `declare` takes a variable name the shell fills in when it runs ($f), and a name I cannot read may be any name")],
       ['U3', 'x=docs/report.md; declare -n r=x; unset x; x=scratch/keep.md; r=docs/report.md; cp base/report.md $x', B, lit('a nameref')],   // bash writes x through r after the unset and the plain write: the freed name would resolve to keep.md
-      ['U4', 'y=scratch/keep.md; h=$(echo y); declare -n r=$h; r=docs/report.md; cp base/report.md $y', B, lit("the command's `declare` takes a variable name the shell fills in when it runs (r=$h), and a name I cannot read may be any name")],
-      ['U4b', 'y=scratch/keep.md; h=$(echo y); export -n r=$h; cp base/report.md $y', [], lit("the command's `export -n` makes `r` a reference to a name the shell fills in (r=$h), which may be any name")],   // the declaration branch's own poison, reached where M1 reads export's -n as no nameref (a cost: bash unexports r, no shell writes)
+      ['U4', 'y=scratch/keep.md; h=$(echo y | cat); declare -n r=$h; r=docs/report.md; cp base/report.md $y', B, lit("the command's `declare` takes a variable name the shell fills in when it runs (r=$h), and a name I cannot read may be any name")],
+      ['U4b', 'y=scratch/keep.md; h=$(echo y | cat); export -n r=$h; cp base/report.md $y', [], lit("the command's `export -n` makes `r` a reference to a name the shell fills in (r=$h), which may be any name")],   // the declaration branch's own poison, reached where M1 reads export's -n as no nameref (a cost: bash unexports r, no shell writes)
       ['U5', 'x=docs/report.md; local x=scratch/keep.md; cp base/report.md $x', B, lit('a `local`, which zsh performs at the top level and bash and dash reject')],
       ['U6', 'x=scratch/keep.md; unset -f x; cp base/report.md $x', [], lit('an `unset` with -f')],
-      ['U7a', 'y=scratch/keep.md; true $(echo y)=docs/report.md; cp base/report.md $y', [], lit("the command's `true` takes a variable name the shell fills in when it runs ($(echo y)=docs/report.md), and a name I cannot read may be any name")],   // taintWord's name-part poison alone (true is on no name-operand list; a cost)
-      ['U7b', "y=scratch/keep.md; h=$(echo y); printf 'docs/report.md\\n' > scratch/line; read $h < scratch/line; cp base/report.md $y", A, lit("the command's `read` takes a variable name the shell fills in when it runs ($h), and a name I cannot read may be any name")],   // M1's per-segment detector alone (no `=` for taintWord's poison)
+      ['U7a', 'y=scratch/keep.md; true $(echo y | cat)=docs/report.md; cp base/report.md $y', [], lit("the command's `true` takes a variable name the shell fills in when it runs ($(echo y | cat)=docs/report.md), and a name I cannot read may be any name")],   // taintWord's name-part poison alone (true is on no name-operand list; a cost)
+      ['U7b', "y=scratch/keep.md; h=$(echo y | cat); printf 'docs/report.md\\n' > scratch/line; read $h < scratch/line; cp base/report.md $y", A, lit("the command's `read` takes a variable name the shell fills in when it runs ($h), and a name I cannot read may be any name")],   // M1's per-segment detector alone (no `=` for taintWord's poison)
       ['U8', 'x=scratch/keep.md; env() { :; }; env true; cp base/report.md $x', [], lit('an earlier call of `env`, a function the command defines, may assign any name')],   // an inert body: the call alone poisons (a cost)
       ['U9', 'env() { cd ..; }; env true; cp notes-api/base/report.md notes-api/notes/n1.md', A, ['dir', 'an earlier call of the function `env` may change the directory, which I do not follow']],
-      ['U10a', "e=$(printf 'HO%s' ME=notes); eval \"$e\"; x=~/n1.md; printf poison > $x", A, TILDE('~')],
+      ['U10a', "e=$(printf 'HO%s' ME=notes | cat); eval \"$e\"; x=~/n1.md; printf poison > $x", A, TILDE('~')],   // U2, U2b, U10a: a pipeline, since a literal printf alone resolves since the third fix-up (the rows test pins the resolved twins)
       ['U10b', 'eval true; x=~/n1.md; printf poison > $x', [], TILDE('~')],   // the guard reads no HOME after an eval: the write lands in the home (a cost)
       ['U10c', "eval 'cd docs'; x=~+/report.md; cp ../base/report.md $x", BZ, TILDE('~+')],
       ['U10d', 'eval true; x=~+/scratch/keep.md; cp base/report.md $x', [], TILDE('~+')],
@@ -6075,6 +6075,136 @@ test("round 5's fifth addendum, second fix-up, the piped-script matrix: the prod
   } finally { process.env.HOME = savedHome; w.rm(); }
 });
 
+// ROUND 5'S FIFTH ADDENDUM, THIRD FIX-UP (2026-09-20): two more populations derived from the fix-up's rules, each judged in-process
+// and run unguarded in bash, zsh and dash, pinned row by row. (1) THE STDIN SCRIPT: how the literal script reaches the consumer
+// (a pipe from echo or from printf; a quoted here-document; an unquoted here-document whose one line is `$(echo '<script>')`; a
+// here-string that is `"$(echo '<script>')"`; a `<` from `<(echo '<script>')`) x the shape around the shell (bare; a subshell; a
+// `{ }` group; an if body; a while body; a `/dev/stdin` operand; a `/dev/fd/0` operand; a `-c` script whose command is the shell;
+// `-c 'exec <shell>'`; `-c 'y=$(<shell>)'`) x the shell (each of the hook's SHELLS) x the script (a copy every shell performs;
+// `[[ a ]]>report.md`, a redirection in every grammar), from docs/. The hard invariant: no row a shell writes is allowed. The
+// refusals where no shell writes are the cost, by class: absent (a consumer not installed here: ksh), herestring-dash (the
+// here-string and the process substitution are syntax errors in dash, so a dash run writes nothing where bash and zsh write; the
+// refusal stands on the other two), and any other, printed. Outside it: the residual producers (the piped-script matrix's), a
+// consumer outside SHELLS, zsh's brace-body compounds (a `}` closer the frame counts, not matched by closerStdin: the named
+// residual), a `read` before the shell inside the compound (the rows test pins the cost). (2) THE HEREDOC BODY: the delimiter's
+// quoting (unquoted; single-quoted; double-quoted; backslash-quoted; part-quoted; `<<-` with the body tab-indented) x the body's
+// one line (a `$(<write>)`; a backtick; `${x:-$(<write>)}`; `$(echo '<write>')`, text every shell prints and a shell consumer runs;
+// `\$(<write>)`, the dollar quoted) x the consumer (cat, then each shell of SHELLS), from docs/, the write a copy onto the tracked
+// file. The hard invariant holds; the refusals where no shell writes are the cost, by class: absent (the `$(echo ..)` body handed
+// to ksh, not installed here), and any other, printed. Outside it: a body of several lines, a `$name` in the body, a body fed
+// through a pipe to a further consumer (the rows test pins `cat <<EOF | bash`). The class escaped-paren: a quoted body's `\$(<write>)` handed to
+// a shell is a syntax error every shell stops on, which the guard reads as a subshell running the write (the parenthesis read, a
+// cost that predates this fix-up).
+// STDIN SCRIPT MATRIX GENERATOR BEGIN
+const STDIN_SCRIPT_MATRIX = {
+  // [name, the command given the consumer C (its shape applied) and the script S]
+  SOURCES: [
+    ['pipe-echo', (c, s) => `echo '${s}' | ${c}`],
+    ['pipe-printf', (c, s) => `printf '%s\\n' '${s}' | ${c}`],
+    ['heredoc', (c, s) => `${c} <<'EOF'\n${s}\nEOF`],
+    ['heredoc-sub', (c, s) => `${c} <<EOF\n$(echo '${s}')\nEOF`],
+    ['herestring-sub', (c, s) => `${c} <<< "$(echo '${s}')"`],
+    ['procsub-stdin', (c, s) => `${c} < <(echo '${s}')`],
+  ],
+  // [name, the shape around the shell X]
+  CONSUMERS: [
+    ['bare', (x) => x],
+    ['subshell', (x) => `(${x})`],
+    ['group', (x) => `{ ${x}; }`],
+    ['if', (x) => `if true; then ${x}; fi`],
+    ['while', (x) => `while true; do ${x}; break; done`],
+    ['dev-stdin', (x) => `${x} /dev/stdin`],
+    ['dev-fd0', (x) => `${x} /dev/fd/0`],
+    ['inner-c', (x) => `${x} -c '${x}'`],
+    ['inner-exec', (x) => `${x} -c 'exec ${x}'`],
+    ['inner-sub', (x) => `${x} -c 'y=$(${x})'`],
+  ],
+  SHELLS: [...guard.SHELLS],
+  SCRIPTS: [['cp', 'cp ../base/report.md report.md'], ['glued', '[[ a ]]>report.md']],
+};
+const stdinScriptMatrixRows = () => {
+  const rows = [];
+  for (const [source, srcOf] of STDIN_SCRIPT_MATRIX.SOURCES) {
+    for (const [consumer, consOf] of STDIN_SCRIPT_MATRIX.CONSUMERS) {
+      for (const sh of STDIN_SCRIPT_MATRIX.SHELLS) {
+        for (const [script, text] of STDIN_SCRIPT_MATRIX.SCRIPTS) {
+          rows.push({ id: `${source}/${consumer}/${sh}/${script}`, source, consumer, shell: sh, script, cwd: 'nad', cmd: srcOf(consOf(sh), text) });
+        }
+      }
+    }
+  }
+  return rows;
+};
+// STDIN SCRIPT MATRIX GENERATOR END
+// HEREDOC BODY MATRIX GENERATOR BEGIN
+const HEREDOC_BODY_MATRIX = {
+  // [name, the redirection as spelled, the body line given its text, the closing line]
+  DELIMITERS: [
+    ['unquoted', '<<EOF', (b) => b, 'EOF'],
+    ['single', "<<'EOF'", (b) => b, 'EOF'],
+    ['double', '<<"EOF"', (b) => b, 'EOF'],
+    ['backslash', '<<\\EOF', (b) => b, 'EOF'],
+    ['part', '<<E"O"F', (b) => b, 'EOF'],
+    ['strip', '<<-EOF', (b) => `\t${b}`, '\tEOF'],
+  ],
+  // [name, the body's one line given the write W]
+  BODIES: [
+    ['sub', (w) => `$(${w})`],
+    ['backtick', (w) => `\`${w}\``],
+    ['brace-sub', (w) => `\${x:-$(${w})}`],
+    ['echo-sub', (w) => `$(echo '${w}')`],
+    ['escaped', (w) => `\\$(${w})`],
+  ],
+  CONSUMERS: ['cat', ...guard.SHELLS],
+  WRITE: 'cp ../base/report.md report.md',
+};
+const heredocBodyMatrixRows = () => {
+  const rows = [];
+  for (const [delimiter, redirect, lineOf, close] of HEREDOC_BODY_MATRIX.DELIMITERS) {
+    for (const [body, bodyOf] of HEREDOC_BODY_MATRIX.BODIES) {
+      for (const consumer of HEREDOC_BODY_MATRIX.CONSUMERS) {
+        rows.push({ id: `${delimiter}/${body}/${consumer}`, delimiter, body, consumer, cwd: 'nad', cmd: `${consumer} ${redirect}\n${lineOf(bodyOf(HEREDOC_BODY_MATRIX.WRITE))}\n${close}` });
+      }
+    }
+  }
+  return rows;
+};
+// HEREDOC BODY MATRIX GENERATOR END
+const STDIN_SCRIPT_MATRIX_PIN = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'romp-track-bash-guard-stdin-script-matrix.json'), 'utf8'));
+const HEREDOC_BODY_MATRIX_PIN = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'romp-track-bash-guard-heredoc-body-matrix.json'), 'utf8'));
+
+test("round 5's fifth addendum, third fix-up, the stdin-script matrix: the script's road (a pipe from echo or printf, a quoted here-document, an unquoted one holding `$(echo '..')`, a here-string holding it, a `<` from `<(echo '..')`) x the shape around the shell (bare, a subshell, a group, an if body, a while body, `/dev/stdin`, `/dev/fd/0`, a `-c` script whose command is the shell, `exec`, a substitution) x the shell (every shell of SHELLS) x the script (a copy, `[[ a ]]>report.md`), judged in-process and run unguarded, matches the fixture row by row; no row a shell writes is allowed; the refusals where no shell writes are counted by class", () => {
+  const w = sixthPassWorld();
+  const savedHome = process.env.HOME;
+  process.env.HOME = w.HOME;
+  try {
+    const rows = stdinScriptMatrixRows();
+    assert.equal(rows.length, STDIN_SCRIPT_MATRIX_PIN.rows, 'the generator produces the rows the fixture pins (a shell added to SHELLS changes this count)');
+    assert.deepEqual(STDIN_SCRIPT_MATRIX.SHELLS, STDIN_SCRIPT_MATRIX_PIN.shells, 'the fixture names the shells it was generated over, the hook\'s SHELLS');
+    assert.deepEqual(STDIN_SCRIPT_MATRIX.CONSUMERS.map((c) => c[0]), STDIN_SCRIPT_MATRIX_PIN.consumers, 'and the consumer shapes');
+    const present = shellsFor(SHELL_ORDER, 'the stdin-script matrix');
+    const installed = (sh) => _spawnSync('sh', ['-c', `command -v ${sh}`], { encoding: 'utf8' }).status === 0;
+    const absent = new Set(STDIN_SCRIPT_MATRIX.SHELLS.filter((c) => !installed(c)));
+    runMatrixAgainstPin(w, rows, STDIN_SCRIPT_MATRIX_PIN, 'the stdin-script matrix', (row, parsed) => (absent.has(row.shell) ? 'absent' : ((row.source === 'herestring-sub' || row.source === 'procsub-stdin') && !parsed.includes('dash') ? 'herestring-dash' : null)), present);
+  } finally { process.env.HOME = savedHome; w.rm(); }
+});
+
+test("round 5's fifth addendum, third fix-up, the heredoc-body matrix: the delimiter's quoting (unquoted, single, double, backslash, part-quoted, `<<-`) x the body's line (a `$(..)`, a backtick, `${x:-$(..)}`, `$(echo '..')`, an escaped dollar) x the consumer (cat, every shell of SHELLS), judged in-process and run unguarded, matches the fixture row by row; no row a shell writes is allowed; the refusals where no shell writes are counted by class", () => {
+  const w = sixthPassWorld();
+  const savedHome = process.env.HOME;
+  process.env.HOME = w.HOME;
+  try {
+    const rows = heredocBodyMatrixRows();
+    assert.equal(rows.length, HEREDOC_BODY_MATRIX_PIN.rows, 'the generator produces the rows the fixture pins');
+    assert.deepEqual(HEREDOC_BODY_MATRIX.CONSUMERS, HEREDOC_BODY_MATRIX_PIN.consumers, 'the fixture names the consumers it was generated over');
+    assert.deepEqual(HEREDOC_BODY_MATRIX.DELIMITERS.map((d) => d[0]), HEREDOC_BODY_MATRIX_PIN.delimiters, 'and the delimiter forms');
+    const present = shellsFor(SHELL_ORDER, 'the heredoc-body matrix');
+    const installed = (sh) => _spawnSync('sh', ['-c', `command -v ${sh}`], { encoding: 'utf8' }).status === 0;
+    const absent = new Set(HEREDOC_BODY_MATRIX.CONSUMERS.filter((c) => c !== 'cat' && !installed(c)));
+    runMatrixAgainstPin(w, rows, HEREDOC_BODY_MATRIX_PIN, 'the heredoc-body matrix', (row) => (absent.has(row.consumer) ? 'absent' : (row.body === 'escaped' && row.delimiter !== 'unquoted' && row.consumer !== 'cat' ? 'escaped-paren' : null)), present);   // escaped-paren: a quoted body's `\$(..)` handed to a shell is a syntax error in every shell, read as a subshell running the write (the parenthesis read, a cost that predates this fix-up)
+  } finally { process.env.HOME = savedHome; w.rm(); }
+});
+
 test("round 5's fifth addendum, second fix-up, the rows: an expansion nested in a `${...}` word is read as the command it runs in every operator form and position (the verifiers' rows and the quoting corners, exactly the shells named writing), a `${...}` as a target or a writer's operand keeps the non-literal rule, a literal echo or printf piped into a shell reading stdin is the script under that shell's grammar, the producers the guard does not read stay the named residual, and the costs are measured with no shell writing", () => {
   const w = sixthPassWorld();
   const savedHome = process.env.HOME;
@@ -6225,6 +6355,205 @@ test("round 5's fifth addendum, second fix-up, the rows: an expansion nested in 
     assert.deepEqual(tgt("printf '%s\\n' '[[ a ]]>docs/report.md' | sh -s"), ['docs/report.md']);
     assert.deepEqual(tgt("cat notes/n1.md | bash"), [], 'a producer the guard does not read');
     assert.ok(!tgt("echo 'cp base/report.md docs/report.md' | tee /dev/null | bash").includes('docs/report.md'), 'a tee between them: the producer is the tee, whose own operand is the only target');
+  } finally { process.env.HOME = savedHome; w.rm(); }
+});
+
+test("round 5's fifth addendum, third fix-up, the rows: an unquoted here-document body's expansions are read as the commands they run and the expanded body is the consumer's script, a substitution whose command is a literal echo or printf is the text it prints where the shell puts it (a script formed from it read under each text it can stand for), a `${...}` default word alone is a reading of a script, zsh's `=(cmd)` is read where zsh performs it, a script operand naming the standard input reads it, a `<` from a literal-echo process substitution and a script operand that is one are the script, a compound consumer and a `-c` script's inner shell read what was piped into them; the verifiers' rows and the twins of the legacy rows the fix-up resolved, exactly the shells named writing, and the costs measured with no shell writing", () => {
+  const w = sixthPassWorld();
+  const savedHome = process.env.HOME;
+  process.env.HOME = w.HOME;
+  try {
+    const A = ['bash', 'zsh', 'dash'];
+    const BZ = ['bash', 'zsh'];
+    const BD = ['bash', 'dash'];
+    const ZD = ['zsh', 'dash'];
+    const B = ['bash'];
+    const Z = ['zsh'];
+    const N = [];
+    const HB = guard.HEREDOC_BODY_VIA;
+    const WORD = guard.BRACE_WORD_VIA;
+    const CP = 'cp ../base/report.md report.md';
+    // [id, cwd, command, the shells that write the tracked subset unguarded, the verdict]
+    const rows = [
+      // (1) THE UNQUOTED BODY: the verifiers' A31 and A32, the backtick, the tab-stripping form, from notes/ and out/; the quoted
+      // delimiters and the escaped dollar run nothing; a quote is a character in the body; the expanded body is a shell consumer's script
+      ['H-sub', 'nad', `cat <<EOF\n$(${CP})\nEOF`, A, ['name', HB]],
+      ['H-brace-sub', 'nad', `cat <<EOF\n\${x:-$(${CP})}\nEOF`, A, ['name', WORD]],
+      ['H-backtick', 'nad', `cat <<EOF\n\`${CP}\`\nEOF`, A, ['name', HB]],
+      ['H-strip-tabs', 'nad', `cat <<-EOF\n\t$(${CP})\n\tEOF`, A, ['name', HB]],
+      ['H-space-after', 'nad', `cat << EOF\n$(${CP})\nEOF`, A, ['name', HB]],
+      ['H-notes', 'nan', `cat <<EOF\n$(echo x > new.md)\nEOF`, A, ['name', HB]],
+      ['H-out', 'out', `cat <<EOF\n$(cp {NA}/base/report.md {NA}/docs/report.md)\nEOF`, A, ['name', HB]],
+      ['H-python-consumer', 'nad', `python3 - <<EOF\n$(${CP})\nEOF`, A, ['name', HB]],   // the shell expands the body before python reads it
+      ['H-quoted-sq', 'nad', `cat <<'EOF'\n$(${CP})\nEOF`, N, 'allow'],
+      ['H-quoted-dq', 'nad', `cat <<"EOF"\n$(${CP})\nEOF`, N, 'allow'],
+      ['H-quoted-backslash', 'nad', `cat <<\\EOF\n$(${CP})\nEOF`, N, 'allow'],
+      ['H-quoted-part', 'nad', `cat <<E"O"F\n$(${CP})\nEOF`, N, 'allow'],
+      ['H-escaped', 'nad', `cat <<EOF\n\\$(${CP})\nEOF`, N, 'allow'],
+      ['H-sq-is-a-character', 'nad', `cat <<EOF\n\${x:-'$(${CP})'}\nEOF`, A, ['name', WORD]],
+      ['H-script-expanded', 'nad', `bash <<EOF\n$(echo 'echo x > report.md')\nEOF`, A, 'name'],   // the printed text is the script bash parses: a redirection
+      ['H-script-quoted-delim', 'nad', `bash <<'EOF'\n$(echo 'echo x > report.md')\nEOF`, N, 'allow'],   // bash runs the echo and prints
+      ['H-script-quoted-delim-cp', 'nad', `bash <<'EOF'\n$(echo '${CP}')\nEOF`, A, 'name'],   // bash splits the printed text and runs the copy
+      ['H-script-piped-compound', 'nad', `cat <<EOF | bash\n$(echo '${CP}')\nEOF`, A, 'name'],
+      ['H-script-default-word', 'nad', `bash <<EOF\n\${x:-$(echo '${CP}')}\nEOF`, A, 'name'],
+      ['H-cat-echo', 'nad', `cat <<EOF\n$(echo '${CP}')\nEOF`, N, 'allow'],   // cat prints the text
+      // (2) THE RESOLVED SUBSTITUTION: the verifiers' C32, C33 and C63, printf, the backtick, sh, the redirection, the command alone,
+      // the writer's operand, a resolved value, the two echo readings, and the twins the shells split or run as a name
+      ['S-c-dq', 'nad', `bash -c "$(echo '${CP}')"`, A, 'name'],
+      ['S-herestring-dq', 'nad', `bash <<< "$(echo '${CP}')"`, BZ, 'name'],
+      ['S-herestring-unquoted', 'nad', `bash <<< $(echo 'echo x > report.md')`, BZ, 'name'],   // a here-string word is never split
+      ['S-c-printf', 'nad', `bash -c "$(printf '%s' '${CP}')"`, A, 'name'],
+      ['S-c-backtick', 'nad', `bash -c "\`echo '${CP}'\`"`, A, 'name'],
+      ['S-c-sh', 'nad', `sh -c "$(echo '${CP}')"`, A, 'name'],
+      ['S-c-redirect', 'nad', `bash -c "$(echo 'echo x > report.md')"`, A, 'name'],
+      ['S-c-mixed', 'nad', `bash -c "x=1; $(echo '${CP}')"`, A, 'name'],
+      ['S-producer-dq', 'nad', `echo "$(echo '${CP}')" | bash`, A, 'name'],
+      ['S-producer-unquoted', 'nad', `echo $(echo '${CP}') | bash`, A, 'name'],
+      ['S-producer-printf', 'nad', `printf '%s\\n' "$(echo '${CP}')" | bash`, A, 'name'],
+      ['S-command-alone', 'nad', `$(echo '${CP}')`, A, 'name'],   // split into the words the shell runs
+      ['S-command-name', 'nad', `$(echo cp) ../base/report.md report.md`, A, 'name'],
+      ['S-target', 'nad', `echo x > $(echo 'report.md')`, A, 'name'],
+      ['S-operand', 'nad', `cp ../base/report.md $(echo 'report.md')`, A, 'name'],
+      ['S-operand-glued', 'nad', `cp ../base/report.md $(echo 'rep')ort.md`, A, 'name'],
+      ['S-value-resolves', 'nad', `x=$(echo 'report.md'); ${CP.replace('report.md', '$x').replace('../base/$x', '../base/report.md')}`, A, 'name'],
+      ['S-two-readings-c-escape', 'nad', `bash -c "$(echo '${CP}\\c')"`, ZD, 'name'],   // bash's echo prints the backslash and the copy names report.md\\c; zsh and dash stop at \\c and copy
+      ['S-two-readings-e', 'nad', `bash -c "$(echo -e '${CP}')"`, BZ, 'name'],   // dash's echo prints the -e and bash rejects the option
+      ['S-two-readings-newline', 'nad', `bash -c "$(echo 'true\\n${CP}')"`, ZD, 'name'],
+      ['S-c-unquoted-split', 'nad', `bash -c $(echo '${CP}')`, N, 'allow'],   // split: bash gets `cp` alone
+      ['S-c-unquoted-redirect', 'nad', `bash -c $(echo 'echo x > report.md')`, N, 'allow'],
+      ['S-dq-command-name', 'nad', `"$(echo '${CP}')"`, N, 'allow'],   // a command named so, not found
+      ['S-alone-redirect-word', 'nad', `$(echo 'echo x > report.md')`, N, 'allow'],   // the > from an expansion is a word of echo
+      ['S-ifs-named', 'nad', `IFS=:; cp $(echo '../base/report.md:report.md')`, A, ['text', 'may split into several words']],   // not resolved while the command names IFS, and the one operand may split (THE SPLIT OPERAND)
+      ['S-split-positional', 'nad', 'cp $1', N, ['text', 'may split into several words']],   // the same rule on a name the guard never reads (no shell writes: $1 is empty here)
+      ['S-split-sub', 'nad', 'cp $(cat ../scratch/other.md)', N, ['text', 'may split into several words']],
+      ['S-split-dq', 'nad', 'cp "$(cat ../scratch/other.md)"', N, 'allow'],   // double-quoted: never split, one operand, no write
+      ['S-split-two', 'nad', 'cp $(cat ../scratch/other.md) report.md', N, 'literal-any'],   // two operands: the non-literal rule as before (the source is unread; the destination is the tracked file, refused by name; no shell writes, the file's text naming no source that exists)
+      ['S-glob', 'nad', `sed -i s/NA/X/ $(echo '*.md')`, BD, 'name'],   // bash and dash glob a substitution's result; zsh does not
+      ['S-no-brace-list', 'nad', `echo x > $(echo '{report,other}.md')`, N, 'allow'],   // no shell brace-expands a substitution's result: a file so named, untracked
+      ['S-empty', 'nad', `cp ../base/report.md $(echo '')report.md`, A, 'name'],
+      // (3) THE DEFAULT WORD: found beside the verifiers' rows; each operator form, the quotings, zsh's unsplit word, the nested word,
+      // and the forms that give no reading or no write
+      ['D-colon-minus-sub', 'nad', `bash -c "\${x:-$(echo '${CP}')}"`, A, 'name'],
+      ['D-colon-minus-sq-unquoted', 'nad', `bash -c \${x:-'${CP}'}`, A, 'name'],
+      ['D-colon-minus-sq-dq', 'nad', `bash -c "\${x:-'${CP}'}"`, N, 'allow'],   // inside double quotes the single quotes are characters: a command named so
+      ['D-colon-minus-plain', 'nad', `bash -c "\${x:-${CP}}"`, A, 'name'],
+      ['D-colon-minus-plain-unquoted', 'nad', `bash -c \${x:-${CP}}`, Z, 'name'],   // zsh splits no expansion's result; bash and dash hand cp alone to bash
+      ['D-minus', 'nad', `bash -c "\${x-${CP}}"`, A, 'name'],
+      ['D-colon-eq', 'nad', `bash -c "\${x:=${CP}}"`, A, 'name'],
+      ['D-colon-plus-set', 'nad', `x=1; bash -c "\${x:+${CP}}"`, A, 'name'],
+      ['D-colon-plus-unset', 'nad', `bash -c "\${x:+${CP}}"`, N, ['name', 'stands for']],   // x unset: no shell runs the word (the cost: the reading is read whatever the state)
+      ['D-set-skips', 'nad', `x=1; bash -c "\${x:-${CP}}"`, N, ['name', 'stands for']],   // the cost's twin
+      ['D-inner-dq', 'nad', `bash -c "\${x:-"${CP}"}"`, A, 'name'],
+      ['D-herestring', 'nad', `bash <<< \${x:-$(echo '${CP}')}`, BZ, 'name'],
+      ['D-nested', 'nad', `bash -c "\${x:-\${y:-${CP}}}"`, A, 'name'],
+      ['D-nested-sub', 'nad', `bash -c "\${x:-\${y:-$(echo '${CP}')}}"`, A, 'name'],
+      ['D-message-form', 'nad', `bash -c "\${x:?${CP}}"`, N, 'allow'],   // the word is a message: the shell exits
+      ['D-no-operator', 'nad', `bash -c "\${x}"`, N, 'allow'],
+      ['D-heredoc-body', 'nad', `bash <<EOF\n\${x:-'${CP}'}\nEOF`, N, 'allow'],   // in a here-document body the quotes are characters
+      // (4) zsh's `=(cmd)`: the verifier's A80 and the bare forms refused by accident before, each position zsh performs it in, and
+      // the positions it does not
+      ['E-brace', 'nad', `echo \${x:-=(${CP})}`, Z, ['name', WORD]],
+      ['E-operand', 'nad', `cat =(${CP})`, Z, 'name'],
+      ['E-colon-operand', 'nad', `: =(${CP})`, Z, 'name'],
+      ['E-assignment', 'nad', `x==(${CP})`, Z, 'name'],
+      ['E-replacement', 'nad', `echo \${x/b/=(${CP})}`, Z, ['name', WORD]],
+      ['E-nested', 'nad', `echo \${x:-\${y:-=(${CP})}}`, Z, ['name', WORD]],
+      ['E-flag', 'nad', `echo \${(e)x:-=(${CP})}`, Z, ['name', WORD]],
+      ['E-script-operand', 'nad', `zsh =(echo '${CP}')`, Z, 'name'],
+      ['E-zsh-c', 'nad', `zsh -c 'cat =(${CP})'`, A, 'name'],   // every shell runs the zsh
+      ['E-mid-word', 'nad', `echo \${x:-a=(${CP})}`, N, 'allow'],
+      ['E-in-test', 'nad', `[[ -n =(${CP}) ]]`, N, 'allow'],
+      ['E-dq', 'nad', `echo "\${x:-=(${CP})}"`, N, 'allow'],
+      ['E-quoted-word', 'nad', `echo \${x:-"=(${CP})"}`, N, 'allow'],
+      ['E-bash-c', 'nad', `bash -c 'cat =(${CP})'`, N, 'name'],   // bash rejects the spelling and `=(` is not read for a script handed to bash; the parenthesis is read as a subshell there, as before (a cost that predates this fix-up)
+      ['E-pattern-cost', 'nad', `x=abc; echo \${x#=(${CP})}`, N, ['name', WORD]],   // read in the pattern part, where zsh performs it not (the cost)
+      // (5) a script operand naming the standard input: the verifiers' C27 and C28, sh, the /proc spelling, python
+      ['N-dev-stdin', 'nad', `echo '${CP}' | bash /dev/stdin`, A, 'name'],
+      ['N-dev-fd0', 'nad', `echo '${CP}' | bash /dev/fd/0`, A, 'name'],
+      ['N-sh-dev-stdin', 'nad', `echo '${CP}' | sh /dev/stdin`, A, 'name'],
+      ['N-proc-fd0', 'nad', `echo '${CP}' | bash /proc/self/fd/0`, A, 'name'],
+      ['N-after-dashdash', 'nad', `echo '${CP}' | bash -- /dev/stdin`, A, 'name'],
+      ['N-python', 'nad', `python3 /dev/stdin <<'EOF'\nopen('report.md', 'w').write('x')\nEOF`, A, 'name'],
+      ['N-heredoc', 'nad', `bash /dev/stdin <<'EOF'\n${CP}\nEOF`, A, 'name'],
+      // (6) a process substitution as the script: the verifiers' C29 to C31, printf, sh, a producer the guard cannot read, another descriptor
+      ['P-operand', 'nad', `bash <(echo '${CP}')`, BZ, 'name'],
+      ['P-stdin', 'nad', `bash < <(echo '${CP}')`, BZ, 'name'],
+      ['P-stdin-s', 'nad', `bash -s < <(echo '${CP}')`, BZ, 'name'],
+      ['P-sh-operand', 'nad', `sh <(echo '${CP}')`, BZ, 'name'],
+      ['P-printf', 'nad', `bash <(printf '${CP}\\n')`, BZ, 'name'],
+      ['P-cat-residual', 'nad', `bash <(cat ../scratch/other.md)`, N, 'allow'],   // a producer the guard cannot read: the named residual
+      ['P-other-descriptor', 'nad', `bash 3< <(echo '${CP}')`, N, 'allow'],   // not the standard input: bash reads nothing
+      ['P-pipe-and-devnull', 'nad', `echo '${CP}' | bash </dev/null`, Z, 'name'],   // zsh's multios feeds the pipe too
+      ['P-pipe-and-fd3', 'nad', `echo '${CP}' | bash 3</dev/null`, A, 'name'],
+      // (7) a compound consumer: the verifiers' C21 and C75, C22 read by rule now, every compound kind, the nesting, a definition,
+      // and the consumers a read drains
+      ['C-subshell', 'nad', `echo '${CP}' | (bash)`, A, 'name'],
+      ['C-group', 'nad', `echo '${CP}' | { bash; }`, A, 'name'],
+      ['C-group-lines', 'nad', `echo '${CP}' | {\nbash\n}`, A, 'name'],
+      ['C-if', 'nad', `echo '${CP}' | if true; then bash; fi`, A, 'name'],
+      ['C-if-subshell', 'nad', `echo '${CP}' | if true; then (bash); fi`, A, 'name'],
+      ['C-while', 'nad', `echo '${CP}' | while true; do bash; break; done`, A, 'name'],
+      ['C-for', 'nad', `echo '${CP}' | for i in 1; do bash; done`, A, 'name'],
+      ['C-case', 'nad', `echo '${CP}' | case a in a) bash;; esac`, A, 'name'],
+      ['C-nested-subshell', 'nad', `echo '${CP}' | ( (bash) )`, A, 'name'],
+      ['C-heredoc-into-subshell', 'nad', `cat <<'EOF' | (bash)\n${CP}\nEOF`, A, 'name'],
+      ['C-heredoc-on-subshell', 'nad', `(bash) <<'EOF'\n${CP}\nEOF`, A, 'name'],   // THE CLOSER'S STDIN
+      ['C-heredoc-on-group', 'nad', `{ bash; } <<'EOF'\n${CP}\nEOF`, A, 'name'],
+      ['C-heredoc-on-if', 'nad', `if true; then bash; fi <<'EOF'\n${CP}\nEOF`, A, 'name'],
+      ['C-heredoc-on-while', 'nad', `while true; do bash; break; done <<'EOF'\n${CP}\nEOF`, A, 'name'],
+      ['C-heredoc-on-nested-if', 'nad', `if true; then if true; then bash; fi; fi <<'EOF'\n${CP}\nEOF`, A, 'name'],
+      ['C-herestring-on-subshell', 'nad', `(bash) <<< '${CP}'`, BZ, 'name'],
+      ['C-procsub-on-group', 'nad', `{ bash; } < <(echo '${CP}')`, BZ, 'name'],
+      ['C-heredoc-on-subshell-no-shell', 'nad', `(cat) <<'EOF'\n${CP}\nEOF`, N, 'allow'],
+      ['C-heredoc-on-definition', 'nad', `f() { bash; } <<'EOF'\n${CP}\nEOF`, N, 'allow'],   // a definition: the redirection applies when called
+      ['C-definition', 'nad', `echo '${CP}' | f() { bash; }`, N, 'allow'],   // a body defined, not run
+      ['C-no-shell', 'nad', `echo '${CP}' | { cat; }`, N, 'allow'],
+      ['C-read-drains', 'nad', `echo '${CP}' | while read -r l; do bash; done`, N, 'name'],   // the read consumed the input (the cost)
+      ['C-else-branch', 'nad', `echo '${CP}' | if true; then :; else bash; fi`, N, 'name'],   // the branch not taken (the cost)
+      // (8) the inner shell of a `-c` script: the verifiers' C71, C73, C74 and C88, a substitution, sh, two levels, a here-string
+      // as the outer stdin, and a consumer that drains it first
+      ['I-bash-c-bash', 'nad', `echo '${CP}' | bash -c 'bash'`, A, 'name'],
+      ['I-sh-c-sh', 'nad', `echo '${CP}' | sh -c sh`, A, 'name'],
+      ['I-exec', 'nad', `echo '${CP}' | bash -c 'exec bash'`, A, 'name'],
+      ['I-bash-s', 'nad', `echo '${CP}' | bash -c 'bash -s'`, A, 'name'],
+      ['I-substitution', 'nad', `echo '${CP}' | bash -c 'x=$(bash)'`, A, 'name'],
+      ['I-two-levels', 'nad', `echo '${CP}' | bash -c 'bash -c bash'`, A, 'name'],
+      ['I-herestring-outer', 'nad', `bash -c 'bash' <<< '${CP}'`, BZ, 'name'],
+      ['I-c-true', 'nad', `echo '${CP}' | bash -c 'true'`, N, 'allow'],
+      ['I-cat-first', 'nad', `echo '${CP}' | bash -c 'cat; bash'`, N, 'name'],   // cat drained the input (the cost)
+      // (9) the twins of the rows the fix-up resolved (the legacy rows keep their intent through a pipeline the guard does not read):
+      // each by name now, where the substitution stood for a text the guard could not read
+      ['T-backtick-name', 'na', 'cp base/report.md notes/`echo n`.md', A, 'name'],
+      ['T-link-source', 'na', 'ln -s $(echo docs) md3 && cp base/report.md md3/report.md', A, 'name'],
+      ['T-export-name', 'na', 'x=other.md; export $(echo x)=../docs/report.md; cp base/report.md scratch/$x', A, 'name'],
+      ['T-declare-flag', 'na', 'y=scratch/keep.md; f=$(printf n); declare -$f x=y; x=docs/report.md; cp base/report.md $y', B, ['literal', 'nameref']],
+      ['T-export-home', 'na', `export "$(printf 'HOME={NA}/notes')"; printf poison > $HOME/n1.md`, A, ['text', 'names HOME outside an expansion']],
+      ['T-class-e-resolved', 'out', 'cp scratch/keep.md $(echo ../notes-api)/notes/x.md', A, 'name'],   // the resolved path lands in the tracked notes/ folder
+      ['T-class-e-outside', 'out', 'cp scratch/keep.md $(echo ../nowhere)/notes/x.md', N, 'allow'],   // the resolved path lies in no project (the legacy row's twin with a folder that is not there)
+    ];
+    const cwds = { ...w.cwds };
+    let n = 0;
+    for (const [id, cwd, raw, writers, expect] of rows) {
+      const cmd = w.fill(raw);
+      const at = cwds[cwd];
+      const h = w.hook(cmd, at);
+      n++;
+      if (expect === 'allow') assert.equal(h.status, 0, `${id}: allowed: ${cmd}: ${h.reason}`);
+      else {
+        assert.equal(h.status, 2, `${id}: refused: ${cmd}: ${h.reason}`);
+        assert.ok(!/\u2014/.test(h.reason) && !ROMP_NOUNS.test(h.reason.split(w.W).join('<w>')), `${id}: no em dash, no romp noun`);
+        if (expect === 'name') assert.match(h.reason, BY_NAME_RE, `${id}: by name: ${h.reason.split('\n')[0]}`);
+        else if (expect === 'literal-any') assert.ok(BY_NAME_RE.test(h.reason) || NOT_LITERAL.test(h.reason), `${id}: refused by name or as not literal: ${h.reason.split('\n')[0]}`);
+        else if (expect[0] === 'name') assert.ok(BY_NAME_RE.test(h.reason) && h.reason.includes(expect[1]), `${id}: by name, the reason including (${expect[1]}): ${h.reason.split('\n')[0]}`);
+        else if (expect[0] === 'text') assert.ok(h.reason.includes(expect[1]), `${id}: refused, the reason including (${expect[1]}): ${h.reason.split('\n')[0]}`);
+        else assert.ok(NOT_LITERAL.test(h.reason) && h.reason.includes(expect[1]), `${id}: refused as not literal, the reason including (${expect[1]}): ${h.reason.split('\n')[0]}`);
+      }
+      for (const shell of shellsFor(A, id)) {
+        const r = w.run(cmd, at, shell);
+        assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
+      }
+    }
+    assert.equal(n, 139);
   } finally { process.env.HOME = savedHome; w.rm(); }
 });
 

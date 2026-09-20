@@ -37,6 +37,7 @@
 // lists, never their elements: a missing element of a named list is what the side describes, not what the test catches.
 export const CENSUS = {
   WRITE_REDIRECTS: { side: 'WRITE', consumer: 'if (WRITE_REDIRECTS.has(r.op)) add(r.target,', why: 'an operator not listed is read as no write' },
+  STDIN_NAMES: { side: 'WRITE', consumer: '(operand.literal && STDIN_NAMES.has(operand.text))) return { stdin: true };', why: 'a script operand naming the standard input that is not listed is read as a script file whose contents are not in the command, so the piped or here-document script passes unread (round 5\'s fifth addendum, third fix-up: `bash /dev/stdin` and `bash /dev/fd/0` ran the piped copy in bash, zsh and dash)' },
   SHELLS: { side: 'WRITE', consumer: 'if (SHELLS.has(name)) {', why: 'a shell not listed is a command like any other and the script it runs is not read (measured: `ksh93 -c \'cp base/report.md docs/report.md\'` is allowed), the contract\'s unmodelled writer' },
   ZSH_MODIFIERS: { side: 'WRITE', consumer: "'chrt', 'numactl', ...ZSH_MODIFIERS]);", why: 'a modifier not listed is read as a command named so and hides the writer behind it (F1)' },
   PREFIXES: { side: 'WRITE', consumer: 'if (!PREFIXES.has(name)) return { name, args: words.slice(k + 1), chdirs, writes, wrapped, wrappers };', why: 'an unlisted wrapper is read as its own command, an unmodelled writer by the contract, so the set is stated on the four surfaces and the unlisted wrappers the passes found are on the contract\'s list' },

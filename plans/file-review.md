@@ -3577,7 +3577,9 @@ document stands on its own, each with the reasoning it was given.
     grep, diff, git, sed without -i) names no target; a command behind eval, xargs or a shell -c it cannot read
     is unresolvable and passes, since a silent block of ordinary work would cost more than a missed write (so does a
     script piped into a shell from a producer other than a literal echo or printf, and one handed to a shell outside the
-    set the guard reads, busybox sh or ash among them: the second fix-up of round 5's fifth addendum names both), and
+    set the guard reads, busybox sh or ash among them: the second fix-up of round 5's fifth addendum names both; since the
+    third fix-up, a script a `${...}` word stands for when the guard cannot read the word, one fed by a redirection on the closing
+    brace of zsh's brace-body compound, and one a command named by an expansion runs, named among the writers below), and
     so does a python or node one-liner whose write path is computed (a name, an f-string, `sys.argv`,
     `os.environ`), since the interpreter scan reads a literal path only (the round-1 review of 2026-09-18
     rejected a scan of computed paths by execution: it would refuse ordinary scripting and still miss the
@@ -4112,7 +4114,8 @@ document stands on its own, each with the reasoning it was given.
     dash, `$( (` in bash and zsh when its first `(` closes before the last, `parenCloseAt`; `echo $((x > report.md);(y))`
     truncated the file in both); the substitutions inside any arithmetic body (never read before; `(( $(echo x >
     report.md) ))` wrote in all three, `for (( i=$(..); .. ))` in bash and zsh, `expansionsOf`); and the reads that diverge
-    in no way that writes (a here-doc body is data in all three; a here-string and a process substitution are syntax
+    in no way that writes (a here-doc body is data in all three once expanded, its expansions performed alike and read since the
+    third fix-up; a here-string and a process substitution are syntax
     errors in dash, though bash performs a process substitution inside `[[ ]]` (the fix-up below); quotes read alike; a brace list dash writes as one literal name, `{a,b}.md`, a residual named below).
     Where dash parses nothing, no dash reading is due, measured: a `for (( ))` head ("Bad for loop variable"), a `((`
     after any word but a reserved one (`time ((`, `echo ((`, `x=1 ((`, `} ((`), an unquoted parenthesis between `[[` and
@@ -4263,6 +4266,102 @@ document stands on its own, each with the reasoning it was given.
     allowed`, `P-colon-minus: refused`); with the piped-script read removed, `FALSE ALLOWS (allowed, a shell writes): 10` and
     the piped-script matrix and the rows tests go red (`the piped-script matrix: no row a shell writes is allowed`,
     `S-echo-bash: refused`).
+    THE THIRD FIX-UP (2026-09-20; the second fix-up's two verifiers, on its head): seven live classes, each present at the pushed
+    head, four of them written by bash, zsh and dash, and three more found while pinning them, every one reproduced by execution
+    before the code changed (the hook as a process from the synthetic project's docs/, notes/, the project root and out/ with
+    ROMP_SID set, then bash 5.2, zsh 5.9 and dash 0.5.12 unguarded over a fresh world, the tracked subset fingerprinted before and
+    after; busybox sh and ash are outside the claimed shells and outside every count here). THE VERIFIERS' ROWS (274, their own
+    spellings, the same harness) at the second fix-up's head: `SUMMARY rows 274 refused 224 allowed 50 other 0 writes bash=243
+    zsh=235 dash=193 busybox=229 timeouts 0`, `FALSE ALLOWS (allowed, one of bash/zsh/dash writes): 45`; at this commit: `SUMMARY
+    rows 274 refused 244 allowed 30 other 0 writes bash=243 zsh=235 dash=193 busybox=229 timeouts 0`, `FALSE ALLOWS (allowed, one of
+    bash/zsh/dash writes): 25`, the 25 the residuals named here and before (a command whose name is an expansion, `${SHELL} -c
+    '..'`, `echo '..' | $SHELL`, 15 rows; a producer the guard cannot read, `| tee /dev/null | bash`, `| sed '' | bash`, `| cat |
+    bash`, `"$s" | bash`, `yes '..' | head -1 | bash`, 6 rows; a script written to a file and run, 2 rows; eval, 1 row; zsh's
+    `${(e)x}`, the eval class, 1 row), `COSTS (refused, no claimed shell writes): 11` before and after, 20 verdicts changed, each
+    from allowed to refused. (1) THE UNQUOTED BODY: `cat <<EOF` with `$(cp ../base/report.md report.md)` on the body's line, and
+    with `${x:-$(cp ..)}`, from docs/ were `ALLOWED writers=[bash,zsh,dash]`: the body was kept as the consumer's data and never
+    lexed, though every shell performs its expansions before any consumer reads it (measured: the backtick, `<<-`, `<< EOF`, from
+    notes/ and out/, a python consumer, and the quote as a character in the body, `${x:-'$(cp ..)'}`, each writing in all three;
+    `<<'EOF'`, `<<"EOF"`, `<<\EOF`, `<<E"O"F` and the escaped `\$(` writing in none). THE RULE, stated at `readHeredocBodies` in
+    the lexer and here in the same words: a here-document whose delimiter has no quoted character has its body expanded by the shell before the command reads it, so a `$(...)`, a backtick, a `${...}` and a `$name` in the body are read as they are anywhere else and the body the consumer reads is the text after those expansions; a delimiter with any quoted character keeps the body as written and runs nothing. The expanded body is the consumer's stdin text, so a shell fed by it reads
+    the script the shell will run: `bash <<EOF` with `$(echo 'echo x > report.md')` on a line wrote report.md in all three (the
+    printed text parsed as a redirection) while the same body after `<<'EOF'` runs the echo and prints; `<<'EOF'` with `$(echo 'cp
+    ..')` copies in all three (bash splits the printed text and runs it), read as any script. (2) THE RESOLVED SUBSTITUTION: `bash
+    -c "$(echo 'cp ../base/report.md report.md')"`, `bash <<< "$(echo '..')"`, that line inside a here-document fed to bash and
+    `echo "$(echo '..')" | bash` from docs/ were `ALLOWED writers=[bash,zsh,dash]` (`writers=[bash,zsh]` for the here-string, which
+    dash rejects): the `$(...)` was read as the command it runs, an echo that writes nothing, and the text it prints, which the
+    guard could see, was never the script. THE RULE, stated at `resolvedSub` in the lexer (`literalOutput` reads the command) and
+    here in the same words: a `$(...)` or a backtick whose command is one echo or printf with literal operands and no redirection prints text the guard can see, and that text stands in the word where the shell puts it, whole where no shell splits an expansion's result (inside double quotes, as a here-string, as a redirection target, in a here-document body, as the word of a `${...}` operator) and split at blanks into the words the shell makes among unquoted operands, so the word is literal and a script it forms is read as the here-string form already is; when echo's two readings differ, a word that is the substitution alone keeps both texts and a script formed from it is read under each. Measured: `bash -c "$(echo 'echo x > report.md')"` writes in all three; `$(echo cp)
+    ../base/report.md report.md` and the substitution alone as the command line copy in all three, split into the words the shell
+    runs; `x=$(echo 'report.md'); cp ../base/report.md $x` copies in all three (the value resolves); `bash -c $(echo 'cp a b')`,
+    split, hands `cp` alone to bash and `"$(echo 'cp a b')"` is a command named so (no shell writes: both allowed); `bash -c
+    "$(echo 'cp a b\c')"` copies in zsh and dash and not in bash (`writers=[zsh,dash]`, the two readings), `echo -e` in bash and
+    zsh (dash's echo prints the `-e`, which bash rejects); `sed -i .. $(echo '*.md')` rewrites in bash and dash (the glob) and not
+    in zsh; `> $(echo '{a,b}.md')` writes the literal name in all three (no brace list); `IFS=:; cp $(echo 'a:b')` is not resolved
+    (the split follows a rule the guard does not read) and takes THE SPLIT OPERAND below. The text carries the mark 'e' (`isGlobMark`):
+    unquoted for a glob, never a brace list, never a reserved word. (3) THE DEFAULT WORD (found while reproducing the verifiers'
+    rows): `bash -c "${x:-$(echo 'cp ../base/report.md report.md')}"` from docs/ was `ALLOWED writers=[bash,zsh,dash]`, the `${...}`
+    word the residual "a script held in a variable" while its word was text the guard could read. THE RULE, stated at
+    `defaultReading` in the lexer (from the same descent as `nestedExpansions`: a second lex per level was exponential in the
+    nesting, the cap test's 70 levels never returning) and here in the same words: `${name:-word}`, `${name-word}`, `${name:=word}` and `${name=word}` stand for word when the name is unset, and `${name:+word}` and `${name+word}` when it is set, so when word lexes to one literal text under the word's quoting that text is a reading of the word, read as a script where the word is one (a `-c` operand, a here-string, a here-document body fed to a shell), in every position, since zsh splits no expansion's result. Measured: `bash -c ${x:-'cp a
+    b'}` unquoted copies in all three (the quotes quote) and `bash -c "${x:-'cp a b'}"` in none (inside double quotes the quotes are
+    characters: a command named `cp a b`); `bash -c "${x:-cp a b}"` copies in all three and `bash -c ${x:-cp a b}` unquoted in zsh
+    alone (bash and dash split the word and hand `cp` alone to bash); `${x-..}`, `${x:=..}` and `${x:+..}` with x set copy in all
+    three; `${x:?..}` (a message) and `${x}` give no reading; in a here-document body `${x:-'cp a b'}` runs nothing (the quotes are
+    characters there too). (4) ZSH'S `=(cmd)`: `echo ${x:-=(cp ../base/report.md report.md)}` from docs/ was `ALLOWED writers=[zsh]`,
+    `=(` appearing nowhere in the hook, while the bare `cat =(cp ..)` and `: =(cp ..)` were refused by accident (the parenthesis read
+    as a subshell). THE RULE, stated at `eqProcsubStart` in the lexer and here in the same words: zsh performs `=(cmd)` where a word begins, unquoted (an operand, an assignment's value, the word of a `${...}` operator, a replacement part), and nowhere else, so it is read as `<(cmd)` is, cmd running and read like a `$(...)`, for the Bash tool's command and for a script handed to zsh. Measured writing in
+    zsh: the operand, `x==(cp ..)`, `${x:-=(..)}`, `${x:-${y:-=(..)}}`, `${(e)x:-=(..)}`, `${x/b/=(..)}`, `zsh =(echo 'cp ..')` as a
+    script operand; writing in none: `${x:-a=(..)}`, `[[ -n =(..) ]]`, `"${x:-=(..)}"`, `${x:-"=(..)"}`, `bash -c 'cat =(..)'` (a
+    syntax error in bash, whose parenthesis the guard still reads as a subshell, a cost that predates this fix-up), `x=abc; echo
+    ${x#=(..)}` (read all the same, a priced cost). (5) THE CONSUMER'S STDIN: `echo 'cp ../base/report.md report.md' | (bash)`, `|
+    if true; then bash; fi`, `| bash /dev/stdin`, `| bash /dev/fd/0`, `| bash -c 'bash'`, `| sh -c sh`, `| bash -c 'exec bash'` and
+    `| bash -c 'bash -s'` from docs/ were `ALLOWED writers=[bash,zsh,dash]`, `bash <(echo '..')`, `bash < <(echo '..')` and `bash -s
+    < <(echo '..')` `ALLOWED writers=[bash,zsh]`, while `| { bash; }` was refused by accident (the brace sharing the shell's
+    segment); found beside them, `(bash) <<'EOF'`, `{ bash; } <<'EOF'` and `if true; then bash; fi <<'EOF'` with the copy in the
+    body, `ALLOWED writers=[bash,zsh,dash]`. THE RULE, stated at extract's `stdinBodies` (`producerAt` through the frames'
+    `stdinFrom`, `closerStdin` into their `stdinText`, THE INHERITED STDIN in `recurse`, `STDIN_NAMES` in `shellScript` and the
+    interpreter walk, `procsubOf` and `literalOutput` for the substitution) and here in the same words: a compound command's standard input is the pipeline's, and so is what a redirection on its closer feeds it, so every command inside it that reads its script from stdin reads what was piped into the compound or redirected onto its closer; a `<` into the standard input feeds the command what it names, read when it is a process substitution whose command is a literal echo or printf, as a script operand that is one is read; a script operand naming the standard input (`-`, `/dev/stdin`, `/dev/fd/0`, `/proc/self/fd/0`) reads it; and a `-c` script, a `$(...)` and a script the shell reads from a file run with their caller's standard input. Measured:
+    every compound kind, the nesting, a here-string and a `<(echo ..)` on the closer, `bash 3</dev/null` (the pipe still read) and
+    `echo '..' | bash </dev/null` (zsh's multios feeds the pipe too: `writers=[zsh]`, both read); a definition (`| f() { bash; }`)
+    reads nothing; the costs, refused with no shell writing: `| while read -r l; do bash; done` and `| bash -c 'cat; bash'` (the
+    input drained before the shell), `| if true; then :; else bash; fi` (the branch not taken), `bash <(cat f)` allowed (a producer
+    the guard cannot read, the residual). (6) THE SPLIT OPERAND (found while pinning the IFS cost): `IFS=:; cp $(echo
+    '../base/report.md:report.md')` from docs/ was `ALLOWED writers=[bash,zsh,dash]`, `cp $1` and `cp $(cat f)` the same shape, a
+    form present since the guard's first commit: a writer with fewer operands than it needs named no target. THE RULE, stated at the
+    copying writers' case in extract and here in the same words: when a copying writer (cp, mv, install, ln) has fewer operands than its two and one of them is an unquoted expansion the guard did not resolve, the shell may split it into the operands the writer needs, so that operand is a target the hook cannot read (`cp "$(cat f)"`, double-quoted, never splits and
+    stays allowed). THE POPULATIONS, each through the hook as a process from the row's cwd and the three shells unguarded, the
+    fixtures stating them: the stdin-script matrix (`tools/romp-track-bash-guard-stdin-script-matrix.json`: 6 roads x 10 shapes
+    around the shell x the 5 shells of SHELLS x 2 scripts), `rows 600 refused 600 allowed 0 other 0 writes bash=480 zsh=480 dash=320
+    timeouts 0`, `FALSE ALLOWS (allowed, a shell writes; the 600 rows not marked residual): 0`, `refused with no writer: absent 120`
+    (ksh is not installed here); the heredoc-body matrix (`tools/romp-track-bash-guard-heredoc-body-matrix.json`: 6 delimiter
+    quotings x 5 body lines x 6 consumers), `rows 180 refused 156 allowed 24 other 0 writes bash=116 zsh=116 dash=116 timeouts 0`,
+    `FALSE ALLOWS (allowed, a shell writes; the 180 rows not marked residual): 0`, `refused with no writer: absent 24 escaped-paren
+    16` (the 16: a quoted body's `\$(cp ..)` handed to a shell, a syntax error every shell stops on, read as a subshell running the
+    copy, the parenthesis read that predates this fix-up). The verdicts of the earlier fixtures are unchanged at this commit:
+    `existing rows: 1020 unchanged, 0 changed, 0 missing` (the param-word matrix), `existing rows: 300 unchanged, 0 changed, 0
+    missing` (the piped-script matrix), `existing rows: 2280 unchanged, 0 changed, 0 missing` (the construct matrix). THE RESIDUALS, named here and on the hook
+    header beside the earlier ones: a script a `${...}` word stands for when the guard cannot read the word (`bash -c
+    "${x:-$(cat f)}"`), one fed by a redirection on the closing brace of zsh's brace-body compound (`if [[ a ]] { bash } <<'EOF'`,
+    a `}` closer the frame counts and closerStdin does not match), a producer behind a pipe the guard cannot read (the second
+    fix-up's list, `yes '..' | head -1 | bash` and `| sed '' | bash` among them), and a command whose name is an expansion (named
+    among the writers since round 4: the verifiers' `${SHELL} -c '..'`, `$SHELL <<< '..'`, `echo '..' | ${x:-bash}`, 15 rows, while
+    `env ${SHELL} -c '..'` is refused by the wrapper's unknown-option rule, an inconsistency stated, not a rule). Pinned: the rows
+    test's third fix-up group (139 rows: the verifiers' spellings, the three classes found beside them, the quotings, the costs, the
+    residuals, and the twins of the legacy rows whose `$(echo ..)` stand-in the fix-up resolves, each by name now, the legacy rows
+    keeping their intent through a pipeline the guard does not read), the two fixtures, the lexer's reads in
+    `tools/romp-track-bash-guard-shapes.test.mjs`, and the plan test (the six rules on both surfaces in the same words, the
+    functions, the fixtures' populations, the residuals named here, on the header and in hooks/README.md, the surfaces' sentence).
+    Mutation on scratch copies: with the unquoted body kept raw, the four tests the third fix-up's name selects (the lexer's shapes, the stdin-script matrix, the
+    heredoc-body matrix, the rows) print `# pass 0 # fail 4` (`H-sub: refused`, `the heredoc-body matrix: no row a shell writes is
+    allowed`); with the resolved substitution disabled, `# pass 0 # fail 4` (`H-script-expanded: refused`, `the stdin-script matrix:
+    no row a shell writes is allowed`); with the default word's reading removed, `# pass 2 # fail 2` (`H-script-default-word:
+    refused`); with the `=(` read removed, `# pass 2 # fail 2` (`E-brace: refused`); with the compound's piped producer not read
+    through the frames, `# pass 1 # fail 3` (`C-subshell: refused`, the stdin-script matrix red); with the closer's redirection not
+    fed to the compound, `# pass 1 # fail 3` (`C-heredoc-on-subshell: refused`); with a script operand naming stdin read as a
+    file, `# pass 1 # fail 3` (`N-dev-stdin: refused`); with the inherited stdin dropped, `# pass 1 # fail 3` (`I-bash-c-bash:
+    refused`); with the split operand removed, `# pass 2 # fail 2` (`S-ifs-named: refused`); with the process-substitution script
+    operand not read, `# pass 2 # fail 2` (`E-script-operand: refused`).
 48. **Sessions commit the comments folder** (2026-09-10). The user found that their sessions never added
     `.trackchanges/` to git, so the user's comments on the sessions' files and the record of the tracked changes
     were not archived with the work. Decision 25 is unchanged: romp does no git operation, and a `.gitignore` line is the

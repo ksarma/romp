@@ -107,7 +107,7 @@ test('decision 47 states what passes, and the hook agrees: reads, opaque command
   assert.ok(hook.includes("const NUMERIC_EXPANSIONS = ['$$', '${$}'];"), 'the numeric set is the two spellings of the process id');
   assert.ok(!/NUMERIC_EXPANSIONS = \[[^\]]*(RANDOM|SECONDS|BASHPID)/.test(hook) && !/['"](RANDOM|SECONDS|BASHPID)['"]/.test(hook), 'no other name is in the set, and no code names one');
   assert.ok(!hook.includes('KEEPS_NUMERIC_SPECIALS') && !hook.includes('POSIX_SH_NUMERIC') && !hook.includes('numericSetFor'), 'the per-shell table is gone');
-  assert.ok(hook.includes('recurse(sh.script.text, name)') && hook.includes('recurse(body, name)') && hook.includes('lex(command, shell)') && hook.includes("const ANSI_C_SHELLS = new Set(['bash', 'zsh']);"), 'a script handed to a shell is lexed as that shell reads `$\'...\'`');
+  assert.ok(hook.includes('recurse(sh.script.text, name)') && hook.includes("recurse(body, name, undefined, '', [])") && hook.includes('lex(command, shell)') && hook.includes("const ANSI_C_SHELLS = new Set(['bash', 'zsh']);"), 'a script handed to a shell is lexed as that shell reads `$\'...\'`');
   assert.ok(d47.includes('`$\'...\'` is ANSI-C quoting in bash and zsh, a literal word') && hook.includes('function ansiC(body)') && hook.includes("if (e.kind === 'ansi') {"), 'ANSI-C quoting');
   // the target's own project, asked first for every target the hook can place (round 2 for a numeric one, round 3 for
   // every unreadable word and for a relative spelling), and the fold judged as the kernel opens the path
@@ -150,7 +150,7 @@ test('decision 47 states what passes, and the hook agrees: reads, opaque command
   assert.ok(d47.includes('a here-string is scanned like a heredoc') && hook.includes("expect = { kind: 'herestring' }"));
   assert.ok(d47.includes('a process substitution\'s command is read like a `$(...)`') && hook.includes("if (testGrammar && (c === '>' || c === '<') && src[i + 1] === '(') {"));
   assert.ok(d47.includes('`cd` moving the working directory for what follows, inside `( ... )` only up to the `)`'));
-  assert.ok(hook.includes("frames.push({ kind: 'subshell', dir, unknownDir, unknownWhy });"));
+  assert.ok(hook.includes("frames.push({ kind: 'subshell', dir, unknownDir, unknownWhy, stdinFrom: pipedFrom(), stdinText: closerStdin(idx, 'subshell') });"));   // stdinFrom and stdinText since the third fix-up
   assert.ok(hook.includes("case 'eval': case 'xargs': sawOpaqueCommand = true; break;"));
   assert.ok(d47.includes('a tracked image or PDF passes by name'));
   assert.ok(hook.includes('if (isNonTextPath(file)) return false;'));
@@ -520,7 +520,7 @@ test("decision 47, the hook and the prose surfaces record round 5's fifth addend
   assert.ok(hook.includes("export const CONSTRUCT_HEADS = {") && hook.includes("'[[': { closer: ']]',") && hook.includes("'((': { closer: '))',") && hook.includes("'$((': { closer: '))', expansion: true,"), 'the construct table carries the three constructs');
   assert.ok(hook.includes("if (testGrammar && raw === '[[' && seg.words.every((w) => plainWord(w) && RESERVED.has(w.text))) { inTest = true; testStart = i; }") && hook.includes("else if (raw === ']]' && inTest) closeTest(i - 2, true);"), 'the test keyword opens and closes the dash reading');
   assert.ok(hook.includes("if (dashGrammar && seg.words.every((w) => plainWord(w) && RESERVED.has(w.text))) seg.viaSubs.push({ text: body, via: CONSTRUCT_HEADS['(('].via });"), 'the (( )) body is a command list in the dash reading, in command position alone');
-  assert.ok(hook.includes("if (inner.startsWith('(') && parenCloseAt(inner) === inner.length - 1) { const body = inner.slice(1, -1); seg.arith.push(body); expansionsOf(body, CONSTRUCT_HEADS['$(('].expandVia); }"), 'a balanced $(( is arithmetic in every shell and its substitutions are read');
+  assert.ok(hook.includes("if (inner.startsWith('(') && parenCloseAt(inner) === inner.length - 1) { opaqueExpansion(); const body = inner.slice(1, -1); seg.arith.push(body); expansionsOf(body, CONSTRUCT_HEADS['$(('].expandVia); }"), 'a balanced $(( is arithmetic in every shell and its substitutions are read');
   assert.ok(hook.includes("if (dash.opaque || dash.segments.some((s) => s.paren)) return;"), 'a parenthesis inside the test: a syntax error in dash, no dash reading');
   assert.ok(hook.includes("add(r.target, r.how || `${r.op} redirection`)"), 'a dash-reading redirect carries its how');
   assert.ok(hook.includes("const compare = u.how.includes(CONSTRUCT_HEADS['[['].via) ?"), 'the not-literal refusal carries the comparison remedy for a [[ target');
@@ -561,13 +561,13 @@ test("decision 47, the hook and the prose surfaces record the fifth addendum's s
   }
   // the descent's home and the reads that make it: the `${` read descends in both quotings, comments are off inside, a single quote is a
   // character in a double-quoted word, and the piped script joins the stdin bodies
-  assert.ok(hook.includes("const braceParameter = (dq = false) => { raw += '${'; i += 2; const inner = skipNested('{', '}', dq); raw += inner + '}'; opaqueExpansion('${' + inner + '}'); nestedExpansions(inner, dq); };"), 'the ${ read descends');
-  assert.ok(hook.includes("if (e.kind === 'brace') { braceParameter(true); continue; }") && hook.includes("if (e.kind === 'brace') { braceParameter(dqInner); continue; }"), 'in double quotes and unquoted');
-  assert.ok(hook.includes("const nested = lex(inner, shell, { comments: false, quotes: dq ? 'double' : 'plain', depth: nestDepth + 1 });"), 'the inner text is lexed with no comment, in its quoting, one level deeper');
+  assert.ok(hook.includes("const nested = nestedExpansions(inner, dq, !!op);") && hook.includes("if (op && nested) defaultReading(inner, op[0].length, nested);"), 'the ${ read descends (once, and reads the default word from the same descent since the third fix-up)');
+  assert.ok(hook.includes("if (e.kind === 'brace') { braceParameter(true); continue; }") && hook.includes("if (e.kind === 'brace') { braceParameter(dqInner || hdInner); continue; }"), 'in double quotes and unquoted (and in a here-document body, the third fix-up)');
+  assert.ok(hook.includes("const nested = lex(inner, shell, { comments: false, quotes: dq ? 'double' : 'plain', depth: nestDepth + 1, braceWord: true, oneWord: true, noSplit: true, ifsNamed });"), 'the inner text is lexed with no comment, in its quoting, one level deeper (as one brace word, unsplit, with the IFS fact, since the third fix-up)');
   assert.ok(hook.includes("if (c === '#' && !inWord && comments) {") && hook.includes("if (c === \"'\" && !dqInner) {"), 'a # opens no comment inside the word; a single quote is a character in a double-quoted one');
   assert.ok(hook.includes("for (const t of s.subs) seg.viaSubs.push({ text: t, via: BRACE_WORD_VIA });"), 'the nested substitutions join the segment with the word named');
-  assert.ok(hook.includes("out.push(...pipedScripts(idx));") && hook.includes("if (producer.name === 'echo') return echoOutput(producer.args);") && hook.includes("if (producer.name === 'printf') return printfOutput(producer.args);"), 'the piped script joins the stdin bodies, from an echo or a printf alone');
-  assert.ok(hook.includes("if (idx < 1 || segments[idx - 1].op !== '|' || segments[idx - 1].paren) return [];"), 'the producer is the command directly before the pipe, never a subshell');
+  assert.ok(hook.includes("out.push(...pipedScripts(p));") && hook.includes("if (producer.name === 'echo') return echoOutput(producer.args);") && hook.includes("if (producer.name === 'printf') return printfOutput(producer.args);"), 'the piped script joins the stdin bodies, from an echo or a printf alone');
+  assert.ok(hook.includes("if (segments[p].paren) return [];") && hook.includes("if (idx > 0 && segments[idx - 1].op === '|') return idx - 1;"), 'the producer is the command directly before the pipe (or, since the third fix-up, before the compound holding the consumer: producerAt), never a subshell');
   // the residual, named with busybox on the header, the decision and the README
   for (const [name, text] of [['the hook header', hook], ['decision 47', d47], ['hooks/README.md', hooksReadme]]) {
     const flat = text.replace(/\n\s*\/\/ ?/g, ' ').replace(/\s+/g, ' ');
@@ -604,4 +604,53 @@ test("decision 47 and the hook header record the seventh pass's attacker: nestin
   assert.ok(!hook.includes('carries an option the shell fills in ('), 'the poison M1\'s per-segment detector shadowed is gone');
   assert.ok(hook.includes("if (readonlyNames.has(name)) return;") && hook.includes("if (readonlyNames.has(name)) continue;"), 'a readonly name keeps its value in both recording paths');
   assert.ok(!/\u2014/.test(d47), 'no em dash in decision 47');
+});
+
+// Round 5's fifth addendum's third fix-up (2026-09-20): six rules, each stated once at its home in the hook and on decision 47 in the
+// same words, the functions that carry them, the two fixtures with their populations, the residuals named on the header, the decision
+// and the README, and the three prose surfaces' sentence
+test("decision 47, the hook and the prose surfaces record the fifth addendum's third fix-up: the six rules (the unquoted body, the resolved substitution, the default word, zsh's `=(cmd)`, the consumer's stdin, the split operand) at their homes and on decision 47 in the same words, the functions, the two matrix fixtures with their populations, the residuals named with the brace-body closer on the header, the decision and the README, and the three surfaces' sentence", () => {
+  const RULES = {
+    'the unquoted body': "a here-document whose delimiter has no quoted character has its body expanded by the shell before the command reads it, so a `$(...)`, a backtick, a `${...}` and a `$name` in the body are read as they are anywhere else and the body the consumer reads is the text after those expansions; a delimiter with any quoted character keeps the body as written and runs nothing",
+    'the resolved substitution': "a `$(...)` or a backtick whose command is one echo or printf with literal operands and no redirection prints text the guard can see, and that text stands in the word where the shell puts it, whole where no shell splits an expansion's result (inside double quotes, as a here-string, as a redirection target, in a here-document body, as the word of a `${...}` operator) and split at blanks into the words the shell makes among unquoted operands, so the word is literal and a script it forms is read as the here-string form already is; when echo's two readings differ, a word that is the substitution alone keeps both texts and a script formed from it is read under each",
+    'the default word': "`${name:-word}`, `${name-word}`, `${name:=word}` and `${name=word}` stand for word when the name is unset, and `${name:+word}` and `${name+word}` when it is set, so when word lexes to one literal text under the word's quoting that text is a reading of the word, read as a script where the word is one (a `-c` operand, a here-string, a here-document body fed to a shell), in every position, since zsh splits no expansion's result",
+    "zsh's =(cmd)": "zsh performs `=(cmd)` where a word begins, unquoted (an operand, an assignment's value, the word of a `${...}` operator, a replacement part), and nowhere else, so it is read as `<(cmd)` is, cmd running and read like a `$(...)`, for the Bash tool's command and for a script handed to zsh",
+    "the consumer's stdin": "a compound command's standard input is the pipeline's, and so is what a redirection on its closer feeds it, so every command inside it that reads its script from stdin reads what was piped into the compound or redirected onto its closer; a `<` into the standard input feeds the command what it names, read when it is a process substitution whose command is a literal echo or printf, as a script operand that is one is read; a script operand naming the standard input (`-`, `/dev/stdin`, `/dev/fd/0`, `/proc/self/fd/0`) reads it; and a `-c` script, a `$(...)` and a script the shell reads from a file run with their caller's standard input",
+    'the split operand': "when a copying writer (cp, mv, install, ln) has fewer operands than its two and one of them is an unquoted expansion the guard did not resolve, the shell may split it into the operands the writer needs, so that operand is a target the hook cannot read",
+  };
+  const d47Flat = d47.replace(/\s+/g, ' ');
+  assert.ok(d47Flat.includes("THE THIRD FIX-UP (2026-09-20; the second fix-up's two verifiers, on its head)"), 'decision 47 records the third fix-up');
+  assert.ok(hook.includes("ROUND 5'S FIFTH ADDENDUM, THIRD FIX-UP (2026-09-20; the second fix-up's two verifiers, on its head)"), 'the hook header records it');
+  for (const [name, rule] of Object.entries(RULES)) {
+    assert.ok(hook.includes(rule), `the hook states the rule of ${name}`);
+    assert.ok(d47Flat.includes(rule), `decision 47 states the rule of ${name} in the same words`);
+  }
+  for (const fn of ['literalOutput', 'procsubOf', 'resolvedSub', 'defaultReading', 'readHeredocBodies', 'producerAt', 'pipedFrom', 'closerStdin', 'eqProcsubStart', 'STDIN_NAMES', 'HEREDOC_BODY_VIA', 'READING_VIA', 'isGlobMark', 'splitOperand', 'inheritedStdin']) {
+    assert.ok(hook.includes(fn), `the hook has ${fn}`);
+  }
+  // the homes: the lexer resolves through literalOutput, the ${ read reads the default word from the one descent, the body is expanded
+  // through the lexer in its own mode, =( is zsh's alone, the stdin names are read by shellScript and the interpreter walk, the
+  // compounds carry the producer and the closer's text, a -c script inherits its caller's stdin, and the copying writers' one operand
+  assert.ok(hook.includes("const texts = literalOutput(inner, shell, nestDepth);") && hook.includes("if (!resolvedSub('$(' + inner + ')', inner)) { opaqueExpansion(hdInner ? '$(' + inner + ')' : undefined); seg.subs.push(inner); }"), 'a $(...) is resolved before it is read as a command');
+  assert.ok(hook.includes("if (op && nested) defaultReading(inner, op[0].length, nested);"), 'the default word from the one descent');
+  assert.ok(hook.includes("const x = lex(body, shell, { quotes: 'heredoc', comments: false, depth: nestDepth + 1, ifsNamed });") && hook.includes("if (q || !/[$`]/.test(body) || nestDepth >= NESTED_DEPTH_CAP) { owner.heredocs.push(body); continue; }"), 'an unquoted body is expanded through the lexer, a quoted one kept');
+  assert.ok(hook.includes("const zshGrammar = shell == null || shell === 'zsh';") && hook.includes("if (zshGrammar && c === '(' && eqProcsubStart()) {"), "=( is read under zsh's grammar");
+  assert.ok(hook.includes("if (s || !operand || (operand.literal && STDIN_NAMES.has(operand.text))) return { stdin: true };") && hook.includes("if (a.literal && STDIN_NAMES.has(a.text)) break;"), 'a script operand naming stdin reads it, for a shell and for an interpreter');
+  assert.ok(hook.includes("stdinFrom: pipedFrom(), stdinText: closerStdin(idx, 'subshell')") && hook.includes("stdinFrom: pipedFrom(), stdinText: closerStdin(walkIdx, 'group')") && hook.includes("stdinFrom: pipedFrom(), stdinText: closerStdin(walkIdx, head)"), 'every compound frame carries the producer piped into it and the text redirected onto its closer');
+  assert.ok(hook.includes("stdin: stdin != null ? stdin : (walkIdx >= 0 ? stdinBodies(walkIdx) : inheritedStdin),") && hook.includes("for (const body of stdinBodies(idx)) recurse(body, name, undefined, '', []);"), 'a -c script inherits its caller\'s stdin; a script fed on stdin passes nothing on');
+  assert.ok(hook.includes("if (operandsAsSpelled.length < 2 && operandsAsSpelled.some(maySplit)) cannotRead(operandsAsSpelled.find(maySplit), name, { kind: 'splitOperand' });"), 'the split operand');
+  // the two fixtures and their populations
+  for (const [file, key] of [['romp-track-bash-guard-stdin-script-matrix.json', 'shells'], ['romp-track-bash-guard-heredoc-body-matrix.json', 'consumers']]) {
+    const f = JSON.parse(fs.readFileSync(path.join(REPO, 'tools', file), 'utf8'));
+    assert.ok(f.rows > 0 && typeof f.population === 'string' && f.population.includes('produced by') && f.note.includes('NOT exhaustive') && Array.isArray(f[key]), `${file} states its population and that it is not exhaustive`);
+    assert.ok(d47Flat.includes('`tools/' + file + '`'), `decision 47 names ${file}`);
+  }
+  // the residuals, named with the brace-body closer on the header, the decision and the README
+  for (const [name, text] of [['the hook header', hook], ['decision 47', d47], ['hooks/README.md', hooksReadme]]) assert.ok(text.replace(/\s+/g, ' ').includes("zsh's brace-body compound"), `${name} names the brace-body closer residual`);
+  // the three prose surfaces carry the third fix-up's sentence
+  const SENT3 = "and since its third fix-up the same day an unquoted here-document body's expansions are read as the commands they run and the expanded body is the consumer's script (a quoted delimiter keeps the body as written), a `$(echo '...')` or a backtick with literal operands is the text it prints where the shell puts it (so `bash -c \"$(echo 'cp a b')\"` and `$(echo cp) a b` copy), a `${x:-word}` alone is read as a script under its default word, zsh's `=(cmd)` runs its command, a shell fed through a subshell, a group, an if or loop body, a `/dev/stdin` operand, a `<(echo '...')` script, a redirection on the compound's closer or a `-c` script's inner shell reads what was piped or redirected to it, and a copying writer whose one unquoted operand the shell may split into two refuses while a project is in play (a `${...}` word the guard cannot read as a script, a producer behind a pipe it cannot read, a redirection on the closing brace of zsh's brace-body compound and a command whose name is an expansion stay unread and are named)";
+  const prose = { 'hooks/README.md': hooksReadme, 'docs/install.md': read('docs', 'install.md'), 'the vendored SKILL.md': read('vendor', 'track-changents', 'skill', 'SKILL.md') };
+  for (const [name, text] of Object.entries(prose)) assert.ok(text.replace(/\s+/g, ' ').includes(SENT3), `${name} carries the third fix-up's sentence`);
+  const censusSrc = fs.readFileSync(path.join(REPO, 'tools', 'romp-track-bash-guard-census.mjs'), 'utf8');
+  assert.ok(censusSrc.includes("STDIN_NAMES: { side: 'WRITE'"), 'the census names the stdin names with their side');
 });

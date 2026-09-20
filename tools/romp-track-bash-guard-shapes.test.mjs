@@ -881,3 +881,83 @@ test('the hook process rules the same way on a subshell cd, a chained heredoc an
   assert.equal(run('cp base/*.md notes/').status, 2, 'a glob source into the tracked folder');
   assert.equal(run('cp base/report.md docs/report.{md,bak}').status, 0, 'three operands and no directory: cp writes nothing');
 });
+
+// ── round 5's fifth addendum, third fix-up (2026-09-20): the lexer's reads ───────────────────
+
+test("round 5's fifth addendum, third fix-up: the lexer resolves a substitution whose command is a literal echo or printf to the text it prints (one literal word inside double quotes, as a here-string and as a redirection target; split at blanks among unquoted operands, marked 'e'; not while the command names IFS), keeps echo's two readings on a word that is the substitution alone, reads a `${...}` default word as a reading of the word, expands an unquoted here-document body (its substitutions run and its text is the consumer's) and leaves a quoted one as written, reads zsh's `=(cmd)` where zsh performs it and not inside double quotes or for a script handed to bash, records a `<` into the standard input with its descriptor, and reads a script operand naming stdin as stdin", () => {
+  const seg = (c, sh = null) => lex(c, sh).segments[0];
+  const texts = (c) => seg(c).words.map((w) => w.text);
+  // THE RESOLVED SUBSTITUTION
+  assert.deepEqual(seg("bash -c \"$(echo 'cp a b')\"").words.map((w) => [w.text, w.literal]), [['bash', true], ['-c', true], ['cp a b', true]], 'inside double quotes the printed text is one literal word');
+  assert.deepEqual(seg("echo $(echo 'cp a b')").words.map((w) => [w.text, w.marks]), [['echo', 'uuuu'], ['cp', 'ee'], ['a', 'e'], ['b', 'e']], "among unquoted operands the text splits at blanks, each piece marked 'e'");
+  assert.deepEqual(texts("a$(echo ' b c ')d"), ['a', 'b', 'c', 'd'], 'a blank at either end ends the word under way, as in the shells');
+  assert.deepEqual(texts("cp $(echo '')x"), ['cp', 'x'], 'an empty result alone makes no word');
+  assert.deepEqual(seg("bash <<< $(echo 'echo x > f')").heredocs, ['echo x > f'], 'a here-string word is one text, never split');
+  assert.deepEqual(seg("echo x > $(echo 'r.md')").redirects.map((r) => [r.target.text, r.target.literal]), [['r.md', true]], 'a redirection target is one literal word');
+  assert.deepEqual(seg("bash -c \"`echo 'cp a b'`\"").words[2].text, 'cp a b', 'a backtick resolves as a $(...) does');
+  assert.deepEqual(seg("bash -c \"$(printf '%s %s' cp 'a b')\"").words[2].text, 'cp a b', 'printf too, its conversions taking the operands');
+  assert.equal(seg("echo $(echo '*.md')").words[1].glob, true, "a glob character in the text globs (mark 'e' is unquoted for a glob), as bash and dash glob a substitution's result");
+  assert.deepEqual(texts("echo x > $(echo '{a,b}.md')"), ['echo', 'x'], 'and no brace list: the target is the literal name');
+  assert.deepEqual(seg("echo x > $(echo '{a,b}.md')").redirects.map((r) => r.target.text), ['{a,b}.md']);
+  const ifs = lex("IFS=:; cp $(echo 'a:b')").segments[1];
+  assert.deepEqual([ifs.words[1].literal, ifs.subs], [false, ["echo 'a:b'"]], 'while the command names IFS an unquoted substitution among operands is not resolved: the expansion stays, its command read');
+  const two = seg("bash -c \"$(echo 'cp a b\\c')\"").words[2];
+  assert.deepEqual([two.literal, two.readings], [false, ['cp a b\\c', 'cp a b']], "echo's two readings (bash as spelled; zsh and dash with the escape interpreted, \\c ending the output) stay on the word that is the substitution alone");
+  const mixed = seg("bash -c \"x$(echo 'a\\tb')\"").words[2];
+  assert.deepEqual([mixed.literal, mixed.readings], [false, undefined], 'beside other text a two-reading substitution leaves the word an expansion with no readings');
+  assert.deepEqual(seg("bash <<< \"$(echo 'a\\tb')\"").heredocs.length, 2, 'a here-string keeps both readings as texts');
+  // THE DEFAULT WORD
+  assert.deepEqual(seg("bash -c \"${x:-$(echo 'cp a b')}\"").words[2].readings, ['cp a b'], 'a default word whose text the lexer can read is a reading of the word');
+  assert.deepEqual(seg("bash -c ${x:-'cp a b'}").words[2].readings, ['cp a b'], 'unquoted: the single quotes quote');
+  assert.deepEqual(seg("bash -c \"${x:-'cp a b'}\"").words[2].readings, ["'cp a b'"], 'inside double quotes they are characters');
+  assert.deepEqual(seg('bash -c "${x-cp a b}"').words[2].readings, ['cp a b'], 'the - form');
+  assert.deepEqual(seg('bash -c "${x:=cp a b}"').words[2].readings, ['cp a b'], 'the := form');
+  assert.deepEqual(seg('bash -c "${x:+cp a b}"').words[2].readings, ['cp a b'], 'the :+ form');
+  assert.deepEqual(seg('bash -c "${x:-${y:-cp a b}}"').words[2].readings, ['cp a b'], 'a default word that is one nested default carries its readings up');
+  assert.equal(seg('bash -c "${x:?cp a b}"').words[2].readings, undefined, 'the message form gives none');
+  assert.equal(seg('bash -c "${x}"').words[2].readings, undefined, 'a plain name gives none');
+  assert.equal(seg('bash -c "${x:-$(cat f)}"').words[2].readings, undefined, 'a word the lexer cannot read gives none (its command is read)');
+  assert.deepEqual(seg('bash -c "${x:-$(cat f)}"').viaSubs.map((v) => v.text), ['cat f']);
+  assert.deepEqual(seg('echo ${x:-a #$(cp a b)}').viaSubs.map((v) => v.text), ['cp a b'], 'the descent still reads every substitution in the word');
+  // THE UNQUOTED BODY
+  const hd = (c) => lex(c).segments[0];
+  assert.deepEqual([hd('cat <<EOF\n$(cp a b)\nEOF').heredocs, hd('cat <<EOF\n$(cp a b)\nEOF').viaSubs.map((v) => v.text)], [['$(cp a b)'], ['cp a b']], "an unquoted body's substitution is read as the command it runs, and its spelling stays in the body's text");
+  assert.deepEqual(hd('cat <<EOF\n`cp a b`\nEOF').viaSubs.map((v) => v.text), ['cp a b'], 'a backtick too');
+  assert.deepEqual(hd('cat <<EOF\n${x:-$(cp a b)}\nEOF').viaSubs.map((v) => v.text), ['cp a b'], 'and one nested in a ${...} word of the body');
+  assert.deepEqual(hd("cat <<EOF\n${x:-'$(cp a b)'}\nEOF").viaSubs.map((v) => v.text), ['cp a b'], 'a quote is a character in the body');
+  assert.deepEqual(hd("bash <<EOF\n$(echo 'echo x > f')\nEOF").heredocs, ['echo x > f'], 'the body a shell consumer reads is the text after the expansions');
+  assert.deepEqual(hd("bash <<EOF\n${x:-$(echo 'cp a b')}\nEOF").heredocs, ["${x:-$(echo 'cp a b')}", 'cp a b'], "and the body's default word is a further text of it");
+  for (const c of ["cat <<'EOF'\n$(cp a b)\nEOF", 'cat <<"EOF"\n$(cp a b)\nEOF', 'cat <<\\EOF\n$(cp a b)\nEOF', 'cat <<E"O"F\n$(cp a b)\nEOF']) assert.deepEqual([hd(c).heredocs, hd(c).viaSubs], [['$(cp a b)'], []], `a quoted delimiter keeps the body as written: ${JSON.stringify(c)}`);
+  assert.deepEqual([hd('cat <<EOF\n\\$(cp a b)\nEOF').heredocs, hd('cat <<EOF\n\\$(cp a b)\nEOF').viaSubs], [['$(cp a b)'], []], 'a backslash quotes the dollar');
+  assert.deepEqual(hd('cat <<-EOF\n\t$(cp a b)\n\tEOF').viaSubs.map((v) => v.text), ['cp a b'], '<<- strips the tabs and expands alike');
+  // zsh's =(cmd)
+  assert.deepEqual([seg('cat =(cp a b)').subs, seg('cat =(cp a b)').words.map((w) => w.text)], [['cp a b'], ['cat', '=(cp a b)']], 'an operand: cmd runs, the word stands for a file');
+  assert.deepEqual(seg('x==(cp a b)').subs, ['cp a b'], "an assignment's value");
+  assert.deepEqual(seg('echo ${x:-=(cp a b)}').viaSubs.map((v) => v.text), ['cp a b'], 'the word of a ${...} operator');
+  assert.deepEqual(seg('echo ${x/b/=(cp a b)}').viaSubs.map((v) => v.text), ['cp a b'], 'a replacement part');
+  assert.deepEqual([seg('echo "${x:-=(cp a b)}"').viaSubs, seg('echo ${x:-a=(cp a b)}').viaSubs], [[], []], 'not inside double quotes, not after a character of the word');
+  assert.deepEqual(seg('cat =(cp a b)', 'bash').subs, [], 'not for a script handed to bash (the parenthesis is read as bash reads it)');
+  assert.deepEqual(seg('cat =(cp a b)', 'zsh').subs, ['cp a b'], 'read for a script handed to zsh');
+  assert.deepEqual(lex('x=(a b)').segments.map((s) => s.paren || s.words.map((w) => w.text)), [['x='], '(', ['a', 'b'], ')'], 'an array assignment keeps its reading');
+  // the standard input
+  assert.deepEqual(seg("bash < <(echo 'cp a b')").stdin.map((s) => [s.text, s.fd]), [["<(echo 'cp a b')", null]], 'a < into the standard input records its word');
+  assert.deepEqual(seg('bash 3</dev/null').stdin.map((s) => [s.text, s.fd]), [['/dev/null', '3']], 'and the descriptor numbered before it');
+  assert.deepEqual(targets("echo 'cp base/report.md docs/report.md' | bash /dev/stdin"), [report], 'a script operand naming stdin reads the piped script');
+  assert.deepEqual(targets("bash <(echo 'cp base/report.md docs/report.md')"), [report], 'a process substitution as the script operand, its echo literal, is the script');
+  assert.deepEqual(targets("bash < <(echo 'cp base/report.md docs/report.md')"), [report], 'and as a < into the standard input');
+  assert.deepEqual(targets('bash <(cat f)'), [], 'a producer the guard cannot read: nothing');
+  assert.deepEqual(targets("echo 'cp base/report.md docs/report.md' | (bash)"), [report], 'a subshell consumer reads what was piped into it');
+  assert.deepEqual(targets("echo 'cp base/report.md docs/report.md' | if true; then bash; fi"), [report], 'an if body too');
+  assert.deepEqual(targets("(bash) <<'EOF'\ncp base/report.md docs/report.md\nEOF"), [report], "a here-document on a subshell's closer feeds it");
+  assert.deepEqual(targets("{ bash; } <<'EOF'\ncp base/report.md docs/report.md\nEOF"), [report], "and on a group's");
+  assert.deepEqual(targets("echo 'cp base/report.md docs/report.md' | bash -c 'bash'"), [report], "a -c script's inner shell reads its caller's stdin");
+  assert.deepEqual(targets("echo 'cp base/report.md docs/report.md' | f() { bash; }"), [], 'a definition reads nothing');
+  assert.deepEqual(targets("bash -c \"$(echo 'cp base/report.md docs/report.md')\""), [report], 'a resolved -c operand is the script');
+  assert.deepEqual(targets("bash -c \"${x:-$(echo 'cp base/report.md docs/report.md')}\""), [report], 'a default word alone is read as the script');
+  assert.deepEqual(targets('cat <<EOF\n$(cp base/report.md docs/report.md)\nEOF'), [report], "an unquoted body's substitution runs");
+  assert.deepEqual(targets("cat <<'EOF'\n$(cp base/report.md docs/report.md)\nEOF"), [], 'a quoted one does not');
+  assert.deepEqual(targets("$(echo 'cp base/report.md docs/report.md')"), [report], 'the substitution alone is the command line, split');
+  const split = evaluate(payload('cp $(cat f)'));
+  assert.ok(split && /may split into several words/.test(split), `a copying writer with one unquoted expansion as its operand is refused while the project is in play: the shell may split it (THE SPLIT OPERAND): ${split}`);
+  assert.equal(evaluate(payload('cp "$(cat f)"')), null, 'double-quoted, one operand: no write');
+});

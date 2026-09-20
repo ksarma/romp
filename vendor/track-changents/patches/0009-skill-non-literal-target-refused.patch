@@ -81,11 +81,16 @@
 # The second fix-up of round 5's fifth addendum (2026-09-20) adds one clause to the same paragraph: an expansion nested in
 # a `${...}` word is read as the command it runs, a literal echo or printf piped into a shell is that shell's script, and
 # the producers and shells the guard does not read are named.
+# The third fix-up of round 5's fifth addendum (2026-09-20) adds one more clause to the same paragraph: an unquoted here-document
+# body's expansions are read, a substitution whose command is a literal echo or printf is the text it prints, a `${x:-word}`
+# alone is read as a script under its default word, zsh's `=(cmd)` runs its command, a shell fed through a compound, a
+# `/dev/stdin` operand, a `<(echo '..')` script, a closer's redirection or a `-c` script's inner shell reads what was piped or
+# redirected to it, a copying writer's one unquoted operand the shell may split refuses, and the residuals are named.
 diff --git a/skill/SKILL.md b/skill/SKILL.md
-index f7d8bc9..9c73557 100644
+index f7d8bc9..4b6cb5d 100644
 --- a/skill/SKILL.md
 +++ b/skill/SKILL.md
-@@ -59,6 +59,199 @@
+@@ -59,6 +59,199 @@ heredoc included), no `sed -i` or `perl -i`, no python `open(..., 'w')` or node
  the write: its status is 0 when tracking is ON, so `track-config ... && cp ...` runs
  the copy on exactly the file it must not touch.
  
@@ -175,7 +180,7 @@ index f7d8bc9..9c73557 100644
 +backtick, a `<(...)`) is read as the command it runs in every position, and a
 +literal echo or printf piped into a shell reading stdin is that shell's script (a
 +producer the guard cannot see, `cat f | bash`, stays unread, as does a script
-+handed to a shell outside the set it reads, busybox sh or ash among them), and
++handed to a shell outside the set it reads, busybox sh or ash among them), and since its third fix-up the same day an unquoted here-document body's expansions are read as the commands they run and the expanded body is the consumer's script (a quoted delimiter keeps the body as written), a `$(echo '...')` or a backtick with literal operands is the text it prints where the shell puts it (so `bash -c "$(echo 'cp a b')"` and `$(echo cp) a b` copy), a `${x:-word}` alone is read as a script under its default word, zsh's `=(cmd)` runs its command, a shell fed through a subshell, a group, an if or loop body, a `/dev/stdin` operand, a `<(echo '...')` script, a redirection on the compound's closer or a `-c` script's inner shell reads what was piped or redirected to it, and a copying writer whose one unquoted operand the shell may split into two refuses while a project is in play (a `${...}` word the guard cannot read as a script, a producer behind a pipe it cannot read, a redirection on the closing brace of zsh's brace-body compound and a command whose name is an expansion stay unread and are named), and
 +`[[ $a > $b ]]` with `$b` the guard cannot read refuses from a tracked cwd, a
 +stated cost (compare from a directory outside the project, or with `expr`); a link the
 +command makes is followed into a numeric name's folder too, and one whose source
