@@ -8316,15 +8316,46 @@ seating method (`append`, `prepend`, `appendChild`, `insertBefore`, `replaceChil
 `bind`, a `mount` or `render`, and any method of `Object`, `Reflect` or `Function` is a call read by its site; a method by
 a name the census lists as seating nothing passes; and a method by any other name fails with its line. A seat whose
 receiver is the `body` token was the first read's; every other seat and every site-read call passes only as a site the
-census lists by hand (`SEATS_READ_BY_HAND`: the enclosing function, the receiver's spelling and the form, with what the
+census lists by hand (`SEATS_READ_BY_HAND`, keyed on the SEAT since the round-7 fixes: the enclosing function, the
+receiver's spelling, the form and WHAT THE SEAT SEATS, the seated arguments or the assigned value as spelled, with what the
 receiver is and so why its seat lands no child in the body, and the declaration a bare receiver name is bound to, so an
-entry reads ONE binding and a second declaration of a listed name inside the entry's function fails with its line rather
-than passing under the entry's claim, the branch's verification pass finding census-2) and FAILS with its line otherwise, whatever produced
+entry reads ONE binding and ONE seat: a second declaration of a listed name inside the entry's function fails with its line
+rather than passing under the entry's claim (the branch's verification pass finding census-2); a second seat at a listed
+site is a second entry and fails until read (the round-6 review's cluster A, 2026-09-20: keyed on the function, receiver
+and form alone, one entry admitted every seat sharing the triple, so a second `main.appendChild` seating an unlisted root
+in the viewer's body passed under the entry hand-read for `main.appendChild(body)`; the table went from 60 entries keyed on
+the triple to 90 entries over 92 seats at the round-7 head, the rise being what the triple hid, and the census test's
+diagnostic derives both counts at every run); and a receiver bound by `let` or `var`, or a parameter written to, is
+reassignable and fails unless the entry pins what every write to it assigns (`holds`; the round-6 review's correctness-5:
+the entry for the viewer's `let sess = null` pinned its declaration and nothing about what it held at the seat, and the
+session tag is a const built by `el()` now)) and FAILS with its line otherwise, whatever produced
 the receiver; a seating or site-read method read without being called (`md.append.call(md, x)`, `Reflect.apply(md.append,
 ...)`, a bound seat, `const f = md.append`) fails with its line; a member read by a computed name and stored (`const f =
 md[m]`) passes only as a site listed (`INDEX_READS_BY_HAND`); a listed site the source no longer has fails too, so the
 tables hold the live sites and nothing more; a call through a computed name (`x["append"](...)`) fails wherever it
-stands; and a call whose callee is neither a name nor a member fails. The derived set is printed with its lines as a
+stands; and a call whose callee is neither a name nor a member fails. Since the round-7 fixes (the round-6 review's
+clusters B and C and its item 7, 2026-09-20) every axis the second read stands on is an allowlist with its default
+refusing: every member WRITE on a receiver other than the `body` token, plain or compound, a `++`, a destructuring target
+or a for-of head, passes as a seat (`innerHTML`, `outerHTML`, through `SEATS_READ_BY_HAND`), by a name the census lists as
+seating nothing (`NON_SEATING_WRITES`, each read by hand; the refuters measured 47 distinct names over 225 writes at the
+round-6 head, and the census test's diagnostic derives the count at every run) or through an element's `style` or
+`dataset`, a handler member (`on<event>`) only from a function, and fails with its line otherwise, a computed name (`md[k]
+= html`) wherever it stands (before this the write axis knew two names and passed `innerText`, `outerText`, `document.body
+= ...` and every computed-name write unread); `Object`, `Reflect` and `Function` are read by their binding and pass as the
+receiver of a member call alone, every other read (an alias `const R = Reflect`, a stored `Reflect.set`, an argument)
+failing with its line (before this the global was known by its spelling, so `const R = Reflect; R.set(...)` passed with no
+site and no refusal while the census's header said it failed); and the ARGUMENT axis is read: a node of the tree handed to
+any callee passes only as a site `ARGS_READ_BY_HAND` lists, a URL member written from a value that is not a literal only as
+a site `URL_WRITES_READ_BY_HAND` lists, each read for whether the value can carry a remote URL, whether that road reaches
+the network and what gates it, an attribute set under a name the census cannot read as a literal only as a site
+`ATTR_NAMES_READ_BY_HAND` lists, and a string road (`eval`, a timer's string, `new Function`, `import(...)`, a javascript:
+URL) fails. Item 7's first run, the census over the viewer at the round-7 head with those tables empty, refused 17 sites: 9
+nodes handed to five callees (`Array.from` over a child list five times, figureAnchor's `oneImg` and `linkAround` over the
+climbing parent, a seat's reference child, boundarySide's `leafIsText`) and 8 URL writes (two object URLs and an object
+URL with a page fragment, no network; two chunk script tags derived from the page's own bundle tag, a fetch from the
+bundle's origin; the download route, a same-origin click the code makes; the GitHub link, a remote host the kernel names,
+reached on the person's click alone; the URL viewer's own document URL, same-origin by the caller's test, reached on a
+click), and no string road; each is listed with the reason. The derived set is printed with its lines as a
 diagnostic, held equal to the three lists, and `bodyReady` is executed over each root as its list says, over an unlisted
 child alone and beside every content root (not in), and under the PDF kind over each wait and line root (the loader
 alone in, the rest not). A root the viewer gains fails the census until it is listed, a `body` token the census

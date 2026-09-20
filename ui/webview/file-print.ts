@@ -756,13 +756,20 @@ function elementChildren(body: BodyLike): BodyChild[] {
  *  seat in the viewer's source, read by file-print.test.ts's census with its default refusing (the rule, not a roster of
  *  method names; the round-5 review, 2026-09-20): a seat whose receiver is the `body` token has each seated argument read
  *  down to the `el("<tag>", "<class>")` that builds it; a seat on ANY OTHER receiver (a seating call, an innerHTML or
- *  outerHTML assignment) passes only as a site the census lists by hand (its function, receiver, form and the receiver's
- *  binding, with what the receiver is), every other method call passes only by a name the census lists, as read by its
- *  site (call, apply, bind, mount, render, a reflection global's method: a listed site too) or as seating nothing, and
- *  every other seat, every other method name, a seating method read without being called and a member stored under a
- *  computed name fail the census with its line, whatever produced the receiver (a query result's parent, a stored query
- *  result, `md.parentElement`, a variable, `closest`, `getRootNode`, an alias, a range's `insertNode`, `Reflect.apply`,
- *  a second binding of a listed name; the branch's verification pass, 2026-09-20); on the `body` token
+ *  outerHTML assignment) passes only as the ONE seat an entry the census lists by hand reads (its function, receiver,
+ *  form, what it seats and the receiver's binding, with what the receiver is; a second seat at a listed site is a second
+ *  entry, and a reassignable receiver is refused unless the entry pins what it holds: the round-6 review's cluster A,
+ *  2026-09-20), every other method call passes only by a name the census lists, as read by its site (call, apply, bind,
+ *  mount, render, a reflection global's method: a listed site too) or as seating nothing, every other member write passes
+ *  as a seat, by a name the census lists or through `style` or `dataset`, `Object`, `Reflect` and `Function` pass as a
+ *  listed call's receiver alone, a node of the tree handed to any callee, a URL member written from a non-literal and an
+ *  attribute set under a name the census cannot read pass only as sites it lists (the round-6 review's clusters B and C
+ *  and item 7), and every other seat, every other method name, every other write (a computed name wherever it stands),
+ *  a seating method read without being called, a member stored under a computed name and a string road fail the census
+ *  with its line, whatever produced the receiver (a query result's parent, a stored query result, `md.parentElement`, a
+ *  variable, `closest`, `getRootNode`, an alias, a range's `insertNode`, `Reflect.apply`, a second binding of a listed
+ *  name, a second seat wearing a listed entry's function, receiver and form; the branch's verification pass and the
+ *  round-6 review, 2026-09-20); on the `body` token
  *  a call, an assignment, a further access or a bare read the census lists as seating nothing passes, a bare `body` passes
  *  as a declaration, a parameter, a property key, a comparison operand, the action-context accessor at its one declared
  *  site (`body: () => body` inside `const ctx: FileViewActionCtx = {`) or an argument to a callee the census lists as read

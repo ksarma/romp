@@ -1170,9 +1170,11 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // through the hosting document's registered lookup — no sid, or a sid it cannot name, and there is
   // no chip.
   const owner = sid ? identityOf(sid) : null;
-  let sess: HTMLElement | null = null;
-  if (owner) {
-    sess = el("span", "fileview-sess");
+  // a const, built by el() in the one branch that shows it: file-print.test.ts's census reads a seat's receiver by its
+  // binding, and a `let` assigned inside the branch said nothing about what it held at the seat (the round-6 review's
+  // correctness-5, 2026-09-20)
+  const sess: HTMLElement | null = owner ? el("span", "fileview-sess") : null;
+  if (owner && sess) {
     sess.replaceChildren(...hostNameNodes(owner.name, sid));
     if (owner.color) { sess.style.background = owner.color.bg; sess.style.color = owner.color.fg; }
     sess.title = "Opened from the " + owner.name + " session";

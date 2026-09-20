@@ -1046,7 +1046,7 @@ test("the title bar carries a session chip resolved from the sid — never inven
   assert.match(VIEW, /export function setFileViewIdentity\(fn: typeof identityOf\): void \{ identityOf = fn; \}/);
   const openFn = VIEW.split("export function openFileView")[1].split("function offersDownload")[0];
   assert.match(openFn, /const owner = sid \? identityOf\(sid\) : null;/, "no sid → the resolver is not even asked");
-  assert.match(openFn, /if \(owner\) \{\n\s*sess = el\("span", "fileview-sess"\);/, "no identity → no chip element at all");
+  assert.match(openFn, /const sess: HTMLElement \| null = owner \? el\("span", "fileview-sess"\) : null;\n(?:\s*\/\/[^\n]*\n)*\s*if \(owner && sess\) \{/, "no identity → no chip element at all (a const, so the print census reads one binding that holds one element: the round-6 review's correctness-5)");
   assert.match(openFn, /sess\.replaceChildren\(\.\.\.hostNameNodes\(owner\.name, sid\)\);/, "host: quiet for a remote session");
   assert.match(openFn, /if \(owner\.color\) \{ sess\.style\.background = owner\.color\.bg; sess\.style\.color = owner\.color\.fg; \}/,
     "the session's identity colour, inline — an uncolored stub keeps the sheet's neutral pill");
