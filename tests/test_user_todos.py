@@ -1700,6 +1700,76 @@ class DriveOps(_StoreSandbox):
         self.assertEqual(self._warns(), [km._USER_TODOS_UNREADABLE_WARN])
         self.assertNotIn("resolved", km._user_todos()[SID][0], "nothing changed")
 
+    def test_a_dismiss_whose_write_fails_is_told_on_the_socket_and_never_raises(self):
+        # what the writer actually raises when the disk, not the store's shape, is the fault: _atomic_write re-raises an
+        # OSError (a disk error, a permission), and the arm above caught RuntimeError alone. Executed over a real loopback
+        # WebSocket at this change's parent commit: the OSError left _drive and _dispatch_ws, the reader loop's socket-failure arm
+        # re-raised it, and the client's connection was torn down with no frame and no stderr line, the row still open;
+        # on screen the row dropped at the click and came back with the reconnect, nothing naming the dismiss. Caught now
+        # the way the recall's reopen is (_cancel_backend_queued), worded by class: the warn says the dismiss could not be
+        # recorded and the request stays listed, and one stderr line names the id and the fault
+        tid = km._add_user_todo(SID, "Need the staging port")
+        err = io.StringIO()
+        with mock.patch.object(km, "_atomic_write", side_effect=OSError(errno.EIO, "Input/output error")), \
+                contextlib.redirect_stderr(err):
+            handled = km._drive({"type": "userTodoDismiss", "id": SID, "todoId": tid}, self.client)
+        self.assertTrue(handled, "handled, never raised")
+        self.assertEqual([m["type"] for m in self.sent], ["warn"], "exactly one frame, a warn")
+        self.assertEqual(self._warns(), [km._USER_TODO_DISMISS_FAILED_WARN],
+                         "the failed write's account, not the unreadable store's")
+        self.assertEqual(self.sent[0].get("sid"), SID, "names its session: toasted, never read as a create's verdict")
+        lines = err.getvalue().splitlines()
+        self.assertEqual(len(lines), 1, lines)
+        self.assertIn("dismiss of %s could not be written" % tid, lines[0])
+        self.assertIn("Input/output error", lines[0], "the fault is named")
+        self.assertNotIn("refused", lines[0], "a failed write is not the writer's refusal")
+        self.assertEqual(self.calls, [], "nothing sent to the session")
+        on_disk = json.loads((jd.STATE / "user-todos.json").read_text())[SID][0]
+        self.assertEqual(on_disk["id"], tid)
+        self.assertNotIn("resolved", on_disk, "the row on disk is still open")
+        self.assertNotIn("resolved", km._user_todos()[SID][0], "and so is the kernel's read of it")
+
+    @unittest.skipIf(os.geteuid() == 0, "root writes into a read-only directory")
+    def test_a_dismiss_into_a_state_directory_the_kernel_cannot_write_is_told_and_never_raises(self):
+        # the same arm off a real permission fault, no mock on the writer: the state directory goes read-only after the
+        # row is filed, so the writer's temp file cannot be created (EACCES) while the store itself still reads. _codex
+        # is stubbed out the way the harness stubs _sdk: on a worker where no earlier test built the Codex backend, the
+        # backend lookup's first construction would mkdir under this read-only root and print its own traceback, and
+        # the stderr count below would read harness noise as the arm's
+        tid = km._add_user_todo(SID, "Need the staging port")
+        err = io.StringIO()
+        os.chmod(jd.STATE, 0o500)
+        try:
+            with mock.patch.object(km, "_codex", lambda: None), contextlib.redirect_stderr(err):
+                handled = km._drive({"type": "userTodoDismiss", "id": SID, "todoId": tid}, self.client)
+        finally:
+            os.chmod(jd.STATE, 0o700)
+        self.assertTrue(handled, "handled, never raised")
+        self.assertEqual(self._warns(), [km._USER_TODO_DISMISS_FAILED_WARN])
+        self.assertEqual(self.sent[0].get("sid"), SID)
+        lines = err.getvalue().splitlines()
+        self.assertEqual(len(lines), 1, lines)
+        self.assertIn("dismiss of %s could not be written" % tid, lines[0])
+        self.assertIn("[Errno %d]" % errno.EACCES, lines[0], "the permission fault is named")
+        self.assertNotIn("resolved", json.loads((jd.STATE / "user-todos.json").read_text())[SID][0],
+                         "the row on disk is still open")
+
+    def test_a_dismiss_of_a_settled_row_to_a_client_being_dropped_says_nothing_of_a_failed_write(self):
+        # the arm's try holds the writer alone. The client's send raises OSError itself when the peer has stopped
+        # draining (_mk_ws_send: over the byte budget it marks the client dead, shuts the socket and raises, and every
+        # caller lets that raise mark the client dead). With the settled-row warn's send inside the try, the arm read
+        # that raise as the store's failed write: one stderr line said the dismiss could not be written when the row
+        # was settled and no write was attempted, and a second send to the dead client raised the same OSError out
+        tid = km._add_user_todo(SID, "Need the staging port")
+        self.assertTrue(km._resolve_user_todo(SID, tid, "dismissed"), "settled before this click reaches the kernel")
+        dropping = {"send": mock.Mock(side_effect=OSError("ws client chat is 17000000 bytes behind, dropping"))}
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), self.assertRaises(OSError):
+            km._drive({"type": "userTodoDismiss", "id": SID, "todoId": tid}, dropping)
+        self.assertEqual(err.getvalue(), "", "no store write was attempted, so no line says one failed")
+        self.assertEqual(dropping["send"].call_count, 1, "the settled warn's send alone, no second frame to a dead client")
+        self.assertEqual(json.loads(dropping["send"].call_args[0][0])["text"], km._USER_TODO_DISMISS_SETTLED_WARN)
+
     def test_both_ops_refuse_on_a_store_that_cannot_be_read_never_with_the_settled_story(self):
         # the flagged store comes before the settled-row read on both ops: off an unflagged empty stand-in the answer
         # told the person the request was "already settled" and the dismiss the same, when the kernel could not read
@@ -1802,7 +1872,8 @@ class DriveOps(_StoreSandbox):
 
     def test_the_warnings_say_request_and_speak_to_the_person(self):
         for text in (km._USER_TODO_SETTLED_WARN, km._USER_TODO_ENDED_WARN, km._USER_TODO_UNDELIVERED_WARN,
-                     km._USER_TODO_STAMP_FAILED_WARN, km._USER_TODO_DISMISS_SETTLED_WARN):
+                     km._USER_TODO_STAMP_FAILED_WARN, km._USER_TODO_DISMISS_SETTLED_WARN,
+                     km._USER_TODO_DISMISS_FAILED_WARN):
             low = text.lower()
             self.assertIn("request", low, text)
             for noun in ("store", "stamp", "queue", "todo", "nonce", "mark"):

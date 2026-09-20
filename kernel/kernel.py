@@ -10248,6 +10248,8 @@ _USER_TODOS_UNREADABLE_CARD = ("Can't read romp's request store (%s), so open re
                                "until the file is fixed or removed (see the kernel log).")
 _USER_TODO_STAMP_FAILED_WARN = ("Your answer reached the session, but it couldn't be recorded (see the kernel log); "
                                 "the request stays listed.")
+_USER_TODO_DISMISS_FAILED_WARN = ("Couldn't dismiss that request: the change couldn't be recorded (see the kernel log), "
+                                  "so the request stays listed. Try again.")
 # The Reply's and Dismiss's refusal texts (userTodoAnswer, userTodoDismiss): read by the person at the
 # dashboard, so they say what happened to the answer and what to do next, never the machinery behind it.
 _USER_TODO_SETTLED_WARN = ("That request was already settled: nothing was sent. If the session still needs your answer, "
@@ -21339,13 +21341,23 @@ def _drive(msg, client):
             client["send"](json.dumps({"type": "warn", "text": _USER_TODOS_UNREADABLE_WARN, "sid": sid}))
         else:
             try:
-                if not _resolve_user_todo(sid, str(msg["todoId"]), "dismissed"):
+                done = _resolve_user_todo(sid, str(msg["todoId"]), "dismissed")
+            except (RuntimeError, OSError) as e:
+                # the store went bad between the check above and the write (RuntimeError, the writer's own refusal while
+                # the file stands flagged) or the write itself failed (OSError, re-raised by _atomic_write: a disk error,
+                # a permission): nothing changed either way, told on the socket and worded by class, never a raise. An
+                # OSError out of _drive reads as a socket failure to the reader loop, which re-raises it and tears the
+                # client's connection down with no frame and no stderr line, the row still open (executed at this change's parent).
+                # The try holds the writer alone: the client's send raises OSError itself when the peer has stopped
+                # draining (_mk_ws_send drops the client), and inside the try that raise read as the store's failed write
+                refused = isinstance(e, RuntimeError)
+                sys.stderr.write("user-todos: dismiss of %s %s: %s\n"
+                                 % (str(msg["todoId"]), "refused" if refused else "could not be written", e))
+                client["send"](json.dumps({"type": "warn", "sid": sid,
+                                           "text": _USER_TODOS_UNREADABLE_WARN if refused else _USER_TODO_DISMISS_FAILED_WARN}))
+            else:
+                if not done:
                     client["send"](json.dumps({"type": "warn", "text": _USER_TODO_DISMISS_SETTLED_WARN, "sid": sid}))
-            except RuntimeError as e:
-                # the store went bad between the check above and the write (the writer's own refusal): the same
-                # "nothing changed" the check answers, told on the socket, never a raise the client hears nothing of
-                sys.stderr.write("user-todos: dismiss of %s refused: %s\n" % (str(msg["todoId"]), e))
-                client["send"](json.dumps({"type": "warn", "text": _USER_TODOS_UNREADABLE_WARN, "sid": sid}))
         _push_soon()
     elif t == "dismissEcho" and hasattr(be, "dismiss_echo"):
         # ✕ on a never-delivered bubble (a send whose CLI died holding it — the backend's dropped-echo
