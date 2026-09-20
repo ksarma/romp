@@ -290,7 +290,7 @@ function rows(code: El, src: string): void {
 }
 function world(): World {
   const main = new El("div"); main.className = "fileview-main";
-  const body = new El("div"); body.className = "fileview-body"; body.rect = BODY_BOX;   // the pane's clip: the offer refuses a selection whose box lies outside it (onSelection, inBodyBox), and every rect below sits inside
+  const body = new El("div"); body.className = "fileview-body"; body.rect = BODY_BOX;   // the pane's clip: the offer refuses a selection whose box lies outside it (onSelection, inBodyBox), and every offer's rect below sits inside it, the scroll's moved rect too (RECT_MOVED), so the same selection after a scroll's hide is refused by the record compare alone
   const actions = new El("div"); actions.className = "fileview-actions"; actions.appendChild(new Txt("Rendered · Raw"));   // a node OUTSIDE the body
   const wrap = new El("div"); wrap.className = "fileview-code";
   const pre = new El("pre"); pre.className = "fileview-pre fileview-wrap";
@@ -348,7 +348,7 @@ type Rect = { left: number; top: number; right: number; bottom: number; width: n
 const BODY_BOX: Rect = { left: 0, top: 100, right: 1000, bottom: 600, width: 1000, height: 500 };   // the body's box in the stand-in (world), the paint-offer file's
 const RECT_A: Rect = { left: 100, top: 200, right: 300, bottom: 220, width: 200, height: 20 };
 const RECT_B: Rect = { left: 100, top: 200, right: 240, bottom: 220, width: 140, height: 20 };
-const RECT_MOVED: Rect = { left: 100, top: 40, right: 300, bottom: 60, width: 200, height: 20 };
+const RECT_MOVED: Rect = { left: 100, top: 400, right: 300, bottom: 420, width: 200, height: 20 };   // the passage moved from under the button by a scroll: a top other than RECT_A's is all the scroll's hide reads (subjectHeld), and the rect stays INSIDE the body's box, so the same selection after the hide is refused by onSelectionChange's record compare and not by the offer's box test (the review's round 2, fresh-2: at top 40, above the box, the box test refused it too, and the file's kill of the compare was gone: tests 1 and 6 green with the compare disabled)
 /** A selection as the panel reads it: the passage's text node from `at` for `length` characters, its rect `rect` (a fake
  *  selection's; the stand-in lays nothing out). */
 function selectionOn(root: El, passage: string, length: number, rect: Rect): any {
