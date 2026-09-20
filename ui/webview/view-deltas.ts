@@ -54,16 +54,23 @@ const slotOf = (s: any): Slot | null => s === "feed" || s === "bars" ? s : null;
  *  member (remoteDialUrl), the base holding it survives every redial (connect()'s gated reset keeps a gen-holding base),
  *  and the kernel's HTTP server refuses a request line over 65,536 bytes with 414 (Python's http.server, which the relay
  *  runs on), so a stamp long enough to take the request line over that would make every redial of the conn fail for
- *  the conn's life. Over the cap a value reads as no stamp: the base holds no gen, is reset on the redial and re-served
- *  whole, as a gen-less base is. */
+ *  the conn's life. Over the cap a value is one genOf cannot read (undefined, as for any other form it refuses): a full
+ *  carrying one seeds no gen, so its base is reset on the redial and re-served whole, as a gen-less base is; a delta
+ *  carrying one onto a base holding a gen is REFUSED by both roads (the receiver's gen gate below, applyRemoteFeedDelta's),
+ *  never read as a gen-less delta (round 4, 2026-09-20: unparseable is not absent). */
 export const GEN_MAX = 64;
 /** A generation stamp as a frame carries it, or undefined for a frame that carries none. The kernel mints a gen as its
  *  boot's random token (16 hex characters) and a decimal counter joined by '-', a string that holds neither '.' (the held
  *  member's own separator: the kernel parses held:<slot>:<gen>.<rev> at its last '.') nor ',' (the caps term's), so a
  *  non-empty string free of both, at most GEN_MAX characters, is a gen. Anything else (a number, an empty string, a
- *  string carrying either separator, one over GEN_MAX) reads as no stamp: the frame then applies as a gen-less one and
- *  the base declares nothing, never a member the kernel could not parse or a request line it would refuse. Compared
- *  with === and never coerced. */
+ *  string carrying either separator, one over GEN_MAX) is a value this reader cannot read: undefined, the same answer
+ *  as for a frame that carries no gen key, so a CALLER that must tell the two apart reads the key's presence
+ *  (frame.gen !== undefined) where the difference matters, and it matters wherever a pair is held (round 4, 2026-09-20:
+ *  unparseable is not absent). A full carrying such a value seeds no gen and its base declares nothing, never a member
+ *  the kernel could not parse or a request line it would refuse; a delta carrying one, or a composed frame whose newGen
+ *  is one, onto a base holding a gen is REFUSED by both roads (the receiver's gate below, applyRemoteFeedDelta's), never
+ *  applied as a gen-less frame and never left under the old gen; onto a base holding no gen a delta carrying one applies
+ *  as a gen-less delta does, since no pair is held there for a refusal to protect. Compared with === and never coerced. */
 export const genOf = (v: any): string | undefined => typeof v === "string" && v !== "" && v.length <= GEN_MAX && v.indexOf(".") === -1 && v.indexOf(",") === -1 ? v : undefined;
 class Unkeyable extends Error {}   // a present collection whose container the kind cannot key: the frame seeds nothing
 
@@ -212,8 +219,15 @@ export class ViewDeltas {
     // refusing here would cost that pane a whole slot for a frame its rev test accepts, while applying costs nothing, and
     // the gen is not seeded because the stream never stated a rev 0 under it: a pair declared from such a base would be
     // one the base never held. A gen-less frame onto a base holding a gen applies and keeps the base's gen, as before.
+    // Unparseable is not absent (round 4, 2026-09-20): onto a base holding a gen, a frame carrying a gen KEY whose value genOf
+    // cannot read (a number, an empty string, a separator, one over GEN_MAX) is a gen that is not the base's and recovers
+    // the same way, never read as a gen-less frame (GEN_MAX had made a 65-character gen skip this test and apply); and a
+    // composed frame whose gen matched but whose newGen genOf cannot read recovers too, here, before anything below runs,
+    // never applied with the base's old gen kept under the frame's rev (a pair that generation's stream never held). Onto a
+    // base holding no gen neither test runs, as the paragraph above says of a stamped frame there.
     const g = genOf(msg.gen);
-    if (base.gen !== undefined && g !== undefined && g !== base.gen) return this.recover(slot);
+    if (base.gen !== undefined && msg.gen !== undefined && g !== base.gen) return this.recover(slot);
+    if (base.gen !== undefined && g !== undefined && msg.newGen !== undefined && genOf(msg.newGen) === undefined) return this.recover(slot);
     try {
       // A per-cycle patch advances the base by one (rev equal to base plus one, the test every kernel in this repo
       // passes). A frame carrying `through` (2026-09-19) is accepted at any rev at or above its base. Two frames carry
@@ -269,7 +283,9 @@ export class ViewDeltas {
       // a newGen (a composed frame, its rev R equal to its through), else (gen, rev) with the base's gen (the frame's, when
       // it carries one: the gate above held them equal; a gen-less frame moves no gen, its newGen included, since the gate
       // never ran for it and the feed road adopts a newGen only under a matched gen), and none on a base seeded without
-      // one, whatever the frame carries (the gate's comment says why the frame's gen is not seeded there)
+      // one, whatever the frame carries (the gate's comment says why the frame's gen is not seeded there). A newGen the
+      // gate would adopt here is readable by the gate's own check above, so an undefined newGen means the frame carries
+      // none (a per-cycle delta) and the base keeps its gen: never a fallback for a value genOf could not read (round 4).
       const newGen = hasThrough && g !== undefined ? genOf(msg.newGen) : undefined;
       const gen = base.gen === undefined ? undefined : newGen !== undefined ? newGen : base.gen;
       this.bases.set(slot, { rev: msg.rev, gen, msg: next, maps });

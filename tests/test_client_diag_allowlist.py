@@ -181,7 +181,7 @@ def federation_host_row_kinds():
     return set(re.findall(r'this\.diag\("([\w-]+)",[^\n{]*\{[^\n}]*\bhost\b', src))
 
 
-STALE_WHY_WORDS = ("gen", "base", "through", "rev", "disagree")   # the feedDelta-stale row's why vocabulary in the ladder's test order: four field words, then the relation word (round 3, 2026-09-20)
+STALE_WHY_WORDS = ("gen", "newGen", "base", "through", "rev", "disagree")   # the feedDelta-stale row's why vocabulary in the ladder's test order: five field words (newGen since round 4: a carried newGen genOf cannot read), then the relation word (round 3, 2026-09-20)
 
 
 def stale_why_words():

@@ -1108,7 +1108,7 @@ test("a bars full refused as unkeyable (judging a flat list, the pre-T278c shape
 
 // The gen's form on the bars road, the mirror of the feed file's leg: genOf is the one reader for both slots, so a value
 // off the kernel's form (a number, an empty string, a string carrying '.' or ',') seeds a base holding no gen here too.
-test("the gen's form on the bars road: a number, an empty string, a string carrying either separator or one over GEN_MAX characters reads as no stamp, so the bars full seeds a base holding no gen, its per-cycle patch applies on the base-plus-one test alone, and the redial declares nothing", async () => {
+test("the gen's form on the bars road: a bars full carrying a number, an empty string, a string carrying either separator or one over GEN_MAX characters seeds a base holding no gen, and onto that gen-less base a per-cycle patch carrying the same value applies on the base-plus-one test alone and the redial declares nothing (onto a base holding a gen it recovers: the round-4 test below)", async () => {
   const overCap = GEN_STAMP + "-" + "9".repeat(GEN_MAX - GEN_STAMP.length);   // GEN_MAX + 1 characters, all in the kernel's alphabet
   assert.equal(overCap.length, GEN_MAX + 1);
   for (const bad of [7, 0, "", GEN_STAMP + ".7", GEN_STAMP + ",7", null, true, overCap]) {
@@ -1259,6 +1259,65 @@ test("a bars frame carrying newGen and through but no gen applies and keeps the 
     assert.equal(qOf(last(FakeWS.made).url).get("caps"), "feedDelta,held:bars:" + G + ".3", "the redial declares the base's gen at the applied rev, never the newGen the gate never matched");
     fm.conns.get(HOST).closed = true;
   });
+});
+
+// Unparseable is not absent, on the bars road (round 4, 2026-09-20), the mirror of the feed file's two tests. A patch carrying
+// a gen genOf cannot read (one over GEN_MAX, a separator, a number, an empty string) onto a base holding a gen used to skip
+// the gen gate (g undefined, the test never ran) and apply as a gen-less patch, keeping the base's gen; now such a value is
+// a gen that is not the base's, and the patch recovers as a foreign gen does (needSlot, the base dropped, nothing emitted).
+// The scope is the base holding a gen, as on the feed road: onto a base seeded without one the patch applies on the rev
+// test alone, as the form test above pins for that base (the receiver's comment says why that base applies a stamped patch).
+test("a bars patch carrying a gen genOf cannot read onto a base holding a gen recovers as a foreign gen does (needSlot, nothing emitted, the base dropped), never applied as a gen-less patch onto that base", async () => {
+  const overCap = GEN_STAMP + "-" + "9".repeat(GEN_MAX - GEN_STAMP.length);
+  assert.equal(overCap.length, GEN_MAX + 1);
+  for (const bad of [overCap, GEN_STAMP + ".7", GEN_STAMP + ",7", 7, "", null, true]) {
+    await withManager("timeline", ({ fm, emitted }) => {
+      seedLocalTimeline(fm);
+      fm.openRemote(HOST, true);
+      const ws = last(FakeWS.made);
+      ws.open();
+      ws.frame(remoteBarsStamped(G));
+      ws.frame(barsCycle(G, 0, bar("seg-2", 1010, 1015, "second"), 505));
+      assert.deepEqual(heldBars(fm), { gen: G, rev: 1 });
+      const before = barsOf(emitted).length;
+      ws.frame({ ...barsCycle(G, 1, bar("seg-3", 1020, 1025, "third"), 510), gen: bad });
+      assert.deepEqual(ws.sent, [{ type: "needSlot", slot: "bars" }], "recovered: the whole slot is asked, as for a foreign gen: " + JSON.stringify(bad));
+      assert.equal(barsOf(emitted).length, before, "nothing emitted: " + JSON.stringify(bad));
+      assert.equal(heldBars(fm), null, "the base is dropped, never kept with the patch applied onto it: " + JSON.stringify(bad));
+      ws.readyState = 3;
+      armedRedials(() => ws.onclose!({ code: 1006, wasClean: false }))[0]();
+      assert.equal(qOf(last(FakeWS.made).url).get("caps"), "feedDelta", "with the base dropped the redial declares nothing: " + JSON.stringify(bad));
+      fm.conns.get(HOST).closed = true;
+    });
+  }
+});
+
+// The same rule one field over (round 4): a composed frame whose gen the gate matched but whose newGen genOf cannot read used
+// to fall back to the base's OLD gen and advance the base to the frame's rev under it (the pair the redial then declared was
+// one that generation's stream never held). Now the receiver reads newGen where it reads gen: a present value it cannot read
+// recovers (needSlot, the base dropped) before anything is set, and the redial declares nothing until the whole slot re-seeds.
+test("a composed bars frame whose gen matched but whose newGen genOf cannot read recovers (needSlot, nothing emitted, the base dropped) and never advances the base under the old gen", async () => {
+  const overCap = GEN_STAMP + "-" + "9".repeat(GEN_MAX - GEN_STAMP.length);
+  for (const bad of [overCap, GEN_STAMP + ".9", GEN_STAMP + ",9", 9, "", null]) {
+    await withManager("timeline", ({ fm, emitted }) => {
+      seedLocalTimeline(fm);
+      fm.openRemote(HOST, true);
+      const ws = last(FakeWS.made);
+      ws.open();
+      ws.frame(remoteBarsStamped(G));
+      ws.frame(barsCycle(G, 0, bar("seg-2", 1010, 1015, "second"), 505));
+      assert.deepEqual(heldBars(fm), { gen: G, rev: 1 });
+      const before = barsOf(emitted).length;
+      ws.frame(composed(1, 4, G, bad as any, { turns: { set: { [SID_A + SEP + "seg-9"]: bar("seg-9", 1090, 1095, "ninth") } } }, 590));
+      assert.deepEqual(ws.sent, [{ type: "needSlot", slot: "bars" }], "recovered: " + JSON.stringify(bad));
+      assert.equal(barsOf(emitted).length, before, "nothing emitted: " + JSON.stringify(bad));
+      assert.equal(heldBars(fm), null, "the base is dropped, never (G, 4) under the old gen: " + JSON.stringify(bad));
+      ws.readyState = 3;
+      armedRedials(() => ws.onclose!({ code: 1006, wasClean: false }))[0]();
+      assert.equal(qOf(last(FakeWS.made).url).get("caps"), "feedDelta", "nothing declared: " + JSON.stringify(bad));
+      fm.conns.get(HOST).closed = true;
+    });
+  }
 });
 
 // The length bound on the bars road (round 3, 2026-09-20), the mirror of the feed file's: genOf is the one reader for both

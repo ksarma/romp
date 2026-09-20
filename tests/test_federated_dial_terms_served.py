@@ -97,11 +97,21 @@ def _stamp_field(f, k):
     """A stamp field as the client reads it: a gen (view-deltas.ts genOf) is a non-empty string of at most GEN_MAX UTF-16
     code units (String.length, the client's count: _utf16_len) holding neither '.' (the held member's own separator) nor ','
     (the caps term's), the kernel's boot token and counter joined by '-'; a rev (base, rev, through) is a non-negative int.
-    Anything else reads as absent, as the client reads it."""
+    Anything else is None, the answer for a value the client cannot read AND for a key the frame does not carry: a caller
+    that must tell the two apart reads the key's presence with _stamp_present, as held_pair does where it matters (round 4,
+    2026-09-20: unparseable is not absent; a present gen the client cannot read is a refusal on both roads, never a gen-less
+    frame)."""
     v = f.get(k)
     if k in GEN_FIELDS:
         return v if isinstance(v, str) and v and _utf16_len(v) <= GEN_MAX and "." not in v and "," not in v else None
     return v if isinstance(v, int) and not isinstance(v, bool) and v >= 0 else None
+
+
+def _stamp_present(f, k):
+    """Whether a recorded frame carried the stamp field `k` at all, whatever its value: the key itself (a hook records a gen
+    or newGen of any string or number form as posted) or the hook's presence flag beside it (`<k>Key`, which the hooks set
+    for gen and newGen, and the relay-redial consumer's _record for both, since that record keeps parsed values alone)."""
+    return k in f or bool(f.get(k + "Key"))
 
 
 def held_pair(frames, slot):
@@ -115,9 +125,16 @@ def held_pair(frames, slot):
     a needFullFeed, nothing applied), bounded by the kernel contract that every stamped delta carries through; the bars
     road (view-deltas.ts receive) applies a through-less frame at rev equal to base plus one and holds (gen, rev), so for
     the bars slot this rule is right only because no designed kernel sends that shape: a lab that met it would need the
-    slot branched and both receiver arms modelled (review round 1, 2026-09-20). A stamped delta the client would otherwise
-    refuse (its gen not the held one, its base above the held rev) is not modelled: a lab's stream is the kernel's own and
-    applies. None when no pair is held."""
+    slot branched and both receiver arms modelled (review round 1, 2026-09-20). A delta onto a held pair that carries a gen
+    key the client cannot read (_stamp_field None with the key present, _stamp_present), or whose gen matched and whose
+    newGen it cannot read, is a refusal on both roads and is modelled as the client answers it (round 4, 2026-09-20:
+    unparseable is not absent): on the feed road the pair stands (needFullFeed with the held pair, nothing applied), on the
+    bars road the base is dropped (needSlot), so nothing is held until the next whole frame re-seeds it. Two refusals are
+    modelled, then: the through-less stamped delta and the unreadable gen or newGen. Every OTHER refusal the gate makes on a
+    stamped delta is not modelled (a lab's stream is the kernel's own and applies): the set is applyRemoteFeedDelta's ladder
+    in federation.ts, whose words tests/test_client_diag_allowlist.py's stale_why_words() derives from the source and holds
+    to STALE_WHY_WORDS, so the bound this docstring states is that derivation's and not a list kept here (review round 3,
+    tests-3: a hand list here went stale twice in one day). None when no pair is held."""
     full, delta = ("feed", "feedDelta") if slot == "feed" else ("bars", "delta")
     pair = None
     for f in frames:
@@ -126,10 +143,22 @@ def held_pair(frames, slot):
             g = _stamp_field(f, "gen")
             pair = (g, 0) if g is not None else None
         elif t == delta and (slot == "feed" or f.get("slot") == "bars"):
+            if pair is None:
+                continue   # no pair held: a delta moves nothing here (a stamped one onto no pair is the feed road's "unpaired" refusal and applies nothing; the bars road applies it and seeds no gen)
             g = _stamp_field(f, "gen")
-            if g is None or pair is None:
-                continue
+            if g is None:
+                if _stamp_present(f, "gen"):
+                    # a present gen the client cannot read: refused, never read as a gen-less delta (round 4)
+                    if slot == "bars":
+                        pair = None   # needSlot: the base dropped
+                    continue          # needFullFeed with the held pair: the pair stands
+                continue   # a gen-less delta moves no pair
             through, new_gen = _stamp_field(f, "through"), _stamp_field(f, "newGen")
+            if new_gen is None and _stamp_present(f, "newGen"):
+                # the gen matched and the newGen is one the client cannot read: refused before the apply (round 4)
+                if slot == "bars":
+                    pair = None
+                continue
             if through is None:
                 continue   # a stamped delta carrying no through is refused by the client and applies nothing: the pair stands
             pair = (new_gen if new_gen is not None else g, through)
@@ -375,6 +404,7 @@ await page.addInitScript(() => {
             const f = { sock: idx, t: String(m.type), slot: m.slot ? String(m.slot) : "" };
             for (const k of ["gen", "newGen", "base", "rev", "through"]) if (typeof m[k] === "number" || (typeof m[k] === "string" && (k === "gen" || k === "newGen"))) f[k] = m[k];   // the revs as numbers, the gens as the kernel's strings; no content
             if ("gen" in m) f.genKey = true;   // the key's presence, whatever its value: drive_pair tells an unreadable gen from none
+            if ("newGen" in m) f.newGenKey = true;   // the same for newGen: held_pair reads a present newGen the client cannot read as the refusal it is (round 4)
             window.__frames.push(f);
           }
         } catch (e) {}
@@ -456,6 +486,38 @@ class HeldPairRule(unittest.TestCase):
         at = wide * (GEN_MAX // 2)
         self.assertEqual(_utf16_len(at), GEN_MAX)
         self.assertEqual(_stamp_field({"gen": at}, "gen"), at, "at the cap in the client's units: a stamp")
+
+    def test_a_present_gen_or_newGen_the_client_cannot_read_is_a_refusal_and_never_reads_as_absent(self):
+        # unparseable is not absent (round 4, 2026-09-20): a delta carrying a gen key whose value the client cannot read
+        # (_stamp_field None, the key present: genOf refuses it) onto a held pair is REFUSED by both roads, never read as a
+        # gen-less delta; on the feed road the pair stands (needFullFeed with the held pair, nothing applied), on the bars
+        # road the base is dropped (needSlot), so nothing is held until the next whole frame. The same for a composed frame
+        # whose gen matched but whose newGen the client cannot read: the pair never advances under the old gen.
+        over_cap = GEN_STAMP + "-" + "9" * (GEN_MAX - len(GEN_STAMP))
+        held = [{"t": "feed", "gen": GEN}, {"t": "feedDelta", "gen": GEN, "base": 0, "rev": 1, "through": 1}]
+        for bad in (over_cap, GEN_STAMP + ".8", GEN_STAMP + ",8", 8, "", True):
+            self.assertEqual(held_pair(held + [{"t": "feedDelta", "gen": bad, "base": 1, "rev": 2, "through": 2}], "feed"), (GEN, 1),
+                             "feed: refused, the pair stands: %r" % (bad,))
+            self.assertEqual(held_pair(held + [{"t": "feedDelta", "gen": GEN, "newGen": bad, "base": 1, "rev": 4, "through": 4}], "feed"), (GEN, 1),
+                             "feed: an unreadable newGen on a matched frame is refused, the pair never (gen, 4): %r" % (bad,))
+            bars = [{"t": "bars", "gen": GEN3}, {"t": "delta", "slot": "bars", "gen": GEN3, "base": 0, "rev": 1, "through": 1}]
+            self.assertIsNone(held_pair(bars + [{"t": "delta", "slot": "bars", "gen": bad, "base": 1, "rev": 2, "through": 2}], "bars"),
+                              "bars: recovered, the base dropped: %r" % (bad,))
+            self.assertIsNone(held_pair(bars + [{"t": "delta", "slot": "bars", "gen": GEN3, "newGen": bad, "base": 1, "rev": 4, "through": 4}], "bars"),
+                              "bars: an unreadable newGen on a matched frame recovers, the base dropped: %r" % (bad,))
+            # a hook that dropped the unreadable value and noted the key (the relay-redial consumer's _record) reads the same
+            self.assertEqual(held_pair(held + [{"t": "feedDelta", "genKey": True, "base": 1, "rev": 2, "through": 2}], "feed"), (GEN, 1))
+            self.assertIsNone(held_pair(bars + [{"t": "delta", "slot": "bars", "genKey": True, "base": 1, "rev": 2, "through": 2}], "bars"))
+            self.assertEqual(held_pair(held + [{"t": "feedDelta", "gen": GEN, "newGenKey": True, "base": 1, "rev": 4, "through": 4}], "feed"), (GEN, 1))
+        # a whole frame carrying an unreadable gen seeds no pair on either road, as before (the full arm is not a gate)
+        self.assertIsNone(held_pair([{"t": "feed", "gen": over_cap}], "feed"))
+        self.assertIsNone(held_pair([{"t": "bars", "gen": over_cap}], "bars"))
+        # and after the drop the next whole frame re-seeds
+        bars = [{"t": "bars", "gen": GEN3}, {"t": "delta", "slot": "bars", "gen": over_cap, "base": 0, "rev": 1, "through": 1}, {"t": "bars", "gen": GEN2}]
+        self.assertEqual(held_pair(bars, "bars"), (GEN2, 0))
+        for k in ("gen", "newGen"):
+            self.assertTrue(_stamp_present({k: over_cap}, k) and _stamp_present({k + "Key": True}, k), k)
+            self.assertFalse(_stamp_present({"base": 1}, k), k)
 
     def test_a_stamped_delta_advances_the_pair_and_a_gen_less_one_moves_nothing(self):
         frames = [{"t": "feed", "gen": GEN}, {"t": "feedDelta", "gen": GEN, "base": 0, "rev": 1, "through": 1}]

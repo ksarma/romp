@@ -882,7 +882,7 @@ test("a stamped delta whose rev and through disagree is refused with why disagre
   });
 });
 
-test("the gen's form: a non-empty string holding neither '.' nor ',' (the kernel's token and counter joined by '-'), at most GEN_MAX characters; a number, an empty string, a string carrying either separator or one over the cap reads as no stamp, so the full leaves no pair, its deltas apply on the base alone and the redial declares nothing", async () => {
+test("the gen's form: a non-empty string holding neither '.' nor ',' (the kernel's token and counter joined by '-'), at most GEN_MAX characters; a full carrying a value of any other form (a number, an empty string, a string carrying either separator or one over the cap) leaves no pair, and onto that gen-less base a delta carrying the same value applies as a gen-less one and the redial declares nothing (onto a base holding a pair it is refused: the round-4 test below)", async () => {
   const overCap = GEN_STAMP + "-" + "9".repeat(GEN_MAX - GEN_STAMP.length);   // GEN_MAX + 1 characters, all in the kernel's alphabet
   assert.equal(overCap.length, GEN_MAX + 1);
   for (const bad of [7, 0, "", GEN_STAMP + ".7", GEN_STAMP + ",7", null, true, overCap]) {
@@ -902,6 +902,73 @@ test("the gen's form: a non-empty string holding neither '.' nor ',' (the kernel
       const timers = heldTimers(() => ws.onclose!({ code: 1006, wasClean: false }));
       timers[0]();
       assert.equal(qOf(last(FakeWS.made).url).get("caps"), "feedDelta", "nothing declared for a base holding no gen: " + JSON.stringify(bad));
+      fm.conns.get(HOST).closed = true;
+    });
+  }
+});
+
+// Unparseable is not absent (round 4, 2026-09-20). GEN_MAX made a 65-character gen read as no stamp, so a foreign-generation
+// delta carrying one bypassed the gate and applied onto a base holding a gen (the length door); the same held for every
+// other form genOf cannot read (a number, an empty string, a separator) at both heads. Now a frame carrying a gen of ANY
+// form onto a base holding a pair enters the gate, and a value genOf cannot read is no match for the held gen: refused
+// with the field word, the ask carrying the held pair, nothing applied, the pair standing. The scope is the base holding a
+// pair (the minimal of the two options the round offered, applied to the feed and bars roads alike): onto a base holding no
+// gen such a frame applies as a gen-less one, as the form test above pins, since no pair is held there for a refusal to
+// protect.
+test("a delta carrying a gen genOf cannot read (one over GEN_MAX, a separator, a number, an empty string, null) onto a base holding a pair is refused with why gen and the held pair on the ask, never applied as a gen-less one: nothing emitted, the base and the pair stand", async () => {
+  const overCap = GEN_STAMP + "-" + "9".repeat(GEN_MAX - GEN_STAMP.length);
+  assert.equal(overCap.length, GEN_MAX + 1);
+  for (const bad of [overCap, GEN_STAMP + ".7", GEN_STAMP + ",7", 7, "", null, true]) {
+    await withManager(({ fm, emitted, sent }) => {
+      fm.outbound({ type: "ready", proto: 2 });
+      fm.openRemote(HOST, true);
+      const ws = last(FakeWS.made);
+      ws.open();
+      ws.frame({ type: "caps" });
+      ws.frame(stamped());
+      ws.frame(cycle(G, 0, 2));
+      assert.deepEqual(heldOf(fm), { gen: G, rev: 1 });
+      const before = feeds(emitted).length, raw = fm.conns.get(HOST).feedRaw;
+      ws.frame({ type: "feedDelta", gen: bad, base: 1, rev: 2, through: 2, now: 540, buildId: 70, asks: [card(SID_A, 9)] });
+      assert.deepEqual(ws.sent.filter((x: any) => x.type !== "ready"), [{ type: "needFullFeed", gen: G, rev: 1 }], "refused, the ask carrying the held pair: " + JSON.stringify(bad));
+      assert.deepEqual(diagRows(sent, "feedDelta-stale"), [{ host: HOST, buildId: 70, why: "gen" }], "the gen field's word: a value genOf cannot read is no match for the held gen: " + JSON.stringify(bad));
+      assert.equal(feeds(emitted).length, before, "nothing applied, nothing emitted: " + JSON.stringify(bad));
+      assert.equal(fm.conns.get(HOST).feedRaw, raw, "the base stands: " + JSON.stringify(bad));
+      assert.deepEqual(heldOf(fm), { gen: G, rev: 1 }, "the pair stands: " + JSON.stringify(bad));
+      ws.readyState = 3;
+      heldTimers(() => ws.onclose!({ code: 1006, wasClean: false }))[0]();
+      assert.equal(qOf(last(FakeWS.made).url).get("caps"), "feedDelta,held:feed:" + G + ".1", "the redial declares the pair that applied: " + JSON.stringify(bad));
+      fm.conns.get(HOST).closed = true;
+    });
+  }
+});
+
+// The same rule one field over (round 4): a composed frame whose gen the gate matched but whose newGen genOf cannot read
+// used to fall back to the OLD gen and advance the pair to the frame's rev under it, so the redial declared a pair that
+// generation's stream never held. The gate now reads newGen where it reads gen: a present value genOf cannot read is a
+// refusal (why newGen, the field's own word), inside the gate and before the apply, so nothing applies and the pair stands.
+test("a composed frame whose gen matched but whose newGen genOf cannot read is refused with why newGen and the held pair on the ask: nothing applied, the pair does not advance under the old gen, and the redial declares what applied", async () => {
+  const overCap = GEN_STAMP + "-" + "9".repeat(GEN_MAX - GEN_STAMP.length);
+  for (const bad of [overCap, GEN_STAMP + ".9", GEN_STAMP + ",9", 9, "", null]) {
+    await withManager(({ fm, emitted, sent }) => {
+      fm.outbound({ type: "ready", proto: 2 });
+      fm.openRemote(HOST, true);
+      const ws = last(FakeWS.made);
+      ws.open();
+      ws.frame({ type: "caps" });
+      ws.frame(stamped());
+      ws.frame(cycle(G, 0, 2));
+      assert.deepEqual(heldOf(fm), { gen: G, rev: 1 });
+      const before = feeds(emitted).length, raw = fm.conns.get(HOST).feedRaw;
+      ws.frame({ type: "feedDelta", gen: G, newGen: bad, base: 1, rev: 4, through: 4, now: 541, buildId: 71, asks: [card(SID_A, 9)] });
+      assert.deepEqual(ws.sent.filter((x: any) => x.type !== "ready"), [{ type: "needFullFeed", gen: G, rev: 1 }], "refused, the ask carrying the held pair: " + JSON.stringify(bad));
+      assert.deepEqual(diagRows(sent, "feedDelta-stale"), [{ host: HOST, buildId: 71, why: "newGen" }], "the newGen field's own word: " + JSON.stringify(bad));
+      assert.equal(feeds(emitted).length, before, "nothing applied: " + JSON.stringify(bad));
+      assert.equal(fm.conns.get(HOST).feedRaw, raw, "the base stands: " + JSON.stringify(bad));
+      assert.deepEqual(heldOf(fm), { gen: G, rev: 1 }, "the pair does not advance to rev 4 under the old gen: " + JSON.stringify(bad));
+      ws.readyState = 3;
+      heldTimers(() => ws.onclose!({ code: 1006, wasClean: false }))[0]();
+      assert.equal(qOf(last(FakeWS.made).url).get("caps"), "feedDelta,held:feed:" + G + ".1", "the redial declares (G, 1), never (G, 4): " + JSON.stringify(bad));
       fm.conns.get(HOST).closed = true;
     });
   }

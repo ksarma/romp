@@ -1522,15 +1522,27 @@ export class FederationManager {
     }
     const gen = genOf(d.gen);
     const held = c.feedHeld;
-    if (gen !== undefined) {
-      const inGate = !!held && gen === held.gen && Number.isSafeInteger(d.base) && d.base <= held.rev && Number.isSafeInteger(d.rev)
+    // Unparseable is not absent (round 4, 2026-09-20). A frame enters the gate when it carries a gen genOf reads, or when it
+    // carries a gen KEY at all onto a base holding a pair: a present value genOf cannot read (a number, an empty string, a
+    // separator, one over GEN_MAX) is no match for the held gen and is refused below with the gen field's word, never read
+    // as no stamp (GEN_MAX had made a 65-character gen read as absent, and a foreign-generation delta applied onto a base
+    // holding a gen through the length door, the hole the gate exists to close). The gate reads newGen the same way: a
+    // composed frame whose gen matched but whose newGen genOf cannot read is refused here, before the apply, with that
+    // field's word, never applied with the pair advanced under the old gen (a pair that generation's stream never held).
+    // The scope is the base holding a pair (the minimal of the two options the round offered, applied to this road and the
+    // bars receiver alike): onto a base holding no gen a frame carrying an unreadable gen applies as a gen-less one, as
+    // the form test pins for that base, since no pair is held there for a refusal to protect.
+    if (gen !== undefined || (d.gen !== undefined && held !== undefined)) {
+      const inGate = !!held && gen === held.gen && (d.newGen === undefined || genOf(d.newGen) !== undefined)
+                     && Number.isSafeInteger(d.base) && d.base <= held.rev && Number.isSafeInteger(d.rev)
                      && Number.isSafeInteger(d.through) && d.through >= held.rev && d.rev === d.through;
       if (!inGate) {
         // The stale row carries host, buildId and this word and nothing else, so the word is the whole signal a reader
         // of the row has. Two kinds of word: one per FIELD for that field's own failures, and one for the RELATION between
         // two fields that are each valid. The field words: gen (the held pair's gen differs, or none is held for a stamped
         // stream), base (not a safe integer, or above the held rev), through (not carried, so not a safe integer: every
-        // stamped delta carries it; or below the held rev), rev (not a safe integer). The relation word: disagree (gen,
+        // stamped delta carries it; or below the held rev), rev (not a safe integer), and newGen (carried, and a value
+        // genOf cannot read: round 4). The relation word: disagree (gen,
         // base, through and rev each passed alone, and rev is not the through the frame states: the pair advances to rev,
         // and a stamped delta's rev IS its through (the design's stamped shape: through equal to rev on a per-cycle delta,
         // R on a composed frame), so a frame whose two disagree states no one rev to advance to and is refused rather than
@@ -1544,7 +1556,8 @@ export class FederationManager {
         // characters, which no word here approaches), so a new word needs no allowlist change where a new key does;
         // tests/test_client_diag_allowlist.py drives each word through it, and a 65-character word through the cut, and
         // holds the list to this ladder.
-        const why = !held || gen !== held.gen ? "gen" : !Number.isSafeInteger(d.base) || d.base > held.rev ? "base"
+        const why = !held || gen !== held.gen ? "gen" : d.newGen !== undefined && genOf(d.newGen) === undefined ? "newGen"
+                    : !Number.isSafeInteger(d.base) || d.base > held.rev ? "base"
                     : !Number.isSafeInteger(d.through) || d.through < held.rev ? "through" : !Number.isSafeInteger(d.rev) ? "rev" : "disagree";
         this.diag("feedDelta-stale", { host, buildId: d.buildId, why });
         this.sendRemote(host, held ? { type: "needFullFeed", gen: held.gen, rev: held.rev } : { type: "needFullFeed" });
@@ -1557,7 +1570,9 @@ export class FederationManager {
       // the pair after the frame: (newGen, rev) after a composed frame, (gen, rev) after a per-cycle delta; rev is the
       // frame's through by the gate (a stamped delta's two are equal or it was refused above), so the pair advances to
       // the one rev the frame states, the rev the applier holds once it applies, as the bars road's base does
-      // (view-deltas.ts), and neither road can declare a reach the stream never reached
+      // (view-deltas.ts), and neither road can declare a reach the stream never reached. A carried newGen is readable by
+      // the gate above, so an undefined one means the frame carries none (a per-cycle delta): never a fallback to gen for
+      // a value genOf could not read (round 4)
       const newGen = genOf(d.newGen);
       c.feedHeld = { gen: newGen !== undefined ? newGen : gen, rev: d.rev };
     }

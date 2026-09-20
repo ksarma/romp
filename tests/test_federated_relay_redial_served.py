@@ -80,6 +80,7 @@ const hook = () => {
             const f = { sock: idx, t: String(m.type), slot: m.slot ? String(m.slot) : "" };
             for (const k of ["gen", "newGen", "base", "rev", "through"]) if (typeof m[k] === "number" || (typeof m[k] === "string" && (k === "gen" || k === "newGen"))) f[k] = m[k];   // the revs as numbers, the gens as the kernel's strings; no content
             if ("gen" in m) f.genKey = true;   // the key's presence, whatever its value: drive_pair tells an unreadable gen from none
+            if ("newGen" in m) f.newGenKey = true;   // the same for newGen: held_pair reads a present newGen the client cannot read as the refusal it is (round 4)
             window.__frames.push(f);
           }
         } catch (e) {}
