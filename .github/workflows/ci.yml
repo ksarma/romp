@@ -358,3 +358,15 @@ jobs:
         run: |
           python -m pip install --upgrade pip pytest pytest-timeout cryptography
           python -m pytest tests/test_*_browser.py tests/test_*_served.py -q -rs -p no:cacheprovider --durations=20 --timeout=600 --timeout-method=thread
+      - name: Anchor slug table against the renderer (docs-anchors-oracle --check)
+        # tests/test_docs_anchors.py holds its slugger to tests/fixtures/docs_anchor_slugs.json, a table
+        # tests/docs-anchors-oracle.py wrote from marked, the extension's renderer. On the Python matrix
+        # runners (no node, no node_modules) the table IS the oracle, so a table edited to agree with a
+        # wrong slugger passes the suite there (round 12 fix-up of fork PR #778, executed: a slugger that
+        # strips every underscore, the table rewritten from it, the suite's renderer test green, this
+        # recipe red on 226 rows). This is the one job with node and the extension's marked installed
+        # (npm ci above), so the recipe runs HERE: it renders every corpus heading and battery shape and
+        # exits 1 naming each row the renderer disagrees with, 2 when node or marked is missing, never a
+        # skip. Sub-second (0.15 s at its introduction). tests/test_docs_anchors.py reads this step.
+        working-directory: ${{ github.workspace }}
+        run: python tests/docs-anchors-oracle.py --check

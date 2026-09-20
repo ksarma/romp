@@ -25,7 +25,7 @@ the slug the renderer gives it: marked 12.0.2, the extension's, run by tests/doc
 heading, takes the h element's text content as GitHub's anchor filter does and slugs it by github-slugger's rule. The
 test below fails on a heading with no row, a row with no heading, and any disagreement, naming each; CI's Python job has
 no node and no marked (the extension job alone installs vscode-extension/node_modules), so the table is the oracle there,
-and the recipe refuses to run without them rather than skipping. Round 11 checked seventeen headings somebody chose and
+and the recipe refuses to run without them rather than skipping; CI's extension job, which has both, runs its --check (a pin below reads the step). Round 11 checked seventeen headings somebody chose and
 an underscore arm that stripped unbalanced runs CommonMark leaves literal, admitted one intraword underscore inside a span
 and read no whitespace flanking; over the derived corpus that arm agreed on every real heading (none carries such a
 shape) and disagreed on 123 of the battery's 457 shapes, 111 underscore runs and 12 whitespace-flanked asterisk runs; the
@@ -325,6 +325,23 @@ class AgainstTheRenderer(unittest.TestCase):
         self.assertEqual(len(shapes), 2 * 9 * 7 * 3 + len(_BATTERY_SHAPES))
         for s in ("__a_b_", "_ spaced _", "lead __word_ tail", "___a__b___", "**a *b** c*"):
             self.assertIn(s, shapes)
+
+    def test_ci_runs_the_recipe_where_node_and_marked_are_installed(self):
+        # round 12 fix-up of fork PR #778: on the Python matrix runners the table IS the oracle, so a table edited to agree with a
+        # wrong slugger passes the test above there (executed: a slugger stripping every underscore, the table rewritten from it,
+        # this class green, the recipe's --check red on 226 rows). The extension job has node and the extension's marked (npm ci),
+        # so it runs `docs-anchors-oracle.py --check`; this pin reads that step off the workflow, in that job, after its npm ci
+        with open(os.path.join(ROOT, ".github", "workflows", "ci.yml"), encoding="utf-8") as f:
+            text = f.read()
+        job = re.search(r"^  vscode-extension:\n(.*?)(?=^  [a-z-]+:$|\Z)", text, re.S | re.M)
+        self.assertIsNotNone(job, "ci.yml has no vscode-extension job")
+        steps = job.group(1)
+        install = steps.find("run: npm ci")
+        self.assertGreaterEqual(install, 0, "the extension job runs no npm ci")
+        check = re.search(r"^\s+run: python3? tests/docs-anchors-oracle\.py --check\s*$", steps, re.M)
+        self.assertIsNotNone(check, "the extension job runs no `python tests/docs-anchors-oracle.py --check` step: in CI the table is never "
+                                    "held to the renderer, so a table edited to agree with a wrong slugger passes")
+        self.assertGreater(check.start(), install, "the recipe needs the extension's marked: the --check step must follow npm ci")
 
 
 class Slugs(unittest.TestCase):

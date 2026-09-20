@@ -1129,8 +1129,8 @@ class Routes(Fresh):
         # main-drift commit in _MAIN_DRIFT, and never on an action it was handed: a confirm is refused unless its kind is release
         # or main and its identifier equals what that slot holds NOW. Whether any banner showed the identifier is not read (a
         # release the check endpoint filters out of the banner's answer as dismissed is still the slot's, and a confirm naming it
-        # runs; the comment on the drift test below says so), which is narrower than round 11's sentence, a confirm handing an
-        # identifier the banner never showed is refused. What is asserted is the LAUNCH, recorded by _launchers, not the status
+        # runs; the comment on the drift test below says so), which is narrower than the sentence round 11 wrote into the ledger entry (corrected in
+        # place by the round-12 fix-up), a confirm handing an identifier the banner never showed is refused. What is asserted is the LAUNCH, recorded by _launchers, not the status
         # code: round 11 patched both launchers to raise, and the route starts the converge on a daemon thread, so that raise was
         # swallowed and the pin never saw whether the launchers ran (a mutant converging on the handed offer before its 409 stayed
         # green). Refused, with nothing started: a kind outside release and main (the route's internal kinds, pull and restart,
