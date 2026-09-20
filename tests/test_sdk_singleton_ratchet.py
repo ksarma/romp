@@ -3107,14 +3107,20 @@ def case_population(source=None, names=None):
     expression, no binding on the class or any base other than _NestedRun) is a shape this does not read and raises,
     and so do two classes of one name, whose map entry would hold one of them, so the population cannot come back
     silently short of a case. Returns (ids, refusal_readers, cases): every case id; the ids of the cases that
-    reference one of `names` in the class body or in a module-defined base other than _NestedRun, whose helpers every
-    case inherits (a reference there would put every case on the roster's side, so the chain excludes it, and the
-    third test of TheCaseRostersNameEveryCase holds that with a helper of its synthetic base referencing a name: the
-    round-7 review found this sentence and the class docstring's naming the base without the exclusion), `names`
-    being this module's copies of the refusal's texts as refusal_text_names derives them from the conftest's texts
-    when None is given, so a class reading those lines through a literal copy of the text is outside this set, which
-    is why the roster pin says it keys on the names; and the class-name to id map. `source` is this module's when
-    None; a synthetic text pins the derivation itself (TheCaseRostersNameEveryCase)."""
+    reference, in the class body or in a module-defined base other than _NestedRun, one of `names` or a function
+    defined as a statement of the module (module_statements) whose body references one of `names` or another such
+    function, transitively (the round-8 review found a module-level helper reading the refusal's line, called from a
+    case, leaving the case off this set while the conftest's sentence claimed every case that reads the refusal
+    through a named copy; a function reached through a method of _NestedRun alone is outside like _NestedRun's own
+    references, and a helper the module does not define as a statement, an import or a lambda bound by assignment,
+    is not followed); _NestedRun is the base whose helpers every case inherits (a reference there would put every
+    case on the roster's side, so the chain excludes it, and the third test of TheCaseRostersNameEveryCase holds
+    that with a helper of its synthetic base referencing a name and calling a reading function: the round-7 review
+    found this sentence and the class docstring's naming the base without the exclusion), `names` being this
+    module's copies of the refusal's texts as refusal_text_names derives them from the conftest's texts when None is
+    given, so a class reading those lines through a literal copy of the text is outside this set, which is why the
+    roster pin says it keys on the names; and the class-name to id map. `source` is this module's when None; a
+    synthetic text pins the derivation itself (TheCaseRostersNameEveryCase)."""
     tree = ast.parse(inspect.getsource(sys.modules[__name__]) if source is None else source)
     names = set(refusal_text_names() if names is None else names)
     defined = [n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)]
@@ -3124,6 +3130,15 @@ def case_population(source=None, names=None):
                              % sorted(n.name for n in defined if [d.name for d in defined].count(n.name) > 1))
     if "_NestedRun" not in classes:
         raise AssertionError("no _NestedRun class in the source: the derivation would read an empty population")
+    referenced = {n.name: {m.id for m in ast.walk(n) if isinstance(m, ast.Name)}
+                  for n in module_statements(tree) if isinstance(n, ast.FunctionDef)}
+    reaching = {f for f, refs in referenced.items() if refs & names}       # the module-level functions reading a name,
+    grew = True                                                           # directly or through another such function
+    while grew:
+        more = {f for f, refs in referenced.items() if f not in reaching and refs & reaching}
+        reaching |= more
+        grew = bool(more)
+    keys = names | reaching
 
     def bases(name):                                    # the module-defined bases, transitively, nearest first
         found = []
@@ -3154,7 +3169,7 @@ def case_population(source=None, names=None):
                                  % (name, ast.unparse(value) if value is not None else "no binding"))
         cases[name] = value.id[len("SCRATCH_"):]
         ids.add(cases[name])
-        if names & {n.id for c in chain for n in ast.walk(classes[c]) if isinstance(n, ast.Name)}:
+        if keys & {n.id for c in chain for n in ast.walk(classes[c]) if isinstance(n, ast.Name)}:
             readers.add(cases[name])
     if not ids:
         raise AssertionError("no class derives from _NestedRun: the derivation would read an empty population")
@@ -3209,7 +3224,10 @@ class TheCaseRostersNameEveryCase(unittest.TestCase):
     excludes it, and the third test holds the exclusion; the round-7 review found this sentence and case_population's
     naming the base without it), to a str constant of this module, bound by a statement of the module or under a
     module-level if or try (module_statements), whose value is a piece of a text the conftest renders for the refusal
-    or for a link to it (refusal_text_names, derived from
+    or for a link to it, or to a function defined as a statement of the module whose body references such a constant
+    or another such function, transitively (case_population; the round-8 review found a module-level helper reading
+    the refusal's line, called from a case, leaving the case off the population with the module green, so the third
+    test plants one called through a second function) (refusal_text_names, derived from
     the conftest's texts, the renderers and the constants they name read from its statements the same way: the round-7
     review found the first form a hand-kept list
     of four names that omitted REFUSED_FOUND_TAIL, the clause's last words, so a case reading the clause through its
@@ -3241,13 +3259,16 @@ class TheCaseRostersNameEveryCase(unittest.TestCase):
         _, readers, _ = case_population(names=names)
         self._assert_same("the conftest's roster of the refusal's cases (keyed on a reference, in the case class or a "
                           "module-defined base other than _NestedRun, to one of %s, this module's copies of the texts "
-                          "the conftest renders for the refusal and its links)"
+                          "the conftest renders for the refusal and its links, or to a module-level function whose "
+                          "body references one of them, directly or through other module-level functions)"
                           % ", ".join(names), readers, conftest_roster_ids(ratchet_comment_text()))
 
     def test_the_derivation_reads_the_classes_by_shape_and_the_rosters_by_their_openers(self):
         """A case inherits its id from a base that binds SCRATCH; a subclass binding its own has its own; a reference
         to a refusal text in a base puts the subclass on the readers' side, and one in _NestedRun, the base every
-        case shares, puts no case there; a class under a module-level conditional
+        case shares, puts no case there; a reference to a module-level function that reads a text through a second
+        module-level function puts the class there, while such a function referenced from _NestedRun alone, or from
+        no class, puts none; a class under a module-level conditional
         is a case; a class outside _NestedRun's tree is no case; a SCRATCH bound in another shape raises, and so do
         two classes of one name; both roster readers accept joined openers and refuse a
         mis-shaped entry. The names are derived from the texts: a constant equal to a head the refusal renders, one
@@ -3263,11 +3284,21 @@ class TheCaseRostersNameEveryCase(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
         synthetic = textwrap.dedent("""\
+            def reads(case):
+                return SWAPPED in case.out
+
+            def via(case):
+                return reads(case)
+
+            def unused():
+                return SWAPPED
+
             class _NestedRun:
                 SCRATCH = ''
 
                 def helper(self):
                     carriers(self.out, SWAPPED)
+                    reads(self)
 
             class One(_NestedRun, unittest.TestCase):
                 SCRATCH = SCRATCH_S98
@@ -3284,6 +3315,12 @@ class TheCaseRostersNameEveryCase(unittest.TestCase):
             class Four(_NestedRun, unittest.TestCase):
                 SCRATCH = SCRATCH_Z
 
+            class Five(_NestedRun, unittest.TestCase):
+                SCRATCH = SCRATCH_F
+
+                def test(self):
+                    via(self)
+
             if sys.version_info >= (3, 12):
                 class Gated(_NestedRun, unittest.TestCase):
                     SCRATCH = SCRATCH_G
@@ -3292,11 +3329,13 @@ class TheCaseRostersNameEveryCase(unittest.TestCase):
                 SCRATCH = SCRATCH_A
             """)
         ids, readers, cases = case_population(synthetic, names=("SWAPPED",))
-        self.assertEqual((ids, readers), ({"S98", "S99", "Z", "G"}, {"S98", "S99"}),
+        self.assertEqual((ids, readers), ({"S98", "S99", "Z", "G", "F"}, {"S98", "S99", "F"}),
                          "(ids, readers): an id per class in _NestedRun's tree from its SCRATCH binding; a reader by a "
-                         "reference to a name in the class or a module-defined base other than _NestedRun (its helper's "
-                         "reference to SWAPPED puts no case among the readers)")
-        self.assertEqual(cases, {"One": "S98", "Two": "S99", "Three": "S98", "Four": "Z", "Gated": "G"},
+                         "reference, in the class or a module-defined base other than _NestedRun, to a name or to a "
+                         "module-level function whose body references a name directly or through another (via reads "
+                         "SWAPPED through reads; _NestedRun's helper's references to SWAPPED and to reads put no case "
+                         "among the readers, and unused, referenced by no class, puts none)")
+        self.assertEqual(cases, {"One": "S98", "Two": "S99", "Three": "S98", "Four": "Z", "Five": "F", "Gated": "G"},
                          "the class-to-id map (case_population over the synthetic module: each case's id from its own "
                          "SCRATCH binding, or its base's when it binds none; the class outside _NestedRun's tree absent)")
         with self.assertRaisesRegex(AssertionError, "two classes share a name.*'Four'"):
