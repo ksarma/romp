@@ -200,9 +200,11 @@ DOWN_READ_ROOM_MS = 2000     # the room down_dwell_ms holds past DOWN_WINDOW_MAR
 #                              AFTER visible()'s reads (waitVisible), so it exceeds the wait's cap by the reads' duration on a phase that ran
 #                              to the cap; without the room the margin pin could red on a drive whose visibility legs pass. The reads
 #                              alone take 6 to 22 ms where the wait had nothing left to wait for (D.seenAfterReturn.waitedMs over 34
-#                              recorded drives as of 2026-09-20, `python3 reads_census.py <report.json>...` outside the repo), so 2 s is a floor far
-#                              above them, not a fit. tests/test_federated_linkdrop_driver_bound.py pins
-#                              down_dwell_ms >= DOWN_WINDOW_MARGIN x wait_ms + this
+#                              recorded drives as of 2026-09-20, `python3 reads_census.py <report.json>...` outside the repo), so the room the
+#                              reads get, this constant over DOWN_WINDOW_MARGIN (1 s: the relation pin divides through by the margin), is a
+#                              floor far above them, not a fit. The room is for the reads after a wait that RESOLVED: a phase whose wait ran
+#                              to the cap is refused by the margin leg (seen.expired, round 5), never measured against the room.
+#                              tests/test_federated_linkdrop_driver_bound.py pins down_dwell_ms >= DOWN_WINDOW_MARGIN x wait_ms + this
 QUIET_TRIES, QUIET_STEP_MS = 7, 2000   # quiet(): up to QUIET_TRIES windows of QUIET_STEP_MS with no new relay frame on any page
 
 
@@ -681,12 +683,15 @@ class _LinkDrop(unittest.TestCase):
     # 2 s retry plus the open, once per churn of the old bundle's socket), not a fit to those spans.
     waits_ms = {"held": 20000, "closed": 20000, "rowDown": 40000, "rowUp": 40000, "redialed": 30000, "localUp": 30000, "redialed2": 30000}
     page_wait_ms = 30000      # the start, per page: its load, its first relay socket, that socket's whole frame
-    driver_budget_ms = 225000  # every wait the driver places draws on this one budget: about twice a healthy drive's total waiting and
-    #                            more (the budget less budget.leftMs in the two drives of 2026-09-20 at this code, `r5/lab-head1.log`'s
-    #                            and `r5/lab-head2.log`'s reports: 79 s on the new bundle in both, 115 and 97 s on the old, whose frozen
-    #                            feed page shows a phase's cards only at the next churned socket's whole
-    #                            frame); the record's budget.leftMs says what a drive left. 225 s, not 240, so the worst case holds the
-    #                            42 s dwell under DRIVER_TIMEOUT_S.
+    driver_budget_ms = 225000  # every wait the driver places draws on this one budget. The budget is a DEADLINE, not a meter of the
+    #                            waits: makeBudget fixes t0 at the driver's start, capped(ms) is min(ms, what is left to the deadline), and
+    #                            the fixed dwells and the control-door calls run to their own bounds whether or not it has passed (their
+    #                            time before it draws it down too). So the budget less the record's budget.leftMs is the drive's WALL
+    #                            CLOCK from the launch to the end mark, the 42 s dwell and the settles included, not a sum of its waits:
+    #                            78.4 s on the new bundle and 97.2 s on the old in the drive of 2026-09-20 at this code (225000 less
+    #                            budget.leftMs in `r6-margin/lab-head1.log`'s reports, the builder's lab logs outside the repo; the old
+    #                            bundle's frozen feed page shows a phase's cards only at the next churned socket's whole frame, so its
+    #                            drives run longer). 225 s, not 240, so the worst case holds the 42 s dwell under DRIVER_TIMEOUT_S.
     # The row stays down this long after phase D's post, and the gate DEPENDS on it (round 2's ruling): the while-down read of D
     # comes DOWN_WINDOW_MARGIN times the drive's own slowest link-up delivery after the post, asserted by both classes' gate legs
     # (_assert_the_down_window_outlasts_the_drives_slowest_delivery). The dwell is sized against the lab's own cap on that
