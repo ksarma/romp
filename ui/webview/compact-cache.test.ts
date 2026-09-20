@@ -26,5 +26,5 @@ test("compact mode paints its tail by unit first (PR E), and a stale view or a p
 
 test("toggling a tool group forces a re-render past the cache (sets stale) — an expand still repaints", () => {
   // the view is read before the sync since review round 1 (the toggle captures the reader's anchor on it first: toolgroup-toggle-keep.test.ts)
-  assert.match(RENDER, /const v = activeId \? views\.get\(activeId\) : undefined;[\s\S]*?if \(activeId\) \{ if \(v\) v\.stale = true; syncView\(activeId, undefined, true\); \}/);   // anchored: the toggle's keep restores the anchor row after the build (review round 1b)
+  assert.match(RENDER, /const v = activeId \? views\.get\(activeId\) : undefined;[\s\S]*?if \(activeId\) \{ if \(v\) v\.stale = true; syncView\(activeId, undefined, !!anchor\); \}/);   // anchored when a row was captured: the toggle's keep restores it after the build; a bottom or row-less reader takes nothing (review round 1b)
 });

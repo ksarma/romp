@@ -41,6 +41,11 @@ const SENTINEL = 424242;   // the reference railChainBefore hands back, so the s
 
 function liftSeam(sessions: Map<string, any>, views: Map<string, any>, itemsOf: (s: any) => DisplayItem[], calls: Call[]) {
   const js = liftBetween("function syncViewInner(", "function patchWorkedFooters(");
+  // itemFirstEvent is LIFTED with the seam, never hand-copied (review round 1b, the verifier's pass): a copy re-creates the drift the
+  // next time production's first-event rule moves, and the seam's footer `from` (the first re-rendered unit's first event) would then be
+  // modelled against a stale map while the harness stayed green. The seam's one call cannot see a gap (the plan rebuilds when a gap
+  // stands at or past u0), so the lift is proven by a production mutation of the run case, which a hand copy would have hidden.
+  const first = liftBetween("function itemFirstEvent(", "// The display-unit index");
   const prelude = `
     const H = HOOKS;
     let renderingSid = null, renderingOwnerSid = null;
@@ -63,13 +68,12 @@ function liftSeam(sessions: Map<string, any>, views: Map<string, any>, itemsOf: 
     const appendItem = (v, s, items, u, prevEpoch) => { H.calls.push(["appendItem", u, prevEpoch]); return prevEpoch; };
     const evictCompactTop = (v, ws) => { H.calls.push(["evict", ws]); if (ws <= (v.winStart ?? 0)) return false; v.winStart = ws; return true; };   // the real one's answer: whether it evicted
     const reseedWindowHead = (v, s, items) => { H.calls.push(["reseed", v.winStart, items.length]); };
-    const itemFirstEvent = (it) => (it.kind === "toolgroup" || it.kind === "noticegroup" ? it.indices[0] : it.kind === "gap" ? it.before : it.index);
     // normal mode's names: never reached in a compact world
     const dayWalkBeforeEvent = () => new H.DayWalk(); const prevTimedEpoch = () => null; const eventEpoch = () => null; const dayDividerFor = () => null;
     const renderEvent = () => new H.FakeEl("div"); const turnWorkedSecs = () => null; const stampWalkDay = () => {};
     const HTMLElement = H.FakeEl; const el = (t, c) => new H.FakeEl(t, c || "");
   `;
-  return new Function("HOOKS", prelude + js + "\nreturn syncViewInner;")({ sessions, views, itemsOf, calls, compactTailPlan, DayWalk, FakeEl, SENTINEL }) as (id: string, atBottom?: boolean, anchored?: boolean) => any;
+  return new Function("HOOKS", prelude + first + js + "\nreturn syncViewInner;")({ sessions, views, itemsOf, calls, compactTailPlan, DayWalk, FakeEl, SENTINEL }) as (id: string, atBottom?: boolean, anchored?: boolean) => any;
 }
 /** renderWindowItems lifted alone (its own gate on the flag) over a recording applyMeasure and stubs for what it appends. */
 function liftBuild(calls: Call[]) {
@@ -198,7 +202,7 @@ test("a sync with no flag (a switch's, a landing's, a hidden prebuild's) takes n
   assert.deepEqual(w.calls.filter((c) => c[0] === "renderWindowItems"), [["renderWindowItems", 0, 2, false]], "…and the build is told it may not take either");
 });
 
-test("every anchoring paint takes: atBottom passed (appendActive's follow or anchor restore, either value) and the flag passed true (the toggle's keep) each call applyMeasure once and hand the build anchored true", () => {
+test("every anchoring paint takes: atBottom passed with no flag (the default: atBottom was passed) and the flag passed true (the toggle's keep holding a row, appendActive's follow or anchor) each call applyMeasure once and hand the build anchored true", () => {
   for (const args of [["A", true], ["A", false], ["A", undefined, true]] as Array<[string, boolean | undefined, boolean?]>) {
     const w = world(["user", "assistant"], [ev(0), ev(1)], [ev(0), ev(1)], 2, 0);
     w.v.stale = true;

@@ -23,6 +23,8 @@ HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
 BIN = os.path.join(ROOT, "bin")
 EXT = os.path.join(ROOT, "vscode-extension")
+# the one skip the engine test shares with the lab: the extension's deps (Playwright) are absent, so no driver head can run
+DEPS_ABSENT = "extension deps absent (npm ci not run here): the served guard needs them"
 sys.path.insert(0, HERE)
 import test_ship_reship_served as _lab   # noqa: E402  the lab kernel's environment (the module, not its classes)
 
@@ -135,7 +137,7 @@ class WindowLab(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         if not os.path.isdir(os.path.join(EXT, "node_modules", "playwright")):
-            cls._skip("extension deps absent (npm ci not run here) — the served guard needs them")
+            cls._skip(DEPS_ABSENT)
         cls.lab = tempfile.mkdtemp(prefix="live-paused-window-")
         dist = os.path.join(cls.lab, "dist")
         lab_dist.copy_dist(dist)   # the checkout's ONE build of the bundles, copied under its lock (tests/lab_dist.py)
@@ -292,7 +294,7 @@ class UnknownEngineFailsLoudly(unittest.TestCase):
 
     def test_a_misspelled_engine_exits_one_and_names_itself(self):
         if not os.path.isdir(os.path.join(EXT, "node_modules", "playwright")):
-            WindowLab._skip("extension deps absent (npm ci not run here) — the served guard needs them")
+            WindowLab._skip(DEPS_ABSENT)
         head = DRIVER_HEAD[:DRIVER_HEAD.index("let browser;")]
         lab = tempfile.mkdtemp(prefix="lab-engine-")
         try:

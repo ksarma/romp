@@ -134,7 +134,7 @@ test("a new message while scrolled UP keeps the viewport put (no backwards jump)
   // instead of evicting the top — which (with the compact full-rebuild that resets scrollTop) was jumping
   // the view "backwards" when messages arrived (the user 2026-06-25).
   assert.match(RENDER, /const before = content\.scrollTop;/);
-  assert.match(RENDER, /syncView\(activeId, stick\);/);
+  assert.match(RENDER, /syncView\(activeId, stick, stick \|\| !!anchor\);/);   // the flag: the follow, or the anchor the restore below holds (review round 1b)
   assert.match(RENDER, /else if \(!\(v && restoreScrollAnchor\(content, v, anchor, before\)\)\) writeScroll\(content, before, "append-raw", false, before\);/);
   // the compact branch keeps winStart on a scrolled-up append
   assert.match(RENDER, /const keepTop = wasAtTail && atBottom === false;/);

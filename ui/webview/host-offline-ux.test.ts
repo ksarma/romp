@@ -60,7 +60,7 @@ test("it is not a top banner — one covered the tab strip and was removed", () 
 });
 
 test("it repaints on both render paths, before the scroll maths", () => {
-  assert.match(RENDER, /syncView\(activeId, stick\);\s*\n\s*syncHostOfflineFoot\(\);/);
+  assert.match(RENDER, /syncView\(activeId, stick, stick \|\| !!anchor\);\s*\n\s*syncHostOfflineFoot\(\);/);
   assert.match(RENDER, /syncHostOfflineFoot\(\);\s*\/\/ the tab we just switched to/);
 });
 

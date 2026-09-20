@@ -427,11 +427,12 @@ test("render.ts: the render task's spacer code holds no layout read; the unit ob
   assert.doesNotMatch(RENDER, /"spacer-follow"/, "the writer is gone with it (landing-settle.ts's census)");
   assert.doesNotMatch(code(uo), /writeScroll|style\.height|sizeSpacers|redrawGapUnits/, "nothing in the unit observer's callback writes the DOM");
   // the parked figures reach the DOM under one rule (review round 1b): a figure is taken ONLY by a paint that anchors the reader, and EVERY
-  // anchoring paint takes one. The takers: syncViewInner under the `anchored` flag (atBottom passed, appendActive's follow or anchor restore;
-  // or true, the toggle's keep), a window build under the same flag from its caller (a deep link's or a moment's land, the re-window, a fill
-  // with a row or a point to put back), landActive on every road but land-saved (the one raw write), and keepPlaceAcrossWindow over its
-  // restore. A switch's, a landing's or a hidden prebuild's sync passes no flag and applies nothing (a 55 px move of a bottom reader in the
-  // landing lab), and a fill that can only restore its raw top passes false.
+  // anchoring paint takes one. The takers: syncViewInner under the `anchored` flag (appendActive's follow or the anchor its restore holds,
+  // `stick || !!anchor`; the toggle's keep when it captured a row, `!!anchor`), a window build under the same flag from its caller (a deep
+  // link's or a moment's land, the re-window, a fill with a row or a point to put back), landActive on every road but land-saved (the one
+  // raw write), and keepPlaceAcrossWindow over its restore. A switch's, a landing's or a hidden prebuild's sync passes no flag and applies
+  // nothing (a 55 px move of a bottom reader in the landing lab), a fill that can only restore its raw top passes false, and a paint whose
+  // only restore is a raw scrollTop (appendActive with no capturable row, the toggle for a bottom or row-less reader) passes false too.
   assert.match(RENDER, /function syncViewInner\(id: string, atBottom\?: boolean, anchored: boolean = atBottom !== undefined\): View \{/, "the flag defaults to 'atBottom was passed'");
   assert.match(RENDER, /if \(anchored && applyMeasure\(v\)\) \{ redrawGapUnits\(v\); sizeSpacers\(v\); \}/, "syncViewInner takes the figures inside an anchoring paint alone");
   assert.match(RENDER, /function renderWindowItems\([^\n]*anchored = false\): void \{\n(?:\s*\/\/[^\n]*\n)*\s*if \(anchored\) applyMeasure\(v\);/, "a window build takes them only when its caller anchors");
@@ -443,8 +444,10 @@ test("render.ts: the render task's spacer code holds no layout read; the unit ob
   const calls = (RENDER.match(/(?<![\w.])applyMeasure\(v\)/g) || []).length;
   assert.equal(calls, 4, "four takers: syncViewInner, the window build, landActive and keepPlaceAcrossWindow (" + calls + "); the frame-end take asks for the first");
   // the census of callers, derived from the tree: every window build outside the definition names whether its caller anchors (a seventh
-  // argument that is the flag it was handed, true, or the fill's own predicate), and every syncView call either passes atBottom, passes
-  // true, or is one of the non-anchoring callers named here, which take nothing
+  // argument that is the flag it was handed, true, or the fill's own predicate), and every syncView call either passes its keep's own
+  // predicate (appendActive's `stick || !!anchor`, the toggle's `!!anchor`) or is one of the non-anchoring callers named here, which take
+  // nothing. appendActive has no harness of its own, so its line is pinned here as well.
+  assert.match(RENDER, /const anchor = !stick && v \? captureScrollAnchor\(content, v\) : null;\n(?:\s*\/\/[^\n]*\n)*\s*syncView\(activeId, stick, stick \|\| !!anchor\);/, "appendActive's sync is flagged by its follow or the anchor it captured, never by atBottom alone");
   const builds = RENDER.match(/(?<![\w.])renderWindowItems\(v, s, items, [^\n]*?\);/g) || [];
   assert.equal(builds.length, (RENDER.match(/(?<![\w.])renderWindowItems\(/g) || []).length - 1, "every call site has the (v, s, items, …) shape (the definition excluded)");
   assert.ok(builds.length >= 7, "the census is not empty: " + builds.length);
@@ -452,10 +455,10 @@ test("render.ts: the render task's spacer code holds no layout read; the unit ob
   const syncs = RENDER.split("\n").map((l, i) => [i + 1, l] as const).filter(([, l]) => /(?<![\w.])syncView\(/.test(l) && !/function syncView\(/.test(l));
   assert.ok(syncs.length >= 7, "the syncView census is not empty: " + syncs.length);
   const fnOf = (line: number) => { for (let i = line - 1; i >= 0; i--) { const m = /^function (\w+)\(/.exec(RENDER.split("\n")[i]); if (m) return m[1]; } return ""; };
-  const flagless = syncs.filter(([, l]) => !/syncView\(\w+, stick\)/.test(l) && !/syncView\(\w+, undefined, true\)/.test(l));
+  const flagless = syncs.filter(([, l]) => !/syncView\(\w+, stick, stick \|\| !!anchor\)/.test(l) && !/syncView\(\w+, undefined, !!anchor\)/.test(l));
   assert.deepEqual(flagless.map(([n]) => fnOf(n)).sort(), ["fillInPlace", "reviveFailedLocal", "runPrebuild", "showActive", "showActive"].sort(),
     "the flagless syncView callers are the non-anchoring ones: the placeholder re-render, the hidden prebuild, the switch's two builds (landActive and keepPlaceAcrossWindow land them) and the fill's no-unit fallback");
-  assert.equal(syncs.length - flagless.length, 2, "…and two pass the flag: appendActive (atBottom) and the toggle (true)");
+  assert.equal(syncs.length - flagless.length, 2, "…and two pass the flag: appendActive (its follow or its anchor) and the toggle (its anchor)");
   // every reset that clears the average clears the parked figures with it (forgetAverage), and none clears the figure bare
   assert.match(RENDER, /function forgetAverage\(v: View\): void \{\s*\n\s*v\.avgTurnH = undefined; v\.measured = undefined;\s*\n\}/);
   assert.equal((RENDER.match(/\bavgTurnH = undefined/g) || []).length, 1, "the one bare clear is the helper's");

@@ -13500,9 +13500,10 @@ function syncView(id: string, atBottom?: boolean, anchored: boolean = atBottom !
 
 function syncViewInner(id: string, atBottom?: boolean, anchored: boolean = atBottom !== undefined): View {
   // anchored: this paint lands the reader over its result (appendActive's follow or anchor restore, the toggle's keep), so it may
-  // take the figures the unit observer parked (applyMeasure, below and in renderWindowItems). A paint that passes atBottom anchors
-  // by definition; a caller with a keep of its own passes true; a switch's, a landing's or a hidden prebuild's sync passes nothing
-  // and takes nothing, leaving the figures for the land that anchors (landActive, keepPlaceAcrossWindow) or the next tail paint.
+  // take the figures the unit observer parked (applyMeasure, below and in renderWindowItems). appendActive passes its follow or the
+  // anchor its restore holds (stick || !!anchor); the tool-run toggle passes whether it captured a row (!!anchor); a switch's, a
+  // landing's or a hidden prebuild's sync passes nothing and takes nothing, leaving the figures for the land that anchors (landActive,
+  // keepPlaceAcrossWindow) or the next tail paint. A paint whose only restore is a raw scrollTop anchors nothing and takes nothing.
   // atBottom (passed by appendActive): false ⇒ the user is scrolled UP reading. A compact append must then
   // NOT evict the window top — evicting shifts the content above the viewport, and since the compact path
   // FULL-REBUILDS (clears the DOM, resetting scrollTop), the caller can only restore the position if the
@@ -13564,7 +13565,7 @@ function syncViewInner(id: string, atBottom?: boolean, anchored: boolean = atBot
   }
   // The figures the unit observer measured since the last paint reach the spacers and the gap units HERE, inside a paint
   // that anchors the reader (PR E): appendActive's, which reads the scroller after this sync and follows the tail or restores
-  // the reader's anchor over whatever moved, and the tool-run toggle's, whose keep does the same (review round 1). The one rule
+  // the reader's anchor over whatever moved, and the tool-run toggle's when its keep holds a row (review round 1). The one rule
   // over every taker: a figure is taken ONLY by a paint that anchors the reader, and EVERY anchoring paint takes one. (A
   // follow-mode reader at the bottom has appendActive's paint asked for at frame end, so the figures reach them within a frame:
   // takeMeasureAtBottom.) A spacer written anywhere else moves the reader: a switch's or a landing's sync passes no flag, so
@@ -14321,10 +14322,14 @@ function renderNoticeGroup(evs: ChatEvent[], anchor: ChatEvent, prevEpoch: numbe
 // shorter, the browser clamps them at the forced layout before the write runs, and the write claims that move with `top` as its origin
 // (a write that read the clamped value would move nothing, file no row and set no marker, leaving the clamp's own scroll event to file
 // as a gesture: see writeScroll); an expand leaves the run's head where it was, its rows opening under it, rather than following to the
-// bottom (a bottom reader's parked figures are taken by the paint the frame-end take asks for, so their toggle rarely finds one). Anyone
-// else has the first visible row's offset captured before the build and restored after it (captureScrollAnchor / restoreScrollAnchor,
-// the anchor keep appendActive uses); when no row is capturable, or the anchor row was inside the run that collapsed and is gone, the
-// raw write stands as the fallback, `top` its origin.
+// bottom. Anyone else has the first visible row's offset captured before the build and restored after it (captureScrollAnchor /
+// restoreScrollAnchor, the anchor keep appendActive uses); when no row is capturable, or the anchor row was inside the run that
+// collapsed and is gone, the raw write stands as the fallback, `top` its origin. The build's sync is flagged by whether a row was
+// captured (review round 1b): a bottom reader's and a row-less reader's build takes no parked figure, because their raw write would
+// move them by it, and a figure parked while the reader was off the bottom has no paint asked for (takeMeasureAtBottom asks only at
+// the bottom, a scroll to the bottom paints nothing), so on an idle session the first paint at the bottom can be this toggle; the
+// figure waits for the next tail paint or re-window, both of which anchor. The one take followed by a raw write is the anchor row
+// gone in the collapse, a residual the PR discloses.
 function toggleToolGroup(key: string): void {
   if (openFolds.has(key)) openFolds.delete(key); else openFolds.add(key);
   const content = document.getElementById("content");
@@ -14334,7 +14339,7 @@ function toggleToolGroup(key: string): void {
   const anchor = content && v && !stick ? captureScrollAnchor(content, v) : null;
   // the expand/collapse changes the DOM without changing the event set, so mark the view stale to force
   // the compact rebuild past the cache guard (a plain tab switch leaves stale false → reuses the cache).
-  if (activeId) { if (v) v.stale = true; syncView(activeId, undefined, true); }   // anchored: the keep below puts the anchor row back over the re-sized spacer
+  if (activeId) { if (v) v.stale = true; syncView(activeId, undefined, !!anchor); }   // anchored when a row was captured: the keep below puts it back over the re-sized spacer; a bottom reader or one with no row takes nothing
   if (content && !(anchor && v && restoreScrollAnchor(content, v, anchor, top))) writeScroll(content, top, "toolgroup-toggle", false, top);
   refillOpenCommentPop();   // the popover renders the same units — its copy of this run must flip too
   scheduleRailSticky();
@@ -15572,7 +15577,9 @@ function appendActive() {
   const heightBefore = content.scrollHeight;
   const distBefore = heightBefore - before - content.clientHeight;
   const anchor = !stick && v ? captureScrollAnchor(content, v) : null;
-  syncView(activeId, stick);
+  // anchored by the follow (stick) or by the anchor restore below; a scrolled-up reader with no capturable row (the viewport inside a
+  // spacer) gets the raw restore, which anchors nothing, so their paint takes no parked figure (review round 1b)
+  syncView(activeId, stick, stick || !!anchor);
   syncHostOfflineFoot();                 // before the scroll maths: it changes scrollHeight
   updateStatusline();
   // Follow-mode pins the bottom only when there is something new to follow (T262, the user 2026-09-08): a
@@ -19915,7 +19922,9 @@ function fillInPlace(sid: string, v: View | undefined): void {
   }
   v.stick = false;   // a fill never follows the tail: the reader is where they are
   // the build takes a parked figure only when the land below has a row or a point to put back (anchored); a fill that can only restore
-  // its raw pre-fill top (no row on screen and no turn under the viewport top) takes nothing, so the figure waits for a paint that anchors
+  // its raw pre-fill top (no row on screen and no turn under the viewport top) takes nothing, so the figure waits for a paint that anchors.
+  // Two roads take and then restore the raw top, decided only after the build (a residual the PR discloses): the anchor row gone from
+  // the rebuilt window with no point to name, and a point whose turn maps to no y (yOfTurn null, here and in the re-window below)
   if (u >= 0) renderWindowItems(v, s, items, Math.max(0, u - WINDOW_RADIUS), Math.min(items.length, u + WINDOW_RADIUS), s.status.state === "working" || s.status.state === "compacting", keepVisible || pointBefore != null);
   else syncView(sid);
   // a visible row that survived the rebuild goes back to its exact offset; otherwise (no row on screen, or the anchor row gone: a turn

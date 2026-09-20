@@ -49,6 +49,9 @@ type Lifted = {
 function lift(open: Set<string>, rendered: Rendered[]): Lifted {
   const rail = liftBetween("function prevTimedEpoch(", "// The day the WALK is in at a row");
   const append = liftBetween("function appendItem(", "// Full (re)build of the window");
+  // itemFirstEvent is LIFTED, never hand-copied (review round 1b, the verifier's pass): railSeed reads a window's first unit through it,
+  // and a gap's first event is its `before`, not an `index`; a copy without that case seeded a gap-headed window with null and stayed green
+  const first = liftBetween("function itemFirstEvent(", "// The display-unit index");
   const prelude = `
     const H = HOOKS;
     const HTMLElement = H.FakeEl;
@@ -58,7 +61,6 @@ function lift(open: Set<string>, rendered: Rendered[]): Lifted {
     const toolGroupKey = (first) => "tg:" + first.uuid;
     const noticeGroupKey = (first) => "ng:" + first.uuid;
     const itemAnchor = H.itemAnchor;
-    const itemFirstEvent = (it) => (it.kind === "toolgroup" || it.kind === "noticegroup" ? it.indices[0] : it.kind === "gap" ? it.before : it.index);
     const dayDividerFor = () => null;
     const stampWalkDay = () => {};
     const gapElement = () => new H.FakeEl("div", "tx-gap");
@@ -68,7 +70,7 @@ function lift(open: Set<string>, rendered: Rendered[]): Lifted {
     const renderNoticeGroup = (evs, anchor, prev) => { H.rendered.push({ what: "noticegroup", index: H.indexOf(anchor), prev }); return new H.FakeEl("div", "turn turn-noticegroup"); };
   `;
   const hooks: any = { FakeEl, open, itemAnchor, rendered, indexOf: (ev: Ev) => hooks.events.indexOf(ev), events: [] as Ev[] };
-  const api = new Function("HOOKS", prelude + rail + append + "\nreturn { prevTimedEpoch, railSeed, railExit, railChainBefore, appendItem, unitExit };")(hooks) as Lifted;
+  const api = new Function("HOOKS", prelude + first + rail + append + "\nreturn { prevTimedEpoch, railSeed, railExit, railChainBefore, appendItem, unitExit };")(hooks) as Lifted;
   return { ...api, appendItem: (v, s, items, u, prev, walk, working, turns = null) => { hooks.events = s.events; return api.appendItem(v, s, items, u, prev, walk, working, turns); },
            railChainBefore: (s, items, ws, u0) => { hooks.events = s.events; return api.railChainBefore(s, items, ws, u0); }, railExit: (s, it, p) => { hooks.events = s.events; return api.railExit(s, it, p); } };
 }
@@ -133,6 +135,15 @@ test("the composition: the chain a window build hands to unit u0 equals railChai
   }
   assert.equal(lift(new Set(), []).railSeed({ events }, items, 2), 130, "the seed at a window's start is the most recent timed event before its first (the back-scan over s.events)");
   assert.equal(lift(new Set(), []).railSeed({ events }, items, 0), null);
+  // a window that opens ON a gap (the history regions' shape since they landed): the gap's first event is the event it stands before, so
+  // the seed is the most recent timed event before that one, and the chain carries it through the gap to the first marker after it
+  // (review round 1b, the verifier's pass: through production's itemFirstEvent, lifted; a copy without the gap case read undefined and
+  // seeded null)
+  const gapped = [ev(0), gap(2, 6, 4), ev(4), ng(5, 6), ev(7), ev(8), ev(9)];
+  const G = lift(new Set(), []);
+  assert.equal(G.railSeed({ events }, gapped, 1), 130, "a gap-headed window seeds from the event before the gap's `before` (event 4): the tool at 130");
+  assert.equal(G.railChainBefore({ events, regions: undefined }, gapped, 1, 2), 130, "…and the chain reaches the unit after the gap unchanged (a gap leaves the chain)");
+  assert.equal(G.railChainBefore({ events, regions: undefined }, gapped, 1, 3), 140, "…then advances over that unit's own epoch");
 });
 
 test("the phone's shape: a collapsed run across a minute boundary, then the reply in the last member's minute: the build's chain stamps the reply, the old seed suppressed it, and the seam now seeds as the build does", () => {
