@@ -83,13 +83,13 @@ counters that the recorders do not wrap, or through a reference to a real door t
 even though it cannot be named. Outside both witnesses: a reader below the judge's loaders or beside its module, the
 kernel opening and parsing the store file itself, the kernel calling the judge's own file reader (`jd._read_store_json`,
 below the loaders) or a second judge module loaded under another name with a cache and counters of its own (three plants,
-each per session in the pass loop, re-taken at the head of the round-5 fixes, over its 37 cases, one at a time with
+each per session in the pass loop, re-taken at this head, the head of the round-6 fixes, over its 38 cases, one at a time with
 the kernel, the judge and this module hashed before the plant, across the run and after the revert: the first two leave every case
 green with no file changed across a run, so they stay outside every witness here; the third has been refused since the consolidation
 pass by the kernel-wide birth pin, whose called population names `_PJ.load_goals_shared` as a fifth loader spelling, so a second judge
 module is outside both execution witnesses and inside the static pin, which reds alone while every execution case stays green; and
 the alias control beside them reds the shared reconciliation on each of the five harness cases that drive a pass, and the birth pin
-(6 failed, 31 passed at the head of the round-5 fixes; the door witness's thirteen cases run outside any pass, twelve calling
+(6 failed, 32 passed at this head, the head of the round-6 fixes; the door witness's thirteen cases run outside any pass, twelve calling
 the door once and one reading the table, and stay green, so the control reds five of the eighteen harness cases; review
 round 5, extra7-1: this sentence said every harness case, and one of the six at the head the round-5 ruling read drove no pass; a verifier
 of the round-5 fixes: it then said the door witness's cases call the door, one of them reading the table). Review round 3, correctness-2 and
@@ -547,9 +547,61 @@ rosters' at four sites; 'every census' at two; the door witness's case count in 
 enumeration rows tests-3's Fix line asked for, each landed.
 
 Review round 6 (2026-09-20; the reviewer's five lenses on the round-5 instruments, each judged by whether it sees what the syntax
-lists could not). The round adds one case, the walker witness's instrument case, so the module holds 38 cases at this head, the head
-of the round-6 fixes, over its 38 cases; the states of the round's fixes are recorded below as each fix lands. The clean module at
-this head, the head of the round-6 fixes: 38 passed single-process on 3.10, 3.11, 3.12, 3.13 and 3.14t.
+lists could not: the splice-site population, the roads' derivation, the silence sentences, the independent source, and the round-5
+items spot-checked). Three fixes landed, each with its states, and every state below was taken at this head, the head of the round-6
+fixes, over its 38 cases (the round adds one, the walker witness's instrument case, in its first fix): the point-1 states on the tree of
+the round's first fix, the point-2 states on the tree of its second, and the first paragraph's bypass plants and alias control on the
+tree of its third, the round's last change but this paragraph, which adds no case; each landed on kernel/kernel.py, kernel/judge.py or
+this module and reverted, the kernel, the judge and this module hashed before the plant and after the revert and found equal, the
+module run single-process on 3.12 through the clean runner, so a figure here reads against 38 and names no other head. Lens one, the
+splice-site population: the walker witness planted its stranger at three hand sites, the module body's end, the first def's body and
+the first class's body, three of the 147 node positions an exec-mode Module offers on 3.12 and all of them statement lists, so a
+hand-rolled walk substituted for _walk that read any other position class by hand (a decorator list, a call's arguments, a
+comprehension's generators, an f-string's values, a match statement's cases, annotations and type parameters, the nested statement
+lists, AsyncFunctionDef.body) kept the witness's three cases green, and one plant per position class was green under a walk reading
+ClassDef.body alone, so the unit is the position; the positions are derived now (_grammar_positions, every field of every concrete
+class the interpreter defines observed non-empty over a synthetic corpus or red naming the field) and planted each alone
+(_plant_at), 147 positions and 1323 drives on 3.12, 153 and 1377 on 3.14, 136 and 1224 on 3.10, 140 and 1260 on 3.11, 150 and 1350
+on 3.13, the roster holding nine rows with the derivation itself the ninth. The derived plant found the one position where the
+refusal did not come first: the finder read every name's `.name` at the ImportFrom and raised AttributeError on a stranger among the
+names before the walk reached it; it reads alias nodes alone now. The states: the alias read unguarded reds the plant case naming
+_traversal_references at position ImportFrom.names as having raised AttributeError instead of the grammar refusal (1 failed, 37
+passed); _census_floor reading class bodies by hand at the module level reds the plant case naming it as having passed the stranger
+over at ClassDef.bases and five more class positions, and the roster case, whose read of the inline methods empties under that walk
+(2 failed, 36 passed); _traversal_references reading the module level by hand reds the plant case (1 failed, 37 passed); the match
+statement cut from the corpus reds the derivation naming the twenty match fields, in the plant case, the instrument case and the
+negative control (3 failed, 35 passed); the keyword container row removed reds the plant case at keyword.value and the instrument
+case, each naming the base (2 failed, 36 passed); the planter planting a statement at the module level whatever the position reds
+the instrument case alone, the plant case staying green since every module-level plant is refused (1 failed, 37 passed); the roster
+count set to eight reds the count line, and the derivation's row removed with the count at eight reds the floor naming
+_grammar_positions (1 failed, 37 passed each); _walk's refusal disabled reds the plant case, the refusal case and the negative
+control's control (3 failed, 35 passed), the run taking 271 seconds where the clean module takes 38, since every drive then walks
+the whole kernel. Lens two, the roads' derivation: the coverage case derived the key set of ROADS against the rosters, so a new key
+with no drive red it naming the key and the roster pin red a key the rosters did not hold, but the derivation was keyed on names and
+a second site bumping an already driven key was on no driven road with the module green (the lens's plant, a second refuse branch on
+state no drive arranges); the door's bump sites are read as (key, ordinal) now, each row of ROADS names the sites its call executes,
+each drive holds that by a trace of the door's frame (_line_trace), and the coverage case derives that the door's sites are the
+rows' sites plus UNDRIVEN_SITES, none in both. The states: the same second refuse branch reds the refuse drive by execution, its call
+executing the second refuse site where the row names the first, and the coverage case naming the first site at its line as one no
+drive executes and no statement names (2 failed, 36 passed); UNDRIVEN_SITES emptied reds the coverage case naming the _unread arm's
+site (1 failed, 37 passed); the corrupt row's sites column naming the miss site alone reds the corrupt drive by execution and the
+coverage case's row consistency, sites against deltas (2 failed, 36 passed); the corrupt site stated undriven reds the coverage case
+as a site a drive executes (1 failed, 37 passed); the tracer recording nothing reds every drive whose road bumps, ten, and leaves the
+two raise roads green, which execute no site (10 failed, 28 passed); the dup and refuse arms swapped in the door leave the module
+green (38 passed), the stated control: a site is (key, ordinal), so a moved site is the same site. Lens three, the silence sentences:
+the lens planted every form the roster pin's sentences claim silence on and each ran silent, and three boundary variants the
+sentences do not claim silence on each red by the clause the module names; two sentences named a construct where a form was meant,
+and say the form now (a second-key raise list under a contextlib.suppress with statement; a helper defined outside the second-key list
+that calls it), prose only. Lens four, the independent source: the lens established that _TRAVERSAL's samples are literal rows that
+read the constant nowhere, that the interpreter pins the spelling and the rows the membership, and that a derivation from vars(ast)
+would spell the four names by hand in another form, so nothing changed. The bypass plants and the alias control, re-taken at this
+head over its 38 cases, each landed on the kernel alone with the kernel, the judge and this module hashed before the plant, across
+the run and after the revert: the kernel opening and parsing the store file itself and the kernel calling jd._read_store_json, per
+session in the pass loop, 38 passed each and no file changed across a run; a second judge module loaded under another name reds
+the birth pin alone, naming `_PJ.load_goals_shared` (1 failed, 37 passed); the alias control, the shared door bound at kernel import
+and called per session, reds the shared reconciliation on each of the five harness cases that drive a pass, 2 against 0, 7 against
+5 twice, 6 against 4 and 3 against 1, and the birth pin (6 failed, 32 passed). The clean module at this head, the head of the
+round-6 fixes: 38 passed single-process on 3.10, 3.11, 3.12, 3.13 and 3.14t.
 
 Drives the real pass (_auto_nudge_tick) over two alive sessions with real transcript files and real goal stores, on the
 suite's fake clock (the pass takes `now`). SYNTHETIC fixtures only; a PRIVATE synthetic sid pair (the goal-store fixture
