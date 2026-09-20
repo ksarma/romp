@@ -354,8 +354,6 @@ export function pageMarks(marks: Record<string, unknown> | null, paints: readonl
   return out;
 }
 
-/** The iOS major version an iPhone, iPad or iPod user agent states (`OS 17_4`); 0 elsewhere, an iPad with the
- *  desktop Macintosh user agent included (its `touch` tells it apart). */
 /** The minute's characters per remote host position (the row's wsBytesByHost) from federation's page-lifetime totals
  *  (`now`, keyed h<ordinal>, the getter's shape; a key off that pattern or a non-numeric value is ignored) against the
  *  minute's baselines (`base`, the same shape, {} where a position had no total when the minute began: a host attached
@@ -388,6 +386,8 @@ export function bytesByHost(now: Record<string, unknown> | null, base: Record<st
   return Object.keys(out).length ? out : null;
 }
 
+/** The iOS major version an iPhone, iPad or iPod user agent states (`OS 17_4`); 0 elsewhere, an iPad with the
+ *  desktop Macintosh user agent included (its `touch` tells it apart). */
 export function iosMajor(ua: string): number {
   if (!/iPhone|iPad|iPod/.test(ua)) return 0;
   const m = /OS (\d+)_/.exec(ua);
