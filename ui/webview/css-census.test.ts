@@ -34,7 +34,7 @@ const rawDims = (css: string) => {
 // unnoticed) — a count that moves in EITHER direction is a deliberate change to name here.
 const EXACT: Record<string, number> = {
   "gear.css": 15,   // +1 (the maintainer's round 5 of the wsBytesByHost review, ui-3): the show rule is two rules with one declaration block, so the popover's box-shadow literal #000000aa is spelled twice, byte-equal; the same colour, not a new one (a selector list mixing :has() and plain arms is dropped whole by an engine without :has(), so the keyboard arms have a rule of their own)
-                    // +1 (T379): the widget rows' demo draws the strip's unknown ring in the strip's own literal #8a8a8a (styles.css .tab-dot.unknown, the network strip's down-host gray), byte-equal so the demo and the strip agree; +1 (T290): .rs-log-n's #ff6b6b, the Log cue's red — a STATUS colour, byte-equal to the shell's
+                    // +1 (T379): the widget rows' demo draws the strip's unknown ring in the strip's own literal #8a8a8a (styles.css .tab-dot.unknown, the network strip's down-host gray), byte-equal so the demo and the strip agree; +1 (T290): .rs-log-n's #ff6b6b, the Log cue's red: a STATUS colour, byte-equal to the shell's
                     // #merr.has, deliberately a literal (no sheet defines that red as a token). Before it: T226's
                     // shadows-onto-var(--shadow-menu), the .ra-li legend joining --text-soft, and the
                     // .ra-openbtn slab joining --btn-bg (2026-09-02: it sat black with dark text in light)
