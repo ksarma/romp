@@ -1579,12 +1579,16 @@ Through `plutil` the reader first learns the tool's line end on a scratch
 plist of its own (a value with no line end of its own and three that end in
 one), checks it on the file (every extract must end as the scratch said, each
 value is read with and without `-n` where the tool honours that switch, and
-each value is echoed through the scratch and must read back as it did on the
-file), reads `<string>` entries alone, and refuses every plist read through a
-plutil it cannot classify, or that renders an entry of another type, with
-exit 5 and nothing written, naming the two ways out: another plutil in
-`ROMP_PLUTIL`, or `romp-service install` from the owning shell and clone,
-which reads no plist.
+each value is echoed through the scratch twice, as it would be written back
+and as the raw bytes read, and must read back as it did on the file), and
+refuses every plist read through a plutil it cannot classify with exit 5 and
+nothing written, naming the two ways out: another plutil in `ROMP_PLUTIL`, or
+`romp-service install` from the owning shell and clone, which reads no plist.
+It reads `<string>` entries alone, the type taken from plutil's own xml1
+rendering of the entry: an entry of another type, or one plutil extracts one
+way and not the other, is the file's form and is refused as such with exit 5
+and nothing written, `romp-service install` the way out, as the one-line
+reader refuses the same file.
 Without `plutil` the reader also refuses romp's own form with any one entry
 it reads split across two lines (`<key>` on one, `<string>` on the next,
 which a text editor does), or with the `ProgramArguments` array not laid out

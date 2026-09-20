@@ -1198,8 +1198,9 @@ class RealTree(unittest.TestCase):
 class WhereLineDerivation(unittest.TestCase):
     """The two derivations over a synthetic two-entry repository (round 8 of fork PR #778, regression-1 and extra7-2): a batch of two
     member branches and a stacked branch are green, an omission on one entry's own commit is red and blames that entry, a path is a whole
-    token (tests/README.md does not name tests/README.md.bak), the working tree is read on a branch and not on main, and the round
-    numeral is owed only where a commit's subject carries one."""
+    token (tests/README.md does not name tests/README.md.bak, and tests/README.md.bak does not name tests/README.md), the working tree
+    is read on a branch and not on main, the round numeral is owed only where a commit's subject carries one and is the highest such
+    numeral, and an entry deleted at head is not attributed (the round-8 addendum's three cases, from the mutation lens)."""
 
     ENTRY = "---\ntitle: %s\nstatus: candidate\nwhere: %s\nadded: 2026-01-0%d\n---\n%s\n"
 
@@ -1260,6 +1261,38 @@ class WhereLineDerivation(unittest.TestCase):
         self.assertEqual(where_line_omissions(self.dir, self.main), [])
         self.assertEqual(round_currency_omissions(self.dir, self.main), [])
         self.git("checkout", "-q", "b")
+        self.assertEqual(round_currency_omissions(self.dir, self.main), [])
+
+    def test_a_path_is_a_whole_token_in_the_direction_that_matters(self):
+        # round 8 addendum (the mutation lens, row 64): the batch fixture above tests the direction a substring check already gets right
+        # (where names the shorter path, the commit changes the longer); the filed direction is the reverse, where names
+        # tests/README.md.bak and the commit changes tests/README.md, which a substring check reads as named (red under the mutant: [])
+        self.git("checkout", "-q", "-b", "tok", self.main)
+        self.commit("Review round 2: alpha names the longer path", {"tests/README.md": "changed",
+                                                                     "upstream/2026-01-01-alpha.md": self.ENTRY % ("alpha", "tests/README.md.bak", 1, "Alpha's body. Round 2.")})
+        self.assertEqual(where_line_omissions(self.dir, self.main), [("upstream/2026-01-01-alpha.md", ["tests/README.md"])])
+        self.commit("Review round 2: both named", {"upstream/2026-01-01-alpha.md": self.ENTRY % ("alpha", "tests/README.md.bak, tests/README.md", 1, "Alpha's body. Round 2.")})
+        self.assertEqual(where_line_omissions(self.dir, self.main), [])
+
+    def test_the_body_must_name_the_highest_round_of_the_commits_that_touched_the_entry(self):
+        # round 8 addendum (the mutation lens, row 68): the batch fixture carries one round per touching set, so highest and any were not
+        # told apart; two rounds on one entry, the body naming the lower (red under a `min` mutant and under an any-`Round N` mutant: [])
+        self.git("checkout", "-q", "-b", "rounds", self.main)
+        self.commit("Review round 2: alpha", {"upstream/2026-01-01-alpha.md": self.ENTRY % ("alpha", "tests/README.md", 1, "Alpha's body. Round 2 (a).")})
+        self.commit("Review round 5: alpha again", {"upstream/2026-01-01-alpha.md": self.ENTRY % ("alpha", "tests/README.md", 1, "Alpha's body. Round 2 (a), more.")})
+        self.assertEqual(round_currency_omissions(self.dir, self.main), [("upstream/2026-01-01-alpha.md", 5)])
+        self.commit("Review round 5: the body says so", {"upstream/2026-01-01-alpha.md": self.ENTRY % ("alpha", "tests/README.md", 1, "Alpha's body. Round 2 (a). Round 5 (b).")})
+        self.assertEqual(round_currency_omissions(self.dir, self.main), [])
+
+    def test_an_entry_deleted_at_head_is_not_attributed(self):
+        # round 8 addendum (the mutation lens, row 69): a commit that deletes an entry and adds a file blames nothing on the deleted
+        # entry, whose where: line no longer exists to read (red under the mutant: the read of a missing file)
+        self.git("checkout", "-q", "-b", "gone", self.main)
+        self.git("rm", "-q", "upstream/2026-01-02-beta.md")
+        self.write("z.py", "")
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "Review round 2: beta withdrawn, z added")
+        self.assertEqual(where_line_omissions(self.dir, self.main), [])
         self.assertEqual(round_currency_omissions(self.dir, self.main), [])
 
     def test_the_working_tree_is_read_on_a_branch_and_not_on_main(self):
