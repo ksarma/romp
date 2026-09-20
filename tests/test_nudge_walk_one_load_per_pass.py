@@ -444,6 +444,8 @@ rule), their override journals cleaned in the teardown; the state root rebound t
 into its session-hosts."""
 import ast
 import contextlib
+import errno
+import functools
 import importlib.util
 import inspect
 import io
@@ -529,6 +531,11 @@ KERNEL_FILE = os.path.basename(os.path.realpath(km.__file__))   # the kernel's r
 # through the writer door at their write moments by design (the reference's jobs block names them among the store's other
 # readers), so the census has nothing to say about them.
 CASE_KM = ("_session_working", "_mark_nudge_failed", "_file_wake_answer")
+# CASE_JD: the judge names a CASE may replace after setUp for its own world, saved with the rest and restored by the cleanup, as
+# CASE_KM's are; setUp leaves them real, so its agreement check is unchanged. _freeze_store is the door witness's seam for the dup and
+# refuse roads (TheDoorBumpsAtMostOneSecondKeyPerCall): a wrapper over the real function that calls through, so its real body runs on
+# every fill and is covered by execution, not by the census.
+CASE_JD = ("_freeze_store",)
 REPLACED_KM = ("_alive_sessions", "_wait_for_graph", "_session_flag", "_compacting_now", "_api_error",
                "_interrupt_suppresses_nudge", "_backend_rewind_pending", "_last_state",
                "_session_awaiting", "_turn_romp_injected", "_closer_settled", "_revivers_pending",
@@ -1078,8 +1085,8 @@ class _WalkHarness(unittest.TestCase):
         self.td = tempfile.TemporaryDirectory()
         self.addCleanup(self.td.cleanup)                  # cleanups run last in, first out: the seams go back, then the dir
         td = Path(self.td.name)
-        self.saved = {k: getattr(km, k) for k in REPLACED_KM + CASE_KM}   # CASE_KM saved too: a case replaces them after setUp
-        self.saved_jd = {k: getattr(jd, k) for k in REPLACED_JD + ("load_goals", "load_goals_shared")}
+        self.saved = {k: getattr(km, k) for k in REPLACED_KM + CASE_KM}   # CASE_KM and CASE_JD saved too: a case replaces them after setUp
+        self.saved_jd = {k: getattr(jd, k) for k in REPLACED_JD + CASE_JD + ("load_goals", "load_goals_shared")}
         self.saved_state = jd.STATE
         self.saved_backend = km.Sessions.backend_for
         self.shared_off_before = jd._SHARED_OFF[0]
@@ -1685,53 +1692,268 @@ class TheSweepIsItsOwnBoundedReader(_WalkHarness):
 
 
 class TheDoorBumpsAtMostOneSecondKeyPerCall(_WalkHarness):
-    """The at-most-one premise of the second-bump bound by execution (review round 4, tests-2, regression-2 and extra4-1; the
-    roster pin in TheCountersOneSite holds it by AST): one call of the door on a fill road that takes a second bump, and the
-    second bump it takes is exactly one. The road is the corrupt one: a store whose bytes do not parse, written for SID_C (never
-    alive, so never walked, and no store of its own but the one a case writes), read once through jd.load_goals_shared directly,
-    under the harness's recorders (setUp stands them) and outside any pass (no tick runs, so the read is this method's and the
-    recorder names it so). The door bumps miss (no entry stood), then corrupt (_disk_parse raised) and hands the read to
-    load_goals, which quarantines the bytes (one stderr line, captured here, and one store-quarantined row under the rebound
-    judge-errors file) and answers the fresh store; one goal_io loads bump is the hand-off, and the writer recorder records
-    nothing (the hand-off is skipped by code identity). The roads not driven: unreadable_journal needs an OSError out of the
-    journal's open (a directory at the path reads as no journal, and a mode change is unreliable under root); dup and refuse need
-    a concurrent fill, or an archive write between the door's two archive-key reads, hooks on judge names this harness does not
-    own. A second second bump on the corrupt road spelled outside the two spellings the roster pin reads
-    (`_SHARED_STATS.__setitem__`, say) reds this case's second-key line and not the pin."""
+    """The at-most-one premise of the second-bump bound by execution, over every road of both rosters (review round 4, tests-2,
+    regression-2 and extra4-1 for the corrupt road; review round 5, correctness-1, regression-1, extra6-1 and extra6-2, and the
+    reviewer's ruling on approach: the roster pin's three AST clauses in TheCountersOneSite are an early warning that refuses
+    the forms they name and are silent on the rest, and this class carries the contract on something that enumerates no
+    syntax). Each drive is one call of the real door, jd.load_goals_shared, on SID_C (never alive, so never walked; each method
+    has a state root of its own from setUp), outside any pass (no tick runs, so _pass's dup and refuse zero line stands as
+    written), under the harness's recorders (setUp stands them and checked the door's code identity; the recorder calls
+    through, and the counters read are the real _SHARED_STATS through shared_store_stats, never a spy over the AST), the road
+    arranged first and the counters read before and after the call. Every drive asserts the same lines through _drive: one
+    recorded call, made by _drive in this file; the call keys' delta exactly the road's; AT MOST ONE second key bumped, the
+    line every construct nobody listed reds (a helper defined inside the door and called from a second-key list, a Return whose
+    expression raises into a handler that bumps, an exception from any other statement of a clean list caught by a bumping
+    handler, contextlib.suppress: each is caught here on the road it sits on, and the round-5 history paragraph records three
+    of them planted on the corrupt road with the AST clauses green); the second keys' delta exactly the road's, so a bump
+    outside the fill road (in _shared_forget on the absent road, say) reds too; the hand-offs, goal_io loads, exactly the road's;
+    and the writer recorder empty. ROADS is the table of expected deltas per road, one method per road named for it
+    (`test_the_<road>_road...`; _drive checks the name), and the coverage case derives from the table that the drives cover
+    every key of both rosters and from the method names that every row is driven, so a key added to a roster with no drive
+    reds naming it, as does a row with no method.
+    Driven: hit ({'hit': 1}, no second key, no hand-off, loads_shared moves); miss ({'miss': 1}, none, none); compare_miss
+    (the store file rewritten in place at the same length with its mtime put back, so (ino, mtime_ns, size) stand and the
+    bytes differ: {'compare_miss': 1}, none, none); absent (no store: {'absent': 1}, none, one hand-off); fallback (the cache
+    off, no store: {'fallback': 1}, none, one hand-off, load_goals' fresh store); corrupt (bytes that do not parse: {'miss': 1},
+    {'corrupt': 1}, one hand-off, the quarantine); unreadable_journal (a symlink loop at the journal's path: _journal_key
+    answers a _StatFailed before the read and _journal_read's open raises ELOOP, an OSError that is not FileNotFoundError:
+    {'miss': 1}, {'unreadable_journal': 1}, one hand-off; load_goals' own replay sees is_file() false on the loop and marks
+    nothing, so no history-unreadable row is written, and the case says so); dup (the published entry popped and republished
+    from a seam on _freeze_store between the door's two archive-key reads, what a concurrent fill does at its publish:
+    {'miss': 1}, {'dup': 1}, none, the published object answered); refuse (an archive file written from the same seam, so the
+    archive key moved under the replay: {'miss': 1}, {'refuse': 1}, none, nothing published, and a following call is a miss
+    that fills); and two raise roads on neither roster, a symlink loop at the store path (the open raises) and a directory
+    there (the read raises), each moving no key and propagating the OSError: the module docstring's sentence that a call whose
+    open or read raises moves none, held by execution. The seam on jd._freeze_store is a wrapper over the real function
+    (functools.wraps, calling through), a name CASE_JD lists so the cleanup restores it; _archive_key stays real. Undriven,
+    stated: the door's `if store.get("_unread")` arm, the second unreadable_journal bump with no hand-off (the door's own
+    comment calls it unreachable while _journal_read hands the rows as lines; a bump planted there is witnessed by neither
+    these drives nor _pass); a compare_miss entering the dup or refuse arm (the drives enter both from a miss; past the fill's
+    first statement the code is the same); and any second bump conditioned on the hand-off itself raising (load_goals raising
+    on the corrupt road: the drive's load_goals quarantines and answers a fresh store, so a Return whose expression raises is
+    exercised by another raise, not by a raising hand-off). Which callee each drive witnesses, as the drives derive it: a bump
+    in _shared_forget by the absent, unreadable_journal and corrupt drives and the two raise roads (and by _pass's per-pass
+    lines on the no-store sweep case); one in _guard_nodes, _finish_load or _freeze_store by the miss, compare_miss, dup and
+    refuse drives (and by _pass's reconciliation on fill passes); one in _journal_read or _disk_parse by every fill road; one
+    on the door's _unread road by neither."""
 
-    def test_a_corrupt_store_read_once_through_the_door_bumps_miss_once_corrupt_once_and_hands_off_once(self):
-        path = jd.GOALDIR / (SID_C + ".json")
-        path.write_text("{not json")
+    # The roads and the deltas each drive asserts: road -> (call keys, second keys, goal_io loads hand-offs, the exception the call
+    # propagates or None). The coverage case derives from this table that the call and second keys over every row are exactly both
+    # rosters, and from the class's method names that every road here has a method named for it.
+    ROADS = {
+        "hit": ({"hit": 1}, {}, 0, None),
+        "miss": ({"miss": 1}, {}, 0, None),
+        "compare_miss": ({"compare_miss": 1}, {}, 0, None),
+        "absent": ({"absent": 1}, {}, 1, None),
+        "fallback": ({"fallback": 1}, {}, 1, None),
+        "corrupt": ({"miss": 1}, {"corrupt": 1}, 1, None),
+        "unreadable_journal": ({"miss": 1}, {"unreadable_journal": 1}, 1, None),
+        "dup": ({"miss": 1}, {"dup": 1}, 0, None),
+        "refuse": ({"miss": 1}, {"refuse": 1}, 0, None),
+        "open_raises": ({}, {}, 0, OSError),
+        "read_raises": ({}, {}, 0, OSError),
+    }
+
+    def _store_path(self):
+        return jd.GOALDIR / (SID_C + ".json")
+
+    def _drive(self, road):
+        """One call of the real door on SID_C for `road`, arranged by the caller, the counters read before and after: the lines
+        every road asserts (the class docstring). Answers (store, the stderr text, the exception propagated) for the road's own
+        assertions."""
+        self.assertTrue(self._testMethodName.startswith("test_the_%s_road" % road),
+                        "a drive sits in the method named for its road (test_the_<road>_road...), the rule the coverage case derives from: "
+                        "%s drives %r" % (self._testMethodName, road))
+        expect_calls, expect_second, expect_loads, raises = self.ROADS[road]
+        here = os.path.basename(os.path.realpath(__file__))
         s0, g0 = jd.shared_store_stats(), jd.goal_io_stats()["loads"]
         self.calls.clear(); self.writer.clear()
-        err = io.StringIO()
+        err, store, exc = io.StringIO(), None, None
         with contextlib.redirect_stderr(err):
-            store = jd.load_goals_shared(SID_C)
+            if raises is None:
+                store = jd.load_goals_shared(SID_C)
+            else:
+                with self.assertRaises(raises) as cm:
+                    jd.load_goals_shared(SID_C)
+                exc = cm.exception
         s1, g1 = jd.shared_store_stats(), jd.goal_io_stats()["loads"]
         calls = {k: s1[k] - s0[k] for k in SHARED_CALL_KEYS if s1[k] != s0[k]}
         second = {k: s1[k] - s0[k] for k in SHARED_SECOND_KEYS if s1[k] != s0[k]}
-        self.assertEqual([(c, f) for _s, c, f, _ln in self.calls], [(self._testMethodName, os.path.basename(os.path.realpath(__file__)))],
-                         "one call through the door, this method's, recorded by the shared recorder in this file: %r" % self.calls)
-        self.assertEqual(calls, {"miss": 1}, "the one call moved one call key, miss: no entry stood for the path, so the read entered the fill "
-                                             "road; the call counters' delta: %r" % calls)
-        self.assertEqual(second, {"corrupt": 1},
-                         "and exactly one second key, corrupt, once: the bytes did not parse, and the door left the fill road right after that "
-                         "bump (the at-most-one premise of the bound's derivation, witnessed per call; the roster pin's AST clause reads two "
-                         "bump spellings, and this line reads the counters, so a second bump spelled another way reds here); the second keys' "
-                         "delta: %r" % second)
-        self.assertEqual(g1 - g0, 1, "the corrupt bump is a hand-off: one load_goals call, one goal_io loads bump, the quarantine and the fresh "
-                                     "store answered by it; loads delta %d" % (g1 - g0))
-        self.assertEqual(self.writer, [], "the hand-off is the shared door's own read, skipped by code identity, so the writer recorder recorded "
-                                          "nothing: %r" % self.writer)
+        self.assertEqual([(c, f) for _s, c, f, _ln in self.calls], [("_drive", here)],
+                         "%s road: one call through the door, made by _drive for %s, recorded by the shared recorder in this file: %r"
+                         % (road, self._testMethodName, self.calls))
+        self.assertLessEqual(sum(second.values()), 1,
+                             "%s road: a call of the door bumps AT MOST ONE second key (unreadable_journal, corrupt, dup, refuse), the premise "
+                             "the second-bump bound's derivation rests on, and this call bumped %d: %r. This line reads the real counters "
+                             "after one call on the real door, so it holds against every construct the roster pin's AST clauses do not name "
+                             "(a helper defined inside the door, a Return whose expression raises into a bumping handler, an exception from a "
+                             "clean list's other statement caught by one, contextlib.suppress, and whatever nobody listed); the call keys "
+                             "moved: %r" % (road, sum(second.values()), second, calls))
+        self.assertEqual(calls, expect_calls, "%s road: the call keys' delta is exactly the road's, %r, and was %r (a call that reaches the "
+                                              "cache's branch and returns moves exactly one; a call whose open or read raises moves none)"
+                                              % (road, expect_calls, calls))
+        self.assertEqual(second, expect_second, "%s road: the second keys' delta is exactly the road's, %r, and was %r (so a bump on a road "
+                                                "that takes none, in a callee such as _shared_forget on the absent road, reds here)"
+                                                % (road, expect_second, second))
+        self.assertEqual(g1 - g0, expect_loads, "%s road: the hand-offs to load_goals, read from the writer door's own counter (goal_io loads), "
+                                                "are exactly the road's, %d, and were %d" % (road, expect_loads, g1 - g0))
+        self.assertEqual(self.writer, [], "%s road: a hand-off is the shared door's own read, skipped by code identity, so the writer recorder "
+                                          "recorded nothing: %r" % (road, self.writer))
+        return store, err.getvalue(), exc
+
+    def test_the_table_covers_both_rosters_and_every_row_is_driven_by_a_method_named_for_it(self):
+        keys = set()
+        for road, (calls, second, _loads, _raises) in self.ROADS.items():
+            keys |= set(calls) | set(second)
+        rosters = set(SHARED_CALL_KEYS) | set(SHARED_SECOND_KEYS)
+        self.assertEqual(keys, rosters, "the keys the drives expect over ROADS are exactly the call keys and the second keys: a key in a "
+                                        "roster that no drive reaches, %r, is a road this class does not witness (add its drive); a key a "
+                                        "drive expects that is in neither roster, %r, is a counter the reconciliations do not read"
+                                        % (sorted(rosters - keys), sorted(keys - rosters)))
+        declared = {m.group(1) for m in (re.match(r"test_the_(\w+?)_road", name) for name in dir(type(self))) if m}
+        self.assertEqual(declared, set(self.ROADS), "every road of ROADS is driven by a method named test_the_<road>_road... and every such "
+                                                    "method drives a road of the table (_drive checks the name it is called under): rows "
+                                                    "with no method %r, methods with no row %r"
+                                                    % (sorted(set(self.ROADS) - declared), sorted(declared - set(self.ROADS))))
+
+    def test_the_miss_road_a_seeded_store_read_once_fills_and_publishes(self):
+        self._seed(SID_C, stamped=False)
+        store, _err, _exc = self._drive("miss")
+        path_s = str(self._store_path())
+        self.assertIn(path_s, jd._SHARED, "the fill published an entry for the path")
+        self.assertIs(jd._SHARED[path_s][2], store, "and the object answered is the published one")
+
+    def test_the_hit_road_a_second_read_of_a_filled_store_moves_hit_alone(self):
+        self._seed(SID_C, stamped=False)
+        first = jd.load_goals_shared(SID_C)               # the prime: the fill, a miss, before the drive's window
+        ls0 = jd.goal_io_stats()["loads_shared"]
+        store, _err, _exc = self._drive("hit")
+        self.assertIs(store, first, "the hit answers the published object, one object for every reader of it")
+        self.assertEqual(jd.goal_io_stats()["loads_shared"] - ls0, 1, "and loads_shared moved once: a store read the cache answered")
+
+    def test_the_compare_miss_road_the_same_identity_over_other_bytes(self):
+        self._seed(SID_C, stamped=False)
+        p = self._store_path()
+        first = jd.load_goals_shared(SID_C)               # the prime fill
+        st = os.stat(p)
+        old = p.read_bytes()
+        new = old.replace(b'"seq": 1', b'"seq": 2')
+        self.assertEqual(len(new), len(old), "the rewrite keeps the length, so the size stands")
+        self.assertNotEqual(new, old, "and changes the bytes")
+        with open(p, "r+b") as fh:
+            fh.write(new)
+        os.utime(p, ns=(st.st_atime_ns, st.st_mtime_ns))   # the mtime put back: the identity (ino, mtime_ns, size) stands
+        st2 = os.stat(p)
+        self.assertEqual((st2.st_ino, st2.st_mtime_ns, st2.st_size), (st.st_ino, st.st_mtime_ns, st.st_size), "the identity stands")
+        self.assertEqual(p.read_bytes(), new, "over the new bytes")
+        store, _err, _exc = self._drive("compare_miss")
+        self.assertIsNot(store, first, "the compare miss refilled: a new object")
+        self.assertEqual(store.get("seq"), 2, "parsed from the new bytes")
+
+    def test_the_absent_road_no_store_file_hands_the_read_to_load_goals(self):
+        self.assertFalse(self._store_path().exists(), "no store for SID_C: setUp seeds SID_A and SID_B alone")
+        store, _err, _exc = self._drive("absent")
+        self.assertEqual((store.get("rompUuid"), store.get("nodes")), (SID_C, {}), "load_goals' fresh store, private, nothing to share")
+        self.assertNotIn(str(self._store_path()), jd._SHARED, "and nothing cached for the path")
+
+    def test_the_fallback_road_the_cache_off_hands_the_read_to_load_goals(self):
+        jd._SHARED_OFF[0] = True                          # setUp's cleanup lifts the switch (jd._shared_clear) and puts the saved value back
+        store, _err, _exc = self._drive("fallback")
+        self.assertEqual((store.get("rompUuid"), store.get("nodes")), (SID_C, {}), "load_goals' fresh store: no store file under SID_C")
+        self.assertNotIn(str(self._store_path()), jd._SHARED, "and nothing cached")
+
+    def test_the_corrupt_road_bytes_that_do_not_parse_bump_miss_once_corrupt_once_and_hand_off_once(self):
+        path = self._store_path()
+        path.write_text("{not json")
+        store, err, _exc = self._drive("corrupt")
         self.assertEqual((store.get("rompUuid"), store.get("nodes")), (SID_C, {}),
                          "the fresh store came back: the bytes were moved aside and nothing was cached for the path")
         self.assertFalse(path.exists(), "the unparseable file was moved aside, so the path reads as absent now")
         aside = [p.name for p in jd.GOALDIR.iterdir() if p.name.startswith(SID_C + ".json.corrupt-")]
         self.assertEqual(len(aside), 1, "one sidecar holds the bytes: %r" % aside)
-        self.assertIn("could not be parsed", err.getvalue(), "the quarantine's one stderr line, captured: %r" % err.getvalue())
+        self.assertIn("could not be parsed", err, "the quarantine's one stderr line, captured: %r" % err)
         rows = [json.loads(ln) for ln in jd.ERRORS.read_text().splitlines()]
         self.assertEqual([(r["err"], r["fsid"]) for r in rows], [("store-quarantined", SID_C)],
                          "and its one store-quarantined row under the rebound judge-errors file: %r" % rows)
+
+    def test_the_unreadable_journal_road_a_symlink_loop_at_the_journal_path(self):
+        self._seed(SID_C, stamped=False)
+        jdir = jd._overrides_dir()
+        jdir.mkdir(parents=True, exist_ok=True)
+        jp = jdir / (SID_C + ".jsonl")
+        os.symlink(str(jp), str(jp))                      # a journal that exists and cannot be read: every open of it raises ELOOP
+        self.addCleanup(os.unlink, str(jp))
+        self.assertIsInstance(jd._journal_key(SID_C), jd._StatFailed, "the journal key before the read is a _StatFailed: the stat fails on the loop")
+        with self.assertRaises(OSError) as cm:
+            jd._journal_read(SID_C)
+        self.assertEqual((cm.exception.errno, isinstance(cm.exception, FileNotFoundError)), (errno.ELOOP, False),
+                         "and _journal_read's open raises ELOOP, an OSError that is not FileNotFoundError, so the door's OSError arm takes it")
+        store, _err, _exc = self._drive("unreadable_journal")
+        self.assertIn(SID_C + ":g1", store.get("nodes", {}), "the seeded store came back through load_goals")
+        self.assertNotIn(str(self._store_path()), jd._SHARED, "and nothing was cached: an unreadable journal is not memoized")
+        self.assertFalse(store.get("_unread"), "load_goals' own replay saw is_file() false on the loop and marked nothing")
+        rows = [json.loads(ln) for ln in jd.ERRORS.read_text().splitlines()] if jd.ERRORS.exists() else []
+        self.assertEqual([r["err"] for r in rows], [], "so no history-unreadable row was written either (stated, not relied on): %r" % rows)
+
+    def test_the_dup_road_a_concurrent_fill_published_this_version_first(self):
+        self._seed(SID_C, stamped=False)
+        path_s = str(self._store_path())
+        first = jd.load_goals_shared(SID_C)               # the prime fill
+        with jd._SHARED_LOCK:
+            ent = jd._SHARED.pop(path_s)
+        self.assertIs(ent[2], first, "the prime published the object it answered")
+        real = jd._freeze_store
+
+        @functools.wraps(real)
+        def republish(store, fsid=None):
+            frozen = real(store, fsid)
+            with jd._SHARED_LOCK:
+                jd._SHARED[path_s] = ent                  # what a concurrent fill does at its publish, between the door's two archive-key reads
+            return frozen
+        jd._freeze_store = republish                      # CASE_JD: the cleanup restores the real one
+        store, _err, _exc = self._drive("dup")
+        self.assertIs(store, ent[2], "the dup answers the entry published first: one object for every reader of it")
+
+    def test_the_refuse_road_the_archive_moved_under_the_replay(self):
+        self._seed(SID_C, stamped=False)
+        path_s = str(self._store_path())
+        jd.GOALARCHDIR.mkdir(parents=True, exist_ok=True)
+        arch = jd.GOALARCHDIR / (SID_C + ".json")
+        self.assertIsNone(jd._archive_key(SID_C), "no archive before the call: the door's first archive-key read answers None")
+        real = jd._freeze_store
+
+        @functools.wraps(real)
+        def archive_write(store, fsid=None):
+            frozen = real(store, fsid)
+            arch.write_text(json.dumps({"rompUuid": SID_C, "nodes": {}}))   # a real archive write between the door's two archive-key reads
+            return frozen
+        jd._freeze_store = archive_write                  # CASE_JD: the cleanup restores the real one
+        store, _err, _exc = self._drive("refuse")
+        self.assertEqual(store.get("rompUuid"), SID_C, "the caller gets its store")
+        self.assertNotIn(path_s, jd._SHARED, "and nothing was published: right for this caller, unproven for the next")
+        jd._freeze_store = real
+        s0 = jd.shared_store_stats()
+        again = jd.load_goals_shared(SID_C)
+        s1 = jd.shared_store_stats()
+        self.assertEqual({k: s1[k] - s0[k] for k in SHARED_CALL_KEYS + SHARED_SECOND_KEYS if s1[k] != s0[k]}, {"miss": 1},
+                         "a following call is a miss that fills: the archive key now stands on both reads")
+        self.assertIs(jd._SHARED.get(path_s, (None, None, None))[2], again, "and publishes")
+
+    def test_the_open_raises_road_a_symlink_loop_at_the_store_path_moves_no_key(self):
+        path = self._store_path()
+        os.symlink(str(path), str(path))
+        self.addCleanup(os.unlink, str(path))
+        _store, _err, exc = self._drive("open_raises")
+        self.assertEqual((exc.errno, isinstance(exc, FileNotFoundError)), (errno.ELOOP, False),
+                         "the open raised ELOOP, an OSError that is not FileNotFoundError, and the door re-raised it: %r" % exc)
+        self.assertNotIn(str(path), jd._SHARED, "nothing cached for the path")
+
+    def test_the_read_raises_road_a_directory_at_the_store_path_moves_no_key(self):
+        path = self._store_path()
+        path.mkdir()                                      # the open succeeds on a directory and the read raises
+        _store, _err, exc = self._drive("read_raises")
+        self.assertIsInstance(exc, IsADirectoryError, "the read raised EISDIR and the door re-raised it: %r" % exc)
+        self.assertNotIn(str(path), jd._SHARED, "nothing cached for the path")
 
 
 class TheRecorderNamesTheAsker(unittest.TestCase):
