@@ -122,6 +122,87 @@ class MarkSelfCheck(unittest.TestCase):
             self.assertIn(phrase, " ".join(text.split()), surface)
         self.assertNotIn("fewer commands with the first command kept", m.LEGEND)
 
+    # the round-7 addendum of fork PR #778 (the mark lens): the census's form space, the label of an and-tested clause, the vacuity row
+    # and the README's counts
+
+    def _source(self):
+        with open(self.m.__file__, encoding="utf-8") as f:
+            return f.read()
+
+    ANCHOR = 'if len(orc["envfiles"]) >= len(sd["envfiles"]) or any(f not in sd["envfiles"] for f in orc["envfiles"]): dangerous = True'
+
+    def _with(self, extra):
+        # compare() with `extra` (one or more statements at the function's indent) placed after the EnvironmentFile block
+        source = self._source()
+        self.assertEqual(source.count(self.ANCHOR), 1)
+        return source.replace(self.ANCHOR, self.ANCHOR + "\n" + "\n".join("    " + line for line in extra.split("\n")))
+
+    def test_a_mark_set_in_a_form_the_census_does_not_read_fails_the_self_check_and_names_the_line(self):
+        # red before: each of these passed the check at 8 of 8 with no row (the census read `dangerous = True` in an if's body alone)
+        m = self.m
+        self.assertEqual(m.unread_mark_forms(), [])
+        cond = 'orc["execs"] and orc["execs"][0]["argv"][-1:] == ["ninth"]'
+        for form in ('dangerous = dangerous or bool(%s)' % cond,
+                     'if %s: dangerous = bool(1)' % cond,
+                     'if %s: dangerous |= True' % cond,
+                     'if not (%s): pass\nelse: dangerous = True' % cond,
+                     'if %s: return "DISAGREE", "ninth", bool(1)' % cond,
+                     'for dangerous in [True]: pass',
+                     'if %s: dangerous = True; return marked(diffs)' % cond,
+                     'dangerous = True'):
+            with self.subTest(form):
+                source = self._with(form)
+                forms = m.unread_mark_forms(source)
+                self.assertEqual(len(forms), 1, forms)
+                out = io.StringIO()
+                self.assertEqual(m.self_check(out, source=source), 1)
+                self.assertIn("mark self-check FAILED", out.getvalue())
+                self.assertIn("  mark set in a form the census does not read, at line %d: " % forms[0][0], out.getvalue())
+        # the read form beside them is still a clause: with a row it passes, without one it fails on the clause, not the form
+        source = self._with('if %s: dangerous = True' % cond)
+        self.assertEqual(m.unread_mark_forms(source), [])
+        out = io.StringIO()
+        self.assertEqual(m.self_check(out, source=source), 1)
+        self.assertIn("8 of 9 mark clauses", out.getvalue())
+        self.assertNotIn("a form the census does not read", out.getvalue())
+
+    def test_an_and_tested_clause_is_labelled_by_its_whole_test(self):
+        # red before: the label was the first conjunct alone (`orc['execs']`), the mutant still the whole test off
+        m = self.m
+        source = self._with('if orc["execs"] and orc["execs"][0]["argv"][-1:] == ["ninth"]: dangerous = True')
+        labels = [label for label, _ in m.mark_clauses(source)]
+        self.assertEqual(labels[-1], "orc['execs'] and orc['execs'][0]['argv'][-1:] == ['ninth']")
+        self.assertEqual(labels[:-1], self.CLAUSES)
+        out = io.StringIO()
+        self.assertEqual(m.self_check(out, source=source), 1)
+        self.assertIn("  mark clause told apart by no row of MARK_CASES: orc['execs'] and orc['execs'][0]['argv'][-1:] == ['ninth']", out.getvalue())
+
+    def test_an_empty_oracle_command_list_is_unmarked_by_vacuity_and_pins_the_first_command_clauses_guard(self):
+        # the mark lens's unpinned item: no row had an empty oracle exec list beside a nonempty systemd list, so the `orc_cmds and` guard
+        # inside the first-command clause was exercised by no row and its removal would have raised on none
+        m = self.m
+        row = next(c for c in m.MARK_CASES if c[0].startswith("argv: the oracle reports no command"))
+        self.assertEqual(m.compare("X", row[1], row[2])[::2], ("DISAGREE", False))
+        source = self._source()
+        guard = "or (orc_cmds and orc_cmds[0] != sd_cmds[0])"
+        self.assertEqual(source.count(guard), 1)
+        unguarded = source.replace(guard, "or (orc_cmds[0] != sd_cmds[0])")
+        tree = m.ast.parse(unguarded)
+        fn = m._compare_def(tree)
+        ns = dict(vars(m))
+        exec(compile(m.ast.fix_missing_locations(m.ast.Module(body=[fn], type_ignores=[])), "<compare() without the guard>", "exec"), ns)
+        with self.assertRaises(IndexError):
+            ns["compare"]("X", row[1], row[2])
+
+    def test_the_readme_states_the_tables_counts(self):
+        # the mutation lens found the README's count unpinned (28 -> 27 changed no test); the counts there are the table's and the census's
+        m = self.m
+        with open(os.path.join(HERE, "README.md"), encoding="utf-8") as f:
+            readme = " ".join(f.read().split())
+        n, k = len(m.MARK_CASES), len(m.mark_clauses())
+        self.assertIn("`MARK_CASES`, %d synthetic (systemd, oracle) pairs" % n, readme)
+        self.assertIn("`mark self-check: %d of %d ...; %d of %d mark clauses of compare() each told apart by a row`" % (n, n, k, k), readme)
+
     def test_a_dead_mark_fails_the_self_check(self):
         # the discriminating half: compare() with every mark off must fail the check, which is what the recipe's real fixtures could not show
         m = self.m

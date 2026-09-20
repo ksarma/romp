@@ -1693,24 +1693,36 @@ EOF
 # the rewrite dropped PATH, the instance block and the service.env path, moved the log paths and, on a binary plist from
 # a second clone, re-pointed the agent at the deploying clone, exit 0, and `rewrite --check` blessed both. macOS has
 # plutil; this Linux host has a stand-in (below) or none, and both readers are exercised.
-_plutil_stub() {   # a stand-in for macOS plutil at $TEST_DIR/plutil-bin/plutil, the one form romp-service calls: -extract <keypath> raw [-expect T] -o - <file>;
-                   # $1 = nonl: one that writes NO line end after the raw value, the line-end calibration's other branch (round 4's mutation
-                   # pass, 2026-09-19: the stand-in always wrote one, so that branch had never run); $1 = lacking: one that writes a line end
-                   # only when the value LACKS one (round 7 of fork PR #778, correctness-1: the behaviour the one-value calibration could not
-                   # tell from the default's, under which it took a value's own trailing newline off; no evidenced plutil behaves so, and the
-                   # reader refuses it rather than assuming)
-    local nonl=False lacking=False; [ "${1:-}" != nonl ] || nonl=True; [ "${1:-}" != lacking ] || lacking=True
+_plutil_stub() {   # a stand-in for macOS plutil at $TEST_DIR/plutil-bin/plutil, the one form romp-service calls: -extract <keypath> raw [-n] [-expect T] -o - <file>.
+                   # $1 is what it writes after the raw value (nl, the default: one line end, plutil(1)'s documented behaviour; nonl: none, the
+                   # line-end calibration's other branch, since round 4's mutation pass (2026-09-19) found the stand-in always wrote one, so that
+                   # branch had never run; lacking: one only when the value LACKS one, round 7 of fork PR #778's correctness-1, the behaviour the
+                   # one-value calibration could not tell from nl's, under which it took a value's own trailing newline off; two: two line ends;
+                   # strip: the value's own trailing newline stripped, none written; strip_nl: stripped, then one written; crlf: CR LF after the
+                   # value; crlf_all: every newline in the value as CR LF and CR LF after it; nested_nonl, array_nonl, top_nonl, key_label_nonl:
+                   # none for a dotted key path, for an array index, for a top-level key, for the Label alone, one otherwise, the key-shape
+                   # behaviours the four probes span; file_nonl and file_lacking: nl on the reader's own scratch plist (a file under a directory
+                   # named romp-service-plutil.) and nonl or lacking on any other file, the behaviours no scratch can span, which the round-7
+                   # addendum's file-side checks refuse). No evidenced plutil behaves as any but the first; the reader refuses the others rather
+                   # than assuming. $2 is what -n does (honour, the default: plutil(1)'s no line end after the raw value; ignore: accepted and
+                   # a line end written anyway; reject: an unrecognised switch, exit 2 and nothing on stdout; half: honoured for a top-level key
+                   # and ignored for a dotted one).
+    local mode="${1:-nl}" nmode="${2:-honour}"
     mkdir -p "$TEST_DIR/plutil-bin"
-    printf '#!/usr/bin/env python3\nNONL = %s   # True: no line end after the raw value\nLACKING = %s   # True: a line end only when the value lacks one\n' "$nonl" "$lacking" > "$TEST_DIR/plutil-bin/plutil"
+    printf '#!/usr/bin/env python3\nMODE = "%s"    # what follows the raw value (the _plutil_stub comment in tests/romp-service.bats)\nNMODE = "%s"   # what -n does\n' "$mode" "$nmode" > "$TEST_DIR/plutil-bin/plutil"
     cat >> "$TEST_DIR/plutil-bin/plutil" <<'PY'
 import plistlib, sys
 a = sys.argv[1:]
 if len(a) < 4 or a[0] != "-extract":
     sys.exit(2)
-kp, path, i = a[1], None, 3
+kp, path, i, nflag = a[1], None, 3, False
 while i < len(a):
     if a[i] in ("-o", "-expect"):
         i += 2
+    elif a[i] == "-n":
+        if NMODE == "reject":
+            sys.stderr.write("plutil: unrecognized option -n\n"); sys.exit(2)
+        nflag = True; i += 1
     else:
         path = a[i]; i += 1
 try:
@@ -1731,8 +1743,24 @@ elif isinstance(cur, bool):
     text = "true" if cur else "false"
 else:
     text = str(cur)
-end = "" if NONL else "\n"
-if LACKING and text.endswith("\n"):
+scratch = "romp-service-plutil." in path      # the reader's own scratch plist
+dotted = "." in kp
+array = kp.rsplit(".", 1)[-1].isdigit()
+end = "\n"
+if MODE == "nonl": end = ""
+elif MODE == "lacking": end = "" if text.endswith("\n") else "\n"
+elif MODE == "two": end = "\n\n"
+elif MODE == "strip": text = text.rstrip("\n"); end = ""
+elif MODE == "strip_nl": text = text.rstrip("\n"); end = "\n"
+elif MODE == "crlf": end = "\r\n"
+elif MODE == "crlf_all": text = text.replace("\n", "\r\n"); end = "\r\n"
+elif MODE == "nested_nonl": end = "" if dotted else "\n"
+elif MODE == "array_nonl": end = "" if array else "\n"
+elif MODE == "top_nonl": end = "\n" if dotted else ""
+elif MODE == "key_label_nonl": end = "" if kp == "Label" else "\n"
+elif MODE == "file_nonl": end = "\n" if scratch else ""
+elif MODE == "file_lacking": end = "\n" if scratch else ("" if text.endswith("\n") else "\n")
+if nflag and (NMODE == "honour" or (NMODE == "half" and not dotted)):
     end = ""
 sys.stdout.write(text + end)
 PY
@@ -4466,8 +4494,7 @@ EOF
     cmp -s "$plist" "$plist.before"
     # round 7 of fork PR #778 (tests-2): the third arm, a plutil whose Label read-back is neither the value alone nor the value and one line
     # end (two line ends here), refused with the bytes it read, nothing read around; the arm the round-7 calibration makes load-bearing
-    _plutil_stub
-    sed -i 's|^end = "" if NONL else "\\n"$|end = "" if NONL else "\\n\\n"|' "$TEST_DIR/plutil-bin/plutil"
+    _plutil_stub two
     [ "$("$TEST_DIR/plutil-bin/plutil" -extract Label raw -o - "$plist.before"; printf x)" = "com.romp.manager${nl}${nl}x" ]
     cp "$plist.before" "$plist"
     PATH="$TEST_DIR/plutil-bin:$PATH" ROMP_OS_OVERRIDE=Darwin run "$SVC" rewrite --check
@@ -4480,16 +4507,26 @@ EOF
     [[ "$output" == *"it read romp.calibrate\\n\\n"* ]]
     cmp -s "$plist" "$plist.before"
     # the second arm (the refuter's rider): the scratch directory is made but cannot be written to, driven by a mktemp on the stub's PATH that
-    # names a regular file, so the write into it fails for any user (a read-only directory would not refuse root); refused with the reason
-    _plutil_stub
+    # names a regular file, so the write into it fails for any user (a read-only directory would not refuse root); refused with the reason,
+    # under both stand-ins and on both verbs, and the arm's STOP is pinned by the success line's absence (the round-7 mutation lens: with the
+    # arm printing its reason and returning 0 this leg still saw exit 5 under the default stand-in, from the not-romp gate misreading the
+    # clean Label with an uncalibrated flag, while under the no-line-end stand-in the clean plist rewrote at exit 0 with the refusal line
+    # printed above the success line)
     printf 'not a directory\n' > "$TEST_DIR/notadir"
     printf '#!/bin/sh\nprintf "%%s\\n" "%s"\n' "$TEST_DIR/notadir" > "$TEST_DIR/plutil-bin/mktemp"; chmod +x "$TEST_DIR/plutil-bin/mktemp"
-    PATH="$TEST_DIR/plutil-bin:$PATH" ROMP_OS_OVERRIDE=Darwin run "$SVC" rewrite --check
-    [ "$status" -eq 5 ]
-    [[ "$output" == *"the scratch could not be written under $TMPDIR; nothing was rewritten"* ]]
-    [[ "$output" != *"Not a directory"* ]]                                                # the arm's reason, not the shell's
-    [[ "$output" != *"agree"* ]]
-    cmp -s "$plist" "$plist.before"
+    for stub in nl nonl; do
+        _plutil_stub "$stub"
+        for verb in "rewrite --check" rewrite; do
+            cp "$plist.before" "$plist"
+            PATH="$TEST_DIR/plutil-bin:$PATH" ROMP_OS_OVERRIDE=Darwin run "$SVC" $verb
+            [ "$status" -eq 5 ]
+            [[ "$output" == *"the scratch could not be written under ${TMPDIR:-/tmp}; nothing was rewritten"* ]]   # the reader's own spelling of the directory
+            [[ "$output" != *"Not a directory"* ]]                                            # the arm's reason, not the shell's
+            [[ "$output" != *"agree"* ]]
+            [[ "$output" != *"Rewrote"* ]]
+            cmp -s "$plist" "$plist.before"
+        done
+    done
     rm -f "$TEST_DIR/plutil-bin/mktemp"
 }
 
@@ -4517,8 +4554,8 @@ EOF
           nonl)    _plutil_stub nonl ;;                                                        # never writes a line end
           nl)      _plutil_stub ;;                                                             # always writes one
           lacking) _plutil_stub lacking ;;                                                     # writes one only when the value lacks one
-          two)     _plutil_stub; sed -i 's|^end = "" if NONL else "\\n"$|end = "" if NONL else "\\n\\n"|' "$stubpath" ;;   # writes two
-          strip)   _plutil_stub nonl; sed -i 's|^    text = str(cur)$|    text = str(cur).rstrip("\\n")|' "$stubpath" ;;   # strips the value's own, writes none
+          two)     _plutil_stub two ;;                                                         # writes two
+          strip)   _plutil_stub strip ;;                                                       # strips the value's own, writes none
         esac
         # what each stub hands the reader for a Label with a newline of its own (read as the reader reads, with a sentinel); the lacking
         # stub hands the SAME bytes for the Label with one and the Label without, which is the ambiguity the calibration must refuse
@@ -4573,6 +4610,163 @@ EOF
           *)       [ "$status" -eq 5 ]; [[ "$output" == *"nothing was rewritten"* ]] ;;
         esac
         cmp -s "$plist" "$plist.before"
+    done
+    # the other shapes the four probes span, each refused whole before any read of the file (the round-7 calibration lens ran them and
+    # found them refused, with no case of their own): the value's own newline stripped and one written (the pair arm, as lacking), CR LF
+    # after the value and CR LF throughout (the Label arm, the bytes named, the CR raw), and a line end that depends on the key shape
+    # (none for a dotted path, for an array index, for a top-level key, for the Label alone: the pair arm, naming the probe that
+    # disagreed). The last four are what pin the nested and array probes by execution (the mutation lens: with either probe gone the
+    # calibration cases stayed green): with a probe gone its stand-in is still refused, later and on the file, under another text.
+    for stub in strip_nl crlf crlf_all nested_nonl array_nonl top_nonl key_label_nonl; do
+        _plutil_stub "$stub"
+        for f in before lnl; do
+            cp "$plist.$f" "$plist"
+            for verb in "rewrite --check" rewrite; do
+                PATH="$TEST_DIR/plutil-bin:$PATH" CLAUDE_CONFIG_DIR=/x/cc ROMP_OS_OVERRIDE=Darwin run "$SVC" $verb
+                [ "$status" -eq 5 ]
+                [[ "$output" != *"agree"* ]]
+                [[ "$output" != *"Rewrote"* ]]
+                [[ "$output" != *"is not romp's"* ]]
+                [[ "$output" == *"nothing was rewritten"* ]]
+                case "$stub" in
+                  strip_nl)       [[ "$output" == *"back as romp.calibrate\\n and its StandardOutPath (romp.calibrate\\n) back as romp.calibrate\\n, where romp.calibrate\\n\\n would say the tool's line end is one it always writes"* ]] ;;
+                  crlf|crlf_all)  [[ "$output" == *"did not read this reader's scratch plist's Label (romp.calibrate) back as the value alone or as the value and one line end of its own (it read romp.calibrate"$'\r'"\\n; a line end is rendered as \\n)"* ]] ;;
+                  nested_nonl)    [[ "$output" == *"back as romp.calibrate\\n and its EnvironmentVariables.PATH (romp.calibrate\\n) back as romp.calibrate\\n, where romp.calibrate\\n\\n would say the tool's line end is one it always writes"* ]] ;;
+                  array_nonl)     [[ "$output" == *"back as romp.calibrate\\n and its ProgramArguments.0 (romp.calibrate\\n) back as romp.calibrate\\n, where romp.calibrate\\n\\n would say the tool's line end is one it always writes"* ]] ;;
+                  top_nonl)       [[ "$output" == *"back as romp.calibrate and its EnvironmentVariables.PATH (romp.calibrate\\n) back as romp.calibrate\\n\\n, where romp.calibrate\\n would say the tool's line end is one it never writes"* ]] ;;
+                  key_label_nonl) [[ "$output" == *"back as romp.calibrate and its StandardOutPath (romp.calibrate\\n) back as romp.calibrate\\n\\n, where romp.calibrate\\n would say the tool's line end is one it never writes"* ]] ;;
+                esac
+                case "$stub" in
+                  crlf*) ;;
+                  *)     [[ "$output" == *"This refuses every plist read through this plutil, this one included, not this file alone"* ]]
+                         [[ "$output" == *"Name another plutil in ROMP_PLUTIL, or write the plist afresh"* ]] ;;
+                esac
+                cmp -s "$plist" "$plist.$f"
+            done
+        done
+    done
+}
+
+@test "rewrite (macOS): the plutil line-end calibration's transfer from the scratch to the file is checked on the file: under a plutil that writes a line end on the scratch and none on the file, or one only when the file's value lacks one, the clean plist or a Label, a CLAUDE_CONFIG_DIR or a manager path ending in a newline is refused at exit 5 with the plist byte for byte on rewrite and rewrite --check, the key and the bytes named, where round 7 wrote the value a newline short at exit 0; a plutil that honours -n for one probe and not another is refused whole; a plutil that ignores or rejects -n is read one way and refuses nothing over the switch; and the scratch is removed on every road out" {
+    # the round-7 addendum of fork PR #778, after the calibration lens: the four probes span the value's own line end and the key shape and
+    # by construction nothing else (a scratch is not the file), and fourteen stand-ins keyed on what they do not span (the file's place or
+    # size, the key's name, an array index above 0, the value's bytes, the input format) each read a Label, a CLAUDE_CONFIG_DIR or a
+    # manager path ending in a newline a newline short at exit 0 with the success line. The file-side checks in _plutil_raw close the two
+    # classes any such stand-in falls in: a tool writing no line end on the file (or for some class of its values) shows on a value without
+    # one of its own, the Label or the launcher's path here, and is refused there; a tool writing one only when the file's value lacks one
+    # is told on the file itself where the tool honours -n, since the extract with and without the switch then differ by nothing where they
+    # should differ by the tool's line end. The residual, said and not pinned: a plutil that IGNORES -n and writes a line end only when the
+    # file's value lacks one (file_lacking ignore) still reads the Label ending in a newline a newline short and rewrites at exit 0; no
+    # scratch and no one-route read can see that, and no evidenced plutil does it (plutil(1) documents -n and the terminator as the tool's).
+    local plist="$ROMP_LAUNCHD_DIR/com.romp.manager.plist" stubpath="$TEST_DIR/plutil-bin/plutil" stub f verb nmode nl=$'\n' mgr="$ROMP_MANAGER_BIN" left
+    _plutil_stub
+    CLAUDE_CONFIG_DIR=/x/cc ROMP_OS_OVERRIDE=Darwin "$SVC" install >/dev/null
+    cp "$plist" "$plist.before"
+    grep -qF "<string>$mgr</string>" "$plist.before"
+    sed 's|<string>com.romp.manager</string>|<string>com.romp.manager\&#10;</string>|' "$plist.before" > "$plist.lnl"     # the Label ends in a newline
+    sed 's|<string>/x/cc</string>|<string>/x/cc\&#10;</string>|' "$plist.before" > "$plist.vnl"                            # CLAUDE_CONFIG_DIR does
+    sed "s|<string>$mgr</string>|<string>$mgr\&#10;</string>|" "$plist.before" > "$plist.exec"                              # the manager's path does
+    for f in lnl vnl exec; do run cmp -s "$plist.$f" "$plist.before"; [ "$status" -ne 0 ]; done
+    # 1. a line end only when the FILE's value lacks one (the scratch read as always): the clean plist through, each newline fixture refused
+    #    on the file at the key that carries it, the two read-backs named and equal where they should differ by one line end
+    _plutil_stub file_lacking
+    [ "$("$stubpath" -extract Label raw -o - "$plist.lnl"; printf x)" = "com.romp.manager${nl}x" ]          # on the file: the value's own newline, none written
+    [ "$("$stubpath" -extract Label raw -n -o - "$plist.lnl"; printf x)" = "com.romp.manager${nl}x" ]       # and the same under -n
+    [ "$("$stubpath" -extract Label raw -o - "$plist.before"; printf x)" = "com.romp.manager${nl}x" ]       # a value without one: the tool's line end written
+    [ "$("$stubpath" -extract Label raw -n -o - "$plist.before"; printf x)" = "com.romp.managerx" ]         # and withheld under -n
+    for f in lnl vnl exec; do
+        cp "$plist.$f" "$plist"
+        for verb in "rewrite --check" rewrite; do
+            PATH="$TEST_DIR/plutil-bin:$PATH" CLAUDE_CONFIG_DIR=/x/cc ROMP_OS_OVERRIDE=Darwin run "$SVC" $verb
+            [ "$status" -eq 5 ]
+            [[ "$output" != *"agree"* ]]
+            [[ "$output" != *"Rewrote"* ]]
+            [[ "$output" != *"is not romp's"* ]]
+            [[ "$output" == *"nothing was rewritten"* ]]
+            [[ "$output" == *"Name another plutil in ROMP_PLUTIL, or write the plist afresh"* ]]
+            case "$f" in
+              lnl)  [[ "$output" == *"plutil reads this plist's Label as com.romp.manager\\n and, asked for no line end of its own (-n), as com.romp.manager\\n, where the two would differ by exactly one line end"* ]] ;;
+              vnl)  [[ "$output" == *"plutil reads this plist's EnvironmentVariables.CLAUDE_CONFIG_DIR as /x/cc\\n and, asked for no line end of its own (-n), as /x/cc\\n, where the two would differ by exactly one line end"* ]] ;;
+              exec) [[ "$output" == *"plutil reads this plist's ProgramArguments.1 as $mgr\\n and, asked for no line end of its own (-n), as $mgr\\n, where the two would differ by exactly one line end"* ]] ;;
+            esac
+            cmp -s "$plist" "$plist.$f"
+        done
+    done
+    cp "$plist.before" "$plist"
+    PATH="$TEST_DIR/plutil-bin:$PATH" CLAUDE_CONFIG_DIR=/x/cc ROMP_OS_OVERRIDE=Darwin run "$SVC" rewrite --check
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"agree"* ]]
+    PATH="$TEST_DIR/plutil-bin:$PATH" ROMP_OS_OVERRIDE=Darwin run "$SVC" rewrite
+    [ "$status" -eq 0 ]
+    cmp -s "$plist" "$plist.before"
+    # 2. no line end on the FILE (the scratch read as always), -n honoured and ignored: every plist refused, the clean one and the two whose
+    #    Label has no newline of its own on the Label (read back without the line end the scratch showed), the Label ending in a newline on
+    #    the two-way read where -n is honoured and on the launcher's path where it is not (the strict arm alone, nothing armed)
+    for nmode in honour ignore; do
+        _plutil_stub file_nonl "$nmode"
+        for f in before lnl vnl exec; do
+            cp "$plist.$f" "$plist"
+            for verb in "rewrite --check" rewrite; do
+                PATH="$TEST_DIR/plutil-bin:$PATH" CLAUDE_CONFIG_DIR=/x/cc ROMP_OS_OVERRIDE=Darwin run "$SVC" $verb
+                [ "$status" -eq 5 ]
+                [[ "$output" != *"agree"* ]]
+                [[ "$output" != *"Rewrote"* ]]
+                [[ "$output" != *"is not romp's"* ]]
+                [[ "$output" == *"nothing was rewritten"* ]]
+                [[ "$output" == *"Name another plutil in ROMP_PLUTIL, or write the plist afresh"* ]]
+                case "$nmode:$f" in
+                  *:before|*:vnl|*:exec) [[ "$output" == *"plutil ended every raw extract of this reader's scratch plist with a line end of its own and ended its extract of this plist's Label (com.romp.manager) with none, so the line end it writes depends on the file or on the value"* ]] ;;
+                  honour:lnl)            [[ "$output" == *"plutil reads this plist's Label as com.romp.manager\\n and, asked for no line end of its own (-n), as com.romp.manager\\n, where the two would differ by exactly one line end"* ]] ;;
+                  ignore:lnl)            [[ "$output" == *"ended its extract of this plist's ProgramArguments.0 ($(_plist_get "$plist.before" ProgramArguments.0)) with none"* ]] ;;
+                esac
+                cmp -s "$plist" "$plist.$f"
+            done
+        done
+    done
+    # 3. a plutil that writes a line end and ignores -n, or rejects it: nothing armed and nothing refused over the switch; round 7's reader,
+    #    the clean plist byte for byte and the Label ending in a newline not romp's
+    for nmode in ignore reject; do
+        _plutil_stub nl "$nmode"
+        cp "$plist.before" "$plist"
+        PATH="$TEST_DIR/plutil-bin:$PATH" CLAUDE_CONFIG_DIR=/x/cc ROMP_OS_OVERRIDE=Darwin run "$SVC" rewrite --check
+        [ "$status" -eq 0 ]
+        [[ "$output" == *"agree"* ]]
+        PATH="$TEST_DIR/plutil-bin:$PATH" ROMP_OS_OVERRIDE=Darwin run "$SVC" rewrite
+        [ "$status" -eq 0 ]
+        cmp -s "$plist" "$plist.before"
+        cp "$plist.lnl" "$plist"
+        PATH="$TEST_DIR/plutil-bin:$PATH" ROMP_OS_OVERRIDE=Darwin run "$SVC" rewrite
+        [ "$status" -eq 5 ]
+        [[ "$output" == *"is not romp's: plutil reads its Label as com.romp.manager\\n, not com.romp.manager"* ]]
+        cmp -s "$plist" "$plist.lnl"
+    done
+    # 4. -n honoured for a top-level key and ignored for a dotted one: refused whole, the probe and the bytes named
+    _plutil_stub nl half
+    for f in before lnl; do
+        cp "$plist.$f" "$plist"
+        for verb in "rewrite --check" rewrite; do
+            PATH="$TEST_DIR/plutil-bin:$PATH" CLAUDE_CONFIG_DIR=/x/cc ROMP_OS_OVERRIDE=Darwin run "$SVC" $verb
+            [ "$status" -eq 5 ]
+            [[ "$output" != *"agree"* ]]
+            [[ "$output" != *"Rewrote"* ]]
+            [[ "$output" != *"is not romp's"* ]]
+            [[ "$output" == *"asked for no line end of its own (-n), plutil read this reader's scratch plist's Label (romp.calibrate) back as romp.calibrate and its EnvironmentVariables.PATH (romp.calibrate\\n) back as romp.calibrate\\n\\n, where romp.calibrate\\n would say the switch holds for every value"* ]]
+            [[ "$output" == *"This refuses every plist read through this plutil, this one included, not this file alone"* ]]
+            [[ "$output" == *"Name another plutil in ROMP_PLUTIL, or write the plist afresh"* ]]
+            cmp -s "$plist" "$plist.$f"
+        done
+    done
+    # 5. the scratch is removed on every road out (the mutation lens: with both rm -rf gone one romp-service-plutil.* directory was left per
+    #    read and no case noticed): a fresh TMPDIR holds none after a rewrite through the default stand-in, after a refusal on the pair arm
+    #    (lacking), on the Label arm (two), on the -n arm (half) and on the file-side arms (file_lacking on the Label fixture)
+    mkdir -p "$TEST_DIR/scratch-tmp"
+    for stub in nl lacking two "nl half" file_lacking; do
+        _plutil_stub $stub
+        case "$stub" in file_lacking) cp "$plist.lnl" "$plist" ;; *) cp "$plist.before" "$plist" ;; esac
+        TMPDIR="$TEST_DIR/scratch-tmp" PATH="$TEST_DIR/plutil-bin:$PATH" ROMP_OS_OVERRIDE=Darwin run "$SVC" rewrite
+        case "$stub" in nl) [ "$status" -eq 0 ] ;; *) [ "$status" -eq 5 ] ;; esac
+        left=("$TEST_DIR/scratch-tmp"/romp-service-plutil.*)
+        [ ! -e "${left[0]}" ]
     done
 }
 

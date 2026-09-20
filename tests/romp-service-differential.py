@@ -494,6 +494,10 @@ MARK_CASES = [   # (name, systemd's reading, the oracle's, the verdict, dangerou
     ("argv fewer, one systemd does not run", _sd(cmds=[["/nx/bin/a"], ["/nx/bin/b"]], path="/nx/bin/a"), _orc(execs=[_ex("/nx/bin/c")]), "DISAGREE", True),
     ("argv fewer, systemd's first dropped (the second reported first)", _sd(cmds=[["/nx/bin/a"], ["/nx/bin/b"]], path="/nx/bin/a"), _orc(execs=[_ex("/nx/bin/b")]), "DISAGREE", True),
     ("argv fewer, every one among systemd's, the first kept", _sd(cmds=[["/nx/bin/a"], ["/nx/bin/b"]], path="/nx/bin/a"), _orc(execs=[_ex("/nx/bin/a")]), "DISAGREE", False),
+    # the round-7 addendum (the mark lens): the oracle reporting NO command where systemd runs one is unmarked by vacuity (no count reached,
+    # none not among systemd's, no first command to be other than systemd's first), the D4 class as an absence the reader follows; the row
+    # is what exercises the first-command clause's `orc_cmds and` guard, whose removal indexes an empty list here
+    ("argv: the oracle reports no command where systemd runs one (unmarked by vacuity; the D4 class)", _sd(cmds=[["/nx/bin/a"]], path="/nx/bin/a"), _orc(execs=[]), "DISAGREE", False),
     # round 7 of fork PR #778 (extra6-1): the rows that ALONE tell three clauses' mutants apart, where every earlier row on their side
     # trips two clauses at once (a longer list with a command systemd does not run trips the count clause and the not-among clause; a
     # shorter list with one systemd does not run, which is also not systemd's first, trips the not-among clause and the first-command
@@ -541,8 +545,10 @@ def mark_clauses(source=None):
     `if` whose body directly sets the mark (`dangerous = True`, or a return whose third element is True); an `if` with no `or` is one
     clause. At round 7 that is eight: systemd refuses and the oracle loads; an env key the oracle sets to another value or alone; the
     argv count, the argv not-among and the first-command clauses; the exec->path clause; the EnvironmentFile count and not-among
-    clauses. The population is never written down here, so a clause added to compare() is in the census the moment it exists, and
-    self_check fails until a row of MARK_CASES tells its mutant apart. `source` is the module's own file unless a test hands it another."""
+    clauses. The population is never written down here, so a clause added to compare() in this form is in the census the moment it
+    exists, and self_check fails until a row of MARK_CASES tells its mutant apart; a mark set in any OTHER form is one this census cannot
+    read, and self_check refuses it by unread_mark_forms (the round-7 addendum of fork PR #778, after the mark lens: three such forms
+    passed the check at 8 of 8). `source` is the module's own file unless a test hands it another."""
     if source is None:
         with open(os.path.abspath(__file__), encoding="utf-8") as f: source = f.read()
     sites = []
@@ -555,8 +561,8 @@ def mark_clauses(source=None):
         tree = ast.parse(source); fn = _compare_def(tree)
         for node in ast.walk(fn):
             if isinstance(node, ast.If) and (node.lineno, node.col_offset) == (lineno, col):
-                if isinstance(node.test, ast.BoolOp):
-                    label = ast.unparse(node.test.values[i]); node.test.values[i] = ast.copy_location(ast.Constant(False), node.test.values[i])
+                if isinstance(node.test, ast.BoolOp) and isinstance(node.test.op, ast.Or):   # an `and` test is one clause, labelled whole (the
+                    label = ast.unparse(node.test.values[i]); node.test.values[i] = ast.copy_location(ast.Constant(False), node.test.values[i])   # round-7 addendum)
                 else:
                     label = ast.unparse(node.test); node.test = ast.copy_location(ast.Constant(False), node.test)
                 break
@@ -565,12 +571,55 @@ def mark_clauses(source=None):
         out.append((label, ns["compare"]))
     return out
 
+def unread_mark_forms(source=None):
+    """The statements of compare() that can set the mark in a form mark_clauses does not read: [(line, text)], empty when every mark is in
+    the read form. The census reads `dangerous = True` directly in the body of an `if`, and a return whose third element is the constant
+    True inside one; the initializer binding `dangerous` to False, and a return whose third element is False or the name `dangerous`, set
+    nothing. Every other store to `dangerous` (another expression, an augmented assignment, a store outside an if's body or in its else
+    branch, a store in a for, a with or a walrus), a return that is not a three-tuple, and a three-tuple return whose third element is
+    neither a constant nor the name `dangerous` are forms the census would read past, so self_check fails on them, naming the line (the
+    round-7 addendum of fork PR #778: `dangerous = dangerous or cond`, `dangerous = bool(1)` and `dangerous |= True` each passed the
+    check at 8 of 8 with no row). A form census is what makes the clause census's count a claim about compare(), not about the forms it
+    happens to use."""
+    if source is None:
+        with open(os.path.abspath(__file__), encoding="utf-8") as f: source = f.read()
+    fn = _compare_def(ast.parse(source))
+    parents = {}
+    for node in ast.walk(fn):
+        for child in ast.iter_child_nodes(node): parents[child] = node
+    def in_if_body(stmt):
+        p = parents.get(stmt)
+        return isinstance(p, ast.If) and any(st is stmt for st in p.body)
+    def is_false(v): return isinstance(v, ast.Constant) and v.value is False
+    out = []
+    for node in ast.walk(fn):
+        if isinstance(node, ast.Name) and node.id == "dangerous" and isinstance(node.ctx, ast.Store):
+            stmt = node
+            while stmt in parents and not isinstance(stmt, ast.stmt): stmt = parents[stmt]
+            ok = False
+            if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1:
+                t, v = stmt.targets[0], stmt.value
+                if isinstance(t, ast.Name):
+                    ok = is_false(v) or (isinstance(v, ast.Constant) and v.value is True and in_if_body(stmt))
+                elif isinstance(t, ast.Tuple) and isinstance(v, ast.Tuple) and len(t.elts) == len(v.elts):
+                    ok = any(e is node and is_false(v.elts[i]) for i, e in enumerate(t.elts))
+            if not ok: out.append((stmt.lineno, ast.unparse(stmt)))
+        elif isinstance(node, ast.Return):
+            v = node.value
+            third = v.elts[2] if isinstance(v, ast.Tuple) and len(v.elts) == 3 else None
+            ok = third is not None and (is_false(third) or (isinstance(third, ast.Name) and third.id == "dangerous")
+                                        or (isinstance(third, ast.Constant) and third.value is True and in_if_body(node)))
+            if not ok: out.append((node.lineno, ast.unparse(node)))
+    return sorted(set(out))
+
 def self_check(out=sys.stdout, source=None):
     """Every MARK_CASES pair against compare(), then every mark clause of compare() (mark_clauses, read from the source) against the
-    table: 0 and one printed line when every pair scores as the table says AND every clause's mutant is told apart by some row, 1 and
-    the mismatches otherwise. The clause count is derived, not stated: at round 6 the table isolated five of eight clauses and read
-    "25 of 25" with the other three deleted (round 7 of fork PR #778, extra6-1); a ninth clause now fails this until a row covers it,
-    and a census that finds no clause fails too, since an empty derivation is a broken census, not a clean one."""
+    table: 0 and one printed line when every pair scores as the table says AND every clause's mutant is told apart by some row AND
+    every mark of compare() is set in the one form the census reads (unread_mark_forms), 1 and the mismatches otherwise. The clause
+    count is derived, not stated: at round 6 the table isolated five of eight clauses and read "25 of 25" with the other three deleted
+    (round 7 of fork PR #778, extra6-1); a ninth clause now fails this until a row covers it, a census that finds no clause fails too,
+    since an empty derivation is a broken census, not a clean one, and a mark set in a form the census does not read fails it naming
+    the line (the round-7 addendum), since a derived count is only as wide as the forms it derives from."""
     bad = []
     for name, sd, orc, verdict, dangerous in MARK_CASES:
         got = compare("X", sd, orc)
@@ -584,6 +633,7 @@ def self_check(out=sys.stdout, source=None):
             if got[0] != verdict or got[2] != dangerous: told = True; break
         if not told: untold.append("  mark clause told apart by no row of MARK_CASES: %s" % label)
     if not clauses: bad.append("  no mark clause found in compare(): the census read nothing")
+    for lineno, text in unread_mark_forms(source): bad.append("  mark set in a form the census does not read, at line %d: %s" % (lineno, text))
     marked = sum(1 for c in MARK_CASES if c[4]); unmarked = sum(1 for c in MARK_CASES if c[3] == "DISAGREE" and not c[4])
     print("mark self-check: %d of %d synthetic pairs as expected (%d on the dangerous side, %d DISAGREE unmarked, %d agree, refuse or unread); %d of %d mark clauses of compare() each told apart by a row" % (
         len(MARK_CASES) - len(bad), len(MARK_CASES), marked, unmarked, len(MARK_CASES) - marked - unmarked, len(clauses) - len(untold), len(clauses)), file=out)

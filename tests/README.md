@@ -153,11 +153,11 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   differ from the one below), so a case that must fail loudly without one
   would fail every mac run and go red on a build change with no change here.
   The dangerous mark's own check needs no systemd and runs first: `MARK_CASES`,
-  28 synthetic (systemd, oracle) pairs with one on each side of every shape
+  29 synthetic (systemd, oracle) pairs with one on each side of every shape
   the column marks, the fatal shapes, the not-modelled row and the loud skip,
-  printed as one line (`mark self-check: 28 of 28 ...; 8 of 8 mark clauses
+  printed as one line (`mark self-check: 29 of 29 ...; 8 of 8 mark clauses
   of compare() each told apart by a row`) and exiting 1 on a
-  mismatch; `tests/test_romp_service_differential_mark.py` pins the same
+  mismatch (the pin module holds these counts to the table's); `tests/test_romp_service_differential_mark.py` pins the same
   table in the suite, so an edit to `compare()` is caught where the recipe
   is not run (round 6, tests-2: no real fixture at an agreeing head reaches
   the mark, so a dead mark printed the same table with the tag alone gone).
@@ -172,7 +172,18 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   mutants apart: more commands every one among systemd's (the count clause),
   fewer with the first kept and one systemd does not run (the not-among
   clause), and more EnvironmentFile paths every one systemd reads (its count
-  clause); every earlier row on that side trips two clauses at once.
+  clause); every earlier row on that side trips two clauses at once. The
+  census reads one form, `dangerous = True` directly in an `if`'s body or a
+  return whose third element is True inside one; a mark set in any other
+  form (another expression, an augmented assignment, a store outside an
+  `if` or in its else branch, a return whose third element is neither a
+  constant nor `dangerous`) fails the check naming the line, since a count
+  derived from one form says nothing about a mark set in another (the
+  round-7 addendum: three such forms had passed at 8 of 8). The addendum's
+  row where the oracle reports no command while systemd runs one is
+  unmarked by vacuity (no count reached, none not among systemd's, no first
+  command), the D4 class as an absence the reader follows; it exercises the
+  first-command clause's guard against an empty list.
   Round 6's addendum added the five rows the first table could not tell a
   mutant by: a key equal on both sides beside one systemd alone sets (the
   per-key guard; unmarked), an agree with a nonempty env, a dropped first
