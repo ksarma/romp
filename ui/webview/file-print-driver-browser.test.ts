@@ -1180,7 +1180,7 @@ test("(15) Keep waiting's open-ended wait carries one word button, Print anyway:
     await page.click(ANYWAY_BTN);
     let p = await prints(page);
     assert.equal(p.length, 1, "Print anyway printed once");
-    assert.deepEqual({ gates: p[0].gates, incomplete: p[0].incomplete.length, line: p[0].line }, { gates: 1, incomplete: 1, line: false }, "the placeholder on the paper, the parked picture still loading as the browser has it, the line gone before the print");
+    assert.deepEqual({ gates: p[0].gates, incomplete: p[0].incomplete.length, line: p[0].line }, { gates: 1, incomplete: 1, line: false }, "the placeholder on the paper, the parked picture still loading and left off the paper, the line gone before the print");
     assert.ok(p[0].incomplete[0].includes("/docs/" + SLOW), "the parked picture is the incomplete one");
     assert.ok(p[0].active.startsWith("BUTTON.fileview-btn.fileview-icon.fileview-print"), "the keyboard went from the word button to the Print button: " + p[0].active);
     assert.equal(s.heldCount(SLOW), 1, "its request is still parked: nothing released it");
