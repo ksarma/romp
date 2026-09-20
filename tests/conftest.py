@@ -588,8 +588,10 @@ def restore_env(name, prior):
 #     The refusal marks nothing on _SDK_REPORTED: no later window takes the kept-root report, and a mark would
 #     silence that later gone report; the fixture records the refused object on _SDK_REFUSED instead, the list
 #     that link reads. The fixture's tests pin it (S7, beside S6, the same leak with no
-#     swapping class, reported as inherited; S7B, the refusal as the first window's alone; S8, the run-root shape,
-#     refused; S9 and S10, the gone shape, the object put back and not).
+#     swapping class, reported as inherited; S7B, the refusal as the first window's and no later one's; S8, the
+#     run-root shape, no refusal; S9 and S10, the gone shape, the object put back and not; S11, the refusal's roots
+#     from the start read's recorded fields; S12, a real object in the slot at the window; S13, the named-object
+#     guard; S9B, the gone pair linked at the object).
 # Three module-level lists of STRONG references (identity membership; strong so an id is never reused by a
 # later object) keep the kinds of naming apart. Every object a VERDICT names (a test's own, a boundary's)
 # goes on _SDK_NAMED, the list the boundary's quiet-on-a-named-object rule consults. Every object the
@@ -745,8 +747,8 @@ _SDK_MODULE_START = None                               # the current module boun
                                                        # kept-root report's object and reference root
 _SDK_NAMED = []                                        # strong references to every object a verdict named (a test's own, a boundary's)
 _SDK_REPORTED = []                                     # strong references to every object the inherited report named
-_SDK_REFUSED = []                                      # strong references to every object the first window's refusal named: the
-                                                       # gone report's link to that line (_sdk_inherited); silences nothing
+_SDK_REFUSED = []                                      # strong references to every object the first window's refusal named:
+                                                       # the gone report's link to that line (_sdk_inherited); silences nothing
 _SDK_REAL = ("romp_sdk_backend", "SdkBackend")
 _SDK_GONE = ", whose state_dir is no longer a directory"
 _SDK_REMEDY_A = ("A test that reaches km._sdk() under a sandboxed jd.STATE builds the kernel's backend singleton over the "
@@ -885,31 +887,32 @@ def _sdk_swapped(start, before):
     when that start read (`start`) found a real backend in a state no test made, over a directory that stands and is not
     jd.STATE as that read recorded it (the kept-root picture) or over a directory that is gone, which at that read only
     import-time code or a fixture of a scope wider than the function could have made; the slot's value at the window
-    (`before`) is what a module or class setup (setUpModule, setUpClass, or a module- or class-scoped fixture, the actors
-    between the two reads) swapped in. The leak is named from the start read's fields, both objects rendered from the
-    reads' recorded state_dir: the start read's because the live attribute may have been repointed since (S11, a class
-    that repoints the object before swapping it out), the window's for one convention, since nothing runs between the
-    before read and this render, so its recorded text and the live attribute agree by construction and no run can tell
-    them apart (annotated at the call, not a cell); no test is accused and no scope is named, because which test will
-    start under the object, and whether it is put back, cannot be said at this window, and the premise sentence, true here, would be false at any
-    later one (the flag is spent with this line, never deferred: a deferred report would fire where a test body has run,
-    a wrong attribution in place of a silence). Two heads, the inherited report's two shapes: the kept-root wording and
-    cause family for the standing directory, the gone wording with the cause family narrowed to what could have run
-    before the start read for the gone one, whatever its root. The gone shape is refused here rather than left to the
-    gone report because the swapping scope may never put the object back, and then no window starts under it, the gone
-    report never fires, and the scope's boundary verdict names the swap and not the object's origin; when the scope does
-    put it back, the later test that starts under the object carries the gone report as well, two lines each saying what
-    the other does not, and the later line says it is the object this window refused, keyed on the object (the rendered
-    path is not an identity, and a repoint between the two reads changes it; S9B). Silent when the start read's object stands over jd.STATE as it recorded it (no leak); on an
-    object a verdict has named (_sdk_named, reachable: a class or module scope that touches the singleton and then skips
-    or errors before any function window runs files a naming verdict while the flag is still armed, the boundary fixture
-    reading at the scope's first item and the flag spent only in the function fixture; S13, a module pair); and, as a
-    belt, on one the inherited report has named (_sdk_reported, empty at this window by construction: the one site that
-    fills that list, the function fixture's report line, runs after this refusal is computed in the same first window,
-    and no earlier window exists in the worker). The refusal marks nothing on _SDK_REPORTED: no later window takes the kept-root report,
-    so a mark would change nothing there, and it would silence that later gone report; the fixture records its object on
-    _SDK_REFUSED instead, the list the gone report's link clause reads. This function stays pure, text or None, as
-    _sdk_inherited is."""
+    (`before`) is what a module or class setup (setUpModule, setUpClass, or a module- or class-scoped fixture, the
+    actors between the two reads) swapped in. The leak is named from the start read's fields, both objects rendered from
+    the reads' recorded state_dir: the start read's because the live attribute may have been repointed since (S11, a
+    class that repoints the object before swapping it out), the window's for one convention, since nothing runs between
+    the before read and this render, so its recorded text and the live attribute agree by construction and no run can
+    tell them apart (annotated at the call, not a cell); no test is accused and no scope is named, because which test
+    will start under the object, and whether it is put back, cannot be said at this window, and the premise sentence,
+    true here, would be false at any later one (the flag is spent with this line, never deferred: a deferred report
+    would fire where a test body has run, a wrong attribution in place of a silence). Two heads, the inherited report's
+    two shapes: the kept-root wording and cause family for the standing directory, the gone wording with the cause
+    family narrowed to what could have run before the start read for the gone one, whatever its root. The gone shape is
+    refused here rather than left to the gone report because the swapping scope may never put the object back, and then
+    no window starts under it, the gone report never fires, and the scope's boundary verdict names the swap and not the
+    object's origin; when the scope does put it back, the later test that starts under the object carries the gone
+    report as well, two lines each saying what the other does not, and the later line says it is the object this window
+    refused, keyed on the object (the rendered path is not an identity, and a repoint between the two reads changes it;
+    S9B). Silent when the start read's object stands over jd.STATE as it recorded it (no leak); on an object a verdict
+    has named (_sdk_named, reachable: a class or module scope that touches the singleton and then skips or errors before
+    any function window runs files a naming verdict while the flag is still armed, the boundary fixture reading at the
+    scope's first item and the flag spent only in the function fixture; S13, a module pair); and, as a belt, on one the
+    inherited report has named (_sdk_reported, empty at this window by construction: the one site that fills that list,
+    the function fixture's report line, runs after this refusal is computed in the same first window, and no earlier
+    window exists in the worker). The refusal marks nothing on _SDK_REPORTED: no later window takes the kept-root
+    report, so a mark would change nothing there, and it would silence that later gone report; the fixture records its
+    object on _SDK_REFUSED instead, the list the gone report's link clause reads. This function stays pure, text or
+    None, as _sdk_inherited is."""
     be = start.be
     if not _sdk_is_real(be) or _sdk_named(be) or _sdk_reported(be):
         return None
@@ -927,9 +930,9 @@ def _sdk_swapped(start, before):
             "no test is accused and no scope is named. Import-time code did, or a session- or package-scoped fixture did (one "
             "that set up before this module's own reads), %s; a swap left in place is judged at its own scope's end."
             % (head, _sdk_singleton_text(be, start.sd), start.jd_state,
-               _sdk_singleton_text(before.be, before.sd),   # the recorded text for one convention: the before read and this render
-               cause))                                       # are one fixture call with no test code between, so the live attribute
-                                                             # agrees with it by construction and no run can tell them apart
+               _sdk_singleton_text(before.be, before.sd),   # the recorded text for one convention: the before read and this
+               cause))                                       # render are one fixture call with no test code between, so the live
+                                                             # attribute agrees with it by construction; no run can tell them apart
 
 
 def _sdk_remedy(after, ref):

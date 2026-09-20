@@ -33,7 +33,8 @@ tests/test_kernel_interrupt_machine_cut.py leaves dangling and two of the three 
 tests/test_kernel_msgcaption.py; the loop cannot land here because the private-kernel harnesses carry 90 or more
 pre-existing teardown leaks (the 90 measured over the three romp_kernel_mc files in one run, on the missing road; the
 round-1 refuters' 574 over the 18 files, their count, its road not recorded, and a teardown count does not depend on the
-road, since SdkBackend constructs on both), so their save-and-restore product code lands first, then the ratchet's private-kernel
+road, since SdkBackend constructs on both), so their save-and-restore product code lands first, then the ratchet's
+private-kernel
 arm; Y pins the limit as behaviour, a private-name leak over a removed root with the ratchet silent and the run green,
 red the day that arm lands), and the 316 the first sweep ran, module alone on the missing road; 364 modules in all. The
 first sweep, over its 316 at the base, module alone on the missing road, found the 4 red on these leaks and 1 red for an
@@ -87,7 +88,8 @@ and the scope's boundary verdict names the swap and not the object's origin (S10
 One.a's one teardown, the only line naming the leak's origin); when the scope does put it back, the later test that
 starts under the object carries the gone report as well, two lines on two items each saying what the other does not
 (S9), and that report names the object as the one the first window refused to attribute, the link keyed on the object
-and not on the rendered path, which a repoint between the two lines changes (S9B). The outer tests read the refusal as they read every report, by the test it lands on (inherited with the SWAPPED
+and not on the rendered path, which a repoint between the two lines changes (S9B). The outer tests read the refusal as
+they read every report, by the test it lands on (inherited with the SWAPPED
 or SWAPPED_GONE head) and as the set of tests carrying each head (carriers, a set of size one), never by a phrase
 count. The class and module boundaries yield to the
 tests' own windows: when the changing windows inside the scope run from the value the scope found to the value it ends
@@ -114,7 +116,8 @@ collects tests/test_host_transport.py takes the importable road (that module put
 import, and every xdist worker imports every collected module), so a full run here is the importable road while a
 module-alone run is CI's; SdkBackend constructs either way (the probe at construction, importlib.util.find_spec, only
 sets _sdk_missing and prints the not-found notices on the missing road), so the transition the ratchet judges is the
-same on both roads, and the figures from this module's own runs carry no inherited road. SCRATCH_HEAD sets None in sys.modules
+same on both roads, and the figures from this module's own runs carry no inherited road. SCRATCH_HEAD sets None in
+sys.modules
 for the name, which makes find_spec answer None and the import fail, so every run over it takes the missing road
 wherever it runs (A's outer test reads the notices); Q takes the importable road over a head without that line and a
 stub package importable by the child alone (nested_run's sdk_stub), asserts inside the child that the stub is what
@@ -299,14 +302,18 @@ alphabetically, and each case's `before` is what the previous case left):
 
 The outer tests read a nested run's output by structure, never by the count of a phrase: the verbose per-phase lines
 (outcomes, a set per case), the verdicts by the test or scope each names (verdict, inherited, boundary: the first
-match, the ERRORS section's; boundary_scopes: the set of scopes named), the final summary line parsed
-(summary_mismatch, and the warned run's read of its warnings segment), and the presence or absence of a text (the
+match, the ERRORS section's; carriers: the set of tests whose report opens with a head; boundary_scopes: the set of
+scopes named), the final summary line parsed (summary_mismatch, and the warned run's read of its warnings segment), and
+the presence or absence of a text (the
 judge fixture's, the exception group's header, the SDK notices), which the short summary cannot change since it only
-repeats what the ERRORS section already printed. CI's pytest is unpinned (the workflow installs the latest, 9.1.1
+repeats what the ERRORS section already printed; the readers are the helpers defined between nested_run and _NestedRun,
+and TheReadersRosterNamesEveryReader derives that population from the source and reads each name here. CI's pytest is
+unpinned (the workflow installs the latest, 9.1.1
 today, the test venv's version here too), and pytest's short summary prints each error's message whole when CI is set
 in the environment or at -vv and trimmed to the terminal width otherwise, so a reader that counted the boundary text's
 occurrences read 1 on a box and 2 on CI for one verdict (the CI red at the round-3 preparation head: red here with
-CI=true alone and under a CI-like install through uv, green at this head both ways). The PROTECTION is the structured reads above: none of them counts occurrences,
+CI=true alone and under a CI-like install through uv, green at this head both ways). The PROTECTION is the structured
+reads above: none of them counts occurrences,
 so the summary's shape cannot change what they read. The child also runs -vv, which is NOT a protection: it only makes a box
 run print what CI prints so a reader comparing the two by eye sees one shape; pytest may change what -vv prints and the
 readers would still hold, while a structured read removed as redundant with -vv would put the count back. Two of the
@@ -328,7 +335,8 @@ fixture READS and the branch each read feeds, with the case that reds under each
   the same-marker judgment: the same-object gone transition deleted (A.f passes silently); the repoint comparison
     dropped (X.One.b passes silently); the gone check made
     absolute again (A.h, E.b and D.Two fail as false accusations and every error count rises); identity replaced by
-    equality of state_dir (A.d passes); the rebuild road rendered as before (A.d's text); the gone clause's class gate dropped (F.h carries
+    equality of state_dir (A.d passes); the rebuild road rendered as before (A.d's text); the gone clause's class gate
+    dropped (F.h carries
     the clause); a None after treated as
     nothing left (A.i and F.d pass); any False after admitted (F.f passes); the None-to-False allowance removed (F.c
     errors).
@@ -367,17 +375,19 @@ fixture READS and the branch each read feeds, with the case that reds under each
     refusal opens with the standing directory's wording, read as carriers of each head); the kept arm rendered under
     the gone head (S7, S7B: the same read the other way); the gone arm's cause clause replaced by the kept arm's (S9,
     S10: the needle naming a directory since removed is missing); the kept arm's cause clause replaced by the gone arm's
-    (S7, S7B: the needle naming a root that is not the run's is missing); the refused list never written (S9, S9B: no link clause on Two.a's gone report); the link clause dropped from the gone
+    (S7, S7B: the needle naming a root that is not the run's is missing); the refused list never written (S9, S9B: no
+    link clause on Two.a's gone report); the link clause dropped from the gone
     branch (S9, S9B); the clause emitted for every gone report (E.a, U.a and V.a carry it, no refusal having preceded
     them); the link keyed on the rendered text in place of the object, the refusal recording its object's rendered path
     and the report testing its own (S9B: the two paths differ and the clause is missing; S9 green, its paths agree); the
-    refusal marking its object as reported (S9:
-    Two.a's gone report silenced, the count 1 against 2); the flag
-    dropped from its condition with the spent first term kept (S7: a second refusal on Two.a, saying the slot does not
-    hold the object at a window where it does; S7B: a third on Three.a); the identity term alone in the condition's
-    place (S7B alone: a second refusal on Three.a, S7 green); a scope appended to its text (S7's no-scope read); the
-    flag kept when the identity term fails, the deferral not taken (S7: no refusal at One.a, and Two.a carries the
-    kept-root report, whose premise sentence, before any test in this worker has run, is false at that window).
+    refusal marking its object as reported (S9: Two.a's gone report silenced, the count 1 against 2); the flag dropped
+    from its condition with the spent first term kept (S7, S7B, S9, S10, S11, S12 and S9B: a second refusal on Two.a,
+    saying the slot does not hold the object at a window where it does, and a third on Three.a in S7B; S13 green, the
+    object at its later windows named); the identity term alone in the condition's place (S7B and S10: a second refusal
+    on Three.a and on Two.a; S7 and S9 green, their only later window being Two.a's, where the identity term holds; S11,
+    S12, S13 and S9B green); a scope appended to its text (S7's no-scope read); the flag kept when the identity term
+    fails, the deferral not taken (S7: no refusal at One.a, and Two.a carries the kept-root report, whose premise
+    sentence, before any test in this worker has run, is false at that window).
   the boundary: the class end deleted (D.One.b and K.One.b show no boundary error, M, P); the module end deleted
     (L.b shows none); compared to its last read only (K.One passes silently); judged without the restore exemption
     (K.Two errors); the named skip dropped (a second report at the class or module end of A, B, C, D, E, K and L;
@@ -393,7 +403,7 @@ fixture READS and the branch each read feeds, with the case that reds under each
     disappears) or without its reference condition (K.One passes silently); the windows never recorded (as the
     yield removed).
   the function fixture not naming the object it accused (A.h gets an inherited report, E, D).
-Seventy-four cells red. Four are pinned by no run, each for a stated reason: the unreadable reference root granting
+Eighty-three cells red. Four are pinned by no run, each for a stated reason: the unreadable reference root granting
 the allowance (not constructible: the kernel always binds jd); the yield's identity condition dropped (redundant by
 construction: when the end value is the last read's and is not the last window's value, a class teardown inside the
 scope installed it, and that class's own boundary judged it against its start, which only a restore of the value the
@@ -2133,6 +2143,24 @@ class TheProtectionIsWorded(unittest.TestCase):
         self._assert_worded(re.sub(r"\s+", " ", nested_run.__doc__), "nested_run's docstring", RUN_PROTECT_READS, RUN_PROTECT_VV)
 
 
+class TheReadersRosterNamesEveryReader(unittest.TestCase):
+    """The module docstring's roster of structured output readers names every reader this module defines. The
+    population is derived from the source, never listed here: the top-level functions between nested_run and _NestedRun
+    whose first parameter is the nested run's output, so a reader added without its roster entry reds this test. At the
+    round-4 head the roster omitted carriers, the reader that delta added, with the module green: the PROTECTION needle
+    pins two claim sentences and their order, not the roster's names."""
+
+    def test_every_reader_is_named_in_the_roster(self):
+        src = inspect.getsource(sys.modules[__name__])
+        region = src[src.index("\ndef nested_run("):src.index("\nclass _NestedRun")]
+        readers = set(re.findall(r"^def (\w+)\(out\b", region, re.M))
+        self.assertGreaterEqual(len(readers), 7, "a derived population that comes back short is a failure, not a pass: %r" % readers)
+        doc = re.sub(r"\s+", " ", __doc__)
+        roster = doc[doc.index("The outer tests read a nested run's output by structure"):doc.index(PROTECT_READS)]
+        for name in sorted(readers):
+            self.assertRegex(roster, r"\b%s\b" % re.escape(name), "the roster does not name the reader %s" % name)
+
+
 class ClassTeardownRemovesTheDirectory(_NestedRun, unittest.TestCase):
     SCRATCH = SCRATCH_D
     ERRORS = 2
@@ -2454,9 +2482,12 @@ class AnImportTimeKeptRootLeakMetFirstByAClassThatSwapsTheSingleton(_NestedRun, 
 class TheRefusalIsTheFirstWindowsAlone(AnImportTimeKeptRootLeakMetFirstByAClassThatSwapsTheSingleton):
     """S7B: S7 with a third class of One's shape after Two, so a LATER window where the identity term fails exists
     (Three.a's before object is None while the start read's is the import-time object). The refusal is the first
-    window's alone, the one pin of the flag in its condition: one carrier, Three.a quiet, Three's boundary quiet, still
-    one error. With the identity term alone in the condition's place Three.a carries a second refusal while S7 stays
-    green: this class is that cell's only pin."""
+    window's: one carrier, Three.a quiet, Three's boundary quiet, still one error. The flag's two cells, measured over
+    the whole module: with the identity term alone in the condition's place, S7B and S10 red (a second refusal on
+    Three.a here, on Two.a in S10) while S7 and S9 stay green, since their only later window is Two.a's, where the
+    identity term holds, and S11, S12, S13 and S9B stay green too; with the flag dropped and the spent first term kept,
+    S7, S7B, S9, S10, S11, S12 and S9B red (a second refusal on Two.a, a third on Three.a here) and S13 green, the
+    object at its later windows named."""
     SCRATCH = SCRATCH_S7B
 
     def test_the_later_swapping_class_gets_no_refusal(self):
