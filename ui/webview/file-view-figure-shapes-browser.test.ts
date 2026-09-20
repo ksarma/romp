@@ -12,7 +12,9 @@
 // figure at the floor (48 by 48) keeps its control inside its own box; one a pixel under it on one side has none; (4) a
 // protocol-relative source (`//host/pic.svg`, a gated placeholder until its click) opens a TAB from its control and from its
 // plain click, the viewer and the trail unmoved (before: the viewer opened on the kernel's /file route at that path, a 404,
-// and Back was armed). Skipped LOUDLY where playwright has no browser (CI installs none). Synthetic values only: the
+// and Back was armed); (5) a captioned picture inside a DEAD link (an `<a>` whose href the sanitizer removed, dressed fv-dead)
+// wears no control either, since linkAbove reads any anchor (before: `a[href]` alone, so the control went inside the dead
+// anchor); its plain click, with no link the links listener or the browser will act on, opens the picture. Skipped LOUDLY where playwright has no browser (CI installs none). Synthetic values only: the
 // notes-api world, a placeholder session id, example.invalid addresses, /repo/notes-api paths.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
@@ -24,6 +26,7 @@ const WEB = "https://example.invalid/elsewhere";
 const WEB_ALONE = "https://example.invalid/alone";
 const PROTO = "//example.invalid/pic.svg";
 const PROTO_ABS = "http://example.invalid/pic.svg";   // the page's origin is http, so the browser and absUrl resolve `//` to it
+const DEAD_HREF = "javascript:void(0)";             // a scheme the sanitizer refuses: the anchor keeps no href and the viewer dresses it dead (file-view-links.ts DEAD_LINK_CLASS)
 const svg = (w: number, h: number, fill: string): string => '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '"><rect width="' + w + '" height="' + h + '" fill="' + fill + '"/></svg>';
 const SIZES: Record<string, [number, number]> = { "plot.svg": [300, 200], "badge.svg": [100, 20], "icon.svg": [16, 16], "mid.svg": [48, 48], "small.svg": [47, 60] };
 // the report, one shape per paragraph: a bare figure; a figure with a caption inside a markdown link to a file; the same as an
@@ -40,11 +43,12 @@ const REPORT_TEXT = "# Report\n\n![the plot](figs/plot.svg)\n\n"
   + "Click the ![icon](figs/icon.svg) button to run it.\n\n"
   + "![mid](figs/mid.svg)\n\n![small](figs/small.svg)\n\n"
   + "![proto](" + PROTO + ")\n\n"
+  + "[![dead](figs/plot.svg) dead caption](" + DEAD_HREF + ")\n\n"
   + "## Results\n\n" + Array.from({ length: 30 }, (_, i) => PARA(i + 1)).join("\n\n") + "\n";
 const NOTES_TEXT = "# Notes\n\nA short note.\n";
 const DOCS: Record<string, string> = { [REPORT]: REPORT_TEXT, [NOTES]: NOTES_TEXT };
 for (const [name, [w, h]] of Object.entries(SIZES)) DOCS[FIGS + name] = svg(w, h, "#468");
-const ALTS = ["the plot", "linked", "html", "weblinked", "alone", "frag", "ci", "icon", "mid", "small", "proto"];
+const ALTS = ["the plot", "linked", "html", "weblinked", "alone", "frag", "ci", "icon", "mid", "small", "proto", "dead"];
 
 type Ctl = { alt: string; control: boolean; before: string | null; inLink: boolean; gated: boolean; w: number; h: number };
 /** Every img of the Rendered box: whether a control stands after its anchor (the img, its wrap, or the link holding it alone),
@@ -125,11 +129,14 @@ test("in a browser: no control stands inside a link; a figure with a caption ins
   await inBrowser(t, async (browser) => {
     const { page, errors } = await openReport(browser);
     const c = await controls(page);
-    assert.deepEqual(c.map((x) => x.alt), ALTS, "the eleven figures in order");
-    // FAILS BEFORE: the captioned links' controls stood inside the <a>, the badge, the icon and the small figure wore one
-    assert.deepEqual(c.map((x) => [x.alt, x.control]), [["the plot", true], ["linked", false], ["html", false], ["weblinked", false], ["alone", true], ["frag", false], ["ci", false], ["icon", false], ["mid", true], ["small", false], ["proto", false]],
-      "a control on the bare plot, on the figure alone in a web link, and on the figure at the floor; none inside a captioned link, on a badge, an icon, a figure under the floor, a gated placeholder");
+    assert.deepEqual(c.map((x) => x.alt), ALTS, "the twelve figures in order");
+    // FAILS BEFORE: the captioned links' controls stood inside the <a>, the badge, the icon and the small figure wore one; and at the
+    // round-2 head the captioned picture inside the DEAD link wore its control inside the dead anchor (linkAbove read `a[href]` alone)
+    assert.deepEqual(c.map((x) => [x.alt, x.control]), [["the plot", true], ["linked", false], ["html", false], ["weblinked", false], ["alone", true], ["frag", false], ["ci", false], ["icon", false], ["mid", true], ["small", false], ["proto", false], ["dead", false]],
+      "a control on the bare plot, on the figure alone in a web link, and on the figure at the floor; none inside a captioned link (a dead one too), on a badge, an icon, a figure under the floor, a gated placeholder");
     assert.equal(await page.evaluate(() => document.querySelectorAll(".fileview-md a [data-fv-figopen]").length), 0, "no control anywhere inside a link (nested interactive content, and the links listener's click)");
+    const dead = await page.evaluate(() => { const a = document.querySelectorAll(".fileview-md img")[11].closest("a")!; return { href: a.getAttribute("href"), dead: a.classList.contains("fv-dead"), inside: a.querySelectorAll("[data-fv-figopen]").length }; });
+    assert.deepEqual(dead, { href: null, dead: true, inside: 0 }, "the dead link: no href, dressed dead, and no control inside it");
     assert.equal(c[4].before, "a", "the figure alone in a web link: its control stands after the link");
     assert.deepEqual(c.slice(1, 4).map((x) => x.inLink), [true, true, true], "the captioned figures do sit inside their links (the shape under test)");
     assert.deepEqual([c[6].w, c[6].h, c[7].w, c[7].h, c[8].w, c[8].h, c[9].w, c[9].h], [100, 20, 16, 16, 48, 48, 47, 60], "the badge, the icon, the figure at the floor and the one under it measure as served");
@@ -203,6 +210,14 @@ test("in a browser: the plain click on a captioned linked figure is the author's
     await page.locator(".fileview-md [data-fv-figopen]").nth(1).click();
     await painted(page, "plot.svg");
     enabledTo((await nav(page)).back, "Back to report.md", "the control opens the picture itself");
+    await page.click(".fileview-nav-back");
+    await painted(page, "report.md");
+    // the captioned picture inside a DEAD link: no link the links listener or the browser will act on, so the plain click opens
+    // the picture (the figure listener yields to a path link, a web anchor with an href and a section link; a dead anchor is none)
+    b = await centred(page, 11);
+    await page.mouse.click(b.left + b.width * 0.3, b.top + b.height * 0.6);
+    await painted(page, "plot.svg");
+    enabledTo((await nav(page)).back, "Back to report.md", "inside a dead link the plain click opens the picture: the trail's push");
     await page.click(".fileview-nav-back");
     await painted(page, "report.md");
     assert.equal(popups.length, 2, "two popups in all, both the anchors' own: " + JSON.stringify(popups));

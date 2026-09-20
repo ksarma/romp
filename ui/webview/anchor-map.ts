@@ -161,7 +161,8 @@ const isFormula = (n: DNode): boolean => FORMULA_CLASSES.some((cls) => hasClass(
  *  Slice 4 the other elements whose text is not the note's: a formula in any of the fill's three shapes (FORMULA_CLASSES: the
  *  paragraph maps AROUND the formula and the mathInline / mathBlock tokens are zero-text holes), a footnote's back link, the
  *  front matter's fold label, a gated figure's placeholder, and since Slice 7 the label the viewer parks beside a figure
- *  that failed to load (`span.fv-figerr`, the img's next sibling: its text names the source and is not the note's). */
+ *  that failed to load (`span.fv-figerr`, the img's next sibling: its text names the source and is not the note's), and since
+ *  the link-navigation follow-on the figure's Open the picture control (`button.fv-figopen`, a glyph with no text of its own). */
 const CONTROL_CLASSES = [
   "code-copy",              // the fence's Copy button (code-block.ts)
   ...FORMULA_CLASSES,       // a formula, rendered or shown as its TeX (math.ts renderMathPlaceholders)

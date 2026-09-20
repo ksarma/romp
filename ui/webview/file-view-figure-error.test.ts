@@ -471,11 +471,11 @@ test("a heading holding a failed figure keeps an Outline row reading the alt alo
   outline!.click();
 });
 
-test("the listeners: two capture listeners on the body per open (error and load), armed once at the open and not per paint, so after a Rendered/Raw round trip an error in the NEW box still gets its label; none on the document; both gone after the close (the file-view-outline.test.ts closers idiom)", async (t) => {
+test("the listeners: the labels' two capture listeners on the body per open (error and load), beside the figure control's pair since the link-navigation follow-on (armFigureControls: load and error), armed once at the open and not per paint, so after a Rendered/Raw round trip an error in the NEW box still gets its label; none on the document; all gone after the close (the file-view-outline.test.ts closers idiom)", async (t) => {
   const docBefore = doc.listeners.filter((l) => l.type === "error" || l.type === "load").length;
   const o = await open(t);
   const { fv, body, rendered, raw } = o;
-  assert.equal(captures(body, "error"), 1, "one capture-phase error listener on the body (the viewer's; nothing else listens for error there)");
+  assert.equal(captures(body, "error"), 2, "two capture-phase error listeners on the body: the labels' and the figure control's (armFigureControls decides the control at a load and at an error; nothing else listens for error there)");
   // the Comments panel arms capture-phase load listeners of its own on the same body (file-comments.ts: the float's hide, the
   // layout's retrim), so the viewer's twin is counted among them and shown by what it does: a load removes a label
   const loadsAtOpen = captures(body, "load");
@@ -487,7 +487,7 @@ test("the listeners: two capture listeners on the body per open (error and load)
   assert.equal(o.ctx.mode(), "rendered", "and back");
   const md2 = body.querySelector(".fileview-md")!;
   assert.ok(md2 && md2 !== o.md, "a new Rendered box after the round trip");
-  assert.equal(captures(body, "error"), 1, "still the one listener: installed per open, not per paint");
+  assert.equal(captures(body, "error"), 2, "still the two listeners: installed per open, not per paint");
   assert.equal(captures(body, "load"), loadsAtOpen, "no load listener added by the paints either");
   const late = img({ src: fileSrc("figs/late.png"), "data-fv-src": "figs/late.png", alt: "late" });
   const stays = img({ src: fileSrc("figs/stays.png"), "data-fv-src": "figs/stays.png", alt: "stays" });
@@ -501,7 +501,7 @@ test("the listeners: two capture listeners on the body per open (error and load)
   assert.ok(kept, "a label standing at the close");
   fv.closeFileView();
   assert.equal(doc.getElementById("romp-fileview"), null, "the viewer is closed");
-  assert.equal(captures(body, "error"), 0, "the close dropped the error listener (ctx.onClose)");
+  assert.equal(captures(body, "error"), 0, "the close dropped both error listeners (ctx.onClose)");
   assert.ok(captures(body, "load") < loadsAtOpen, "…and the load twin (the count fell; the panel's own body listeners are the panel's to drop, and the check below is the viewer's)");
   assert.equal(doc.listeners.filter((l) => l.type === "error" || l.type === "load").length, docBefore, "the document's listeners are as before the open");
   // the dropped listeners hear nothing: an error on a figure of the old body adds no label, and a load removes none

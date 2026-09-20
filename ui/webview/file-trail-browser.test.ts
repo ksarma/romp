@@ -302,6 +302,36 @@ test("in a browser, the Files page: Alt+Left and Alt+Right step the trail while 
     assert.deepEqual(taken, { back: true, none: true }, "the browser's history step is taken over while the viewer is up, with a target and without one");
     await h.painted("report.md");
     assert.equal(await h.base(), "report.md");
+    // the editor's stand-down (the guide's sentence; the review's round 1 held it by source text alone): with the editor up the chord
+    // asks nothing, though the keyboard is on a bar button and not in a text field; leaving edit mode gives the chord back. Edit's
+    // consent ask is a confirm dialog here (/version is not served by this harness), accepted; the editor chunk is not served either,
+    // so the plain fallback editor comes up, which is enough: `editing` is the guard, whichever editor holds the text.
+    await h.follow("the notes", "notes.md");
+    const s1 = await h.shape();
+    assert.deepEqual(s1.back, ["report.md@rendered"], "a step behind, so the chord has a target to refuse");
+    h.page.once("dialog", (d: any) => d.accept());
+    await h.page.click('#romp-fileview button[aria-label="Edit"]');
+    await h.page.waitForFunction(() => !!document.querySelector("#romp-fileview textarea, #romp-fileview .cm-editor"), null, { timeout: 10000 });
+    await h.frames(2);
+    await h.page.focus("#romp-fileview .fileview-nav-back");
+    assert.equal(await h.page.evaluate(() => document.activeElement!.className.includes("fileview-nav-back")), true, "the keyboard is on the Back button, no text field");
+    await h.page.keyboard.press("Alt+ArrowLeft");
+    await h.frames(3);
+    // FAILS BEFORE the guard: the chord replaced the card under the open editor and dropped edit mode
+    assert.equal(await h.base(), "notes.md", "the editor holds the viewer: the chord steps nothing");
+    assert.deepEqual(await h.shape(), s1, "the trail did not move");
+    assert.equal(await h.page.evaluate(() => !!document.querySelector("#romp-fileview textarea, #romp-fileview .cm-editor")), true, "and the editor is still up");
+    // leave edit mode (Escape peels it first; the buffer is unmodified, so no discard ask) and the chord steps again, with nothing
+    // focused but the document's body, which the typing-target stand-down lets through
+    await h.page.keyboard.press("Escape");
+    await h.page.waitForFunction(() => !document.querySelector("#romp-fileview textarea, #romp-fileview .cm-editor") && !!document.querySelector("#romp-fileview .fileview-body .fv-cl, #romp-fileview .fileview-md"), null, { timeout: 10000 });
+    await h.frames(2);
+    await h.page.evaluate(() => { (document.activeElement as HTMLElement | null)?.blur(); });
+    assert.equal(await h.page.evaluate(() => document.activeElement === document.body), true, "nothing focused: the document's body");
+    await h.page.keyboard.press("Alt+ArrowLeft");
+    await h.painted("report.md");
+    assert.equal(await h.base(), "report.md", "out of edit mode the chord is Back again");
+    assert.deepEqual((await h.shape()).current, "report.md@rendered");
   });
 });
 

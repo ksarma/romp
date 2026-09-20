@@ -7840,7 +7840,8 @@ floated with `align` stacks sideways: the control floats with it, a left float's
 right float's at the top-LEFT corner (`fv-figopen-left`, `fv-figopen-right`: a later right float sits left of the
 earlier one, and the far edge cannot be reached without the figure's width). The text walks skip it as a control
 (anchor-map.ts and reader-place.ts CONTROL_CLASSES); the Rendered pairing leaves it out of the top-level nodes beside
-an html-block figure as it leaves the failed figure's label (anchor-map.ts `isFigureCompanion`); the label goes after
+an html-block figure as it leaves the failed figure's label (anchor-map.ts `isFigureCompanion`, the predicate Slice 7
+recorded as `isFigureLabel`); the label goes after
 the control when both stand (`figureLabelAfter`). What it opens (`figureTarget`): a remote picture (an http or https
 source, a protocol-relative one) in a tab, never the viewer, the web test run FIRST, before the model's join, since
 `figurePath` reads a protocol-relative source as an absolute path of the disk (read after the join, a `//host/pic.svg`
@@ -7960,6 +7961,13 @@ aside opening and closing, a page opened at the narrow width with none, and a cl
 placeholder's img opening nothing while a real click on the restored figure's control opens its tab) and re-aimed
 ui/webview/file-view-figure-shapes.test.ts (the re-read's pins: refigureControls's body and its place in the repaint)
 and ui/webview/file-figure-open.test.ts (the stand-down as the listener's first line).
+The review's round 2 (the control decided from the figure's current state by one function, and the figure's own door into
+the viewer) added ui/webview/file-view-figure-state-browser.test.ts (Chromium over the real chat modal: a failed figure, a
+fetching `<picture>` and a srcset figure whose chosen candidate is a `data:` URI, each without a control, the link beside the
+failed figure taking the click, the fetching figure's plain click opening nothing and its load bringing the control that
+opens the source's file) and ui/webview/file-view-figure-recent-browser.test.ts (Chromium over the real Files page: a picture
+opened from a figure, by the control and by the plain click, takes no Recent row while Back returns to the report at the
+reader's block, and a link's open still takes its row).
 Eleven standing suites were re-aimed, not undone:
 ui/webview/file-view-text-size.test.ts (its real-module bar leg at 380, 420, 480 and 600 px in the chat and feed modals
 measures the two glyphs among the actions, case 8), ui/webview/file-view.test.ts and ui/webview/file-view-links.test.ts

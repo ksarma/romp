@@ -17,8 +17,8 @@ sentence to the shell's lines, to `onNavKey`'s stand-downs (a prevented key, a t
 `navChord`'s two chord families (file-trail.ts).
 
 The picture sentence. Round 1 of the review left two pictures without the button: one under `FIGOPEN_MIN_PX` on
-either side (a badge, an inline icon; `figureTooSmall`, and `dropFigureControl` for one added before the load
-measured it), and one inside a link that holds more than the picture (`linkAbove`: the climb of `figureAnchor`
+either side (a badge, an inline icon; `figureTooSmall`, read by the one decision `decideFigureControl` at the load and
+at each change of the body's width), and one inside a link that holds more than the picture (`linkAbove`: the climb of `figureAnchor`
 leaves such a link standing over the img, where `linkAround` climbs a link holding the picture alone so its button
 lands after the link). A small picture no link holds still opens on a plain click: the figure's click listener reads
 the link above the target and never the size. The guide names all three kinds of picture without the button (the
@@ -176,14 +176,16 @@ class ThreeKindsOfPictureWithoutTheButton(GuideSentences):
         self.assertIn("return b !== null && (b.w < FIGOPEN_MIN_PX || b.h < FIGOPEN_MIN_PX);", small, "either side under the floor")
 
     def test_the_builder_refuses_the_three_and_puts_the_button_after_a_link_holding_the_picture_alone(self):
-        build = _body(self.viewer, "function ensureFigureControl(img: Element, filePath: string): void {", "}")
-        self.assertIn("if (figureTooSmall(img)) { dropFigureControl(img); return; }", build, "the floor, and one added before the load leaves")
-        self.assertIn("if (figureTarget(img, filePath) === null) return;", build, "nothing to open: a data: picture, no source")
-        self.assertIn("if (linkAbove(anchor)) return;", build, "a link holding more than the picture")
-        self.assertIn("const anchor = figureAnchor(img);", build)
+        build = _body(self.viewer, "function figureWantsControl(img: Element, anchor: Element, filePath: string): boolean {", "}")
+        self.assertIn("if (figureTooSmall(img)) return false;", build, "the floor, read from the loaded picture")
+        self.assertIn("if (figureTarget(img, filePath) === null) return false;", build, "nothing to open: a data: picture, no source")
+        self.assertIn("return linkAbove(anchor) === null;", build, "a link holding more than the picture")
+        decide = _body(self.viewer, "function decideFigureControl(img: Element, filePath: string): void {", "}")
+        self.assertIn("const anchor = figureAnchor(img);", decide)
+        self.assertIn("if (standing) { if (!want) standing.remove(); return; }", decide, "the one place a control is added or removed")
         self.assertLess(build.index("figureTooSmall"), build.index("linkAbove"))
         above = _body(self.viewer, "function linkAbove(anchor: Element): Element | null {", "}")
-        self.assertIn("return p ? p.closest('a[href], [data-act=\"openpath\"]') : null;", above, "a link to a file, a web address or a section")
+        self.assertIn("return p ? p.closest('a, [data-act=\"openpath\"]') : null;", above, "any link: to a file, a web address or a section, and a dead one")
         around = _body(self.viewer, "function linkAround(p: Element, a: Element): boolean {", "}")
         self.assertIn('return p.localName === "a" && p.children.length === 1 && p.children[0] === a && (p.textContent || "").trim() === "";', around,
                       "a link holding the picture alone is climbed: the button lands after the link, and the picture keeps it")

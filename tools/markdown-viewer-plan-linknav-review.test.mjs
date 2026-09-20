@@ -66,24 +66,27 @@ test('L3 opens on the exceptions it names, and names the floor by the source\'s 
   const px = floor[1];
   assert.ok(L3.includes('a figure under ' + px + ' CSS px on either side (`FIGOPEN_MIN_PX`'), 'L3 gives the floor the source\'s number, ' + px);
   assert.ok(L3.includes('a figure at the floor (' + px + ' by ' + px + ') keeps its control inside its own box'), 'and the figure at the floor keeps its control');
-  for (const fn of ['figureBox', 'figureTooSmall', 'dropFigureControl', 'linkAbove']) {
+  for (const fn of ['figureBox', 'figureTooSmall', 'linkAbove']) {
     assert.ok(viewer.includes('function ' + fn + '('), 'the source defines ' + fn);
     assert.ok(L3.includes('`' + fn + '`'), 'L3 names ' + fn);
   }
   assert.ok(L3.includes('the paint, which runs before the load, adds the control and the load (armFigureControls, the same builder) removes the one on a figure the measure finds under the floor'));
   assert.ok(L3.includes('a figure inside a link that holds more than it (`[![alt](fig.png) caption](other.md)`'));
   assert.ok(L3.includes('a figure alone in a link keeps its control, after the link'));
-  const build = between(viewer, 'function ensureFigureControl(img: Element, filePath: string): void {', 'function addFigureControls(');
-  inOrder(build, ['if (figureTooSmall(img)) { dropFigureControl(img); return; }', 'const anchor = figureAnchor(img);', 'if (linkAbove(anchor)) return;', 'parent.insertBefore(b, anchor.nextSibling);'], 'ensureFigureControl');
+  const want = between(viewer, 'function figureWantsControl(img: Element, anchor: Element, filePath: string): boolean {', 'function decideFigureControl(');
+  inOrder(want, ['if (state === "fetching" || state === "failed") return false;', 'if (figureTooSmall(img)) return false;', 'if (figureTarget(img, filePath) === null) return false;', 'return linkAbove(anchor) === null;'], 'figureWantsControl: the state, the floor, the target, the link');
+  const build = between(viewer, 'function decideFigureControl(img: Element, filePath: string): void {', 'function addFigureControls(');
+  inOrder(build, ['const anchor = figureAnchor(img);', 'if (standing) { if (!want) standing.remove(); return; }', 'parent.insertBefore(b, anchor.nextSibling);'], 'decideFigureControl: the one place a control is added or removed');
   const small = between(viewer, 'function figureTooSmall(img: Element): boolean {', '\n}\n');
   assert.ok(small.includes('b.w < FIGOPEN_MIN_PX || b.h < FIGOPEN_MIN_PX'), 'under the floor on either side, as L3 says');
   const arm = between(viewer, 'function armFigureControls(body: HTMLElement, filePath: string): () => void {', '\n}\n');
-  assert.ok(arm.includes('if (img) ensureFigureControl(img, filePath);'), 'the load runs the same builder, where the measure is read');
+  assert.ok(arm.includes('if (img && figureState(img) !== "standin") decideFigureControl(img, filePath);'), 'the load and the error run the one decision, where the measure is read');
+  assert.ok(arm.includes('body.addEventListener("error", decide, true);'), 'the error too: a failed figure is decided (no control)');
   // the re-read at each change of the body's width (the review's measurement: read once at the load, a narrowed figure kept its control)
   assert.ok(L3.includes('the floor is read again at each change of the body\'s width (`refigureControls`'), 'L3 names the re-read and its function');
   assert.ok(L3.includes('a value measured once against a condition that can change is re-read on the event that changes it'), 'L3 states the class');
   const refigure = between(viewer, 'function refigureControls(body: HTMLElement, filePath: string): void {', '\n}\n');
-  assert.ok(refigure.includes('body.querySelectorAll(".fileview-md img").forEach((img) => { ensureFigureControl(img, filePath); });'), 'the source re-reads every figure of the box through the same builder');
+  assert.ok(refigure.includes('body.querySelectorAll(".fileview-md img").forEach((img) => { decideFigureControl(img, filePath); });'), 'the source decides every figure of the box again through the one decision');
   const repaint = between(viewer, 'const repaint = () => {', '\n  };\n');
   inOrder(repaint, ['if (unmeasurable()) return;', 'landRemembered(); landTarget();', 'retakeAfterHide();', 'refigureControls(body, path);'], 'the width watch\'s repaint runs the re-read over a body with a box, after the seat');
   const FLOOR_LEG = 'file-view-figure-floor-browser.test.ts';

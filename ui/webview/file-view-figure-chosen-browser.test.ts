@@ -7,8 +7,12 @@
 // candidates and never for the src; the control on the <picture> opens the source's file (the bar names it; FAILS BEFORE:
 // the src's file, which the paint never requested) through one GET of the URL the paint fetched the figure through; the plain
 // click on the srcset figure opens its candidate the same way; a Ctrl-click hands window.open the /file URL of the candidate;
-// the gated remote picture, once loaded, fetched its source alone, and its control and its plain click hand window.open that
-// address (FAILS BEFORE: the src's, an address the page never requested) with nothing else asked of the host. Skips LOUDLY
+// the gated remote picture, once loaded, fetched its source alone (one request of type image, none while it was gated and
+// none at the open), and its control and its plain click each open a NEW TOP-LEVEL TAB at that address, observed as one
+// request of type document at a context-level route with the REAL window.open running (FAILS BEFORE: the src's address, one
+// the page never requested; and the round-2 review: a leg that stubs window.open reads the string the code passed and not a
+// request, so the tab's own document request, the one that carries the host's cookies, was never observed), with nothing else
+// asked of the host. Skips LOUDLY
 // without a playwright browser (CI installs none). Synthetic values only: the notes-api world, a placeholder session id,
 // example.invalid addresses, /repo/notes-api paths.
 import { test } from "node:test";
@@ -69,15 +73,30 @@ const gotFiles = async (page: any): Promise<string[]> => {
   const got: Array<{ u: string; m: string }> = await page.evaluate(() => (window as any).__fetched.splice(0));
   return got.filter((r) => r.m === "GET" && /[?&]path=/.test(r.u)).map((r) => new URL(r.u, ORIGIN).href);
 };
+/** The next page the context opens (window.open's tab, opener or not), and its URL once loaded; the tab is closed after the read. */
+async function nextTab(page: any, act: () => Promise<unknown>): Promise<string> {
+  const [tab] = await Promise.all([page.context().waitForEvent("page", { timeout: 10000 }), act()]);
+  await tab.waitForLoadState();
+  const url = tab.url();
+  await tab.close();
+  return url;
+}
 
-test("in a browser: a <picture> figure and a srcset figure open the candidate the browser showed, through the URL the paint fetched it by, never the fallback src; a remote <picture>'s control and plain click hand the tab the address the page fetched, never its src", { timeout: 240000 }, async (t) => {
+test("in a browser: a <picture> figure and a srcset figure open the candidate the browser showed, through the URL the paint fetched it by, never the fallback src; a remote <picture> makes no request while gated, one image request at its load, and its control and its plain click each make exactly one document request at that address (a new top-level tab, the real window.open), never its src", { timeout: 240000 }, async (t) => {
   await inBrowser(t, async (browser) => {
     asked.length = 0;
+    // every request to the remote host, from this page or from a tab it opens, with its type: the context's route sees both
     const remote: string[] = [];
     const { page, errors } = await openViewer(browser, "chat", 900, 600, { docs: DOCS, serve });
-    await page.route((u: URL) => u.href.startsWith("https://example.invalid/"), (route: any) => { remote.push(route.request().url()); return route.fulfill({ status: 200, contentType: "image/svg+xml", body: svg("#333") }); });
+    await page.context().route((u: URL) => u.href.startsWith("https://example.invalid/"), (route: any) => {
+      const r = route.request();
+      remote.push(r.resourceType() + " " + r.url());
+      if (r.resourceType() === "document") return route.fulfill({ status: 200, contentType: "text/html", body: "<!DOCTYPE html><title>elsewhere</title>" });
+      return route.fulfill({ status: 200, contentType: "image/svg+xml", body: svg("#333") });
+    });
     await page.evaluate(() => {
       const w = window as any;
+      w.__realOpen = window.open;   // kept for the remote picture below, whose tab is observed as a request and not as a stubbed string
       w.__opened = []; window.open = ((u: unknown) => { w.__opened.push(String(u)); return { opener: null }; }) as unknown as typeof window.open;
       const f = window.fetch; w.__fetched = [];
       window.fetch = function (u: any, i?: any) { w.__fetched.push({ u: String(u), m: (i && i.method) || "GET" }); return f.call(window, u, i); } as typeof window.fetch;
@@ -90,6 +109,7 @@ test("in a browser: a <picture> figure and a srcset figure open the candidate th
     assert.deepEqual(c.map((x) => [x.alt, x.control, x.gated, leaf(x.shown)]), [["picture", true, false, "plot2.svg"], ["dense", true, false, "plot3.svg"], ["remote", false, true, ""]],
       "currentSrc names the candidate shown; the two local figures wear the control, the gated one none yet");
     assert.deepEqual(asked.map(leaf).sort(), ["plot2.svg", "plot3.svg"], "the paint asked for the two chosen candidates and never for plot.svg: " + JSON.stringify(asked));
+    assert.deepEqual(remote, [], "zero requests to the remote host at the open: the gate holds");
     const paintUrls = asked.slice();
     await gotFiles(page);   // the report's own GET and anything since: not the open's
     // the control on the <picture>: the viewer opens the <source>'s file. FAILS BEFORE: plot.svg, the src the paint never requested
@@ -120,8 +140,12 @@ test("in a browser: a <picture> figure and a srcset figure open the candidate th
     await frames(page, 2);
     assert.deepEqual(await opened(page), [FILE_URL(PLOT2)], "the tab's URL is the candidate's, not the src's");
     assert.equal(await base(page), "report.md", "the viewer still shows the report");
-    // the remote picture: its load fetched the <source> alone; the control and the plain click hand the tab that address.
+    // the remote picture: the real window.open from here on (the stub above was for the /file tab, which this page's route serves;
+    // a tab at the remote host is served by the context's route and observed there), no request while gated, its load fetching
+    // the <source> alone; the control and the plain click each open a top-level tab at that address, one document request each.
     // FAILS BEFORE: b.svg, the src, an address the page never requested
+    await page.evaluate(() => { const w = window as any; window.open = w.__realOpen; });
+    assert.deepEqual(remote, [], "none while gated: nothing has left for the host through the local opens either");
     await page.evaluate(() => { document.querySelector('[data-act="fv-load"]')!.scrollIntoView({ block: "center" }); });
     await frames(page, 1);
     await page.click('[data-act="fv-load"]');
@@ -129,19 +153,22 @@ test("in a browser: a <picture> figure and a srcset figure open the candidate th
     await frames(page, 2);   // the picture's box replacing the placeholder's settles the layout the control sits on
     const c2 = await controls(page);
     assert.deepEqual([c2[2].control, c2[2].gated, c2[2].before, c2[2].shown], [true, false, "picture", REMOTE_A], "loaded: the control stands after the picture, and the browser shows the source");
-    assert.deepEqual(remote, [REMOTE_A], "the load fetched the source alone");
-    await page.locator(".fileview-md [data-fv-figopen]").nth(2).click();
-    await frames(page, 2);
-    assert.deepEqual(await opened(page), [REMOTE_A], "the control's tab is the address the page fetched");
+    assert.deepEqual(remote, ["image " + REMOTE_A], "the load made exactly one request of type image, for the source alone");
+    // the control: a new top-level tab (the context's page event), its loaded URL the address, and exactly one document request
+    const tab1 = await nextTab(page, () => page.locator(".fileview-md [data-fv-figopen]").nth(2).click());
+    assert.equal(tab1, REMOTE_A, "the control's tab loaded the address the page fetched");
+    assert.deepEqual(remote, ["image " + REMOTE_A, "document " + REMOTE_A], "one request of type document, the tab's own");
     assert.equal(await base(page), "report.md", "never in the viewer");
+    assert.deepEqual(await opened(page), [], "the stub is out of the way: nothing recorded there");
     await page.evaluate(() => { document.querySelectorAll(".fileview-md img")[2].scrollIntoView({ block: "center" }); });
     await frames(page, 1);
     const r = await boxOf(page, ".fileview-md img", 2);
-    await page.mouse.click(r.left + r.width * 0.3, r.top + r.height * 0.6);
-    await frames(page, 2);
-    assert.deepEqual(await opened(page), [REMOTE_A], "and the plain click's");
+    const tab2 = await nextTab(page, () => page.mouse.click(r.left + r.width * 0.3, r.top + r.height * 0.6));
+    assert.equal(tab2, REMOTE_A, "the plain click's tab loaded the same address");
+    assert.deepEqual(remote, ["image " + REMOTE_A, "document " + REMOTE_A, "document " + REMOTE_A], "one more document request, the second tab's; b.svg was never asked of the host");
     assert.equal(await base(page), "report.md");
-    assert.deepEqual(remote, [REMOTE_A], "nothing else was asked of the host: b.svg never left the machine");
+    assert.equal(remote.filter((x: string) => x.startsWith("image ")).length, 1, "one image request in all: the load's");   // the parameter typed: strict deepEqual's assertion signature narrows `remote` above
+    assert.equal(remote.filter((x: string) => x.endsWith(REMOTE_B)).length, 0, "the src's address left for the host in no request");
     assert.deepEqual(errors, [], "no page errors");
     await page.close();
   });

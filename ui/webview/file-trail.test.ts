@@ -144,6 +144,30 @@ test("the viewer's own openers set ONE tag that openFileView reads and clears be
   // the body delegate's path-link open and the Back and Forward controls are the callers; the delegate calls nothing else on openLinkedFile
   assert.match(VIEW, /openFromViewer\("push", p, sid \|\| null, ln > 0 \? \{ line: ln \} : x\.dataset\.frag \? \{ heading: x\.dataset\.frag \} : null\);/, "the delegate's path link is a push");
   assert.equal((VIEW.match(/openLinkedFile\(/g) || []).length, 1, "openLinkedFile is called from openFromViewer alone (its declaration is a type annotation, not a call)");
+  // the population behind "by construction" (the review's round 1): every openFileView call in file-view.ts, named, so a new
+  // site fails here until its author says which side of the door it stands on; every assignment of the tag the same way; and
+  // no alias of the function, which a textual count would not see
+  const OPEN_SITES: Array<[string, string]> = [
+    ["export function openFileView(", "the declaration"],
+    ["(path, sid, at) => { openFileView(path, sid, { at }); };", "the trail delegate's default opener (openLinkedFile: reached through the door, tagged by it)"],
+    ["else openFileView(path, sid, { at: at ?? null });", "openFileClick (outside: a path link's click in a todo or the chat)"],
+    ['trailNext = "reload"; openFileView(path, sid, opts);', "the conflict bar's Reload (tagged reload)"],
+    ['openFileView(m.path, typeof m.sid === "string" ? m.sid : null, { at: readAt(m.at) });', "the shell's relay (outside)"],
+    ["try { openFileView(path, sid, { at: null }); } finally { trailNext = null; }", "the figure's own door, openFigureInViewer (tagged push)"],
+  ];
+  assert.equal((VIEW.match(/openFileView\(/g) || []).length, OPEN_SITES.length, "openFileView( sites in file-view.ts, each inside or outside the door: " + OPEN_SITES.map((s) => s[1]).join("; ") + "; a new site says here which it is");
+  for (const [site, what] of OPEN_SITES) assert.ok(VIEW.includes(site), what + " stands as named: " + site);
+  assert.doesNotMatch(VIEW, /=\s*openFileView\s*[;,)]/, "no alias of openFileView (const open = openFileView), which the count above would not see");
+  const TAG_SITES: Array<[string, string]> = [
+    ["trailNext = how;", "the door's set"],
+    ["try { openLinkedFile(path, sid, at); } finally { trailNext = null; }", "the door's clear"],
+    ['trailNext = "push";', "the figure door's set"],
+    ["try { openFileView(path, sid, { at: null }); } finally { trailNext = null; }", "the figure door's clear"],
+    ["const how = trailNext; trailNext = null;", "openFileView's read-and-clear"],
+    ['trailNext = "reload"; openFileView(path, sid, opts);', "the conflict Reload's set"],
+  ];
+  assert.equal((VIEW.match(/trailNext = /g) || []).length, TAG_SITES.length, "trailNext assignments in file-view.ts: " + TAG_SITES.map((s) => s[1]).join("; ") + "; a new one says here what it tags");
+  for (const [site, what] of TAG_SITES) assert.ok(VIEW.includes(site), what + " stands as named: " + site);
   assert.match(VIEW, /openFromViewer\(dir, target\.path, target\.sid, null\);/, "Back and Forward re-open their entry with NO target, so the remembered place re-seats it");
 });
 

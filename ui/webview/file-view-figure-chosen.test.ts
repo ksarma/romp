@@ -68,7 +68,7 @@ test("chosenSource is the one reader of the browser's answer: currentSrc matched
 test("the reader's doc names what it makes true of the records (L3: the picture opened is the one shown; L6: the open's request is the paint's) and the paint-time reading (the control's existence from the src, its target read again at the click)", () => {
   const doc = flat(between(VIEW, "/** The candidate the browser chose for a figure, as the author wrote it", "function chosenSource("));
   assert.ok(doc.includes("so the picture opened is the one shown and its request is the one the paint made"), "L3 and L6 at the reader: " + doc);
-  assert.ok(doc.includes("a figure read at paint time, before the browser has picked, whose control's existence is decided from the src then and whose target is read again at the click"), "the paint-time reading is stated");
+  assert.ok(doc.includes("in a browser a figure the browser has not answered for is fetching, figureState, and figureTarget names nothing for it until its load or its error"), "the fetching figure's reading is stated: no control and no open before the browser has picked");
   const head = between(VIEW, "// What the control opens (figureTarget): the candidate the browser chose for the figure", "type FigureTarget =").replace(/\n\/\/ ?/g, " ");
   assert.ok(head.includes("so a `<picture>` or a srcset figure opens the picture shown and not the fallback src the browser never asked for"), "the section header says what the reader is for");
 });

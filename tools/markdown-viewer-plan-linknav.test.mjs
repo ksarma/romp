@@ -103,6 +103,7 @@ test('L1: the trail module exports the functions the section names, the viewer i
   assert.match(viewer, /^function openFromViewer\(how: TrailHow, path: string, sid: string \| null, at: At \| null\): void \{\n  trailNext = how;\n  try \{ openLinkedFile\(path, sid, at\); \} finally \{ trailNext = null; \}\n\}$/m, 'the one door');
   assert.ok(section.includes('the viewer\'s own opens go through one door, `openFromViewer` in file-view.ts'));
   assert.equal((viewer.match(/openLinkedFile\(/g) || []).length, 1, 'openLinkedFile is called from the door alone');
+  assert.equal((viewer.match(/openFileView\(/g) || []).length, 6, 'openFileView( sites in file-view.ts: the declaration, the delegate\'s default, openFileClick, the conflict Reload, the relay and the figure door openFigureInViewer (file-trail.test.ts names each with its side of the door; the same universal the section states)');
   const open = between(viewer, 'export function openFileView(', '  const wrap = el("div");\n  wrap.id = "romp-fileview";');
   const tagAt = open.indexOf('const how = trailNext; trailNext = null;');
   const guardAt = open.indexOf('if (document.getElementById("romp-fileview") && closeGuard && !closeGuard()) return false;');
@@ -168,9 +169,10 @@ test('L3: the control\'s words are the viewer\'s literal, quoted by the section 
   assert.equal(literalAfter(viewer, 'const FIGOPEN_MARK = '), 'data-fv-figopen');
   assert.ok(section.includes('found by its mark `data-fv-figopen` and never by its class'));
   assert.match(icons, /^export const ICON_EXPAND = svg\('/m, 'the glyph in the icon family');
-  const build = between(viewer, 'function ensureFigureControl(img: Element, filePath: string): void {', 'function addFigureControls(');
-  assert.ok(build.includes('if (img.closest(\'[data-act="\' + GATE_ACT + \'"]\')) return;'), 'a gated placeholder waits for its load');
-  assert.ok(build.includes('if (figureTarget(img, filePath) === null) return;'), 'nothing to open, no control');
+  const build = between(viewer, 'function decideFigureControl(img: Element, filePath: string): void {', 'function addFigureControls(');
+  const want = between(viewer, 'function figureWantsControl(img: Element, anchor: Element, filePath: string): boolean {', 'function decideFigureControl(');
+  assert.ok(want.includes('if (img.closest(\'[data-act="\' + GATE_ACT + \'"]\')) return false;'), 'a gated placeholder waits for its load');
+  assert.ok(want.includes('if (figureTarget(img, filePath) === null) return false;'), 'nothing to open, no control');
   assert.ok(build.includes('b.title = FIGURE_OPEN_TITLE; b.setAttribute("aria-label", FIGURE_OPEN_TITLE);'));
   assert.ok(build.includes('parent.insertBefore(b, anchor.nextSibling);'), 'a sibling after the anchor, never a wrapper');
   assert.ok(build.includes('b.classList.add(FIGOPEN_CLASS + "-" + align);'), 'a floated figure\'s control floats with it');
@@ -188,12 +190,13 @@ test('L3: the control\'s words are the viewer\'s literal, quoted by the section 
   const openFig = between(viewer, 'const openFigure = (img: Element, ev: MouseEvent): void => {', '\n  };\n');
   assert.ok(openFig.includes('if (target.kind === "web") { openUrlTab(target.href); return; }'));
   assert.ok(openFig.includes('if (wantsOwnTab(ev) && openFileTab(target.path, sid || null)) return;'));
-  assert.ok(openFig.includes('openFromViewer("push", target.path, sid || null, null);'), 'the plain click is the trail\'s push with no target');
+  assert.ok(openFig.includes('openFigureInViewer(target.path, sid || null);'), 'the plain click is the trail\'s push with no target, through the figure\'s own door (no Recent row)');
   assert.ok(section.includes('the figure\'s own click yields to a figure inside a link'));
   assert.ok(section.includes('the floor is read again at each change of the body\'s width (`refigureControls`'), 'the re-read at a width change, by its function');
   assert.ok(viewer.includes('refigureControls(body, path);'), 'which the width watch\'s repaint runs');
   // the walks
   assert.match(read('ui', 'webview', 'anchor-map.ts'), /"fv-figerr",[^\n]*\n\s*"fv-figopen",/, 'anchor-map.ts CONTROL_CLASSES');
+  assert.match(read('ui', 'webview', 'anchor-map.ts').replace(/\n \*  /g, ' '), /is not the note's\), and since the link-navigation follow-on the figure's Open the picture control \(`button\.fv-figopen`, a glyph with no text of its own\)\. \*\//, 'anchor-map.ts CONTROL_CLASSES header names the control, as reader-place.ts\'s twin does');
   assert.ok(read('ui', 'webview', 'anchor-map.ts').includes('const isFigureCompanion = (n: DNode): boolean => hasClass(n, "fv-figerr") || hasClass(n, "fv-figopen");'));
   assert.ok(read('ui', 'webview', 'reader-place.ts').includes('const CONTROL_CLASSES = ["code-copy", "katex", "md-fnback", "md-frontmatter-head", "fv-gate", "fv-figerr", "fv-figopen"];'));
   assert.ok(viewer.includes('const n = (figureControlAfter(anchor) || anchor).nextSibling;'), 'the label lookup steps past the control');

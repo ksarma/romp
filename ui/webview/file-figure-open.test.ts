@@ -1,9 +1,9 @@
 // A figure opens in detail (plans/markdown-viewer.md, "Follow-on: Link navigation", L3): the source pins beside the browser
 // leg (file-figure-open-browser.test.ts, which lays the control out and clicks it in Chromium). What is pinned here is the shape
-// the browser leg cannot read off a page: the control's one path into the DOM (ensureFigureControl: after figureAnchor's climb,
+// the browser leg cannot read off a page: the control's one path into the DOM (decideFigureControl: after figureAnchor's climb,
 // never a wrapper, found by its mark, skipped inside a gate's placeholder), what it opens (figureTarget: the model's figurePath
-// for a file of the session, a tab for an http source, nothing for a `data:` one), where it is added (mdBlock's file arm after
-// the anchors; the body's `load` capture listener for a figure loaded later), how a click on it or on a bare figure is routed
+// for a file of the session, a tab for an http source, nothing for a `data:` one), where it is decided (mdBlock's file arm after
+// the anchors; the body's `load` and `error` capture pair for a figure the browser answers for later), how a click on it or on a bare figure is routed
 // (a listener of its own beside the links', with the guards for a link, a panel mark, the open panel and a drag-select), the
 // label lookup that steps past it, the two text walks that skip it, the glyph, and the sheets' rules under `screen`. Every pin
 // reads the tree's own source, so a rename here fails loudly. Synthetic values only.
@@ -25,10 +25,12 @@ const between = (src: string, from: string, to: string): string => {
   return src.slice(a, b);
 };
 
-test("the control: one builder (ensureFigureControl) puts a button of the bar's glyph dress after figureAnchor's climb, marked, titled Open the picture, never inside a gate's placeholder, never twice, and only for a figure with something to open", () => {
-  const fn = between(VIEW, "function ensureFigureControl(img: Element, filePath: string): void {", "function addFigureControls(");
-  assert.match(fn, /if \(img\.closest\('\[data-act="' \+ GATE_ACT \+ '"\]'\)\) return;/, "a gated figure waits for its load");
-  assert.match(fn, /const anchor = figureAnchor\(img\);\n\s*if \(figureControlAfter\(anchor\)\) return;\n\s*if \(figureTarget\(img, filePath\) === null\) return;/, "one control per figure, and none for a figure with nothing to open");
+test("the control: one decision (decideFigureControl) puts a button of the bar's glyph dress after figureAnchor's climb, marked, titled Open the picture, never inside a gate's placeholder, never twice, and only for a figure with something to open (figureWantsControl)", () => {
+  const fn = between(VIEW, "function decideFigureControl(img: Element, filePath: string): void {", "function addFigureControls(");
+  const want = between(VIEW, "function figureWantsControl(img: Element, anchor: Element, filePath: string): boolean {", "function decideFigureControl(");
+  assert.match(want, /if \(img\.closest\('\[data-act="' \+ GATE_ACT \+ '"\]'\)\) return false;/, "a gated figure waits for its load");
+  assert.match(want, /if \(figureTarget\(img, filePath\) === null\) return false;/, "none for a figure with nothing to open");
+  assert.match(fn, /const anchor = figureAnchor\(img\);\n\s*const standing = figureControlAfter\(anchor\);\n\s*const want = figureWantsControl\(img, anchor, filePath\);\n\s*if \(standing\) \{ if \(!want\) standing\.remove\(\); return; \}\n\s*if \(!want\) return;/, "one control per figure: the verdict against the one standing, added when missing and wanted, removed when standing and unwanted");
   assert.match(fn, /el\("button", "fileview-btn fileview-icon " \+ FIGOPEN_CLASS\)/, "the bar's glyph dress and the control's own class");
   assert.match(fn, /b\.type = "button"; b\.innerHTML = ICON_EXPAND; b\.dataset\.icon = "1";/, "the icon family's drawing");
   assert.match(fn, /b\.setAttribute\(FIGOPEN_MARK, ""\);/, "the mark it is found by");
@@ -53,16 +55,16 @@ test("what it opens (figureTarget): the model's figurePath for a source on the s
   assert.match(fn, /return null;\n\}/, "a data: URL or any other scheme: nothing to open");
 });
 
-test("where it is added: mdBlock's file arm after the anchors are sorted; a figure loaded after the paint through one capture-phase load listener on the body, armed per open and dropped with the viewer; a URL document adds none", () => {
+test("where it is decided: mdBlock's file arm after the anchors are sorted; a figure the browser answers for after the paint through one capture-phase load and error pair on the body, armed per open and dropped with the viewer; a URL document adds none", () => {
   const md = between(VIEW, "function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {", "\n}\n");
   const fileArm = between(md, 'if (doc && doc.kind === "file") {', "} else {");
   assert.ok(fileArm.indexOf("linkMarkdownAnchors(box, doc.path);") < fileArm.indexOf("addFigureControls(box, doc.path);"), "after the anchors: a link holding the figure is sorted before the control goes in after it");
   assert.equal((md.match(/addFigureControls\(/g) || []).length, 1, "the file arm alone: a URL document's figures get no control");
   const arm = between(VIEW, "function armFigureControls(body: HTMLElement, filePath: string): () => void {", "\n}\n");
-  assert.match(arm, /const img = figureOf\(e\); if \(img\) ensureFigureControl\(img, filePath\);/, "figureOf's rule: an img of the box outside a placeholder");
-  assert.match(arm, /body\.addEventListener\("load", onLoad, true\);/, "capture: an img's load does not bubble");
-  assert.match(arm, /return \(\) => \{ body\.removeEventListener\("load", onLoad, true\); \};/);
-  assert.equal((arm.match(/addEventListener\(/g) || []).length, 1, "one listener, nothing per paint or per img");
+  assert.match(arm, /const img = figureOf\(e\); if \(img && figureState\(img\) !== "standin"\) decideFigureControl\(img, filePath\);/, "figureOf's rule: an img of the box outside a placeholder, carrying the browser's record");
+  assert.match(arm, /body\.addEventListener\("load", decide, true\);\n\s*body\.addEventListener\("error", decide, true\);/, "capture: an img's load and error do not bubble");
+  assert.match(arm, /return \(\) => \{ body\.removeEventListener\("load", decide, true\); body\.removeEventListener\("error", decide, true\); \};/);
+  assert.equal((arm.match(/addEventListener\(/g) || []).length, 2, "one pair, nothing per paint or per img");
   assert.match(VIEW, /ctx\.onClose\(armFigureLabels\(body\)\);\n(?:\s*\/\/[^\n]*\n)*\s*ctx\.onClose\(armFigureControls\(body, path\)\);/, "armed beside the labels' listeners, dropped through the same close hooks");
   // the label lookup steps past the control, and the label is inserted where it reads it back
   assert.match(VIEW, /const n = \(figureControlAfter\(anchor\) \|\| anchor\)\.nextSibling;/, "figureLabelAfter reads past the control");
@@ -82,7 +84,8 @@ test("the click: a listener of its own on the body beside the links'; the contro
   assert.match(open, /if \(wantsOwnTab\(ev\)\) ev\.stopPropagation\(\);/, "a modified click stops before the row's delegate, as a link's does");
   assert.match(open, /if \(target\.kind === "web"\) \{ openUrlTab\(target\.href\); return; \}/, "a remote picture: a tab, never the viewer");
   assert.match(open, /if \(wantsOwnTab\(ev\) && openFileTab\(target\.path, sid \|\| null\)\) return;/, "the /file URL in a tab; a blocked popup falls through");
-  assert.match(open, /openFromViewer\("push", target\.path, sid \|\| null, null\);/, "the viewer, with no target: the trail's push");
+  assert.match(open, /openFigureInViewer\(target\.path, sid \|\| null\);/, "the viewer through the figure's own door, with no target: the trail's push, and no Recent row (file-view-figure-recent-browser.test.ts)");
+  assert.match(VIEW, /\nfunction openFigureInViewer\(path: string, sid: string \| null\): void \{\n  trailNext = "push";\n  try \{ openFileView\(path, sid, \{ at: null \}\); \} finally \{ trailNext = null; \}\n\}\n/, "the door: the tag set and cleared as openFromViewer sets and clears it, openFileView itself and not the host's opener");
   assert.doesNotMatch(fig + open, /ev\.stopPropagation\(\)(?!;\s*\/\/ a modified)/, "a plain click is never stopped");
   // the links' listener is as it was: its pins in file-view-links.test.ts read the first listener's text
   const links = listeners[1].split("\n  });\n")[0];
