@@ -39,7 +39,8 @@
 // under the armed line (its host asked once, the recount narrowing the line and the title), then "Print with them" over
 // the one left (its host once). (3) the wait: a Reload landing during the wait (the landing's pictures requested once,
 // the print at the landing's picture's release); the deadline into the ask, then "Print anyway"; the ask, then "Keep
-// waiting" and the parked route released. (4) a <video poster> and an svg <image href> whose routes answer 404: one probe
+// waiting" and the parked route released; the ask, then "Keep waiting", then "Print anyway" from the open-ended wait's
+// line (romp-manager's ruling, 2026-09-20: the print with the picture incomplete, the request still parked, nothing asked). (4) a <video poster> and an svg <image href> whose routes answer 404: one probe
 // per URL per press, over two presses; an <img loading="lazy"> far below the fold: no request before the press, one at
 // it. (5) a picture opened directly: its bytes come through the page's fetch and its <img> is a blob: URL, for which the
 // intercept reports no request; a PDF under the two launches the media leg uses: the headless shell reports the frame's
@@ -183,6 +184,7 @@ const KEEP_BTN = '#fileview-print-line button:has-text("' + KEEP_WORDS + '")';
 const ARMED_TWO = "2 pictures from other hosts are not loaded.";
 const ARMED_ONE = "1 picture from another host is not loaded.";
 const PREPARING_ONE = "Preparing 1 picture…";
+const WAITING_ONE = "Waiting for 1 picture…";   // Keep waiting's open-ended wait, whose line carries Print anyway (romp-manager's ruling, 2026-09-20)
 const STALLED_ONE = "1 picture has not loaded.";
 const titleFor = (hosts: string[]): string => "Load the pictures from " + (hosts.length === 1 ? hosts[0] : hosts.slice(0, -1).join(", ") + " and " + hosts[hosts.length - 1]) + ", then print";
 
@@ -501,7 +503,7 @@ test("(2) two placeholders: a press arms over both; the first activated by hand 
 
 // ── (3) the wait: a landing, the deadline's ask, Print anyway, Keep waiting ────────────────────────
 
-test("(3) the wait. A Reload landing during the wait requests the landing's pictures once and the print comes at the landing's picture's release; the deadline into the ask then Print anyway, and the ask then Keep waiting and the route released, each print once and ask nothing more", { timeout: 180000 }, async (t) => {
+test("(3) the wait. A Reload landing during the wait requests the landing's pictures once and the print comes at the landing's picture's release; the deadline into the ask then Print anyway, the ask then Keep waiting and the route released, and the ask then Keep waiting then Print anyway from the open-ended wait's line, each print once and ask nothing more", { timeout: 180000 }, async (t) => {
   await inBrowser(t, async (browser) => {
     // a: the landing
     let s = await scene(t, browser, "pane", SLOW_NOTE, { held: [SLOW, SLOW2], open: { local: { ["/file docs/" + QUICK]: 1, ["/file docs/" + SLOW]: 1, ...PAGE_LOCAL } } });
@@ -564,7 +566,7 @@ test("(3) the wait. A Reload landing during the wait requests the landing's pict
     await road(s, "Keep waiting, then the parked route released", { printed: "window.print x1" }, async () => {
       await page.click(KEEP_BTN);
       let b = await bar(page);
-      assert.equal(b.phase, "preparing"); assert.equal(b.line, PREPARING_ONE);
+      assert.equal(b.phase, "preparing"); assert.equal(b.line, WAITING_ONE); assert.deepEqual(b.buttons, [ANYWAY_WORDS], "the open-ended wait's one button, pressed on no road here");
       await pause(page, 700);
       assert.equal((await prints(page)).length, 0, "no print past the seam's deadline: Keep waiting set no timer");
       await s.release([SLOW]);
@@ -579,6 +581,33 @@ test("(3) the wait. A Reload landing during the wait requests the landing's pict
     await page.evaluate(() => { (window as any).FV.setPrintSettleMs(null); });
     assert.equal(await page.evaluate(() => (window as any).FV.printSettleMs()), 8000, "the seam restored");
     await tail(s, "(3c)");
+    // d: the ask, then Keep waiting, then Print anyway from the open-ended wait's line (romp-manager's ruling, 2026-09-20):
+    // the print with the picture incomplete, its request still parked, nothing asked
+    s = await scene(t, browser, "pane", GATED_SLOW_NOTE, { held: [SLOW], open: { local: { ["/file docs/" + QUICK]: 1, ["/file docs/" + SLOW]: 1, ...PAGE_LOCAL } } });
+    page = s.page;
+    await readPlacements(s, [ph(HOST_GATED, "/o.svg", "body")]);
+    await page.evaluate(() => { (window as any).FV.setPrintSettleMs(300); });
+    await road(s, "press, Print without them, the deadline into the ask (a third time)", { printed: "none" }, async () => {
+      await page.click(PRINT_BTN);
+      await page.click(WITHOUT_BTN);
+      await lineReads(page, STALLED_ONE);
+    });
+    await road(s, "Keep waiting, then Print anyway from the open-ended wait's line", { printed: "window.print x1" }, async () => {
+      await page.click(KEEP_BTN);
+      let b = await bar(page);
+      assert.equal(b.phase, "preparing"); assert.equal(b.line, WAITING_ONE); assert.deepEqual(b.buttons, [ANYWAY_WORDS], "the open-ended wait's one button");
+      await page.click(ANYWAY_BTN);
+      const p = await prints(page);
+      assert.equal(p.length, 1); assert.equal(p[0].incomplete.length, 1, "the parked picture prints as the browser has it"); assert.equal(p[0].gates, 1, "the placeholder kept");
+      assert.equal(s.heldCount(SLOW), 1, "its request is still parked");
+      await frames(page, 1);
+      b = await bar(page);
+      assert.equal(b.phase, null, "the bar rested");
+    });
+    assert.deepEqual(hostsAsked(s), [], "the gated host was never asked");
+    await page.evaluate(() => { (window as any).FV.setPrintSettleMs(null); });
+    assert.equal(await page.evaluate(() => (window as any).FV.printSettleMs()), 8000, "the seam restored");
+    await tail(s, "(3d)");
   });
 });
 
@@ -916,7 +945,7 @@ test("(9) one host, four placeholders, the open picture's route parked. A second
     await road(s, "Keep waiting, then the parked route released", { printed: "window.print x1" }, async () => {
       await page.click(KEEP_BTN);
       let b = await bar(page);
-      assert.equal(b.phase, "preparing"); assert.equal(b.line, PREPARING_ONE);
+      assert.equal(b.phase, "preparing"); assert.equal(b.line, WAITING_ONE); assert.deepEqual(b.buttons, [ANYWAY_WORDS], "the open-ended wait's one button, pressed on no road here");
       await pause(page, 700);
       assert.equal((await prints(page)).length, 0, "no print past the seam's deadline: Keep waiting set no timer");
       await s.release([FOUR_OPEN]);

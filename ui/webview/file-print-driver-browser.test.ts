@@ -54,6 +54,16 @@
 // (5b) the deadline's ask is written INTO the wait's line: the same row (marked before the deadline, still marked after), the
 //     loader gone, the two word buttons in it (the round-2 review's ui-2, landed 2026-09-20: before this the ask was a fresh
 //     row, so the accessibility tree lost the wait's live region and gained another at the transition).
+// (15) Keep waiting's open-ended wait carries one word button, "Print anyway" (romp-manager's ruling, 2026-09-20, on the
+//     round-2 review's fresh-2 and the round-3 review's tests-4, ui-2 and extra5-3): after Keep waiting the line reads
+//     "Waiting for 1 picture…" beside the loader with Print anyway alone, which prints at once with what has loaded, the
+//     parked picture incomplete and the placeholder on the paper, the request still parked; a Reload landing under that
+//     wait rewrites the count in the same row with the button staying, and the landing's pictures released print as
+//     before; no timer. Before this the line read "Preparing 1 picture…" with no button, so the wait had no way through
+//     but the load. Escape during that wait was established by execution on the code before the button (2026-09-20): the
+//     bar rested with the card up and the line gone, nothing printed, and the release after it printed nothing; so the
+//     person had an exit and lacked a way through, and the button is the way through, not a second exit. The case
+//     executes both.
 // Each re-aim's deadline is executed by its own case: the repaint's in case (3c), a Reload landing mid-wait whose picture
 // is parked too, and the ask at the PRESS's deadline, not one restarted at the landing (the third review's tests-2: the
 // record's claim was pinned by a source-text census alone, and a re-aim restarting the full deadline left every leg
@@ -65,7 +75,7 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { inBrowser, openViewer, frames, REPORT, ROOT, ORIGIN, SID, MT2, UI, requireCjs, type Mode } from "./real-viewer-leg";
-import { isPrintKeys, isPrintChord, withTitle, WITHOUT_TITLE, OWN_ESCAPE_SEL, ANYWAY_WORDS, KEEP_WORDS, ANYWAY_TITLE, KEEP_TITLE } from "./file-print";
+import { isPrintKeys, isPrintChord, withTitle, WITHOUT_TITLE, OWN_ESCAPE_SEL, ANYWAY_WORDS, KEEP_WORDS, ANYWAY_TITLE, KEEP_TITLE, waitingWords } from "./file-print";
 import { DEFAULT_CHORDS } from "./commands";
 
 const SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8" fill="black"/></svg>';
@@ -1137,6 +1147,103 @@ test("(5b) the deadline's ask is written into the wait's line: the row marked du
     await frames(page, 6);
     assert.equal((await prints(page)).length, 0);
     await page.evaluate(() => { (window as any).FV.setPrintSettleMs(null); });
+    assert.deepEqual(s.errors, [], "no script error");
+    await page.close();
+  });
+});
+
+// ── (15) Keep waiting's open-ended wait: Print anyway on its line, and Escape ──────────────────────
+
+test("(15) Keep waiting's open-ended wait carries one word button, Print anyway: after Keep waiting the line reads \"Waiting for 1 picture…\" beside the loader with Print anyway alone (FAILS BEFORE: the line read \"Preparing 1 picture…\" with no button, so the wait had no way through but the load); pressing it prints once with the parked picture still incomplete and the placeholder on the paper, the request still parked, the keyboard on the Print button, and the bar rests; no print on any timer meanwhile; a Reload landing under that wait re-aims it and rewrites the count in the same row, the button staying, and the landing's pictures released print once with every picture complete; Escape during that wait rests the bar with the card up and nothing printed, and the release after it prints nothing (the exit the wait already had: established by execution on the code before the button, 2026-09-20)", { timeout: 120000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const WAITING_ONE = waitingWords(1), WAITING_TWO = waitingWords(2);
+    const ANYWAY_BTN = '#fileview-print-line button:has-text("' + ANYWAY_WORDS + '")';
+    const KEEP_BTN = '#fileview-print-line button:has-text("' + KEEP_WORDS + '")';
+    const loaderOn = (page: any): Promise<boolean> => page.evaluate(() => !!document.querySelector("#fileview-print-line .fileview-print-load"));
+    const lineReads = (page: any, words: string): Promise<unknown> => page.waitForFunction((w: string) => (document.getElementById("fileview-print-line")?.firstChild?.textContent || "") === w, words, { timeout: 6000 });
+    // a: the gated note, Print without them, the ask, Keep waiting: the line with its one button; Print anyway prints at once
+    let s = await scene(browser, "pane", GATED_NOTE, { held: [SLOW] });
+    let { page } = s;
+    await waitGates(page, 1); await parked(s, [SLOW]);
+    await page.evaluate(() => { (window as any).FV.setPrintSettleMs(600); });
+    await page.click(PRINT_BTN);
+    await page.click(WITHOUT_BTN);
+    await askReached(page);
+    await page.click(KEEP_BTN);
+    let b = await bar(page);
+    assert.deepEqual({ phase: b.phase, line: b.line, buttons: b.buttons, titles: b.titles, loader: await loaderOn(page), lines: b.lines, busy: b.busy },
+      { phase: "preparing", line: WAITING_ONE, buttons: [ANYWAY_WORDS], titles: [ANYWAY_TITLE], loader: true, lines: 1, busy: true },
+      "FAILS BEFORE: the open-ended wait's line read \"Preparing 1 picture…\" with no button; now it reads the waiting words beside the loader with Print anyway alone");
+    await pause(page, 1000);   // a timer, since the absence of one is what is measured
+    assert.equal((await prints(page)).length, 0, "no print 1 s into the open-ended wait: no timer");
+    assert.equal((await bar(page)).line, WAITING_ONE, "still waiting");
+    await page.click(ANYWAY_BTN);
+    let p = await prints(page);
+    assert.equal(p.length, 1, "Print anyway printed once");
+    assert.deepEqual({ gates: p[0].gates, incomplete: p[0].incomplete.length, line: p[0].line }, { gates: 1, incomplete: 1, line: false }, "the placeholder on the paper, the parked picture still loading as the browser has it, the line gone before the print");
+    assert.ok(p[0].incomplete[0].includes("/docs/" + SLOW), "the parked picture is the incomplete one");
+    assert.ok(p[0].active.startsWith("BUTTON.fileview-btn.fileview-icon.fileview-print"), "the keyboard went from the word button to the Print button: " + p[0].active);
+    assert.equal(s.heldCount(SLOW), 1, "its request is still parked: nothing released it");
+    await frames(page, 1);
+    b = await bar(page);
+    assert.equal(b.phase, null, "the bar rested"); assert.equal(b.line, null); assert.equal(b.cardUp, true);
+    await s.release([SLOW]);
+    await frames(page, 6);
+    assert.equal((await prints(page)).length, 1, "the release after the print prints nothing more");
+    await page.evaluate(() => { (window as any).FV.setPrintSettleMs(null); });
+    assert.deepEqual(s.errors, [], "no script error");
+    await page.close();
+    // b: a Reload landing under the open-ended wait (the repaint's re-aim, under no deadline): the count follows in the same
+    // row and the button stays; the landing's two pictures released print once, the old body's picture still parked
+    s = await scene(browser, "pane", SLOW_NOTE, { held: [SLOW, SLOW2, SLOW3] });
+    page = s.page;
+    await parked(s, [SLOW]);
+    await page.evaluate(() => { (window as any).FV.setPrintSettleMs(600); });
+    await page.click(PRINT_BTN);
+    await askReached(page);
+    await page.click(KEEP_BTN);
+    await markLine(page);
+    b = await bar(page);
+    assert.deepEqual({ line: b.line, buttons: b.buttons }, { line: WAITING_ONE, buttons: [ANYWAY_WORDS] }, "the open-ended wait over one");
+    await reloadTo(page, TWO_SLOW_NOTE);
+    for (let i = 0; i < 100 && (s.heldCount(SLOW2) === 0 || s.heldCount(SLOW3) === 0); i++) await frames(page, 1);
+    assert.equal(s.heldCount(SLOW2) + s.heldCount(SLOW3), 2, "the landing's two pictures are requested and parked");
+    await lineReads(page, WAITING_TWO);
+    b = await bar(page);
+    assert.deepEqual({ marked: await lineMarked(page), buttons: b.buttons, titles: b.titles, lines: b.lines, phase: b.phase, loader: await loaderOn(page), prints: (await prints(page)).length },
+      { marked: true, buttons: [ANYWAY_WORDS], titles: [ANYWAY_TITLE], lines: 1, phase: "preparing", loader: true, prints: 0 },
+      "the landing: the count rewritten in the same row, the button and the loader staying, nothing printed");
+    await pause(page, 800);
+    assert.equal((await prints(page)).length, 0, "no print past the seam's deadline after the landing: the re-aim set no timer either");
+    await s.release([SLOW2, SLOW3]);
+    await printsReach(page, 1);
+    p = await prints(page);
+    assert.deepEqual({ n: p.length, incomplete: p[0].incomplete, line: p[0].line }, { n: 1, incomplete: [], line: false }, "the last settle prints as before, every <img> of the body complete");
+    assert.equal(s.heldCount(SLOW), 1, "the old body's picture never landed: nothing waited for it");
+    await frames(page, 1);
+    assert.equal((await bar(page)).phase, null, "the bar rested");
+    await page.evaluate(() => { (window as any).FV.setPrintSettleMs(null); });
+    assert.deepEqual(s.errors, [], "no script error");
+    await page.close();
+    // c: Escape during the open-ended wait: the exit the wait already had (the probe of 2026-09-20 read the same on the code before the button)
+    s = await scene(browser, "pane", SLOW_NOTE, { held: [SLOW] });
+    page = s.page;
+    await parked(s, [SLOW]);
+    await page.evaluate(() => { (window as any).FV.setPrintSettleMs(600); });
+    await page.click(PRINT_BTN);
+    await askReached(page);
+    await page.click(KEEP_BTN);
+    b = await bar(page);
+    assert.deepEqual({ phase: b.phase, buttons: b.buttons }, { phase: "preparing", buttons: [ANYWAY_WORDS] });
+    await page.keyboard.press("Escape");
+    await frames(page, 2);
+    b = await bar(page);
+    assert.deepEqual({ phase: b.phase, line: b.line, cardUp: b.cardUp, busy: b.busy, prints: (await prints(page)).length, parked: s.heldCount(SLOW) }, { phase: null, line: null, cardUp: true, busy: false, prints: 0, parked: 1 }, "Escape: the bar at rest, the line gone, the card up, nothing printed, the request still parked");
+    await s.release([SLOW]);
+    await frames(page, 8);
+    assert.equal((await prints(page)).length, 0, "the release after the Escape prints nothing: nothing waits");
+    await page.evaluate(() => { (window as any).FV.setPrintSettleMs(null); });
+    assert.equal(await page.evaluate(() => (window as any).FV.printSettleMs()), 8000, "the seam restored");
     assert.deepEqual(s.errors, [], "no script error");
     await page.close();
   });

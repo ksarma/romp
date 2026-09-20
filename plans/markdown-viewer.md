@@ -7988,7 +7988,23 @@ and the ask was wired off a separate `stalled` event from the resolver; that eve
 a repaint under the ask, and the machine reads it in the `stalled` phase only). "Print anyway" prints at once, the
 picture as the browser has it. "Keep waiting" waits on the load and error events alone, with no timer (`settlePictures`
 under a null deadline; the state carries `untimed`), until every pending picture settles, then prints; Escape cancels
-that open-ended wait, where the timed wait's Escape stays the viewer's, which closes the card. Nothing listens under the
+that open-ended wait, where the timed wait's Escape stays the viewer's, which closes the card. While that open-ended
+wait stands the line reads "Waiting for 1 picture…" or "Waiting for N pictures…" (`waitingWords`) beside the loader,
+with one word button, **Print anyway** (`ANYWAY_WORDS` and `ANYWAY_TITLE`, the ask's), which prints at once with what
+has loaded, the pictures still loading as the browser has them (the machine reads `anyway` in the `preparing` phase
+under `untimed` alone; the driver's `waitLine` builds the row and its `preparingLine` rewrites the count in place at a
+re-aim, so the button stays); the last settle prints as before, and nothing prints on a timer (romp-manager's ruling,
+2026-09-20, on the round-2 review's fresh-2 and the round-3 review's tests-4, ui-2 and extra5-3: the person chose to
+wait and the button completes that gesture with what has loaded; not an exit control, since Escape already left the
+wait; no timer, since a timer would print with a chosen picture missing and nothing said, the defect the ask closed;
+before this the line read "Preparing N pictures…" with no button, so the wait had no way through but the load).
+Escape's role there was established by execution in Chromium on the code before the button (2026-09-20): after Keep
+waiting, Escape rested the bar with the card up and the line gone, nothing printed, the parked request still parked
+and its release printing nothing; so the person had an exit and lacked a way through.
+file-print-driver-browser.test.ts case (15) executes the button, a Reload landing under that wait (the count rewritten
+in the same row, the button staying) and that Escape, FAILS BEFORE in its title; file-print-browser.test.ts case 4
+reads the line's words and its one button; file-print-egress-browser.test.ts case (3) counts the road (nothing asked,
+one print). Nothing listens under the
 ask: "Keep waiting" reads the body as it stands then, so a picture that landed meanwhile is not waited on again, and
 with none left loading the print runs at once. A failed picture (its error event) settles and prints as its label, then
 as now. Before this the print ran at the deadline, as the contract's clause (b) had it (the ask is the build's departure
@@ -8286,7 +8302,8 @@ _Avoid_ (a review finding, 2026-09-19).
   with none prints; Print anyway prints; Keep waiting resumes through the driver's prepare into an open-ended wait, or a
   print with nothing left; Escape or a second press under the ask disarms; a repaint under the ask counts again over any
   and rests over none, never printing, FAILS BEFORE: the count of none was the print act; Escape cancels the open-ended
-  wait and is left alone during the timed one), the words, the chord (`isPrintKeys` over the chord's keys and over other
+  wait and Print anyway prints under it, FAILS BEFORE: the event changed nothing during any wait; both are left alone
+  during the timed one), the words (the open-ended wait's among them), the chord (`isPrintKeys` over the chord's keys and over other
   keys and modifier sets, none of which is the chord), `settlePictures` over fake pictures and a fake clock (the
   incomplete pictures alone are waited on; load or error settles each; the deadline resolves with listeners off; a null
   deadline sets no timer and the events alone end the wait; nothing pending resolves at once with no timer; cancel), the
@@ -8329,7 +8346,8 @@ _Avoid_ (a review finding, 2026-09-19).
   inside the click handler; the deadline's ask over a picture whose route never answers, the deadline shortened to 300
   ms through the seam and restored (the line with Print anyway and Keep waiting and no print, FAILS BEFORE: the print
   ran at the deadline; Print anyway printing once with the picture as the browser has it; Keep waiting setting no timer,
-  1 s past the seam's deadline still waiting, and printing once at the picture's load with every `<img>` complete;
+  its line reading "Waiting for 1 picture…" with Print anyway alone, 1 s past the seam's deadline still waiting, and
+  printing once at the picture's load with every `<img>` complete;
   Escape and a second press under the ask, and Escape during the open-ended wait, printing nothing with the card up and
   the picture landing after the cancel printing nothing); the URL kind arming; a parked answer on the pane (Print
   disabled over the loader, aria-disabled and `data-print` reading disabled and the `disabled` property false; the
@@ -8388,6 +8406,12 @@ _Avoid_ (a review finding, 2026-09-19).
   and the ask standing, its words rewritten in the same row; FAILS BEFORE: the count read none and the question was
   called moot); and the ask written into the wait's row (the row marked during the wait is the row the ask stands in,
   the loader gone and the two word buttons in it, one line on the card; FAILS BEFORE: the ask was a fresh row).
+  Since the ruling of 2026-09-20: Keep waiting's open-ended wait with its one button (the line reading "Waiting for
+  1 picture…" beside the loader with Print anyway alone, FAILS BEFORE: "Preparing 1 picture…" with no button; Print
+  anyway printing once with the parked picture incomplete and the placeholder on the paper, the request still parked
+  and the keyboard on the Print button; a Reload landing under that wait rewriting the count in the same row with
+  the button staying, and the landing's pictures released printing once; Escape during that wait resting the bar
+  with the card up and nothing printed, the release after it printing nothing).
 - ui/webview/file-print-armed-browser.test.ts, under node first (the machine's `recount` event; `ownsEscape` over
   stand-ins: the keyboard inside a menu or a dialog, an open popup's trigger anywhere in the scope whatever the target,
   not an aria-expanded alone, not a scope with none; `printable` over stand-in trees: the open body, a closed details
@@ -8481,7 +8505,8 @@ _Avoid_ (a review finding, 2026-09-19).
   placeholders, one activated by hand under the armed line (its host once, the line and the title narrowing) and Print
   with them over the one left (its host once); (3) the wait (a Reload landing's pictures requested once and the print at
   the landing's picture's release; the deadline into the ask then Print anyway; the ask then Keep waiting and the route
-  released); (4) a <video poster> and an svg <image href> whose routes answer 404 (one probe per URL per press, over two
+  released; the ask then Keep waiting then Print anyway from the open-ended wait's line, nothing asked and one print);
+  (4) a <video poster> and an svg <image href> whose routes answer 404 (one probe per URL per press, over two
   presses) and an <img loading="lazy"> far below the fold (no request before the press, one at it); (5) a picture opened
   directly (a blob: URL, no request) and a PDF under the two launches the media leg uses (the headless shell's frame
   navigation to the blob and the /file tab through the stubbed window.open; the full Chromium build's own PDF viewer

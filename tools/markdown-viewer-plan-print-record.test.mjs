@@ -169,7 +169,7 @@ test('P2: the machine\'s phases and events are the record\'s: six phases with di
   assert.equal([...events.matchAll(/\{ kind: "/g)].length, 11, 'and no other');
 });
 
-test('P2: the deadline asks instead of printing, Print anyway prints, Keep waiting is an open-ended wait Escape cancels, and a repaint under the ask counts again', () => {
+test('P2: the deadline asks instead of printing, Print anyway prints, Keep waiting is an open-ended wait Escape cancels and whose line offers Print anyway (the ruling of 2026-09-20), and a repaint under the ask counts again', () => {
   assert.ok(P2.includes('after which the bar asks instead of printing (the third review, 2026-09-19): with a picture still loading the flow enters the `stalled` phase and the line reads "1 picture has not loaded." or "N pictures have not loaded." with **Print anyway** and **Keep waiting**'));
   // the words and the titles are the module\'s
   assert.ok(flow.includes('return n === 1 ? "1 picture has not loaded." : n + " pictures have not loaded.";'), 'the ask\'s words');
@@ -204,6 +204,24 @@ test('P2: the deadline asks instead of printing, Print anyway prints, Keep waiti
   assert.ok(TESTS.includes('the ask written into the wait\'s row (the row marked during the wait is the row the ask stands in'), 'the Tests list names it');
   assert.ok(P2.includes('"Keep waiting" waits on the load and error events alone, with no timer (`settlePictures` under a null deadline; the state carries `untimed`), until every pending picture settles, then prints; Escape cancels that open-ended wait, where the timed wait\'s Escape stays the viewer\'s, which closes the card.'));
   assert.ok(P2.includes('Nothing listens under the ask: "Keep waiting" reads the body as it stands then, so a picture that landed meanwhile is not waited on again, and with none left loading the print runs at once.'));
+  // the open-ended wait's line: the waiting words, one word button, and the machine's anyway under untimed alone (romp-manager's
+  // ruling, 2026-09-20: not an exit control, since Escape already left the wait, established by execution; no timer)
+  assert.ok(flow.includes('return n === 1 ? "Waiting for 1 picture…" : "Waiting for " + n + " pictures…";'), 'the open-ended wait\'s words');
+  assert.ok(P2.includes('While that open-ended wait stands the line reads "Waiting for 1 picture…" or "Waiting for N pictures…" (`waitingWords`) beside the loader, with one word button, **Print anyway** (`ANYWAY_WORDS` and `ANYWAY_TITLE`, the ask\'s), which prints at once with what has loaded'));
+  assert.ok(flow.includes('if (ev.kind === "anyway" && s.untimed === true) return { state: { phase: "printing", gated: 0, pending: 0 }, act: "print" };'), 'anyway prints under the open-ended wait alone');
+  inOrder(between(flow, 'case "preparing":', 'break;'), ['if (ev.kind === "ready")', 'if (ev.kind === "escape" && s.untimed === true)', 'if (ev.kind === "anyway" && s.untimed === true)'], 'the preparing phase: the verdict, then Escape and anyway under the mark');
+  assert.equal([...flow.matchAll(/ev\.kind === "anyway"/g)].length, 2, 'anyway is read twice: under the ask, and under the open-ended wait');
+  assert.ok(flow.includes('const waitWords = (n: number): string => (state.phase === "preparing" && state.untimed === true ? waitingWords(n) : preparingWords(n));'), 'the wait\'s words by the mark');
+  inOrder(between(flow, 'const waitLine = (n: number): void => {', '\n  };'), ['const row = showLine(waitWords(n), true);', 'if (state.phase !== "preparing" || state.untimed !== true) return;', 'b.textContent = ANYWAY_WORDS;', 'b.className = "fileview-btn fileview-err-act";', 'b.title = ANYWAY_TITLE;', 'feed({ kind: "anyway" });', 'row.appendChild(b);'], 'the wait\'s line: the words and the loader, then under the mark alone the one button');
+  assert.ok(flow.includes('case "wait": waitLine(state.pending); break;'), 'the wait act builds it');
+  assert.ok(P2.includes('not an exit control, since Escape already left the wait; no timer, since a timer would print with a chosen picture missing and nothing said, the defect the ask closed'), 'the ruling\'s two exclusions');
+  assert.ok(P2.includes('Escape\'s role there was established by execution in Chromium on the code before the button (2026-09-20): after Keep waiting, Escape rested the bar with the card up and the line gone, nothing printed, the parked request still parked and its release printing nothing; so the person had an exit and lacked a way through.'), 'Escape established, and the reading of it');
+  const driverLeg = read('ui', 'webview', 'file-print-driver-browser.test.ts');
+  assert.ok(driverLeg.includes('test("(15) Keep waiting\'s open-ended wait carries one word button, Print anyway:'), 'the driver leg\'s case (15)');
+  inOrder(between(driverLeg, 'test("(15) Keep waiting\'s open-ended wait', '\n});'), ['await page.click(KEEP_BTN);', '{ phase: "preparing", line: WAITING_ONE, buttons: [ANYWAY_WORDS], titles: [ANYWAY_TITLE], loader: true, lines: 1, busy: true }', 'await pause(page, 1000);', 'await page.click(ANYWAY_BTN);', '{ gates: 1, incomplete: 1, line: false }', 'await reloadTo(page, TWO_SLOW_NOTE);', 'await lineReads(page, WAITING_TWO);', '{ marked: true, buttons: [ANYWAY_WORDS], titles: [ANYWAY_TITLE], lines: 1, phase: "preparing", loader: true, prints: 0 }', 'await page.keyboard.press("Escape");', '{ phase: null, line: null, cardUp: true, busy: false, prints: 0, parked: 1 }'], 'case (15): the line after Keep waiting, no print on a timer, the button\'s print, the landing in the same row, then Escape');
+  assert.ok(read('ui', 'webview', 'file-print-browser.test.ts').includes('assert.deepEqual(b.buttons, ["Print anyway"], "one word button, the way through the open-ended wait'), 'the gated leg\'s case 4 reads the one button');
+  assert.ok(read('ui', 'webview', 'file-print-egress-browser.test.ts').includes('await road(s, "Keep waiting, then Print anyway from the open-ended wait\'s line", { printed: "window.print x1" }'), 'the egress road: one print, nothing asked');
+  assert.ok(TESTS.includes('Escape cancels the open-ended wait and Print anyway prints under it, FAILS BEFORE: the event changed nothing during any wait') && TESTS.includes('Since the ruling of 2026-09-20: Keep waiting\'s open-ended wait with its one button') && TESTS.includes('the ask then Keep waiting then Print anyway from the open-ended wait\'s line, nothing asked and one print'), 'the Tests list names the node case, the driver case and the egress road');
   // the driver: the ask in the armed line\'s shape, rewritten in place under a repaint; the recount under the ask
   const stall = between(flow, 'case "stall": {', '\n      }');
   inOrder(stall, ['const words = stalledWords(state.pending);', 'if (line && asked) { line.firstChild!.textContent = words; break; }', 'const row = line || showLine(words);', 'row.firstChild!.textContent = words;', 'while (row.firstChild!.nextSibling) row.firstChild!.nextSibling!.remove();', 'b.className = "fileview-btn fileview-err-act";', 'asked = true;'], 'the ask\'s line: the wait\'s row when one stands, its words rewritten and what followed them removed (round 4: the round-2 review\'s ui-2; file-print-driver-browser.test.ts case (5b) executes the same row)');
@@ -251,7 +269,7 @@ test('P2: the wait is re-aimed at a repaint and at each settle under the press\'
   assert.ok(flow.includes('observer.observe(host.body, { childList: true });'), 'the observer reads the body\'s children alone, which is why the insertion inside the root is silent');
   assert.ok(TESTS.includes('and the settle\'s re-aim under the press\'s deadline (a second parked picture inserted inside the rendered root mid-wait'), 'the Tests list names case (12)');
   // the wait's line is rewritten in place at a re-aim
-  assert.ok(flow.includes('const preparingLine = (n: number): void => {') && flow.includes('if (line && line.querySelector(".fileview-print-load")) { line.firstChild!.textContent = preparingWords(n); return; }'), 'the standing wait line\'s words change in place');
+  assert.ok(flow.includes('const preparingLine = (n: number): void => {') && flow.includes('if (line && line.querySelector(".fileview-print-load")) { line.firstChild!.textContent = waitWords(n); return; }'), 'the standing wait line\'s words change in place (the open-ended wait\'s words under the mark, and its button stays)');
   assert.ok(flow.includes('if (more > 0) { preparingLine(more); return; }') && between(flow, 'const reaim = (): void => {', '\n  };').includes('preparingLine(n);'), 'both re-aims go through it');
   assert.ok(P2.includes('rewritten in place when the wait\'s line stands (`preparingLine`'));
   // the repaint reaches the driver through its observer of the body (P7), not a report
@@ -475,8 +493,8 @@ test('P2: the wait\'s line carries the viewer\'s loader after its words, under o
   assert.ok(P2.includes('Beside the words the line carries the viewer\'s loader, the swirl, the wordmark and the three pulsing dots (`.fileview-load`, the markup file-view.ts\'s waits use, hidden from the status\'s announcement), inline on the words\' row under a rule of its own in both sheets, `.fileview-print-line .fileview-load`'));
   const show = between(flow, 'const showLine = (words: string, loading = false): HTMLElement => {', '\n  };');
   inOrder(show, ['row.textContent = words;', 'if (loading) {', 'load.className = "fileview-load fileview-print-load";', 'load.setAttribute("aria-hidden", "true");', '<img src="/media/romp-swirl-glyph.svg" alt=""><span>romp</span>', '<i class="fileview-dot"></i><i class="fileview-dot"></i><i class="fileview-dot"></i>', 'row.appendChild(load);'], 'the words first, then the loader');
-  assert.equal([...flow.matchAll(/showLine\(preparingWords\([^)]*\), true\)/g)].length, 2, 'every fresh preparing line loads: the wait act, and preparingLine\'s line when none stands (the re-aim and the settle\'s second look rewrite a standing one in place)');
-  assert.equal([...flow.matchAll(/showLine\(preparingWords\(/g)].length, 2, 'and no preparing line without the loader');
+  assert.equal([...flow.matchAll(/showLine\(waitWords\(n\), true\)/g)].length, 1, 'every fresh wait line loads: waitLine\'s one showLine, reached from the wait act and from preparingLine when none stands (the re-aim and the settle\'s second look rewrite a standing one in place)');
+  assert.equal([...flow.matchAll(/showLine\((preparingWords|waitingWords|waitWords)\(/g)].length, 1, 'and no wait line without the loader');
   const RULE = '.fileview-print-line .fileview-load { display: inline-flex; padding: 0; margin-left: 10px; font-size: 1em; vertical-align: middle; }';
   for (const sheet of ['styles.css', 'feed.css']) {
     const css = read('ui', 'webview', sheet);

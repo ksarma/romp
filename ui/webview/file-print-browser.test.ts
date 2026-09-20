@@ -17,7 +17,9 @@
 // the Raw view (a code view, no pictures) the same. (4) the deadline asks: a picture whose route never answers brings, at
 // the deadline (shortened through the module's test seam, FV.setPrintSettleMs), a line saying it has not loaded with
 // "Print anyway" and "Keep waiting", and no print; "Print anyway" prints once with the picture as the browser has it;
-// "Keep waiting" waits on the load and error events alone, with no timer, and prints once the picture lands, every <img>
+// "Keep waiting" waits on the load and error events alone, with no timer, its line reading "Waiting for 1 picture…" with
+// one word button, "Print anyway" (romp-manager's ruling, 2026-09-20; file-print-driver-browser.test.ts case (15) presses
+// it), and prints once the picture lands, every <img>
 // complete; Escape or a second press under the ask, and Escape during that open-ended wait, print nothing and leave the
 // card up (the third review, 2026-09-19: before this the print ran at the deadline and the picture printed as an empty box
 // with nothing said). (5) the
@@ -298,7 +300,7 @@ async function askAtDeadline(s: Scene): Promise<number> {
   return t0;
 }
 
-test("case 4: the deadline asks. A picture whose route never answers: at the deadline (shortened through the test seam) the line says it has not loaded, with Print anyway and Keep waiting, and window.print is NOT called (FAILS BEFORE: the print ran at the deadline, the picture incomplete); Print anyway prints once as the browser has it; Keep waiting sets no timer and prints once the picture lands, every <img> complete; Escape or a second press under the ask, and Escape during the open-ended wait, print nothing and leave the card up; the seam restored, the constant is 8 s", { timeout: 120000 }, async (t) => {
+test("case 4: the deadline asks. A picture whose route never answers: at the deadline (shortened through the test seam) the line says it has not loaded, with Print anyway and Keep waiting, and window.print is NOT called (FAILS BEFORE: the print ran at the deadline, the picture incomplete); Print anyway prints once as the browser has it; Keep waiting sets no timer, its line reading \"Waiting for 1 picture…\" with Print anyway alone, and prints once the picture lands, every <img> complete; Escape or a second press under the ask, and Escape during the open-ended wait, print nothing and leave the card up; the seam restored, the constant is 8 s", { timeout: 120000 }, async (t) => {
   await inBrowser(t, async (browser) => {
     // a: the ask, then Print anyway
     let s = await scene(browser, "pane", GATED_NOTE);
@@ -336,12 +338,12 @@ test("case 4: the deadline asks. A picture whose route never answers: at the dea
     await askAtDeadline(s);
     await page.click(KEEP_BTN);
     b = await bar(page);
-    assert.equal(b.phase, "preparing", "Keep waiting: the wait again"); assert.equal(b.line, "Preparing 1 picture…"); assert.equal(b.busy, true); assert.deepEqual(b.buttons, []);
+    assert.equal(b.phase, "preparing", "Keep waiting: the wait again"); assert.equal(b.line, "Waiting for 1 picture…", "the open-ended wait's words"); assert.equal(b.busy, true); assert.deepEqual(b.buttons, ["Print anyway"], "one word button, the way through the open-ended wait (romp-manager's ruling, 2026-09-20; the driver leg's case (15) presses it)");
     assert.equal((await loaderFacts(page)).present, true, "the wait's loader is back on the line");
     await page.evaluate((k: number) => new Promise<void>((r) => setTimeout(r, k)), 1000);   // a timer, since the absence of one is what is measured: three of the seam's deadlines
     assert.equal((await prints(page)).length, 0, "no print 1 s past the answer: Keep waiting set no deadline");
     b = await bar(page);
-    assert.equal(b.phase, "preparing", "still waiting"); assert.equal(b.line, "Preparing 1 picture…");
+    assert.equal(b.phase, "preparing", "still waiting"); assert.equal(b.line, "Waiting for 1 picture…");
     await s.release();
     await printsReach(page, 1);
     p = await prints(page);

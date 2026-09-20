@@ -8,7 +8,7 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { hideEdges } from "../test-dom-shim";   // every stand-in below that carries a tree edge (parentElement, children, childNodes, firstElementChild) hides it, the shared module's rule (ui/test-dom-shim.test.ts's ratchet)
-import { step, RESTING, DISABLED, armedWords, preparingWords, stalledWords, isPrintChord, isPrintKeys, settlePictures, collectPictures, bodyReady, rootKind, PRINT_SETTLE_MS, setPrintSettleMs, printSettleMs,
+import { step, RESTING, DISABLED, armedWords, preparingWords, waitingWords, stalledWords, isPrintChord, isPrintKeys, settlePictures, collectPictures, bodyReady, rootKind, PRINT_SETTLE_MS, setPrintSettleMs, printSettleMs,
   WITH_WORDS, WITHOUT_WORDS, ANYWAY_WORDS, KEEP_WORDS, TAB_WORDS, NO_TAB_WORDS, pdfFrameWindow, READY_ROOTS, NOT_READY_ROOTS, LINE_ROOTS, PDF_LOADER_ROOT, printable, figurePrintable, figureHidden, rendered, SVG_NS, PAINTS_SEL,
   type PrintState, type Picture, type Timers, type BodyLike, type PrintableNode, type FigureNode } from "./file-print";
 
@@ -55,9 +55,9 @@ test("no gated placeholder: one press begins the wait when pictures are loading 
   assert.equal(now.state.phase, "printing");
 });
 
-test("ready during the wait prints; printed rests; a press, an Escape or a choice during the wait or the print changes nothing", () => {   // the wait's verdict carries why (settled, or the deadline) and the count still loading: the machine reads both (the deadline's ask, below)
+test("ready during the wait prints; printed rests; a press, an Escape, a choice or Print anyway during the timed wait or the print changes nothing (the timed wait's line has no button; its deadline asks)", () => {   // the wait's verdict carries why (settled, or the deadline) and the count still loading: the machine reads both (the deadline's ask, below)
   const preparing: PrintState = { phase: "preparing", gated: 0, pending: 2 };
-  for (const ev of [{ kind: "press", gated: 0, pending: 0 }, { kind: "escape" }, { kind: "choose", withGated: true }, { kind: "prepare", pending: 1 }, { kind: "printed" }] as const) {
+  for (const ev of [{ kind: "press", gated: 0, pending: 0 }, { kind: "escape" }, { kind: "anyway" }, { kind: "choose", withGated: true }, { kind: "prepare", pending: 1 }, { kind: "printed" }] as const) {
     const r = step(preparing, ev);
     assert.equal(r.act, "none", ev.kind + " during the wait");
     assert.equal(r.state, preparing, ev.kind + " during the wait keeps the state");
@@ -65,7 +65,7 @@ test("ready during the wait prints; printed rests; a press, an Escape or a choic
   const printing = step(preparing, { kind: "ready", why: "settled", pending: 0 });
   assert.equal(printing.act, "print");
   assert.equal(printing.state.phase, "printing");
-  for (const ev of [{ kind: "press", gated: 2, pending: 0 }, { kind: "escape" }, { kind: "ready", why: "settled", pending: 0 }] as const) {
+  for (const ev of [{ kind: "press", gated: 2, pending: 0 }, { kind: "escape" }, { kind: "anyway" }, { kind: "ready", why: "settled", pending: 0 }] as const) {
     assert.equal(step(printing.state, ev).act, "none", ev.kind + " during the print");
   }
   const rested = step(printing.state, { kind: "printed" });
@@ -75,11 +75,13 @@ test("ready during the wait prints; printed rests; a press, an Escape or a choic
   assert.equal(step(RESTING, { kind: "printed" }).act, "none");
 });
 
-test("the words: one picture and many, for the armed line, the wait and the ask; the four buttons' words", () => {
+test("the words: one picture and many, for the armed line, the wait, the open-ended wait and the ask; the four buttons' words", () => {
   assert.equal(armedWords(1), "1 picture from another host is not loaded.");
   assert.equal(armedWords(2), "2 pictures from other hosts are not loaded.");
   assert.equal(preparingWords(1), "Preparing 1 picture…");
   assert.equal(preparingWords(3), "Preparing 3 pictures…");
+  assert.equal(waitingWords(1), "Waiting for 1 picture…");
+  assert.equal(waitingWords(3), "Waiting for 3 pictures…");
   assert.equal(stalledWords(1), "1 picture has not loaded.");
   assert.equal(stalledWords(3), "3 pictures have not loaded.");
   assert.equal(WITH_WORDS, "Print with them");
@@ -140,7 +142,7 @@ test("the wait's verdict carries why and the count still loading: settled prints
   }
 });
 
-test("the open-ended wait: Escape cancels it, where the timed wait's Escape is left to the viewer; a press changes nothing in either; ready prints in both; the timed waits carry no mark", () => {
+test("the open-ended wait: Escape cancels it and Print anyway prints at once with what has loaded (FAILS BEFORE: the event changed nothing during any wait, so the open-ended wait had no way through but the load), where the timed wait's Escape is left to the viewer and its anyway changes nothing (its line has no button); a press changes nothing in either; ready prints in both; the timed waits carry no mark", () => {
   const timed = step(RESTING, { kind: "press", gated: 0, pending: 2 }).state;
   assert.equal(timed.untimed, undefined, "the press's wait carries the deadline");
   assert.equal(step(timed, { kind: "escape" }).act, "none", "Escape during the timed wait is the viewer's (it closes the card, whose close cancels the wait)");
@@ -151,6 +153,13 @@ test("the open-ended wait: Escape cancels it, where the timed wait's Escape is l
   const esc = step(open, { kind: "escape" });
   assert.equal(esc.act, "disarm", "Escape cancels the open-ended wait: no deadline would end it");
   assert.equal(esc.state.phase, "resting");
+  const anyway = step(open, { kind: "anyway" });
+  assert.equal(anyway.act, "print", "FAILS BEFORE: Print anyway on the open-ended wait's line prints at once with what has loaded (romp-manager's ruling, 2026-09-20); before this the event changed nothing during any wait, so the open-ended wait had no way through but the load");
+  assert.equal(anyway.state.phase, "printing");
+  assert.equal(anyway.state.untimed, undefined, "the print carries no mark");
+  assert.equal(step(anyway.state, { kind: "printed" }).act, "rest", "the print Print anyway began rests as any print does");
+  assert.equal(step(timed, { kind: "anyway" }).act, "none", "the timed wait's line has no Print anyway button, so the event changes nothing there: its deadline asks");
+  assert.equal(step(chosen, { kind: "anyway" }).act, "none", "the armed line's choice begins a timed wait too, with no button");
   assert.equal(step(open, { kind: "press", gated: 0, pending: 0 }).act, "none", "a press during the open-ended wait changes nothing, as during the timed one");
   assert.equal(step(open, { kind: "ready", why: "settled", pending: 0 }).act, "print", "every picture settled: the print");
   assert.equal(step(open, { kind: "ready", why: "deadline", pending: 1 }).act, "stall", "a deadline verdict during the open-ended wait would ask again (none comes: the wait sets no timer)");
