@@ -707,7 +707,8 @@ function elementChildren(body: BodyLike): BodyChild[] {
  *  `body` token in the viewer's source that file-print.test.ts's census can class (the rule, not a roster of method names):
  *  a call of a seating method has each seated argument read down to the `el("<tag>", "<class>")` that builds it; a call, an
  *  assignment, a further access or a bare read the census knows seats nothing passes; a bare `body` passes as a
- *  declaration, a parameter, a property key, a comparison operand or an argument to a callee the census lists as read by
+ *  declaration, a parameter, a property key, a comparison operand, the action-context accessor at its one declared site
+ *  (`body: () => body` inside `const ctx: FileViewActionCtx = {`) or an argument to a callee the census lists as read by
  *  hand; and every other `body` token fails the census with its line (a computed name, a seating method handed out or
  *  reached through call, bind or apply, a member it has not seen, an alias, a parenthesised or cast receiver, a callee it
  *  does not list). The census derives the seated set from file-view.ts, holds it equal to these three
