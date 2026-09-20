@@ -1,5 +1,6 @@
 """The sitecustomize.py the no-SDK controls hand a spawned host on PYTHONPATH (tests/test_session_host.py and
-tests/test_session_host_sdk_pin.py), and the two assertions every such control makes afterwards.
+tests/test_session_host_sdk_pin.py), the probe that asks a child interpreter whether it imports the SDK (two questions,
+interpreter_imports_sdk's docstring tells them apart), and the two assertions every such control makes afterwards.
 
 The blocker hides an installed claude_agent_sdk from the child: sys.modules[name] = None makes the import raise
 ModuleNotFoundError and importlib.util.find_spec answer None, so bin/romp-session-host's launcher falls through to
@@ -30,13 +31,27 @@ SITECUSTOMIZE = (
     "        f.write('sdk_on_path=%%s' %% on_path)\n" % WITNESS_ENV)
 
 
-def interpreter_imports_sdk() -> bool:
-    """Whether a child of sys.executable started with this process's environment, minus ROMP_SDK_SITE and PYTHONPATH,
-    imports claude_agent_sdk on its own. Asked of a CHILD because this process's own find_spec is the wrong witness:
+def interpreter_imports_sdk(env=None, *, strip_pythonpath: bool = True) -> bool:
+    """Whether a child of sys.executable started with `env` (this process's environment when None), minus ROMP_SDK_SITE,
+    imports claude_agent_sdk. One probe, two questions, told apart by `strip_pythonpath`:
+
+    - True, the default, the WITNESS question: what the interpreter has ON ITS OWN, PYTHONPATH dropped too. The no-SDK
+      controls (tests/test_session_host.py and tests/test_session_host_sdk_pin.py) ask this to check the blocker's
+      witness, because each REPLACES its host's PYTHONPATH with the blocker's site: that host took no SDK from the
+      parent's PYTHONPATH, so what the blocker hid has to agree with the interpreter alone.
+    - False, the GATE question: what a host spawned with `env` as given imports, PYTHONPATH kept. tests/test_session_host.py's
+      _host_imports_sdk asks this of the environment HostProcess._start hands a host, which inherits the parent's
+      PYTHONPATH. Asking the witness question there (review round 3 found it, 2026-09-20) gated "no SDK" for a host whose
+      SDK was reachable through PYTHONPATH alone, so where the run required the SDK that module's switch case failed and
+      its two SDK-transport cases skipped, both wrongly; and it would gate "SDK" for a host the parent's PYTHONPATH hides
+      it from.
+
+    Asked of a CHILD because this process's own find_spec is the wrong witness for either question:
     tests/test_host_transport.py puts the machine's SDK venv on THIS process's sys.path, which no child inherits."""
-    env = dict(os.environ)
+    env = dict(os.environ if env is None else env)
     env.pop("ROMP_SDK_SITE", None)
-    env.pop("PYTHONPATH", None)
+    if strip_pythonpath:
+        env.pop("PYTHONPATH", None)
     probe = subprocess.run([sys.executable, "-c",
                             "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('claude_agent_sdk') else 1)"],
                            env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=60)
