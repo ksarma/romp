@@ -352,17 +352,19 @@ class binds as SCRATCH, and TheCaseRostersNameEveryCase holds the list and the c
     what imported and _sdk_missing is False, builds over jd.STATE and passes; the run exits 0 and neither notice is in
     its output.
 
-The outer tests read a nested run's output by structure, never by the count of a phrase: the verbose per-phase lines
-(outcomes, a set per case), the verdicts by the test or scope each names (verdict, inherited, boundary: the first
-match, the ERRORS section's; carriers: the set of tests whose report opens with a head; boundary_scopes: the set of
-scopes named), the final summary line parsed (summary_mismatch, and the warned run's read of its warnings segment), and
-the presence or absence of a text (the
-judge fixture's, the exception group's header, the SDK notices), which the short summary cannot change since it only
-repeats what the ERRORS section already printed; the readers are the top-level helpers defined between nested_run and
-_NestedRun to which some call in this module passes the child's output as the first argument, the output being the
-second value nested_run returns, read through the names its unpacking binds where a run is made (setUpClass's cls.out);
-TheReadersRosterNamesEveryReader derives that population from the source by AST (reader_population), from the call
-sites and never from a parameter's spelling, and reads each name here. CI's pytest is
+The outer tests read a nested run's output by structure, never by the count of a phrase, through the readers, each
+named here once with what it reads (outcomes: the verbose per-phase lines, a set per case; verdict, inherited and
+boundary: the verdict by the test or scope each names, the first match, the ERRORS section's; carriers: the set of
+tests whose report opens with a head; boundary_scopes: the set of scopes named; summary_mismatch: the final summary
+line parsed, the warned run's read of its warnings segment beside it), and through the presence or absence of a text
+(the judge fixture's, the exception group's header, the SDK notices), which the short summary cannot change since it
+only repeats what the ERRORS section already printed; the readers are the top-level functions of this module to which
+some call passes the child's output as the first argument, the output being the second value nested_run returns, read
+through the names its unpacking binds where a run is made (setUpClass's cls.out); TheReadersRosterNamesEveryReader
+derives that population from the source by AST (reader_population), from the call sites and never from a parameter's
+spelling or from where in the file a function is defined, and holds the list above and the population equal both
+ways, the list read by shape (readers_roster_names: the parenthesis that follows the list's opening words, one entry
+per semicolon, the names before the entry's colon). CI's pytest is
 unpinned (the workflow installs the latest, 9.1.1
 today, the test venv's version here too), and pytest's short summary prints each error's message whole when CI is set
 in the environment or at -vv and trimmed to the terminal width otherwise, so a reader that counted the boundary text's
@@ -2663,8 +2665,8 @@ class TheProtectionIsWorded(unittest.TestCase):
 
 def reader_population(source=None):
     """The structured output readers a module defines, derived from its source by AST and keyed on a property of the
-    call sites, never on a parameter's spelling: the top-level functions defined between nested_run and _NestedRun to
-    which some call in the module passes the nested run's output as the first positional argument. The output is
+    call sites, never on a parameter's spelling or on where in the file a function is defined: the top-level functions
+    to which some call in the module passes the nested run's output as the first positional argument. The output is
     decided mechanically: nested_run returns (returncode, output), and the module binds that pair by tuple unpacking
     where a run is made (setUpClass: cls.rc, cls.out = nested_run(...)), so the output is whatever the unpacking's
     second target names, an attribute or a bare name, and a read of a name so bound (self.out, cls.out) is a read of
@@ -2672,13 +2674,10 @@ def reader_population(source=None):
     count as the output too, which can only put a helper ON the roster's demanded side, never off it. A nested_run
     result bound in any other shape (a bare name, an index) is a shape this does not read and raises, and so does a
     module with no binding at all, so the population cannot come back silently short of a reader. Returns (readers,
-    others, bindings): the readers, the region's other functions (called on the output at no site: _split takes a
-    match object), and the names the unpacking bound. `source` is this module's when None; a synthetic text pins the
-    derivation itself (TheReadersRosterNamesEveryReader)."""
+    bindings): the readers and the names the unpacking bound. `source` is this module's when None; a synthetic text
+    pins the derivation itself (TheReadersRosterNamesEveryReader)."""
     tree = ast.parse(inspect.getsource(sys.modules[__name__]) if source is None else source)
-    start = next(n.lineno for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "nested_run")
-    end = next(n.lineno for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "_NestedRun")
-    region = {n.name for n in tree.body if isinstance(n, ast.FunctionDef) and start < n.lineno < end}
+    functions = {n.name for n in tree.body if isinstance(n, ast.FunctionDef)}
     bindings = set()
     for node in ast.walk(tree):
         if not (isinstance(node, ast.Assign) and isinstance(node.value, ast.Call)
@@ -2697,12 +2696,33 @@ def reader_population(source=None):
         raise AssertionError("no unpacking of a nested_run result found: the derivation would read an empty output")
     readers = set()
     for node in ast.walk(tree):
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in region and node.args:
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in functions and node.args:
             first = node.args[0]
             name = first.attr if isinstance(first, ast.Attribute) else first.id if isinstance(first, ast.Name) else None
             if name in bindings:
                 readers.add(node.func.id)
-    return readers, region - readers, bindings
+    return readers, bindings
+
+
+READERS_ROSTER_OPENS = "the readers, each named here once with what it reads"
+
+
+def readers_roster_names(doc):
+    """The names the module docstring's roster of readers holds, read by shape from the collapsed docstring: the
+    parenthesis that follows READERS_ROSTER_OPENS, its entries split on semicolons, each opening with its name, or its
+    names joined by commas and "and", before the entry's colon. An entry in any other shape raises, so an entry the pin
+    cannot read is never passed over as prose. Names in roster order, duplicates kept for the pin to name."""
+    text = re.sub(r"\s+", " ", doc)
+    m = re.search(re.escape(READERS_ROSTER_OPENS) + r" \(([^()]*)\)", text)
+    if not m:
+        raise AssertionError("no roster in one parenthesis follows %r in the module docstring" % READERS_ROSTER_OPENS)
+    names = []
+    for entry in m.group(1).split("; "):
+        opener, colon, _ = entry.partition(": ")
+        if not colon or not re.fullmatch(r"[a-z_]\w*(?:, [a-z_]\w*)*(?: and [a-z_]\w*)?", opener):
+            raise AssertionError("a roster entry opens on no name before a colon: %r" % entry)
+        names.extend(re.split(r", | and ", opener))
+    return names
 
 
 # The refusal's rendered texts, the module's one copy of each: the two heads and the link clause's two texts. A case
@@ -2877,29 +2897,37 @@ class TheCaseRostersNameEveryCase(unittest.TestCase):
 
 
 class TheReadersRosterNamesEveryReader(unittest.TestCase):
-    """The module docstring's roster of structured output readers names every reader this module defines. The
-    population is derived from the source, never listed here: reader_population reads the call sites by AST, and a
-    helper is a reader when some call passes the nested run's output (the value the unpacking binds where a run is
-    made) as its first argument, whatever its parameter is called, so a reader added without its roster entry reds
-    this test. Until round 7 the derivation matched the spelling `out` in the parameter list, so a reader with any
-    other first-parameter name was outside the population with the module green (the round-6 review's B): the second
-    test plants that reader in a synthetic source and reads it found. In round 4 the roster omitted carriers, the
-    reader that round's delta added, with the module green: the PROTECTION needle pins two claim sentences and their
-    order, not the roster's names."""
+    """The module docstring's roster of structured output readers names every reader this module defines and no
+    other. The population is derived from the source, never listed here: reader_population reads the call sites by
+    AST, and a top-level function is a reader when some call passes the nested run's output (the value the unpacking
+    binds where a run is made) as its first argument, whatever its parameter is called and wherever in the file it is
+    defined; the roster is read by shape (readers_roster_names), and the two are held equal both ways, the failure
+    naming the missing and the extra names, so a reader added without its entry reds here and so does an entry whose
+    helper is gone. Until round 7 the derivation matched the spelling `out` in the parameter list, so a reader with
+    any other first-parameter name was outside the population with the module green (the round-6 review's B): the
+    second test plants that reader in a synthetic source and reads it found. The round-7 review found the first form
+    of this pin matching each derived name as a word anywhere in the roster paragraph's prose, one way only, so a
+    reader named with a word the prose carried (boundary, verdict, summary) had no entry with the module green and a
+    retired helper kept its entry, and found the population bounded to the functions defined between nested_run and
+    _NestedRun, so a reader defined elsewhere was outside it. In round 4 the roster omitted carriers, the reader that
+    round's delta added, with the module green: the PROTECTION needle pins two claim sentences and their order, not
+    the roster's names."""
 
-    def test_every_reader_is_named_in_the_roster(self):
-        readers, others, bindings = reader_population()
+    def test_every_reader_is_named_in_the_roster_and_no_other_name_is(self):
+        readers, bindings = reader_population()
         self.assertGreaterEqual(len(readers), 7, "a derived population that comes back short is a failure, not a pass: "
-                                "readers %r; in the region but passed the output at no call site %r; the output's bound "
-                                "names %r" % (sorted(readers), sorted(others), sorted(bindings)))
-        doc = re.sub(r"\s+", " ", __doc__)
-        roster = doc[doc.index("The outer tests read a nested run's output by structure"):doc.index(PROTECT_READS)]
-        for name in sorted(readers):
-            self.assertRegex(roster, r"\b%s\b" % re.escape(name), "the roster does not name the reader %s" % name)
+                                "readers %r; the output's bound names %r" % (sorted(readers), sorted(bindings)))
+        named = readers_roster_names(__doc__)
+        self.assertEqual(len(named), len(set(named)), "the roster names a reader twice: %r" % sorted(named))
+        self.assertEqual(set(named), readers, "the module docstring's roster of readers and the call sites differ: "
+                         "missing from it %r, in it with no reader %r"
+                         % (sorted(readers - set(named)), sorted(set(named) - readers)))
 
     def test_the_population_is_keyed_on_the_call_sites_and_not_on_a_parameters_spelling(self):
-        """A reader whose first parameter is not spelled `out` is found, a function spelled `out` that no call passes
-        the output to is not, a helper called on a literal is not, and the binding's name comes from the unpacking."""
+        """A reader whose first parameter is not spelled `out` is found, and so is one defined after the class that
+        makes the run; a function spelled `out` that no call passes the output to is not, a helper called on a literal
+        is not, and the binding's name comes from the unpacking. The roster reader accepts joined openers and refuses a
+        mis-shaped entry and a missing parenthesis."""
         synthetic = textwrap.dedent("""\
             def nested_run(text):
                 return 0, text
@@ -2922,12 +2950,22 @@ class TheReadersRosterNamesEveryReader(unittest.TestCase):
                     probe(self.result)
                     spelled("a literal")
                     _split(probe(self.result))
+                    later(self.result)
+
+            def later(text):
+                return text
             """)
-        self.assertEqual(reader_population(synthetic), ({"probe"}, {"spelled", "_split"}, {"result"}))
+        self.assertEqual(reader_population(synthetic), ({"probe", "later"}, {"result"}))
         with self.assertRaisesRegex(AssertionError, "no unpacking of a nested_run result"):
             reader_population(synthetic.replace("cls.rc, cls.result = nested_run(\"\")", "pass"))
         with self.assertRaisesRegex(AssertionError, "a shape reader_population does not read"):
             reader_population(synthetic.replace("cls.rc, cls.result = nested_run(\"\")", "cls.result = nested_run(\"\")"))
+        text = "x %s (a: one; b, c and d: two, with a comma; e_f: three). y" % READERS_ROSTER_OPENS
+        self.assertEqual(readers_roster_names(text), ["a", "b", "c", "d", "e_f"])
+        with self.assertRaisesRegex(AssertionError, "opens on no name before a colon"):
+            readers_roster_names(text.replace("e_f: three", "the third, a reader"))
+        with self.assertRaisesRegex(AssertionError, "no roster in one parenthesis"):
+            readers_roster_names("x %s. y" % READERS_ROSTER_OPENS)
 
 
 class TheMutationCellsApply(unittest.TestCase):
