@@ -167,7 +167,8 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   raw feed base, `held:bars:<gen>.<rev>` from the receiver's bars base), each
   omitted while its base holds no gen, which is every dial against a kernel that
   stamps no generation on its frames; never the page's own caps, whose held
-  member is the pair the page holds for its LOCAL kernel. A consumer that announces nothing and dials no `delta=1` (a bundle
+  member is the pair the page holds for its LOCAL kernel.
+  A consumer that announces nothing and dials no `delta=1` (a bundle
   before the cap; a relay dialed by a dashboard bundle before 2026-09-15; the
   VS Code extension before 2026-09-16) stays on the full-frame path, which
   keeps its 60 s repost of the unchanged frame; one that dials `delta=1`
