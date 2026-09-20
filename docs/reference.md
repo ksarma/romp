@@ -3219,11 +3219,12 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   rows here to `pusher.cycleJobsMs.<job>`: their `jobs.<job>` keys are gone
   from `stages_ms`, and a `jobs.<job>` row is the jobs thread's time under
   that name, where before it was every thread's; the nine do not compare
-  across a capture pair spanning the change, while the nineteen remaining
+  across a capture pair spanning the change, while the twenty remaining
   `jobs.<job>` container rows (the pass jobs) keep their names and their
   values: the act-now pass the dashboard's arms run on the WS handler thread
   closes no `jobs.<job>` container, so the jobs thread alone wrote those
-  nineteen. A job's part rows narrow too: the `jobs.autoNudge.<part>` rows
+  rows (nineteen on that day; `jobs.stateRootMode`, the state root's mode
+  re-check, joined the pass on 2026-09-20). A job's part rows narrow too: the `jobs.autoNudge.<part>` rows
   shed that pass's share, now counted under `stagesForeign` (the
   `stagesForeign` bullet below, since 2026-09-18). The `push.*` rows
   narrowed to the pusher's own work: the connect pushes' part, in those rows
@@ -5503,6 +5504,56 @@ never the previous numbers.
 State is written under `${XDG_STATE_HOME:-~/.local/state}/romp/`. Transcripts
 are read in place from where Claude Code writes them (`~/.claude/projects/`)
 and never copied.
+
+The state root's mode is checked, and the check has a consequence (since
+2026-09-20). Every romp tool makes the root owner-only (`0700`) when it
+loads, best-effort; the kernel reads the mode back at boot and re-reads it
+on a cadence (a read stands for 15 seconds; the housekeeping pass, every
+HTTP request and every WebSocket frame a client sends re-read it once it
+is older), and the same rule applies at every check. Four arms. One: a
+root writable by its group or by others (`0777`, `0770`, `0707`, `0722`
+and the like) is refused, because write access by another local user is
+what lets that user plant or replace entries under it. At boot the kernel
+prints one line naming the root, the mode read back and the remedy, and
+exits with code 2 before any thread starts (the manager restarts it and it
+refuses again). Found after boot, every request except `/healthz` and
+`/version` answers 503 with a JSON body (the error, the mode read back and
+a remedy with no filesystem path in it) and its route does not run, until
+the root reads tight again, when serving resumes on its own. A dashboard
+already connected over a WebSocket is not disconnected by the latch, but a
+frame it sends while the latch holds runs no operation: the kernel answers
+that socket one `stateRootRefused` frame (the 503 body plus `type` and
+`status`) per latch episode and drops the frame, and drops the episode's
+later frames without another answer; a new connection gets the 503. Pushes
+to an open socket keep flowing, and the kernel's background loops (the
+judges, the pusher, the housekeeping jobs) keep running and writing under
+the root while the latch holds: the latch stops serving, not the process.
+The manager's `/busy` poll answers 503 under the latch too, which the
+manager counts as a missed poll; after three consecutive misses (about
+nine seconds) it treats the kernel as unreachable and applies a parked
+deploy, and the restarted kernel, if the root still reads writable by
+others, refuses at boot with exit 2. Two: a root that is not `0700` but
+not writable by others (`0750`, `0755`, `0711`) is a privacy fault, not a
+code-execution one: one row in the dashboard's error center and one
+kernel-log line per transition, and no refusal. A root whose mode cannot
+be read (the check's `stat` failed, or the check itself raised) is
+reported the same way, as `unknown`, and lifts no latch: only a mode read
+back with no group or other write bit does, and the row that says serving
+resumed names that mode. Three: the re-check catches a root tightened at
+boot and loosened later; entering or leaving a state is said once, not
+once per pass. Four: a `chmod` or `mkdir` the repair could not run travels
+with its errno name and text on every one of these surfaces, since a chmod
+that could not run is not a quieter version of one that ran; a root that
+reads `0700` but that this user's `chmod` cannot change (a root another
+user owns) is one row and one line per transition with the verdict still
+`ok`. The check reads the mode of the path the root resolves to and
+nothing else: not the parent directories, not the owner, and not whether
+it is a directory; the repair chmods that resolved path. `/version`
+carries `stateRootMode` (`verdict`, `mode`, `err`, `remedy`, `checkedAt`,
+`refusingSince`) with no filesystem path, since that route answers with no
+token; the kernel log and the error center name the root. The remedy is
+`chmod 700` on the root, or, when the root is not this user's to change,
+making it this user's first.
 
 The self-updater's report, `update-report.json`, is read once, by the next
 kernel boot or by the running kernel's banner poll, and archived as

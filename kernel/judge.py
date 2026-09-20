@@ -175,7 +175,13 @@ STATE    = Path(os.environ.get("ROMP_STATE_DIR")   # per-kernel state root overr
 # enough to block other local users from reading anything beneath it. Runs on
 # import so every romp Python tool that uses STATE secures it; best-effort, and
 # since review round 2 of PR 789 (2026-09-19) the mode is read back afterwards
-# and said once on stderr when it is not 0700 (_state_root_mode_line).
+# and said once on stderr when it is not 0700 (_state_root_mode_line). Since
+# 2026-09-20 a failed mkdir or chmod is recorded with its errno
+# (_STATE_ROOT_REPAIR_ERROR) rather than only swallowed, and state_root_mode_check
+# below is the kernel's check: it re-attempts the chmod, reads the mode back and
+# returns a verdict (refuse when group or other can write the root, warn when it
+# is not 0700, unknown when it cannot be read), run at the kernel's boot and on a
+# cadence after it (kernel.py: _state_root_boot_check, _state_root_verdict).
 
 
 def _state_root_mode_line(root):
@@ -200,14 +206,104 @@ def _state_root_mode_line(root):
             "under it is only as private as its own mode" % (root, mode))
 
 
+def _errno_text(e):
+    """"ENAME: strerror" for an OSError, from its errno alone (errno.errorcode and os.strerror), never str(e), which
+    carries the path: "EPERM: Operation not permitted". An OSError raised with no errno reads as its type name and
+    its strerror when it has one."""
+    code = getattr(e, "errno", None)
+    if code is None:
+        return "%s: %s" % (type(e).__name__, getattr(e, "strerror", None) or "no errno")
+    return "%s: %s" % (errno.errorcode.get(code, "E%d" % code), os.strerror(code))
+
+
 try:
     STATE.mkdir(parents=True, exist_ok=True)
     os.chmod(STATE, 0o700)
-except OSError:
-    pass
+    _STATE_ROOT_REPAIR_ERROR = None
+except OSError as _repair_e:
+    # Recorded, not only swallowed (2026-09-20): a chmod that could not run is not a quieter version of one that ran.
+    # The CLI still starts (a failure here must not stop a tool); the kernel's state_root_mode_check reads this back
+    # and puts it, with its errno, on the surfaces the mode itself reaches.
+    _STATE_ROOT_REPAIR_ERROR = _errno_text(_repair_e)
 _STATE_ROOT_MODE_LINE = _state_root_mode_line(STATE)   # the line said at import, or None: read back, not assumed
 if _STATE_ROOT_MODE_LINE:
     sys.stderr.write(_STATE_ROOT_MODE_LINE + "\n")
+
+STATE_ROOT_REFUSE_MASK = 0o022    # a group or other WRITE bit on the root: another local user can create or replace
+#                                   entries under it, which is the cross-session code-execution road; refuse to serve
+
+
+def state_root_mode_check(root=None, repair=True):
+    """The state root's mode as a verdict, for the kernel's boot check and its re-check (2026-09-20). Returns a dict:
+    root (str), mode (int or None), modeText ("%04o" or None), err (str or None: a failed stat and/or a failed
+    repair, each as "ENAME: strerror"), verdict ("ok" | "warn" | "refuse" | "unknown"), line (the one sentence to
+    say; None only when the verdict is ok AND the repair ran or was not asked for), remedy (str) and t (time.time()).
+
+    With `repair` the best-effort chmod 0700 is re-attempted first, its OSError recorded with its errno and never
+    raised; without it, and for the module's own STATE, the import's recorded repair error stands in. The mode is
+    then read back. Verdict: a stat that fails is "unknown" (surfaced like warn); a mode with a group or other
+    write bit (mode & 0o022) is "refuse", since write access by another local user is what enables the
+    cross-session code-execution road; any other mode that is not 0700 is "warn", a privacy fault and not a
+    code-execution one; 0700 is "ok". The line names the root, the mode read back, the repair error when there is
+    one and the remedy: `chmod 700 <root>`, or, when the repair failed with EPERM or EACCES, that the root is not
+    this uid's to change. A root that reads 0700 but whose chmod failed (a root another uid owns) is verdict ok
+    WITH a line: the mode is right today and not this uid's to keep, and the failed chmod is the signal, so it
+    reaches every surface the mode does (review of 2026-09-20). Two conditions, two consequences: the kernel refuses
+    to serve on "refuse" and files an error-centre row on "warn", "unknown" and ok-with-a-repair-error (kernel.py:
+    _state_root_boot_check, _state_root_verdict). The check reads the mode of the path the root resolves to and
+    nothing else: not the parent directories, not the owner, not whether it is a directory; the repair chmods that
+    resolved path. tests/test_state_root_mode.py pins the discriminator."""
+    r = STATE if root is None else Path(root)
+    repair_err = None
+    if repair:
+        try:
+            os.chmod(r, 0o700)
+        except OSError as e:
+            repair_err = _errno_text(e)
+    elif root is None:
+        repair_err = _STATE_ROOT_REPAIR_ERROR
+    stat_err = None
+    try:
+        mode = stat.S_IMODE(os.stat(r).st_mode)
+    except OSError as e:
+        mode, stat_err = None, _errno_text(e)
+    if mode is None:
+        verdict = "unknown"
+    elif mode & STATE_ROOT_REFUSE_MASK:
+        verdict = "refuse"
+    elif mode != 0o700:
+        verdict = "warn"
+    else:
+        verdict = "ok"
+    errs = []
+    if stat_err:
+        errs.append("stat failed: " + stat_err)
+    if repair_err:
+        errs.append("chmod 700 failed: " + repair_err)
+    err = "; ".join(errs) or None
+    if repair_err and repair_err.split(":", 1)[0] in ("EPERM", "EACCES"):
+        remedy = "the root is not this uid's to change: make %s owned by this uid, then chmod 700" % r
+    else:
+        remedy = "chmod 700 %s" % r
+    mode_text = ("%04o" % mode) if mode is not None else None
+    fail = (" (%s)" % err) if err else ""
+    if verdict == "ok" and repair_err:
+        # the mode reads right, the chmod that keeps it so could not run: said, since the failed chmod is the signal
+        line = ("state root %s is mode 0700, but chmod 700 failed (%s): the mode is right today and not this uid's to "
+                "keep; %s" % (r, repair_err, remedy))
+    elif verdict == "ok":
+        line = None
+    elif verdict == "unknown":
+        line = ("state root %s could not be checked for its mode%s: every file under it is only as private as its "
+                "own mode; %s" % (r, fail, remedy))
+    elif verdict == "refuse":
+        line = ("state root %s is mode %s, writable by other local users (a group or other write bit)%s: romp refuses "
+                "to serve until it is 0700; %s" % (r, mode_text, fail, remedy))
+    else:
+        line = ("state root %s is mode %s, not 0700%s: every file under it is only as private as its own mode; %s"
+                % (r, mode_text, fail, remedy))
+    return {"root": str(r), "mode": mode, "modeText": mode_text, "err": err, "verdict": verdict, "line": line,
+            "remedy": remedy, "t": time.time()}
 NAMES    = STATE / "names"
 PROJECTS = Path(os.environ.get("CLAUDE_CONFIG_DIR") or str(HOME / ".claude")) / "projects"   # per-kernel Claude root (plans/multi-kernel.md phase 2)
 CAPDIR   = STATE / "captions"            # the new summaries/ — one .jsonl per transcript, keyed by unit id

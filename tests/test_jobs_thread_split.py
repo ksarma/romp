@@ -26,7 +26,8 @@ WALK_SID = "33333333-4444-5555-6666-777777777777"   # the walk test's own synthe
 
 PUSHER_JOBS = ("beginCheckpointCycle", "sessionsListing", "applyPendingOps", "turnNotify", "persistCheckpoints", "convergeCheckpoints",
                "bootRowBackstop", "kernelSample", "apiHealth")
-HOUSEKEEPING = ("liftSpentAwaiting", "deathSweep", "endOnIdle", "deferralSweep",
+HOUSEKEEPING = ("stateRootMode",   # the state root's mode re-check (2026-09-20), first: the premise of every write in the pass
+                "liftSpentAwaiting", "deathSweep", "endOnIdle", "deferralSweep",
                 "unreadableStores",   # this fork's unreadable-store warn, a stage of the jobs pass since the 2026-09-15 pull-in (the rulings' item 9)
                 "autoNudge", "interruptBlock",
                 "persistTickSeen", "persistIntrMarks", "persistSpendTrees", "autoPauseOnLimit", "usagePoll", "autoPauseOnSpend",

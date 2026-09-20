@@ -1243,7 +1243,8 @@ class _PerfStats:
     # thread owning neither loop's to stagesForeign
     CYCLE_JOBS = ("beginCheckpointCycle", "sessionsListing", "applyPendingOps", "turnNotify", "persistCheckpoints", "convergeCheckpoints",
                   "bootRowBackstop", "kernelSample", "apiHealth")
-    PASS_JOBS = ("liftSpentAwaiting", "deathSweep", "endOnIdle", "deferralSweep",
+    PASS_JOBS = ("stateRootMode",       # the state root's mode re-check (2026-09-20), first: the premise of every write in the pass
+                 "liftSpentAwaiting", "deathSweep", "endOnIdle", "deferralSweep",
                  "unreadableStores",   # the fork's unreadable-store warn (PR 322), a housekeeping stage on the jobs thread since the 2026-09-15 pull-in
                  "autoNudge", "interruptBlock", "persistTickSeen", "persistIntrMarks", "persistSpendTrees", "autoPauseOnLimit", "usagePoll",
                  "autoPauseOnSpend", "spendGuard", "autoResumeRetry", "autoResumeSession", "autoRetry", "idleQueueDrive", "clearDoneNotes")
@@ -3378,6 +3379,11 @@ def _version_info():
             # the API added beyond the shipped seed, and the last refresh failure — so a stale list
             # is a visible fact in `romp version`, never a guess
             "modelCatalog": _catalog_public_status(),
+            # the state root's mode as last checked (2026-09-20): verdict ok | warn | refuse | unknown (unchecked before
+            # the boot check), the mode read back, the check's error with its errno, a path-free remedy, checkedAt and
+            # refusingSince while the 503 latch holds. The manager reads this route; it now carries the reason. No
+            # path: the root's default sits under $HOME (_state_root_public_status)
+            "stateRootMode": _state_root_public_status(),
             "autoNudge": _mv["autoNudge"],   # server-side toggle state → the gear checkbox reflects the kernel
             "compactSuggest": _mv["compactSuggest"],   # T208+: its gear checkbox rides the same read
             "conserveMemory": _conserve_on(),   # the T148 toggle: close idle tab-less claude processes
@@ -7076,7 +7082,10 @@ def _atomic_write(path, text, mode=None):
     state root (the reviewer's call, round 1): a file this helper has not rewritten since keeps its older
     mode until its next write, and the owner-only state root is what makes that interim safe: kernel/judge.py
     chmods it 0700 on import and, since review round 2 (2026-09-19), reads the mode back and says so once on
-    stderr when it is not 0700, so that premise is checked rather than assumed. tests/test_kernel_remotes_perms.py
+    stderr when it is not 0700, so that premise is checked rather than assumed. Since 2026-09-20 the check has a
+    consequence: a root writable by group or other stops the kernel at boot (exit 2) or, found later by the re-check,
+    latches every request but /healthz and /version to 503 until it reads tight again; a root not 0700 but not writable
+    by others files an error-centre row (_state_root_boot_check, _state_root_verdict). tests/test_kernel_remotes_perms.py
     pins the shape: one fchmod on the descriptor while the temp is still empty, no chmod on any path, the
     requested mode published exactly under a permissive and a restrictive umask, a leftover temp overwritten
     rather than refused, and a raising fchmod closing the descriptor and leaving no temp."""
@@ -22424,6 +22433,209 @@ _SDK_BOOT_PROBLEMS = []
 def _sdk_problem(text):
     _SDK_BOOT_PROBLEMS.append({"seq": len(_SDK_BOOT_PROBLEMS) + 1, "t": time.time(), "text": str(text)})
     del _SDK_BOOT_PROBLEMS[:-20]
+
+
+# ── the state root's mode (2026-09-20) ───────────────────────────────────────────────────────────────────
+# kernel/judge.py makes the state root 0700 at import, best-effort, and until 2026-09-20 the kernel took that
+# on trust: a root this uid could not tighten was said once on stderr and served anyway, and a root loosened
+# after boot was never read again. The root's mode is the premise of _atomic_write's interim-mode argument (a
+# file this uid wrote at a looser mode is not exposed because the root is owner-only), so the check lives here
+# with a consequence. Two conditions, two consequences: a root WRITABLE by group or other (mode & 0o022) is the
+# cross-session code-execution road (another local user can plant or replace entries under it), and the kernel
+# REFUSES TO SERVE: at boot by exiting 2 before any thread starts (_state_root_boot_check), at runtime by a
+# latch every request but /healthz and /version answers 503 from (Handler._state_root_gate) until the root reads
+# tight again; a root that is not 0700 but not writable by others (0750, 0755, 0711) is a privacy fault, not a
+# code-execution one: one error-centre row per transition (_sdk_problem) and a stderr line, no refusal. The
+# check re-runs on the jobs pass's cadence (_jobs_pass, `jobs.stateRootMode`), before every request and before
+# every WebSocket client frame (_state_root_verdict), each at most every STATE_ROOT_CHECK_S; a chmod that could
+# not run travels with its errno on every surface (the line, the row, /version's stateRootMode), a root that reads
+# 0700 but whose chmod fails included (verdict ok with a line: one row per transition). A verdict the check could
+# not read (unknown: the stat failed, or the check raised) lifts NO latch: only a mode read back with no group or
+# other write bit does, and the resumed row names that mode. Existing WebSocket clients are not force-closed by
+# the latch (out of scope; the docs say so), but a frame one sends while the latch holds runs no op: the socket is
+# answered one refusal frame per latch episode and the frame is dropped (_ws_state_root_gate); pushes to it keep
+# flowing, and the background loops keep running (the latch stops serving, not the process). New /ws upgrades
+# get the 503 like every other route.
+STATE_ROOT_CHECK_S = 15.0                      # the re-check cadence; ROMP_STATE_ROOT_CHECK_S overrides it (tests)
+_STATE_ROOT_MODE = None                        # the last check dict (jd.state_root_mode_check), None before the first
+_STATE_ROOT_REFUSAL = None                     # {t, line} while the root reads writable by other local users, else None
+_STATE_ROOT_LOCK = threading.Lock()
+
+
+def _state_root_check_interval():
+    """Seconds between two re-reads of the root's mode: ROMP_STATE_ROOT_CHECK_S when it parses, else STATE_ROOT_CHECK_S.
+    Read at call time so a test can set it after the kernel loaded."""
+    raw = (os.environ.get("ROMP_STATE_ROOT_CHECK_S") or "").strip()
+    if raw:
+        try:
+            return max(0.0, float(raw))
+        except ValueError:
+            pass
+    return STATE_ROOT_CHECK_S
+
+
+def _state_root_boot_check():
+    """The boot arm, called from main() right after jd._cred.check_boot_environment() and BEFORE any thread starts.
+    Verdict refuse (the root is writable by group or other): the loud line on stderr, naming the root, the mode read
+    back and the remedy, then SystemExit(2); the manager restarts the kernel and it refuses again, which is loud and
+    stops nothing that is not this kernel (credentials.py's check_boot_environment is the start-time refusal this
+    matches, RuntimeError there since the manager logs the traceback; here the one line is the whole message, so
+    the exit code carries it). Verdict warn or unknown, or ok with a repair error (the root reads 0700 but this uid's
+    chmod failed: the failed chmod is the signal): the line on stderr and one error-centre row (_sdk_problem), and
+    the boot goes on. Verdict ok with no line: nothing said. The check is stored for /version (stateRootMode) and
+    as the re-check's previous state, so the first runtime pass files no second row for the same state."""
+    global _STATE_ROOT_MODE
+    chk = jd.state_root_mode_check(repair=True)
+    with _STATE_ROOT_LOCK:
+        _STATE_ROOT_MODE = chk
+    if chk["verdict"] == "refuse":
+        sys.stderr.write("romp-kernel: %s. romp did NOT start.\n" % chk["line"])
+        raise SystemExit(2)
+    if chk["line"]:
+        sys.stderr.write("romp-kernel: %s\n" % chk["line"])
+        _sdk_problem(chk["line"])
+    return chk
+
+
+def _state_root_key(chk):
+    """The state the transition rule compares: the verdict, except that ok WITH a repair error is its own state
+    ("ok+repair": the root reads 0700 but this uid's chmod failed), so entering it files one row and staying in it
+    files none. None for no check."""
+    if chk is None:
+        return None
+    if chk["verdict"] == "ok" and chk.get("err"):
+        return "ok+repair"
+    return chk["verdict"]
+
+
+def _state_root_unknown_check(exc_text, now):
+    """The check dict _state_root_verdict caches when jd.state_root_mode_check itself raised (not an OSError, which it
+    catches): verdict unknown with the exception's type name in err, so the cache is refreshed, one row files per
+    transition and the traceback is said once, not on every request."""
+    root = str(jd.STATE)
+    return {"root": root, "mode": None, "modeText": None, "err": "check raised: " + exc_text, "verdict": "unknown",
+            "line": ("state root %s could not be checked for its mode (the check raised %s): every file under it is only "
+                     "as private as its own mode; chmod 700 %s" % (root, exc_text, root)),
+            "remedy": "chmod 700 %s" % root, "t": now}
+
+
+def _state_root_verdict(now):
+    """The runtime arm: the root's current verdict, re-read (jd.state_root_mode_check, repair=True) when the cached check
+    is older than the interval, and the transition rule applied under one lock so two roads (the jobs pass and a
+    request) never file one transition twice. Entering refuse latches _STATE_ROOT_REFUSAL = {t, line}, says the line
+    on stderr and files it as an error-centre row; a mode read back with no group or other write bit (verdict ok or
+    warn) while the latch holds clears it, says so and files a "serving resumed" row naming that mode; an unknown
+    verdict (the stat failed, or the check raised) lifts nothing: a mode the check could not read is no evidence the
+    root is tight, so the latch stands and the unknown row says so. Entering warn, unknown, or ok with a repair
+    error (_state_root_key) says the line and files one row per transition, never one per pass; a check that stays
+    in one state says nothing. A check that raises (not an OSError: state_root_mode_check catches those) is cached as
+    an unknown check with the exception's type name (_state_root_unknown_check) and its traceback is said once, on the
+    transition, so a persistent raise neither fails open into a stale cache nor repeats on every request. Returns
+    the verdict string. The cache answers while its age, `now` minus the check's time.time(), is inside
+    [0, interval); a negative age (the jobs pass hands an int second, which can trail a float check time within the
+    same second, or a clock stepped back) re-reads rather than trusting a check the caller's clock says has not
+    happened."""
+    global _STATE_ROOT_MODE, _STATE_ROOT_REFUSAL
+
+    def fresh(chk):
+        return chk is not None and 0 <= (now - float(chk.get("t") or 0)) < _state_root_check_interval()
+    prev = _STATE_ROOT_MODE
+    if fresh(prev):
+        return prev["verdict"]
+    with _STATE_ROOT_LOCK:
+        prev = _STATE_ROOT_MODE
+        if fresh(prev):
+            return prev["verdict"]                        # another thread re-read it while this one waited
+        tb = None
+        try:
+            chk = jd.state_root_mode_check(repair=True)
+        except Exception as e:
+            tb = traceback.format_exc()
+            chk = _state_root_unknown_check(type(e).__name__, time.time())
+        _STATE_ROOT_MODE = chk
+        entered = _state_root_key(chk) != _state_root_key(prev)
+        v = chk["verdict"]
+        if v == "refuse":
+            if _STATE_ROOT_REFUSAL is None:
+                _STATE_ROOT_REFUSAL = {"t": chk["t"], "line": chk["line"]}
+                sys.stderr.write("romp-kernel: %s. Every request but /healthz and /version answers 503 until then.\n"
+                                 % chk["line"])
+                _sdk_problem(chk["line"])
+            return v
+        if v == "unknown":
+            # no mode was read: the latch, if it holds, stands (a root that cannot be stat'ed is not one read tight)
+            if entered:
+                held = ". The 503 latch stands until a mode is read back" if _STATE_ROOT_REFUSAL is not None else ""
+                sys.stderr.write("romp-kernel: %s%s\n" % (chk["line"], held))
+                if tb:
+                    sys.stderr.write(tb)
+                _sdk_problem(chk["line"] + held)
+            return v
+        if _STATE_ROOT_REFUSAL is not None:               # ok or warn: a mode was read, and it has no group or other write bit
+            _STATE_ROOT_REFUSAL = None
+            line = ("state root %s is mode %s again (not writable by other local users): serving resumed"
+                    % (chk["root"], chk["modeText"]))
+            sys.stderr.write("romp-kernel: %s\n" % line)
+            _sdk_problem(line)
+        if chk["line"] and entered:                       # warn, or ok with a repair error
+            sys.stderr.write("romp-kernel: %s\n" % chk["line"])
+            _sdk_problem(chk["line"])
+        return v
+
+
+def _state_root_public_status():
+    """/version's stateRootMode block: verdict ("unchecked" before the boot check ran), mode as "%04o" or null, err,
+    remedy, checkedAt and refusingSince (the latch's time, or null). NO FILESYSTEM PATH: /version is auth-exempt and
+    its contract is no paths (_version_info's docstring; the state root's default sits under $HOME and names the
+    user), so the remedy here says "the state root" where the stderr line and the error-centre row name it; err is
+    built from errno alone (jd._errno_text), never from an exception's text."""
+    chk = _STATE_ROOT_MODE
+    latch = _STATE_ROOT_REFUSAL
+    if chk is None:
+        return {"verdict": "unchecked", "mode": None, "err": None, "remedy": None, "checkedAt": None,
+                "refusingSince": None}
+    return {"verdict": chk["verdict"], "mode": chk["modeText"], "err": chk["err"],
+            "remedy": _state_root_public_remedy(chk), "checkedAt": int(chk["t"]),
+            "refusingSince": int(latch["t"]) if latch else None}
+
+
+def _state_root_public_remedy(chk):
+    """The check's remedy with the root's path replaced by the words "the state root" (the path is on stderr and in the
+    error centre, both this uid's surfaces; /version and the 503 body answer before the token gate)."""
+    return str(chk.get("remedy") or "").replace(chk.get("root") or "\0", "the state root")
+
+
+def _state_root_refused_body():
+    """The 503 body every gated route answers under the latch: the error, the mode read back and the path-free remedy
+    (the reason _state_root_public_status gives). The full line, with the path, is on stderr and in the error centre."""
+    chk = _STATE_ROOT_MODE or {}
+    return {"error": "the state root is writable by other local users", "mode": chk.get("modeText"),
+            "remedy": _state_root_public_remedy(chk) if chk else "chmod 700 the state root"}
+
+
+def _ws_state_root_gate(client):
+    """The latch's WebSocket arm (review of 2026-09-20): run by the handler's read loop before every client frame is
+    dispatched, the third re-check road (a frame is a request: createSession, sendMessage, saveFile and setConserve
+    all write under the root). The mode is re-read when the cached check is stale (_state_root_verdict), and while the
+    latch holds the frame is dropped, no op runs, and the socket is answered ONE refusal frame per latch episode
+    ({type: "stateRootRefused", status: 503} plus the 503 body: the error, the mode read back, a path-free remedy),
+    keyed on the latch's time so a second episode is told again. Returns True when the frame is to be dropped. The
+    socket is not closed (out of scope; the docs say so): pushes to it keep flowing, so the page keeps its state and
+    sees the error-centre row, and its next frame after the root reads tight again acts as before. The frame goes
+    through _client_send like every other, so a dead socket is marked the usual way."""
+    try:
+        _state_root_verdict(time.time())
+    except Exception:
+        sys.stderr.write("state-root-mode (ws frame): %s\n" % traceback.format_exc())
+    latch = _STATE_ROOT_REFUSAL
+    if latch is None:
+        client.pop("stateRootRefusedAt", None)
+        return False
+    if client.get("stateRootRefusedAt") != latch["t"]:
+        client["stateRootRefusedAt"] = latch["t"]
+        body = dict(_state_root_refused_body(), type="stateRootRefused", status=503)
+        _client_send(client, json.dumps(body), ("stateRootRefused",))
+    return True
 
 
 def _auth_key_present():
@@ -65449,6 +65661,10 @@ def _jobs_pass(now, live_map):
         #                                   so the jobs below are the flat rows', whatever ran before on this thread
     _own_stat = _files_stat_pass_open(live_map)   # the dirty set taken, the prelude's observers read, the pass's shared ten-file
     #                                               snapshot opened when the caller did not (closed below; the cycle's finally too)
+    try:                                  # the state root's mode, re-read on this pass's cadence (2026-09-20): a root loosened after
+        _job_stage('stateRootMode', lambda: _state_root_verdict(now))   # boot latches the 503 gate, one tightened again lifts it;
+    except Exception:                     # FIRST, since the root's mode is the premise of every write below
+        sys.stderr.write("state-root-mode: %s\n" % traceback.format_exc())
     try:                                  # EXACT retraction first: dispatches returned → the stamp is spent,
         _job_stage('liftSpentAwaiting', lambda: _lift_spent_awaiting(now, live_map))   # so the nudge tick below never wakes a wait that already ended
     except Exception:
@@ -73169,6 +73385,29 @@ class Handler(BaseHTTPRequestHandler):
         return bool(TOKEN) and (_ct_eq((q.get("token") or [""])[0], TOKEN)
                                 or _ct_eq(self.headers.get("X-Romp-Token") or "", TOKEN))
 
+    def _state_root_gate(self, path):
+        """The one shared gate every method runs before routing (2026-09-20): the state root's mode is re-read when the
+        cached check is stale (_state_root_verdict, the road that matters: a request is what a loosened root exposes),
+        and while the refusal latch holds every path but /healthz and /version is answered 503 with a JSON body (the
+        error, the mode read back, a path-free remedy) and its route does not run. Returns True when it answered.
+        /healthz and /version keep answering (the manager reads /version, which carries the reason). Runs BEFORE
+        the token gate, so the body carries no filesystem path, like every other answer given before it. A POST's
+        body is still unread here, so the connection closes with the answer (the 403 path's shape). A check that
+        raises leaves the latch as it stood: the gate never takes the handler down. A client frame on an already-open
+        WebSocket runs the same rule in the read loop (_ws_state_root_gate)."""
+        try:
+            _state_root_verdict(time.time())
+        except Exception:
+            sys.stderr.write("state-root-mode (request): %s\n" % traceback.format_exc())
+        if _STATE_ROOT_REFUSAL is None or path in ("/healthz", "/version"):
+            return False
+        headers = None
+        if self.command == "POST":
+            self.close_connection = True
+            headers = {"Connection": "close"}
+        self._send(503, json.dumps(_state_root_refused_body()), "application/json", cache="no-cache", headers=headers)
+        return True
+
     def _file_slice(self, fp, q):
         """GET /file?slice=1[&anchor=slug] — the file preview popover's one fetch (T351): JSON with the kind, the title
         (the file's name), the text slice (a markdown or code file's head, or the section `anchor` names; a missing
@@ -73386,6 +73625,10 @@ class Handler(BaseHTTPRequestHandler):
         first). Approve only what the auth gate itself allows — the actual request
         still runs the full _authorize on arrival; this grants delivery, not access."""
         q = parse_qs(urlparse(self.path).query)
+        self._set_cookie = None
+        self._cors_origin = None
+        if self._state_root_gate(urlparse(self.path).path):   # the state-root latch (2026-09-20): a preflight under it is 503 too
+            return
         ok, _, _ = self._authorize(q)
         origin = self.headers.get("Origin")
         if not (ok and origin):
@@ -73413,6 +73656,8 @@ class Handler(BaseHTTPRequestHandler):
         # foreign origin — the federated dashboard — and a denial clears the echo).
         self._cors_origin = self.headers.get("Origin") if self._origin_ok() else None
         try:
+            if self._state_root_gate(u.path):             # the state-root latch (2026-09-20), before the token gate and the routes
+                return
             ok, self._set_cookie, why = self._authorize(q)
             self._cors_origin = self.headers.get("Origin") if ok else None   # echoed by _send (CORS delivery)
             if not ok:
@@ -73444,6 +73689,8 @@ class Handler(BaseHTTPRequestHandler):
         # foreign origin — the federated dashboard — and a denial clears the echo).
         self._cors_origin = self.headers.get("Origin") if self._origin_ok() else None
         try:
+            if self._state_root_gate(p):                  # the state-root latch (2026-09-20): every path but /healthz and /version
+                return                                    # answers 503 under it, /ws upgrades included; before the token gate
             if p == "/healthz":
                 # liveness probe — exempt from auth. X-Romp-Boot identifies THIS kernel process: the
                 # restart button reloads only when the id flips (a bare 200 can still be the old kernel
@@ -74206,6 +74453,8 @@ class Handler(BaseHTTPRequestHandler):
         # foreign origin — the federated dashboard — and a denial clears the echo).
         self._cors_origin = self.headers.get("Origin") if self._origin_ok() else None
         try:
+            if self._state_root_gate(u.path):             # the state-root latch (2026-09-20): 503 before the token gate, the body
+                return                                    # unread, the connection closed with the answer
             if u.path == "/push/ack":
                 # The push worker's word on one push (the ledger block above _push_ledger): {pid, stage: 'shown' |
                 # 'clicked', v}. AUTHENTICATED BY THE PID ALONE, ahead of _authorize on purpose: a worker's fetch
@@ -77668,7 +77917,8 @@ class Handler(BaseHTTPRequestHandler):
                     sys.stderr.write("ws: undecodable client frame dropped (op 0x%x, %d bytes)\n"
                                      % (op, len(payload or b"")))
                 try:
-                    self._dispatch_ws(msg, client)
+                    if not _ws_state_root_gate(client):    # the state-root latch (2026-09-20): under it the frame is dropped,
+                        self._dispatch_ws(msg, client)     # the socket told once per episode, and no op runs
                 except (BrokenPipeError, ConnectionResetError, OSError):
                     raise   # a genuine socket failure → let the outer handler tear the connection down
                 except Exception:
@@ -78581,6 +78831,11 @@ def main():
     # postal bus or the SDK backend spawn anything that could inherit it. RuntimeError: the
     # manager crash-loops the traceback into manager.log until the file is repaired (the serve token's shape).
     jd._cred.check_boot_environment()
+    # The state root's mode (2026-09-20): a root writable by group or other stops the kernel HERE too, with the line
+    # and exit code 2 (the manager restarts it and it refuses again); a root that is not 0700 but not writable by
+    # others files one error-centre row and the boot goes on. Before any thread: nothing serves from a root another
+    # local user can write to. Re-checked on the jobs pass and before every request (_state_root_verdict).
+    _state_root_boot_check()
     _ensure_bundles()
     try:                                                      # the diary boot sweep (2026-07-07): migrate every
         _death_boot_pass()                                    # deaths no kernel was up to see: stamp them
