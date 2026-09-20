@@ -263,8 +263,8 @@ the clone updates it:
   cannot read) whose source lies in a tracked project or is one it cannot read. A value it can read
   is resolved first and the real path judged. A name is readable only when every write to it in the
   command is a plain top-level `NAME=plain-string` the shell performs as spelled: no tilde opening
-  the value, no declaration flag that transforms it, no nameref reaching it, no name the shell fills
-  in, no subshell, pipeline, piped group or body scope, no wrapper argument, no call of a function
+  the value, no declaration flag at all, no `declare`, `typeset` or `local` (dash has none of the three; `export` and `readonly` with no option word are the two declarations every shell performs), no nameref reaching it, no name the shell fills
+  in, no subshell, pipeline, piped group or body scope, no `{ }` group opened after `&&`, `||` or `|`, no wrapper argument, no call of a function
   the command defines in any spelling, no subscript; any other construct that can write the name,
   listed here or not, leaves it unreadable, the doctrine a `read` and a loop variable already had.
   HOME, PWD, OLDPWD, `~+` and `~-` are read the same way: HOME after a plain top-level `HOME=<path>`
@@ -277,7 +277,7 @@ the clone updates it:
   script the shell reads from elsewhere (eval,
   xargs, a sourced file, trap, a command whose name is an expansion, a script held in a variable); a
   command that runs another command and is outside the guard's wrapper set (unshare, nsenter,
-  script, setarch, setpriv, strace, coproc and their kin); a link made by a writer outside the model
+  script, setarch, setpriv, strace and their kin); a link made by a writer outside the model
   (python, tar, rsync) that a later modelled write follows; shuf -o; a cd through CDPATH; and an
   opaque expansion from a cwd outside every project, leading or after a literal head outside every
   project (a `..` inside the value could climb into a project; from a cwd in a tracked project the

@@ -8,24 +8,32 @@
 // consumer line a side rests on is no longer in the source.
 //
 // THE METHOD. No parser is vendored (acorn is not in this tree), so the enumeration is a disciplined regex over the
-// module's top-level declarations: a line at column 0 of the form `const NAME = <init>` or `export const NAME = <init>`
-// whose initializer opens a Set (`new Set(`), an array (`[`), an object table (`{`), an `Object.fromEntries(` or a
-// `new RegExp(` (the interpreter write functions live in regex alternations). Two pseudo-lists are read from inside
-// extract: the writer cases (the `case '...'` labels of `switch (name) {` up to its `default:`) and the root markers
-// (the array markerAt iterates). THE BLIND SPOTS, stated: a list declared inside a function or a block (indented; the
-// read and mapfile option letters in assembledNameOperand, the cd option pattern, sedTargets's and perlTargets's option
-// handling, shellScript's option letters), a regex literal or a string holding an alternation (RESOLVED_NAME,
-// ARITH_ASSIGNED_EXPANSION, PY_ARG, the interpreter-name test), a `let` filled in later, a list built by a call
-// (`Object.keys(...)`, a spread copy) whose initializer does not open with one of the five forms, and Maps and WeakMaps,
-// which this file excludes on purpose (they are caches, not hand-maintained lists). A list added to the hook in any of
-// those shapes is not enumerated here; the enumeration is pinned against a synthetic source in the test so the shapes it
-// DOES read stay read.
+// module's top-level declarations: a line at column 0 of the form `const NAME = <init>`, `let NAME = <init>`, `var NAME =
+// <init>` or `export const NAME = <init>`, any spacing around the `=`, the initializer on the same line or on the next when
+// the line ends at the `=`, whose initializer opens a Set (`new Set(`), an array (`[`), an object table (`{`), an
+// `Object.fromEntries(` or a `new RegExp(` (the interpreter write functions live in regex alternations). Two pseudo-lists
+// are read from inside extract: the writer cases (the `case '...'` labels of `switch (name) {` up to that switch's own
+// `default:`, at its indentation) and the root markers (the array markerAt iterates). THE BLIND SPOTS, stated (round 5's
+// addendum, 2026-09-20: the census lens planted fourteen list shapes in scratch copies of the hook, each live on the write
+// side, and twelve landed green; three of those are read since, `var`, the split declaration and the spacing drift, and the
+// rest are named here): a list declared inside a function or a block (indented; the read and mapfile option letters in
+// assembledNameOperand, the cd option pattern, sedTargets's and perlTargets's option handling, shellScript's option
+// letters), a regex literal or a string holding an alternation (RESOLVED_NAME, ARITH_ASSIGNED_EXPANSION, PY_ARG, the
+// interpreter-name test), a `let` filled in later, a list built by a call (`Object.keys(...)`, `Object.freeze(...)`, a
+// spread copy) whose initializer does not open with one of the five forms, an inline literal at its point of use
+// (`['a', 'b'].includes(x)`, a list with no name), a second declarator on one line (`const A = 1, B = new Set(...)`), a
+// second `switch` over a word (only `switch (name) {` in extract is read), and Maps and WeakMaps, which this file excludes
+// on purpose (they are caches, not hand-maintained lists). A list added to the hook in any of those shapes is not
+// enumerated here, so the hook header's sentence that a planted list reds the test holds for the shapes this file reads
+// and for no other; the enumeration is pinned against a synthetic source in the test so the shapes it DOES read stay read.
 //
 // THE SIDES. A list's gap is the element nobody added. WRITE: a missing element makes the guard read a write as plain
 // sequence, as no write, or as a construct it need not follow, so the shell writes a tracked file the guard allowed.
 // REFUSE: a missing element makes the guard refuse (a false refusal, recoverable in one step). NONE: a text table whose
 // gap changes no verdict. Each side rests on a consumer line quoted here as `consumer`, which must appear in the source:
 // the classification is tied to the code that decides it, and a consumer rewritten without this table reds the test.
+// The side of a NEW entry is the author's to state (the census cannot derive it from the consumer), and the census reads
+// lists, never their elements: a missing element of a named list is what the side describes, not what the test catches.
 export const CENSUS = {
   WRITE_REDIRECTS: { side: 'WRITE', consumer: 'if (WRITE_REDIRECTS.has(r.op)) add(r.target,', why: 'an operator not listed is read as no write' },
   SHELLS: { side: 'WRITE', consumer: 'if (SHELLS.has(name)) {', why: 'a shell not listed is a command like any other and the script it runs is not read (measured: `ksh93 -c \'cp base/report.md docs/report.md\'` is allowed), the contract\'s unmodelled writer' },
@@ -34,7 +42,7 @@ export const CENSUS = {
   RESERVED: { side: 'WRITE', consumer: 'while (k < words.length && RESERVED.has(words[k].text)) k++;', why: 'a reserved word not listed at a segment\'s head is read as the command name and hides the command after it' },
   FRAME_PEEL: { side: 'WRITE', consumer: 'if (plainWord(w) && ((FRAME_PEEL.has(w.text)', why: 'a word the shell reads past that is not peeled hides the compound head, so no frame opens and a body that may not run is read as plain sequence (round 4\'s defect)' },
   TIME_OPTIONS: { side: 'WRITE', consumer: 'if (plainWord(w) && afterTime && TIME_OPTIONS.has(w.text))', why: 'a `time` option not listed stops the peel before the head' },
-  BODY_CLOSER: { side: 'WRITE', consumer: 'else if (head != null && Object.hasOwn(BODY_CLOSER, head)) frames.push({ kind: head, moved: false });', why: 'a compound head not listed opens no frame: the body\'s names stay readable and its cd is followed (the round-4 highs)' },
+  BODY_CLOSER: { side: 'WRITE', consumer: 'else if (head != null && Object.hasOwn(BODY_CLOSER, head)) {', why: 'a compound head not listed opens no frame: the body\'s names stay readable and its cd is followed (the round-4 highs; round 5\'s addendum added zsh\'s repeat and foreach, and each entry\'s opener and list flag, read by compoundBody: an opener wrong for its head would make a `{` in the body a brace body, closing the frame at the next `}`, a WRITE too)' },
   CLOSERS: { side: 'WRITE', consumer: 'if (head != null && Object.hasOwn(CLOSERS, head)) closeCompound(CLOSERS[head]);', why: 'derived from BODY_CLOSER, so a closer is missing only when its head is, the same gap; a closer edited out by hand would leave the frame open to the end of the command, a refusal' },
   COMPOUND_HEADS: { side: 'WRITE', consumer: 'COMPOUND_HEADS.has(compoundHeadOf(seg.words))) opened = true;', why: 'derived from BODY_CLOSER; readableHomeWrites stops reading a plain HOME= after a compound (the conservative side), so the derived set carries the table\'s gap' },
   ANSI_C_SHELLS: { side: 'REFUSE', consumer: 'const ansiCQuoting = shell == null || ANSI_C_SHELLS.has(shell);', why: 'a shell not listed gets the restricted reading of $\'...\', a word the hook cannot read' },
@@ -53,7 +61,7 @@ export const CENSUS = {
   NAME_OPERAND_COMMANDS: { side: 'WRITE', consumer: "|| !NAME_OPERAND_COMMANDS.has(cmd.name)) continue;", why: 'a reader or declaration not listed whose name operand the shell fills in poisons nothing, so a reassigned HOME, PWD or OLDPWD is read (M1)' },
   VAR_ASSIGNERS: { side: 'REFUSE', consumer: "if (cmd && (VAR_ASSIGNERS.has(cmd.name) || cmd.name === 'local')) {", why: 'an unlisted declaration command\'s NAME=VALUE operand is read by taintWord\'s lvalue shape and taints the name (zsh\'s `integer x=5`, the rule pin)' },
   VAR_POISONERS: { side: 'WRITE', consumer: 'if (cmd && (VAR_POISONERS.has(cmd.name) ||', why: 'a command not listed that runs text as shell (trap, a sourced file by another name) poisons nothing, so a name it may have written stays readable; the contract\'s scripts-read-from-elsewhere clause' },
-  INERT_DECLARATION_FLAGS: { side: 'REFUSE', consumer: '![...w.text.slice(1)].every((c) => INERT_DECLARATION_FLAGS.has(c))', why: 'a flag not listed taints every name of the declaration' },
+  ATTRIBUTE_ONLY_FLAGS: { side: 'NONE', consumer: '![...w.text.slice(1)].every((c) => ATTRIBUTE_ONLY_FLAGS.has(c))', why: 'since round 5\'s addendum no declaration flag keeps the name readable (bash rejects -r, -x and -g on export and readonly; declare and typeset are no commands of dash), so the table picks the refusal\'s text alone: a letter not listed names the flag, a listed one the shells\' disagreement, and either taints the name' },
   WRAPPED_CD_WHY: { side: 'NONE', consumer: 'block = WRAPPED_CD_WHY[w]', why: 'a text table: a wrapper not listed gets the external-cd text and the same unknown-directory verdict' },
   PY_OPEN: { side: 'WRITE', consumer: 'for (const m of t.matchAll(PY_OPEN)) {', why: 'a python write call not in the alternation is out of model (the contract\'s interpreter clause)' },
   PY_PATH_OPEN: { side: 'WRITE', consumer: 'for (const m of t.matchAll(PY_PATH_OPEN)) {', why: 'as PY_OPEN' },
@@ -68,13 +76,22 @@ export const CENSUS = {
 export const SIDES = new Set(['WRITE', 'REFUSE', 'NONE']);
 
 // The enumeration: [{ name, line, init }] for every top-level declaration the method reads, plus the two pseudo-lists.
-const DECL = /^(?:export )?(?:const|let) ([A-Za-z_$][\w$]*) = (new Set\(|\[|\{|Object\.fromEntries\(|new RegExp\()/;
+const DECL = /^(?:export )?(?:const|let|var) ([A-Za-z_$][\w$]*)\s*=\s*(new Set\(|\[|\{|Object\.fromEntries\(|new RegExp\()/;
+const DECL_SPLIT = /^(?:export )?(?:const|let|var) ([A-Za-z_$][\w$]*)\s*=\s*$/;   // the initializer on the next line
+const INIT = /^\s*(new Set\(|\[|\{|Object\.fromEntries\(|new RegExp\()/;
 export function enumerateLists(source) {
   const out = [];
   const lines = source.split('\n');
-  lines.forEach((l, i) => { const m = l.match(DECL); if (m) out.push({ name: m[1], line: i + 1, init: m[2] }); });
+  lines.forEach((l, i) => {
+    const m = l.match(DECL);
+    if (m) { out.push({ name: m[1], line: i + 1, init: m[2] }); return; }
+    const split = l.match(DECL_SPLIT);
+    const next = split && i + 1 < lines.length ? lines[i + 1].match(INIT) : null;
+    if (split && next) out.push({ name: split[1], line: i + 1, init: next[1] });
+  });
   const sw = source.indexOf('    switch (name) {');
-  const def = sw >= 0 ? source.indexOf('      default:', sw) : -1;
+  const defAt = sw >= 0 ? source.slice(sw).search(/\n {6}default:/) : -1;   // that switch's own default, at its indentation, not a deeper one inside a case
+  const def = defAt >= 0 ? sw + defAt : -1;
   if (sw >= 0 && def > sw) {
     const cases = [...source.slice(sw, def).matchAll(/case '([^']+)':/g)].map((m) => m[1]);
     out.push({ name: 'WRITER_CASES', line: source.slice(0, sw).split('\n').length, init: 'switch', items: cases });

@@ -331,8 +331,9 @@
 // already applied to a `read` and a loop variable, applied to assignment; a contract that states its boundary as a list is
 // falsified by the first construct nobody listed, which is why the rule replaces the list). The classes: C1 a tilde opening an
 // assignment value (plainValue: `~/` and `~` resolve through HOME, `~+` and `~-` through PWD and OLDPWD, a `~user` and a tilde
-// after a `:` leave the name unreadable); C2 a declaration flag that transforms the value (INERT_DECLARATION_FLAGS: `-g`, `-x`,
-// `-r` and `--` alone are inert; the attribute persists, so the taint is sticky); C3 a nameref (the target is tainted, or every
+// after a `:` leave the name unreadable); C2 a declaration flag that transforms the value (at this pass `-g`, `-x`, `-r` and
+// `--` alone were inert; since round 5's addendum no option word is, ATTRIBUTE_ONLY_FLAGS picks the refusal's text; the
+// attribute persists, so the taint is sticky); C3 a nameref (the target is tainted, or every
 // name when the target is one the shell fills in; `unset` does not free a nameref's target, refTargets); C4 an assembled name
 // operand (the resolved name is tainted when it resolves, every name when it does not); C5 scoping (a pipeline's tail, a `{ }`
 // group whose closing brace is piped or backgrounded, a wrapper's argument, an assignment-only segment's words read left to
@@ -386,13 +387,18 @@
 // omitted the two lists whose gap falls on the WRITE side, the compound-head frame push and CLOSERS, and that omission is
 // how a `select` missing from both slipped through round 3: an instrument built to bound the hand-maintained lists that
 // was itself a hand-maintained list, with a gap on the dangerous side. The census is DERIVED FROM THIS SOURCE at test time
-// instead (tools/romp-track-bash-guard-census.mjs, run by tools/romp-track-bash-guard.test.mjs): every top-level `const`
-// whose initializer is a Set, an array or an object table is enumerated by reading the module's text (the method and its
-// blind spots are stated in that file), the writer cases of extract's switch and the markers markerAt reads with them, and
-// each is classified by the side its GAP falls on (a missing element causes a WRITE the guard reads as plain or as no
-// write, or a false REFUSAL) against the consumer line that decides it, which must exist in this file. A list this file
-// gains that the census does not name, or one whose side is not classified, or a consumer line that moved, reds that
-// test; a list planted in a scratch copy reds it (measured with the change). The two write-side tables to know from the
+// instead (tools/romp-track-bash-guard-census.mjs, run by tools/romp-track-bash-guard.test.mjs): every column-0 `const`,
+// `let` or `var` whose initializer opens a Set, an array, an object table, an `Object.fromEntries(` or a `new RegExp(` is
+// enumerated by reading the module's text (the method and its blind spots are stated in that file), the writer cases of
+// extract's switch and the markers markerAt reads with them, and each is classified by the side its GAP falls on (a missing
+// element causes a WRITE the guard reads as plain or as no write, or a false REFUSAL) against the consumer line that decides
+// it, which must exist in this file. A list this file gains in one of those shapes that the census does not name, or one
+// whose side is not classified, or a consumer line that moved, reds that test; a list planted in a scratch copy in one of
+// the shapes the census reads reds it (measured with the change, and again by round 5's addendum's census lens, which
+// planted fourteen shapes: twelve landed green while live on the write side, three of those are read since, `var`, a
+// declaration split after its `=` and spacing drift, and the rest are named in the module as its blind spots, an inline
+// literal at its point of use, a second declarator, a second `switch`, a call, a string, a regex literal, a `let` filled in
+// later, a declaration inside a function). The two write-side tables to know from the
 // code: BODY_CLOSER (the compound heads with their closers, from which the frame push, CLOSERS and COMPOUND_HEADS all
 // read: a head not listed opens no frame, and a body that may not run is read as plain sequence) and PREFIXES (an unlisted
 // wrapper is read as its own command, an unmodelled writer by the contract, so the set is stated on the four surfaces and
@@ -408,8 +414,10 @@
 // a write through an alias the command makes (a hard link, `cp -l`, `cp -s`, `link`, a link whose source it cannot read)
 // whose source lies in a tracked project or is one it cannot read. A value it can read is resolved first and the real
 // path judged. A name is readable only when every write to it in the command is a plain top-level `NAME=plain-string`
-// the shell performs as spelled: no tilde opening the value, no declaration flag that transforms it, no nameref
-// reaching it, no name the shell fills in, no subshell, pipeline, piped group or body scope, no wrapper argument, no
+// the shell performs as spelled: no tilde opening the value, no declaration flag at all, no `declare`, `typeset` or `local`
+// (dash has none of the three; `export` and `readonly` with no option word are the two declarations every shell performs),
+// no nameref reaching it, no name the shell fills in, no subshell, pipeline, piped group or body scope, no `{ }` group
+// opened after `&&`, `||` or `|`, no wrapper argument, no
 // call of a function the command defines in any spelling, no subscript; any other construct that can write the name,
 // listed here or not, leaves it unreadable, the doctrine a `read` and a loop variable already had. HOME, PWD, OLDPWD,
 // `~+` and `~-` are read the same way: HOME after a plain top-level `HOME=<path>` assignment of its own, and none of
@@ -420,7 +428,7 @@
 // path inside an interpreter (a name, sys.argv, os.environ or process.env, a concatenation that does not open with a string
 // literal, or an escape sequence in the string, in python3 -c or node -e); a script the shell reads from elsewhere (eval, xargs, a sourced file, trap,
 // a command whose name is an expansion, a script held in a variable); a command that runs another command and is
-// outside the guard's wrapper set (unshare, nsenter, script, setarch, setpriv, strace, coproc and their kin); a link
+// outside the guard's wrapper set (unshare, nsenter, script, setarch, setpriv, strace and their kin); a link
 // made by a writer outside the model (python, tar, rsync) that a later modelled write follows; shuf -o; a cd through
 // CDPATH; and an opaque expansion from a cwd outside every project, leading or after a literal head outside every
 // project (a `..` inside the value could climb into a project; from a cwd in a tracked project the same word is
@@ -2251,13 +2259,18 @@ function unreadableExpandedNames(segments, homeWrites = new Set()) {
 // B2's own unknown-defaults-to-unreadable doctrine, already applied to a `read` and a loop variable, applied to
 // assignment). A name is readable only when every write to it in the command is a plain top-level `NAME=plain-string`
 // the shell performs as spelled: a word of a segment holding assignment words alone, in plain sequence (no if, loop,
-// case, subshell or function body, no `{ }` group that is piped or backgrounded, not after `&&`, `||` or `|`, not piped
+// case, subshell or function body, no `{ }` group that is piped or backgrounded or that was OPENED after `&&`, `||` or `|`
+// or behind `time`, not after `&&`, `||` or `|`, not piped
 // or backgrounded itself, no wrapper before it), the words of that segment read left to right as the shells perform them,
 // the value literal, non-empty, without whitespace or a glob character, and without a tilde the shell would expand (an
 // unquoted `~` opening the value or following a `:`, which bash, zsh and dash all expand there: `~/` and `~` resolve
-// through HOME, `~+` and `~-` through PWD and OLDPWD, when those are readable, and `~user` never); a declaration
-// (`export`, `declare`, `typeset`, `readonly`) counts as that write only with inert flags (INERT_DECLARATION_FLAGS: `-g`,
-// `-x`, `-r`, `--`). ANY OTHER CONSTRUCT THAT CAN WRITE THE NAME MAKES IT UNREADABLE from that construct to the end of the
+// through HOME, `~+` and `~-` through PWD and OLDPWD, when those are readable, and `~user` never); of the declarations only
+// `export NAME=plain-string` and `readonly NAME=plain-string` count as that write, and only with no option word (a `--`
+// before the operands aside): they are the two every shell performs, while `declare`, `typeset` and `local` are no commands
+// of dash (`x=docs/report.md; declare x=scratch/keep.md; cp base/report.md $x` wrote the tracked file in dash, measured
+// 2026-09-20, while bash and zsh assigned) and an option word on `export` or `readonly` is one bash rejects, assigning nothing,
+// while zsh may perform it (`export -r`, `readonly -r`, `-x`, `-g`; round 5's addendum, the freeze lens). ANY OTHER CONSTRUCT
+// THAT CAN WRITE THE NAME MAKES IT UNREADABLE from that construct to the end of the
 // command, and a plain write after it does not restore it (a declaration attribute persists, a nameref persists): a
 // declaration flag outside the inert set (`-l`, `-u`, `-i`, `-a`, `-A`, `-n`, zsh's `-L`, `-R` and their kin), a nameref
 // (`declare -n r=x` writes x through r), a subscript (`x[0]=`, `x[1,8]=`, `printf -v 'x[0]'`), `+=`, an assignment-shaped
@@ -2277,8 +2290,12 @@ function unreadableExpandedNames(segments, homeWrites = new Set()) {
 // command of its), so the readonly value is the shell's wherever the command reaches a later word (the seventh pass's
 // attacker's RO rows and a sibling found with them: `readonly x=docs/report.md; declare x=scratch/keep.md; cp base/report.md
 // $x` wrote the tracked file in bash and dash while the guard adopted the later value); the freeze is read only from the
-// segment's own unwrapped `readonly`, `declare -r` or `typeset -r` (round 5: a declaration behind a wrapper freezes nothing in
-// the shells that run the wrapper as an external command and taints the name, the reason at `frozen` in recordSegment). The
+// segment's own unwrapped `readonly` with no option word, in plain sequence (round 5: a declaration behind a wrapper freezes
+// nothing in the shells that run the wrapper as an external command and taints the name; round 5's addendum: neither does a
+// `readonly` in a body that may not run, a subshell, a pipeline or a function body (`if false; then readonly x; fi` froze the
+// guard's x while every shell performed the later write, 34 rows), nor `declare -r` or `typeset -r` (no commands of dash), nor
+// a `readonly` with an option word (bash rejects `-r`, `-x`, `-g` and assigns nothing), nor `local -r` at the top level; each
+// taints the name instead, the reason at `frozen` in recordSegment). The
 // predicate is one predicate in five parts (plainSequence, plainValue, recordPlainWord, recordSegment, taintWord, in extract)
 // and is keyed on the construct, never on a
 // list of commands, so a spelling nobody listed is caught by the shape it must take: a name the command touches
@@ -2303,12 +2320,14 @@ function unreadableExpandedNames(segments, homeWrites = new Set()) {
 const RESOLVED_NAME = /^\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))/;
 const VAR_ASSIGNERS = new Set(['export', 'declare', 'typeset', 'readonly']);   // NAME=VALUE operands that persist in this shell at the top level
 const VAR_POISONERS = new Set(['eval', 'source', '.', 'xargs']);   // after these the guard reads no assigned name
-// The declaration flags under which a `declare`/`typeset`/`export`/`readonly NAME=VALUE` stays the plain write the rule
-// reads: they change neither the value nor what the name refers to. Every other letter (`-l` lowercases, `-u` uppercases,
-// `-i` evaluates, `-a`/`-A` make an array, `-n` a nameref, zsh's `-L n`/`-R n` pad or truncate, `-Z`, `-U`, `-T`, `-t`,
-// `-H`, `-h`, `-F`, `-E`, `-p` prints) leaves every name of the declaration unreadable; the gap of this list falls on the
-// refuse side (a flag not listed refuses).
-const INERT_DECLARATION_FLAGS = new Set(['g', 'x', 'r']);
+// The declaration flags that change neither the value nor what the name refers to (`-g`, `-x`, `-r`). Until round 5's
+// addendum a declaration carrying only these was read as the plain write; now NO option word keeps a declaration readable
+// (bash rejects `-r`, `-x` and `-g` on `export` and `readonly`, and `declare`/`typeset` are no commands of dash, recordSegment),
+// so the table only picks the refusal's TEXT: a letter outside it names the flag as one that can change the value or what
+// the name is (`-l` lowercases, `-u` uppercases, `-i` evaluates, `-a`/`-A` make an array, `-n` a nameref, zsh's `-L n`/`-R n`
+// pad or truncate, `-Z`, `-U`, `-T`, `-t`, `-H`, `-h`, `-F`, `-E`, `-p` prints), a letter inside it names the shells'
+// disagreement. Either way the name is tainted, so the gap of this list changes no verdict.
+const ATTRIBUTE_ONLY_FLAGS = new Set(['g', 'x', 'r']);
 const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
 // The index of a segment's command word as spelled: the first word that is neither a reserved word nor assignment-shaped,
 // before any wrapper is peeled (-1 for assignments alone). A `NAME=value` before it is a prefix assignment on the command.
@@ -2344,10 +2363,22 @@ function identifierTokens(text, marks) {
 // as this shell's own plain sequence, its assignment adopted and its cd followed. The push, CLOSERS and COMPOUND_HEADS now
 // READ this table, so no second list can drift. Its gap falls on the WRITE side: a head not listed opens no frame, and a
 // body that may not run is read as plain sequence. `function` is a compound head too (a definition, not a run: the function
-// frame in extract) and closes on its brace, so it is not in this table.
-const BODY_CLOSER = { if: 'fi', while: 'done', until: 'done', for: 'done', case: 'esac', select: 'done' };
-const CLOSERS = {};   // closer -> the heads it closes, derived from BODY_CLOSER: fi -> [if], done -> [while, until, for, select], esac -> [case]
-for (const [head, closer] of Object.entries(BODY_CLOSER)) (CLOSERS[closer] = CLOSERS[closer] || []).push(head);
+// frame in extract) and closes on its brace, so it is not in this table. Since round 5's addendum (2026-09-20, the frame
+// lens) each entry also names the word that OPENS the body (`then`, `do`, `in`; the `)` of zsh's `foreach`) and whether the
+// head takes a word list rather than a command list (`list`), so the walk can tell where a body begins and ends in the
+// spellings that close it with a `}` or with nothing: zsh's brace bodies (`if [[ .. ]] {`, `while (( .. )) {`, `for y (..) {`,
+// `case x {`, `repeat n {`), bash's brace-body `for y in ..; {` and `select ..; {` (bash and zsh skip both when the list is
+// empty or stdin is at EOF), and zsh's one-command bodies (`for y (..) cmd`, `repeat n cmd`, `if (..) cmd`); each of these
+// was walked as plain sequence past a body the shell skipped, its cd followed and standing for the write after it (F4, F6,
+// F7). zsh's `repeat` and `foreach .. end` are heads (bash and dash have no such words: `repeat` is not found and `foreach y
+// (a)` is a syntax error, so a frame there costs nothing); compoundBody in extract reads the table.
+const BODY_CLOSER = {
+  if: { opener: 'then', closer: 'fi' }, while: { opener: 'do', closer: 'done' }, until: { opener: 'do', closer: 'done' },
+  for: { opener: 'do', closer: 'done', list: true }, case: { opener: 'in', closer: 'esac', list: true }, select: { opener: 'do', closer: 'done', list: true },
+  repeat: { opener: 'do', closer: 'done', list: true }, foreach: { opener: ')', closer: 'end', list: true },
+};
+const CLOSERS = {};   // closer -> the heads it closes, derived from BODY_CLOSER: fi -> [if], done -> [while, until, for, select, repeat], esac -> [case], end -> [foreach]
+for (const [head, { closer }] of Object.entries(BODY_CLOSER)) (CLOSERS[closer] = CLOSERS[closer] || []).push(head);
 const COMPOUND_HEADS = new Set([...Object.keys(BODY_CLOSER), 'function']);
 // THE FRAME'S PEEL (round 5, 2026-09-20). The frame decision (a body that may not run: its names unreadable, its cd made
 // unknown at the closer) was keyed on the segment's FIRST word, so anything the shell reads past before the reserved word hid
@@ -2365,8 +2396,11 @@ const COMPOUND_HEADS = new Set([...Object.keys(BODY_CLOSER), 'function']);
 // `time`, `time -p`, `time --` and `{`; zsh behind `!`, `time` and `{`; dash behind `!` and `{`; behind a wrapper or an
 // assignment word every shell stops on the `then` or `do` with a syntax error and runs nothing, so a frame there costs
 // nothing. A redirection is not a word to the lexer (zsh alone accepts one before a compound command), so it never hides a
-// head. PEEL FOR THE FRAME, NOT FOR THE FREEZE: recordSegment's readonly skip decides the opposite way and requires the
-// declaration to be the segment's own unwrapped command; the reason both decisions hold is written there, beside `frozen`.
+// head. Two reserved words are read in extract rather than peeled (round 5's addendum): `coproc` (bash and zsh), whose command
+// runs in a coprocess, a subshell of its own, so the words after it are read inside a frame that keeps no name and restores
+// the directory; and zsh's `always`, which continues a `{ }` group into its always-list. PEEL FOR THE FRAME, NOT FOR THE
+// FREEZE: recordSegment's readonly skip decides the opposite way and requires the declaration to be the segment's own
+// unwrapped `readonly` in plain sequence; the reason both decisions hold is written there, beside `frozen`.
 const FRAME_PEEL = new Set(['!', 'time', 'then', 'do', 'else', 'elif', ...PREFIXES]);   // the braces are peeled by peelIndex's callers, which open and close their frames
 const TIME_OPTIONS = new Set(['-p', '--']);
 const plainWord = (w) => !!(w && w.literal && (!w.marks || w.marks[0] === 'u'));   // unquoted and literal, as a reserved word must be
@@ -2591,7 +2625,12 @@ function extract(command, ctx) {
   // must take to name the variable.
   const plainSequence = (seg, idx) => {
     const prevOp = idx > 0 ? segments[idx - 1].op : '';
-    if (!frames.every((f) => f.kind === 'group')) return { ok: false, why: 'an if, loop, case or function body, or a subshell' };   // a plain `{ }` group runs in this shell; its closing brace settles a piped or backgrounded one
+    if (!frames.every((f) => f.kind === 'group')) return { ok: false, why: 'an if, loop, case or function body, or a subshell' };   // a plain `{ }` group runs in this shell (one opened after `&&`, `||` or `|`, or behind `time`, is not plain: below); its closing brace settles a piped or backgrounded one
+    // round 5's addendum (F1, F9): a group opened after `&&`, `||` or `|` is skipped, or run in a subshell, whole, whatever line
+    // its body sits on; a group behind `time` loses an assignment made alone in it in zsh (`x=a; time { x=b; }` leaves a)
+    const cond = frames.find((f) => f.conditional);
+    if (cond) return { ok: false, why: cond.conditional === '|' ? 'a `{ }` group opened after `|`, a pipeline member bash and dash run in a subshell (zsh keeps the last in this shell)' : `a \`{ }\` group opened after \`${cond.conditional}\`, which may not run` };
+    if (frames.some((f) => f.timed)) return { ok: false, why: 'a `{ }` group behind `time`, whose assignment zsh does not keep when it stands alone in the group' };
     if (prevOp === '&&' || prevOp === '||') return { ok: false, why: `a command after \`${prevOp}\`, which may not run` };
     if (prevOp === '|' || seg.op === '|') return { ok: false, why: 'a pipeline, whose members bash and dash run in a subshell (zsh keeps the last in this shell)' };
     if (seg.op === '&') return { ok: false, why: 'a backgrounded command, which runs in a subshell' };
@@ -2694,7 +2733,7 @@ function extract(command, ctx) {
     seg0 = (i) => (seg.words[i] ? seg.words[i].text : null);
     // (1) a for or select loop variable
     const loopVar = seg.words[headAt + 1];
-    if ((head === 'for' || head === 'select') && loopVar && loopVar.literal) taint(loopVar.text, wroteThrough(loopVar.text, `a \`${head}\` loop variable`, loopVar.raw));
+    if ((head === 'for' || head === 'select' || head === 'foreach') && loopVar && loopVar.literal) taint(loopVar.text, wroteThrough(loopVar.text, `a \`${head}\` loop variable`, loopVar.raw));
     // (2) a construct that may write ANY name: an eval, a source, xargs, a call of a function the command defines by any spelling
     // (the head as spelled, before a wrapper peel: `env() { x=..; }; env true` runs the function, C6b)
     const rawHead = rawHeadOf(seg.words);
@@ -2707,17 +2746,26 @@ function extract(command, ctx) {
     // and OLDPWD for the whole command)
     const assembled = assembledNameOperand([seg]);
     if (assembled) poison(`the command's \`${assembled.verb}\` takes a variable name the shell fills in when it runs (${assembled.raw}), and a name I cannot read may be any name`);
-    // (3) a declaration: inert flags and a plain value keep the plain write; any other flag, a nameref, `local`, a name with
-    // no value or a subscript, or a value the guard does not read, taints the name; a nameref's target too (`declare -n r=x`
-    // writes x through r), or every name when the target is one the shell fills in
+    // (3) a declaration: an `export NAME=plain-string` or `readonly NAME=plain-string` with no option word, in plain sequence,
+    // is the plain write (readonly freezing the name); `declare`, `typeset` and `local` (no commands of dash), any option word,
+    // a nameref, a name with no value, a subscript, or a value the guard does not read, taints the name; a nameref's target too
+    // (`declare -n r=x` writes x through r), or every name when the target is one the shell fills in
     const handled = new Set();
     if (cmd && (VAR_ASSIGNERS.has(cmd.name) || cmd.name === 'local')) {
       const flags = cmd.args.filter((w) => /^[-+]/.test(w.text) && w.text.length > 1);
       // an option word the shell fills in (`declare $f x=y`, `declare -$f x=y`) poisons every name through M1's per-segment
       // detector (2b) above, which reads every non-literal option word of a declaration; a second poison here was shadowed
       // by it on every row and is gone (the seventh pass's close; the sixth pass removed an unreachable poison the same way)
-      const bad = flags.filter((w) => w.text !== '--' && (w.text[0] === '+' || w.text.startsWith('--') || ![...w.text.slice(1)].every((c) => INERT_DECLARATION_FLAGS.has(c))));
+      const bad = flags.filter((w) => w.text !== '--' && (w.text[0] === '+' || w.text.startsWith('--') || ![...w.text.slice(1)].every((c) => ATTRIBUTE_ONLY_FLAGS.has(c))));
       const nameref = flags.some((w) => w.literal && /^-[A-Za-z]*n/.test(w.text));
+      // an option word anywhere (round 5's addendum, the freeze lens RC3 and RC4): bash's `export` takes -fnp and its `readonly`
+      // -aAfp, so `export -r x=v`, `readonly -x x=v` print "invalid option" and assign nothing while zsh freezes on some of them and
+      // dash exits; an option after an operand (`declare x=v -r`) is an operand to bash ("not a valid identifier"), which then
+      // assigns x WITHOUT the attribute; and `--` is the one option word every shell reads, before the operands alone
+      const firstOperand = cmd.args.findIndex((w) => !(/^[-+]/.test(w.text) && w.text.length > 1));
+      const optionAfterOperand = firstOperand >= 0 && cmd.args.slice(firstOperand).some((w) => /^[-+]/.test(w.text) && w.text.length > 1);
+      const plainOptions = flags.every((w) => w.text === '--') && !optionAfterOperand;
+      const portable = cmd.name === 'readonly' || cmd.name === 'export';   // POSIX special builtins, the declarations every shell performs
       // PEEL FOR THE FRAME, NOT FOR THE FREEZE (round 5 of the review, 2026-09-20). Two decisions read a word behind a wrapper
       // and pull opposite ways. The FRAME peels: the shell reads the reserved word behind a `!`, a `time` or a brace, so a
       // body there may not run and its names and cd must not be adopted (peelIndex). The FREEZE must not: `frozen` was
@@ -2730,11 +2778,20 @@ function extract(command, ctx) {
       // runs an external command in zsh; `builtin readonly` freezes in bash and zsh and is no command in dash; `noglob readonly`
       // freezes in zsh alone; env, nice, nohup, timeout, setsid and stdbuf freeze nowhere), so a uniform peel breaks one of the
       // two. The freeze therefore applies only when it is UNAMBIGUOUS in this shell: the declaration is the segment's own
-      // command, unwrapped (`!cmd.wrapped`), a bare `readonly`, `declare -r` or `typeset -r` with a plain NAME or
-      // NAME=plain-string operand; a declaration of any kind reached through ANY wrapper (`env export x=..` and `command
-      // declare x=..` adopted the value the same way) freezes nothing and TAINTS every name it declares, below, since which
-      // shell runs the line is not known and the shells differ on whether the assignment happened: fail toward refusing.
-      const frozen = !cmd.wrapped && (cmd.name === 'readonly' || flags.some((w) => w.literal && /^-[A-Za-z]*r/.test(w.text)));   // the names become readonly (readonlyNames)
+      // command, unwrapped (`!cmd.wrapped`), a `readonly` with no option word (a `--` before the operands aside) and a plain
+      // NAME or NAME=plain-string operand, in plain sequence (`seq.ok`: not in an if, loop, case, select or function body, a
+      // subshell, a pipeline, a backgrounded command, after `&&` or `||`, or in a group opened after one of them). Round 5's
+      // addendum measured each of the other roads (the freeze lens, 54 rows, every one allowed at round 5's head while a shell
+      // performed the later write onto the tracked file): a bare `readonly x` in a body that may not run, a piped or
+      // backgrounded group, a subshell, a pipeline, after `&&` or `||` or in a function never called froze the guard's x and no
+      // shell's (the skip ran before the scope check, RC1); `declare -r` and `typeset -r` freeze in bash and zsh and are "not
+      // found" in dash, which then performs the write (RC2); `export -r`, `readonly -r`, `-x`, `-g` are options bash rejects,
+      // assigning nothing (RC3); an option after the operand is an operand to bash (RC4); `local -r x` at the top level is
+      // rejected by bash (RC5). A declaration of any kind reached through ANY wrapper (`env export x=..` and `command declare
+      // x=..` adopted the value the same way) freezes nothing and TAINTS every name it declares, below, since which shell runs
+      // the line is not known and the shells differ on whether the assignment happened: fail toward refusing; so does every
+      // road above.
+      const frozen = !cmd.wrapped && seq.ok && cmd.name === 'readonly' && plainOptions;   // the names become readonly (readonlyNames)
       // bash and dash reject `local` outside a function and zsh rejects `local -n` (measured 2026-09-19), so a top-level
       // `local -n r=x` writes nothing through r; r itself is tainted below, as every `local` name is (zsh performs a plain
       // `local x=v` at the top level, bash and dash do not)
@@ -2761,9 +2818,13 @@ function extract(command, ctx) {
         if (cmd.wrapped) { taint(name, wroteThrough(name, `a \`${cmd.name}\` behind the wrapper \`${cmd.wrappers[cmd.wrappers.length - 1]}\`, which runs the shell's own ${cmd.name} in some shells and an external command that assigns nothing in others`, w.raw)); continue; }
         if (frozen) {
           readonlyNames.add(name);   // from here every later write to it is one the shells refuse
+          noteGroupName(name);   // a freeze inside a `{ }` group that turns out piped or backgrounded was a subshell's: closeGroups undoes it (round 5's addendum)
           if (m[2] === '' && !(vars.has(name) && vars.get(name) === null)) continue;   // `readonly x` alone: the value it has stays the one it has
         }
         if (cmd.name === 'local') { taint(name, wroteThrough(name, 'a `local`, which zsh performs at the top level and bash and dash reject', w.raw)); continue; }
+        // round 5's addendum: the declarations dash has no command for, and an option word bash rejects (RC2 to RC4 above)
+        if (!portable) { taint(name, wroteThrough(name, `a \`${cmd.name}\`, which dash has no command for, so whether the shell assigned the name depends on which shell runs the line`, w.raw)); continue; }
+        if (!plainOptions) { taint(name, wroteThrough(name, `an option word on \`${cmd.name}\` (${flags.map((f) => f.text).join(' ')}), which bash rejects, assigning nothing, while another shell may perform it`, w.raw)); continue; }
         if (m[2] === '[') { taint(name, wroteThrough(name, 'a subscript', w.raw)); continue; }
         if (m[2] === '+=') { taint(name, wroteThrough(name, '`+=`, an append', w.raw)); continue; }
         if (m[2] === '') { taint(name, wroteThrough(name, `a \`${cmd.name}\` of the name alone, which may change how it is read`, w.raw)); continue; }
@@ -3049,14 +3110,21 @@ function extract(command, ctx) {
   // inside it and the directory state at its `{`. A group that closes in plain sequence hands its names to the enclosing
   // group (whose own brace may be piped); one whose closing brace is piped or backgrounded ran in a subshell, so its names are
   // tainted and its directory restored. A trailing `}` (zsh's `{ cmd }`) closes after the segment is read: pendingClose.
+  // Round 5's addendum (the frame lens, 2026-09-20): a group whose OPENING brace follows `&&`, `||` or `|` is `conditional`
+  // (the operator kept): the shells skip it, or run it in a subshell, whole, so nothing inside it is this shell's own, on
+  // whatever line the body sits (plainSequence and the cd handler read the flag; the same-line `false && { x=1; }` was refused
+  // by the assignment's own previous operator while `false && {⏎x=1⏎}` read a newline there and adopted x, 36 rows in bash, zsh
+  // and dash, F1, `test -d d || {⏎mkdir d⏎cd d⏎}` the lead). A group behind `time` is `timed`: zsh does not keep an assignment
+  // made alone inside it (`x=a; time { x=b; }` leaves a in zsh and b in bash, measured), so its assignments are unreadable
+  // (F9) while its cd, which moves every shell, is followed.
   let pendingClose = null;
-  const openGroup = () => frames.push({ kind: 'group', names: new Set(), dir, unknownDir, unknownWhy, oldDir });
+  const openGroup = (conditional = null, timed = false) => frames.push({ kind: 'group', names: new Set(), dir, unknownDir, unknownWhy, oldDir, conditional, timed });
   const closeGroups = (n, op) => {
     for (let i = 0; i < n && frames.length && frames[frames.length - 1].kind === 'group'; i++) {
       const g = frames.pop();
       if (i === n - 1 && (op === '|' || op === '&')) {
         const how = op === '|' ? 'a `{ }` group that is piped, which the shells run in a subshell' : 'a `{ }` group that is backgrounded, which the shells run in a subshell';
-        for (const nm of g.names) taint(nm, wroteThrough(nm, how, '{ ... }'));
+        for (const nm of g.names) { readonlyNames.delete(nm); taint(nm, wroteThrough(nm, how, '{ ... }')); }   // a name frozen inside the group was frozen in the subshell alone (round 5's addendum, the freeze lens: `{ readonly x; } | cat; x=..` performed the later write in every shell)
         ({ dir, unknownDir, unknownWhy, oldDir } = g);
       } else if (frames.length && frames[frames.length - 1].kind === 'group') {
         for (const nm of g.names) frames[frames.length - 1].names.add(nm);
@@ -3064,20 +3132,100 @@ function extract(command, ctx) {
     }
   };
   const isScope = (f) => f.kind === 'subshell' || f.kind === 'function';   // CLOSERS and BODY_CLOSER (module level) name the compound frames
+  const isCompound = (f) => !!f && Object.hasOwn(BODY_CLOSER, f.kind);
   const restore = (f) => { ({ dir, unknownDir, unknownWhy } = f); };
-  const closeSubshell = () => {
-    for (let j = frames.length - 1; j >= 0; j--) {
-      if (frames[j].kind === 'case' || frames[j].kind === 'function') return;   // in a case body a ) ends a pattern
-      if (frames[j].kind === 'subshell') { restore(frames[j]); frames.length = j; return; }
-    }
+  // A compound frame (the heads of BODY_CLOSER) records whether a cd ran in its body (`moved`), whether its body opener has
+  // been read (`opened`: `then`, `do`, `in`, foreach's `)`), the brace depth of a brace body (`braces`) and a `)` that closed
+  // with nothing after it (`afterParen`, so the next segment is zsh's one-command body: `if (x) cmd`, `for y (..) cmd`).
+  // `oneSegment` on any frame says its body is the segment being read and it closes before the next one (a compound frame
+  // applies `moved`, a function or coproc frame restores the directory); `untilChild` on a coproc frame says it closes with
+  // the compound frame pushed above it (round 5's addendum).
+  const pushCompound = (head) => { const f = { kind: head, moved: false, opened: false, braces: 0, afterParen: false }; frames.push(f); return f; };
+  const closeCompoundAt = (j) => {
+    if (frames.slice(j).some((f) => f.moved)) setUnknown('an earlier `cd` sits in an if, loop or case body that may not run');
+    frames.length = j;
+    afterChildClosed();
   };
   const closeCompound = (kinds) => {
     for (let j = frames.length - 1; j >= 0 && !isScope(frames[j]); j--) {
       if (!kinds.includes(frames[j].kind)) continue;
-      if (frames.slice(j).some((f) => f.moved)) setUnknown('an earlier `cd` sits in an if, loop or case body that may not run');
-      frames.length = j;
+      closeCompoundAt(j);
       return;
     }
+  };
+  const popFunction = (f) => {
+    if (f.bodyMoved && f.name) cdFunctions.add(f.name);
+    // a `function NAME` without parentheses whose body opens on a later segment (round 5's addendum, F10): bash and zsh define it,
+    // dash has no `function` word and runs the body as plain commands in THIS shell, so a cd in it leaves the directory unknown
+    if (f.dashRuns && f.bodyMoved) setUnknown('an earlier `cd` sits in the body of a `function NAME` written without parentheses, which bash and zsh define and dash, having no `function` word, runs in this shell');
+    else restore(f);
+    frames.pop();
+  };
+  // a scope whose body was the frame pushed above it closes with that frame (round 5's addendum): a function whose body is a
+  // subshell or a compound command (`f() (..)`, `f() if ..; fi`), a coproc whose command is a compound (`coproc if ..; fi`),
+  // and any one-segment frame whose one segment opened a frame of its own
+  const afterChildClosed = () => {
+    const t = frames[frames.length - 1];
+    if (!t) return;
+    if (t.kind === 'function' && (t.depth === 0 || t.oneSegment)) { popFunction(t); afterChildClosed(); return; }
+    if (t.kind === 'subshell' && (t.untilChild || t.oneSegment)) { restore(t); frames.pop(); afterChildClosed(); return; }
+    if (isCompound(t) && t.oneSegment) closeCompoundAt(frames.length - 1);
+  };
+  const closeOneSegment = () => {
+    for (;;) {
+      const t = frames[frames.length - 1];
+      if (!t || !t.oneSegment) return;
+      if (t.kind === 'function') popFunction(t);
+      else if (t.kind === 'subshell') { restore(t); frames.pop(); }
+      else closeCompoundAt(frames.length - 1);
+    }
+  };
+  const closeSubshell = (op) => {
+    for (let j = frames.length - 1; j >= 0; j--) {
+      if (frames[j].kind === 'case' || frames[j].kind === 'function') return;   // in a case body a ) ends a pattern
+      if (frames[j].kind === 'subshell') {
+        restore(frames[j]);
+        frames.length = j;
+        // the `)` that ends a compound head's word list or condition (round 5's addendum): foreach's body opens here; a `)` with
+        // nothing between it and the next word makes that word zsh's one-command body (`if (x) cmd`, `for y (..) cmd`, F6)
+        const t = frames[frames.length - 1];
+        if (isCompound(t) && !t.opened) { if (t.kind === 'foreach') t.opened = true; else t.afterParen = op === ''; }
+        afterChildClosed();
+        return;
+      }
+    }
+  };
+  // The body of the innermost compound frame, read on a segment (round 5's addendum; the frame lens found each spelling
+  // walked as plain sequence past a body the shell skipped, F4, F6, F7): the opener word as the segment's first plain word (or
+  // `in` in a case head) marks the body open; an unquoted `{` before the opener is a brace body, whose matching `}` closes the
+  // frame with `moved` applied (zsh's `if [[ .. ]] {`, `while (( .. )) {`, `for y (..) {`, `case x {`, `repeat n {`; bash's
+  // `for y in ..; {` and `select ..; {`), the braces inside it counted; a later segment that is neither, after a head that
+  // takes a word list (`list` in the table) or after a `)` with nothing between (`afterParen`), is zsh's one-command body and
+  // closes the frame before the next segment (`oneSegment`); an `in` after a `for` or `select` head is its list, not a body;
+  // a `{` or `}` inside a body opened by its keyword is a plain group and changes nothing. Returns the index after a `}` that
+  // closed the frame, so the group scan does not read the same brace. A body the walk cannot see the end of stays open, the
+  // safe direction: every later name is unreadable and a cd inside is applied at the closer or never trusted.
+  const compoundBody = (seg, start, f) => {
+    let first = true;
+    for (let i = start; i < seg.words.length; i++) {
+      const w = seg.words[i];
+      if (!plainWord(w)) { first = false; continue; }
+      if (f.braces > 0) {
+        if (w.text === '{') f.braces++;
+        else if (w.text === '}' && --f.braces === 0) { closeCompoundAt(frames.indexOf(f)); return i + 1; }
+        first = false;
+        continue;
+      }
+      if (!f.opened) {
+        const { opener, list } = BODY_CLOSER[f.kind];
+        if (w.text === opener) { f.opened = true; f.afterParen = false; first = false; continue; }
+        if (w.text === '{') { f.opened = true; f.braces = 1; first = false; continue; }
+        if (list && w.text === 'in') { first = false; continue; }
+        if (first && start === 0 && (list || f.afterParen)) { f.opened = true; f.oneSegment = true; f.afterParen = false; return 0; }
+      }
+      first = false;
+    }
+    return 0;
   };
   const movedHere = () => {
     for (let j = frames.length - 1; j >= 0 && !isScope(frames[j]); j--) frames[j].moved = true;
@@ -3090,37 +3238,49 @@ function extract(command, ctx) {
   const braces = (seg) => {
     const f = frames[frames.length - 1];
     if (!f || f.kind !== 'function') return 0;
-    if (f.depth === 0 && !(seg.words.length && seg.words[0].text === '{')) { frames.pop(); return 0; }   // a body without braces: not followed
+    // a body without braces (zsh and dash accept `f() cmd` and `function f cmd`; bash rejects them): this one segment is the
+    // body, defined and not run, and the frame closes before the next segment (round 5's addendum, F3: the frame was popped
+    // here and the body read as the enclosing scope's, its assignment adopted and its cd followed, in zsh, dash and through
+    // `sh -c` from every shell)
+    if (f.depth === 0 && !(seg.words.length && seg.words[0].text === '{')) { f.oneSegment = true; return 0; }
     for (let i = 0; i < seg.words.length; i++) {
       const w = seg.words[i];
       if (w.text === '{') f.depth++;
-      else if (w.text === '}' && --f.depth <= 0) { if (f.bodyMoved && f.name) cdFunctions.add(f.name); restore(f); frames.pop(); return i + 1; }
+      else if (w.text === '}' && --f.depth <= 0) { popFunction(f); return i + 1; }
     }
     return seg.words.length;
   };
   for (let idx = 0; idx < segments.length; idx++) {
     const seg = segments[idx];
+    closeOneSegment();   // a one-segment body read on the previous segment closes here (round 5's addendum)
     if (seg.paren === '(') {
       const next = segments[idx + 1];
       const prev = segments[idx - 1];
       // the name is read after the peel (round 5): `! f() { x=..; }` and `{ f() { x=..; }; }` are definitions too, and were read
       // as a subshell before a plain group, whose assignment the guard adopted while no shell ran the body
       const rest = prev && prev.op === '(' ? prev.words.slice(peelIndex(prev.words, 0, true, false)) : [];
-      const named = rest.length === 1 || (rest.length === 2 && rest[0].text === 'function');
-      if (next && next.paren === ')' && named) {
-        const fname = rest[rest.length - 1].text;
-        definedFunctions.add(fname);   // B2: a call of it may assign any name
-        frames.push({ kind: 'function', name: fname, bodyMoved: false, dir, unknownDir, unknownWhy, depth: 0 });   // name() ... : a definition, not a run
+      // the word list of a `for`, `select` or `foreach` head, or the condition of an `if` or `while` (`for y (a b)`, `if (cmd)`):
+      // a subshell frame for the words inside, and closeSubshell tells the compound frame its `)` closed
+      const listOf = rest.length > 0 && plainWord(rest[0]) && Object.hasOwn(BODY_CLOSER, rest[0].text);
+      // `name() {`, and since round 5's addendum every spelling that puts one or more words before an EMPTY pair of parentheses:
+      // zsh's `f g () {` defines both names and `env f () {` defines env and f, running nothing, while bash and dash reject them
+      // all with a syntax error; the paren path had read a rest of two words as a subshell before a plain group, whose
+      // assignment the guard adopted and whose cd it followed (40 rows in zsh, F2)
+      if (!listOf && next && next.paren === ')' && rest.length) {
+        const names = rest.filter((w) => !(plainWord(w) && w.text === 'function')).map((w) => w.text);
+        for (const nm of names) definedFunctions.add(nm);   // B2: a call of any of them may assign any name
+        frames.push({ kind: 'function', name: names.length ? names[names.length - 1] : rest[rest.length - 1].text, bodyMoved: false, dir, unknownDir, unknownWhy, depth: 0 });   // name() ... : a definition, not a run
         idx++;
         continue;
       }
       frames.push({ kind: 'subshell', dir, unknownDir, unknownWhy });
       continue;
     }
-    if (seg.paren === ')') { closeSubshell(); continue; }
-    const from = braces(seg);   // the words before `from` were a function body's; the rest are the enclosing scope's
+    if (seg.paren === ')') { closeSubshell(seg.op); continue; }
+    let from = braces(seg);   // the words before `from` were a function body's; the rest are the enclosing scope's
+    { const t = frames[frames.length - 1]; if (isCompound(t)) from = Math.max(from, compoundBody(seg, 0, t)); }   // the innermost compound frame's opener, brace body or one-command body on this segment
     // A `{ }` group at the top level (C5b), at ANY nesting (the seventh pass's attacker, F2, 2026-09-19): a frame the readability
-    // rule looks through (a plain group runs in this shell) until its closing brace is piped or backgrounded, when the group ran
+    // rule looks through (a plain group runs in this shell; one opened after `&&`, `||` or `|`, or behind `time`, is not plain, round 5's addendum) until its closing brace is piped or backgrounded, when the group ran
     // in a subshell: every name assigned inside it, the groups nested in it included, is tainted and the directory it moved to
     // restored (`{ cd docs; } | cat; cp base/report.md docs/report.md` was judged from docs/ while bash wrote the tracked file
     // from the cwd, found with the sixth pass's fix). Before this pass one frame opened for the first `{` and popped on the
@@ -3134,11 +3294,22 @@ function extract(command, ctx) {
     let k = from;   // the index after the leading braces, and after the peel words before and between them (round 5)
     if (frames.every((f) => f.kind === 'group') && seg.words.length > from) {
       const brace = (w) => ((w.text === '{' || w.text === '}') && w.marks && w.marks[0] === 'u' ? w.text : null);
+      const prevOp = idx > 0 ? segments[idx - 1].op : '';
+      const conditional = prevOp === '&&' || prevOp === '||' || prevOp === '|' ? prevOp : null;   // every group this segment opens is skipped or run in a subshell whole (round 5's addendum, F1)
       k = peelIndex(seg.words, from, false);
       let closes = 0;
-      while (k < seg.words.length && brace(seg.words[k]) === '}') { closes++; k = peelIndex(seg.words, k + 1, false); }
+      while (k < seg.words.length && brace(seg.words[k]) === '}') {
+        closes++;
+        k = peelIndex(seg.words, k + 1, false);
+        // zsh's `{ try-list } always { always-list }` (round 5's addendum, F5): the `always` block continues the group, so the
+        // brace before it closes nothing and the brace after it opens nothing; the group closes at the last `}`, whose operator
+        // says whether the whole construct ran in a subshell (`{ x=1; } always { :; } | cat` keeps x unchanged in zsh, and the
+        // cd of an always-list moves it; bash and dash reject the word and run nothing)
+        if (k + 1 < seg.words.length && plainWord(seg.words[k]) && seg.words[k].text === 'always' && brace(seg.words[k + 1]) === '{') { closes--; seg.words.splice(k, 1); k = peelIndex(seg.words, k + 1, false); }   // the word is dropped so commandOf reads the always-list's own command, not a command named always with the list as its operands
+      }
       if (closes) closeGroups(closes, k >= seg.words.length ? seg.op : '');
-      while (k < seg.words.length && brace(seg.words[k]) === '{') { openGroup(); k = peelIndex(seg.words, k + 1, false); }
+      let start = from;
+      while (k < seg.words.length && brace(seg.words[k]) === '{') { openGroup(conditional, seg.words.slice(start, k).some((w) => plainWord(w) && w.text === 'time')); start = k + 1; k = peelIndex(seg.words, k + 1, false); }
       let trailing = 0;
       for (let j = seg.words.length - 1; j >= k && brace(seg.words[j]) === '}'; j--) trailing++;
       if (trailing) pendingClose = { n: trailing, op: seg.op };
@@ -3151,11 +3322,37 @@ function extract(command, ctx) {
     {
       const p = peelIndex(seg.words, k, false);
       if (seg.words.length >= p + 2 && plainWord(seg.words[p]) && seg.words[p].text === 'function' && seg.words[p + 1].literal && seg.op !== '(' && !frames.some((f) => f.kind === 'function')) {
-        definedFunctions.add(seg.words[p + 1].text);
-        const body = seg.words[p + 2] && seg.words[p + 2].text === '{' && seg.words[p + 2].marks && seg.words[p + 2].marks[0] === 'u';
-        frames.push({ kind: 'function', name: seg.words[p + 1].text, bodyMoved: false, dir, unknownDir, unknownWhy, depth: body ? 1 : 0 });
-        seg.words = seg.words.slice(p + (body ? 3 : 2));
+        // every word up to the body's `{` is a name (round 5's addendum, F2: zsh's `function f g {` defines both and runs nothing;
+        // bash rejects the spelling); with no `{` on this segment the body is the next segment, a `{ }` group counted by `braces`
+        // or zsh's one-command body, which dash, having no `function` word, runs in THIS shell (`function f⏎{⏎cd ../docs⏎}` moved
+        // dash and the write after it landed on the tracked file, F10), so a cd in such a body leaves the directory unknown at
+        // its close (`dashRuns`, popFunction)
+        let q = p + 1;
+        while (q < seg.words.length && !(plainWord(seg.words[q]) && seg.words[q].text === '{')) { if (seg.words[q].literal) definedFunctions.add(seg.words[q].text); q++; }
+        const body = q < seg.words.length;
+        frames.push({ kind: 'function', name: seg.words[p + 1].text, bodyMoved: false, dir, unknownDir, unknownWhy, depth: body ? 1 : 0, dashRuns: !body });
+        seg.words = seg.words.slice(q + (body ? 1 : 0));
         if (!seg.words.length) continue;   // the body opens on the next segment, which `braces` counts
+      }
+    }
+    // `coproc` (a reserved word of bash and zsh; round 5's addendum, F8): the command after it, in bash a NAME and a compound
+    // body, runs in a coprocess, a subshell whose assignments and cd never reach this shell while its writes land, so the word
+    // (and the NAME) is dropped and the rest is read inside a frame that keeps no name and restores the directory: a brace body
+    // counts its braces like a function body, a compound body closes with its compound, a simple command closes with its
+    // segment. `coproc {⏎x=other.md⏎}; cp base/report.md scratch/$x` adopted x and `coproc {⏎cd ../scratch⏎}` followed the cd
+    // (31 rows in bash and zsh at round 5's head), and `coproc cp base/report.md docs/report.md` was an operand of a command
+    // named coproc, the residual the contract listed; each is refused now. dash has no coproc (not found, nothing runs).
+    {
+      const p = peelIndex(seg.words, k, false);
+      if (seg.words.length > p && plainWord(seg.words[p]) && seg.words[p].text === 'coproc') {
+        let q = p + 1;
+        const bodyWord = (w) => !!(w && plainWord(w) && (w.text === '{' || Object.hasOwn(BODY_CLOSER, w.text)));
+        if (seg.words[q] && seg.words[q].literal && IDENTIFIER.test(seg.words[q].text) && bodyWord(seg.words[q + 1])) q++;   // bash's NAME before a compound body
+        seg.words = seg.words.slice(q);
+        if (!seg.words.length) continue;
+        if (plainWord(seg.words[0]) && seg.words[0].text === '{') { frames.push({ kind: 'function', name: null, bodyMoved: false, dir, unknownDir, unknownWhy, depth: 0, coproc: true }); braces(seg); }
+        else if (plainWord(seg.words[0]) && Object.hasOwn(BODY_CLOSER, seg.words[0].text)) frames.push({ kind: 'subshell', dir, unknownDir, unknownWhy, coproc: true, untilChild: true });
+        else frames.push({ kind: 'subshell', dir, unknownDir, unknownWhy, coproc: true, oneSegment: true });
       }
     }
     // B2: the expansions the guard can read are resolved before the segment's words and targets are judged
@@ -3166,7 +3363,7 @@ function extract(command, ctx) {
       // left to right as the shells perform them (C5d: `x=../docs/report.md y=$x` gives y the NEW x); the redirections were
       // resolved above, before any of them (bash expands a redirection before it assigns)
       const head0 = compoundHeadOf(seg.words);   // after the peel (round 5), read from the one table
-      if (head0 != null && Object.hasOwn(BODY_CLOSER, head0)) frames.push({ kind: head0, moved: false });
+      if (head0 != null && Object.hasOwn(BODY_CLOSER, head0)) compoundBody(seg, peelIndex(seg.words) + 1, pushCompound(head0));
       const seq = plainSequence(seg, idx);
       seg.words = seg.words.map((w) => { const r = resolveWord(w); recordPlainWord(r, seg, idx, seq); return r; });
       for (const r of seg.redirects) if (WRITE_REDIRECTS.has(r.op)) add(r.target, `${r.op} redirection`);
@@ -3174,7 +3371,7 @@ function extract(command, ctx) {
       taintArith(seg);   // a bare `(( x = 5 ))` is a segment with no words: its body may assign any name in it
       continue;
     }
-    const preWords = seg.words;   // as spelled: the readability rule reads a mention in the command's own text, not in a resolved value
+    let preWords = seg.words;   // as spelled: the readability rule reads a mention in the command's own text, not in a resolved value
     seg.words = seg.words.map(resolveWord);
     for (const r of seg.redirects) if (WRITE_REDIRECTS.has(r.op)) add(r.target, `${r.op} redirection`);   // a glob: every match (add)
     for (const inner of seg.subs) recurse(inner);
@@ -3183,7 +3380,15 @@ function extract(command, ctx) {
     // in the walk and evaluate's catch-all turned the throw into an allow (round 4's extra4-4; the catch-all refuses now)
     const head = compoundHeadOf(seg.words);
     if (head != null && Object.hasOwn(CLOSERS, head)) closeCompound(CLOSERS[head]);
-    else if (head != null && Object.hasOwn(BODY_CLOSER, head)) frames.push({ kind: head, moved: false });
+    else if (head != null && Object.hasOwn(BODY_CLOSER, head)) {
+      const f = pushCompound(head);
+      const at = peelIndex(seg.words);
+      // zsh's `repeat N cmd` (round 5's addendum, F4): the words after the count are the body, run N times (0 included), so they
+      // are read as the body of a one-segment frame (`repeat 2 cp base/report.md docs/report.md` writes the tracked file in zsh;
+      // bash and dash have no repeat and run nothing)
+      if (head === 'repeat' && seg.words.length > at + 2 && !(plainWord(seg.words[at + 2]) && seg.words[at + 2].text === '{')) { f.opened = true; f.oneSegment = true; seg.words = seg.words.slice(at + 2); preWords = preWords.slice(at + 2); }
+      else compoundBody(seg, at + 1, f);
+    }
     const cmd = commandOf(seg.words);
     if (!cmd) { recordSegment(seg, idx, null, preWords); continue; }
     if (cmd.unknown) {
@@ -3280,6 +3485,15 @@ function extract(command, ctx) {
         if (prevOp === '&&' || prevOp === '||') block = `an earlier \`${name}\` after \`${prevOp}\` may not run, so where it lands is not known (its move depends on the previous status)`;
         else if (seg.op === '|' || prevOp === '|') block = `an earlier \`${name}\` is part of a pipeline, so it runs in a subshell and moves nothing in this shell`;
         else if (seg.op === '&') block = `an earlier \`${name}\` is backgrounded, so it runs in a subshell and moves nothing in this shell`;
+        else if (frames.some((f) => f.kind === 'group' && f.conditional)) {
+          // round 5's addendum (F1): the group the cd sits in was opened after `&&`, `||` or `|`, so the shells skip it whole, or run it
+          // in a subshell (`test -d ../scratch || {⏎mkdir ../scratch⏎cd ../scratch⏎}⏎cp ../base/report.md report.md` was judged from
+          // scratch/ while bash, zsh and dash, the directory there, skipped the group and wrote the tracked docs/report.md)
+          const g = frames.find((f) => f.kind === 'group' && f.conditional);
+          block = g.conditional === '|'
+            ? `an earlier \`${name}\` sits in a \`{ }\` group opened after \`|\`, a pipeline member that bash and dash run in a subshell and zsh in this shell, so where the shell is after it depends on which shell runs the line`
+            : `an earlier \`${name}\` sits in a \`{ }\` group opened after \`${g.conditional}\`, which may not run, so where it lands is not known`;
+        }
         else if (cmd.wrapped) {
           // the seventh pass's addendum, item 2 (WRAPPED_CD_WHY): under `builtin`, `command` and `time` the shell's own cd runs in
           // some shells and moves them, so the text says which; under every other wrapper an external cd runs and moves nothing

@@ -63,10 +63,14 @@
 # project, LANDING_SCAN_CAP), which the hook header, hooks/README.md and decision 47 already named and this skill did not
 # (round 3's rules-1, whose ruling put this surface first, since it is the one that changes what a session does); and the
 # contract paragraph's interpreter clause says a concatenation that does not OPEN with a string literal stays out of model,
-# since a literal-first one is a template the guard refuses since that round (its regression-1). The hunk header's line
-# count moves with the text; nothing else in the skill moves.
+# since a literal-first one is a template the guard refuses since that round (its regression-1). Round 5's addendum
+# (2026-09-20, the lenses over that round) says in the same paragraph that no declaration flag, and no `declare`, `typeset`
+# or `local` (no commands of dash; `export` and `readonly` with no option word are the two every shell performs), keeps a
+# name readable, that a `{ }` group opened after `&&`, `||` or `|` does not either, and drops coproc from the unmodelled
+# wrappers, since the guard reads the command behind it. The hunk header's line count moves with the text; nothing else in
+# the skill moves.
 diff --git a/skill/SKILL.md b/skill/SKILL.md
-index f7d8bc9..9a12473 100644
+index f7d8bc9..95eb539 100644
 --- a/skill/SKILL.md
 +++ b/skill/SKILL.md
 @@ -59,6 +59,180 @@ heredoc included), no `sed -i` or `perl -i`, no python `open(..., 'w')` or node
@@ -221,9 +225,9 @@ index f7d8bc9..9a12473 100644
 +project or is one it cannot read. A value it can read is resolved first and the
 +real path judged. A name is readable only when every write to it in the command
 +is a plain top-level `NAME=plain-string` the shell performs as spelled: no tilde
-+opening the value, no declaration flag that transforms it, no nameref reaching
++opening the value, no declaration flag at all, no `declare`, `typeset` or `local` (dash has none of the three; `export` and `readonly` with no option word are the two declarations every shell performs), no nameref reaching
 +it, no name the shell fills in, no subshell, pipeline, piped group or body
-+scope, no wrapper argument, no call of a function the command defines in any
++scope, no `{ }` group opened after `&&`, `||` or `|`, no wrapper argument, no call of a function the command defines in any
 +spelling, no subscript; any other construct that can write the name, listed here
 +or not, leaves it unreadable, the doctrine a `read` and a loop variable already
 +had. HOME, PWD, OLDPWD, `~+` and `~-` are read the same way: HOME after a plain
@@ -238,7 +242,7 @@ index f7d8bc9..9a12473 100644
 +reads from elsewhere (eval, xargs, a sourced file, trap, a command whose name is
 +an expansion, a script held in a variable);
 +a command that runs another command and is outside the guard's wrapper set
-+(unshare, nsenter, script, setarch, setpriv, strace, coproc and their kin); a
++(unshare, nsenter, script, setarch, setpriv, strace and their kin); a
 +link made by a writer outside the model (python, tar, rsync) that a later
 +modelled write follows; shuf -o; a cd through CDPATH; and an opaque expansion
 +from a cwd outside every project, leading or after a literal head outside every

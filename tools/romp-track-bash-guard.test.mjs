@@ -60,7 +60,7 @@ const ROMP_NOUNS = /\b(romp|card|board|column|goal|nudge|dashboard|panel|viewer|
 // seventh pass's addendum, item 4, 2026-09-19: CI's shell job has no zsh and failed on unguarded zsh legs at 50e85deec; round 5,
 // 2026-09-20: two dash legs sat outside the probe, one skipping its assertion in silence and one throwing a bare TypeError, the
 // bash legs ran outside it too, and a bash that starts but is too old declined with a value-mismatch red, since the probe asked
-// only whether the shell starts: 45 lines of this file spell a bash 4.x construct, `declare -n` the newest at 4.3, counted by
+// only whether the shell starts: 48 lines of this file spell a bash 4.x construct, `declare -n` the newest at 4.3, counted by
 // grep -c -E "declare -[a-zA-Z]*[nlugA]|typeset -[a-zA-Z]*[nlug]|mapfile|readarray|\|&" over its non-comment lines, and the
 // CI Shell job's macOS cell ships bash 3.2.57). Every spawn of a shell in this file goes through the `spawnSync` wrapper below,
 // which throws by name when the probe declined that shell, so a leg that reaches a shell without asking shellsFor is a loud red
@@ -684,11 +684,12 @@ test('the numeric set is $$ and ${$} in every shell, and nothing else: RANDOM, S
       `echo x > ${out}/x-$BASHPID.log`,
     ];
     // B2 (2026-09-19): a shape whose assignment is a plain string at the top level of its shell (`unset RANDOM; RANDOM=<back>;
-    // cp … "<out>/$RANDOM"`, `export BASHPID=<back>; …`, the `bash -c`, `declare -g`, heredoc and `sh -c` twins) is RESOLVED,
+    // cp … "<out>/$RANDOM"`, `export BASHPID=<back>; …`, the `bash -c`, heredoc and `sh -c` twins) is RESOLVED,
     // so the guard names the tracked file the traversal lands on; the rest (a name set inside a function, a sourced file,
-    // no assignment in sight) stay refused as words it cannot read. Either way the numeric narrowing never applies.
-    const resolved = new Set(refused.filter((c) => /(unset (RANDOM|SECONDS); (declare -g )?(RANDOM|SECONDS)=|export BASHPID=|^sh -c 'RANDOM=)/.test(c) && !/f\(\)/.test(c)));
-    assert.equal(resolved.size, 7, `the seven shapes B2 resolves: ${[...resolved].join(' | ')}`);
+    // no assignment in sight, and since round 5's addendum the `declare -g` twin, a declaration dash has no command for, so
+    // the name is unreadable) stay refused as words it cannot read. Either way the numeric narrowing never applies.
+    const resolved = new Set(refused.filter((c) => /(unset (RANDOM|SECONDS); (RANDOM|SECONDS)=|export BASHPID=|^sh -c 'RANDOM=)/.test(c) && !/f\(\)/.test(c)));
+    assert.equal(resolved.size, 6, `the six shapes B2 resolves: ${[...resolved].join(' | ')}`);
     const byName = (c) => (/^Track-changes is ON for /.test(evaluate(payload(c)) || '') ? 'refused by name' : verdictOf(c));
     assert.deepEqual(Object.fromEntries(refused.map((c) => [c, byName(c)])), Object.fromEntries(refused.map((c) => [c, resolved.has(c) ? 'refused by name' : REFUSED])));
     const allowed = [
@@ -3331,17 +3332,18 @@ test("an interpreter's option cluster is read as the interpreter reads it: pytho
     for (const shell of shellsFor(i === 0 ? ['bash', 'zsh', 'dash'] : ['bash'])) assert.equal(overwrites(cmd, report, proj, shell).changed, true, `${shell} overwrites the tracked file: ${cmd}`);
     assert.equal(runHook(cmd).status, 2, `the hook refuses: ${cmd}`);
   }
-  // the twins and the flag-only forms run and touch nothing tracked
+  // the twins and the flag-only forms run and touch nothing tracked; the untracked twin's landing is asserted inside the bash leg
+  // (round 5's addendum, the documents lens: it sat outside the loop and reds by value on a runner whose bash the probe declined)
   const before = shaOf(report);
   for (const cmd of [...untracked, ...flagOnly]) {
     for (const sh of shellsFor(['bash'], cmd)) {
       const r = spawnSync(sh, ['-c', cmd], { cwd: proj, encoding: 'utf8', env: { PATH: process.env.PATH } });
       if (!cmd.startsWith('python3 -Wc')) assert.equal(r.status, 0, `bash: ${cmd}: ${r.stderr}`);   // -Wc names a script file that is not there: python exits 2 and writes nothing
+      if (untracked.includes(cmd)) { assert.notEqual(fs.readFileSync(other, 'utf8'), 'untracked prose\n', `the untracked twin landed: ${cmd}`); fs.writeFileSync(other, 'untracked prose\n'); }
     }
     assert.equal(runHook(cmd).status, 0, `the hook allows: ${cmd}`);
   }
   assert.equal(shaOf(report), before, 'the twins left the tracked file as it was');
-  assert.equal(fs.readFileSync(other, 'utf8'), 'poison', 'the untracked twin landed');
   // the contract's residual, measured so the list is read as a fact: an escape sequence in the string is a path the
   // interpreter decodes and the guard does not (it is named on the four surfaces beside the other computed forms)
   const escaped = `python3 -c 'open("docs\\x2freport.md","w").write("poison")'`;
@@ -3539,9 +3541,10 @@ test("the sixth pass, the names: a nameref declaration, a `printf -v` and a `rea
     }
     for (const shell of shellsFor(['bash', 'zsh'])) assert.equal(lands(flockRow, landing, out, shell).landed, true, `${shell} lands x.md through the value flock left alone`);
     // the twins: a declaration, a printf -v and a readarray into ANOTHER name leave n readable; each allowed, run in the shells
-    // that have the builtin, landing under <out>/scratch with the tracked subset unchanged
+    // that have the builtin, landing under <out>/scratch with the tracked subset unchanged (round 5's addendum: the declaration
+    // is an `export`, the one every shell performs; `declare` is no command of dash and leaves the name unreadable)
     const twins = [
-      [`declare n=b; echo x > ${out}/scratch/$n.md`, 'b.md', ['bash', 'zsh']],
+      [`export n=b; echo x > ${out}/scratch/$n.md`, 'b.md', ['bash', 'zsh', 'dash']],
       [`n=a; printf -v m x; echo x > ${out}/scratch/$n.md`, 'a.md', ['bash', 'zsh']],
       [`n=a; readarray -t m <<< b; echo x > ${out}/scratch/$n.md`, 'a.md', ['bash']],
     ];
@@ -3669,7 +3672,7 @@ const sixthPassWorld = () => {
     return acc.join(' ');
   };
   const fill = (s) => s.replaceAll('{W}', W).replaceAll('{NA}', NA).replaceAll('{WEB}', WEB).replaceAll('{OUT}', OUT);
-  const cwds = { na: NA, nas: path.join(NA, 'scratch'), out: OUT };
+  const cwds = { na: NA, nas: path.join(NA, 'scratch'), nad: path.join(NA, 'docs'), out: OUT };
   const env = { PATH: process.env.PATH, HOME, LC_ALL: 'C.UTF-8' };
   // the hook as a process from the row's cwd, HOME the world's home
   const hook = (cmd, cwd) => { const r = spawnSync(process.execPath, [HOOK], { input: payload(cmd, cwd), encoding: 'utf8', env: { ...env, ROMP_SID } }); return { status: r.status, reason: String(r.stderr || '') }; };
@@ -3705,6 +3708,7 @@ test("the sixth pass's attacker: its 77 in-model rows, run through the hook as a
     const PIPE = ['literal', 'a pipeline, whose members bash and dash run in a subshell'];
     const wrapper = (n) => ['literal', `an argument of the wrapper \`${n}\`, which the shell hands to it rather than assigning`];
     const prefix = (n) => ['literal', `a prefix assignment on \`${n}\``];
+    const DECL = ['literal', 'a `declare`, which dash has no command for'];   // round 5's addendum: a declaration dash lacks leaves the name unreadable (its tilde would have resolved before)
     // [id, cwd, command, the shells the attacker measured writing, the verdict the rule gives]
     const rows = [
       // C1: a tilde opening an assignment value
@@ -3715,7 +3719,7 @@ test("the sixth pass's attacker: its 77 in-model rows, run through the hook as a
       ['R1-e', 'out', 'x=~/../notes-api/docs/report.md; cp {WEB}/base/report.md $x', A, 'name'],
       ['R1-f', 'out', 'x=~+/../notes-api/docs/report.md; cp {WEB}/base/report.md $x', BZ, 'name'],
       ['R1-h', 'na', 'export x=~/../notes-api/docs/report.md; cp base/report.md $x', A, 'name'],
-      ['R1-i', 'na', 'declare x=~/../notes-api/docs/report.md; cp base/report.md $x', BZ, 'name'],
+      ['R1-i', 'na', 'declare x=~/../notes-api/docs/report.md; cp base/report.md $x', BZ, DECL],
       ['R17-r', 'out', 'x=~/../notes-api/docs/report.md; printf poison > $x', A, 'name'],
       ['R17-a2', 'na', 'x=~daemon/../..{W}/notes-api/docs/report.md; cp base/report.md $x', A, ['literal', 'a value that begins with `~user`']],
       ['R17-a3', 'out', 'x=~daemon/../..{W}/notes-api/docs/report.md; cp {WEB}/base/report.md $x', A, 'residual'],
@@ -3738,8 +3742,8 @@ test("the sixth pass's attacker: its 77 in-model rows, run through the hook as a
       ['R17-o', 'na', 'declare -n r=x; x=other.md; declare -n r; r=../docs/report.md; cp base/report.md scratch/$x', B, NAMEREF],
       // C4: an assembled name operand (the resolved name is written when the name resolves; every name when it does not)
       ['R4-a', 'na', 'x=other.md; h=x; export $h=../docs/report.md; cp base/report.md scratch/$x', A, 'name'],
-      ['R4-b', 'na', 'x=other.md; h=x; declare $h=../docs/report.md; cp base/report.md scratch/$x', BZ, 'name'],
-      ['R4-c', 'na', 'x=other.md; h=x; typeset $h=../docs/report.md; cp base/report.md scratch/$x', BZ, 'name'],
+      ['R4-b', 'na', 'x=other.md; h=x; declare $h=../docs/report.md; cp base/report.md scratch/$x', BZ, DECL],   // round 5's addendum: the resolved name is tainted by the declaration dash lacks (it was read by name)
+      ['R4-c', 'na', 'x=other.md; h=x; typeset $h=../docs/report.md; cp base/report.md scratch/$x', BZ, ['literal', 'a `typeset`, which dash has no command for']],
       ['R4-d', 'na', 'x=other.md; h=x; readonly $h=../docs/report.md; cp base/report.md scratch/$x', A, 'name'],
       ['R4-e', 'na', 'x=other.md; h=x; export "$h=../docs/report.md"; cp base/report.md scratch/$x', A, 'name'],
       ['R4-f', 'na', 'x=other.md; export $(echo x)=../docs/report.md; cp base/report.md scratch/$x', A, ['literal', 'takes a variable name the shell fills in when it runs']],
@@ -3747,7 +3751,7 @@ test("the sixth pass's attacker: its 77 in-model rows, run through the hook as a
       ['R4-j', 'out', 'x=../../notes-api/docs/other.md; h=x; export $h=../../notes-api/docs/report.md; cp {WEB}/base/report.md {OUT}/scratch/$x', A, 'name'],
       // C5a: an assignment as the tail of a pipeline
       ['R5-a', 'na', 'x=../docs/report.md; cat </dev/null | x=other.md; cp base/report.md scratch/$x', BD, PIPE],
-      ['R17-e', 'na', 'x=../docs/report.md; cat </dev/null | { x=other.md; }; cp base/report.md scratch/$x', BD, PIPE],
+      ['R17-e', 'na', 'x=../docs/report.md; cat </dev/null | { x=other.md; }; cp base/report.md scratch/$x', BD, ['literal', /a pipeline, whose members bash and dash run in a subshell|a `\{ \}` group opened after `\|`/]],   // round 5's addendum: the group opened after `|` carries its own reason
       ['R5-a-out', 'out', 'x=../../notes-api/docs/report.md; cat </dev/null | x=z; cp {WEB}/base/report.md {OUT}/scratch/$x', BD, 'residual'],
       // C5b: a { } group that is piped or backgrounded
       ['R5-b', 'na', 'x=../docs/report.md; { x=other.md; } | cat; cp base/report.md scratch/$x', A, ['literal', 'a `{ }` group that is piped']],
@@ -3792,8 +3796,8 @@ test("the sixth pass's attacker: its 77 in-model rows, run through the hook as a
       ['R7-b', 'na', 'x=other.md; x[1,8]=../docs/report.md; cp base/report.md scratch/$x', Z, SUBSCRIPT],
       ['R7-c', 'na', "x=other.md; printf -v 'x[0]' ../docs/report.md; cp base/report.md scratch/$x", B, SUBSCRIPT],
       ['R7-d', 'na', "x=other.md; read 'x[0]' <<< ../docs/report.md; cp base/report.md scratch/$x", B, SUBSCRIPT],
-      ['R7-e', 'na', "x=other.md; declare 'x[0]=../docs/report.md'; cp base/report.md scratch/$x", B, SUBSCRIPT],
-      ['R7-f', 'na', 'x=other.md; declare x[0]=../docs/report.md; cp base/report.md scratch/$x', B, SUBSCRIPT],
+      ['R7-e', 'na', "x=other.md; declare 'x[0]=../docs/report.md'; cp base/report.md scratch/$x", B, ['literal', /a subscript|a `declare`, which dash has no command for/]],   // round 5's addendum: the declaration dash lacks taints x before the subscript rule reads it
+      ['R7-f', 'na', 'x=other.md; declare x[0]=../docs/report.md; cp base/report.md scratch/$x', B, ['literal', /a subscript|a `declare`, which dash has no command for/]],
       ['R7-g', 'out', 'x=../../notes-api/docs/other.md; x[0]=../../notes-api/docs/report.md; cp {WEB}/base/report.md {OUT}/scratch/$x', B, 'residual'],
       ['R17-b', 'na', 'x=other.md; x[1,-1]=../docs/report.md; cp base/report.md scratch/$x', Z, SUBSCRIPT],
       ['R17-c', 'na', 'x=other.md; x[0]+=; x[0]=../docs/report.md; cp base/report.md scratch/$x', B, SUBSCRIPT],
@@ -3825,7 +3829,7 @@ test("the sixth pass's attacker: its 77 in-model rows, run through the hook as a
     }
     console.log(`# the sixth pass's attacker: ${n} rows run; refused by name ${tally.name}, refused as not literal with the construct named ${tally.literal}, the ruled residual from a cwd in no project ${tally.residual}`);
     assert.equal(n, hasDaemon ? 77 : 75);
-    if (hasDaemon) assert.deepEqual(tally, { name: 18, literal: 49, residual: 10 });
+    if (hasDaemon) assert.deepEqual(tally, { name: 15, literal: 52, residual: 10 });   // round 5's addendum: R1-i, R4-b and R4-c moved from by-name to not-literal (the declare or typeset taint fires before the value resolves)
   } finally { process.env.HOME = savedHome; w.rm(); }
 });
 
@@ -3841,9 +3845,9 @@ test("the attacker's twins keep their verdicts, and the reviewer's four false re
       ['R1-T1', 'x="~/../notes-api/docs/report.md"; cp base/report.md $x', 'allow'],   // a quoted tilde is text in the shell too
       ['R1-T2', 'x=~/x.md; cp base/report.md $x', 'allow'],                            // resolved through HOME, lands in the home
       ['R2-T1', 'declare -u x=../docs/report.md; cp base/report.md scratch/$x', 'refuse'],   // the shell writes an uppercase path that is not there
-      ['R2-T2', 'declare -x x=../docs/report.md; cp base/report.md scratch/$x', 'name'],
-      ['R2-T3', 'declare -g x=../docs/report.md; cp base/report.md scratch/$x', 'name'],
-      ['R2-T4', 'declare -- x=../docs/report.md; cp base/report.md scratch/$x', 'name'],
+      ['R2-T2', 'declare -x x=../docs/report.md; cp base/report.md scratch/$x', 'refuse'],   // round 5's addendum: `declare` is no command of dash (x stays unset there), so the name is unreadable; refused as not literal where the value resolved by name before
+      ['R2-T3', 'declare -g x=../docs/report.md; cp base/report.md scratch/$x', 'refuse'],
+      ['R2-T4', 'declare -- x=../docs/report.md; cp base/report.md scratch/$x', 'refuse'],
       ['R3-T1', 'x=other.md; declare -n r=y; r=../docs/report.md; cp base/report.md scratch/$x', 'allow'],   // a nameref to another name
       ['R3-T2', 'x=other.md; local -n r=x; r=../docs/report.md; cp base/report.md scratch/$x', 'allow'],     // `local` at the top level: bash and dash reject it, zsh rejects -n
       ['R4-T1', 'h=y; export $h=../docs/report.md; x=other.md; cp base/report.md scratch/$x', 'allow'],      // an assembled name that resolves to another name
@@ -3866,7 +3870,7 @@ test("the attacker's twins keep their verdicts, and the reviewer's four false re
       ['R7-T1', 'x=(../docs/report.md); cp base/report.md scratch/$x', 'refuse'],
       ['R7-T2', 'declare -a x=(../docs/report.md); cp base/report.md scratch/$x', 'refuse'],   // the report's C7 twin: the -a flag taints, bash and zsh write through the array's first element
       ['R17-j', 'x=other.md; export x=../docs/report.md y=$x; cp base/report.md scratch/$y', 'allow'],   // the shells expand $x before either declaration word is assigned
-      ['R17-k', 'x=other.md; declare x=../docs/report.md y=$x; cp base/report.md scratch/$y', 'allow'],
+      ['R17-k', 'x=other.md; declare x=../docs/report.md y=$x; cp base/report.md scratch/$y', 'refuse'],   // round 5's addendum: y is a `declare` operand, a declaration dash has no command for, so y is unreadable (a cost: bash and zsh copy onto scratch/other.md, priced below)
       ['R11-d', 'x=other.md; y=$x; x=../docs/report.md; cp base/report.md scratch/$y', 'allow'],
       ['R11-e', "y=../docs/report.md; x='$y'; cp base/report.md scratch/$x", 'allow'],                      // a literal dollar in a value
       ['UNSET-1', 'declare -l x=AAA; unset x; x=../docs/REPORT.MD; cp base/report.md scratch/$x', 'allow'],  // unset drops the attribute: the plain write after it is readable, and lands on the untracked uppercase file
@@ -3910,6 +3914,13 @@ test("the attacker's twins keep their verdicts, and the reviewer's four false re
       ['declare -A x=5; cp base/report.md scratch/$x', 'a `declare` flag that can change the value or what the name is (-A)', ['dash'], path.join(NA, 'scratch', 'report.md')],
       ['x=other.md; let x=5; cp base/report.md scratch/$x', 'an assignment-shaped word of `let`', ['bash', 'zsh'], path.join(NA, 'scratch', '5')],
       ['x=other.md; let x=5; cp base/report.md scratch/$x', 'an assignment-shaped word of `let`', ['dash'], path.join(NA, 'scratch', 'other.md')],
+      // round 5's addendum (the freeze lens, RC2 widened to the class): a `declare` or `typeset` with no flag at all is no command of
+      // dash, which keeps the old value and performs the later write, so the name is unreadable everywhere; bash and zsh land the
+      // declared value, dash the earlier one (a false refusal, recoverable by `x=..` or `export x=..`, which every shell performs)
+      ['x=decl-a.md; declare x=decl-b.md; cp base/report.md scratch/$x', 'a `declare`, which dash has no command for', ['bash', 'zsh'], path.join(NA, 'scratch', 'decl-b.md')],
+      ['x=decl-a.md; declare x=decl-b.md; cp base/report.md scratch/$x', 'a `declare`, which dash has no command for', ['dash'], path.join(NA, 'scratch', 'decl-a.md')],
+      ['x=decl-a.md; typeset x=decl-b.md; cp base/report.md scratch/$x', 'a `typeset`, which dash has no command for', ['bash', 'zsh'], path.join(NA, 'scratch', 'decl-b.md')],
+      ['x=decl-a.md; typeset x=decl-b.md; cp base/report.md scratch/$x', 'a `typeset`, which dash has no command for', ['dash'], path.join(NA, 'scratch', 'decl-a.md')],
       ['x=a; cat </dev/null | x=b; printf x > {OUT}/scratch/$x.log', 'a pipeline, whose members bash and dash run in a subshell', ['bash', 'zsh', 'dash'], null],
       ['x=a; { x=b; } | cat; printf x > {OUT}/scratch/$x.log', 'a `{ }` group that is piped', ['bash', 'zsh', 'dash'], null],
       // the `export x` item (tests-1, round 4): the plain `x=..; export x` was refused before the readability rule too, as not
@@ -3955,9 +3966,12 @@ test('the readability rule itself, not its thirteen classes: a construct that wr
       { cmd: 'x=other.md; float x=5; cp base/report.md scratch/$x', shells: ['zsh'], construct: 'an assignment-shaped word of `float`', tracked: false },
       // round 5 (extra4-5): the SCOPE half of the rule (no if, loop, case, select, subshell or function body), which the six rows
       // above could not see: a body that may not run, behind each construct that hid its head at round 4's head (`{`, `!`, `time`,
-      // a select body, a function body inside a group, a subshell) and under each closer (fi, done, esac). Every row was a live
-      // false ALLOW at that head; the shells listed keep the tracked path and write the tracked file (dash rejects `time` before a
-      // compound command and has no select).
+      // a select body, a function body inside a group) and under each closer (fi, done, esac), and a subshell, which no prefix
+      // hid (its frame predates round 5). Nine of the ten rows were live false ALLOWs at that head (a36e34832, the hook run as a
+      // process: every row but the subshell's allowed there; round 5's addendum corrected this comment, which had said every row);
+      // the shells listed keep the tracked path and write the tracked file (dash rejects `time` before a compound command and has
+      // no select). Under a peel that does nothing eight of the ten red; the select row reds when `select` leaves the table and
+      // the subshell row when the subshell frame goes, so the rows cover the table and the frame as well as the peel.
       { cmd: 'x=../docs/report.md; { if false; then x=other.md; fi; }; cp base/report.md scratch/$x', shells: ['bash', 'zsh', 'dash'], construct: 'an if, loop, case or function body, or a subshell', tracked: true },
       { cmd: 'x=../docs/report.md; ! if false; then x=other.md; fi; cp base/report.md scratch/$x', shells: ['bash', 'zsh', 'dash'], construct: 'an if, loop, case or function body, or a subshell', tracked: true },
       { cmd: 'x=../docs/report.md; time if false; then x=other.md; fi; cp base/report.md scratch/$x', shells: ['bash', 'zsh'], construct: 'an if, loop, case or function body, or a subshell', tracked: true },
@@ -3969,6 +3983,12 @@ test('the readability rule itself, not its thirteen classes: a construct that wr
       { cmd: 'x=../docs/report.md; ! case a in b) x=other.md;; esac; cp base/report.md scratch/$x', shells: ['bash', 'zsh', 'dash'], construct: 'an if, loop, case or function body, or a subshell', tracked: true },
       { cmd: 'x=../docs/report.md; ! for y in; do x=other.md; done; cp base/report.md scratch/$x', shells: ['bash', 'zsh', 'dash'], construct: 'an if, loop, case or function body, or a subshell', tracked: true },
     ];
+    // the population (round 5's addendum, the mutation lens M43): both halves of the rule, the scope half ten rows spanning each
+    // construct named above, so a row dropped from the set reds here rather than leaving a smaller draw green
+    const scope = UNLISTED.filter((c) => c.construct === 'an if, loop, case or function body, or a subshell');
+    assert.equal(UNLISTED.length - scope.length, 6, 'the assignment-mechanism half: six rows');
+    assert.equal(scope.length, 10, 'the scope half: ten rows');
+    for (const spelling of ['{ if false', '! if false', 'time if false', 'select y in a', '{ f() {', '(x=other.md)', '! while', '! until', '! case', '! for']) assert.ok(scope.some((c) => c.cmd.includes(spelling)), `the scope half spells ${spelling}`);
     const pick = UNLISTED[crypto.randomInt(UNLISTED.length)];
     console.log(`# the rule pin's random pick: ${pick.cmd}`);
     for (const c of [pick, ...UNLISTED]) {
@@ -4047,7 +4067,10 @@ test("the addendum, item 1: a plain top-level `HOME=<path>` assignment is the on
     for (const shell of shellsFor(A, 'the prefix form in the shells')) { const r = w.run(prefixRow, w.NA, shell); assert.equal(r.changed, false, `${shell}: the prefix applies after the tilde expanded, so the write went to the previous home (a false refusal, ruled to stay)`); assert.ok(fs.existsSync(path.join(w.HOME, 'n1.md')), `${shell} wrote the previous home's n1.md`); }
     const prefixScript = w.fill("HOME={NA}/notes bash -c 'printf poison > ~/n1.md'");
     assert.equal(w.hook(prefixScript, w.NA).status, 2, 'the prefix form before a script is refused');
-    for (const shell of shellsFor(A, 'the prefix form before a script')) assert.equal(w.run(prefixScript, w.NA, shell).changed, true, `${shell}: the inner shell runs under the new HOME and writes the tracked note, which is why the prefix form stays unreadable`);
+    // the row's command text runs bash inside whichever shell runs it, so the leg needs bash on the runner too (round 5's addendum,
+    // the documents lens: on a runner whose bash the probe declined the zsh and dash rows red by value); the inner bash is asked of the
+    // probe first, and the outer shells run only when it passed
+    for (const shell of shellsFor(['bash'], 'the inner bash of the prefix form before a script').length ? shellsFor(A, 'the prefix form before a script') : []) assert.equal(w.run(prefixScript, w.NA, shell).changed, true, `${shell}: the inner shell runs under the new HOME and writes the tracked note, which is why the prefix form stays unreadable`);
     // every other form stays as it was: unreadable, refused with rule (a)'s reason
     assert.match(w.hook(w.fill('HOME={NA}/notes && printf poison > ~/n1.md'), w.NA).reason, BY_NAME_RE, 'the assignment before a && is this shell\'s own (the && gates the command after it), so it is read and the write refused by name');
     for (const raw of ['export HOME={NA}/notes; printf poison > $HOME/n1.md', 'HOME=~/sub; printf poison > ~/n1.md', 'HOME=; printf poison > ~/n1.md', 'true && HOME={NA}/notes; printf poison > ~/n1.md', 'if true; then HOME={NA}/notes; fi; printf poison > ~/n1.md']) {
@@ -4131,12 +4154,13 @@ test('the addendum, item 4, and round 5: every real-shell evidence leg of this f
     "AZ2.forEach((s) => go(s));",
     "[QB, QZ].map((s) => run(s, x));",
     "run(flag ? QZ : QB, x);",
+    "[QB, QD].forEach((s) => go(s));",
     "for (const shell of shellsFor([QZ], 'x')) go(shell);",
     "// spawnSync(QZ, ['-c', 'true']) in a comment",
     "const ok = HAS_SHELL.zsh ? run(QZ, x) : null;",
     "const sh = (shell, cmd) => spawnSync(shell, shell === QZ ? ['-f', '-c', cmd] : ['-c', cmd]);",
   ].map((l) => l.replaceAll('QB', `'${['ba', 'sh'].join('')}'`).replaceAll('QZ', `'${['z', 'sh'].join('')}'`).replaceAll('QD', `'${['da', 'sh'].join('')}'`));
-  assert.deepEqual(legsOutsideProbe(synthetic).map((l) => Number(l.split(':')[0])), [3, 4, 5, 6, 7, 8, 9, 10, 11, 12], 'ten unguarded legs flagged: the two declarations, the guarded line, the comment and the comparison not');
+  assert.deepEqual(legsOutsideProbe(synthetic).map((l) => Number(l.split(':')[0])), [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13], 'eleven unguarded legs flagged: the two declarations, the guarded line, the comment and the comparison not (line 13, a forEach over a literal list into no runner, is flagged by the list clause alone: round 5\'s addendum, the mutation lens M51)');
   // the line itself, in-process: a missing shell is reported once per leg through the reporter and dropped from the leg's list; a
   // present but too-old shell (the probe's record) is reported with the version found, the same loud line, never a value mismatch
   const lines = [];
@@ -4149,6 +4173,25 @@ test('the addendum, item 4, and round 5: every real-shell evidence leg of this f
   assert.equal(old.length, 1);
   assert.match(old[0], /^NOT RUN: real bash is 3\.2\.57\(1\)-release on this runner, below the 4\.3 its legs need, so its evidence leg did not run: a nameref leg \(/, 'a too-old shell declines with the loud line naming the version');
   assert.deepEqual([probeShell('bash').ok, typeof probeShell('bash').version], [SHELL_PROBE.bash.ok, 'string'], 'the probe reads bash\'s version');
+  // the version floor by execution (round 5's addendum, the mutation lens M47b): a stub first on PATH answers the probe's version
+  // question with 3.2.57, the version macOS's CI cell ships, and the probe declines it naming the version and the floor
+  const oldStub = fs.mkdtempSync(path.join(os.tmpdir(), 'romp-bash-guard-oldbash-'));
+  const savedPath = process.env.PATH;
+  try {
+    fs.writeFileSync(path.join(oldStub, ['ba', 'sh'].join('')), '#!/bin/sh\nprintf %s "3.2.57(1)-release"\n', { mode: 0o755 });
+    process.env.PATH = `${oldStub}:${savedPath}`;
+    const old32 = probeShell(['ba', 'sh'].join(''));
+    assert.deepEqual([old32.ok, old32.version], [false, '3.2.57(1)-release'], 'a bash below the floor is declined');
+    assert.match(old32.why, /^is 3\.2\.57\(1\)-release on this runner, below the 4\.3 its legs need$/, 'the reason names the version found and the floor');
+  } finally { process.env.PATH = savedPath; fs.rmSync(oldStub, { recursive: true, force: true }); }
+  // the live-value check on the binding the legs use (M45): the file's own `spawnSync` is the wrapper over the probe's table, so a
+  // shell the probe declined throws from any leg, not only from a wrapper built over a synthetic table
+  SHELL_PROBE.__declined_probe_only__ = { ok: false, why: 'is not on this runner' };
+  try { assert.throws(() => spawnSync('__declined_probe_only__', ['-c', 'true']), /a real-shell leg ran __declined_probe_only__ outside the probe: real __declined_probe_only__ is not on this runner; ask shellsFor first/, 'the module-level spawnSync is the guarded one'); }
+  finally { delete SHELL_PROBE.__declined_probe_only__; }
+  // the runners take their shell from the caller and default to none (M49): a call that names no shell throws instead of running bash
+  assert.throws(() => overwrites('true', report, proj), TypeError, 'overwrites without a shell runs nothing');
+  assert.throws(() => lands('true', path.join(proj, 'docs', 'x.md'), proj), TypeError, 'lands without a shell runs nothing');
   // the live-value check: a spawn of a shell the probe declined throws by name, whatever the call shape; a shell it passed runs
   const calls = [];
   const guarded = guardedSpawn({ bash: true, zsh: false, dash: { ok: false, why: 'is 0.5.12 on this runner, below the 9.9 its legs need' } }, (...a) => { calls.push(a); return { status: 0 }; });
@@ -4194,6 +4237,7 @@ test("the seventh pass's attacker, F2: a `{ }` group nested in a piped or backgr
     const BZ = ['bash', 'zsh'];
     const PIPED = ['literal', 'a `{ }` group that is piped, which the shells run in a subshell'];
     const BG = ['literal', 'a `{ }` group that is backgrounded, which the shells run in a subshell'];
+    const DECL = ['literal', 'a `declare`, which dash has no command for'];   // round 5's addendum: the declaration taints the name before the piped brace is reached
     // [id, command, the shells that write the tracked subset when run unguarded, the verdict]
     const rows = [
       ['F2a-1', 'x=docs/report.md; { { x=scratch/keep.md; }; } | cat; cp base/report.md $x', A, PIPED],
@@ -4203,8 +4247,8 @@ test("the seventh pass's attacker, F2: a `{ }` group nested in a piped or backgr
       ['F2a-5', 'x=docs/report.md; { { x=scratch/keep.md; }; } |& cat; cp base/report.md $x', BZ, PIPED],   // dash has no |&: a syntax error, nothing runs
       ['F2a-6', 'x=docs/report.md; { { x=scratch/keep.md; } } | cat; cp base/report.md $x', A, PIPED],        // `} }` without a `;` between: all three shells accept it
       ['F2a-7', 'x=docs/report.md; { { x=scratch/keep.md; } } & wait; cp base/report.md $x', A, BG],
-      ['F2a-8', 'x=docs/report.md; { { declare x=scratch/keep.md; }; } | cat; cp base/report.md $x', A, PIPED],   // dash has no declare: x untouched, the copy lands the same
-      ['F2a-9', 'x=docs/report.md; { declare x=scratch/keep.md; } | cat; cp base/report.md $x', A, PIPED],       // ONE level, a declaration: the declaration branch noted no name (found here)
+      ['F2a-8', 'x=docs/report.md; { { declare x=scratch/keep.md; }; } | cat; cp base/report.md $x', A, DECL],   // dash has no declare: x untouched, the copy lands the same (since round 5's addendum the declare itself taints x, before the piped brace is reached)
+      ['F2a-9', 'x=docs/report.md; { declare x=scratch/keep.md; } | cat; cp base/report.md $x', A, DECL],       // ONE level, a declaration: the declaration branch noted no name (found here)
       ['F2a-10', 'x=docs/report.md; { export x=scratch/keep.md; } | cat; cp base/report.md $x', A, PIPED],
       ['F2a-11', 'x=docs/report.md; { { x=scratch/keep.md; }; y=1; } | cat; cp base/report.md $x', A, PIPED],
       ['F2a-12', 'x=docs/report.md; { { x=scratch/keep.md; }; } > /dev/null | cat; cp base/report.md $x', A, PIPED],
@@ -4324,28 +4368,30 @@ test("found beside the attacker's readonly rows: a name made readonly keeps its 
     const B = ['bash'];
     const BD = ['bash', 'dash'];
     const BZ = ['bash', 'zsh'];
+    const DECL = ['literal', 'a `declare`, which dash has no command for'];   // round 5's addendum (the freeze lens, RC2): `declare -r` freezes in bash and zsh and is not found in dash, which performs the later write, so the name is tainted, not frozen
+    const TYPESET = ['literal', 'a `typeset`, which dash has no command for'];
     // [id, cwd, command, the shells that write, the verdict, the shells whose run fails]
     const rows = [
       ['RO-6', 'na', 'readonly x=docs/report.md; declare x=scratch/keep.md; cp base/report.md $x', BD, 'name', ['zsh']],        // zsh stops on the declare; bash continues with the readonly value, dash has no declare
       ['RO-7', 'na', 'readonly x=docs/report.md; export x=scratch/keep.md; cp base/report.md $x', B, 'name', ['zsh', 'dash']],  // dash's export refuses and stops
       ['RO-8', 'na', 'readonly x=docs/report.md; unset x; cp base/report.md $x', B, 'name', ['zsh', 'dash']],
-      ['RO-9', 'na', 'declare -r x=docs/report.md; declare x=scratch/keep.md; cp base/report.md $x', B, 'name', ['zsh', 'dash']],   // dash: no declare at all, the copy has no destination
+      ['RO-9', 'na', 'declare -r x=docs/report.md; declare x=scratch/keep.md; cp base/report.md $x', B, DECL, ['zsh', 'dash']],   // dash: no declare at all, the copy has no destination
       ['RO-10', 'na', 'x=docs/report.md; readonly x; declare x=scratch/keep.md; cp base/report.md $x', BD, 'name', ['zsh']],   // `readonly x` alone freezes the value it has
       ['RO-11', 'na', 'readonly x=docs/report.md; typeset x=scratch/keep.md; cp base/report.md $x', BD, 'name', ['zsh']],
       ['RO-12', 'na', 'readonly x=docs/report.md; local x=scratch/keep.md; cp base/report.md $x', B, 'name', ['zsh', 'dash']],
       ['RO-13', 'out', 'readonly x={NA}/docs/report.md; declare x={OUT}/scratch/keep.md; cp {NA}/base/report.md $x', BD, 'name', ['zsh']],   // from a cwd in no project: resolved by the readonly value, so refused by name (a taint would have left it the residual)
       // the attacker's rows: a plain reassign stops every shell that has the construct (RO-1..4, E1..E3 were allowed and safe by shell semantics; refused by the readonly value now)
       ['RO-1', 'na', 'readonly x=docs/report.md; x=scratch/keep.md; cp base/report.md $x', [], 'name', A],
-      ['RO-2', 'na', 'declare -r x=docs/report.md; x=scratch/keep.md; cp base/report.md $x', [], 'name', BZ],    // dash has no declare: x is the later value and the copy lands on keep.md
-      ['RO-3', 'na', 'typeset -r x=docs/report.md; x=scratch/keep.md; cp base/report.md $x', [], 'name', BZ],
-      ['RO-4', 'na', 'declare -gr x=docs/report.md; x=scratch/keep.md; cp base/report.md $x', [], 'name', BZ],
+      ['RO-2', 'na', 'declare -r x=docs/report.md; x=scratch/keep.md; cp base/report.md $x', [], DECL, BZ],    // dash has no declare: x is the later value and the copy lands on keep.md (the reason the freeze lens made the guard taint rather than freeze)
+      ['RO-3', 'na', 'typeset -r x=docs/report.md; x=scratch/keep.md; cp base/report.md $x', [], TYPESET, BZ],
+      ['RO-4', 'na', 'declare -gr x=docs/report.md; x=scratch/keep.md; cp base/report.md $x', [], DECL, BZ],
       ['RO-E1', 'na', 'readonly x=docs/report.md; x=scratch/keep.md || true; cp base/report.md $x', [], 'name', A],
       ['RO-E2', 'na', 'readonly x=docs/report.md; x=scratch/keep.md 2>/dev/null; cp base/report.md $x', [], 'name', A],
       ['RO-E3', 'na', 'readonly x=docs/report.md; set +e; x=scratch/keep.md; cp base/report.md $x', [], 'name', A],
       ['RO-E4', 'na', 'readonly x=docs/report.md; (x=scratch/keep.md) 2>/dev/null; cp base/report.md $x', A, 'name', []],
       ['RO-T1', 'na', 'readonly x=docs/report.md; cp base/report.md $x', A, 'name', []],
       ['RO-T2', 'na', 'readonly x=scratch/keep.md; cp base/report.md $x', [], 'allow', []],
-      ['RO-T3', 'na', 'declare -r x=scratch/keep.md; cp base/report.md $x', [], 'allow', ['dash']],   // dash: no declare, the copy has no destination
+      ['RO-T3', 'na', 'declare -r x=scratch/keep.md; cp base/report.md $x', [], DECL, ['dash']],   // dash: no declare, the copy has no destination; refused since round 5's addendum (a cost: bash and zsh land the copy on the untracked keep.md)
       ['RO-T4', 'na', 'readonly x=scratch/keep.md; declare x=docs/report.md; cp base/report.md $x', [], 'allow', ['zsh']],   // the readonly value is untracked: allowed, and bash lands the copy there
       ['RO-T5', 'na', 'x=scratch/keep.md; readonly x; cp base/report.md $x', [], 'allow', []],      // `readonly x` alone keeps a readable value readable (a taint before)
     ];
@@ -4356,6 +4402,7 @@ test("found beside the attacker's readonly rows: a name made readonly keeps its 
       const h = w.hook(cmd, at);
       n++;
       if (expect === 'allow') assert.equal(h.status, 0, `${id}: allowed: ${cmd}: ${h.reason}`);
+      else if (expect[0] === 'literal') { assert.equal(h.status, 2, `${id}: refused: ${cmd}: ${h.reason}`); assert.ok(NOT_LITERAL.test(h.reason) && h.reason.includes(expect[1]), `${id}: refused as not literal, the reason naming the declaration dash lacks: ${h.reason.split('\n')[0]}`); }
       else { assert.equal(h.status, 2, `${id}: refused: ${cmd}: ${h.reason}`); assert.match(h.reason, BY_NAME_RE, `${id}: by the readonly value: ${h.reason.split('\n')[0]}`); assert.ok(h.reason.includes(path.join(w.NA, 'docs', 'report.md')), `${id}: the readonly value is the path named`); }
       for (const shell of shellsFor(A, id)) {
         const r = w.run(cmd, at, shell);
@@ -4499,6 +4546,15 @@ test("round 5, the frame on parsed structure: a compound head behind `!` (a run 
       ['N19', 'x=docs/report.md; ! until true; do x=scratch/keep.md; done; cp base/report.md $x', A, BODY],
       ['N20', 'x=docs/report.md; ! for y in; do x=scratch/keep.md; done; cp base/report.md $x', A, BODY],
       ['N21', 'x=docs/report.md; ! while false; do x=scratch/keep.md; done; cp base/report.md $x', A, BODY],
+      // round 5's addendum (the mutation lens, M13): the assignment-only head read (head0) after the peel, which the rows above never
+      // reach (each has a command in its condition): a condition of assignments alone behind `!` or `{`, its else-branch not run
+      ['N22', 'x=docs/report.md; ! if y=1; then :; else x=scratch/keep.md; fi; cp base/report.md $x', A, BODY],
+      ['N23', 'x=docs/report.md; { if y=1; then :; else x=scratch/keep.md; fi; }; cp base/report.md $x', A, BODY],
+      // the wrapper-word and assignment-word peels (M07, M07b): a compound behind `command` or `y=1` stops every shell with a syntax
+      // error, so no shell writes anything; the frame opens all the same (without the peel the head is `command` and `then x=..`
+      // an adopted assignment), a refusal that costs nothing
+      ['N24', 'x=docs/report.md; command if false; then x=scratch/keep.md; fi; cp base/report.md $x', [], BODY],
+      ['N25', 'x=docs/report.md; y=1 if false; then x=scratch/keep.md; fi; cp base/report.md $x', [], BODY],
       // the cd face: the cd in the body never runs, the copy lands in the tracked folder from the cwd the shell never left
       ['D1', '! if false; then cd scratch; fi; cp base/report.md notes/n1.md', A, UNKNOWN_BODY_CD],
       ['D2', 'time if false; then cd scratch; fi; cp base/report.md notes/n1.md', BZ, UNKNOWN_BODY_CD],
@@ -4533,7 +4589,7 @@ test("round 5, the frame on parsed structure: a compound head behind `!` (a run 
         assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
       }
     }
-    assert.equal(n, 34);
+    assert.equal(n, 38);
     // the grammar: the head is read after the peel and from the one table; a select body closes on `done`
     const ex = extractWriteTargets('x=docs/report.md; ! if false; then x=scratch/keep.md; fi; cp base/report.md $x', w.NA);
     assert.deepEqual([ex.targets.length, ex.unresolved.map((u) => u.raw)], [0, ['$x']], 'the body behind `!` leaves x unreadable');
@@ -4621,8 +4677,29 @@ test('round 5, the catch-all refuses: a command word that is an Object.prototype
       assert.ok(inPlay && inPlay.includes('an error of my own (Error: planted by the test)') && inPlay.includes(w.NA) && inPlay.includes('track-edit'), `the planted throw refuses, naming it and the project: ${inPlay}`);
       assert.ok(!/\u2014/.test(inPlay) && !ROMP_NOUNS.test(inPlay.split(w.W).join('<w>')), 'no em dash, no romp noun');
       assert.equal(evaluate(payload('cp x.md y.md', w.OUT)), null, 'from a cwd in no project the same throw passes: the guard\'s subject is not there');
+      // the in-play check itself throwing (round 5's addendum, the mutation lens M22): with the config read planted to fail too, the
+      // refusal says the project in play is not known either, naming that error, and still refuses (a null there was an allow)
+      const realAccess = fs.accessSync;
+      try {
+        fs.accessSync = () => { const e = new Error('EACCES: planted access'); e.code = 'EACCES'; throw e; };
+        const unknownToo = evaluate(payload('cp base/report.md scratch/keep.md', w.NA));
+        assert.ok(unknownToo && unknownToo.includes('an error of my own (Error: planted by the test)') && /sits in a project that tracks files is not known either \(Error: EACCES: /.test(unknownToo), `when the in-play check throws too the refusal says so and refuses: ${unknownToo}`);
+      } finally { fs.accessSync = realAccess; }
     } finally { path.basename = real; }
     assert.equal(evaluate(payload('cp base/report.md scratch/keep.md', w.NA)), null, 'with the plant removed the copy is judged as ever');
+    // the process-level catch (M26): a throw that escapes evaluate itself, here process.cwd() on a directory removed after the hook
+    // started (the payload names no cwd), refuses with the exception named rather than exiting 0
+    const gone = fs.mkdtempSync(path.join(os.tmpdir(), 'romp-bash-guard-gone-'));
+    const child = spawn(process.execPath, [HOOK], { cwd: gone, env: hookEnv({ ROMP_SID }) });
+    let childErr = '';
+    child.stderr.on('data', (c) => { childErr += c; });
+    const exited = new Promise((resolve) => child.on('exit', resolve));
+    fs.rmSync(gone, { recursive: true, force: true });
+    child.stdin.end(JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'cp base/report.md scratch/keep.md' } }));
+    return exited.then((code) => {
+      assert.equal(code, 2, `the process-level catch refuses: ${childErr}`);
+      assert.match(childErr, /the guard that judges shell writes to tracked files failed while reading it \(Error: ENOENT: no such file or directory, uv_cwd\)/, 'the refusal names the exception');
+    });
   } finally { process.env.HOME = savedHome; w.rm(); }
 });
 
@@ -4704,8 +4781,9 @@ test('round 5, the census of the lists that remain is derived from the hook\'s s
   const c = census(src);
   assert.ok(c.lists.length >= 30, `the enumeration finds the lists: ${c.lists.length}`);
   assert.deepEqual([c.unnamed, c.stale, c.unclassified, c.missingConsumer], [[], [], [], []], `the census holds: ${JSON.stringify({ unnamed: c.unnamed, stale: c.stale, unclassified: c.unclassified, missingConsumer: c.missingConsumer })}`);
-  for (const name of ['BODY_CLOSER', 'CLOSERS', 'PREFIXES', 'FRAME_PEEL', 'WRITER_CASES']) assert.equal(CENSUS[name].side, 'WRITE', `${name}: a gap on the write side`);
-  for (const name of ['WRAPPER_OPT', 'COPY_OPT', 'INERT_DECLARATION_FLAGS', 'VAR_ASSIGNERS']) assert.equal(CENSUS[name].side, 'REFUSE', `${name}: a gap on the refuse side`);
+  for (const name of ['BODY_CLOSER', 'CLOSERS', 'PREFIXES', 'FRAME_PEEL', 'WRITER_CASES', 'INTERPRETER_OPERANDS']) assert.equal(CENSUS[name].side, 'WRITE', `${name}: a gap on the write side`);   // INTERPRETER_OPERANDS: the side round 5 corrected by measurement, pinned since its addendum (the mutation lens M42b)
+  for (const name of ['WRAPPER_OPT', 'COPY_OPT', 'VAR_ASSIGNERS']) assert.equal(CENSUS[name].side, 'REFUSE', `${name}: a gap on the refuse side`);
+  assert.equal(CENSUS.ATTRIBUTE_ONLY_FLAGS.side, 'NONE', 'the attribute-only letters pick a refusal text since round 5\'s addendum: no declaration flag is inert');
   assert.ok(c.lists.find((l) => l.name === 'WRITER_CASES').items.includes('cp') && c.lists.find((l) => l.name === 'ROOT_MARKERS').items.includes('.trackchanges'), 'the pseudo-lists carry their items');
   // planted: a list the census does not name reds
   const planted = census(src + "\nconst PLANTED_WRAPPERS = new Set(['unshare']);\n");
@@ -4716,9 +4794,18 @@ test('round 5, the census of the lists that remain is derived from the hook\'s s
   // moved: a consumer rewritten without the table reds
   const moved = census(src.replace(CENSUS.BODY_CLOSER.consumer, "else if (head === 'if') frames.push({ kind: head, moved: false });"));
   assert.deepEqual(moved.missingConsumer, ['BODY_CLOSER']);
-  // the shapes read, and the blind spots stated: a comment, an indented declaration and a Map are not lists here
-  const shapes = enumerateLists("const A = new Set(['a']);\nexport const B = ['b'];\nconst C = { c: 1 };\nconst D = Object.fromEntries([]);\nconst E = new RegExp('x|y');\n// const F = new Set(['f']);\n  const G = new Set(['g']);\nconst H = new Map();\nlet I = [];\n");
-  assert.deepEqual(shapes.map((l) => l.name), ['A', 'B', 'C', 'D', 'E', 'I']);
+  // the shapes read, and the blind spots stated: a comment, an indented declaration and a Map are not lists here; since round 5's
+  // addendum (the census lens planted 14 shapes and 12 landed green while live) a `var`, a declaration split after its `=` and
+  // spacing drift around the `=` are read too, and the six shapes that still pass are named in the module as blind spots
+  const shapes = enumerateLists("const A = new Set(['a']);\nexport const B = ['b'];\nconst C = { c: 1 };\nconst D = Object.fromEntries([]);\nconst E = new RegExp('x|y');\n// const F = new Set(['f']);\n  const G = new Set(['g']);\nconst H = new Map();\nlet I = [];\nvar J = new Set(['j']);\nconst K =\n  new Set(['k']);\nconst L  =  ['l'];\nconst M = Object.keys(C).filter(Boolean);\nconst N = 'a b c';\nconst O = /^(?:a|b)$/;\nconst P1 = 1, P = new Set(['p']);\nlet Q;\nQ = new Set(['q']);\nconst R = Object.freeze(new Set(['r']));\n");
+  assert.deepEqual(shapes.map((l) => l.name), ['A', 'B', 'C', 'D', 'E', 'I', 'J', 'K', 'L'], 'the shapes read: the five initializer forms on const, let or var, a split declaration joined, spacing drift; not a comment, an indented declaration, a Map, a call, a string, a regex literal, a second declarator, a let filled later or a frozen set');
+  assert.equal(shapes.find((l) => l.name === 'K').line, 11, 'a split declaration is reported at its own line');
+  const censusSource = fs.readFileSync(fileURLToPath(new URL('./romp-track-bash-guard-census.mjs', import.meta.url)), 'utf8').replace(/\n\/\/ ?/g, ' ').replace(/\s+/g, ' ');
+  for (const spot of ['a list built by a call', 'a string holding an alternation', 'a regex literal', 'declared inside a function or a block', 'a `let` filled in later', 'an inline literal at its point of use', 'a second declarator', 'a second `switch`']) assert.ok(censusSource.includes(spot), `the module states the blind spot: ${spot}`);
+  // the writer cases stop at the switch's own `default:`, not at a deeper one inside a case (round 5's addendum: an indexOf on the
+  // six-space spelling matched a deeper-indented default too and would have truncated the list in silence)
+  const nested = "    switch (name) {\n      case 'cp': {\n        switch (x) {\n          case 'a': break;\n          default: break;\n        }\n        break;\n      }\n      case 'tee': break;\n      default:\n        break;\n    }\n";
+  assert.deepEqual(enumerateLists(nested).find((l) => l.name === 'WRITER_CASES').items, ['cp', 'a', 'tee'], 'the inner default does not end the writer cases (a case label inside is still a case label; the point is that `tee`, after the inner default, is read)');
   assert.equal(Object.keys(CENSUS).length, c.lists.length, 'the census names exactly the lists enumerated');
 });
 
@@ -4778,4 +4865,234 @@ test("round 5, the since sweep: every corpus row marked `since` newly refuses at
     assert.deepEqual(bad, [], `every since row flips at the pass it names (2 at the pass, 0 before)`);
     console.log(`# the since sweep: ${since.length} rows, ${Object.keys(SINCE_HEADS).length} labels, every row newly refuses at its pass`);
   } finally { process.env.HOME = savedHome; fs.rmSync(scratch, { recursive: true, force: true }); }
+});
+
+// ── round 5's addendum (2026-09-20): the five lenses over the round-5 commit ──
+//
+// Every lens ran on the round-5 head as a process against a fresh synthetic world and then executed each row unguarded in
+// bash 5.2, zsh 5.9 and dash 0.5.12. The frame lens (a grammar-driven matrix, 3526 rows on four faces) found the frame
+// decision holding for what it claimed and eleven classes of live false allow beside it, every one pre-existing at round 4's
+// head: a `{ }` group opened after `&&`, `||` or `|` with its body on a later line (F1, 36 rows, all three shells, the lead
+// the commonest way a multi-line conditional is written), zsh's multi-name and wrapper-prefixed function definitions (F2),
+// a function body without braces (F3, zsh and dash, and every shell through `sh -c`), zsh's `repeat` (F4), `always` (F5),
+// `foreach` and `for y (..)` (F6), a compound body closed by a `}` the walk never read (F7), `coproc` (F8), a timed group
+// (F9) and dash running a `function NAME` body (F10). The freeze lens (163 constructs) found the readonly skip firing
+// before the scope check (RC1: a bare `readonly x` in a body that may not run, a subshell, a pipeline or an uncalled
+// function froze the guard's name and no shell's), `declare -r` and `typeset -r` freezing nowhere in dash (RC2), option
+// words bash rejects read as inert (RC3), an option after the operand (RC4) and `local -r` at the top level (RC5), 54 rows.
+// The mutation lens found thirteen unpinned claims, the census lens six undisclosed list shapes and a false sentence in the
+// UNLISTED comment, the documents lens an assertion outside its probe loop. Each is closed on the safe side and pinned here
+// and in the tests above; the rows below run the hook as a process from each row's cwd and then unguarded in every shell,
+// asserting EXACTLY which shells write the tracked subset.
+
+const DECL_TAINT = (verb) => ['literal', `a \`${verb}\`, which dash has no command for`];
+const OPTION_TAINT = (verb, flags) => ['literal', `an option word on \`${verb}\` (${flags}), which bash rejects, assigning nothing`];
+const ALONE = (verb) => ['literal', `a \`${verb}\` of the name alone, which may change how it is read`];
+const COND_GROUP = (op) => ['literal', `a \`{ }\` group opened after \`${op}\``];
+const TIMED_GROUP = ['literal', 'a `{ }` group behind `time`, whose assignment zsh does not keep when it stands alone in the group'];
+const COND_GROUP_CD = (op) => ['dir', `sits in a \`{ }\` group opened after \`${op}\``];
+const DASH_FUNCTION_CD = ['dir', 'sits in the body of a `function NAME` written without parentheses'];
+
+test("round 5's addendum, the frame lens: a `{ }` group opened after `&&`, `||` or `|` is skipped or run in a subshell whole (its assignment unreadable, its cd unknown), zsh's multi-name and wrapper-prefixed definitions and a function body without braces define and run nothing, `repeat`, `foreach`, `for y (..)`, a brace body and a one-command body open and close their frames, `always` continues a group, `coproc` runs in a coprocess whose writes land and whose names and cd never reach this shell, a timed group's lone assignment is unreadable, and dash runs a `function NAME` body; each refused row writes the tracked subset in exactly the shells named and each allowed row leaves it", () => {
+  const w = sixthPassWorld();
+  const savedHome = process.env.HOME;
+  process.env.HOME = w.HOME;
+  try {
+    const A = ['bash', 'zsh', 'dash'];
+    const B = ['bash'];
+    const Z = ['zsh'];
+    const D = ['dash'];
+    const BZ = ['bash', 'zsh'];
+    const BD = ['bash', 'dash'];
+    const ZD = ['zsh', 'dash'];
+    // [id, cwd, command, the shells that write the tracked subset when run unguarded (the others skip the body, run it in a subshell, or reject the spelling), the verdict]
+    const rows = [
+      // F1: a group opened after an operator, its body on a later line (the same-line form was refused by the assignment's own operator)
+      ['F1-lead', 'nad', 'test -d ../scratch || {\n mkdir ../scratch\n cd ../scratch\n}\ncp ../base/report.md report.md', A, COND_GROUP_CD('||')],   // scratch exists: every shell skips the group and copies onto the tracked docs/report.md
+      ['F1-and', 'na', 'x=../docs/report.md; false && {\nx=other.md\n}; cp base/report.md scratch/$x', A, COND_GROUP('&&')],
+      ['F1-or', 'na', 'x=../docs/report.md; true || {\nx=other.md\n}; cp base/report.md scratch/$x', A, COND_GROUP('||')],
+      ['F1-pipe', 'na', 'x=../docs/report.md; true | {\nx=other.md\n}; cp base/report.md scratch/$x', BD, COND_GROUP('|')],   // zsh runs the last pipeline member in this shell and keeps x
+      ['F1-nl', 'na', 'x=../docs/report.md; false &&\n{\nx=other.md\n}; cp base/report.md scratch/$x', A, COND_GROUP('&&')],
+      ['F1-bang', 'na', 'x=../docs/report.md; false && ! {\nx=other.md\n}; cp base/report.md scratch/$x', A, COND_GROUP('&&')],
+      ['F1-nested', 'na', 'x=../docs/report.md; false && {\n{\nx=other.md\n}\n}; cp base/report.md scratch/$x', A, COND_GROUP('&&')],
+      ['F1-decl', 'na', 'x=../docs/report.md; false && {\nexport x=other.md\n}; cp base/report.md scratch/$x', A, COND_GROUP('&&')],
+      ['F1-pipe-cd', 'nad', 'true | {\ncd ../scratch\n}; cp ../base/report.md report.md', BD, COND_GROUP_CD('|')],
+      ['F1-sh', 'nad', "sh -c 'false && {\ncd ../scratch\n}\ncp ../base/report.md report.md'", A, COND_GROUP_CD('&&')],
+      ['F1-same', 'na', 'x=../docs/report.md; false && { x=other.md; }; cp base/report.md scratch/$x', A, ['literal', 'a `{ }` group opened after `&&`']],   // refused before too, by the assignment's own operator; the group's reason now
+      ['F1-T1', 'na', 'x=../docs/report.md; true && {\nx=other.md\n}; cp base/report.md scratch/$x', [], COND_GROUP('&&')],   // the group runs: a false refusal, priced in the corpus
+      ['F1-T2', 'na', 'x=../docs/report.md; true & {\nx=other.md\n}; cp base/report.md scratch/$x', [], 'allow'],           // after `&` the group is this shell's own
+      // F2: zsh's multi-name definitions and a wrapper word before a definition (bash and dash: a syntax error, nothing runs)
+      ['F2-two', 'na', 'x=../docs/report.md; f g () {\nx=other.md\n}; cp base/report.md scratch/$x', Z, BODY],
+      ['F2-two-cd', 'nad', 'f g () {\ncd ../scratch\n}; cp ../base/report.md report.md', Z, 'name'],
+      ['F2-kw', 'na', 'x=../docs/report.md; function f g {\nx=other.md\n}; cp base/report.md scratch/$x', Z, BODY],
+      ['F2-env', 'na', 'x=../docs/report.md; env f () { x=other.md; }; cp base/report.md scratch/$x', Z, BODY],
+      ['F2-command', 'na', 'x=../docs/report.md; command f () {\nx=other.md\n}; cp base/report.md scratch/$x', Z, BODY],
+      ['F2-coproc', 'na', 'x=../docs/report.md; coproc f () { x=other.md; }; cp base/report.md scratch/$x', Z, BODY],
+      // F3: a function body without braces (bash rejects the spelling)
+      ['F3-asg', 'na', 'x=../docs/report.md; f() x=other.md; cp base/report.md scratch/$x', ZD, BODY],
+      ['F3-cd', 'nad', 'f() cd ../scratch; cp ../base/report.md report.md', ZD, 'name'],
+      ['F3-nl', 'nad', 'f()\ncd ../scratch; cp ../base/report.md report.md', ZD, 'name'],
+      ['F3-sh', 'nad', "sh -c 'f() cd ../scratch; cp ../base/report.md report.md'", A, 'name'],
+      ['F3-kw', 'nad', 'function f cd ../scratch; cp ../base/report.md report.md', D, 'name'],   // zsh defines f with the next command as its body; dash has no `function` and runs the cp from docs/
+      // F4: zsh's repeat (bash and dash: no such word, nothing runs)
+      ['F4-do', 'na', 'x=../docs/report.md; repeat 0; do x=other.md; done; cp base/report.md scratch/$x', Z, BODY],
+      ['F4-brace', 'na', 'x=../docs/report.md; repeat 0 {\nx=other.md\n}; cp base/report.md scratch/$x', Z, BODY],
+      ['F4-brace-cd', 'nad', 'repeat 0 {\ncd ../scratch\n}; cp ../base/report.md report.md', Z, UNKNOWN_BODY_CD],
+      ['F4-cmd', 'na', 'repeat 2 cp base/report.md docs/report.md', Z, 'name'],
+      // F5: zsh's always (bash and dash: a syntax error, nothing runs)
+      ['F5-pipe', 'na', 'x=../docs/report.md; { x=other.md; } always { :; } | cat; cp base/report.md scratch/$x', Z, PIPED_GROUP],
+      ['F5-cd', 'nas', '{ :; } always { cd ../docs; }; cp ../base/report.md report.md', Z, 'name'],
+      ['F5-plain', 'na', 'x=../docs/report.md; { x=other.md; } always { :; }; cp base/report.md scratch/$x', [], 'allow'],
+      // F6: zsh's foreach and the short for
+      ['F6-foreach', 'na', 'x=../docs/report.md; foreach y ()\nx=other.md\nend; cp base/report.md scratch/$x', Z, BODY],
+      ['F6-for-cmd', 'nad', 'for y () cd ../scratch; cp ../base/report.md report.md', Z, UNKNOWN_BODY_CD],
+      ['F6-for-brace', 'nad', 'for y () {\ncd ../scratch\n}; cp ../base/report.md report.md', Z, UNKNOWN_BODY_CD],
+      // F7: a compound body closed by a brace, and the one-command body after a `)`
+      ['F7-for-in', 'nad', 'for y in; {\ncd ../scratch\n}; cp ../base/report.md report.md', BZ, UNKNOWN_BODY_CD],
+      ['F7-case', 'nad', 'case a {\nb) cd ../scratch;;\n}; cp ../base/report.md report.md', Z, UNKNOWN_BODY_CD],
+      ['F7-if', 'nad', 'if (( 0 )) {\ncd ../scratch\n}; cp ../base/report.md report.md', Z, UNKNOWN_BODY_CD],
+      ['F7-select', 'na', 'x=docs/report.md; select y in a; { x=scratch/keep.md; } </dev/null; cp base/report.md $x', BZ, BODY],
+      ['F7-if-paren', 'nad', 'if (false) cd ../scratch; cp ../base/report.md report.md', Z, UNKNOWN_BODY_CD],
+      // F8: coproc (dash: not found)
+      ['F8-grp', 'na', 'x=../docs/report.md; coproc {\nx=other.md\n}; cp base/report.md scratch/$x', BZ, BODY],
+      ['F8-grp-cd', 'nad', 'coproc {\ncd ../scratch\n}; cp ../base/report.md report.md', BZ, 'name'],
+      ['F8-name', 'na', 'x=../docs/report.md; coproc CO {\nx=other.md\n}; cp base/report.md scratch/$x', B, BODY],   // zsh's coproc takes no NAME: an error, nothing written
+      ['F8-if', 'na', 'x=../docs/report.md; coproc if true; then x=other.md; fi; cp base/report.md scratch/$x', BZ, BODY],
+      ['F8-if-cd', 'nad', 'coproc if true; then cd ../scratch; fi; cp ../base/report.md report.md', BZ, 'name'],
+      ['F8-asg', 'na', 'x=docs/report.md; coproc x=scratch/keep.md; wait; cp base/report.md $x', A, BODY],
+      ['F8-cp', 'na', 'coproc cp base/report.md docs/report.md; wait', BZ, 'name'],   // the direct write the contract had listed as a residual
+      ['F8-cp-T', 'na', 'coproc cp base/report.md scratch/keep.md; wait', [], 'allow'],
+      // F9: a timed group holding an assignment alone
+      ['F9', 'na', 'x=docs/report.md; time {\nx=scratch/keep.md\n}; cp base/report.md $x', Z, TIMED_GROUP],
+      ['F9-cd', 'nad', 'time {\ncd ../scratch\n}; cp ../base/report.md report.md', [], 'allow'],   // the cd moves bash and zsh: followed
+      // F10: dash runs a `function NAME` body whose brace opens on a later line
+      ['F10', 'nas', 'function f\n{\ncd ../docs\n}; cp ../base/report.md report.md', D, DASH_FUNCTION_CD],
+      ['F10-T', 'nas', 'function f { cd ../docs; }; cp ../base/report.md report.md', [], 'allow'],   // one line: dash stops at the `}` with a syntax error before the cp
+    ];
+    let n = 0;
+    for (const [id, cwd, raw, writers, expect] of rows) {
+      const cmd = w.fill(raw);
+      const at = w.cwds[cwd];
+      const h = w.hook(cmd, at);
+      n++;
+      if (expect === 'allow') assert.equal(h.status, 0, `${id}: allowed: ${cmd}: ${h.reason}`);
+      else {
+        assert.equal(h.status, 2, `${id}: refused: ${cmd}: ${h.reason}`);
+        assert.ok(!/\u2014/.test(h.reason) && !ROMP_NOUNS.test(h.reason.split(w.W).join('<w>')), `${id}: no em dash, no romp noun`);
+        if (expect === 'name') assert.match(h.reason, BY_NAME_RE, `${id}: by name: ${h.reason.split('\n')[0]}`);
+        else if (expect[0] === 'dir') assert.ok(/the directory it is relative to is not known/.test(h.reason) && h.reason.includes(expect[1]), `${id}: the directory is unknown, the reason naming the construct: ${h.reason.split('\n')[0]}`);
+        else assert.ok(NOT_LITERAL.test(h.reason) && h.reason.includes(expect[1]), `${id}: refused as not literal, the reason naming the construct (${expect[1]}): ${h.reason.split('\n')[0]}`);
+      }
+      for (const shell of shellsFor(A, id)) {
+        const r = w.run(cmd, at, shell);
+        assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
+      }
+    }
+    assert.equal(n, 51);
+    // the grammar: the conditional group's names are not adopted, the coproc's cd is restored, the brace body closes its frame
+    assert.deepEqual(extractWriteTargets('x=../docs/report.md; false && {\nx=other.md\n}; cp base/report.md scratch/$x', w.NA).targets, [], 'the group opened after && leaves x unreadable');
+    assert.deepEqual(extractWriteTargets('coproc {\ncd scratch\n}; cp base/report.md docs/report.md', w.NA).targets.map((t) => t.path), [path.join(w.NA, 'docs', 'report.md')], 'the coproc body\'s cd is restored');
+    assert.deepEqual(extractWriteTargets('for y in; {\ncd scratch\n}; cp base/report.md notes/n1.md', w.NA).unresolved.map((u) => u.why && u.why.kind), ['unknownDir'], 'the brace body closes the for frame and applies its cd');
+    assert.deepEqual(extractWriteTargets('coproc cp base/report.md docs/report.md', w.NA).targets.map((t) => t.path), [path.join(w.NA, 'docs', 'report.md')], 'the command behind coproc is read');
+  } finally { process.env.HOME = savedHome; w.rm(); }
+});
+
+test("round 5's addendum, the freeze lens: a `readonly` freezes the guard's name only as the segment's own unwrapped command with no option word in plain sequence; in a body that may not run, a subshell, a pipeline, a piped or backgrounded group, after `&&` or `||` or in a function never called the name is tainted instead (the skip had run before the scope check and every shell performed the later write), `declare -r`, `typeset -r` and every `declare` or `typeset` taint (no commands of dash, which keeps the old value), an option word on `export` or `readonly` taints (bash rejects it and assigns nothing), and `local -r` at the top level taints; the unwrapped freeze and the portable `export` still resolve; exactly the shells where no freeze happened write the tracked file", () => {
+  const w = sixthPassWorld();
+  const savedHome = process.env.HOME;
+  process.env.HOME = w.HOME;
+  try {
+    const A = ['bash', 'zsh', 'dash'];
+    const B = ['bash'];
+    const D = ['dash'];
+    const BZ = ['bash', 'zsh'];
+    const BD = ['bash', 'dash'];
+    const P = (t) => `x=scratch/keep.md; ${t}; x=docs/report.md; cp base/report.md $x`;   // the finding direction: a frozen untracked value, a later plain write to the tracked path
+    // [id, command, the shells that perform the later write onto the tracked file (no freeze there), the verdict]
+    const rows = [
+      // RC1: the bare readonly outside plain sequence
+      ['RC1-if', P('if false; then readonly x; fi'), A, ALONE('readonly')],   // a bare readonly outside plain sequence is not frozen, so the name-alone rule taints it
+      ['RC1-else', P('if true; then :; else readonly x; fi'), A, ALONE('readonly')],
+      ['RC1-elif', P('if false; then :; elif false; then readonly x; fi'), A, ALONE('readonly')],
+      ['RC1-while', P('while false; do readonly x; done'), A, ALONE('readonly')],
+      ['RC1-until', P('until true; do readonly x; done'), A, ALONE('readonly')],
+      ['RC1-for', P('for i in; do readonly x; done'), A, ALONE('readonly')],
+      ['RC1-case', P('case a in b) readonly x;; esac'), A, ALONE('readonly')],
+      ['RC1-select', P('select i in a; do readonly x; done'), BZ, ALONE('readonly')],   // stdin at EOF; dash has no select
+      ['RC1-fn', P('f() { readonly x; }'), A, ALONE('readonly')],
+      ['RC1-fnkw', P('function f { readonly x; }'), BZ, ALONE('readonly')],          // dash has no `function`: a syntax error
+      ['RC1-local', P('f() { local -r x; }'), A, ['literal', 'a `local`, which zsh performs at the top level and bash and dash reject']],
+      ['RC1-sub', P('(readonly x)'), A, ALONE('readonly')],
+      ['RC1-pgrp', P('{ readonly x; } | cat'), A, PIPED_GROUP],
+      ['RC1-pgrp-last', P('cat </dev/null | { readonly x; }'), BD, ALONE('readonly')],   // the group is opened after `|`, so the readonly is never frozen and the name-alone rule taints   // zsh runs the last member in this shell and freezes
+      ['RC1-bggrp', P('{ readonly x; } & wait'), A, ['literal', 'a `{ }` group that is backgrounded']],
+      ['RC1-pipe', P('readonly x | cat'), A, ALONE('readonly')],
+      ['RC1-bg', P('readonly x & wait'), A, ALONE('readonly')],
+      ['RC1-and', P('false && readonly x'), A, ALONE('readonly')],
+      ['RC1-or', P('true || readonly x'), A, ALONE('readonly')],
+      ['RC1-negsub', P('! ( readonly x )'), A, ALONE('readonly')],
+      ['RC1-timesub', P('time ( readonly x )'), BZ, ALONE('readonly')],             // dash: `time` is an external command and `(` a syntax error
+      ['RC1-bangif', P('! if false; then readonly x; fi'), A, ALONE('readonly')],
+      ['RC1-grpif', P('{ if false; then readonly x; fi; }'), A, ALONE('readonly')],
+      ['RC1-sh', `sh -c '${P('if false; then readonly x; fi')}'`, A, ALONE('readonly')],
+      ['RC1-unset', 'x=scratch/keep.md; if false; then readonly x; fi; unset x; x=docs/report.md; cp base/report.md $x', A, 'name'],   // the freeze in the body taints x, the plain unset frees it, and the later plain write resolves onto the tracked file: refused by name (the guard had kept scratch/keep.md through the unset)
+      ['RC1-decl-and', P('false && declare -r x'), A, DECL_TAINT('declare')],
+      ['RC1-redir', P('{ readonly x; } 2>/dev/null | cat'), A, PIPED_GROUP],
+      // RC2: declare and typeset, no commands of dash
+      ['RC2-r', P('declare -r x=scratch/keep.md'), D, DECL_TAINT('declare')],
+      ['RC2-t', P('typeset -r x=scratch/keep.md'), D, DECL_TAINT('typeset')],
+      ['RC2-bare', P('declare -r x'), D, DECL_TAINT('declare')],
+      ['RC2-rx', P('declare -rx x=scratch/keep.md'), D, DECL_TAINT('declare')],
+      ['RC2-dd', P('declare -r -- x=scratch/keep.md'), D, DECL_TAINT('declare')],
+      ['RC2-sh', `sh -c '${P('declare -r x=scratch/keep.md')}'`, A, DECL_TAINT('declare')],
+      ['RC2-plain', 'x=docs/report.md; declare x=scratch/keep.md; cp base/report.md $x', D, DECL_TAINT('declare')],   // the class widened: a declare with no flag at all
+      ['RC2-plain-t', 'x=docs/report.md; typeset x=scratch/keep.md; cp base/report.md $x', D, DECL_TAINT('typeset')],
+      ['RC2-x', 'x=docs/report.md; declare -x x=scratch/keep.md; cp base/report.md $x', D, DECL_TAINT('declare')],
+      // RC3: an option word bash rejects
+      ['RC3-exp-r', P('export -r x=scratch/keep.md'), B, OPTION_TAINT('export', '-r')],
+      ['RC3-exp-r-bare', P('export -r x'), B, OPTION_TAINT('export', '-r')],
+      ['RC3-exp-rx', P('export -rx x=scratch/keep.md'), BZ, OPTION_TAINT('export', '-rx')],
+      ['RC3-ro-r', P('readonly -r x=scratch/keep.md'), BZ, OPTION_TAINT('readonly', '-r')],
+      ['RC3-ro-x', P('readonly -x x=scratch/keep.md'), B, OPTION_TAINT('readonly', '-x')],
+      ['RC3-ro-g', P('readonly -g x=scratch/keep.md'), B, OPTION_TAINT('readonly', '-g')],
+      // RC4: an option after the operand
+      ['RC4-decl', P('declare x=scratch/keep.md -r'), BD, DECL_TAINT('declare')],
+      ['RC4-ro', P('readonly x=scratch/keep.md -p'), [], ['literal', 'a `readonly` flag that can change the value or what the name is (-p)']],   // bash freezes x and prints; zsh and dash stop: nothing written, a cost (the letter outside the attribute-only three names the flag)
+      // RC5: local at the top level
+      ['RC5', P('local -r x'), B, ['literal', 'a `local`, which zsh performs at the top level and bash and dash reject']],
+      // the freezes every shell performs keep resolving (allowed: the later write is skipped and the frozen untracked value read)
+      ['OK-ro', P('readonly x'), [], 'allow'],
+      ['OK-ro-val', P('readonly x=scratch/keep.md'), [], 'allow'],
+      ['OK-ro-dd', P('readonly -- x'), [], 'allow'],
+      ['OK-ro-two', P('readonly x y=1'), [], 'allow'],
+      ['OK-ro-grp', P('{ readonly x; }'), [], 'allow'],
+      ['OK-ro-and', P('true && readonly x'), [], ALONE('readonly')],   // after && the readonly may not run, so the name is tainted (a cost: every shell froze and stopped on the later write)
+      // the portable declaration resolves; a freeze made in a piped group is undone at its brace
+      ['OK-export', 'x=docs/report.md; export x=scratch/keep.md; cp base/report.md $x', [], 'allow'],
+      ['OK-export-dd', 'x=docs/report.md; export -- x=scratch/keep.md; cp base/report.md $x', [], 'allow'],
+      ['OK-export-t', 'x=scratch/keep.md; export x=docs/report.md; cp base/report.md $x', A, 'name'],
+    ];
+    let n = 0;
+    for (const [id, raw, writers, expect] of rows) {
+      const cmd = w.fill(raw);
+      const h = w.hook(cmd, w.NA);
+      n++;
+      if (expect === 'allow') assert.equal(h.status, 0, `${id}: allowed: ${cmd}: ${h.reason}`);
+      else {
+        assert.equal(h.status, 2, `${id}: refused: ${cmd}: ${h.reason}`);
+        assert.ok(!/\u2014/.test(h.reason) && !ROMP_NOUNS.test(h.reason.split(w.W).join('<w>')), `${id}: no em dash, no romp noun`);
+        if (expect === 'name') assert.match(h.reason, BY_NAME_RE, `${id}: by name: ${h.reason.split('\n')[0]}`);
+        else assert.ok(NOT_LITERAL.test(h.reason) && h.reason.includes(expect[1]), `${id}: refused as not literal, the reason naming the construct (${expect[1]}): ${h.reason.split('\n')[0]}`);
+      }
+      for (const shell of shellsFor(A, id)) {
+        const r = w.run(cmd, w.NA, shell);
+        assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'performs the later write onto the tracked file (no freeze there)' : 'froze the name, or ran nothing, and left the tracked subset'}: ${cmd}: ${r.stderr}`);
+      }
+    }
+    assert.equal(n, 54);
+    // the grammar: the frozen value resolves only for the unwrapped plain-sequence readonly; a freeze in a piped group is undone
+    assert.deepEqual(extractWriteTargets('x=scratch/keep.md; readonly x; x=docs/report.md; cp base/report.md $x', w.NA).targets.map((t) => t.path), [path.join(w.NA, 'scratch', 'keep.md')], 'the unwrapped freeze resolves');
+    assert.deepEqual(extractWriteTargets('x=scratch/keep.md; if false; then readonly x; fi; x=docs/report.md; cp base/report.md $x', w.NA).targets, [], 'a freeze in a body taints, so the later write is not read as skipped');
+    assert.deepEqual(extractWriteTargets('x=scratch/keep.md; { readonly x; } | cat; x=docs/report.md; cp base/report.md $x', w.NA).targets, [], 'a freeze in a piped group is undone at its brace');
+  } finally { process.env.HOME = savedHome; w.rm(); }
 });

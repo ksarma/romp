@@ -3775,7 +3775,7 @@ document stands on its own, each with the reasoning it was given.
     now RESOLVES every expansion whose value it can read before judging a word (`resolveWord`, `valueOf`): a name the
     command set to a plain string earlier, at the top level in plain sequence (`recordPlainWord` and `recordSegment`
     since the seventh pass, the readability rule's predicate, which mark a name
-    set in a body, a subshell or after `&&`/`||`, by a `read`, a loop, a nameref, an unset or a `+=`, or any name once
+    set in a body, a subshell, after `&&`/`||` or in a `{ }` group opened after one of them, by a `read`, a loop, a nameref, an unset or a `+=`, or any name once
     an eval, a source, an unknown wrapper option or a call of a function the command defines ran, as unreadable); HOME
     through the guard's home; PWD through the directory it knows; OLDPWD, `~+` and `~-` through the directory before a
     `cd` in the same command; none of HOME, PWD and OLDPWD once the command names the name outside an expansion or may
@@ -3859,8 +3859,9 @@ document stands on its own, each with the reasoning it was given.
     list of commands, the reviewer's framing being B2's own unknown-defaults-to-unreadable doctrine, already applied to a
     `read` and a loop variable, applied to assignment. The classes: a tilde opening an assignment value (`plainValue`: `~/`
     and `~` resolve through HOME, `~+` and `~-` through PWD and OLDPWD, a `~user` and a tilde after a `:` leave the name
-    unreadable); a declaration flag that transforms the value (`INERT_DECLARATION_FLAGS`: `-g`, `-x`, `-r` and `--` alone
-    are inert); a nameref (the target tainted, `refTargets`, or every name when the target is one the shell fills in); an
+    unreadable); a declaration flag that transforms the value (at that pass `INERT_DECLARATION_FLAGS`: `-g`, `-x`, `-r` and
+    `--` alone were inert; since round 5's addendum no option word is, and `ATTRIBUTE_ONLY_FLAGS` picks the refusal's text
+    alone); a nameref (the target tainted, `refTargets`, or every name when the target is one the shell fills in); an
     assembled name operand (the resolved name tainted when it resolves, every name when it does not); scoping (a pipeline's
     tail, a `{ }` group whose closing brace is piped or backgrounded, which also restores the directory, a wrapper's
     argument, `commandOf` returning the assignment words as a nameless command's arguments, an assignment-only segment's
@@ -3952,11 +3953,12 @@ document stands on its own, each with the reasoning it was given.
     names (the shells differ on whether it ran: `command readonly` freezes in bash and dash, `builtin readonly` in bash and
     zsh, `noglob readonly` in zsh, the external wrappers nowhere, measured). THE CATCH-ALL REFUSES: `Object.hasOwn` at the
     CLOSERS and BODY_CLOSER lookups (a command word that is an Object.prototype key threw inside a body), and any exception
-    evaluate did not anticipate refuses while a tracked project is in play, naming it (`judge`, `internalErrorRefusal`; the
-    three catches that allowed rethrow). THE CENSUS DERIVED: the hand-written census of the lists that remain, which omitted
+    evaluate did not anticipate refuses while a tracked project is in play, naming it (`judge`, `internalErrorRefusal`; two of the three catches that allowed rethrow to the one catch-all, and the
+    process-level catch refuses in place). THE CENSUS DERIVED: the hand-written census of the lists that remain, which omitted
     the two write-side lists this round's highs lived in, is replaced by one computed from the hook's source at test time
-    (`tools/romp-track-bash-guard-census.mjs`: every top-level Set, array, object table and regex alternation, the writer
-    cases and the root markers, each classified against its consumer line; a list the census does not name reds the test;
+    (`tools/romp-track-bash-guard-census.mjs`: every column-0 `const`, `let` or `var` whose initializer opens a Set, an
+    array, an object table, an `Object.fromEntries(` or a `new RegExp(`, the writer cases and the root markers, each
+    classified against its consumer line; a list the census does not name reds the test;
     it corrected one stated side, an interpreter option not on `INTERPRETER_OPERANDS` being a write gap, measured, not an
     over-count, disclosed and unfixed). THE DRAW WIDENED: the rule pin's UNLISTED set spans the scope half of the rule (a
     body behind `{`, `!`, `time`, a select body, a function body in a group, a subshell, each closer). The riders: a node
@@ -3970,6 +3972,59 @@ document stands on its own, each with the reasoning it was given.
     dropped, one re-anchored, one relabelled); the priced costs say what each shell does by execution; and every
     real-shell evidence leg, dash and bash included, goes through the one probe, which reports a shell that is missing or
     below the bash 4.3 floor with a `NOT RUN` line and whose `spawnSync` wrapper throws by name otherwise.
+    Round 5's addendum (2026-09-20; five lenses over the round-5 commit, each running the hook as a process and every row
+    unguarded in bash 5.2, zsh 5.9 and dash 0.5.12) closed what they found, every item a live false allow pre-existing at
+    round 4's head or a claim no test held. THE FRAME LENS (a grammar-driven matrix of 3526 rows on four faces): a `{ }`
+    group whose opening brace follows `&&`, `||` or `|` with its body on a later line was walked as a plain group while the
+    shells skip it whole or run it in a subshell (36 rows in all three shells; `test -d d || {`, `mkdir d`, `cd d`, `}` and a
+    relative write, the commonest multi-line conditional, was judged from d/); a group frame now carries the operator it
+    was opened after (`openGroup`), `plainSequence` and the cd handler refuse through it, and a group behind `time` is
+    marked too, since zsh does not keep an assignment standing alone in a timed group. The compound frame (`pushCompound`)
+    records its body's opener, so a `{` before the opener is a brace body closed by its `}` (`compoundBody`, zsh's
+    `if [[ .. ]] {`, `case x {`, `repeat n {`, `for y (..) {`, bash's `for y in ..; {` and `select ..; {`), a later segment
+    after a word-list head or a `)` with nothing after it is zsh's one-command body that closes before the next segment
+    (`oneSegment`, `closeOneSegment`), and a frame whose body was the frame pushed above it closes with it
+    (`afterChildClosed`, `closeCompoundAt`); `BODY_CLOSER` holds the opener and the closer of every head and gains zsh's
+    `repeat` and `foreach .. end`. A function body without braces (`f() cmd`, zsh and dash) is the one segment after the
+    parentheses, defined and not run, where the frame had been popped and the body read as the enclosing scope's; every
+    word before an empty pair of parentheses names a function (zsh's `f g () {`, `env f () {`) and every word after
+    `function` up to its brace does (`function f g {`), bash rejecting each spelling; a `function NAME` whose brace opens
+    on a later segment is run by dash, which has no `function` word, so a cd in it leaves the directory unknown
+    (`popFunction`); `coproc` (bash and zsh) drops the word and its NAME and reads the rest inside a frame that keeps no
+    name and restores the directory while its writes are judged, so `coproc cp base/report.md docs/report.md`, which the
+    contract had listed among the unmodelled wrappers, is refused by name; and zsh's `always` continues a group. THE
+    FREEZE LENS (163 constructs): the readonly skip ran before the scope check, so a bare `readonly x` in a body that may
+    not run, a subshell, a pipeline, a piped or backgrounded group, after `&&` or `||` or in a function never called froze
+    the guard's name and no shell's, and every shell performed the later write onto the tracked file (34 rows); `declare
+    -r` and `typeset -r` freeze in bash and zsh and are not found in dash, which performs the write; `export -r`, `readonly
+    -r`, `-x` and `-g` are options bash rejects, assigning nothing; an option after the operand is an operand to bash; and
+    `local -r x` at the top level is rejected by bash. The freeze is now `!cmd.wrapped && seq.ok && cmd.name ===
+    'readonly' && plainOptions` (an unwrapped `readonly` with no option word, a `--` before the operands aside, in plain
+    sequence), a freeze made inside a group that turns out piped or backgrounded is undone at its brace, and every other
+    road taints the name: the class widened to every `declare` and `typeset`, since dash has neither (`x=docs/report.md;
+    declare x=scratch/keep.md; cp base/report.md $x` wrote the tracked file in dash, measured), and to any option word on
+    `export` or `readonly`; `export NAME=..` and `readonly NAME=..` with no option word are the two declarations every
+    shell performs, and `INERT_DECLARATION_FLAGS` is `ATTRIBUTE_ONLY_FLAGS`, a text table that picks the refusal's reason
+    (a flag that changes the value, or the shells' disagreement) and changes no verdict. THE CENSUS LENS planted fourteen
+    list shapes in scratch copies of the hook, each live on the write side, and twelve landed green: the census reads
+    `var`, a declaration split after its `=` and spacing drift since, and names the six shapes it still cannot read (an
+    inline literal at its point of use, a second declarator, a second `switch`, beside the call, string, regex-literal,
+    later-filled `let` and in-function shapes it stated); the header's sentence that a planted list reds the test is
+    qualified to the shapes the census reads; the writer cases stop at the switch's own `default:`; and the UNLISTED comment
+    that said every scope row was a live false allow at round 4's head says nine of the ten (the subshell row was refused
+    there) and that the select and subshell rows cover the table and the frame rather than the peel, with the population
+    pinned (six mechanism rows, ten scope rows spelling each construct). THE MUTATION LENS found thirteen claims no test
+    held; each is pinned (the assignment-only head read after the peel with a condition of assignments alone, the
+    wrapper-word and assignment-word peels as refusals that cost nothing, the in-play check throwing inside the catch-all,
+    the process-level catch on a removed working directory, the module-level `spawnSync` binding, the bash version floor
+    by a stub, the runners' dropped shell default, the scan's list clause, the draw's population, the census side of
+    `INTERPRETER_OPERANDS`, the priced-cost, privacy and `u`-letter sentences on the header and the ledger's two clauses)
+    or stated in fork PR #780's body as unpinnable with the reason (the loop-variable read after the peel, held by the
+    bare-mention rule; `Object.hasOwn` at the assignment-only head read, which no reserved-word head can be a prototype
+    key of). THE DOCUMENTS LENS: the interpreter test's assertion that the untracked twin landed sits inside its bash leg,
+    the prefix-script rows ask the probe for the inner bash they run, the catch count above says two rethrow and the
+    process-level one refuses in place, the census method is named the same way here and on the header, and the corpus
+    movement at c7d7505a9 was two readable rows and one cost row, three, 293 to 296, where the body had said four.
 48. **Sessions commit the comments folder** (2026-09-10). The user found that their sessions never added
     `.trackchanges/` to git, so the user's comments on the sessions' files and the record of the tracked changes
     were not archived with the work. Decision 25 is unchanged: romp does no git operation, and a `.gitignore` line is the
