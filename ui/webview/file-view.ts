@@ -2279,11 +2279,13 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // earlier build opened the tab). Before the third review (2026-09-19) each paint here reported the body in or out by
   // hand, and the roads nobody wired were wrong: the plain fallback reported in and printed one clipped page. A root added
   // to this file's body paints must join the flow's lists (file-print.ts READY_ROOTS, NOT_READY_ROOTS, LINE_ROOTS), or
-  // file-print.test.ts's census over this file's seating sites fails: it reads every `body` token in this file, resolves a
-  // seating call's roots and refuses every token it cannot class (a computed name, a bare read of a seating method, a
+  // file-print.test.ts's census over this file's seats fails. Its default refuses: it reads every `body` token in this file,
+  // resolves a seating call's roots and refuses every token it cannot class (a computed name, a bare read of a seating method, a
   // call, bind or apply on one, a member it has not seen, an alias, a parenthesised or cast receiver, a helper handed the
-  // body that its BODY_HANDED_TO list does not name). Seat the body here by its name; a helper that takes the body is read
-  // by hand and listed there before the census passes it. The flow hands the keyboard through takeKeyboard when
+  // body that its BODY_HANDED_TO list does not name), and it reads every seat in this file on any other receiver (a seating
+  // call, an innerHTML or outerHTML assignment) and refuses each whose site (function, receiver, form) its SEATS_READ_BY_HAND
+  // table does not list, whatever produced the receiver. Seat the body here by its name; a helper that takes the body, and a
+  // seat on another receiver, are read by hand and listed there before the census passes them. The flow hands the keyboard through takeKeyboard when
   // the body goes out while a word button of its line holds it (dropDiskBar's hand-over), since its button is not enabled
   // then.
   const print = installFilePrint({ card: box, bar, body, typing: typingHere, onClose: (cb) => { closeHooks.push(cb); },
@@ -3740,7 +3742,8 @@ export function openUrlView(href: string): void {
   // line under this bar, the chord through the driver's one keydown listener, dropped by the close hooks (file-print.ts);
   // disabled until renderBody seats the document and again over fail's pane, read off this body's children by the flow itself
   // (file-print.ts bodyReady, P7: the loader below and a `.fileview-err` pane alone are not in; the document's root is; a
-  // root the flow's lists do not name is not in either, and its census reads this file's seating sites)
+  // root the flow's lists do not name is not in either, and its census reads every seat in this file, refusing what it has
+  // not read by hand; the local viewer's install comment says how)
   const print = installFilePrint({ card: box, bar, body, typing: typingHere, onClose: (cb) => { closeHooks.push(cb); } });
   acts.insertBefore(print.button, copy);
   // In-document links land on their heading (mdBlock's fv-anchor stamp): one delegated listener, the

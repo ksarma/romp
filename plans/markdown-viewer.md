@@ -8251,27 +8251,39 @@ and a non-null `!`, with `document.body` and any other receiver's `.body` set as
 member: a call of a seating method (`(`
 or `?.(`) has its seated arguments resolved down to the `el("<tag>", "<class>")` that builds them (`replaceChildren`,
 `prepend` and `append` seat every argument; `appendChild` and `insertBefore` their first; `insertAdjacentElement` its
-second), a call of a method that seats nothing passes (`addEventListener`, `querySelector`, `focus`, `contains`, the
-geometry reads and their kin, a closed list), an assignment to `scrollTop`, `scrollLeft` or `tabIndex` (plain or
-compound) passes, a further access on a scalar or on `classList`, `style` or `dataset` passes, a bare read of a scalar or
-of a non-seating method as a value passes, and EVERY OTHER MEMBER ACCESS ON `body` FAILS the census with its line: a
+second), a call of a method that seats nothing passes AS A CALL (`addEventListener`, `querySelector`, `focus`,
+`contains`, the geometry reads and their kin, a closed list; what is done with the call's value is the second read's,
+below, so a seat on `body.querySelector(...)!.parentElement` fails there), an assignment to `scrollTop`, `scrollLeft` or
+`tabIndex` (plain or compound) passes, a further access on a scalar or on `classList`, `style` or `dataset` passes, a
+bare read of a scalar or of a non-seating method as a value passes, a bare read of a node member passes directly inside
+a `body` call's own argument list alone (the reference child; not inside a nested call's or a callback's within it), and
+EVERY OTHER MEMBER ACCESS ON `body` FAILS the census with its line: a
 computed name (`body["append"]`), a call it does not know, an assignment it does not know (`innerHTML` and its kin seat
 what no resolver reads), a further access on a member that hands out a child node, on a seating method (`.call`,
 `.bind`, `.apply`) or on a member it does not list, and a bare read of a member it does not list (a seating method
 handed out). A token no member access follows is classed by its context: a declaration, a parameter, a declared type
-or a property key, a comparison operand and the viewer's action-context accessor (`body: () => body`, the one hand-out
-to the Comments panel, read by hand) pass; an argument, or a property of an argument, passes when its callee is one the
+or a property key and a comparison operand pass; the viewer's action-context accessor (`body: () => body`, the one
+hand-out to the Comments panel, read by hand) passes at its one declared site, inside the object literal
+`const ctx: FileViewActionCtx = {`, which the census holds the source to declaring, and the spelling anywhere else
+fails; an argument, or a property of an argument, passes when its callee is one the
 census lists as read by hand (`BODY_HANDED_TO`: `foldKeeper`, `readPlace`, `installFilePrint` and the rest of the
 viewer's helpers that take the body; one whose own parameter is named `body` has its member accesses read like the
 viewer's own, and the census holds its declaration to that name); and EVERY OTHER `body` TOKEN FAILS the census with its
 line: an alias (`const b = body`), a return, an arrow's value, an array element, a ternary or logical operand, a
-parenthesised or cast receiver (`(body).append(x)`), an argument to a callee it does not list. The file is read once
-more for a child-level seat anywhere (`replaceWith`, `after`, `before`, `replaceChild`, `insertAdjacentElement`,
-`insertAdjacentHTML`), refused on sight, and file-view.ts has none. The derived set is printed with its lines as a
+parenthesised or cast receiver (`(body).append(x)`), an argument to a callee it does not list. The file is then read a
+SECOND time, by the compiler's tree, for every seat on ANY receiver (a call of `append`, `prepend`, `appendChild`,
+`insertBefore`, `replaceChildren`, `insertAdjacentElement`, `replaceWith`, `after`, `before`, `replaceChild` or
+`insertAdjacentHTML`, and an assignment to `innerHTML` or `outerHTML`): a seat whose receiver is the `body` token was the
+first read's; every other seat passes only as a site the census lists by hand (`SEATS_READ_BY_HAND`: the enclosing
+function, the receiver's spelling and the form, with what the receiver is and so why its seat lands no child in the
+body) and FAILS with its line otherwise, whatever produced the receiver; a listed site the source no longer has fails
+too, so the table holds the live sites and nothing more; and a call through a computed name (`x["append"](...)`) fails
+wherever it stands. The derived set is printed with its lines as a
 diagnostic, held equal to the three lists, and `bodyReady` is executed over each root as its list says, over an unlisted
 child alone and beside every content root (not in), and under the PDF kind over each wait and line root (the loader
 alone in, the rest not). A root the viewer gains fails the census until it is listed, a `body` token the census
-cannot class fails it with the line, and file-view.ts's own comment at the install says so. Before the round-3 review
+cannot class fails it with the line, a seat on any other receiver the census has not read by hand fails it with the
+line, and file-view.ts's own comment at the install says so. Before the round-3 review
 the sites were found by a closed list of three method names, `replaceChildren`, `prepend` and `appendChild`, and the
 census's unknown passed, so a root seated by `body.append` or `body.insertBefore` was invisible to it and that guarantee
 was false; the census's second case executes both seats, an `innerHTML` assignment, a call the census does not know, a
@@ -8291,7 +8303,20 @@ this record, the census's header, the READY_ROOTS comment, the install comment a
 member access failed; the census now classes every token and blanks every comment, the mutant case plants each of those
 forms and the phantom, and the sentences were corrected with it. What the census cannot see is what a listed callee does
 with the body it is handed: that is read by hand when the callee is listed, never derived, and a callee not listed fails
-the census until it is. Today the census derives nine roots:
+the census until it is. Before the round-5 review (2026-09-20) the census REFUSED A LIST: six child-level method names,
+read anywhere, and every seat on a receiver other than the `body` token passed unread, so six spellings seated with no
+refusal and no root (a seat through `body.querySelector(...)!.parentElement`, a node read inside any `body` call's
+arguments, a listener's callback included, then seated, a seat through `md.parentElement`, the accessor keyed on its
+spelling and passing anywhere, a stored query result), while this record's roster sentences, the census's header, the
+READY_ROOTS comment, the install comment and the record pins said every other use failed. The ruling inverted the
+default (a guard whose gap passes certifies the cases it failed to consider): the census now passes sanctioned forms
+and refuses everything else, every seat in file-view.ts was read by hand and listed by its site (the test holds the
+table equal to the live sites rather than to a number; the commit that landed the inversion states the counts of its
+read), a listed site the source loses reds, and the mutant case plants each of the six forms, a parent held in a variable, `closest`,
+`getRootNode`, a computed-name call, a seat on an unlisted receiver by each seating form, a removed entry, a stale entry
+and a renamed ctx declaration and reads the census red with the planted line (FAILS BEFORE in its title). What the
+census cannot see is what a listed site's receiver is and what a listed callee does with the body: both are read by
+hand when listed, never derived. Today the census derives nine roots:
 `div.fileview-md`, `div.fileview-code`,
 `div.fileview-imgbox`, `div.fileview-pdffall`, `div.fileview-pdfhost`, `div.fileview-cm`, `div.fileview-load`,
 `textarea.fileview-editor` and `div.fileview-err`.
@@ -8669,8 +8694,10 @@ _Avoid_ (a review finding, 2026-09-19).
   beside the poster, nothing granted for the page, and the corrected grant sentence read from figure-gate.ts,
   file-print.ts's header and `printable`'s docstring, the sentence it replaced gone), file-view-figures-gate-browser.test.ts, pdf-new-tab.test.ts,
   button-vocab.test.ts, file-view.test.ts.
-- The node modules that drive the real viewer over the repo's DOM stand-ins, the 39 that
-  `grep -l 'openFileView\|openUrlView' ui/webview/*.test.ts | grep -v browser` lists, each run in its own capped scope
+- The node modules that drive the real viewer over the repo's DOM stand-ins, the 40 that
+  `grep -l 'openFileView\|openUrlView' ui/webview/*.test.ts | grep -v browser` lists (39 at the round-2 review;
+  file-print.test.ts joined the listing at the round-6 census, whose table of seats read by hand names the viewer's
+  functions, and drives the viewer in no case of its own), each run in its own capped scope
   at the round-2 review (the review's ui-1, 2026-09-19): at be1db1ba7, the head before the round's fixes, 24 modules and
   210 of their 560 cases were red, every failure the bare `new MutationObserver` at the install or the read of
   `children` over a stand-in body, modules the review found green at the base; after the guard and the `childNodes`

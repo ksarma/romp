@@ -704,19 +704,25 @@ function elementChildren(body: BodyLike): BodyChild[] {
  *  body is in with one standing and no wait root beside it), a wait (NOT_READY_ROOTS: not in while one stands, whatever
  *  else does, the PDF kind's loader aside) or a line (LINE_ROOTS: alone not in, over content a notice above it). The lists
  *  are CLOSED: a child matching none is unknown, and the body is not in over it (rootKind, bodyReady). The sites are every
- *  `body` token in the viewer's source that file-print.test.ts's census can class (the rule, not a roster of method names):
- *  a call of a seating method has each seated argument read down to the `el("<tag>", "<class>")` that builds it; a call, an
- *  assignment, a further access or a bare read the census knows seats nothing passes; a bare `body` passes as a
- *  declaration, a parameter, a property key, a comparison operand, the action-context accessor at its one declared site
- *  (`body: () => body` inside `const ctx: FileViewActionCtx = {`) or an argument to a callee the census lists as read by
- *  hand; and every other `body` token fails the census with its line (a computed name, a seating method handed out or
- *  reached through call, bind or apply, a member it has not seen, an alias, a parenthesised or cast receiver, a callee it
- *  does not list). The census derives the seated set from file-view.ts, holds it equal to these three
- *  lists, and executes bodyReady over each root as its list says, so a root the viewer gains fails that test until it is
- *  listed here, rather than being answered by a guess (the round-2 review, 2026-09-19: the first derivation answered content
- *  for every child it had not seen, the permissive side for a print button; the round-4 review, 2026-09-20: this comment
- *  named three method names as the sites, a roster the census itself had outgrown; the round-5 fix: the census read member
- *  accesses on the token alone, so a parenthesised receiver or an alias seated unseen). */
+ *  seat in the viewer's source, read by file-print.test.ts's census with its default refusing (the rule, not a roster of
+ *  method names; the round-5 review, 2026-09-20): a seat whose receiver is the `body` token has each seated argument read
+ *  down to the `el("<tag>", "<class>")` that builds it; a seat on ANY OTHER receiver (a seating call, an innerHTML or
+ *  outerHTML assignment) passes only as a site the census lists by hand (its function, receiver and form, with what the
+ *  receiver is), and every other seat fails the census with its line, whatever produced the receiver (a query result's
+ *  parent, a stored query result, `md.parentElement`, a variable, `closest`, `getRootNode`, an alias); on the `body` token
+ *  a call, an assignment, a further access or a bare read the census lists as seating nothing passes, a bare `body` passes
+ *  as a declaration, a parameter, a property key, a comparison operand, the action-context accessor at its one declared
+ *  site (`body: () => body` inside `const ctx: FileViewActionCtx = {`) or an argument to a callee the census lists as read
+ *  by hand, and every other `body` token fails the census with its line (a computed name, a call or an assignment it does
+ *  not list, a seating method handed out or reached through call, bind or apply, a member it has not seen, an alias, a
+ *  parenthesised or cast receiver, a callee it does not list). The census derives the seated set from file-view.ts, holds
+ *  it equal to these three lists, and executes bodyReady over each root as its list says, so a root the viewer gains fails
+ *  that test until it is listed here, and a seat the census has not read fails it until it is read and listed, rather than
+ *  either being answered by a guess (the round-2 review, 2026-09-19: the first derivation answered content for every child
+ *  it had not seen, the permissive side for a print button; the round-4 review, 2026-09-20: this comment named three method
+ *  names as the sites, a roster the census itself had outgrown; the round-5 fix: the census read member accesses on the
+ *  token alone, so a parenthesised receiver or an alias seated unseen; the round-5 review: the census refused a closed list
+ *  of dangerous forms and passed every other seat unread, so a seat through a query result's parent seated unseen). */
 export const READY_ROOTS: readonly string[] = ["div.fileview-md", "div.fileview-code", "div.fileview-imgbox", "div.fileview-pdffall", "div.fileview-pdfhost", "div.fileview-cm"];
 export const NOT_READY_ROOTS: readonly string[] = ["div.fileview-load", "textarea.fileview-editor"];
 export const LINE_ROOTS: readonly string[] = ["div.fileview-err"];
