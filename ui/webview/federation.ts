@@ -1533,32 +1533,42 @@ export class FederationManager {
     // bars receiver alike): onto a base holding no gen a frame carrying an unreadable gen applies as a gen-less one, as
     // the form test pins for that base, since no pair is held there for a refusal to protect.
     if (gen !== undefined || (d.gen !== undefined && held !== undefined)) {
+      // the gate's tests, in the order the ladder below reads them: the pair, the gen, the newGen, the base's two, the
+      // through's two, the rev, then the relation
       const inGate = !!held && gen === held.gen && (d.newGen === undefined || genOf(d.newGen) !== undefined)
-                     && Number.isSafeInteger(d.base) && d.base <= held.rev && Number.isSafeInteger(d.rev)
-                     && Number.isSafeInteger(d.through) && d.through >= held.rev && d.rev === d.through;
+                     && Number.isSafeInteger(d.base) && d.base <= held.rev
+                     && Number.isSafeInteger(d.through) && d.through >= held.rev
+                     && Number.isSafeInteger(d.rev) && d.rev === d.through;
       if (!inGate) {
         // The stale row carries host, buildId and this word and nothing else, so the word is the whole signal a reader
-        // of the row has. Two kinds of word: one per FIELD for that field's own failures, and one for the RELATION between
-        // two fields that are each valid. The field words: gen (the held pair's gen differs, or none is held for a stamped
-        // stream), base (not a safe integer, or above the held rev), through (not carried, so not a safe integer: every
-        // stamped delta carries it; or below the held rev), rev (not a safe integer), and newGen (carried, and a value
-        // genOf cannot read: round 4). The relation word: disagree (gen,
-        // base, through and rev each passed alone, and rev is not the through the frame states: the pair advances to rev,
-        // and a stamped delta's rev IS its through (the design's stamped shape: through equal to rev on a per-cycle delta,
-        // R on a composed frame), so a frame whose two disagree states no one rev to advance to and is refused rather than
-        // declared at either; both values can be good safe integers, so this is no failure of the rev field, and "rev"
-        // would hide it from a reader who has the word alone). Tested in that order, gen, base, through, rev, then the
-        // relation, so a frame below the held rev reads "through" whatever its rev, "rev" is read only once gen, base and
-        // through have each passed, and "disagree" only once every field has. Five words, the stale row's whole
-        // vocabulary: four field words, each covering every failure of its field, and one relation word. The kernel's
-        // admit road (kernel.py _client_diag_admit) filters the row's top-level KEYS against CLIENT_DIAG_KEYS and tests no
-        // value for admission (an admitted key's value is stored as posted, a string cut at CLIENT_DIAG_STR_MAX, 64
-        // characters, which no word here approaches), so a new word needs no allowlist change where a new key does;
-        // tests/test_client_diag_allowlist.py drives each word through it, and a 65-character word through the cut, and
-        // holds the list to this ladder.
-        const why = !held || gen !== held.gen ? "gen" : d.newGen !== undefined && genOf(d.newGen) === undefined ? "newGen"
-                    : !Number.isSafeInteger(d.base) || d.base > held.rev ? "base"
-                    : !Number.isSafeInteger(d.through) || d.through < held.rev ? "through" : !Number.isSafeInteger(d.rev) ? "rev" : "disagree";
+        // of the row has. One rule over the vocabulary (review round 3; applied to every test of the gate in round 4,
+        // 2026-09-20, when three relations were found riding a field's word): a word per FIELD for that field's own
+        // failures, and a word per RELATION between fields that are each valid, since a relation failure is no failure of
+        // either field and a field's word would hide it from a reader who has the word alone. In the gate's test order:
+        //   the pair:    "unpaired"  no pair is held for a stamped stream (the base came from a full carrying no gen)
+        //   gen:         "gen"       the frame's gen is not the held pair's (a value genOf cannot read included: round 4)
+        //   newGen:      "newGen"    the frame carries a newGen genOf cannot read (round 4)
+        //   base:        "base"      not a safe integer
+        //                "ahead"     above the held rev (the frame composes from a rev this side never reached)
+        //   through:     "through"   not carried (every stamped delta carries it) or not a safe integer
+        //                "behind"    below the held rev (the frame reaches less than this side already holds)
+        //   rev:         "rev"       not a safe integer
+        //   relation:    "disagree"  every field passed and rev is not the through the frame states: the pair advances to
+        //                            rev, and a stamped delta's rev IS its through (the design's stamped shape: through
+        //                            equal to rev on a per-cycle delta, R on a composed frame), so a frame whose two
+        //                            disagree states no one rev to advance to and is refused rather than declared at either
+        // So a frame below the held rev reads "behind" whatever its rev, "rev" is read only once the pair, gen, newGen,
+        // base and through have each passed, and "disagree" only once every field has. Nine words, the stale row's whole
+        // vocabulary: six field words for five fields (newGen has one failure), two relation words for the base and the
+        // through against the held rev, and one for the rev against the through. The kernel's admit road (kernel.py
+        // _client_diag_admit) filters the row's top-level KEYS against CLIENT_DIAG_KEYS and tests no value for admission
+        // (an admitted key's value is stored as posted, a string cut at CLIENT_DIAG_STR_MAX, 64 characters, which no word
+        // here approaches), so a new word needs no allowlist change where a new key does; tests/test_client_diag_allowlist.py
+        // drives each word through it, and a 65-character word through the cut, and holds its list to this ladder.
+        const why = !held ? "unpaired" : gen !== held.gen ? "gen" : d.newGen !== undefined && genOf(d.newGen) === undefined ? "newGen"
+                    : !Number.isSafeInteger(d.base) ? "base" : d.base > held.rev ? "ahead"
+                    : !Number.isSafeInteger(d.through) ? "through" : d.through < held.rev ? "behind"
+                    : !Number.isSafeInteger(d.rev) ? "rev" : "disagree";
         this.diag("feedDelta-stale", { host, buildId: d.buildId, why });
         this.sendRemote(host, held ? { type: "needFullFeed", gen: held.gen, rev: held.rev } : { type: "needFullFeed" });
         return;

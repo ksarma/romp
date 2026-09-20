@@ -682,7 +682,7 @@ test("the watchdog's abandon-and-dial declares the same pair, without reconnect 
   }, { terms: pageTerms });
 });
 
-test("a stamped delta whose gen differs, or whose base is above the held rev, or whose through is below it or carrying no through, posts needFullFeed carrying the held pair on the arriving conn and applies nothing; the feedDelta-stale row names the cause; the full the ask earns re-seeds the pair", async () => {
+test("a stamped delta whose gen differs, or whose base is above the held rev, or whose through is below it or carrying no through, posts needFullFeed carrying the held pair on the arriving conn and applies nothing; the feedDelta-stale row names the cause (gen, ahead, behind, through: a word per field failure and a word per relation); the full the ask earns re-seeds the pair", async () => {
   await withManager(({ fm, emitted, sent }) => {
     const ws = attached(fm);   // a gen-less full first: the pair is absent
     assert.equal(heldOf(fm), undefined);
@@ -701,8 +701,8 @@ test("a stamped delta whose gen differs, or whose base is above the held rev, or
     assert.equal(ws.sent.length, 4, "a stamped delta carrying no through: asked again");
     ws.frame({ type: "feedDelta", gen: G, base: 0, rev: 1.5, through: 0, now: 524, buildId: 34, asks: [card(SID_A, 9)] });   // below the held rev AND a rev that is no safe integer
     assert.equal(ws.sent.length, 5, "a frame below the held rev with a bad rev: asked again");
-    assert.deepEqual(diagRows(sent, "feedDelta-stale"), [{ host: HOST, buildId: 30, why: "gen" }, { host: HOST, buildId: 31, why: "base" }, { host: HOST, buildId: 32, why: "through" }, { host: HOST, buildId: 33, why: "through" }, { host: HOST, buildId: 34, why: "through" }],
-                     "a field's word for a field's own failure (each frame here fails one field; the relation word has its own test below), the fields tested in order: a frame below the held rev reads through whatever its rev");
+    assert.deepEqual(diagRows(sent, "feedDelta-stale"), [{ host: HOST, buildId: 30, why: "gen" }, { host: HOST, buildId: 31, why: "ahead" }, { host: HOST, buildId: 32, why: "behind" }, { host: HOST, buildId: 33, why: "through" }, { host: HOST, buildId: 34, why: "behind" }],
+                     "a field's word for a field's own failure (gen; through not carried) and a relation's word for a relation's (ahead: the base above the held rev; behind: the through below it), the gate's tests in order: a frame below the held rev reads behind whatever its rev (round 4: base and through each carried a relation under their field's word)");
     assert.equal(feeds(emitted).length, before, "nothing applied, nothing emitted");
     assert.equal(fm.conns.get(HOST).feedRaw, raw, "the base stands");
     assert.deepEqual(heldOf(fm), { gen: G, rev: 1 }, "…and the pair with it");

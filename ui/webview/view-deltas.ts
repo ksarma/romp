@@ -214,7 +214,7 @@ export class ViewDeltas {
     // base-rev mismatch does (needSlot, the base dropped), never applied onto this base and never adopted as its gen. A
     // composed frame's gen is gated the same way, so its newGen is adopted only after its gen matched the base's. Where
     // the roads differ, and why: a stamped frame onto a base holding NO gen (a full carrying none seeded it) applies here
-    // on the rev test alone and seeds no gen, where the feed road refuses it (why "gen": no pair is held for a stamped
+    // on the rev test alone and seeds no gen, where the feed road refuses it (why "unpaired": no pair is held for a stamped
     // stream). This receiver is shared with the local VS Code pipe, whose base is the last whole frame the kernel served;
     // refusing here would cost that pane a whole slot for a frame its rev test accepts, while applying costs nothing, and
     // the gen is not seeded because the stream never stated a rev 0 under it: a pair declared from such a base would be
