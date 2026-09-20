@@ -7921,10 +7921,22 @@ counted and fetched, the shape the round-2 census had closed for a bare `<img hi
 round-3 review and nine more since the round-4 review, gated through the
 real gate and as an ungated twin at a local URL, the flow's answer for the gated figure held equal to the browser's own
 for the twin, the named spellings of opacity, visibility and display held to the answers the round named, and no remote
-host reached before the restores; where an engine's twin oracle reads other than the paint the row records that engine's
-reading and the flow is held to the paint, the twin oracle to the reading: the rows whose image stands inside a container
-that never renders its content, in Firefox and WebKit, which report a client rect there and paint nothing, and the opacity
-1e-9 row in WebKit, which computes it to 0 while its checkVisibility keeps it; file-print-egress-browser.test.ts case (12): a gated svg at `opacity="0e0"` and a `<picture>` whose
+host reached before the restores; the leg's `paints` column is the INK the twin puts on the page since the round-7 fixes
+(2026-09-20: a full-page screenshot decoded in the page, a pixel inside the twin's box that is not white, measured per row
+in each engine, with no element of the row laid out over the box, asserted), never the twin oracle's reading or the
+flow's; where an engine's twin oracle reads other than the ink the row records that engine's reading and the oracle is
+held to it (`twinReads`: the rows whose image stands inside a container that never renders its content, in Firefox and
+WebKit, which report a client rect there; the opacity 1e-9 row, which every engine's checkVisibility keeps; a rect whose
+paint server the page cannot resolve and a video with no poster and no source, which have a box in every engine; a
+visible image inside an svg root whose visibility is hidden, in WebKit), and where the FLOW answers other than the ink
+the row records that with the reason and the flow is held to the record (`flowReads`: opacity 1e-9 in Chromium and
+Firefox, which compute it as nonzero; the paint-server rect and the video with fallback content alone, which the flow
+reads as painting of themselves in every engine; the visible image inside a hidden svg root, which WebKit alone paints
+nothing of while every engine computes the image visible), so each divergence stands disclosed at its row and a change
+in either direction reds it; a row whose ink cannot be measured says so on the row, and none does today; the oracle's
+divergences are pre-existing at the PR's base as platform readings (measured in the same three engines at the base,
+which has no file-print.ts) and read by this PR's code, `rendered`, which collectPictures read alone for an svg image
+until the round-7 fixes (below); file-print-egress-browser.test.ts case (12): a gated svg at `opacity="0e0"` and a `<picture>` whose
 `<img>` carries `hidden`, beside a plain placeholder, on three hosts, and since the round-4 review's tests-4 (2026-09-20)
 a gated svg at `opacity="0"` on the plain placeholder's own host, the line counting the plain one alone, the title
 naming its host alone, and "Print with them" asking that host once, for the plain placeholder's URL and never for the
@@ -7978,8 +7990,16 @@ ask cover the pictures that reach the paper alone: `collectPictures` filters eac
 `printable`, the rule the placeholders are counted by (the `<img>` itself; the `<video>` for its poster; the svg
 `<image>` element), so a picture inside a closed fold or under `hidden` is neither awaited, counted, set eager nor asked
 about (the shared-host probe, 2026-09-19), and the browser's answer is read through it too, so a picture the browser
-does not render (a ruby's `<rp>`, a `<canvas>`'s fallback content, a `popover` not shown, an svg `<image>` inside
-`<defs>`) is not awaited, not set eager and not probed. Such a picture can still be loading during the wait when its
+does not render (a ruby's `<rp>`, a `<canvas>`'s fallback content, a `popover` not shown) is not awaited, not set eager
+and not probed. An svg `<image>` is filtered by the container walk as well (`inRenderingSvg`, the test `shows` runs
+below a figure's root), because the browser's answer for one inside `<defs>`, a `<symbol>`, a `<clipPath>`, a `<mask>`,
+a `<pattern>` or a `<marker>` is the engine's: Chromium reports no rect and Firefox and WebKit one, and no engine paints
+it; before the round-7 fixes (2026-09-20, the round-6 review's finding) the rect alone decided, so on the figure leg's
+body of eight such images and an `<img>` Chromium collected two pictures and Firefox and WebKit eight, the wait there
+counting, awaiting and probing seven images the print never shows (their hrefs already requested by the render in every
+engine, so the count on the line and the deadline's ask differed, never a host); the figure leg's collectPictures case
+per engine holds every engine to the `<img>` and the image in `<g>` alone, and the node case holds the walk over
+namespaced stand-ins. Such a picture can still be loading during the wait when its
 host is allowed (the gear's list, or a host a click loaded for the page), since the browser fetches an `<img>` the fold
 hides at the render; "with them" does not restore it (the per-placeholder restore above). Before this the wait read
 every picture in the body, so a host two placeholders shared, one in the open body and one inside a closed `<details>`,
@@ -8389,7 +8409,10 @@ and a placeholder with no figure inside answers for itself (the `figurePrintable
 (P7): a use of `body` in file-view.ts the census cannot class is refused with its line, never passed (the census's
 mutant case). `collectPictures` (P2): each of its three collections reads
 `printable`, the browser's answer included, so a picture the browser does not render is not awaited, not set eager and
-not probed (the two `collectPictures` cases over the printable rule and over the browser's answer). `step` under the
+not probed (the two `collectPictures` cases over the printable rule and over the browser's answer), and the svg
+`<image>` collection reads the container walk too (`inRenderingSvg`), so an image inside a container that never renders
+is not a picture in any engine, whatever rect the engine reports (the node case over namespaced stand-ins; the figure
+leg's collectPictures case per engine). `step` under the
 ask (P2): a `stalled` with nothing loading disarms and rests, never prints (the verdict case;
 file-print-driver-browser.test.ts case (13)). `isPrintKeys` (P1): every key or modifier set it does not name is not the
 chord and is left to the browser, so the flow prevents no key it does not know (the `isPrintKeys` case over other keys
@@ -8620,7 +8643,8 @@ _Avoid_ (a review finding, 2026-09-19).
   the escaped `n\6fne` among them, and `contents` off; `inline`, `block` and `bogus` on), `hidden` and `popover` on HTML
   and on SVG elements (an `<svg hidden>` and an svg `<image hidden>` paint), a `<picture>` whose `<img>` is hidden, with
   and without a `<source>`, a hidden `<picture>`, a video's poster and a hidden video, the fallback content of a video
-  (its box paints) and of an audio (nothing does), an audio with and without `controls`, an svg image inside each SVG
+  (nothing inks of a video with no poster and no source in any engine; the flow counts its box, recorded on the row)
+  and of an audio (nothing does), an audio with and without `controls`, an svg image inside each SVG
   container (defs, symbol, clipPath, mask, pattern, marker and metadata never render; g, a and switch do), an svg image
   hidden by its own display, opacity or visibility, a hidden group over a visible image, `display: contents` on a group
   and a nested svg (its content renders) and on the outermost svg, a link and a switch (it does not), and an svg reached
@@ -8646,7 +8670,16 @@ _Avoid_ (a review finding, 2026-09-19).
   first shape whichever row failed (the round-5 review's correctness-3, tests-2, regression-2 and extra7-1, the same
   defect filed seven times over two rounds); the record test's census over the print test modules refuses every
   filter-then-map-by-index chain but the two cases' fails-before records, by the modules' syntax, so the population
-  is read at each run rather than recalled.
+  is read at each run rather than recalled. Since the round-7 fixes (2026-09-20): the `paints` column is the ink the twin
+  puts on the page, measured per row in each engine from a full-page screenshot decoded in the page (a pixel inside the
+  twin's box that is not white; each twin stands at a fixed offset from the row's left edge and the leg asserts that no
+  element of the row lays out over the box), the twin oracle's and the flow's readings recorded on the row where they
+  differ from the ink and each held to its record (P2), and a row whose ink cannot be measured saying so on the row
+  (none today); and a collectPictures case per engine over a body of eight local svg images, one inside each SVG
+  container, and an `<img>`: the pictures are the `<img>` and the image inside `<g>` alone, the seven other hrefs not
+  probed, and the render itself requested every one of the nine (FAILS BEFORE in its title, in Firefox and WebKit: eight
+  pictures and seven probes against Chromium's two and one), with `rendered` read per container and held to the
+  per-engine reading the docstrings state.
 - ui/webview/file-view-print-takings-browser.test.ts, headless Chromium: P7's takings and seatings after a paint that
   held the file, each executed against the derived readiness: a reload that fails while the bar is armed with the
   keyboard on a word button of the line (the line goes, the button disables by aria-disabled with the property false,

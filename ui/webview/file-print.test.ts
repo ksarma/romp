@@ -475,6 +475,21 @@ test("collectPictures reads the browser's answer through printable too: a pictur
   assert.deepEqual(probed, ["http://notes-api.test/open-d.svg"], "no probe for the image inside defs");
 });
 
+test("collectPictures reads the container walk for an svg image as well as the browser's answer (the round-7 fixes, 2026-09-20: Firefox and WebKit report a client rect for an image inside a container that never renders its content, so the browser's answer alone collected it there and Chromium alone skipped it): an image whose SVG ancestors include defs, symbol, clipPath, mask, pattern, marker or metadata is not collected and not probed even where the browser reports it rendered; one under g, a, switch or a nested svg is; a stand-in whose parents carry no namespace is decided by the browser's answer and the walk alone", () => {
+  const probed: string[] = [];
+  const probe = (url: string): Picture => { probed.push(url); return new FakePic(); };
+  const svgNode = (localName: string, parentElement: PrintableNode | null = null): PrintableNode & { namespaceURI: string } => hideEdges({ localName, parentElement, hasAttribute: () => false, namespaceURI: SVG_NS });   // built as `node` builds an ancestor (a spread of one would drop the edges hideEdges hides)
+  const svgRoot = svgNode("svg", node("div"));
+  const rendersTo = (container: string, href: string): FakeEl => elm({ href }, false, undefined, svgNode(container, svgRoot), "image", { cv: true, rects: 1 });   // Firefox's and WebKit's reading: a rect and visible
+  const never = ["defs", "symbol", "clipPath", "mask", "pattern", "marker", "metadata"].map((c) => rendersTo(c, c + ".svg"));
+  const renders = ["g", "a", "switch", "svg"].map((c) => rendersTo(c, c + ".svg"));
+  const deep = elm({ href: "deep.svg" }, false, undefined, svgNode("g", svgNode("defs", svgRoot)), "image", { cv: true, rects: 1 });   // a rendering group inside a container that never renders
+  const bare = elm({ href: "bare.svg" }, false, undefined, node("defs", [], node("svg")), "image", { cv: true, rects: 1 });   // a stand-in with no namespace: the walk reads SVG containers alone
+  const pics = collectPictures(fakeBody({ img: [], "video[poster]": [], image: [...never, ...renders, deep, bare] }), "http://notes-api.test/files", probe);
+  assert.deepEqual(probed, ["http://notes-api.test/g.svg", "http://notes-api.test/a.svg", "http://notes-api.test/switch.svg", "http://notes-api.test/svg.svg", "http://notes-api.test/bare.svg"], "the images under a rendering container alone, and the namespace-less stand-in");
+  assert.equal(pics.length, 5);
+});
+
 test("isPrintKeys enumerates the chord's keys and answers false for every other key or modifier set (the flow prevents no key it does not know; the browser's default stands for the rest): Ctrl or Meta with p or P, no Shift, no Alt; a repeat is the keys (isPrintChord alone refuses it)", () => {
   assert.equal(isPrintKeys({ key: "p", ctrlKey: true }), true); assert.equal(isPrintKeys({ key: "P", metaKey: true }), true);
   assert.equal(isPrintKeys({ key: "p", ctrlKey: true, repeat: true }), true, "a held chord's repeat is the keys");

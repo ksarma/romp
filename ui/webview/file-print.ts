@@ -405,13 +405,19 @@ export type PrintableNode = { localName: string; parentElement: PrintableNode | 
   checkVisibility?(options?: { visibilityProperty?: boolean; opacityProperty?: boolean }): boolean; getClientRects?(): ArrayLike<unknown> };
 /** The browser's own answer whether `el` is rendered: checkVisibility, with visibility and opacity read (an svg's
  *  `visibility="hidden"` or `opacity="0"`, kept attributes, leave nothing on the paper; content-visibility auto is left
- *  alone: the sheets use none, and a picture far below the fold is on the paper), AND at least one client rect (an svg
- *  <image> inside <defs>, a <symbol>, a <clipPath>, a <mask>, a <pattern> or a <marker> has a layout object and no rect,
- *  which checkVisibility alone reads as rendered; a closed fold's content and a `hidden="until-found"` ancestor's keep
- *  their rects and are skipped, which the rects alone read as rendered). Null where the browser cannot be asked (a stand-in
- *  under node, an engine without checkVisibility): the walk alone decides then. Measured in Chromium, 2026-09-19: a picture
- *  still loading, one with no src (a gated one) and one far below the fold each have a rect and are visible; one inside a
- *  ruby's <rp>, a <canvas>'s or a <video>'s fallback content or a `popover` not shown has none. */
+ *  alone: the sheets use none, and a picture far below the fold is on the paper), AND at least one client rect (a closed
+ *  fold's content and a `hidden="until-found"` ancestor's keep their rects and are skipped, which the rects alone read as
+ *  rendered). The rect is the engine's own reading, and the engines differ on an svg <image> inside <defs>, a <symbol>, a
+ *  <clipPath>, a <mask>, a <pattern> or a <marker>, which no engine paints: Chromium gives it a layout object and no rect,
+ *  so this answer is false there; Firefox reports one empty rect and WebKit one full rect for it, with checkVisibility true
+ *  in all three, so this answer is TRUE in those two (file-print-figure-browser.test.ts, the three engines, 2026-09-20).
+ *  An svg <image> is therefore never decided by this answer alone: the container walk decides it (SVG_RENDERS through
+ *  `shows` for a figure's paint, and through `inRenderingSvg` for the wait's pictures, collectPictures), and before the
+ *  round-7 fixes (2026-09-20) collectPictures read this answer alone for it, so in Firefox and WebKit the wait counted,
+ *  awaited and probed the images inside such containers where Chromium skipped them. Null where the browser cannot be
+ *  asked (a stand-in under node, an engine without checkVisibility): the walk alone decides then. Measured in Chromium,
+ *  2026-09-19: a picture still loading, one with no src (a gated one) and one far below the fold each have a rect and are
+ *  visible; one inside a ruby's <rp>, a <canvas>'s or a <video>'s fallback content or a `popover` not shown has none. */
 export function rendered(el: PrintableNode): boolean | null {
   if (typeof el.checkVisibility !== "function" || typeof el.getClientRects !== "function") return null;
   return el.checkVisibility({ visibilityProperty: true, opacityProperty: true }) && el.getClientRects().length > 0;
@@ -495,6 +501,10 @@ function authorDisplay(el: FigureNode): string | null {
  *  and paints nothing there; an SVG ancestor this list does not name reads the same way, the safe side, so nothing is
  *  counted for it. */
 const SVG_RENDERS: readonly string[] = ["svg", "g", "a", "switch"];
+/** Whether the ancestor `a` lets the content below it render: an element in the svg namespace that SVG_RENDERS does not name
+ *  takes the paint off; an HTML ancestor, or an SVG container the list names, does not. The one test both walks over an
+ *  svg's containers run (`shows`, for a figure's painting element; `inRenderingSvg`, for the wait's svg <image>). */
+const svgContainerRenders = (a: { namespaceURI?: string | null; localName: string }): boolean => a.namespaceURI !== SVG_NS || SVG_RENDERS.includes(a.localName);
 /** Whether the author's `display: contents` on the SVG element `el` lets its content render, read on the AUTHORED road
  *  alone (offPaper: the figure's root, and a stand-in under node where nothing computes): on a group, and on an svg nested
  *  inside SVG content, it does; on an outermost svg, a switch and an image, `contents` computes to none, so it hides as
@@ -543,7 +553,9 @@ function offPaper(el: FigureNode, self: boolean, root: FigureNode = el): boolean
  *  pattern, so `-0`, `+0` and `0e0` read as on the paper and `0.0.0` as off it; the computed value is the browser's own. */
 export function figureHidden(el: FigureNode): boolean { return offPaper(el, true); }
 /** The elements inside a placeholder's figure that put paint on the paper themselves: HTML's img, video (its poster or a
- *  frame; with neither, its box) and audio with `controls` (the controls: the browser's own sheet hides an audio without
+ *  frame; with neither it is read as painting all the same, the permissive side, while a video with no poster and no
+ *  source inks nothing in any engine: the figure leg's `video>img (fallback)` row records the flow's reading beside the
+ *  ink, 2026-09-20) and audio with `controls` (the controls: the browser's own sheet hides an audio without
  *  them, so one paints nothing), and SVG's graphics elements as the sanitizer keeps them (circle, ellipse, image, line,
  *  path, polygon, polyline, rect, text; use and foreignObject are dropped today and listed for a wider profile). A
  *  <picture>, a <source> and a <track> paint nothing of their own (the picture's <img> does); an svg root paints through
@@ -576,7 +588,7 @@ function shows(paint: FigureNode, root: FigureNode): boolean {
   if (offPaper(paint, true, root)) return false;
   for (let a = paint === root ? null : paint.parentElement; a; a = a === root ? null : a.parentElement) {
     if (offPaper(a, false, root)) return false;
-    if (a.namespaceURI === SVG_NS && !SVG_RENDERS.includes(a.localName)) return false;
+    if (!svgContainerRenders(a)) return false;
   }
   return true;
 }
@@ -620,8 +632,17 @@ function resolved(value: string | null, base: string): string | null {
  *  "Print with them" then restored by host, so a folded placeholder sharing a host with a printable one was restored and
  *  fetched too, which the per-placeholder restore since the round-2 review no longer does). The browser's own answer is
  *  read through printable as well (rendered): a picture inside a ruby's <rp>, a <canvas>'s fallback content or a `popover`
- *  not shown, or an svg <image> inside <defs>, is not awaited, not set eager and not probed, so no request the render did
- *  not make is made for a picture the print never shows. An <img loading="lazy"> is set eager first: the browser has deliberately not started
+ *  not shown is not awaited, not set eager and not probed, so no request the render did not make is made for a picture
+ *  the print never shows. An svg <image> is filtered by the container walk as well (inRenderingSvg: every SVG ancestor up
+ *  to the first HTML one renders its content, the test `shows` runs below a figure's root), because the browser's own
+ *  answer is the engine's for one inside <defs>, a <symbol>, a <clipPath>, a <mask>, a <pattern> or a <marker>: Chromium
+ *  reports no rect for it and Firefox and WebKit report one (rendered's docstring), and no engine paints it. Before the
+ *  round-7 fixes (2026-09-20) the rect alone decided, so on a body of eight svg images, one in each of those six
+ *  containers, one in <metadata> and one in <g>, plus an <img>, Chromium collected two pictures and Firefox and WebKit
+ *  eight, awaiting and probing seven images the print never shows; with the walk every engine collects the <img> and the
+ *  image in <g> alone (file-print-figure-browser.test.ts, the collectPictures case per engine; their hrefs were already
+ *  requested by the render in every engine, so the difference was the count on the line and the deadline's ask, never a
+ *  host). An <img loading="lazy"> is set eager first: the browser has deliberately not started
  *  fetching one far below the fold, so it would fire neither load nor error and the wait would run to its deadline over
  *  it; eager starts the deferred fetch at once, for the same URL (no other host is reached; a gated img has no src and
  *  fetches nothing), and the attribute stays eager after the print; a hidden or folded lazy picture is left as it is, so
@@ -632,9 +653,21 @@ export function collectPictures(body: ParentNode, base: string, probe: (url: str
   const out: Picture[] = [];
   body.querySelectorAll("img").forEach((el) => { if (!printable(el)) return; const img = el as HTMLImageElement; if (img.loading === "lazy") img.loading = "eager"; out.push(img); });
   body.querySelectorAll("video[poster]").forEach((v) => { if (!printable(v)) return; const u = resolved(v.getAttribute("poster"), base); if (u) out.push(probe(u)); });
-  body.querySelectorAll("image").forEach((im) => { if (!printable(im)) return; const u = resolved(im.getAttribute("href"), base); if (u) out.push(probe(u)); });
+  body.querySelectorAll("image").forEach((im) => { if (!printable(im) || !inRenderingSvg(im)) return; const u = resolved(im.getAttribute("href"), base); if (u) out.push(probe(u)); });
   return out;
 }
+/** Whether every SVG ancestor of the svg element `el`, up to the first ancestor outside the svg namespace, renders its content
+ *  (svgContainerRenders, the test `shows` runs below a figure's root): an svg <image> inside <defs>, a <symbol>, a
+ *  <clipPath>, a <mask>, a <pattern>, a <marker> or <metadata> is not a picture the print shows in any engine, whatever
+ *  rect the engine reports for it (rendered's docstring). A stand-in whose parents carry no namespace passes: the walk
+ *  reads SVG containers alone, and the browser's own answer and the walk in printable stand before it. */
+function inRenderingSvg(el: SvgWalkNode): boolean {
+  for (let a = el.parentElement; a && a.namespaceURI === SVG_NS; a = a.parentElement) if (!svgContainerRenders(a)) return false;
+  return true;
+}
+/** What the container walk reads of an svg <image> and its ancestors: the name, the namespace (absent on a stand-in) and the
+ *  parent. An Element is one. */
+type SvgWalkNode = { parentElement: SvgWalkNode | null; namespaceURI?: string | null; localName: string };
 
 export type SettleWhy = "settled" | "deadline" | "cancelled";
 export type Settle = {

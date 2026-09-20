@@ -31,8 +31,24 @@
 // three engines (real-viewer-leg.ts inBrowser takes the engine; one case per engine below): the table's `paints` is one
 // answer where the engines agree and each engine's own where they differ, because a row that pinned one engine's answer as
 // every engine's would hold the flow to that engine's reading (the `svg>a[display=contents]>image` row: Firefox paints it,
-// Chromium and WebKit do not). Skips loudly without a browser, engine by engine. Synthetic values only: invented hosts under
-// .test, a local /twin.svg and /twin2.svg.
+// Chromium and WebKit do not). The round-7 fixes (2026-09-20, on the round-6 review's finding that the product's
+// collectPictures read the divergent oracle) DEFINE the `paints` column as INK ON THE PAGE: a full-page screenshot of the
+// leg's page, decoded in the page, with a pixel that is not white inside the twin's box, measured per row in each engine;
+// never the twin oracle's reading (checkVisibility and a client rect) and never the flow's. Where the oracle reads other
+// than the ink the row records that engine's reading (`twinReads`) and the oracle is held to it; where the FLOW answers
+// other than the ink the row records that too (`flowReads`) with the reason, and the flow is held to the record, so the
+// divergence stands at the row and a change in either direction reds it. A row whose ink cannot be measured says so on the
+// row (`inkUnmeasured`, with the reason; the column is not asserted for it and its diagnostic line says so); today no row
+// does. The oracle's divergences are pre-existing at the PR's base as platform readings (measured at the base, the fork's
+// main the review reads this PR against, which has no file-print.ts, in the same three engines: Firefox and WebKit report a client rect for an element inside an SVG
+// container that never renders its content, Firefox an empty one and WebKit a full one, with checkVisibility true, and
+// every engine paints nothing there) AND read by this PR's code: `rendered` is that oracle, and collectPictures read it
+// alone for an svg <image> until the round-7 fixes, so in Firefox and WebKit the wait counted, awaited and probed the
+// images inside such containers where Chromium skipped them; the collectPictures case per engine below pins the fix
+// (FAILS BEFORE in Firefox and WebKit: eight pictures against Chromium's two). Figures with no remote URL have no row and
+// nothing to label: the gate wraps a figure on an unlisted host alone (figure-gate.ts gateRemoteFigures), so an ungated
+// figure never reaches figurePrintable in any engine. Skips loudly without a browser, engine by engine. Synthetic values
+// only: invented hosts under .test, a local /twin.svg and /twin2.svg, and the collectPictures case's /pic-<container>.svg.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -48,34 +64,49 @@ const GATE_RULE = '.fileview-md .fv-gate[data-act="fv-load"] > :not([data-fv-lab
 function bundle(): string {
   const esbuild = requireCjs("esbuild");
   const r = esbuild.buildSync({
-    stdin: { contents: 'export { figureHidden, figurePrintable, PAINTS_SEL } from "./file-print"; export { gateRemoteFigures, loadGatedFigure, GATE_ACT } from "./figure-gate";', resolveDir: UI, loader: "ts", sourcefile: "figure-leg.ts" },
+    stdin: { contents: 'export { figureHidden, figurePrintable, collectPictures, rendered, PAINTS_SEL } from "./file-print"; export { gateRemoteFigures, loadGatedFigure, GATE_ACT } from "./figure-gate";', resolveDir: UI, loader: "ts", sourcefile: "figure-leg.ts" },
     bundle: true, write: false, format: "iife", globalName: "FVF", platform: "browser", target: "es2020",
     nodePaths: [path.join(process.cwd(), "node_modules")], external: ["*.png", "*.svg", "*.woff", "*.ttf", "../media/*.woff2"], logLevel: "silent",
   });
   return r.outputFiles[0].text as string;
 }
 
-/** `paints`: whether the browser paints the shape's ungated twin, which figurePrintable must match: one answer where the
- *  three engines agree, or each engine's own where they differ (a row naming one engine's answer as every engine's would
- *  pin that engine's reading as the truth, the round-5 review's correctness-2, 2026-09-20). `fetches`: which of the
+/** `paints`: whether the shape's ungated twin puts INK on the page, one answer where the three engines agree, or each engine's
+ *  own where they differ (a row naming one engine's answer as every engine's would pin that engine's reading as the truth,
+ *  the round-5 review's correctness-2, 2026-09-20). Ink is measured (the round-7 fixes, 2026-09-20): a full-page screenshot
+ *  decoded in the page, and a pixel inside the twin's box that is not white; the column is never the twin oracle's reading
+ *  and never the flow's, each of which is recorded apart where it differs (twinReads, flowReads). `fetches`: which of the
  *  shape's URLs the browser asks for once the placeholder is restored as "Print with them" restores it ("a" the first, "b"
- *  the second), measured; absent, the first URL when the figure paints and none when it does not. */
+ *  the second), measured; absent, the first URL when the FLOW counts the figure (flowIn: the restore follows the flow's
+ *  answer, not the ink) and none when it does not. */
 type PerEngine = Record<Engine, boolean>;
-/** `twinReads`: what the twin oracle (checkVisibility and a client rect over the twin's painting elements) reads in an engine
- *  where that reading is NOT the paint, measured at the round-5 head's product code before the round-6 fix and unchanged by
- *  it (2026-09-20): Firefox and WebKit report a client rect for an element inside an SVG container that never renders its
- *  content (Firefox an empty one, WebKit a full one) and paint nothing there, in every engine, by a screenshot probe; and
- *  WebKit keeps opacity 1e-9 visible in checkVisibility while computing it to 0, which the flow reads. Where a row records
- *  it, the flow is held to `paints` and the oracle to this reading, so a change in either engine reds the row. */
-type Shape = { name: string; html: (url: string, url2: string) => string; hidden?: boolean | PerEngine; paints: boolean | PerEngine; fetches?: string[] | Record<Engine, string[]>; twinReads?: Partial<PerEngine> };
-/** The twin's paint the table names for `engine`. */
+/** `twinReads`: what the twin oracle (checkVisibility and a client rect over the twin's painting elements, `rendered` in the
+ *  product) reads in an engine where that reading is NOT the ink: Firefox and WebKit report a client rect for an element
+ *  inside an SVG container that never renders its content (Firefox an empty one, WebKit a full one) with checkVisibility
+ *  true, and every engine paints nothing there; every engine keeps opacity 1e-9 visible in checkVisibility and paints no
+ *  visible pixel at it; and a rect whose paint server the page cannot resolve, and a video with no poster and no source,
+ *  have a box and paint nothing. Pre-existing at the PR's base (the fork's main, which has no file-print.ts) as a platform
+ *  reading in the same three engines, and read by this PR's code through `rendered` (the header). Where a row records it the oracle is
+ *  held to the reading, so a change in the engine reds the row.
+ *  `flowReads`: what the FLOW (figurePrintable) answers in an engine where that answer is NOT the ink, with the reason: the
+ *  flow reads attributes and computed values and never the paint itself, so a figure whose painting element has a box and
+ *  a nonzero computed opacity is counted whatever the page shows of it. Where a row records it the flow is held to the
+ *  record, the divergence disclosed at the row; every other row holds the flow to the ink.
+ *  `inkUnmeasured`: the reason a row's ink cannot be measured, stated on that row; the ink column is not asserted for it and
+ *  its diagnostic line says so. No row carries it today: every twin is a box on one page, and the screenshot covers it. */
+type Shape = { name: string; html: (url: string, url2: string) => string; hidden?: boolean | PerEngine; paints: boolean | PerEngine; fetches?: string[] | Record<Engine, string[]>; twinReads?: Partial<PerEngine>; flowReads?: { in: Partial<PerEngine>; why: string }; inkUnmeasured?: string };
+/** The twin's ink the table names for `engine`. */
 const paintsIn = (s: Shape, engine: Engine): boolean => typeof s.paints === "boolean" ? s.paints : s.paints[engine];
 /** The root's figureHidden answer the table names for `engine`, or undefined where the row names none. */
 const hiddenIn = (s: Shape, engine: Engine): boolean | undefined => typeof s.hidden === "object" ? s.hidden[engine] : s.hidden;
-/** The twin oracle's reading the table expects in `engine`: the recorded one where the row carries it, the paint otherwise. */
+/** The twin oracle's reading the table expects in `engine`: the recorded one where the row carries it, the ink otherwise. */
 const oracleReads = (s: Shape, engine: Engine): boolean => s.twinReads && s.twinReads[engine] !== undefined ? s.twinReads[engine]! : paintsIn(s, engine);
-/** Whether the row records the oracle reading other than the paint in `engine`. */
+/** Whether the row records the oracle reading other than the ink in `engine`. */
 const recorded = (s: Shape, engine: Engine): boolean => !!s.twinReads && s.twinReads[engine] !== undefined;
+/** The flow's answer the table expects in `engine`: the recorded one where the row carries it (flowReads), the ink otherwise. */
+const flowIn = (s: Shape, engine: Engine): boolean => s.flowReads && s.flowReads.in[engine] !== undefined ? s.flowReads.in[engine]! : paintsIn(s, engine);
+/** Whether the row records the flow answering other than the ink in `engine`. */
+const flowRecorded = (s: Shape, engine: Engine): boolean => !!s.flowReads && s.flowReads.in[engine] !== undefined;
 const svgOf = (attrs: string, inner: (url: string, url2: string) => string) => (url: string, url2: string): string => '<svg xmlns="http://www.w3.org/2000/svg" ' + attrs + ' width="8" height="8">' + inner(url, url2) + "</svg>";
 const image = (attrs = "") => (url: string): string => '<image href="' + url + '" ' + attrs + ' width="8" height="8"/>';
 /** The sheet rule of the leg's page that hides an author's class: what the computed display read below the root sees and
@@ -92,9 +123,9 @@ function shapes(): Shape[] {
     out.push({ name: "opacity=" + JSON.stringify(v), html: svgOf('opacity="' + v + '"', image()), hidden, paints: !hidden });
   }
   // opacity 1e-9 is the engine's own computed value, which the flow reads: Chromium and Firefox keep it (1e-09, 1e-9) and
-  // WebKit computes it to 0, so the flow reads the figure off the paper in WebKit alone, while every engine's checkVisibility
-  // keeps it and no engine puts a visible pixel on the paper at that opacity (the screenshot probe; twinReads above)
-  out.push({ name: 'opacity="1e-9"', html: svgOf('opacity="1e-9"', image()), hidden: { chromium: false, firefox: false, webkit: true }, paints: { chromium: true, firefox: true, webkit: false }, twinReads: { webkit: true } });
+  // WebKit computes it to 0, so the flow reads the figure off the paper in WebKit alone; no engine puts a pixel that is not
+  // white on the page at that opacity (the ink column), and every engine's checkVisibility keeps it (twinReads)
+  out.push({ name: 'opacity="1e-9"', html: svgOf('opacity="1e-9"', image()), hidden: { chromium: false, firefox: false, webkit: true }, paints: false, twinReads: { chromium: true, firefox: true, webkit: true }, flowReads: { in: { chromium: true, firefox: true }, why: "the flow reads the computed opacity and counts any nonzero value as on the paper; Chromium and Firefox compute 1e-9 as nonzero, and the page shows no pixel of it" } });
   for (const [v, hidden] of [["hidden", true], ["HIDDEN", true], [" collapse ", true], ["hidden /* c */", true], ["visible", false], ["bogus", false]] as Array<[string, boolean]>) {
     out.push({ name: "visibility=" + JSON.stringify(v), html: svgOf('visibility="' + v + '"', image()), hidden, paints: !hidden });
   }
@@ -113,7 +144,9 @@ function shapes(): Shape[] {
   out.push({ name: "picture[hidden]>img", html: (u) => '<picture hidden><img src="' + u + '" width="8" height="8" alt=""></picture>', hidden: true, paints: false });
   out.push({ name: "video[poster]", html: (u) => '<video poster="' + u + '" width="8" height="8"></video>', hidden: false, paints: true });
   out.push({ name: "video[hidden][poster]", html: (u) => '<video hidden poster="' + u + '" width="8" height="8"></video>', hidden: true, paints: false });
-  out.push({ name: "video>img (fallback)", html: (u) => '<video width="8" height="8"><img src="' + u + '" width="8" height="8" alt=""></video>', hidden: false, paints: true });
+  // a video with no poster and no source inks nothing in any engine; the flow reads a video as painting of itself (PAINTING_ROOTS,
+  // reading no source), so it counts the figure and the restore fetches the fallback image's URL (the fetches column)
+  out.push({ name: "video>img (fallback)", html: (u) => '<video width="8" height="8"><img src="' + u + '" width="8" height="8" alt=""></video>', hidden: false, paints: false, twinReads: { chromium: true, firefox: true, webkit: true }, flowReads: { in: { chromium: true, firefox: true, webkit: true }, why: "the flow reads a video as painting of itself whatever it holds, and a video with no poster and no source inks nothing" } });
   out.push({ name: "audio[controls][src]", html: (u) => '<audio controls src="' + u + '"></audio>', hidden: false, paints: true, fetches: { chromium: ["a"], firefox: ["a"], webkit: ["a x2"] } });
   out.push({ name: "audio[src]", html: (u) => '<audio src="' + u + '"></audio>', hidden: false, paints: false });
   out.push({ name: "audio>img (fallback)", html: (u) => '<audio><img src="' + u + '" width="8" height="8" alt=""></audio>', hidden: false, paints: false });
@@ -128,7 +161,10 @@ function shapes(): Shape[] {
   out.push({ name: "svg>image[display=contents]", html: svgOf("", image('display="contents"')), hidden: false, paints: false });
   out.push({ name: "svg>image[opacity=0]", html: svgOf("", image('opacity="0"')), hidden: false, paints: false });
   out.push({ name: "svg>image[visibility=hidden]", html: svgOf("", image('visibility="hidden"')), hidden: false, paints: false });
-  out.push({ name: "svg[visibility=hidden]>image[visibility=visible]", html: svgOf('visibility="hidden"', image('visibility="visible"')), hidden: true, paints: true });
+  // a visible image inside an svg ROOT whose visibility is hidden: Chromium and Firefox paint it, WebKit paints nothing of it
+  // (a visible image inside a hidden GROUP paints in all three); every engine computes the image's visibility as visible,
+  // which the flow reads and the oracle's checkVisibility reads too
+  out.push({ name: "svg[visibility=hidden]>image[visibility=visible]", html: svgOf('visibility="hidden"', image('visibility="visible"')), hidden: true, paints: { chromium: true, firefox: true, webkit: false }, twinReads: { webkit: true }, flowReads: { in: { webkit: true }, why: "the flow reads the image's computed visibility, visible in every engine; WebKit paints nothing of a visible child of an svg root whose visibility is hidden" } });
   out.push({ name: "svg[opacity=0]>image[opacity=1]", html: svgOf('opacity="0"', image('opacity="1"')), hidden: true, paints: false });
   out.push({ name: "svg[display=contents]>image", html: svgOf('display="contents"', image()), hidden: true, paints: false });
   out.push({ name: "svg>g[display=contents]>image", html: svgOf("", (u) => '<g display="contents">' + image()(u) + "</g>"), hidden: false, paints: true });
@@ -139,8 +175,10 @@ function shapes(): Shape[] {
   out.push({ name: "svg>switch[display=contents]>image", html: svgOf("", (u) => '<switch display="contents">' + image()(u) + "</switch>"), hidden: false, paints: false });
   out.push({ name: "svg>svg[display=contents]>image", html: svgOf("", (u) => '<svg display="contents" width="8" height="8">' + image()(u) + "</svg>"), hidden: false, paints: true });
   // a paint server on another host: Chromium asks for it on the restore, Firefox and WebKit do not (what the browser fetches of
-  // a restored figure is its own; the column is measured per engine)
-  out.push({ name: "svg[fill=url]>rect", html: (u) => '<svg xmlns="http://www.w3.org/2000/svg" fill="url(' + u + '#p)" width="8" height="8"><rect width="8" height="8"/></svg>', hidden: false, paints: true, fetches: { chromium: ["a"], firefox: [], webkit: [] } });
+  // a restored figure is its own; the column is measured per engine). The twin's server is the local twin.svg, which has no
+  // `p` fragment, so the rect inks nothing in any engine; the flow reads a rect as painting of itself and never resolves its
+  // paint server, so it counts the figure (flowReads), and the twin oracle reads the rect's box (twinReads)
+  out.push({ name: "svg[fill=url]>rect", html: (u) => '<svg xmlns="http://www.w3.org/2000/svg" fill="url(' + u + '#p)" width="8" height="8"><rect width="8" height="8"/></svg>', hidden: false, paints: false, twinReads: { chromium: true, firefox: true, webkit: true }, flowReads: { in: { chromium: true, firefox: true, webkit: true }, why: "the flow reads a rect as painting of itself and never resolves its paint server; a server the page cannot resolve fills nothing" }, fetches: { chromium: ["a"], firefox: [], webkit: [] } });
   out.push({ name: "svg[fill=url]>defs>rect", html: (u) => '<svg xmlns="http://www.w3.org/2000/svg" fill="url(' + u + '#p)" width="8" height="8"><defs><rect width="8" height="8"/></defs></svg>', hidden: false, paints: false, twinReads: { firefox: true, webkit: true } });
   out.push({ name: "svg[fill=url] empty", html: (u) => '<svg xmlns="http://www.w3.org/2000/svg" fill="url(' + u + '#p)" width="8" height="8"></svg>', hidden: false, paints: false });
   // the round-4 review's extra8-3: a group a sheet rule hides, which no attribute and no style names
@@ -160,14 +198,17 @@ function shapes(): Shape[] {
 /** The URLs the restore is expected to have asked for in `engine`, as the table says: the row's list, one per engine where
  *  the engines differ in what they fetch of a restored figure (a paint server named by `fill="url(...)"`, which Firefox and
  *  WebKit do not ask for on the restore where Chromium does; an audio's src, which WebKit asks for twice), the first URL
- *  when the figure paints and none when it does not otherwise. */
-const expectedFetches = (s: Shape, engine: Engine): string[] => s.fetches === undefined ? (paintsIn(s, engine) ? ["a"] : []) : Array.isArray(s.fetches) ? s.fetches : s.fetches[engine];
+ *  when the FLOW counts the figure (flowIn: the restore is keyed on figurePrintable, so a row the flow counts and the page
+ *  inks nothing of is restored and fetched) and none when it does not otherwise. */
+const expectedFetches = (s: Shape, engine: Engine): string[] => s.fetches === undefined ? (flowIn(s, engine) ? ["a"] : []) : Array.isArray(s.fetches) ? s.fetches : s.fetches[engine];
 /** Whether a request URL is the page's own: the origin, or a blob URL the page minted (WebKit reports its own audio controls'
  *  glyphs as `blob:` requests of the page's origin, eleven per `<audio controls>`; a blob URL is the page's memory, no host). */
 const ofOrigin = (u: string): boolean => u.startsWith(ORIGIN) || u.startsWith("blob:" + ORIGIN);
 
-type Row = { name: string; gated: boolean; rootDisplay: string; rootOpacity: string; hidden: boolean | null; printable: boolean | null; twinPaints: boolean | null; remote: string };
-/** The shapes whose measured paint disagrees with the table, each named with ITS OWN expected value: the expectation travels
+type Row = { name: string; gated: boolean; rootDisplay: string; rootOpacity: string; hidden: boolean | null; printable: boolean | null; twinPaints: boolean | null; remote: string; overlap: string };
+/** The ink measured inside a twin's box: the count of pixels that are not white, and the box's size in the screenshot. */
+type Ink = { pixels: number; width: number; height: number };
+/** The shapes whose measured twin ORACLE reading disagrees with the table, each named with ITS OWN expected value: the expectation travels
  *  with its row through the filter. The round-4 review (2026-09-20): before this the leg filtered by the row's index and then
  *  mapped by the POST-FILTER index, so when it reddened the message named another shape's expected value, misleading exactly
  *  when it fired; the node case below executes both forms over three rows. */
@@ -205,19 +246,19 @@ test("namesWhere names each row the predicate holds by its own name with the row
 type Read = { rows: Row[]; errors: string[] };
 type Restored = { restored: boolean | null; printableAtRestore: boolean | null };
 
-for (const engine of ENGINES) test("figureHidden and figurePrintable over real gated figures in " + engine + ": for every shape the flow's answer equals the browser's own answer for the shape's ungated twin (checkVisibility with visibility and opacity, and a client rect, over the twin's painting elements), a group hidden by a sheet rule on its class among them (FAILS BEFORE the round-4 review: the author's declaration read empty); the named spellings of opacity, visibility and display read as the round named (FAILS BEFORE: -0, +0, 0e0, -1 and calc(0) read on the paper, 0.0.0 off it; a hidden img inside a picture, an svg image inside defs, with display none or with opacity 0 counted; an <svg hidden> read as hidden where the browser paints it); the gate's sheet rule stands in both sheets and sets display none on the gated root alone; no remote host was asked", { timeout: 120000 }, async (t) => {
+for (const engine of ENGINES) test("figureHidden and figurePrintable over real gated figures in " + engine + ": for every shape the flow's answer equals the INK the shape's ungated twin puts on the page (a full-page screenshot decoded in the page, measured per row; the round-7 fixes) or the row's recorded flow reading where it differs, and the twin oracle (checkVisibility with visibility and opacity, and a client rect, over the twin's painting elements) equals the ink or the row's recorded oracle reading, a group hidden by a sheet rule on its class among them (FAILS BEFORE the round-4 review: the author's declaration read empty); the named spellings of opacity, visibility and display read as the round named (FAILS BEFORE: -0, +0, 0e0, -1 and calc(0) read on the paper, 0.0.0 off it; a hidden img inside a picture, an svg image inside defs, with display none or with opacity 0 counted; an <svg hidden> read as hidden where the browser paints it); the gate's sheet rule stands in both sheets and sets display none on the gated root alone; no remote host was asked", { timeout: 120000 }, async (t) => {
   for (const sheet of ["feed.css", "styles.css"]) assert.ok(fs.readFileSync(path.join(UI, sheet), "utf8").includes(GATE_RULE), sheet + " carries the gate rule the flow's display read depends on");
   await inBrowser(t, async (browser) => {
     const all = shapes();
     const hostOf = (i: number): string => "s" + i + ".remote.test";
     const hostOf2 = (i: number): string => "s" + i + "b.remote.test";
     const requests: string[] = [];
-    const page = await browser.newPage({ viewport: { width: 900, height: 700 } });
+    const page = await browser.newPage({ viewport: { width: 1200, height: 700 } });   // wide enough for a twin at 40em plus an audio's controls, so the page never scrolls sideways and the shot is the viewport's width
     const errors: string[] = [];
     page.on("pageerror", (e: Error) => { errors.push(e.message); });
     page.on("request", (r: any) => { requests.push(r.url()); });
     const js = bundle();
-    const html = '<!DOCTYPE html><html><head><meta charset="utf-8"><style>.fileview-md .fv-gate { display: inline-flex; min-width: 4em; min-height: 1em; }\n' + GATE_RULE + '\n' + HIDE_RULE + '\n.twin { display: inline-block; margin-left: 1em; }</style></head><body><div class="fileview-md" id="root"></div><script src="/leg.js"></script></body></html>';
+    const html = '<!DOCTYPE html><html><head><meta charset="utf-8"><style>.fileview-md .fv-gate { display: inline-flex; min-width: 4em; min-height: 1em; }\n' + GATE_RULE + '\n' + HIDE_RULE + '\n.fileview-md p { position: relative; }\n.twin { position: absolute; left: 40em; top: 0; }</style></head><body><div class="fileview-md" id="root"></div><script src="/leg.js"></script></body></html>';
     await page.route((u: URL) => u.href.startsWith(ORIGIN), (route: any) => {
       const u = new URL(route.request().url());
       if (u.pathname === "/leg.js") return route.fulfill({ status: 200, contentType: "text/javascript", body: js });
@@ -248,28 +289,73 @@ for (const engine of ENGINES) test("figureHidden and figurePrintable over real g
         let hidden: boolean | null = null, printable: boolean | null = null;
         try { hidden = fig ? w.FVF.figureHidden(fig) : null; printable = g ? w.FVF.figurePrintable(g) : null; } catch (e) { errors.push(i + ": " + String(e)); }
         const cs = fig ? getComputedStyle(fig) : null;
-        return { name: "", gated: !!g, rootDisplay: cs ? cs.display : "-", rootOpacity: cs ? cs.opacity : "-", hidden, printable, twinPaints: paints.length ? paints.some(shows) : false, remote: p.querySelector('[src^="https:"], [href^="https:"], [srcset*="https:"], [poster^="https:"], [fill*="https:"]') ? "live" : "moved" };
+        // the ink read's ground: no element of the row outside the twin lays out over the twin's box (the gated placeholder's
+        // label runs past its 8px-wide inline-flex box in Firefox and WebKit, and under the twin when the twin sat 1em after it)
+        const box = twin.getBoundingClientRect();
+        const meets = (r: DOMRect): boolean => r.width > 0 && r.height > 0 && box.width > 0 && box.height > 0 && r.left < box.right && r.right > box.left && r.top < box.bottom && r.bottom > box.top;
+        const overlap = Array.from(p.querySelectorAll("*")).filter((e) => e !== twin && !twin.contains(e) && meets(e.getBoundingClientRect())).map((e) => e.tagName.toLowerCase() + (e.className ? "." + String(e.className).split(" ")[0] : "")).join(",");
+        return { name: "", gated: !!g, rootDisplay: cs ? cs.display : "-", rootOpacity: cs ? cs.opacity : "-", hidden, printable, twinPaints: paints.length ? paints.some(shows) : false, remote: p.querySelector('[src^="https:"], [href^="https:"], [srcset*="https:"], [poster^="https:"], [fill*="https:"]') ? "live" : "moved", overlap };
       });
       return { rows, errors };
     }, [all.map((s) => s.html("URL", "URL2")), all.map((_, i) => hostOf(i)), all.map((_, i) => hostOf2(i)), PAINTS_SEL]);
     assert.deepEqual(read.errors, [], "the flow's reads threw nothing");
     const rows = read.rows.map((r, i) => ({ ...r, name: all[i].name }));
-    for (const r of rows) t.diagnostic("figure | " + engine + " | " + r.name + " | gated=" + r.gated + " | root display=" + r.rootDisplay + " opacity=" + r.rootOpacity + " | figureHidden=" + r.hidden + " | figurePrintable=" + r.printable + " | twin paints=" + r.twinPaints);
+    // the ink: one full-page screenshot, decoded in the page onto a canvas, and the pixels inside each twin's box that are
+    // not white counted (the twin sits on the page's white background with nothing else in its box)
+    const shot: Buffer = await page.screenshot({ fullPage: true });
+    const inks: Ink[] = await page.evaluate(async ([png, n]: [string, number]) => {
+      const img = new Image();
+      img.src = "data:image/png;base64," + png;
+      await img.decode();
+      const canvas = document.createElement("canvas");
+      canvas.width = img.naturalWidth; canvas.height = img.naturalHeight;
+      const ctx = canvas.getContext("2d")!;
+      ctx.drawImage(img, 0, 0);
+      const scale = window.devicePixelRatio;   // device pixels per CSS pixel in the shot (the page's own ratio; the screenshot is viewport-wide, so its width over the document's clientWidth would be off by a scrollbar in Firefox and WebKit)
+      const out: Ink[] = [{ pixels: -1, width: img.naturalWidth, height: img.naturalHeight }];   // the shot's own size first, for the diagnostic
+      out.push({ pixels: -1, width: Math.round(window.innerWidth * scale), height: Math.round(document.documentElement.scrollHeight * scale) });
+      for (let i = 0; i < n; i++) {
+        const r = document.querySelector('p[data-shape="' + i + '"] .twin')!.getBoundingClientRect();
+        const x = Math.floor((r.left + window.scrollX) * scale), y = Math.floor((r.top + window.scrollY) * scale);
+        const width = Math.ceil(r.width * scale), height = Math.ceil(r.height * scale);
+        let pixels = 0;
+        if (width > 0 && height > 0) {
+          const d = ctx.getImageData(x, y, width, height).data;
+          for (let k = 0; k < d.length; k += 4) if (d[k] < 250 || d[k + 1] < 250 || d[k + 2] < 250) pixels++;
+        }
+        out.push({ pixels, width, height });
+      }
+      return out;
+    }, [shot.toString("base64"), all.length]);
+    const [shotSize, pageSize] = inks.splice(0, 2);
+    t.diagnostic("ink | " + engine + " | shot " + shotSize.width + "x" + shotSize.height + " px | page " + pageSize.width + "x" + pageSize.height + " px at the page's pixel ratio");
+    assert.equal(inks.length, all.length, "one ink reading per row");
+    assert.deepEqual(rows.filter((r) => r.overlap).map((r) => r.name + ": " + r.overlap), [], "no element of a row outside its twin lays out over the twin's box, so the ink inside the box is the twin's alone (the placeholder's label overflowed under the twin in Firefox and WebKit when the twin followed it in flow; each twin now stands at a fixed offset from the row's left edge)");
+    assert.ok(shotSize.width === pageSize.width && shotSize.height >= pageSize.height - 1, "the shot is the whole page at the page's pixel ratio, so a twin's box maps onto it without scaling beyond that ratio (shot " + shotSize.width + "x" + shotSize.height + ", page " + pageSize.width + "x" + pageSize.height + ")");
+    const inkOf = (i: number): boolean | null => all[i].inkUnmeasured ? null : inks[i].pixels > 0;
+    for (const [i, r] of rows.entries()) t.diagnostic("figure | " + engine + " | " + r.name + " | gated=" + r.gated + " | root display=" + r.rootDisplay + " opacity=" + r.rootOpacity + " | figureHidden=" + r.hidden + " | figurePrintable=" + r.printable + (flowRecorded(all[i], engine) ? " (recorded: " + all[i].flowReads!.why + ")" : "") + " | twin oracle=" + r.twinPaints + (recorded(all[i], engine) ? " (recorded)" : "") + " | ink=" + (all[i].inkUnmeasured ? "unmeasured: " + all[i].inkUnmeasured : inks[i].pixels + " of " + inks[i].width + "x" + inks[i].height + " px"));
+    assert.ok(inks.some((k) => k.pixels > 0) && inks.some((k) => k.pixels === 0 && k.width > 0), "the ink read tells rows apart: some twin box inks and some sized box does not (a screenshot that missed the page would read every row alike)");
+    // the paints column IS the ink: for every row whose ink is measurable, the table's paints is whether the twin's box holds a pixel that is not white
+    const wrongInk = rows.map((r, i) => ({ r, s: all[i], ink: inkOf(i) })).filter((x) => x.ink !== null && x.ink !== paintsIn(x.s, engine)).map((x) => x.r.name + ": the twin inks " + x.ink + " (" + inks[all.indexOf(x.s)].pixels + " px), the table's paints " + paintsIn(x.s, engine));
+    assert.deepEqual(wrongInk, [], "the paints column is the ink on the page, per row, in " + engine + " (FAILS BEFORE the round-7 fixes: the column carried the oracle's reading for svg[fill=url]>rect and for the rows below, which ink nothing)");
+    assert.deepEqual(all.filter((s) => s.inkUnmeasured).map((s) => s.name + ": " + s.inkUnmeasured), [], "every row's ink is measured today; a row that cannot be says so here, on the row, and is listed in this message rather than passing silently");
     assert.deepEqual(rows.filter((r) => !r.gated).map((r) => r.name), [], "every shape was gated: its host is on no list, and the gate wraps the media root");
     assert.deepEqual(rows.filter((r) => r.remote !== "moved").map((r) => r.name), [], "every remote URL was moved aside by the gate before the tree entered the page");
     assert.deepEqual(rows.filter((r) => r.rootDisplay !== "none").map((r) => r.name), [], "the sheet's rule sets display none on every gated root");
     assert.deepEqual(rows.filter((r) => r.name.startsWith("opacity=") && r.hidden !== (Number(r.rootOpacity) === 0)).map((r) => r.name + " computed " + r.rootOpacity), [], "the sheet leaves opacity alone, and figureHidden reads the computed value: zero and only zero is hidden");
-    // the flow's answer is the browser's answer for the twin, shape by shape
-    const disagree = rows.map((r, i) => ({ r, s: all[i] })).filter((x) => !recorded(x.s, engine) && x.r.printable !== x.r.twinPaints).map((x) => x.r.name + ": figurePrintable " + x.r.printable + ", the browser paints the twin " + x.r.twinPaints);
-    assert.deepEqual(disagree, [], "FAILS BEFORE: figurePrintable disagreed with the browser on the zero spellings, on 0.0.0, on the hidden img inside a picture, on the svg image inside defs and on the hidden svg");
-    // where the row records the twin oracle reading other than the paint in this engine (twinReads), the flow is held to the paint
-    const offRecord = rows.map((r, i) => ({ r, s: all[i] })).filter((x) => recorded(x.s, engine) && x.r.printable !== paintsIn(x.s, engine)).map((x) => x.r.name + ": figurePrintable " + x.r.printable + ", the table's paint " + paintsIn(x.s, engine) + " (the twin oracle reads " + x.r.twinPaints + " in " + engine + ", recorded)");
-    assert.deepEqual(offRecord, [], "where the twin oracle is recorded to read other than the paint, the flow answers the paint");
+    // the flow's answer is the ink, shape by shape, but where the row records the flow reading other than the ink (flowReads,
+    // with its reason), where it is held to the record
+    const disagree = rows.map((r, i) => ({ r, s: all[i] })).filter((x) => !flowRecorded(x.s, engine) && x.r.printable !== paintsIn(x.s, engine)).map((x) => x.r.name + ": figurePrintable " + x.r.printable + ", the twin inks " + paintsIn(x.s, engine));
+    assert.deepEqual(disagree, [], "FAILS BEFORE: figurePrintable disagreed with the paint on the zero spellings, on 0.0.0, on the hidden img inside a picture, on the svg image inside defs and on the hidden svg");
+    const offRecord = rows.map((r, i) => ({ r, s: all[i] })).filter((x) => flowRecorded(x.s, engine) && x.r.printable !== flowIn(x.s, engine)).map((x) => x.r.name + ": figurePrintable " + x.r.printable + ", the row records " + flowIn(x.s, engine) + " in " + engine + " (" + x.s.flowReads!.why + ")");
+    assert.deepEqual(offRecord, [], "where the row records the flow answering other than the ink, the flow answers as recorded; a flow that comes to read the paint reds the row, which then drops its record");
+    // where the row records the twin oracle reading other than the ink (twinReads), the oracle is held to the reading (wrongPaper below); the two records are disjoint from the ink they depart from
+    assert.deepEqual(all.filter((s) => (recorded(s, engine) && oracleReads(s, engine) === paintsIn(s, engine)) || (flowRecorded(s, engine) && flowIn(s, engine) === paintsIn(s, engine))).map((s) => s.name), [], "a record names a reading OTHER than the ink; one equal to the ink is a stale record");
     // the named spellings and shapes, each to the answer the round named
     const wrong = rows.filter((r, i) => hiddenIn(all[i], engine) !== undefined && r.hidden !== hiddenIn(all[i], engine)).map((r) => r.name + ": figureHidden " + r.hidden);
     assert.deepEqual(wrong, [], "FAILS BEFORE: -0, +0, 0e0, -1 and calc(0) read as on the paper, 0.0.0 as off it, and <svg hidden> as hidden");
     const wrongPaper = paperMismatches(rows, all.map((s) => oracleReads(s, engine)));
-    assert.deepEqual(wrongPaper, [], "the browser's own answers are the ones this leg's table names, the recorded per-engine readings among them (a change here is a change in the engine, and the flow follows it)");
+    assert.deepEqual(wrongPaper, [], "the twin oracle reads the ink, or the recorded per-engine reading where the row carries one (a change here is a change in the engine, and the record follows it)");
     assert.deepEqual(requests.filter((u) => !ofOrigin(u)), [], "no request left the origin before any restore: the gate moved every remote URL aside on the parser document");
     // the second oracle, keyed on the URL: every placeholder whose figure paints is restored as "Print with them" restores it,
     // and the remote URLs the page then asks for are read per shape against the table's `fetches`
@@ -297,6 +383,61 @@ for (const engine of ENGINES) test("figureHidden and figurePrintable over real g
     const wrongFetch = all.map((s, i) => ({ name: s.name, got: fetchedOf(i), want: expectedFetches(s, engine) })).filter((x) => x.got.join(",") !== x.want.join(",")).map((x) => x.name + ": asked for " + (x.got.join(",") || "none") + ", the table says " + (x.want.join(",") || "none"));
     assert.deepEqual(wrongFetch, [], "per URL: the restore of a figure that paints asks for every URL the browser fetches of the whole figure, a non-painting element's among them (the figure-level grant, stated in figure-gate.ts and file-print.ts), and a figure that paints nothing has no URL asked for");
     assert.deepEqual(asked.filter((u) => !/^https:\/\/s\d+b?\.remote\.test\/[pq]\.svg$/.test(u)), [], "no URL outside the shapes' own was asked for");
+    assert.deepEqual(errors, [], "no script error");
+    await page.close();
+  }, engine);
+});
+
+/** The containers the collectPictures case builds one svg <image> in, each with its own local href: the six that never render
+ *  their content (the rows above with `twinReads` in Firefox and WebKit), <metadata> (not laid out in any engine) and <g>, the
+ *  one that renders. */
+const PICTURE_CONTAINERS: readonly string[] = ["defs", "symbol", "clipPath", "mask", "pattern", "marker", "metadata", "g"];
+/** What the collectPictures case reads per engine: `rendered` for each container's image (the product's oracle, per engine),
+ *  the URLs collectPictures probed, and how many pictures it returned (the <img> and the probes). */
+type Collected = { rendered: Record<string, boolean | null>; probed: string[]; pictures: number; imgs: number };
+/** The oracle's reading per engine for an svg <image> inside each container, as the docstrings of `rendered` and
+ *  collectPictures state it: Chromium no rect for the six containers; Firefox an empty rect and WebKit a full one, both read as
+ *  rendered; <metadata> not laid out anywhere; <g> rendered everywhere. */
+const RENDERED_READS: Record<Engine, Record<string, boolean>> = {
+  chromium: { defs: false, symbol: false, clipPath: false, mask: false, pattern: false, marker: false, metadata: false, g: true },
+  firefox: { defs: true, symbol: true, clipPath: true, mask: true, pattern: true, marker: true, metadata: false, g: true },
+  webkit: { defs: true, symbol: true, clipPath: true, mask: true, pattern: true, marker: true, metadata: false, g: true },
+};
+
+for (const engine of ENGINES) test("collectPictures in " + engine + " over a body of eight local svg images, one inside each SVG container (defs, symbol, clipPath, mask, pattern, marker, metadata, g), and one <img>: the pictures are the <img> and the image inside <g> alone, the one container that renders its content, and the seven other hrefs are not probed (FAILS BEFORE the round-7 fixes in Firefox and WebKit: the rect alone decided, those engines report one for an image inside a container that never renders, and collectPictures returned eight pictures and probed all seven against Chromium's two and one); the oracle `rendered` reads each container's image as the docstrings state per engine", { timeout: 120000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const page = await browser.newPage({ viewport: { width: 900, height: 700 } });
+    const errors: string[] = [];
+    const requests: string[] = [];
+    page.on("pageerror", (e: Error) => { errors.push(e.message); });
+    page.on("request", (r: any) => { requests.push(r.url()); });
+    const js = bundle();
+    const body = PICTURE_CONTAINERS.map((c) => '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><' + c + '><image href="/pic-' + c + '.svg" width="8" height="8"/></' + c + "></svg>").join("") + '<img src="/pic-img.svg" width="8" height="8" alt="">';
+    const html = '<!DOCTYPE html><html><head><meta charset="utf-8"></head><body><div class="fileview-md" id="root">' + body + '</div><script src="/leg.js"></script></body></html>';
+    await page.route((u: URL) => u.href.startsWith(ORIGIN), (route: any) => {
+      const u = new URL(route.request().url());
+      if (u.pathname === "/leg.js") return route.fulfill({ status: 200, contentType: "text/javascript", body: js });
+      if (u.pathname.startsWith("/pic-") && u.pathname.endsWith(".svg")) return route.fulfill({ status: 200, contentType: "image/svg+xml", body: SVG });
+      return route.fulfill({ status: 200, contentType: "text/html", body: html });
+    });
+    await page.goto(ORIGIN + "/");
+    const got: Collected = await page.evaluate(async (containers: string[]) => {
+      const w = window as any;
+      const root = document.getElementById("root")!;
+      await Promise.all(Array.from(root.querySelectorAll("img")).map((i) => i.complete ? null : new Promise<void>((r) => { i.addEventListener("load", () => r()); i.addEventListener("error", () => r()); })));
+      await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
+      const rendered: Record<string, boolean | null> = {};
+      for (const c of containers) rendered[c] = w.FVF.rendered(root.querySelector(c + " > image"));
+      const probed: string[] = [];
+      const pics = w.FVF.collectPictures(root, location.href, (url: string) => { probed.push(url); return { complete: true, addEventListener() {}, removeEventListener() {} }; }) as unknown[];
+      return { rendered, probed, pictures: pics.length, imgs: pics.filter((p) => p instanceof HTMLImageElement).length };
+    }, PICTURE_CONTAINERS as string[]);
+    for (const c of PICTURE_CONTAINERS) t.diagnostic("pictures | " + engine + " | svg>" + c + ">image | rendered=" + got.rendered[c] + " | probed=" + got.probed.includes(ORIGIN + "/pic-" + c + ".svg"));
+    t.diagnostic("pictures | " + engine + " | collectPictures returned " + got.pictures + " (" + got.imgs + " img) | probed " + got.probed.join(",") + " | the render requested " + requests.filter((u) => u.includes("/pic-")).length + " picture URLs");
+    assert.deepEqual(got.rendered, RENDERED_READS[engine], "the oracle reads each container's image as the docstrings state for " + engine);
+    assert.deepEqual(got.probed, [ORIGIN + "/pic-g.svg"], "the image inside <g> is the one svg picture probed in " + engine + " (FAILS BEFORE in Firefox and WebKit: all seven laid-out containers' images were probed)");
+    assert.deepEqual({ pictures: got.pictures, imgs: got.imgs }, { pictures: 2, imgs: 1 }, "two pictures, the <img> and one probe, in " + engine + " (FAILS BEFORE in Firefox and WebKit: eight)");
+    assert.deepEqual(PICTURE_CONTAINERS.filter((c) => !requests.includes(ORIGIN + "/pic-" + c + ".svg")), [], "the render itself requested every container's image, <metadata>'s among them, in " + engine + ", so the fix changes what the wait counts and probes, never what the page fetches");
     assert.deepEqual(errors, [], "no script error");
     await page.close();
   }, engine);
