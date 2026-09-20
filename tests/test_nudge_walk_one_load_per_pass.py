@@ -1861,6 +1861,24 @@ def _caller(frame, boundary):
     return f.f_code.co_name, os.path.basename(os.path.realpath(f.f_code.co_filename)), f.f_lineno
 
 
+def _class_attributes(mod):
+    """Every attribute of every class `mod` defines, {(class name, attribute): object}, read from the classes' own dicts (vars(c), so
+    a staticmethod is the descriptor object and not the function it wraps) for every type bound in the module's globals whose
+    __module__ is the module's name. The cleanup's leak check (_restore) compares this against setUp's snapshot: one container below
+    the module globals, the level the fixture's own seam sits at (Sessions.backend_for). Before it, a stub a case left on any other
+    class attribute of either module lived for every later test with the cleanup naming nothing (review round 7, the seventh-axis
+    verifier: a new-identity pass-through on km.Sessions.live and on jd._ParseStore.get in the wedge-gate sweep case was still live at
+    the module's last case), and the one hand-picked restore was itself lossy, since setUp read backend_for through getattr, the plain
+    function a staticmethod hands out, and the restore put that function into the class dict in place of the staticmethod object
+    (inert by reading: the kernel calls backend_for on the class at every site and never instantiates Sessions). Derives: the classes
+    from the module's globals and their attributes from the class dicts, so no class attribute of either module is outside the check.
+    Bounds: the containers read, a module's globals and its classes' dicts; the contents of a module-level dict, list or set, an
+    instance's attributes and an imported module's attributes are outside it; and the ownership test, __module__ equal to the
+    module's name, so a class the module imports, or builds under another module's name, is not read."""
+    return {(cn, an): v for cn, c in vars(mod).items() if isinstance(c, type) and c.__module__ == mod.__name__
+            for an, v in vars(c).items()}
+
+
 class _FakeBackend:
     def __init__(self):
         self.sent = []
@@ -1882,10 +1900,14 @@ class _WalkHarness(unittest.TestCase):
     against setUp's first snapshot by identity once the saved names are back, the names the restoring rebind moves subtracted, so a
     name a case rebound outside every list is named at that case's cleanup and put back (until the round-7 fixes _restore put the
     saved names back and checked no other name, so a new-identity pass-through on such a kernel name left the module green and the
-    stub live for every later test). Bounds: REPLACED_KM, REPLACED_JD, CASE_KM and CASE_JD, what the fixture replaces and what a
+    stub live for every later test), and every attribute of every class either module defines against the same snapshot, read
+    from the classes' own dicts (_class_attributes; the container Sessions.backend_for sits in, which the cleanup put back by hand
+    while a stub on any other class attribute was named by nothing until the round-7 close). Bounds: REPLACED_KM, REPLACED_JD, CASE_KM and CASE_JD, what the fixture replaces and what a
     case may, a policy, the first two pinned by execution in setUp and the last two by the cleanup's check (a case may replace only
     names on the saved lists, since any other is named as leaked); REPLACED_DATA, the two data names the census skips, read one way (a data name left off it errors in the census's identity
-    check, a callable put on it is skipped unseen); the window, one tick; the doors recorded, the judge's two; WALK, GATE and SWEEP,
+    check, a callable put on it is skipped unseen); the containers the cleanup's check reads, the globals and the class dicts of both
+    modules (the contents of a module-level dict, list or set, an instance's attributes and an imported module's attributes are
+    outside it); the window, one tick; the doors recorded, the judge's two; WALK, GATE and SWEEP,
     the callers the condition names; the boundary set, three wrappers hand-picked as the judge's, held against the judge's AST by
     the birth pin's hand-offs line; KEYS, the walk counters the cases pin exactly (a tuple derived from km._NUDGE_WALK_STATS would
     report more with nothing asserting it); and the fixture constants, SIDS, NOW and the seeded stores."""
@@ -1893,13 +1915,16 @@ class _WalkHarness(unittest.TestCase):
     def setUp(self):
         before_km, before_jd = dict(vars(km)), dict(vars(jd))   # FIRST: the agreement check at the end of setUp compares against these,
         self.before_km, self.before_jd = before_km, before_jd   #   and _restore compares every global of both modules against them
+        self.before_cls = {label: _class_attributes(mod) for label, mod in (("kernel", km), ("judge", jd))}   # and every class
+        #                                                   attribute of both, the container the fixture's own seam sits in (_restore)
         self.td = tempfile.TemporaryDirectory()
         self.addCleanup(self.td.cleanup)                  # cleanups run last in, first out: the seams go back, then the dir
         td = Path(self.td.name)
         self.saved = {k: getattr(km, k) for k in REPLACED_KM + CASE_KM}   # CASE_KM and CASE_JD saved too: a case replaces them after setUp
         self.saved_jd = {k: getattr(jd, k) for k in REPLACED_JD + CASE_JD + ("load_goals", "load_goals_shared")}
         self.saved_state = jd.STATE
-        self.saved_backend = km.Sessions.backend_for
+        self.saved_backend = vars(km.Sessions)["backend_for"]   # the class-dict object, a staticmethod; through getattr it would be
+        #                                                       the plain function, and the restore would bind that in its place
         self.shared_off_before = jd._SHARED_OFF[0]
         self.walk_stats = {k: (dict(v) if isinstance(v, dict) else v) for k, v in km._NUDGE_WALK_STATS.items()}
         self.gate_stats = dict(km._NUDGE_GATE_STATS)
@@ -2034,7 +2059,7 @@ class _WalkHarness(unittest.TestCase):
         self.assertEqual(rebound_jd, set(REPLACED_JD) | {"load_goals", "load_goals_shared"},
                          "and exactly the judge names REPLACED_JD lists plus the two recorded doors (the names jd._rebind_state moves "
                          "subtracted)")
-        self.assertIsNot(km.Sessions.backend_for, self.saved_backend, "and Sessions.backend_for, replaced beside them")
+        self.assertIsNot(vars(km.Sessions)["backend_for"], self.saved_backend, "and Sessions.backend_for, replaced beside them")
 
     def _before_rebind(self):
         """A no-op hook, called right before the judge snapshot the rebind's diff is read against: the region between setUp's first
@@ -2050,11 +2075,18 @@ class _WalkHarness(unittest.TestCase):
         """Every seam back the way setUp found it: the saved kernel and judge names, the backend, the caches, the counters, the
         journals, the state root; then the check the saved lists cannot make: every kernel and judge global is the object setUp's
         first snapshot held, by identity, over the union of the names then and now, the names jd._rebind_state moves subtracted (the
-        diff across the restoring rebind, as setUp reads them across its own). A name a case rebound, added or deleted outside
-        REPLACED_KM, CASE_KM, REPLACED_JD, CASE_JD and the two doors is put back and this cleanup reds naming it, so the case that
+        diff across the restoring rebind, as setUp reads them across its own), and then the same check one container below, every
+        attribute of every class either module defines against setUp's snapshot of the class dicts (_class_attributes), read after
+        the globals are back so a rebound class name reaches the snapshot's class. A name a case rebound, added or deleted outside
+        REPLACED_KM, CASE_KM, REPLACED_JD, CASE_JD, the two doors and Sessions.backend_for, at either level, is put back and this
+        cleanup reds naming it (a class attribute as Class.attr under a kernel or judge class-attributes label), so the case that
         leaked it fails and the tests after it run over the modules setUp found (review round 7, the seventh-axis hunt: before this
         check a new-identity pass-through on km._nudge_response_ready, a kernel name in neither list, left the module green with the
-        stub live for every later test). Derives: the leaked names from both modules' globals against the snapshot. Bounds: the
+        stub live for every later test; the round's seventh-axis verifier: the same pass-through on km.Sessions.live and on
+        jd._ParseStore.get, class attributes, was live at the module's last case with the check over the globals green). Derives:
+        the leaked names from both modules' globals and from their classes' dicts against the snapshots. Bounds: the containers
+        read, the globals and the class dicts (a member of a module-level dict, list or set, an instance attribute or an imported
+        module's attribute is outside it); the
         names the restoring rebind moves, subtracted, so a stub a case leaves on one of the judge's directory or path names is
         overwritten by the rebind and not named (setUp's check has the same edge); TICK_REBOUND_KM and TICK_REBOUND_JD, the
         allowance for a global the tick itself rebinds, empty today and checked only to name a live global; and _INTERPRETER_GLOBALS,
@@ -2102,9 +2134,20 @@ class _WalkHarness(unittest.TestCase):
                     delattr(mod, k)
             if names:
                 leaked[label] = names
-        self.assertEqual(leaked, {}, "every kernel and judge global is the object setUp's first snapshot held once the saved names are "
-                                     "back (the names the rebind moves subtracted); these were rebound, added or deleted by this case "
-                                     "outside REPLACED_KM, CASE_KM, REPLACED_JD, CASE_JD and the two doors, and are put back here: %r"
+        for label, mod in (("kernel", km), ("judge", jd)):    # one container below: every class attribute of both modules, read after
+            before, now = self.before_cls[label], _class_attributes(mod)   # the globals went back, so a rebound class name reaches
+            names = sorted(k for k in set(before) | set(now) if now.get(k, _UNSET) is not before.get(k, _UNSET))   # the snapshot's class
+            for cls_name, attr in names:
+                if (cls_name, attr) in before:
+                    setattr(getattr(mod, cls_name), attr, before[(cls_name, attr)])
+                else:
+                    delattr(getattr(mod, cls_name), attr)
+            if names:
+                leaked[label + " class attributes"] = ["%s.%s" % k for k in names]
+        self.assertEqual(leaked, {}, "every kernel and judge global, and every attribute of every class either module defines, is the "
+                                     "object setUp's first snapshot held once the saved names are back (the names the rebind moves "
+                                     "subtracted); these were rebound, added or deleted by this case outside REPLACED_KM, CASE_KM, "
+                                     "REPLACED_JD, CASE_JD, the two doors and Sessions.backend_for, and are put back here: %r"
                                      % leaked)
 
     def _toggle(self, enabled):
