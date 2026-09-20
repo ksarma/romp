@@ -151,7 +151,7 @@ merged on 2026-09-07; fork main, which carries the plan and fork PR #347, was me
    poster>`, `<img srcset>` and `<source srcset>` also fetch on open and sit outside `img[src]`.
    The gate itself ran after the sanitized nodes were adopted into the live document until 2026-09-20, and WebKit fetches
    an img on that adoption, so its placeholder stood over a request already made; the hole, the fix and its measurement are
-   in "Fix: the gate before adoption (2026-09-20)" at the end of this plan.
+   in "Fix: the gate before adoption (2026-09-20)", the section after "Out of scope".
 4. *Decision 6's grammar.* An `uponSanitizeAttribute` hook, installed once behind a module guard, keeps in a `style`
    attribute only `color` and `background-color` declarations whose value is a literal colour: a bare word of letters
    (a named colour, `transparent`, `currentcolor`, or a CSS-wide keyword such as `inherit`, `unset` or `initial`,
@@ -1840,8 +1840,8 @@ as built departs from the text above, why, and which test holds each rule:
    srcset parse, remoteHost, the allowed set, the normaliser); settings.test.ts and md-config-figure-hosts.test.ts the
    field and its reading; docs/reference.md and the guide's Figures paragraph describe it.
    Since 2026-09-20 the chain runs on the sanitizer's own body, before the adoption into the live document: a chain after
-   the adoption fetched a gated figure in WebKit while the placeholder stood ("Fix: the gate before adoption (2026-09-20)"
-   at the end of this plan records the hole, the fix, the instrument and the tests).
+   the adoption fetched a gated figure in WebKit while the placeholder stood ("Fix: the gate before adoption (2026-09-20)",
+   the section after "Out of scope", records the hole, the fix, the instrument and the tests).
 10. *Not built here.* Obsidian's `%%comment%%` and `#tag` (the text names them for awareness only) stay literal.
    Slice 5's other items (refusal reasons for the remaining token names) are untouched; its goTo into a closed
    details is delivered here (item 5, the panel's revealMarks), since this slice is what makes a closed fold
@@ -7764,19 +7764,20 @@ document's link resolution, which sat between resolveFigureRefs and the gate, st
 the adoption sets, repoints or moves a fetching attribute. The chat's `md()` path stays ungated by the recorded ruling;
 the same order applies to any sanitizeMd caller that adopts nodes.
 
-**The instrument.** The claim is about bytes leaving, so the test reads real servers' request logs, never page.route or
-context.route, which answer a request inside the browser and can report one the network never carried or miss one the
-engine issued before the route saw it. file-view-figures-gate-adopt-browser.test.ts runs three servers on 127.0.0.1: a
-figure server for `remote.test`; a harness server for `romp.test` that serves the pane page, the Files bundle, the notes
-and a folder figure through /file, with the kernel's Referrer-Policy header on every response; and an HTTP forward proxy
-that logs every request the browser hands it and forwards by hostname. Each engine is launched with that proxy, so the
-browser fetches under the unlisted name without DNS and every request passes two logs; after each open a drain makes one
-sentinel round trip through the proxy and waits 250 ms. Its three scenes: a note with a figure on the unlisted host; a
-note with a figure of its own folder; a document opened from its URL, at /notes/note.md on the harness, with a figure of
-its own folder, one on the unlisted host and a protocol-relative `<img src="//remote.test/proto.png">`. The second leg,
+**The instrument.** The claim is about bytes leaving, so the test reads real servers' request logs, never page.route
+or context.route, which answer a request inside the browser and can report one the network never carried or miss one
+the engine issued before the route saw it. file-view-figures-gate-adopt-browser.test.ts runs three servers on
+127.0.0.1: a figure server for `remote.test`; a harness server for `romp.test` that serves the pane page, the Files
+bundle, the notes and a folder figure through /file, with the kernel's Referrer-Policy header on every response; and
+an HTTP forward proxy that logs every request the browser hands it and forwards by hostname. Each engine is launched
+with that proxy, so the browser fetches under the unlisted name without DNS and every request is logged twice, by the
+proxy and by the server it reaches; after each open a drain makes one sentinel round trip through the proxy and waits
+250 ms. Its three scenes: a note with a figure on the unlisted host; a note with a figure of its own folder; a
+document opened from its URL, at /notes/note.md on the harness, with a figure of its own folder, one on the unlisted
+host and a protocol-relative `<img src="//remote.test/proto.png">`. The second leg,
 file-view-figures-gate-adopt-svg-browser.test.ts, is the same instrument with one figure server answering for two
-unlisted hosts, `remote.test` and `other.test`, and one scene: the 3000-paragraph note with an svg image spelt `href` on
-the first host and one spelt `xlink:href` on the second, clicked one at a time.
+unlisted hosts, `remote.test` and `other.test`, and one scene: the 3000-paragraph note with an svg image spelt `href`
+on the first host and one spelt `xlink:href` on the second, clicked one at a time.
 
 **Measured.** In Playwright's Chromium, Firefox and WebKit, at the base 2d41e5c9b and after the fix. At the base,
 WebKit: the figure server logged `GET /fig.png` under Host `remote.test` while the placeholder stood, and the harness
@@ -7806,6 +7807,14 @@ measured.
 Chromium and Firefox there, green in all three engines after the fix. file-view-figures-gate-adopt-svg-browser.test.ts,
 the second leg: red in Firefox and in WebKit at 2d41e5c9b, green in Chromium there, green in all three after the fix.
 file-view-seam.test.ts pins the order in mdBlock (sanitize, rewrite, gate on `clean`, then the adoption, and no figure
-pass over `box`); md-url-view.test.ts pins the URL kind's resolution before the adoption;
-tools/file-review-viewer-recipe.test.mjs pins the sanitize and adoption statements;
+pass over `box`) and holds the premise where CI runs, since both legs skip where Playwright's engines are absent and
+CI's npm test runs before its one browser install: its test "the inertness premise, held where CI runs" pins the
+sanitizer's profile literal and its keys at run time, the config the sanitize is handed, sanitizeMd's body, the
+installed DOMPurify's RETURN_DOM branch with its one road into the live document (a clone under an allowed shadowroot
+attribute, which no profile here allows), and `clean` reaching the four chain calls and nothing else before the
+adoption (the review's refuters measured that one added profile key, `ADD_ATTR: ["shadowrootmode"]`, made DOMPurify
+clone the body into the live document with every CI-run module green and WebKit fetching the gated figure again).
+md-url-view.test.ts pins the URL kind's resolution before the adoption; tools/file-review-viewer-recipe.test.mjs pins
+the sanitize and adoption statements; tools/2026-09-20-figure-gate-before-adoption-ledger.test.mjs holds the ledger
+entry's file list, its count and its engine statements to the tree and the legs;
 tools/markdown-viewer-plan-gate-adopt.test.mjs holds this section's sentences to the code, its comment and the leg.
