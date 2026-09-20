@@ -4193,13 +4193,14 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
   // element's node document becomes one with a render tree (adoption is enough; a place in the tree is not needed), so
   // with the chain after the adoption the bytes had left for the unlisted host by the time the gate's placeholder said
   // "Click to load", and a figure of the file's folder was requested against the PAGE, as the attribute read before
-  // rewriteFigureSrcs repointed it, and then again through /file. Chromium and Firefox defer that fetch to a microtask,
-  // which the chain's synchronous attribute moves beat, so only WebKit fetched: the kernel-served pages (the dashboard, and
-  // the iOS web app, which is the same page in Safari's engine) were reachable, the VS Code panes not (their CSP names no
-  // remote img-src). Every pass that sets, repoints or moves a fetching attribute is in this block; the passes after the
-  // adoption write a video's style, a list item's class, anchors' attributes, fences' markup and the prose's links (found
-  // by the review of the link-navigation follow-on, 2026-09-20; file-view-figures-gate-adopt-browser.test.ts reads real
-  // servers' request logs in all three engines).
+  // rewriteFigureSrcs repointed it, and then again through /file. In Chromium and Firefox the servers' logs held no line
+  // for either figure before the chain ran (measured at the base, 2026-09-20, by the leg named below), so only WebKit
+  // fetched: the kernel-served pages (the dashboard, and the iOS web app, which is the same page in Safari's engine) were
+  // reachable, the VS Code panes not (their CSP names no remote img-src). Every pass that sets, repoints or moves a
+  // fetching attribute is in this block; the passes after the adoption write a video's style, a list item's class, anchors'
+  // attributes, fences' markup and the prose's links (found by the review of the link-navigation follow-on, 2026-09-20;
+  // file-view-figures-gate-adopt-browser.test.ts reads real servers' request logs in all three engines; the section "Fix:
+  // the gate before adoption (2026-09-20)" of plans/markdown-viewer.md records the hole, the instrument and the scope).
   if (doc && doc.kind === "url") {
     // Every attribute a figure fetches through resolves against the document (resolveFigureRefs, below): this arm read
     // `img[src]` alone, so a relative `srcset` candidate, a video's `src` or `poster`, an audio's, a `source`'s or a

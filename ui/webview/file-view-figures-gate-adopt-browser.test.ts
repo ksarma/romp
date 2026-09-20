@@ -19,8 +19,9 @@
 // Red before the fix in WebKit alone, both scenes: mdBlock adopted the sanitized nodes into a live-document element before
 // the figure chain ran, and WebKit starts an <img>'s fetch synchronously when the element's node document becomes one
 // with a render tree, so the figure server logged GET /fig.png while the placeholder stood, and the harness logged a
-// GET /fig.png against the page before the one through /file; Chromium and Firefox defer that fetch to a microtask, which
-// the chain's synchronous attribute moves beat (measured 2026-09-20 at the base 2d41e5c9b). Each engine is its own test
+// GET /fig.png against the page before the one through /file; in Chromium and Firefox both logs held no line for either
+// figure before the chain ran, so both scenes were green there (measured 2026-09-20 at the base 2d41e5c9b; the engines'
+// scheduling of the fetch was not instrumented, the logs were read). Each engine is its own test
 // and skips, saying so, when its binary is absent. Synthetic values only: an invented note, TESTHOST paths, a placeholder
 // sid, .test hosts.
 import { test } from "node:test";

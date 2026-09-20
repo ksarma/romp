@@ -149,6 +149,9 @@ merged on 2026-09-07; fork main, which carries the plan and fork PR #347, was me
    file document's links are dressed by `linkMarkdownAnchors`, a walk over `a`, which an area is not. `LINK_SEL` (item
    8) keeps naming `area[href]` as a second guard. For Slice 4's gate, not fixed here: `<svg><image href>`, `<video
    poster>`, `<img srcset>` and `<source srcset>` also fetch on open and sit outside `img[src]`.
+   The gate itself ran after the sanitized nodes were adopted into the live document until 2026-09-20, and WebKit fetches
+   an img on that adoption, so its placeholder stood over a request already made; the hole, the fix and its measurement are
+   in "Fix: the gate before adoption (2026-09-20)" at the end of this plan.
 4. *Decision 6's grammar.* An `uponSanitizeAttribute` hook, installed once behind a module guard, keeps in a `style`
    attribute only `color` and `background-color` declarations whose value is a literal colour: a bare word of letters
    (a named colour, `transparent`, `currentcolor`, or a CSS-wide keyword such as `inherit`, `unset` or `initial`,
@@ -1836,25 +1839,9 @@ as built departs from the text above, why, and which test holds each rule:
    and gear-figure-hosts.test.ts holds them equal to settings.ts's. figure-gate.test.ts covers the pure parts (the
    srcset parse, remoteHost, the allowed set, the normaliser); settings.test.ts and md-config-figure-hosts.test.ts the
    field and its reading; docs/reference.md and the guide's Figures paragraph describe it.
-   The chain runs on the sanitizer's own body, before the adoption (2026-09-20; found as pre-existing on main by the
-   review of the link-navigation follow-on, fork PR 862's round 1, and fixed on its own branch). mdBlock had adopted the
-   sanitized nodes into its live-document box first and run resolveFigureRefs, rewriteFigureSrcs and the gate after.
-   WebKit starts an img's fetch synchronously when the element's node document becomes one with a render tree, so in
-   the kernel-served pages under WebKit (Safari, the iOS web app) the bytes had left for the unlisted host while the
-   placeholder stood, and a figure of the file's folder was requested against the page, as the attribute read before
-   the rewrite, and again through /file; the VS Code panes were out of reach, their CSP naming no remote img-src.
-   Chromium and Firefox defer that fetch to a microtask, which ran after the chain had moved the attributes, so neither
-   leaked. DOMPurify's RETURN_DOM body is its parse document's (DOMParser, or createDocument when that fails; no browsing
-   context, defaultView null), which never loads, so the whole chain moved above `box.replaceChildren`, and the passes
-   left after the adoption set no fetching attribute. file-view-figures-gate-adopt-browser.test.ts launches each of
-   Playwright's three engines through an HTTP forward proxy the test runs and reads real servers' request logs, never
-   page.route: with a figure on `remote.test` gated and its placeholder on screen, the logs hold no line for it; the
-   click adds one GET under Host remote.test with no Referer (the harness sends the kernel's Referrer-Policy); the real
-   sanitizeMd's body has no window and a figure in it fetches nothing, where an uninserted img of the live document
-   fetches; a figure of the file's folder makes one request through /file and none page-relative. Red in WebKit at
-   2d41e5c9b in both scenes (the figure server logged GET /fig.png; the harness logged GET /fig.png before the /file
-   one), green in Chromium and Firefox there, green in all three after; file-view-seam.test.ts pins the order. This is
-   Playwright's WebKit build, not a device: the iOS statement rests on the shared engine.
+   Since 2026-09-20 the chain runs on the sanitizer's own body, before the adoption into the live document: a chain after
+   the adoption fetched a gated figure in WebKit while the placeholder stood ("Fix: the gate before adoption (2026-09-20)"
+   at the end of this plan records the hole, the fix, the instrument and the tests).
 10. *Not built here.* Obsidian's `%%comment%%` and `#tag` (the text names them for awareness only) stay literal.
    Slice 5's other items (refusal reasons for the remaining token names) are untouched; its goTo into a closed
    details is delivered here (item 5, the panel's revealMarks), since this slice is what makes a closed fold
@@ -7743,3 +7730,59 @@ test family re-verifies. Where the code as built departs from the text above, wh
 Text size, fluid width, table reflow, whole-word cells (fork PR #348); path and http links in files,
 the `:line` suffix (fork PR #347); the PDF viewer; emoji shortcodes; another parser; editing the rendered
 view in place; the two audit items its refuters overturned.
+
+## Fix: the gate before adoption (2026-09-20)
+
+Until this fix the viewer's figure gate did not hold in WebKit. The review of the link-navigation follow-on found the hole
+on main (fork PR 862, round 1, finding extra8-3; two refuters confirmed it with real servers); the fix is its own branch, a
+fix-tier PR and a privacy surface, so it lands on the owner's word.
+
+**The hole.** Under WebKit a figure on an unlisted host was requested while the gate's placeholder, "Image from <host>.
+Click to load.", stood, so the placeholder was a false assurance. `mdBlock` (file-view.ts) adopted the sanitized nodes into
+its live-document box first (`box.replaceChildren(...sanitizeMd(dirty, mintHeadingIds).childNodes)`) and ran the figure
+chain after: resolveFigureRefs for a URL document, rewriteFigureSrcs for a file, gateRemoteFigures for both. WebKit starts
+an img's fetch synchronously when the element's node document becomes one with a render tree; the adoption is enough, a
+place in the tree is not needed. A figure of the file's own folder was requested against the page, as the attribute read
+before rewriteFigureSrcs repointed it, and then again through /file. In Chromium and Firefox the servers' logs held no line
+for either figure before the chain ran, so neither leaked; the engines' scheduling of the fetch was not instrumented, the
+logs were read.
+
+**The fix.** `sanitizeMd` (md-sanitize.ts) returns the body of DOMPurify's own parse document (RETURN_DOM; DOMPurify
+parses the markup with DOMParser, or into `implementation.createDocument` when that fails), a document with no browsing
+context, whose `defaultView` is null, in which nothing loads. The whole figure chain now runs over that body and the
+adoption comes after: `const clean = sanitizeMd(dirty, mintHeadingIds)`, then resolveFigureRefs, rewriteFigureSrcs and
+gateRemoteFigures over `clean`, then `box.replaceChildren(...Array.from(clean.childNodes))`. The URL document's link
+resolution, which sat between resolveFigureRefs and the gate, stays after the adoption; no pass after the adoption sets,
+repoints or moves a fetching attribute. The chat's `md()` path stays ungated by the recorded ruling; the same order applies
+to any sanitizeMd caller that adopts nodes.
+
+**The instrument.** The claim is about bytes leaving, so the test reads real servers' request logs, never page.route or
+context.route, which answer a request inside the browser and can report one the network never carried or miss one the
+engine issued before the route saw it. file-view-figures-gate-adopt-browser.test.ts runs three servers on 127.0.0.1: a
+figure server for `remote.test`; a harness server for `romp.test` that serves the pane page, the Files bundle, the notes
+and a folder figure through /file, with the kernel's Referrer-Policy header on every response; and an HTTP forward proxy
+that logs every request the browser hands it and forwards by hostname. Each engine is launched with that proxy, so the
+browser fetches under the unlisted name without DNS and every request passes two logs; after each open a drain makes one
+sentinel round trip through the proxy and waits 250 ms.
+
+**Measured.** In Playwright's Chromium, Firefox and WebKit, at the base 2d41e5c9b and after the fix. At the base, WebKit:
+the figure server logged `GET /fig.png` under Host `remote.test` while the placeholder stood, and the harness logged a
+page-relative `GET /fig.png` for the folder figure beside the request through /file; Chromium and Firefox: no such line in
+either scene. After the fix,
+in all three: no line for the gated figure until the click, which makes exactly one request, `GET /fig.png` under Host
+`remote.test` with no Referer; the folder figure requested once, through /file, and never as `/fig.png`. The premise,
+executed over the real sanitizeMd in each engine: its body's ownerDocument is another document with `defaultView` null and
+an img in it fetches nothing, where an img of the live document with a src and no place in the tree fetches in every
+engine, the control that the instrument sees a fetch the page does make.
+
+**Scope.** Unreachable through the VS Code panes, whose CSP blocks remote figures (`img-src ${webview.cspSource} data:`,
+extension.ts). Reachable through the kernel-served dashboard and the iOS web app. What leaks is the IP address, the time,
+the user agent and the path; the kernel sends Referrer-Policy same-origin, so no referer. The engine measured is
+Playwright's WebKit build, not literal iOS Safari, so the iOS statement rests on shared engine behaviour and not on a
+device test.
+
+**Tests.** file-view-figures-gate-adopt-browser.test.ts, above: red in WebKit at 2d41e5c9b in both scenes, green in
+Chromium and Firefox there, green in all three after the fix. file-view-seam.test.ts pins the order in mdBlock (sanitize,
+rewrite, gate on `clean`, then the adoption, and no figure pass over `box`); md-url-view.test.ts pins the URL kind's
+resolution before the adoption; tools/file-review-viewer-recipe.test.mjs pins the sanitize and adoption statements;
+tools/markdown-viewer-plan-gate-adopt.test.mjs holds this section's sentences to the code, its comment and the leg.
