@@ -7861,13 +7861,13 @@ leaked: the re-parse ran after the passes, so its product carried what they had 
 (the post-adoption fold's `href="#top"` and the link pass's class, copied into the HTML `a` the re-parse made) and
 escaped their judgment, as the img it made carried a `src` the chain never read. With the re-parse before the passes,
 they judge its product: the img is gated, and the split anchor, an HTML `a` with no `href`, is dead (fv-dead), which
-is what linkMarkdownAnchors (file-view-links.ts) makes of every HTML anchor with no `href`. Closing the leak and
-making that anchor inert are one effect, a correction and not a cost: a link inside a code fence stopped being live,
-which is what every other link inside a fenced code block already does, since the fence shows its markup as text.
-Behaviour, not privacy: an HTML `a` with no `href` follows and fetches nothing. An svg anchor on one line keeps its
-namespace and folds as before, and an HTML anchor written as raw markup in such a `<pre><code>` block is an element
-the passes read, not text, and is stamped the same under both orders (the same probe: a path link, live at both
-heads).
+is what linkMarkdownAnchors (file-view-links.ts) makes of every HTML anchor with no `href` that is not an anchor
+target (no `name` or `id`). Closing the leak and making that anchor inert are one effect, a correction and not a cost:
+a link inside a code fence stopped being live, which is what every other link inside a fenced code block already does,
+since the fence shows its markup as text. Behaviour, not privacy: an HTML `a` with no `href` follows and fetches
+nothing. An svg anchor on one line keeps its namespace and folds as before, and an HTML anchor written as raw markup
+in such a `<pre><code>` block is an element the passes read, not text, and is stamped the same under both orders (the
+same probe: a path link, live at both heads).
 
 **The re-parse population.** The rule needs every write that re-parses or re-serializes markup after the adoption
 enumerated, a different grep from the walk of attribute writes. The verbs are the HTML-parsing entry points an element
@@ -7982,16 +7982,16 @@ holding /*, a block comment holding a regex, a URL in a string). The CI pin in
 tools/markdown-viewer-plan-gate-adopt.test.mjs reads the property the Tests paragraph states off the block of the job
 that runs npm test, found by that step and not by its key, over the block's steps with its YAML comment lines removed,
 and nothing in it reads the job's key: the paragraph's sentence names the job by the step it runs, so a rename of the
-key alone needs no companion edit (the fork PR review's third-round ruling, 2026-09-20: the round-2 push had held the
-key to a name in the sentence by a separate check, which pinned an arrangement, and that check is gone); in scratch
-copies of the head, that module alone, an engine install added to another job left it green (10 of 10), a Chromium
-install moved before the job's Test step turned it red with the sentence to change named (9 of 10), and a Firefox and
-WebKit install before that step with the sentence reworded to the run form left it green with the held-whole paragraph
-pin red, as the same-commit rule intends (9 of 10); after the round-2 review (its pins-2 and pins-3), a `#` comment in
-the job's header naming the browser cache green (10 of 10, where the pin before it read the raw block and was red, 9
-of 10), and a restore step for that cache before the Test step red on the property (9 of 10); after the third-round
-ruling, the job key renamed alone green (10 of 10) and a Chromium install moved before the Test step red on the
-property (9 of 10). Outside the three modules
+key alone needs no companion edit (the fork PR review's ruling on its third round's finding pins-2, 2026-09-20: the
+round-2 push had held the key to a name in the sentence by a separate check, which pinned an arrangement, and that
+check is gone); in scratch copies of the head, that module alone, an engine install added to another job left it green
+(10 of 10), a Chromium install moved before the job's Test step turned it red with the sentence to change named (9 of
+10), and a Firefox and WebKit install before that step with the sentence reworded to the run form left it green with
+the held-whole paragraph pin red, as the same-commit rule intends (9 of 10); after the round-2 review (its pins-2 and
+pins-3), a `#` comment in the job's header naming the browser cache green (10 of 10, where the pin before it read the
+raw block and was red, 9 of 10), and a restore step for that cache before the Test step red on the property (9 of 10);
+after that ruling, the job key renamed alone green (10 of 10) and a Chromium install moved before the Test step red on
+the property (9 of 10). Outside the three modules
 that read comment-stripped code (file-view-seam.test.ts, md-url-view.test.ts and md-sanitize-viewer-links.test.ts), no
 test of this branch compares where the chain or the fence pass sits relative to the adoption: file-view.test.ts,
 tools/file-review-viewer-recipe.test.mjs, tools/upstream-ledger-figure-gate-before-adoption.test.mjs and

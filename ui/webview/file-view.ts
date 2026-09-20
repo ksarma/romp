@@ -4208,13 +4208,13 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
   // names: `image` alone becomes a fetching element the chain judges through other attributes (an HTML img, src and srcset); a
   // nested `svg` stays an svg, its paint references judged by paintRefs. The same move corrected a second product of the
   // re-parse: an svg <a xlink:href> split across lines in such a fence comes back an HTML <a> whose xlink:href is a plain
-  // attribute, and under the old order that anchor was followable for the reason the image leaked, the fold below
-  // (`a[*|href]`) and linkMarkdownAnchors having stamped href and class on the svg anchor before the re-parse copied them
-  // into the HTML <a> it made; judged after the re-parse it has no href, and linkMarkdownAnchors (file-view-links.ts) marks
-  // it dead (fv-dead) as it does every HTML anchor with no href, so a link inside a code fence stopped being live, which is
-  // what every other link inside a fenced code block already does, its markup shown as text; an svg anchor on one line keeps
-  // its namespace and folds as before (measured 2026-09-20 in the three engines by the fork PR review's verification, at the
-  // moved head and at a copy with the pass moved back). The Copy button (code-block.ts addCopyBtn) is created in the live
+  // attribute, and under the old order that anchor was followable for the reason the image leaked, the fold below (`a[*|href]`)
+  // and linkMarkdownAnchors having stamped href and class on the svg anchor before the re-parse copied them into the HTML <a> it
+  // made; judged after the re-parse it has no href, and linkMarkdownAnchors (file-view-links.ts) marks it dead (fv-dead) as it
+  // does every HTML anchor with no href that is not an anchor target (no name or id), so a link inside a code fence stopped being
+  // live, which is what every other link inside a fenced code block already does, its markup shown as text; an svg anchor on one
+  // line keeps its namespace and folds as before (measured 2026-09-20 in the three engines by the fork PR review's verification,
+  // at the moved head and at a copy with the pass moved back). The Copy button (code-block.ts addCopyBtn) is created in the live
   // document, appended into this body's <pre> and adopted with it below; its listeners ride both adoptions, and the same leg
   // clicks each fence's button for real in the three engines.
   const copySources = fenceCopyQueue(text, fences);

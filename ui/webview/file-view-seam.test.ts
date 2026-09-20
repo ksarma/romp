@@ -1133,7 +1133,7 @@ test("source: the Slice 3 seam members exist with their doc comments; the media 
 // The chain-before-adoption order pinned above rests on one fact: the body sanitizeMd hands mdBlock belongs to a document
 // with no browsing context, so the chain's writes over it start no fetch. The browser legs execute that fact in each engine
 // (file-view-figures-gate-adopt-browser.test.ts, the premise probe) and skip wherever Playwright's engines are absent, and
-// in CI's vscode-extension job no browser install precedes the npm test step (.github/workflows/ci.yml; the plan pin
+// in CI's job that runs npm test no browser install precedes that step (.github/workflows/ci.yml; the plan pin
 // tools/markdown-viewer-plan-gate-adopt.test.mjs reads that property off the job's block), so under CI the fact stood on
 // nothing: the pins above and their siblings in the other re-aimed modules match names and call order, and a change that kept both
 // while handing back a live-document body left every CI-run test green. The review's refuters measured that in a scratch
@@ -1151,7 +1151,7 @@ test("source: the Slice 3 seam members exist with their doc comments; the media 
 // sanitizeMd before mdBlock's chain sees it (the caller's own pass, mintHeadingIds, and every registered post-pass, the
 // registrant list derived from the code by its registerMdPostPass calls and held to the census REGISTERED_POST_PASSES,
 // red on any new registrant: the round-1 ruling of the fork PR's review, 2026-09-20, found neither swept while this header
-// claimed every door, and its third-round ruling kept the census), each opening no door to the live
+// claimed every door, and its ruling on its third round's finding guards-3 kept the census), each opening no door to the live
 // document, and, in mdBlock, `clean` reaching the four chain calls and the fence pass's one read (`clean.querySelectorAll`)
 // and nothing else before the adoption, and nothing after it. What this test does not do is execute the order: the node scene
 // (below) asserts by execution that no node of the sanitizer's body enters the live document until the gate has run over it.
@@ -1288,17 +1288,24 @@ test("the inertness premise, held where CI runs: MD_PURIFY is its six-key litera
     }
   }
   assert.ok(registrants.length > 0, "the derivation found the registrations (an empty derivation is a broken reader, not a clean tree)");
-  // ── the census: the derived list against REGISTERED_POST_PASSES, and red on ANY registrant not in it, a read-only one
-  // included (the fork PR review's third-round ruling, guards-3, 2026-09-20). The census cannot tell a read-only registrant
-  // from one whose body it cannot follow: the sweep below reads a body's own text and not its callees, so a road to the live
-  // document through a helper the body calls is invisible to it, and greening the first would green the second, which
-  // reopens the premise this fix rests on, that nothing puts the body in the live document before the gate runs. A person
-  // adding a read-only registrant pays one red and one line here; the red names both. ──
+  // ── the census: the derived list against REGISTERED_POST_PASSES, and red on ANY registrant not in it, a read-only one included
+  // (the fork PR review's ruling on its third round's finding guards-3, 2026-09-20). The census cannot tell a read-only
+  // registrant from one whose body it cannot follow: the sweep below reads a body's own text and not its callees, so a road to
+  // the live document through a helper the body calls is invisible to it, and greening the first would green the second, which
+  // reopens the premise this fix rests on, that nothing puts the body in the live document before the gate runs. A person adding
+  // a read-only registrant pays one red and one line here; the red names both. ──
   const REGISTERED_POST_PASSES = ["md-config.ts: registerMdPostPass(renderMathPlaceholders) -> math.ts"];
   const CENSUS_REMEDY = "a registrant outside the census: judge the new registrant's body for live-document roads (the doors the sweep below reads, and any callee of its own that reaches the live document, which the sweep does not follow), then add its line to REGISTERED_POST_PASSES in ui/webview/file-view-seam.test.ts; the census refuses a read-only registrant too, since it cannot tell one from a registrant whose body it cannot follow";
-  const SELF = web("file-view-seam.test.ts");
-  assert.ok(/^\s*const REGISTERED_POST_PASSES = \[/m.test(SELF) && SELF.includes(CENSUS_REMEDY) && CENSUS_REMEDY.includes("REGISTERED_POST_PASSES in ui/webview/file-view-seam.test.ts"),
-    "the census's red names its remedy: the constant to add the line to and the file that declares it are the constant this module declares and the file it reads itself from");
+  // The remedy's two names are read off the message and checked against this module's own source, never repeated here: the
+  // constant it names must be declared in this file as an array literal (so a rename of the declaration that leaves the
+  // message stale is red), and the file it names must be the one this module reads itself from (the one literal handed to
+  // web). Found by the fork PR review's verification of the guards-3 change, 2026-09-20: the check before this one held
+  // the message to a second copy of both names, and a rename of the declaration, its use and that copy stayed green.
+  const SEAM_FILE = "file-view-seam.test.ts";
+  const SELF = web(SEAM_FILE);
+  const remedyNames = /add its line to (\w+) in ui\/webview\/([\w.-]+);/.exec(CENSUS_REMEDY);
+  assert.ok(remedyNames !== null && new RegExp("^\\s*const " + remedyNames[1] + " = \\[", "m").test(SELF) && remedyNames[2] === SEAM_FILE,
+    "the census's red names its remedy: the constant it says to add the line to is declared in this module as an array literal, and the file it names is the one this module reads itself from (the message names " + JSON.stringify(remedyNames && remedyNames.slice(1)) + ")");
   assert.deepEqual(registrants.map((r) => r.site + ": registerMdPostPass(" + r.name + ") -> " + r.module), REGISTERED_POST_PASSES,
     "the registered post-passes, derived from the code, are the census REGISTERED_POST_PASSES (one, the math fill, registered by md-config.ts and defined in math.ts); " + CENSUS_REMEDY);
   const preChain = [{ label: "mintHeadingIds (file-view.ts, the pass mdBlock hands sanitizeMd)", body: fnBody(codeOnly(VIEW), "mintHeadingIds", "file-view.ts") }, ...registrants.map((r) => ({ label: r.name + " (" + r.module + ", registered by " + r.site + ")", body: r.body }))];
