@@ -1122,8 +1122,8 @@ class MobileFitExecutes(unittest.TestCase):
 
     def test_the_clamp_reads_the_layout_viewport_in_both_engine_models_and_binds_only_below_zero(self):
         # round 7 (2026-09-20). The clamp had read window.innerHeight as the layout viewport's height, which holds in Chromium
-        # and not in WebKit under the engine model kernel.py's fit() comment states (the one home: it holds by WebKit's source and
-        # a Chromium run; the on-device read under a pinch is the only real-engine confirmation): there every zoomed run had
+        # and not in WebKit under the engine model kernel.py's fit() comment states with its evidence status (the one home; this
+        # comment points there and restates nothing, the fixer pass of round 8): there every zoomed run had
         # innerHeight - h below 0 and the pinch road published 0px whatever the hold (the band under the composer, back for as
         # long as the zoom held), while every step above kept innerHeight at 844 through the pinch and could not see it. The clamp
         # reads document.documentElement.clientHeight, the layout viewport in both models. The records carry both readings, so

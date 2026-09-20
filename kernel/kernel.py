@@ -71710,9 +71710,9 @@ def _landing():
             # maximum-scale=1,user-scalable=no: the top document governs pinch-zoom for the whole visual
             # viewport (incl. iframes), so without this iOS page-zooms on a timeline pinch instead of letting
             # the timeline's own pinch handler run (the user 2026-06-16). Disables browser zoom on the mobile UI.
-            # [fork] round 8 (2026-09-20): whether iOS Safari honours user-scalable=no is a premise this file states ONCE, in the
-            # fit() comment of _LANDING_MOBILE_JS ("TWO PREMISES rest here": the pinch machinery there assumes iOS ignores the
-            # token, unverified on device); the line above is upstream's and stays as written.
+            # [fork] round 8 (2026-09-20): whether iOS Safari honours user-scalable=no is a premise this file states ONCE, with its
+            # evidence status, in the fit() comment of _LANDING_MOBILE_JS ("TWO PREMISES rest here"); the line above is upstream's
+            # and stays as written.
             # NO viewport-fit=cover in the STATIC meta (the user 2026-06-17): with cover, Android Chrome reports a non-zero
             # env(safe-area-inset-bottom) even though the viewport already sits ABOVE the nav bar, so #mtabs's
             # safe-area padding-bottom became a dead slab below the Chat/Feed/Timeline labels; cover also drew

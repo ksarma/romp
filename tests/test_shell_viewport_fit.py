@@ -496,8 +496,8 @@ class RefitsWhenTheVisibleHeightChanges(unittest.TestCase):
         # run publishes, so a keyboard dismissed while zoomed cannot leave the body hanging below the viewport (round 2,
         # 2026-09-19); the layout viewport is document.documentElement.clientHeight, the same height in both engine models
         # (round 7, 2026-09-20: it had read window.innerHeight, which WebKit shrinks to the visual viewport's height under a
-        # pinch under the engine model the fit() comment states, the one home, holding by WebKit's source and a Chromium run
-        # with the on-device read as the only real-engine confirmation, so there the difference was below 0 on every zoomed
+        # pinch under the engine model the fit() comment states with its evidence status, the one home (this comment points
+        # there and restates nothing), so there the difference was below 0 on every zoomed
         # run and the road published 0px whatever the hold; the harness drives both models); the clamp bounds what is published and never writes back into the hold (round 4, 2026-09-20: it had,
         # so the hold decayed to 0 the first time the clamp bound and a keyboard raised again under the zoom reopened the
         # band). Every road that WRITES the hold writes the value it publishes: the measured road its measurement, the 0px
