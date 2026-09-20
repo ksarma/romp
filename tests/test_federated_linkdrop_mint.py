@@ -60,10 +60,12 @@ is printed there, never carried here as a number or a name.
 
 Synthetic: a scratch repository minted here, hostname TESTHOST; no kernel, no browser.
 """
+import _posixsubprocess
 import ast
+import asyncio
 import functools
-import importlib
 import os
+import pty
 import shutil
 import subprocess
 import sys
@@ -93,6 +95,9 @@ OS_SPAWNERS = ("system", "popen",
 # asyncio.AbstractEventLoop). A fork is a process the recorder never sees, whatever it goes on to exec.
 OTHER_SPAWNERS = {"pty": ("spawn",), "asyncio": ("create_subprocess_exec", "create_subprocess_shell"),
                   "asyncio.AbstractEventLoop": ("subprocess_exec", "subprocess_shell"), "_posixsubprocess": ("fork_exec",), "os": ("fork", "forkpty")}
+# the modules the table is pinned against, imported statically (an import_module call here would read to
+# tests/test_state_isolation_order.py as an in-process load of romp code, which this module never makes)
+OTHER_SPAWNER_MODULES = {"pty": pty, "asyncio": asyncio, "_posixsubprocess": _posixsubprocess, "os": os}
 # the reflective primitives a spawning name could be reached through without being a whole node of the source: refused as
 # NODES, whatever their argument, so the road through them is closed at the primitive and not at the spelling it carries
 # (round 5: `exec("import subprocess as _s; _s.run(...)")` passed a census that read the constant "subprocess" alone); a
@@ -629,7 +634,7 @@ class OldHubMintIsPrivate(unittest.TestCase):
         for modname, names in OTHER_SPAWNERS.items():
             with self.subTest(module=modname):
                 top, _, attr = modname.partition(".")
-                mod = importlib.import_module(top)
+                mod = OTHER_SPAWNER_MODULES[top]
                 holder = getattr(mod, attr) if attr else mod
                 self.assertEqual([n for n in names if not hasattr(holder, n)], [], "every name filed under %s is its attribute on this Python" % modname)
                 self.assertNotIn(top, ALLOWED_IMPORTS + ("os",) if top != "os" else (), "a spawner family's module is outside the import allow-list: %s" % top)
