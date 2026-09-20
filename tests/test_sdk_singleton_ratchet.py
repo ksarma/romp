@@ -2611,14 +2611,19 @@ class NestedSummaryMatcher(unittest.TestCase):
                              ("6 passed, 2 skipped, 9 warnings, 3 errors in 0.19s", 3),
                              ("2 passed, 1 error in 0.19s", 1),
                              ("1 failed, 2 passed, 1 warning, 1 error in 65.20s (0:01:05)", 1)):
-            self.assertIsNone(summary_mismatch("=========== %s ===========\n" % line, errors), line)
+            self.assertIsNone(summary_mismatch("=========== %s ===========\n" % line, errors),
+                              "a summary line whose errors segment reads %d is refused (summary_mismatch's count read past "
+                              "the other segments) over %r" % (errors, line))
 
     def test_zero_errors_tolerates_other_counts_and_refuses_an_errors_segment(self):
         for line in ("6 passed in 0.19s", "6 passed, 1 warning in 0.19s", "6 passed, 2 skipped, 1 warning in 0.19s"):
-            self.assertIsNone(summary_mismatch("=== %s ===\n" % line, 0), line)
+            self.assertIsNone(summary_mismatch("=== %s ===\n" % line, 0),
+                              "a summary line with no errors segment is refused under an expected 0 (summary_mismatch's "
+                              "tolerance of the other counts) over %r" % line)
         for line in ("6 passed, 3 errors in 0.19s", "6 passed, 1 warning, 1 error in 0.19s"):
             problem = summary_mismatch("=== %s ===\n" % line, 0)
-            self.assertIsNotNone(problem, line)
+            self.assertIsNotNone(problem, "an errors segment under an expected 0 is not refused (summary_mismatch's count "
+                                          "comparison) over %r" % line)
             self.assertIn("not 0 errors", problem,
                           "the refusal of an errors segment under an expected 0 does not name the count (summary_mismatch's "
                           "wording over %r): %r" % (line, problem))
@@ -2666,7 +2671,8 @@ class NestedSummaryMatcher(unittest.TestCase):
     def test_no_summary_line_is_refused_with_the_count_expected(self):
         for out in ("", "collected 0 items\n", "6 passed, 3 errors in 0.19s\n"):     # the last lacks pytest's rule of equals signs
             problem = summary_mismatch(out, 3)
-            self.assertIsNotNone(problem, repr(out))
+            self.assertIsNotNone(problem, "an output with no pytest summary line is not refused (summary_mismatch's "
+                                          "SUMMARY_LINE search) over %r" % out)
             self.assertIn("no pytest summary line", problem,
                           "the refusal does not say no summary line was found (summary_mismatch's wording over %r): %r"
                           % (out, problem))
@@ -2761,7 +2767,8 @@ class TheCountLimitIsStatedBesideTheCount(unittest.TestCase):
     def test_the_error_count_attribute_points_at_the_limit(self):
         src = inspect.getsource(_NestedRun)
         m = re.search(r"^    ERRORS = 0 +#(.*(?:\n {27}#.*)*)", src, re.M)
-        self.assertIsNotNone(m, "ERRORS carries a comment: %s" % src)
+        self.assertIsNotNone(m, "_NestedRun's ERRORS = 0 carries no comment in the shape this pin reads (a # on the "
+                                "line and continuation lines at column 27, read from the class's source by regex)")
         note = re.sub(r"\s+", " ", m.group(1))
         self.assertIn("summary_mismatch", note,
                       "the comment beside _NestedRun.ERRORS does not point at summary_mismatch: %r" % note)
@@ -3635,13 +3642,18 @@ class TheDerivationIsRunnable(unittest.TestCase):
         self.assertEqual(len(targets), len(DERIVE_DESELECT),
                          "derive_deselect_targets does not resolve one target per node id of DERIVE_DESELECT")
         for node, (klass, method) in zip(DERIVE_DESELECT, targets):
-            self.assertTrue(node.startswith(MODULE_PATH + "::"), node)
-            self.assertTrue(isinstance(klass, type) and issubclass(klass, unittest.TestCase), node)
-            self.assertIs(getattr(module, klass.__name__), klass, node)
-            self.assertEqual(klass.__module__, module.__name__, node)
+            self.assertTrue(node.startswith(MODULE_PATH + "::"), "%s: the node id does not open on MODULE_PATH" % node)
+            self.assertTrue(isinstance(klass, type) and issubclass(klass, unittest.TestCase),
+                            "%s: the class derive_deselect_targets resolved is no unittest.TestCase subclass: %r" % (node, klass))
+            self.assertIs(getattr(module, klass.__name__), klass,
+                          "%s: the class resolved is not the one this module binds under its name" % node)
+            self.assertEqual(klass.__module__, module.__name__,
+                             "%s: the class resolved is defined by another module: %s" % (node, klass.__module__))
             if method is not None:
                 self.assertTrue(callable(method) and method.__name__.startswith("test")
-                                and getattr(klass, method.__name__) is method, node)
+                                and getattr(klass, method.__name__) is method,
+                                "%s: the method resolved is not a callable test of the class (its name opening on 'test', "
+                                "bound on the class): %r" % (node, method))
         self.assertEqual([(klass.__name__, method and method.__name__) for klass, method in targets],
                          [(node.split("::")[1], node.split("::")[2] if node.count("::") == 2 else None)
                           for node in DERIVE_DESELECT],
@@ -3899,7 +3911,8 @@ class TheMutationCellsApply(unittest.TestCase):
             for old, new in subs:
                 self.assertEqual(text.count(old), 1, "%s: the old text occurs %d times in %s, not once: %r"
                                  % (cell, text.count(old), target, old))
-                self.assertNotEqual(old, new, cell)
+                self.assertNotEqual(old, new, "%s: the old text and its replacement are the same text (a plant that "
+                                    "changes nothing): %r" % (cell, old))
                 if old in new:                   # an append beside the old text: the plant leaves the count at one
                     self.assertFalse(new in text, "%s: the tree already carries the plant: %r" % (cell, new))
                     # assertFalse, not assertNotIn: the container is the whole fixture file, which the failure
@@ -3914,7 +3927,7 @@ class TheMutationCellsApply(unittest.TestCase):
         self.assertEqual(set(in_doc), set(MUTATIONS), "the docstring's derive ids and the table's keys differ")
         for cell in MUTATIONS:
             text = mutation_cell_text(__doc__, cell)
-            self.assertIsNotNone(text, cell)
+            self.assertIsNotNone(text, "%s: no cell of the module docstring carries 'derive: %s' (mutation_cell_text)" % (cell, cell))
             self.assertIn("(red: ", text, "%s: the cell states no rule: %s" % (cell, text))
 
     def test_each_blocks_paragraph_carries_exactly_the_keys_of_its_prefixes(self):
@@ -3981,9 +3994,12 @@ class TheMutationCellsApply(unittest.TestCase):
         delimiter, the two first cells printed from the previous cell's tail (the refusal block's from the inherited
         report's last cell, the boundary block's from refusal-flag-kept's close)."""
         self.assertTrue(mutation_cell_text(__doc__, "refusal-deleted").startswith("deleted (red: "),
-                        mutation_cell_text(__doc__, "refusal-deleted"))
+                        "the refusal block's first cell text does not open on its own words 'deleted (red: ' "
+                        "(mutation_cell_text's start at the block's head): %r" % mutation_cell_text(__doc__, "refusal-deleted"))
         self.assertTrue(mutation_cell_text(__doc__, "boundary-link-dropped").startswith("the clause dropped (red: "),
-                        mutation_cell_text(__doc__, "boundary-link-dropped"))
+                        "the boundary block's first cell text does not open on its own words 'the clause dropped (red: ' "
+                        "(mutation_cell_text's start at the block's head): %r"
+                        % mutation_cell_text(__doc__, "boundary-link-dropped"))
         for cell in MUTATIONS:                            # no cell's text opens on another's derive id or a block head
             text = mutation_cell_text(__doc__, cell)
             self.assertFalse(text.startswith("derive: ") or "a derive id: " in text, "%s: %s" % (cell, text[:120]))
@@ -4011,14 +4027,18 @@ class TheMutationCellsApply(unittest.TestCase):
         self.assertIn("`python -B %s --count`" % MODULE_PATH, doc,
                       "the docstring does not name the command that prints the count (`python -B <MODULE_PATH> --count`)")
         counts = cell_counts()
-        self.assertEqual(sum(n for block, n in counts.items() if block != "in total"), len(MUTATIONS), counts)
+        self.assertEqual(sum(n for block, n in counts.items() if block != "in total"), len(MUTATIONS),
+                         "the blocks' counts do not sum to the table's length (cell_counts over MUTATIONS): %r" % (counts,))
         with tempfile.TemporaryDirectory() as tmp:                # the script's import-time state root lands here
             env = {k: v for k, v in os.environ.items() if not k.startswith("ROMP_") and k not in DERIVE_ENV_DROPPED}
             env.update(TMPDIR=tmp, PYTHONDONTWRITEBYTECODE="1")
             r = subprocess.run([sys.executable, "-B", MODULE_PATH, "--count"],
                                cwd=ROOT, env=env, capture_output=True, text=True, timeout=300)
-        self.assertEqual(r.returncode, 0, r.stdout[-2000:] + r.stderr[-2000:])
-        self.assertEqual(r.stdout.splitlines(), ["%s: %d" % (block, n) for block, n in counts.items()], r.stdout)
+        self.assertEqual(r.returncode, 0, "the --count command exited %d, not 0 (its output's tail): %s"
+                         % (r.returncode, r.stdout[-2000:] + r.stderr[-2000:]))
+        self.assertEqual(r.stdout.splitlines(), ["%s: %d" % (block, n) for block, n in counts.items()],
+                         "the --count command's lines are not cell_counts() at this tree, block by block and in total "
+                         "(the command's stdout): %r" % r.stdout)
 
 
 class ClassTeardownRemovesTheDirectory(_NestedRun, unittest.TestCase):
