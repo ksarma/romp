@@ -487,7 +487,7 @@ is that run's, at the head it prints, and none is written here.
     disappears) or without its reference condition (K.One passes silently); the windows never recorded (as the
     yield removed).
   the function fixture not naming the object it accused (A.h gets an inherited report, E, D).
-Eighty-nine cells red at the round-6 head.
+Ninety-one cells red at the round-6 close head.
 Four are pinned by no run at the round-6 close head, each for a stated reason: the unreadable reference root granting
 the allowance (not constructible: the kernel always binds jd); the yield's identity condition dropped (redundant by
 construction: when the end value is the last read's and is not the last window's value, a class teardown inside the
