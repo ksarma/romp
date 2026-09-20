@@ -64,6 +64,7 @@ import inspect
 import json
 import os
 import re
+import shutil
 import stat
 import tempfile
 import threading
@@ -73,6 +74,7 @@ import uuid
 from pathlib import Path
 from unittest import mock
 from romp_load import load_source
+import env_ring_census as erc
 from env_ring_census import Census, CensusError, DEFAULT_SOURCES, census
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -2498,6 +2500,93 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         tenth = [f for f in c.all_fns if f.qual == "SdkBackend._tenth"][0]
         self.assertEqual(sorted(c.tainted_names[tenth].get("names", ())), ["env"], "the with-target carries the env")
         self.assertEqual(sorted(c.carried_names[tenth].get("names", ())), ["env"], "and carries it whole")
+
+
+class CensusParseRetention(unittest.TestCase):
+    """The parse cache's retention rule (fork PR 781, the reviewer's ruling of 2026-09-20): tests/env_ring_census.py
+    keeps a parsed tree for the process's life for the census's canonical inputs alone (retained_paths, derived from
+    DEFAULT_FILES), any other path is parsed for the construction that asked and dropped after it, and the `census()`
+    door keeps a Census under the same rule. Until the rule every parsed path stayed: the blind-spot class above
+    constructs about 180 censuses over as many sabotaged copies of kernel/sdk_backend.py, each construction left about
+    165k objects alive under a dead path, and late in the module every gen-2 collection walked tens of millions of
+    objects (the finding at the pushed head, serial, a plugin timing every construction: 154 of 185 constructions in
+    1.0 to 1.5 s, 14 at or above 2 s carrying 120.5 s, the slowest 21.8 s, each slow one holding exactly one gen-2
+    collection). Over 30 plain copies in one process, serial, at the previous commit: the gen-2 pauses grew from 0.23 s
+    at the second copy to 3.42 s at the 27th, 10 collections carrying 14.5 of 44.0 s, the cache at 31 entries; with the
+    rule, the pauses stayed at 0.28 to 0.58 s, 15 collections carrying 7.0 of 33.8 s, the cache at 1 entry. The census
+    result cannot depend on where a tree came from, and the differential over the real pair and 40 plants at both heads
+    found 41 compared, 41 identical, 0 different. The pins here are rules, not figures: a foreign path is not retained
+    and a canonical one is, the retained set is the canonical table's, the door keeps the sites' set alone, and the
+    count of retained trees does not grow with the number of constructions. gc is neither disabled nor tuned: the
+    heap that grew was the cache's, and the fix is at the cache."""
+
+    def _copy(self):
+        """A plain copy of kernel/sdk_backend.py at a fresh path: the same input, a foreign path."""
+        path = os.path.join(tempfile.mkdtemp(), "sdk_backend.py")
+        shutil.copyfile(SDK_BACKEND, path)
+        return path
+
+    def _plant(self, name, src):
+        path = os.path.join(tempfile.mkdtemp(), name)
+        Path(path).write_text(src, encoding="utf-8")
+        return path
+
+    def test_a_foreign_path_is_parsed_for_its_construction_and_not_retained(self):
+        """A census over a copy walks the copy (the base rows come out of it) and the cache holds the copy's path
+        afterwards no more than before; the canonical input the same construction parsed is held. Red before on the
+        NotIn: the copy's realpath was a cache key for the process's life."""
+        path = self._copy()
+        c = Census((path, CREDENTIALS_PY), DEFAULT_SOURCES)
+        self.assertEqual(len(c.content_rows), len(ROWS), "the copy was the construction's input")
+        self.assertIn(os.path.realpath(path), c.mods, "and its Mod, with the tree, is the Census's own")
+        self.assertNotIn(os.path.realpath(path), erc.ASTS, "a foreign path is parsed for its construction, not retained")
+        self.assertIn(os.path.realpath(CREDENTIALS_PY), erc.ASTS, "the canonical input the construction parsed is retained")
+        parsed_canonical = [f for f in CENSUS_FILES if os.path.realpath(f) in erc.retained_paths()]
+        self.assertTrue(parsed_canonical, "the sites' files include canonical inputs")
+        census(CENSUS_FILES)
+        for f in parsed_canonical:
+            self.assertIn(os.path.realpath(f), erc.ASTS, "every canonical input parsed so far is retained: %s" % f)
+
+    def test_the_retained_set_is_the_canonical_table(self):
+        """retained_paths() is DEFAULT_FILES by realpath, read from the table (a scratch copy of the census module with
+        the table cut to two files retains two, and this pin's expected value follows it), and after the sites' census
+        the cache holds exactly that set: a synthetic path parsed through `parsed` itself is not in it. Red before on the
+        set equality: the synthetic path was a key."""
+        expected = frozenset(os.path.realpath(f) for f in erc.DEFAULT_FILES)
+        self.assertTrue(expected, "the canonical table is not empty")
+        self.assertEqual(erc.retained_paths(), expected)
+        foreign = self._plant("synthetic.py", "X = 1\n")
+        src, tree = erc.parsed(foreign)
+        self.assertEqual((src, type(tree).__name__), ("X = 1\n", "Module"), "the foreign path was parsed")
+        census(CENSUS_FILES)
+        self.assertEqual(frozenset(erc.ASTS), expected, "the cache holds the canonical inputs and nothing else")
+
+    def test_the_door_keeps_the_sites_census_and_not_a_foreign_set(self):
+        """`census(CENSUS_FILES)` is one object per process (the 17 sites share it; a canonical table that dropped one of
+        this module's files would make every site construct anew, and this pin reds on it), while a set with a foreign
+        path is computed for the call and leaves the door's cache the size it was. Red before on the size: the foreign
+        set was kept, with its trees."""
+        self.assertIs(census(CENSUS_FILES), census(CENSUS_FILES), "the sites' census is kept")
+        held = len(erc._CENSUS)
+        self.assertGreater(held, 0, "the door holds the sites' census")
+        path = self._copy()
+        c = census((path, CREDENTIALS_PY))
+        self.assertEqual(len(c.content_rows), len(ROWS), "the foreign set was computed")
+        self.assertEqual(len(erc._CENSUS), held, "and not kept")
+        self.assertNotIn(os.path.realpath(path), erc.ASTS, "nor its tree")
+
+    def test_the_count_of_retained_trees_does_not_grow_with_the_constructions(self):
+        """After N constructions over N copies the cache's size is the same for N = 3 and N = 6, and not zero (the
+        canonical input each construction parsed is in it): the rule, not a figure. Red before: 3 and 6 more entries."""
+        def construct(n):
+            for _ in range(n):
+                c = Census((self._copy(), CREDENTIALS_PY), DEFAULT_SOURCES)
+                self.assertEqual(len(c.content_rows), len(ROWS), "each copy was walked")
+            return len(erc.ASTS)
+        after_three = construct(3)
+        after_six = construct(3)
+        self.assertGreater(after_three, 0, "the canonical input is retained")
+        self.assertEqual(after_six, after_three, "the count of retained trees does not grow with the constructions")
 
 
 class LogQuietlyAtRuntime(_Backend):

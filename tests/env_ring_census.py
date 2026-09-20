@@ -171,7 +171,8 @@ the unreadable-list line joins up to twelve CLI key names uncut into its text an
 reports interpolate an exception's text uncut; tracked as ITEM: _log_quietly True callers unbounded (2026-09-20) in
 ~/romp-handoffs/romp-general-notes/small-asks.md, outside the repo. The comment at the road names them.
 
-Pure AST: imports nothing of romp, executes nothing of it, and parses each file once per process (ASTS below). The
+Pure AST: imports nothing of romp, executes nothing of it, and parses each canonical file once per process (ASTS below;
+any other path is parsed for the construction that asked and not retained after it, the retention rule there). The
 public entry is `census(files=None, sources=None)`, returning a Census with the counts, the door calls and the
 failures as data; `content_rows_line` spells the ENV ROWS line; `main` prints the summary for a command line.
 """
@@ -245,7 +246,33 @@ for _t in (str, bytes, dict, list, set, frozenset, tuple, int, float, bool, obje
     COMMON_METHODS.update(n for n in dir(_t) if not n.startswith("__"))
 COMMON_METHODS.discard("_log")   # logging.Logger has one; the door's own name is never filtered
 
-ASTS = {}   # path -> (source, tree): parsed once per process
+# The parse cache: realpath -> (source, tree), for the census's canonical inputs ALONE, parsed once per process. The
+# retention rule (fork PR 781, the reviewer's ruling of 2026-09-20): a path in retained_paths() is kept for the
+# process's life; any other path is parsed for the construction that asked and dropped after it (the Mod holds its
+# own tree for the Census's life, and no phase parses a path twice within one construction). Until the rule, every
+# path stayed: tests/test_session_env.py's blind-spot class constructs about 180 censuses, each over a distinct
+# sabotaged copy of kernel/sdk_backend.py, so each construction left about 165k objects alive (about 70k AST nodes,
+# 60k dicts, 37k lists) under a dead path, and after about 150 copies every full garbage collection walked tens of
+# millions of objects. Measured before the rule, serial, with a plugin timing every construction: 154 of 185
+# constructions took 1.0 to 1.5 s, 14 at or above 2 s carried 120.5 s of the module's 329.4 s inside __init__, the
+# slowest 21.8 s; every slow construction held exactly one gen-2 collection, the slow ones shared no plant shape
+# and moved between items on a rerun. Over 30 plain copies in one process, before the rule, the gen-2 pauses grew from
+# 0.23 s at the second copy to 3.42 s at the 27th, 10 collections carrying 14.5 of 44.0 s; with the rule the same
+# script's figures are in tests/test_session_env.py's retention pins' class docstring. The cache exists for the
+# `census(CENSUS_FILES)` sites, which share one construction of the canonical files through `_CENSUS` below (the
+# door keeps a Census under the same rule). gc is neither disabled nor tuned anywhere: the heap that grew was this
+# cache's, and the fix is at the cache. The module's tail was a process-lifetime cache and a fixpoint's enqueue rule,
+# not the per-copy walk over the real file: the real-file plants (one sabotaged copy of the real 21,735-line file
+# per defect) are not the cost, and must not be traded for synthetic small modules the next time someone reads
+# about 300 seconds and reaches for the obvious lever; the evidence-preserving option was also the fast one.
+ASTS = {}
+
+
+def retained_paths():
+    """The paths `parsed` keeps for the process's life: the census's canonical inputs, DEFAULT_FILES by realpath, the
+    same table `census()` defaults to and keys `_CENSUS` by. Derived on every call (three realpaths, once per file per
+    construction), so a table edited in a scratch copy of this module changes the retained set with it."""
+    return frozenset(os.path.realpath(f) for f in DEFAULT_FILES)
 
 
 def parsed(path):
@@ -253,7 +280,9 @@ def parsed(path):
     hit = ASTS.get(path)
     if hit is None:
         src = pathlib.Path(path).read_text(encoding="utf-8")
-        hit = ASTS[path] = (src, ast.parse(src, filename=path))
+        hit = (src, ast.parse(src, filename=path))
+        if path in retained_paths():
+            ASTS[path] = hit
     return hit
 
 
@@ -3229,23 +3258,29 @@ class Census:
         return out
 
 
+# The Census cache of the `census()` door: (realpaths, id(sources)) -> Census, under the retention rule of ASTS above
+# (a Census holds its trees through its Mods, so a kept Census over a foreign path would keep that path's tree too).
 _CENSUS = {}
 
 
 def census(files=None, sources=None):
-    """The census over `files` (the three kernel modules by default), computed once per process per file set."""
+    """The census over `files` (the three kernel modules by default), computed once per process per file set when
+    every file is a canonical input (retained_paths); a set with any other file is computed for the call."""
     files = tuple(os.path.realpath(f) for f in (files or DEFAULT_FILES))
     key = (files, id(sources) if sources is not None else 0)
-    if key not in _CENSUS:
-        _CENSUS[key] = Census(files, sources or DEFAULT_SOURCES)
-    return _CENSUS[key]
+    hit = _CENSUS.get(key)
+    if hit is None:
+        hit = Census(files, sources or DEFAULT_SOURCES)
+        if set(files) <= retained_paths():
+            _CENSUS[key] = hit
+    return hit
 
 
 def main(argv):
     import time
     files = argv[1:] or list(DEFAULT_FILES)
     t0 = time.time()
-    for f in files:
+    for f in files:   # a file outside retained_paths() is parsed again by the construction, so `census` includes it
         parsed(f)
     t1 = time.time()
     c = Census(files, DEFAULT_SOURCES)
