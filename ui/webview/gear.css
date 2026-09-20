@@ -112,8 +112,19 @@ body.rs-lifted.rs-pane-gone::before { display: none; }
    otherwise the native tooltip and the description popover stack (2026-09-02). The open picker is
    read off the class rs-picking on its row (gear.js setListOpen, the one writer of a list's hidden,
    toggles it at every site that moves a list: the maintainer's round 5, correctness-1), never off a
-   list's id, so the panel-wide stand-down below reads the same word and a third picker joins by
-   the class alone. Specificity (1,3,0), the show rules' own, and after them, so the order decides. Two rules, not one
+   list's id, so the panel-wide stand-down below reads the same word and a new picker joins by
+   calling that writer. WHAT THIS RULE DOES NOT REACH (the author's fixer pass after round 5, exclusions-1 and -4): the
+   two list pickers (colormap, palette) are the only ones that call it; the HOUSE dropdowns (gear.js housePick: the judge
+   rows' model and effort pickers, the widget options' pickers, twelve in the panel today) write their menu's hidden
+   themselves and their rows never wear the class, so while one is open under the pointer the row's own description
+   shows beside and partly under the menu (the menu carries no native title, so no two tooltips stack; the pointer still
+   wins over a focus in another row), upstream's behaviour from before this branch and left as it stands here (routing
+   housePick through setListOpen is a behaviour change for twelve pickers, the maintainer's call); a row greyed by task
+   tracking off (rs-off, gear.js dressTracking: seven judge rows and two Debug rows) carries the "Enable task tracking"
+   title on the row itself and still shows its description on hover, a native title and a description together; and the
+   widget rows' grips, option wraps and demo spans carry titles of their own that hover beside the widget's description.
+   gear-sub-focus-browser.test.ts enters the house-dropdown state and records it; the other two it names as states its legs
+   do not enter. Specificity (1,3,0), the show rules' own, and after them, so the order decides. Two rules, not one
    list: the mark's arm needs :has() and the class arm does not, and a list mixing them would lose both on an engine
    without :has() (the rule the show rules above follow). */
 #rsettings .rs-row.rs-picking .rs-sub { display: none; }

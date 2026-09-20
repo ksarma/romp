@@ -26,7 +26,17 @@
 // that Chromium and a skip is a failure naming its reason (the pane bench's stance), pinned by tests/test_served_labs_under_ci.py.
 // A developer's machine with playwright's Chromium runs both in one `npm test`. The surface the browser legs exclude: Firefox
 // and WebKit (the three-engine readings in the review record came from a scratch matrix, not this file), and every engine
-// generation that lacks :has(), which the degradation leg below MODELS rather than installs. The legs read the PANEL, not the
+// generation that lacks :has(), which the degradation leg below MODELS rather than installs. And the STATES the legs do not
+// enter (the author's fixer pass after round 5, exclusions-1, -4 and -5; the ruler's lesson: name what a surface excludes):
+// task tracking OFF (gear.js dressTracking greys seven judge rows and two Debug rows with rs-off, disables their controls, which
+// the census skips, and puts the "Enable task tracking" title on the row, so a hover there shows a native title AND the row's
+// description); a greyed Fast mode box (disabled, so no focus reaches it: its "why greyed" text is the pointer's alone); the
+// panel as its own page (the four pane-toggle rows are hidden under the shell and the census skips them, so their descriptions
+// are never read); the login modal (no focus trap: one Tab from the login button lands on the Pictures from the web textarea
+// behind the modal and shows that row's description under the dim, upstream's modal from before this branch); and the widget
+// rows' titled elements (grips, option wraps, demo spans: a native title beside the widget's description on hover). The house
+// dropdowns (gear.js housePick, twelve pickers) WERE outside the legs too, since their rows never wear rs-picking; the
+// house-dropdown leg below enters that state and records its reading. The legs read the PANEL, not the
 // row: every `.rs-sub` under `#rsettings` that is shown,
 // with the host that owns it, over every host in EVERY pane that has a description and a control of any kind (a checkbox, a
 // button, a text field; the census form: a two-pane leg was a sample, and the two text controls and the Account row's two
@@ -157,7 +167,7 @@ test("the sheet shows a description while its row holds a KEYBOARD focus: the sh
   ], "the trigger is a hovered row SHOWING a description (:not(.rs-picking): a row whose list is open shows none), a hovered widget row with one, or a hovered mark; the .rs-row and .rs-widget branches");
   assert.equal(panelStand[0].block, "display: none;");
   const pickerStand = GEAR_RULES.find((r) => r.selector === "#rsettings .rs-row.rs-picking .rs-sub");
-  assert.ok(pickerStand && pickerStand.block === "display: none;", "the row's own description stands down while its picker list is open, keyed on the same class and never on a list's id (a third picker joins by the class)");
+  assert.ok(pickerStand && pickerStand.block === "display: none;", "the row's own description stands down while its picker list is open, keyed on the same class and never on a list's id (a new list picker joins by calling setListOpen; the house dropdowns do not call it and their rows never wear the class, the state the house-dropdown leg enters)");
   assert.equal(GEAR_RULES.filter((r) => /rs-cmap-list|rs-pal-list/.test(r.selector) && /rs-sub/.test(r.selector)).length, 0, "no description rule keys on a picker list's id any more");
   assert.match(GEAR_CSS, /THE\s+POINTER WINS wherever it has something to show/, "the precedence is stated in the sheet, not left to specificity");
   assert.match(GEAR_CSS, /within a row the box wins whenever either road rests on the\s+box, one description either way; across rows the pointer wins/,
@@ -292,7 +302,13 @@ async function tabInto(page: any, id: string): Promise<{ landed: boolean; focusV
  *  box, the first control's id for a row, the widget id for a widget row), whether any two shown rects of DIFFERENT hosts
  *  intersect (`intersect`) and whether two of one host do (`intersectWithin`: the Account row's two, see the census leg), the
  *  focused control and its :focus-visible, every host wearing the placement class, and the count of open menus (a picker's
- *  list, a house dropdown, the login modal), so a leg can read that a click left none behind. */
+ *  list, a house dropdown, the login modal), so a leg can read that a click left none behind. A house dropdown is told by its
+ *  COMPUTED position (the maintainer's round 5, the fixer pass, exclusions-3): housePick writes its menu's style through
+ *  cssText, which the browser serialises with a space after each colon, so a selector on the attribute's text
+ *  (`div[style*='position:absolute']`) matched no row menu and read "nothing left open" over an open judge picker, while
+ *  `.rs-widget-opt div` counted a widget option's menu with its option rows; menus are counted, never their rows (the option
+ *  rows are positioned relative) and never a description (a shown `.rs-sub` is positioned absolutely too, and the Account row's
+ *  second one is a div: excluded by class). */
 const shownPanel = (page: any) => page.evaluate(() => {
   const HOSTS = "#rsettings .rs-fastin, #rsettings .rs-row, #rsettings .rs-widget";
   const hostId = (h: HTMLElement | null) => {
@@ -313,8 +329,8 @@ const shownPanel = (page: any) => page.evaluate(() => {
   }
   const act = document.activeElement as HTMLElement | null;
   const lm = document.getElementById("rs-login-modal");
-  const menus = (Array.from(document.querySelectorAll("#rsettings .rs-widget-opt div, #rsettings .rs-row div[style*='position:absolute'], #rs-cmap-list, #rs-pal-list")) as HTMLElement[])
-    .filter((m) => !m.hidden && getComputedStyle(m).display !== "none" && m.getBoundingClientRect().height > 0).length + (lm && !lm.hidden ? 1 : 0);
+  const menus = (Array.from(document.querySelectorAll("#rsettings .rs-row div:not(.rs-sub), #rsettings .rs-widget-opt div, #rs-cmap-list, #rs-pal-list")) as HTMLElement[])
+    .filter((m) => getComputedStyle(m).position === "absolute" && !m.hidden && getComputedStyle(m).display !== "none" && m.getBoundingClientRect().height > 0).length + (lm && !lm.hidden ? 1 : 0);
   return { shown: shown.map((el) => hostId(el.closest(HOSTS) as HTMLElement | null)), intersect, intersectWithin, menus,
     active: act && act !== document.body ? (act.id || act.tagName + "." + act.className) : null,
     focusVisible: act && act !== document.body ? act.matches(":focus-visible") : null,
@@ -850,6 +866,61 @@ test("the picker-open state, the one the panel leg did not enter (the maintainer
     assert.equal((await shownPanel(page)).menus, 0, "the rig: nothing left open");
     assert.deepEqual(errors, [], "no page error");
   });
+});
+
+test("a HOUSE dropdown open under the pointer (gear.js housePick: the judge rows' model and effort pickers and the widget options' pickers), the state the picker-open leg does not enter: those rows never wear rs-picking, so the pointer-wins rule alone governs it; exactly one description is shown with a keyboard focus in another row (never zero, never two), the open menu is counted by its computed position, and which host shows is recorded", { timeout: 180000 }, async (t) => {
+  // the exclusion the sheet states beside its one-tooltip rule (the author's fixer pass after round 5, exclusions-1): housePick
+  // writes its menu's hidden itself and never calls setListOpen, so the class the two list pickers wear never reaches these rows
+  // and the hovered row's own description shows beside its open menu; whether that row should join the class is the
+  // maintainer's call (upstream's picker from before this branch), so the pins here are the invariants that hold either way,
+  // and the reading (which host, the class) is a diagnostic
+  assert.equal((GEAR.match(/function housePick\(/g) || []).length, 1, "the rig: gear.js holds the house dropdown factory");
+  const houseBody = GEAR.slice(GEAR.indexOf("function housePick("), GEAR.indexOf("var SCHEMES = ["));
+  assert.equal((houseBody.match(/setListOpen\(/g) || []).length, 0, "housePick does not call the list writer: its rows never wear rs-picking (the exclusion the sheet states; a call here would be the maintainer's behaviour change, and this pin then moves with it)");
+  assert.match(houseBody, /menu\.hidden = true;[\s\S]*menu\.hidden = false;/, "the rig: housePick writes its menu's hidden itself, both ways");
+  for (const [tab, pane, floor] of [["tasks", "Task tracking", 4], ["chat", "Chat", 5]] as const) {
+    await withGear(t, tab, async (page, errors) => {
+      await settled(page, tab);
+      const hosts = await census(page);
+      // every house picker button among the census controls: a button whose next sibling is the menu housePick appends (a div
+      // positioned absolutely), derived from the DOM and never listed here
+      const house: string[] = await page.evaluate((ids: string[]) => ids.filter((id) => {
+        const b = document.getElementById(id); const m = b && (b.nextElementSibling as HTMLElement | null);
+        return !!(b && b.tagName === "BUTTON" && m && m.tagName === "DIV" && getComputedStyle(m).position === "absolute");
+      }), hosts.flatMap((h: any) => h.controls.map((c: any) => c.id)));
+      assert.ok(house.length >= floor, `the rig: the ${pane} pane holds house pickers among the census controls (${house.length} of at least ${floor})`);
+      for (const id of house) {
+        const host = hosts.find((h: any) => h.controls.some((c: any) => c.id === id));
+        await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur?.());
+        await page.mouse.move(5, 5);
+        assert.equal((await shownPanel(page)).menus, 0, "the rig: nothing open before the click");
+        await page.click(`#${id}`);   // opens the menu; the pointer rests on the button, inside the row
+        const st = await page.evaluate((cid: string) => {
+          const b = document.getElementById(cid)!, m = b.nextElementSibling as HTMLElement, row = b.closest("#rsettings .rs-row, #rsettings .rs-widget") as HTMLElement;
+          return { open: !m.hidden, picking: row.classList.contains("rs-picking"), hovered: row.matches(":hover"), inRow: !!b.closest(".rs-row"), optionTitles: Array.from(m.children).filter((x) => x.getAttribute("title")).length };
+        }, id);
+        assert.equal(st.open && st.hovered, true, `the rig: the menu of ${id} is open under the pointer`);
+        assert.equal(st.optionTitles, 0, "the rig: the menu's option rows carry no native title (so a description beside the menu stacks with no tooltip)");
+        const on = await shownPanel(page);
+        assert.equal(on.menus, 1, `the rig: the one open house menu is counted by its computed position (${id}; the style attribute's text carries a space the old selector never matched)`);
+        assert.ok(hostsShown(on).length <= 1, `at most one description with the house menu of ${id} open under the pointer: ${JSON.stringify(on.shown)}`);
+        // a real Tab into another row's control while the menu stays open under the pointer
+        const other = hosts.find((o: any) => o.row !== host.row && !o.box);
+        assert.ok(other, "the rig: another row with a description in the pane");
+        const tabbed = await tabInto(page, other.control);
+        assert.equal(tabbed.landed && tabbed.focusVisible, true, `the rig: a keyboard focus landed in another row (from ${tabbed.prev})`);
+        const withFocus = await shownPanel(page);
+        assert.equal(withFocus.menus, 1, "the rig: the menu is still open (a Tab closes nothing)");
+        assert.equal(hostsShown(withFocus).length, 1, `exactly one description with the house menu of ${id} open under the pointer and a keyboard focus in ${other.host}: never zero (the panel-wide stand-down stands the focused row's down only for a hovered row SHOWING one) and never two: ${JSON.stringify(withFocus.shown)}`);
+        assert.equal(withFocus.intersect, false, "and no two shown descriptions of different hosts intersect");
+        t.diagnostic(`house menu ${id} (${pane}, ${st.inRow ? "a row's picker" : "a widget option's picker"}): rs-picking=${st.picking}; shown under the pointer=${JSON.stringify(hostsShown(on))}; with a focus in ${other.host}=${JSON.stringify(hostsShown(withFocus))}`);
+        await page.keyboard.press("Escape");   // housePick's keydown closer
+        assert.equal((await shownPanel(page)).menus, 0, `the rig: Escape closed the menu of ${id}`);
+        await page.mouse.move(5, 5);
+      }
+      assert.deepEqual(errors, [], "no page error");
+    });
+  }
 });
 
 test("the roads a browser decides by its own reading of :focus-visible, recorded: a programmatic focus after a mouse click and after a key press (a screen reader's move), and an emulated tap then a Tab; at most one description is shown on each", { timeout: 120000 }, async (t) => {
