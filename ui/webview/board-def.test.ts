@@ -61,7 +61,11 @@ test("the sort, the grouping and the notification set equal the sources' literal
   assert.match(feedTable, /"needsYou": "needs_input"/);
   assert.equal(FEED_BOARD.needsYou, "needs_input");
   assert.match(KERNEL, /_NOTIFY_COLUMNS = tuple\(_CODE_BOARDS\["feed"\]\["notify"\]\)/, "the feed's notify set is read from the table");
-  assert.match(KERNEL, /a\.get\("category", a\.get\("column"\)\) == _board_needs_you\(a\.get\("board"\)\)/, "_needs_you_count counts the board's badge category, the column from an older card");
+  // the kernel spells the needs-you test either as the project does (== against the board helper inline) or as this fork
+  // does in its user-todo count (the helper bound to _ny first, the skip spelled !=): the same property, either pair
+  assert.ok(/a\.get\("category", a\.get\("column"\)\) == _board_needs_you\(a\.get\("board"\)\)/.test(KERNEL)
+    || (/_ny = _board_needs_you\(a\.get\("board"\)\)/.test(KERNEL) && /a\.get\("category", a\.get\("column"\)\) != _ny/.test(KERNEL)),
+    "_needs_you_count counts the board's badge category, the column from an older card");
   assert.deepEqual([...FEED_BOARD.kinds], [...KIND_IDS]);
   assert.deepEqual([...FEED_BOARD.rules], []); assert.deepEqual([...FEED_BOARD.order], []); assert.deepEqual([...FEED_BOARD.subSorts], []);
 });

@@ -375,6 +375,7 @@ class ServedFocusedSessionSection(unittest.TestCase):
         self.assertEqual(dark["tint"], "rgba(156, 210, 255, 0.04)", "dark: the section's ground is the accent tint (the base had none): %r" % dark)
         self.assertEqual(lit["tint"], "rgba(194, 65, 12, 0.04)", "light: the light theme's own tint: %r" % lit)
         for th, t in (("dark", dark), ("light", lit)):
+            self.assertIsNotNone(t["plainCol"], "%s: a plain board column outside the section (the selector matched nothing, so the guard below would pass vacuously)" % th)
             self.assertNotEqual(t["plainCol"], t["tint"], "%s: the rest of the feed carries no tint: %r" % (th, t["plainCol"]))
             self.assertIsNotNone(t["card"], "%s: a card inside the section" % th)
             self.assertNotEqual(t["card"], t["tint"], "%s: the cards keep their own ground: %r" % (th, t["card"]))

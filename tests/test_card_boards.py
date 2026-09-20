@@ -153,7 +153,8 @@ class BellAndBadgeReadTheBoard(unittest.TestCase):
             {"itemId": "e", "column": "needs_input"},                                                                     # an older card: column alone
         ]}
         self.assertEqual(km._needs_you_count(feed), 2)
-        self.assertIn('a.get("category", a.get("column")) == _board_needs_you(a.get("board"))', inspect.getsource(km._needs_you_count))
+        src_count = inspect.getsource(km._needs_you_count)
+        self.assertTrue('a.get("category", a.get("column")) == _board_needs_you(a.get("board"))' in src_count or ('_ny = _board_needs_you(a.get("board"))' in src_count and 'a.get("category", a.get("column")) != _ny' in src_count), "the count reads the category with the column as the fallback against the board's badge category, in either spelling (this fork binds the helper first and skips with !=)")
         # a board whose badge category is None counts nothing, a key-less card included (the 1837 read, low 2: None == None
         # counted a card carrying neither field); the table has no such board yet, so the helper stands in for one
         keyless = {"asks": [{"itemId": "k", "board": "notes"}, {"itemId": "a", "board": "notes", "category": "needs_input"}]}
@@ -167,7 +168,7 @@ class BellAndBadgeReadTheBoard(unittest.TestCase):
                       "the diff reads the category with the column as the fallback, the same read as the badge (the 1837 read, low 1)")
         self.assertIn('if col in _board_notify(a.get("board")):', src)
         self.assertIn('needs_you = col == _board_needs_you(a.get("board"))', src, "the notification's words come from the board's badge category, never a literal")
-        self.assertNotIn('col == "needs_input"', src)
+        self.assertNotIn('needs_you = col == "needs_input"', src, "the line 1837 replaced; this fork's todo-floor latch (_ut_floor, the userTodos dedup) keeps its literal, a fork-only presentation of the feed board")
         self.assertNotIn("col in _NOTIFY_COLUMNS", src, "no literal set in the diff; the snapshot's entry check keeps _NOTIFY_COLUMNS")
         self.assertIn("_NOTIFY_COLUMNS", inspect.getsource(km._notify_prev_entry), "the stored snapshot's entries are still checked against the feed's set")
 

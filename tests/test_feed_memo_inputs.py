@@ -257,6 +257,7 @@ ROW_READERS = {
     "_awaiting_live_rows": ("tm", {"subagents"}),
     "_session_awaiting": ("live", set()),                                   # `live is not None` alone: no field
     "_warm_wanted": ("tm", {"state"}),
+    "_user_todo_idle": ("tm", set()),                                       # hands the row and the path to _compacting_now's gate (build_feed's hoist); no field of its own
     "_interrupting": ("tm", {"interrupting", "snapT"}),
 }
 INTERRUPTING_FIELDS = {"interrupting", "snapT"}    # the `interrupting` component's own reads, not the row component's
@@ -293,6 +294,12 @@ FOLDED_BY = {"cwd": "transcript", "lastSid": "transcript", "name": "names"}
 NOT_CONSUMED = {
     "jd._sdk_last_sid": ("lastSid",),    # _session_stamp_read (under _bg_split -> _session_stamped_tops, run by _awaiting_task_descs
     #                                      and _bg_service_descs): shapes that helper's own memo key and its deleg output only
+    # the static walk reaches these two through this fork's chain _user_todo_idle -> _compacting_now -> _path_of ->
+    # _session_row -> _thread_transcript_path; on the feed path _feed_session_entry hands _compacting_now both the row
+    # and the path build_feed hoisted, so the _path_of branch never runs there and no card consumes the reads (a card's
+    # transcript path is discover's, folded by `transcript`); the fields stay disjoint from _FEED_REG_FIELDS
+    "_session_row": ("cwd", "name"),                 # the /sessions row and the fork, comment and rewind handlers
+    "_thread_transcript_path": ("cwd", "lastSid"),   # comment threads' transcript resolve (a `reg` parameter)
 }
 # the readers no feed derivation reaches, each with the surface it serves (the fields, for the record)
 OFF_FEED = (
@@ -304,21 +311,23 @@ OFF_FEED = (
     "_compact_suggest_tick",       # the compaction tick: threadOf
     "_dead_wait_corroborated",     # the dead-wait sweep and the wake: alive
     "_death_boot_pass",            # main's boot pass over the registry: alive
+    "_end_on_idle_sweep",          # the jobs-stage end-on-idle sweep, a comment thread's own end (this fork): alive, threadOf, forkOf, launchError
     "_lift_decisions",             # the lift tick (_lift_spent_awaiting): bgLedgerEnded
     "_model_alias_boot_pass",      # main's model-alias migration, a rewrite of every record: model, name
+    "_named_generation_live",      # the by-name end and interrupt doors (this fork): alive
     "_page_sig",                   # the chat history page's signature: forkedFrom
     "_reported_model_ids",         # the learned model versions: liveModelId
-    "_session_row",                # the /sessions row and the fork, comment and rewind handlers: cwd, name
     "_settle_event_key",           # the nudge and compaction ticks: lastStopAt
     "_thread_events",              # comment threads: forkOf
     "_thread_mail_off",            # the mail-off gate: threadOf
     "_thread_messages",            # comment threads: forkOf
     "_thread_names",               # name claims and the sid resolve: name
     "_thread_owes_first_reply",    # comment threads: forkOf
-    "_thread_transcript_path",     # comment threads' transcript resolve (a `reg` parameter): cwd, lastSid
     "_thread_turn_read",           # comment threads: forkOf
     "_turn_end_key",               # the post-loop notify pass, the checkpoints, the bell pass after the feed's loop: lastStopAt
     "_turn_opener",                # the post-loop notify pass: lastTurnOpener
+    "_user_todo_loss_boot_pass",   # main's boot pass over the registry files for lost user todos (this fork; a json.loads decoder over STATE/sdk/*.json): sid, echoes
+    "_user_todo_session_ended",    # the user-todo count's ended gate, build_feed's ctx before the loop (this fork): alive
     "jd._judge_auth",              # the judge's billing pick: auth, authLogin
     "jd._reg_spawned_at",          # the judge tiers' plan and close signatures: spawnedAt
 )

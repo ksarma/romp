@@ -1082,6 +1082,7 @@ def _bench(args, state, repo, out, shadow, rec, maps):
         km._live_scope.paths = {}
         km._live_scope.sessions = {}
         km._live_scope.auth = {}
+        km._live_scope.subagent_trees = {}   # ...and the cycle's subagents-tree samples (upstream PR 1822)
         km._live_scope.names = km._names_snapshot()
 
     def unscope():
@@ -1090,12 +1091,14 @@ def _bench(args, state, repo, out, shadow, rec, maps):
         km._live_scope.paths = None
         km._live_scope.sessions = None
         km._live_scope.auth = None
+        km._live_scope.subagent_trees = None
 
     def new_cycle():
         """A fresh cycle's per-cycle memos (what _pusher_cycle resets between two cycles)."""
         km._live_scope.paths = {}
         km._live_scope.sessions = {}
         km._live_scope.auth = {}
+        km._live_scope.subagent_trees = {}   # ...and the cycle's subagents-tree samples (upstream PR 1822)
 
     def clear_kernel_caches():
         """The kernel-side caches a freshly started kernel lacks (build_session's inputs above the parse)."""

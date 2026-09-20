@@ -295,6 +295,7 @@ def _dead_manager_port():
     os.environ["ROMP_MANAGER_PORT"] = "1"
     os.environ["ROMP_KERNEL_PORT"] = "1"
     os.environ["ROMP_SERVE_PORT"] = "1"
+    os.environ["ROMP_POSTAL_CLIENT_ONLY"] = "1"   # re-floored per test: tests/test_postal_peers.py pops it outright (1848's floor, 2026-09-18)
     yield
 
 
