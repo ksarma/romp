@@ -12,8 +12,9 @@ note under `a-_b/c_/`, directories whose names begin and end with an underscore:
 underscores an emphasis pair, and the chat rendered the path's middle as <em>, so its link walk never saw the token and the
 link never rendered (the 2026-09-19 browser census, Entry 5: the lab's own random temp name did this on one CI run; the
 population note md-emphasis-population.md has the class); the fixed synthetic path reproduces it on every run at the head
-before the chat's path-aware emphasis (md-config.ts pathAwareEmphasis) and is the twelfth link after it. The route itself,
-asked by hand for a refused path, answers 403 with the reason and no text. The acceptance includes
+before the chat's path-aware emphasis (md-config.ts pathAwareEmphasis), where the driver prints eleven links, or ten on the
+rare run whose random temp names also pair, and is the twelfth link after it. The route itself, asked by hand for a refused
+path, answers 403 with the reason and no text. The acceptance includes
 latency: the card stamps the time from the dwell's end to its rendered content; a cached markdown slice (the guide,
 warmed on the pusher's path) must render within 250 ms, and a cold one (a file whose time the test rewrites after the
 build, so the hover misses the cache) is measured and reported (PV_LATENCY names a file for the numbers). The cold file
@@ -109,7 +110,9 @@ await page.goto(cfg.chat);
 await page.waitForSelector("#tabs .tab[data-id]", { timeout: 20000 });
 await page.click('#tabs .tab[data-id="' + cfg.sid + '"]');
 try { await page.waitForFunction(() => document.querySelectorAll("#content .file-uri-link").length >= 12, null, { timeout: 20000 }); }
-catch (e) {   // say which links rendered, so a short count is diagnosable from the failure alone (eleven of twelve: the underscored path was cut by emphasis)
+catch (e) {   // say which links rendered, so a short count is diagnosable from the failure alone. Before the chat's path-aware emphasis
+  // the count was eleven (the fixed underscored path cut), or ten on the rare run whose two random temp names also formed a flanking
+  // pair, the census's own shape (about 3 in 37 squared per run; three names under xdist): the list, not the count, says what was cut.
   const got = await page.evaluate(() => Array.from(document.querySelectorAll("#content .file-uri-link")).map((a) => a.dataset.path + (a.dataset.frag ? "#" + a.dataset.frag : "")));
   console.error("links rendered (" + got.length + "): " + JSON.stringify(got)); process.exit(1);
 }

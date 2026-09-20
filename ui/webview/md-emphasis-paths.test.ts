@@ -7,8 +7,9 @@
 // and the kernel's key for it matched no text node (the 2026-09-19 browser census, Entry 5: a temp directory whose
 // random name began with an underscore). marked is spec-correct on every row, so the fix is a tokenizer override on
 // the chat's instances that refuses an opener or closer lying strictly inside a token the walk's own scanner and
-// gates would link, and hides a run inside such a token from the built-in's closer scan (md-emphasis-override.test.ts
-// pins that edge and the mechanism's cost). Pinned here, by execution: every member row renders literal on both chat renderers and the walk
+// gates would link, hides a run inside such a token from the built-in's closer scan (md-emphasis-override.test.ts
+// pins that edge and the mechanism's cost), and makes a token holding a run beside punctuation inside it one word whole,
+// its edge runs too (md-emphasis-atomic.test.ts). Pinned here, by execution: every member row renders literal on both chat renderers and the walk
 // then links every wanted token (C36 both of its two); every other row is byte-identical to the base grammar (the
 // singleton's configuration on a private instance), real emphasis, strong, strikethrough, autolinks, code spans and
 // fences included; the adversarial rows change only where the note says, A08 the one accepted loss; the base grammar
@@ -90,7 +91,7 @@ const CASES: Row[] = [
   { id: "C37", text: "_private_ sits beside /a-_b/c_/d.md", after: "<p><em>private</em> sits beside /a-_b/c_/d.md</p>\n", links: [P] },
   { id: "C38", text: "_private /a-b/c_/d.md", after: "<p>_private /a-b/c_/d.md</p>\n", links: ["/a-b/c_/d.md"] },
   { id: "C39", text: "__init__.py and __main__.py", after: "<p>__init__.py and __main__.py</p>\n", links: [], keys: ["__init__.py", "__main__.py"] },
-  { id: "C40", text: "src/*.py and lib/*.ts", keeps: ["src/<em>.py and lib/</em>.ts"], links: [] },   // a boundary, not a member: `*` is no path character, so a glob is no token to the walk or the kernel and was never linked; both grammars pair the stars, as GitHub does
+  { id: "C40", text: "src/*.py and lib/*.ts", keeps: ["src/<em>.py and lib/</em>.ts"], links: [] },   // a boundary, not a member: `*` is no path character on the path arms, so this glob is no token to the walk or the kernel and was never linked (inside a file URI a star is part of the token, md-config.ts's boundaries); both grammars pair the stars, as GitHub does
   // C41 to C43 are the two parity follow-ups the ledger entry records (the kernel tokenises the raw markdown, the walk the
   // rendered DOM; not this change's): `links` holds the DOM token the walk sees, and the kernel's own key differs (C41 three
   // tokens, `/a-`, `_b/c`, `_/d.md`; C42 `_docs/notes.md_`; C43 `~~/old/notes.md`) and would link nothing, so these rows
@@ -275,7 +276,8 @@ test("every other row is byte-identical to the base grammar, and its emphasis, s
   }
   // the rows that decide the boundary: real emphasis the user or the session typed, at a token's edge or around one, and
   // the glob C40, whose stars pair on text that is no token to the walk
-  for (const id of ["C17", "C23", "C24", "C25", "C40", "C42", "C43"]) assert.ok(byId(CASES, id).keeps, id + " asserts a kept shape");
+  // (a non-empty list: an empty array is truthy, and the loop above asserts nothing over it)
+  for (const id of ["C17", "C23", "C24", "C25", "C40", "C42", "C43"]) assert.ok((byId(CASES, id).keeps || []).length > 0, id + " asserts a kept shape");
 });
 
 test("the adversarial rows change only where the note says: A08 the accepted loss (emphasis glued to a path), A12, A14 and A20 to the literal path; the other 16 stand", () => {

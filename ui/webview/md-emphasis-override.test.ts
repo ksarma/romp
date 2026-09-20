@@ -14,8 +14,10 @@
 //   - the override reaches the built-in through Tokenizer.prototype (marked's use() gives an override no handle to the
 //     tokenizer it replaced), so an emStrong override registered EARLIER on the same instance would never see a `_` run.
 //     Right while no extension in mdExtensions overrides emStrong, pinned by reading the list and by execution;
-//   - cost: one linear scan per masked paragraph string, remembered across a standing pair's body lex, and a binary
-//     search per delimiter. Before, the whitespace bounds were walked on every call ahead of the memo (a 20 KB run with
+//   - cost: one linear scan per masked paragraph string, remembered in a short most-recently-used list across a
+//     standing pair's body lex (round 2 made the one-slot memo that list, so a link's label or a `*` pair's body lexed
+//     between two prose delimiters no longer evicts the paragraph's entry; md-emphasis-atomic.test.ts counts the scans),
+//     and a binary search per delimiter. Before, the whitespace bounds were walked on every call ahead of the memo (a 20 KB run with
 //     no whitespace and a pair every eleven characters cost sixteen times the base grammar, a run of `(_a_)` thirty),
 //     and a standing pair's body lex evicted the one-slot memo (`_(_a_)_.` repeated, fifty times the base). Measured
 //     here as a ratio to the base grammar on the same string in the same process, the best of interleaved passes, as
