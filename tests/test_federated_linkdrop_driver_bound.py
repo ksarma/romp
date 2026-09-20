@@ -60,6 +60,7 @@ showed, over a synthetic record for each class (round 5: a wait that ran to its 
 
 Synthetic: no kernel, no browser; stub classes over scratch directories.
 """
+import ast
 import json
 import os
 import re
@@ -124,6 +125,14 @@ PARAM_LIST_HEADS = ("async", "function")   # `async (page) =>` and `function (pa
 HELPER_PARAM = re.compile(r"\bconst\s+(?P<name>[\w$]+)\s*=\s*(?:async\s*)?\(\s*(?P<param>[\w$]+)\s*\)\s*=>")
 BARE_CALLEES = ("Object.keys",)
 RECEIVER_MAKERS = ("launch", "newContext", "newPage")   # the calls that return a receiver (chromium, browser, context); with LOCATOR_MAKERS, a chain ending on one binds a receiver
+# The driver's record keys by the read that produced them (round 5, tests-3): a waitVisible record (a phase's `seen`, D's
+# `seenAfterReturn`) carries the waits' outcomes and is read with waited=True by every _assert_seen site that reads it; a
+# visible() record (seenWhileDown, seenA, seenB, seenD) carries none and is read without. Both tuples are pinned against the
+# driver text by the spelling it stores a read under (`<key>: await waitVisible(` in a literal, `.<key> = await waitVisible(`
+# as an assignment; the same for visible), and every _assert_seen call site in the served module is read from its parse.
+WAITED_READS = ("seen", "seenAfterReturn")
+UNWAITED_READS = ("seenWhileDown", "seenA", "seenB", "seenD")
+READ_STORE = re.compile(r"(?:\.|\b)(?P<key>\w+)\s*[:=]\s*await\s+(?P<fn>waitVisible|visible)\s*\(")
 
 
 def _strip_js_comments(text):
@@ -239,6 +248,57 @@ def _escaped_receivers(text):
             continue
         out.append((text.count("\n", 0, m.start()) + 1, "%s(%s)" % (callee or "<a later argument>", m.group("recv")),
                     callee in BARE_CALLEES or helpers.get(callee) in WALKED_NAMES))
+    return out
+
+
+def _assert_seen_sites(src):
+    """Every call of _assert_seen in the parsed served module, as (line, key, waited): the key of the record its first argument
+    reads (`D["seenAfterReturn"]`, `self._phase("B")["seen"]`, or a local assigned in the same function from `rec.get("seen")`,
+    the `or {}` default stripped), or None when the argument resolves to no such key (an offender), and whether the call passes
+    waited=True. A source pin over the SITES (round 5, tests-3: the helper's waited branch had a cell and its wiring none, so
+    removing waited=True from every site left the module green), read from the tree and not from the text."""
+    def key_of(node):
+        if isinstance(node, ast.BoolOp):
+            node = node.values[0]
+        if isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant):
+            return node.slice.value
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "get" and node.args and isinstance(node.args[0], ast.Constant):
+            return node.args[0].value
+        return None
+    out = []
+    for fn in ast.walk(ast.parse(src)):
+        if not isinstance(fn, ast.FunctionDef):
+            continue
+        assigned = {t.id: a.value for a in ast.walk(fn) if isinstance(a, ast.Assign) for t in a.targets if isinstance(t, ast.Name)}
+        for call in ast.walk(fn):
+            if isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute) and call.func.attr == "_assert_seen" and call.args:
+                arg = call.args[0]
+                if isinstance(arg, ast.Name):
+                    arg = assigned.get(arg.id)
+                waited = any(k.arg == "waited" and isinstance(k.value, ast.Constant) and k.value.value is True for k in call.keywords)
+                out.append((call.lineno, key_of(arg), waited))
+    return out
+
+
+def _since_at_the_sites(src):
+    """The `since` each attach reader passes, read from the served module's parse (round 5, extra6-2: the values are read at
+    three sites and a cell reached one helper's): per function, the source text of every second argument handed to
+    _minus_attach_rows or _attaches_since, and of the right side of an assignment to a name `since`, in source order.
+    Widening any site's since changes its text here."""
+    out = {}
+    for fn in ast.walk(ast.parse(src)):
+        if not isinstance(fn, ast.FunctionDef):
+            continue
+        found = []
+        for n in ast.walk(fn):
+            if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "since" for t in n.targets):
+                found.append((n.lineno, n.col_offset, "since = " + ast.unparse(n.value)))
+            elif isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr in ("_minus_attach_rows", "_attaches_since") and len(n.args) >= 2:
+                found.append((n.lineno, n.col_offset, "%s(..., %s)" % (n.func.attr, ast.unparse(n.args[-1]))))
+            elif isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == "_attaches_since" and len(n.args) == 1:
+                found.append((n.lineno, n.col_offset, "_attaches_since(%s)" % ast.unparse(n.args[0])))
+        if found:
+            out[fn.name] = [text for _, _, text in sorted(found)]
     return out
 
 
@@ -690,12 +750,16 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
         head's set exempted both); a row of the attach's rev stamped two seconds below is not the attach's and reds (the set
         exempted it); a row of the attach's rev naming another slot is not the attach's and reds (the set exempted it before
         the slot check ran); a second row with no attach behind it reds (narrowness: a widened exemption passes the first
-        cell alone); the same patch carrying cards is no attach and its row reds (a control on the card conditioning, red at
-        both trees, so not a discriminator of the match). The gate leg
+        cell alone); and the card conditioning is pinned where each reader applies it (round 5: the earlier control, the
+        card-carrying patch through the storm site, redded through the patch-side clause at both trees and stayed green when
+        either card clause was dropped alone, so it controlled nothing and is replaced): a feed patch carrying cards is no
+        attach to _attaches_since, its row stays through _minus_attach_rows and through the gate leg's own read, and the storm
+        site reds on its patch side, in that clause's words. The gate leg
         reads attaches from 1.5 s before the resume and the storm test from the resume: an attach 1 s before the resume is in
         the first set and not the second, through the helpers at both since values and through the gate leg's own read
         (_rows_down_minus_attaches, which carries its since; round 4's fixer pass: the leg's inline since was reached by no
-        test, and a mutation moving it to the resume stayed green). And the return window's read (_return_window_stray, the
+        test, and a mutation moving it to the resume stayed green; round 5 pins the since at every SITE, in the cell after
+        this one). And the return window's read (_return_window_stray, the
         third reader of the attaches, which kept a set of revs until the fixer pass), in cells beside the down window's: one
         row of an attach's rev in the window is the attach's and nothing is stray (the control); two rows of the same rev
         leave one stray, so the gate leg's exact zero reds on the second where the set passed both; a row of a rev no attach
@@ -739,15 +803,28 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
                 down([row(7, RESUME - 900), row(7, RESUME + 1050)], [attach])
             self.assertIn("one outline/delta-unapplied row per feed slot patch", str(cm.exception), cm.exception)
         with self.subTest(rows="a row of the attach's rev two seconds below its floored second"):
-            with self.assertRaises(AssertionError, msg="a row of the attach's rev two seconds below its floored second is not the attach's (the slack is one second)"):
+            with self.assertRaises(AssertionError, msg="a row of the attach's rev two seconds below its floored second is not the attach's (the slack is one second)") as cm:
                 down([row(7, RESUME - 2000)], [attach])
+            self.assertIn("one outline/delta-unapplied row per feed slot patch", str(cm.exception), "the row stays and the by-rev equality reds on it: %s" % cm.exception)
         with self.subTest(rows="a row of the attach's rev naming another slot"):
-            with self.assertRaises(AssertionError, msg="a row of the attach's rev naming another slot is not the attach's (the set exempted it before the slot check)"):
+            with self.assertRaises(AssertionError, msg="a row of the attach's rev naming another slot is not the attach's (the set exempted it before the slot check)") as cm:
                 down([row(7, RESUME - 900, slot="ledgers")], [attach])
-        with self.assertRaises(AssertionError, msg="a second row with no attach behind it reds (narrowness)"):
+            self.assertIn("names the feed slot", str(cm.exception), "the row stays and the slot check reds on it: %s" % cm.exception)
+        with self.assertRaises(AssertionError, msg="a second row with no attach behind it reds (narrowness)") as cm:
             down([row(7, RESUME - 900), row(99, RESUME - 900)], [attach])
-        with self.assertRaises(AssertionError, msg="the same patch carrying cards is no attach (a control on the card conditioning, red at both trees)"):
+        self.assertIn("one outline/delta-unapplied row per feed slot patch", str(cm.exception), "the attach takes its one row and rev 99's stays: %s" % cm.exception)
+        # the card conditioning at each reader that applies it (round 5, extra6-1: the control this replaces, the card-carrying
+        # patch through the storm site alone, redded on the patch side at both trees and stayed green with either card clause
+        # dropped alone): the same patch carrying cards is no attach, so its row is nobody's and stays, at the helper, at the
+        # gate leg's own read (which has no patch side to red for it) and at the storm site, which reds on its patch side
+        carded = record([row(7, RESUME - 900)], [patch(RESUME + 50, ["asks"])])
+        stamped_c = carded._outline_unapplied_stamped(carded._rows_in("drop", "resume"))
+        self.assertEqual(carded._attaches_since(RESUME), [], "a feed slot patch carrying cards is no attach (_attaches_since's card clause)")
+        self.assertEqual(carded._minus_attach_rows(stamped_c, RESUME), [{"rev": 7, "slot": "feed"}], "...so its row is nobody's and stays (the row side of the conditioning)")
+        self.assertEqual(carded._rows_down_minus_attaches(), [{"rev": 7, "slot": "feed"}], "...at the gate leg's own read too, which has no patch side to red for it")
+        with self.assertRaises(AssertionError, msg="the storm site reds on its patch side: a card-carrying feed patch in the down window reached the Outline while the link was down") as cm:
             down([row(7, RESUME - 900)], [patch(RESUME + 50, ["asks"])])
+        self.assertIn("no feed slot patch reached the Outline", str(cm.exception), "the patch filter's card clause keeps the patch, so the storm site reds on it and not on the row: %s" % cm.exception)
         # the gate leg's separate copy reads attaches from resume - 1500 ms, the storm test's from resume
         early = patch(RESUME - 1000, ["ledgers"], rev=5)
         t = record([row(5, RESUME - 1000)], [early])
@@ -773,6 +850,77 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
         with self.subTest(window="the return window, a row two seconds before the attach"):
             self.assertEqual(record([row(1, (f - 2) * 1000)], [late])._return_window_stray()[0], [{"rev": 1, "slot": "feed"}],
                              "a row of the attach's rev two seconds before its floored second is not the attach's (the slack is one second; the set passed it)")
+
+    def test_the_three_attach_readers_carry_their_since_at_their_sites(self):
+        """The since each reader of the attaches passes, pinned at the SITE (round 5, extra6-2: the gate leg's helper carried
+        its since where a cell could reach it, and the storm site's and the return window's were reached by no cell, so
+        widening either left the module green). From the served module's parse: the storm site takes the mark itself
+        (`since = self._marks()[attach_after]`, handed to _minus_attach_rows), the gate leg's read takes the resume less
+        1500 ms, the return window takes the resume less 1500 ms at both its calls, and _minus_attach_rows hands its own
+        since to _attaches_since; a widened or moved since changes its text here. Then by behaviour, over the synthetic
+        record: through the storm site's own call a card-less feed patch 1 s before the resume with its row inside the down
+        window reds on the patch side (the site's since is the resume, so the patch is no attach to it; from 1.5 s before it
+        would be, and the call would return 0); through the return window a card-less attach 2.5 s before the resume with a
+        row of its rev inside the window leaves that row stray (the window's since is 1.5 s before the resume; from 3 s
+        before, the attach would take the row)."""
+        with open(L.__file__, encoding="utf-8") as f:
+            src = f.read()
+        self.assertEqual(_since_at_the_sites(src), {
+            "_assert_one_row_per_outline_feed_patch": ["since = self._marks()[attach_after]", "_minus_attach_rows(..., since)"],
+            "_minus_attach_rows": ["_attaches_since(since_ms)"],
+            "_rows_down_minus_attaches": ["_minus_attach_rows(..., self._marks()['resume'] - 1500)"],
+            "_return_window_stray": ["_minus_attach_rows(..., m['resume'] - 1500)", "_attaches_since(m['resume'] - 1500)"]},
+            "the since at every reader of the attaches, as the served module's parse reads it: the storm site the mark itself, the gate leg and the return window 1.5 s before the resume")
+        DROP, RESUME = 1_000_000, 1_030_000
+        B0, END = RESUME + 20_000, RESUME + 60_000
+
+        class Rec(L.LinkDropOldLocal):
+            driver_error = None
+
+        def row(rev, t_ms, slot="feed"):
+            return {"surface": "outline", "what": "delta-unapplied", "t": t_ms // 1000, "wid": "w1", "reconnect": False, "data": {"rev": rev, "slot": slot}}
+
+        def patch(at, coll, rev):
+            return {"t": "delta", "slot": "feed", "at": at, "coll": list(coll), "rev": rev, "len": 300, "restAll": False}
+
+        def record(rows, frames):
+            Rec.result = {"marks": {"drop": DROP, "resume": RESUME, "B0": B0, "end": END}, "died": None, "timeouts": [],
+                          "pages": {"fleet": {"socks": [{"i": 1, "relay": True, "dialedAt": RESUME + 10, "openAt": RESUME + 20, "closeAt": None, "url": "", "frames": list(frames)}], "sends": []}}}
+            Rec.changes_made = []
+            Rec.hub_diag_rows = list(rows)
+            return Rec("test_nothing_was_asked_of_the_remote")
+        early = record([row(5, RESUME - 1000)], [patch(RESUME - 1000, ["ledgers"], 5)])
+        with self.assertRaises(AssertionError, msg="the storm site's since is the resume: a card-less feed patch 1 s before it is no attach to that site") as cm:
+            early._assert_one_row_per_outline_feed_patch("drop", "resume", patches_due=False, attach_after="resume")
+        self.assertIn("no feed slot patch reached the Outline", str(cm.exception), "the patch stays in the window and the site reds on it (from 1.5 s before the resume it would be exempt and the call would return 0): %s" % cm.exception)
+        late = record([row(3, RESUME + 500)], [patch(RESUME - 2500, ["ledgers"], 3)])
+        self.assertEqual(late._return_window_stray(), ([{"rev": 3, "slot": "feed"}], []),
+                         "the return window's since is 1.5 s before the resume: an attach 2.5 s before it is none of this window's, so its row is stray (from 3 s before, it would take the row)")
+
+    def test_every_waitvisible_read_site_passes_waited_and_no_visible_read_does(self):
+        """The wiring of _assert_seen's `waited` (round 5, tests-3: the helper's waited branch had a cell, and removing
+        waited=True from every call site, phase D's after-return read included, left the module green). The driver stores a
+        waitVisible record under the keys WAITED_READS and a visible() record under UNWAITED_READS, pinned against the driver
+        text by the spelling it uses (READ_STORE: `<key>: await waitVisible(` in a literal, `.<key> = await waitVisible(` as an
+        assignment, the same for visible; `v` is the record waitVisible itself builds from visible), with every call of either
+        accounted for by one stored key so a call stored another way is a red. Then every _assert_seen call site in the served
+        module, read from its parse (_assert_seen_sites), reads a key of one tuple or the other and passes waited=True exactly
+        when the key is a waitVisible record's; and both tuples are read whole, so the pin is not vacuous."""
+        driver = _strip_js_comments(L.DRIVER)
+        stored = [(m.group("key"), m.group("fn")) for m in READ_STORE.finditer(driver)]
+        self.assertEqual({k for k, fn in stored if fn == "waitVisible"}, set(WAITED_READS), "the keys the driver stores a waitVisible record under: %r" % (stored,))
+        self.assertEqual({k for k, fn in stored if fn == "visible"} - {"v"}, set(UNWAITED_READS), "the keys the driver stores a visible() record under (`v` is waitVisible's own): %r" % (stored,))
+        self.assertEqual(driver.count("waitVisible("), sum(1 for _, fn in stored if fn == "waitVisible"), "every waitVisible call stores its record under a key the spelling READ_STORE reads: %r" % (stored,))
+        self.assertEqual(driver.count("visible("), sum(1 for _, fn in stored if fn == "visible"), "every visible() call stores its record under a key the spelling READ_STORE reads (the count is case-sensitive, so waitVisible( is not among them): %r" % (stored,))
+        with open(L.__file__, encoding="utf-8") as f:
+            src = f.read()
+        sites = _assert_seen_sites(src)
+        bad = [(ln, key, waited) for ln, key, waited in sites if key not in WAITED_READS + UNWAITED_READS or waited != (key in WAITED_READS)]
+        self.assertEqual(bad, [], "an _assert_seen site that reads a waitVisible record without waited=True (its expired list goes unchecked, the round-4 tests-1 hole), "
+                                  "a visible() record with it (a healthy drive reds), or a record the pin cannot name (line, key, waited): %r" % (bad,))
+        self.assertEqual({key for _, key, w in sites if w}, set(WAITED_READS), "every waitVisible record is read with waited=True somewhere: %r" % (sites,))
+        self.assertEqual({key for _, key, w in sites if not w}, set(UNWAITED_READS), "every visible() record is read without: %r" % (sites,))
+        self.assertGreaterEqual(sum(1 for _, _, w in sites if w), 7, "the waited sites the served module had at the round-5 head (a site removed is read here): %r" % (sites,))
 
     def test_the_margin_leg_takes_no_expired_or_unshown_wait_as_a_delivery(self):
         """The gate's control in time (_assert_the_down_window_outlasts_the_drives_slowest_delivery) reads a phase's

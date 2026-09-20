@@ -848,6 +848,29 @@ class TheDriverParsed(unittest.TestCase):
                     continue
                 self.assertTrue(any(token in why and line == 2 for line, _, why in c["refusals"]), "%s: the walk refuses the shape by line and class: %r" % (name, c["refusals"]))
 
+    def test_the_driver_stores_each_read_under_the_key_the_driver_bound_module_names(self):
+        """The record keys the driver-bound module's wiring pin reads (WAITED_READS, UNWAITED_READS), derived here from the
+        tree rather than from a spelling: every property assignment or assignment whose value is `await waitVisible(...)`
+        stores a waitVisible record, every one whose value is `await visible(...)` a visible() record (`v` inside waitVisible
+        is the record it builds), and no call of either is stored any other way."""
+        w = Walk(L.DRIVER, self.trees["driver.mjs"][1]).run()
+        stored, calls = [], {"waitVisible": 0, "visible": 0}
+        for n in w.nodes:
+            if n["k"] == "CallExpression" and w.kids(n)[0].get("t") in calls:
+                calls[w.kids(n)[0]["t"]] += 1
+                p = w.parent[id(n)]
+                p = w.parent[id(p)] if p["k"] == "AwaitExpression" else None
+                if p is not None and p["k"] == "PropertyAssignment":
+                    stored.append((w.kids(p)[0]["t"], w.kids(n)[0]["t"]))
+                elif p is not None and p["k"] == "BinaryExpression" and p.get("op") == "=" and w.kids(p)[0]["k"] == "PropertyAccessExpression":
+                    stored.append((w.kids(w.kids(p)[0])[1]["t"], w.kids(n)[0]["t"]))
+                elif p is not None and p["k"] == "VariableDeclaration":
+                    stored.append((w.kids(p)[0]["t"], w.kids(n)[0]["t"]))
+        self.assertEqual({k for k, fn in stored if fn == "waitVisible"}, set(B.WAITED_READS), stored)
+        self.assertEqual({k for k, fn in stored if fn == "visible"} - {"v"}, set(B.UNWAITED_READS), stored)
+        self.assertEqual((calls["waitVisible"], calls["visible"]), (len([1 for _, fn in stored if fn == "waitVisible"]), len([1 for _, fn in stored if fn == "visible"])),
+                         "every call of waitVisible and of visible is stored under a key: %r" % (stored,))
+
     def test_every_plant_of_the_review_is_refused_by_the_class_the_table_names(self):
         """The fixture: each PLANTS row inserted into the driver and run through this census gives the verdict the row
         names, with the two controls passing. A row whose verdict moves is a change to what the census sees, and its
