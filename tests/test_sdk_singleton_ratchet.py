@@ -657,6 +657,9 @@ DERIVE_ENV_DROPPED = ("PYTEST_ADDOPTS", "PYTEST_PLUGINS", "PYTEST_DISABLE_PLUGIN
 # cell_counts refuses a key that opens on no block's prefix, or on two, so a cell of a new block is added here before it
 # can be counted: never a silent third bucket.
 CELL_BLOCKS = (("the refusal block", ("refusal-", "refused-", "report-")), ("the boundary link", ("boundary-",)))
+# The table's floor, set at the round-6 close head: a shorter table is a failure, not a pass. The floor pin's message
+# formats this constant, so the value has one copy.
+TABLE_FLOOR = 30
 # A number of cells stated in prose: the form the pin holds absent from the module docstring (the count is printed)
 NUMBER_OF_CELLS = re.compile(r"\b(?:\w+-)?(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|"
                              r"fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|"
@@ -2709,9 +2712,10 @@ class TheMutationCellsApply(unittest.TestCase):
 
     def test_the_table_is_not_short(self):
         counts = cell_counts()
-        self.assertGreaterEqual(len(MUTATIONS), 30, "the table came back under the floor of thirty, set at the round-6 close "
-                                "head; a shorter table is a failure, not a pass. The table now: %s: %r"
-                                % (", ".join("%s %d" % (block, n) for block, n in counts.items()), sorted(MUTATIONS)))
+        self.assertGreaterEqual(len(MUTATIONS), TABLE_FLOOR, "the table came back under the floor of %d, set at the round-6 "
+                                "close head; a shorter table is a failure, not a pass. The table now: %s: %r"
+                                % (TABLE_FLOOR, ", ".join("%s %d" % (block, n) for block, n in counts.items()),
+                                   sorted(MUTATIONS)))
         self.assertEqual(counts["in total"], len(MUTATIONS))
 
     def test_the_count_is_printed_never_written(self):
