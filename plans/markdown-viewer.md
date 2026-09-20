@@ -7824,7 +7824,7 @@ before the group is appended, which the sheets take out of the flow with its gap
 on an open with no step either way, the ordinary open from outside, the bar rows no pair; once a step exists one way the
 group shows whole and the button without a target wears `aria-disabled` alone, so the two glyphs keep their places from
 one step of a trail to the next. The ground, re-decided in the file review's round 2 (extra8-2): the round-1 record kept
-the pair dimmed, the contract's shape, on the claim that the review's refuters had found no rule in ui/CLAUDE.md or in
+the pair dimmed, the contract's shape, on the claim that the file review's round-1 refuters had found no rule in ui/CLAUDE.md or in
 the code that hides a control with nothing to do, and that claim was false. T367 (the user 2026-09-12; file-view.ts's
 GitHub-link section, styles.css's `.fileview-gh` comment) is that rule for this bar, with a worked precedent: the greyed
 GitHub link and its caption were removed rather than dimmed from a file outside a repository, the unit hidden and out of

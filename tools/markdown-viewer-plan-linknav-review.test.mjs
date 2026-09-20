@@ -26,6 +26,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, '..');
@@ -102,7 +103,7 @@ test('L3 opens on the exceptions it names, and names the floor by the source\'s 
   const arm = between(viewer, 'function armFigureControls(body: HTMLElement, filePath: string): () => void {', '\n}\n');
   assert.ok(arm.includes('if (img && figureState(img) !== "standin") decideFigureControl(img, filePath);'), 'the load and the error run the one decision, where the measure is read');
   assert.ok(arm.includes('body.addEventListener("error", decide, true);'), 'the error too: a failed figure is decided (no control)');
-  // the re-read at each reflow of the figure's own box (the review's measurement: read once at the load, a narrowed figure kept its
+  // the re-read at each reflow of the figure's own box (the file review's measurement: read once at the load, a narrowed figure kept its
   // control; the file review's round 2: re-read from the width watch's repaint alone, a text-size step's reflow was missed), by one
   // ResizeObserver per open over the figures, so the record names the observer, the text-size step among the reflows, and the class
   assert.ok(L3.includes('the floor is read again at each change of the figure\'s own laid-out box (`watchFigureBoxes`'), 'L3 names the re-read and its function');
@@ -345,4 +346,18 @@ test('the file review: L2 hides the pair when neither direction has a target, on
   assert.ok(op12.includes('a Forward step onto the picture puts its row at the head of Recent, and the next Back moves the report\'s row back over it'), 'open point 12 states the exception');
   assert.ok(read('ui', 'webview', 'file-view-figure-recent-browser.test.ts').includes('a Forward step to the picture mints its row (L2\'s rule)'), 'which the recent leg drives');
   assert.ok(between(openPoints, '13. The Back and Forward pair hidden', 'L2 names invert').includes('74 px'), 'open point 13 prices the alternative');
+});
+
+// ── the attributions: the branch's review ran two rounds, the file review is named as such (the file review's round 3, tests-2) ──
+test("no line the branch added since the merge-base names \"the review's round N\" with N above 2: the section's convention names the branch's two-round adversarial review \"the review\" and the maintainer's review of the PR \"the file review\", so a third or later round can only be the file review's and must say so", (t) => {
+  assert.ok(flat(section).includes("The branch's adversarial review before the PR ran two rounds, named below as the review's round 1 and round 2; the maintainer session's review of the PR (2026-09-20) is named the file review."), 'the naming convention stands in the section');
+  const git = (...args) => execFileSync('git', args, { cwd: REPO, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+  let base = null;
+  try { base = git('merge-base', 'origin/main', 'HEAD'); } catch { base = null; }
+  if (!base) { t.diagnostic('origin/main is not known in this checkout: the attribution rule is held by its prose alone here'); return; }
+  if (base === git('rev-parse', 'HEAD')) { t.diagnostic('HEAD is the merge-base (the branch is merged, or this is main): no added lines to read'); return; }
+  const added = git('diff', '-U0', base, 'HEAD').split('\n').filter((l) => l.startsWith('+') && !l.startsWith('+++'));
+  assert.ok(added.length > 0, 'the branch added lines since ' + base);
+  const wrong = added.filter((l) => /\bthe review's round (?:[3-9]|\d{2,})\b/i.test(l));
+  assert.deepEqual(wrong, [], "added lines naming the branch's review with a round it never had (the file review's round 3 found two: write \"the file review's round N\")");
 });
