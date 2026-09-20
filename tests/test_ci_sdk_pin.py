@@ -363,7 +363,9 @@ class NeverSkips(unittest.TestCase):
     a scratch file of this name whose module level runs pytest.importorskip, which collects no items, is a collection
     error and the run stops red. Synthetic files only; no SDK, no network. The census case is in-process: the belt
     reads reports, and a test that is never collected files none, so the one test the belt exists for is pinned by
-    name against unittest's loader, the collection pytest performs on a TestCase."""
+    name against unittest's loader, the collection pytest performs on a TestCase. The children pass -p no:anyio as the
+    workflow's pytest step does, so in a cell they run with the step's plugin set rather than the interpreter's default
+    (pytest accepts the flag where anyio is absent, as on the box venvs)."""
     INSTALLED_VERSION_TEST = "test_the_installed_sdk_is_the_pin_where_it_imports_and_the_pin_is_well_formed_where_it_does_not"
 
     def setUp(self):
@@ -377,7 +379,7 @@ class NeverSkips(unittest.TestCase):
         return path
 
     def _run(self, *paths):
-        p = subprocess.run([sys.executable, "-m", "pytest", "-p", "tests.conftest", "-p", "no:cacheprovider", "-q", "-rs", *paths],
+        p = subprocess.run([sys.executable, "-m", "pytest", "-p", "tests.conftest", "-p", "no:cacheprovider", "-p", "no:anyio", "-q", "-rs", *paths],
                            cwd=ROOT, env=dict(os.environ), capture_output=True, text=True, timeout=240)
         return p.returncode, p.stdout + p.stderr
 
