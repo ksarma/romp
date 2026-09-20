@@ -132,10 +132,22 @@ test("the sheet shows a description while its row holds a KEYBOARD focus: the sh
     "one tooltip on the keyboard too: the box's description stands down while a mark in its row is hovered, or a focus in the box and a pointer on the row's mark stack it with the mark's title");
   assert.ok(GEAR_CSS.indexOf(markStand) > GEAR_CSS.indexOf(showTwin),
     "and it follows the show twin: the two share a specificity, (1,5,0), so the order is the tie-break");
-  const panelStand = "#rsettings .rs-card:has(.rs-row:hover .rs-sub, .rs-widget:hover .rs-sub, .rs-mixed:hover) .rs-row:not(:hover) .rs-sub,\n"
-    + "#rsettings .rs-card:has(.rs-row:hover .rs-sub, .rs-widget:hover .rs-sub, .rs-mixed:hover) .rs-widget:not(:hover) .rs-sub { display: none; }";
-  assert.ok(GEAR_CSS.includes(panelStand),
-    "one tooltip across the PANEL: while a row with a description or any mixed mark is hovered, every description outside the hovered row stands down, the focused row's included, the hovered row's own exempt; a .rs-widget branch because the widget rows live in their grids, not in a .rs-row");
+  // the panel-wide stand-down, read from the parsed sheet (its selector spans two lines): while a row SHOWING a description, a
+  // widget row with one or any mixed mark is hovered, every description outside the hovered row stands down, the hovered row's
+  // own exempt; a hovered row whose own description its open picker list stood down (rs-picking) has nothing to show and is
+  // no trigger (the maintainer's round 5, correctness-1: keyed on the row CONTAINING a description, a list open under the
+  // pointer and a keyboard focus in another row showed zero descriptions); a .rs-widget branch because the widget rows live
+  // in their grids, not in a .rs-row
+  const panelStand = GEAR_RULES.filter((r) => r.arms.every((a) => a.startsWith("#rsettings .rs-card:has(")));
+  assert.equal(panelStand.length, 1, "one panel-wide stand-down rule");
+  assert.deepEqual(panelStand[0].arms, [
+    "#rsettings .rs-card:has(.rs-row:hover:not(.rs-picking) .rs-sub, .rs-widget:hover .rs-sub, .rs-mixed:hover) .rs-row:not(:hover) .rs-sub",
+    "#rsettings .rs-card:has(.rs-row:hover:not(.rs-picking) .rs-sub, .rs-widget:hover .rs-sub, .rs-mixed:hover) .rs-widget:not(:hover) .rs-sub",
+  ], "the trigger is a hovered row SHOWING a description (:not(.rs-picking): a row whose list is open shows none), a hovered widget row with one, or a hovered mark; the .rs-row and .rs-widget branches");
+  assert.equal(panelStand[0].block, "display: none;");
+  const pickerStand = GEAR_RULES.find((r) => r.selector === "#rsettings .rs-row.rs-picking .rs-sub");
+  assert.ok(pickerStand && pickerStand.block === "display: none;", "the row's own description stands down while its picker list is open, keyed on the same class and never on a list's id (a third picker joins by the class)");
+  assert.equal(GEAR_RULES.filter((r) => /rs-cmap-list|rs-pal-list/.test(r.selector) && /rs-sub/.test(r.selector)).length, 0, "no description rule keys on a picker list's id any more");
   assert.match(GEAR_CSS, /THE\s+POINTER WINS wherever it has something to show/, "the precedence is stated in the sheet, not left to specificity");
   assert.match(GEAR_CSS, /within a row the box wins whenever either road rests on the\s+box, one description either way; across rows the pointer wins/,
     "the one exception to the pointer-wins rule is stated beside it: within a judge row the BOX's description shows with the focus inside the box and the pointer on the row's label (the census leg pins it)");
@@ -160,6 +172,17 @@ test("placeSub runs on focusin as on mouseover, on the pointer road's host (the 
     "no exit handler strips the class unconditionally any more: placeSub drops it and re-adds it only while the host's own popover is shown and does not fit below");
   assert.doesNotMatch(GEAR, /focusHostOf/,
     "no climb from a Fast mode box to its row on the focus road: the sheet shows the box's own description on that focus (its hover pair's focus twins), so the box is the host on both roads and its popover has a height to place");
+  // the picker lists' open state has ONE writer (the maintainer's round 5, correctness-1, the refuters' condition): the class the
+  // sheet reads (rs-picking on the list's row) moves with the list's hidden in setListOpen and nowhere else, so no site that
+  // opens or closes a list can leave the class behind; the census is derived from the source, never a list kept here
+  assert.match(GEAR, /function setListOpen\(list, open\) \{ if \(!list\) return; list\.hidden = !open; var row = list\.closest\('\.rs-row'\); if \(row\) row\.classList\.toggle\('rs-picking', !!open\); \}/,
+    "the one writer: the list's hidden and its row's rs-picking move together");
+  assert.deepEqual(GEAR.match(/\b(cmList|plList)\.hidden\s*=/g) || [], [], "no site writes a picker list's hidden directly: every move goes through setListOpen");
+  assert.equal((GEAR.match(/'rs-picking'/g) || []).length, 1, "the class literal is spelled once in gear.js, in the writer");
+  const listOpenSites = GEAR.match(/setListOpen\((cmList|plList), [^)]*\)/g) || [];
+  assert.equal(listOpenSites.length, 6, "every site that moves a list calls it: the button's toggle, the pick and the outside-click closer, for both pickers: " + listOpenSites.join(" | "));
+  assert.deepEqual(listOpenSites.filter((s) => s.startsWith("setListOpen(cmList")).length, 3);
+  assert.deepEqual(listOpenSites.filter((s) => s.startsWith("setListOpen(plList")).length, 3);
 });
 
 const ENTRY = `
@@ -635,6 +658,72 @@ for (const [tab, pane, floor] of PANES) {
     });
   });
 }
+
+test("the picker-open state, the one the panel leg did not enter (the maintainer's round 5, correctness-1): a colormap or palette list open under the pointer stands the hovered row's own description down, so that row has nothing to show and stands nothing down; a keyboard focus in another row shows that row's description alone (zero before), the pointer on another row with a description shows that one alone, and a Tab out of the open picker's button shows the focused row's; the row wears rs-picking exactly while its list is open, at every site that moves a list", { timeout: 120000 }, async (t) => {
+  await withGear(t, "general", async (page, errors) => {
+    await settled(page, "general");
+    const hosts = await census(page);
+    const pickerRow = (id: string) => page.evaluate((lid: string) => {
+      const list = document.getElementById(lid)!, row = list.closest("#rsettings .rs-row") as HTMLElement;
+      return { open: !list.hidden, picking: row.classList.contains("rs-picking"), hovered: row.matches(":hover") };
+    }, id);
+    // (a) the list open by its button: the pointer rests on the button, inside the Colormap row, whose own description the open
+    // list stands down; the row wears the class; nothing shows in the panel
+    await page.click("#rs-cmap-btn");
+    let cm = await pickerRow("rs-cmap-list");
+    assert.deepEqual(cm, { open: true, picking: true, hovered: true }, "the rig: the colormap list is open under the pointer and its row wears rs-picking");
+    const a0 = await shownPanel(page);
+    assert.equal(a0.menus, 1, "the rig: one menu open");
+    assert.deepEqual(a0.shown, [], "the hovered row's own description stands down under its open list, and nothing else shows");
+    // a real Tab into another row's control while the list stays open: the focused row's description shows ALONE (before the
+    // fix the panel-wide stand-down read the hovered row as a trigger, since it contains a description, and hid this one too)
+    const other = hosts.find((h: any) => h.host === "rs-fileedit");
+    assert.ok(other, "the rig: the General census holds the File comments row (its control is the first tabbable after the two picker buttons)");
+    const tabbed = await tabInto(page, other.control);
+    assert.equal(tabbed.landed && tabbed.focusVisible, true, "the rig: a keyboard focus landed in another row (from " + tabbed.prev + ")");
+    cm = await pickerRow("rs-cmap-list");
+    assert.deepEqual(cm, { open: true, picking: true, hovered: true }, "the rig: the list is still open under the pointer");
+    const a1 = await shownPanel(page);
+    assert.equal(a1.menus, 1);
+    assert.deepEqual(a1.shown, [other.host], "exactly one description, the focused row's: the hovered row has nothing to show, so it stands nothing down");
+    assert.equal(a1.intersect, false);
+    // the pointer moves to a third row WITH a description while the list stays open: the pointer wins, one shown
+    const third = hosts.find((h: any) => h.host !== other.host && h.host !== "rs-cmap-btn" && h.host !== "rs-pal-btn" && !h.box);
+    assert.ok(third, "the rig: a third General host with a description");
+    await hoverOn(page, third.hoverSel);
+    const a2 = await shownPanel(page);
+    assert.equal(a2.active, other.control, "the rig: the focus stayed");
+    assert.equal((await pickerRow("rs-cmap-list")).open, true, "the rig: the list is still open (a hover closes nothing)");
+    assert.deepEqual(Array.from(new Set(a2.shown)), [third.host], "the pointer on a row showing a description wins: that host's description alone (whatever number it owns: the Account row owns two), the focused row's standing down");
+    await page.mouse.move(5, 5);
+    assert.deepEqual((await shownPanel(page)).shown, [other.host], "the pointer gone, the focused row's shows again");
+    // (b) the button's second click closes the list and the class goes with it
+    await page.click("#rs-cmap-btn");
+    assert.deepEqual(await pickerRow("rs-cmap-list"), { open: false, picking: false, hovered: true }, "closed by its button: hidden and no class");
+    assert.equal((await shownPanel(page)).menus, 0);
+    // (c) the second road: the list open, then one Tab from its button lands on the palette button (:focus-visible) with the
+    // pointer still on the colormap row: the palette row's description shows alone (zero before)
+    await page.click("#rs-cmap-btn");
+    assert.equal((await pickerRow("rs-cmap-list")).open, true, "the rig: open again");
+    await page.keyboard.press("Tab");
+    const c1 = await shownPanel(page);
+    assert.equal(c1.active, "rs-pal-btn", "the rig: the Tab landed on the palette button");
+    assert.equal(c1.focusVisible, true, "the rig: a Tab is :focus-visible");
+    assert.equal((await pickerRow("rs-cmap-list")).hovered, true, "the rig: the pointer still rests on the colormap row");
+    assert.deepEqual(c1.shown, ["rs-pal-btn"], "exactly one description, the focused palette row's");
+    // (d) a pick closes the list through the same writer: the class goes
+    await page.click("#rs-cmap-list .rs-cmap-opt");
+    assert.deepEqual(await pickerRow("rs-cmap-list"), { open: false, picking: false, hovered: true }, "closed by a pick: hidden and no class");
+    // (e) the outside-click closer, on the palette picker: open by its button, close by a click on the card's title
+    await page.click("#rs-pal-btn");
+    assert.deepEqual(await pickerRow("rs-pal-list"), { open: true, picking: true, hovered: true }, "the palette list open under the pointer, its row wearing the class");
+    assert.deepEqual((await shownPanel(page)).shown, [], "and its row's own description stands down");
+    await page.click("#rsettings .rs-sec.rs-sec-first");   // the Account section header: inside the card, outside every picker and every row
+    assert.deepEqual(await pickerRow("rs-pal-list"), { open: false, picking: false, hovered: false }, "closed by the outside click: hidden and no class");
+    assert.equal((await shownPanel(page)).menus, 0, "the rig: nothing left open");
+    assert.deepEqual(errors, [], "no page error");
+  });
+});
 
 test("the roads a browser decides by its own reading of :focus-visible, recorded: a programmatic focus after a mouse click and after a key press (a screen reader's move), and an emulated tap then a Tab; at most one description is shown on each", { timeout: 120000 }, async (t) => {
   await withGear(t, "debug", async (page, errors) => {

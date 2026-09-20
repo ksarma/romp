@@ -1552,6 +1552,13 @@ function initGear(post, opts) {
     plasma: [[13, 8, 135], [75, 3, 161], [125, 3, 168], [168, 34, 150], [203, 70, 121], [229, 107, 93], [248, 148, 65], [253, 195, 40], [240, 249, 33]],
     cividis: [[0, 34, 78], [33, 59, 110], [76, 85, 108], [108, 110, 114], [142, 137, 120], [177, 165, 112], [217, 197, 92], [254, 232, 56]] };
   var cmBtn = document.getElementById('rs-cmap-btn'), cmList = document.getElementById('rs-cmap-list');
+  // ONE writer for a picker list's open state (the maintainer's round 5, correctness-1): the list's hidden and the class rs-picking
+  // on its row move together, here and nowhere else, at every site that opens or closes a list (the button's toggle, a pick, the
+  // outside-click closer, for both pickers). The sheet keys two rules on the class and never on a list's id: the row's own
+  // description stands down while its list is open, and a hovered row wearing it contributes nothing to the panel-wide
+  // stand-down, since a row whose description is stood down has nothing to show (gear.css). A class written beside every hidden
+  // write by hand drifts from the real state at the first site that forgets it; a third picker joins by calling this.
+  function setListOpen(list, open) { if (!list) return; list.hidden = !open; var row = list.closest('.rs-row'); if (row) row.classList.toggle('rs-picking', !!open); }
   function cmStops(name) { return CMAPS[(name || '').toLowerCase()] || CMAPS.aurora; }   // the map by name, aurora the default as the chat's selectedStops has it (the settings default)
   function cmGrad(name) { var st = CMAPS[(name || '').toLowerCase()] || CMAPS.hawaii;
     return 'linear-gradient(to right,' + st.map(function (c) { return 'rgb(' + c[0] + ',' + c[1] + ',' + c[2] + ')'; }).join(',') + ')'; }
@@ -1560,11 +1567,11 @@ function initGear(post, opts) {
   function cmBuild() { if (!cmList || cmList.children.length) return; Object.keys(CMAPS).forEach(function (name) {
     var o = document.createElement('div'); o.className = 'rs-cmap-opt'; o.setAttribute('data-cmap', name); o.title = name;
     o.style.background = cmGrad(name); o.addEventListener('click', function (e) { e.stopPropagation(); cmPick(name); }); cmList.appendChild(o); }); }
-  function cmPick(name) { var s = load(); s.colormap = name; save(s); cmPaint(name); if (cmList) cmList.hidden = true;
+  function cmPick(name) { var s = load(); s.colormap = name; save(s); cmPaint(name); setListOpen(cmList, false);
     post({ type: 'setColormap', name: name }); }
-  if (cmBtn) cmBtn.addEventListener('click', function (e) { e.stopPropagation(); cmBuild(); if (cmList) cmList.hidden = !cmList.hidden; });
+  if (cmBtn) cmBtn.addEventListener('click', function (e) { e.stopPropagation(); cmBuild(); if (cmList) setListOpen(cmList, cmList.hidden); });
   document.addEventListener('click', function (e) { var w = document.getElementById('rs-cmap');
-    if (cmList && !cmList.hidden && w && !w.contains(e.target)) cmList.hidden = true; });
+    if (cmList && !cmList.hidden && w && !w.contains(e.target)) setListOpen(cmList, false); });
   // Session-colors palette picker: options + the active name come from /palette (the kernel is authoritative).
   var plBtn = document.getElementById('rs-pal-btn'), plList = document.getElementById('rs-pal-list'), plData = null, plActive = '';
   function plDots(cols) { return cols.map(function (c) { return '<span class=rs-pal-dot style="background:' + c + '"></span>'; }).join(''); }
@@ -1574,13 +1581,13 @@ function initGear(post, opts) {
   function plBuild() { if (!plList || !plData || plList.children.length) return; plData.forEach(function (pd) {
     var o = document.createElement('div'); o.className = 'rs-pal-opt'; o.setAttribute('data-pal', pd.name); o.title = pd.label;
     o.innerHTML = plRow(pd); o.addEventListener('click', function (e) { e.stopPropagation(); plPick(pd.name); }); plList.appendChild(o); }); }
-  function plPick(name) { plActive = name; plPaint(); if (plList) plList.hidden = true;
+  function plPick(name) { plActive = name; plPaint(); setListOpen(plList, false);
     post({ type: 'setPalette', name: name }); }
   function plFill() { fetch(ku('/palette'), { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (d) {
     if (d && d.palettes) { plData = d.palettes; plActive = d.active || ''; plBuild(); plPaint(); } }).catch(function () {}); }
-  if (plBtn) plBtn.addEventListener('click', function (e) { e.stopPropagation(); plBuild(); if (plList) plList.hidden = !plList.hidden; });
+  if (plBtn) plBtn.addEventListener('click', function (e) { e.stopPropagation(); plBuild(); if (plList) setListOpen(plList, plList.hidden); });
   document.addEventListener('click', function (e) { var w = document.getElementById('rs-pal');
-    if (plList && !plList.hidden && w && !w.contains(e.target)) plList.hidden = true; });
+    if (plList && !plList.hidden && w && !w.contains(e.target)) setListOpen(plList, false); });
   if (bk) bk.addEventListener('change', function () { var s = load(); s.backend = bk.value; save(s); });   // webview-local pref read at createSession time
   if (dd) dd.addEventListener('change', function () { var v = dd.value.trim(); var s = load(); s.defaultDir = v; save(s);
     post({ type: 'setDefaultDir', value: v }); });   // persist kernel-side: _default_create_dir reads this file FIRST
