@@ -124,6 +124,10 @@ class Fresh(unittest.TestCase):
         jd.STATE = Path(self.td.name)
         km._UPDATE_AVAIL[0] = ""
         km._UPDATE_STATE[0] = ""
+        # the once-per-version notice slot a non-primary kernel in auto mode writes (review round 10): one unpatched
+        # writer per process today, but a second test of that shape would read the first one's value by order
+        if hasattr(km, "_UPDATE_AUX_SAID"):
+            km._UPDATE_AUX_SAID[0] = ""
         # the drift door's in-flight flag and latched outcome (review round 5 of the confirm step): a test that
         # mocks _run_main_update and clicks the drift door takes the flag in the route and never runs the
         # converge's finally that clears it, so every later read would say running and skip the counts
