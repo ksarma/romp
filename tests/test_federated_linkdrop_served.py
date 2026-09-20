@@ -1155,16 +1155,19 @@ class _LinkDrop(unittest.TestCase):
         distinguishing datum an empty window needs (round 2's ruling on correctness-1: the allowance is keyed on this EVENT,
         read from the hook's frames, never a dropped requirement). Round 4 added the gap because the frame alone was no key:
         on the old bundle a routine redial produces a whole frame after the phase's notices were already delivered as
-        patches, so the frame-only excuse was available in 47 of the 75 phase windows (A, B, C) over the 25 unmutated
-        old-hub records in the builder's cache as of the drive at `r6-margin/lab-head5.log` (2026-09-20; `python3
-        population6.py old | xargs python3 excuse_census.py <tests_dir>`, this helper over each record's windows, outside the
-        repo), load-bearing in 5, and a planted gating miss (a phase's patches and rows removed from the record) stayed green
-        at both floors; keyed on the gap it is available in 5 of those 75, the phase-A windows of the five drives whose
-        Outline socket churned inside phase A (the same command at this module), and the planted miss reds. Over all 75
-        windows the planted miss (the phase's feed patches and rows removed, every frame kept) reds the floor in 70 and stays
-        excused in those 5 (`python3 population6.py old | xargs python3 census_module.py <tests_dir>`, the floor itself over
-        each window, outside the repo, as of the same drive): a real gating miss during a churn is indistinguishable from the
-        churn in the record, the excuse's remaining hole and the price of excusing the churn at all. The post times
+        patches, so the frame-only excuse was available in 47 of the 78 phase windows (A, B, C) over the 26 unmutated
+        old-hub records in the builder's cache as of the drive at `r7/lab-ci5.log` (2026-09-20), load-bearing in 5, and a
+        planted gating miss (a phase's patches and rows removed from the record) stayed green at both floors; keyed on the gap
+        it is available in 5 of those 78, the phase-A windows of the five drives whose Outline socket churned inside phase A,
+        and the planted miss reds. Over all 78 windows the planted miss (the phase's feed patches and rows removed, every
+        frame kept) reds the floor in 73 and stays excused in those 5: a real gating miss during a churn is indistinguishable
+        from the churn in the record, the excuse's remaining hole and the price of excusing the churn at all. Every figure in
+        this paragraph, the population, its drive and the counts, is ONE derivation (round 5: a hand-kept pair of a count and
+        a drive drifted apart twice, one drive behind each time): `population_drive.py <tests_dir> <round-3 tests_dir>` in the
+        builder's cache outside the repo lists the records by `population6.py`, names the newest drive by its log's header
+        stamp and checks its records are in the population, then runs this helper over each record's windows
+        (`excuse_census.py`, the round-3 module's copy for the frame-only key) and the floor over each window with the miss
+        planted (`census_module.py`), and prints these sentences; they are pasted, never retyped. The post times
         are DERIVED from the change record (its t0 plus i x NOTICE_GAP_S, _change's own sleeps between the posts, on the
         poster's clock at millisecond resolution); each notice's answer in the record carries the remote kernel's own stamp
         for the notice too (`at`, `t`), but in whole seconds and on the other clock, too coarse for a millisecond gap check,
@@ -1396,11 +1399,14 @@ class _LinkDrop(unittest.TestCase):
         drive). A multiset difference matched to the ATTACH, not a set of revs (round 4): the Outline's feed patch revs
         restart at 1 on every relay socket, so a rev is no identity over a drive, and a set of revs let every row of a
         colliding rev through where the assertions' messages promise one row per attach. The exemption fires on no recorded
-        drive: over the 65 unmutated records of both classes in the builder's cache as of the drive at
-        `r6-margin/lab-head5.log` (2026-09-20; `python3 population6.py old|new | xargs python3 attach_census.py <tests_dir>`,
-        these helpers over each record, outside the repo) the down windows hold 0 rows and 0 attaches, so 0 rows are exempted
-        at either site, by the set before round 4 and by this match after it; the pin over a synthetic record in
-        tests/test_federated_linkdrop_driver_bound.py is where it is exercised. Returns the rows' data, _outline_unapplied's shape."""
+        drive: over the 68 unmutated records of both classes in the builder's cache as of the drive at `r7/lab-ci5.log`
+        (2026-09-20) the down windows hold 0 rows and 0 attaches, and the return window holds 0 rows, so 0 rows are exempted
+        at any of the three readers, by the set before round 4 and by this match after it; the pin over a synthetic record
+        in tests/test_federated_linkdrop_driver_bound.py is where the match is exercised. The count and its drive are one
+        derivation, `population_drive.py` in the builder's cache outside the repo (the population by `population6.py`, the
+        newest drive by its log's header stamp with its records checked into the population, then `attach_census.py`, these
+        helpers over each record), and the sentence is pasted from its output (round 5: the pair was retyped one drive
+        behind, twice). Returns the rows' data, _outline_unapplied's shape."""
         pool = list(self._attaches_since(since_ms))
         out = []
         for d, t in stamped:
@@ -1428,8 +1434,9 @@ class _LinkDrop(unittest.TestCase):
         B0 - 1 s, B0 being marked before the change is posted) less one row per attach from 1.5 s before the resume, matched to
         the attach as the down window's are (_minus_attach_rows). Round 4's fixer pass: this reader kept a set of revs after the
         two down-window sites moved to the match, so two rows of one attach's rev both passed a filter whose message promised one
-        per attach (over the 65 recorded records of both classes the window holds 0 rows and 0 attaches, so the switch moves no
-        recorded verdict; the census is in _minus_attach_rows's docstring). Returns (the stray rows' data, the attaches)."""
+        per attach; the switch moves no recorded verdict, since the recorded population holds no row and no attach in this
+        window (the census, its population and its drive are in _minus_attach_rows's docstring, one derivation, and are not
+        repeated here). Returns (the stray rows' data, the attaches)."""
         m = self._marks()
         t0, t1 = m["resume"] / 1000.0 - 1.5, m["B0"] / 1000.0 - 1.0
         stamped = self._outline_unapplied_stamped([r for r in self.hub_diag_rows if t0 <= float(r.get("t") or 0) <= t1])

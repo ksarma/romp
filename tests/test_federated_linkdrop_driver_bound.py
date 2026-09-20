@@ -53,8 +53,8 @@ asked for whose bundle cannot be made ready, or whose root holds no kernel, is a
 checkout's own bundle failing to build stays a skip (round 1's tests-3, ruled twice); the old-hub storm's allowance
 for an empty phase is keyed on a notice post that found the Outline without an open, served relay socket and then on a
 whole keyed feed frame after the bundle's last notice, over a synthetic record, and the floor it guards reds on a planted
-miss with the frame present (round 4: the frame alone excused 47 of the 75 phase windows over the 25 old-hub records as of
-`r6-margin/lab-head5.log`; the census and its command are in _outline_caught_up_whole's docstring); and the
+miss with the frame present (round 4: the frame alone excused most recorded phase windows; the census, its figures, its
+population and its drive are in _outline_caught_up_whole's docstring, one derivation, and are not repeated here); and the
 gate's control in time takes a phase's waitedMs as a delivery only when every wait behind it resolved and its visibles
 showed, over a synthetic record for each class (round 5: a wait that ran to its cap measured as a delivery at the cap).
 
@@ -585,15 +585,15 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
         the gaps between the notices) and before the window's padded end. Round 3 found the key was the window: a frame at
         A0 + 5 ms or between notice 1 and notice 2 excused a stripped phase, though it could not have carried the notices
         posted after it. Round 4 found the frame alone was no key either: on the old bundle a routine redial produces a whole
-        frame after the notices were already delivered as patches, so the excuse was available in 47 of the 75 phase windows
-        over the 25 old-hub records as of `r6-margin/lab-head5.log` (the census is in _outline_caught_up_whole's docstring)
+        frame after the notices were already delivered as patches, so the excuse was available in most recorded phase windows
+        (the census, its figures and its drive are in _outline_caught_up_whole's docstring, one derivation, not repeated here)
         and a planted miss stayed green, and the cells below could not tell the keys apart, since a synthetic socket
         with no openAt reads as never open and the gap held in every cell. Over a synthetic record, by cell: with the socket
         recording no open, a frame before the window, before the first post, between the notices, one millisecond before the
         last notice's earliest post (all no excuse), at it, after the bundle, at the right pad's edge (all an excuse), past
         the pad and unkeyed (no excuse); a frame on the feed page's socket counts for nothing; a phase with no change record
         fails rather than widening. Then the socket's state at the posts: open and served across all three posts with a
-        later frame in the window (no excuse: the 42 recorded windows the frame alone excused with their patches delivered),
+        later frame in the window (no excuse: the recorded windows the frame alone excused with their patches delivered),
         the same socket closing after the last post with the redial's frame (no excuse), closed before the posts (an excuse),
         closing between notice 1 and notice 2 (an excuse: the recorded churn's own shape, since in all five churned drives the
         first post, 0.01 s in, found the socket open and served and it closed 0.6 to 0.7 s in, before the second; the fixer
