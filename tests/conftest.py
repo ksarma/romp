@@ -565,14 +565,23 @@ def restore_env(name, prior):
 #     no remedy, and its naming silenced the boundary that would have been right. A missing module start read
 #     refuses the report. Later windows do not apply that test: a legitimate first build followed by a STATE move
 #     the judge fixture names leaves the same picture, and a test window or a boundary made it, where it was
-#     judged. STATED LIMIT: the first window consumes the flag whether or not it takes the report, so an
-#     import-time (or wider-scoped fixture's) build over a kept root whose worker's first window belongs to a
-#     class that swapped the singleton out around its tests (K.Two's shape: saved, reset, put back) is met, as
-#     that object, only at a later window, where the report is not taken, and the leak goes unreported (the
-#     fixture's tests pin it as behaviour, S7, beside S6, the same leak with no swapping class, reported). The
-#     closure would record the candidate at the worker's first module start read (a real object over a root
-#     other than that read's jd.STATE) and raise it at the first window whose before object is that object,
-#     with the wording's "before any test in this worker has run" reworded; not taken here.
+#     judged. The first window spends the flag whether or not it takes the report, and never defers it: a
+#     report deferred to a later window would fire where a test body has run, with its premise sentence
+#     ("before any test in this worker has run") false, a wrong attribution in place of a silence. THE REFUSAL
+#     (_sdk_swapped): when the slot at the worker's first window does not hold the object the module start read
+#     found (the identity term fails), and that read's object is a real backend over a directory that stands and
+#     is not the jd.STATE it recorded (an import-time or wider-scoped fixture's build over a kept root, met first
+#     by a class that swapped the singleton out around its tests, K.Two's shape: saved, reset, put back), the
+#     window raises a refusal in the report's place, at the moment the flag is spent: the leak is named from the
+#     start read's fields (the object, its root and jd.STATE at that read, recorded before the swap), the slot's
+#     value at the window is said, the swap is attributed to a module or class setup between the two reads
+#     without naming it, no test is accused and no scope is named, since which test will start under the object,
+#     and whether it is put back, cannot be said there, and the cause family is the kept-root report's. A start
+#     read's object over the run root is no leak and gets no refusal; one over a gone directory is left to the
+#     gone report, taken at any window a test starts under it. The refusal marks nothing on _SDK_REPORTED: no
+#     later window takes the kept-root report, and a mark would silence a later gone report on the same object.
+#     The fixture's tests pin it (S7, beside S6, the same leak with no swapping class, reported as inherited; S7B,
+#     the refusal as the first window's alone; S8 and S9, the run-root and gone shapes, refused).
 # Two module-level lists of STRONG references (identity membership; strong so an id is never reused by a
 # later object) keep the two kinds of naming apart. Every object a VERDICT names (a test's own, a boundary's)
 # goes on _SDK_NAMED, the list the boundary's quiet-on-a-named-object rule consults. Every object the

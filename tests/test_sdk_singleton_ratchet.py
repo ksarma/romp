@@ -72,10 +72,19 @@ read only import-time code and any fixture of a scope wider than the function ha
 start read's reference make the report a statement about that read; a module or class setup's install after it is left
 to its boundary, which names the scope and prints the sandbox remedy, and a jd.STATE a scope setup moved for its tests
 after that read is no leak and never the reference (K2: compared against the window's jd.STATE, the kernel's own
-import-time build over the run root got the report). The first window consumes the flag whether or not it takes the
-report, a stated limit: an import-time build over a kept root whose worker's first window belongs to a class that
-swapped the singleton out around its tests is met, as that object, only at a later window, where the report is not
-taken, and goes unreported (S7 pins it as behaviour, S6 the control). The class and module boundaries yield to the
+import-time build over the run root got the report). The first window spends the flag whether or not it takes the
+report, and never defers it: a report deferred to a later window would fire where a test body has run, with its premise
+sentence (before any test in this worker has run) false, a wrong attribution in place of a silence. When the slot at
+the worker's first window does not hold the object the start read found, and that read's object is a real backend over
+a directory that stands and is not the jd.STATE it recorded (an import-time build over a kept root met first by a class
+that swapped the singleton out around its tests, S7), the window REFUSES instead, at the moment the flag is spent: it
+names the leak from the start read's fields (the object, its root, and jd.STATE at that read), says a module or class
+setup swapped the slot between the two reads, accuses no test and names no scope, and the run exits 1; the later test
+that meets the object is quiet, and the refusal is the first window's alone (S7B). A start read's object over the run
+root is no leak and gets no refusal (S8), and one over a gone directory is left to the gone report, taken at any window
+a test starts under it (S9). The outer tests read the refusal as they read every report, by the test it lands on
+(inherited with the SWAPPED head) and as the set of tests carrying it (carriers, a set of size one), never by a phrase
+count. The class and module boundaries yield to the
 tests' own windows: when the changing windows inside the scope run from the value the scope found to the value it ends
 on, each judged where it happened against the scope's own reference root, the boundary says nothing, so a test's
 accused reset or allowed rebuild is never re-attributed to a tearDownClass or tearDownModule that did nothing; a class
@@ -197,9 +206,20 @@ alphabetically, and each case's `before` is what the previous case left):
     no remedy) and its own verdict; b is quiet under a's named object.
   S7, S6's import-time build over a kept root met first by a class that swaps the singleton (One's setUpClass saves the
     singleton and jd.STATE, resets the slot and moves jd.STATE; a builds over the class root; tearDownClass puts both
-    back): One.a's window consumes the first-window flag on an object the start read did not find, Two.a meets the
-    import-time object at a later window, nothing is said and the run exits 0: the first-window report's stated limit,
-    pinned as behaviour (S6 is the control, the same leak with no swapping class, reported).
+    back): One.a's before object (None) is not the one the start read found, so the first window refuses in place of
+    the kept-root report: the refusal on One.a's teardown names the leak from the start read's fields (SdkBackend over
+    the kept root, jd.STATE the run root at that read), says the slot holds None at this window because a module or
+    class setup swapped it between the two reads, accuses no test and names no scope; Two.a meets the import-time
+    object at a later window and is quiet; every boundary is quiet; the run exits 1 (S6 is the control, the same leak
+    with no swapping class, reported as inherited).
+  S7B, S7 with a third class of One's shape after Two: a later window where the identity term fails, and the refusal is
+    still the first window's alone (one carrier, Three.a quiet, Three's boundary quiet, one error).
+  S8, the refusal's refused input on the run-root shape: K2's import-time build over the RUN root, then S7's swapping
+    class; the identity term fails at One.a but the start read's object is over jd.STATE as that read recorded it, so
+    no refusal, no report, and the run exits 0.
+  S9, the refusal's refused input on the gone shape: E's import-time leak (the sandbox removed), then S7's swapping
+    class; no refusal at One.a, and Two.a, which starts under the gone object, carries the inherited gone report: one
+    error.
   W, a session-scoped autouse fixture in the case directory's own conftest.py (nested_run's conftest) that builds over
     a kept root and restores jd.STATE before the module boundary's start read: a is the first test to meet it and
     carries the kept-root inherited report, its cause clause naming import-time code or a session- or package-scoped
@@ -297,6 +317,17 @@ fixture READS and the branch each read feeds, with the case that reds under each
     the identity term (T's One.a gets a false report blaming import-time code, and the run counts two errors, the
     boundary verdict staying beside it); its reference moved from the module start read's jd.STATE to the window's (K2's
     One.a gets a false report blaming import-time code for the moves setUpModule and setUpClass made for their tests).
+  the first window's refusal (_sdk_swapped): deleted (S7's first test shows no refusal line and the run exits 0); keyed
+    on the window's before object in place of the start read's (S7: the window's object is None, so the refusal is
+    silent); its class guard dropped (T, U and V: a refusal naming None (not built) as the leak on a first window whose
+    start read saw nothing, beside T's class boundary verdict and inside U's and V's gone-report teardown, read as
+    carriers); its run-root guard dropped (S8: a refusal on the kernel's own import-time build over the run root, exit
+    1); its gone guard dropped (S9: a refusal on One.a beside Two.a's gone report, two lines for one leak); the flag
+    dropped from its condition with the spent first term kept (S7: a second refusal on Two.a, saying the slot does not
+    hold the object at a window where it does; S7B: a third on Three.a); the identity term alone in the condition's
+    place (S7B alone: a second refusal on Three.a, S7 green); a scope appended to its text (S7's no-scope read); the
+    flag kept when the identity term fails, the deferral not taken (S7: no refusal at One.a, and Two.a carries the
+    kept-root report, whose premise sentence, before any test in this worker has run, is false at that window).
   the boundary: the class end deleted (D.One.b and K.One.b show no boundary error, M, P); the module end deleted
     (L.b shows none); compared to its last read only (K.One passes silently); judged without the restore exemption
     (K.Two errors); the named skip dropped (a second report at the class or module end of A, B, C, D, E, K and L;
@@ -312,7 +343,7 @@ fixture READS and the branch each read feeds, with the case that reds under each
     disappears) or without its reference condition (K.One passes silently); the windows never recorded (as the
     yield removed).
   the function fixture not naming the object it accused (A.h gets an inherited report, E, D).
-Sixty-one cells red. Three are pinned by no run, each for a stated reason: the unreadable reference root granting
+Seventy cells red. Three are pinned by no run, each for a stated reason: the unreadable reference root granting
 the allowance (not constructible: the kernel always binds jd); the yield's identity condition dropped (redundant by
 construction: when the end value is the last read's and is not the last window's value, a class teardown inside the
 scope installed it, and that class's own boundary judged it against its start, which only a restore of the value the
@@ -350,6 +381,8 @@ INHERITED = "starts under the kernel's backend singleton (km._sdk_backend) over 
 INHERITED_KEPT = ("starts under the kernel's backend singleton (km._sdk_backend) over a directory that is not jd.STATE, before any "
                   "test in this worker has run")
 PUT_BACK_GONE = "put back the kernel's backend singleton (km._sdk_backend) it found, whose directory is gone: "
+SWAPPED = ("opens the worker's first test window, and this module's start read had found the kernel's backend singleton "
+           "(km._sdk_backend) over a directory that is not jd.STATE, before any test in this worker has run")
 PUT_BACK_REPOINTED = "put back the kernel's backend singleton (km._sdk_backend) it found with its state_dir repointed: before "
 REMEDY_C = ("Put back the singleton's state_dir where it was found: the kernel's readers hold the object and read its state_dir "
             "on every registry scan")
@@ -864,6 +897,82 @@ SCRATCH_S7 = SCRATCH_HEAD + textwrap.dedent("""\
             assert km._sdk_backend.state_dir == _root and _root.is_dir() and jd.STATE != _root
 """)
 
+SCRATCH_S7B = SCRATCH_S7 + textwrap.dedent("""\
+
+    class Three(unittest.TestCase):
+        @classmethod
+        def setUpClass(cls):
+            cls.saved = (km._sdk_backend, jd.STATE)   # One's shape again, after Two: a later window where the identity term fails
+            cls.root = sandbox()
+            km._sdk_backend = None
+            jd.STATE = cls.root
+
+        @classmethod
+        def tearDownClass(cls):
+            km._sdk_backend, jd.STATE = cls.saved
+            shutil.rmtree(cls.root)
+
+        def test_a_builds_over_the_class_root(self):
+            assert km._sdk().state_dir == Three.root
+""")
+
+SCRATCH_S8 = SCRATCH_HEAD + textwrap.dedent("""\
+
+    km._sdk()                                         # import-time: the kernel's own lazy build over the RUN root, nothing leaked
+    assert km._sdk_backend.state_dir == jd.STATE
+    _run_root = jd.STATE
+
+    class One(unittest.TestCase):
+        @classmethod
+        def setUpClass(cls):
+            cls.saved = (km._sdk_backend, jd.STATE)   # S7's swapping class over a clean import-time build
+            cls.root = sandbox()
+            km._sdk_backend = None
+            jd.STATE = cls.root
+
+        @classmethod
+        def tearDownClass(cls):
+            km._sdk_backend, jd.STATE = cls.saved
+            shutil.rmtree(cls.root)
+
+        def test_a_builds_over_the_class_root(self):
+            assert km._sdk().state_dir == One.root
+
+    class Two(unittest.TestCase):
+        def test_a_meets_the_run_roots_object(self):
+            assert km._sdk_backend.state_dir == _run_root and jd.STATE == _run_root
+""")
+
+SCRATCH_S9 = SCRATCH_HEAD + textwrap.dedent("""\
+
+    _root = sandbox()                                 # E's import-time leak: built over a sandbox, jd.STATE restored, the sandbox removed
+    _saved = jd.STATE
+    jd.STATE = _root
+    km._sdk()
+    jd.STATE = _saved
+    shutil.rmtree(_root)
+
+    class One(unittest.TestCase):
+        @classmethod
+        def setUpClass(cls):
+            cls.saved = (km._sdk_backend, jd.STATE)   # S7's swapping class over a gone import-time object
+            cls.root = sandbox()
+            km._sdk_backend = None
+            jd.STATE = cls.root
+
+        @classmethod
+        def tearDownClass(cls):
+            km._sdk_backend, jd.STATE = cls.saved
+            shutil.rmtree(cls.root)
+
+        def test_a_builds_over_the_class_root(self):
+            assert km._sdk().state_dir == One.root
+
+    class Two(unittest.TestCase):
+        def test_a_meets_the_gone_object(self):
+            assert km._sdk_backend.state_dir == _root and not _root.exists()
+""")
+
 CONFTEST_W = textwrap.dedent("""\
     import sys, tempfile
     from pathlib import Path
@@ -1324,6 +1433,13 @@ def boundary(out, scope, module="test_scratch.py"):
     """The boundary verdict for `scope` ("::One" for a class, "" for the module) as (clause, remedy), or None."""
     m = re.search(r"%s%s%s ([^\n]*?)\. Fix: ([^\n]*)" % (re.escape(module), re.escape(scope), re.escape(BOUNDARY)), out)
     return _split(m) if m else None
+
+
+def carriers(out, head):
+    """The tests whose report opens with `head`, as a set of "test_scratch.py::<Class>::<method>": the count of such
+    reports is the size of this set, never the count of the text's occurrences, which the short summary repeats
+    (nested_run). "Exactly one refusal" is a set of size one."""
+    return set(re.findall(r"(test_scratch2?\.py::\w+::test_\w+) %s: " % re.escape(head), out))
 
 
 def boundary_scopes(out):
@@ -2056,22 +2172,102 @@ class ImportTimeLeakOverAKeptSandboxIsInheritedOnce(_NestedRun, unittest.TestCas
 
 
 class AnImportTimeKeptRootLeakMetFirstByAClassThatSwapsTheSingleton(_NestedRun, unittest.TestCase):
-    """S7, the first-window report's stated limit pinned as behaviour: S6's import-time build over a kept root, jd.STATE
-    restored, but the worker's first class saves, resets and puts back the singleton around its one test (K.Two's
-    shape). One.a's window consumes the first-window flag while its before object (None) is not the one the module
-    start read found, so the kept-root report is not taken there; Two.a meets the import-time object at a later
-    window, where the report is never taken; One's boundary sees the object it found put back unchanged. Nothing is
-    said and the run exits 0, while S6, the same leak with no swapping class, reports it on its first test. Red the
-    day the report is re-keyed on the worker's first module start read and raised at the first window whose before
-    object is that read's (the closure the conftest comment names beside the limit)."""
+    """S7: S6's import-time build over a kept root, jd.STATE restored, met first by a class that saves, resets and puts
+    back the singleton around its one test (K.Two's shape). One.a's before object is None, not the one the module start
+    read found, so the kept-root report is not taken at the worker's first window; the window REFUSES instead, with the
+    flag spent there: it names the leak from the start read's fields (the object, its root, and jd.STATE at that read),
+    says a module or class setup swapped the slot between the two reads, accuses no test and names no scope. Two.a
+    meets the object at a later window and is quiet, One's boundary sees the object it found put back unchanged, every
+    boundary is quiet, and the run exits 1 on the refusal alone. Before the refusal this class pinned the silence (exit
+    0, no report) as a stated limit, a pin that froze the defect: a reader of a green pin concludes the case is handled.
+    The deferral not taken (the flag kept when the identity term fails) would put the kept-root report on Two.a, where
+    a test body has run and its premise sentence, before any test in this worker has run, is false."""
     SCRATCH = SCRATCH_S7
+    ERRORS = 1
+    FIRST = "One.test_a_builds_over_the_class_root"
+
+    def test_the_first_window_names_the_leak_and_refuses_to_attribute_it(self):
+        cls, method = self.FIRST.split(".")
+        text = inherited(self.out, cls, method, head=SWAPPED)
+        self.assertIsNotNone(text, "the first window's refusal line, opening with SWAPPED, is missing: %s" % self.out)
+        self.assertEqual(outcomes(self.out).get(self.FIRST), {"PASSED", "ERROR"},
+                         "the body runs; the refusal is the teardown's: %s" % self.out)
+        self.assertIsNone(verdict(self.out, cls, method), "the allowed build over the class root is not accused: %s" % self.out)
+        self.assertTrue(text.startswith("SdkBackend over "), text)                # the start read's object and its root
+        self.assertIn(", jd.STATE ", text)                                       # the run root as the start read recorded it
+        self.assertIn("(it holds None (not built))", text)                       # what the window found in the slot
+        self.assertIn("no test is accused and no scope is named", text)
+        self.assertIn("Import-time code did, or a session- or package-scoped fixture did", text)
+        self.assertNotIn("Fix:", text, "no remedy is addressed to the test at the window: %s" % text)
+        self.assertNotIn(GONE, text)
+        self.assertNotIn(BOUNDARY, text)
+        self.assertIsNone(re.search(r"test_scratch2?\.py::\w+", text), "no scope or test is named in the refusal: %s" % text)
+        for head in (INHERITED, INHERITED_KEPT):
+            self.assertIsNone(inherited(self.out, cls, method, head=head), "not the starts-under report: %s" % self.out)
+
+    def test_the_refusal_is_on_one_test_and_every_boundary_is_quiet(self):
+        self.assertEqual(carriers(self.out, SWAPPED), {"test_scratch.py::" + self.FIRST.replace(".", "::")}, self.out)
+        for scope in ("::One", "::Two", ""):
+            self.assertIsNone(boundary(self.out, scope), self.out)
+        self.assertEqual(boundary_scopes(self.out), set(), self.out)
+        self.assertNotIn("sub-exceptions", self.out, "the refusal is One.a's only teardown failure, no fold: %s" % self.out)
+
+    def test_the_later_test_that_meets_the_object_is_quiet(self):
+        self.assertRatchetPassed("Two", "test_a_meets_the_import_time_object")
+        for head in (INHERITED_KEPT, SWAPPED):
+            self.assertIsNone(inherited(self.out, "Two", "test_a_meets_the_import_time_object", head=head), self.out)
+
+
+class TheRefusalIsTheFirstWindowsAlone(AnImportTimeKeptRootLeakMetFirstByAClassThatSwapsTheSingleton):
+    """S7B: S7 with a third class of One's shape after Two, so a LATER window where the identity term fails exists
+    (Three.a's before object is None while the start read's is the import-time object). The refusal is the first
+    window's alone, the one pin of the flag in its condition: one carrier, Three.a quiet, Three's boundary quiet, still
+    one error. With the identity term alone in the condition's place Three.a carries a second refusal while S7 stays
+    green: this class is that cell's only pin."""
+    SCRATCH = SCRATCH_S7B
+
+    def test_the_later_swapping_class_gets_no_refusal(self):
+        self.assertRatchetPassed("Three", "test_a_builds_over_the_class_root")
+        self.assertIsNone(inherited(self.out, "Three", "test_a_builds_over_the_class_root", head=SWAPPED), self.out)
+        self.assertIsNone(boundary(self.out, "::Three"), self.out)
+
+
+class ASwappingClassOverAnImportTimeBuildOverTheRunRoot(_NestedRun, unittest.TestCase):
+    """S8, the refusal's refused input on the run-root shape: K2's import-time build over the RUN root, then S7's
+    swapping class. The identity term fails at One.a, but the start read's object is over jd.STATE as that read
+    recorded it, so nothing leaked and the refusal is not taken; Two.a meets the run root's object quietly and the run
+    exits 0."""
+    SCRATCH = SCRATCH_S8
     ERRORS = 0
 
-    def test_the_import_time_leak_goes_unreported_and_the_run_exits_0(self):
+    def test_no_refusal_and_no_report_on_a_clean_import_time_build(self):
         self.assertRatchetPassed("One", "test_a_builds_over_the_class_root")
-        self.assertRatchetPassed("Two", "test_a_meets_the_import_time_object")
-        self.assertIsNone(inherited(self.out, "Two", "test_a_meets_the_import_time_object", head=INHERITED_KEPT), self.out)
+        self.assertRatchetPassed("Two", "test_a_meets_the_run_roots_object")
+        self.assertEqual(carriers(self.out, SWAPPED), set(), self.out)
+        for cls, method in (("One", "test_a_builds_over_the_class_root"), ("Two", "test_a_meets_the_run_roots_object")):
+            self.assertIsNone(inherited(self.out, cls, method, head=INHERITED_KEPT), self.out)
         self.assertEqual(self.rc, 0, self.out)
+
+    def test_every_boundary_is_quiet(self):
+        for scope in ("::One", "::Two", ""):
+            self.assertIsNone(boundary(self.out, scope), self.out)
+        self.assertEqual(boundary_scopes(self.out), set(), self.out)
+
+
+class ASwappingClassOverAnImportTimeGoneLeak(_NestedRun, unittest.TestCase):
+    """S9, the refusal's refused input on the gone shape: E's import-time leak (built over a sandbox, jd.STATE restored,
+    the sandbox removed), then S7's swapping class. No refusal at One.a, since the gone report takes that object at any
+    window a test starts under it, and Two.a, which does, carries the inherited gone report with its cause clause: one
+    error. With the gone guard dropped a refusal lands on One.a beside it, two lines for one leak."""
+    SCRATCH = SCRATCH_S9
+    ERRORS = 1
+
+    def test_the_first_window_is_quiet_and_the_later_test_carries_the_gone_report(self):
+        self.assertRatchetPassed("One", "test_a_builds_over_the_class_root")
+        self.assertEqual(carriers(self.out, SWAPPED), set(), self.out)
+        text = self.assertInherited("Two", "test_a_meets_the_gone_object")
+        self.assertTrue(text.startswith("SdkBackend over "), text)
+        self.assertIn("import-time code did", text)
 
     def test_every_boundary_is_quiet(self):
         for scope in ("::One", "::Two", ""):
@@ -2119,6 +2315,7 @@ class ClassSetupBuildsOverAKeptSandboxAsTheWorkersFirstBuilder(_NestedRun, unitt
     def test_the_first_test_is_not_told_import_time_code_made_the_setups_object(self):
         self.assertRatchetPassed("One", "test_a_does_nothing_under_the_setups_object")
         self.assertIsNone(inherited(self.out, "One", "test_a_does_nothing_under_the_setups_object", head=INHERITED_KEPT), self.out)
+        self.assertEqual(carriers(self.out, SWAPPED), set(), "no refusal on a first window whose start read saw None: %s" % self.out)
 
     def test_the_class_boundary_names_the_setups_build_with_the_sandbox_remedy(self):
         text = self.assertBoundaryFailed("::One", "One.test_b_does_nothing")
@@ -2166,6 +2363,7 @@ class ClassSetupCompletesALeak(_NestedRun, unittest.TestCase):
         text = self.assertInherited("One", "test_a_meets_the_gone_object_first")
         self.assertTrue(text.startswith("SdkBackend over "), text)
         self.assertIn("a class or module setup or teardown", text)
+        self.assertEqual(carriers(self.out, SWAPPED), set(), "no refusal beside the gone report: %s" % self.out)
 
     def test_the_class_boundary_names_the_setups_leak_with_the_gone_clause_and_the_sandbox_remedy(self):
         text = self.assertBoundaryFailed("::One", "One.test_b_does_nothing")
@@ -2186,6 +2384,7 @@ class ModuleSetupCompletesALeak(_NestedRun, unittest.TestCase):
     def test_the_first_test_reports_the_gone_object_as_inherited(self):
         text = self.assertInherited("One", "test_a_meets_the_gone_object_first")
         self.assertIn("a class or module setup or teardown", text)
+        self.assertEqual(carriers(self.out, SWAPPED), set(), "no refusal beside the gone report: %s" % self.out)
 
     def test_the_module_boundary_names_the_setups_leak_and_the_class_end_is_quiet(self):
         text = self.assertBoundaryFailed("", "One.test_b_does_nothing")
