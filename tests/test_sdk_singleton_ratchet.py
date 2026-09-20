@@ -670,10 +670,14 @@ MUTATIONS = {
                                 .replace("_sdk_remedy(after, ref))\n", "_sdk_remedy(after, ref)), before, after)\n"))]),
 }
 DERIVE_DESELECT = "tests/test_sdk_singleton_ratchet.py::TheMutationCellsApply"   # reds under any plant (its docstring)
-DERIVE_ENV_DROPPED = ("PYTEST_ADDOPTS", "PYTEST_PLUGINS", "PYTEST_DISABLE_PLUGIN_AUTOLOAD", "PYTEST_CURRENT_TEST",
-                      "PYTEST_XDIST_WORKER", "PYTEST_XDIST_WORKER_COUNT", "ROMP_TESTS_SYSTEM_TMPDIR",
-                      "PY_COLORS", "FORCE_COLOR", "CLICOLOR_FORCE",      # what nested_run pops from its child's
-                      "CLAUDE_CODE_SESSION_ID")                          # environment; the session id the recipe unsets
+# What nested_run pops from its child's environment, the one copy (the round-7 review found derive's list a second
+# hand-kept copy of the tuple in nested_run's loop, bound by no pin): pytest's own variables, the recipe's temp root,
+# and the colour-forcing variables, since two readers parse plain text. TheDeriveEnvironmentIsNestedRuns holds
+# nested_run's loop to this name.
+NESTED_RUN_POPS = ("PYTEST_ADDOPTS", "PYTEST_PLUGINS", "PYTEST_DISABLE_PLUGIN_AUTOLOAD", "PYTEST_CURRENT_TEST",
+                   "PYTEST_XDIST_WORKER", "PYTEST_XDIST_WORKER_COUNT", "ROMP_TESTS_SYSTEM_TMPDIR",
+                   "PY_COLORS", "FORCE_COLOR", "CLICOLOR_FORCE")
+DERIVE_ENV_DROPPED = NESTED_RUN_POPS + ("CLAUDE_CODE_SESSION_ID",)      # and the session id the recipe unsets
 # The matrix's blocks: each by the name --count prints, the words that open its head in the module docstring (the head
 # ends in BLOCK_HEAD_TAIL) and its key prefixes. cell_counts refuses a key that opens on no block's prefix, or on two,
 # so a cell of a new block is added here before it can be counted: never a silent third bucket; and
@@ -2127,9 +2131,7 @@ def nested_run(text, follower=None, sdk_stub=False, conftest=None):
             f.write('"""A stub for the kernel\'s import probe (find_spec at SdkBackend construction); no session runs here."""\n')
         env["PYTHONPATH"] = stub + ((os.pathsep + env["PYTHONPATH"]) if env.get("PYTHONPATH") else "")
         env["ROMP_RATCHET_SDK_STUB"] = stub
-    for var in ("PYTEST_ADDOPTS", "PYTEST_PLUGINS", "PYTEST_DISABLE_PLUGIN_AUTOLOAD", "PYTEST_CURRENT_TEST",
-                "PYTEST_XDIST_WORKER", "PYTEST_XDIST_WORKER_COUNT", "ROMP_TESTS_SYSTEM_TMPDIR",
-                "PY_COLORS", "FORCE_COLOR", "CLICOLOR_FORCE"):     # the colour-forcing variables: two readers parse plain text
+    for var in NESTED_RUN_POPS:                        # the one copy; derive's environment is built from the same name
         env.pop(var, None)
     r = subprocess.run([sys.executable, "-m", "pytest", "-p", "tests.conftest", "-p", "no:cacheprovider",
                         "-vv", "-rA", "--tb=short", "--color=no", case],
@@ -3160,6 +3162,27 @@ class TheReadersRosterNamesEveryReader(unittest.TestCase):
             readers_roster_names(text.replace("e_f: three", "the third, a reader"))
         with self.assertRaisesRegex(AssertionError, "no roster in one parenthesis"):
             readers_roster_names("x %s. y" % READERS_ROSTER_OPENS)
+
+
+class TheDeriveEnvironmentIsNestedRuns(unittest.TestCase):
+    """derive() runs the module under the environment nested_run gives its children, from the same name: nested_run
+    pops NESTED_RUN_POPS and nothing written beside it, read from its source by AST (every env.pop call's argument is
+    the loop variable of a loop over the name NESTED_RUN_POPS and nothing else), and DERIVE_ENV_DROPPED opens on that
+    tuple. Before this pin the two were kept by hand and could diverge with the module green."""
+
+    def test_nested_run_pops_the_shared_tuple_and_no_literal(self):
+        tree = ast.parse(textwrap.dedent(inspect.getsource(nested_run)))
+        pops = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                and n.func.attr == "pop" and isinstance(n.func.value, ast.Name) and n.func.value.id == "env"]
+        self.assertTrue(pops, "nested_run pops nothing from the child's environment")
+        loops = [n for n in ast.walk(tree) if isinstance(n, ast.For) and isinstance(n.target, ast.Name)]
+        self.assertEqual(len(loops), 1, "nested_run's pops run in one loop: %s" % [ast.unparse(n.iter) for n in loops])
+        self.assertEqual(ast.unparse(loops[0].iter), "NESTED_RUN_POPS",
+                         "nested_run's loop iterates a shape beside the shared tuple: %s" % ast.unparse(loops[0].iter))
+        for call in pops:
+            self.assertEqual(ast.unparse(call.args[0]), loops[0].target.id,
+                             "an env.pop outside the loop over NESTED_RUN_POPS: %s" % ast.unparse(call))
+        self.assertEqual(DERIVE_ENV_DROPPED[:len(NESTED_RUN_POPS)], NESTED_RUN_POPS)
 
 
 class TheMutationCellsApply(unittest.TestCase):
