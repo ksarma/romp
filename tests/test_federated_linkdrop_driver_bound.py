@@ -31,8 +31,10 @@ Three more pins ride here because the module they pin has no kernel-free test of
 knob, wherever such a gate could sit (a class-level skip, setUpClass, _knobs), and LinkDropOldLocal skips as optional
 (round 1's high, closed by a value; round 2 asked for the pin, round 3 for the property over every site); a hub a knob
 asked for whose bundle cannot be made ready, or whose root holds no kernel, is an error through _boot, while this
-checkout's own bundle failing to build stays a skip (round 1's tests-3, ruled twice); and the old-hub storm's allowance
-for an empty phase is keyed on a whole keyed feed frame after the bundle's last notice, over a synthetic record.
+checkout's own bundle failing to build stays a skip (round 1's tests-3, ruled twice); the old-hub storm's allowance
+for an empty phase is keyed on a whole keyed feed frame after the bundle's last notice, over a synthetic record; and the
+gate's control in time takes a phase's waitedMs as a delivery only when every wait behind it resolved and its visibles
+showed, over a synthetic record for each class (round 5: a wait that ran to its cap measured as a delivery at the cap).
 
 Synthetic: no kernel, no browser; stub classes over scratch directories.
 """
@@ -384,6 +386,63 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
         Rec.changes_made = []
         with self.assertRaises(AssertionError):
             t._outline_caught_up_whole("A0", "A1")
+
+    def test_the_margin_leg_takes_no_expired_or_unshown_wait_as_a_delivery(self):
+        """The gate's control in time (_assert_the_down_window_outlasts_the_drives_slowest_delivery) reads a phase's
+        seen.waitedMs as this drive's delivery. Round 5 found that a waitVisible wait that TIMED OUT left waitedMs at about
+        wait_ms with no other trace (the driver swallowed the TimeoutError; out.timeouts held only budget.waitFor's
+        expiries), so the yardstick became the cap and the leg passed at 42 >= 2 x 20.0x by the relation pin's arithmetic
+        with the true delivery unknown; on the old-hub class phase A's visibles were asserted nowhere, so an old-hub drive
+        whose phase-A churn came past 20 s was green. Over a synthetic record for each class with a 42.005 s down window
+        (the recorded span): every wait resolved and the slowest delivery 19,900 ms passes and is measured; then in each
+        link-up phase in turn, a wait that expired with the visibles absent (waitedMs 20,012), the same with the visibles
+        present (the card attached inside the read gap: an honest 20.0x s, refused all the same, since the leg keys on the
+        wait's outcome and not on a read that happened to catch it), an older driver's record with no expired list and the
+        visibles shown (the outcome cannot be established, so the read alone does not make it a delivery) and a resolved
+        wait whose read found nothing (the belt: the DOM changed between the wait and the read) each fail naming the phase; a resolved wait at 20,012 ms with the visibles present passes, since
+        a resolved wait ended by its cap and the excess is the reads (DOWN_READ_ROOM_MS)."""
+        span_ms = 42005                     # settled less phase D's t1: 42.004 to 42.010 s over the recorded head drives
+        d_t1 = 2_000_000.0                  # phase D's post end, in the control door's seconds
+        settled = int(d_t1 * 1000) + span_ms
+        for cls in (L.LinkDropBothNew, L.LinkDropOldLocal):
+            self.assertTrue(cls.local_drop, "both classes drive the local drop, so A, B and C are the phases the yardstick reads")
+
+            class Rec(cls):
+                driver_error = None
+
+            def change(p):
+                return {"phase": p, "prompt": "synthetic prompt %s" % p, "noticeKeys": ["k1", "k2", "k3"], "noticeRevs": [1, 2, 3]}
+
+            def seen(waited, p, shown=True, expired=(), key=True):
+                v = {"cards": [shown] * 3, "waitedMs": waited}
+                if "todo" in cls.changes:
+                    v["todo"] = shown
+                if "append" in cls.changes:
+                    v["prov"] = change(p)["prompt"] if shown else "the row before the change"
+                if key:
+                    v["expired"] = list(expired)
+                return v
+
+            def record(**over):
+                Rec.result = {"marks": {"settled": settled, "resume": settled + 20, "end": settled + 60000}, "died": None, "timeouts": [],
+                              "phases": {p: {"change": change(p), "seen": over.get(p) or seen(1000 * (i + 1), p)} for i, p in enumerate("ABC")}}
+                Rec.changes_made = [change(p) for p in "ABC"] + [{"phase": "D", "t0": d_t1 - 2.0, "t1": d_t1, "noticeKeys": ["k1", "k2", "k3"]}]
+                return Rec("test_every_wait_the_driver_placed_was_met")   # an instance for the helper; the test method is never run
+            span_s, deliveries = record(C=seen(19900, "C"))._assert_the_down_window_outlasts_the_drives_slowest_delivery()
+            self.assertAlmostEqual(span_s, span_ms / 1000.0, places=3, msg="%s: the leg read the window from phase D's post end to settled" % cls.__name__)
+            self.assertEqual(deliveries, {"A": 1000, "B": 2000, "C": 19900}, "%s: every wait resolved and shown, so every phase's waitedMs is a delivery and the slowest is C's" % cls.__name__)
+            for X in "ABC":
+                cells = [("a wait that expired with the visibles absent", seen(20012, X, shown=False, expired=["card"]), "expired"),
+                         ("a wait that expired though the read caught the card", seen(20012, X, shown=True, expired=["card"]), "expired"),
+                         ("an older driver's record with no expired list, visibles shown", seen(20012, X, shown=True, key=False), "expired"),
+                         ("a resolved wait whose read found nothing", seen(20012, X, shown=False, expired=[]), "phase %s's changes" % X)]
+                for why, v, token in cells:
+                    with self.assertRaises(AssertionError, msg="%s: %s in phase %s must fail the margin leg instead of measuring the cap" % (cls.__name__, why, X)) as cm:
+                        record(**{X: v})._assert_the_down_window_outlasts_the_drives_slowest_delivery()
+                    self.assertIn("phase %s" % X, str(cm.exception), "%s: %s: the failure names the phase: %s" % (cls.__name__, why, cm.exception))
+                    self.assertIn(token, str(cm.exception), "%s: %s: the failure says why: %s" % (cls.__name__, why, cm.exception))
+                span_s, deliveries = record(**{X: seen(20012, X, shown=True, expired=[])})._assert_the_down_window_outlasts_the_drives_slowest_delivery()
+                self.assertEqual(deliveries[X], 20012, "%s: a resolved wait at the cap's edge with the visibles shown is a delivery in phase %s (the reads after the wait)" % (cls.__name__, X))
 
     def test_drive_sends_the_timeout_the_budget_and_the_caps(self):
         lab = tempfile.mkdtemp(prefix="linkdrop-bound-")
