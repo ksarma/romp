@@ -100,9 +100,11 @@ jobs:
         # cryptography: the kernel's Web Push soft dependency (plans/ios-app.md). Installed here
         # so tests/test_kernel_webpush.py's crypto layers RUN in CI instead of skipping — the
         # kernel itself still degrades loudly without it (that path has its own test). It ships
-        # free-threaded (cp314t) wheels since 46.0, so the 3.14t cell installs it like the rest;
-        # that cell alone may continue without it, should a future release lag the interpreter,
-        # and the webpush tests then skip and say so rather than the whole cell going red.
+        # free-threaded (cp314t) wheels since 46.0, so the 3.14t cell installs it like the rest.
+        # The 3.14t allowance below no longer keeps that cell green without it (2026-09-20): the
+        # SDK step next requires cryptography through mcp's pyjwt[crypto] and carries no allowance,
+        # so a cryptography wheel lagging the interpreter reds the cell there. What the allowance
+        # still does is let the failure be named by this step first, where the package is.
         continue-on-error: ${{ endsWith(matrix.python-version, 't') }}
         run: python -m pip install cryptography
       - name: Install the Claude Agent SDK
