@@ -437,6 +437,8 @@ def ladder_words(expr):
             form = "an empty value"
         elif len(run) == 1:
             form = ("an " if run[0][0][0] in "aeiou" else "a ") + run[0][0]
+        elif run[0][1] == "(":
+            form = "a parenthesized expression"   # a nested ternary in parentheses among them: refused, and named for what it is, not as a call (the author's fixer pass after round 4, refusals-5)
         elif any(t[0] == "identifier" for t in run) and any(t[1] == "(" for t in run):
             form = "a call"
         elif any(t[1] == "+" for t in run):
@@ -1476,7 +1478,7 @@ class ClientDiagAllowlistTest(unittest.TestCase):
                       ("member", "d.why", "an expression"), ("concatenation", '"neg" + "ative"', "a concatenation"),
                       ("call", 'word("negative")', "a call"), ("number", "42", "a number"), ("empty", "", "an empty value"),
                       ("unterminated", '"negative', "unterminated"), ("newline-in-string", '"nega\ntive"', "unterminated"),
-                      ("bad-hex-escape", '"neg\\xZZtive"', "malformed")]
+                      ("bad-hex-escape", '"neg\\xZZtive"', "malformed"), ("parenthesized-nested-ternary", '(d.x ? "a" : "b")', "a parenthesized expression")]
         for name, lit, named in unreadable:
             with self.assertRaises(AssertionError, msg=name) as cm:
                 ladder_words(plant(lit))
@@ -1485,7 +1487,7 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         self.assertEqual({n for n, _, _ in readable}, {"double", "single", "template", "double-with-dot", "unicode-escape", "unicode-brace-escape", "hex-escape",
                                                        "quote-escape", "double-quote-escape", "line-continuation", "template-newline", "non-escape", "simple-escape"})
         self.assertEqual({n for n, _, _ in unreadable}, {"template-expression", "identifier", "member", "concatenation", "call", "number", "empty",
-                                                         "unterminated", "newline-in-string", "bad-hex-escape"})
+                                                         "unterminated", "newline-in-string", "bad-hex-escape", "parenthesized-nested-ternary"})
         # a string literal inside a CONDITION is not a value and is no word (the conditions are free; only the values are read)
         self.assertEqual(tuple(ladder_words(expr.replace("!held ?", '(d.kind === "x" || !held) ?', 1))), STALE_WHY_WORDS)
         # a ladder that is not flat (a nested ternary in a value) is refused, named
