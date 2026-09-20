@@ -89,9 +89,13 @@ def held_pair(frames, slot):
     helper never detach a host, so a host's sockets are one conn's), by federation.ts's rule: a full carrying gen leaves (gen, 0) and a full carrying none clears
     the pair; a stamped delta leaves (newGen when carried, else gen; through), which is (newGen, R) for a composed frame and
     (gen, rev) for the stamping kernel's per-cycle delta (through equal to rev, no newGen); a stamped delta carrying no
-    through is refused by the client (every stamped delta carries it: a needFullFeed, nothing applied) and moves nothing, as
-    a gen-less delta does. A stamped delta the client would otherwise refuse (its gen not the held one, its base above the
-    held rev) is not modelled: a lab's stream is the kernel's own and applies. None when no pair is held."""
+    through moves nothing here, as a gen-less delta does. That refusal is the FEED road's rule alone (applyRemoteFeedDelta:
+    a needFullFeed, nothing applied), bounded by the kernel contract that every stamped delta carries through; the bars
+    road (view-deltas.ts receive) applies a through-less frame at rev equal to base plus one and holds (gen, rev), so for
+    the bars slot this rule is right only because no designed kernel sends that shape: a lab that met it would need the
+    slot branched and both receiver arms modelled (review round 1, 2026-09-20). A stamped delta the client would otherwise
+    refuse (its gen not the held one, its base above the held rev) is not modelled: a lab's stream is the kernel's own and
+    applies. None when no pair is held."""
     full, delta = ("feed", "feedDelta") if slot == "feed" else ("bars", "delta")
     pair = None
     for f in frames:
