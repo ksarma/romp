@@ -33,7 +33,9 @@ knob, wherever such a gate could sit (a class-level skip, setUpClass, _knobs), a
 (round 1's high, closed by a value; round 2 asked for the pin, round 3 for the property over every site); a hub a knob
 asked for whose bundle cannot be made ready, or whose root holds no kernel, is an error through _boot, while this
 checkout's own bundle failing to build stays a skip (round 1's tests-3, ruled twice); the old-hub storm's allowance
-for an empty phase is keyed on a whole keyed feed frame after the bundle's last notice, over a synthetic record; and the
+for an empty phase is keyed on a notice post that found the Outline without an open, served relay socket and then on a
+whole keyed feed frame after the bundle's last notice, over a synthetic record, and the floor it guards reds on a planted
+miss with the frame present (round 4: the frame alone excused 47 of 75 recorded windows); and the
 gate's control in time takes a phase's waitedMs as a delivery only when every wait behind it resolved and its visibles
 showed, over a synthetic record for each class (round 5: a wait that ran to its cap measured as a delivery at the cap).
 
@@ -345,13 +347,26 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
 
     def test_an_empty_phase_is_excused_only_by_a_whole_frame_after_the_bundles_last_notice(self):
         """The old-hub storm's allowance (_outline_caught_up_whole, both floors) excuses a phase with no patch and no row only
-        for a whole keyed feed frame the Outline received after the earliest the bundle's LAST notice could have been posted
-        (the change record's t0 plus the gaps between the notices) and before the window's padded end. Round 3 found the key
-        was the window: a frame at A0 + 5 ms or between notice 1 and notice 2 excused a stripped phase, though it could not have
-        carried the notices posted after it. Over a synthetic record (one Outline relay socket, one frame), by cell: before
-        the window, before the first post, between the notices, one millisecond before the last notice's earliest post (all
-        no excuse), at it, after the bundle, at the right pad's edge (all an excuse), past the pad and unkeyed (no excuse); a
-        frame on the feed page's socket counts for nothing; a phase with no change record fails rather than widening."""
+        when one of the bundle's notice posts happened while the Outline held no open relay socket that had already received
+        its first feed-family frame (the gap that could have swallowed a notice), and then only for a whole keyed feed frame
+        the Outline received after the earliest the bundle's LAST notice could have been posted (the change record's t0 plus
+        the gaps between the notices) and before the window's padded end. Round 3 found the key was the window: a frame at
+        A0 + 5 ms or between notice 1 and notice 2 excused a stripped phase, though it could not have carried the notices
+        posted after it. Round 4 found the frame alone was no key either: on the old bundle a routine redial produces a whole
+        frame after the notices were already delivered as patches, so the excuse was available in 47 of the 75 recorded phase
+        windows and a planted miss stayed green, and the cells below could not tell the keys apart, since a synthetic socket
+        with no openAt reads as never open and the gap held in every cell. Over a synthetic record, by cell: with the socket
+        recording no open, a frame before the window, before the first post, between the notices, one millisecond before the
+        last notice's earliest post (all no excuse), at it, after the bundle, at the right pad's edge (all an excuse), past
+        the pad and unkeyed (no excuse); a frame on the feed page's socket counts for nothing; a phase with no change record
+        fails rather than widening. Then the socket's state at the posts: open and served across all three posts with a
+        later frame in the window (no excuse: the 42 recorded windows the frame alone excused with their patches delivered),
+        the same socket closing after the last post with the redial's frame (no excuse), closed before the posts (an excuse:
+        the tightening kept the recorded churn's excuse), closing between notice 1 and notice 2 (an excuse), open across the
+        posts but served only after notice 2 (an excuse). And the floor the excuse guards, with the excuse frame PRESENT in
+        the record: a phase with no patch and no row whose socket was open and served across the posts reds
+        _assert_one_row_per_outline_feed_patch (the planted miss), the same with the socket closed across the posts passes
+        (the churn), and a patch with its row passes (the storm)."""
         A0 = 1_000_000
         made = {"phase": "A", "t0": A0 / 1000.0 + 0.010, "t1": A0 / 1000.0 + 2.015, "noticeKeys": ["k1", "k2", "k3"], "noticeRevs": [1, 2, 3], "notices": []}
         last_post = (made["t0"] + (L.NOTICES_PER_PHASE - 1) * L.NOTICE_GAP_S) * 1000   # the earliest the last notice's post could start
@@ -374,10 +389,12 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
         class Rec(L.LinkDropOldLocal):
             driver_error = None
 
-        def record(fleet_frames, feed_frames=()):
+        def record(fleet_frames, feed_frames=(), socks=None, rows=()):
+            outline = list(socks) if socks is not None else [{"relay": True, "frames": list(fleet_frames)}]   # no openAt: never open
             Rec.result = {"marks": {"A0": A0, "A1": A1, "end": A1 + 1}, "died": None,
-                          "pages": {"fleet": {"socks": [{"relay": True, "frames": list(fleet_frames)}]}, "feed": {"socks": [{"relay": True, "frames": list(feed_frames)}]}}}
+                          "pages": {"fleet": {"socks": outline}, "feed": {"socks": [{"relay": True, "frames": list(feed_frames)}]}}}
             Rec.changes_made = [dict(made)]
+            Rec.hub_diag_rows = list(rows)
             return Rec("test_nothing_was_asked_of_the_remote")   # an instance for the helper; the test method is never run
         for at, asks, want, why in cells:
             got = record([frame(at, asks)])._outline_caught_up_whole("A0", "A1")
@@ -388,6 +405,41 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
         Rec.changes_made = []
         with self.assertRaises(AssertionError):
             t._outline_caught_up_whole("A0", "A1")
+        # the socket's state at the three posts (A0 + 10, + 1010, + 2010 ms): the gap the excuse is keyed on
+        posts = [int((made["t0"] + i * L.NOTICE_GAP_S) * 1000) for i in range(L.NOTICES_PER_PHASE)]
+        self.assertEqual(posts, [A0 + 10, A0 + 1010, A0 + 2010], "the derived post times the cells are placed against")
+
+        def sock(i, open_at, close_at, frames):
+            return {"i": i, "relay": True, "dialedAt": open_at - 100, "openAt": open_at, "closeAt": close_at, "frames": list(frames)}
+        held = sock(0, A0 - 5000, None, [frame(A0 - 4000)])                       # open and served since before the window
+        redial = sock(1, A0 + 2500, None, [frame(A0 + 3000)])                      # the retry's socket, its whole frame after the last post
+        state_cells = [([sock(0, A0 - 5000, None, [frame(A0 - 4000), frame(A0 + 3000)])], False,
+                        "open and served across all three posts, with a later whole frame in the window (the redial after the notices were delivered)"),
+                       ([sock(0, A0 - 5000, A0 + 2500, [frame(A0 - 4000)]), sock(1, A0 + 2900, None, [frame(A0 + 3000)])], False,
+                        "open and served across all three posts, closing after the last post, the redial's frame in the window"),
+                       ([sock(0, A0 - 5000, A0 - 100, [frame(A0 - 4000)]), redial], True,
+                        "closed before the first post (every post found no open socket), the redial's frame after the last post"),
+                       ([sock(0, A0 - 5000, A0 + 500, [frame(A0 - 4000)]), redial], True,
+                        "closing between notice 1 and notice 2 (posts 2 and 3 found no open socket)"),
+                       ([sock(0, A0 - 5000, None, [frame(A0 + 1500), frame(A0 + 3000)])], True,
+                        "open across the posts but served its first frame only after notice 2 (posts 1 and 2 found it unserved)")]
+        for socks, want, why in state_cells:
+            with self.subTest(socket=why):
+                got = record([], socks=socks)._outline_caught_up_whole("A0", "A1")
+                self.assertEqual(bool(got), want, "the Outline's socket %s: a whole frame after the last post %s excuse an empty phase A: %r"
+                                 % (why, "should" if want else "must not", got))
+        # the floor the excuse guards, with the excuse frame present in the record (a whole keyed frame at A0 + 3 s, after the
+        # last post, inside the window): the planted miss reds it, the churn passes it, the storm passes it
+        with self.assertRaises(AssertionError) as cm:
+            record([], socks=[sock(0, A0 - 5000, None, [frame(A0 - 4000), frame(A0 + 3000)])])._assert_one_row_per_outline_feed_patch("A0", "A1", patches_due=True)
+        self.assertIn("neither happened", str(cm.exception), "a phase with no patch and no row whose socket was open and served across the posts is a change that "
+                                                              "reached the Outline as nothing; the later whole frame excuses nothing: %s" % cm.exception)
+        self.assertEqual(record([], socks=[held.copy() | {"closeAt": A0 - 100}, redial])._assert_one_row_per_outline_feed_patch("A0", "A1", patches_due=True), 0,
+                         "the churn: no patch and no row, the socket closed across the posts, the redial's whole frame after the last post")
+        patch = {"t": "delta", "slot": "feed", "at": A0 + 1200, "coll": ["asks"], "rev": 1, "len": 300, "restAll": False}
+        row = {"surface": "outline", "what": "delta-unapplied", "t": (A0 + 1200) // 1000, "wid": "w1", "reconnect": False, "data": {"rev": 1, "slot": "feed"}}
+        self.assertEqual(record([], socks=[sock(0, A0 - 5000, None, [frame(A0 - 4000), patch, frame(A0 + 3000)])], rows=[row])._assert_one_row_per_outline_feed_patch("A0", "A1", patches_due=True), 1,
+                         "the storm: one patch, its row, the socket open and served throughout")
 
     def test_the_margin_leg_takes_no_expired_or_unshown_wait_as_a_delivery(self):
         """The gate's control in time (_assert_the_down_window_outlasts_the_drives_slowest_delivery) reads a phase's

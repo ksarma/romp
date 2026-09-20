@@ -91,10 +91,11 @@ relay socket churned 0.7 s into phase A and its retry's whole frame absorbed all
 patches, the drive 6 / 6 by rev): one at the round-3 head, RED there on the per-phase at-least-one-patch floors of the
 storm test and the phase-A drops test with the correspondence intact; one at the 30 s dwell on 2026-09-20, red on the
 margin pin with its floors green; and one at this code the same day, green (`r5/lab-head2.log`). Those are the data
-behind the churn-keyed allowance (_outline_caught_up_whole: an empty phase is excused only by a whole keyed feed frame
-the Outline received there after the bundle's last notice could have been posted; all three frames came about 0.8 s
-after that, 2.87, 2.83 and 2.86 s into phase A against a last notice posted from 2.01 s, so all three are green on the
-floors under it). The population is counted as of that last drive, since any later drive can add either shape: the
+behind the churn-keyed allowance (_outline_caught_up_whole: an empty phase is excused only when one of its notice posts
+found the Outline holding no open relay socket that had received its first feed-family frame, and then only by a whole
+keyed feed frame the Outline received there after the bundle's last notice could have been posted; in all three the
+socket closed 0.7 s into phase A, before the posts, and the frames came about 0.8 s after the last, 2.87, 2.83 and 2.86 s
+into phase A against a last notice posted from 2.01 s, so all three are green on the floors under it). The population is counted as of that last drive, since any later drive can add either shape: the
 builder's cache then held 18 old-hub records of the unmutated module (the builder's earlier drives at three pre-PR
 vintages among them, two with a hand-built old hub), 15 at 3 / 0 / 3 / 3 and those 3 at 0 / 0 / 3 / 3, and the
 reviewers' further drives at round 1's head gave 3 / 0 / 3 / 3 (the per-window table over the report JSONs outside the
@@ -1127,36 +1128,63 @@ class _LinkDrop(unittest.TestCase):
             frames = [f for f in frames if t0 <= f["at"] <= t1]
         return frames
 
+    def _outline_served_at(self, socks, t_ms):
+        """Whether at t_ms (the browser's clock, the hook's stamps) one of the sockets was OPEN and already SERVED: its openAt at
+        or before t_ms, its closeAt None or at or after t_ms, and its first feed-family frame (_first_feed_family) at or before
+        t_ms. A socket with no openAt never opened (a churn's dial that never connected; a synthetic socket recording no open)
+        and serves nothing: that reading is deliberate, a frame on a socket that never opened is not a frame the page held."""
+        for s in socks:
+            if s.get("openAt") and s["openAt"] <= t_ms and (s.get("closeAt") is None or s["closeAt"] >= t_ms):
+                first = self._first_feed_family(s)
+                if first and first["at"] <= t_ms:
+                    return True
+        return False
+
     def _outline_caught_up_whole(self, k0, k1, slack_s=1.5):
-        """The whole keyed feed frames that reached the Outline's relay sockets AFTER the phase's bundle could have been posted
-        whole and before k1 + slack_s: the old bundle's socket churn (its relay socket closes every few seconds, the 2 s retry
-        redials, the remote serves the new socket a whole frame), whose whole frame absorbs the notices posted while the
-        socket was down, so that phase's change crosses as no patch and files no row. The distinguishing datum an empty
-        window needs (round 2's ruling on correctness-1: the allowance is keyed on this EVENT, read from the hook's frames,
-        never a dropped requirement). The key is a frame after the bundle's LAST notice, not a frame in the window: the left
-        edge is the later of the window's mark and the earliest the last notice's post could have started (the phase's
-        change record's t0 plus the gaps between the notices, _change's own timing), because a frame before that carries at
-        most the earlier notices and cannot explain the later ones reaching the Outline as nothing (round 3: a frame anywhere
-        in the window's first two seconds excused a stripped phase). No pad on that edge, on purpose: the ready-time whole
-        frame before A0 must not excuse an empty phase A; the right pad is _rows_in's, for a retry's frame landing just past
-        the settle. The phase's change record must exist (the window is a phase's), else this fails rather than widening."""
+        """The excuse for an empty phase window, keyed on the GAP that could have swallowed the notices and then on the frame
+        that caught the page up: the whole keyed feed frames that reached the Outline's relay sockets after the bundle's LAST
+        notice could have been posted and before k1 + slack_s, returned ONLY when at least one of the phase's notice posts
+        happened while the Outline held no open relay socket that had already received its first feed-family frame
+        (_outline_served_at at each derived post time; every post served means nothing could have swallowed a notice, so no
+        later frame excuses the window). The mechanism excused: the old bundle's socket churn (its relay socket closes every
+        few seconds, the 2 s retry redials, the remote serves the new socket a whole frame), whose whole frame absorbs the
+        notices posted while the socket was down, so that phase's change crosses as no patch and files no row. The
+        distinguishing datum an empty window needs (round 2's ruling on correctness-1: the allowance is keyed on this EVENT,
+        read from the hook's frames, never a dropped requirement). Round 4 added the gap because the frame alone was no key:
+        on the old bundle a routine redial produces a whole frame after the phase's notices were already delivered as
+        patches, so the frame-only excuse was available in 47 of the 75 phase windows (A, B, C) over the 25 unmutated
+        old-hub records in the builder's cache as of the drive at `r6-margin/lab-head5.log` (2026-09-20; `python3
+        population6.py old | xargs python3 excuse_census.py <tests_dir>`, this helper over each record's windows, outside the
+        repo), load-bearing in 5, and a planted gating miss (a phase's patches and rows removed from the record) stayed green
+        at both floors; keyed on the gap it is available in 5 of those 75, the phase-A windows of the five drives whose
+        Outline socket churned inside phase A (the same command at this module), and the planted miss reds. The post times
+        are DERIVED from the change record (its t0 plus i x NOTICE_GAP_S, _change's own timing), not recorded per notice. The
+        frame key is after the bundle's last notice, not in the window: the left edge is the later of the window's mark and
+        the earliest the last notice's post could have started, because a frame before that carries at most the earlier
+        notices and cannot explain the later ones reaching the Outline as nothing (round 3: a frame anywhere in the window's
+        first two seconds excused a stripped phase). No pad on that edge, on purpose: the ready-time whole frame before A0
+        must not excuse an empty phase A; the right pad is _rows_in's, for a retry's frame landing just past the settle. The
+        phase's change record must exist (the window is a phase's), else this fails rather than widening."""
         m = self._marks()
         made = [c for c in self.changes_made if c.get("phase") == k0[0]]   # the phase's bundle, by the mark's letter (A0 -> A)
-        self.assertEqual(len(made), 1, "the control door made phase %s's change bundle once (the allowance is keyed on its last notice): %r"
+        self.assertEqual(len(made), 1, "the control door made phase %s's change bundle once (the allowance is keyed on its posts): %r"
                          % (k0[0], [c.get("phase") for c in self.changes_made]))
-        last_post_ms = (made[0]["t0"] + (NOTICES_PER_PHASE - 1) * NOTICE_GAP_S) * 1000
-        t0, t1 = max(m[k0], last_post_ms), m[k1] + slack_s * 1000
-        return [f for s in self._page("fleet")["socks"] if s["relay"] for f in s["frames"]
-                if f["t"] == "feed" and f.get("asks") is not None and t0 <= f["at"] <= t1]
+        posts_ms = [(made[0]["t0"] + i * NOTICE_GAP_S) * 1000 for i in range(NOTICES_PER_PHASE)]
+        socks = [s for s in self._page("fleet")["socks"] if s["relay"]]
+        if all(self._outline_served_at(socks, t) for t in posts_ms):
+            return []   # every post found the Outline on an open, served socket: no gap, so no frame excuses the window
+        t0, t1 = max(m[k0], posts_ms[-1]), m[k1] + slack_s * 1000
+        return [f for s in socks for f in s["frames"] if f["t"] == "feed" and f.get("asks") is not None and t0 <= f["at"] <= t1]
 
     def _assert_one_row_per_outline_feed_patch(self, k0=None, k1=None, patches_due=True, attach_after=None):
         """The old bundle's storm as an invariant, not a count: in the window (padded on both sides as _rows_in pads,
         the whole drive without marks) the outline/delta-unapplied rows correspond one to one, by rev, with the feed
         slot patches the Outline's own relay sockets received there, and every such row names the feed slot. With
-        patches_due the window must hold at least one patch OR a whole keyed feed frame the Outline received there after the
-        bundle's last notice could have been posted (_outline_caught_up_whole: a churned socket's retry absorbs the notices
-        into one whole frame and files no row, so a count is one drive's, and a window with neither a patch nor such a frame
-        is a change that reached the Outline as nothing, not the storm); without, both sides are empty. With attach_after (a mark) the return window's allowance
+        patches_due the window must hold at least one patch OR the churn excuse (_outline_caught_up_whole: a notice post found
+        the Outline without an open, served relay socket AND a whole keyed feed frame reached it there after the bundle's last
+        notice could have been posted: a churned socket's retry absorbs the notices into one whole frame and files no row, so
+        a count is one drive's, and a window with neither a patch nor that excuse is a change that reached the Outline as
+        nothing, not the storm); without, both sides are empty. With attach_after (a mark) the return window's allowance
         reaches into this window's right pad: a card-less feed-family patch at or after that mark is the connect push's
         ledgers attach, by design and with no card in it, and it and the row the old bundle files for it (matched by rev
         over the drive's attaches, _attach_revs_since) are the return's, not this window's. Returns the row count, for
@@ -1178,10 +1206,11 @@ class _LinkDrop(unittest.TestCase):
                          % (where, [(d.get("slot"), d.get("rev")) for d in rows], [(f.get("rev"), f["at"]) for f in patches]))
         if patches_due:
             wholes = self._outline_caught_up_whole(k0, k1) if k0 and k1 else []
-            self.assertTrue(patches or wholes, "the Outline received a feed slot patch in %s (the storm has a patch to file a row for), or a whole keyed feed "
-                                               "frame caught it up there after the bundle's last notice could have been posted (the old bundle's socket churn: the "
-                                               "retry's whole frame absorbs the notices posted while the socket was down, so no patch and no row; a frame before "
-                                               "the last notice explains nothing); neither happened" % where)
+            self.assertTrue(patches or wholes, "the Outline received a feed slot patch in %s (the storm has a patch to file a row for), or a notice post found "
+                                               "it without an open, served relay socket and a whole keyed feed frame caught it up there after the bundle's last "
+                                               "notice could have been posted (the old bundle's socket churn: the retry's whole frame absorbs the notices posted "
+                                               "while the socket was down, so no patch and no row; a frame before the last notice explains nothing, and a frame "
+                                               "while every post found an open, served socket explains nothing); neither happened" % where)
         else:
             self.assertEqual(patches, [], "no feed slot patch reached the Outline in %s: %r" % (where, patches))
         return len(rows)
@@ -1535,10 +1564,10 @@ class LinkDropOldLocal(_LinkDrop):
     the gate), and it RESUMES after each redial's whole frame (the whole
     frame catches the page up once; the next patch freezes again). The class pins the correspondence, not a count: per
     window and over the whole drive, the rows equal the Outline's own feed slot patches by rev, non-empty in every
-    phase unless a whole keyed feed frame caught the Outline up inside it after the bundle's last notice could have been
-    posted (the old bundle's socket churn absorbing the phase's notices: no patch, so no row; the allowance is keyed on that
-    frame, _outline_caught_up_whole) and empty
-    while the link was down. One drive's count on the bundle at 01d4fbe43 (2026-09-19, the round-2
+    phase unless a notice post found the Outline without an open, served relay socket and a whole keyed feed frame then
+    caught it up inside the phase after the bundle's last notice could have been posted (the old bundle's socket churn
+    absorbing the phase's notices: no patch, so no row; the allowance is keyed on that gap and that frame,
+    _outline_caught_up_whole) and empty while the link was down. One drive's count on the bundle at 01d4fbe43 (2026-09-19, the round-2
     head): 3 / 0 / 3 / 3 across phase A, the link down, phase B and phase C; a reviewer's drive at round 1's head gave
     3 / 0 / 1 / 3 when socket churn inside phase B absorbed two notices into whole frames (the module docstring gives
     the recorded population). A relay redial does not end the storm but restarts it, so with a link that comes and goes
@@ -1604,9 +1633,10 @@ class LinkDropOldLocal(_LinkDrop):
         A = self._rows_in("A0", "A1")
         ua = self._outline_unapplied(A)
         self.assertTrue(len(ua) >= 1 or self._outline_caught_up_whole("A0", "A1"),
-                        "the old Outline filed a delta-unapplied row for the remote feed patches in phase A, or a whole keyed feed frame caught it up "
-                        "there after the bundle's last notice could have been posted (the old bundle's socket churn absorbing the notices; a frame before "
-                        "that, the ready-time frame included, does not count); rows by kind: %r"
+                        "the old Outline filed a delta-unapplied row for the remote feed patches in phase A, or a notice post found it without an open, "
+                        "served relay socket and a whole keyed feed frame caught it up there after the bundle's last notice could have been posted (the "
+                        "old bundle's socket churn absorbing the notices; a frame before that, the ready-time frame included, does not count, nor does "
+                        "one while every post found an open, served socket); rows by kind: %r"
                         % (self._rows_by_kind(A),))
         self.assertTrue(all((d or {}).get("slot") == "feed" for d in ua), "…each naming the feed slot: %r" % (ua,))
         self.assertTrue(self._sends("fleet", "local", "needSlot"), "…and posted its needSlot to the LOCAL kernel")
