@@ -2282,10 +2282,13 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // file-print.test.ts's census over this file's seats fails. Its default refuses: it reads every `body` token in this file,
   // resolves a seating call's roots and refuses every token it cannot class (a computed name, a bare read of a seating method, a
   // call, bind or apply on one, a member it has not seen, an alias, a parenthesised or cast receiver, a helper handed the
-  // body that its BODY_HANDED_TO list does not name), and it reads every seat in this file on any other receiver (a seating
-  // call, an innerHTML or outerHTML assignment) and refuses each whose site (function, receiver, form) its SEATS_READ_BY_HAND
-  // table does not list, whatever produced the receiver. Seat the body here by its name; a helper that takes the body, and a
-  // seat on another receiver, are read by hand and listed there before the census passes them. The flow hands the keyboard through takeKeyboard when
+  // body that its BODY_HANDED_TO list does not name), and it reads every member call in this file on any other receiver: a
+  // seat (a seating call, an innerHTML or outerHTML assignment) or a call it reads by its site (call, apply, bind, mount,
+  // render, a reflection global's method) is refused unless its site (function, receiver, form, the receiver's binding) is
+  // in its SEATS_READ_BY_HAND table, whatever produced the receiver, and a method by a name it has not listed, a seating
+  // method read without being called and a member stored under a computed name are refused too. Seat the body here by its
+  // name; a helper that takes the body, a seat on another receiver and a method by a new name are read by hand and listed
+  // there before the census passes them. The flow hands the keyboard through takeKeyboard when
   // the body goes out while a word button of its line holds it (dropDiskBar's hand-over), since its button is not enabled
   // then.
   const print = installFilePrint({ card: box, bar, body, typing: typingHere, onClose: (cb) => { closeHooks.push(cb); },

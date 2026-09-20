@@ -8282,14 +8282,23 @@ viewer's helpers that take the body; one whose own parameter is named `body` has
 viewer's own, and the census holds its declaration to that name); and EVERY OTHER `body` TOKEN FAILS the census with its
 line: an alias (`const b = body`), a return, an arrow's value, an array element, a ternary or logical operand, a
 parenthesised or cast receiver (`(body).append(x)`), an argument to a callee it does not list. The file is then read a
-SECOND time, by the compiler's tree, for every seat on ANY receiver (a call of `append`, `prepend`, `appendChild`,
-`insertBefore`, `replaceChildren`, `insertAdjacentElement`, `replaceWith`, `after`, `before`, `replaceChild` or
-`insertAdjacentHTML`, and an assignment to `innerHTML` or `outerHTML`): a seat whose receiver is the `body` token was the
-first read's; every other seat passes only as a site the census lists by hand (`SEATS_READ_BY_HAND`: the enclosing
-function, the receiver's spelling and the form, with what the receiver is and so why its seat lands no child in the
-body) and FAILS with its line otherwise, whatever produced the receiver; a listed site the source no longer has fails
-too, so the table holds the live sites and nothing more; and a call through a computed name (`x["append"](...)`) fails
-wherever it stands. The derived set is printed with its lines as a
+SECOND time, by the compiler's tree, for every seat on ANY receiver and for every other member call, classed by the
+member's NAME (the round-6 review's census-1, 2026-09-20: the form axis is an allowlist too): a seat is a call of a
+seating method (`append`, `prepend`, `appendChild`, `insertBefore`, `replaceChildren`, `insertAdjacentElement`,
+`replaceWith`, `after`, `before`, `replaceChild`, `insertAdjacentHTML`, a range's `insertNode` and `surroundContents`,
+`setHTMLUnsafe`, `moveBefore`, `write`, `writeln`) or an assignment to `innerHTML` or `outerHTML`; a `call`, `apply` or
+`bind`, a `mount` or `render`, and any method of `Object`, `Reflect` or `Function` is a call read by its site; a method by
+a name the census lists as seating nothing passes; and a method by any other name fails with its line. A seat whose
+receiver is the `body` token was the first read's; every other seat and every site-read call passes only as a site the
+census lists by hand (`SEATS_READ_BY_HAND`: the enclosing function, the receiver's spelling and the form, with what the
+receiver is and so why its seat lands no child in the body, and the declaration a bare receiver name is bound to, so an
+entry reads ONE binding and a second declaration of a listed name inside the entry's function fails with its line rather
+than passing under the entry's claim, the round-6 review's census-2) and FAILS with its line otherwise, whatever produced
+the receiver; a seating or site-read method read without being called (`md.append.call(md, x)`, `Reflect.apply(md.append,
+...)`, a bound seat, `const f = md.append`) fails with its line; a member read by a computed name and stored (`const f =
+md[m]`) passes only as a site listed (`INDEX_READS_BY_HAND`); a listed site the source no longer has fails too, so the
+tables hold the live sites and nothing more; a call through a computed name (`x["append"](...)`) fails wherever it
+stands; and a call whose callee is neither a name nor a member fails. The derived set is printed with its lines as a
 diagnostic, held equal to the three lists, and `bodyReady` is executed over each root as its list says, over an unlisted
 child alone and beside every content root (not in), and under the PDF kind over each wait and line root (the loader
 alone in, the rest not). A root the viewer gains fails the census until it is listed, a `body` token the census
@@ -8325,9 +8334,17 @@ and refuses everything else, every seat in file-view.ts was read by hand and lis
 table equal to the live sites rather than to a number; the commit that landed the inversion states the counts of its
 read), a listed site the source loses reds, and the mutant case plants each of the six forms, a parent held in a variable, `closest`,
 `getRootNode`, a computed-name call, a seat on an unlisted receiver by each seating form, a removed entry, a stale entry
-and a renamed ctx declaration and reads the census red with the planted line (FAILS BEFORE in its title). What the
-census cannot see is what a listed site's receiver is and what a listed callee does with the body: both are read by
-hand when listed, never derived. Today the census derives nine roots:
+and a renamed ctx declaration and reads the census red with the planted line (FAILS BEFORE in its title). Before the
+round-6 review (2026-09-20) that inversion stood on the receiver axis alone: the second read knew a closed list of
+eleven seating names and two assignments and passed every other form on a receiver other than the `body` token, so a
+seating method reached through `call`, `bind` or `apply`, through `Reflect.apply` or as a bound function, a range's
+`insertNode`, `setHTMLUnsafe` and `moveBefore` seated with no refusal and no root, an entry keyed on a receiver's
+spelling covered a second binding of the same name in the same function, and a spread into a `body` seat made the
+resolver throw with no line, while this record, the census's header, the READY_ROOTS comment and the install comment
+said every other seat failed; the form axis now passes a listed name and refuses every other with its line, each entry
+names its binding, the resolver's failure is a refusal with the line, and the mutant case plants each of those forms.
+What the census cannot see is what a listed site's receiver is, what a listed callee does with the body and what a
+listed method does by its name: each is read by hand when listed, never derived. Today the census derives nine roots:
 `div.fileview-md`, `div.fileview-code`,
 `div.fileview-imgbox`, `div.fileview-pdffall`, `div.fileview-pdfhost`, `div.fileview-cm`, `div.fileview-load`,
 `textarea.fileview-editor` and `div.fileview-err`.

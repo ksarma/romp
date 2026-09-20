@@ -722,9 +722,13 @@ function elementChildren(body: BodyLike): BodyChild[] {
  *  seat in the viewer's source, read by file-print.test.ts's census with its default refusing (the rule, not a roster of
  *  method names; the round-5 review, 2026-09-20): a seat whose receiver is the `body` token has each seated argument read
  *  down to the `el("<tag>", "<class>")` that builds it; a seat on ANY OTHER receiver (a seating call, an innerHTML or
- *  outerHTML assignment) passes only as a site the census lists by hand (its function, receiver and form, with what the
- *  receiver is), and every other seat fails the census with its line, whatever produced the receiver (a query result's
- *  parent, a stored query result, `md.parentElement`, a variable, `closest`, `getRootNode`, an alias); on the `body` token
+ *  outerHTML assignment) passes only as a site the census lists by hand (its function, receiver, form and the receiver's
+ *  binding, with what the receiver is), every other method call passes only by a name the census lists, as read by its
+ *  site (call, apply, bind, mount, render, a reflection global's method: a listed site too) or as seating nothing, and
+ *  every other seat, every other method name, a seating method read without being called and a member stored under a
+ *  computed name fail the census with its line, whatever produced the receiver (a query result's parent, a stored query
+ *  result, `md.parentElement`, a variable, `closest`, `getRootNode`, an alias, a range's `insertNode`, `Reflect.apply`,
+ *  a second binding of a listed name; the round-6 review, 2026-09-20); on the `body` token
  *  a call, an assignment, a further access or a bare read the census lists as seating nothing passes, a bare `body` passes
  *  as a declaration, a parameter, a property key, a comparison operand, the action-context accessor at its one declared
  *  site (`body: () => body` inside `const ctx: FileViewActionCtx = {`) or an argument to a callee the census lists as read
@@ -737,7 +741,9 @@ function elementChildren(body: BodyLike): BodyChild[] {
  *  it had not seen, the permissive side for a print button; the round-4 review, 2026-09-20: this comment named three method
  *  names as the sites, a roster the census itself had outgrown; the round-5 fix: the census read member accesses on the
  *  token alone, so a parenthesised receiver or an alias seated unseen; the round-5 review: the census refused a closed list
- *  of dangerous forms and passed every other seat unread, so a seat through a query result's parent seated unseen). */
+ *  of dangerous forms and passed every other seat unread, so a seat through a query result's parent seated unseen; the
+ *  round-6 review: the second read knew a closed list of seating names, so a seat by any other name or through call, bind
+ *  or apply on another receiver passed unread). */
 export const READY_ROOTS: readonly string[] = ["div.fileview-md", "div.fileview-code", "div.fileview-imgbox", "div.fileview-pdffall", "div.fileview-pdfhost", "div.fileview-cm"];
 export const NOT_READY_ROOTS: readonly string[] = ["div.fileview-load", "textarea.fileview-editor"];
 export const LINE_ROOTS: readonly string[] = ["div.fileview-err"];
