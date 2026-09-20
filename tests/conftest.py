@@ -508,20 +508,21 @@ def restore_env(name, prior):
 # over its 316 at the base, found these 4 modules red and 1 unrelated pre-existing red
 # (tests/test_sdk_rate_limit_usage.py: an unrestored ROMP_SERVE_TOKEN setdefault that
 # _shared_state_restored's environment check names, identical with this fixture off and byte-identical at
-# the base); at this head every one of the 364 is green alone except that one. The full-suite census saw
+# the base); the sweep repeated over all 364 after the fixes (2026-09-19) was green alone except that one. The
+# full-suite census saw
 # none of the five: an earlier first builder in every worker made their builds cache hits. A green suite run
 # is therefore no evidence a module is clean; the module-alone sweep is the measurement, and the review
 # round that found the four ran the modules that way.
 # THE ROAD EACH FIGURE WAS TAKEN ON, since the two families came from opposite roads. Every module-alone
-# figure above (the 316-module first sweep, the 364-module sweep and "every one of the 364 is green alone",
-# and the per-module triage counts behind them) was taken module alone, on the missing road, which is CI's:
+# figure above (the 316-module first sweep, the 364-module sweep repeated after the fixes, and the per-module
+# triage counts behind them) was taken module alone, on the missing road, which is CI's:
 # the test venv's interpreter has no claude_agent_sdk, and a module run alone does not import
 # tests/test_host_transport.py; that module is the one exception in the union, since it puts the venv on
 # sys.path itself. Every full-run figure above (the two full -n 4 census runs and their 237-module set, and
 # "the full-suite census saw none of the five") was taken on the SDK-importable road: when claude_agent_sdk
 # is not importable, tests/test_host_transport.py puts the box's SDK venv on sys.path at import, and every
 # xdist worker imports every collected module, so a full run here takes that road; CI never does (its install
-# has no SDK), and the green CI run at the round-3 head is the missing-road full-suite datum. The figures in
+# has no SDK), and a green CI run of the suite is the missing-road full-suite datum. The figures in
 # this fixture's own tests (tests/test_sdk_singleton_ratchet.py) carry no inherited road: each scratch head
 # forces its road.
 #
