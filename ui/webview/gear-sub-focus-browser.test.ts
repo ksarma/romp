@@ -438,7 +438,7 @@ test("ROMP_GEAR_BROWSER_REQUIRE turns the browser legs' skip into a failure that
   }
 });
 
-test("the degradation on an engine without :has(), modelled: with every :has() rule removed from the sheet (such an engine drops a rule it cannot parse whole) a hover still shows the row's description and a keyboard focus shows nothing, the keyboard road alone lost; before the split of the show rule nothing showed on either road", { timeout: 90000 }, async (t) => {
+test("the degradation on an engine without :has(), modelled: with every :has() rule removed from the sheet (such an engine drops a rule it cannot parse whole) a hover still shows the row's description and a keyboard focus shows nothing, the keyboard road alone lost; before the split of the show rule nothing showed on either road; and the Fast mode BOX loses its own pointer road too: a hover on the box shows the row's description, the box's own by no road", { timeout: 120000 }, async (t) => {
   // the surface the three-engine matrix excludes (the maintainer's round 5, ui-3): Chromium 151, Firefox 153 and WebKit 26.5 all
   // parse :has(), so the engine without it is modelled, not installed: the sheet an engine without :has() applies is this sheet
   // less every rule whose selector list carries it, driven in the browser at hand
@@ -465,6 +465,31 @@ test("the degradation on an engine without :has(), modelled: with every :has() r
   }, 320, {}, noHas);
   // the mechanism behind the reading: the pointer half is a rule of its own and holds no :has(), so the model keeps it
   assert.ok(kept.some((r) => r.selector === "#rsettings .rs-row:hover .rs-sub, #rsettings .rs-widget:hover .rs-sub"), "the show rule's pointer half stands in the model (it holds no :has())");
+  // the one road a ROW does not lose but the BOX does (the author's fixer pass after round 5, exclusions-2): the box's show
+  // rule needs :has() and is gone with it, while the plain stand-down that hides the box's description under a hovered row
+  // survives, so a hover on the box shows the ROW's description where the box's stood, and the box's own text is reachable by no
+  // road there (a Tab shows nothing, as on every host); the sheet states this beside the split
+  assert.ok(kept.some((r) => r.selector === "#rsettings .rs-row:hover .rs-fastin .rs-sub" && r.block === "display: none;"), "the rig: the plain stand-down over the box's description under a hovered row survives the model");
+  assert.equal(kept.filter((r) => / \.rs-fastin \.rs-sub$/.test(r.selector) && r.block === "display: block;").length, 0, "the rig: no rule showing the box's description survives (both were :has() rules)");
+  await withGear(t, "tasks", async (page, errors) => {
+    const readBox = () => page.evaluate(() => {
+      const box = document.getElementById("rs-judgefast")!, wrap = box.closest(".rs-fastin") as HTMLElement, row = box.closest("#rsettings .rs-row") as HTMLElement;
+      const rowSub = (Array.from(row.querySelectorAll(".rs-sub")) as HTMLElement[]).find((el) => el.closest("#rsettings .rs-fastin, #rsettings .rs-row") === row)!;
+      return { boxHovered: wrap.matches(":hover"), focused: document.activeElement === box, boxDisplay: getComputedStyle(document.getElementById("rs-judgefast-sub")!).display, rowDisplay: getComputedStyle(rowSub).display };
+    });
+    await hoverOn(page, "#rs-judgefast-wrap");
+    const on = await readBox();
+    assert.equal(on.boxHovered, true, "the rig: the pointer is on the Fast mode box");
+    assert.equal(on.rowDisplay, "block", "a hover on the box shows the ROW's description there (the box's show rule went with :has(), the row's hover rule stands)");
+    assert.equal(on.boxDisplay, "none", "and not the box's own: the plain stand-down under a hovered row survives, so the box's pointer road is the one pointer road this sheet loses without :has()");
+    assert.equal((await shownPanel(page)).shown.length, 1, "one description shown, the row's");
+    await page.mouse.move(5, 5);
+    const tab = await tabInto(page, "rs-judgefast");
+    assert.equal(tab.landed && tab.focusVisible, true, "the rig: a real keyboard focus in the box");
+    const tabbed = await readBox();
+    assert.equal(tabbed.boxDisplay === "none" && tabbed.rowDisplay === "none", true, "and a Tab into the box shows nothing: the box's own text is reachable by no road on such an engine " + JSON.stringify(tabbed));
+    assert.deepEqual(errors, [], "no page error");
+  }, 320, {}, noHas);
 });
 
 test("a Tab into a Fast mode box shows one description in its row, the BOX's own, the row's standing down, as a hover on the box does", { timeout: 90000 }, async (t) => {
