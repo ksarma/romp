@@ -4239,7 +4239,129 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
   // of plans/file-review.md: one holding an inline start tag with no end tag in it (`## Results <b>`), which the rule
   // above renders as literal text, so the slug takes the tag's characters too (md-results-b), where GitHub reads the
   // tag as HTML (results).
-  box.replaceChildren(...Array.from(sanitizeMd(dirty, mintHeadingIds).childNodes));
+  const clean = sanitizeMd(dirty, mintHeadingIds);   // the sanitized <body>: DOMPurify's own document's, which never loads (below)
+  // Fenced blocks: highlight only a language the fence NAMES and this bundle registers (the same no-guessing rule as
+  // langFor; an unnamed block stays plain rather than being painted at random). Then, for EVERY fence, named or not, the
+  // chat's own dress (code-block.ts): the per-line rows that number the lines and make a soft-wrap read distinctly from a
+  // real newline, and the Copy button. Copy copies the fence's text AS THE FILE HOLDS IT (fence-source.ts, off the code
+  // tokens the parse collected): the raw text captured here is read before the rows drop the newlines, but after marked's
+  // lexer turned the file's leading tabs into four spaces each, so a Makefile recipe copied from the rendered text pasted
+  // back with spaces; a fence the module does not find in the file copies the raw text as before.
+  // The math fill's source fallback (a code element wearing md-math-src, math.ts; spelled, not imported, since this module
+  // carries no KaTeX) is not code: it keeps the Copy button and nothing else, as in the chat's highlight().
+  // The pass runs HERE, on the sanitizer's body, before the figure chain below (2026-09-20), because it is the one pass that
+  // re-parses markup: wrapCodeLines (code-block.ts) serializes each code element through innerHTML and parses it back, and its
+  // line splitter carries only <span> tags across a newline, so an author's raw multi-line fence `<pre><code><svg>` / `<image
+  // src="...">` / `</svg></code></pre>` comes back with the image outside its svg, where the HTML parser makes it an HTML <img>.
+  // The chain reads src and srcset on an img and never on an svg image (figure-gate.ts FETCH_ATTRS.image is href and xlink:href),
+  // so with this pass after the adoption the img was created in the live document after the chain had judged the svg, and its src
+  // or srcset fetched from the unlisted host in Chromium, Firefox and WebKit with no click (the fourth scene of
+  // file-view-figures-gate-adopt-browser.test.ts: red with this pass over `box` after the adoption, green here, measured
+  // 2026-09-20). Before the chain, the chain judges what the re-parse created, once; a placeholder placed before this pass was
+  // repeated by the line splitter, three for one gated svg. What the re-parse in body makes of every element the sanitizer keeps
+  // inside an svg, and which of those fetch, is the namespace table under "The fence hole" in the plan section the chain block
+  // names: `image` alone becomes a fetching element the chain judges through other attributes (an HTML img, src and srcset); a
+  // nested `svg` stays an svg, its paint references judged by paintRefs. The same move corrected a second product of the re-parse:
+  // an svg <a xlink:href> split across lines in such a fence comes back an HTML <a> whose xlink:href is a plain attribute, and
+  // under the old order that anchor was followable for the reason the image leaked, the fold below (`a[*|href]`) and
+  // linkMarkdownAnchors having stamped href and class on the svg anchor before the re-parse copied them into the HTML <a> it made;
+  // judged after the re-parse it has no href and still carries the plain xlink:href, which the fold below (`a[*|href]`, a
+  // namespaced match) does not select, and linkMarkdownAnchors (file-view-links.ts) marks it dead (fv-dead, the title saying why)
+  // whether or not the author gave it an id or a name: the module exempts an href-less anchor target (an author's name or id,
+  // never a link) from the dead dressing, and the split anchor with an author's id sat in that exemption unclassed and untitled,
+  // painted in the link ink by the sheet's bare `.fileview-md a` rule and doing nothing on a click, a silent dead link in the
+  // three engines (the fork PR review's round 2, findings correctness-2, extra7-1 and tests-4, 2026-09-20; the mark is keyed on
+  // that attribute and not on the fence, so an author's HTML anchor spelled with xlink:href in prose, which the sanitizer keeps
+  // with the attribute plain and no href, is marked too, and the exemption for a target carrying no xlink:href is unchanged; the
+  // sixth case of the same leg holds the three shapes, red for the id-bearing one at the head before the mark), so a link inside a
+  // code fence stopped being live and says so, which is what every other link inside a fenced code block already does, its markup
+  // shown as text; an svg anchor on one line keeps its namespace and folds as before (measured 2026-09-20 in the three engines by
+  // the fork PR review's verification, at the moved head and at a copy with the pass moved back). The Copy button (code-block.ts
+  // addCopyBtn) is created in the live document, appended into this body's <pre> and adopted with it below; its listeners ride
+  // both adoptions, and the same leg clicks each fence's button for real in the three engines.
+  const copySources = fenceCopyQueue(text, fences);
+  clean.querySelectorAll("pre code").forEach((node) => {
+    const codeEl = node as HTMLElement;
+    const raw = codeEl.textContent || "";
+    const pre = codeEl.parentElement;
+    const host = pre && pre.tagName === "PRE" ? pre : null;
+    if (codeEl.classList.contains("md-math-src")) { if (host) addCopyBtn(host, raw); return; }
+    const queued = copySources.get(raw);
+    const toCopy = (queued && queued.length ? queued.shift() : null) ?? raw;
+    const lang = (codeEl.className.match(/language-([\w-]+)/) || [])[1];
+    if (lang && hljs.getLanguage(lang)) {
+      try {
+        codeEl.innerHTML = hljs.highlight(raw, { language: lang }).value;
+        codeEl.classList.add("hljs");
+      } catch { /* leave plain */ }
+    }
+    wrapCodeLines(codeEl);
+    if (host) addCopyBtn(host, toCopy);
+  });
+  // The figure chain runs HERE, on the sanitizer's body, BEFORE its nodes are adopted into `box` (2026-09-20). That body is
+  // DOMPurify's (md-sanitize.ts sanitizeMd, RETURN_DOM): its _initDocument parses the markup with `new
+  // DOMParser().parseFromString`, or into `implementation.createDocument` when that fails, and either document has no
+  // browsing context (`defaultView` is null), so nothing in it loads whatever attributes its elements carry; the math fill
+  // has always run there. `box` is the LIVE document's, and WebKit starts an <img>'s fetch synchronously the moment the
+  // element's node document becomes one with a render tree (adoption is enough; a place in the tree is not needed), so
+  // with the chain after the adoption the bytes had left for the unlisted host by the time the gate's placeholder said
+  // "Click to load", and a figure of the file's folder was requested against the PAGE, as the attribute read before
+  // rewriteFigureSrcs repointed it, and then again through /file. In Chromium and Firefox the servers' logs held no line
+  // for either of those <img> figures before the chain ran (measured at the base, 2026-09-20, by the first leg named
+  // below). An inline svg's <image> is loaded by another path, and there the gate held in Chromium alone: Firefox requested
+  // a gated svg image, in either spelling, while its placeholder stood when the chain's work between the adoption and that
+  // element's strip was long (the second leg's 3000-paragraph note, both figures, 3 of 3 runs; 400 plain paragraphs, 1 of 3;
+  // every count is under "Run counts, the svg vectors" in the plan section named below; measured at the base by the second leg
+  // named below), and WebKit requested the `xlink:href` spelling in every run and the `href` spelling in none. So the
+  // kernel-served pages (the dashboard, in Safari and in Firefox, and the iOS web app, which is the same page in Safari's
+  // engine) were reachable, the VS Code panes not (their CSP names no remote img-src; found by the review of the
+  // link-navigation follow-on, 2026-09-20; file-view-figures-gate-adopt-browser.test.ts, an HTML img in three scenes and the
+  // fence re-parse in a fourth, and file-view-figures-gate-adopt-svg-browser.test.ts, two inline svg images at the end of a
+  // long note, read real servers' request logs in all three engines, and file-view-figures-gate-adopt.test.ts executes this
+  // order under plain node, where those legs skip; the section "Fix: the gate before adoption (2026-09-20)" of
+  // plans/markdown-viewer.md records the hole, the instrument and the scope). The rule this block keeps: every pass of mdBlock
+  // that sets, repoints, moves or creates a fetching element runs before the adoption (the hooks renderBody runs after mdBlock
+  // returns wrap, move or label elements the chain has judged, inside the live document, and set no fetching attribute; the plan
+  // section names them). The fence pass (above) is the one pass
+  // that re-parses markup, so it runs before this block and this block judges what its re-parse creates (its comment says
+  // what that is). The passes after the adoption write a video's style, a list item's class, anchors' attributes (class,
+  // title, data-*, target, rel, tabindex, role, an href set, resolved or removed) and new anchors and spans in place of the
+  // prose's and the code blocks' text nodes, and none re-parses: after the adoption line this function, and every module a pass
+  // after it reaches (the callees' modules and their imports, derived from the code), holds no write of innerHTML or outerHTML
+  // and no insertAdjacentHTML, insertAdjacentElement, createContextualFragment, DOMParser, document.write, setHTML,
+  // setHTMLUnsafe, parseHTMLUnsafe or template element; file-view-seam.test.ts derives that population from the
+  // comment-stripped code (its RE_PARSE pattern) and pins it, so a new such site after the adoption is red there until it is
+  // judged.
+  if (doc && doc.kind === "url") {
+    // Every attribute a figure fetches through resolves against the document (resolveFigureRefs, below): this arm read
+    // `img[src]` alone, so a relative `srcset` candidate, a video's `src` or `poster`, an audio's, a `source`'s or a
+    // track's `src` in a URL document stayed relative and the browser resolved it against the PAGE, fetching the
+    // dashboard's directory instead of the document's and 404ing, the gap rewriteFigureSrcs closed for the file kind
+    // (the Slice 4 review, round 2).
+    resolveFigureRefs(clean, doc.href);
+    // Decision 8 for a URL document: the document's own host loads on open beside the gear's list; every other host
+    // is gated behind a click that names it (figure-gate.ts; the same placeholder, restored by the same action).
+    let own = "";
+    try { own = new URL(doc.href, document.baseURI).hostname; } catch { /* an unparseable location: the list alone */ }
+    gateRemoteFigures(clean, document.baseURI, [own]);
+  } else if (doc) {
+    // Figures on the session's disk: re-pointed at the kernel's /file route by rewriteFigureSrcs (below), which
+    // keeps the authored src in `data-fv-src` for the comments panel's embed matching and joins the path the way
+    // every other reader of an embed's destination does (a relative src under the file's directory, an absolute
+    // one as itself, `..` left to the kernel), so the picture shown is the file the poll watches.
+    rewriteFigureSrcs(clean, doc.path.slice(0, doc.path.lastIndexOf("/") + 1), doc.sid);
+    // Then decision 8 (plans/markdown-viewer.md; figure-gate.ts): a figure whose source is on a host the gear's list
+    // does not name, and that the person has not loaded in this document, is wrapped in a placeholder naming the host
+    // and fetches nothing until the placeholder is clicked. The kernel's own route, being the page's origin, is never
+    // gated, so a file's own attachments load on open; the list is read at every paint (loadSettings inside), so a
+    // change in the gear reaches the next paint, and an open document through the settings listener the gate installs.
+    gateRemoteFigures(clean, document.baseURI);
+  }
+  // Adopted as they are, no re-parse here or after (the fence pass's re-parse ran above, before the chain), every fetching
+  // attribute gated or repointed above, so the adoption starts no fetch to an unlisted host and none at a pre-rewrite URL, in
+  // any engine; what it does start is the fetch of every figure left with a live attribute, the folder's through /file and an
+  // allowed host's as written (the legs' logs: no line for a gated host, one line through /file for the folder's figure).
+  box.replaceChildren(...Array.from(clean.childNodes));
   // A pixel-sized <video> keeps the author's shape (keepVideoShape, below): the sheets give it `height: auto` so it
   // shrinks in ratio with the column, and the browser's own `aspect-ratio: auto W / H` would hand that ratio to the poster.
   keepVideoShape(box);
@@ -4280,12 +4402,7 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
     a.removeAttributeNS(XLINK_NS, "href");
   });
   if (doc && doc.kind === "url") {
-    // Every attribute a figure fetches through resolves against the document (resolveFigureRefs, below): this arm read
-    // `img[src]` alone, so a relative `srcset` candidate, a video's `src` or `poster`, an audio's, a `source`'s or a
-    // track's `src` in a URL document stayed relative and the browser resolved it against the PAGE, fetching the
-    // dashboard's directory instead of the document's and 404ing, the gap rewriteFigureSrcs closed for the file kind
-    // (the Slice 4 review, round 2).
-    resolveFigureRefs(box, doc.href);
+    // A URL document's links resolve against the document too (its figures did above, before the adoption).
     box.querySelectorAll(LINK_SEL).forEach((node) => {
       const a = node as HTMLElement | SVGElement;
       const href = linkHref(a);
@@ -4294,23 +4411,6 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
       // .md target opens in this viewer (isMarkdownUrl), everything else in a new tab.
       a.setAttribute("href", resolveDocRelative(href, doc.href));
     });
-    // Decision 8 for a URL document: the document's own host loads on open beside the gear's list; every other host
-    // is gated behind a click that names it (figure-gate.ts; the same placeholder, restored by the same action).
-    let own = "";
-    try { own = new URL(doc.href, document.baseURI).hostname; } catch { /* an unparseable location: the list alone */ }
-    gateRemoteFigures(box, document.baseURI, [own]);
-  } else if (doc) {
-    // Figures on the session's disk: re-pointed at the kernel's /file route by rewriteFigureSrcs (below), which
-    // keeps the authored src in `data-fv-src` for the comments panel's embed matching and joins the path the way
-    // every other reader of an embed's destination does (a relative src under the file's directory, an absolute
-    // one as itself, `..` left to the kernel), so the picture shown is the file the poll watches.
-    rewriteFigureSrcs(box, doc.path.slice(0, doc.path.lastIndexOf("/") + 1), doc.sid);
-    // Then decision 8 (plans/markdown-viewer.md; figure-gate.ts): a figure whose source is on a host the gear's list
-    // does not name, and that the person has not loaded in this document, is wrapped in a placeholder naming the host
-    // and fetches nothing until the placeholder is clicked. The kernel's own route, being the page's origin, is never
-    // gated, so a file's own attachments load on open; the list is read at every paint (loadSettings inside), so a
-    // change in the gear reaches the next paint, and an open document through the settings listener the gate installs.
-    gateRemoteFigures(box, document.baseURI);
   }
   if (doc && doc.kind === "file") {
     // A file on the session's disk: its links are sorted by file-view-links.ts (linkMarkdownAnchors). A link to the
@@ -4338,34 +4438,6 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
       a.setAttribute("rel", "noopener");
     });
   }
-  // Fenced blocks: highlight only a language the fence NAMES and this bundle registers (the same no-guessing rule as
-  // langFor; an unnamed block stays plain rather than being painted at random). Then, for EVERY fence, named or not, the
-  // chat's own dress (code-block.ts): the per-line rows that number the lines and make a soft-wrap read distinctly from a
-  // real newline, and the Copy button. Copy copies the fence's text AS THE FILE HOLDS IT (fence-source.ts, off the code
-  // tokens the parse collected): the raw text captured here is read before the rows drop the newlines, but after marked's
-  // lexer turned the file's leading tabs into four spaces each, so a Makefile recipe copied from the rendered text pasted
-  // back with spaces; a fence the module does not find in the file copies the raw text as before.
-  // The math fill's source fallback (a code element wearing md-math-src, math.ts; spelled, not imported, since this module
-  // carries no KaTeX) is not code: it keeps the Copy button and nothing else, as in the chat's highlight().
-  const copySources = fenceCopyQueue(text, fences);
-  box.querySelectorAll("pre code").forEach((node) => {
-    const codeEl = node as HTMLElement;
-    const raw = codeEl.textContent || "";
-    const pre = codeEl.parentElement;
-    const host = pre && pre.tagName === "PRE" ? pre : null;
-    if (codeEl.classList.contains("md-math-src")) { if (host) addCopyBtn(host, raw); return; }
-    const queued = copySources.get(raw);
-    const toCopy = (queued && queued.length ? queued.shift() : null) ?? raw;
-    const lang = (codeEl.className.match(/language-([\w-]+)/) || [])[1];
-    if (lang && hljs.getLanguage(lang)) {
-      try {
-        codeEl.innerHTML = hljs.highlight(raw, { language: lang }).value;
-        codeEl.classList.add("hljs");
-      } catch { /* leave plain */ }
-    }
-    wrapCodeLines(codeEl);
-    if (host) addCopyBtn(host, toCopy);
-  });
   // URLs and paths written in the prose and the code blocks, after the highlight rewrote the blocks' markup
   // (a pass before it would be undone). marked already made the prose's URLs anchors; text inside one is skipped.
   if (doc && doc.kind === "file") linkifyFileText(box, doc.path);
