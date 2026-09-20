@@ -383,6 +383,19 @@
 // and refused by name now, a spelling no shell runs (`command` looks `noglob` up as an external program), priced in fork PR
 // #780's body.
 //
+// ROUND 5'S SECOND ADDENDUM (2026-09-20; the round's verifier, driving the addendum's rows and its own): two live false allows in
+// zsh alone, one reading of a `}` behind both, a closing brace that shares a segment with the command before it. (1) A brace
+// body on one line, `if (( 0 )) { cd ../scratch }; cp ../base/report.md report.md` from docs/ (and the `for y ()`, `while`,
+// `until`, `select`, `case a { b) .. }` and `for y in; { .. }` spellings): compoundBody closed the frame at the `}` before the
+// cd in its own segment was read, so the cd zsh skipped was followed and the write resolved to scratch/report.md while zsh
+// wrote the tracked docs/report.md (bash and dash reject the spelling); pre-existing at the round-4 head, claimed closed by the
+// addendum's F6 and F7, whose rows had the brace on its own segment. The brace is read after the segment's command now
+// (`oneSegment`), so the cd makes the directory unknown at the close and an assignment in the body is unreadable. (2) The
+// trailing `}` of zsh's `{ cmd }` was read as the command's LAST OPERAND, cp's, mv's, install's and ln's destination
+// (`{ cp ../base/report.md report.md }` from docs/, in a plain group, a `then` or `do` body, a function body or a group after
+// `&&`), so the tracked file was read as a source and the copy onto it allowed while zsh performed it; every writer is judged
+// with the trailing braces and without them (`variants`). Both pinned with the rows, each run unguarded in the three shells.
+//
 // THE LISTS THAT REMAIN are not written here (round 5 of the review, 2026-09-20). The hand-written census that stood here
 // omitted the two lists whose gap falls on the WRITE side, the compound-head frame push and CLOSERS, and that omission is
 // how a `select` missing from both slipped through round 3: an instrument built to bound the hand-maintained lists that
@@ -2371,7 +2384,11 @@ function identifierTokens(text, marks) {
 // empty or stdin is at EOF), and zsh's one-command bodies (`for y (..) cmd`, `repeat n cmd`, `if (..) cmd`); each of these
 // was walked as plain sequence past a body the shell skipped, its cd followed and standing for the write after it (F4, F6,
 // F7). zsh's `repeat` and `foreach .. end` are heads (bash and dash have no such words: `repeat` is not found and `foreach y
-// (a)` is a syntax error, so a frame there costs nothing); compoundBody in extract reads the table.
+// (a)` is a syntax error, so a frame there costs nothing); compoundBody in extract reads the table. Round 5's second addendum
+// (2026-09-20, the round's verifier): a brace body written on one line, its `}` sharing a segment with the body's last command
+// (`if (( 0 )) { cd ../scratch }; cp ../base/report.md report.md` from docs/, zsh alone), closed its frame at the brace BEFORE
+// that command was read, so the skipped cd was followed and the write resolved to scratch/ while zsh wrote docs/report.md; the
+// brace is read after the command now (compoundBody, `oneSegment`), for every head of this table, and dropped from the words.
 const BODY_CLOSER = {
   if: { opener: 'then', closer: 'fi' }, while: { opener: 'do', closer: 'done' }, until: { opener: 'do', closer: 'done' },
   for: { opener: 'do', closer: 'done', list: true }, case: { opener: 'in', closer: 'esac', list: true }, select: { opener: 'do', closer: 'done', list: true },
@@ -3199,7 +3216,8 @@ function extract(command, ctx) {
   // walked as plain sequence past a body the shell skipped, F4, F6, F7): the opener word as the segment's first plain word (or
   // `in` in a case head) marks the body open; an unquoted `{` before the opener is a brace body, whose matching `}` closes the
   // frame with `moved` applied (zsh's `if [[ .. ]] {`, `while (( .. )) {`, `for y (..) {`, `case x {`, `repeat n {`; bash's
-  // `for y in ..; {` and `select ..; {`), the braces inside it counted; a later segment that is neither, after a head that
+  // `for y in ..; {` and `select ..; {`), the braces inside it counted, and a `}` that shares its segment with the body's last
+  // command closes it after that command is read (round 5's second addendum, below); a later segment that is neither, after a head that
   // takes a word list (`list` in the table) or after a `)` with nothing between (`afterParen`), is zsh's one-command body and
   // closes the frame before the next segment (`oneSegment`); an `in` after a `for` or `select` head is its list, not a body;
   // a `{` or `}` inside a body opened by its keyword is a plain group and changes nothing. Returns the index after a `}` that
@@ -3207,12 +3225,28 @@ function extract(command, ctx) {
   // safe direction: every later name is unreadable and a cd inside is applied at the closer or never trusted.
   const compoundBody = (seg, start, f) => {
     let first = true;
+    let body = 0;   // words of the brace body read on THIS segment before its closing brace: the segment's own command
     for (let i = start; i < seg.words.length; i++) {
       const w = seg.words[i];
-      if (!plainWord(w)) { first = false; continue; }
+      if (!plainWord(w)) { first = false; if (f.braces > 0) body++; continue; }
       if (f.braces > 0) {
         if (w.text === '{') f.braces++;
-        else if (w.text === '}' && --f.braces === 0) { closeCompoundAt(frames.indexOf(f)); return i + 1; }
+        else if (w.text === '}' && --f.braces === 0) {
+          // Round 5's second addendum (2026-09-20): a closing brace that shares its segment with the body's last command (zsh's
+          // `if (( 0 )) { cd ../scratch }`, `for y () { .. }`, `while (( 0 )) { .. }`, `until (( 1 )) { .. }`, `case a { b) cd .. }`,
+          // `select y (a) { .. }`, `select y in a; { .. }`, `for y in; { .. }`, a group nested in the body) is read AFTER that
+          // command: the frame closes before the next segment (`oneSegment`, closeOneSegment), so a cd in the body sets `moved`
+          // and the close makes the directory unknown, and an assignment in it is recorded inside the frame, unreadable. It
+          // closed HERE, before the command was read, so the cd zsh skipped was followed and the write after it resolved to a
+          // directory the shell never entered: allowed, while zsh wrote the tracked file (bash and dash reject each spelling and
+          // run nothing); the pinned rows had the brace on its own line or after a `;`, its own segment, where the close is right.
+          // The brace is dropped from the words: it is the body's own closer, matched to the `{` this frame read, in no shell an
+          // operand of the command before it.
+          if (body) { f.oneSegment = true; seg.words.splice(i, 1); return i; }
+          closeCompoundAt(frames.indexOf(f));
+          return i + 1;
+        }
+        else body++;
         first = false;
         continue;
       }
@@ -3390,7 +3424,18 @@ function extract(command, ctx) {
       else compoundBody(seg, at + 1, f);
     }
     const cmd = commandOf(seg.words);
-    if (!cmd) { recordSegment(seg, idx, null, preWords); continue; }
+    if (!cmd) {
+      // assignment words (and reserved words) alone once compoundBody dropped a brace body's closing `}` from the segment (round
+      // 5's second addendum): recorded as the assignment-only path above records them, inside the frame the head pushed, so the
+      // body's assignment is unreadable with the body's own reason (before, the `}` was read as a command named `}` and the
+      // assignment as its prefix word: a refusal, with the wrong construct named); anything else keeps the taint-by-shape read
+      if (seg.words.every((w) => isAssignmentWord(w) || (plainWord(w) && RESERVED.has(w.text)))) {
+        const seq = plainSequence(seg, idx);
+        for (const w of seg.words) recordPlainWord(w, seg, idx, seq);
+        taintArith(seg);
+      } else recordSegment(seg, idx, null, preWords);
+      continue;
+    }
     if (cmd.unknown) {
       // rule (b) (the third pass, 2026-09-19): a wrapper option its table does not parse in full. The option, its `=value`
       // and every later word are recorded as targets the hook cannot read, so the own-project step judges each literal
@@ -3438,7 +3483,20 @@ function extract(command, ctx) {
     }
     // bash's keyword mode (setsKeywordMode): a later writer's operands are read as spelled and with every assignment-shaped
     // word dropped, and a write under either reading is judged; zsh reads the words as spelled
-    const variants = keywordMode && asSpelled.some(isAssignmentWord) ? [asSpelled, asSpelled.filter((w) => !isAssignmentWord(w))] : [asSpelled];
+    let variants = keywordMode && asSpelled.some(isAssignmentWord) ? [asSpelled, asSpelled.filter((w) => !isAssignmentWord(w))] : [asSpelled];
+    // A trailing `}` (round 5's second addendum, 2026-09-20): zsh reads an unquoted `}` after a command's last word as the closer
+    // of an open `{ }` group (`{ cp ../base/report.md report.md }`, in a plain group, a `then` or `do` body, a function body or a
+    // group opened after `&&`; a stray one is a parse error and nothing runs), bash and dash as one more operand (and they reject
+    // the group spelling, running nothing). The guard does not count every group brace (a `{` inside a body opened by its keyword
+    // is a plain group it does not track), so the brace was read as the LAST operand, the destination of cp, mv, install and ln,
+    // and the file zsh overwrote was read as a source: allowed, while zsh wrote the tracked file. Each writer is judged with the
+    // trailing braces and without them, the closer reading first, and a write under either reading is refused.
+    const closer = (w) => plainWord(w) && w.text === '}';
+    if (asSpelled.length && closer(asSpelled[asSpelled.length - 1])) {
+      const cut = asSpelled.slice();
+      while (cut.length && closer(cut[cut.length - 1])) cut.pop();
+      variants = [cut, ...variants];
+    }
     for (const args of variants) {
     // the walk-around lens second pass (family 6): a call to a function whose body moved the shell moves the cwd, which the guard does not
     // follow into the call, so the directory is unknown from here (the body was modelled as not moving the shell)

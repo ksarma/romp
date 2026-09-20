@@ -9,7 +9,8 @@
 //
 // THE METHOD. No parser is vendored (acorn is not in this tree), so the enumeration is a disciplined regex over the
 // module's top-level declarations: a line at column 0 of the form `const NAME = <init>`, `let NAME = <init>`, `var NAME =
-// <init>` or `export const NAME = <init>`, any spacing around the `=`, the initializer on the same line or on the next when
+// <init>` or `export const NAME = <init>`, any spacing after the keyword and around the `=` (a second space after `const` was
+// not read until round 5's second addendum, 2026-09-20, and was not among the blind spots below), the initializer on the same line or on the next when
 // the line ends at the `=`, whose initializer opens a Set (`new Set(`), an array (`[`), an object table (`{`), an
 // `Object.fromEntries(` or a `new RegExp(` (the interpreter write functions live in regex alternations). Two pseudo-lists
 // are read from inside extract: the writer cases (the `case '...'` labels of `switch (name) {` up to that switch's own
@@ -76,8 +77,8 @@ export const CENSUS = {
 export const SIDES = new Set(['WRITE', 'REFUSE', 'NONE']);
 
 // The enumeration: [{ name, line, init }] for every top-level declaration the method reads, plus the two pseudo-lists.
-const DECL = /^(?:export )?(?:const|let|var) ([A-Za-z_$][\w$]*)\s*=\s*(new Set\(|\[|\{|Object\.fromEntries\(|new RegExp\()/;
-const DECL_SPLIT = /^(?:export )?(?:const|let|var) ([A-Za-z_$][\w$]*)\s*=\s*$/;   // the initializer on the next line
+const DECL = /^(?:export )?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(new Set\(|\[|\{|Object\.fromEntries\(|new RegExp\()/;   // `\s+` after the keyword: `const  NAME =` was not enumerated (round 5's second addendum)
+const DECL_SPLIT = /^(?:export )?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*$/;   // the initializer on the next line
 const INIT = /^\s*(new Set\(|\[|\{|Object\.fromEntries\(|new RegExp\()/;
 export function enumerateLists(source) {
   const out = [];

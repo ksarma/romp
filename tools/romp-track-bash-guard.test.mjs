@@ -4797,8 +4797,8 @@ test('round 5, the census of the lists that remain is derived from the hook\'s s
   // the shapes read, and the blind spots stated: a comment, an indented declaration and a Map are not lists here; since round 5's
   // addendum (the census lens planted 14 shapes and 12 landed green while live) a `var`, a declaration split after its `=` and
   // spacing drift around the `=` are read too, and the six shapes that still pass are named in the module as blind spots
-  const shapes = enumerateLists("const A = new Set(['a']);\nexport const B = ['b'];\nconst C = { c: 1 };\nconst D = Object.fromEntries([]);\nconst E = new RegExp('x|y');\n// const F = new Set(['f']);\n  const G = new Set(['g']);\nconst H = new Map();\nlet I = [];\nvar J = new Set(['j']);\nconst K =\n  new Set(['k']);\nconst L  =  ['l'];\nconst M = Object.keys(C).filter(Boolean);\nconst N = 'a b c';\nconst O = /^(?:a|b)$/;\nconst P1 = 1, P = new Set(['p']);\nlet Q;\nQ = new Set(['q']);\nconst R = Object.freeze(new Set(['r']));\n");
-  assert.deepEqual(shapes.map((l) => l.name), ['A', 'B', 'C', 'D', 'E', 'I', 'J', 'K', 'L'], 'the shapes read: the five initializer forms on const, let or var, a split declaration joined, spacing drift; not a comment, an indented declaration, a Map, a call, a string, a regex literal, a second declarator, a let filled later or a frozen set');
+  const shapes = enumerateLists("const A = new Set(['a']);\nexport const B = ['b'];\nconst C = { c: 1 };\nconst D = Object.fromEntries([]);\nconst E = new RegExp('x|y');\n// const F = new Set(['f']);\n  const G = new Set(['g']);\nconst H = new Map();\nlet I = [];\nvar J = new Set(['j']);\nconst K =\n  new Set(['k']);\nconst L  =  ['l'];\nconst M = Object.keys(C).filter(Boolean);\nconst N = 'a b c';\nconst O = /^(?:a|b)$/;\nconst P1 = 1, P = new Set(['p']);\nlet Q;\nQ = new Set(['q']);\nconst R = Object.freeze(new Set(['r']));\nconst  S = new Set(['s']);\nlet\tT = ['t'];\n");
+  assert.deepEqual(shapes.map((l) => l.name), ['A', 'B', 'C', 'D', 'E', 'I', 'J', 'K', 'L', 'S', 'T'], 'the shapes read: the five initializer forms on const, let or var, a split declaration joined, spacing drift around the `=` and after the keyword (two spaces, a tab: round 5\'s second addendum, the verifier\'s blind spot); not a comment, an indented declaration, a Map, a call, a string, a regex literal, a second declarator, a let filled later or a frozen set');
   assert.equal(shapes.find((l) => l.name === 'K').line, 11, 'a split declaration is reported at its own line');
   const censusSource = fs.readFileSync(fileURLToPath(new URL('./romp-track-bash-guard-census.mjs', import.meta.url)), 'utf8').replace(/\n\/\/ ?/g, ' ').replace(/\s+/g, ' ');
   for (const spot of ['a list built by a call', 'a string holding an alternation', 'a regex literal', 'declared inside a function or a block', 'a `let` filled in later', 'an inline literal at its point of use', 'a second declarator', 'a second `switch`']) assert.ok(censusSource.includes(spot), `the module states the blind spot: ${spot}`);
@@ -4824,6 +4824,7 @@ const SINCE_HEADS = {
   'seventh pass': 'befa93b3f2b37bf3cc830ac9459a8fdb1becda51',
   'seventh pass, the attacker': 'a36e34832173180184fb595ca1c6d0e8b85b8a55',
   'round 5': null,   // this tree; its previous head is the attacker's
+  'round 5, second addendum': null,   // this tree too (one commit after the addendum's); its previous head is the attacker's
 };
 test("round 5, the since sweep: every corpus row marked `since` newly refuses at the pass it names (allowed by the hook at the head before that pass, refused at the pass's head, both hooks taken from this checkout's history and run as processes over the corpus world); every label is one the sweep's table knows; a checkout without the history says so loudly", () => {
   const since = CORPUS.filter((e) => e.since);
@@ -4994,6 +4995,92 @@ test("round 5's addendum, the frame lens: a `{ }` group opened after `&&`, `||` 
     assert.deepEqual(extractWriteTargets('coproc {\ncd scratch\n}; cp base/report.md docs/report.md', w.NA).targets.map((t) => t.path), [path.join(w.NA, 'docs', 'report.md')], 'the coproc body\'s cd is restored');
     assert.deepEqual(extractWriteTargets('for y in; {\ncd scratch\n}; cp base/report.md notes/n1.md', w.NA).unresolved.map((u) => u.why && u.why.kind), ['unknownDir'], 'the brace body closes the for frame and applies its cd');
     assert.deepEqual(extractWriteTargets('coproc cp base/report.md docs/report.md', w.NA).targets.map((t) => t.path), [path.join(w.NA, 'docs', 'report.md')], 'the command behind coproc is read');
+  } finally { process.env.HOME = savedHome; w.rm(); }
+});
+
+// Round 5's second addendum (2026-09-20): the round's verifier drove the addendum's rows and rows of its own and found two live
+// false allows, zsh alone, one reading behind both: a `}` that shares a segment with the command before it. (1) A brace body
+// on one line (`if (( 0 )) { cd ../scratch }`) had compoundBody close its frame at the brace before the cd in the same segment
+// was read, so the cd zsh skipped was followed and the write after it resolved to a directory the shell never entered; the F6
+// and F7 rows above put the brace on its own segment, where the close is right. (2) The trailing `}` of zsh's `{ cmd }` was
+// read as the command's last operand, cp's destination, so the file zsh overwrote was read as a source. Each row below runs
+// the hook as a process from its cwd and then unguarded in every shell over a fresh world, asserting EXACTLY which shells
+// write the tracked subset; the rows are red on the addendum's head (the cd rows allowed there, the operand rows allowed).
+test("round 5's second addendum: a brace body's closing `}` that shares a segment with the body's last command closes the frame after that command is read, for every head of BODY_CLOSER that takes a brace body (the cd face refused as an unknown directory, the name face unreadable with the body's reason), a trailing `}` is never a writer's operand (judged as zsh's closer too), and the twins stay allowed; exactly the shells named write the tracked subset unguarded", () => {
+  const w = sixthPassWorld();
+  const savedHome = process.env.HOME;
+  process.env.HOME = w.HOME;
+  try {
+    const A = ['bash', 'zsh', 'dash'];
+    const Z = ['zsh'];
+    const REPEAT_ARG = ['literal', 'an assignment-shaped word of `repeat`'];
+    // [id, cwd, command, the shells that write the tracked subset unguarded (bash and dash reject every one-line brace body with a syntax error and run nothing), the verdict]
+    const rows = [
+      // the cd face: the body not run, the write after it refused as an unknown directory (allowed on the addendum's head, zsh writing docs/report.md)
+      ['C-if', 'nad', 'if (( 0 )) { cd ../scratch }; cp ../base/report.md report.md', Z, UNKNOWN_BODY_CD],
+      ['C-for', 'nad', 'for y () { cd ../scratch }; cp ../base/report.md report.md', Z, UNKNOWN_BODY_CD],
+      ['C-while', 'nad', 'while (( 0 )) { cd ../scratch }; cp ../base/report.md report.md', Z, UNKNOWN_BODY_CD],
+      ['C-until', 'nad', 'until (( 1 )) { cd ../scratch }; cp ../base/report.md report.md', Z, UNKNOWN_BODY_CD],
+      ['C-select', 'nad', 'select y (a) { cd ../scratch }; cp ../base/report.md report.md', Z, UNKNOWN_BODY_CD],   // stdin at EOF: zsh skips the body
+      ['C-select-in', 'nad', 'select y in a; { cd ../scratch }; cp ../base/report.md report.md', Z, UNKNOWN_BODY_CD],
+      ['C-case', 'nad', 'case a { b) cd ../scratch }; cp ../base/report.md report.md', Z, UNKNOWN_BODY_CD],   // zsh takes the last item without `;;`
+      ['C-for-in', 'nad', 'for y in; { cd ../scratch }; cp ../base/report.md report.md', Z, UNKNOWN_BODY_CD],
+      ['C-nested', 'nad', 'if (( 0 )) { { cd ../scratch } }; cp ../base/report.md report.md', Z, UNKNOWN_BODY_CD],
+      ['C-else', 'nad', 'if (( 0 )) { cd ../scratch } else { : }; cp ../base/report.md report.md', Z, UNKNOWN_BODY_CD],
+      ['C-quoted', 'nad', 'if (( 0 )) { cd "../scratch" }; cp ../base/report.md report.md', Z, UNKNOWN_BODY_CD],
+      ['C-repeat', 'nad', 'repeat 0 { cd ../scratch }; cp ../base/report.md report.md', A, 'name'],   // the words after `repeat` are its operands to commandOf, so the cd is not followed: by name from the cwd (bash and dash have no repeat and copy)
+      ['C-test', 'nad', 'if [[ 1 = 2 ]] { cd ../scratch }; cp ../base/report.md report.md', Z, 'name'],   // the condition's words are the segment's command, so the cd is not followed: by name
+      ['C-runs', 'nad', 'if (( 1 )) { cd ../scratch }; cp ../base/report.md report.md', [], UNKNOWN_BODY_CD],   // the body runs and zsh writes scratch/report.md: the priced cost, as `if true; then cd ..; fi` is
+      // the name face: the body's assignment unreadable with the body's reason (refused on the addendum's head too, naming `}` as a command)
+      ['N-if', 'na', 'x=docs/report.md; if (( 0 )) { x=scratch/keep.md }; cp base/report.md $x', Z, BODY],
+      ['N-for', 'na', 'x=docs/report.md; for y () { x=scratch/keep.md }; cp base/report.md $x', Z, BODY],
+      ['N-while', 'na', 'x=docs/report.md; while (( 0 )) { x=scratch/keep.md }; cp base/report.md $x', Z, BODY],
+      ['N-until', 'na', 'x=docs/report.md; until (( 1 )) { x=scratch/keep.md }; cp base/report.md $x', Z, BODY],
+      ['N-select', 'na', 'x=docs/report.md; select y (a) { x=scratch/keep.md }; cp base/report.md $x', Z, BODY],
+      ['N-select-in', 'na', 'x=docs/report.md; select y in a; { x=scratch/keep.md }; cp base/report.md $x', Z, BODY],
+      ['N-case', 'na', 'x=docs/report.md; case a { b) x=scratch/keep.md }; cp base/report.md $x', Z, BODY],
+      ['N-for-in', 'na', 'x=docs/report.md; for y in; { x=scratch/keep.md }; cp base/report.md $x', Z, BODY],
+      ['N-repeat', 'na', 'x=docs/report.md; repeat 0 { x=scratch/keep.md }; cp base/report.md $x', A, REPEAT_ARG],   // the assignment is an operand of `repeat` to commandOf
+      // the operand face: the trailing `}` is zsh's closer, never the destination (allowed on the addendum's head, zsh writing docs/report.md)
+      ['O-grp', 'nad', '{ cp ../base/report.md report.md }', Z, 'name'],
+      ['O-then', 'nad', 'if true; then { cp ../base/report.md report.md }; fi', Z, 'name'],
+      ['O-fn', 'nad', 'f() { cp ../base/report.md report.md }; f', Z, 'name'],
+      ['O-and', 'nad', 'true && { cp ../base/report.md report.md }', Z, 'name'],
+      ['O-nested', 'nad', '{ { cp ../base/report.md report.md } }', Z, 'name'],
+      ['O-do', 'nad', 'while true; do { cp ../base/report.md report.md }; break; done', Z, 'name'],
+      ['O-mv', 'nad', '{ mv ../base/report.md report.md }', Z, 'name'],
+      ['O-install', 'nad', '{ install ../base/report.md report.md }', Z, 'name'],
+      ['O-ln', 'nad', '{ ln -f ../base/report.md report.md }', Z, 'name'],
+      ['O-body', 'nad', 'if (( 1 )) { cp ../base/report.md report.md }; :', Z, 'name'],   // a brace body that runs; the `; :` since zsh 5.9 rejects a brace body that ends the input
+      ['O-T1', 'nad', '{ cp ../base/report.md ../scratch/keep.md }', [], 'allow'],
+      ['O-T2', 'nad', '{ cd ../scratch }; cp ../base/report.md report.md', [], 'allow'],   // a plain group runs in this shell: the cd is followed (zsh moves and writes scratch/report.md; bash and dash reject the spelling)
+      ['O-T3', 'nad', "cp ../base/report.md ../scratch/keep.md '}'", [], 'allow'],   // a quoted brace is an operand (cp fails on it: no directory named so)
+    ];
+    let n = 0;
+    for (const [id, cwd, raw, writers, expect] of rows) {
+      const cmd = w.fill(raw);
+      const at = w.cwds[cwd];
+      const h = w.hook(cmd, at);
+      n++;
+      if (expect === 'allow') assert.equal(h.status, 0, `${id}: allowed: ${cmd}: ${h.reason}`);
+      else {
+        assert.equal(h.status, 2, `${id}: refused: ${cmd}: ${h.reason}`);
+        assert.ok(!/\u2014/.test(h.reason) && !ROMP_NOUNS.test(h.reason.split(w.W).join('<w>')), `${id}: no em dash, no romp noun`);
+        if (expect === 'name') assert.match(h.reason, BY_NAME_RE, `${id}: by name: ${h.reason.split('\n')[0]}`);
+        else if (expect[0] === 'dir') assert.ok(/the directory it is relative to is not known/.test(h.reason) && h.reason.includes(expect[1]), `${id}: the directory is unknown, the reason naming the construct: ${h.reason.split('\n')[0]}`);
+        else assert.ok(NOT_LITERAL.test(h.reason) && h.reason.includes(expect[1]), `${id}: refused as not literal, the reason naming the construct (${expect[1]}): ${h.reason.split('\n')[0]}`);
+      }
+      for (const shell of shellsFor(A, id)) {
+        const r = w.run(cmd, at, shell);
+        assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
+      }
+    }
+    assert.equal(n, 36);
+    // the grammar: the one-line body's cd is applied at the close, its assignment is not adopted, and the closer reading of a trailing brace names the real destination
+    assert.deepEqual(extractWriteTargets('if (( 0 )) { cd scratch }; cp base/report.md notes/n1.md', w.NA).unresolved.map((u) => u.why && u.why.kind), ['unknownDir'], 'the brace body closes after its cd is read and applies it');
+    assert.deepEqual(extractWriteTargets('x=docs/report.md; if (( 0 )) { x=scratch/keep.md }; cp base/report.md $x', w.NA).targets, [], 'the one-line body\'s assignment is unreadable');
+    assert.ok(extractWriteTargets('{ cp base/report.md docs/report.md }', w.NA).targets.map((t) => t.path).includes(path.join(w.NA, 'docs', 'report.md')), 'the word before a trailing brace is the destination');
+    assert.deepEqual(extractWriteTargets('if (( 0 )) {\ncd scratch\n}; cp base/report.md notes/n1.md', w.NA).unresolved.map((u) => u.why && u.why.kind), ['unknownDir'], 'the brace on its own segment closes as before');
   } finally { process.env.HOME = savedHome; w.rm(); }
 });
 

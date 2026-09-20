@@ -3951,7 +3951,9 @@ document stands on its own, each with the reasoning it was given.
     later plain write went through, the one place the rule's failure was an allow; the freeze now needs the segment's own
     unwrapped `readonly`, `declare -r` or `typeset -r` (`!cmd.wrapped`), and a declaration behind any wrapper taints its
     names (the shells differ on whether it ran: `command readonly` freezes in bash and dash, `builtin readonly` in bash and
-    zsh, `noglob readonly` in zsh, the external wrappers nowhere, measured). THE CATCH-ALL REFUSES: `Object.hasOwn` at the
+    zsh, `noglob readonly` in zsh, the external wrappers nowhere, measured; round 5's addendum, 2026-09-20, narrowed this
+    further, below: the freeze is an unwrapped `readonly` with no option word in plain sequence alone, and `declare -r` and
+    `typeset -r` taint, dash having neither). THE CATCH-ALL REFUSES: `Object.hasOwn` at the
     CLOSERS and BODY_CLOSER lookups (a command word that is an Object.prototype key threw inside a body), and any exception
     evaluate did not anticipate refuses while a tracked project is in play, naming it (`judge`, `internalErrorRefusal`; two of the three catches that allowed rethrow to the one catch-all, and the
     process-level catch refuses in place). THE CENSUS DERIVED: the hand-written census of the lists that remain, which omitted
@@ -4025,6 +4027,24 @@ document stands on its own, each with the reasoning it was given.
     the prefix-script rows ask the probe for the inner bash they run, the catch count above says two rethrow and the
     process-level one refuses in place, the census method is named the same way here and on the header, and the corpus
     movement at c7d7505a9 was two readable rows and one cost row, three, 293 to 296, where the body had said four.
+    Round 5's second addendum (2026-09-20; the round's verifier, driving the addendum's rows and rows of its own through the
+    hook and unguarded in the three shells): two live false allows in zsh alone, both a `}` that shares a segment with the
+    command before it. A brace body written on one line, `if (( 0 )) { cd ../scratch }; cp ../base/report.md report.md` from
+    docs/ (the `for y ()`, `while`, `until`, `select`, `case a { b) .. }` and `for y in; { .. }` spellings the same), had
+    `compoundBody` close its frame at the brace BEFORE the cd in the same segment was read, so the cd zsh skipped was followed
+    and the write resolved to scratch/ while zsh wrote the tracked file; pre-existing at round 4's head and claimed closed by
+    the addendum's F6 and F7, whose rows put the brace on its own segment. The brace is read after the segment's command now
+    (`oneSegment`, the brace dropped from the words), so the cd makes the directory unknown at the close and an assignment in
+    the body is unreadable with the body's own reason. And the trailing `}` of zsh's `{ cmd }` was read as the command's LAST
+    OPERAND, the destination of cp, mv, install and ln, so `{ cp ../base/report.md report.md }` (in a plain group, a `then` or
+    `do` body, a function body, a group after `&&`) read the tracked file as a source and was allowed while zsh performed it:
+    every writer is judged with the trailing braces and without them (`variants`), a write under either reading refused. The
+    one new cost is the priced class's zsh one-line spelling (`if (( 1 )) { cd .. }`, `for y (a) { cd .. }`, refused as an
+    unknown directory like `if true; then cd ..; fi`), priced in the corpus. Beside them: the census reads a declaration with
+    any spacing after its keyword (`const  NAME = ..` was not enumerated and not among the stated blind spots), and the
+    vendored README's row for patch 0009 states the addendum's declaration rule the right way round (no declaration flag and
+    no `declare`, `typeset` or `local` keeps a name readable, nor does a group opened after `&&`, `||` or `|`; the row had
+    said they keep it readable).
 48. **Sessions commit the comments folder** (2026-09-10). The user found that their sessions never added
     `.trackchanges/` to git, so the user's comments on the sessions' files and the record of the tracked changes
     were not archived with the work. Decision 25 is unchanged: romp does no git operation, and a `.gitignore` line is the
