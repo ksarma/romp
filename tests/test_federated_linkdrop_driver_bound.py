@@ -441,6 +441,77 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
         self.assertEqual(record([], socks=[sock(0, A0 - 5000, None, [frame(A0 - 4000), patch, frame(A0 + 3000)])], rows=[row])._assert_one_row_per_outline_feed_patch("A0", "A1", patches_due=True), 1,
                          "the storm: one patch, its row, the socket open and served throughout")
 
+    def test_the_down_windows_attach_exemption_takes_one_feed_row_per_attach_stamped_at_or_after_it(self):
+        """The down window's exemption for the connect push's ledgers attach (round 2's regression-3 fix: a card-less feed slot
+        patch at or after the resume, and the row the old bundle files for it, are the return's, not the down window's) landed
+        keyed on the row's REV as a set over the drive's attaches, with no test, and the Outline's feed patch revs restart at 1
+        on every relay socket, so the gate leg's exact zero was weaker than its message (round 4: the row is matched to the
+        attach, at most one row per attach, naming the feed slot, stamped at or after the attach's floored second with a
+        second of slack for the kernel's clock against the browser's). Over a synthetic record (one Outline relay socket
+        opened after the resume, one card-less feed slot patch 50 ms after it, rows at chosen stamps), the storm test's
+        down-window call returns 0 for the attach's row floored a second below the attach, at its floored second and a second
+        above it; a second row of the attach's rev, also stamped at or after it, is the down window's and reds (the round-3
+        head's set exempted both); a row of the attach's rev stamped two seconds below is not the attach's and reds (the set
+        exempted it); a row of the attach's rev naming another slot is not the attach's and reds (the set exempted it before
+        the slot check ran); a second row with no attach behind it reds (narrowness: a widened exemption passes the first
+        cell alone); the same patch carrying cards is no attach and its row reds (a control on the card conditioning, red at
+        both trees, so not a discriminator of the match). The gate leg
+        reads attaches from 1.5 s before the resume and the storm test from the resume (the gate leg's SEPARATE copy): an
+        attach 1 s before the resume is in the first set and not the second, through the match and through the set the return
+        window's filter still reads. Nothing here exercises the two call sites' wiring; the replays over recorded drives do
+        (0 rows and 0 attaches in every recorded down window, so the exemption fires on no recorded drive: the census is in
+        the served module's _minus_attach_rows docstring)."""
+        DROP, RESUME = 1_000_000, 1_030_000
+        B0, END = RESUME + 20_000, RESUME + 60_000
+
+        class Rec(L.LinkDropOldLocal):
+            driver_error = None
+
+        def row(rev, t_ms, slot="feed"):
+            return {"surface": "outline", "what": "delta-unapplied", "t": t_ms // 1000, "wid": "w1", "reconnect": False, "data": {"rev": rev, "slot": slot}}
+
+        def patch(at, coll, rev=7):
+            return {"t": "delta", "slot": "feed", "at": at, "coll": list(coll), "rev": rev, "len": 300, "restAll": False}
+
+        def record(rows, frames):
+            Rec.result = {"marks": {"drop": DROP, "resume": RESUME, "B0": B0, "end": END}, "died": None, "timeouts": [],
+                          "pages": {"fleet": {"socks": [{"i": 1, "relay": True, "dialedAt": RESUME + 10, "openAt": RESUME + 20, "closeAt": None, "url": "", "frames": list(frames)}], "sends": []}}}
+            Rec.changes_made = []
+            Rec.hub_diag_rows = list(rows)
+            return Rec("test_nothing_was_asked_of_the_remote")   # an instance for the helpers; the test method is never run
+
+        def down(rows, frames):
+            return record(rows, frames)._assert_one_row_per_outline_feed_patch("drop", "resume", patches_due=False, attach_after="resume")
+        attach = patch(RESUME + 50, ["ledgers"])   # the connect push's ledgers attach: card-less, 50 ms after the resume, floored second RESUME // 1000
+        floor = (RESUME + 50) // 1000
+        for t_ms, why in ((RESUME - 900, "floored a second below the attach (the kernel's clock behind the browser's)"),
+                          (RESUME + 50, "at the attach's floored second"), (RESUME + 1050, "a second above it")):
+            with self.subTest(row=why):
+                self.assertEqual(down([row(7, t_ms)], [attach]), 0, "the attach's row %s (t %d against the attach's floored second %d) is the return's, not the down window's" % (why, t_ms // 1000, floor))
+        with self.subTest(rows="two rows of the attach's rev, both stamped at or after it"):
+            with self.assertRaises(AssertionError, msg="a second row of the attach's rev is the down window's (one row per attach; the set of revs exempted both)") as cm:
+                down([row(7, RESUME - 900), row(7, RESUME + 1050)], [attach])
+            self.assertIn("one outline/delta-unapplied row per feed slot patch", str(cm.exception), cm.exception)
+        with self.subTest(rows="a row of the attach's rev two seconds below its floored second"):
+            with self.assertRaises(AssertionError, msg="a row of the attach's rev two seconds below its floored second is not the attach's (the slack is one second)"):
+                down([row(7, RESUME - 2000)], [attach])
+        with self.subTest(rows="a row of the attach's rev naming another slot"):
+            with self.assertRaises(AssertionError, msg="a row of the attach's rev naming another slot is not the attach's (the set exempted it before the slot check)"):
+                down([row(7, RESUME - 900, slot="ledgers")], [attach])
+        with self.assertRaises(AssertionError, msg="a second row with no attach behind it reds (narrowness)"):
+            down([row(7, RESUME - 900), row(99, RESUME - 900)], [attach])
+        with self.assertRaises(AssertionError, msg="the same patch carrying cards is no attach (a control on the card conditioning, red at both trees)"):
+            down([row(7, RESUME - 900)], [patch(RESUME + 50, ["asks"])])
+        # the gate leg's separate copy reads attaches from resume - 1500 ms, the storm test's from resume
+        early = patch(RESUME - 1000, ["ledgers"], rev=5)
+        t = record([row(5, RESUME - 1000)], [early])
+        stamped = t._outline_unapplied_stamped(t._rows_in("drop", "resume"))
+        self.assertEqual((t._attaches_since(RESUME - 1500), t._attaches_since(RESUME)), ([(5, (RESUME - 1000) // 1000)], []),
+                         "an attach 1 s before the resume is in the gate leg's set of attaches and not the storm test's")
+        self.assertEqual((t._minus_attach_rows(stamped, RESUME - 1500), t._minus_attach_rows(stamped, RESUME)), ([], [{"rev": 5, "slot": "feed"}]),
+                         "…so the gate leg's since exempts its row and the storm test's does not")
+        self.assertEqual((t._attach_revs_since(RESUME - 1500), t._attach_revs_since(RESUME)), ({5}, set()), "…and the return window's set reads the same two since values")
+
     def test_the_margin_leg_takes_no_expired_or_unshown_wait_as_a_delivery(self):
         """The gate's control in time (_assert_the_down_window_outlasts_the_drives_slowest_delivery) reads a phase's
         seen.waitedMs as this drive's delivery. Round 5 found that a waitVisible wait that TIMED OUT left waitedMs at about

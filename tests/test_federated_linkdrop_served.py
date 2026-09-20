@@ -1186,19 +1186,21 @@ class _LinkDrop(unittest.TestCase):
         a count is one drive's, and a window with neither a patch nor that excuse is a change that reached the Outline as
         nothing, not the storm); without, both sides are empty. With attach_after (a mark) the return window's allowance
         reaches into this window's right pad: a card-less feed-family patch at or after that mark is the connect push's
-        ledgers attach, by design and with no card in it, and it and the row the old bundle files for it (matched by rev
-        over the drive's attaches, _attach_revs_since) are the return's, not this window's. Returns the row count, for
-        the record."""
-        rows = self._outline_unapplied(self._rows_in(k0, k1) if k0 and k1 else None)
+        ledgers attach, by design and with no card in it, and it and the row the old bundle files for it (matched to the
+        ATTACH, _minus_attach_rows: at most one row per attach, naming the feed slot, carrying the attach's rev and stamped at or
+        after the attach's floored second with a second of slack; round 4: a rev is no identity, since the Outline's feed patch
+        revs restart at 1 on every relay socket, and a set of revs let every row of a colliding rev through where this message
+        promised one) are the return's, not this window's. Returns the row count, for the record."""
+        stamped = self._outline_unapplied_stamped(self._rows_in(k0, k1) if k0 and k1 else None)
+        rows = [d for d, _ in stamped]
         patches = self._outline_feed_patches(k0, k1)
         where = "[%s, %s)" % (k0, k1) if k0 and k1 else "the whole drive"
         self.assertTrue(all("rev" in f for f in patches), "every recorded feed patch carries its rev (the hook records m.rev on a delta frame): %r" % (patches,))
         self.assertTrue(all(isinstance(d, dict) and "rev" in d for d in rows), "every outline/delta-unapplied row carries the patch's rev: %r" % (rows,))
         if attach_after:
             since = self._marks()[attach_after]
-            attach_revs = self._attach_revs_since(since)
             patches = [f for f in patches if not (f["at"] >= since and not self._carries_cards(f))]
-            rows = [d for d in rows if int(d["rev"]) not in attach_revs]
+            rows = self._minus_attach_rows(stamped, since)
         feed_rows = [d for d in rows if d.get("slot") == "feed"]
         self.assertEqual(len(feed_rows), len(rows), "every outline/delta-unapplied row in %s names the feed slot: %r" % (where, rows))
         self.assertEqual(sorted(int(d["rev"]) for d in feed_rows), sorted(int(f["rev"]) for f in patches),
@@ -1357,9 +1359,44 @@ class _LinkDrop(unittest.TestCase):
         """The revs of the card-less feed slot patches (the connect push's ledgers attach, _carries_cards) the Outline received
         from `since_ms` to phase B's first change, read over the drive's record and not a window's: the kernel floors a row's
         stamp to the second, so the row the old bundle files for an attach can sit inside a window whose patch pad the attach
-        itself is past by tens of milliseconds (round 2, regression-3: a 40 ms gap on a recorded drive)."""
+        itself is past by tens of milliseconds (round 2, regression-3: a 40 ms gap on a recorded drive). A SET of revs, read
+        by the return window's stray filter alone; the two down-window sites match rows to the attach (_minus_attach_rows)."""
         m = self._marks()
         return {int(f["rev"]) for f in self._outline_feed_patches() if since_ms <= f["at"] < m["B0"] and not self._carries_cards(f)}
+
+    def _attaches_since(self, since_ms):
+        """One (rev, floored second) per card-less feed slot patch (the connect push's ledgers attach, _carries_cards) the Outline
+        received from `since_ms` to phase B's first change, over the drive's record as _attach_revs_since reads it, in order."""
+        m = self._marks()
+        return sorted((int(f["rev"]), int(f["at"] // 1000)) for f in self._outline_feed_patches() if since_ms <= f["at"] < m["B0"] and not self._carries_cards(f))
+
+    def _outline_unapplied_stamped(self, rows=None):
+        """(data, stamp) per outline/delta-unapplied row: _outline_unapplied with the kernel's whole-second stamp kept beside it."""
+        rows = self.hub_diag_rows if rows is None else rows
+        return [(r.get("data"), float(r.get("t") or 0)) for r in rows if (r.get("surface"), r.get("what")) == ("outline", "delta-unapplied")]
+
+    def _minus_attach_rows(self, stamped, since_ms, slack_s=1.0):
+        """The rows left once every ledgers attach since `since_ms` has taken AT MOST ONE row as its own: a row naming the feed
+        slot, carrying the attach's rev and stamped at or after the attach's floored second less slack_s (the kernel stamps a
+        row at receipt in whole seconds, and its clock and the browser hook's can differ by up to a second on a recorded
+        drive). A multiset difference matched to the ATTACH, not a set of revs (round 4): the Outline's feed patch revs
+        restart at 1 on every relay socket, so a rev is no identity over a drive, and a set of revs let every row of a
+        colliding rev through where the assertions' messages promise one row per attach. The exemption fires on no recorded
+        drive: over the 65 unmutated records of both classes in the builder's cache as of the drive at
+        `r6-margin/lab-head5.log` (2026-09-20; `python3 population6.py old|new | xargs python3 attach_census.py <tests_dir>`,
+        these helpers over each record, outside the repo) the down windows hold 0 rows and 0 attaches, so 0 rows are exempted
+        at either site, by the set before round 4 and by this match after it; the pin over a synthetic record in
+        tests/test_federated_linkdrop_driver_bound.py is where it is exercised. Returns the rows' data, _outline_unapplied's shape."""
+        pool = list(self._attaches_since(since_ms))
+        out = []
+        for d, t in stamped:
+            rev = d.get("rev") if isinstance(d, dict) else None
+            hit = next((a for a in pool if rev is not None and int(rev) == a[0] and t >= a[1] - slack_s and d.get("slot") == "feed"), None)
+            if hit is not None:
+                pool.remove(hit)
+            else:
+                out.append(d)
+        return out
 
     def _link_up_phases(self):
         return ("A", "B", "C") if self.local_drop else ("A", "B")
@@ -1432,10 +1469,11 @@ class _LinkDrop(unittest.TestCase):
         self._assert_seen(D["seenWhileDown"], False, todo=(False if todo else None), what="phase D while the link was down (a change due, nothing to carry it)")
         if prompt is not None:
             self.assertNotEqual(D["seenWhileDown"].get("prov"), prompt, "api's provisional row did not read phase D's prompt while the link was down: %r" % (D["seenWhileDown"],))
-        attach_revs = self._attach_revs_since(m["resume"] - 1500)   # the return's ledgers attaches, by rev (the row check below and the return window's)
-        down = [d for d in self._outline_unapplied(self._rows_in("drop", "resume")) if not (isinstance(d, dict) and d.get("rev") is not None and int(d["rev"]) in attach_revs)]
-        self.assertEqual(down, [], "no outline/delta-unapplied row filed while the link was down with phase D due (the row the old bundle files for a ledgers "
-                                   "attach the Outline received after the resume is the return's, in this window's right pad by the kernel's whole-second floor): %r" % (down,))
+        attach_revs = self._attach_revs_since(m["resume"] - 1500)   # the return's ledgers attaches, by rev, for the return window's stray filter below
+        down = self._minus_attach_rows(self._outline_unapplied_stamped(self._rows_in("drop", "resume")), m["resume"] - 1500)   # one row per attach, matched to it
+        self.assertEqual(down, [], "no outline/delta-unapplied row filed while the link was down with phase D due (the one row the old bundle files for a "
+                                   "ledgers attach the Outline received after the resume is the return's, in this window's right pad by the kernel's whole-second "
+                                   "floor: it names the feed slot, carries the attach's rev and is stamped at or after the attach's floored second): %r" % (down,))
         self._assert_seen(D["seenAfterReturn"], True, todo=todo, prompt=prompt, what="phase D after the link's return (the redial's whole frame carried it)")
         for app in self.apps:
             window = [(s, f) for s in self._relay_socks(app) for f in s["frames"] if m["resume"] <= f["at"] < m["B0"]]
