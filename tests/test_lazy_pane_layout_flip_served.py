@@ -13,7 +13,9 @@ mobileOn() the shell's real function over the real query (tests/test_pane_state_
 node with a MediaQueryList fake). Case A fails the pane on the phone and then flips; case B flips WHILE the pane loads and lets the
 abort land on the desktop; case C fails the desktop's re-promotion too and, back on the phone, recovers by one of the three gestures
 (review round 4: the desktop promotion has its own detectors, its failure is bounded to one re-promotion per episode, and the flip back
-parks the recorded pane with the failed state). Chromium alone: WebKit's failure detector is the 30 s backstop (no load event for a
+parks the recorded pane with the failed state); case D drives the kernel's own 403 to the desktop's bound, where the document the kernel sent
+is dropped from the frame (review round 5, correctness-3); case E holds a desktop load past the 30 s backstop and lets it land on the kept src
+(review round 5, tests-2 with extra9-1). Chromium alone: WebKit's failure detector is the 30 s backstop (no load event for a
 failed navigation), which would cost 30 s a case for the same shell lines the LazyPanes harness covers.
 
 The lab: one kernel from test_ship_reship_served.kernel_env with the return harness's seed (three synthetic sessions of the
@@ -99,7 +101,7 @@ class LazyPaneLayoutFlip(unittest.TestCase):
 
     def _drive(self, case, recover=None):
         cfg = {"case": case, "recover": recover or "", "url": "http://127.0.0.1:%d/?token=%s" % (self.port, self.token), "healthz": "http://127.0.0.1:%d/healthz" % self.port,
-               "diag": self.diag, "settleMs": 1200, "holdMs": 1500, "resultPath": os.path.join(self.lab, "result-%s%s.json" % (case, "-" + recover if recover else ""))}
+               "diag": self.diag, "settleMs": 1200, "holdMs": 1500, "slowMs": 34000, "resultPath": os.path.join(self.lab, "result-%s%s.json" % (case, "-" + recover if recover else ""))}
         cfg_path = os.path.join(self.lab, "cfg-%s%s.json" % (case, "-" + recover if recover else ""))
         Path(cfg_path).write_text(json.dumps(cfg))
         try:
@@ -196,6 +198,63 @@ class LazyPaneLayoutFlip(unittest.TestCase):
 
     def test_C_when_the_desktop_re_promotion_fails_too_the_try_again_button_recovers(self):
         self._case_c("button")
+
+    def test_D_at_the_desktop_bound_the_kernels_own_denial_is_dropped_from_the_frame_and_the_flip_back_parks_it_with_the_failed_state(self):
+        # review round 5 (2026-09-20, correctness-3, ruled high): the desktop's bound is reached by docState's `other` answer too, whose commonest
+        # member is the kernel's own 403 line (its body names the serve-token file's path). Round 4's bound kept the src whatever the answer, so
+        # that body stood on the desktop's screen with no failed state and no retry for the page's life. Driven against the REAL kernel's denial
+        # (the route re-issues the request credential-less and hands the frame the kernel's answer): at the bound the src is dropped and the frame
+        # navigates to about:blank, the url waits under data-src, no third request; the flip back parks it with the failed state and the tab tap
+        # loads it. Asserted: the status and the page's state. The body is never read, printed or kept by the driver or here.
+        r = self._drive("D")
+        d = r["desktopBound"]
+        self.assertGreaterEqual(d.get("ms", -1), 0, "the second denial reached the bound within the wait (two promotions, then the src dropped): %r" % (d,))
+        self.assertEqual((d["mobile"], d["src"], d["lazy"], d["dataSrc"], d["sets"]), (False, None, None, "/waiting", 2), "the desktop's bound over a document the kernel sent: the src DROPPED, the url under data-src, two promotions (before: the src kept over the 403 body): %r" % (d,))
+        self.assertEqual((d["divFailed"], d["bodyFailed"], d["divLoading"], d["bodyLoading"]), (False, False, False, False), "no failed or loading state on the desktop (nothing paints one there): %r" % (d,))
+        b = r["blanked"]
+        self.assertGreaterEqual(b.get("ms", -1), 0, "the frame navigated to about:blank once the src was dropped: nothing of the kernel's answer stays on show: %r" % (b,))
+        self.assertEqual(b["url"], "about:blank", "%r" % (b,))
+        self.assertEqual(r["denied"], {"statuses": [403, 403], "responses": 2}, "the kernel answered both document requests with its 403 (the status read off the response; the body never read): %r" % (r["denied"],))
+        a = r["after"]
+        self.assertEqual((a["sets"], a["src"], a["dataSrc"], a["url"]), (2, None, "/waiting", "about:blank"), "1.5 s on: no third promotion, the frame blank: %r" % (a,))
+        self.assertEqual(r["requestsAtBound"], 2, "two document requests reached the wire before the flip back, both denied; no third: %r" % (r["requests"],))
+        pb = r["phoneBack"]
+        self.assertGreaterEqual(pb.get("ms", -1), 0, "the flip back parked the recorded pane within the wait: %r" % (pb,))
+        self.assertEqual((pb["mobile"], pb["src"], pb["lazy"], pb["dataSrc"], pb["divFailed"], pb["bodyFailed"], pb["sets"]), (True, None, "/waiting", None, True, False, 2), "back on the phone: the src-less pane parked under data-lazy-src with the failed state on its div (the chat is the shown tab, so nothing is painted yet): %r" % (pb,))
+        rec = r["recovered"]
+        self.assertGreaterEqual(rec.get("ms", -1), 0, "the Waiting tab's tap promoted the pane again and its document loaded and painted within the wait: %r" % (rec,))
+        self.assertEqual((rec["mobile"], rec["src"], rec["lazy"], rec["divFailed"], rec["bodyFailed"], rec["bodyLoading"], rec["sets"]), (True, "/waiting", None, False, False, False, 3), "the third promotion, by the tab tap: the pane loaded, the failed state gone: %r" % (rec,))
+        self.assertTrue(rec["url"].endswith("/waiting") and rec["spinGone"] and rec["head"], "its document is the Waiting page, painted: %r" % (rec,))
+        self.assertEqual((len(r["requests"]), r["routePassed"]), (3, 1), "three document requests in all: the two denied and the one that passed: %r" % (r["requests"],))
+        self.assertEqual([x for x in r["rows"] if x["what"] == "pane-load-failed"], [{"what": "pane-load-failed", "pane": "waiting", "via": "load", "n": 1}, {"what": "pane-load-failed", "pane": "waiting", "via": "load", "n": 2}],
+                         "two failure rows via load (the 403 commits a document and fires load); the recovery filed none: %r" % (r["rows"],))
+        self.assertEqual([x for x in r["rows"] if x["what"] == "pane-load-unmarked"], [], "nothing was shown as served")
+        self.assertEqual(r["errors"], [], "no page errors")
+
+    def test_E_a_slow_desktop_load_is_held_through_the_backstop_and_lands_on_the_kept_src(self):
+        # review round 5 (2026-09-20, tests-2 with extra9-1): every desktop promotion arms the 30 s backstop since round 4, and its `blank` answer
+        # (a fetch not yet committed) was a failure there too, so a healthy but slow desktop load was torn down at 30 s, re-fetched, and filed a
+        # row (the LazyPanes node cases drive the same lines and the rotation back). Here the Waiting pane's one request is held 34 s by the route
+        # and then answered by the lab kernel: at the backstop the src is kept and nothing is re-fetched (one request on the wire, one src set),
+        # the row records the 30 s uncommitted document, and the document lands on the kept src and paints.
+        r = self._drive("E")
+        fl = r["flipped"]
+        self.assertEqual((fl["mobile"], fl["src"], fl["lazy"], fl["dataSrc"], fl["sets"], fl["url"]), (False, "/waiting", None, "/waiting", 1, "about:blank"), "the rotation to the desktop promoted the parked pane; its request is held, the frame's document still the initial about:blank: %r" % (fl,))
+        ab = r["atBackstop"]
+        self.assertGreaterEqual(ab["atMs"], 30000, "the read is past LOAD_MS: %r" % (ab,))
+        self.assertEqual((ab["src"], ab["lazy"], ab["dataSrc"], ab["sets"], ab["url"]), ("/waiting", None, "/waiting", 1, "about:blank"), "the HOLD: past the backstop the src is kept and nothing was re-fetched (one set; round 4: the src dropped and a second promotion): %r" % (ab,))
+        self.assertEqual((ab["divFailed"], ab["bodyFailed"], ab["divLoading"], ab["bodyLoading"]), (False, False, False, False), "no failed or loading state on the desktop: %r" % (ab,))
+        self.assertEqual(r["requestsAtBackstop"], 1, "one document request on the wire past the backstop: the held fetch was not torn down (round 4: two): %r" % (r["requests"],))
+        ld = r["landed"]
+        self.assertGreaterEqual(ld.get("ms", -1), 0, "the held request was answered and the document loaded and painted on the kept src within the wait: %r" % (ld,))
+        self.assertEqual((ld["src"], ld["dataSrc"], ld["sets"], ld["divFailed"], ld["bodyFailed"], ld["divLoading"], ld["bodyLoading"]), ("/waiting", "/waiting", 1, False, False, False, False), "landed: one src set for the page's life, no state: %r" % (ld,))
+        self.assertTrue(ld["url"].endswith("/waiting") and ld["spinGone"] and ld["head"], "its document is the Waiting page, painted: %r" % (ld,))
+        self.assertEqual((r["after"]["sets"], r["after"]["src"]), (1, "/waiting"), "and nothing promoted again: %r" % (r["after"],))
+        self.assertEqual((len(r["requests"]), r["routeHeld"]), (1, 1), "one document request in all, the held one: %r" % (r["requests"],))
+        self.assertEqual([x for x in r["rows"] if x["what"] == "pane-load-failed"], [{"what": "pane-load-failed", "pane": "waiting", "via": "backstop", "n": 1}],
+                         "one row via the backstop: the 30 s uncommitted document is recorded (the hold keeps the src; the load that landed ended the episode): %r" % (r["rows"],))
+        self.assertEqual([x for x in r["rows"] if x["what"] == "pane-load-unmarked"], [], "nothing was shown as served")
+        self.assertEqual(r["errors"], [], "no page errors")
 
 
 if __name__ == "__main__":

@@ -18,6 +18,19 @@
 //      extra7-2's refuter executed it), then the window narrows back to the phone: the recorded failure parks the pane with the failed
 //      state painted, and ONE recovery gesture (cfg.recover: "tab" the Waiting tab's button, "overlay" a tap on #pane-load away from its
 //      children, "button" the Try again button) promotes it again; the third request passes and the pane loads.
+//   D  (review round 5, correctness-3, ruled high) the desktop's bound over a document the KERNEL sent: every request for /waiting is
+//      re-issued to the lab kernel credential-less (route.fetch with an explicit empty Cookie header, the return harness's denied mode)
+//      and the frame fulfilled with the kernel's own answer, 403, text/plain, a body naming the serve-token file's path (its STATUS is
+//      recorded; the body is never read, printed or kept). The flip to the desktop promotes the parked pane; the first denial re-parks
+//      under data-src and promotes again; the second is the bound: the src is DROPPED, the frame navigates to about:blank (nothing of the
+//      kernel's answer on show), the url waits under data-src, no third request. Round 4's bound kept the src, so that body stood on the
+//      desktop's screen with no failed state and no retry. The flip back parks it with the failed state; the Waiting tab's tap (the
+//      route passing now) loads it.
+//   E  (review round 5, tests-2 with extra9-1) a healthy but SLOW desktop load through the 30 s backstop: the first request for /waiting
+//      is held cfg.slowMs (34 s, past LOAD_MS) and then continued. The flip to the desktop promotes the pane; at 30 s the backstop reads a
+//      frame never committed (`blank`) and HOLDS it: the src kept, no re-fetch (one request on the wire, one src set), one pane-load-failed
+//      row via backstop recording the 30 s uncommitted document; the document then lands on the kept src and paints. Round 4 tore it down
+//      at 30 s and re-fetched it (two requests, two sets).
 // Prints one RESULT: JSON line (cfg.resultPath gets the same object). cfg.healthz names the LAB port and is asserted before any request;
 // a live kernel is never touched. Chromium alone: WebKit's failure detector is the 30 s backstop (no load event), which would cost 30 s a
 // case for the same shell lines. Synthetic sessions only.
@@ -117,7 +130,7 @@ try {
     await page.click("#mtabs button[data-pane=waiting]");
     await sleep(500);
     out.phoneAgain = await readPane();
-  } else {
+  } else if (cfg.case === "B" || cfg.case === "C") {
     let held = 0;
     const abortN = cfg.case === "C" ? 2 : 1;   // C: the desktop's re-promotion fails too
     const gate = async (route) => { if (held === 0) { held = 1; await sleep(cfg.holdMs || 1500); out.t.abort = now(); try { await route.abort(); } catch (e) { /* gone */ } } else if (held < abortN) { held++; try { await route.abort(); } catch (e) { /* gone */ } } else { held++; await route.continue(); } };
@@ -151,6 +164,55 @@ try {
       out.recovered = { ...rec.r, ms: rec.ok ? rec.ms : -1 };
     }
     await page.unroute(isWaiting, gate);
+    out.routeHeld = held;
+  } else if (cfg.case === "D") {
+    const denied = { statuses: [], responses: 0 };
+    let passN = 0;
+    const denier = async (route) => {
+      if (denied.responses >= 2) { passN++; return route.continue(); }   // the third request (the phone's tap after the flip back) passes
+      const resp = await route.fetch({ headers: { ...route.request().headers(), cookie: "" } });   // the kernel's own answer to a credential-less request: status recorded, body never read
+      denied.responses++; denied.statuses.push(resp.status());
+      return route.fulfill({ response: resp });
+    };
+    await page.route(isWaiting, denier);
+    out.t.tap = now();
+    out.t.flip = now();
+    await page.setViewportSize({ width: 1200, height: 800 });   // the rotation to the desktop: lazyFlip promotes the parked Waiting pane
+    const bound = await until((r) => !r.mobile && r.sets >= 2 && r.src === null && r.dataSrc === "/waiting", 25000);
+    out.desktopBound = { ...bound.r, ms: bound.ok ? bound.ms : -1 };
+    const blank = await until((r) => r.url === "about:blank", 5000);   // the src removed: the frame navigates to about:blank (the engine's rule for a removed src)
+    out.blanked = { url: blank.r && blank.r.url, ms: blank.ok ? blank.ms : -1 };
+    await sleep(1500);   // room for a third promotion, were one to come
+    out.after = await readPane();
+    out.denied = denied;
+    out.requestsAtBound = out.requests.length;
+    out.t.flipBack = now();
+    await page.setViewportSize({ width: 390, height: 844 });   // back to the phone: the recorded failure parks the src-less pane with the failed state
+    const back = await until((r) => r.mobile && r.src === null && r.lazy === "/waiting" && r.divFailed, 5000);
+    out.phoneBack = { ...back.r, ms: back.ok ? back.ms : -1 };
+    out.t.recover = now();
+    await page.click("#mtabs button[data-pane=waiting]");   // the tab tap: the failed state is painted for the shown tab, and show() promotes the parked pane
+    const rec = await until((r) => r.src === "/waiting" && r.url && r.url.endsWith("/waiting") && r.spinGone === true && r.head === true, 25000);
+    out.recovered = { ...rec.r, ms: rec.ok ? rec.ms : -1 };
+    await page.unroute(isWaiting, denier);
+    out.routePassed = passN;
+  } else if (cfg.case === "E") {
+    let held = 0;
+    const slow = async (route) => { held++; if (held === 1) await sleep(cfg.slowMs || 34000); try { await route.continue(); } catch (e) { /* gone */ } };   // the first request held past the 30 s backstop, then answered by the lab kernel
+    await page.route(isWaiting, slow);
+    out.t.tap = now();
+    out.t.flip = now();
+    await page.setViewportSize({ width: 1200, height: 800 });
+    await sleep(500);
+    out.flipped = await readPane();   // promoted: the src set, the frame's document still the initial about:blank
+    while (now() - out.t.flip < 31500) await sleep(100);   // past LOAD_MS (30 s): the backstop has read the frame
+    out.atBackstop = { ...(await readPane()), atMs: now() - out.t.flip };
+    out.requestsAtBackstop = out.requests.length;
+    const landed = await until((r) => r.src === "/waiting" && r.url && r.url.endsWith("/waiting") && r.spinGone === true && r.head === true, 25000);
+    out.landed = { ...landed.r, ms: landed.ok ? landed.ms : -1, atMs: now() - out.t.flip };
+    await sleep(1000);
+    out.after = await readPane();
+    await page.unroute(isWaiting, slow);
     out.routeHeld = held;
   }
   const rows = readDiag().filter((x) => x.wid === out.wid && x.surface === "shell" && (x.what === "pane-load-failed" || x.what === "pane-load-unmarked"));
