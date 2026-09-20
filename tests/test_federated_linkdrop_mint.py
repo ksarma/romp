@@ -135,7 +135,11 @@ OTHER_SPAWNER_MODULES = {"pty": pty, "asyncio": asyncio, "_posixsubprocess": _po
 # object's type, code or bound function; the bare name `__builtins__` reaches `__import__` by a string) are refused the
 # same way, as attributes or as a bare name (REFLECTIVE_NAMES), whatever follows them.
 REFLECTIVE_CALLS = ("exec", "eval", "compile", "__import__", "vars", "globals", "locals")
-REFLECTIVE_ATTRS = ("import_module", "__getattribute__", "__dict__", "modules", "attrgetter",
+# the attribute-reading builtins: refused with a name that is not a string constant over ANY value (a name built at run time is one
+# the census cannot read), and, like REFLECTIVE_CALLS, refused read as a bare name anywhere but as the function of a call (an alias
+# carries the road under another name: round 6's fixer pass, `_gi = __import__`, `_ga = getattr`, `map(exec, [...])`)
+ATTR_BUILTINS = ("getattr", "setattr", "delattr", "hasattr")
+REFLECTIVE_ATTRS = ("import_module", "__getattribute__", "__getattr__", "__dict__", "modules", "attrgetter",
                     "__globals__", "__spec__", "__loader__", "__builtins__", "__class__", "__subclasses__", "__code__", "__closure__", "__wrapped__", "__self__", "__func__")
 REFLECTIVE_NAMES = ("__builtins__",)
 # every module the censused set imports today, foreign to this directory (a sibling is walked, never listed): an import
@@ -222,13 +226,22 @@ def _commands_around_the_recorder(src, siblings=()):
     import of the subprocess module or of os under another name, or of a name from subprocess; a constant "subprocess" or one
     equal to an OS_SPAWNERS name (the road through a string handed to a primitive); a call to one of REFLECTIVE_CALLS, an
     attribute named as one of REFLECTIVE_ATTRS, a bare read of one of REFLECTIVE_NAMES, a getattr whose first argument is the
-    os module, a getattr whose first argument is any name the source imports and whose name argument is not a string constant
-    (round 6: `getattr(_dial, "subproce" + "ss")` was inside the stated class with no red; a built name over a module is a name
-    the census cannot read, and a constant name is read by the constant arm), or an import of such a name,
-    each refused as a node whatever its argument, so the text it carries is not what is matched; and an import of any module
-    outside ALLOWED_IMPORTS that is not a sibling this census walks (`siblings`; a relative import is one by construction). A
-    comment or a docstring is no node of these kinds, so the words in one do not count; a docstring is one constant equal to
-    its whole text, so a docstring that names os.system is not equal to "system"."""
+    os module, a getattr, setattr, delattr or hasattr whose name argument is not a string constant over ANY first argument
+    (round 6: `getattr(_dial, "subproce" + "ss")` was inside the stated class with no red, and the fixer pass found the same
+    over an alias of os and over an attribute; a built name over any value is a name the census cannot read, and a constant
+    name is read by the constant arm), a reflective primitive or an attribute-reading builtin read as a BARE NAME anywhere but
+    as the function of a call (`_gi = __import__`, `map(exec, [...])`: an alias carries the road under another name, the rule
+    the bare name `subprocess` already had), or an import of such a name, each refused as a node whatever its argument, so the
+    text it carries is not what is matched, a constant compared by its decoded text (b"subprocess" is "subprocess"); the name
+    `subprocess` BOUND anywhere but by a module-level `import subprocess` (an import inside a function or a class, a `global` or
+    `nonlocal` declaration, an assignment, a parameter, a name imported as it: the recorder patches ONE binding, the module's
+    attribute, and a function-local import rebinds the name to the real module past it); a spawning call of subprocess outside
+    every function BODY (at module level, in a class body, in a default argument or a decorator: it runs at import, before any
+    recorder is installed); a function literal or a def's name handed as an argument to a call outside every function body
+    (a thread target, a signal handler: when it runs is a bound this census cannot read, and a program it starts runs under no
+    recorder); and an import of any module outside ALLOWED_IMPORTS that is not a sibling this census walks (`siblings`; a
+    relative import is one by construction). A comment or a docstring is no node of these kinds, so the words in one do not
+    count; a docstring is one constant equal to its whole text, so a docstring that names os.system is not equal to "system"."""
     found = []
     tree = ast.parse(src)
     parent = {}
@@ -236,12 +249,18 @@ def _commands_around_the_recorder(src, siblings=()):
         for child in ast.iter_child_nodes(node):
             parent[child] = node
     spawners = set(OS_SPAWNERS) | set(OTHER_NAMES)
-    imported = set()   # every name the source binds by an import statement: a module, or a name from one
-    for n in ast.walk(tree):
-        if isinstance(n, ast.Import):
-            imported.update((a.asname or a.name).split(".")[0] for a in n.names)
-        elif isinstance(n, ast.ImportFrom):
-            imported.update(a.asname or a.name for a in n.names)
+    defs = {n.name for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+
+    def in_a_body(n):
+        """Whether the node sits inside some function's BODY: a default argument, a decorator and an annotation are outside it
+        (they run at definition time), as is a class body and the module level."""
+        q = n
+        while q in parent:
+            up = parent[q]
+            if (isinstance(up, (ast.FunctionDef, ast.AsyncFunctionDef)) and q in up.body) or (isinstance(up, ast.Lambda) and q is up.body):
+                return True
+            q = up
+        return False
     for n in ast.walk(tree):
         p = parent.get(n)
         if isinstance(n, ast.Attribute):
@@ -257,6 +276,14 @@ def _commands_around_the_recorder(src, siblings=()):
             found.append((n.lineno, "subprocess read bare"))
         elif isinstance(n, ast.Name) and n.id in REFLECTIVE_NAMES and isinstance(n.ctx, ast.Load):
             found.append((n.lineno, n.id))
+        elif isinstance(n, ast.Name) and (n.id in REFLECTIVE_CALLS or n.id in ATTR_BUILTINS) and isinstance(n.ctx, ast.Load) and not (isinstance(p, ast.Call) and p.func is n):
+            found.append((n.lineno, "%s read bare (an alias of a reflective primitive)" % n.id))
+        elif isinstance(n, ast.Name) and n.id == "subprocess" and isinstance(n.ctx, (ast.Store, ast.Del)):
+            found.append((n.lineno, "subprocess bound by an assignment"))
+        elif isinstance(n, (ast.Global, ast.Nonlocal)) and "subprocess" in n.names:
+            found.append((n.lineno, "%s subprocess" % type(n).__name__.lower()))
+        elif isinstance(n, ast.arg) and n.arg == "subprocess":
+            found.append((n.lineno, "subprocess bound as a parameter"))
         elif isinstance(n, ast.Call) and isinstance(n.func, ast.Name):
             if n.func.id in spawners:
                 found.append((n.lineno, n.func.id + "("))
@@ -264,8 +291,8 @@ def _commands_around_the_recorder(src, siblings=()):
                 found.append((n.lineno, n.func.id + "("))
             elif n.func.id == "getattr" and n.args and isinstance(n.args[0], ast.Name) and n.args[0].id == "os":
                 found.append((n.lineno, "getattr(os,"))
-            elif n.func.id == "getattr" and n.args and isinstance(n.args[0], ast.Name) and n.args[0].id in imported and not (len(n.args) > 1 and isinstance(n.args[1], ast.Constant)):
-                found.append((n.lineno, "getattr(%s, <a name built at run time>" % n.args[0].id))
+            elif n.func.id in ATTR_BUILTINS and len(n.args) > 1 and not isinstance(n.args[1], ast.Constant):
+                found.append((n.lineno, "%s(%s, <a name built at run time>" % (n.func.id, ast.unparse(n.args[0]))))
         elif isinstance(n, ast.ImportFrom):
             top = n.module.split(".")[0] if n.module else ""
             names = [a.name for a in n.names]
@@ -273,8 +300,10 @@ def _commands_around_the_recorder(src, siblings=()):
                 found.append((n.lineno, "from os import " + ", ".join(names)))
             elif n.module and top == "subprocess":
                 found.append((n.lineno, "from %s import %s" % (n.module, ", ".join(names))))
-            elif n.module and any(a in OTHER_NAMES or a in REFLECTIVE_CALLS or a in REFLECTIVE_ATTRS for a in names):
+            elif n.module and any(a in OTHER_NAMES or a in REFLECTIVE_CALLS or a in REFLECTIVE_ATTRS or a in ATTR_BUILTINS for a in names):
                 found.append((n.lineno, "from %s import %s" % (n.module, ", ".join(names))))
+            if any((a.asname or a.name) == "subprocess" for a in n.names):
+                found.append((n.lineno, "from %s import ... as subprocess (a second binding of the name)" % (n.module,)))
             if n.level == 0 and top not in ALLOWED_IMPORTS and top not in siblings and top != PACKAGE:
                 found.append((n.lineno, "from %s import ... (a module ALLOWED_IMPORTS does not name)" % (n.module,)))
         elif isinstance(n, ast.Import):
@@ -282,12 +311,22 @@ def _commands_around_the_recorder(src, siblings=()):
                 top = a.name.split(".")[0]
                 if top == "subprocess" and (a.asname or a.name != "subprocess"):
                     found.append((n.lineno, "import %s as %s" % (a.name, a.asname)))
+                elif top == "subprocess" and not isinstance(p, ast.Module):
+                    found.append((n.lineno, "import subprocess inside a function or a class (a second binding of the name, past the recorder)"))
                 elif top == "os" and a.asname:
                     found.append((n.lineno, "import %s as %s" % (a.name, a.asname)))
                 elif top not in ALLOWED_IMPORTS and top not in siblings and top != PACKAGE:
                     found.append((n.lineno, "import %s (a module ALLOWED_IMPORTS does not name)" % (a.name,)))
-        elif isinstance(n, ast.Constant) and (n.value == "subprocess" or n.value in OS_SPAWNERS):
-            found.append((n.lineno, '"%s"' % (n.value,)))
+        elif isinstance(n, ast.Constant) and isinstance(n.value, (str, bytes)):
+            text = n.value.decode("utf-8", "replace") if isinstance(n.value, bytes) else n.value
+            if text == "subprocess" or text in OS_SPAWNERS:
+                found.append((n.lineno, '"%s"' % (text,)))
+        if isinstance(n, ast.Call) and not in_a_body(n):
+            if isinstance(n.func, ast.Attribute) and isinstance(n.func.value, ast.Name) and n.func.value.id == "subprocess" and n.func.attr in SPAWNERS:
+                found.append((n.lineno, "subprocess.%s(...) outside every function body: it runs at import, before any recorder" % n.func.attr))
+            for a in list(n.args) + [k.value for k in n.keywords]:
+                if isinstance(a, ast.Lambda) or (isinstance(a, ast.Name) and a.id in defs):
+                    found.append((n.lineno, "a callable handed to a call outside every function body (%s): when it runs is a bound the census cannot read" % ast.unparse(n.func)))
     return found
 
 
@@ -598,6 +637,10 @@ class OldHubMintIsPrivate(unittest.TestCase):
 
         class Recorder:
             def __getattr__(self, name):
+                # every spawning function is a class attribute of the recorder, so a dunder lookup asking for one is a road
+                # around the record (round 6's fixer pass: `subprocess.__getattr__("ru" + "n")` under the recorder ran unrecorded)
+                if name in SPAWNERS:
+                    raise AssertionError("the recorder's __getattr__ was asked for %s: a spawning function is reached only as its class attribute" % name)
                 return getattr(real, name)
 
         def recording(name):
@@ -640,6 +683,9 @@ class OldHubMintIsPrivate(unittest.TestCase):
             self.assertEqual(seen, [["true"]], "a shell string is recorded as one token: %r" % (seen,))
             for name in ("PIPE", "STDOUT", "DEVNULL", "TimeoutExpired", "CompletedProcess", "CalledProcessError"):
                 self.assertIs(getattr(L.subprocess, name), getattr(subprocess, name), "%s is delegated to the real module" % name)
+            with self.assertRaises(AssertionError, msg="the recorder's own __getattr__ hands out no spawning function (a dunder lookup would reach the real one unrecorded)"):
+                L.subprocess.__getattr__("run")
+            self.assertIs(L.subprocess.__getattr__("PIPE"), subprocess.PIPE, "...and delegates every other name")
 
     def _assert_commands_are_private(self, seen, expect_commands=True):
         """Every git command the mint ran either reads the source (the clone) or is bound to a path under the lab; none
@@ -816,15 +862,44 @@ class OldHubMintIsPrivate(unittest.TestCase):
                  ('f.__closure__[0].cell_contents\n', ".__closure__"),
                  ('f.__wrapped__\n', ".__wrapped__"),
                  ('m.__self__\n', ".__self__"),
-                 ('m.__func__\n', ".__func__"))
+                 ('m.__func__\n', ".__func__"),
+                 # round 6's fixer pass: a second binding of the name subprocess; a spawn or a callable at import time; a
+                 # reflective primitive read bare or handed a built name over any value; a bytes constant; __getattr__
+                 ('def f():\n    import subprocess\n    return subprocess.run(["true"])\n', "import subprocess inside a function or a class"),
+                 ('class K:\n    import subprocess\n', "import subprocess inside a function or a class"),
+                 ('def f():\n    global subprocess\n    import subprocess\n', "global subprocess"),
+                 ('def f():\n    nonlocal subprocess\n', "nonlocal subprocess"),
+                 ('subprocess = None\n', "subprocess bound by an assignment"),
+                 ('def f(subprocess):\n    return subprocess\n', "subprocess bound as a parameter"),
+                 ('from unittest import mock as subprocess\n', "from unittest import ... as subprocess"),
+                 ('import subprocess\n_p = subprocess.run(["true"])\n', "subprocess.run(...) outside every function body"),
+                 ('import subprocess\nclass K:\n    r = subprocess.check_call(["true"])\n', "subprocess.check_call(...) outside every function body"),
+                 ('import subprocess\ndef f(x=subprocess.run(["true"])):\n    return x\n', "subprocess.run(...) outside every function body"),
+                 ('import subprocess\n@subprocess.Popen(["true"]).wait\ndef f():\n    pass\n', "subprocess.Popen(...) outside every function body"),
+                 ('import threading\nthreading.Thread(target=lambda: 1).start()\n', "a callable handed to a call outside every function body (threading.Thread)"),
+                 ('import signal\ndef h(*a):\n    pass\nsignal.signal(signal.SIGUSR2, h)\n', "a callable handed to a call outside every function body (signal.signal)"),
+                 ('class K:\n    def m(self):\n        pass\n    t = list(map(lambda x: x, []))\n', "a callable handed to a call outside every function body (map)"),
+                 ('_gi = __import__\n', "__import__ read bare"),
+                 ('_ga = getattr\n', "getattr read bare"),
+                 ('list(map(exec, ["1"]))\n', "exec read bare"),
+                 ('import os\n_o = os\ngetattr(_o, "sys" + "tem")\n', "getattr(_o, <a name built at run time>"),
+                 ('import os\nclass H:\n    m = os\ngetattr(H.m, NAME)\n', "getattr(H.m, <a name built at run time>"),
+                 ('setattr(x, "subpro" + "cess", y)\n', "setattr(x, <a name built at run time>"),
+                 ('hasattr(x, n)\n', "hasattr(x, <a name built at run time>"),
+                 ('from builtins import getattr as g\n', "from builtins import getattr"),
+                 ('b"subprocess".decode()\n', '"subprocess"'),
+                 ('x.__getattr__("ru" + "n")\n', ".__getattr__"))
         for src, form in forms:
             with self.subTest(form=form, src=src):
                 hits = _commands_around_the_recorder(src, siblings=("test_federated_dial_terms_served",))
                 self.assertTrue(any(form in h[1] for h in hits), "the detector refuses %r as %r: %r" % (src, form, hits))
-        allowed = ('import os\nimport subprocess\nimport lab_dist\nfrom . import lab_dist_stub\nfrom tests import fs_clock\n'
-                   'subprocess.run(["true"], stdout=subprocess.PIPE)\np = subprocess.Popen(["true"])\nos.path.join("a", "b")\n'
-                   'getattr(cls, "procs", [])\ngetattr(type(self), "result", None)\ngetattr(lab_dist, "build", None)\n"""os.system in a docstring; exec and eval too"""\n')
-        self.assertEqual(_commands_around_the_recorder(allowed, siblings=("lab_dist", "fs_clock")), [], "the allowed spellings, and the words in a docstring, are not refused")
+        allowed = ('import os\nimport subprocess\nimport sys\nimport lab_dist\nfrom . import lab_dist_stub\nfrom tests import fs_clock\n'
+                   'HERE = os.path.dirname(os.path.realpath(__file__))\nsys.path.insert(0, HERE)\n'
+                   'def f():\n    import select\n    subprocess.run(["true"], stdout=subprocess.PIPE)\n    p = subprocess.Popen(["true"])\n    return select.select([], [], [], 0)\n'
+                   'def g(cb=None):\n    return cb\ndef h():\n    return g(lambda: 1)\nos.path.join("a", "b")\n'
+                   'getattr(cls, "procs", [])\ngetattr(type(self), "result", None)\ngetattr(lab_dist, "build", None)\nhasattr(x, "y")\n"""os.system in a docstring; exec and eval too"""\n')
+        self.assertEqual(_commands_around_the_recorder(allowed, siblings=("lab_dist", "fs_clock")), [], "the allowed spellings (a spawner CALLED inside a function body, a nested import of another module, a "
+                                                                                                          "module-level call with no callable argument, a lambda handed to a call inside a function, a constant name to getattr or hasattr), and the words in a docstring, are not refused")
         mods = _lab_modules()
         self.assertTrue({LAB_MODULE, "lab_dist"} <= set(mods), "the derivation reaches the lab module and lab_dist: %r" % sorted(mods))
         found = {name: hits for name, src in sorted(mods.items()) for hits in [_commands_around_the_recorder(src, siblings=set(mods))] if hits}
