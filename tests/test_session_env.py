@@ -2562,7 +2562,7 @@ class CensusParseRetention(unittest.TestCase):
         self.assertEqual(frozenset(erc.ASTS), expected, "the cache holds the canonical inputs and nothing else")
 
     def test_the_door_keeps_the_sites_census_and_not_a_foreign_set(self):
-        """`census(CENSUS_FILES)` is one object per process (the 17 sites share it; a canonical table that dropped one of
+        """`census(CENSUS_FILES)` is one object per process (the sites share it; a canonical table that dropped one of
         this module's files would make every site construct anew, and this pin reds on it), while a set with a foreign
         path is computed for the call and leaves the door's cache the size it was. Red before on the size: the foreign
         set was kept, with its trees."""
