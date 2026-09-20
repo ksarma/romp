@@ -8400,7 +8400,11 @@ count in the Tests list recomputed by the listing it names,and, since the round-
 it also holds the computed read over every painting element against the flow's `offPaper`, `paintsOf` and `shows`, the
 probe drop shared by the two repaint roads and absent from the settle's, the ask written into the wait's row, the
 census's classes and its refusal, the editor's loader seated before its mount, and the legs and cases the round added,
-by their titles.
+by their titles. Since the round-6 fixes (2026-09-20, after the round-5 review) it also runs the figure leg's table from
+the leg's own source and holds the shape count and the two-URL count in this section to the rows built, and it derives
+two populations over the print test modules rather than recalling them, the sources read with their comments for these
+two: every filter-then-map-by-index chain, by the modules' syntax, and every line carrying a spelling of the retired
+sentence; each passes the sites read by hand and refuses every other with its module and line.
 tools/markdown-viewer-plan-print-vocabulary.test.mjs holds this section's words to CONTEXT.md's File comment entry: what
 the Comments panel draws over a PDF page is called comments here, never `annotation`, which that entry lists under
 _Avoid_ (a review finding, 2026-09-19).
