@@ -749,8 +749,11 @@ def owner_only_dir(path, what: str = "directory", parents: bool = False) -> Path
     and the caller's open: a race-free version needs directory-descriptor-relative calls (mkdirat, openat, fchmod on the
     descriptor), and the files written below these directories take paths. The reachable cases are narrow: an
     attacker-owned target raises PermissionError at the chmod before any write, so what lands content is that TOCTOU
-    flip or a target the operator already owns, and either needs a state root that is not 0700, where ours is 0700 by
-    code (kernel/judge.py). tests/test_judge_scratch_private.py OwnerOnlyParity runs this and the judge copy over one
+    flip or a target the operator already owns, and either needs a state root that is not 0700 while a session starts.
+    On this deployment the root reads 0700 because kernel/judge.py chmods it at import, best-effort (the OSError
+    swallowed, the mode read back once and reported on stderr when it is not 0700), and nothing re-checks or guards it
+    afterwards (extra6-1, round 5 of the review, 2026-09-20: an attempt at startup, not a standing property of the
+    box). tests/test_judge_scratch_private.py OwnerOnlyParity runs this and the judge copy over one
     table of setups and holds their outcomes equal."""
     d = Path(path)
     d.mkdir(mode=0o700, parents=parents, exist_ok=True)

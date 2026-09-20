@@ -108,8 +108,18 @@ def host_sock(state_dir, sid: str) -> Path:
 class HostDirRefused(OSError):
     """A `hosts/` or `hosts/<sid>/` the kernel will not write under: a symlink, not a directory, another uid's, or
     group/world-accessible, found by write_spawn_spec's two directory guards (sh.hosts_dir, sh.owner_only_dir) or by
-    open_host_dirs' descriptor checks. The text is the reason with the path; sdk_backend._host_transport_for files it
-    as a problem row with the remedy and refuses the launch (round 4 of the review, 2026-09-20)."""
+    open_host_dirs' descriptor checks; or, since round 5 of the review (kernel-2, 2026-09-20), a symlink standing at
+    `spawn.json` or `host.stderr` under a verified `hosts/<sid>/`, refused by the file-level O_NOFOLLOW open
+    (_open_file_nofollow), with `file` naming it: through round 4 those two opens raised a bare OSError (ELOOP), so a
+    link planted at either name escaped this class, with no problem row, no remedy, and the launch error composed over a
+    stale stderr tail. The text is the reason with the path; sdk_backend._host_transport_for files it as a problem row
+    with the remedy (worded per shape, a directory's or a file's) and refuses the launch (round 4 of the review,
+    2026-09-20). Built from ONE text argument, always, so `errno` is None on every instance: that is what tells a
+    decided refusal from a filesystem error in write_spawn_spec's wrap of the two path-taking helpers (regression-1 and
+    kernel-4, round 5), which raise their own refusals as single-argument OSErrors and let a real errno (a full disk,
+    an unwritable root) through as the OSError it is."""
+
+    file = None                                  # the file name when the refusal is a link at spawn.json or host.stderr
 
 
 _DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
@@ -162,10 +172,14 @@ class HostDirs:
     published path (`while not sock.exists()` in _host_transport_for) and the kernel's first connect to it take that
     PATH, not a name under these descriptors, so a hosts/ re-pointed during the spawn wait is read there through the
     link (a stat, then a connect, no write). That residual is named in the PR's record, under the same precondition
-    every residual here shares (a state root that is not 0700; ours is 0700 by code)."""
+    every residual here shares: a state root that is not 0700 while a session starts. On this deployment the root reads
+    0700 because kernel/judge.py chmods it at import, best-effort (the OSError swallowed, the mode read back once and
+    reported on stderr when it is not 0700), and nothing re-checks or guards it afterwards (extra6-1, round 5 of the
+    review, 2026-09-20: an attempt at startup, not a standing property of the box). `path` is `hosts/<sid>/` as the
+    caller names it, for the wording of a refusal at a file under it (_open_file_nofollow)."""
 
-    def __init__(self, hosts: int, dir: int):
-        self.hosts, self.dir = hosts, dir
+    def __init__(self, hosts: int, dir: int, path=None):
+        self.hosts, self.dir, self.path = hosts, dir, path
 
     def close(self) -> None:
         for name in ("hosts", "dir"):
@@ -202,7 +216,27 @@ def open_host_dirs(state_dir, sid: str) -> HostDirs:
     except BaseException:
         os.close(hfd)
         raise
-    return HostDirs(hfd, dfd)
+    return HostDirs(hfd, dfd, hosts_path / str(sid))
+
+
+def _open_file_nofollow(name: str, flags: int, dirs: HostDirs) -> int:
+    """A file under the verified `hosts/<sid>/` opened by NAME relative to its descriptor with O_NOFOLLOW (and
+    O_CLOEXEC), mode 0600 when created: the two file-level opens of the spawn road, spawn.json (write_spawn_spec) and
+    host.stderr (host_stderr_open). A symlink standing at the name fails the open with ELOOP and is refused under
+    HostDirRefused, naming the file and the directory, with `file` set (kernel-2, round 5 of the review, 2026-09-20:
+    through round 4 the ELOOP surfaced as a bare OSError, outside the class the two call sites catch, so a planted link
+    got no problem row and no remedy and _record_launch_error composed the card over a stale stderr tail). Any other
+    OSError (a full disk, a permission error, EISDIR for a directory at the name) propagates as itself with its errno:
+    the class is for the shape the descent refuses, not for every failure of the open. Nothing is followed and nothing
+    is written on the refused road: O_NOFOLLOW fails the open before any descriptor exists."""
+    try:
+        return os.open(name, flags | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0), 0o600, dir_fd=dirs.dir)
+    except OSError as e:
+        if e.errno == errno.ELOOP:
+            e2 = HostDirRefused("%s in host directory %s is a symlink, not a regular file" % (name, dirs.path))
+            e2.file = name
+            raise e2 from None
+        raise
 
 
 def host_stderr_open(dirs: HostDirs) -> int:
@@ -210,9 +244,20 @@ def host_stderr_open(dirs: HostDirs) -> int:
     0600, relative to the session directory's descriptor, so the file is created in the directory the kernel verified
     and never through a link at any component. Append, so a previous launch's bytes stay where they are and the kernel's
     watermark (host_stderr_size before the spawn) tells this launch's bytes from them. The caller passes the descriptor
-    to Popen as the child's stderr and closes its own copy after the spawn."""
-    return os.open("host.stderr", os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0),
-                   0o600, dir_fd=dirs.dir)
+    to Popen as the child's stderr and closes its own copy after the spawn. The mode is set on the descriptor after the
+    open (os.fchmod, kernel-1 of round 5 of the review, 2026-09-20): O_CREAT's 0600 applies only to a file this open
+    creates, and a host.stderr a previous launch left (a stale kernel-held lease keeps the directory) kept whatever mode
+    it was born with, 0664 under the 002 umask every launch before round 4 opened it at, while spawn.json two lines
+    away in write_spawn_spec paid the same fchmod for the same reason; a raising fchmod closes the descriptor and
+    propagates. A symlink at the name is refused under HostDirRefused (_open_file_nofollow, kernel-2 of the same
+    round), the class the launcher's call site already catches."""
+    fd = _open_file_nofollow("host.stderr", os.O_WRONLY | os.O_CREAT | os.O_APPEND, dirs)
+    try:
+        os.fchmod(fd, 0o600)
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
 
 
 def host_stderr_size(dirs: HostDirs) -> int:
@@ -234,7 +279,12 @@ def _rmtree_at(dir_fd: int, name: str) -> None:
     walked), its entries read off the descriptor, each subdirectory taken the same way and every other entry (a symlink
     among them, as an entry) unlinked relative to it, then the directory itself removed relative to dir_fd. The shape
     shutil.rmtree takes on a platform with dir_fd support, written out because rmtree's own dir_fd parameter is 3.11's and
-    CI runs 3.10."""
+    CI runs 3.10. An entry the listing named that is gone by the time the walk reaches it (a live host still writing and
+    rotating its journal beside this walk) is skipped, the ignore_errors semantics of the rmtree this replaced
+    (kernel-3, round 5 of the review, 2026-09-20: through round 4 that FileNotFoundError climbed out of the walk to
+    remove_host_dir's already-absent arm, which reported the directory cleared with it still standing and its remaining
+    entries in it). The skip weakens no refusal: HostDirRefused is built from one text argument and is never a
+    FileNotFoundError, and a link or a foreign directory still fails the O_NOFOLLOW open or the fstat above it."""
     fd = os.open(name, _DIR_FLAGS, dir_fd=dir_fd)
     try:
         st = os.fstat(fd)
@@ -243,10 +293,13 @@ def _rmtree_at(dir_fd: int, name: str) -> None:
         with os.scandir(fd) as it:
             entries = list(it)
         for e in entries:
-            if e.is_dir(follow_symlinks=False):
-                _rmtree_at(fd, e.name)
-            else:
-                os.unlink(e.name, dir_fd=fd)
+            try:
+                if e.is_dir(follow_symlinks=False):
+                    _rmtree_at(fd, e.name)
+                else:
+                    os.unlink(e.name, dir_fd=fd)
+            except FileNotFoundError:               # gone since the listing: nothing to remove, the walk goes on
+                continue
     finally:
         os.close(fd)
     os.rmdir(name, dir_fd=dir_fd)
@@ -279,7 +332,20 @@ def remove_host_dir(state_dir, sid: str, log=None) -> bool:
     try:
         _rmtree_at(hfd, str(sid))
     except FileNotFoundError:
-        return True
+        # the arm for a hosts/<sid>/ already absent (the open of <sid> itself, or its trailing rmdir after a concurrent
+        # removal), decided by a stat of the entry off the verified hosts/ descriptor and not by the exception alone
+        # (kernel-3, round 5 of the review, 2026-09-20: through round 4 this arm also caught a FileNotFoundError raised
+        # INSIDE the walk and reported "cleared" with the directory standing; the walk now skips a vanished entry
+        # itself, so what reaches here with <sid> still on disk is logged and reported as not cleared)
+        try:
+            os.stat(str(sid), dir_fd=hfd, follow_symlinks=False)
+        except FileNotFoundError:
+            return True
+        except OSError:
+            pass
+        if log is not None:
+            log("host directory hosts/%s not cleared: an entry was reported missing during the walk, and the directory still stands" % sid)
+        return False
     except HostDirRefused as e:
         if log is not None:
             log("host directory hosts/%s not cleared: %s" % (sid, e))
@@ -493,7 +559,15 @@ def write_spawn_spec(state_dir, sid: str, spec: dict) -> Path:
     socket-mode fix, 2026-09-19). The residual the helper's docstring states (a re-point between its read-back
     and a path-taking open) is closed for this write since round 4 of the review: the open below takes a name
     relative to a held descriptor, not a path, and a link swapped in after the read-back fails it (the paragraph
-    on the open, below).
+    on the open, below). WHAT STILL TAKES A PATH (correctness-2 and extra5-1, round 5 of the review, 2026-09-20): the
+    two directory helpers themselves. sh.hosts_dir makes and checks hosts/ by path, and sh.owner_only_dir makes and
+    checks hosts/<sid>/ by path, so a hosts/ re-pointed to a symlink after the first returns and before the second's
+    mkdir puts that mkdir, and the chmod that follows it for a loose directory of ours, in the link's target: by
+    execution, an empty 0700 directory named <sid> is created inside the target (or a loose <sid>/ of ours already
+    standing there is tightened to 0700), no content is written, and the descent below then refuses the link before
+    the open. A mkdir and a chmod in a location the attacker chose, under the same precondition as every residual
+    here (a state root a peer can write while a session starts); closing it means making hosts/<sid>/ with mkdir and
+    fchmod relative to a verified descriptor on hosts/, its own change.
     The file's mode is set on the descriptor BEFORE the write (os.fchmod): a
     pre-existing file keeps its old mode through O_CREAT|O_TRUNC, and the trailing chmod this had until
     2026-09-18 tightened it only after the overlay was already in it (PR 789, review round 1, the same
@@ -510,17 +584,24 @@ def write_spawn_spec(state_dir, sid: str, spec: dict) -> Path:
     the helper's read-back and the open, is closed for this write: a link swapped in at either component fails the
     open (ENOTDIR on Linux under O_DIRECTORY|O_NOFOLLOW, ELOOP elsewhere; the descent handles both) and the spawn is
     refused with the reason (HostDirRefused, which the kernel files as a problem row
-    with the remedy). Both helpers' refusals are raised under the same class here, so the kernel tells the class apart
-    from any other OSError of the write (a full disk) without reading the text."""
+    with the remedy). A symlink standing at spawn.json itself fails that O_NOFOLLOW open and is refused under the same
+    class, naming the file (_open_file_nofollow; kernel-2, round 5 of the review, 2026-09-20: through round 4 it was a
+    bare OSError outside the class). The two helpers' DECIDED refusals are raised under the class here, and only those:
+    every refusal they decide (a symlink, not a directory, another uid's, stays loose) is a single-argument OSError whose
+    errno is None, and a filesystem failure of theirs (a full disk at the mkdir, an unwritable root) carries an errno and
+    propagates as the OSError it is, so the kernel tells the class apart from any other OSError of the write without
+    reading the text (regression-1 and kernel-4, round 5: round 4's wrap folded every OSError of the helpers into the
+    class, so a full disk reached the operator as a directory refusal with a remedy that was false for it)."""
     try:
         sh.hosts_dir(state_dir)
         sh.owner_only_dir(host_dir(state_dir, sid), "host directory")
     except OSError as e:
+        if e.errno is not None:                      # a filesystem failure, not a refusal the helper decided
+            raise
         raise HostDirRefused(str(e)) from e
     p = host_dir(state_dir, sid) / "spawn.json"
     with open_host_dirs(state_dir, sid) as dirs:
-        fd = os.open("spawn.json", os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0),
-                     0o600, dir_fd=dirs.dir)
+        fd = _open_file_nofollow("spawn.json", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, dirs)
         try:
             os.fchmod(fd, 0o600)
         except BaseException:

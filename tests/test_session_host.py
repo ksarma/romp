@@ -3015,6 +3015,7 @@ class PreludeRefusalRead(unittest.TestCase):
                 os.environ.pop(name, None)
             with self.assertRaises(Exception) as cm:
                 asyncio.run(asyncio.wait_for(self.be._host_transport_for(self.sess, self.opts, (None, None, None)), timeout))
+        self.last_exc = cm.exception                    # the exception itself, for a case that reads its class or its errno
         return str(cm.exception)
 
     def _events(self):
@@ -3146,6 +3147,223 @@ class PreludeRefusalRead(unittest.TestCase):
                     self.assertEqual([r["kind"] for r in events], ["host.exited-before-socket"])
                 self.assertFalse(os.path.exists(self.marker), "the CLI never started: its marker is absent")
                 self.assertIsNone(sb.read_lease(state, SID), "no lease was ever written")
+
+    def test_the_launchers_descent_refuses_a_foreign_uid_or_a_loose_session_directory_and_starts_nothing(self):
+        """tests-1 (round 5 of the review, 2026-09-20), on the production road: the descent's two fstat refusals at the
+        launcher's own open_host_dirs (_spawn_host), which the PR body had waived as redundant with the O_NOFOLLOW open
+        or unreachable. Neither arm is a link. Both are planted inside the real _spawn_host (wrapped to plant, then
+        delegate), after write_spawn_spec's helpers have made and tightened the directories and after the kernel's own
+        descent: `uid`, os.fstat answering st_uid + 1 for the descriptor whose (st_dev, st_ino) is hosts/<sid>/'s and
+        truthfully for every other, the shape of a foreign directory renamed into place; `mode`, hosts/<sid>/ renamed
+        aside and a real 0775 directory of ours made at its name (umask 002, the live host's). Each: the launch is
+        refused before Popen, the launch error and one host.directory-refused row carry the arm's reason, the
+        component's path and the remedy, and the directory the launcher would have opened host.stderr in holds no
+        such file. Red with the arm deleted from _open_dir_nofollow: Popen runs and host.stderr is created inside the
+        planted directory (on the uid arm a real host starts over it)."""
+        real_fstat = os.fstat
+
+        def foreign(st):
+            fields = list(st)
+            fields[4] = st.st_uid + 1
+            return os.stat_result(fields)
+        for arm in ("uid", "mode"):
+            with self.subTest(arm=arm):
+                self.setUp()
+                self.addCleanup(os.umask, os.umask(0o002))
+                state = tempfile.mkdtemp()
+                self.addCleanup(shutil.rmtree, state, True)
+                self._harness(state)
+                sdir = Path(state) / "hosts" / SID
+                real_spawn = self.be._spawn_host
+
+                def plant_then_launch(sess, spec_path, secret_env=None, arm=arm, sdir=sdir, real_spawn=real_spawn):
+                    if arm == "mode":
+                        os.rename(sdir, sdir.parent / "moved")
+                        os.mkdir(sdir, 0o775)                       # ours and loose, made at the name after the helpers ran
+                        return real_spawn(sess, spec_path, secret_env)
+                    st = os.lstat(sdir)
+                    ident = (st.st_dev, st.st_ino)
+
+                    def fstat(fd):
+                        st = real_fstat(fd)
+                        if isinstance(fd, int) and stat.S_ISDIR(st.st_mode) and (st.st_dev, st.st_ino) == ident:
+                            return foreign(st)
+                        return st
+                    with mock.patch.object(os, "fstat", fstat):
+                        return real_spawn(sess, spec_path, secret_env)
+                self.be._spawn_host = plant_then_launch
+                msg = self._connect()
+                reason = ("belongs to uid %d, not to us (uid %d)" % (os.geteuid() + 1, os.geteuid()) if arm == "uid"
+                          else "is group/world-accessible (mode 0775)")
+                self.assertTrue(msg.startswith("the session host was not started: host directory %s %s" % (sdir, reason)), msg)
+                self.assertIn("ROMP_STATE_DIR", msg, "the remedy rides with the reason")
+                self.assertEqual(self.hosts, [], "no host process was started: the launcher's descent refused before Popen")
+                events = self._events()
+                self.assertEqual([r["kind"] for r in events], ["host.directory-refused"], "one row, its own kind")
+                self.assertIn(reason, events[0]["text"])
+                self.assertEqual(sorted(os.listdir(sdir)), ["spawn.json"] if arm == "uid" else [],
+                                 "no host.stderr in the directory the launcher would have opened it in")
+                self.assertFalse(os.path.exists(self.marker), "the CLI never started: its marker is absent")
+                self.assertIsNone(sb.read_lease(state, SID), "no lease was ever written")
+
+    def test_a_symlink_planted_at_spawn_json_or_host_stderr_is_filed_as_a_refusal_with_the_files_remedy_and_starts_nothing(self):
+        """kernel-2 (round 5 of the review, 2026-09-20), on the production road: through round 4 the two file-level
+        O_NOFOLLOW opens raised a bare OSError for a link at the name, so a spawn.json or host.stderr planted as a
+        symlink under a verified hosts/<sid>/ escaped the refusal class: no problem row, no remedy, and the launch
+        error composed over a stale stderr tail. A stale kernel-held lease keeps the directory across the launch (the
+        live deployment's shape, where every session's directory survives between launches). Each arm: the launch
+        error starts with the refusal naming the file and the directory, carries the file's remedy (remove the link),
+        one host.directory-refused row, no Popen, and the link's target byte-identical at its old mode. Red before
+        the change: the error is the bare OSError's text (`[Errno 40] Too many levels of symbolic links`) and no row
+        is filed."""
+        for name in ("spawn.json", "host.stderr"):
+            with self.subTest(file=name):
+                self.setUp()
+                state = tempfile.mkdtemp()
+                self.addCleanup(shutil.rmtree, state, True)
+                self._harness(state)
+                sdir = Path(state) / "hosts" / SID
+                sdir.mkdir(parents=True, mode=0o700)
+                sdir.parent.chmod(0o700)
+                target = Path(self.scratch) / ("theirs-%s.txt" % name)
+                target.write_text("the peer's own bytes")
+                os.chmod(target, 0o644)
+                (sdir / name).symlink_to(target)
+                sb.write_lease(state, dict(SpawnWaitMessageArms._STALE_LEASE, sid=SID))
+                msg = self._connect()
+                self.assertTrue(msg.startswith("the session host was not started: %s in host directory %s is a symlink, not a regular file. "
+                                               % (name, sdir)), msg)
+                self.assertIn("A %s under hosts/<sid>/ that is a symlink is refused; remove the link, or point the state root elsewhere "
+                              "(ROMP_STATE_DIR or XDG_STATE_HOME)" % name, msg, "the file's remedy, not the directory's")
+                self.assertEqual(self.hosts, [], "no host process was started")
+                events = self._events()
+                self.assertEqual([r["kind"] for r in events], ["host.directory-refused"], "one row, the refusal class's kind")
+                self.assertIn("%s in host directory" % name, events[0]["text"])
+                self.assertTrue((sdir / name).is_symlink(), "the link is left, not replaced")
+                self.assertEqual(target.read_text(), "the peer's own bytes", "nothing written through the link")
+                self.assertEqual(stat.S_IMODE(os.lstat(target).st_mode), 0o644, "the target's mode untouched")
+                self.assertFalse(os.path.exists(self.marker), "the CLI never started")
+
+    def test_a_full_disk_at_the_spec_write_is_the_launch_error_with_its_errno_and_neither_a_refusal_nor_a_stale_tail(self):
+        """regression-1 and kernel-4 (round 5 of the review, 2026-09-20), on the production road: a filesystem failure
+        at write_spawn_spec's second directory helper (ENOSPC, then EROFS, raised by sh.owner_only_dir for hosts/<sid>/
+        as os.mkdir would) is not a refusal. Through round 4 the wrap made it one: the card and the row read
+        host.directory-refused with the directory remedy, false for a full disk. Now it is the launch error under its
+        own text, `[Errno 28] No space left on device` and the path, errno on the exception, no remedy, no
+        host.directory-refused row, no Popen; and _record_launch_error, handed that exception on a session whose CLI
+        had once written a stderr line, persists the error's text and not that stale tail (the road a bare OSError
+        takes, driven at this round's build). Red before the change: the message carried the directory remedy and a
+        host.directory-refused row was filed."""
+        for arm, code in (("ENOSPC", errno.ENOSPC), ("EROFS", errno.EROFS)):
+            with self.subTest(arm=arm):
+                self.setUp()
+                state = tempfile.mkdtemp()
+                self.addCleanup(shutil.rmtree, state, True)
+                self._harness(state)
+                self.sess.stderr_tail = lambda: "a STALE stderr tail from a previous CLI"
+                self.sess._stderr_tail = ["a STALE stderr tail from a previous CLI"]
+                real = sh.owner_only_dir
+
+                def fail(path, what="directory", parents=False, code=code):
+                    if what == "host directory":
+                        raise OSError(code, os.strerror(code), os.fspath(path))
+                    return real(path, what, parents)
+                with mock.patch.object(sh, "owner_only_dir", fail):
+                    msg = self._connect()
+                self.assertTrue(msg.startswith("the session host was not started: [Errno %d] %s: " % (code, os.strerror(code))), msg)
+                self.assertIn(os.fspath(Path(state) / "hosts" / SID), msg, "the error's own text, path included")
+                self.assertNotIn("replace it with a directory", msg, "no directory remedy for a full disk")
+                self.assertIsInstance(self.last_exc, sb.CLIConnectionErrorLike, repr(self.last_exc))
+                self.assertEqual(getattr(self.last_exc, "errno", None), code, "the errno rides on the launch error")
+                self.assertEqual([r["kind"] for r in self._events() if r["kind"] == "host.directory-refused"], [], "not filed as a refusal")
+                self.assertEqual(self.hosts, [], "no host process was started")
+                self.be._record_launch_error(self.sess, self.last_exc)
+                rec = (sb.read_reg(Path(state), SID) or {}).get("launchError") or {}
+                self.assertIn("[Errno %d] %s" % (code, os.strerror(code)), rec.get("text", ""), "the card reads the error, not the stale tail: %r" % (rec,))
+                self.assertNotIn("STALE", rec.get("text", ""))
+
+    def test_a_hosts_swapped_after_the_roads_descent_leaves_the_peers_file_at_the_published_name_and_the_launcher_refuses(self):
+        """tests-2 (round 5 of the review, 2026-09-20): the published socket's unlink takes a NAME relative to the held
+        hosts/ descriptor, which no case held (moved back onto the path, the recipe stayed green). The fifth plant
+        point the peer-swap case above lacks: after the road's own descent and before the unlink, planted on the road's
+        own call between the two (ht.host_sock, wrapped to swap then delegate; write_spawn_spec's descent runs earlier,
+        and a swap on that one reproduces the after-spec refusal instead). The peer's directory holds an empty <sid>/
+        and a regular file of the peer's at the published name, <sid8>.sock. The unlink, by name under the verified
+        hosts/ (renamed aside, ours), removes nothing of the peer's, and the launcher's own descent then refuses the
+        link before Popen. Red with the unlink moved back onto the path: the peer's file at the published name is
+        deleted through the link."""
+        state = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, state, True)
+        self._harness(state)
+        hosts, moved = Path(state) / "hosts", Path(state) / "hosts.moved"
+        peer = Path(self.scratch) / "peer"
+        (peer / SID).mkdir(parents=True, mode=0o755)
+        published = peer / sh.sock_names(SID)[0]
+        published.write_text("the peer's own file at the published name")
+        ht = sb._ht()
+        real_sock = ht.host_sock
+        calls = []
+
+        def swap_then_name(state_dir, sid):
+            calls.append(1)
+            if len(calls) == 1:                          # the road's one call between its descent and the unlink
+                os.rename(hosts, moved)
+                hosts.symlink_to(peer)
+            return real_sock(state_dir, sid)
+        with mock.patch.object(ht, "host_sock", swap_then_name):
+            msg = self._connect()
+        self.assertEqual(len(calls), 1, "one call on this road, between the descent and the unlink")
+        self.assertTrue(hosts.is_symlink(), "the link is left, not replaced")
+        self.assertTrue(published.exists(), "the peer's file at the published name survives: the unlink took a name under the verified hosts/")
+        self.assertEqual(published.read_text(), "the peer's own file at the published name")
+        self.assertEqual(sorted(os.listdir(peer)), sorted([SID, published.name]), "the peer's directory holds what the peer put there")
+        self.assertEqual(os.listdir(peer / SID), [], "and its <sid>/ received nothing")
+        self.assertEqual(self.hosts, [], "no host process was started: the launcher's descent refused the link")
+        self.assertTrue(msg.startswith("the session host was not started: hosts directory %s is a symlink, not a directory" % hosts), msg)
+        self.assertEqual([r["kind"] for r in self._events()], ["host.directory-refused"])
+        self.assertFalse((moved / published.name).exists(), "nothing of ours stood at the published name: the unlink found nothing")
+
+    def test_a_peer_planted_host_log_behind_a_swap_after_both_descents_reaches_no_message_no_row_and_no_registry_position(self):
+        """tests-2 (round 5 of the review, 2026-09-20): the refused roads' three reads of host.log (host_exit_reason for
+        the reason, _file_refused_launch_context for the untested-version row, _record_refused_launch_position for
+        hostLogPos) take a name relative to the held descriptor (_open_host_log's dir_fd), which no case held. The
+        before-popen plant of the peer-swap case above, with the peer's <sid>/ holding a host.log of the peer's: a
+        host-started row, an sdk-version-untested row and a host-crashed row naming a reason of the peer's. The host
+        starts holding the kernel's descriptor, exits 1 (its spec is absent through the link), and every read the
+        kernel then makes goes to the directory it verified, moved aside, where no host.log exists: the message names
+        host.stderr under the condition and carries no reason of the peer's, the rows are the one
+        host.exited-before-socket row and no host.sdk-untested row, and the registry keeps no hostLogPos. Red with
+        _open_host_log moved back onto the path: the peer's reason is the card's, the peer's untested-version row is
+        filed, and hostLogPos reads the peer's line count."""
+        state = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, state, True)
+        self._harness(state)
+        hosts, moved = Path(state) / "hosts", Path(state) / "hosts.moved"
+        peer = Path(self.scratch) / "peer"
+        (peer / SID).mkdir(parents=True, mode=0o755)
+        rows = [{"t": 1, "kind": "host-started"},
+                {"t": 2, "kind": "sdk-version-untested", "installed": "9.9.9", "tested": "0.0.1", "relation": "newer"},
+                {"t": 3, "kind": "host-crashed", "error": "PeerPlantedError", "errno": 99, "at": "peer.py:1"}]
+        planted = "".join(json.dumps(r) + "\n" for r in rows)
+        (peer / SID / "host.log").write_text(planted)
+
+        def swap():
+            os.rename(hosts, moved)
+            hosts.symlink_to(peer)
+        self.before_popen.append(swap)
+        msg = self._connect()
+        self.assertEqual(len(self.hosts), 1, "the host started with the descriptor the kernel opened before the swap")
+        self.assertEqual(self.hosts[0].wait(10), 1)
+        self.assertIn("exited before serving its socket (code 1)", msg)
+        self.assertIn("see hosts/%s/host.stderr when host.log is missing" % SID, msg, "host.stderr grew, read through the held descriptor")
+        self.assertNotIn("PeerPlantedError", msg, "the peer's reason is not this launch's: the read took the held descriptor")
+        events = self._events()
+        self.assertEqual([r["kind"] for r in events], ["host.exited-before-socket"], "no host.sdk-untested row from the peer's file")
+        self.assertNotIn("PeerPlantedError", json.dumps(events))
+        self.assertNotIn("9.9.9", json.dumps(events))
+        reg = sb.read_reg(Path(state), SID) or {}
+        self.assertIsNone(reg.get("hostLogPos"), "no host.log in the verified directory: no position recorded")
+        self.assertEqual((peer / SID / "host.log").read_text(), planted, "the peer's file untouched")
 
     def test_the_spawn_wait_reads_the_exit_of_a_host_refused_before_its_cli_and_finds_no_lease_and_no_cli(self):
         self._harness(padded_root(self, sh.SOCK_PATH_MAX + 1, os.path.join("hosts", SID[:8] + ".sock")))
@@ -3372,6 +3590,85 @@ class SpawnWaitMessageArms(unittest.TestCase):
                 self.assertEqual([(r["kind"], r["text"]) for r in events],
                                  [("host.never-served-socket", "the session host for web " + msg[len("the session host "):])])
                 self.assertNotIn("code", events[0], "ended, not exited: no return code to record")
+
+    def test_the_spawn_watermark_is_read_through_the_descriptor_so_a_hosts_swapped_at_the_mark_hides_no_reason_of_this_host(self):
+        """tests-2 (round 5 of the review, 2026-09-20): host_log_mark's dir_fd, which no case held. The mark is taken
+        after the road's descent and before the spawn; a hosts/ swapped for a link to a peer's directory holding a
+        LONGER host.log at that moment and put back before the launch (ht.host_log_mark wrapped: swap, delegate,
+        restore) would, by path, read the peer's size as the mark, past which this host's own failing row never lands,
+        so the reason would not reach the operator. Through the descriptor the mark is the real file's, and the reason
+        does. Red with host_log_mark moved back onto the path: the message says host.stderr carries nothing from this
+        launch and names host.log with no reason."""
+        d = self._root()
+        hd = sb._ht().host_dir(d, SID)
+        hd.mkdir(parents=True)
+        (hd / "host.log").write_text(json.dumps({"t": 1, "kind": "host-started"}) + "\n")
+        sb.write_lease(d, dict(self._STALE_LEASE, sid=SID))
+        peer = Path(tempfile.mkdtemp(prefix="swm-peer-"))
+        self.addCleanup(shutil.rmtree, peer, True)
+        (peer / SID).mkdir(mode=0o755)
+        (peer / SID / "host.log").write_text("".join(json.dumps({"t": i, "kind": "host-started"}) + "\n" for i in range(40)))
+        self.assertGreater((peer / SID / "host.log").stat().st_size, 10 * (hd / "host.log").stat().st_size, "the peer's file is the longer one")
+        hosts, moved = Path(d) / "hosts", Path(d) / "hosts.moved"
+        ht = sb._ht()
+        real_mark = ht.host_log_mark
+
+        def mark_over_a_swap(state_dir, sid, dir_fd=None):
+            os.rename(hosts, moved)
+            hosts.symlink_to(peer)
+            try:
+                return real_mark(state_dir, sid, dir_fd=dir_fd)
+            finally:
+                os.unlink(hosts)
+                os.rename(moved, hosts)
+        with mock.patch.object(ht, "host_log_mark", mark_over_a_swap):
+            msg, events = self._launch(d, [{"t": 2, "kind": "cli-spawn-failed", "error": "TypeError"}])
+        self.assertEqual(msg, self._HAPPENED + "; see hosts/%s/host.log: TypeError" % SID, "this host's reason reached the operator")
+        self.assertEqual([(r["kind"], r["code"]) for r in events], [("host.exited-before-socket", 1)])
+
+    def test_a_host_that_appends_to_a_previous_launchs_host_stderr_is_sent_to_it_and_the_previous_bytes_still_head_the_file(self):
+        """tests-3 (round 5 of the review, 2026-09-20): host.stderr's O_APPEND, the mechanism the watermark rests on,
+        composed and pinned: under a stale kernel-held lease a previous launch's traceback, many times longer than
+        what this launch writes, sits in the file, and this launch's host writes 30 bytes through the kernel's own
+        open. The grown arm names host.stderr under the condition, and the file is the previous bytes then this
+        launch's, both kept. Both assertions are needed: with O_TRUNC and a longer new write the size alone would still
+        pass the mark. Red with O_APPEND replaced by O_TRUNC: the file holds this launch's bytes alone, below the mark,
+        and the message says host.stderr carries nothing from this launch."""
+        d = self._root()
+        hd = sb._ht().host_dir(d, SID)
+        hd.mkdir(parents=True)
+        previous = (b"Traceback (most recent call last):\n" + b"  File \"session_host.py\", line 1, in <module>\n" * 20
+                    + b"OSError: a previous launch's reason\n")
+        (hd / "host.stderr").write_bytes(previous)
+        sb.write_lease(d, dict(self._STALE_LEASE, sid=SID))
+        this = b"OSError: this launch's reason\n"
+        self.assertEqual(len(this), 30)
+        self.assertGreater(len(previous), 10 * len(this))
+        msg, events = self._launch(d, [], stderr=this)
+        self.assertEqual((hd / "host.stderr").read_bytes(), previous + this, "appended: the previous bytes head the file, this launch's follow")
+        self.assertEqual(msg, self._NO_REASON_STDERR)
+        self.assertEqual([(r["kind"], r["code"]) for r in events], [("host.exited-before-socket", 1)])
+
+    def test_a_host_stderr_a_previous_launch_left_at_0664_is_tightened_to_0600_when_this_launch_opens_it(self):
+        """kernel-1 (round 5 of the review, 2026-09-20): host_stderr_open created the file at 0600 and never fchmod'd
+        it, so a host.stderr a previous launch left at 0664 (every launch before round 4 opened it under the 002 umask;
+        all nine on the live deployment read 0664) kept that mode, while spawn.json in the same directory pays
+        os.fchmod for exactly that reason. Planted at 0664 under a stale kernel-held lease and opened by this launch
+        through the kernel's own open: 0600 read back off the file, the previous bytes still heading it. Red before the
+        change: 0664 stays."""
+        d = self._root()
+        hd = sb._ht().host_dir(d, SID)
+        hd.mkdir(parents=True)
+        previous = b"OSError: a previous launch's reason\n"
+        (hd / "host.stderr").write_bytes(previous)
+        os.chmod(hd / "host.stderr", 0o664)
+        self.assertEqual(stat.S_IMODE(os.lstat(hd / "host.stderr").st_mode), 0o664, "the plant, read back")
+        sb.write_lease(d, dict(self._STALE_LEASE, sid=SID))
+        msg, events = self._launch(d, [], stderr=b"OSError: this launch's reason\n")
+        self.assertEqual(stat.S_IMODE(os.lstat(hd / "host.stderr").st_mode), 0o600, "tightened on the descriptor by this launch's open, read back off the file")
+        self.assertTrue((hd / "host.stderr").read_bytes().startswith(previous), "and appended, not replaced")
+        self.assertEqual(msg, self._NO_REASON_STDERR)
+        self.assertEqual([(r["kind"], r["code"]) for r in events], [("host.exited-before-socket", 1)])
 
 class SocketFchmod(unittest.TestCase):
     def test_fchmod_on_a_bound_socket_descriptor_leaves_the_path_mode_alone(self):

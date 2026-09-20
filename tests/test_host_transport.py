@@ -415,6 +415,163 @@ class SpawnSpec(unittest.TestCase):
                 moved = Path(root) / "moved"
                 self.assertFalse((moved / (SID if arm == "hosts" else "") / "spawn.json").exists(), "and no spec was written anywhere: the open was refused")
 
+    def test_the_descents_foreign_uid_arm_refuses_a_directory_renamed_into_place_at_hosts_and_at_the_session_directory(self):
+        """open_host_dirs' foreign-uid arm, driven with a stub keyed on the object (tests-1, round 5 of the review,
+        2026-09-20: the descent's two fstat refusals, this one and the mode arm below, were held by no case, and the PR
+        body had waived them as redundant with the road's O_NOFOLLOW open, which is false for this arm: a foreign
+        DIRECTORY renamed into place is not a link, and O_NOFOLLOW admits it). Real directories of ours at hosts/ and
+        hosts/<sid>/; os.fstat answers st_uid + 1 for the descriptor whose (st_dev, st_ino) is the planted component's,
+        read by the real lstat before the patch, and truthfully for every other descriptor (the sibling component's
+        among them, so the refusal is the planted component's own). write_spawn_spec's descent raises HostDirRefused
+        carrying `belongs to uid` and the component's path, and no spawn.json is written anywhere under the root. Red
+        with the uid arm deleted from _open_dir_nofollow: the descent admits the directory and the spec lands in it."""
+        spec = {"sid": SID, "name": "web", "version": "abc12345", "state_dir": "/state", "protocol": 1, "env": {"FEATURE_FLAG": "1"}}
+        real_fstat = os.fstat
+
+        def foreign(st):
+            fields = list(st)
+            fields[4] = st.st_uid + 1                   # st_uid: someone else's directory at the component
+            return os.stat_result(fields)
+        for arm, noun in (("hosts", "hosts directory"), ("session-dir", "host directory")):
+            with self.subTest(arm=arm):
+                root = tempfile.mkdtemp()
+                self.addCleanup(shutil.rmtree, root, True)
+                sh.hosts_dir(root)
+                sdir = ht.host_dir(root, SID)
+                sdir.mkdir(mode=0o700)
+                planted = Path(root) / "hosts" if arm == "hosts" else sdir
+                st = os.lstat(planted)
+                ident = (st.st_dev, st.st_ino)
+
+                def fstat(fd, ident=ident):
+                    st = real_fstat(fd)
+                    if isinstance(fd, int) and stat.S_ISDIR(st.st_mode) and (st.st_dev, st.st_ino) == ident:
+                        return foreign(st)
+                    return st
+                with mock.patch.object(os, "fstat", fstat):
+                    with self.assertRaises(OSError) as cm:
+                        ht.write_spawn_spec(root, SID, spec)
+                self.assertIsInstance(cm.exception, ht.HostDirRefused, repr(cm.exception))
+                msg = str(cm.exception)
+                self.assertTrue(msg.startswith(noun + " "), msg)
+                self.assertIn("belongs to uid %d, not to us (uid %d)" % (os.geteuid() + 1, os.geteuid()), msg)
+                self.assertIn(os.fspath(planted), msg)
+                self.assertEqual([str(q) for q in Path(root).rglob("spawn.json")], [], "no spec written anywhere: the descent refused")
+
+    def test_the_descents_mode_arm_refuses_a_loose_directory_renamed_into_place_after_the_helpers_tighten(self):
+        """open_host_dirs' group/world arm, driven with no stub (tests-1, round 5 of the review, 2026-09-20; the PR body
+        had said this arm too needed a stub keyed on the object, which is not so): under the live host's umask, 002,
+        the component is renamed aside after sh.owner_only_dir's last check returns and a real directory of ours at 0775
+        made at its name (with a 0700 <sid>/ inside it for the hosts/ arm, so nothing but the mode stands between the
+        descent and the spec). The descent's fstat reads the loose mode and refuses with `is group/world-accessible
+        (mode 0775)` and the component's path; nothing is written under the loose directory. Red with the mode arm
+        deleted: the descent admits the directory and spawn.json lands under it."""
+        self.addCleanup(os.umask, os.umask(0o002))
+        spec = {"sid": SID, "name": "web", "version": "abc12345", "state_dir": "/state", "protocol": 1, "env": {"FEATURE_FLAG": "1"}}
+        real = sh.owner_only_dir
+        for arm, noun in (("hosts", "hosts directory"), ("session-dir", "host directory")):
+            with self.subTest(arm=arm):
+                root = tempfile.mkdtemp()
+                self.addCleanup(shutil.rmtree, root, True)
+                hosts, sdir = Path(root) / "hosts", Path(root) / "hosts" / SID
+                loose = hosts if arm == "hosts" else sdir
+
+                def swap_in_loose(path, what="directory", parents=False, loose=loose, arm=arm):
+                    d = real(path, what, parents)
+                    if what == "host directory":             # the last check before the descent: the swap lands here
+                        os.rename(loose, Path(root) / "moved")
+                        os.mkdir(loose, 0o775)                # ours and loose; under 002 the mode lands as 0775
+                        if arm == "hosts":
+                            os.mkdir(loose / SID, 0o700)
+                    return d
+                with mock.patch.object(sh, "owner_only_dir", swap_in_loose):
+                    with self.assertRaises(OSError) as cm:
+                        ht.write_spawn_spec(root, SID, spec)
+                self.assertIsInstance(cm.exception, ht.HostDirRefused, repr(cm.exception))
+                msg = str(cm.exception)
+                self.assertTrue(msg.startswith(noun + " "), msg)
+                self.assertIn("is group/world-accessible (mode 0775)", msg)
+                self.assertIn(os.fspath(loose), msg)
+                self.assertEqual(stat.S_IMODE(os.lstat(loose).st_mode), 0o775, "the loose directory as planted, read back")
+                self.assertEqual([str(q) for q in loose.rglob("*") if q.is_file()], [], "nothing written under the loose directory")
+
+    def test_a_filesystem_failure_at_a_directory_helper_is_the_oserror_it_is_and_a_decided_refusal_is_the_class(self):
+        """The wrap around write_spawn_spec's two path-taking helpers keys on the refusal, not on OSError (regression-1
+        and kernel-4, round 5 of the review, 2026-09-20: round 4's wrap folded every OSError of the helpers into
+        HostDirRefused, so a full disk at the mkdir reached the operator as host.directory-refused with a remedy that
+        was false for it, and the errno left the class). Interposed on sh.owner_only_dir, the module attribute both
+        helpers reach: a full disk (ENOSPC) and a read-only filesystem (EROFS) at hosts/<sid>/'s mkdir each reach the
+        caller as the OSError raised, errno and text intact, and not as HostDirRefused; a refusal the helper decides (a
+        single-argument OSError, errno None, the shape every one of its refusals has) is HostDirRefused, errno None.
+        Red before the change: the ENOSPC and EROFS arms arrived as HostDirRefused."""
+        import errno as _errno
+        spec = {"sid": SID, "name": "web", "version": "abc12345", "state_dir": "/state", "protocol": 1, "env": {"FEATURE_FLAG": "1"}}
+        real = sh.owner_only_dir
+        for arm, code in (("ENOSPC", _errno.ENOSPC), ("EROFS", _errno.EROFS)):
+            with self.subTest(arm=arm):
+                root = tempfile.mkdtemp()
+                self.addCleanup(shutil.rmtree, root, True)
+
+                def fail(path, what="directory", parents=False, code=code):
+                    if what == "host directory":
+                        raise OSError(code, os.strerror(code), os.fspath(path))
+                    return real(path, what, parents)
+                with mock.patch.object(sh, "owner_only_dir", fail):
+                    with self.assertRaises(OSError) as cm:
+                        ht.write_spawn_spec(root, SID, spec)
+                self.assertNotIsInstance(cm.exception, ht.HostDirRefused, "a filesystem failure is not a refusal: %r" % (cm.exception,))
+                self.assertEqual(cm.exception.errno, code, "the errno rides on the exception")
+                self.assertTrue(str(cm.exception).startswith("[Errno %d] " % code), str(cm.exception))
+                self.assertFalse((Path(root) / "hosts" / SID / "spawn.json").exists())
+        with self.subTest(arm="decided-refusal"):
+            root = tempfile.mkdtemp()
+            self.addCleanup(shutil.rmtree, root, True)
+
+            def refuse(path, what="directory", parents=False):
+                if what == "host directory":
+                    raise OSError("%s %s is not a directory" % (what, path))
+                return real(path, what, parents)
+            with mock.patch.object(sh, "owner_only_dir", refuse):
+                with self.assertRaises(OSError) as cm:
+                    ht.write_spawn_spec(root, SID, spec)
+            self.assertIsInstance(cm.exception, ht.HostDirRefused, repr(cm.exception))
+            self.assertIsNone(cm.exception.errno, "the class carries no errno: that is how the wrap tells a decided refusal")
+
+    def test_a_symlink_at_spawn_json_or_host_stderr_is_refused_under_the_class_naming_the_file_and_the_target_is_untouched(self):
+        """kernel-2 (round 5 of the review, 2026-09-20): the descent's two FILE-level O_NOFOLLOW opens raised a bare
+        OSError (ELOOP) for a symlink at the name, outside the class the two call sites catch, so a link planted at
+        spawn.json or host.stderr got no problem row and no remedy. Now _open_file_nofollow raises HostDirRefused
+        naming the file and the directory, with `file` set. Two arms over a verified hosts/<sid>/ of ours: spawn.json a
+        link to a file of a peer's (write_spawn_spec), host.stderr the same (open_host_dirs, then host_stderr_open).
+        Each: the class, its `file`, the message, the link left standing, the peer's file byte-identical at its old
+        mode: nothing followed, nothing written. Red before the change: OSError, not the class, at both arms."""
+        spec = {"sid": SID, "name": "web", "version": "abc12345", "state_dir": "/state", "protocol": 1, "env": {"FEATURE_FLAG": "1"}}
+        for name in ("spawn.json", "host.stderr"):
+            with self.subTest(file=name):
+                root = tempfile.mkdtemp()
+                self.addCleanup(shutil.rmtree, root, True)
+                sh.hosts_dir(root)
+                sdir = ht.host_dir(root, SID)
+                sdir.mkdir(mode=0o700)
+                peer = Path(root) / "peer"
+                peer.mkdir(mode=0o755)
+                target = peer / "theirs.txt"
+                target.write_text("the peer's own bytes")
+                os.chmod(target, 0o644)
+                (sdir / name).symlink_to(target)
+                with self.assertRaises(OSError) as cm:
+                    if name == "spawn.json":
+                        ht.write_spawn_spec(root, SID, spec)
+                    else:
+                        with ht.open_host_dirs(root, SID) as dirs:
+                            os.close(ht.host_stderr_open(dirs))
+                self.assertIsInstance(cm.exception, ht.HostDirRefused, repr(cm.exception))
+                self.assertEqual(getattr(cm.exception, "file", None), name, "the refusal names its file")
+                self.assertEqual(str(cm.exception), "%s in host directory %s is a symlink, not a regular file" % (name, sdir))
+                self.assertTrue((sdir / name).is_symlink(), "the link is left, not replaced")
+                self.assertEqual(target.read_text(), "the peer's own bytes", "nothing written through the link")
+                self.assertEqual(stat.S_IMODE(os.lstat(target).st_mode), 0o644, "the target's mode untouched")
+
     @unittest.skipUnless(SDK, "the SDK is not importable here")
     def test_the_spec_fields_track_what_the_sdk_transport_reads(self):
         import claude_agent_sdk._internal.transport.subprocess_cli as scli
@@ -927,6 +1084,74 @@ class BackendHostRules(unittest.TestCase):
                 self.assertEqual(len(logs), 1, be._test_logs)
                 self.assertIn("belongs to uid %d, not to us (uid %d)" % (os.geteuid() + 1, os.geteuid()), logs[0])
                 self.assertIn("directory %s belongs" % (SID if arm == "sid" else "theirs"), logs[0])
+
+    def test_an_entry_that_vanishes_during_the_removal_walk_is_skipped_and_the_report_says_what_stands(self):
+        """kernel-3 (round 5 of the review, 2026-09-20): remove_host_dir's `except FileNotFoundError: return True` was
+        written for a hosts/<sid>/ already absent and also caught one raised INSIDE the walk, so a concurrent unlink
+        under the directory (a live host still rotating its journal) had the call report "cleared" with the directory
+        standing and its remaining entries in it, nothing logged, where the shutil.rmtree(ignore_errors=True) it
+        replaced carried on past the missing entry. Three arms on remove_host_dir itself (both kernel callers discard
+        its answer, so the answer and the log line are the contract). `vanished`: os.scandir hands the walk a listing
+        one entry of which is unlinked after the listing, the stale-listing shape of the race (deterministic, where a
+        real thread race needs thousands of entries): the walk skips it, the rest is removed, the directory is gone,
+        the answer is True and nothing is logged. `rmdir-lies`: the trailing rmdir of <sid> reports it absent while it
+        stands (os.rmdir stubbed for that one name): the answer is False and the log says the directory still stands,
+        decided by a stat off the hosts/ descriptor and not by the exception. `absent`: no hosts/<sid>/ at all: True,
+        nothing logged, the arm the clause was written for, pinned so the stat cannot swallow it. Red before the
+        change: `vanished` answers True with the directory standing and three entries left in it; `rmdir-lies`
+        answers True with nothing logged."""
+        import contextlib
+        import errno as _errno
+        real_scandir, real_rmdir = os.scandir, os.rmdir
+        for arm in ("vanished", "rmdir-lies", "absent"):
+            with self.subTest(arm=arm):
+                d = tempfile.mkdtemp()
+                self.addCleanup(shutil.rmtree, d, True)
+                logs = []
+                sid_dir = ht.host_dir(d, SID)
+                if arm == "absent":
+                    sid_dir.parent.mkdir(parents=True, mode=0o700)
+                    ident = None
+                else:
+                    sid_dir.mkdir(parents=True, mode=0o700)
+                    sid_dir.parent.chmod(0o700)
+                    for name in ("host.log", "identity.json", "journal-1.jsonl", "journal-2.jsonl"):
+                        (sid_dir / name).write_text("x")
+                    st = os.lstat(sid_dir)
+                    ident = (st.st_dev, st.st_ino)
+
+                def scandir(fd, ident=ident):
+                    with real_scandir(fd) as it:
+                        entries = list(it)
+                    if isinstance(fd, int):
+                        st = os.fstat(fd)
+                        if (st.st_dev, st.st_ino) == ident:
+                            os.unlink(entries[0].name, dir_fd=fd)     # gone between the listing and the walk
+                    return contextlib.nullcontext(iter(entries))
+
+                def rmdir(name, *a, dir_fd=None, **k):
+                    if dir_fd is not None and name == SID:
+                        raise FileNotFoundError(_errno.ENOENT, os.strerror(_errno.ENOENT), name)
+                    return real_rmdir(name, *a, dir_fd=dir_fd, **k)
+                with contextlib.ExitStack() as stack:
+                    if arm == "vanished":
+                        stack.enter_context(mock.patch.object(os, "scandir", scandir))
+                    if arm == "rmdir-lies":
+                        stack.enter_context(mock.patch.object(os, "rmdir", rmdir))
+                    rv = ht.remove_host_dir(d, SID, log=logs.append)
+                if arm == "vanished":
+                    self.assertFalse(sid_dir.exists(), "the directory is gone: the vanished entry was skipped and the rest removed")
+                    self.assertTrue(rv, "and the answer is cleared")
+                    self.assertEqual(logs, [])
+                elif arm == "rmdir-lies":
+                    self.assertFalse(rv, "not cleared: the directory stands, whatever the rmdir said")
+                    self.assertTrue(sid_dir.is_dir())
+                    self.assertEqual(len(logs), 1, logs)
+                    self.assertIn("not cleared", logs[0])
+                    self.assertIn("still stands", logs[0])
+                else:
+                    self.assertTrue(rv, "already absent counts as cleared")
+                    self.assertEqual(logs, [])
 
     def test_with_the_setting_off_an_orphan_lease_is_recovered_and_no_host_is_spawned(self):
         d, be = self._be()

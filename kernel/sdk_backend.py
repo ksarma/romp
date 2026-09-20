@@ -12617,6 +12617,8 @@ class SdkBackend:
                 dirs = ht.open_host_dirs(self.state_dir, sess.sid)
             except ht.HostDirRefused as e:
                 self._refuse_host_directory(sess, e)
+            except OSError as e:
+                self._spawn_spec_failed(sess, e)
             sock = ht.host_sock(self.state_dir, sess.sid)
             try:
                 os.unlink(sock.name, dir_fd=dirs.hosts)     # a dead host's published socket, by name under the verified hosts/
@@ -12755,16 +12757,43 @@ class SdkBackend:
 
     def _refuse_host_directory(self, sess, e) -> None:
         """A hosts/ or hosts/<sid>/ the spawn road will not write under (host_transport.HostDirRefused, from
-        write_spawn_spec's two directory guards, the road's own descent or the launcher's): filed the way the host's
-        prelude refusals are, one problem row with the reason and the remedy, then the launch error the registry keeps
-        (CLIConnectionErrorLike: _record_launch_error persists it without a stale stderr tail, and it survives a kernel
-        restart, recoverable at the next send), never a traceback to the operator. No process was started (round 4 of
-        the review, 2026-09-20)."""
-        said = ("was not started: %s. A hosts/ or hosts/<sid>/ that is not a directory this user owns at 0700 is refused; "
-                "replace it with a directory, or point the state root elsewhere (ROMP_STATE_DIR or XDG_STATE_HOME)" % e)
+        write_spawn_spec's two directory guards, the road's own descent or the launcher's), or a symlink standing at
+        spawn.json or host.stderr under a verified hosts/<sid>/ (the same class with `file` set; kernel-2, round 5 of
+        the review, 2026-09-20: through round 4 those two opens raised a bare OSError past this filing): filed the way
+        the host's prelude refusals are, one problem row with the reason and the remedy worded for the shape (a
+        directory's, or a file's), then the launch error the registry keeps (CLIConnectionErrorLike:
+        _record_launch_error persists it without a stale stderr tail, and it survives a kernel restart, recoverable at
+        the next send), never a traceback to the operator. No process was started (round 4 of the review, 2026-09-20).
+        A filesystem failure of the spawn road (a full disk, an unwritable root) never reaches here: write_spawn_spec
+        raises it as the OSError it is, errno and all, and _spawn_spec_failed makes the launch error of it (regression-1
+        and kernel-4, round 5)."""
+        if getattr(e, "file", None):
+            remedy = ("A %s under hosts/<sid>/ that is a symlink is refused; remove the link, or point the state root "
+                      "elsewhere (ROMP_STATE_DIR or XDG_STATE_HOME)" % e.file)
+        else:
+            remedy = ("A hosts/ or hosts/<sid>/ that is not a directory this user owns at 0700 is refused; "
+                      "replace it with a directory, or point the state root elsewhere (ROMP_STATE_DIR or XDG_STATE_HOME)")
+        said = "was not started: %s. %s" % (e, remedy)
         problem_row(self.state_dir, "the session host for %s %s" % (sess.name, said), "host.directory-refused",
                     sid=sess.sid, name=sess.name, log=self._log)
         raise CLIConnectionErrorLike("the session host " + said)
+
+    def _spawn_spec_failed(self, sess, e) -> None:
+        """A filesystem failure while the spawn specification or the descent to its directory was made (an OSError
+        that is not a refusal: a full disk or a read-only filesystem at hosts/<sid>/'s mkdir, an unwritable root), raised
+        as the launch error under its own text, errno and path included, with no directory remedy and under no
+        refusal kind (regression-1 and kernel-4, round 5 of the review, 2026-09-20: round 4's wrap in write_spawn_spec
+        folded every OSError of its two directory helpers into HostDirRefused, so a full disk reached the operator as
+        host.directory-refused with a remedy that was false for it). Not left to propagate bare either: a bare OSError
+        reaches _record_launch_error, whose text prefers the session's stale stderr tail over the exception, so on a
+        session whose CLI had ever written a stderr line the card read that tail and the errno reached no one (driven
+        at this round's build). CLIConnectionErrorLike is the class _record_launch_error takes no tail for, so the card
+        reads the error; `errno` rides on it too. No problem row: nothing was refused and no process was started, the
+        shape of a kernel child's own launch failure, which files none either."""
+        err = CLIConnectionErrorLike("the session host was not started: %s" % e)
+        err.errno = getattr(e, "errno", None)
+        self._log("host (%s): the spawn specification could not be written: %s" % (sess.name, e), problem=True)
+        raise err from e
 
     def _new_host_transport(self, sess, sock, offset):
         ht = _ht()
