@@ -744,6 +744,28 @@ test("the vintage guard: a delta carrying no gen applies onto a base holding non
   }, { terms: pageTerms });
 });
 
+// The feed road's reading of the same shape the bars test pins (round 3, the fixer's pass, 2026-09-20): a delta carrying
+// newGen and through but no gen is a gen-less delta, applied on the base's presence alone, and moves no pair, so the two
+// roads agree that a newGen rides only a frame whose gen the gate matched.
+test("a feedDelta carrying newGen and through but no gen applies as a gen-less delta and moves no pair: the held pair stands and the redial declares it, never the newGen", async () => {
+  await withManager(({ fm, emitted }) => {
+    const ws = attached(fm);
+    ws.frame(stamped());
+    ws.frame(cycle(G, 0, 2));
+    assert.deepEqual(heldOf(fm), { gen: G, rev: 1 });
+    const before = feeds(emitted).length;
+    ws.frame({ type: "feedDelta", newGen: G2, base: 1, rev: 4, through: 4, now: 530, buildId: 60, asks: [card(SID_A, 9)] });
+    assert.deepEqual(ws.sent, [], "applied: nothing asked");
+    assert.equal(feeds(emitted).length, before + 1, "emitted once");
+    assert.deepEqual(heldOf(fm), { gen: G, rev: 1 }, "no gen on the frame, so the pair does not move: the newGen is not adopted");
+    ws.readyState = 3;
+    const timers = heldTimers(() => ws.onclose!({ code: 1006, wasClean: false }));
+    timers[0]();
+    assert.equal(qOf(last(FakeWS.made).url).get("caps"), "feedDelta,held:feed:" + G + ".1", "the redial declares the held pair, never the newGen");
+    fm.conns.get(HOST).closed = true;
+  });
+});
+
 // One base is the real shape: the kernel serves the feed payload to a feed-riding app's socket and the bars to a timeline's,
 // and each conn dials with one app, so a feed conn holds feedRaw and never a bars base and a timeline conn the reverse. The
 // two-base state is a harness construction (inbound stores a feed frame on any manager, and the receiver seeds a bars base

@@ -265,11 +265,12 @@ export class ViewDeltas {
         maps.set(name, collection);
         next[name] = assemble(collection, kinds[name], base.msg[name]);
       }
-      // the pair the base holds after the frame: (newGen, rev) when the frame carries through and a newGen (a composed
-      // frame, its rev R equal to its through), else (gen, rev) with the base's gen (the frame's, when it carries one: the
-      // gate above held them equal; a gen-less frame moves no gen), and none on a base seeded without one, whatever the
-      // frame carries (the gate's comment says why the frame's gen is not seeded there)
-      const newGen = hasThrough ? genOf(msg.newGen) : undefined;
+      // the pair the base holds after the frame: (newGen, rev) when the frame carries a gen the gate matched, through and
+      // a newGen (a composed frame, its rev R equal to its through), else (gen, rev) with the base's gen (the frame's, when
+      // it carries one: the gate above held them equal; a gen-less frame moves no gen, its newGen included, since the gate
+      // never ran for it and the feed road adopts a newGen only under a matched gen), and none on a base seeded without
+      // one, whatever the frame carries (the gate's comment says why the frame's gen is not seeded there)
+      const newGen = hasThrough && g !== undefined ? genOf(msg.newGen) : undefined;
       const gen = base.gen === undefined ? undefined : newGen !== undefined ? newGen : base.gen;
       this.bases.set(slot, { rev: msg.rev, gen, msg: next, maps });
       return next;

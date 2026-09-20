@@ -1236,6 +1236,31 @@ test("a stamped bars patch whose gen is not the base's recovers as a base-rev mi
   });
 });
 
+// A frame carrying newGen and through but NO gen never ran the gate, so its newGen is not adopted (round 3, the fixer's
+// pass, 2026-09-20): before it the base's gen was overwritten by a gen the gate never matched, and the next redial declared
+// that pair while the feed road, applying the same frame, moved no pair. Now both roads read the shape alike: the frame
+// applies on the rev test, the base keeps its gen and rev advances to the frame's, and the redial declares the base's gen.
+test("a bars frame carrying newGen and through but no gen applies and keeps the base's gen: held(bars) is (G, rev), nothing asked, and the redial declares held:bars:G.rev and never the newGen", async () => {
+  await withManager("timeline", ({ fm, emitted }) => {
+    seedLocalTimeline(fm);
+    fm.openRemote(HOST, true);
+    const ws = last(FakeWS.made);
+    ws.open();
+    ws.frame(remoteBarsStamped(G));
+    assert.deepEqual(heldBars(fm), { gen: G, rev: 0 });
+    const before = barsOf(emitted).length;
+    ws.frame({ type: "delta", slot: "bars", newGen: G2, base: 0, rev: 3, through: 3, coll: { turns: { set: { [SID_A + SEP + "seg-9"]: bar("seg-9", 1090, 1095, "ninth") } } }, rest: { now: 590 } });
+    assert.deepEqual(ws.sent, [], "applied: nothing asked");
+    assert.equal(barsOf(emitted).length, before + 1, "emitted once");
+    assert.deepEqual(heldBars(fm), { gen: G, rev: 3 }, "the base keeps its gen and takes the frame's rev: a newGen rides only a frame whose gen the gate matched");
+    ws.readyState = 3;
+    const redials = armedRedials(() => ws.onclose!({ code: 1006, wasClean: false }));
+    redials[0]();
+    assert.equal(qOf(last(FakeWS.made).url).get("caps"), "feedDelta,held:bars:" + G + ".3", "the redial declares the base's gen at the applied rev, never the newGen the gate never matched");
+    fm.conns.get(HOST).closed = true;
+  });
+});
+
 // The length bound on the bars road (round 3, 2026-09-20), the mirror of the feed file's: genOf is the one reader for both
 // slots, so a gen at GEN_MAX is a stamp here too (the pair holds and the redial declares it) and one over reads as none
 // (the form test's list).
