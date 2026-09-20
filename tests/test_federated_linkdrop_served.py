@@ -169,6 +169,8 @@ POST_TIMEOUT_S = 5           # one control-door post to the remote (a notice, a 
 HUB_TERM_WAIT_S = 10         # _restart_hub waits this long for SIGTERM to end the hub before SIGKILL
 HUB_SPAWN_TRIES = 40         # _spawn_hub's /healthz tries, a 1 s probe and a 0.5 s pause each (the respawn answers in about a second)
 PHASE_SETTLE_MS = 1500       # phase() lets the panes' rows land on the hub before marking the phase's end
+DOWN_WINDOW_MARGIN = 2.0     # the while-down read comes this many of the drive's slowest link-up deliveries after phase D's post
+#                              (_assert_the_down_window_outlasts_the_drives_slowest_delivery; down_dwell_ms is sized for it)
 QUIET_TRIES, QUIET_STEP_MS = 7, 2000   # quiet(): up to QUIET_TRIES windows of QUIET_STEP_MS with no new relay frame on any page
 
 
@@ -623,7 +625,17 @@ class _LinkDrop(unittest.TestCase):
     driver_budget_ms = 240000  # every wait the driver places draws on this one budget: between two and a half and five times a healthy
     #                            drive's total waiting (52 s on the new bundle, 87 s on the old, whose frozen feed page shows a phase's
     #                            cards only at the next churned socket's whole frame); the record's budget.leftMs says what a drive left
-    down_dwell_ms = 12000     # the row stays down this long after the supervisor marks it: a quiescent tail well past one 4 s /tunnels poll
+    # The row stays down this long after phase D's post, and the gate DEPENDS on it (round 2's ruling): the while-down read of D
+    # comes DOWN_WINDOW_MARGIN times the drive's own slowest link-up delivery after the post, asserted by both classes' gate legs
+    # (_assert_the_down_window_outlasts_the_drives_slowest_delivery). The slowest recorded delivery is the old bundle's, whose
+    # frozen feed page shows a change only at the next churned socket's whole frame (one churn interval plus the 2 s retry):
+    # 12,885 ms over ten recorded unmutated old-hub drives (`python3 analyse.py <report.json>...` over the builder's reports
+    # outside the repo, max of phases' seen.waitedMs; the new bundle's is under 1.4 s). At 30 s the span holds the margin for
+    # any delivery under 15.0 s, 2.1 s over the slowest recorded, and driver_worst_case_s stays under DRIVER_TIMEOUT_S (475.5 s
+    # for the new class, 455.5 s for the old-hub class: tests/test_federated_linkdrop_driver_bound.py). A margin fitted to the
+    # data at hand would be the 18 ms window again; the dwell is widened instead, never the margin softened. It is also a
+    # quiescent tail well past one 4 s /tunnels poll, the earlier reason.
+    down_dwell_ms = 30000
     quiet_tail_ms = 6000      # no relay dial in this window before resume: the poll read the row down and connect() gated on live=false
     apps = ("waiting", "fleet", "feed")
 
@@ -1161,9 +1173,39 @@ class _LinkDrop(unittest.TestCase):
             return "asks" in (f.get("coll") or [])
         return False
 
+    def _link_up_phases(self):
+        return ("A", "B", "C") if self.local_drop else ("A", "B")
+
+    def _assert_the_down_window_outlasts_the_drives_slowest_delivery(self):
+        """The gate's control in TIME (round 2's ruling): the while-down read of phase D came at least DOWN_WINDOW_MARGIN times
+        this drive's own slowest link-up delivery after D's post ended. A phase's delivery is the driver's seen.waitedMs, from
+        the change's post returning to the last of its visibles on the pages (waited for concurrently), taken over EVERY
+        link-up phase (A, B and C with the local drop; A is the fastest, C often the slowest), so the yardstick is this drive's
+        and this bundle's: on the old bundle a change shows only at the next churned socket's whole frame, 6 to 13 s. Without
+        this pin the two temporal pins hold for a post at the END of the dwell (an 18 ms window, both round-2 voters), and
+        "absent while down" cannot be told from "no time passed". The span is read to `settled`, the mark the while-down read
+        follows (resume is some 20 ms later). Returns (span_s, deliveries) for the record."""
+        m = self._marks()
+        made = [c for c in self.changes_made if c.get("phase") == "D"]
+        self.assertEqual(len(made), 1, "the control door made phase D's change bundle once: %r" % ([c.get("phase") for c in self.changes_made],))
+        deliveries = {p: (self._phase(p).get("seen") or {}).get("waitedMs") for p in self._link_up_phases()}
+        self.assertTrue(deliveries and all(isinstance(v, int) and not isinstance(v, bool) and v >= 0 for v in deliveries.values()),
+                        "every link-up phase recorded its delivery (seen.waitedMs): %r" % (deliveries,))
+        slowest = max(deliveries, key=deliveries.get)
+        slowest_s = deliveries[slowest] / 1000.0
+        span_s = m["settled"] / 1000.0 - made[0]["t1"]
+        self.assertGreaterEqual(span_s, DOWN_WINDOW_MARGIN * slowest_s,
+                                "the down window's observation span (phase D's post end to the while-down read at settled: %.3f s; resume %d ms "
+                                "later) holds %g times this drive's slowest link-up delivery (%.3f s in phase %s; per phase %r): a change that "
+                                "took that long with the link up had %g times that long to arrive while it was down, so its absence is the "
+                                "link's and not the window's; widen down_dwell_ms, never the margin"
+                                % (span_s, m["resume"] - m["settled"], DOWN_WINDOW_MARGIN, slowest_s, slowest, deliveries, DOWN_WINDOW_MARGIN))
+        return span_s, deliveries
+
     def _assert_change_due_while_down_crossed_nothing_and_the_return_carried_it_whole(self):
         """The gate, established rather than exhibited (round 1): phase D's change bundle was posted to the remote's real
-        port after the hub's row went down and before the dwell ended, so a patch was DUE with the link down. While down
+        port after the hub's row went down and before the dwell ended, so a patch was DUE with the link down, and the dwell
+        after the post outlasted this drive's slowest link-up delivery by DOWN_WINDOW_MARGIN (the control in time). While down
         the change is absent from every page (the card, and on the new bundle the todo and the provisional row), no
         outline/delta-unapplied row files, and the link's return serves each page ONE whole frame that carries it: the
         change is visible after the return, no patch carrying a card reaches any page between the return and phase B's
@@ -1179,6 +1221,7 @@ class _LinkDrop(unittest.TestCase):
         self.assertEqual(len(ch.get("noticeKeys") or []), NOTICES_PER_PHASE, "phase D posted its notice cards: %r" % (ch,))
         self.assertGreaterEqual(ch["t0"], m["rowDown"] / 1000.0, "phase D was posted after the hub's row went down (t0 %r, rowDown %r)" % (ch["t0"], m["rowDown"] / 1000.0))
         self.assertLessEqual(ch["t1"], m["settled"] / 1000.0, "…and finished inside the down dwell (t1 %r, settled %r)" % (ch["t1"], m["settled"] / 1000.0))
+        self._assert_the_down_window_outlasts_the_drives_slowest_delivery()   # …and the dwell after it outlasted this drive's slowest delivery
         todo = ("todo" in self.changes) or None
         prompt = ch.get("prompt") if "append" in self.changes else None
         self._assert_seen(D["seenWhileDown"], False, todo=(False if todo else None), what="phase D while the link was down (a change due, nothing to carry it)")
@@ -1394,6 +1437,7 @@ class LinkDropOldLocal(_LinkDrop):
         perA = self._assert_one_row_per_outline_feed_patch("A0", "A1", patches_due=True)     # the link up: a patch per notice, a row per patch
         down = self._assert_one_row_per_outline_feed_patch("drop", "resume", patches_due=False)   # the link down, phase D due: no patch, no row
         self.assertEqual(down, 0, "no delta-unapplied row while the link was down: no patch arrived, so no row (the storm is gated on the link); rows in the down window: %r" % (self._rows_by_kind(self._rows_in("drop", "resume")),))
+        self._assert_the_down_window_outlasts_the_drives_slowest_delivery()   # the same zero, the same control in time as the gate leg's
         perB = self._assert_one_row_per_outline_feed_patch("B0", "B1", patches_due=True)     # the storm RESUMED on the return's socket
         perC = self._assert_one_row_per_outline_feed_patch("C0", "C1", patches_due=True) if self.local_drop else None   # …and after the local restart
         total = self._assert_one_row_per_outline_feed_patch()                                  # and over the whole drive, by rev
