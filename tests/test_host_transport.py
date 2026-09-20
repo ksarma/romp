@@ -872,6 +872,62 @@ class BackendHostRules(unittest.TestCase):
         self.assertEqual((peer / "keep").read_text(), "the peer's own file")
         self.assertTrue(any("not cleared" in l for l in be._test_logs), "remove_host_dir logged the refusal")
 
+    def test_a_foreign_uid_directory_on_the_removal_road_is_refused_by_the_fstat_of_the_object_opened(self):
+        """_rmtree_at's foreign-uid arm, driven with a stub keyed on the object (the residual-conditions commit of fork
+        PR #814, 2026-09-20: round 5's mutation lens left this arm green, the one green mutation with a refusal behind
+        it, and the reviewer's condition was a pin that pays the stub's cost rather than a sentence calling the arm
+        impossible to drive). Two arms; each plants real directories of ours under hosts/ and lies about ONE of them:
+        os.fstat answers st_uid + 1 for the descriptor whose (st_dev, st_ino) is the planted directory's, read by the
+        real lstat before the patch, and answers truthfully for every other descriptor (the descent's own fstat of
+        hosts/ among them, so the refusal is _rmtree_at's and not _open_dir_nofollow's). Arm `sid`: hosts/<sid>/ itself
+        reads as another uid's: the walk never starts, the directory and both files in it stand, and the refusal names
+        the entry and both uids. Arm `nested`: hosts/<sid>/theirs/ reads as another uid's under our verified <sid>/:
+        the walk stops at it with that directory and its file untouched and <sid>/ still standing (the trailing rmdir
+        never runs), the shape remove_host_dir's docstring states for a nested refusal (a sibling scandir had already
+        yielded may be gone, so this arm reads nothing about it). Both: exactly one `not cleared` line is logged, with
+        `belongs to uid`, and _host_ended returns without raising. An ordinary euid cannot plant a foreign directory
+        under its own 0700 hosts/<sid>/, so the stub is the one way to drive the arm; the refusal is outcome-bearing at
+        euid 0 or with CAP_FOWNER, where the unlinks under a foreign directory would succeed. Red with the uid arm
+        deleted from _rmtree_at: both arms lose <sid>/ whole, the file under `theirs` with it."""
+        real_fstat = os.fstat
+
+        def foreign(st):
+            fields = list(st)
+            fields[4] = st.st_uid + 1                   # st_uid: someone else's directory at our entry
+            return os.stat_result(fields)
+        for arm in ("sid", "nested"):
+            with self.subTest(arm=arm):
+                d, be = self._be()
+                sid_dir = ht.host_dir(d, SID)
+                sid_dir.mkdir(parents=True, mode=0o700)
+                sid_dir.parent.chmod(0o700)
+                theirs = sid_dir / "theirs"
+                theirs.mkdir(mode=0o700)
+                (theirs / "keep").write_text("a file under the directory the stub calls another uid's")
+                (sid_dir / "ours").write_text("a file of ours beside it")
+                st = os.lstat(sid_dir if arm == "sid" else theirs)
+                ident = (st.st_dev, st.st_ino)
+
+                def fstat(fd):
+                    st = real_fstat(fd)
+                    if isinstance(fd, int) and stat.S_ISDIR(st.st_mode) and (st.st_dev, st.st_ino) == ident:
+                        return foreign(st)
+                    return st
+                sb.write_reg(Path(d), SID, {"sid": SID, "name": "web", "alive": True})
+                t = types.SimpleNamespace(hello={"host": {"pid": 7, "start": "h"}, "cli": {"pid": 8, "start": "c"}}, ack_offset=3, exit_info=None)
+                s = types.SimpleNamespace(sid=SID, name="web", _host=t, _host_ack_t=0.0)
+                with mock.patch.object(os, "fstat", fstat):
+                    be._host_ended(s, {"t": "exit", "code": 0, "cause": "end"})
+                self.assertTrue(sid_dir.is_dir(), "hosts/<sid>/ stands: the trailing rmdir never ran")
+                self.assertTrue(theirs.is_dir(), "the directory the stub calls another uid's stands")
+                self.assertEqual((theirs / "keep").read_text(), "a file under the directory the stub calls another uid's")
+                if arm == "sid":
+                    self.assertTrue((sid_dir / "ours").exists(), "a refusal at <sid> deletes nothing")
+                logs = [l for l in be._test_logs if "not cleared" in l]
+                self.assertEqual(len(logs), 1, be._test_logs)
+                self.assertIn("belongs to uid %d, not to us (uid %d)" % (os.geteuid() + 1, os.geteuid()), logs[0])
+                self.assertIn("directory %s belongs" % (SID if arm == "sid" else "theirs"), logs[0])
+
     def test_with_the_setting_off_an_orphan_lease_is_recovered_and_no_host_is_spawned(self):
         d, be = self._be()
         Path(d, "session-hosts").write_text("off")
