@@ -19949,10 +19949,13 @@ function fillInPlace(sid: string, v: View | undefined): void {
   v.stick = false;   // a fill never follows the tail: the reader is where they are
   // the build takes a parked figure only when the land below has a row or a point to put back (anchored); a fill that can only restore
   // its raw pre-fill top (no row on screen and no turn under the viewport top) takes nothing, so the figure waits for a paint that anchors.
+  // The no-unit fallback (a row or a point in hand that names no unit) is the same paint one road over and passes the same predicate,
+  // written out rather than relied on through unitAtScroll's guarantee that u < 0 implies a row in hand (review round 2: a flagless
+  // sync there restored a row over spacers it had not re-sized, and the census could not see it).
   // Two roads take and then restore the raw top, decided only after the build (a residual the PR discloses): the anchor row gone from
   // the rebuilt window with no point to name, and a point whose turn maps to no y (yOfTurn null, here and in the re-window below)
   if (u >= 0) renderWindowItems(v, s, items, Math.max(0, u - WINDOW_RADIUS), Math.min(items.length, u + WINDOW_RADIUS), s.status.state === "working" || s.status.state === "compacting", keepVisible || pointBefore != null);
-  else syncView(sid);
+  else syncView(sid, undefined, keepVisible || pointBefore != null);
   // a visible row that survived the rebuild goes back to its exact offset; otherwise (no row on screen, or the anchor row gone: a turn
   // anchored on a resultUuid or a word key no event carries, round five medium A) the point under the viewport top is put back by its
   // turn; with no way to name the point, the reader keeps their scrollTop (the head stays at zero)

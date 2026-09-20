@@ -446,22 +446,36 @@ test("render.ts: the render task's spacer code holds no layout read; the unit ob
   assert.match(keep, /if \(applyMeasure\(v\)\) \{ redrawGapUnits\(v\); sizeSpacers\(v\); \}\s*\n\s*if \(restoreScrollAnchor\(content, v, keep\)\) return true;/, "keepPlaceAcrossWindow takes over its restore, spacers and gap units first");
   const calls = (RENDER.match(/(?<![\w.])applyMeasure\(v\)/g) || []).length;
   assert.equal(calls, 4, "four takers: syncViewInner, the window build, landActive and keepPlaceAcrossWindow (" + calls + "); the frame-end take asks for the first");
-  // the census of callers, derived from the tree: every window build outside the definition names whether its caller anchors (a seventh
-  // argument that is the flag it was handed, true, or the fill's own predicate), and every syncView call either passes its keep's own
-  // predicate (appendActive's `stick || !!anchor`, the toggle's `!!anchor`) or is one of the non-anchoring callers named here, which take
-  // nothing. appendActive has no harness of its own, so its line is pinned here as well.
+  // the census of callers, derived from the tree and keyed on the CALLER, not on a spelling (review round 2): every window build outside
+  // the definition names whether its caller anchors (a seventh argument that is the flag it was handed, true, or the fill's own predicate)
+  // and sits in one of the functions the multiset names (a multiset, so an eighth build hard-coded inside syncViewInner reds too); every
+  // syncView call either passes its keep's own predicate (appendActive's `stick || !!anchor`, the toggle's `!!anchor`, the fill's
+  // `keepVisible || pointBefore != null`) or is one of the non-anchoring callers named here, which take nothing; and neither name is
+  // handed on as a bare reference (a value passed on could reach a caller neither census reads). appendActive has no harness of its
+  // own, so its line is pinned here as well; scroll-to-anchor-roads.test.ts and land-active-keep.test.ts execute the roads behind the
+  // flagged builds and the land.
   assert.match(RENDER, /const anchor = !stick && v \? captureScrollAnchor\(content, v\) : null;\n(?:\s*\/\/[^\n]*\n)*\s*syncView\(activeId, stick, stick \|\| !!anchor\);/, "appendActive's sync is flagged by its follow or the anchor it captured, never by atBottom alone");
+  const lines = RENDER.split("\n").map((l, i) => [i + 1, l] as const);
+  const fnOf = (line: number) => { for (let i = line - 1; i >= 0; i--) { const m = /^function (\w+)\(/.exec(RENDER.split("\n")[i]); if (m) return m[1]; } return ""; };
   const builds = RENDER.match(/(?<![\w.])renderWindowItems\(v, s, items, [^\n]*?\);/g) || [];
   assert.equal(builds.length, (RENDER.match(/(?<![\w.])renderWindowItems\(/g) || []).length - 1, "every call site has the (v, s, items, …) shape (the definition excluded)");
   assert.ok(builds.length >= 7, "the census is not empty: " + builds.length);
   for (const b of builds) assert.match(b, /, (?:anchored|true|keepVisible \|\| pointBefore != null)\);$/, "a build names whether its caller anchors: " + b);
-  const syncs = RENDER.split("\n").map((l, i) => [i + 1, l] as const).filter(([, l]) => /(?<![\w.])syncView\(/.test(l) && !/function syncView\(/.test(l));
+  const buildLines = lines.filter(([, l]) => /(?<![\w.])renderWindowItems\(v, s, items, /.test(l));
+  assert.equal(buildLines.length, builds.length, "one build call per line");
+  assert.deepEqual(buildLines.map(([n]) => fnOf(n)).sort(), ["fillInPlace", "fillInPlace", "landNearestMoment", "scrollToAnchor", "syncViewInner", "syncViewInner", "virtualizeToViewport"].sort(),
+    "the window builds by caller, a multiset: the fill's two (the land and its re-window), the moment's, the deep link's, the seam's first build and rebuild, the re-window's; a build added anywhere, syncViewInner included, changes it");
+  const bare = (name: string) => (code(RENDER).match(new RegExp("(?<![\\w.$])" + name + "(?![\\w$(])", "g")) || []).length;
+  assert.equal(bare("renderWindowItems"), 0, "renderWindowItems is never handed on as a bare reference (every use is a call the census reads)");
+  assert.equal(bare("syncView"), 0, "syncView is never handed on as a bare reference either");
+  const syncs = lines.filter(([, l]) => /(?<![\w.])syncView\(/.test(l) && !/function syncView\(/.test(l));
   assert.ok(syncs.length >= 7, "the syncView census is not empty: " + syncs.length);
-  const fnOf = (line: number) => { for (let i = line - 1; i >= 0; i--) { const m = /^function (\w+)\(/.exec(RENDER.split("\n")[i]); if (m) return m[1]; } return ""; };
-  const flagless = syncs.filter(([, l]) => !/syncView\(\w+, stick, stick \|\| !!anchor\)/.test(l) && !/syncView\(\w+, undefined, !!anchor\)/.test(l));
-  assert.deepEqual(flagless.map(([n]) => fnOf(n)).sort(), ["fillInPlace", "reviveFailedLocal", "runPrebuild", "showActive", "showActive"].sort(),
-    "the flagless syncView callers are the non-anchoring ones: the placeholder re-render, the hidden prebuild, the switch's two builds (landActive and keepPlaceAcrossWindow land them) and the fill's no-unit fallback");
-  assert.equal(syncs.length - flagless.length, 2, "…and two pass the flag: appendActive (its follow or its anchor) and the toggle (its anchor)");
+  const flagless = syncs.filter(([, l]) => !/syncView\(\w+, stick, stick \|\| !!anchor\)/.test(l) && !/syncView\(\w+, undefined, !!anchor\)/.test(l) && !/syncView\(\w+, undefined, keepVisible \|\| pointBefore != null\)/.test(l));
+  assert.deepEqual(flagless.map(([n]) => fnOf(n)).sort(), ["reviveFailedLocal", "runPrebuild", "showActive", "showActive"].sort(),
+    "the flagless syncView callers are the non-anchoring ones: the placeholder re-render, the hidden prebuild and the switch's two builds (landActive and keepPlaceAcrossWindow land them)");
+  assert.deepEqual(syncs.filter((x) => !flagless.includes(x)).map(([n]) => fnOf(n)).sort(), ["appendActive", "fillInPlace", "toggleToolGroup"].sort(),
+    "…and three pass their keep's own predicate: appendActive (its follow or its anchor), the toggle (its anchor) and the fill's no-unit fallback (a row or a point in hand), by caller");
+  assert.equal(syncs.length - flagless.length, 3, "three flagged syncs");
   // every reset that clears the average clears the parked figures with it (forgetAverage), and none clears the figure bare
   assert.match(RENDER, /function forgetAverage\(v: View\): void \{\s*\n\s*v\.avgTurnH = undefined; v\.measured = undefined;\s*\n\}/);
   assert.equal((RENDER.match(/\bavgTurnH = undefined/g) || []).length, 1, "the one bare clear is the helper's");

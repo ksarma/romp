@@ -288,9 +288,10 @@ class ServedCompactStream(WindowLab):
       and a window with one user row holds none, so the gap keeps its default; the old figure read the whole window's height as one
       turn and the spacer grew about thirty-fold on the first streamed paint (24k to 1.43M px on the phone).
 
-    Runs in Chromium; ROMP_LAB_ENGINE=webkit runs the same lab in WebKit, the phone's engine (the driver head reads it, and the
-    RESULT names the browser that launched, asserted against the request). Synthetic fixtures only (placeholder uuids, invented
-    prose); hostname TESTHOST."""
+    Runs in Chromium. ROMP_LAB_ENGINE=webkit is OPT-IN for a runner that installs WebKit, the phone's engine: it runs the same lab
+    there (the driver head reads it, and the RESULT names the browser that launched, asserted against the request), and no checked-in
+    runner sets it (CI installs Chromium alone), so the WebKit figures in the PR body are the session's own runs under that variable,
+    not a leg any runner runs. Synthetic fixtures only (placeholder uuids, invented prose); hostname TESTHOST."""
     AGENTIC_TAIL_PAIRS = 38   # 1 + 38 x 2 + 1 = 78 events in the last turn; with the kernel's closing notice row after it, the 80-unit
                               # window opens on the previous turn's reply and holds ONE user row (two, should that notice ever go: still no
                               # second complete turn, which is the premise)
@@ -317,9 +318,11 @@ class ServedCompactStream(WindowLab):
     def test_the_result_names_the_engine_that_ran(self):
         # the engine the body's claims rest on is the one that launched: the RESULT's field is browserType().name(), and a run under
         # ROMP_LAB_ENGINE=webkit whose driver launched Chromium regardless would say chromium here (review round 1b; the old field
-        # echoed the variable and could not disagree with it)
+        # echoed the variable and could not disagree with it). The discriminating case needs the opt-in variable set, which nothing
+        # checked in does; the default run pins that the launch is Chromium. The request is read as the driver head reads it (`||`):
+        # an EMPTY variable asks for Chromium, so it does not red the lab with a message naming no defect (review round 2)
         r = self._result()
-        self.assertEqual(r["engine"], os.environ.get("ROMP_LAB_ENGINE", "chromium"), "the launched engine is the requested one: %r" % r["engine"])
+        self.assertEqual(r["engine"], os.environ.get("ROMP_LAB_ENGINE") or "chromium", "the launched engine is the requested one: %r" % r["engine"])
 
     def test_the_boot_window_holds_no_complete_turn_at_the_bottom(self):
         # the premise the two measurements rest on: the tail window is the agentic turn (one visible user row; two at most, should the
