@@ -10,6 +10,7 @@
 // helpers in md-links.test.ts and capped-read.test.ts. Synthetic hosts/paths only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
+import { codeOnly } from "../test-code-only";   // the comment stripper the order pins read through (the compiler's ranges; file-view-seam.test.ts self-checks it)
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -17,24 +18,6 @@ const web = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui
 const RENDER = web("render.ts");
 const VIEW = web("file-view.ts");
 const SANITIZE = web("md-sanitize.ts");   // the one sanitizer both md() and mdBlock call (sanitizeMd)
-/** `src` with its comments removed (file-view-seam.test.ts codeOnly, copied: a line comment to the line's end, a block comment to
- *  its close, string literals kept), so an order pin here reads code and a comment quoting the pinned lines cannot satisfy it. */
-function codeOnly(src: string): string {
-  let out = "", i = 0;
-  while (i < src.length) {
-    const c = src[i], n = src[i + 1];
-    if (c === '"' || c === "'" || c === "`") {
-      out += c; i++;
-      while (i < src.length && src[i] !== c) { if (src[i] === "\\") { out += src[i]; i++; } out += src[i] ?? ""; i++; }
-      out += src[i] ?? ""; i++;
-    } else if (c === "/" && n === "/") {
-      while (i < src.length && src[i] !== "\n") i++;
-    } else if (c === "/" && n === "*") {
-      const end = src.indexOf("*/", i + 2); i = end < 0 ? src.length : end + 2;
-    } else { out += c; i++; }
-  }
-  return out.split("\n").map((l) => l.trimEnd()).filter((l) => l !== "").join("\n");
-}
 const CHAT_CSS = web("styles.css");
 const FEED_CSS = web("feed.css");
 const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
@@ -46,7 +29,7 @@ const HANDLER = (RENDER.match(/closest\?\.\((?:"a\[href\]"|LINK_SEL)\)[\s\S]*?\}
 const URL_FN = (VIEW.split("export function openUrlView")[1] || "").split("// Kick the browser's downloader")[0];
 // the markdown renderer
 const MD_FN = (VIEW.split("function mdBlock(")[1] || "").split("// The image body:")[0];
-// mdBlock's body alone, comments stripped (codeOnly, below): the order pins read this, so a comment quoting the pinned lines
+// mdBlock's body alone, comments stripped (codeOnly, ui/test-code-only.ts): the order pins read this, so a comment quoting the pinned lines
 // above an adopt-first body cannot satisfy them (the review's round-2 pre-answers built that reversion, 2026-09-20)
 const MD_CODE = codeOnly((VIEW.split("function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {")[1] || "").split("\n}\n")[0]);
 // the local viewer (the split file-view.test.ts uses — openUrlView sits AFTER offersDownload so it
@@ -328,8 +311,7 @@ test("local file mode: a relative image is the sibling over the kernel's /file r
   // matching and joins the path the way the panel's poll and the kernel read it (relative under the file's directory,
   // absolute as itself, `..` left to the kernel; file-view-seam.test.ts pins its body). Deliberate divergence: a
   // `~`-anchored src joins under the directory here, as those two readers do, where upstream took it as itself.
-  assert.match(MD_CODE, /rewriteFigureSrcs\(clean, doc\.path\.slice\(0, doc\.path\.lastIndexOf\("\/"\) \+ 1\), doc\.sid\);/);   // over the sanitizer's body
-  assert.ok(MD_CODE.indexOf("rewriteFigureSrcs(clean") < MD_CODE.indexOf("box.replaceChildren(...Array.from(clean.childNodes));"), "before the adoption (file-view-seam.test.ts pins the whole order; this reads code, not comments)");
+  assert.match(MD_CODE, /rewriteFigureSrcs\(clean, doc\.path\.slice\(0, doc\.path\.lastIndexOf\("\/"\) \+ 1\), doc\.sid\);/);   // over the sanitizer's body, before the adoption (file-view-seam.test.ts pins the order)
   const RW = VIEW.split("export function rewriteFigureSrcs(")[1].split("\n}")[0];
   // one path builder for every fetching attribute (Slice 4 of plans/markdown-viewer.md widened the rewrite from `img[src]` to
   // every attribute figure-gate.ts's figureRefs reads: srcset candidates, a video's poster, a source's src, an svg image's href)

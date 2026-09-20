@@ -13,6 +13,7 @@ import { test, type TestContext } from "node:test";
 import * as assert from "node:assert/strict";
 import { inspect } from "node:util";
 import { assertHiddenEvent, hideEdges, sameNodes, staysEnumerable } from "../test-dom-shim";
+import { codeOnly, stripComments } from "../test-code-only";   // the comment stripper every source pin below reads through (the compiler's ranges)
 import * as fs from "node:fs";
 import * as path from "node:path";
 import DOMPurify from "dompurify";   // the module-global instance md-sanitize.ts imports, for the record pin on the seam's constraint
@@ -1147,33 +1148,45 @@ test("source: the Slice 3 seam members exist with their doc comments; the media 
 // engines and read the servers' logs before re-aiming a pin. The ORDER itself (the chain's writes landing before the nodes
 // enter the live document) is executed under node by file-view-figures-gate-adopt.test.ts, over a stand-in with an inert
 // and a live document; the premise, that DOMPurify's body is inert, is what that scene assumes and this test pins.
-/** `src` with its comments removed: a line comment to the line's end and a block comment to its close, outside string
- *  literals (a `//` inside quotes, the HTML namespace URL, is kept). Regex literals are not parsed: none in the code read here
- *  holds a comment opener or a quote (the self-check in the test reads a string holding `//` back, and a doc comment's word
- *  off the code). Trailing whitespace a stripped comment leaves is trimmed and blank lines are dropped. */
-function codeOnly(src: string): string {
-  let out = "", i = 0;
-  while (i < src.length) {
-    const c = src[i], n = src[i + 1];
-    if (c === '"' || c === "'" || c === "`") {
-      out += c; i++;
-      while (i < src.length && src[i] !== c) { if (src[i] === "\\") { out += src[i]; i++; } out += src[i] ?? ""; i++; }
-      out += src[i] ?? ""; i++;
-    } else if (c === "/" && n === "/") {
-      while (i < src.length && src[i] !== "\n") i++;
-    } else if (c === "/" && n === "*") {
-      const end = src.indexOf("*/", i + 2); i = end < 0 ? src.length : end + 2;
-    } else { out += c; i++; }
-  }
-  return out.split("\n").map((l) => l.trimEnd()).filter((l) => l !== "").join("\n");
-}
+// codeOnly (ui/test-code-only.ts): the compiler's comment ranges, so a string holding `//`, a template holding `/*` and a
+// regex literal ending in backslash-slash are code and stay (the self-check below, and the module's header for the hand
+// scanner it replaced and the line that scanner deleted).
+test("codeOnly reads the compiler's comment ranges: an affected module keeps the line the hand scanner deleted (settings.ts, a regex literal ending in backslash-slash), md-sanitize.ts keeps a string holding // and loses the doc comments' word, and a synthetic module keeps every literal that holds a comment opener and loses every comment", () => {
+  // the affected module the round-1 refuter named: the hand scanner took the regex literal's closing `\//` as a line comment
+  const settings = web("settings.ts");
+  assert.ok(settings.includes("hostname.toLowerCase()"), "the source holds the call (the pin below reads it back through the stripper)");
+  assert.ok(codeOnly(settings).includes("hostname.toLowerCase()"), "settings.ts's hostname.toLowerCase() survives the strip (a regex literal ending in backslash-slash on the same line)");
+  assert.ok(codeOnly(settings).includes('/^[a-z][a-z0-9+.-]*:\\/\\//i.test(s) ? s : "http://" + s'), "and the regex literal itself is intact");
+  const SAN = web("md-sanitize.ts"), SAN_CODE = codeOnly(SAN);
+  assert.ok(SAN_CODE.includes('const HTML_NS = "http://www.w3.org/1999/xhtml";'), "a string literal holding // is kept");
+  assert.match(SAN, /allowedTags/); assert.doesNotMatch(SAN_CODE, /allowedTags|\/\*\*|^\s*\* /m, "the doc comments are gone (dropBodyTitle's names the hook's allowedTags lever; the code never does)");
+  // a synthetic module: each construct a pattern-based stripper has mis-read, one per line, with a marker each that must survive or go
+  const synthetic = [
+    'const a = /x:\\/\\//i.test(s) ? s : "http://" + s; const keepA = 1;',       // the ruling's case: a regex literal ending in backslash-slash, then code
+    'const b = "a // not a comment"; const keepB = 2;',                        // a string holding //
+    'const c = `t /* not a comment */ ${d /* dropC */ + 1}`; const keepC = 3;',  // a template holding /*, with a real comment inside its substitution
+    '/* dropD: a regex /a\\/b/ and a "quote" inside a block comment */ const keepD = 4;',
+    'const e = "https://host.test/p?q=1#f"; const keepE = 5; // dropE',        // a URL in a string, a trailing line comment
+    '/** dropF: see http://x.test/y */ const keepF = 6;',                      // a doc comment holding a URL, code after it on the line
+    'const f = g / h; // dropG: a division, then a comment',
+    'const i = j /k/ l; const keepH = 7;',                                     // a regex literal between two divisions' operands
+  ].join("\n");
+  const code = codeOnly(synthetic), whole = stripComments(synthetic);
+  for (const keep of ["keepA", "keepB", "keepC", "keepD", "keepE", "keepF", "keepH", '"a // not a comment"', "`t /* not a comment */ ${d  + 1}`", '"https://host.test/p?q=1#f"', "/x:\\/\\//i", "const f = g / h;", "j /k/ l"]) assert.ok(code.includes(keep), "kept: " + keep);
+  for (const drop of ["dropC", "dropD", "dropE", "dropF", "dropG"]) assert.ok(!code.includes(drop), "gone: " + drop);
+  assert.deepEqual(code.split("\n").filter((l) => /\/\*|\/\//.test(l.replace(/"[^"]*"|`[^`]*`|\/x:[^;]*\/i/g, ""))), [], "outside the kept string, template and regex literals no comment opener is left");
+  assert.equal(whole.split("\n").length, synthetic.split("\n").length, "stripComments keeps every newline, so line numbers survive");
+  assert.equal(code.split("\n").length, 8, "codeOnly drops no line that holds code");
+});
 /** The profile's keys, in the literal's order: the whole of what sanitizeMd spreads RETURN_DOM onto. */
 const PROFILE_KEYS = ["USE_PROFILES", "ADD_DATA_URI_TAGS", "ALLOW_DATA_ATTR", "FORBID_TAGS", "FORBID_ATTR", "SANITIZE_NAMED_PROPS"];
 
 test("the inertness premise, held where CI runs: MD_PURIFY is its six-key literal at the source and at run time and reaches the sanitize with RETURN_DOM alone added; sanitizeMd's body is its five statements; md-sanitize.ts's code opens no door to the live document and no config verb, and no other dashboard module names the profile or those verbs; the installed DOMPurify parses into a template's document, returns that body itself, and clones into the live document only under a shadowroot attribute no profile here allows; in mdBlock `clean` reaches the four chain calls and the fence pass's one read (`clean.querySelectorAll`) and nothing else before the adoption, and nothing after it", () => {
   const SAN = web("md-sanitize.ts");
   const SAN_CODE = codeOnly(SAN);
-  // the reader's self-check: a string holding `//` survives, a word the doc comments use and the code does not is gone
+  // the reader's self-check, over an AFFECTED module too (the round-1 refuter's condition): settings.ts keeps the line the hand
+  // scanner deleted; md-sanitize.ts keeps a string holding `//` and loses a word the doc comments use and the code does not
+  assert.ok(codeOnly(web("settings.ts")).includes("hostname.toLowerCase()"), "codeOnly keeps settings.ts's hostname.toLowerCase() (a regex literal ending in backslash-slash sits before it on the line)");
   assert.ok(SAN_CODE.includes('const HTML_NS = "http://www.w3.org/1999/xhtml";'), "codeOnly keeps a string literal holding //");
   assert.match(SAN, /allowedTags/); assert.doesNotMatch(SAN_CODE, /allowedTags|\/\*\*|^\s*\* /m, "codeOnly drops the doc comments (dropBodyTitle's names the hook's allowedTags lever; the code never does)");
   // ── the profile: the literal whole, the object's keys, the config the sanitize is handed ──
@@ -1242,7 +1255,7 @@ test("the inertness premise, held where CI runs: MD_PURIFY is its six-key litera
     const initAt = lib.indexOf("_initDocument = function _initDocument(dirty) {");
     const initEnd = lib.indexOf("return WHOLE_DOCUMENT ? doc.documentElement : body;", initAt);
     assert.ok(initAt > 0 && initEnd > initAt, tag + "_initDocument is where the parse document is made");
-    const init = codeOnly(lib.slice(initAt, initEnd));
+    const init = codeOnly(lib.slice(initAt, initEnd), "js");
     assert.match(init, /doc = new DOMParser\(\)\.parseFromString\(dirtyPayload, PARSER_MEDIA_TYPE\);/, tag + "DOMParser first");
     assert.match(init, /doc = implementation\.createDocument\(NAMESPACE, 'template', null\);/, tag + "a created document when DOMParser gives none");
     assert.deepEqual(init.match(/\b(?:document|originalDocument|window)\.\w+/g), ["document.createTextNode"], tag + "the live document is not consulted for the parse document; the template document lends a text node");
@@ -1252,7 +1265,7 @@ test("the inertness premise, held where CI runs: MD_PURIFY is its six-key litera
     const at = lib.indexOf("if (RETURN_DOM) {");
     const end = lib.indexOf("return returnNode;", at);
     assert.ok(at > 0 && end > at, tag + "the RETURN_DOM branch");
-    const branch = codeOnly(lib.slice(at, end));
+    const branch = codeOnly(lib.slice(at, end), "js");
     assert.match(branch, /if \(RETURN_DOM_FRAGMENT\) \{\n\s*returnNode = createDocumentFragment\.call\(body\.ownerDocument\);/, tag + "a fragment, were one asked for, is the body's own document's");
     assert.match(branch, /\} else \{\n\s*returnNode = body;\n\s*\}/, tag + "RETURN_DOM alone hands back the parse document's body itself");
     assert.match(branch, /if \(ALLOWED_ATTR\.shadowroot \|\| ALLOWED_ATTR\.shadowrootmode\) \{\n\s*returnNode = importNode\.call\(originalDocument, returnNode, true\);\n\s*\}\n?$/, tag + "the one road into the live document, a deep clone under importNode, taken only when shadowroot or shadowrootmode is allowed");

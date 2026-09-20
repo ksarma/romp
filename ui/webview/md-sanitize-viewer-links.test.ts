@@ -18,6 +18,7 @@
 // under the chat's delegate.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
+import { codeOnly } from "../test-code-only";   // the comment stripper the order pins read through (the compiler's ranges; file-view-seam.test.ts self-checks it)
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { LINK_SEL, XLINK_NS, linkHref } from "./md-links";
@@ -29,27 +30,9 @@ const VIEW = read("file-view.ts");
 const RENDER = read("render.ts");
 // mdBlock, from its declaration to the next exported function
 const MD_FN = VIEW.split("function mdBlock(")[1].split("export function rewriteFigureSrcs")[0];
-// mdBlock's body with its comments stripped (codeOnly, below), for the order pins: a comment quoting the pinned lines cannot
+// mdBlock's body with its comments stripped (codeOnly, ui/test-code-only.ts), for the order pins: a comment quoting the pinned lines cannot
 // satisfy them (the review's round-2 pre-answers built that reversion, 2026-09-20); the prose pins above read MD_FN as written
 const MD_CODE = codeOnly(VIEW.split("function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {")[1].split("\n}\n")[0]);
-/** `src` with its comments removed (file-view-seam.test.ts codeOnly, copied: a line comment to the line's end, a block comment to
- *  its close, string literals kept), so an order pin here reads code and a comment quoting the pinned lines cannot satisfy it. */
-function codeOnly(src: string): string {
-  let out = "", i = 0;
-  while (i < src.length) {
-    const c = src[i], n = src[i + 1];
-    if (c === '"' || c === "'" || c === "`") {
-      out += c; i++;
-      while (i < src.length && src[i] !== c) { if (src[i] === "\\") { out += src[i]; i++; } out += src[i] ?? ""; i++; }
-      out += src[i] ?? ""; i++;
-    } else if (c === "/" && n === "/") {
-      while (i < src.length && src[i] !== "\n") i++;
-    } else if (c === "/" && n === "*") {
-      const end = src.indexOf("*/", i + 2); i = end < 0 ? src.length : end + 2;
-    } else { out += c; i++; }
-  }
-  return out.split("\n").map((l) => l.trimEnd()).filter((l) => l !== "").join("\n");
-}
 
 /** A stub element carrying only the attributes linkHref reads: `href` in no namespace, `xlink:href` in XLink. */
 function stub(attrs: { href?: string; xlink?: string }) {
