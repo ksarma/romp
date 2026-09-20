@@ -725,7 +725,7 @@ the finder's getattr branch deleted as well, each left the module green before (
 held against the samples alone, the close's first pin, the rows alone red the finder case naming getattr (1 failed, 38 passed)
 while the rows and the branch together left it green (39 passed), the two derived sets agreeing; each reds the finder case
 naming getattr since (1 failed, 38 passed each), and the branch deleted with the rows intact reds the same case (1 failed, 38
-passed). The four prose corrections, no state each: this paragraph's framing sentence, above, said every figure was this
+passed). The other four findings, prose corrections with no state each: this paragraph's framing sentence, above, said every figure was this
 head's while the registry finding's pre-fix figure is another tree's; the door witness said every drive seeds a one-node
 store, and five of the thirteen seed none (weakened at its four live places and in the round-5 paragraph); the module docstring
 and setUp's comment placed the shared door's name lookup in _or_fault, and the outer wrapper makes it; and _line_trace's Bounds
@@ -820,7 +820,8 @@ SHARED_HANDOFF_KEYS = ("absent", "fallback", "corrupt", "unreadable_journal")
 # contextlib.suppress with statement, which the raising clause, reading try statements alone, does not see; and any construct nobody
 # listed), each of which the witness catches
 # on the road it sits on when a drive reaches that road; no drive arranges a store of more than one node, every drive is on one sid
-# and calls the door once, so a bump conditioned on state no drive arranges is on no driven road, stated in the witness's docstring (review round 4, tests-2,
+# and calls the door once, so a bump conditioned on state no drive arranges is on no driven road, stated in the witness's
+# docstring (review round 4, tests-2,
 # regression-2 and extra4-1: the pin read the first two premises and the third was
 # held by reading the body; a verifier of the round-4 fixes: a bump in a finally clause left the list predicate green; review round
 # 5, correctness-1, regression-1 and extra6-1: the first three constructs above, each planted on the corrupt road, bumped two second
@@ -986,8 +987,8 @@ _TRAVERSAL = ("walk", "iter_child_nodes", "NodeVisitor", "NodeTransformer")
 # forms the samples cover from the rows, and holds each equal to this roster both ways (review round 7, the seventh-axis verifier: the
 # forms were pinned one way, so the getattr rows removed left the finder's getattr branch pinned by nothing; the round's close: the
 # source derivation held against the samples alone agreed with them when the branch and the rows were removed together, so this
-# roster is the copy that names the loss). A form removed from the finder, the samples and this roster at once is unseen, as a name
-# removed from _TRAVERSAL with its samples is.
+# roster is the copy that names the loss). A form removed from the finder, the samples and this roster at once is unseen: the
+# roster is a policy, and no count pins it, as no count pins the four names.
 _FINDER_FORMS = ("attribute", "from-import", "getattr")
 # Every reference to a traversal name outside _walk, keyed (enclosing def, name) with the reason it walks nothing around _walk. The
 # pin asserts each row is used (a stale row reds) and that nothing else refers to one; a new legitimate reference gets a row here.
@@ -1869,9 +1870,9 @@ def _line_trace(codes, hit):
     whether the site runs in the door's own frame or in the frame of a helper defined inside the door (review round 7, the
     seventh-axis hunt). Derives: nothing; it records the lines that run. Bounds: `codes`, the caller's set; this thread; and a tracer
     already installed on it, which is set aside for the block, receives no event for anything entered inside it (a frame of a code
-    object in `codes` or not), and is put back after it, so a coverage tool or a debugger over this module records nothing the
-    drives run (measured with an outer tracer over the door witness on every interpreter this module runs on: it saw none of the
-    thirteen in-window door calls and every door call outside a window)."""
+    object in `codes` or not), and is put back after it, so a coverage tool or a debugger that rides on sys.settrace records
+    nothing the drives run (measured with an outer settrace tracer over the door witness on every interpreter this module runs on:
+    it saw none of the thirteen in-window door calls and every door call outside a window)."""
     ids = {id(c) for c in codes}
 
     def local(frame, event, _arg):
@@ -1921,7 +1922,8 @@ def _class_attributes(mod):
     the module's last case), and the one hand-picked restore was itself lossy, since setUp read backend_for through getattr, the plain
     function a staticmethod hands out, and the restore put that function into the class dict in place of the staticmethod object
     (inert by reading: the kernel calls backend_for on the class at every site and never instantiates Sessions). Derives: the classes
-    from the module's globals and their attributes from the class dicts, so no class attribute of either module is outside the check.
+    from the module's globals and their attributes from the class dicts, so every attribute of every class the module owns by
+    __module__ is inside the check.
     Bounds: the containers read, a module's globals and its classes' dicts; the contents of a module-level dict, list or set, an
     instance's attributes and an imported module's attributes are outside it; and the ownership test, __module__ equal to the
     module's name, so a class the module imports, or builds under another module's name, is not read."""
@@ -1955,7 +1957,8 @@ class _WalkHarness(unittest.TestCase):
     saved names back and checked no other name, so a new-identity pass-through on such a kernel name left the module green and the
     stub live for every later test), and every attribute of every class either module defines against the same snapshot, read
     from the classes' own dicts (_class_attributes; the container Sessions.backend_for sits in, which the cleanup put back by hand
-    while a stub on any other class attribute was named by nothing until the round-7 close). Bounds: REPLACED_KM, REPLACED_JD, CASE_KM and CASE_JD, what the fixture replaces and what a
+    while a stub on any other class attribute was named by nothing until the round-7 close). Bounds: REPLACED_KM, REPLACED_JD,
+    CASE_KM and CASE_JD, what the fixture replaces and what a
     case may, a policy, the first two pinned by execution in setUp and the last two by the cleanup's check (a case may replace only
     names on the saved lists, since any other is named as leaked); the containers the cleanup's check reads, the globals and the class dicts of both
     modules (the contents of a module-level dict, list or set, an instance's attributes and an imported module's attributes are
@@ -2107,7 +2110,8 @@ class _WalkHarness(unittest.TestCase):
         rebound_km = {k for k, v in vars(km).items() if before_km.get(k, _UNSET) is not v}
         self.assertEqual(rebound_km, set(REPLACED_KM), "setUp replaces exactly the kernel names REPLACED_KM lists, the census's targets: a "
                                                         "stub without a list entry hides a loader from the execution witness and the census")
-        data = tuple(k for k in REPLACED_KM if not callable(before_km[k]))   # the data names among them, from the objects setUp found
+        data = tuple(k for k in REPLACED_KM if not callable(before_km.get(k, _UNSET)))   # the data names among them, from the objects
+        #                                                                            setUp found (a name the kernel lacks reads as data)
         self.assertEqual(data, REPLACED_DATA, "REPLACED_DATA is exactly the names of REPLACED_KM whose kernel object is not callable, in the "
                                               "list's order, derived from setUp's first snapshot (the replaced-helpers census skips these names; "
                                               "until the round-7 close the tuple was pinned by its count alone, so a callable put on it with the "
@@ -4187,7 +4191,7 @@ class TheGrammarIsTheOneTheWalkersClassify(unittest.TestCase):
         source derivation against the samples alone, and the branch deleted with its rows removed left them agreeing, so the roster
         is the copy that names the loss). Bounds: the four names and the three forms (the ruling's stop and the finder's policy, two
         rosters: a list of syntax does not converge, and a form removed from the finder, the samples and the roster at once is unseen,
-        as a name removed from _TRAVERSAL with its samples is); the samples and the limits as the independent source, literal rows the
+        since no count pins either roster); the samples and the limits as the independent source, literal rows the
         module cannot compute without spelling the names they test; and the roads per form, which no derivation counts (a road with
         no sample row is pinned by the plants the history paragraphs record alone)."""
         refs = _traversal_references(ast.parse(Path(os.path.realpath(__file__)).read_text(encoding="utf-8")))
