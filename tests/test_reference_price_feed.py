@@ -8,9 +8,11 @@ variable and the line's text, and nothing else ties the doc to the code, so thes
 reference carries the subsection (beside Judge concurrency) and the analytics sentence; the fragments it quotes
 are the ones gear.js renders and kernel.py reads; the six-hour, host and override-file claims are the kernel's
 constants; the entry's word that the line and the block count the override file's rows in effect is tied to
-_price_feed_status counting them from the merge (_model_prices, which applies the file last) and to the gear.js
-clause the entry quotes (review round 1, 2026-09-20: a row in the file prices its model whichever table the line
-names, and the line says so instead of reading as the table alone); and the new prose carries no em or en dash
+_price_feed_status counting them from the merge (_model_prices, which applies the file last; review round 2: the
+merge's two needles are each asserted present before their order is compared, since str.find returns -1 on a
+miss and -1 sorts before any found index) and to the gear.js clause the entry quotes (review round 1,
+2026-09-20: a row in the file prices its model whichever table the line names, and the line says so instead of
+reading as the table alone); and the new prose carries no em or en dash
 and not the word the repo's CLAUDE.md bans. A wording change in gear.js or a moved constant reddens here before
 the reference goes stale.
 
@@ -64,8 +66,8 @@ KERNEL = _read("kernel", "kernel.py")
 GEAR = _read("ui", "webview", "gear.js")
 
 VAR = "ROMP_PRICE_FEED"
-# gear.js raPriceNote assembles the defaults reading as 'prices: baked-in defaults' + '; ' + why
-DEFAULTS_HEAD = "prices: baked-in defaults"
+# gear.js raPriceNote assembles the defaults reading as 'prices: built-in defaults' + '; ' + why
+DEFAULTS_HEAD = "prices: built-in defaults"
 WHY_OFF = "live feed off (%s=off)" % VAR
 OFF_LINE = DEFAULTS_HEAD + "; " + WHY_OFF
 # the kernel's one stderr line under the switch, and the constants the doc's claims rest on
@@ -74,6 +76,9 @@ TTL_LINE = "PRICE_TTL = 6 * 3600"
 FEED_HOST = "raw.githubusercontent.com"
 CONFIG_LINE = 'PRICE_CONFIG = Path(os.path.expanduser("~/.config/romp/model-prices.json"))'
 ROW_KEYS = ("in", "out", "cache_w", "cache_r")
+# _model_prices merges the feed's cached rows over the defaults, then reads the override file, so a row there wins
+FEED_MERGE = '_price_cache["remote"]'
+FILE_READ = "PRICE_CONFIG.read_text()"
 # the analytics paragraph's new sentence, and the anchor it links
 SENTENCE_HEAD = "A line under the footnote says where the table's prices came from"
 LINK = "[The price feed](#the-price-feed)"
@@ -157,7 +162,7 @@ class TheReferenceCarriesTheSubsection(_Pins):
         # whichever table the line names (_model_prices applies the file after the defaults and the feed), so the
         # status counts the rows in effect from that merge (`overrides`, through _model_prices with refresh=False,
         # the road that never fetches) and the line ends with the count; the entry says so rather than promising
-        # the baked-in defaults. Review round 1: the first draft documented the line as blind to the file, which
+        # the built-in defaults. Review round 1: the first draft documented the line as blind to the file, which
         # left the visible statement false in the configuration the entry itself recommends.
         self.assertSection()
         flat = _flat(SECTION)
@@ -171,8 +176,12 @@ class TheReferenceCarriesTheSubsection(_Pins):
         self.assertQuoted('"overrides": overrides', status, "kernel/kernel.py _price_feed_status", "the block carries the count")
         self.assertQuoted("' row' : ' rows') + ' overridden by model-prices.json'", GEAR, "ui/webview/gear.js",
                           "the clause the doc quotes, on either source")
-        self.assertQuoted("PRICE_CONFIG.read_text()", prices, "kernel/kernel.py _model_prices")
-        self.assertLess(prices.find('_price_cache["remote"]'), prices.find("PRICE_CONFIG.read_text()"),
+        # Review round 2: both needles are asserted present before their order is compared. str.find returns -1 on
+        # a miss and -1 is less than any found index, so without the first assertQuoted a _model_prices that no
+        # longer merged the feed's rows, or merged them under another key, kept this pin green.
+        self.assertQuoted(FEED_MERGE, prices, "kernel/kernel.py _model_prices", "the feed's cached rows are merged into the table")
+        self.assertQuoted(FILE_READ, prices, "kernel/kernel.py _model_prices")
+        self.assertLess(prices.find(FEED_MERGE), prices.find(FILE_READ),
                         "the override is applied after the feed's rows, so a row there replaces the table's")
         self.assertQuoted("v.get(kk, base.get(kk, 0))", prices, "kernel/kernel.py _model_prices", "a rate the row omits keeps the table's")
 
@@ -184,7 +193,7 @@ class TheAnalyticsParagraphPointsAtTheLine(_Pins):
         self.assertTrue(ANALYTICS, "docs/reference.md has the analytics modal paragraph")
         flat = _flat(ANALYTICS)
         self.assertQuoted(SENTENCE_HEAD, flat, self.DOC)
-        self.assertQuoted("the live price feed, and how long ago it was fetched, or the baked-in defaults and why", flat, self.DOC)
+        self.assertQuoted("the live price feed, and how long ago it was fetched, or the built-in defaults and why", flat, self.DOC)
         self.assertQuoted(LINK, flat, self.DOC, "how to stop the fetch is one link away")
         self.assertQuoted("'prices: live feed'", GEAR, "ui/webview/gear.js", "the live reading the sentence describes")
 

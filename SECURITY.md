@@ -173,7 +173,7 @@ numeric pricing. No telemetry or session data is sent anywhere.
 
 `ROMP_PRICE_FEED=off` in the kernel's environment (`service.env` for the
 installed service, then a manager restart) stops that fetch: the Token usage
-modal then prices tokens from the baked-in defaults and says so on the line
+modal then prices tokens from the built-in defaults and says so on the line
 under its footnote, and `/version` says the same in its `priceFeed` block. The
 reference documents the switch under
 [The price feed](docs/reference.md#the-price-feed).

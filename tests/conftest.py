@@ -340,10 +340,15 @@ def _no_model_catalog_fetch():
 # public LiteLLM price list on a third party's host whenever the in-memory price cache is older than
 # PRICE_TTL, which at import it always is (there is no cache file). The same DEFENSIVE floor as the
 # catalog's, on the switch the kernel reads with the catalog's spelling (ROMP_PRICE_FEED=off,
-# kernel/kernel.py _price_feed_off, the first statement of _refresh_remote_prices): no test reached
-# that host before this line (the analytics tests replace _refresh_remote_prices with a no-op, and no
-# served lab opens the view), but a test kernel serving the view is one request away from a third
-# party on nobody's assertion. Set, not setdefault, for the catalog's reason. The feed's own tests
+# kernel/kernel.py _price_feed_off, the first statement of _refresh_remote_prices). This floor is the
+# RUNNER's: it reaches the analytics tests (which replace _refresh_remote_prices with a no-op anyway)
+# and the served labs whose kernel env copies os.environ, but a lab kernel built from names
+# (tests/test_ship_reship_served.py kernel_env, an allowlist) never inherits it, and two such labs open
+# the view (the settings recut and the widget reorder browser tests click #ra-open): their kernels
+# fetched the feed on every run until kernel_env set the switch itself, beside the catalog's
+# (2026-09-20, review round 2; LabKernelEnv there pins it). A test kernel serving the view is one
+# request away from a third party on nobody's assertion. Set, not setdefault, for the catalog's reason.
+# The feed's own tests
 # (tests/test_price_feed_off.py) pop the variable in setUp to drive the fetch against a recorder,
 # hence the per-test re-assert below (tests/test_price_feed_floor.py pins both).
 os.environ["ROMP_PRICE_FEED"] = "off"

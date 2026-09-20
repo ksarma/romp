@@ -875,7 +875,7 @@ only when the ledger has no bucket of the period's kind at all. The estimate
 misses fast mode's premium and any model the table lacks, and it prices
 every session's transcript, login sessions included. A line under the
 footnote says where the table's prices came from: the live price feed, and
-how long ago it was fetched, or the baked-in defaults and why; how to stop
+how long ago it was fetched, or the built-in defaults and why; how to stop
 the fetch is under [The price feed](#the-price-feed).
 
 The token count beside the dollars is every kind together: fresh input,
@@ -1113,15 +1113,17 @@ yes. The gear reports a machine that is missing node or the comment tools.
 
 - `ROMP_PRICE_FEED=off` stops the kernel from fetching model prices. The
   gear's analytics modal (**Token usage**) prices transcript tokens with a
-  per-model table that ships with romp as baked-in defaults; when the modal
+  per-model table that ships with romp as built-in defaults; when the modal
   opens and the last fetch attempt is more than six hours old, or there has
   been none, the kernel fetches the public LiteLLM price list from
   `raw.githubusercontent.com`, a third-party host, with no credential, and
-  keeps the rows it matched in memory until the next restart. Set the
-  variable where the kernel's service sees it (`service.env`, then a manager
+  keeps the rows it matched in memory until the next restart or the next
+  fetch that lands: a landed fetch replaces them with the rows it parsed,
+  even when that is none, and a failed fetch leaves them. Set the variable
+  where the kernel's service sees it (`service.env`, then a manager
   restart), and the kernel sends no request to that host. With the variable set,
-  the table is the baked-in defaults and the modal says so: the line under its
-  footnote reads `prices: baked-in defaults; live feed off (ROMP_PRICE_FEED=off)`,
+  the table is the built-in defaults and the modal says so: the line under its
+  footnote reads `prices: built-in defaults; live feed off (ROMP_PRICE_FEED=off)`,
   `/version` carries a `priceFeed` block that says the same beside
   `modelCatalog`, and the kernel logs one line, naming the variable, the
   first time it would have fetched. The spend ceiling's check never fetches:
@@ -1132,8 +1134,11 @@ yes. The gear reports a machine that is missing node or the comment tools.
   dollars per token; a row there replaces that model's row in the feed's
   table and the defaults alike, and a rate the row omits keeps the table's.
   The line under the footnote and the `priceFeed` block count the rows the
-  file puts in effect: with one row in the file, the line ends
-  `; 1 row overridden by model-prices.json`, whichever table it names.
+  file puts in effect: a row that changes or adds a model's rates counts; a
+  row equal to the table's row for that model does not, so the count says
+  what the file changed, not whether it was read. With one counted row in
+  the file, the line ends `; 1 row overridden by model-prices.json`,
+  whichever table it names.
 
 ### Fast mode for the judges
 

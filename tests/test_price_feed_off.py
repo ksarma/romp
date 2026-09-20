@@ -3,7 +3,7 @@
 where its prices come from.
 
 _refresh_remote_prices fetches a third party's price table when the analytics view opens with a cache older
-than six hours; it had no off switch and no visibility: a failed or refused fetch left the baked-in defaults
+than six hours; it had no off switch and no visibility: a failed or refused fetch left the built-in defaults
 reading as though live. The switch copies the model catalog's (spelling and shape, `_refresh_model_catalog`)
 and sits as the FIRST statement of the one function a fetch can start in, before the TTL check and the stamp,
 so the spend guard's road, `_model_prices(refresh=False)` (T350), stays unable to start a fetch with the
@@ -50,7 +50,7 @@ jd.STATE.mkdir(parents=True, exist_ok=True)
 NOW = 1781100000              # a synthetic clock; every epoch below is relative to it
 WINDOW = 86400
 BODY_MARKER = "synthetic-feed-body-marker"   # what a fetch's response body carries; must never reach the status
-# a LiteLLM-shaped body with INVENTED rates: one row that signs to a baked-in id, one that never can
+# a LiteLLM-shaped body with INVENTED rates: one row that signs to a built-in id, one that never can
 FEED = {
     "claude-fable-5-1": {"input_cost_per_token": 11e-6, "output_cost_per_token": 55e-6,
                          "cache_creation_input_token_cost": 13.75e-6, "cache_read_input_token_cost": 1.1e-6},
@@ -60,7 +60,7 @@ OFF_LINE = "price feed: off (ROMP_PRICE_FEED=off)"
 FAIL_LINE = "price feed: fetch failed ("
 FEED_RESET = {"fetchedAt": None, "attemptedAt": None, "lastError": None, "rows": 0, "matched": 0, "inflight": False,
               "offSaid": False}
-SERVED_DEFAULTS = "the cost view prices tokens from the baked-in defaults"   # the lines' tail with nothing cached and no override
+SERVED_DEFAULTS = "the cost view prices tokens from the built-in defaults"   # the lines' tail with nothing cached and no override
 
 
 class _Resp:
@@ -173,7 +173,7 @@ class OffSwitch(PriceFeedCase):
         self.assertEqual(self.calls, [km.PRICE_FEED_URL], "a stale cache starts exactly one fetch")
         self.assertEqual(km._price_cache["t"], NOW, "stamped at the attempt")
         self.assertEqual(km._price_cache["remote"]["claude-fable-5-1"]["in"], 11e-6, "the fake's row landed")
-        self.assertNotIn("some-other-vendor-model", km._price_cache["remote"], "a row that signs to no baked-in id is dropped")
+        self.assertNotIn("some-other-vendor-model", km._price_cache["remote"], "a row that signs to no built-in id is dropped")
         self.assertEqual(log, "", "a fetch that lands says nothing")
 
     def test_the_payload_and_version_say_defaults_because_the_feed_is_off(self):
@@ -253,7 +253,7 @@ class GuardRoad(PriceFeedCase):
                 self.assertEqual(self.calls, [], "the guard's road never starts a fetch")
                 self.assertEqual(km._price_cache["t"], 0, "the stamp never moved: the road never entered the refresh")
                 self.assertEqual(err.getvalue(), "", "and nothing is said: the guard made no attempt the switch could refuse")
-                self.assertEqual(prices["claude-fable-5-1"]["in"], 10e-6, "the baked-in table is what it merged")
+                self.assertEqual(prices["claude-fable-5-1"]["in"], 10e-6, "the built-in table is what it merged")
 
     def test_refresh_true_under_off_serves_the_defaults_and_still_starts_nothing(self):
         os.environ["ROMP_PRICE_FEED"] = "off"
@@ -412,7 +412,7 @@ class FailedFetch(PriceFeedCase):
 
     def test_a_failed_refresh_after_a_landed_fetch_says_the_cached_rows_still_serve(self):
         """Stale-while-revalidate: a failed refresh leaves the landed rows in the cache, they keep pricing tokens, and
-        the status says source feed. The failure line's tail used to say the baked-in table served, a fixed phrase that
+        the status says source feed. The failure line's tail used to say the built-in table served, a fixed phrase that
         was false here; the tail is read from the status now, so the line and the modal's line cannot disagree."""
         self._analytics()                                          # the fetch lands
         self.assertEqual(len(self.calls), 1)
@@ -422,8 +422,10 @@ class FailedFetch(PriceFeedCase):
         resp, log = self._analytics(now=later)
         self.assertEqual(len(self.calls), 2)
         self.assertEqual(log.count(FAIL_LINE), 1, log)
-        self.assertIn("; the cost view prices tokens from the feed rows in memory, fetched 6 h ago\n", log)
-        self.assertNotIn("baked-in", log, "the defaults do not serve here and the line does not claim they do")
+        self.assertIn("; the cost view prices tokens from the feed rows in memory for 1 of 6 models, fetched 6 h ago, and the "
+                      "built-in defaults for the rest\n", log, "the tail words the same facts the modal does: the share the feed "
+                      "priced, its age, the defaults for the rest (review round 2)")
+        self.assertNotIn("from the built-in defaults\n", log, "the line never says the defaults serve the whole table here")
         pf = resp["priceFeed"]
         self.assertEqual((pf["source"], pf["rows"], pf["fetchedAt"], pf["ageS"]), ("feed", 1, NOW, km.PRICE_TTL + 1800))
         self.assertTrue(pf["lastError"].startswith("URLError: ConnectionRefusedError"), pf["lastError"])
@@ -432,10 +434,11 @@ class FailedFetch(PriceFeedCase):
 
 class LiveFeed(PriceFeedCase):
     """The status when the feed is on: not fetched yet at the view's first open, live with its fetch time and
-    age on the next click (through the memo), empty when the feed matches no baked-in id, and a populated cache
+    age on the click after the landing (a fresh build: the landing clears the memo), empty when the feed matches no
+    built-in id, and a populated cache
     under off served with its age said."""
 
-    def test_the_first_open_reads_inflight_and_the_next_click_reads_live_through_the_memo(self):
+    def test_the_first_open_reads_inflight_and_the_click_after_the_landing_reads_live_from_a_fresh_build(self):
         self.gate = threading.Event()                              # the worker parks inside urlopen
         self.addCleanup(self.gate.set)
         err = io.StringIO()
@@ -448,11 +451,13 @@ class LiveFeed(PriceFeedCase):
         self.gate.set()
         self._join()
         resp2 = km._token_analytics(NOW + 5, WINDOW)
-        self.assertEqual(km._ANALYTICS_MEMO[WINDOW]["t"], NOW, "the second build served the memo")
+        self.assertEqual(km._ANALYTICS_MEMO[WINDOW]["t"], NOW + 5, "the landing invalidated the memo (review round 2): the click "
+                         "after it builds fresh, so the figures beside the block are priced from the table the block names")
         pf2 = resp2["priceFeed"]
         self.assertEqual((pf2["source"], pf2["reason"], pf2["fetchedAt"], pf2["ageS"], pf2["rows"], pf2["lastError"]),
                          ("feed", None, NOW, 5, 1, None), "the status rides outside the memo, so the click after the fetch shows it")
-        self.assertEqual(resp2["sessions"], resp1["sessions"], "the memoized figures are what was served")
+        self.assertEqual(resp2["sessions"], resp1["sessions"], "no session discovered here, so the fresh build's figures equal the "
+                         "first's; tests/test_price_feed_consistency.py prices a session through the two tables")
         self.assertEqual(err.getvalue(), "")
         v = km._version_info()["priceFeed"]
         self.assertEqual((v["source"], v["fetchedAt"], v["rows"]), ("feed", NOW, 1))
@@ -466,14 +471,14 @@ class LiveFeed(PriceFeedCase):
         pf = resp["priceFeed"]
         self.assertEqual((pf["source"], pf["reason"], pf["rows"], pf["fetchedAt"], pf["ageS"]),
                          ("defaults", "empty", 0, NOW, 1), "a landed feed that matched nothing is not the live feed")
-        self.assertEqual(pf.get("matched"), 0, "no row signed to a baked-in id: a renamed feed, not a broken parser")
+        self.assertEqual(pf.get("matched"), 0, "no row signed to a built-in id: a renamed feed, not a broken parser")
         self.assertEqual(pf.get("known"), len({km._price_sig(k) for k in km.DEFAULT_MODEL_PRICES if km._price_sig(k)}),
                          "the ids a feed row can sign to, the bound `rows` reads against for a partial match")
         self.assertGreaterEqual(pf["known"], pf["rows"])
         self.assertEqual(len(self.calls), 1)
 
     def test_rows_for_known_ids_that_do_not_parse_read_empty_with_the_matched_count_and_a_line(self):
-        """A landed body whose rows for baked-in ids carry unparseable rates (a schema move at the feed: rates renamed,
+        """A landed body whose rows for built-in ids carry unparseable rates (a schema move at the feed: rates renamed,
         nested or stringified) leaves the cache bare like a body naming no known id, and both read `empty`. They differ
         in `matched`, the ids the feed's rows signed to, parsed or not, so the view and /version can tell the parser
         broke from the feed renaming its ids; and a fetch that landed and left nothing usable says so once on stderr,
@@ -485,8 +490,8 @@ class LiveFeed(PriceFeedCase):
         resp, log2 = self._analytics(now=NOW + 1)
         pf = resp["priceFeed"]
         self.assertEqual((pf["source"], pf["reason"], pf["rows"], pf.get("matched"), pf["fetchedAt"], pf["lastError"]),
-                         ("defaults", "empty", 0, 2, NOW, None), "two rows signed to baked-in ids and neither parsed")
-        self.assertEqual(log.count("price feed: fetch landed with no usable row (2 signed to a baked-in id, none parsed); "), 1, log)
+                         ("defaults", "empty", 0, 2, NOW, None), "two rows signed to built-in ids and neither parsed")
+        self.assertEqual(log.count("price feed: fetch landed with no usable row (2 signed to a built-in id, none parsed); "), 1, log)
         self.assertIn(SERVED_DEFAULTS, log)
         self.assertEqual(log2, "", "said once, at the fetch, not per build")
         self.assertEqual(len(self.calls), 1)
@@ -505,15 +510,17 @@ class LiveFeed(PriceFeedCase):
         self.assertEqual(km._model_prices(NOW + 7200)["claude-fable-5-1"]["in"], 11e-6, "the cached row is what prices tokens")
         self.assertEqual(len(self.calls), 1, "and no request left")
         self.assertEqual(log.count(OFF_LINE), 1)
-        self.assertIn(OFF_LINE + "; the cost view prices tokens from the feed rows in memory, fetched 2 h ago\n", log,
-                      "the off line's tail names what serves, the cached rows and their age, not a fixed phrase about the defaults")
-        self.assertNotIn("baked-in", log)
+        self.assertIn(OFF_LINE + "; the cost view prices tokens from the feed rows in memory for 1 of 6 models, fetched 2 h ago, "
+                      "and the built-in defaults for the rest\n", log,
+                      "the off line's tail names what serves: the cached row for one of six models with its age and the defaults "
+                      "for the rest, not a fixed phrase about the defaults alone")
+        self.assertNotIn("from the built-in defaults\n", log, "the line never says the defaults serve the whole table here")
 
     def test_an_override_row_is_counted_in_the_status_and_the_line(self):
         """The table's third layer: a row in PRICE_CONFIG (~/.config/romp/model-prices.json) wins over the feed and the
         defaults, and the reference tells a person with the feed off to keep a rate current there. A status that knew
         only the feed and the defaults read `defaults, off` while the user's row priced the dollars, so the modal's line
-        said the baked-in defaults served when they did not. `overrides` counts the ids the file changed or added,
+        said the built-in defaults served when they did not. `overrides` counts the ids the file changed or added,
         derived from the merge itself against the defaults under the cached rows, and the lines' tail says so."""
         self.assertEqual(km._price_feed_status(NOW).get("overrides"), 0, "no file: nothing overridden")
         km.PRICE_CONFIG.write_text(json.dumps({
@@ -525,7 +532,7 @@ class LiveFeed(PriceFeedCase):
         self.assertEqual((pf["source"], pf["reason"], pf.get("overrides")), ("defaults", "off", 1),
                          "one row changed the table; a row equal to the default is not an override")
         self.assertEqual(km._model_prices(NOW)["claude-fable-5-1"]["in"], 99e-6, "the row is what prices tokens")
-        self.assertIn(OFF_LINE + "; the cost view prices tokens from the baked-in defaults, 1 row overridden by model-prices.json\n", log)
+        self.assertIn(OFF_LINE + "; the cost view prices tokens from the built-in defaults, 1 row overridden by model-prices.json\n", log)
         self.assertEqual(km._version_info()["priceFeed"]["overrides"], 1, "/version carries the count too")
         self.assertNotIn(str(km.PRICE_CONFIG.parent), log + json.dumps(pf), "a count, never the path")
         self.assertEqual(self.calls, [])
@@ -541,7 +548,9 @@ class LiveFeed(PriceFeedCase):
 class ReattemptKeepsTheEarlierResult(PriceFeedCase):
     """A landed or failed fetch outranks a fetch in flight (review round 1): the TTL re-attempt's payload says what
     the table is priced from and why, not that a fetch is under way, which after a result would hide it for the
-    seconds the new worker runs. "inflight" is exactly the state with no result yet, the view's first open."""
+    seconds the new worker runs. "inflight" is exactly the state with no result yet, the view's first open. The two
+    re-attempt cases are red over the tree before the reorder; the first-open case is a CONTROL, green there by
+    design, pinning the one state the reorder must leave alone, so it is no red-before evidence for anything."""
 
     def _reattempt(self):
         km._ANALYTICS_MEMO.clear()
@@ -592,11 +601,11 @@ class ReattemptKeepsTheEarlierResult(PriceFeedCase):
 
 
 class TheBlockCountsTheTable(PriceFeedCase):
-    """`known`: how many baked-in ids the feed is matched against, beside `rows`, the ids it matched, so the view can
+    """`known`: how many built-in ids the feed is matched against, beside `rows`, the ids it matched, so the view can
     say a feed that matched some of them prices those and no more (review round 1)."""
 
     def test_the_block_carries_known_beside_rows_and_a_partial_feed_prices_the_rest_from_the_defaults(self):
-        self._analytics()                                          # FEED signs to one of the baked-in ids
+        self._analytics()                                          # FEED signs to one of the built-in ids
         km._ANALYTICS_MEMO.clear()
         resp, _ = self._analytics(now=NOW + 1)
         pf = resp["priceFeed"]
@@ -617,7 +626,7 @@ class TheBlockCountsTheTable(PriceFeedCase):
         self.assertIn("known", pf, "the block says how many ids the table holds, under off too")
         self.assertEqual(pf["known"], len(km.DEFAULT_MODEL_PRICES))
         sigs = {km._price_sig(k) for k in km.DEFAULT_MODEL_PRICES if km._price_sig(k)}
-        self.assertEqual(len(sigs), pf["known"], "every baked-in id has its own signature, so rows can reach known")
+        self.assertEqual(len(sigs), pf["known"], "every built-in id has its own signature, so rows can reach known")
 
 
 if __name__ == "__main__":

@@ -51,8 +51,8 @@ VAR = "ROMP_PRICE_FEED"
 # the link the section carries, and the reference heading GitHub anchors as #the-price-feed
 LINK = "[The price feed](docs/reference.md#the-price-feed)"
 TARGET = "### The price feed"
-# gear.js raPriceNote's reading under the switch: 'prices: baked-in defaults' + '; ' + why
-DEFAULTS_HEAD = "prices: baked-in defaults"
+# gear.js raPriceNote's reading under the switch: 'prices: built-in defaults' + '; ' + why
+DEFAULTS_HEAD = "prices: built-in defaults"
 WHY_OFF = "live feed off (%s=off)" % VAR
 
 
@@ -80,7 +80,7 @@ class TheNetworkSectionNamesTheSwitch(_Pins):
     def test_it_says_what_the_reader_sees_and_the_code_emits_it(self):
         self.assertNetwork()
         flat = _flat(NETWORK)
-        self.assertQuoted("prices tokens from the baked-in defaults and says so", flat, self.DOC)
+        self.assertQuoted("prices tokens from the built-in defaults and says so", flat, self.DOC)
         self.assertQuoted("`/version`", NETWORK, self.DOC)
         self.assertQuoted("`priceFeed`", NETWORK, self.DOC)
         self.assertQuoted('"priceFeed": _price_feed_status()', KERNEL, "kernel/kernel.py", "/version carries the block")

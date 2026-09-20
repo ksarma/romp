@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
-"""The suite-wide price-feed floor (tests/conftest.py, 2026-09-20): no test kernel fetches the price feed.
+"""The suite-wide price-feed floor (tests/conftest.py, 2026-09-20), the runner's half of "no test kernel fetches
+the price feed"; the lab kernels' half is tests/test_ship_reship_served.py kernel_env, pinned by LabKernelEnv there.
 
 The cost view's /analytics build (`_token_analytics`, the one refresh=True caller of `_model_prices`) starts a
 background GET of the public LiteLLM price list on a third party's host whenever the in-memory price cache is
 older than PRICE_TTL, which at import it always is (there is no cache file). Under pytest the feed's switch
 (ROMP_PRICE_FEED=off, kernel/kernel.py _price_feed_off, read as the FIRST statement of _refresh_remote_prices)
-is off for every test as a DEFENSIVE floor, the model catalog's floor copied (tests/test_model_catalog_floor.py):
-no test reached that host before it (the analytics tests replace the refresh with a no-op, and no served lab
-opens the view), but a test kernel serving the view is one request away from a third party on nobody's
+is off for every test as a DEFENSIVE floor, the model catalog's floor copied (tests/test_model_catalog_floor.py).
+It reaches the runner and every child that copies the runner's environment; a lab kernel built from names
+(kernel_env's allowlist) never inherits it and sets the switch itself, because the two served labs that open the
+view (the settings recut and the widget reorder browser tests) fetched the feed on every run without it
+(2026-09-20, review round 2). A test kernel serving the view is one request away from a third party on nobody's
 assertion. It STAYS off across a test that pops it: the feed's own tests (tests/test_price_feed_off.py) pop the
 variable in setUp to drive the fetch against a recorder, and a module-level pop would otherwise hold for the
 rest of a serial run. Synthetic throughout; the kernel is loaded only to prove the refresh is inert under the

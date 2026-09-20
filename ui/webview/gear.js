@@ -2226,9 +2226,10 @@ function initGear(post, opts) {
 // words it in the payload's own terms. Pure: the block in, the line's text out, '' for a payload without the block
 // (an older kernel) or with a `source` this view does not know (absent beats a false statement). The block's shape
 // is the kernel's _price_feed_status: `source` 'feed' (the live table; `ageS` seconds since it landed; `rows` the
-// baked-in ids it matched, of the `known` the table holds, so a feed that matched some of them is said to price
-// those and no more; `off` and `lastError` say whether the next refresh is refused by the switch or the last one
-// failed, the rows serving either way: the switch stops traffic, not data) or 'defaults' (the baked-in defaults)
+// built-in ids it matched, of the `known` the table holds, so a feed that matched some of them is said to price
+// those and no more, and `matched` above `rows` is rows the feed had for known models that could not be read, said
+// apart from models it never named; `off` and `lastError` say whether the next refresh is refused by the switch or the last one
+// failed, the rows serving either way: the switch stops traffic, not data) or 'defaults' (the built-in defaults)
 // with a `reason`: 'off' (ROMP_PRICE_FEED=off), 'failed' (`lastError`, the kernel's short reason for the failure,
 // never the response body), 'empty' (a landed feed left no usable row: `matched` 0 is a feed naming no known model,
 // above 0 is rows for known models that could not be read), 'inflight' (a fetch is under way and nothing has landed
@@ -2245,13 +2246,17 @@ function raPriceNote(pf) {
   var ovr = typeof pf.overrides === 'number' && pf.overrides > 0
     ? pf.overrides + (pf.overrides === 1 ? ' row' : ' rows') + ' overridden by model-prices.json' : '';
   if (pf.source === 'feed') {
-    // fewer matched than the table knows: the rest are priced from the baked-in defaults, and the line says so instead
+    // fewer matched than the table knows: the rest are priced from the built-in defaults, and the line says so instead
     // of calling the whole table live (a block without `known`, an older kernel, is the plain line)
     var partial = typeof pf.rows === 'number' && typeof pf.known === 'number' && pf.rows < pf.known;
     var line = 'prices: live feed' + (partial ? ' for ' + pf.rows + ' of ' + pf.known + ' models' : '')
       + (typeof pf.ageS === 'number' ? ', fetched ' + raAgo(pf.ageS) : '');
     var tails = [];
-    if (partial) tails.push('baked-in defaults for the rest');
+    if (partial) tails.push('built-in defaults for the rest');
+    // rows the feed had for known models that did not parse (the kernel's `matched` above `rows`: a schema move at the
+    // feed for those models), told apart from models the feed never named; a block without `matched` claims nothing
+    var unread = typeof pf.matched === 'number' && typeof pf.rows === 'number' && pf.matched > pf.rows ? pf.matched - pf.rows : 0;
+    if (unread) tails.push('the feed\'s rows for ' + unread + ' known model' + (unread === 1 ? '' : 's') + ' could not be read');
     // the refresh's own state beside the rows it did not or will not replace: the switch outranks a failure it predates
     if (pf.off === true) tails.push('refresh off (ROMP_PRICE_FEED=off)');
     else if (pf.lastError) tails.push('the last refresh failed (' + pf.lastError + ')');
@@ -2260,7 +2265,7 @@ function raPriceNote(pf) {
   }
   if (pf.source !== 'defaults') return '';
   var why = pf.reason === 'off' ? 'live feed off (ROMP_PRICE_FEED=off)'
-    : pf.reason === 'failed' ? 'the last feed fetch failed' + (pf.lastError ? ' (' + pf.lastError + ')' : '')
+    : pf.reason === 'failed' ? 'the feed could not be fetched' + (pf.lastError ? ' (' + pf.lastError + ')' : '')
     // a landed feed that left nothing usable: rows that named known models and did not parse are a schema change at
     // the feed, not a feed that renamed its ids, and the kernel's `matched` tells the two apart
     : pf.reason === 'empty' ? (typeof pf.matched === 'number' && pf.matched > 0
@@ -2269,7 +2274,7 @@ function raPriceNote(pf) {
     : pf.reason === 'inflight' ? 'fetching the feed now'
     : pf.reason === 'unfetched' ? 'nothing fetched from the feed yet'
     : '';
-  return 'prices: baked-in defaults' + (why ? '; ' + why : '') + (ovr ? '; ' + ovr : '');
+  return 'prices: built-in defaults' + (why ? '; ' + why : '') + (ovr ? '; ' + ovr : '');
 }
 function raAgo(s) {   // an age in seconds as plain words: 'just now' under a minute, then whole minutes, then whole hours
   s = Math.max(0, Math.floor(Number(s) || 0));
