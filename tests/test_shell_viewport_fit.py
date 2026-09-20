@@ -125,13 +125,19 @@ class OneHeightBasis(unittest.TestCase):
         # (.pane, .col) would re-parent it too; that road is guarded by the served leg, tests/test_keyboard_gap_served.py,
         # which reads the lift's box against the body's in a real engine under the pan (a static scan cannot see a class
         # added at runtime or a script-inserted rule, so the engine leg is the instrument for the ancestors, not this one).
+        # Round 8 (2026-09-20): transform-style joins the list, measured to displace a fixed bottom:0 bar into the fixed body's
+        # box in both engines exactly as the listed properties do; the guard matches the property, not the value, so
+        # transform-style:flat is caught too, harmless, the same over-catch the list already has for filter:none,
+        # perspective:none and will-change:opacity (no value logic). A roster is a sample, so the measured NON-members are
+        # recorded beside the members and kept out on purpose: container-type, the container shorthand and
+        # view-transition-name did not displace the bar in either engine.
         rules = served_css.rules(self.html)
         subject = re.compile(r"^(html|body|:root)(?![\w-])")
         pop = [r for r in rules if any(subject.match(x) for x in served_css.subjects(r.selector))]
         self.assertGreaterEqual(len(pop), 4, "the html/body population is the base chain, the mobile chain, the flex body and the fixed body at least: %r"
                                 % ([r.selector for r in pop],))
         self.assertIn(_FIXED_BODY_RULE, ["%s{%s}" % (r.selector, r.declarations) for r in pop], "the fixed body rule is in the population")
-        prop = re.compile(r"^(?:-[a-z]+-)?(transform|translate|rotate|scale|filter|backdrop-filter|contain|content-visibility|will-change|perspective|offset-path)$")
+        prop = re.compile(r"^(?:-[a-z]+-)?(transform|transform-style|translate|rotate|scale|filter|backdrop-filter|contain|content-visibility|will-change|perspective|offset-path)$")
         self.assertEqual([(r.at, r.selector, p, v) for r in pop for p, v in r.decls if prop.match(p)], [],
                          "a containing-block property on html or body moves every fixed panel with the fixed body's pan")
 
