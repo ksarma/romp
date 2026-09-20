@@ -115,7 +115,7 @@ jobs:
         # tests in tests/test_session_host.py RUN in CI instead of skipping, and every session host a test
         # spawns takes the SDK transport, as it does on a box with the venv bin/romp-sdk-setup builds.
         # Why that version and not PyPI's latest: it is the one the full suite passed under on the box that
-        # runs the hosted sessions (16875 passed, 566 skipped, 0 failed), and the newer release that existed
+        # runs the hosted sessions (16875 passed, 566 skipped, 1 xfailed, 0 failed), and the newer release that existed
         # when this landed (0.2.157, the fifth release in four days) was left alone on purpose: the version is
         # chosen by a run of the host tests, not by the package index. Bumping it is the act the constant's
         # comment describes: install the new version, run the host tests on it, move the number, and the
@@ -131,11 +131,11 @@ jobs:
         # 3.14.6 with the GIL off the install, the import (the GIL still off after it) and the gated and host
         # test modules ran green before this landed (2026-09-20). The SDK's own classifiers stop at 3.13, so a
         # release that breaks there shows as a red cell, which is the point of having the cell.
-        # Cost: about 106.5 MB of download per cell after the cryptography step (the SDK wheel is 102 MB, it
-        # bundles the Claude Code binary; its other dependencies total about 4.5 MB) and a few seconds of
-        # install; the run's own step timings are the measurement that counts. The step timeout is the
-        # file's convention for a download (the bats, gitleaks and Playwright steps): a wedged fetch fails
-        # in minutes instead of eating the job's cap.
+        # Cost on the Linux cells: about 106.5 MB of download per cell after the cryptography step (the SDK
+        # wheel is 102 MB there, 92 MB on the macOS arm64 cells; it bundles the Claude Code binary; its other
+        # dependencies total about 4.5 MB) and a few seconds of install; the run's own step timings are the
+        # measurement that counts. The step timeout is the file's convention for a download (the bats,
+        # gitleaks and Playwright steps): a wedged fetch fails in minutes instead of eating the job's cap.
         timeout-minutes: 5
         shell: bash
         run: |
