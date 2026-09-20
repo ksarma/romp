@@ -8249,8 +8249,8 @@ corners; `button.fileview-btn.fileview-icon.fv-figopen`, the words in its title 
 from the figure AS IT IS NOW, by that one function, and decided again at every event that changes what it reads: the
 paint (mdBlock, `addFigureControls`), the picture's load and its error (`armFigureControls`) and each change of the
 figure's own laid-out box (`watchFigureBoxes`: one ResizeObserver per open over the figures of the Rendered box,
-re-armed at each text paint, which hears every reflow of the figure whatever moved it, the body's width or a text-size
-step; the file review's round 2, below); the verdict reads the figure's state off the element (`figureState`: `complete` and
+armed at each text paint through the seam's onRendered, the first paint's included, which hears every reflow of the
+figure whatever moved it, the body's width or a text-size step; the file review's round 2, below); the verdict reads the figure's state off the element (`figureState`: `complete` and
 `naturalWidth`, the browser's own record: fetching, loaded, failed, or a stand-in outside a browser, which carries no
 `complete` and is decided from its source alone), and a figure still fetching, or one that failed, gets none. The file
 review found five findings with that one cause, the control decided once at the paint from what was known then, and
@@ -8632,7 +8632,11 @@ merging `origin/main` and on any later branch once the follow-on has landed the 
 names the part of the gate that held them, and without the ref the prose alone holds; a batch head that main has moved
 under passes both parts and fails the count on the other PRs' files, the gate's residual, disclosed in both modules and
 here and not closed, a third part named for the maintainer in the PR body: the author's closing pass after the file
-review's round 4, attribution-and-gates-2 with records-2); the guide's two sentences are whole and the old
+review's round 4, attribution-and-gates-2 with records-2; the gate is a pure function over git's answers, pinned in all
+four cells, the module's own path asserted to exist in the tree, and the running shape and the three hold-offs run
+against a temp repo shaped as the open PR branch, in this module and in the attribution module alike: the file review's
+round 5, tests-7, since a hold-off is a pass and a misspelt path would have held the checks off for good behind a green
+diagnostic); the guide's two sentences are whole and the old
 wording is gone; the browser plan's pointer stands in its navigation-stack section; and the module list is two-way
 (every module the listing above produces is named here and the count in that sentence is the listing's, read from the
 sentence; every test module under ui/webview, tools or tests whose own text names this follow-on is named here; every
@@ -8684,6 +8688,9 @@ sees as one value as one unit with that value, in either quote, escapes resolved
 value it computes and a template's spans joined with each hole kept as its source text, so a phrase split across tokens
 is judged whole; a join, a concat and a hole's run-time value outside the read, which the reader's header lists), Markdown
 as paragraphs and Python as paragraphs with its string literals cooked as Python cooks them and adjacent literals glued,
+the file's suffix picking the reader and a suffix the reader has no rule for refused naming the file rather than read as
+prose (the file review's round 5, correctness-7 with tests-4 and extra7-2: .tsx, .jsx and .cts had fallen through to the
+prose arm with no word to the caller; the tree road's diagnostic lists the suffixes it read),
 every unit charging a phrase to its source line through a starts map built from source positions (the file review's
 round 5, correctness-2 with extra6-1 and tests-2, extra6-3, and correctness-1 with tests-3 and extra7-1: the reader had
 emitted one unit per literal token, so a phrase split across a `+`, a hole, Python's adjacent literals or an f-string

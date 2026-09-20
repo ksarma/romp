@@ -36,7 +36,9 @@
 // tokens had sat in no unit); what stays outside the read, a value assembled at run time (a join, a concat, a hole's value,
 // the part of a chain after a non-literal operand), the reader's header lists and the messages say; a Markdown file as
 // paragraphs, a Python file as paragraphs with its literals cooked as Python cooks them and adjacent literals glued (the
-// compiler does not read Python), which the message says. Two roads. Road 1, in every checkout, is a RULE over the tree
+// compiler does not read Python), which the message says; the file's suffix picks the reader, and a suffix the reader has no
+// rule for is refused naming the file rather than read as prose (the file review's round 5, correctness-7 with tests-4 and
+// extra7-2: .tsx, .jsx and .cts had fallen through to the prose arm silently). Two roads. Road 1, in every checkout, is a RULE over the tree
 // (the file review's round 5, extra5-1 with tests-1, extra5-2 and correctness-5, in the refuters' corrected form: the road had
 // read a hand-written roster of eighteen files, and the road that checked the roster against the diff ran in no checkout
 // that CI makes, so the roster was the guard). The population is every path git lists at the repo root, tracked or
@@ -76,7 +78,11 @@
 // main has moved past has a merge-base off origin/main too, while its diff adds that branch's files and not this module
 // (the roster equality before this gate failed on every such branch in the repo, in both refuters' scratch repos). So road
 // 2 runs on this follow-on's open PR branch in a clone where origin/main has moved past the branch's last merge of it, and
-// the diagnostic says which road ran and, when road 2 stood down, which part of the gate held it. The gate's residual,
+// the diagnostic says which road ran and, when road 2 stood down, which part of the gate held it. The gate is a pure
+// function over git's answers (gateOf), pinned in all four cells; THIS_MODULE is asserted to exist in the tree; and the
+// running shape and the three hold-offs are run against a temp repo shaped as the open PR branch, a planted added line
+// charged there (the file review's round 5, tests-7: the gate had no test, and a hold-off is a pass, so a misspelt module
+// path would have held the road off for good behind a green diagnostic). The gate's residual,
 // disclosed and not closed: a batch head that main has moved under (a commit landed on main after the batch was cut from
 // its tip) has its merge-base off origin/main and a diff that adds this module, so road 2 runs over the batch's whole
 // delta. A third part would close it, every first-parent merge since the merge-base merging main alone, and is named for
@@ -92,7 +98,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { execFileSync } from "node:child_process";
-import { comments, lineAt, literals, proseUnits, scriptUnits, unitsOf, type Unit } from "./source-units";
+import { comments, lineAt, literals, proseUnits, PROSE_SUFFIXES, SCRIPT_SUFFIXES, scriptUnits, suffixOf, unitsOf, type Unit } from "./source-units";
 
 const REPO = path.resolve(process.cwd(), "..");
 const read = (rel: string): string => fs.readFileSync(path.join(REPO, rel), "utf8");
@@ -305,6 +311,55 @@ function paragraphAt(text: string, marker: string, what: string): { units: Unit[
   return { units, span: [first, units.length ? units[units.length - 1].endLine : first] };
 }
 
+/** Road 2's gate, a pure function over what git answers (the file review's round 5, tests-7: the gate had no test of either
+ *  hold-off or the running shape, and a hold-off is a PASS, so a misspelt module path would have held the road off for good
+ *  behind a green diagnostic): `base` is the merge-base with origin/main and `main` origin/main itself, both null where the
+ *  ref is unknown; `added` the paths the diff since the merge-base adds. The road runs where origin/main is known, the
+ *  merge-base is not origin/main itself, and the diff adds `module`; otherwise `held` names the part that held it. */
+export type GateHeld = "no origin/main" | "the merge-base is origin/main" | "the diff does not add the module";
+export type Gate = { ran: boolean; held: GateHeld | null };
+export function gateOf(base: string | null, main: string | null, added: string[], module: string): Gate {
+  if (!base) return { ran: false, held: "no origin/main" };
+  if (base === main) return { ran: false, held: "the merge-base is origin/main" };
+  if (!added.includes(module)) return { ran: false, held: "the diff does not add the module" };
+  return { ran: true, held: null };
+}
+/** What the diagnostic says for each part of the gate that held road 2 off. */
+const HELD: Record<GateHeld, (base: string | null, module: string) => string> = {
+  "no origin/main": () => "road 2 did not run: origin/main is not known in this checkout (CI's default-depth checkout: road 2 runs in no CI job and in none after the merge, the plan's Tests paragraph).",
+  "the merge-base is origin/main": () => "road 2 did not run: the merge-base with origin/main is origin/main itself (main itself, a branch or a batch head cut from main's tip, or this branch just after merging origin/main), so the diff since it is the whole history over main's tip and not this follow-on's delta; road 2 runs on the open PR branch once main has moved past the branch's last merge of it, and in no CI job and in none after the merge (the plan's Tests paragraph).",
+  "the diff does not add the module": (base, module) => "road 2 did not run: the diff since the merge-base " + base + " does not add " + module + " (a later branch after this follow-on landed, whose fork point main has moved past; or HEAD is main), so the diff is that branch's delta and not this follow-on's; road 2 runs on the open PR branch once main has moved past the branch's last merge of it, and in no CI job and in none after the merge (the plan's Tests paragraph).",
+};
+/** Road 2 over `repo`: the gate read off git, and where it ran, every round and every id on a line the working tree adds
+ *  since the merge-base, in every tracked file the diff lists as modified, judged in the unit that carries it under the full
+ *  rule. The diff is the WORKING TREE against the merge-base (no HEAD argument), so the ranges and the units read come from
+ *  the same bytes and an uncommitted edit is charged like a committed one; the diff lists tracked paths alone, so a new
+ *  uncommitted file is road 1's. `created` is the diff's added files, for a human to compare with CREATED. */
+export type RoadTwo = { gate: Gate; base: string | null; created: string[]; touched: string[]; faults: string[] };
+export function roadTwo(repo: string, reviews: Reviews, module: string): RoadTwo {
+  const git = (...args: string[]): string => execFileSync("git", args, { cwd: repo, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+  let base: string | null = null;
+  let main: string | null = null;
+  try { base = git("merge-base", "origin/main", "HEAD"); main = git("rev-parse", "origin/main"); } catch { base = null; }
+  const status = base && base !== main ? git("diff", "--name-status", base).split("\n").filter(Boolean).map((l) => l.split("\t")) : [];
+  const created = status.filter((s) => s[0] === "A").map((s) => s[1]).sort();
+  const gate = gateOf(base, main, created, module);
+  if (!gate.ran) return { gate, base, created, touched: [], faults: [] };
+  const touched = status.filter((s) => s[0] !== "A" && s[0] !== "D").map((s) => s[s.length - 1]);
+  const faults: string[] = [];
+  for (const f of touched) {
+    const ranges: [number, number][] = [];
+    for (const m of git("diff", "-U0", base!, "--", f).matchAll(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/gm)) {
+      const n = m[2] === undefined ? 1 : Number(m[2]);
+      if (n > 0) ranges.push([Number(m[1]), Number(m[1]) + n - 1]);
+    }
+    if (!ranges.length) continue;
+    const units = unitsOf(f, fs.readFileSync(path.join(repo, f), "utf8")).filter((u) => ranges.some(([a, b]) => u.line <= b && u.endLine >= a));
+    faults.push(...faultsOf(f, units, reviews, (line) => ranges.some(([a, b]) => line >= a && line <= b)));
+  }
+  return { gate, base, created, touched, faults };
+}
+
 const convention = (): Reviews => {
   const para = sectionUnits().find((u) => u.text.includes("named below as the review's round 1 and round 2"));
   assert.ok(para, "the section's opening paragraph carries the naming convention");
@@ -376,6 +431,20 @@ test("the reader (source-units.ts): a string the program sees as one value is on
   const doc = proseUnits("def f():\n    \"\"\"The file review's\n    step 9 ruled it.\n\n    Second para 'a' 'b'.\n    \"\"\"\n    return 1\n", true);
   assert.deepEqual(doc.map((u) => [u.text, u.line, u.endLine]), [["def f(): \"\"\"The file review's step 9 ruled it.", 1, 3], ["Second para 'a' 'b'. \"\"\" return 1", 5, 7]], "a docstring's lines join with a space and its blank line ends a paragraph; quotes inside it are its text");
   assert.equal(lineAt(doc[0], doc[0].text.indexOf("step 9")), 3, "charged to the docstring line that carries it");
+  // the suffix picks the reader (the file review's round 5, correctness-7 with tests-4 and extra7-2: .tsx, .jsx and .cts had
+  // fallen through to the prose arm with no word to the caller): each script suffix reaches the compiler with its kind (a
+  // JSX body under the TS kind misreads a closing tag as a regular expression), .py the Python arm, a prose suffix and a
+  // file with no suffix the paragraphs, and any other suffix is refused naming the file
+  const script = "// a note\nconst s = 'step 9';\n";
+  for (const sfx of [".ts", ".mts", ".cts", ".js", ".mjs", ".cjs"]) assert.deepEqual(unitsOf("dir/x" + sfx, script).map((u) => [u.kind, u.text]), [["comment", "a note"], ["string", "step 9"]], sfx + " is read by the compiler");
+  const jsx = "// a note\nconst el = <div title='step 9'>text</div>;\nconst s = 'x';\n";
+  for (const sfx of [".tsx", ".jsx"]) assert.deepEqual(unitsOf("dir/x" + sfx, jsx).map((u) => [u.kind, u.text]), [["comment", "a note"], ["string", "step 9"], ["string", "x"]], sfx + " is read by the compiler in its own kind: the attribute's literal a unit, the closing tag no regular expression");
+  assert.deepEqual(unitsOf("x.tsx", "const el = <a title=\"step\\n9\" href={\"step\\n8\"} />;\n").map((u) => u.text), ["step\\n9", "step\n8"], "a JSX attribute's quoted value has no escapes and is read as written; a literal inside its braces is cooked");
+  assert.deepEqual(unitsOf("x.py", "x = 'a\\nstep 9'\n").map((u) => [u.kind, u.text]), [["prose", "x = 'a step 9'"]], ".py is read through the Python arm");
+  for (const f of ["x.md", "x.css", "x.yml", "x.json", "x.sh", "Makefile", ".gitignore", "dir/LICENSE"]) assert.deepEqual(unitsOf(f, "one\n\ntwo\n").map((u) => [u.kind, u.text]), [["prose", "one"], ["prose", "two"]], f + " is read as paragraphs");
+  assert.deepEqual([suffixOf("a/b.test.ts"), suffixOf(".gitignore"), suffixOf("Makefile"), suffixOf("a.b/c")], [".ts", "", "", ""], "the suffix is the basename's last dot on; a bare dotfile and a dotted directory have none");
+  assert.throws(() => unitsOf("dir/x.unknown", "one\n"), /^Error: source-units: dir\/x\.unknown has the suffix "\.unknown", which the reader has no rule for/, "an unknown suffix is refused by name, not read as prose");
+  assert.ok(SCRIPT_SUFFIXES.includes(".cts") && SCRIPT_SUFFIXES.includes(".tsx") && SCRIPT_SUFFIXES.includes(".jsx") && !PROSE_SUFFIXES.some((s) => SCRIPT_SUFFIXES.includes(s)), "the two suffix lists are disjoint and the script list carries the three the round found missing");
 });
 
 test("the convention: the branch's review has rounds 1 and 2, the file review's rounds are enumerated, the author's passes are never rounds and own an id family; the rule reads a unit's nearest review and refuses a round the convention does not give it, a pass with a round, an id of the pass's family with no pass named, and a round with no review named", () => {
@@ -490,6 +559,7 @@ test("road 1, every checkout, a rule over the tree: every file git lists at the 
   for (const r of full.values()) add(judgeUnits(r.label, r.units, reviews));
   const candidates: string[] = [];
   const another: string[] = [];   // files with a phrase left alone as another review's or no review's
+  const suffixes = new Map<string, number>();   // the suffixes the road read, each with its count (unitsOf refuses one it has no rule for, naming the file)
   let binary = 0;
   let viewerOwn: number[] = [];
   for (const f of pop.files) {
@@ -499,6 +569,7 @@ test("road 1, every checkout, a rule over the tree: every file git lists at the 
     const whole = CREATED.includes(f);
     if (!whole && !vocabulary(text)) continue;
     candidates.push(f);
+    suffixes.set(suffixOf(f) || "(none)", (suffixes.get(suffixOf(f) || "(none)") ?? 0) + 1);
     const place = full.get(f);
     const units = unitsOf(f, text).filter((u) => !(place && u.line >= place.span[0] && u.endLine <= place.span[1]) && (whole || vocabulary(u.text)));
     const x = judgeUnits(f, units, reviews, !whole);
@@ -510,42 +581,16 @@ test("road 1, every checkout, a rule over the tree: every file git lists at the 
   assert.ok(tally.units >= 200, "the units judged: " + tally.units);
   assert.deepEqual(faults, [], "every round a record names is a round the convention gives the review it names, and every finding of the author's family follows a pass (TS and JS read by the compiler, comments joined and each string the program sees as one value one unit, a + chain of literals and a template's spans folded, a join, a concat and a hole's run-time value outside the read; Markdown as paragraphs; Python as paragraphs with its literals cooked as Python cooks them; a round is read as the word round or rounds, a hyphen or whitespace and digits, bare or in Markdown emphasis or code markers, with a comma list or a to-range after rounds as the set, and not as an ordinal, a spelled-out number or an abbreviation; an id as the family word, a hyphen and digits, never spaced; outside the created files and the three records a phrase is judged only where the review named nearest before it is the file review or the author's pass)");
   assert.equal(viewerOwn.length, VIEWER_UNITS, "ui/webview/file-view.ts carries " + VIEWER_UNITS + " units of this follow-on's (naming the file review, or the author's pass before a round or an id); derived: " + viewerOwn.length + " at lines " + viewerOwn.join(", ") + ". A deleted or an added attribution there moves this count; re-derive VIEWER_UNITS at the new head, never fit the records to it");
-  t.diagnostic("road 1 ran over the tree: " + pop.files.length + " files in the population (" + pop.skipped.length + " paths skipped as no regular file, " + binary + " binary), " + candidates.length + " candidates, " + tally.units + " units judged, " + tally.judged + " phrases ours, " + tally.foreign + " another review's and " + tally.unanchored + " naming no review left alone" + (another.length ? " in " + another.join("; ") : "") + ". Candidates (compare with the PR's added files): " + candidates.join(", "));
+  t.diagnostic("road 1 ran over the tree: " + pop.files.length + " files in the population (" + pop.skipped.length + " paths skipped as no regular file, " + binary + " binary), " + candidates.length + " candidates, " + tally.units + " units judged, " + tally.judged + " phrases ours, " + tally.foreign + " another review's and " + tally.unanchored + " naming no review left alone" + (another.length ? " in " + another.join("; ") : "") + ". Suffixes read: " + Array.from(suffixes, ([s, n]) => s + " " + n).join(", ") + ". Candidates (compare with the PR's added files): " + candidates.join(", "));
   // road 2 (kept and disclosed: it runs in no CI job and in none after the merge; the plan's Tests paragraph says why)
-  const git = (...args: string[]): string => execFileSync("git", args, { cwd: REPO, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
-  let base: string | null = null;
-  let main: string | null = null;
-  try { base = git("merge-base", "origin/main", "HEAD"); main = git("rev-parse", "origin/main"); } catch { base = null; }
-  if (!base) { t.diagnostic("road 2 did not run: origin/main is not known in this checkout (CI's default-depth checkout: road 2 runs in no CI job and in none after the merge, the plan's Tests paragraph); road 1 ran over the tree"); return; }
-  if (base === main) {
-    t.diagnostic("road 2 did not run: the merge-base with origin/main is origin/main itself (main itself, a branch or a batch head cut from main's tip, or this branch just after merging origin/main), so the diff since it is the whole history over main's tip and not this follow-on's delta; road 2 runs on the open PR branch once main has moved past the branch's last merge of it, and in no CI job and in none after the merge (the plan's Tests paragraph). Road 1 ran over the tree.");
-    return;
-  }
-  // the working tree against the merge-base (no HEAD argument): the ranges and the units read come from the same bytes; the
-  // diff lists tracked paths alone, so a new uncommitted file is road 1's
-  const status = git("diff", "--name-status", base).split("\n").filter(Boolean).map((l) => l.split("\t"));
-  const created = status.filter((s) => s[0] === "A").map((s) => s[1]).sort();
-  if (!created.includes(THIS_MODULE)) {
-    t.diagnostic("road 2 did not run: the diff since the merge-base " + base + " does not add " + THIS_MODULE + " (a later branch after this follow-on landed, whose fork point main has moved past; or HEAD is main), so the diff is that branch's delta and not this follow-on's; road 2 runs on the open PR branch once main has moved past the branch's last merge of it, and in no CI job and in none after the merge (the plan's Tests paragraph). Road 1 ran over the tree.");
-    return;
-  }
-  const notInRoster = created.filter((f) => !CREATED.includes(f));
-  const notAdded = CREATED.filter((f) => !created.includes(f));
-  const touched = status.filter((s) => s[0] !== "A" && s[0] !== "D").map((s) => s[s.length - 1]);
-  const faults2: string[] = [];
-  for (const f of touched) {
-    const ranges: [number, number][] = [];
-    for (const m of git("diff", "-U0", base, "--", f).matchAll(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/gm)) {
-      const n = m[2] === undefined ? 1 : Number(m[2]);
-      if (n > 0) ranges.push([Number(m[1]), Number(m[1]) + n - 1]);
-    }
-    if (!ranges.length) continue;
-    const units = unitsOf(f, read(f)).filter((u) => ranges.some(([a, b]) => u.line <= b && u.endLine >= a));
-    faults2.push(...faultsOf(f, units, reviews, (line) => ranges.some(([a, b]) => line >= a && line <= b)));
-  }
-  assert.ok(touched.length > 0, "the branch touched files since " + base);
-  assert.deepEqual(faults2, [], "every round and every id on a line the branch added since " + base + " (the working tree against the merge-base, so an uncommitted edit is charged like a committed one) is judged in its unit and passes (road 2; a round is read as the word round or rounds followed by digits, a comma list or a to-range after rounds as the set, never an ordinal, a spelled-out number or an abbreviation; an id as the family word, a hyphen and digits)");
-  t.diagnostic("road 2 ran: " + touched.length + " touched files read since " + base + ", the working tree's added lines (committed or not) judged in their units; the diff adds " + created.length + " files" + (notInRoster.length ? ", not in CREATED: " + notInRoster.join(", ") : "") + (notAdded.length ? "; in CREATED and not added by the diff: " + notAdded.join(", ") : "") + " (for a human to compare; nothing here gates landing)");
+  assert.ok(fs.existsSync(path.join(REPO, THIS_MODULE)), "THIS_MODULE names a file in the tree: " + THIS_MODULE + " (a misspelt path would hold road 2 off for good behind a green diagnostic; the file review's round 5, tests-7)");
+  const r2 = roadTwo(REPO, reviews, THIS_MODULE);
+  if (!r2.gate.ran) { t.diagnostic(HELD[r2.gate.held!](r2.base, THIS_MODULE) + " Road 1 ran over the tree."); return; }
+  const notInRoster = r2.created.filter((f) => !CREATED.includes(f));
+  const notAdded = CREATED.filter((f) => !r2.created.includes(f));
+  assert.ok(r2.touched.length > 0, "the branch touched files since " + r2.base);
+  assert.deepEqual(r2.faults, [], "every round and every id on a line the branch added since " + r2.base + " (the working tree against the merge-base, so an uncommitted edit is charged like a committed one) is judged in its unit and passes (road 2; a round is read as the word round or rounds followed by digits, a comma list or a to-range after rounds as the set, never an ordinal, a spelled-out number or an abbreviation; an id as the family word, a hyphen and digits)");
+  t.diagnostic("road 2 ran: " + r2.touched.length + " touched files read since " + r2.base + ", the working tree's added lines (committed or not) judged in their units; the diff adds " + r2.created.length + " files" + (notInRoster.length ? ", not in CREATED: " + notInRoster.join(", ") : "") + (notAdded.length ? "; in CREATED and not added by the diff: " + notAdded.join(", ") : "") + " (for a human to compare; nothing here gates landing)");
 });
 
 test("the population helper (road 1): a temp repo with a tracked file, an untracked file, an ignored file, a symlink to a file, a dangling symlink and a symlink to a directory lists the tracked, the untracked and the file symlink, and skips the two other symlinks", () => {
@@ -566,6 +611,69 @@ test("the population helper (road 1): a temp repo with a tracked file, an untrac
     const pop = populationOf(repo);
     assert.deepEqual(pop.files, [".gitignore", "link-to-file.md", "sub/untracked.ts", "tracked.md"], "the tracked file, the untracked ones (the .gitignore itself among them) and the symlink to a file; the ignored file is not listed");
     assert.deepEqual(pop.skipped, ["dangling.md", "link-to-dir"], "the dangling symlink and the symlink to a directory are skipped, not read");
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("road 2's gate (the file review's round 5, tests-7): a pure function over git's answers, pinned in all four cells; and in a temp repo shaped as the open PR branch (origin/main moved past the branch's merge of it, the branch adding the module and a line to a tracked file) the gate reports ran and the planted line reds road 2, while origin/main at the branch's head holds the road off on the merge-base part, a later branch adding another file on the module part, and no origin/main on the first", () => {
+  const M = "ui/webview/the-module.test.ts";
+  const n = (k: number): number => k;   // the plants' digits behind a call, so this module's own literals name no round at rest
+  assert.deepEqual(gateOf(null, null, [], M), { ran: false, held: "no origin/main" });
+  assert.deepEqual(gateOf("aaaa", "aaaa", [M], M), { ran: false, held: "the merge-base is origin/main" }, "the module added and the base at main: the first part that holds names itself");
+  assert.deepEqual(gateOf("aaaa", "bbbb", ["other.ts"], M), { ran: false, held: "the diff does not add the module" });
+  assert.deepEqual(gateOf("aaaa", "bbbb", ["other.ts", M], M), { ran: true, held: null });
+  const reviews = convention();
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "linknav-gate-"));
+  try {
+    const git = (...args: string[]): string => execFileSync("git", ["-C", repo, "-c", "user.email=t@example.test", "-c", "user.name=t", ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    const write = (rel: string, text: string): void => { fs.mkdirSync(path.dirname(path.join(repo, rel)), { recursive: true }); fs.writeFileSync(path.join(repo, rel), text); };
+    git("init", "-q", "-b", "main", ".");
+    write("tracked.md", "A paragraph.\n");
+    git("add", "tracked.md"); git("commit", "-q", "-m", "base");
+    const forkPoint = git("rev-parse", "HEAD");
+    git("checkout", "-q", "-b", "feature");
+    write(M, "// nothing named here\n");
+    write("tracked.md", "A paragraph.\n\nThe file review's round " + n(9) + " found it.\n");
+    git("add", "-A"); git("commit", "-q", "-m", "the branch");
+    git("checkout", "-q", "main");
+    write("other.md", "Main moved on.\n");
+    git("add", "other.md"); git("commit", "-q", "-m", "main moves");
+    const mainTip = git("rev-parse", "HEAD");
+    git("checkout", "-q", "feature");
+    // no origin/main: the first part
+    assert.deepEqual(roadTwo(repo, reviews, M).gate, { ran: false, held: "no origin/main" });
+    // origin/main moved past the branch's fork point, the branch adds the module: the road runs and the planted line reds
+    git("update-ref", "refs/remotes/origin/main", mainTip);
+    const ran = roadTwo(repo, reviews, M);
+    assert.deepEqual(ran.gate, { ran: true, held: null }, "the open PR branch's shape runs the road");
+    assert.equal(ran.base, forkPoint, "the merge-base is the fork point");
+    assert.deepEqual(ran.created, [M], "the diff adds the module");
+    assert.deepEqual(ran.touched, ["tracked.md"], "and modifies the tracked file");
+    assert.equal(ran.faults.length, 1, "the planted round on the added line is charged: " + JSON.stringify(ran.faults));
+    assert.match(ran.faults[0], new RegExp("^tracked\\.md:3 .*round " + n(9) + " is not one the convention enumerates"), "at its own line, with the reason (the digits behind the call: this module reads its own regex literals)");
+    // an uncommitted edit is charged too (the working tree against the merge-base), and a valid line is not
+    write("tracked.md", "A paragraph.\n\nThe file review's round " + n(2) + " found it.\n");
+    assert.deepEqual(roadTwo(repo, reviews, M).faults, [], "the valid round on the uncommitted edit passes");
+    write("tracked.md", "A paragraph.\n\nThe author's closing pass (round " + n(7) + ", records-" + n(2) + ") found it.\n");
+    assert.equal(roadTwo(repo, reviews, M).faults.length, 1, "the uncommitted misattribution is charged like a committed one");
+    git("checkout", "-q", "--", "tracked.md");
+    // origin/main at the branch's own head: the merge-base part holds
+    git("update-ref", "refs/remotes/origin/main", git("rev-parse", "HEAD"));
+    assert.deepEqual(roadTwo(repo, reviews, M).gate, { ran: false, held: "the merge-base is origin/main" });
+    // a later branch cut from main after the follow-on landed, main moved past its fork point: the branch adds another file
+    // and not the module, so the module part holds
+    git("checkout", "-q", "-b", "later", mainTip);
+    write("later.md", "The file review's round " + n(9) + " found it.\n");
+    git("add", "later.md"); git("commit", "-q", "-m", "later");
+    git("checkout", "-q", "main");
+    write("other.md", "Main moved on.\n\nAnd again.\n");
+    git("add", "other.md"); git("commit", "-q", "-m", "main moves again");
+    git("update-ref", "refs/remotes/origin/main", git("rev-parse", "HEAD"));
+    git("checkout", "-q", "later");
+    const later = roadTwo(repo, reviews, M);
+    assert.deepEqual(later.gate, { ran: false, held: "the diff does not add the module" }, "another branch's delta is not this follow-on's: held off, its own round left to its own guard");
+    assert.deepEqual(later.faults, [], "and nothing is judged");
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
   }

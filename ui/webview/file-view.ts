@@ -4899,7 +4899,8 @@ function resolveFigureRefs(root: ParentNode, base: string): void {
 // control is added or removed), and decided again at every event that changes what it reads: the paint (mdBlock,
 // addFigureControls), the picture's load and its error (armFigureControls, one capture-phase pair on the body), and each
 // change of the figure's OWN laid-out box (watchFigureBoxes: one ResizeObserver per open over the figures of the Rendered
-// box, re-armed at each text paint), which is the reflow itself whatever caused it: the pane dragged, the Comments aside
+// box, armed at each text paint through the seam's onRendered, the first paint's included), which is the reflow itself
+// whatever caused it: the pane dragged, the Comments aside
 // opened or closed, the window resized, or a text-size step (A-, A+, Ctrl/Cmd + wheel), which re-measures the 80ch column
 // at a CONSTANT body width and so reflows every column-capped figure with no width report (the file review's round 2:
 // decided from the width watch's repaint alone, the floor went stale both ways across a step, a control on a figure the step

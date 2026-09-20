@@ -155,7 +155,8 @@ test("the one decision: figureWantsControl reads the figure's state by one rule 
   assert.match(arm, /const decide = \(e: Event\): void => \{ const img = figureOf\(e\); if \(img && figureState\(img\) !== "standin"\) decideFigureControl\(img, filePath\); \};/, "the events' road into the decision, for an element carrying the browser's record (a stand-in stays as the paint decided it)");
   assert.match(arm, /body\.addEventListener\("load", decide, true\);\n\s*body\.addEventListener\("error", decide, true\);/, "the load and the error, both capture (neither bubbles)");
   // each figure's OWN box re-runs it (the file review's round 2): one ResizeObserver per open over the figures of the Rendered
-  // box, re-armed at each text paint (never at a reflow, whose figures are the same nodes), dropped with the viewer; the
+  // box, armed at each text paint through the seam's onRendered, the first paint's included (never at a reflow, whose figures
+  // are the same nodes), dropped with the viewer; the
   // observer hears every reflow of the figure, the body's width and a text-size step alike, so no road calls the decision
   // itself; absent ResizeObserver (a stand-in outside a browser) nothing is armed and the paint's decision stands
   const watch = between(VIEW, "function watchFigureBoxes(body: HTMLElement, filePath: string, onRendered: (cb: (why?: FileViewRenderWhy) => void) => void): (() => void) | null {", "\n}\n");

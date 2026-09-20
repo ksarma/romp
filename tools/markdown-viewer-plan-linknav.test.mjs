@@ -26,7 +26,10 @@
 // 1 with no origin/main and a landed follow-on's diff is some later branch's, so where landing is gated the prose alone
 // carries L6, re-derived by hand at the merged head: the file review's round 5, correctness-4, the plan's Tests paragraph
 // stating it once with the checkouts, and this module holding the two CI jobs that run the tools and the UI tests to a
-// checkout with no fetch-depth: 0, so a change there names the plan's sentence); the guide's two sentences are whole, the old wording
+// checkout with no fetch-depth: 0, so a change there names the plan's sentence; the gate itself is a pure function over git's
+// answers, gateOf, pinned in all four cells, this module's own path asserted to exist in the tree, and the running shape and
+// the three hold-offs run against a temp repo shaped as the open PR branch: the file review's round 5, tests-7, since a
+// hold-off is a pass and a misspelt path would have held the checks off for good behind a green diagnostic); the guide's two sentences are whole, the old wording
 // is gone, and the sentence that says a link opens the file in place still stands (it is still true); the browser
 // plan's pointer stands in its navigation-stack section; and the module list is two-way (every module the section's
 // `ls` produces is named in the section and the count the section gives is the listing's, read from its sentence rather
@@ -38,6 +41,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
@@ -49,6 +53,37 @@ const exists = (...parts) => fs.existsSync(path.join(REPO, ...parts));
 const flat = (s) => s.replace(/\s+/g, ' ');
 /** This module's own path: L6's verifications run only where the diff since the merge-base adds it (the second part of their gate). */
 const THIS_MODULE = 'tools/markdown-viewer-plan-linknav.test.mjs';
+
+/** L6's gate, a pure function over what git answers (the file review's round 5, tests-7: the gate had no test of either
+ *  hold-off or the running shape, and a hold-off is a PASS): `base` is the merge-base with origin/main and `main` origin/main
+ *  itself, both null where the ref is unknown; `added` the paths the diff since the merge-base adds. The verifications run
+ *  where origin/main is known, the merge-base is not origin/main itself, and the diff adds `module`; otherwise `held` names
+ *  the part that held them. */
+export function gateOf(base, main, added, module) {
+  if (!base) return { ran: false, held: 'no origin/main' };
+  if (base === main) return { ran: false, held: 'the merge-base is origin/main' };
+  if (!added.includes(module)) return { ran: false, held: 'the diff does not add the module' };
+  return { ran: true, held: null };
+}
+const NOWHERE = '; the verifications run in no CI job and in none after the merge (the plan\'s Tests paragraph)';
+/** What the diagnostic says for each part of the gate that held the verifications off. */
+const HELD = {
+  'no origin/main': () => 'L6\'s verifications did not run: origin/main is not known in this checkout (CI\'s default-depth checkout); the prose alone holds them here' + NOWHERE,
+  'the merge-base is origin/main': () => 'L6\'s verifications did not run: the merge-base with origin/main is origin/main itself (main itself, a branch or a batch head cut from main\'s tip, or this branch just after merging origin/main), so the diff since it is the whole history over main\'s tip and not this follow-on\'s delta; they run on the open PR branch once main has moved past the branch\'s last merge of it' + NOWHERE,
+  'the diff does not add the module': (base, module) => 'L6\'s verifications did not run: the diff since the merge-base ' + base + ' does not add ' + module + ' (a later branch after this follow-on landed, whose fork point main has moved past; or HEAD is main), so the diff is that branch\'s delta and not this follow-on\'s; they run on the open PR branch once main has moved past the branch\'s last merge of it' + NOWHERE,
+};
+/** The delta L6 speaks of, read off git in `repo`: the gate, and where it ran, every file the diff since the merge-base lists
+ *  (HEAD against the merge-base, the committed delta) and the kernel stat over the same span. */
+function deltaOf(repo, module) {
+  const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+  let base = null;
+  let main = null;
+  try { base = git('merge-base', 'origin/main', 'HEAD'); main = git('rev-parse', 'origin/main'); } catch { base = null; }
+  const status = base && base !== main ? git('diff', '--name-status', base, 'HEAD').split('\n').filter(Boolean).map((l) => l.split('\t')) : [];
+  const gate = gateOf(base, main, status.filter((s) => s[0] === 'A').map((s) => s[1]), module);
+  if (!gate.ran) return { gate, base, files: [], kernel: '' };
+  return { gate, base, files: status.map((s) => s[s.length - 1]), kernel: git('diff', '--stat', base, 'HEAD', '--', 'kernel/') };
+}
 
 const plan = read('plans', 'markdown-viewer.md');
 const browserPlan = read('plans', 'file-browser.md');
@@ -297,21 +332,14 @@ test('L5 and L6: no history API call in the trail or the viewer; the trail modul
   const count = /upstream or tests alone \((\d+) files, the ledger entry's where line/.exec(section);
   assert.ok(count, 'L6 counts the listing beside the command');
   assert.ok(exists('upstream', '2026-09-19-linknav-trail-back-forward.md'), 'the ledger entry the section names');
-  const git = (...args) => execFileSync('git', args, { cwd: REPO, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-  let base = null;
-  let main = null;
-  try { base = git('merge-base', 'origin/main', 'HEAD'); main = git('rev-parse', 'origin/main'); } catch { base = null; }
-  const NOWHERE = '; the verifications run in no CI job and in none after the merge (the plan\'s Tests paragraph)';
-  if (!base) { t.diagnostic('L6\'s verifications did not run: origin/main is not known in this checkout (CI\'s default-depth checkout); the prose alone holds them here' + NOWHERE); return; }
-  if (base === main) { t.diagnostic('L6\'s verifications did not run: the merge-base with origin/main is origin/main itself (main itself, a branch or a batch head cut from main\'s tip, or this branch just after merging origin/main), so the diff since it is the whole history over main\'s tip and not this follow-on\'s delta; they run on the open PR branch once main has moved past the branch\'s last merge of it' + NOWHERE); return; }
-  const status = git('diff', '--name-status', base, 'HEAD').split('\n').filter(Boolean).map((l) => l.split('\t'));
-  const files = status.map((s) => s[s.length - 1]);
-  if (!status.some((s) => s[0] === 'A' && s[1] === THIS_MODULE)) { t.diagnostic('L6\'s verifications did not run: the diff since the merge-base ' + base + ' does not add ' + THIS_MODULE + ' (a later branch after this follow-on landed, whose fork point main has moved past; or HEAD is main), so the diff is that branch\'s delta and not this follow-on\'s; they run on the open PR branch once main has moved past the branch\'s last merge of it' + NOWHERE); return; }
-  assert.equal(git('diff', '--stat', base, 'HEAD', '--', 'kernel/'), '', 'no kernel change since the merge-base ' + base);
+  assert.ok(exists(...THIS_MODULE.split('/')), 'THIS_MODULE names a file in the tree: ' + THIS_MODULE + ' (a misspelt path would hold the verifications off for good behind a green diagnostic; the file review\'s round 5, tests-7)');
+  const d = deltaOf(REPO, THIS_MODULE);
+  if (!d.gate.ran) { t.diagnostic(HELD[d.gate.held](d.base, THIS_MODULE)); return; }
+  assert.equal(d.kernel, '', 'no kernel change since the merge-base ' + d.base);
   const DIRS = ['ui/webview/', 'docs/', 'plans/', 'tools/', 'upstream/', 'tests/'];
-  for (const f of files) assert.ok(DIRS.some((d) => f.startsWith(d)), f + ' lies under one of the six directories L6 names');
-  assert.equal(files.length, Number(count[1]), 'L6 says the listing since the merge-base has ' + count[1] + ' files; it has ' + files.length + ': ' + files.join(', '));
-  t.diagnostic('L6\'s verifications ran: ' + files.length + ' files since the merge-base ' + base + ', none under kernel/, all under the six directories');
+  for (const f of d.files) assert.ok(DIRS.some((dir) => f.startsWith(dir)), f + ' lies under one of the six directories L6 names');
+  assert.equal(d.files.length, Number(count[1]), 'L6 says the listing since the merge-base has ' + count[1] + ' files; it has ' + d.files.length + ': ' + d.files.join(', '));
+  t.diagnostic('L6\'s verifications ran: ' + d.files.length + ' files since the merge-base ' + d.base + ', none under kernel/, all under the six directories');
 });
 
 // ── the guide and the browser plan ─────────────────────────────────────────────────────────────────
@@ -398,4 +426,57 @@ test('every test module that names the follow-on in its own text is named in the
   for (const f of legs) assert.ok(tests.includes('ui/webview/' + f), 'ui/webview/' + f + ' names the follow-on and is named in the Tests paragraph');
   for (const f of pins) assert.ok(tests.includes('tools/' + f), 'tools/' + f + ' names the follow-on and is named in the Tests paragraph');
   for (const f of py) assert.ok(tests.includes('tests/' + f), 'tests/' + f + ' names the follow-on and is named in the Tests paragraph');
+});
+
+// ── the gate on L6's verifications ─────────────────────────────────────────────────────────────────
+
+test('L6\'s gate (the file review\'s round 5, tests-7): a pure function over git\'s answers, pinned in all four cells; in a temp repo shaped as the open PR branch (origin/main moved past the branch\'s fork point, the branch adding this module\'s path) the verifications run and read the delta, a kernel edit there is what the kernel stat would red on; origin/main at the branch\'s head holds them off on the merge-base part, a later branch adding another file on the module part, no origin/main on the first', () => {
+  const M = THIS_MODULE;
+  assert.deepEqual(gateOf(null, null, [], M), { ran: false, held: 'no origin/main' });
+  assert.deepEqual(gateOf('aaaa', 'aaaa', [M], M), { ran: false, held: 'the merge-base is origin/main' }, 'the module added and the base at main: the first part that holds names itself');
+  assert.deepEqual(gateOf('aaaa', 'bbbb', ['other.ts'], M), { ran: false, held: 'the diff does not add the module' });
+  assert.deepEqual(gateOf('aaaa', 'bbbb', ['other.ts', M], M), { ran: true, held: null });
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'linknav-l6-gate-'));
+  try {
+    const git = (...args) => execFileSync('git', ['-C', repo, '-c', 'user.email=t@example.test', '-c', 'user.name=t', ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    const write = (rel, text) => { fs.mkdirSync(path.dirname(path.join(repo, rel)), { recursive: true }); fs.writeFileSync(path.join(repo, rel), text); };
+    git('init', '-q', '-b', 'main', '.');
+    write('docs/a.md', 'A paragraph.\n');
+    write('kernel/k.py', 'x = 1\n');
+    git('add', '-A'); git('commit', '-q', '-m', 'base');
+    const forkPoint = git('rev-parse', 'HEAD');
+    git('checkout', '-q', '-b', 'feature');
+    write(M, '// the pin\n');
+    write('ui/webview/x.ts', 'export const x = 1;\n');
+    write('docs/a.md', 'A paragraph.\n\nAnother.\n');
+    git('add', '-A'); git('commit', '-q', '-m', 'the branch');
+    git('checkout', '-q', 'main');
+    write('other.md', 'Main moved on.\n');
+    git('add', 'other.md'); git('commit', '-q', '-m', 'main moves');
+    const mainTip = git('rev-parse', 'HEAD');
+    git('checkout', '-q', 'feature');
+    assert.deepEqual(deltaOf(repo, M).gate, { ran: false, held: 'no origin/main' }, 'no ref: the first part');
+    git('update-ref', 'refs/remotes/origin/main', mainTip);
+    const ran = deltaOf(repo, M);
+    assert.deepEqual(ran.gate, { ran: true, held: null }, 'the open PR branch\'s shape runs the verifications');
+    assert.equal(ran.base, forkPoint);
+    assert.deepEqual(ran.files, ['docs/a.md', M, 'ui/webview/x.ts'], 'the delta is the branch\'s files alone, main\'s own commit not among them');
+    assert.equal(ran.kernel, '', 'no kernel change on the branch');
+    write('kernel/k.py', 'x = 2\n');
+    git('add', '-A'); git('commit', '-q', '-m', 'a kernel edit');
+    assert.match(deltaOf(repo, M).kernel, /kernel\/k\.py \|/, 'a kernel edit on the branch shows in the stat the check reads');
+    git('update-ref', 'refs/remotes/origin/main', git('rev-parse', 'HEAD'));
+    assert.deepEqual(deltaOf(repo, M).gate, { ran: false, held: 'the merge-base is origin/main' }, 'origin/main at the branch\'s head: the merge-base part');
+    git('checkout', '-q', '-b', 'later', mainTip);
+    write('later.md', 'Later.\n');
+    git('add', 'later.md'); git('commit', '-q', '-m', 'later');
+    git('checkout', '-q', 'main');
+    write('other.md', 'Main moved on.\n\nAnd again.\n');
+    git('add', 'other.md'); git('commit', '-q', '-m', 'main moves again');
+    git('update-ref', 'refs/remotes/origin/main', git('rev-parse', 'HEAD'));
+    git('checkout', '-q', 'later');
+    assert.deepEqual(deltaOf(repo, M).gate, { ran: false, held: 'the diff does not add the module' }, 'a later branch after the landing: the module part');
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
 });
