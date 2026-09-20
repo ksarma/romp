@@ -1451,9 +1451,11 @@ class HostTransportNames(unittest.TestCase):
     """fresh-2 (round 1 of the review, 2026-09-18): kernel/host_transport.py read Transport, CLIConnectionError and
     ProcessError from the SDK's PRIVATE modules (_internal.transport, _errors) inside one try/except Exception that
     silently substituted stand-ins; all three are public exports at the pinned version. They are bound from the
-    public package now, and the duck-typed fallback stays for a machine with no SDK at all (the hermetic tests,
-    CI). Not added to SDK_INTERNALS: that check runs in the host process at spawn time, after this module has
-    already bound its imports in the kernel process, so it would not protect this binding."""
+    public package now, and the duck-typed fallback stays for an interpreter with no SDK at all (a box venv without
+    it; the vscode-extension job's served-page pytest step, which installs none; every Python matrix cell installs
+    it since #872, so there the fallback is inert). Not added to SDK_INTERNALS: that check runs in the host process at
+    spawn time, after this module has already bound its imports in the kernel process, so it would not protect this
+    binding."""
 
     _NAMES = ("claude_agent_sdk", "claude_agent_sdk._internal", "claude_agent_sdk._internal.transport", "claude_agent_sdk._errors")
 
