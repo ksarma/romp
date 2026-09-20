@@ -7,6 +7,7 @@ discovered version; off = never checks. The update runs DETACHED (fetch + ff-onl
 report to update-report.json, restart through the manager door only on success), and the outcome is
 always filed as a sync notice — by the next boot, or by /update-check's poll on the still-running
 kernel (fail loudly, never silent). Synthetic tags/paths only."""
+import contextlib
 import inspect
 import io
 import json
@@ -1102,10 +1103,9 @@ class Routes(Fresh):
                 km._UPDATE_AVAIL[0] = tag
                 km._MAIN_DRIFT[0], km._MAIN_DRIFT[1] = drift
                 try:
-                    with mock.patch.object(km, "_run_update", side_effect=AssertionError("must not launch")), \
-                         mock.patch.object(km, "_run_main_update", side_effect=AssertionError("must not converge")), \
-                         mock.patch.dict(km.os.environ, {"ROMP_KERNEL_ID": kid}):
+                    with self._launchers() as started, mock.patch.dict(km.os.environ, {"ROMP_KERNEL_ID": kid}):
                         code, text = self._post("/update", offer=offer)
+                    self.assertEqual((list(started), started.threads), ([], []), "no launch and no converge, observed (round 12): %r" % ((kid, offer, text),))
                     self.assertEqual(code, 409, (kid, offer, text))
                     self.assertIn("the banner offered %s, but this kernel now offers %s" % (shown, known), text)
                     self.assertIn("nothing was started", text)
@@ -1124,13 +1124,21 @@ class Routes(Fresh):
         self.assertIn("no newer release or main commit known", text)
 
     def test_the_route_acts_only_on_the_offer_it_owns_and_a_handed_action_is_refused_and_starts_nothing(self):
-        # review round 11 of fork PR #778 (the property the confirm step exists for, named by no test until now): round 10
-        # closed a regression by having the BANNER adopt the kernel's standing offer, and the route was not touched, so
-        # the route still does only what it owns. A confirm carrying an action the banner never showed, a kind outside
-        # release and main (the route's own internal kinds, pull and restart, handed by a client), or a release or a
-        # sha the kernel does not offer now, is refused and starts nothing: no launch, no converge, no running push to
-        # the shells, no audit row, the slots untouched. Before the confirm step (the base of this PR) the route derived
-        # the action from its own slots and ran the release on the same post
+        # review round 11 of fork PR #778 named the property the confirm step exists for; round 12 (extra7-1, regression-3) states
+        # it as the route has it and observes it. The route acts on its OWN slots, the release tag in _UPDATE_AVAIL and the
+        # main-drift commit in _MAIN_DRIFT, and never on an action it was handed: a confirm is refused unless its kind is release
+        # or main and its identifier equals what that slot holds NOW. Whether any banner showed the identifier is not read (a
+        # release the check endpoint filters out of the banner's answer as dismissed is still the slot's, and a confirm naming it
+        # runs; the comment on the drift test below says so), which is narrower than round 11's sentence, a confirm handing an
+        # identifier the banner never showed is refused. What is asserted is the LAUNCH, recorded by _launchers, not the status
+        # code: round 11 patched both launchers to raise, and the route starts the converge on a daemon thread, so that raise was
+        # swallowed and the pin never saw whether the launchers ran (a mutant converging on the handed offer before its 409 stayed
+        # green). Refused, with nothing started: a kind outside release and main (the route's internal kinds, pull and restart,
+        # handed by a client), a release the slot does not hold, a main commit the slot does not hold, the slot's release under the
+        # main kind. Then the record is shown REACHABLE, so the empty records above are not vacuous: a confirm naming the slot's
+        # main commit converges (the thread the route constructed, joined; its call and target read) and one naming the slot's
+        # release launches. Before the confirm step (the base of this PR) the route derived the action from its slots alone and
+        # ran the release on any confirmed post
         km._UPDATE_AVAIL[0] = "v0.7.0"
         km._MAIN_DRIFT[0], km._MAIN_DRIFT[1] = "aaaa1111", ""
         handed = (({"kind": "pull", "id": "aaaa1111"}, 400, "named no offer"),
@@ -1141,10 +1149,9 @@ class Routes(Fresh):
         pushed = []
         try:
             for offer, want, text_wanted in handed:
-                with mock.patch.object(km, "_run_update", side_effect=AssertionError("a handed action must not launch")), \
-                     mock.patch.object(km, "_run_main_update", side_effect=AssertionError("a handed action must not converge")), \
-                     mock.patch.object(km, "_send_to_app", side_effect=lambda app, m: pushed.append(m)):
+                with self._launchers() as started, mock.patch.object(km, "_send_to_app", side_effect=lambda app, m: pushed.append(m)):
                     code, text = self._post("/update", offer=offer)
+                self.assertEqual((list(started), started.threads), ([], []), "a handed action launched or converged: %r" % ((offer, text),))
                 self.assertEqual(code, want, (offer, text))
                 self.assertIn(text_wanted, text, offer)
                 self.assertEqual(pushed, [], "no running push went to the shells")
@@ -1152,8 +1159,23 @@ class Routes(Fresh):
                 self.assertEqual((km._UPDATE_STATE[0], km._MAIN_CONVERGE_INFLIGHT[0]), ("", False), offer)
                 self.assertEqual((km._UPDATE_AVAIL[0], km._MAIN_DRIFT[0], km._MAIN_DRIFT[1]), ("v0.7.0", "aaaa1111", ""),
                                  "the kernel's own offer stands: a refused post consumes nothing")
+            # the record is reachable: the slot's main commit, whatever showed it, converges on the thread the route starts
+            with self._launchers() as started, mock.patch.object(km, "_send_to_app", side_effect=lambda app, m: pushed.append(m)):
+                code, text = self._post("/update", offer={"kind": "main", "id": "aaaa1111"})
+            self.assertEqual(code, 200, text)
+            self.assertEqual(list(started), [("converge", "pull", True, "aaaa1111")], "the slot's own commit, converged")
+            self.assertEqual([t.is_alive() for t in started.threads], [False], "one thread, the route's, joined")
+            self.assertEqual(([r["action"] for r in self._audit_rows()], len(pushed)), (["main-converge"], 1))
+            km._MAIN_CONVERGE_INFLIGHT[0] = False
+            # and the slot's release, launched in the handler
+            with self._launchers() as started, mock.patch.object(km, "_send_to_app", side_effect=lambda app, m: pushed.append(m)):
+                code, text = self._post("/update", offer={"kind": "release", "id": "v0.7.0"})
+            self.assertEqual(code, 200, text)
+            self.assertEqual((list(started), started.threads), ([("launch", "v0.7.0")], []), "the slot's own release, launched")
+            self.assertEqual(([r["action"] for r in self._audit_rows()], len(pushed)), (["main-converge", "self-update"], 2))
         finally:
             km._MAIN_DRIFT[0] = km._MAIN_DRIFT[1] = ""
+            km._MAIN_CONVERGE_INFLIGHT[0] = False
 
     def test_on_the_primary_a_main_drift_offer_converges_though_a_release_slot_is_filled(self):
         # round 3 (2026-09-19): the same defect on the primary. /update-check filters a DISMISSED release out of its
@@ -1182,29 +1204,65 @@ class Routes(Fresh):
     def test_post_update_on_a_kernel_that_is_not_the_primary_with_no_drift_is_still_refused_naming_the_primary(self):
         km._UPDATE_AVAIL[0] = "v0.7.0"
         km._MAIN_DRIFT[0] = km._MAIN_DRIFT[1] = ""
-        with mock.patch.object(km, "_run_update", side_effect=AssertionError("must not launch")), \
-             mock.patch.object(km, "_run_main_update", side_effect=AssertionError("nothing to converge")), \
-             mock.patch.dict(km.os.environ, {"ROMP_KERNEL_ID": "alice"}):
+        with self._launchers() as started, mock.patch.dict(km.os.environ, {"ROMP_KERNEL_ID": "alice"}):
             code, text = self._post("/update")
+        self.assertEqual((list(started), started.threads), ([], []), "nothing launched or converged, observed (round 12): " + text)
         self.assertEqual(code, 409, text)
         self.assertIn("not the primary", text)
         self.assertIn("primary kernel's dashboard", text)
         self.assertEqual(self._audit_rows(), [])
         # the primary with the same state runs the release, drift or no drift (unchanged)
         km._MAIN_DRIFT[0] = "aaaa1111"
-        ran = []
         try:
-            with mock.patch.object(km, "_run_update", side_effect=lambda tag: ran.append(tag) or True), \
-                 mock.patch.object(km, "_run_main_update", side_effect=AssertionError("the release outranks drift on the primary")):
+            with self._launchers() as started:
                 code, body = self._post("/update")
             self.assertEqual(code, 200, body)
-            self.assertEqual(ran, ["v0.7.0"])
+            self.assertEqual((list(started), started.threads), ([("launch", "v0.7.0")], []), "the release alone; no converge thread (observed, round 12)")
         finally:
             km._MAIN_DRIFT[0] = ""
 
     def _audit_rows(self):
         p = jd.STATE / "restart-audit.jsonl"
         return [json.loads(l) for l in p.read_text().splitlines() if l.strip()] if p.exists() else []
+
+    @contextlib.contextmanager
+    def _launchers(self):
+        """Both launchers RECORDED, never refused (review round 12 of fork PR #778, extra7-1). The route starts the main-drift
+        converge on a daemon thread, so a patch that raised there was swallowed by the thread and surfaced as a warning at
+        most: the round-11 pin below asserted the status code and the slots, and a mutant that converged on the handed offer
+        before its 409 left it green. Yields the record, written by the launcher itself: ("launch", tag) for _run_update, which
+        the route calls in the handler, and ("converge", kind, immediate, target) for _run_main_update, which it hands to a
+        thread; `started.threads` holds every thread constructed with a launcher as its target, read at construction, which
+        the route does before it answers, so an empty record after the post is an observation and not a race, and on the way
+        out every such thread is joined (bounded) so a positive case reads the call. _run_update reports the launch it did
+        not make as made (True), as the real one does when the child is spawned."""
+        class Started(list):
+            threads = None
+        started = Started()
+        started.threads = []
+
+        def launch(tag):
+            started.append(("launch", tag))
+            return True
+
+        def converge(kind, immediate=True, manager_port=None, target=""):
+            started.append(("converge", kind, immediate, target))
+
+        real = threading.Thread
+
+        class Recorded(real):
+            def __init__(self, *a, **kw):
+                super().__init__(*a, **kw)
+                if kw.get("target") in (launch, converge):
+                    started.threads.append(self)
+
+        try:
+            with mock.patch.object(km, "_run_update", new=launch), mock.patch.object(km, "_run_main_update", new=converge), \
+                 mock.patch.object(threading, "Thread", Recorded):
+                yield started
+        finally:
+            for t in started.threads:
+                t.join(5)
 
     def test_post_update_refuses_an_unconfirmed_click_and_runs_nothing(self):
         # 2026-09-10: one click on the banner POSTed /update, and a click that only meant to focus the

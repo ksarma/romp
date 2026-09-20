@@ -780,6 +780,33 @@ GO.onclick(); await tick(); await tick(); CHECK.tag = ""; CF.onclick(); await ti
                        " CHECK.updated = 'abcdef02'; await tick(); await tick(); DM.onclick(); out(state());", check={"tag": ""})
         self.assertEqual((s["posts"], s["dismissals"]), ([], [{"tag": "abcdef02"}]), "the adopted drift sha, the same way")
 
+    def test_not_now_after_an_updated_ending_posts_the_identifier_the_window_holds_not_the_one_that_landed(self):
+        # review round 12 of fork PR #778 (kernel-1): the round-11 comment gave the wide clause above a reason, that an offer is
+        # moot once any update lands so the adopted window dismisses as the offering one would, and the reason is false on a road
+        # the clause covers. What the code does: the updated ending leaves curTag alone, and Not now posts curTag, the identifier
+        # this window HOLDS, never read against d.updated, the identifier the ending carries. Where another door's update landed
+        # (a main-drift converge while this window held the release, or the reverse), the identifier dismissed is a standing offer
+        # that did not land, retired durably for every window. Pinned as it stands, for the adopted window and for one that made
+        # its own offer alike, so the comment's account of the write is the executed one; a narrowing (post the landed identifier,
+        # or nothing, when the two differ) reds here and is a behaviour decision for its own change, not taken in a review round
+        failed = "CHECK.failed = 'romp is updated on disk but the restart request failed (HTTP 500)';"
+        flipped = "window.__rompUpdateOffer('', '', '', 'b1', 'running'); "
+        landed = "CHECK.failed = ''; CHECK.tag = ''; CHECK.updated = 'abcdef02'; CHECK.why = 'no manager is running this kernel';"
+        # the adopted window: flipped into the wait with no offer, adopts the release at the failed ending, then reads a later
+        # running push's ending that landed a main commit it neither offered nor clicked
+        s = run_banner(flipped + "CHECK.tag = 'v0.2.0'; " + failed + " await tick(); await tick(); var adopted = state();"
+                       " window.__rompUpdateOffer('', '', '', 'b1', 'running'); " + landed + " await tick(); await tick(); var ended = state();"
+                       " DM.onclick(); out({ adopted: adopted, ended: ended, after: state() });", check={"tag": ""})
+        self.assertEqual((s["adopted"]["goHidden"], s["adopted"]["dismissals"]), (False, []), "Update re-shown over the adopted release")
+        self.assertTrue(s["ended"]["msg"].startswith("romp updated to abcdef02 on disk"), s["ended"]["msg"])
+        self.assertEqual((s["after"]["posts"], s["after"]["dismissals"]), ([], [{"tag": "v0.2.0"}]),
+                         "Not now posts the release this window holds, not the main commit the ending says landed")
+        # a window that made its own offer, no adoption anywhere: the same write, the held release on another door's landing
+        s = run_banner(flipped + landed + " await tick(); await tick(); var ended = state(); DM.onclick(); out({ ended: ended, after: state() });")
+        self.assertTrue(s["ended"]["msg"].startswith("romp updated to abcdef02 on disk"), s["ended"]["msg"])
+        self.assertEqual((s["after"]["posts"], s["after"]["dismissals"]), ([], [{"tag": "v0.2.0"}]),
+                         "the window's own offer, still standing, dismissed durably on a landing it did not make")
+
     def test_a_second_activation_of_the_update_button_never_posts(self):
         # the confirm is a different control, beside the label that took Update's place: whatever
         # reaches the Update button again (a double-click's second click, a double-tap's second tap, a

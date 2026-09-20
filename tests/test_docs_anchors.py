@@ -1,54 +1,179 @@
 #!/usr/bin/env python3
-"""Every in-page link in the repository's markdown resolves to a heading of its own file (round 10 of fork PR #778, correctness-1).
+"""Every in-page link in the repository's markdown resolves to a heading of its own file (round 10 of fork PR #778, correctness-1),
+and the slugger that decides it agrees with the renderer over every heading of the documentation (round 12, tests-2, extra8-1, extra8-2).
 
 docs/reference.md's paragraph on the unit rewrite's identity refusal linked `#two-instances-on-one-machine`, an anchor no heading
 in the repository produces, so the one pointer that sentence gave the reader was dead, and it stayed green through nine review
-rounds because nothing read the anchors (CI renders no markdown). This module slugs every heading as GitHub does (lowercase, the
-inline markup dropped, punctuation other than hyphens and underscores removed, spaces to hyphens, a repeated slug numbered -1, -2,
-...), takes an explicit `<a id=...>` or `<a name=...>` as a target too, skips fenced code on both sides, and resolves every
-`](#...)` reference in a file against that file's targets. The population is the documentation a reader is sent to: every
-tracked markdown file under docs/, at the top level, and bin/README.md and tests/README.md. Outside it, read once when this
-pin was written (2026-09-20) and left to their owners: ui/webview/anchor-map-fixtures/obsidian.md carries two deliberately odd
-anchors (a fixture of the viewer's anchor map), plans/file-review.md one to `#results` and the ledger entry
-upstream/2026-09-07-markdown-viewer-sanitizer.md one to `#top`, none a document this pin guards."""
+rounds because nothing read the anchors (CI renders no markdown). This module slugs every heading as GitHub does: the heading's
+inline markdown rendered to its text (a code span's text without the ticks, a link's text, nothing for an image, a tag dropped,
+an entity decoded, a backslash escape's character, and an emphasis delimiter, `*` or `_`, dropped only where CommonMark's
+left- and right-flanking rules and its process-emphasis pairing make it one, an intraword underscore run never being one and
+an unpaired run staying literal), then lowercased, everything but letters, digits, underscores, hyphens and spaces removed,
+spaces to hyphens, a repeated slug numbered -1, -2, ...; it takes an explicit `<a id=...>` or `<a name=...>` as a target too,
+skips fenced code on both sides, and resolves every `](#...)` reference in a file against that file's targets. The population
+is the documentation a reader is sent to: every tracked markdown file under docs/, at the top level, and bin/README.md and
+tests/README.md. Outside it, read once when this pin was written (2026-09-20) and left to their owners:
+ui/webview/anchor-map-fixtures/obsidian.md carries two deliberately odd anchors (a fixture of the viewer's anchor map),
+plans/file-review.md one to `#results` and the ledger entry upstream/2026-09-07-markdown-viewer-sanitizer.md one to `#top`,
+none a document this pin guards.
+
+The slugger is checked against the renderer by DERIVATION, not by a hand list (round 12 of fork PR #778): corpus_headings()
+is every ATX heading of that population and of every tracked markdown file under plans/, battery() is every shape a small
+grammar of emphasis runs generates (both delimiters, one to three on each side, seven contents, three surroundings) plus
+the pairing and flanking shapes CommonMark's own examples name, and tests/fixtures/docs_anchor_slugs.json holds, for each,
+the slug the renderer gives it: marked 12.0.2, the extension's, run by tests/docs-anchors-oracle.py, which renders the
+heading, takes the h element's text content as GitHub's anchor filter does and slugs it by github-slugger's rule. The
+test below fails on a heading with no row, a row with no heading, and any disagreement, naming each; CI's Python job has
+no node and no marked (the extension job alone installs vscode-extension/node_modules), so the table is the oracle there,
+and the recipe refuses to run without them rather than skipping. Round 11 checked seventeen headings somebody chose and
+an underscore arm that stripped unbalanced runs CommonMark leaves literal, admitted one intraword underscore inside a span
+and read no whitespace flanking; over the derived corpus that arm agreed on every real heading (none carries such a
+shape) and disagreed on 123 of the battery's 457 shapes, 111 underscore runs and 12 whitespace-flanked asterisk runs; the
+slugger below disagrees on none of the 987. What GitHub does that the oracle does not: it renders with cmark-gfm,
+which agrees with marked on everything the corpus and the battery hold; it replaces an emoji shortcode (`:name:`) before
+it slugs, so one contributes nothing where this module keeps the name (no heading here carries one); and it prefixes the
+id with user-content- and resolves the bare anchor by script, which the link never sees. Letters and digits here are
+Python's \\w, so a combining mark, which github-slugger keeps, would be dropped; no heading carries one, and the table
+would show it."""
+import html
+import itertools
+import json
 import os
 import re
 import subprocess
+import unicodedata
 import unittest
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
+TABLE = os.path.join(HERE, "fixtures", "docs_anchor_slugs.json")
+REGENERATE = "python3 tests/docs-anchors-oracle.py"
 
 _FENCE = re.compile(r"^\s*(```|~~~)")
 _HEADING = re.compile(r"^ {0,3}(#{1,6})\s+(.*?)\s*#*\s*$")
 _HTML_ANCHOR = re.compile(r"""<a\s+(?:id|name)=["']([^"']+)["']""")
 _IN_PAGE = re.compile(r"\]\(#([^)\s]+)\)")
-_INLINE = [(re.compile(r"`([^`]*)`"), r"\1"),                 # code spans: the text stays, the ticks go
-           (re.compile(r"!\[[^\]]*\]\([^)]*\)"), ""),          # an image contributes nothing
-           (re.compile(r"\[([^\]]*)\]\([^)]*\)"), r"\1"),      # a link: its text
-           (re.compile(r"\*{1,3}([^*]+)\*{1,3}"), r"\1"),         # asterisk emphasis, which CommonMark takes inside a word too
-           # underscore emphasis only where CommonMark takes it: a run of underscores neither preceded nor followed by a
-           # word character, so a heading's ROMP_STATE_DIR keeps its underscores (GitHub's slug keeps them) while
-           # `_real emphasis_` loses its delimiters; round 10 of fork PR #778 stripped every `_..._` pair, so a heading
-           # with two or more underscores slugged wrong, its correct link red and a dead link to its wrong slug green
-           # (round 11, correctness-1). The content may hold an intraword underscore (`_a_b_` is <em>a_b</em>), one between
-           # two letters or digits, never a second delimiter
-           (re.compile(r"(?<!\w)_{1,3}([^_](?:[^_]|(?<=[^\W_])_(?=[^\W_]))*)_{1,3}(?!\w)"), r"\1")]
+_IMAGE = re.compile(r"!\[[^\]]*\]\([^)]*\)")                              # an image contributes nothing
+_LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")                              # a link: its text
+_AUTOLINK = re.compile(r"<([A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*)>")      # <scheme:...>: its text
+_TAG = re.compile(r"</?[A-Za-z][A-Za-z0-9-]*(?:\s[^<>]*)?/?>")            # an inline tag: nothing (its text stays)
 _KEEP = re.compile(r"[^\w\- ]", re.UNICODE)
+_ASCII_PUNCT = set("!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~")
+
+
+def _space(ch):
+    """CommonMark's Unicode whitespace; the ends of the text ("") count as whitespace for flanking."""
+    return ch == "" or ch in "\t\n\x0c\r" or unicodedata.category(ch) == "Zs"
+
+
+def _punct(ch):
+    """CommonMark's Unicode punctuation: the ASCII set and every P and S category."""
+    return ch != "" and (ch in _ASCII_PUNCT or unicodedata.category(ch)[0] in "PS")
+
+
+def _delimiter(ch, before, after):
+    """(can open, can close) for a run of `ch` between `before` and `after` (CommonMark 0.31, section 6.2): left-flanking is
+    not followed by whitespace and either not followed by punctuation or preceded by whitespace or punctuation, right-flanking
+    the mirror; `*` opens where left-flanking and closes where right-flanking; `_` opens only where left-flanking and not
+    right-flanking (or preceded by punctuation) and closes only where right-flanking and not left-flanking (or followed by
+    punctuation), which is what keeps an intraword underscore run literal."""
+    left = not _space(after) and (not _punct(after) or _space(before) or _punct(before))
+    right = not _space(before) and (not _punct(before) or _space(after) or _punct(after))
+    if ch == "*":
+        return left, right
+    return left and (not right or _punct(before)), right and (not left or _punct(after))
+
+
+def _tokens(s):
+    """The inline text as CommonMark reads it: text chunks and [char, length, can open, can close] delimiter runs. A code span
+    (a backtick run closed by an equal run) is one text chunk, its ticks gone, one space stripped from each end when both are
+    there and it is not all spaces; an unclosed run is literal; a backslash before ASCII punctuation escapes it."""
+    out, i, n = [], 0, len(s)
+    while i < n:
+        c = s[i]
+        if c == "\\" and i + 1 < n and s[i + 1] in _ASCII_PUNCT:
+            out.append(s[i + 1])
+            i += 2
+            continue
+        if c == "`":
+            j = i
+            while j < n and s[j] == "`":
+                j += 1
+            run = s[i:j]
+            m = re.compile(r"(?<!`)" + re.escape(run) + r"(?!`)").search(s, j)
+            if m:
+                body = s[j:m.start()].replace("\n", " ")
+                if len(body) >= 2 and body[0] == " " and body[-1] == " " and body.strip(" "):
+                    body = body[1:-1]
+                out.append(body)
+                i = m.end()
+            else:
+                out.append(run)
+                i = j
+            continue
+        if c in "*_":
+            j = i
+            while j < n and s[j] == c:
+                j += 1
+            can_open, can_close = _delimiter(c, s[i - 1] if i else "", s[j] if j < n else "")
+            out.append([c, j - i, can_open, can_close])
+            i = j
+            continue
+        j = i + 1
+        while j < n and s[j] not in "\\`*_":
+            j += 1
+        out.append(s[i:j])
+        i = j
+    return out
+
+
+def _emphasis(tokens):
+    """CommonMark's process-emphasis over the delimiter runs: a closer takes the nearest earlier opener of its character that
+    the rule of three allows (where either run could both open and close, their original lengths must not sum to a multiple
+    of three unless both are), two delimiters from each for strong when both hold two or more, else one each; the runs between
+    the pair are literal from then on, and every delimiter neither side consumed stays in the text."""
+    runs = [t for t in tokens if isinstance(t, list)]
+    orig = [t[1] for t in runs]
+    dead = set()
+    for ci, closer in enumerate(runs):
+        while closer[1] and closer[3]:
+            found = None
+            for oi in range(ci - 1, -1, -1):
+                opener = runs[oi]
+                if oi in dead or not opener[1] or opener[0] != closer[0] or not opener[2]:
+                    continue
+                if (opener[3] or closer[2]) and (orig[oi] + orig[ci]) % 3 == 0 and not (orig[oi] % 3 == 0 and orig[ci] % 3 == 0):
+                    continue
+                found = oi
+                break
+            if found is None:
+                break
+            use = 2 if runs[found][1] >= 2 and closer[1] >= 2 else 1
+            runs[found][1] -= use
+            closer[1] -= use
+            dead.update(range(found + 1, ci))
+    return "".join(t if isinstance(t, str) else t[0] * t[1] for t in tokens)
+
+
+def inline_text(heading):
+    """The text GitHub's renderer gives a heading's inline markdown, which its anchor is slugged from (the module docstring)."""
+    s = _IMAGE.sub("", heading)
+    s = _LINK.sub(r"\1", s)
+    s = _AUTOLINK.sub(r"\1", s)
+    s = _TAG.sub("", s)
+    return html.unescape(_emphasis(_tokens(s)))
 
 
 def slug(heading):
-    """GitHub's anchor for a heading's text."""
-    text = heading
-    for pat, rep in _INLINE:
-        text = pat.sub(rep, text)
-    text = _KEEP.sub("", text.strip().lower()).replace(" ", "-")
-    return text
+    """GitHub's anchor for a heading's text (github-slugger's rule over the rendered text): the heading trimmed as the block parser
+    trims it, its inline markdown rendered to text, lowercased, everything but letters, digits, underscores, hyphens and spaces
+    removed, spaces to hyphens. Nothing is trimmed after the rendering: an image at an end leaves its space, and the hyphen."""
+    return _KEEP.sub("", inline_text(heading.strip()).lower()).replace(" ", "-")
 
 
-def targets_and_links(text):
-    """(set of anchors the file defines, [(line, anchor) for each in-page link]), fenced code skipped."""
-    seen, anchors, links, fenced, fence = {}, set(), [], False, None
+def _unfenced(text):
+    """(line number, line) for every line outside fenced code."""
+    fenced, fence = False, None
     for n, line in enumerate(text.split("\n"), 1):
         m = _FENCE.match(line)
         if m:
@@ -59,6 +184,13 @@ def targets_and_links(text):
             continue
         if fenced:
             continue
+        yield n, line
+
+
+def targets_and_links(text):
+    """(set of anchors the file defines, [(line, anchor) for each in-page link]), fenced code skipped."""
+    seen, anchors, links = {}, set(), []
+    for n, line in _unfenced(text):
         h = _HEADING.match(line)
         if h:
             s = slug(h.group(2))
@@ -72,11 +204,71 @@ def targets_and_links(text):
     return anchors, links
 
 
-def tracked_markdown():
-    """The tracked markdown files this pin guards (the module docstring names the population and what it leaves out)."""
-    out = subprocess.run(["git", "-C", ROOT, "ls-files", "-z", "--", ":(glob)docs/**/*.md", ":(glob)*.md", "bin/README.md", "tests/README.md"],
-                         capture_output=True, check=True).stdout
+def _ls_files(*pathspecs):
+    out = subprocess.run(["git", "-C", ROOT, "ls-files", "-z", "--"] + list(pathspecs), capture_output=True, check=True).stdout
     return sorted({p.decode() for p in out.split(b"\0") if p})
+
+
+def tracked_markdown():
+    """The tracked markdown files the anchor pin guards (the module docstring names the population and what it leaves out)."""
+    return _ls_files(":(glob)docs/**/*.md", ":(glob)*.md", "bin/README.md", "tests/README.md")
+
+
+def corpus_files():
+    """The files whose headings the slugger is checked against the renderer over: the anchor pin's population and every tracked
+    markdown file under plans/, the repository's richest headings (round 12 of fork PR #778)."""
+    return sorted(set(tracked_markdown()) | set(_ls_files(":(glob)plans/**/*.md")))
+
+
+def corpus_headings():
+    """{heading text: [(file, line), ...]} for every ATX heading outside fenced code in corpus_files(), the text as the heading
+    regex reads it (the marks and the closing sequence gone)."""
+    out = {}
+    for rel in corpus_files():
+        with open(os.path.join(ROOT, rel), encoding="utf-8") as f:
+            for n, line in _unfenced(f.read()):
+                h = _HEADING.match(line)
+                if h:
+                    out.setdefault(h.group(2), []).append((rel, n))
+    return out
+
+
+# the shapes CommonMark's emphasis section names, beside the generated grid: pairing across a foreign run, the rule of three,
+# strong inside em and em inside strong, delimiters beside punctuation, intraword runs of each character, runs alone, escapes,
+# code spans holding delimiters, a tag, entities, an autolink, strikethrough, non-Latin text
+_BATTERY_SHAPES = (
+    "*a _b* c_", "_a *b_ c*", "**a *b** c*", "*a **b* c**", "***a** b*", "*a **b*** c", "**a *b*** c", 'a*"foo"*', "*(*foo*)*",
+    "_(_foo_)_", "foo-_(bar)_", "_foo_bar_baz_", "*foo*bar", "_foo_bar", "__foo, __bar__, baz__", "*foo**bar**baz*", "***foo** bar*",
+    "*foo **bar***", "foo***bar***baz", "foo******bar*********baz", "*foo _bar* baz_", "**foo*bar*baz**", "*[foo*](x.md)",
+    "_a `b_ c` d_", "\\_not\\_ emphasis", "\\*lit\\*", "<kbd>Ctrl</kbd>+C", "A &amp; B", "&lt;tag&gt; and &#95;x&#95;",
+    "<https://example.com/a_b>", "` a ` and `_a_` and ``co`de``", "~~strike~~ through", "a * b * c", "a ** b ** c", "*a*_b_",
+    "_a_*b*", "__init__ and __main__", "*foo*_bar_", "_foo_*bar*", "foo _bar_ baz_", "_foo_ bar_", "a_*b*_c", "**Note:** the _thing_",
+    "*Note*: `x_y` and _z_", "5*6*78", "пример _слова_ здесь", "日本語 *テスト* です", "**", "***", "****", "_", "__", "___", "____",
+    "* *", "_ _", "*_*", "_*_", "*__*", "_**_", "**_a_**", "__*a*__", "***a***", "___a___", "**a**b", "__a__b", "a**b**", "a__b__",
+    "*a **b** c*", "_a __b__ c_", "**bold** and __strong__ and *em* and _em_", "ROMP_STATE_DIR and ROMP_SERVICE_NO_LOAD",
+    "x _y_z_ w", "`code_with_underscores` and `*stars*`", "[a _link_ text](x.md) and ![img](y.png)", "a_ _b", "foo_bar_ baz",
+    "2*3*4", "2 * 3 * 4")
+
+
+def battery():
+    """Every input of a small grammar of emphasis runs, in a fixed order: for each delimiter character, each pair of run lengths
+    one to three, each of seven contents (a word, two words, an intraword single and double run, the other character intraword,
+    whitespace on both sides, a run then a space) and each of three surroundings (none, words with spaces, words abutting), then
+    the shapes above. Derived, not chosen: a shape the grammar covers is in the table whether or not anyone thought of it."""
+    out = []
+    for ch in "_*":
+        other = "*" if ch == "_" else "_"
+        for o, c in itertools.product((1, 2, 3), repeat=2):
+            for content in ("word", "two words", "a%sb" % ch, "a%s%sb" % (ch, ch), "a%sb" % other, " spaced ", "x%s y" % ch):
+                for pre, post in (("", ""), ("lead ", " tail"), ("lead", "tail")):
+                    out.append("%s%s%s%s%s" % (pre, ch * o, content, ch * c, post))
+    out.extend(_BATTERY_SHAPES)
+    return out
+
+
+def _table():
+    with open(TABLE, encoding="utf-8") as f:
+        return json.load(f)
 
 
 class InPageAnchors(unittest.TestCase):
@@ -95,6 +287,46 @@ class InPageAnchors(unittest.TestCase):
                          % (resolved, "\n".join(dead)))
 
 
+class AgainstTheRenderer(unittest.TestCase):
+    """The slugger against the renderer over the derived population (round 12 of fork PR #778; the module docstring). The table is
+    the oracle: tests/docs-anchors-oracle.py wrote it from marked, and the test refuses a heading the table does not cover, a row no
+    heading or battery shape owns, and any disagreement, each named with the file and line, the renderer's slug and the slugger's."""
+
+    def test_every_heading_of_the_documentation_and_every_battery_shape_slugs_as_the_renderer_does(self):
+        table = _table()
+        want = dict(table["rows"])
+        self.assertTrue(want, "the table is empty: run %s" % REGENERATE)
+        corpus, files, shapes = corpus_headings(), corpus_files(), battery()
+        # a derived expectation must fail on empty, and on a population no wider than the hand list it replaces
+        self.assertGreater(len(files), len(tracked_markdown()), "plans/ contributed no file: the corpus is the anchor pin's alone")
+        self.assertGreater(len(corpus), 17, "the derived corpus (%d headings in %d files) must exceed round 11's seventeen" % (len(corpus), len(files)))
+        self.assertGreater(len(shapes), 100, "the battery is not the grammar's")
+        missing = ["%s (%s)" % (h, ", ".join("%s:%d" % w for w in corpus[h])) for h in sorted(corpus) if h not in want]
+        missing += ["%r (battery)" % b for b in shapes if b not in want]
+        self.assertEqual(missing, [], "headings with no row in %s (regenerate it: %s; needs node and vscode-extension/node_modules):\n%s"
+                         % (os.path.relpath(TABLE, ROOT), REGENERATE, "\n".join(missing)))
+        held = set(shapes)
+        stale = sorted(h for h in want if h not in corpus and h not in held)
+        self.assertEqual(stale, [], "rows no heading of the corpus and no battery shape owns (regenerate: %s):\n%s" % (REGENERATE, "\n".join(stale)))
+        disagree = [(h, want[h], slug(h)) for h in sorted(want) if slug(h) != want[h]]
+        self.assertEqual(disagree, [], "the slugger disagrees with the renderer on %d of %d (heading, the renderer's slug, the slugger's):\n%s"
+                         % (len(disagree), len(want), "\n".join("  %r: want %r, got %r" % d for d in disagree)))
+
+    def test_the_table_names_the_renderer_the_extension_pins_and_its_own_recipe(self):
+        table = _table()
+        with open(os.path.join(ROOT, "vscode-extension", "package-lock.json"), encoding="utf-8") as f:
+            pinned = json.load(f)["packages"]["node_modules/marked"]["version"]
+        self.assertEqual(table["marked"], pinned, "the extension's marked moved (%s, the table's %s): re-run %s" % (pinned, table["marked"], REGENERATE))
+        self.assertEqual(table["regenerate"], REGENERATE)
+
+    def test_the_battery_is_the_grammar_and_holds_the_shapes_round_eleven_missed(self):
+        shapes = battery()
+        self.assertEqual(len(shapes), len(set(shapes)), "a shape is generated twice")
+        self.assertEqual(len(shapes), 2 * 9 * 7 * 3 + len(_BATTERY_SHAPES))
+        for s in ("__a_b_", "_ spaced _", "lead __word_ tail", "___a__b___", "**a *b** c*"):
+            self.assertIn(s, shapes)
+
+
 class Slugs(unittest.TestCase):
     def test_slugs_as_github_does(self):
         self.assertEqual(slug("The manager's control port"), "the-managers-control-port")
@@ -107,6 +339,14 @@ class Slugs(unittest.TestCase):
         self.assertEqual(slug("_real emphasis_ here"), "real-emphasis-here")
         self.assertEqual(slug("x _y_z_ w and __strong__ text"), "x-y_z-w-and-strong-text")
         self.assertEqual(slug("snake_case_name and trailing_ and a_ _b"), "snake_case_name-and-trailing_-and-a_-_b")
+        # round 12 (tests-2, extra8-1), each the renderer's answer: an unbalanced run keeps what no closer consumed, a
+        # whitespace-flanked run is no delimiter, a span may hold a double intraword run, and a code span's delimiters are text
+        self.assertEqual(slug("__a_b_"), "_a_b")
+        self.assertEqual(slug("_ spaced _"), "_-spaced-_")
+        self.assertEqual(slug("lead __word_ tail"), "lead-_word-tail")
+        self.assertEqual(slug("_a__b_"), "a__b")
+        self.assertEqual(slug("`_a_` and `*b*`"), "_a_-and-b")
+        self.assertEqual(slug("[a _link_ text](x.md) and ![img](y.png)"), "a-link-text-and-")
 
     def test_a_correct_link_to_a_heading_with_two_underscores_resolves(self):
         # round 11 of fork PR #778 (correctness-1): the round-10 stripper read the heading's `_STATE_` and `_SERVICE_` as

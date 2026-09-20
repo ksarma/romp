@@ -71498,9 +71498,14 @@ _UPD_JS = (
     # the standing offer, the branch below: from then on the window holds that identifier as if it had offered
     # it, so ANY updated ending it reads, its own retry's or a later running push's that it neither started nor
     # clicked, has its Not now dismiss the adopted identifier durably, a write from a window that never made the
-    # offer; review round 10 of fork PR #778, and round 11, kernel-1, which widened this clause to what the code
-    # does: an offer is moot once any update lands, so the adopted window dismisses as the offering one would).
-    # After the failed ending Not now hides the message and dismisses
+    # offer; review round 10 of fork PR #778, and round 11, kernel-1, which widened this clause to every updated
+    # ending). The write carries the identifier the window HOLDS, adopted or its own, and is never read against
+    # d.updated, the identifier the ending says landed: where another door's update landed (a main-drift converge
+    # while the window held the release, or the reverse), the identifier dismissed is a standing offer that did
+    # not land, retired durably for every window, and nothing in the store clears it (round 12 of fork PR #778,
+    # kernel-1: round 11 gave the clause the reason that an offer is moot once any update lands, false on that
+    # road; the write is pinned as it stands, and a narrowing to the landed identifier is a behaviour decision
+    # for its own change). After the failed ending Not now hides the message and dismisses
     # nothing, in every window: the failure's own text promises the next check's re-offer (a refused pull
     # re-arms the drift slot; a refused restart request keeps its offer), and a durable dismissal of the
     # refused target would stop that re-offer everywhere, on every page load and in the drift check's push.
