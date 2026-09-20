@@ -4197,16 +4197,17 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
   // for either of those <img> figures before the chain ran (measured at the base, 2026-09-20, by the first leg named
   // below). An inline svg's <image> is loaded by another path, and there the gate held in Chromium alone: Firefox requested
   // a gated svg image, in either spelling, while its placeholder stood when the chain's work between the adoption and that
-  // element's strip was long (over 400 plain paragraphs in one run of three, over 3000 paragraphs with a link each in every
-  // run of six; measured at the base by the second leg named below), and WebKit requested the `xlink:href` spelling in every
-  // run and the `href` spelling in none. So the kernel-served pages (the dashboard, in Safari and in Firefox, and the iOS web
+  // element's strip was long (the second leg's 3000-paragraph note, both figures, 3 of 3 runs; 400 plain paragraphs, 1 of 3;
+  // every count is under "Run counts, the svg vectors" in the plan section named below; measured at the base by the second leg
+  // named below), and WebKit requested the `xlink:href` spelling in every run and the `href` spelling in none. So the kernel-served pages (the dashboard, in Safari and in Firefox, and the iOS web
   // app, which is the same page in Safari's engine) were reachable, the VS Code panes not (their CSP names no remote
   // img-src). Every pass that sets, repoints or moves a fetching attribute is in this block; the passes after the adoption
   // write a video's style, a list item's class, anchors' attributes, fences' markup and the prose's links (found by the
   // review of the link-navigation follow-on, 2026-09-20; file-view-figures-gate-adopt-browser.test.ts, an HTML img in three
   // scenes, and file-view-figures-gate-adopt-svg-browser.test.ts, two inline svg images at the end of a long note, read real
-  // servers' request logs in all three engines; the section "Fix: the gate before adoption (2026-09-20)" of
-  // plans/markdown-viewer.md records the hole, the instrument and the scope).
+  // servers' request logs in all three engines, and file-view-figures-gate-adopt.test.ts executes this order under plain node,
+  // where those legs skip; the section "Fix: the gate before adoption (2026-09-20)" of plans/markdown-viewer.md records the
+  // hole, the instrument and the scope).
   if (doc && doc.kind === "url") {
     // Every attribute a figure fetches through resolves against the document (resolveFigureRefs, below): this arm read
     // `img[src]` alone, so a relative `srcset` candidate, a video's `src` or `poster`, an audio's, a `source`'s or a

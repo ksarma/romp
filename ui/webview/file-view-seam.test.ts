@@ -1133,7 +1133,9 @@ test("source: the Slice 3 seam members exist with their doc comments; the media 
 // chain calls and nothing else before the adoption and nothing after it. Comments are stripped before any code is read
 // (codeOnly), so a comment may name what the code may not. Red at the head with either of the two changes above (measured
 // in a scratch copy, the same day). A red here means the premise moved: re-run the two gate-adopt browser legs in all three
-// engines and read the servers' logs before re-aiming a pin.
+// engines and read the servers' logs before re-aiming a pin. The ORDER itself (the chain's writes landing before the nodes
+// enter the live document) is executed under node by file-view-figures-gate-adopt.test.ts, over a stand-in with an inert
+// and a live document; the premise, that DOMPurify's body is inert, is what that scene assumes and this test pins.
 /** `src` with its comments removed: a line comment to the line's end and a block comment to its close, outside string
  *  literals (a `//` inside quotes, the HTML namespace URL, is kept). Regex literals are not parsed: none in the code read here
  *  holds a comment opener or a quote (the self-check in the test reads a string holding `//` back, and a doc comment's word

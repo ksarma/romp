@@ -5,7 +5,9 @@
 // says so; the browser leg the section names exists and reads real servers' request logs through a proxy, never a route;
 // the scope facts (the VS Code panes' CSP, the kernel's Referrer-Policy) stand in the files they cite; and the two
 // pointers, at Slice 1's fetch-on-render paragraph and the Slice 4 record's item 9, name the section as the one after
-// "Out of scope". The section is read from its heading to the next `## ` heading or the end of the plan, and it is held
+// "Out of scope". The Tests paragraph names the node scene that runs where the browser legs skip, and the svg run counts are
+// stated once, in the section's Run counts paragraph, which the chain comment, the svg leg's header and the ledger entry point at.
+// The section is read from its heading to the next `## ` heading or the end of the plan, and it is held
 // to follow "## Out of scope", not to be the plan's last: the link-navigation and print follow-ons (branches
 // filereview-linknav and filereview-print, in flight) land at the same place, and the print pin holds that one last, so
 // a "last" assertion here would turn red on main whichever of the two landed second (found by the review of this fix,
@@ -27,6 +29,8 @@ const HEADING = '## Fix: the gate before adoption (2026-09-20)';
 const TITLE = '"Fix: the gate before adoption (2026-09-20)"';
 const LEG = 'file-view-figures-gate-adopt-browser.test.ts';
 const SVG_LEG = 'file-view-figures-gate-adopt-svg-browser.test.ts';
+/** The node scene that executes the order under plain node, where the legs skip. */
+const NODE_SCENE = 'file-view-figures-gate-adopt.test.ts';
 /** The seam test's guard for the premise where CI runs, as the plan's Tests paragraph quotes it. */
 const SEAM_GUARD = '"the inertness premise, held where CI runs"';
 
@@ -83,7 +87,15 @@ test('the section records the hole, the fix, the instrument, the measurement, th
     'Under WebKit a figure on an unlisted host was requested while the gate\'s placeholder, "Image from <host>. Click to load.", stood, so the placeholder was a false assurance.',
     'In Chromium and Firefox the servers\' logs held no line for either of those img figures before the chain ran, so for an HTML img only WebKit leaked; the engines\' scheduling of the fetch was not instrumented, the logs were read.',
     'For an inline svg\'s `<image>` the gate held in Chromium alone.',
+    'Firefox requested a gated svg image, spelt `href` or `xlink:href`, while its placeholder stood when the chain\'s work between the adoption and the gate\'s strip of that element was long: over the second leg\'s note (3000 paragraphs with a link each, then the two svg images) both figures in 3 of 3 runs at the base, over 400 plain paragraphs in 1 of 3; the run counts per note are under "Run counts, the svg vectors" below.',
     'WebKit requested the `xlink:href` spelling in every run and the `href` spelling in none.',
+    // the run counts, the one place they are stated (the comment, the svg leg's header and the ledger entry point here)
+    '**Run counts, the svg vectors.** Every count is at the base 2d41e5c9b, 2026-09-20, a request counted only while the placeholder stood, read from real servers\' logs through a logging proxy;',
+    'The second leg, in its three runs: Firefox both figures 3 of 3, WebKit the `xlink:href` figure 3 of 3 and the `href` one 0 of 3, Chromium 0 of 3; a sizing variant of the same note, Firefox alone: the `href` figure 3 of 3.',
+    '400 plain paragraphs 1 of 3 (the `xlink:href` figure; WebKit 3 of 3 `xlink:href` and Chromium 0 of 3 in those runs), 2000 plain 1 of 3 (the `href` figure), 400 with a link, code and emphasis each 1 of 3 (the `xlink:href` figure), 400 plain with forty gated svg figures on a third host before the two 0 of 3.',
+    'one svg image spelt `href` followed by 300 gated img figures 4 of 5; the same image alone 0 of 6 and 0 of 4; beside one img figure 0 of 5, 0 of 5 and 0 of 6;',
+    'the last of two or three svg images in a short note 2 of 3, 3 of 5 and 1 of 5.',
+    'Chromium: no svg figure requested in any run by any instrument. After the fix, no request in any engine in any run: the leg 3 of 3 per engine; the refuters 18 of 18, then 4, 4 and 2 runs, then 3 per engine.',
     // the fix
     'The whole figure chain now runs over that body and the adoption comes after: `const clean = sanitizeMd(dirty, mintHeadingIds)`, then resolveFigureRefs, rewriteFigureSrcs and gateRemoteFigures over `clean`, then `box.replaceChildren(...Array.from(clean.childNodes))`.',
     'no pass after the adoption sets, repoints or moves a fetching attribute.',
@@ -99,7 +111,11 @@ test('the section records the hole, the fix, the instrument, the measurement, th
     // the tests
     '**Tests.** ' + LEG + ', above: red in WebKit at 2d41e5c9b in all three scenes, green in Chromium and Firefox there, green in all three engines after the fix.',
     SVG_LEG + ', the second leg: red in Firefox and in WebKit at 2d41e5c9b, green in Chromium there, green in all three after the fix.',
-    'file-view-seam.test.ts pins the order in mdBlock (sanitize, rewrite, gate on `clean`, then the adoption, and no figure pass over `box`) and holds the premise where CI runs, since both legs skip where Playwright\'s engines are absent and CI\'s npm test runs before its one browser install: its test ' + SEAM_GUARD + ' pins',
+    'Both legs skip where Playwright\'s engines are absent, and CI\'s npm test runs before its one browser install, so in CI the legs skip and the node scene runs: ' + NODE_SCENE + ' drives the real openFileView and openUrlView under plain node over a stand-in with two documents, the sanitizer\'s body inert and the viewer\'s document live, and pins by execution that no node entering the live document carries a fetching attribute on an unlisted host or a page-relative path',
+    'that no write of such an attribute lands on a live-document element across the render, that the gated figures stand as placeholders holding their sources in data-fv-gated-* and a click on the host restores exactly them, and that the folder figure is requested through /file.',
+    'Red on three mutations of file-view.ts in scratch copies of the head (2026-09-20): the base\'s order (the adoption first: 16 leaks at the adoption in the file kind and 4 in the URL kind), the gate alone moved after the adoption (13 and 2), and one added post-adoption write of a gated src back into src (5 live writes and 2); green at the head.',
+    'It sees no bytes: a leak there is an attribute the browser would fetch through, judged by the scene\'s own oracle, never by figure-gate\'s remoteHost;',
+    'file-view-seam.test.ts pins the order in mdBlock (sanitize, rewrite, gate on `clean`, then the adoption, and no figure pass over `box`) and holds the inertness premise, which no node test can execute: its test ' + SEAM_GUARD + ' pins',
     'tools/upstream-ledger-figure-gate-before-adoption.test.mjs holds the ledger entry\'s file list, its count and its engine statements to the tree and the legs;',
     'tools/markdown-viewer-plan-gate-adopt.test.mjs holds this section\'s sentences to the code, its comment and the leg.',
   ]) assert.ok(s.includes(sentence), 'the section says: ' + sentence);
@@ -133,9 +149,12 @@ test('mdBlock runs the chain on the sanitized body and adopts after, and the ado
   assert.ok(block.includes('An inline svg\'s <image> is loaded by another path, and there the gate held in Chromium alone:'), 'the comment states the svg observation');
   assert.ok(block.includes('measured at the base by the second leg named below'), 'the svg observation names its leg');
   assert.ok(!/microtask/.test(block), 'no scheduling claim the leg did not measure');
-  // The two legs the comment names, in the order it names them, both under ui/webview.
-  const firstAt = block.indexOf(LEG), secondAt = block.indexOf(SVG_LEG);
+  // The two legs the comment names, in the order it names them, then the node scene, all under ui/webview.
+  const firstAt = block.indexOf(LEG), secondAt = block.indexOf(SVG_LEG), sceneAt = block.indexOf(NODE_SCENE);
   assert.ok(firstAt >= 0 && secondAt > firstAt, 'the comment names the img leg first and the svg leg second');
+  assert.ok(sceneAt > secondAt, 'and the node scene after both, as the order\'s executed pin where the legs skip');
+  assert.ok(fs.existsSync(path.join(REPO, 'ui', 'webview', NODE_SCENE)), NODE_SCENE + ' exists under ui/webview');
+  assert.ok(block.includes('the second leg\'s 3000-paragraph note, both figures, 3 of 3 runs; 400 plain paragraphs, 1 of 3; every count is under "Run counts, the svg vectors" in the plan section named below'), 'the Firefox svg sentence carries its two counts and points at the plan\'s Run counts paragraph');
   assert.ok(fs.existsSync(path.join(REPO, 'ui', 'webview', SVG_LEG)), SVG_LEG + ' exists under ui/webview');
   assert.ok(block.includes('the section ' + TITLE + ' of plans/markdown-viewer.md records the hole, the instrument and the scope'), 'the comment names the plan section');
 });
@@ -153,7 +172,7 @@ test('the leg exists, the section names it, and it is what the section says: rea
   assert.ok(leg.includes('const FIGURE = "http://remote.test/fig.png";'), 'the unlisted host is a .test name');
 });
 
-test('the Tests paragraph\'s premise guard is a test in file-view-seam.test.ts, and CI runs npm test before its one browser install, so the legs skip there', () => {
+test('the Tests paragraph\'s premise guard is a test in file-view-seam.test.ts, and CI runs npm test before its one browser install, so the legs skip there and the node scene runs', () => {
   const seam = read('ui', 'webview', 'file-view-seam.test.ts');
   assert.ok(seam.includes('\ntest(' + SEAM_GUARD.replace(/"$/, ': ')), 'the seam test holds a test titled by the phrase the section quotes');
   for (const pin of ['Object.keys(MD_PURIFY)', 'RETURN_DOM', 'shadowroot', '\\w+\\(clean\\b']) assert.ok(seam.includes(pin), 'the guard reads ' + pin);
@@ -162,7 +181,19 @@ test('the Tests paragraph\'s premise guard is a test in file-view-seam.test.ts, 
   assert.ok(testAt >= 0 && installAt > testAt, 'npm test runs before the one playwright install');
   assert.equal((ci.match(/npx playwright install/g) || []).length, 1, 'one browser install in CI');
   assert.ok(ci.slice(installAt).startsWith('run: npx playwright install chromium\n'), 'and it installs Chromium alone');
-  for (const leg of [LEG, SVG_LEG]) assert.ok(read('ui', 'webview', leg).includes('t.skip("playwright is not installed under vscode-extension'), leg + ' skips, saying so, without playwright');
+  for (const leg of [LEG, SVG_LEG]) {
+    const src = read('ui', 'webview', leg);
+    assert.ok(src.includes('t.skip("playwright is not installed under vscode-extension'), leg + ' skips, saying so, without playwright');
+    assert.ok(src.includes('file-view-figures-gate-adopt.test.ts, the node scene, is the guard that runs where this leg skips'), leg + '\'s skip names the node scene');
+  }
+  // the scene is a node test: no browser in its name (npm test runs every out-tests file; the legs skip themselves), no Playwright, the
+  // shim rule's call, and the two roads the section names, by their assertion messages
+  const scene = read('ui', 'webview', NODE_SCENE);
+  assert.ok(!/(?:require\w*\(|from )["']playwright/.test(scene), 'the scene reaches no browser: no import or require of playwright (its comments may name the legs\' engines)');
+  assert.ok(scene.includes('hideEdges(this)'), 'the stand-in is on the shim rule');
+  assert.ok(scene.includes('"road (a): no fetching attribute on an unlisted host, none page-relative, on any node at the moment it entered the live document"'), 'road (a), the adoption');
+  assert.ok(scene.includes('"road (b): no write of a fetching attribute on an unlisted host, or page-relative, landed on a live-document element"'), 'road (b), the writes');
+  assert.ok(scene.includes('loadGatedHost("remote.test", doc as unknown as ParentNode);'), 'the click phase restores through the product\'s own door');
 });
 
 test('the scope facts stand in the code they cite: the panes\' CSP names no remote img-src, the kernel sends Referrer-Policy same-origin', () => {

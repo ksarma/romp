@@ -5,7 +5,7 @@
 // had measured Firefox doing so too (found by the review's round 2, 2026-09-20). This module holds the entry to the tree and
 // to the legs: every file the branch changed is named in the where: line, by its path or its basename (the entry by the
 // ledger's own phrase, "this entry among them"), and exists; the count the line states is the number of files it names;
-// both browser legs are named in the line and in the body; the body's engine statements match the legs' own headers (the
+// both browser legs and the node scene are named in the line and in the body; the body's engine statements match the legs' own headers (the
 // img leg red in WebKit alone at the base, the svg leg red in Firefox and in WebKit, green in Chromium); the reach names
 // Firefox beside Safari, as the chain block's comment in file-view.ts does; no em dash. The file list is the branch's diff
 // at its head, written down: the entry is a record of that branch, so this module reads no git. Named by its subject and
@@ -26,6 +26,8 @@ const read = (...parts) => fs.readFileSync(path.join(REPO, ...parts), 'utf8');
 const ENTRY = 'upstream/2026-09-20-figure-gate-before-adoption.md';
 const IMG_LEG = 'ui/webview/file-view-figures-gate-adopt-browser.test.ts';
 const SVG_LEG = 'ui/webview/file-view-figures-gate-adopt-svg-browser.test.ts';
+/** The node scene that executes the order where the legs skip (CI installs no engine before npm test). */
+const NODE_SCENE = 'ui/webview/file-view-figures-gate-adopt.test.ts';
 /** `git diff --name-only 2d41e5c9b HEAD` at the branch's head, sorted as git prints it. */
 const FILES = [
   'plans/markdown-viewer.md',
@@ -34,6 +36,7 @@ const FILES = [
   'tools/upstream-ledger-figure-gate-before-adoption.test.mjs',
   IMG_LEG,
   SVG_LEG,
+  NODE_SCENE,
   'ui/webview/file-view-figures-gate-browser.test.ts',
   'ui/webview/file-view-seam.test.ts',
   'ui/webview/file-view-text-size.test.ts',
@@ -91,6 +94,22 @@ test('both browser legs are named in the where: line and in the body, the svg le
   assert.ok(where.includes('two inline svg images, one spelt href and one xlink:href'), 'the svg leg is described by its two spellings');
 });
 
+test('the node scene is named in the where: line and in the body, is a node test (no browser in its name, no Playwright), and both legs\' skip text names it as the guard that runs where they skip', () => {
+  assert.ok(where.includes(NODE_SCENE), `where: names ${NODE_SCENE} by its path`);
+  assert.ok(where.includes('one node scene'), 'the line counts the scene');
+  assert.ok(body.includes(path.basename(NODE_SCENE)), 'the body names the scene');
+  assert.ok(body.includes('red on the base\'s order and on two other mutations in scratch copies of the head, green at the head'), 'the body records the mutation runs');
+  assert.ok(!path.basename(NODE_SCENE).includes('browser'), 'a node test: no browser in its name, so npm test runs it under node');
+  const scene = read(NODE_SCENE);
+  assert.ok(!/(?:require\w*\(|from )["']playwright/.test(scene), 'the scene reaches no browser: no import or require of playwright (its comments may name the legs\' engines)');
+  assert.ok(scene.includes('hideEdges(this)'), 'its stand-in is on the shim rule (ui/test-dom-shim.test.ts)');
+  for (const leg of [IMG_LEG, SVG_LEG]) {
+    const src = read(leg);
+    assert.ok(src.includes('t.skip("playwright is not installed under vscode-extension; the browser legs need it (CI installs no browsers); file-view-figures-gate-adopt.test.ts, the node scene, is the guard that runs where this leg skips")'), `${leg}'s skip names the scene`);
+    assert.ok(src.split('\nimport ')[0].includes('file-view-figures-gate-adopt.test.ts executes the'), `${leg}'s header names the scene`);
+  }
+});
+
 test("the body's engine statements are the legs' own: the img leg red in WebKit alone at the base, the svg leg red in Firefox and WebKit, green in Chromium", () => {
   const imgHeader = read(IMG_LEG).split('\nimport ')[0];
   const svgHeader = read(SVG_LEG).split('\nimport ')[0];
@@ -98,6 +117,7 @@ test("the body's engine statements are the legs' own: the img leg red in WebKit 
   assert.ok(body.includes('red in WebKit at 2d41e5c9b in all three scenes, green in Chromium and Firefox there'), 'the body says so of the img leg');
   assert.ok(svgHeader.includes('red in Firefox') && svgHeader.includes('red in WebKit') && svgHeader.includes('green in Chromium'), "the svg leg's header: Firefox and WebKit red, Chromium green");
   assert.ok(body.includes('red in Firefox (both requested while the placeholders stood) and in WebKit (the xlink:href one) at 2d41e5c9b, green in Chromium there'), 'the body says so of the svg leg');
+  assert.ok(body.includes('(the second leg\'s 3000-paragraph note, both spellings, 3 of 3 runs; shorter notes in some runs or none; the counts are under "Run counts, the svg vectors" in the plan section)'), 'the Firefox svg statement carries its run counts and points at the plan\'s Run counts paragraph');
   assert.ok(body.includes('Both legs green in all three engines after the fix.'), 'the body records the fixed state for both legs');
   assert.ok(!body.includes('so neither leaked'), 'the pre-round-1 sentence that Chromium and Firefox did not leak is gone');
 });

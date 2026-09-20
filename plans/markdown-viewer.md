@@ -7749,9 +7749,10 @@ page, as the attribute read before rewriteFigureSrcs repointed it, and then agai
 the servers' logs held no line for either of those img figures before the chain ran, so for an HTML img only WebKit
 leaked; the engines' scheduling of the fetch was not instrumented, the logs were read. For an inline svg's `<image>` the
 gate held in Chromium alone. Firefox requested a gated svg image, spelt `href` or `xlink:href`, while its placeholder
-stood when the chain's work between the adoption and the gate's strip of that element was long: in one run of three over
-a note of 400 plain paragraphs, and in every run over the second leg's note, 3000 paragraphs with a link each and the
-two svg images at the end. WebKit requested the `xlink:href` spelling in every run and the `href` spelling in none.
+stood when the chain's work between the adoption and the gate's strip of that element was long: over the second leg's
+note (3000 paragraphs with a link each, then the two svg images) both figures in 3 of 3 runs at the base, over 400 plain
+paragraphs in 1 of 3; the run counts per note are under "Run counts, the svg vectors" below. WebKit requested the
+`xlink:href` spelling in every run and the `href` spelling in none.
 
 **The fix.** `sanitizeMd` (md-sanitize.ts) returns the body of DOMPurify's own parse document (RETURN_DOM; DOMPurify
 parses the markup with DOMParser, or into `implementation.createDocument` when that fails), a document with no browsing
@@ -7795,6 +7796,23 @@ ownerDocument is another document with `defaultView` null and an img in it fetch
 document with a src and no place in the tree fetches in every engine, the control that the instrument sees a fetch the
 page does make.
 
+**Run counts, the svg vectors.** Every count is at the base 2d41e5c9b, 2026-09-20, a request counted only while the
+placeholder stood, read from real servers' logs through a logging proxy; the numbers are the review's records, brought
+together here (the round-1 fixer's runs for the leg and its sizing variants, the round-1 finder's and the two refuters'
+for the rest), and this paragraph is the one place they are stated, the other records pointing here. The second leg, in
+its three runs: Firefox both figures 3 of 3, WebKit the `xlink:href` figure 3 of 3 and the `href` one 0 of 3, Chromium
+0 of 3; a sizing variant of the same note, Firefox alone: the `href` figure 3 of 3. The leg over shorter notes, Firefox
+alone unless said: 400 plain paragraphs 1 of 3 (the `xlink:href` figure; WebKit 3 of 3 `xlink:href` and Chromium 0 of 3
+in those runs), 2000 plain 1 of 3 (the `href` figure), 400 with a link, code and emphasis each 1 of 3 (the `xlink:href`
+figure), 400 plain with forty gated svg figures on a third host before the two 0 of 3. The review's finder and two
+refuters, each with its own servers and proxy, Firefox: one svg image spelt `href` followed by 300 gated img figures 4 of
+5; the same image alone 0 of 6 and 0 of 4; beside one img figure 0 of 5, 0 of 5 and 0 of 6; in a note of about two dozen
+figure vectors 3 of 3 (the finder) and 1 of 7 (a refuter), and that note's `xlink:href` image 2 of 7; the last of two or
+three svg images in a short note 2 of 3, 3 of 5 and 1 of 5. WebKit, the refuters: `xlink:href` 4 of 4 (one refuter's
+return; three of its result lines were recoverable, all with the figure), 4 of 4 and 3 of 3; `href` 0 of 4, 0 of 4, 0 of 3
+and 0 of 3. Chromium: no svg figure requested in any run by any instrument. After the fix, no request in any engine in any
+run: the leg 3 of 3 per engine; the refuters 18 of 18, then 4, 4 and 2 runs, then 3 per engine.
+
 **Scope.** Unreachable through the VS Code panes, whose CSP blocks remote figures (`img-src ${webview.cspSource} data:`,
 extension.ts). Reachable through the kernel-served dashboard and the iOS web app. What leaks is the IP address, the
 time, the user agent and the path; the kernel sends Referrer-Policy same-origin, so no referer. The engine measured is
@@ -7806,9 +7824,22 @@ measured.
 **Tests.** file-view-figures-gate-adopt-browser.test.ts, above: red in WebKit at 2d41e5c9b in all three scenes, green in
 Chromium and Firefox there, green in all three engines after the fix. file-view-figures-gate-adopt-svg-browser.test.ts,
 the second leg: red in Firefox and in WebKit at 2d41e5c9b, green in Chromium there, green in all three after the fix.
-file-view-seam.test.ts pins the order in mdBlock (sanitize, rewrite, gate on `clean`, then the adoption, and no figure
-pass over `box`) and holds the premise where CI runs, since both legs skip where Playwright's engines are absent and
-CI's npm test runs before its one browser install: its test "the inertness premise, held where CI runs" pins the
+Both legs skip where Playwright's engines are absent, and CI's npm test runs before its one browser install, so in CI
+the legs skip and the node scene runs: file-view-figures-gate-adopt.test.ts drives the real openFileView and openUrlView
+under plain node over a stand-in with two documents, the sanitizer's body inert and the viewer's document live, and
+pins by execution that no node entering the live document carries a fetching attribute on an unlisted host or a
+page-relative path (an img's src and srcset, a source's, a video's src and poster, an audio's src, an svg image's href or
+xlink:href, an svg paint reference, a figure inside details, a folder figure, and for a URL document a relative figure
+resolved against the document's directory), that no write of such an attribute lands on a live-document element across
+the render, that the gated figures stand as placeholders holding their sources in data-fv-gated-* and a click on the host
+restores exactly them, and that the folder figure is requested through /file. Red on three mutations of file-view.ts in
+scratch copies of the head (2026-09-20): the base's order (the adoption first: 16 leaks at the adoption in the file kind
+and 4 in the URL kind), the gate alone moved after the adoption (13 and 2), and one added post-adoption write of a gated
+src back into src (5 live writes and 2); green at the head. It sees no bytes: a leak there is an attribute the browser
+would fetch through, judged by the scene's own oracle, never by figure-gate's remoteHost; the engines' loading is the
+legs' and DOMPurify's document is the seam test's. file-view-seam.test.ts pins the order in mdBlock (sanitize, rewrite,
+gate on `clean`, then the adoption, and no figure pass over `box`) and holds the inertness premise, which no node test
+can execute: its test "the inertness premise, held where CI runs" pins the
 sanitizer's profile literal and its keys at run time, the config the sanitize is handed, sanitizeMd's body, the
 installed DOMPurify's RETURN_DOM branch with its one road into the live document (a clone under an allowed shadowroot
 attribute, which no profile here allows), and `clean` reaching the four chain calls and nothing else before the
