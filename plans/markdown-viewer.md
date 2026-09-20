@@ -7852,15 +7852,22 @@ re-parse created and gates it like any other; the same scene at the moved head, 
 unlisted host, each of the three fences holding one HTML img under exactly one placeholder with its `src` or `srcset`
 under `data-fv-gated-*` and no svg image left, the control holding no img, and one click on a placeholder loading the
 host, one request per img, no Referer. The three-placeholder effect is closed by the same move (one placeholder per
-fence in the scene's assertion). One further effect of the order, measured 2026-09-20 in the three engines by the fork
-PR review's verification (a note with an svg anchor on one line inside a fence and one split across lines, at the moved
-head and at a copy with the fence pass moved back after the adoption): an svg anchor split across lines inside such a
-fence is re-parsed in body as an HTML `a` whose `xlink:href` is a plain attribute, which the post-adoption fold
-`a[*|href]` does not match, so it ends a dead link (fv-dead) where the old order, folding before the re-parse, made it a
-section link (fv-frag); an svg anchor on one line keeps its namespace and folds as before, and an HTML anchor in a fence
-is stamped the same under both orders. Behaviour, not privacy: an HTML `a` with no `href` follows and fetches nothing.
-Whether the fold should also read a plain `xlink:href` on an HTML anchor is a design call left to the reviewer, not part
-of this fix.
+fence in the scene's assertion). The same move corrected a second product of the re-parse, measured 2026-09-20 in
+Playwright's three engines by the fork PR review's verification (a note with an svg anchor on one line inside such a
+fence and one split across lines, at the moved head and at a copy with the fence pass moved back after the adoption):
+an svg anchor split across lines is re-parsed in body as an HTML `a` whose `xlink:href` is a plain attribute with no
+namespace. Under the old order that anchor was followable (a section link, fv-frag) for exactly the reason the image
+leaked: the re-parse ran after the passes, so its product carried what they had stamped on the element they judged
+(the post-adoption fold's `href="#top"` and the link pass's class, copied into the HTML `a` the re-parse made) and
+escaped their judgment, as the img it made carried a `src` the chain never read. With the re-parse before the passes,
+they judge its product: the img is gated, and the split anchor, an HTML `a` with no `href`, is dead (fv-dead), which
+is what linkMarkdownAnchors (file-view-links.ts) makes of every HTML anchor with no `href`. Closing the leak and
+making that anchor inert are one effect, a correction and not a cost: a link inside a code fence stopped being live,
+which is what every other link inside a fenced code block already does, since the fence shows its markup as text.
+Behaviour, not privacy: an HTML `a` with no `href` follows and fetches nothing. An svg anchor on one line keeps its
+namespace and folds as before, and an HTML anchor written as raw markup in such a `<pre><code>` block is an element
+the passes read, not text, and is stamped the same under both orders (the same probe: a path link, live at both
+heads).
 
 **The re-parse population.** The rule needs every write that re-parses or re-serializes markup after the adoption
 enumerated, a different grep from the walk of attribute writes. The verbs are the HTML-parsing entry points an element
