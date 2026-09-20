@@ -699,7 +699,10 @@ test("a stamped delta whose gen differs, or whose base is above the held rev, or
     assert.equal(ws.sent.length, 3, "a composed frame reaching below the held rev: asked again");
     ws.frame({ type: "feedDelta", gen: G, base: 1, rev: 2, now: 523, buildId: 33, asks: [card(SID_A, 9)] });   // no through: every stamped delta carries it
     assert.equal(ws.sent.length, 4, "a stamped delta carrying no through: asked again");
-    assert.deepEqual(diagRows(sent, "feedDelta-stale"), [{ host: HOST, buildId: 30, why: "gen" }, { host: HOST, buildId: 31, why: "base" }, { host: HOST, buildId: 32, why: "through" }, { host: HOST, buildId: 33, why: "through" }], "one why per cause");
+    ws.frame({ type: "feedDelta", gen: G, base: 0, rev: 1.5, through: 0, now: 524, buildId: 34, asks: [card(SID_A, 9)] });   // below the held rev AND a rev that is no safe integer
+    assert.equal(ws.sent.length, 5, "a frame below the held rev with a bad rev: asked again");
+    assert.deepEqual(diagRows(sent, "feedDelta-stale"), [{ host: HOST, buildId: 30, why: "gen" }, { host: HOST, buildId: 31, why: "base" }, { host: HOST, buildId: 32, why: "through" }, { host: HOST, buildId: 33, why: "through" }, { host: HOST, buildId: 34, why: "through" }],
+                     "one why per field, the fields tested in order: a frame below the held rev reads through whatever its rev");
     assert.equal(feeds(emitted).length, before, "nothing applied, nothing emitted");
     assert.equal(fm.conns.get(HOST).feedRaw, raw, "the base stands");
     assert.deepEqual(heldOf(fm), { gen: G, rev: 1 }, "…and the pair with it");
@@ -710,7 +713,7 @@ test("a stamped delta whose gen differs, or whose base is above the held rev, or
     assert.deepEqual(heldOf(fm), { gen: G3, rev: 0 });
     ws.frame(cycle(G3, 0, 4));
     assert.deepEqual(heldOf(fm), { gen: G3, rev: 1 });
-    assert.equal(ws.sent.length, 4, "no further ask");
+    assert.equal(ws.sent.length, 5, "no further ask");
     fm.conns.get(HOST).closed = true;
   });
 });

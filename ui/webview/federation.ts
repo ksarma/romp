@@ -1523,15 +1523,17 @@ export class FederationManager {
       const inGate = !!held && gen === held.gen && Number.isSafeInteger(d.base) && d.base <= held.rev && Number.isSafeInteger(d.rev)
                      && Number.isSafeInteger(d.through) && d.through >= held.rev && d.rev === d.through;
       if (!inGate) {
-        // one why per cause, so a reader can tell a generation change from a base past the held rev: gen (the held pair's
-        // gen differs, or none is held for a stamped stream), base (above the held rev), through (below the held rev, or not
-        // carried: every stamped delta carries it), or rev (not a safe integer, or unequal to the through the frame states:
-        // the pair advances to rev, and a stamped delta's rev IS its through (the design's stamped shape: through equal to
-        // rev on a per-cycle delta, R on a composed frame), so a frame whose two disagree states no one rev to advance to
-        // and is refused rather than declared at either; the through causes are tested first, so a frame below the held
-        // rev reads "through" whatever its rev). Four words, the stale row's whole vocabulary.
+        // one why per FIELD the frame fails on, so a reader can tell a generation change from a base past the held rev:
+        // gen (the held pair's gen differs, or none is held for a stamped stream), base (not a safe integer, or above the
+        // held rev), through (not carried, so not a safe integer: every stamped delta carries it; or below the held rev),
+        // or rev (not a safe integer, or unequal to the through the frame states: the pair advances to rev, and a stamped
+        // delta's rev IS its through (the design's stamped shape: through equal to rev on a per-cycle delta, R on a
+        // composed frame), so a frame whose two disagree states no one rev to advance to and is refused rather than
+        // declared at either). The fields are tested in that order, so a frame below the held rev reads "through"
+        // whatever its rev, and "rev" is read only once gen, base and through have each passed. Four words, the stale
+        // row's whole vocabulary; each word covers every failure of its field.
         const why = !held || gen !== held.gen ? "gen" : !Number.isSafeInteger(d.base) || d.base > held.rev ? "base"
-                    : !Number.isSafeInteger(d.rev) ? "rev" : !Number.isSafeInteger(d.through) || d.through < held.rev ? "through" : "rev";
+                    : !Number.isSafeInteger(d.through) || d.through < held.rev ? "through" : "rev";
         this.diag("feedDelta-stale", { host, buildId: d.buildId, why });
         this.sendRemote(host, held ? { type: "needFullFeed", gen: held.gen, rev: held.rev } : { type: "needFullFeed" });
         return;
