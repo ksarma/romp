@@ -90,7 +90,7 @@ class OneHeightBasis(unittest.TestCase):
         # the only position:fixed body rule is the one inside the mobile block, so a document outside _MOBILE_MQ (a fine
         # pointer above 820 px, a coarse one above 1024 px) keeps its body in flow, and the base html,body chain
         # (test_the_shell_height_chain_applies_at_every_width) carries no top or position. Inside the block a fine pointer at
-        # or under 820 px takes this fixed body too, at the 0px fit() writes off a coarse pointer (round 2, 2026-09-19:
+        # or under 820 px takes this fixed body too, at the 0px fit() writes whenever the pointer is not coarse (round 2, 2026-09-19:
         # test_kernel_mobile's finePointer scenario, and the populations legs in test_keyboard_gap_served)
         self.assertEqual(html.count("body{position:fixed"), 1)
         # round 4 (2026-09-20): the consumers of --app-top DERIVED by the parser over every served style element, through any

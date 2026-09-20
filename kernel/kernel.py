@@ -69848,8 +69848,8 @@ if(h)document.documentElement.style.setProperty('--app-h',h+'px');
 // and the bottom offsetTop pixels of the screen showed bare page background under the composer (the user 2026-09-18 and
 // 2026-09-19, iPhone, installed app: an empty band about 80 CSS px tall between the composer and the keyboard's accessory
 // bar). Publish the pan as --app-top; the mobile body rule (position:fixed;top:var(--app-top)) moves the shell down into the
-// visible band. Written on every run, 0px off a coarse pointer whatever the visual viewport says (a fine-pointer browser has
-// no soft keyboard to pan for). Two gates on two axes (round 2, 2026-09-19): this writer is gated on the POINTER, so any
+// visible band. Written on every run, 0px whenever the pointer is not coarse or there is no visual viewport, whatever the
+// visual viewport says (a fine-pointer browser has no soft keyboard to pan for). Two gates on two axes (round 2, 2026-09-19): this writer is gated on the POINTER, so any
 // coarse document publishes its pan at any width; the consumer, the fixed body rule inside the _MOBILE_MQ block, is gated
 // on the LAYOUT query, which a window at or under 820 px matches at any pointer and a coarse one up to 1024 px. So a
 // fine-pointer window at or under 820 px takes the fixed body at top 0 and lays out as before, and a coarse document wider
