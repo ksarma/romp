@@ -8901,6 +8901,9 @@ meanwhile.
 tools/markdown-viewer-plan-print-vocabulary.test.mjs holds this section's words to CONTEXT.md's File comment entry: what
 the Comments panel draws over a PDF page is called comments here, never `annotation`, which that entry lists under
 _Avoid_ (a review finding, 2026-09-19).
+tools/markdown-viewer-plan-gate-adopt.test.mjs, the pin of the "Fix: the gate before adoption (2026-09-20)" section
+above, names this follow-on for one fact about its own section, that it follows "## Out of scope" and is not held to be
+the plan's last because this section lands at the same place; it pins nothing of this follow-on's.
 
 - ui/webview/file-print.test.ts, under node with no DOM: `step` over every phase and event (the wait's verdict among
   them, `ready` with `why` and the count: settled prints, the deadline with pictures pending stalls and the deadline
@@ -9253,10 +9256,12 @@ _Avoid_ (a review finding, 2026-09-19).
   beside the poster, nothing granted for the page, and the corrected grant sentence read from figure-gate.ts,
   file-print.ts's header and `printable`'s docstring, the sentence it replaced gone), file-view-figures-gate-browser.test.ts, pdf-new-tab.test.ts,
   button-vocab.test.ts, file-view.test.ts.
-- The node modules that drive the real viewer over the repo's DOM stand-ins, the 40 that
+- The node modules that drive the real viewer over the repo's DOM stand-ins, the 41 that
   `grep -l 'openFileView\|openUrlView' ui/webview/*.test.ts | grep -v browser` lists (39 at the round-2 review;
   file-print.test.ts joined the listing at the round-6 census, whose table of seats read by hand names the viewer's
-  functions, and drives the viewer in no case of its own), each run in its own capped scope
+  functions, and drives the viewer in no case of its own; ui/webview/file-view-figures-gate-adopt.test.ts, the node
+  scene of the "Fix: the gate before adoption (2026-09-20)" section above, joined it when the fork's main was merged
+  into this branch on 2026-09-20, and drives the real openFileView and openUrlView in cases of its own), each run in its own capped scope
   at the round-2 review (the review's ui-1, 2026-09-19): at be1db1ba7, the head before the round's fixes, 24 modules and
   210 of their 560 cases were red, every failure the bare `new MutationObserver` at the install or the read of
   `children` over a stand-in body, modules the review found green at the base; after the guard and the `childNodes`
