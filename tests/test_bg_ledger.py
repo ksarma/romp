@@ -192,6 +192,81 @@ class StopReconciler(_Backend):
         live, _ = self._ledger()
         self.assertEqual(len(live), 1, "no payload field, no verdict — never treat absence as empty")
 
+    def test_a_shell_the_reconciler_adopted_is_ruled_by_absence_like_one_the_launch_recorded(self):
+        # the round 3 pre-check (2026-09-19): an adopted entry carries the payload's own label (tool "shell"), a
+        # launch-recorded one the hook's tool name lowercased (tool "bash"); one predicate (report_absence_decides) reads
+        # every spelling of a shell, so a later payload that omits the adopted shell tombstones it "gone" as it does the
+        # recorded one. Pinned by the mutation pass of the same day: with "shell" dropped from the predicate the adopted
+        # entry stayed live for good, as a type of unproven coverage, and the session read as waiting on it
+        self._launch_bash()
+        self._stop(self.sess, [
+            {"id": "task-aa11", "type": "shell", "status": "running", "description": "campaign timer", "command": "sleep 40"},
+            {"id": "task-zz99", "type": "shell", "status": "running", "description": "a launch the hook missed", "command": "tail -f x"}])
+        live, _ = self._ledger()
+        self.assertEqual({(e["tid"], e["tool"]) for e in live}, {("task-aa11", "bash"), ("task-zz99", "shell")}, "two spellings, one per road")
+        self._stop(self.sess, [])
+        live, ended = self._ledger()
+        self.assertEqual(live, [])
+        self.assertEqual(sorted((w["tid"], w["why"]) for w in ended), [("task-aa11", "gone"), ("task-zz99", "gone")])
+
+    def test_an_untyped_adopted_entry_is_held_on_a_later_omission_not_defaulted_to_shell(self):
+        # round 4 of the reviewer's review (2026-09-19; its tests-1): the adopt default was `str(t.get("type") or
+        # "shell")`, so an entry with no type was filed as a shell and report_absence_decides retired it on a later
+        # omission, though its type was never learned, the one thing the predicate forbids. It records "" now (a type
+        # never learned) and is HELD, aligning with the seeded reconcile's own adoption. Unreachable on the bundled CLI
+        # (its producer always labels every entry), so the restricted side of an unverified default, not a live bug
+        self._stop(self.sess, [{"id": "task-untyped", "status": "running", "description": "a launch with no type"}])
+        live, ended = self._ledger()
+        self.assertEqual([(e["tid"], e["tool"]) for e in live], [("task-untyped", "")], "adopted as a type never learned, not shell")
+        self.assertEqual(ended, [])
+        self._stop(self.sess, [])                                  # a later payload omits it
+        live, ended = self._ledger()
+        self.assertEqual([e["tid"] for e in live], ["task-untyped"], "held: absence is no report about a type never learned")
+        self.assertEqual(ended, [])
+        # a control: an entry the report DOES type as a shell is still tombstoned on the omission
+        self._stop(self.sess, [{"id": "task-shell", "type": "shell", "status": "running", "description": "a real shell"}])
+        self._stop(self.sess, [])
+        _, ended = self._ledger()
+        self.assertIn(("task-shell", "gone"), [(w["tid"], w["why"]) for w in ended])
+
+    def test_the_two_reconciles_can_disagree_on_a_pending_shell_and_the_live_set_holds(self):
+        # round 4 of the reviewer's review (2026-09-19; its correctness-2, kernel-1 and regression-2): the comment
+        # claiming "the two reconciles of one payload cannot disagree" was false and is corrected. The predicate they
+        # SHARE (report_absence_decides) decides only which TYPES an omission may retire; the live-status filters
+        # differ (this ledger counts status=="running", the seeded reconcile counts every non-terminal status), so on a
+        # "pending" shell the seeded side holds the row live while the ledger tombstones it "gone". Harmless and out of
+        # this PR's scope: the live mirror, not the ledger, is the liveness authority, and it stays non-empty (the
+        # tombstone's only consumer is gated on an empty mirror). Unreachable on the bundled CLI (no build examined
+        # emits a pending shell). Characterisation: the filters are unchanged this round, so this holds on the base too;
+        # the round corrects the false comment, not the behaviour
+        self._launch_bash(tid="task-p", tuid="toolu_p")           # a launch-ledger entry, tool "bash", live generation
+        self.sess._seed_live_work_from_reg({"bgTasks": [{"taskId": "task-p", "type": "local_bash", "desc": "a long sweep",
+                                                        "since": int(time.time()) - 60, "toolUseId": "toolu_p", "lastTool": ""}]})
+        self.assertEqual(self.sess._seeded_tasks, {"task-p"})
+        self._stop(self.sess, [{"id": "task-p", "type": "shell", "status": "pending", "description": "a long sweep"}])
+        live, ended = self._ledger()
+        self.assertEqual([w["tid"] for w in ended], ["task-p"], "the ledger tombstones the pending shell: status != running")
+        self.assertEqual(live, [], "the ledger holds no live row for it")
+        self.assertIn("task-p", self.sess._bg_tasks, "the seeded reconcile holds it live: pending is not terminal")
+        self.assertEqual(self.sess._live_work_counts(), (0, 1), "the live authority holds the row, so the disagreement is harmless")
+
+    def test_the_ledger_reconcile_reads_the_one_usable_report_decision_so_an_unreadable_list_tombstones_nothing(self):
+        # the mutation pass over round 4 (2026-09-19; m27): the Stop hook feeds ONE usable-report decision to both
+        # reconciles, so the launch ledger does not act on a list the seeded reconcile refused. A ledger branch that read
+        # the raw list and filtered entries itself was left green: on a list with an entry the kernel cannot key it
+        # would tombstone every live entry absent from the readable ones as "gone", the destructive verdict the
+        # whole-list refusal exists to prevent. Two unreadable shapes: a dict with no id, and a non-dict entry beside a
+        # readable one (which is not adopted either)
+        self._launch_bash()
+        self._stop(self.sess, [{"type": "shell", "status": "running", "description": "no id here"}])
+        live, ended = self._ledger()
+        self.assertEqual([e["tid"] for e in live], ["task-aa11"], "a list this kernel cannot read rules nothing")
+        self.assertEqual(ended, [])
+        self._stop(self.sess, [{"id": "task-zz99", "type": "shell", "status": "running", "description": "readable"}, "not an entry"])
+        live, ended = self._ledger()
+        self.assertEqual([e["tid"] for e in live], ["task-aa11"], "the readable entry beside the unreadable one is not adopted")
+        self.assertEqual(ended, [])
+
 
 class KernelSeamEnrichesTheStream(unittest.TestCase):
     """_bg_live_norm: the lifecycle set stays the liveness authority; the ledger ENRICHES its rows by

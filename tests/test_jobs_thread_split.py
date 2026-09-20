@@ -14,6 +14,7 @@ import re
 import sys
 import threading
 import time
+import types
 import unittest
 from unittest import mock
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -149,8 +150,18 @@ class TheBrowserNeverWaitsOnTheHousekeeping(_LabCycles):
 
     def test_the_jobs_pass_has_its_own_split_and_scope(self):
         km = self.km
-        km._jobs_cycle()
-        snap = km._PERF_STATS.snapshot()
+        reads = []
+
+        def fake(who):                                    # a thread clock that advances one ms of user, half a ms of sys per read
+            reads.append(who)
+            return types.SimpleNamespace(ru_utime=0.001 * len(reads), ru_stime=0.0005 * len(reads), ru_maxrss=0)
+        with mock.patch.object(km, "_RUSAGE_THREAD", 11), mock.patch.object(km.resource, "getrusage", fake):
+            km._jobs_cycle()
+            snap = km._PERF_STATS.snapshot()
+        # the pass container's thread CPU (stages_cpu_ms; 2026-09-18 review, medium 8): its open and close reads apart
+        cpu = snap["stages_cpu_ms"]["jobsPass"]
+        self.assertGreaterEqual(cpu["user"], 1.0 - 1e-6, "the pass's CPU row moved: at least its own read pair apart")
+        self.assertAlmostEqual(cpu["sys"], cpu["user"] / 2.0, places=6, msg="the fake's ratio survives the fold")
         first = snap["jobs"]["firstPass"]
         self.assertIsNotNone(first, "the boot's first pass's split is kept under jobs.firstPass")
         self.assertIn("jobsPass", first["stages"], sorted(first["stages"]))
