@@ -42,11 +42,16 @@ This module holds four things, and it never skips: a pin that skips reports gree
    checks are all silently on the no-SDK road. The switch, not GITHUB_ACTIONS: a platform variable infers the
    requirement, the switch declares it, and a future CI step that runs pytest without the SDK on purpose (the
    served-page step installs none today) would red for the wrong reason under the former. Off the switch a box's bare
-   road warns and never fails. So a box's full run and a CI cell both go red the moment the installed SDK and
-   the constant disagree, and the bump stays the act the constant's comment describes: install the new version, run the
-   host tests on it, move the number. The residual is stated here because nothing else states it: nothing polls PyPI,
-   a person notices a release; the trigger for the bump is a red from this module on a box whose venv moved or a red
-   cell on a release that the pin refuses.
+   road warns and never fails. RequireSwitch runs that refusing road by execution: pytest in a child over
+   InstalledVersion's class node id with tests/sdk_blocker.py's sitecustomize prepended to the PYTHONPATH it inherits,
+   so the child's interpreter cannot import the SDK whichever venv runs this module; the child is red with the
+   switch's message under ROMP_SDK_REQUIRE=1 and one passed test with the warning once the variable is removed from
+   the environment the child inherits (before that case the fail branch was a non-red mutant: deleted, every test in
+   the repo stayed green under the switch, 2026-09-20). So a box's full run and a CI cell both go red the moment the
+   installed SDK and the constant disagree, and the bump stays the act the constant's comment describes: install the
+   new version, run the host tests on it, move the number. The residual is stated here because nothing else states it:
+   nothing polls PyPI, a person notices a release; the trigger for the bump is a red from this module on a box whose
+   venv moved or a red cell on a release that the pin refuses.
 4. The proof that this module cannot skip. The property is the OUTCOME, not a spelling: tests/conftest.py lists this
    file in _NEVER_SKIP_FILES and reports any skipped test report or skipped collection report for it as a failure
    carrying the skip's own reason, always, with no switch. NeverSkips proves that belt by execution, running pytest in
@@ -75,6 +80,7 @@ import tempfile
 import unittest
 import warnings
 from romp_load import load_source
+import sdk_blocker   # noqa: E402  the shared test helper, registered by name in tests/__init__.py like romp_load
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -419,6 +425,55 @@ class NeverSkips(unittest.TestCase):
         # a TestCase: exactly one test, under this name.
         self.assertEqual(unittest.defaultTestLoader.getTestCaseNames(InstalledVersion), [self.INSTALLED_VERSION_TEST],
                          "InstalledVersion's test is not collected under its name: the pin the belt guards is not in the run")
+
+
+class RequireSwitch(unittest.TestCase):
+    """The ROMP_SDK_REQUIRE=1 switch run against what it refuses: InstalledVersion in a child pytest whose interpreter
+    cannot import the SDK. tests/sdk_blocker.py's sitecustomize, in a scratch directory PREPENDED to whatever PYTHONPATH
+    the child inherits, hides an installed claude_agent_sdk (find_spec answers None for a module set to None in
+    sys.modules), so the child takes the no-SDK road on a venv with the SDK as on one without. On the switch the run is
+    red with the switch's own message and the FAILED line names InstalledVersion's node id; off it, with the variable
+    REMOVED from the inherited environment (the workflow's Run pytest step sets it in the parent this module runs
+    under, so leaving it out of a child's env would not turn it off), the same road is one passed test carrying the
+    warning. The child selects the CLASS node id, never the file: the file would collect this class too and spawn
+    grandchildren without end. It passes no -p tests.conftest: the module lives under tests/, whose conftest pytest
+    loads on its own, and registering it a second time is pluggy's "Plugin already registered" error (run 2026-09-20).
+    The message texts witness that the blocker took effect where there is an SDK to hide: an unloaded blocker on such a
+    venv reads as a pass under the switch and as a pass without the warning off it, and both are red here.
+    Before this case the fail branch was a non-red mutant: with its four lines deleted this module read 22 passed,
+    1 warning under the switch on a venv without the SDK, and 22 passed in CI's shape on one with it (2026-09-20)."""
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp(prefix="sdk-require-")
+        self.addCleanup(shutil.rmtree, self.d, ignore_errors=True)
+        with open(os.path.join(self.d, "sitecustomize.py"), "w") as f:
+            f.write(sdk_blocker.SITECUSTOMIZE)
+        self.node = "%s::%s" % (os.path.relpath(os.path.realpath(__file__), ROOT), InstalledVersion.__name__)
+
+    def _run_installed_version(self, require):
+        """pytest in a child over InstalledVersion's class node id with the blocker's directory prepended to the
+        inherited PYTHONPATH; `require` sets ROMP_SDK_REQUIRE=1, else the variable is popped from the child's env."""
+        env = dict(os.environ)
+        env.pop("ROMP_SDK_REQUIRE", None)
+        if require:
+            env["ROMP_SDK_REQUIRE"] = "1"
+        env["PYTHONPATH"] = os.pathsep.join([self.d] + [p for p in (env.get("PYTHONPATH", ""),) if p])
+        p = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "no:anyio", self.node],
+                           cwd=ROOT, env=env, capture_output=True, text=True, timeout=240)
+        return p.returncode, p.stdout + p.stderr
+
+    def test_on_the_switch_an_interpreter_without_the_sdk_fails_the_run_naming_the_switch(self):
+        rc, out = self._run_installed_version(require=True)
+        self.assertNotEqual(rc, 0, "ROMP_SDK_REQUIRE=1 on an interpreter without the SDK must fail the run, not warn: " + out[-3000:])
+        self.assertIn("ROMP_SDK_REQUIRE=1: this run requires the SDK", out, "the red must carry the switch's own message: " + out[-3000:])
+        self.assertIn("FAILED %s::" % self.node, out, "the red must be InstalledVersion's own test: " + out[-3000:])
+        self.assertIn("1 failed", out, "one test, failed, nothing skipped: " + out[-3000:])
+
+    def test_off_the_switch_the_same_interpreter_passes_with_the_warning(self):
+        rc, out = self._run_installed_version(require=False)
+        self.assertEqual(rc, 0, "off the switch the no-SDK road warns and never fails: " + out[-3000:])
+        self.assertIn("1 passed, 1 warning", out, "one test, passed, with the warning pytest lists under -q: " + out[-3000:])
+        self.assertIn("claude_agent_sdk does not import in this interpreter", out, "the warning must say what was not checked: " + out[-3000:])
 
 
 if __name__ == "__main__":
