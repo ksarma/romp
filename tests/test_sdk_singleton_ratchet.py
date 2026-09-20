@@ -341,8 +341,9 @@ match, the ERRORS section's; carriers: the set of tests whose report opens with 
 scopes named), the final summary line parsed (summary_mismatch, and the warned run's read of its warnings segment), and
 the presence or absence of a text (the
 judge fixture's, the exception group's header, the SDK notices), which the short summary cannot change since it only
-repeats what the ERRORS section already printed; the readers are the helpers defined between nested_run and _NestedRun,
-and TheReadersRosterNamesEveryReader derives that population from the source and reads each name here. CI's pytest is
+repeats what the ERRORS section already printed; the readers are the helpers defined between nested_run and _NestedRun
+whose first parameter is the child's output, and TheReadersRosterNamesEveryReader derives that population from the
+source and reads each name here. CI's pytest is
 unpinned (the workflow installs the latest, 9.1.1
 today, the test venv's version here too), and pytest's short summary prints each error's message whole when CI is set
 in the environment or at -vv and trimmed to the terminal width otherwise, so a reader that counted the boundary text's
