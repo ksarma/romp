@@ -34,13 +34,13 @@ class Row {
 }
 /** The view's host: `.turn[data-KEY="V"]` and `.turn[data-KEY~="V"]` (the whitespace-separated token), the selectors scrollToAnchor uses. */
 class Host {
-  rows: Row[] = [];
+  children: Row[] = [];   // the DOM edge name, the shape the edge-initialiser detector reads
   constructor() { hideEdges(this); }
   querySelector(sel: string): Row | null {
     const m = /^\.turn\[data-([\w-]+)(~?)="([^"]*)"\]$/.exec(sel);
     assert.ok(m, "scrollToAnchor's selector shape: " + sel);
     const key = m![1].replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
-    return this.rows.find((r) => { const v = r.dataset[key]; return v != null && (m![2] ? v.split(/\s+/).includes(m![3]) : v === m![3]); }) ?? null;
+    return this.children.find((r) => { const v = r.dataset[key]; return v != null && (m![2] ? v.split(/\s+/).includes(m![3]) : v === m![3]); }) ?? null;
   }
 }
 
@@ -53,11 +53,11 @@ type World = { host: Host; calls: any[]; writes: any[]; rows: any[]; toasts: str
  *  `keepY` a re-land's kept offset; `headFrom` and `older` shape the older-than-the-tail branch. */
 function world(o: Opts): World {
   const host = new Host();
-  for (const u of o.resident ?? []) host.rows.push(new Row("turn " + (o.events.find((e) => e.uuid === u)?.kind === "user" ? "turn-user" : "turn-assistant"), u));
+  for (const u of o.resident ?? []) host.children.push(new Row("turn " + (o.events.find((e) => e.uuid === u)?.kind === "user" ? "turn-user" : "turn-assistant"), u));
   const s: any = { id: "A", events: o.events, status: { state: "working" }, proto: o.proto ?? 1, headFrom: o.headFrom ?? 0, regions: undefined };
   const v: any = { el: host };
   const H: any = { host, s, v, calls: [] as any[], writes: [] as any[], rows: [] as any[], toasts: [] as string[], intent: o.intent ?? null, keepY: o.keepY ?? null, older: !!o.older,
-                   build: (uuid: string) => { if (o.rendersOnBuild) { const ev = o.events.find((e) => e.uuid === uuid); host.rows.push(new Row("turn " + (ev?.kind === "user" ? "turn-user" : "turn-assistant"), uuid)); } } };
+                   build: (uuid: string) => { if (o.rendersOnBuild) { const ev = o.events.find((e) => e.uuid === uuid); host.children.push(new Row("turn " + (ev?.kind === "user" ? "turn-user" : "turn-assistant"), uuid)); } } };
   const js = liftBetween("function scrollToAnchor(uuid: string): boolean {", "/** The atoms of the transcript turn");
   const prelude = `
     const H = HOOKS;
