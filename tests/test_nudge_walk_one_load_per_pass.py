@@ -620,11 +620,13 @@ fix sets that name aside and the plant leaves every case green since (39 passed)
 
 Review round 7 (2026-09-20; the reviewer's standard after round 6: no instrument in this module carries a hand-written population on
 any axis where the module can compute one, and every instrument states which axes it derives and which it bounds). Ten fixes landed,
-nine planned and one the records pass found, and every state below was taken at this head, the head of the round-7 fixes, over its
-39 cases (the round adds one, the door witness's unread road), each landed on kernel/kernel.py, kernel/judge.py or this module and
-reverted, the kernel, the judge and this module hashed before the plant and after the revert and found equal, the module run
-single-process on 3.12 through the clean runner; where a plant left the module green on the tree before its fix the paragraph says
-so in words, and every figure is this head's. The census floor (regression-1, extra4-2 and tests-3): _census_floor read two
+nine planned and one the records pass found, and the round's close landed the closures of the verifiers' eight findings, recorded at
+the end of this paragraph; every state below but the registry finding's pre-fix state, labelled by its tree where it stands, was
+taken at this head, the head of the round-7 fixes, over its 39 cases (the round adds one, the door witness's unread road), each
+landed on kernel/kernel.py, kernel/judge.py or this module and reverted, the kernel, the judge and this module hashed before the
+plant and after the revert and found equal, the module run single-process on 3.12 through the clean runner; where a plant left the
+module green on the tree before its fix the paragraph says so in words, and every figure is this head's but that one state's,
+which its sentence labels by its tree. The census floor (regression-1, extra4-2 and tests-3): _census_floor read two
 container shapes, a module-level def and a direct method of a module-level class, so a reader in any other container was attributed
 to nothing; it attributes every reader reference to its nearest def or class chain over the whole tree now, and the roster case pins
 the class chains and the module statements with a reason each. The states, each green before the fix: a census written as a method
@@ -699,7 +701,35 @@ second judge module loaded under another name reds the birth pin alone, naming `
 alias control, the shared door bound at kernel import and called per session, reds the shared reconciliation on each of the five
 harness cases that drive a pass, 2 against 0, 7 against 5 twice, 6 against 4 and 3 against 1, and the birth pin, the door witness's
 fourteen cases green under it (6 failed, 33 passed). The round-6 paragraph's states were re-taken at this head as well, and that
-paragraph's last sentences record the result. The clean module at this head, the head of the round-7 fixes: 39 passed single-process
+paragraph's last sentences record the result. The round's close (the verifiers' eight findings on the round's delta, four of them the
+seventh-axis lens's). The class attributes (the lens's first find): the cleanup's check read the module globals of both modules
+and put one class attribute, Sessions.backend_for, back by hand, so a stub a case left on any other class attribute lived for
+every later test unnamed; _class_attributes derives every attribute of every class either module defines from the classes' own
+dicts, setUp snapshots it and _restore checks it after the globals are back, and setUp saves backend_for from the class dict so
+the staticmethod object goes back. The states: a new-identity pass-through on km.Sessions.live and on jd._ParseStore.get in the
+wedge-gate sweep case, with a probe at the module's last case reading both class-dict entries against the import-time objects,
+left the wedge case's cleanup green with the probe red before (1 failed, 38 passed), and reds the wedge case at its cleanup naming
+both under the class-attributes labels since, the probe green (1 failed, 38 passed); a probe at the last case reading the class
+dict's backend_for against the import-time staticmethod found a plain function before (1 failed, 38 passed) and the staticmethod
+since (39 passed). REPLACED_DATA (the second find): the tuple was pinned by the census's count alone, and its two Bounds clauses
+said a callable put on it was skipped unseen; setUp derives it from the kernel objects it found, the names of REPLACED_KM whose
+object is not callable, and holds it equal to the tuple both ways. The states: a callable added to the tuple red the census's
+count line alone, 20 against 21 (1 failed, 38 passed), so the clause was false in the safe direction, and with the count edited
+to match left the module green (39 passed); the same reds the nineteen harness cases at setUp naming both tuples since, and the
+agreement-span pin, whose expected refusal that line pre-empts (20 failed, 19 passed). The _pass Bounds sentence (the third
+find) said CASE_KM and CASE_JD were pinned by nothing past the cleanup fix that pins them; it says what the class docstring
+says now, prose only. The finder's forms (the fourth find): the samples pinned the roster by name both ways and by form one
+way; the forms the finder reports are derived from its own source and the forms the samples cover from the rows, and each is
+held to _FINDER_FORMS, a roster like _TRAVERSAL, both ways. The states: the four getattr sample rows removed, alone and with
+the finder's getattr branch deleted as well, each left the module green before (39 passed each); with the source derivation
+held against the samples alone, the close's first pin, the rows alone red the finder case naming getattr (1 failed, 38 passed)
+while the rows and the branch together left it green (39 passed), the two derived sets agreeing; each reds the finder case
+naming getattr since (1 failed, 38 passed each), and the branch deleted with the rows intact reds the same case (1 failed, 38
+passed). The four prose corrections, no state each: this paragraph's framing sentence, above, said every figure was this
+head's while the registry finding's pre-fix figure is another tree's; the door witness said every drive seeds a one-node
+store, and five of the thirteen seed none (weakened at its four live places and in the round-5 paragraph); the module docstring
+and setUp's comment placed the shared door's name lookup in _or_fault, and the outer wrapper makes it; and _line_trace's Bounds
+sentence names the outer tracer's blind window. The clean module at this head, the head of the round-7 fixes: 39 passed single-process
 on 3.10, 3.11, 3.12, 3.13 and 3.14t.
 
 Drives the real pass (_auto_nudge_tick) over two alive sessions with real transcript files and real goal stores, on the
