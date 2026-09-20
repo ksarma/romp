@@ -2322,6 +2322,144 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
                              "problem_row's line, built from prose through a helper's returned row, and _log_quietly's forwarded parameters")
 
 
+    def test_a_chain_the_inner_loop_needs_seven_passes_for_is_followed_to_the_door(self):
+        """The taint visit's inner loop over a function's own stores runs at most six passes. A chain of seven names
+        assigned in reverse order (each from the one the NEXT statement fills, the last from the env) gains one link
+        per pass, so the sixth pass ends with the first name clean and the visit ends still growing. Before fork PR
+        781's readers index, the module-wide sweep on a grown module name happened to give the function another visit
+        (a name grew after its first visit); the index removed the sweep, so the census re-visits a function whose loop
+        ran out (Census.cap_requeues counts them), and the tenth row is found through the chain with the chain's taint
+        alone: the ring text counts the last link and reads no source."""
+        chain = "".join("        %s = %s\n" % (a, b) for a, b in zip("gfedcb", "fedcba")) + "        a = sess.env_vars\n"
+        c = self._census(self._method(chain + '        self._log("env (%s): tenth %s" % (sess.name, ", ".join(g)), problem=True, '
+                                              'ring_text=TENTH_RING % (sess.name[:20], len(g)))'))
+        self._assert_tenth_found(c, "self")
+        self.assertGreaterEqual(c.cap_requeues, 1, "the plant's function ran its inner loop out and was re-visited")
+        self.assertEqual(sorted(c.tainted_names[[f for f in c.all_fns if f.qual == "SdkBackend._tenth"][0]]), list("abcdefg"))
+
+
+    def test_an_attribute_read_by_reflection_and_stored_later_in_the_file_reaches_the_door(self):
+        """A helper reads `getattr(self, "_tenth_names", None)`, the names are stored on the attribute by a method
+        written AFTER it, and the row's function reads the helper's return. In file order the helper is visited with
+        the attribute clean; the store then grows the attribute, and only a re-visit of the helper carries the names
+        into its return and on to the row. Before fork PR 781 the module-wide sweep on a grown module name gave the
+        helper that visit by accident: the attribute readers index knew `<x>._tenth_names` alone, not the reflected
+        forms expr_taint reads through _reflected_attr, and the PR's differential over the real pair found
+        _stamp_launch_login's `getattr(sess, "_launching", None)` losing its taint the moment the sweep went. The index
+        holds the reflected forms now, so the row is found; the helper is no caller of the writer, so nothing else
+        re-visits it (a plant whose row function reads the attribute itself is re-visited as the writer's caller and
+        proves nothing)."""
+        c = self._census(self._copy(lambda s: self._with_format(s).replace(
+            self.METHOD_ANCHOR,
+            '    def _tenth(self, sess):\n        names = self._tenth_names_of()\n'
+            '        self._log("env (%s): tenth %s" % (sess.name, ", ".join(names)), problem=True, ring_text=TENTH_RING % (sess.name[:20], len(names)))\n\n'
+            '    def _tenth_names_of(self):\n        return getattr(self, "_tenth_names", None) or []\n\n'
+            '    def _tenth_store(self, sess):\n        self._tenth_names = sorted(sess.env_vars)\n\n' + self.METHOD_ANCHOR)))
+        self._assert_tenth_found(c, "self")
+        helper = [f for f in c.all_fns if f.qual == "SdkBackend._tenth_names_of"][0]
+        self.assertIn(helper, c.attr_readers["_tenth_names"], "the reflected read indexes the helper as the attribute's reader")
+        self.assertIn(("_tenth_names_of", "_tenth_store"), [(a.qual.split(".")[-1], b.qual.split(".")[-1]) for a in c.all_fns for b in c.all_fns
+                                                              if a.qual.endswith("_tenth_names_of") and b.qual.endswith("_tenth_store")
+                                                              and c.all_fns.index(a) < c.all_fns.index(b)],
+                      "the helper is visited before the store in file order, so the row depends on the re-visit")
+
+
+    def _module_list_plant(self):
+        """A module list extended by a method written AFTER the method that joins it into a local for the tenth row: in
+        file order the reader is visited with the list clean, the store then grows the module-level name, and only a
+        re-visit of the reader carries the names to the row. The reader is a caller of the writer and nothing else, and
+        the writer returns nothing, so no other event re-visits it: the row depends on the module name's readers index
+        (fork PR 781), where before the PR the module-wide sweep on the grown name visited every function."""
+        return self._copy(lambda s: s.replace(self.FMT_ANCHOR, self.TENTH + "_TENTH_SEEN = []\n" + self.FMT_ANCHOR).replace(
+            self.METHOD_ANCHOR,
+            '    def _tenth(self, sess):\n        names = ", ".join(_TENTH_SEEN)\n'
+            '        self._log("env (%s): tenth %s" % (sess.name, names), problem=True, ring_text=TENTH_RING % (sess.name[:20], len(names)))\n\n'
+            '    def _tenth_store(self, sess):\n        _TENTH_SEEN.extend(sorted(sess.env_vars))\n\n' + self.METHOD_ANCHOR))
+
+    def test_every_function_whose_taint_visit_reads_a_module_name_is_in_the_readers_index_for_it(self):
+        """Fork PR 781, before round 7: the census walk's cost on CI. The taint pass re-visited every function of a module
+        whenever a module-level name's stored taint grew (three such events over 715 functions: 2101 visits of 743
+        functions, 85 of them changing anything), and with this class constructing 175 censuses the module ran 337 s
+        serial against 1.55 s at the PR's base, past CI's 25-minute job ceiling. The pass now re-visits the name's
+        READERS by an index Census._index builds from the same test the reads make (a bare Name read that no scope of
+        the function binds, then Census._global_read). The pin traces _global_read during _taint over the module-list
+        plant, where a taint visit does read a grown name (over the real pair none does: one grown name is read in an
+        `if` test alone, which no taint visit evaluates, the other only under a `global` declaration that binds it):
+        every function whose visit read a name is indexed as its reader, the index is the predicate run over every
+        function's reads, no reader is indexed without a Name read of the name under its def, and the index is
+        narrower than the module."""
+        class Tracing(Census):
+            def _taint(self):
+                self.traced, self._tracing = collections.defaultdict(set), True
+                try:
+                    super()._taint()
+                finally:
+                    self._tracing = False
+
+            def _global_read(self, fn, name):
+                if getattr(self, "_tracing", False):
+                    self.traced[(self.mod_of(fn).path, name)].add(fn)
+                return super()._global_read(fn, name)
+
+        c = Tracing((self._module_list_plant(), CREDENTIALS_PY), DEFAULT_SOURCES)
+        self._assert_tenth_found(c, "self")
+        key = (c.mods["sdk_backend.py"].path, "_TENTH_SEEN")
+        self.assertIn(key, c.global_taint, "the module list gains the env: a growth event for the index to answer")
+        self.assertEqual(sorted(f.qual for f in c.traced[key]), ["SdkBackend._tenth"], "the reader's taint visit reads the grown name")
+        # soundness: every function whose taint visit read a module name is indexed as its reader
+        missing = sorted((os.path.basename(k[0]), k[1], fn.qual) for k, fns in c.traced.items() for fn in fns
+                         if fn not in c.global_readers.get(k, ()))
+        self.assertEqual(missing, [], "a function whose taint visit read a module name is not indexed as its reader")
+        # the index is the recognising predicate (a Name read no scope binds) run over every function's reads
+        ident = lambda fn: (fn.base, fn.qual, fn.node.lineno)
+        rebuilt = collections.defaultdict(set)
+        for fn in c.all_fns:
+            for name in fn.name_reads:
+                if not c._binds(fn, name):
+                    rebuilt[(fn.file, name)].add(ident(fn))
+        self.assertEqual({k: sorted(ident(f) for f in v) for k, v in c.global_readers.items()},
+                         {k: sorted(v) for k, v in rebuilt.items()})
+        # and no reader is indexed without a Name read of the name under its def
+        for (_path, name), fns in c.global_readers.items():
+            for fn in fns:
+                loads = {n.id for n in ast.walk(fn.node) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)}
+                self.assertIn(name, loads, "%s is indexed as a reader of %s without a Name read of it" % (fn.qual, name))
+        # the index is narrower than the module for every grown name: the saving is real
+        module_fns = len(c.mods["sdk_backend.py"].fns)
+        for k in c.global_taint:
+            self.assertLess(len(c.global_readers.get(k, ())), module_fns, k[1])
+
+    def test_the_readers_only_pass_reaches_the_module_wide_sweeps_fixpoint(self):
+        """A census that restores the module-wide sweep (Census._global_growth_readers returning the module's every
+        function, the enqueue before fork PR 781) reaches the same taint stores and the same rows as the readers-only
+        pass while visiting more, over the real pair and over the module-list plant, where the readers index is
+        load-bearing. Over the real pair no function runs its inner loop out, so the two passes differ in the enqueue
+        alone."""
+        class Sweeping(Census):
+            def _global_growth_readers(self, key):
+                return self.mods[key[0]].fns
+
+        ident = lambda fn: (fn.base, fn.qual, fn.node.lineno)
+        by_fn = lambda d: {ident(f): {str(k): sorted(v) for k, v in m.items() if v} for f, m in d.items() if any(m.values())}
+        by_name = lambda d: {k: sorted(v) for k, v in d.items() if v}
+        rows = lambda c: [(dc.base, dc.lineno, dc.kind, sorted(dc.taint), dc.heads, dc.ring_formats, dc.unreduced, sorted(dc.residual))
+                          for dc in c.door_calls]
+        for label, files in (("the real pair", (SDK_BACKEND, CREDENTIALS_PY)), ("the module-list plant", (self._module_list_plant(), CREDENTIALS_PY))):
+            with self.subTest(over=label):
+                fast, slow = Census(files, DEFAULT_SOURCES), Sweeping(files, DEFAULT_SOURCES)
+                self.assertTrue(fast.global_taint, "module names gain taint: the sweep had events to fire on")
+                self.assertGreater(slow.taint_rounds, fast.taint_rounds, "the sweep visits more, else the pin compares a pass with itself")
+                if label == "the real pair":
+                    self.assertEqual(fast.cap_requeues, 0, "no function ran its inner loop out over the real pair")
+                for attr, view in (("tainted_names", by_fn), ("carried_names", by_fn), ("ret_taint", by_fn), ("ret_whole", by_fn),
+                                   ("attr_taint", by_name), ("attr_whole", by_name)):
+                    self.assertEqual(view(getattr(fast, attr)), view(getattr(slow, attr)), attr)
+                self.assertEqual({k[1]: sorted(v) for k, v in fast.global_taint.items()}, {k[1]: sorted(v) for k, v in slow.global_taint.items()})
+                self.assertEqual(rows(fast), rows(slow))
+                self.assertEqual((fast.content_identities(), fast.failures, [(dc.lineno, why) for dc, why in fast.explicit_violations]),
+                                 (slow.content_identities(), slow.failures, [(dc.lineno, why) for dc, why in slow.explicit_violations]))
+
+
 class LogQuietlyAtRuntime(_Backend):
     """The runtime half of _log_quietly's problem=False (round 6; its lexical half is the census's rule (2)): a line
     through the conduit inside a live except handler, where _log's default would file it, lands on the kernel log

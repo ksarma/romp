@@ -260,12 +260,13 @@ def parsed(path):
 class Fn:
     __slots__ = ("qual", "name", "file", "base", "node", "cls", "parent", "params", "kwonly", "vararg", "kwarg",
                  "defaults", "kind", "calls", "assigns", "returns", "lexical", "nested", "globals_", "annotations",
-                 "_params_set", "_assigned", "_loops", "_chain")
+                 "name_reads", "_params_set", "_assigned", "_loops", "_chain")
 
     def __init__(self, qual, name, file, node, cls, parent):
         self.qual, self.name, self.file, self.node, self.cls, self.parent = qual, name, file, node, cls, parent
         self.base = os.path.basename(file)
         self.calls, self.assigns, self.returns, self.nested, self.globals_ = [], [], [], {}, set()
+        self.name_reads = set()    # every identifier read as a bare Name under this def (Census._index says which nodes)
         self.lexical = {}          # id(call) -> True when the call sits inside an except handler of this def
         self.kind = "function"     # function | method | static | classmethod | lambda
         args = node.args
@@ -304,8 +305,14 @@ class Fn:
             self._assigned = out
         return self._assigned
 
+    LOOP_NODES = (ast.For, ast.AsyncFor, ast.comprehension, ast.With, ast.AsyncWith)
+
     def loops(self):
-        """The for loops, comprehensions and with items of this function's own body."""
+        """The for loops, comprehensions and with items of this function's own body: every such node under the def's
+        own node (its decorators, default arguments and annotations included) outside any nested def or lambda. The
+        walk below defines the set; Census._index fills it during its one pass (fork PR 781: the walk was a second full
+        traversal per function, 0.12 s of a 0.9 s construction over the real pair), so the walk runs only for a Fn the
+        index did not build. The two orders differ; _taint_fn unions its stores to a fixpoint, so the result does not."""
         if self._loops is None:
             out = []
             stack = [self.node]
@@ -314,7 +321,7 @@ class Fn:
                 for ch in ast.iter_child_nodes(n):
                     if isinstance(ch, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
                         continue
-                    if isinstance(ch, (ast.For, ast.AsyncFor, ast.comprehension, ast.With, ast.AsyncWith)):
+                    if isinstance(ch, Fn.LOOP_NODES):
                         out.append(ch)
                     stack.append(ch)
             self._loops = out
@@ -424,7 +431,8 @@ class Census:
         self.classes_by_name = collections.defaultdict(list)
         self.cls_by_node = {}    # id(ClassDef) -> Cls
         self.fn_by_node = {}     # id(FunctionDef | Lambda) -> Fn
-        self.attr_readers = collections.defaultdict(set)   # attribute name -> Fns reading `<x>.<name>`
+        self.attr_readers = collections.defaultdict(set)   # attribute name -> Fns reading `<x>.<name>`, or it by reflection
+        self.global_readers = collections.defaultdict(set)  # (module path, name) -> Fns reading the module-level name
         self.ring_refs = []      # (Mod, Attribute node, enclosing Fn or None) for every `<x>._problems` in the files
         self.ident_consts = []   # (Mod, Constant node, enclosing Fn or None) for every string constant spelling an identifier
         self.all_fns = []
@@ -457,6 +465,7 @@ class Census:
                 qual = "%s.<locals>.%s" % (parent.qual, name)
             fn = Fn(qual, name, mod.path, node, cls, parent)
             fn.kind = kind
+            fn._loops = []              # filled below as the pass meets the loop nodes (Fn.loops says which)
             mod.fns.append(fn)
             self.all_fns.append(fn)
             self.fn_by_node[id(node)] = fn
@@ -465,27 +474,76 @@ class Census:
                 parent.nested.setdefault(name, []).append(fn)
             return fn
 
-        def handle(child, cls, fn, handler):
-            """One node, in the scope (cls, fn) and lexical handler state of its parent."""
+        def stray_loops(nodes, owner):
+            """The loop nodes under fields this pass does not otherwise visit (a class statement's keywords, a def's or
+            class's type parameters), for Fn.loops of `owner`, by the walk that defines the set."""
+            if owner is None:
+                return
+            stack = list(nodes)
+            while stack:
+                n = stack.pop()
+                for ch in ast.iter_child_nodes(n):
+                    if isinstance(ch, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                        continue
+                    if isinstance(ch, Fn.LOOP_NODES):
+                        owner._loops.append(ch)
+                    stack.append(ch)
+            for n in nodes:
+                if isinstance(n, Fn.LOOP_NODES):
+                    owner._loops.append(n)
+
+        def handle(child, cls, fn, handler, also=None):
+            """One node, in the scope (cls, fn) and lexical handler state of its parent. `also` is a second Fn the taint
+            pass evaluates the node under besides the lexical `fn`: the def or lambda whose decorators, default arguments
+            or annotations hold it (Fn.loops walks them from the def's own node, so a comprehension there is tainted
+            under the def, while the node's calls and assignments are the enclosing scope's), or the function whose body
+            holds the class body the node sits in (the same walk crosses a nested class). Both Fns are readers of the
+            attributes and module-level names the node reads."""
             if isinstance(child, ast.Attribute):
                 if child.attr == self.RING_ATTR:
                     self.ring_refs.append((mod, child, fn))
-                if fn is not None and isinstance(child.ctx, ast.Load):
-                    self.attr_readers[child.attr].add(fn)
+                if isinstance(child.ctx, ast.Load):
+                    if fn is not None:
+                        self.attr_readers[child.attr].add(fn)
+                    if also is not None:
+                        self.attr_readers[child.attr].add(also)
+            elif isinstance(child, ast.Name) and isinstance(child.ctx, ast.Load):
+                if fn is not None:
+                    fn.name_reads.add(child.id)
+                if also is not None:
+                    also.name_reads.add(child.id)
             elif isinstance(child, ast.Constant) and isinstance(child.value, str) and child.value.isidentifier():
                 self.ident_consts.append((mod, child, fn))
+            elif isinstance(child, Fn.LOOP_NODES):
+                # Fn.loops: the node belongs to the innermost enclosing def or lambda, `also` where the node sits in a
+                # def's decorators, defaults or annotations or in a class body inside a function, else the lexical fn
+                owner = also if also is not None else fn
+                if owner is not None:
+                    owner._loops.append(child)
+            elif isinstance(child, (ast.Call, ast.Subscript)):
+                # an attribute read by REFLECTION (`getattr(x, "n", d)`, `vars(x)["n"]`, `x.__dict__["n"]`, `x.__dict__.get("n")`)
+                # is a reader of `n` like `<x>.n` is, by the recognition expr_taint reads it through (_reflected_attr). Found
+                # by fork PR 781's differential when the module-wide sweep below went: _stamp_launch_login reads
+                # `getattr(sess, "_launching", None)`, the attribute's taint grows after its first visit, and the sweep on a
+                # grown module name had been giving it the re-visit the attribute owed it
+                ra = self._reflected_attr(child)
+                if ra is not None:
+                    for reader in (fn, also):
+                        if reader is not None:
+                            self.attr_readers[ra[1]].add(reader)
             if isinstance(child, ast.ClassDef):
                 c = Cls(child.name, mod.path, child, [ast.unparse(b) for b in child.bases])
                 if fn is None:
                     mod.classes[child.name] = c
                 self.classes_by_name[child.name].append(c)
                 self.cls_by_node[id(child)] = c
+                stray_loops([kw.value for kw in child.keywords] + list(getattr(child, "type_params", ())), fn if fn is not None else also)
                 for d in child.decorator_list + child.bases:
                     self.parents[d] = child
-                    handle(d, cls, fn, handler)
+                    handle(d, cls, fn, handler, also)
                 for stmt in child.body:
                     self.parents[stmt] = child
-                    handle(stmt, c, None, False)
+                    handle(stmt, c, None, False, fn if fn is not None else also)
                 return
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 decos = [ast.unparse(d) for d in child.decorator_list]
@@ -497,14 +555,15 @@ class Census:
                     cls.methods[child.name] = f
                 elif fn is None and cls is None:
                     mod.top_defs[child.name] = f
+                stray_loops(list(getattr(child, "type_params", ())), f)
                 for d in child.decorator_list:
                     self.parents[d] = child
-                    handle(d, cls, fn, handler)
+                    handle(d, cls, fn, handler, f)
                 self.parents[child.args] = child
-                handle(child.args, cls, fn, handler)
+                handle(child.args, cls, fn, handler, f)
                 if child.returns is not None:
                     self.parents[child.returns] = child
-                    handle(child.returns, cls, fn, handler)
+                    handle(child.returns, cls, fn, handler, f)
                 for stmt in child.body:
                     self.parents[stmt] = child
                     handle(stmt, None, f, False)
@@ -512,7 +571,7 @@ class Census:
             if isinstance(child, ast.Lambda):
                 f = new_fn(child, None, fn, "<lambda@%d>" % child.lineno, "lambda")
                 self.parents[child.args] = child
-                handle(child.args, cls, fn, handler)
+                handle(child.args, cls, fn, handler, f)
                 self.parents[child.body] = child
                 self.fn_of[id(child.body)] = f
                 f.returns.append(child.body)
@@ -570,11 +629,19 @@ class Census:
                     self.fn_of[id(child)] = fn
             for sub in ast.iter_child_nodes(child):
                 self.parents[sub] = child
-                handle(sub, cls, fn, handler)
+                handle(sub, cls, fn, handler, also)
 
         for stmt in mod.tree.body:
             self.parents[stmt] = mod.tree
             handle(stmt, None, None, False)
+        # the readers of each module-level name, built like attr_readers: the functions with a bare Name read of it that
+        # no scope of theirs binds, the test expr_taint and _keyed_taint make before they fall to the name's stored taint
+        # (_binds, then _global_read). The taint pass re-visits these, and only these, when the stored taint grows
+        # (_taint says why); the module's defs are complete here, so every scope's bindings are known.
+        for fn in mod.fns:
+            for name in fn.name_reads:
+                if not self._binds(fn, name):
+                    self.global_readers[(mod.path, name)].add(fn)
 
     # ------------------------------------------------------------------ lookups
     def fn_for(self, node):
@@ -641,6 +708,29 @@ class Census:
 
     def _assigns_name(self, fn, name):
         return fn.assigned().get(name, [])
+
+    @staticmethod
+    def _scope_binds(s, name):
+        """Whether the scope `s` (a Fn or ScopeFn) binds `name` as a parameter or by an assignment statement. A loop or
+        with target is no binding here: its taint sits in tainted_names alone, which the readers check first."""
+        return name in s.all_params() or name in s.assigned()
+
+    def _binds(self, fn, name):
+        """Whether any scope of fn's chain binds `name`. A bare Name read that none binds falls to the module-level
+        name's stored taint (_global_read); the readers index global_readers is built in _index from this same test,
+        so the functions the taint pass re-visits on a grown module name are the ones whose reads can reach it."""
+        return any(self._scope_binds(s, name) for s in self.scope_chain(fn))
+
+    def _global_read(self, fn, name):
+        """The stored taint of the module-level name `name` as read from fn (a name of fn's own module), or None: the
+        one read of global_taint the walks make. A subclass observing it sees every such read (the readers-index pin)."""
+        return self.global_taint.get((self.mod_of(fn).path, name))
+
+    def _global_growth_readers(self, key):
+        """The functions to re-visit when the module-level name `key` ((module path, name)) gains taint: its readers by
+        the index. Returning self.mods[key[0]].fns restores the module-wide sweep this replaced (the fixpoint pin in
+        tests/test_session_env.py does, to show the two reach the same result)."""
+        return self.global_readers.get(key, ())
 
     @staticmethod
     def _leaves(t):
@@ -1903,7 +1993,6 @@ class Census:
         the direction that finds a value stored in one method and read in another)."""
         tags = set()
         stack = [expr]
-        mod = self.mod_of(fn)
         while stack:
             node = stack.pop()
             if node is None:
@@ -1933,11 +2022,11 @@ class Census:
                         tags |= tn[node.id]
                         found = True
                         break
-                    if node.id in s.all_params() or node.id in s.assigned():
+                    if self._scope_binds(s, node.id):
                         found = True
                         break
                 if not found:
-                    gt = self.global_taint.get((mod.path, node.id))
+                    gt = self._global_read(fn, node.id)
                     if gt:
                         tags |= gt
                 continue
@@ -2007,6 +2096,7 @@ class Census:
         work = collections.deque(self.all_fns)
         queued = set(id(f) for f in self.all_fns)
         rounds = 0
+        self.cap_requeues = 0
 
         def enqueue(f):
             if id(f) not in queued:
@@ -2017,10 +2107,23 @@ class Census:
             fn = work.popleft()
             queued.discard(id(fn))
             rounds += 1
-            changed = self._taint_fn(fn)
-            if changed:
+            self._inner_cap_hit = False
+            locals_changed, returns_changed = self._taint_fn(fn)
+            if self._inner_cap_hit:
+                # the visit's inner loop over the function's own stores ran out of iterations while still growing: the
+                # function's own inputs (its locals) changed, so it is a reader of its own state and is owed another
+                # visit. Before the readers index below, the module-wide sweep on a grown module name gave such a
+                # function its next visit by accident, when a name grew after it; the sweep is gone, so the visit is
+                # owed here (the blind-spot class plants a chain the loop needs seven passes for)
+                self.cap_requeues += 1
+                enqueue(fn)
+            if returns_changed:
+                # a caller reads this function's returns at the call (expr_taint, _container_taint, _keyed_taint), and
+                # nothing else of it: until fork PR 781 a change of its locals alone enqueued every caller too, and the
+                # writer's parameters gaining taint sent every door-call function back through the walk for nothing
                 for call, caller, _via in self.callers.get(fn, []):
                     enqueue(caller)
+            if locals_changed:
                 for nested in [x for lst in fn.nested.values() for x in lst]:
                     enqueue(nested)
             for callee in self._newly_tainted_callees:
@@ -2031,8 +2134,18 @@ class Census:
                         enqueue(reader)
                 self._grown_attrs = set()
             if self._grown_globals:
-                for path, _name in self._grown_globals:
-                    for reader in self.mods[path].fns:
+                # a module-level name's stored taint grew: re-visit its READERS (global_readers, built in _index from the
+                # same test expr_taint and _keyed_taint make before they read the name's stored taint, a bare Name read
+                # that no scope of the function binds), the way a grown attribute re-visits attr_readers. Until fork
+                # PR 781 this enqueued every function of the module: three such events over 715 functions made 2101
+                # visits of 743 functions, 85 of which changed anything, and with the blind-spot class constructing 175
+                # censuses that put tests/test_session_env.py at 337 s serial against 1.55 s at the PR's base, past CI's
+                # 25-minute job ceiling. A function with no read of the grown name re-derives the same sets from the
+                # same inputs, so its visit was a no-op; every result is unchanged (the differential over the real pair
+                # and the class's copies, and the fixpoint pin in tests/test_session_env.py, which restores the sweep
+                # through _global_growth_readers and compares).
+                for key in self._grown_globals:
+                    for reader in self._global_growth_readers(key):
                         enqueue(reader)
                 self._grown_globals = set()
         self.taint_rounds = rounds
@@ -2168,6 +2281,8 @@ class Census:
                 grew |= self._store(fn, mod, names, carried, recv, vt, ct, method in ("setdefault", "__setitem__", "update"))
             if not grew:
                 break
+        else:
+            self._inner_cap_hit = True      # every pass grew: _taint gives the function another visit
         # returns. A dict-valued return carries "env" alone, and only what sits under a key that is NOT a source
         # (the per-session env's own key, 'env' in DEFAULT_SOURCES, is a source at the READ, so a dict does not carry
         # it; a value re-keyed under any other name crosses with the dict: blind-pin lens of review round 6, a helper
@@ -2223,8 +2338,11 @@ class Census:
                     if c and not c <= cc.get(p, set()):
                         cc.setdefault(p, set()).update(c)
                         self._newly_tainted_callees.append(callee)
-        return (names != before or carried != before_carried or self.ret_taint.get(fn, {}) != before_ret
-                or self.ret_whole.get(fn, {}) != before_whole)
+        # two signals for two kinds of reader (fork PR 781): a nested def reads this function's locals (tainted_names,
+        # carried_names, through its scope chain) and a caller reads its returns (ret_taint, ret_whole, at the call);
+        # _taint re-visits each kind on its own signal
+        return (names != before or carried != before_carried,
+                self.ret_taint.get(fn, {}) != before_ret or self.ret_whole.get(fn, {}) != before_whole)
 
     def _return_taint(self, expr, fn):
         """What a return CARRIES across its boundary (its carried set), less the pick tag when the return is a dict (the
@@ -2264,9 +2382,9 @@ class Census:
                 cn = self.carried_names.get(s, {})
                 if x.id in cn:
                     return set(cn[x.id])
-                if x.id in s.all_params() or x.id in s.assigned():
+                if self._scope_binds(s, x.id):
                     return set()
-            gt = self.global_taint.get((self.mod_of(fn).path, x.id))
+            gt = self._global_read(fn, x.id)
             return set(gt) if gt else set()
         if isinstance(x, ast.Attribute) and isinstance(x.ctx, ast.Load):
             return set(self.attr_taint.get(x.attr, set()))
@@ -2961,7 +3079,6 @@ class Census:
         return whether or not the callee keeps it)."""
         tags = set()
         stack = [expr]
-        mod = self.mod_of(fn)
         params = fn.all_params()
         while stack:
             node = stack.pop()
@@ -2985,11 +3102,11 @@ class Census:
                         tags |= tn[node.id]
                         found = True
                         break
-                    if node.id in s.all_params() or node.id in s.assigned():
+                    if self._scope_binds(s, node.id):
                         found = True
                         break
                 if not found:
-                    gt = self.global_taint.get((mod.path, node.id))
+                    gt = self._global_read(fn, node.id)
                     if gt:
                         tags |= gt
                 continue
