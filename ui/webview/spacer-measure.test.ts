@@ -364,6 +364,26 @@ test("forgetAverage drops a parked average with the figure, so a reset's build m
   assert.equal(w.reads.offsetHeight, 0, "no layout read anywhere in this");
 });
 
+// ── the measure's population is the units (review round 1) ───────────────────────────────────────
+
+test("a hover's rail band among the view's children is not a row: the rows' average is over the children that carry a unit alone", () => {
+  // drawRailBand appends the band to the thread with a class and no data-unit; the unit observer observes every added element, so the
+  // band has a height in v.uh, and measureUnits' population was every child of the thread, band included (review round 1, with the trim)
+  const w = lift(null);
+  const heights = [40, 90, 90, 30, 90, 90];
+  const { v, items, rows } = viewOver(w, 200, 1 + 100 + heights.length, 101, (u) => [u === 101 || u === 104 ? "turn turn-user" : "turn turn-assistant", heights[u - 101]]);
+  const band = new FakeEl("div", "rail-band rail-band-local", 4, w.reads);
+  v.el.appendChild(band);
+  buildOne(w, v, items);
+  assert.ok(rows.length > 0, "the population is derived from the fixture's rows and must not be empty");
+  const expected = rows.reduce((a, r) => a + r.realH, 0) / rows.length;
+  assert.ok(expected > 0);
+  v.uh.set(band, band.realH);   // the observer reported the band too (it observes every added element)
+  observe(w, v, rows);
+  assert.equal(v.measured?.avg, expected, "the mean over the unit rows: " + expected + " (the band's 4 px would pull it to " + (expected * rows.length + 4) / (rows.length + 1) + ")");
+  assert.equal(v.measured?.per, undefined, "one complete turn in this window: no per-turn figure (the band is no turn row either)");
+});
+
 // ── source pins on what the harness does not lift ────────────────────────────────────────────────
 
 test("render.ts: the render task's spacer code holds no layout read; the unit observer records border-box heights and measures in both of its branches", () => {

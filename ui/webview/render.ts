@@ -13963,14 +13963,34 @@ function gapUnitsOf(items: readonly DisplayItem[], perTurn: number | undefined):
   for (let u = 0; u < items.length; u++) { const it = items[u]; if (it.kind === "gap") gu.set(u, gapHeight(it, perTurn)); }
   return gu.size ? gu : undefined;
 }
-/** The unit a node belongs to, off its data-unit; -1 for a node that carries none (a spacer), which ends a trim on its own. */
+/** THE predicate for what a view's child is (PR E review round 1, high): a child WITH data-unit is a unit's node (a turn, a run's head or
+ *  row, a day divider, a gap element: appendItem tags every node it appends), and this is its unit; -1 for a child that carries none. The
+ *  trim, the eviction and the measure all key on it. Of the children with no unit, a spacer (tx-spacer, isSpacerNode) bounds the units
+ *  and ends a walk over them; any other is FOREIGN to the transcript (a hover's rail band, drawn as the thread's last child on every rail,
+ *  dot or feed hover: instantLocalBand, drawRailBand; showActive's loading hint) and is neither a unit nor an end: the trim drops it and
+ *  the measure skips it. */
 function unitOfNode(n: ChildNode): number { return n instanceof HTMLElement && n.dataset.unit != null ? Number(n.dataset.unit) : -1; }
+/** A virtualization spacer: no unit of its own, and the end of a walk over the units. */
+function isSpacerNode(n: ChildNode): boolean { return n instanceof HTMLElement && n.classList.contains("tx-spacer"); }
 /** Drop every node from unit `u0` onward off the END of a view (a unit's nodes are contiguous and units are in order, so the walk up
- *  from the last child meets them all; a spacer, with no unit, ends it). Returns the count removed. Compact mode's tail path (PR E);
- *  the normal-mode tail keeps its own copy of the walk, unchanged. */
+ *  from the last child meets them all; a unit below u0, or a spacer, ends it). A foreign child met on the way (unitOfNode: a hover's rail
+ *  band) is dropped, not counted, and the walk goes on to the units behind it. Until review round 1 the walk stopped at any child with
+ *  no unit, so after any hover the tail paint trimmed nothing and re-appended the tail units on top of stale copies of themselves,
+ *  which the footer patch and the gap redraw then resolved to the stale copy (querySelector's first match). Dropped rather than skipped
+ *  over so the invariant the eviction's walk and the footer patch's positional read rely on holds after every paint (the units
+ *  contiguous, nothing foreign among them); the rebuild this path replaced removed the band on every frame too, and a hover redraws it
+ *  on the next mouseenter. Returns the count of unit nodes removed. Compact mode's tail path (PR E); the normal-mode tail keeps its
+ *  own copy of the walk, which still stops at a foreign child (a residual the PR body names). */
 function trimUnitsFrom(host: HTMLElement, u0: number): number {
   let n = 0;
-  while (host.lastChild && unitOfNode(host.lastChild) >= u0) { host.removeChild(host.lastChild); n++; }
+  for (let c: ChildNode | null = host.lastChild; c; ) {
+    const prev: ChildNode | null = c.previousSibling;
+    const u = unitOfNode(c);
+    if (u >= u0) { host.removeChild(c); n++; }
+    else if (u >= 0 || isSpacerNode(c)) break;
+    else host.removeChild(c);
+    c = prev;
+  }
   return n;
 }
 /** Compact mode keeps its window's span while the reader follows the tail (PR E): after an append at the bottom the leading units past
@@ -14064,7 +14084,10 @@ function measureUnits(v: View): void {
   if (!v.measureDue || !v.uh) return;
   v.measureDue = false;
   const uh = v.uh;
-  const rows = rowsFor(Array.from(v.el.children) as HTMLElement[], (c) => c.className, (c) => c.style.display === "none", (c) => uh.get(c));
+  // the population is the children that carry a unit (unitOfNode, the one predicate): a hover's rail band is a child of the thread with a
+  // height in the map (the observer observes every added element) and counted as a row until review round 1; the spacers carry no unit
+  // either, and a gap element does but is not row content (isSpacerRow)
+  const rows = rowsFor((Array.from(v.el.children) as HTMLElement[]).filter((c) => unitOfNode(c) >= 0), (c) => c.className, (c) => c.style.display === "none", (c) => uh.get(c));
   if (v.avgTurnH == null && v.measured?.avg == null) { const h = meanRowHeight(rows); if (h != null) v.measured = { ...v.measured, avg: h }; }
   const per = perTurnEstimate(rows);
   if (per != null && per !== (v.measured?.per ?? v.pxPerTurn)) v.measured = { ...v.measured, per };

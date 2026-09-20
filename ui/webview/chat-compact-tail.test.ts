@@ -117,6 +117,7 @@ class FakeEl {
   get firstChild(): FakeEl | null { return this.children[0] ?? null; }
   get lastChild(): FakeEl | null { return this.children[this.children.length - 1] ?? null; }
   get nextSibling(): FakeEl | null { const p = this.parent; if (!p) return null; const i = p.children.indexOf(this); return i >= 0 ? p.children[i + 1] ?? null : null; }
+  get previousSibling(): FakeEl | null { const p = this.parent; if (!p) return null; const i = p.children.indexOf(this); return i > 0 ? p.children[i - 1] : null; }
   appendChild(c: FakeEl): FakeEl { c.parent?.removeChild(c); c.parent = this; this.children.push(c); return c; }
   insertBefore(c: FakeEl, ref: FakeEl | null): FakeEl { c.parent?.removeChild(c); c.parent = this; const i = ref ? this.children.indexOf(ref) : -1; if (i < 0) this.children.push(c); else this.children.splice(i, 0, c); return c; }
   removeChild(c: FakeEl): void { this.children = this.children.filter((x) => x !== c); c.parent = null; }
@@ -160,6 +161,27 @@ test("the trim drops every node from the unit onward off the end, dividers inclu
   assert.equal(trimUnitsFrom(host, 0), 50, "…down to the spacer, which stops the walk");
   assert.equal(host.children.length, 1); assert.ok(host.children[0].classList.contains("tx-spacer-top"));
   assert.equal(trimUnitsFrom(host, 0), 0, "nothing left to trim");
+});
+
+test("a foreign child (a hover's rail band, appended as the thread's last child) neither ends the trim nor counts: the walk reaches the units behind it and drops the band; a spacer still ends it", () => {
+  // drawRailBand appends the band to the thread (host.appendChild) on every rail, dot or feed hover, with a class and no data-unit; the
+  // walk stopped at it, trimmed nothing and re-appended the tail units on top of stale copies of themselves (review round 1, high)
+  const { trimUnitsFrom } = liftTrim({ sized: [] });
+  const host = window(100, 180);
+  host.appendChild(new FakeEl("div", "rail-band rail-band-local"));
+  assert.equal(trimUnitsFrom(host, 179), 1, "the streaming unit's one row, the band not counted");
+  assert.deepEqual(unitsIn(host).slice(-1), [178], "the units before it stand");
+  assert.equal(host.children.filter((c) => c.classList.contains("rail-band")).length, 0, "the band is dropped (a hover redraws it on the next mouseenter), so nothing foreign stands among the units");
+  assert.equal(host.children.length, 1 + 79, "the spacer and 79 units");
+  // a band behind a unit below u0: the walk still ends at that unit, and the band, met first, is dropped
+  host.appendChild(new FakeEl("div", "rail-band"));
+  assert.equal(trimUnitsFrom(host, 179), 0, "nothing at or past 179 is left");
+  assert.equal(host.children.filter((c) => c.classList.contains("rail-band")).length, 0);
+  assert.equal(unitsIn(host).length, 79);
+  // a band over a spacer: the spacer ends the walk as before
+  host.appendChild(new FakeEl("div", "rail-band rail-band-local"));
+  assert.equal(trimUnitsFrom(host, 0), 79, "every unit, down to the spacer");
+  assert.equal(host.children.length, 1); assert.ok(host.children[0].classList.contains("tx-spacer-top"));
 });
 
 test("the eviction keeps the window's span after an append at the bottom: the leading units leave, the top spacer stands for them and is re-sized", () => {
