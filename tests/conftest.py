@@ -593,9 +593,11 @@ def restore_env(name, prior):
 #     verdict the live one, two paths for one object, and the clause is still there, keyed on the object. The refusal
 #     marks nothing on _SDK_REPORTED: no later window takes the kept-root report, and a mark would silence that later
 #     gone report; the fixture records the refused object on _SDK_REFUSED instead, the list both links read. The
-#     fixture's tests pin it, every case whose outer class reads the refusal's lines or the link clause, present or
-#     absent, a roster derived from the classes and held equal to them both ways by TheCaseRostersNameEveryCase in
-#     tests/test_sdk_singleton_ratchet.py, whose failure names the ids missing here and the ids here with no class
+#     fixture's tests pin it, every case whose outer class reads the refusal's line or a link clause, present or
+#     absent, through one of that module's named copies of these texts, the names derived there from this file's
+#     texts by refusal_text_names, a roster derived from the classes and held equal to them both ways by
+#     TheCaseRostersNameEveryCase in tests/test_sdk_singleton_ratchet.py, whose failure names the ids missing here
+#     and the ids here with no class
 #     (S7, beside S6, the same leak with no swapping class, reported as inherited; S7B, the refusal as the first
 #     window's and no later one's; S8, the run-root shape, no refusal; S9 and S10, the gone shape, the object put back
 #     and not, each pair linked at the object; S11, the refusal's roots from the start read's recorded fields; S12, a
