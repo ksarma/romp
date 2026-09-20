@@ -29,7 +29,8 @@ and the recipe refuses to run without them rather than skipping; CI's extension 
 an underscore arm that stripped unbalanced runs CommonMark leaves literal, admitted one intraword underscore inside a span
 and read no whitespace flanking; over the derived corpus that arm agreed on every real heading (none carries such a
 shape) and disagreed on 123 of the battery's 457 shapes, 111 underscore runs and 12 whitespace-flanked asterisk runs; the
-slugger below disagrees on none of the 987. What GitHub does that the oracle does not: it renders with cmark-gfm,
+slugger below disagreed on none of the 987 rows at the round-12 commit, before the merge of main (the table's corpus field
+names the counts at this head). What GitHub does that the oracle does not: it renders with cmark-gfm,
 which agrees with marked on everything the corpus and the battery hold; it replaces an emoji shortcode (`:name:`) before
 it slugs, so one contributes nothing where this module keeps the name (no heading here carries one); and it prefixes the
 id with user-content- and resolves the bare anchor by script, which the link never sees. Letters and digits here are
