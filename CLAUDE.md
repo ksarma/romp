@@ -277,6 +277,20 @@ Every bug fix or feature change must land with a test that covers it (user rule,
 surfaces. Reproduce the bug in a failing test first when practical; fixtures
 live in `tests/fixtures/`.
 
+### Any `kernel/kernel.py` change runs the webview tests (2026-09-20)
+A change to `kernel/kernel.py` owes the webview leg (`npm test` in `vscode-extension/`),
+whatever the hunk's language. The leg pins kernel.py by SOURCE TEXT: well over a hundred of
+its `.test.ts` files read the file and assert on its inline JavaScript AND on its Python
+(`ui/webview/user-todos-switch.test.ts` reads kernel.py and asserts that the User-todos
+switch's 409 literal appears at least twice, once per request route), so a pure-Python
+refactor that touches no `ui/` file and no JavaScript line can still turn it red. Precedent:
+our PR 994 to the project (2026-09-20) lifted the route bodies into functions and turned the
+project's `vscode-extension` CI job red on that one test of 5224. The leg may be skipped only
+when `kernel/kernel.py`, `ui/` and `vscode-extension/` are ALL untouched. Corollary for the
+pins themselves: a pin keyed on WHERE code lives says in its message what it guards (the
+route still reaches the function) and points to the executed test that proves the behaviour,
+so a reader never mistakes the weaker guarantee for the stronger one.
+
 ### A test that mints its own state root pins `session-hosts` off (2026-09-11)
 Per-session hosts are ON by default (T348): a backend over a state directory with no
 `session-hosts` file starts a real `bin/romp-session-host` for any session it connects. The
