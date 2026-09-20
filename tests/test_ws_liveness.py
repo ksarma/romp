@@ -344,7 +344,7 @@ class PhantomPanesAreDropped(unittest.TestCase):
         self.assertTrue(self._settle(lambda: client["pingAt"] == self.clock[0]), "stamped as the first ping left")
 
     def test_c3_a_peer_is_never_judged_while_its_handler_is_inside_a_dispatch(self):
-        """A `ready` runs the connect push on the handler thread — tens of seconds on a cold kernel — and the
+        """A `ready` runs the connect push on the handler thread, tens of seconds on a cold kernel, and the
         peer's pongs wait unread in the receive buffer meanwhile. Unread is not missing (review 2026-09-03).
         The wait before the clear keys the harness on the moment the second ping left rather than on the moment
         the clear landed: a ping that leaves after the clear is a new outstanding ping stamped at its leave time,
