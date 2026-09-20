@@ -685,9 +685,11 @@ class _LinkDrop(unittest.TestCase):
     # redialed, 0.8 to 4.6 s; localUp, restarted -> localUp, 0.013 to 0.30 s (the restart itself, SIGTERM and the 3 s held
     # down, is the control door's and not this wait's); redialed2, localUp -> redialed2, 0.011 to 1.04 s. held, A1 -> drop
     # (every page holding one open relay socket before the drop), is new in round 3 and has no recorded span before it: the
-    # snapshot alone took 9 to 35 ms there, and in the five drives at this code the wait took 16 to 21 ms with every page
-    # already holding one; its cap is closed's, a floor well above the mechanism's worst (a page lacks an open socket for the relay's
-    # 2 s retry plus the open, once per churn of the old bundle's socket), not a fit to those spans.
+    # snapshot alone took 9 to 35 ms there, and in the six recorded drives as of that same drive (`r5/lab-ci2.log`) that carry
+    # the held wait (`drop` less `A1` over the report JSONs of `r5/reports-head1`, `reports-head2`, both classes, `reports-ci1` and
+    # `reports-ci2`, outside the repo; round 5 re-derived the count, which a hand-kept "five" had missed) the wait took 16 to 21
+    # ms with every page already holding one; its cap is closed's, a floor well above the mechanism's worst (a page lacks an open
+    # socket for the relay's 2 s retry plus the open, once per churn of the old bundle's socket), not a fit to those spans.
     waits_ms = {"held": 20000, "closed": 20000, "rowDown": 40000, "rowUp": 40000, "redialed": 30000, "localUp": 30000, "redialed2": 30000}
     page_wait_ms = 30000      # the start, per page: its load, its first relay socket, that socket's whole frame
     driver_budget_ms = 225000  # every wait the driver places draws on this one budget. The budget is a DEADLINE, not a meter of the
@@ -710,7 +712,7 @@ class _LinkDrop(unittest.TestCase):
     # (tests/test_federated_linkdrop_driver_bound.py pins the relation). The slowest delivery recorded is the old bundle's, whose frozen feed page shows a change only at the next
     # churned socket's whole frame, and a change whose three notices straddle a churn waits for the frame after that: 19,013 ms
     # over eighteen recorded unmutated old-hub drives as of the drive at `r5/lab-ci2.log` (2026-09-20, the round-5 code, the
-    # drive the waits census above is dated to; `python3 population.py old | xargs python3 analyse.py`, the builder's scripts
+    # drive the waits census above is dated to; `python3 population6.py old | xargs python3 analyse.py`, the builder's scripts
     # over the report JSONs outside the repo, max of the phases' seen.waitedMs; the new bundle's is 1.35 s at most over the
     # twenty-seven as of that drive). A dwell of 30 s, sized at twice the 12.9 s
     # then recorded, redded on the very next drive (19.0 s): a threshold fitted to the data at hand is no threshold, which is
@@ -1396,7 +1398,11 @@ class _LinkDrop(unittest.TestCase):
         """The rows left once every ledgers attach since `since_ms` has taken AT MOST ONE row as its own: a row naming the feed
         slot, carrying the attach's rev and stamped at or after the attach's floored second less slack_s (the kernel stamps a
         row at receipt in whole seconds, and its clock and the browser hook's can differ by up to a second on a recorded
-        drive). A multiset difference matched to the ATTACH, not a set of revs (round 4): the Outline's feed patch revs
+        drive), and with NO upper bound on the row's stamp: a row of the attach's rev stamped any time later inside the
+        reader's window is the attach's (the kernel stamps a row at the flush, and a row queued while the page's local socket
+        was down lands late, _rows_in's flush-lag residual), so the match is closed a second below the floored second and
+        open above it, to the window's end; the pin's return-late cell states the choice. A multiset difference matched to
+        the ATTACH, not a set of revs (round 4): the Outline's feed patch revs
         restart at 1 on every relay socket, so a rev is no identity over a drive, and a set of revs let every row of a
         colliding rev through where the assertions' messages promise one row per attach. The exemption fires on no recorded
         drive: over the 68 unmutated records of both classes in the builder's cache as of the drive at `r7/lab-ci5.log`
@@ -1516,8 +1522,10 @@ class _LinkDrop(unittest.TestCase):
             self.assertNotEqual(D["seenWhileDown"].get("prov"), prompt, "api's provisional row did not read phase D's prompt while the link was down: %r" % (D["seenWhileDown"],))
         down = self._rows_down_minus_attaches()   # one row per ledgers attach from 1.5 s before the resume, matched to it
         self.assertEqual(down, [], "no outline/delta-unapplied row filed while the link was down with phase D due (the one row the old bundle files for a "
-                                   "ledgers attach the Outline received after the resume is the return's, in this window's right pad by the kernel's whole-second "
-                                   "floor: it names the feed slot, carries the attach's rev and is stamped at or after the attach's floored second): %r" % (down,))
+                                   "ledgers attach the Outline received from 1.5 s BEFORE the resume, the reader's since, since the kernel's whole-second floor can "
+                                   "put the attach's row a second before the mark, is the return's, in this window's right pad: it names the feed slot, carries the "
+                                   "attach's rev and is stamped no more than one second, slack_s, below the attach's floored second, with no upper bound on its "
+                                   "stamp inside the window): %r" % (down,))
         self._assert_seen(D["seenAfterReturn"], True, todo=todo, prompt=prompt, what="phase D after the link's return (the redial's whole frame carried it)", waited=True)
         for app in self.apps:
             window = [(s, f) for s in self._relay_socks(app) for f in s["frames"] if m["resume"] <= f["at"] < m["B0"]]
@@ -1530,11 +1538,14 @@ class _LinkDrop(unittest.TestCase):
         # the rows, read over the return window itself (round 2's review, finding 2; the down window's zero above ends 1.5 s
         # after resume and reaches none of the return's whole frames, which arrive 1 to 5 s after it): no outline/
         # delta-unapplied row for the return's whole frame or for a replayed patch (_return_window_stray: the window's bounds,
-        # and the one row allowed per ledgers attach the Outline received there, matched to the attach as the down window's are)
+        # and the one row allowed per ledgers attach the Outline received from 1.5 s before the resume, matched to the attach as
+        # the down window's are: the feed slot, the attach's rev, a stamp no more than one second below its floored second and
+        # any later inside the window)
         stray, attaches = self._return_window_stray()
         self.assertEqual(stray, [], "no outline/delta-unapplied row filed between the link's return and phase B's first change beyond one per ledgers attach the "
-                                    "Outline received there (a row here is a row for the return's whole frame or for a replayed patch; the attach's row names the feed "
-                                    "slot, carries its rev and is stamped at or after its floored second): stray %r, attaches (rev, floored second) %r" % (stray, attaches))
+                                    "Outline received from 1.5 s before the resume, the reader's since (a row here is a row for the return's whole frame or for a "
+                                    "replayed patch; the attach's row names the feed slot, carries its rev and is stamped no more than one second, slack_s, below "
+                                    "its floored second, any later inside the window): stray %r, attaches (rev, floored second) %r" % (stray, attaches))
         self._assert_seen(self._phase("B")["seenD"], True, todo=todo, what="phase D's changes after phase B")
         if self.local_drop:
             self._assert_seen(self._phase("C")["seenD"], True, todo=todo, what="phase D's changes at the end")

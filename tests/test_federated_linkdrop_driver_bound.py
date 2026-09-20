@@ -338,6 +338,10 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
         return served[0]
 
     def test_the_arithmetic_and_the_cap_it_is_chosen_against(self):
+        self.assertGreaterEqual(L.DOWN_WINDOW_MARGIN, 2.0, "round 2's ruling: the while-down read comes at least twice this drive's slowest link-up delivery after phase D's "
+                                                          "post; widen down_dwell_ms, never the margin. The floor is pinned here because the margin pin's cells are derived from "
+                                                          "the constant and shrink with it (a lowered margin passes them all); the relation pin below ceilings it at 2.0 for the "
+                                                          "dwell and the cap as they stand, so the constant is bracketed from both sides")
         for cls in (L.LinkDropBothNew, L.LinkDropOldLocal):
             worst = L.driver_worst_case_s(cls)
             self.assertGreater(worst, cls.driver_budget_ms / 1000.0 + L.hub_restart_bound_s(),
@@ -351,10 +355,6 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
                                     "holds for every drive whose link-up waits all resolved and showed, the reads inside the room (DOWN_READ_ROOM_MS over "
                                     "DOWN_WINDOW_MARGIN, %d ms), and reds only for a window shorter than that"
                                     % (cls.__name__, cls.down_dwell_ms, L.DOWN_WINDOW_MARGIN, cls.wait_ms, L.DOWN_READ_ROOM_MS, int(L.DOWN_READ_ROOM_MS / L.DOWN_WINDOW_MARGIN)))
-        self.assertGreaterEqual(L.DOWN_WINDOW_MARGIN, 2.0, "round 2's ruling: the while-down read comes at least twice this drive's slowest link-up delivery after phase D's "
-                                                          "post; widen down_dwell_ms, never the margin. The floor is pinned here because the margin pin's cells are derived from "
-                                                          "the constant and shrink with it (a lowered margin passes them all); the relation pin above ceilings it at 2.0 for the "
-                                                          "dwell and the cap as they stand, so the constant is bracketed from both sides")
         self.assertLessEqual(L.DRIVER_TIMEOUT_S + L.BOOT_ROOM_S, L.CI_TEST_TIMEOUT_S,
                              "the subprocess timeout leaves BOOT_ROOM_S of CI's per-test cap for the rest of setUpClass")
         served = self._served_step_line()
@@ -850,6 +850,10 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
         with self.subTest(window="the return window, a row two seconds before the attach"):
             self.assertEqual(record([row(1, (f - 2) * 1000)], [late])._return_window_stray()[0], [{"rev": 1, "slot": "feed"}],
                              "a row of the attach's rev two seconds before its floored second is not the attach's (the slack is one second; the set passed it)")
+        with self.subTest(window="the return window, a row four seconds after the attach (no upper bound)"):
+            self.assertEqual(record([row(1, (f + 4) * 1000)], [late])._return_window_stray(), ([], [(1, f)]),
+                             "a row of the attach's rev stamped four seconds after its floored second, inside the window, is the attach's: the match has no upper "
+                             "bound on the stamp (the flush lag, _minus_attach_rows's docstring), a choice this cell states rather than leaves implied")
 
     def test_the_three_attach_readers_carry_their_since_at_their_sites(self):
         """The since each reader of the attaches passes, pinned at the SITE (round 5, extra6-2: the gate leg's helper carried
