@@ -753,6 +753,33 @@ GO.onclick(); await tick(); await tick(); CHECK.tag = ""; CF.onclick(); await ti
         self.assertTrue(s["ended"]["msg"].startswith("romp updated to v0.2.0 on disk"), s["ended"]["msg"])
         self.assertEqual(s["after"]["dismissals"], [{"tag": "v0.2.0"}], "the retry's updated ending: Not now dismisses the adopted identifier")
 
+    def test_an_adopted_identifier_is_dismissed_durably_on_any_later_updated_ending_the_window_reads(self):
+        # review round 11 of fork PR #778 (kernel-1): the adoption's disclosure named the retry's updated ending, but the
+        # window holds the adopted identifier from then on as if it had offered it, so a later running push (another
+        # window's click, a converge: an update this window neither started nor clicked) whose wait ends updated has this
+        # window's Not now post /update-dismiss with the adopted identifier too. Pinned as the wide road the comment now
+        # states: no /update post from this window at the moment of Not now distinguishes it from the retry case above
+        failed = "CHECK.failed = 'romp is updated on disk but the restart request failed (HTTP 500)';"
+        flipped = "window.__rompUpdateOffer('', '', '', 'b1', 'running'); "
+        updated = "CHECK.failed = ''; CHECK.tag = ''; CHECK.updated = 'v0.2.0'; CHECK.why = 'no manager is running this kernel';"
+        s = run_banner(flipped + "CHECK.tag = 'v0.2.0'; " + failed + " await tick(); await tick(); var adopted = state();"
+                       + " window.__rompUpdateOffer('', '', '', 'b1', 'running'); " + updated + " await tick(); await tick(); var ended = state();"
+                       " DM.onclick(); out({ adopted: adopted, ended: ended, after: state() });", check={"tag": ""})
+        a = s["adopted"]
+        self.assertEqual((a["goHidden"], a["posts"], a["dismissals"]), (False, [], []), "Update re-shown over the adopted offer; nothing posted")
+        e = s["ended"]
+        self.assertTrue(e["msg"].startswith("romp updated to v0.2.0 on disk"), e["msg"])
+        self.assertEqual((e["goHidden"], e["notNowHidden"], e["posts"]), (True, False, []),
+                         "the push-fed wait ended updated with no confirm from this window")
+        self.assertEqual(s["after"]["posts"], [], "at the moment of Not now this window has posted no /update: the update was another's")
+        self.assertEqual(s["after"]["dismissals"], [{"tag": "v0.2.0"}],
+                         "the adopted identifier is dismissed durably on an updated ending the window neither started nor clicked")
+        # the drift form of the same road
+        s = run_banner(flipped + "CHECK.drift = 'restart'; CHECK.driftSha = 'abcdef02'; " + failed + " await tick(); await tick();"
+                       " window.__rompUpdateOffer('', '', '', 'b1', 'running'); CHECK.failed = ''; CHECK.drift = ''; CHECK.driftSha = '';"
+                       " CHECK.updated = 'abcdef02'; await tick(); await tick(); DM.onclick(); out(state());", check={"tag": ""})
+        self.assertEqual((s["posts"], s["dismissals"]), ([], [{"tag": "abcdef02"}]), "the adopted drift sha, the same way")
+
     def test_a_second_activation_of_the_update_button_never_posts(self):
         # the confirm is a different control, beside the label that took Update's place: whatever
         # reaches the Update button again (a double-click's second click, a double-tap's second tap, a

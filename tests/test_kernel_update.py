@@ -1123,6 +1123,38 @@ class Routes(Fresh):
         self.assertEqual(code, 409, text)
         self.assertIn("no newer release or main commit known", text)
 
+    def test_the_route_acts_only_on_the_offer_it_owns_and_a_handed_action_is_refused_and_starts_nothing(self):
+        # review round 11 of fork PR #778 (the property the confirm step exists for, named by no test until now): round 10
+        # closed a regression by having the BANNER adopt the kernel's standing offer, and the route was not touched, so
+        # the route still does only what it owns. A confirm carrying an action the banner never showed, a kind outside
+        # release and main (the route's own internal kinds, pull and restart, handed by a client), or a release or a
+        # sha the kernel does not offer now, is refused and starts nothing: no launch, no converge, no running push to
+        # the shells, no audit row, the slots untouched. Before the confirm step (the base of this PR) the route derived
+        # the action from its own slots and ran the release on the same post
+        km._UPDATE_AVAIL[0] = "v0.7.0"
+        km._MAIN_DRIFT[0], km._MAIN_DRIFT[1] = "aaaa1111", ""
+        handed = (({"kind": "pull", "id": "aaaa1111"}, 400, "named no offer"),
+                  ({"kind": "restart", "id": "aaaa1111"}, 400, "named no offer"),
+                  ({"kind": "release", "id": "v9.9.9"}, 409, "the banner offered romp v9.9.9, but this kernel now offers romp v0.7.0, main at aaaa1111; nothing was started"),
+                  ({"kind": "main", "id": "0000dead"}, 409, "the banner offered main at 0000dead, but this kernel now offers romp v0.7.0, main at aaaa1111; nothing was started"),
+                  ({"kind": "main", "id": "v0.7.0"}, 409, "the banner offered main at v0.7.0, but this kernel now offers"))
+        pushed = []
+        try:
+            for offer, want, text_wanted in handed:
+                with mock.patch.object(km, "_run_update", side_effect=AssertionError("a handed action must not launch")), \
+                     mock.patch.object(km, "_run_main_update", side_effect=AssertionError("a handed action must not converge")), \
+                     mock.patch.object(km, "_send_to_app", side_effect=lambda app, m: pushed.append(m)):
+                    code, text = self._post("/update", offer=offer)
+                self.assertEqual(code, want, (offer, text))
+                self.assertIn(text_wanted, text, offer)
+                self.assertEqual(pushed, [], "no running push went to the shells")
+                self.assertEqual(self._audit_rows(), [], offer)
+                self.assertEqual((km._UPDATE_STATE[0], km._MAIN_CONVERGE_INFLIGHT[0]), ("", False), offer)
+                self.assertEqual((km._UPDATE_AVAIL[0], km._MAIN_DRIFT[0], km._MAIN_DRIFT[1]), ("v0.7.0", "aaaa1111", ""),
+                                 "the kernel's own offer stands: a refused post consumes nothing")
+        finally:
+            km._MAIN_DRIFT[0] = km._MAIN_DRIFT[1] = ""
+
     def test_on_the_primary_a_main_drift_offer_converges_though_a_release_slot_is_filled(self):
         # round 3 (2026-09-19): the same defect on the primary. /update-check filters a DISMISSED release out of its
         # answer, so the banner shows the drift while the route's slot still holds the tag; the route re-derived and

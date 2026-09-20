@@ -71495,9 +71495,12 @@ _UPD_JS = (
     # would offer again as a restart drift, and the dismissal is durable, so that offer stays quiet until a
     # newer sha (a window the running push flipped into the wait offered nothing, so its curTag is empty and
     # its Not now hides the message alone, unless a failed ending re-showed Update there and the window adopted
-    # the standing offer, the branch below: a retry from that Update whose wait ends updated then dismisses the
-    # adopted identifier, a durable write from a window that never made the offer; review round 10 of fork PR
-    # #778). After the failed ending Not now hides the message and dismisses
+    # the standing offer, the branch below: from then on the window holds that identifier as if it had offered
+    # it, so ANY updated ending it reads, its own retry's or a later running push's that it neither started nor
+    # clicked, has its Not now dismiss the adopted identifier durably, a write from a window that never made the
+    # offer; review round 10 of fork PR #778, and round 11, kernel-1, which widened this clause to what the code
+    # does: an offer is moot once any update lands, so the adopted window dismisses as the offering one would).
+    # After the failed ending Not now hides the message and dismisses
     # nothing, in every window: the failure's own text promises the next check's re-offer (a refused pull
     # re-arms the drift slot; a refused restart request keeps its offer), and a durable dismissal of the
     # refused target would stop that re-offer everywhere, on every page load and in the drift check's push.
@@ -71506,9 +71509,9 @@ _UPD_JS = (
     # page-local dismissedTag alone, so the next push of the same identifier shows in this window too. curTag
     # is cleared only when no offer stands; while Update is re-shown the window keeps the identifier it
     # offers, or adopts the answer's when it had none (round 10 of fork PR #778, the comment on the branch
-    # below), so a retry from that Update whose wait ends updated has its Not now dismiss that identifier
-    # durably, as the updated ending's rule above says (round 7 cleared curTag at every failed ending, and
-    # the retry's updated ending posted nothing). A boot change retires the text whether or not Update
+    # below), so any updated ending the window then reads, its own retry's or a later running push's, has its
+    # Not now dismiss that identifier durably, as the updated ending's rule above says (round 7 cleared curTag
+    # at every failed ending, and the retry's updated ending posted nothing). A boot change retires the text whether or not Update
     # stands beside it (__rompUpdBoot above), so a previous life's failure does not outlive the kernel's
     # restart. Round 6 had the failed ending's Not now post the tag the
     # clicking window had offered (the refused target) and an empty tag from a pushed window, which the
