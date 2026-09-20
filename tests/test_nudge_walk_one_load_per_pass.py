@@ -615,7 +615,9 @@ SHARED_HANDOFF_KEYS = ("absent", "fallback", "corrupt", "unreadable_journal")
 # The bound rests on three premises about the body. Two are pinned against the door's own source by the roster pin in
 # TheCountersOneSite: the keys the door bumps are the two rosters exactly, and every second-key bump sits below every call-key bump.
 # The third, that a call bumps AT MOST ONE second key, is carried by execution: TheDoorBumpsAtMostOneSecondKeyPerCall drives one
-# road per key of both rosters, nine roads, and three raise roads on the real door and reads the counters per call. The roster pin's
+# road per key of both rosters, nine roads, and three raise roads on the real door and reads the counters per call, and ties each
+# drive to the door's bump SITES by a trace of the door's frame, every site of the door driven by a row or stated undriven (review
+# round 6, lens two: a second site under an already driven key was on no driven road with the module green). The roster pin's
 # AST clauses are an early warning for that premise: they refuse the forms they name (a second-key bump that is not a statement of a
 # list, an assignment's value, a with item or a lambda body, say; a second-key list holding two; a list not ending in a return or a
 # raise; a bump under a finally clause; a second-key raise list under a try statement) and are silent on the rest (a helper defined
@@ -1539,6 +1541,27 @@ _CENSUSES = (
 )
 
 
+@contextlib.contextmanager
+def _line_trace(code, hit):
+    """Record in `hit` the line number of every 'line' event in frames running `code` while the block runs: sys.settrace on this
+    thread, a tracer that traces those frames alone (any other frame gets no local tracer) and is put back the way it was found. The
+    door witness reads through it which bump sites a call of the door executed, so a site is tied to a drive by execution and not by
+    the name of the key it bumps (review round 6, lens two)."""
+    def local(frame, event, _arg):
+        if event == "line":
+            hit.add(frame.f_lineno)
+        return local
+
+    def tracer(frame, event, _arg):
+        return local if event == "call" and frame.f_code is code else None
+    previous = sys.gettrace()
+    sys.settrace(tracer)
+    try:
+        yield hit
+    finally:
+        sys.settrace(previous)
+
+
 def _caller(frame, boundary):
     """(function, file, line) of the frame that asked for the store: `frame` is the recorder's own, its f_back the immediate
     caller, and the judge's boundary frames are stepped over by code identity, never by name, so a call through either
@@ -2228,10 +2251,18 @@ class TheDoorBumpsAtMostOneSecondKeyPerCall(_WalkHarness):
     int() raises out of _finish_load after the miss bump and the loads_shared bump, {'miss': 1}, no second key, no hand-off, the
     ValueError propagated, nothing cached; a verifier of the round-5 fixes found this road neither driven nor named, and a
     second-key bump planted in a handler around _finish_load was witnessed by nothing). The seam on jd._freeze_store is a wrapper over the real function
-    (functools.wraps, calling through), a name CASE_JD lists so the cleanup restores it; _archive_key stays real. Undriven,
-    stated: the door's `if store.get("_unread")` arm, the second unreadable_journal bump with no hand-off (the door's own
-    comment calls it unreachable while _journal_read hands the rows as lines; a bump planted there is witnessed by neither
-    these drives nor _pass); a compare_miss entering the dup or refuse arm (the drives enter both from a miss; past the fill's
+    (functools.wraps, calling through), a name CASE_JD lists so the cleanup restores it; _archive_key stays real. The roads are
+    tied to the door's bump SITES by execution and not by the keys' names (review round 6, lens two: the coverage case derived the
+    key set of ROADS against the rosters, so a new key with no drive red it, but a second site bumping an already driven key, a
+    second refuse branch conditioned on state no drive arranges, was on no driven road with the module green): the sites are read
+    from the real door's source as (key, ordinal) pairs, the ordinal counting a key's sites in source order (_door_regions, the
+    roster pin's read, mapped to the file's lines as _pass_through_lines maps a hand-off), each row of ROADS names the sites its
+    call executes, each drive asserts by a trace of the door's own frame (_line_trace) that exactly those sites ran, and the
+    coverage case derives that every site of the door is named by a row or by UNDRIVEN_SITES, with none in both, so a new site
+    reds naming its line until a drive or a statement names it. Undriven, stated in UNDRIVEN_SITES: the door's
+    `if store.get("_unread")` arm, the second unreadable_journal bump with no hand-off (the door's own comment calls it unreachable
+    while _journal_read hands the rows as lines; a bump planted there is witnessed by neither these drives nor _pass). Undriven and
+    not a site: a compare_miss entering the dup or refuse arm (the drives enter both from a miss; past the fill's
     first statement the code is the same); and any second bump conditioned on the hand-off itself raising (load_goals raising
     on the corrupt road: the drive's load_goals quarantines and answers a fresh store, so a Return whose expression raises is
     exercised by another raise, not by a raising hand-off); and the arrangement itself: every drive seeds a one-node store for
@@ -2250,22 +2281,45 @@ class TheDoorBumpsAtMostOneSecondKeyPerCall(_WalkHarness):
     one on the door's _unread road by neither."""
 
     # The roads and the deltas each drive asserts: road -> (call keys, second keys, goal_io loads hand-offs, the exception the call
-    # propagates or None). The coverage case derives from this table that the call and second keys over every row are exactly both
-    # rosters, and from the class's method names that every road here has a method named for it.
+    # propagates or None, the bump SITES the call executes as (key, ordinal) pairs, the ordinal counting that key's sites in the door's
+    # source order from 0). The coverage case derives from this table that the call and second keys over every row are exactly both
+    # rosters, that a row's sites name exactly the keys its deltas name, and that the sites over every row plus UNDRIVEN_SITES are
+    # exactly the door's own bump sites (_sites), and from the class's method names that every road here has a method named for it;
+    # each drive asserts by a trace of the door's frame that its call executed exactly its row's sites.
     ROADS = {
-        "hit": ({"hit": 1}, {}, 0, None),
-        "miss": ({"miss": 1}, {}, 0, None),
-        "compare_miss": ({"compare_miss": 1}, {}, 0, None),
-        "absent": ({"absent": 1}, {}, 1, None),
-        "fallback": ({"fallback": 1}, {}, 1, None),
-        "corrupt": ({"miss": 1}, {"corrupt": 1}, 1, None),
-        "unreadable_journal": ({"miss": 1}, {"unreadable_journal": 1}, 1, None),
-        "dup": ({"miss": 1}, {"dup": 1}, 0, None),
-        "refuse": ({"miss": 1}, {"refuse": 1}, 0, None),
-        "open_raises": ({}, {}, 0, OSError),
-        "read_raises": ({}, {}, 0, OSError),
-        "fill_raises": ({"miss": 1}, {}, 0, ValueError),
+        "hit": ({"hit": 1}, {}, 0, None, (("hit", 0),)),
+        "miss": ({"miss": 1}, {}, 0, None, (("miss", 0),)),
+        "compare_miss": ({"compare_miss": 1}, {}, 0, None, (("compare_miss", 0),)),
+        "absent": ({"absent": 1}, {}, 1, None, (("absent", 0),)),
+        "fallback": ({"fallback": 1}, {}, 1, None, (("fallback", 0),)),
+        "corrupt": ({"miss": 1}, {"corrupt": 1}, 1, None, (("miss", 0), ("corrupt", 0))),
+        "unreadable_journal": ({"miss": 1}, {"unreadable_journal": 1}, 1, None, (("miss", 0), ("unreadable_journal", 0))),
+        "dup": ({"miss": 1}, {"dup": 1}, 0, None, (("miss", 0), ("dup", 0))),
+        "refuse": ({"miss": 1}, {"refuse": 1}, 0, None, (("miss", 0), ("refuse", 0))),
+        "open_raises": ({}, {}, 0, OSError, ()),
+        "read_raises": ({}, {}, 0, OSError, ()),
+        "fill_raises": ({"miss": 1}, {}, 0, ValueError, (("miss", 0),)),
     }
+    # The door's bump sites no drive reaches, (key, ordinal) -> the reason, derived against the door's own sites by the coverage case
+    # (every site is in a row of ROADS or here, none in both), so a site added to the door reds there naming its line until a drive
+    # reaches it or a row here says why none does.
+    UNDRIVEN_SITES = {
+        ("unreadable_journal", 1): "the `if store.get(\"_unread\")` arm, the second unreadable_journal bump with no hand-off: the door's own "
+                                   "comment calls it unreachable while _journal_read hands the rows as lines, so no drive arranges it",
+    }
+
+    def _sites(self):
+        """The door's bump sites in execution's coordinates: {(key, ordinal): absolute line}, the ordinal counting a key's sites in
+        source order from 0, read from the real door's source through _door_regions (the roster pin's read of the door, a roster row)
+        and mapped to the file's lines as _pass_through_lines maps a hand-off (inspect gives the source with its first line's number).
+        The real door is the one setUp saved before it stood the recorder on the name."""
+        door = self.saved_jd["load_goals_shared"]
+        src, start = inspect.getsourcelines(door)
+        bumps, _blocks, _tries = _door_regions(ast.parse(textwrap.dedent("".join(src))))
+        by_key = {}
+        for rel, key in sorted(bumps):
+            by_key.setdefault(key, []).append(start - 1 + rel)
+        return {(key, i): line for key, lines in by_key.items() for i, line in enumerate(lines)}
 
     def _store_path(self):
         return jd.GOALDIR / (SID_C + ".json")
@@ -2277,12 +2331,13 @@ class TheDoorBumpsAtMostOneSecondKeyPerCall(_WalkHarness):
         self.assertTrue(self._testMethodName.startswith("test_the_%s_road" % road),
                         "a drive sits in the method named for its road (test_the_<road>_road...), the rule the coverage case derives from: "
                         "%s drives %r" % (self._testMethodName, road))
-        expect_calls, expect_second, expect_loads, raises = self.ROADS[road]
+        expect_calls, expect_second, expect_loads, raises, expect_sites = self.ROADS[road]
         here = os.path.basename(os.path.realpath(__file__))
+        sites, hit = self._sites(), set()
         s0, g0 = jd.shared_store_stats(), jd.goal_io_stats()["loads"]
         self.calls.clear(); self.writer.clear()
         err, store, exc = io.StringIO(), None, None
-        with contextlib.redirect_stderr(err):
+        with contextlib.redirect_stderr(err), _line_trace(self.saved_jd["load_goals_shared"].__code__, hit):
             if raises is None:
                 store = jd.load_goals_shared(SID_C)
             else:
@@ -2292,6 +2347,16 @@ class TheDoorBumpsAtMostOneSecondKeyPerCall(_WalkHarness):
         s1, g1 = jd.shared_store_stats(), jd.goal_io_stats()["loads"]
         calls = {k: s1[k] - s0[k] for k in SHARED_CALL_KEYS if s1[k] != s0[k]}
         second = {k: s1[k] - s0[k] for k in SHARED_SECOND_KEYS if s1[k] != s0[k]}
+        executed = sorted(site for site, line in sites.items() if line in hit)
+        self.assertEqual(executed, sorted(expect_sites),
+                         "%s road: the bump sites the call executed, read by a trace of the door's own frame against the sites _door_regions "
+                         "reads from its source ((key, ordinal), the ordinal counting that key's sites in source order), are exactly the "
+                         "road's, %r, and were %r; so a site is tied to this drive by execution and not by its key's name, and a second site "
+                         "bumping an already driven key is on no driven road until a row names it (review round 6, lens two); the sites by "
+                         "line: %r" % (road, sorted(expect_sites), executed, sorted(sites.items())))
+        self.assertEqual({k for k, _i in executed}, set(calls) | set(second),
+                         "%s road: the keys of the sites the trace saw executed are the keys whose counters moved, so the trace and the "
+                         "counters agree on this call: sites %r, counters %r" % (road, executed, sorted(set(calls) | set(second))))
         self.assertEqual([(c, f) for _s, c, f, _ln in self.calls], [("_drive", here)],
                          "%s road: one call through the door, made by _drive for %s, recorded by the shared recorder in this file: %r"
                          % (road, self._testMethodName, self.calls))
@@ -2317,7 +2382,7 @@ class TheDoorBumpsAtMostOneSecondKeyPerCall(_WalkHarness):
 
     def test_the_table_covers_both_rosters_and_every_row_is_driven_by_a_method_named_for_it(self):
         keys = set()
-        for road, (calls, second, _loads, _raises) in self.ROADS.items():
+        for road, (calls, second, _loads, _raises, _sites) in self.ROADS.items():
             keys |= set(calls) | set(second)
         rosters = set(SHARED_CALL_KEYS) | set(SHARED_SECOND_KEYS)
         self.assertEqual(keys, rosters, "the keys the drives expect over ROADS are exactly the call keys and the second keys: a key in a "
@@ -2329,6 +2394,26 @@ class TheDoorBumpsAtMostOneSecondKeyPerCall(_WalkHarness):
                                                     "method drives a road of the table (_drive checks the name it is called under): rows "
                                                     "with no method %r, methods with no row %r"
                                                     % (sorted(set(self.ROADS) - declared), sorted(declared - set(self.ROADS))))
+        # the sites (review round 6, lens two): every bump site of the door, read from its source as (key, ordinal), is named by a row's
+        # sites column, which its drive holds by a trace of the door's frame, or by UNDRIVEN_SITES with its reason, and by neither both,
+        # so a second site under an already driven key reds here naming its line, where the key set above cannot see it
+        for road, (calls, second, _loads, _raises, road_sites) in self.ROADS.items():
+            self.assertEqual({k for k, _i in road_sites}, set(calls) | set(second),
+                             "%s: the sites column names exactly the keys the row's deltas name (a site of a key whose counter the road "
+                             "does not move, or a moved key with no site, is a row that disagrees with itself): sites %r, deltas %r"
+                             % (road, road_sites, sorted(set(calls) | set(second))))
+        sites = self._sites()
+        driven = {site for _road, row in self.ROADS.items() for site in row[4]}
+        stated = set(self.UNDRIVEN_SITES)
+        self.assertEqual(sorted(driven & stated), [], "a site a drive executes is stated undriven: remove the statement: %r" % sorted(driven & stated))
+        self.assertEqual(sorted((driven | stated) - set(sites)), [],
+                         "a row or a statement names a bump site the door does not have (by (key, ordinal); the door's sites are %r): %r"
+                         % (sorted(sites), sorted((driven | stated) - set(sites))))
+        self.assertEqual(sorted(set(sites) - (driven | stated)), [],
+                         "a bump site of the door that no drive executes and no statement names, by (key, ordinal) and line: %s. A second "
+                         "site bumping an already driven key is on no driven road; add the drive that reaches it, or a row to "
+                         "UNDRIVEN_SITES saying why none does"
+                         % "; ".join("%r at line %d" % (site, sites[site]) for site in sorted(set(sites) - (driven | stated))))
 
     def test_the_miss_road_a_seeded_store_read_once_fills_and_publishes(self):
         self._seed(SID_C, stamped=False)
