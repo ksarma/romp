@@ -72,7 +72,19 @@ body.rs-lifted.rs-pane-gone::before { display: none; }
    gives; the field is being edited, so the description is the row's help while it is. Kept, not excluded: keying them out
    would cost the keyboard user the description of the two rows that take typing. The click leg pins it by control kind. */
 #rsettings .rs-sub { display: none; }
-#rsettings .rs-row:hover .rs-sub, #rsettings .rs-row:has(:focus-visible) .rs-sub, #rsettings .rs-widget:hover .rs-sub, #rsettings .rs-widget:has(:focus-visible) .rs-sub { display: block; position: absolute; left: 0; right: 0; top: 100%; z-index: 10;
+/* TWO rules with one declaration block, the pointer's arms and the keyboard's (the maintainer's round 5, ui-3): a selector list
+   is unforgiving, one selector the engine cannot parse invalidates the whole rule, so with the four arms in one list an engine
+   without :has() (Chromium before 105, Firefox before 121, WebKit before Safari 15.4) dropped the show rule whole and no
+   description showed on ANY road, the pointer's included. Split, such an engine drops the keyboard rule alone and keeps the
+   pointer road: the degradation the sheet had before the keyboard road existed (a description the keyboard cannot reach, never
+   one nobody can). Every other :has() rule in this sheet is its own rule or a stand-down (display: none), so its loss on that
+   engine costs an extra tooltip or the keyboard road and never the pointer's; gear-sub-focus-browser.test.ts parses the sheet
+   and holds both (no rule mixes a :has() arm with a :has()-free arm; every :has() rule's loss is classified) and drives the
+   model, the sheet with every :has() rule removed, in a browser. Not :is() to make the list forgiving: two rules say it. */
+#rsettings .rs-row:hover .rs-sub, #rsettings .rs-widget:hover .rs-sub { display: block; position: absolute; left: 0; right: 0; top: 100%; z-index: 10;
+  margin-top: 2px; color: var(--text-soft, #cdd3da); font-size: 0.92em; line-height: 1.35; background: var(--input-bg, #1b1b1c); border: 1px solid var(--hairline, #3a3a3a);
+  border-radius: 6px; padding: 6px 9px; box-shadow: 0 4px 14px #000000aa; pointer-events: none; }
+#rsettings .rs-row:has(:focus-visible) .rs-sub, #rsettings .rs-widget:has(:focus-visible) .rs-sub { display: block; position: absolute; left: 0; right: 0; top: 100%; z-index: 10;
   margin-top: 2px; color: var(--text-soft, #cdd3da); font-size: 0.92em; line-height: 1.35; background: var(--input-bg, #1b1b1c); border: 1px solid var(--hairline, #3a3a3a);
   border-radius: 6px; padding: 6px 9px; box-shadow: 0 4px 14px #000000aa; pointer-events: none; }
 /* the popover opens ABOVE a row whose popover would run past the card's bottom (gear.js placeSub sets rs-up on hover and on

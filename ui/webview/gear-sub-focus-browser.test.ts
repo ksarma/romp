@@ -37,9 +37,60 @@ const UI = path.resolve(EXT, "..", "ui", "webview");
 const GEAR = fs.readFileSync(path.join(UI, "gear.js"), "utf8");
 const GEAR_CSS = fs.readFileSync(path.join(UI, "gear.css"), "utf8");
 
-test("the sheet shows a description while its row holds a KEYBOARD focus: :has(:focus-visible) beside :hover on the show rule and the up rule, the Fast mode box's twins keyed the same way, no :focus-within left in any rule, and one tooltip across the panel: the pointer wins", () => {
-  assert.match(GEAR_CSS, /^#rsettings \.rs-row:hover \.rs-sub, #rsettings \.rs-row:has\(:focus-visible\) \.rs-sub, #rsettings \.rs-widget:hover \.rs-sub, #rsettings \.rs-widget:has\(:focus-visible\) \.rs-sub \{ display: block; position: absolute;/m,
-    "the show rule: the row's and the widget's hover selectors each with a :has(:focus-visible) twin (a mouse click is not :focus-visible, so a click shows nothing that outlives the pointer)");
+/** The sheet PARSED (the maintainer's round 5, ui-3 and tests-1): comments blanked as spans (spaces, so offsets hold), then every
+ *  rule as its selector list (the arms split on the commas outside parentheses), its declaration block and its span in the
+ *  stripped source, whatever lines the selector takes (gear.css writes three selectors over two lines, which a line-keyed read
+ *  never saw); a conditional at-rule (@media) is descended and @keyframes is skipped whole (its blocks are keyframe selectors,
+ *  not rules over elements). The pins below read rules, never lines; the degradation model below removes rules by span. */
+interface CssRule { selector: string; arms: string[]; block: string; start: number; end: number }
+const stripCssComments = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, (m) => " ".repeat(m.length));
+function cssRules(src: string): CssRule[] {
+  const out: CssRule[] = [];
+  const walk = (from: number, to: number) => {
+    let i = from;
+    while (i < to) {
+      const open = src.indexOf("{", i);
+      if (open < 0 || open >= to) break;
+      const prelude = src.slice(i, open), preludeT = prelude.trim();
+      let depth = 1, j = open + 1;   // the matching close, counting nested braces (@media holds rules, @keyframes holds keyframe blocks)
+      while (j < to && depth > 0) { if (src[j] === "{") depth++; else if (src[j] === "}") depth--; j++; }
+      if (preludeT.startsWith("@keyframes")) { /* keyframe selectors, not rules over elements */ }
+      else if (preludeT.startsWith("@")) walk(open + 1, j - 1);
+      else if (preludeT) {
+        const arms: string[] = []; let arm = "", paren = 0;
+        for (const ch of preludeT) { if (ch === "(") paren++; else if (ch === ")") paren--; if (ch === "," && paren === 0) { arms.push(arm); arm = ""; } else arm += ch; }
+        arms.push(arm);
+        const norm = (s: string) => s.replace(/\s+/g, " ").trim();
+        out.push({ selector: arms.map(norm).join(", "), arms: arms.map(norm), block: norm(src.slice(open + 1, j - 1)), start: i + prelude.search(/\S/), end: j });
+      }
+      i = j;
+    }
+  };
+  walk(0, src.length);
+  return out;
+}
+const GEAR_RULES = cssRules(stripCssComments(GEAR_CSS));
+/** The sheet as an engine WITHOUT :has() applies it: every rule whose selector list carries :has() is gone whole (a selector the
+ *  engine cannot parse invalidates the whole rule, whatever its other arms), the rest unchanged. The model the degradation leg
+ *  drives in a real browser, since the three engines a developer's machine runs all support :has(). */
+function withoutHas(css: string): string {
+  const src = stripCssComments(css);
+  const gone = cssRules(src).filter((r) => /:has\(/.test(r.selector));
+  let out = src;
+  for (const r of gone) out = out.slice(0, r.start) + " ".repeat(r.end - r.start) + out.slice(r.end);
+  return out;
+}
+
+test("the sheet shows a description while its row holds a KEYBOARD focus: the show rule is TWO rules with one declaration block, the :hover arms and the :has(:focus-visible) arms, so an engine without :has() loses the keyboard road alone; the up rule and the Fast mode box's twins keyed the same way; no rule mixes a :has() arm with a plain arm and every :has() rule's loss is classified; no :focus-within left in any rule; one tooltip across the panel: the pointer wins", (t) => {
+  assert.match(GEAR_CSS, /^#rsettings \.rs-row:hover \.rs-sub, #rsettings \.rs-widget:hover \.rs-sub \{ display: block; position: absolute;/m,
+    "the show rule's pointer half: the row's and the widget's hover selectors in a rule of their own");
+  assert.match(GEAR_CSS, /^#rsettings \.rs-row:has\(:focus-visible\) \.rs-sub, #rsettings \.rs-widget:has\(:focus-visible\) \.rs-sub \{ display: block; position: absolute;/m,
+    "the show rule's keyboard half: the :has(:focus-visible) twins in a rule of their own (a mouse click is not :focus-visible, so a click shows nothing that outlives the pointer); an engine without :has() drops this rule alone and keeps the pointer's (the maintainer's round 5, ui-3: in one selector list the arms it could not parse took the whole rule, and no description showed on any road)");
+  const showHover = GEAR_RULES.find((r) => r.selector === "#rsettings .rs-row:hover .rs-sub, #rsettings .rs-widget:hover .rs-sub");
+  const showFocus = GEAR_RULES.find((r) => r.selector === "#rsettings .rs-row:has(:focus-visible) .rs-sub, #rsettings .rs-widget:has(:focus-visible) .rs-sub");
+  assert.ok(showHover && showFocus, "the parsed sheet holds both halves of the show rule");
+  assert.equal(showFocus!.block, showHover!.block, "one declaration block, spelled twice: the keyboard rule declares exactly what the pointer rule declares");
+  assert.match(showHover!.block, /^display: block; position: absolute; left: 0; right: 0; top: 100%; z-index: 10;/);
   assert.match(GEAR_CSS, /^#rsettings \.rs-row\.rs-up:has\(:focus-visible\) \.rs-sub, #rsettings \.rs-widget\.rs-up:has\(:focus-visible\) \.rs-sub \{ top: auto; bottom: 100%; margin-top: 0; margin-bottom: 2px; \}/m,
     "the up rule's focus twin, the same declarations as the hover rule beside it");
   assert.match(GEAR_CSS, /^#rsettings \.rs-row:has\(:focus-visible\) \.rs-fastin \.rs-sub \{ display: none; \}/m,
@@ -53,6 +104,28 @@ test("the sheet shows a description while its row holds a KEYBOARD focus: :has(:
     "no rule keys on :focus-within any more: a mouse click satisfies it, and the description then outlives the pointer (the maintainer's round 4, ui-2)");
   assert.equal(rules.join("\n").match(/:focus-visible/g)!.length, 9,
     "nine :focus-visible tokens in rules: the show rule's two, the up twin's two, the box's up twin, the box's stand-down twin, the pair's two twins, and the grip's own rule from before this road");
+  // the rule walk (round 5, ui-3): a selector list is unforgiving, so no rule may mix a :has() arm with a :has()-free arm, or an
+  // engine without :has() drops the plain arms with the rule (the show rule did, and nothing showed on any road there); the
+  // failure text names the rule
+  const mixed = GEAR_RULES.filter((r) => { const n = r.arms.filter((a) => /:has\(/.test(a)).length; return n > 0 && n < r.arms.length; });
+  assert.deepEqual(mixed.map((r) => r.selector), [], "no rule's selector list mixes a :has() arm with a :has()-free arm (an engine without :has() drops the whole rule, the plain arms with it)");
+  // and every :has() rule's loss on such an engine is named by its shape, never by a list: a STAND-DOWN (display: none: its loss
+  // costs an extra tooltip, never a missing one), a KEYBOARD TWIN (every arm keyed on :focus-visible and a :focus-visible-free rule
+  // with the same declarations standing: its loss costs the keyboard road alone), or the BOX's own pointer road (a :hover inside
+  // the :has() argument selecting the box's description: the row is selected by its child's hover for the (1,5,0) that beats the
+  // row-hover stand-down, the one pointer road this sheet cannot write without :has(), from before this branch; its loss shows
+  // the row's description over a hovered box instead of the box's); any other :has() rule is unclassified and reds here until
+  // its degradation is stated
+  const hasRules = GEAR_RULES.filter((r) => /:has\(/.test(r.selector));
+  const classOf = (r: CssRule) => /(^|; )display: none;?$/.test(r.block) || /(^|; )display: none;/.test(r.block) ? "stand-down"
+    : r.arms.every((a) => /:focus-visible/.test(a)) && GEAR_RULES.some((o) => !/:focus-visible/.test(o.selector) && o.block === r.block) ? "keyboard twin"
+    : r.arms.every((a) => /:has\([^)]*:hover\)/.test(a) && / \.rs-fastin \.rs-sub$/.test(a)) ? "the box's own pointer road"
+    : "unclassified";
+  const classes = hasRules.map((r) => ({ selector: r.selector, degradation: classOf(r) }));
+  assert.ok(hasRules.length >= 12, "the rig: the sheet's :has() rules, twelve when this was written (" + hasRules.length + ")");
+  assert.deepEqual(classes.filter((c) => c.degradation === "unclassified"), [], "every :has() rule's loss on an engine without :has() is a stand-down, a keyboard twin or the box's own pointer road");
+  assert.ok(classes.some((c) => c.degradation === "keyboard twin") && classes.some((c) => c.degradation === "stand-down"), "the rig: both named shapes occur");
+  t.diagnostic("the :has() rules by degradation: " + JSON.stringify(classes.reduce((m: Record<string, number>, c) => { m[c.degradation] = (m[c.degradation] || 0) + 1; return m; }, {})));
   const showTwin = "#rsettings .rs-row:has(.rs-fastin :focus-visible) .rs-fastin .rs-sub { display: block; }";
   const markStand = "#rsettings .rs-row:has(.rs-mixed:hover) .rs-fastin .rs-sub { display: none; }";
   assert.ok(GEAR_CSS.includes(markStand),
@@ -105,7 +178,7 @@ function bundle(): string {
   return r.outputFiles[0].text;
 }
 
-const PAGE_HTML = `<!DOCTYPE html><html><head><meta charset=utf-8><style>${GEAR_CSS}</style></head><body>
+const pageHtml = (css: string) => `<!DOCTYPE html><html><head><meta charset=utf-8><style>${css}</style></head><body>
 <script src=/dist/gear.js></script></body></html>`;
 const MODELS = { models: [{ value: "opus", label: "Opus", versions: [] }, { value: "sonnet", label: "Sonnet", versions: [] }], efforts: [{ value: "", label: "Default" }] };
 const VERSION = { judgeModel: "opus", judgeEffort: "", indexModel: "opus", indexEffort: "", distillModel: "triage", distillEffort: "triage",
@@ -115,7 +188,7 @@ const VERSION = { judgeModel: "opus", judgeEffort: "", indexModel: "opus", index
 let pw: any = null;
 try { pw = requireCjs("playwright"); } catch { pw = null; }
 
-async function withGear(t: any, tab: string, body: (page: any, errors: string[]) => Promise<void>, height = 320, ctxOpts: Record<string, unknown> = {}): Promise<void> {
+async function withGear(t: any, tab: string, body: (page: any, errors: string[]) => Promise<void>, height = 320, ctxOpts: Record<string, unknown> = {}, css = GEAR_CSS): Promise<void> {
   if (!pw) { t.skip("playwright is not installed under vscode-extension; the browser leg needs it (CI installs no browsers)"); return; }
   let browser: any;
   try { browser = await pw.chromium.launch(); }
@@ -133,7 +206,7 @@ async function withGear(t: any, tab: string, body: (page: any, errors: string[])
       const u = new URL(route.request().url());
       const json = (o: unknown) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(o) });
       if (u.hostname !== "romp.test") return route.fulfill({ status: 404, body: "" });
-      if (u.pathname === "/gear") return route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: PAGE_HTML });
+      if (u.pathname === "/gear") return route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: pageHtml(css) });
       if (u.pathname === "/dist/gear.js") return route.fulfill({ status: 200, contentType: "application/javascript", body: js });
       if (u.pathname === "/models") return json(MODELS);
       if (u.pathname === "/version") return json(VERSION);
@@ -284,6 +357,35 @@ test("the share switch's description opens on a keyboard focus and is placed: at
     assert.equal(high.subBelowRow, true, "and it shows below the row");
     assert.deepEqual(errors, [], "no page error");
   });
+});
+
+test("the degradation on an engine without :has(), modelled: with every :has() rule removed from the sheet (such an engine drops a rule it cannot parse whole) a hover still shows the row's description and a keyboard focus shows nothing, the keyboard road alone lost; before the split of the show rule nothing showed on either road", { timeout: 90000 }, async (t) => {
+  // the surface the three-engine matrix excludes (the maintainer's round 5, ui-3): Chromium 151, Firefox 153 and WebKit 26.5 all
+  // parse :has(), so the engine without it is modelled, not installed: the sheet an engine without :has() applies is this sheet
+  // less every rule whose selector list carries it, driven in the browser at hand
+  const noHas = withoutHas(GEAR_CSS);
+  const kept = cssRules(noHas);
+  assert.equal(kept.filter((r) => /:has\(/.test(r.selector)).length, 0, "the rig: no :has() rule survives the model");
+  assert.equal(GEAR_RULES.length - kept.length, GEAR_RULES.filter((r) => /:has\(/.test(r.selector)).length, "the rig: exactly the :has() rules are gone, every other rule stands");
+  await withGear(t, "debug", async (page, errors) => {
+    const read = () => page.evaluate(() => {
+      const box = document.getElementById("rs-perfshare")!, row = box.closest("#rsettings .rs-row") as HTMLElement, sub = row.querySelector(".rs-sub") as HTMLElement;
+      return { hovered: row.matches(":hover"), focused: document.activeElement === box, display: getComputedStyle(sub).display };
+    });
+    await hoverOn(page, "#rsettings .rs-row:has(#rs-perfshare) b");
+    const on = await read();
+    assert.equal(on.hovered, true, "the rig: the pointer is on the share row");
+    assert.equal(on.display, "block", "the pointer road survives the loss of :has(): a hover shows the row's description (before the split the four-arm show rule was dropped whole and this read none)");
+    assert.deepEqual((await shownPanel(page)).shown, ["rs-perfshare"], "the hovered row's description, alone");
+    await page.mouse.move(5, 5);
+    assert.equal((await read()).display, "none", "the rig: the pointer gone, nothing shows");
+    const tab = await tabInto(page, "rs-perfshare");
+    assert.equal(tab.landed && tab.focusVisible, true, "the rig: a real keyboard focus in the row");
+    assert.equal((await read()).display, "none", "the keyboard road is what such an engine loses: the focus rule is gone with its :has(), and the description stays hidden (the degradation the sheet had before the keyboard road, stated in the sheet beside the two rules)");
+    assert.deepEqual(errors, [], "no page error");
+  }, 320, {}, noHas);
+  // the mechanism behind the reading: the pointer half is a rule of its own and holds no :has(), so the model keeps it
+  assert.ok(kept.some((r) => r.selector === "#rsettings .rs-row:hover .rs-sub, #rsettings .rs-widget:hover .rs-sub"), "the show rule's pointer half stands in the model (it holds no :has())");
 });
 
 test("a Tab into a Fast mode box shows one description in its row, the BOX's own, the row's standing down, as a hover on the box does", { timeout: 90000 }, async (t) => {
