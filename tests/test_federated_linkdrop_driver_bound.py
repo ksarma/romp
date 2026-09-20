@@ -9,7 +9,8 @@ and leaving no summary for the labs already run. The module now bounds the drive
 kernel or a browser:
 - the arithmetic: the driver's worst case (its shared wait budget plus the bounded work between the waits) is under the
   subprocess timeout, which is under CI's cap with room for the rest of setUpClass, and the cap the constant is chosen
-  against is the one the workflow's served step states;
+  against is the one the workflow's served step states; and the down dwell holds DOWN_WINDOW_MARGIN times wait_ms, the
+  cap on the delivery the gate legs measure it against, so that pin holds for every drive whose visibility legs pass;
 - the bytes sent: _drive hands subprocess.run the timeout and writes the budget, the wait caps and the settle values
   into the driver's cfg from the class that drives (a stub class, the driver replaced by a spy), and the driver it writes
   opens with the budget and reads every one of those keys;
@@ -142,6 +143,10 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
             self.assertGreater(worst, cls.driver_budget_ms / 1000.0 + L.hub_restart_bound_s(),
                                "the worst case counts more than the budget and the restart (the bundles, the dwell, the settles): %r" % (worst,))
             self.assertLess(worst, L.DRIVER_TIMEOUT_S, "%s's driver at its worst (%.1f s) ends before its subprocess timeout (%d s)" % (cls.__name__, worst, L.DRIVER_TIMEOUT_S))
+            self.assertGreaterEqual(cls.down_dwell_ms, L.DOWN_WINDOW_MARGIN * cls.wait_ms,
+                                    "%s's down dwell (%d ms) holds DOWN_WINDOW_MARGIN (%g) times wait_ms (%d ms), the cap waitVisible puts on the delivery the "
+                                    "gate legs measure the dwell against, so the per-drive margin pin holds for every drive whose visibility legs pass and "
+                                    "reds only for a window shorter than that" % (cls.__name__, cls.down_dwell_ms, L.DOWN_WINDOW_MARGIN, cls.wait_ms))
         self.assertLessEqual(L.DRIVER_TIMEOUT_S + L.BOOT_ROOM_S, L.CI_TEST_TIMEOUT_S,
                              "the subprocess timeout leaves BOOT_ROOM_S of CI's per-test cap for the rest of setUpClass")
         served = self._served_step_line()
