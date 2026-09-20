@@ -32,9 +32,11 @@ type Slot = "feed" | "bars";
 type Frame = Record<string, any>;
 type Collection = { order: string[]; items: Map<string, any> };
 // A base holds a `gen` beside its rev once a kernel's frames carry one (the resume protocol's generation stamp,
-// 2026-09-19): the full's gen at the full, a composed frame's newGen after it applies, a per-cycle delta's gen after it.
-// A kernel before the stamp seeds none, and held() then reports no pair, so nothing is declared for that base. The gen
-// is a string in the kernel's form (genOf below), never a number.
+// 2026-09-19): the full's gen at the full, a composed frame's newGen after it applies, and unchanged by a per-cycle delta,
+// whose gen the gate in receive() holds equal to the base's (a frame carrying another gen recovers, 2026-09-20). A kernel
+// before the stamp seeds none, a stamped frame onto such a base seeds none either (receive() says why), and held() then
+// reports no pair, so nothing is declared for that base. The gen is a string in the kernel's form (genOf below), never a
+// number.
 type Base = { rev: number; gen?: string; msg: Frame; maps: Map<string, Collection> };
 export const VIEW_DELTA_KINDS: Record<Slot, Record<string, string>> = {
   feed: { asks: "byid:itemId" },
@@ -188,6 +190,18 @@ export class ViewDeltas {
       return this.recover(slot);
     }
     if (base.rev !== msg.base) return this.recover(slot);
+    // The gen gate on this road (2026-09-20), the mirror of applyRemoteFeedDelta's: a frame carrying a gen (genOf) onto a
+    // base holding one applies only when the two agree; a foreign gen is another stream's, and the frame recovers as a
+    // base-rev mismatch does (needSlot, the base dropped), never applied onto this base and never adopted as its gen. A
+    // composed frame's gen is gated the same way, so its newGen is adopted only after its gen matched the base's. Where
+    // the roads differ, and why: a stamped frame onto a base holding NO gen (a full carrying none seeded it) applies here
+    // on the rev test alone and seeds no gen, where the feed road refuses it (why "gen": no pair is held for a stamped
+    // stream). This receiver is shared with the local VS Code pipe, whose base is the last whole frame the kernel served;
+    // refusing here would cost that pane a whole slot for a frame its rev test accepts, while applying costs nothing, and
+    // the gen is not seeded because the stream never stated a rev 0 under it: a pair declared from such a base would be
+    // one the base never held. A gen-less frame onto a base holding a gen applies and keeps the base's gen, as before.
+    const g = genOf(msg.gen);
+    if (base.gen !== undefined && g !== undefined && g !== base.gen) return this.recover(slot);
     try {
       // A per-cycle patch advances the base by one (rev equal to base plus one, the test every kernel in this repo
       // passes). A frame carrying `through` (2026-09-19) is accepted at any rev at or above its base. Two frames carry
@@ -240,11 +254,11 @@ export class ViewDeltas {
         next[name] = assemble(collection, kinds[name], base.msg[name]);
       }
       // the pair the base holds after the frame: (newGen, rev) when the frame carries through and a newGen (a composed
-      // frame, its rev R equal to its through), else (gen, rev) when it carries a gen (a per-cycle stamped patch, through
-      // carried or not: through's presence alone never moves the gen), else the base's gen as it was (none on a kernel
-      // before the stamp)
-      const newGen = hasThrough ? genOf(msg.newGen) : undefined, g = genOf(msg.gen);
-      const gen = newGen !== undefined ? newGen : g !== undefined ? g : base.gen;
+      // frame, its rev R equal to its through), else (gen, rev) with the base's gen (the frame's, when it carries one: the
+      // gate above held them equal; a gen-less frame moves no gen), and none on a base seeded without one, whatever the
+      // frame carries (the gate's comment says why the frame's gen is not seeded there)
+      const newGen = hasThrough ? genOf(msg.newGen) : undefined;
+      const gen = base.gen === undefined ? undefined : newGen !== undefined ? newGen : base.gen;
       this.bases.set(slot, { rev: msg.rev, gen, msg: next, maps });
       return next;
     } catch {

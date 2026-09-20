@@ -1183,3 +1183,53 @@ test("a stamped patch whose rev and through disagree recovers as a base-rev mism
     fm.conns.get(HOST).closed = true;
   });
 });
+
+// The gen gate on the bars road, the mirror of the feed file's: a stamped patch whose gen is not the base's is another
+// stream's and recovers (needSlot, the base dropped), never applied and never adopted as the base's gen; a composed
+// frame's gen is gated the same way. Before round 3 the patch applied and its gen overwrote the base's, so the next redial
+// declared a pair the page never held. Where the roads differ: a stamped patch onto a base seeded WITHOUT a gen applies on
+// the rev test alone and seeds no gen (the feed road refuses that frame), so held() stays null and the redial declares nothing.
+test("a stamped bars patch whose gen is not the base's recovers as a base-rev mismatch does (needSlot, nothing emitted, the base dropped), for a per-cycle patch and a composed frame alike, and the base's gen is never overwritten; a stamped patch onto a gen-less base applies and seeds no gen", async () => {
+  await withManager("timeline", ({ fm, emitted }) => {
+    seedLocalTimeline(fm);
+    fm.openRemote(HOST, true);
+    const ws = last(FakeWS.made);
+    ws.open();
+    ws.frame(remoteBarsStamped(G));
+    ws.frame(barsCycle(G, 0, bar("seg-2", 1010, 1015, "second"), 505));
+    assert.deepEqual(heldBars(fm), { gen: G, rev: 1 });
+    const foreign = "fedcba9876543210-1";
+    let before = barsOf(emitted).length;
+    ws.frame(barsCycle(foreign, 1, bar("seg-3", 1020, 1025, "third"), 510));   // another stream's per-cycle patch at the right rev
+    assert.deepEqual(ws.sent, [{ type: "needSlot", slot: "bars" }], "refused: the whole slot is asked of that kernel, as the feed road asks for its full");
+    assert.equal(barsOf(emitted).length, before, "nothing emitted");
+    assert.equal(heldBars(fm), null, "the base is dropped, not re-stamped with the foreign gen");
+    ws.frame(remoteBarsStamped(G2));   // the whole slot the ask earns re-seeds the base under the kernel's gen
+    ws.frame(barsCycle(G2, 0, bar("seg-2", 1010, 1015, "second"), 515));
+    assert.deepEqual(heldBars(fm), { gen: G2, rev: 1 });
+    before = barsOf(emitted).length;
+    ws.frame(composed(1, 3, foreign, G3, { turns: { set: { [SID_A + SEP + "seg-4"]: bar("seg-4", 1030, 1035, "fourth") } } }, 520));   // a composed frame whose gen is another stream's
+    assert.deepEqual(ws.sent.slice(1), [{ type: "needSlot", slot: "bars" }], "a composed frame is gated on its gen too, before its newGen is adopted");
+    assert.equal(barsOf(emitted).length, before);
+    assert.equal(heldBars(fm), null);
+    ws.readyState = 3;
+    const redials = armedRedials(() => ws.onclose!({ code: 1006, wasClean: false }));
+    redials[0]();
+    const ws2 = last(FakeWS.made);
+    assert.equal(qOf(ws2.url).get("caps"), "feedDelta", "with the base dropped the redial declares nothing, never the foreign pair");
+    ws2.open();
+    // where the roads differ: a base seeded by a full carrying no gen takes a stamped patch on the rev test alone and seeds no gen
+    ws2.frame(remoteBars());
+    assert.equal(heldBars(fm), null);
+    before = barsOf(emitted).length;
+    ws2.frame(barsCycle(G, 0, bar("seg-2", 1010, 1015, "second"), 525));
+    assert.deepEqual(ws2.sent, [], "applied: nothing asked");
+    assert.equal(barsOf(emitted).length, before + 1, "emitted once");
+    assert.equal(heldBars(fm), null, "and no gen seeded: the stream stated no rev 0 under it, so nothing is declared from this base");
+    ws2.readyState = 3;
+    const again = armedRedials(() => ws2.onclose!({ code: 1006, wasClean: false }));
+    again[0]();
+    assert.equal(qOf(last(FakeWS.made).url).get("caps"), "feedDelta", "nothing declared for a base holding no gen");
+    fm.conns.get(HOST).closed = true;
+  });
+});
