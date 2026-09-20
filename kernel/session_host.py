@@ -797,7 +797,8 @@ def hosts_dir(state_dir) -> Path:
     then OPENED with O_DIRECTORY|O_NOFOLLOW, read again by fstat on that descriptor (the same directory and uid refusals,
     decided on the object the chmod will act on), tightened by fchmod on the descriptor, and read back by fstat on it. So
     a link present at the lstat is refused there, and a link swapped in between the lstat and the open fails the open
-    (ELOOP) and is refused with the reason: no mode reaches anything a link points at. Through round 6 the chmod took the
+    (ENOTDIR on Linux under O_DIRECTORY|O_NOFOLLOW, ELOOP elsewhere; both are refusals here) and is refused with the
+    reason: no mode reaches anything a link points at. Through round 6 the chmod took the
     path, so a link swapped in after the lstat had whatever it pointed at (a directory or a file of ours) tightened to
     0700 before the read-back refused, and a foreign target raised EPERM at the chmod; the uid check never read the
     swapped target, since it had decided on the pre-swap root. A live symlink at the root's path, pointing at a
@@ -826,7 +827,8 @@ def hosts_dir(state_dir) -> Path:
     runner's umask, 002, 022, 077 and 000 when this call made it, with `hosts/` 0700 and the ancestor made on the way at
     the umask's mode; a root pre-existing at 0755 or 0777 stays as planted with `hosts/` 0700 below it; a live symlink at
     the root's path takes the pre-existing road, one swapped in after the exists() read is refused at the lstat with its
-    target untouched, and one swapped in between the lstat and the open is refused at the open with its target's mode
+    target's MODE untouched (an empty hosts/ of ours, 0700, is made through the link by the parents mkdir before the
+    lstat refuses), and one swapped in between the lstat and the open is refused at the open with its target's mode
     unchanged; a root another uid owns is refused before any mode is set, whether the lstat or the descriptor's fstat
     reads the uid; the read-back is an fstat on the descriptor, so a stat or an lstat by path that disagrees is inert;
     and the refusal fires when the read-back disagrees."""
@@ -840,8 +842,8 @@ def hosts_dir(state_dir) -> Path:
         if st.st_uid != os.geteuid():
             raise OSError("state root %s belongs to uid %d, not to us (uid %d)" % (root, st.st_uid, os.geteuid()))
         # the chmod goes through a descriptor (kernel-4, round 4 of the review, 2026-09-20): opened O_DIRECTORY|O_NOFOLLOW
-        # right after the lstat, so a link swapped in between fails the open (ELOOP) and is refused before any mode
-        # reaches what it points at, where a chmod by path tightened the link's target and refused only at the
+        # right after the lstat, so a link swapped in between fails the open (ENOTDIR on Linux, ELOOP elsewhere) and is
+        # refused before any mode reaches what it points at, where a chmod by path tightened the link's target and refused only at the
         # read-back; the fstat repeats the directory and uid checks on the object the fchmod acts on, and the read-back
         # is an fstat on the same descriptor, never a stat by path
         try:
@@ -1398,7 +1400,8 @@ class SessionHost:
         the bind's), a dead host's published socket unlinked and stale temps swept (_sweep_stale_temps, step prelude).
         None of these reads the lease or needs the CLI's identity, and nothing in the kernel waits on the lease appearing
         before them (shown by execution in that round, not by reading), so they cost the lease-to-socket interval nothing
-        once moved here: after _spawn's lease write only the bind, the chmod by path and the rename run (_serve_socket).
+        once moved here: after _spawn's lease write only one lstat of hosts/ (the bind-hosts guard, round 4 of the
+        review), the bind, the chmod by path and the rename run (_serve_socket).
         The trade is that the lease appears later in absolute terms by these steps' cost, which lengthens the interval
         from host-started to the lease, the one a kernel reading a foreign host's state mid-start falls into (a
         recovered orphan and a second host; queued as its own change). A refusal here is the socket-bind-failed row

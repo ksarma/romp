@@ -154,11 +154,15 @@ def _open_dir_nofollow(name, what: str, shown: Path, dir_fd=None, private: bool 
 class HostDirs:
     """Descriptors on `<state>/hosts/` (`hosts`) and `hosts/<sid>/` (`dir`), the kernel's handle on the two directories
     it writes under on a host's spawn road, opened by open_host_dirs and closed by close() or the `with` exit. Every
-    open, stat or unlink the kernel makes under them takes a NAME relative to one of these descriptors (dir_fd), so
-    no component of the path can be re-pointed under it: a descriptor names an inode, not a path (round 4 of the
+    WRITE and refused-road READ the kernel makes under them takes a NAME relative to one of these descriptors (dir_fd),
+    so no component of the path can be re-pointed under it: a descriptor names an inode, not a path (round 4 of the
     review, 2026-09-20: through round 3 the launcher opened hosts/<sid>/host.stderr by path before Popen, and a
     hosts/ swapped for a symlink after the spec was written had that file, carrying the host's traceback with the
-    absolute state root in it, written into the link's target)."""
+    absolute state root in it, written into the link's target). Not every read: the spawn wait's own poll of the
+    published path (`while not sock.exists()` in _host_transport_for) and the kernel's first connect to it take that
+    PATH, not a name under these descriptors, so a hosts/ re-pointed during the spawn wait is read there through the
+    link (a stat, then a connect, no write). That residual is named in the PR's record, under the same precondition
+    every residual here shares (a state root that is not 0700; ours is 0700 by code)."""
 
     def __init__(self, hosts: int, dir: int):
         self.hosts, self.dir = hosts, dir
@@ -183,8 +187,9 @@ class HostDirs:
 def open_host_dirs(state_dir, sid: str) -> HostDirs:
     """The descent to `hosts/<sid>/`: `hosts/` opened O_DIRECTORY|O_NOFOLLOW off the state root and verified (a directory,
     this uid's, no group or other bits), then `<sid>` opened the same way relative to that descriptor and verified the
-    same way. Follows no symlink at either component: a link at hosts/ or at hosts/<sid>/ fails its open (ELOOP) and
-    is refused as one, a foreign or loose directory is refused by the fstat of the object opened, and nothing is refused
+    same way. Follows no symlink at either component: a link at hosts/ or at hosts/<sid>/ fails its open (Linux answers
+    ENOTDIR under O_DIRECTORY|O_NOFOLLOW, ELOOP elsewhere; _open_dir_nofollow handles both and an lstat after the refusal
+    words it as a symlink) and is refused, a foreign or loose directory is refused by the fstat of the object opened, and nothing is refused
     or accepted on a path's say-so. Raises HostDirRefused with the reason and the path. The state root's own ancestors
     are the operator's (a symlinked ~/.local/state is followed as ever): the guard is against a re-point INSIDE the
     root, where hosts/ lives. The caller holds the descriptors for as long as its writes and reads under the directory
@@ -254,7 +259,11 @@ def remove_host_dir(state_dir, sid: str, log=None) -> bool:
     condition here, see _open_dir_nofollow), then the tree under `<sid>` removed by descriptors (_rmtree_at, which refuses
     a `<sid>` that is a link or another uid's), so no component is followed as a link. True
     when the directory is gone afterwards (already absent counts); False when `hosts/` was refused or a removal failed,
-    in which case NOTHING was deleted through the refusal and `log`, when given, is told why. Round 4 of the review
+    and `log`, when given, is told why. A refusal at `hosts/` or at `<sid>` deletes nothing (the open fails before the
+    walk); a refusal DEEPER stops the walk with the entries scandir had already yielded (ours, under our verified
+    `<sid>/`) unlinked and the foreign object and everything below it untouched, so a nested refusal is not "deletes
+    nothing" (round 5 of the review, 2026-09-20, the docs lens: a two-pass walk would be, and is not taken here).
+    Round 4 of the review
     (2026-09-20): these roads ran shutil.rmtree on a path with errors ignored, and with `hosts/` swapped for a symlink to
     a peer's directory the leftover arm of the connect road (a `hosts/<sid>/` seen through the link, no lease) deleted
     the peer's `<sid>/` through it, a write onto a target of the peer's choosing on the road every session start takes.
@@ -497,7 +506,8 @@ def write_spawn_spec(state_dir, sid: str, spec: dict) -> Path:
     off the root and verified by fstat, then <sid> the same way relative to it), with O_NOFOLLOW on the file too. So
     the residual the two helpers' docstrings state for a path-taking open, a hosts/ or hosts/<sid>/ re-pointed between
     the helper's read-back and the open, is closed for this write: a link swapped in at either component fails the
-    open with ELOOP and the spawn is refused with the reason (HostDirRefused, which the kernel files as a problem row
+    open (ENOTDIR on Linux under O_DIRECTORY|O_NOFOLLOW, ELOOP elsewhere; the descent handles both) and the spawn is
+    refused with the reason (HostDirRefused, which the kernel files as a problem row
     with the remedy). Both helpers' refusals are raised under the same class here, so the kernel tells the class apart
     from any other OSError of the write (a full disk) without reading the text."""
     try:

@@ -1553,6 +1553,51 @@ class SocketMode(unittest.TestCase):
         self.assertEqual(sorted(p.name for p in target.iterdir() if p.name.endswith((".sock", ".tmp"))), [], "the target holds no socket and no temp")
         self.assertEqual(self.lease_calls, ["write", "remove"], "the lease was written at the spawn and removed on the failure")
 
+    def test_the_bind_guard_refuses_a_non_directory_a_foreign_uid_and_a_group_world_hosts(self):
+        """extra6-1's guard at the bind has four refusals (kernel/session_host.py _serve_socket, step
+        bind-hosts): a symlink (ELOOP), a non-directory (ENOTDIR), another uid's (EPERM) and a
+        group/world-accessible one (EPERM). The re-pointed case above drives the symlink arm; the other
+        three were held by no case (the mutation lens's F1 on round 5 of the review, 2026-09-20). Each arm
+        here doctors os.lstat's ANSWER for hosts/ at the bind alone, the shape StateRootByHostsDir uses,
+        armed at the lease write so the prelude's own hosts_dir check has already passed on the real
+        directory: the guard reads a regular file, a foreign uid, or a 0755 directory, refuses with step
+        bind-hosts and the arm's errno, and start_unix_server is never called. The doctored value is read
+        BACK from the object the guard stats (the lstat's return), never asserted from a picture. Red with
+        the matching arm deleted from the guard: the doctored value passes and the socket is published."""
+        for arm, doctor, errcls, err in (
+            # OSError(errno, msg) is constructed as the errno's subclass, so ENOTDIR reads as NotADirectoryError
+            # and EPERM as PermissionError; ELOOP (the re-pointed case above) has no subclass and stays OSError
+            ("not-a-directory", lambda st: os.stat_result((stat.S_IFREG | 0o700,) + tuple(st)[1:]), "NotADirectoryError", errno.ENOTDIR),
+            ("foreign-uid", lambda st: os.stat_result(tuple(st)[:4] + (st.st_uid + 1,) + tuple(st)[5:]), "PermissionError", errno.EPERM),
+            ("group-world", lambda st: os.stat_result((stat.S_IFDIR | 0o755,) + tuple(st)[1:]), "PermissionError", errno.EPERM),
+        ):
+            with self.subTest(arm=arm):
+                self.setUp()
+                hosts = self.pub.parent
+                binds, armed = [], []
+                real_start, real_lstat = asyncio.start_unix_server, os.lstat
+
+                async def start(*a, **k):
+                    binds.append(k.get("path"))
+                    return await real_start(*a, **k)
+
+                def lstat(path, *a, _doctor=doctor, **k):
+                    st = real_lstat(path, *a, **k)
+                    if armed and not isinstance(path, int) and os.fspath(path) == os.fspath(hosts):
+                        return _doctor(st)                       # the guard's own lstat of hosts/, and only that
+                    return st
+                write = self.lease_api["write_lease"]
+
+                def plant(sd, lease, _write=write):
+                    _write(sd, lease)
+                    armed.append(True)                           # from the lease write on: the prelude has already passed
+                self.lease_api["write_lease"] = plant
+                with mock.patch.object(asyncio, "start_unix_server", start), mock.patch.object(os, "lstat", lstat):
+                    mode, rc = self._run_host()
+                self.assertIsNone(mode, "nothing was published")
+                self._assert_refused(rc, "bind-hosts", errcls, err)
+                self.assertEqual(binds, [], "start_unix_server was never called: the guard refused first")
+
     def test_a_failed_publish_closes_the_listening_socket_it_bound(self):
         """The except arm's server.close() (the mutation pass of round 1, 2026-09-19: the rename-failure case below checks
         the rows, the temp, the lease and the CLI, and a listening socket left open behind an unlinked temp is invisible
@@ -2109,7 +2154,8 @@ class StateRootByHostsDir(unittest.TestCase):
     at 0755 or 0777 stays as planted with hosts/ 0700 below it, and no chmod and no fchmod names it (the create-only
     scope); a live symlink at the root's path takes the pre-existing road (exists() follows it, hosts/ is made 0700 under
     its target, the target is never read or tightened) while a link swapped in after the exists() read is refused at the
-    lstat as not a directory with its target untouched; a link swapped in BETWEEN the lstat and the open (kernel-4,
+    lstat as not a directory with its target's MODE untouched (an empty hosts/ of ours, 0700, is made through the link
+    by the parents mkdir before the lstat refuses, as the case below reads back); a link swapped in BETWEEN the lstat and the open (kernel-4,
     round 4) fails the open and is refused with its target's mode unchanged, where the chmod by path through round 6
     tightened the target first; a root another uid owns is refused before any mode call, whether the lstat or the
     descriptor's fstat reads the uid (regression-1 and kernel-2, round 4: the refusal was held by no test); the read-back
@@ -2118,8 +2164,10 @@ class StateRootByHostsDir(unittest.TestCase):
     path, fstat on the descriptor), never asserted from a picture. Refusable, each run on a scratch copy: the fchmod
     removed reds the 002, 022 and 000 arms (077 stays green, the umask's mode being the code's there); an fchmod that does
     not take, or a stubbed fstat answering 0755 on the read-back, fires the refusal; the lstat's foreign-uid refusal
-    deleted reds that case's lstat arm; the open's O_NOFOLLOW dropped, or the tighten put back on the path, reds the
-    swapped-link case on the target's mode."""
+    deleted reds that case's lstat arm; the open's O_NOFOLLOW dropped reds the swapped-link case on the target's mode
+    (the load-bearing refusal there); the tighten put back on the path (os.chmod for the fchmod) leaves that case GREEN,
+    since the O_NOFOLLOW open refuses before any tighten runs, and reds the read-back and tightened-object cases instead
+    through the fchmod spies (the round-5 modes lens, 2026-09-20, F3: the earlier wording conflated the two mutations)."""
 
     def _made_under(self, umask, root=None):
         """hosts_dir over a root not yet on disk, under `umask` (restored); the root's and hosts/'s modes as read back.
@@ -2304,7 +2352,8 @@ class StateRootByHostsDir(unittest.TestCase):
         the round's refuters read a file of ours tightened the same way), and the call refused only at the read-back and
         for the wrong reason (the link's own mode); the uid check never read the swapped target, having decided on the
         pre-swap root. Now the root is opened O_DIRECTORY|O_NOFOLLOW right after the lstat: the open fails on the link
-        (ELOOP), hosts_dir refuses naming the root and the swap, and the target's mode is what it was. Interposed on
+        (ENOTDIR on Linux under O_DIRECTORY|O_NOFOLLOW, ELOOP elsewhere), hosts_dir refuses naming the root and the swap,
+        and the target's mode is what it was. Interposed on
         os.lstat, a direct call in hosts_dir (so the plant is seen on every interpreter, 3.10 included): the first lstat
         of the root's path answers the truth and then performs the swap (the root renamed aside with the hosts/ already
         made under it, a symlink to a 0755 directory put in its place). Read back from the objects: the target by lstat,

@@ -846,6 +846,32 @@ class BackendHostRules(unittest.TestCase):
         self.assertIn("hostAck", reg)
         self.assertEqual(reg.get("hostLogPos"), {"host": sb.HOST_LOG_POS_REFUSED, "pos": 1}, "and the position with it")
 
+    def test_a_symlinked_sid_on_the_removal_road_is_refused_and_the_targets_file_is_not_walked(self):
+        """The removal road's <sid>-level O_NOFOLLOW, driven (the mutation lens on round 5 of the review,
+        2026-09-20, found it held by no case: remove_host_dir's docstring and the PR body say _rmtree_at
+        refuses a link at any level, but only the hosts/ level was driven, so a link at hosts/<sid> was
+        unpinned). hosts/<sid> is a symlink to a peer's directory holding a file of the peer's; _host_ended
+        for an end this kernel asked for reaches remove_host_dir, whose _rmtree_at opens <sid>
+        O_DIRECTORY|O_NOFOLLOW off the verified hosts/ descriptor, so the open fails on the link, the walk
+        never descends, the peer's file stands and the link is left. A delete onto an attacker-chosen target
+        is this PR's standing class. Red with O_NOFOLLOW dropped from _rmtree_at's open: the link is followed
+        and the peer's file is unlinked before the trailing rmdir on the link raises."""
+        d, be = self._be()
+        hosts = ht.host_dir(d, SID).parent
+        hosts.mkdir(parents=True, mode=0o700)
+        peer = Path(d) / "peer" / SID
+        peer.mkdir(parents=True, mode=0o700)
+        (peer / "keep").write_text("the peer's own file")
+        (hosts / SID).symlink_to(peer)                          # hosts/<sid> -> a directory the peer owns
+        sb.write_reg(Path(d), SID, {"sid": SID, "name": "web", "alive": True})
+        t = types.SimpleNamespace(hello={"host": {"pid": 7, "start": "h"}, "cli": {"pid": 8, "start": "c"}}, ack_offset=3, exit_info=None)
+        s = types.SimpleNamespace(sid=SID, name="web", _host=t, _host_ack_t=0.0)
+        be._host_ended(s, {"t": "exit", "code": 0, "cause": "end"})
+        self.assertTrue((hosts / SID).is_symlink(), "the link is left, not walked")
+        self.assertTrue((peer / "keep").exists(), "the peer's file was not deleted through the link")
+        self.assertEqual((peer / "keep").read_text(), "the peer's own file")
+        self.assertTrue(any("not cleared" in l for l in be._test_logs), "remove_host_dir logged the refusal")
+
     def test_with_the_setting_off_an_orphan_lease_is_recovered_and_no_host_is_spawned(self):
         d, be = self._be()
         Path(d, "session-hosts").write_text("off")

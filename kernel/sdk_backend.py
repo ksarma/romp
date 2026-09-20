@@ -12612,7 +12612,8 @@ class SdkBackend:
                 # reads of host.log and host.stderr), so a hosts/ swapped for a symlink after the spec is written
                 # re-points none of them: through round 3 the launcher opened host.stderr by path, and the link's
                 # target received the host's traceback, which names the state root. A link found at either component
-                # fails the open (ELOOP) and the launch is refused BEFORE any process starts, filed below.
+                # fails the open (ENOTDIR on Linux under O_DIRECTORY|O_NOFOLLOW, ELOOP elsewhere) and the launch is
+                # refused BEFORE any process starts, filed below.
                 dirs = ht.open_host_dirs(self.state_dir, sess.sid)
             except ht.HostDirRefused as e:
                 self._refuse_host_directory(sess, e)
