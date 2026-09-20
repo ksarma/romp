@@ -3112,9 +3112,13 @@ class TheCaseRostersNameEveryCase(unittest.TestCase):
     conftest renders, which a plant can change, so under a plant that stops rendering one text the cases reading that
     text's copy alone leave the derived population while the roster, which the plant does not touch, still names them,
     and the test reds on a roster entry that lost no class. That red is the plant's, not a case's, and this class is no
-    cell's set. The case-list test's verdict reads no conftest text (it holds the module docstring's list to the
-    classes' SCRATCH bindings; the names case_population derives on the way are unused by it) and the third test reads
-    synthetic texts, so both stay selected."""
+    cell's set. The case-list test's verdict does not depend on the conftest's texts (it holds the module docstring's
+    list to the classes' SCRATCH bindings; the names case_population derives on the way are unused by it), though its
+    derivation reads them through case_population's names default and raises under a conftest that renders no refusal
+    text, a red the plant's, which derive prints with no case id (the round-8 review found this sentence saying the
+    test reads no conftest text); the third test reads synthetic texts only, under a HERE pointed at a directory with
+    no conftest, so a call of its that falls to a default read is a loud FileNotFoundError (the round-8 review found
+    its SCRATCH-shape call reading the real conftest through the names default); both stay selected."""
 
     def _assert_same(self, what, derived, named):
         self.assertEqual(len(named), len(set(named)), "%s names an id twice: %r" % (what, sorted(named)))
@@ -3144,7 +3148,13 @@ class TheCaseRostersNameEveryCase(unittest.TestCase):
         a name into a piece of the gone report's link are the copies, and so is a constant bound under a module-level
         if whose value is a piece a renderer reaches through a constant bound under a try; a piece of the gone report's
         own head, of a renderer's docstring, or of a text outside those sites is not; a conftest with no such text
-        raises."""
+        raises. The whole test runs with HERE pointed at a directory holding no conftest, so every call here passes
+        its texts and a call that fell to a default read of the real files would red as a FileNotFoundError."""
+        empty = tempfile.mkdtemp()                        # no conftest here: a default read of the real texts is loud
+        self.addCleanup(shutil.rmtree, empty)
+        patcher = mock.patch.object(sys.modules[__name__], "HERE", empty)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         synthetic = textwrap.dedent("""\
             class _NestedRun:
                 SCRATCH = ''
@@ -3183,7 +3193,7 @@ class TheCaseRostersNameEveryCase(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "two classes share a name.*'Four'"):
             case_population(synthetic + "\nclass Four(_NestedRun):\n    SCRATCH = SCRATCH_Z\n", names=())
         with self.assertRaisesRegex(AssertionError, "Four binds its SCRATCH in a shape case_population does not read"):
-            case_population(synthetic.replace("SCRATCH = SCRATCH_Z", "SCRATCH = SCRATCH_HEAD + 'x'"))
+            case_population(synthetic.replace("SCRATCH = SCRATCH_Z", "SCRATCH = SCRATCH_HEAD + 'x'"), names=())
         with self.assertRaisesRegex(AssertionError, "no _NestedRun class"):
             case_population("class Pin(unittest.TestCase):\n    pass\n", names=())
         conftest = textwrap.dedent('''\
