@@ -186,8 +186,10 @@ BAD_EVS = ("delta-unknown-slot", "delta-unkeyed-base")
 # (driver_worst_case_s: its wait budget plus the bounded work between the waits) sits under the subprocess timeout, so a
 # degraded drive returns through its wait budget with the expired waits recorded or, for a hang in the control door,
 # through driver_error ("driver timed out"), and the labs after this one still run.
-# tests/test_federated_linkdrop_driver_bound.py pins the arithmetic, the budget, the bytes sent and the premise that every
-# wait the driver places draws on the budget or is a fixed dwell the arithmetic counts.
+# tests/test_federated_linkdrop_driver_bound.py pins the arithmetic, the budget and the bytes sent; the premise that every
+# wait the driver places draws on the budget or is a fixed dwell the arithmetic counts is pinned there by regular expressions
+# over the driver text and in tests/test_federated_linkdrop_driver_parsed_served.py over the compiler's parse (every receiver
+# call allow-listed, every wait capped, by type), each module's docstring naming what it checks and the class it cannot see.
 CI_TEST_TIMEOUT_S = 600      # pytest --timeout on CI's served step
 BOOT_ROOM_S = 120            # setUpClass outside the drive: the kernels' boots, the dist copy, the readers after the drive
 DRIVER_TIMEOUT_S = 480       # the node driver's subprocess timeout: CI_TEST_TIMEOUT_S - BOOT_ROOM_S
@@ -1176,10 +1178,13 @@ class _LinkDrop(unittest.TestCase):
         named drive moves the date with it (round 6; round 5 dated by the newest log's header stamp, which a unit run logged
         like a drive made unreachable). It refuses to print anything when the two can disagree: a complete unmutated record
         the listing does not hold; a newest record in a directory with no headered lab log; that log with no end line (a drive
-        in flight); a record ending more than a second after its drive's end stamp (the log's whole seconds against the
-        record's milliseconds); a record of the dating drive outside the listing; a lab drive newer than the dating one that is
-        in flight or ended with no class record (a log whose pytest target is another module, named in its header or read from
-        its body's test ids, is no lab drive and is skipped with a note). Then it runs this helper over each record's windows
+        in flight); a record of the DATING drive ending more than a second after that drive's end stamp (the log's whole seconds
+        against the record's milliseconds; an older drive's records are not held to their own stamp); a record of the dating
+        drive outside the listing; a lab drive newer than the dating one that is in flight or ended with no class record (a
+        log whose pytest target is another module, named in its header or read from its body's test ids, is no lab drive and
+        is skipped with a note). A counted record beside no headered lab log (a copy of an older record, a drive another script
+        logged) is counted by the listing, dates nothing and is named to stderr, refused only when it is the newest: the count
+        can hold records no drive dates while the date stays on the newest dated one. Then it runs this helper over each record's windows
         (`excuse_census.py`, the round-3 module's copy for the frame-only key) and the floor over each window with the miss
         planted (`census_module.py`), prints the figure-bearing spans of this paragraph (three, two of them in one sentence),
         of _minus_attach_rows' docstring and of the waits and delivery comments WHOLE, and under --check reads this module for

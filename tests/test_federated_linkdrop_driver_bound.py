@@ -45,7 +45,7 @@ kernel or a browser:
   through the typescript compiler's parse with every receiver known by its TYPE (it runs where the extension's node deps
   are, CI's served job; this module runs on the Python matrix, which has none). The two are read together: this one is the
   matrix's backstop and says what it checks; that one refuses the rest of those spellings, but for the class its own docstring
-discloses, which neither census sees and no budget bounds.
+  discloses, which neither census sees and no budget bounds.
 
 Three more pins ride here because the module they pin has no kernel-free test of its own: LinkDropBothNew gates on no
 knob, wherever such a gate could sit (a class-level skip, setUpClass, _knobs), and LinkDropOldLocal skips as optional
@@ -267,8 +267,9 @@ def _assert_seen_sites(src):
     (round 6, the maintainer's round 5 extra7-2: a call whose `seen` was keyword-spelled was skipped, since the census read the
     first positional): the argument is the first positional or the `seen` keyword, and a call with neither (a `**kwargs` pass,
     a starred positional) is an offender with key None rather than a dropped site. What the census keys on: a call spelled
-    `<x>._assert_seen(...)` inside a function of any kind (FUNCTION_NODES, `def` and `async def`); a call at module level, in a
-    class body or inside a lambda, or one through a name bound to the method or through getattr, is outside it by construction."""
+    `<x>._assert_seen(...)` inside a function of any kind (FUNCTION_NODES, `def` and `async def`), a lambda inside one read with
+    it; a call at module level or in a class body (inside a lambda there too), or one through a name bound to the method or
+    through getattr, is outside it by construction."""
     def key_of(node):
         if isinstance(node, ast.BoolOp):
             node = node.values[0]
@@ -296,12 +297,15 @@ def _assert_seen_sites(src):
 def _since_at_the_sites(src):
     """The `since` each attach reader passes, read from the served module's parse (round 5, extra6-2: the values are read at
     three sites and a cell reached one helper's): per function of any kind (FUNCTION_NODES), the source text of the argument
-    bound to the `since_ms` PARAMETER of every _minus_attach_rows call (its second positional, or the `since_ms` or `since`
-    keyword; the third positional is `slack_s`) and of every _attaches_since call (its first), and of the right side of an
-    assignment to a name `since`, in source order. Widening any site's since changes its text here. Keyed on the call and the
-    parameter (round 6, the maintainer's round 5 extra7-2: the census read the LAST positional, so a keyword-spelled since was
-    skipped and a slack passed positionally was read as the since): a site whose since the census cannot read (a starred
-    positional, a `**kwargs` pass) is recorded as `<a since this census cannot read>` rather than dropped, and reds the pin.
+    bound to the `since_ms` PARAMETER of every _minus_attach_rows call (its second positional, or the `since_ms` keyword; the
+    third positional is `slack_s`; neither method has a `since` parameter, so a `since=` keyword would bind to nothing and is
+    not read as one) and of every _attaches_since call (its first), and of the right side of an assignment to a name `since`,
+    in source order. Widening any site's since changes its text here. Keyed on the call and the parameter (round 6, the
+    maintainer's round 5 extra7-2: the census read the LAST positional, so a keyword-spelled since was skipped and a slack
+    passed positionally was read as the since): a site whose since the census cannot read (a starred positional at or before
+    the parameter's position, past which no position resolves; a `**kwargs` pass) is recorded as `<a since this census cannot
+    read>` rather than dropped, and reds the pin (round 6's fixer pass: `(*a, since)` was read as the since, though the star
+    before it makes the position unresolvable).
     A call through a name bound to the method or through getattr is outside the census by construction (it keys on
     `<x>._minus_attach_rows(...)` and `<x>._attaches_since(...)`)."""
     out = {}
@@ -315,8 +319,9 @@ def _since_at_the_sites(src):
             elif isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr in ("_minus_attach_rows", "_attaches_since"):
                 pos = 1 if n.func.attr == "_minus_attach_rows" else 0
                 kw = {k.arg: k.value for k in n.keywords}
-                v = n.args[pos] if len(n.args) > pos else kw.get("since_ms", kw.get("since"))
-                shown = ast.unparse(v) if v is not None and not isinstance(v, ast.Starred) else "<a since this census cannot read>"
+                starred = any(isinstance(a, ast.Starred) for a in n.args[:pos + 1])   # a star at or before the position: no position past it resolves
+                v = None if starred else (n.args[pos] if len(n.args) > pos else kw.get("since_ms"))
+                shown = ast.unparse(v) if v is not None else "<a since this census cannot read>"
                 found.append((n.lineno, n.col_offset, ("_minus_attach_rows(..., %s)" if n.func.attr == "_minus_attach_rows" else "_attaches_since(%s)") % shown))
         if found:
             out[fn.name] = [text for _, _, text in sorted(found)]
@@ -946,9 +951,10 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
         """The two site censuses (round 6, the maintainer's round 5 tests-4 and extra7-2) over a synthetic source: a call inside
         an `async def` is a site like one inside a `def` (FUNCTION_NODES is derived from ast's node classes, pinned here by
         name), a keyword-spelled `seen` or `since_ms` is read, a `**kwargs` pass and a starred positional are offenders
-        (key None; `<a since this census cannot read>`) and not dropped sites, and a slack passed positionally is not read as
-        the since. Red before: the async sites were skipped, the keyword sites skipped, the unreadable sites dropped, and the
-        positional slack read as the since."""
+        (key None; `<a since this census cannot read>`) and not dropped sites, a starred positional BEFORE the since's
+        position makes it unreadable too (round 6's fixer pass: `(*a, since)` was read as `since`), a lambda inside a def is
+        read with the def, and a slack passed positionally is not read as the since. Red before: the async sites were
+        skipped, the keyword sites skipped, the unreadable sites dropped, and the positional slack read as the since."""
         self.assertEqual(sorted(c.__name__ for c in FUNCTION_NODES), ["AsyncFunctionDef", "FunctionDef"],
                          "the function node classes, derived from ast as every class with args, body, decorator_list and returns")
         src = "\n".join(["class T:",
@@ -962,12 +968,15 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
                          "        return self._attaches_since(*a)",
                          "    def d(self):",
                          "        return self._minus_attach_rows(stamped, since, 2.0)",
+                         "    def e(self):",
+                         "        f = lambda: self._assert_seen(D[\"x\"])",
+                         "        return self._minus_attach_rows(*a, since)",
                          ""])
-        self.assertEqual(_assert_seen_sites(src), [(3, "seen", True), (5, "seen", True), (8, None, False)],
-                         "the async site and the keyword-spelled site are read; the **kwargs pass is an offender with no key")
+        self.assertEqual(_assert_seen_sites(src), [(3, "seen", True), (5, "seen", True), (8, None, False), (13, "x", False)],
+                         "the async site and the keyword-spelled site are read; the **kwargs pass is an offender with no key; a lambda inside a def is read with the def")
         self.assertEqual(_since_at_the_sites(src), {"b": ["_minus_attach_rows(..., self._marks()['resume'] + 5)"], "c": ["_attaches_since(<a since this census cannot read>)"],
-                                                    "d": ["_minus_attach_rows(..., since)"]},
-                         "the keyword since is read at the async site, the starred since is unreadable and kept, the positional slack is not the since")
+                                                    "d": ["_minus_attach_rows(..., since)"], "e": ["_minus_attach_rows(..., <a since this census cannot read>)"]},
+                         "the keyword since is read at the async site, the starred since is unreadable and kept, the positional slack is not the since, and a star before the since's position makes it unreadable")
 
     def test_every_waitvisible_read_site_passes_waited_and_no_visible_read_does(self):
         """The wiring of _assert_seen's `waited` (round 5, tests-3: the helper's waited branch had a cell, and removing
