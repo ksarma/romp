@@ -31,7 +31,12 @@ kernel or a browser:
   must be one ALLOWED_CALLS names for that receiver kind, because a deny-list's gap passes (the round-3 head listed the
   auto-waiting ACTIONS and not the auto-waiting locator READS, so `locator(...).textContent()`, which inherits playwright's
   30 s default that no budget caps, kept the census green while the pinned headroom under the subprocess timeout is 7.5 s
-  and 27.5 s); `evaluate` is allowed on a page receiver only, since a locator's evaluate auto-waits.
+  and 27.5 s); `evaluate` is allowed on a page receiver only, since a locator's evaluate auto-waits. The fixer pass of that
+  round closed the walk's own gap: the walk follows chains on the names it knows (page, pages, context, browser, chromium),
+  so a receiver or a locator reachable under any other name was invisible to it and a bound locator's read left the census
+  green; the three ways a receiver leaves the walk (a binding or assignment to a name outside WALKED_NAMES, a locator-making
+  call whose chain ends on it, a receiver passed bare to anything but Object.keys or a driver helper whose one parameter is a
+  walked name) are refused by name.
 
 Three more pins ride here because the module they pin has no kernel-free test of its own: LinkDropBothNew gates on no
 knob, wherever such a gate could sit (a class-level skip, setUpClass, _knobs), and LinkDropOldLocal skips as optional
@@ -93,6 +98,21 @@ ALLOWED_CALLS = {"page": ("locator", "evaluate", "goto", "waitForFunction", "wai
 LOCATOR_MAKERS = ("locator", "first", "last", "nth", "filter", "and", "or", "getByText", "getByRole", "getByTestId", "getByLabel", "getByPlaceholder", "getByAltText", "getByTitle")
 RECEIVERS = re.compile(r"\b(?P<recv>pages\.\w+|pages\[(?:[^\[\]]|\[[^\[\]]*\])*\]|page|context|browser|chromium)(?=\s*\.)")
 MEMBER = re.compile(r"\s*\.\s*(?P<name>[\w$]+)\s*")
+# The names the walk follows: a playwright receiver, or a locator made from one, reachable under any OTHER name is invisible to
+# it, so the census refuses the three ways a receiver leaves the walk (round 4's fixer pass: `const row = pages.feed.locator(sel);
+# await row.textContent();` and `const fp = pages.feed; await fp.locator(sel).textContent();` left the allow-list green): a binding
+# or assignment whose target is not a walked name (BINDING against WALKED_TARGET), a locator-making call whose chain ends on it
+# (stored, returned or passed on; _receiver_calls reports it), and a receiver passed bare as an argument (PASSED_BARE), allowed
+# only to BARE_CALLEES or to a driver helper whose one parameter is itself a walked name (HELPER_PARAM: snap's is `page`).
+WALKED_NAMES = ("page", "pages", "context", "browser", "chromium")
+RECV_EXPR = r"pages(?:\.\w+|\[[^\[\]]*\])?|page|context|browser|chromium"
+BINDING = re.compile(r"(?:\b(?:const|let|var)\s+)?(?P<target>[\w$]+(?:\s*(?:\.\s*[\w$]+|\[[^\[\]]*\]))*|[\[{][^=;]*[\]}])\s*(?<![=!<>])=(?![=>])\s*(?:await\s+)?(?P<recv>%s)(?![\w$])" % RECV_EXPR)
+WALKED_TARGET = re.compile(r"page|context|browser|chromium|pages(?:\.\w+|\[[^\[\]]*\])?")
+PASSED_BARE = re.compile(r"(?:(?P<callee>[\w$]+(?:\.[\w$]+)*)\s*\(|,)\s*(?P<recv>%s)\s*(?=[,)])(?!\s*\)\s*=>)" % RECV_EXPR)   # not an arrow's parameter list
+PARAM_LIST_HEADS = ("async", "function")   # `async (page) =>` and `function (page)` declare a parameter, they pass nothing
+HELPER_PARAM = re.compile(r"\bconst\s+(?P<name>[\w$]+)\s*=\s*(?:async\s*)?\(\s*(?P<param>[\w$]+)\s*\)\s*=>")
+BARE_CALLEES = ("Object.keys",)
+RECEIVER_MAKERS = ("launch", "newContext", "newPage")   # the calls that return a receiver (chromium, browser, context); with LOCATOR_MAKERS, a chain ending on one binds a receiver
 
 
 def _strip_js_comments(text):
@@ -146,25 +166,62 @@ def _wait_sites(text):
     return out
 
 
-def _receiver_calls(text):
+def _receiver_calls(text, escapes=None):
     """Every method call chained on a playwright receiver expression in the (comment-stripped) driver: (kind, method, line).
     The receivers are the driver's names for them (`page`, `pages.<app>`, `pages[...]`: a page; `context`; `browser`;
     `chromium`), the chain is walked call by call with _call_args skipping each call's arguments, and the kind becomes
     `locator` after a locator-making call (LOCATOR_MAKERS), so `pages.feed.locator(sel).first().waitFor({...})` yields
-    (page, locator), (locator, first), (locator, waitFor). A member read without a call ends the chain."""
+    (page, locator), (locator, first), (locator, waitFor). A member read without a call ends the chain. A chain that ends
+    ON a locator-making call left that locator unconsumed (stored, returned or passed on, to be read under a name the walk
+    does not follow) and is appended to `escapes` as (line, what) when a list is given (round 4's fixer pass)."""
     out = []
     for m in RECEIVERS.finditer(text):
         kind = "page" if m.group("recv").startswith("page") else m.group("recv")
-        j = m.end()
+        j, last = m.end(), None
         while True:
             c = MEMBER.match(text, j)
             if not c or text[c.end():c.end() + 1] != "(":
                 break
             name = c.group("name")
             out.append((kind, name, text.count("\n", 0, m.start()) + 1))
+            last = name
             if name in LOCATOR_MAKERS:
                 kind = "locator"
             j = c.end() + 1 + len(_call_args(text, c.end())) + 1   # past the call's closing parenthesis
+        if escapes is not None and last in LOCATOR_MAKERS:
+            escapes.append((text.count("\n", 0, m.start()) + 1, "%s(...) left its chain unconsumed" % last))
+    return out
+
+
+def _escaped_receivers(text):
+    """The bindings and bare passes of a playwright receiver in the (comment-stripped) driver, as (line, what, allowed): a
+    binding or assignment whose right side begins with a receiver name and YIELDS a receiver (no call after it, a member read
+    without a call, or a chain ending on a receiver-making or locator-making call: RECEIVER_MAKERS, LOCATOR_MAKERS) is allowed
+    only when its target is a walked name (WALKED_TARGET: `const context = await browser.newContext(...)`, `pages[app] = page`),
+    while a chain ending on any other call binds a value, not a receiver (`const c = await pages.feed.locator(s).count()`), and
+    is not a binding here; a receiver passed bare as an argument is allowed only to BARE_CALLEES or to a driver helper whose one
+    parameter is a walked name (HELPER_PARAM), since the walk follows the parameter by its name. Everything else here is a
+    receiver reaching a name the walk does not follow."""
+    out = []
+    for m in BINDING.finditer(text):
+        j, last = m.end("recv"), None
+        while True:
+            c = MEMBER.match(text, j)
+            if not c or text[c.end():c.end() + 1] != "(":
+                break
+            last = c.group("name")
+            j = c.end() + 1 + len(_call_args(text, c.end())) + 1
+        if last is not None and last not in RECEIVER_MAKERS and last not in LOCATOR_MAKERS:
+            continue   # the chain ends on a call that returns a value: nothing playwright is bound
+        target = re.sub(r"\s+", "", m.group("target"))
+        out.append((text.count("\n", 0, m.start()) + 1, "%s = %s" % (target, m.group("recv")), bool(WALKED_TARGET.fullmatch(target))))
+    helpers = {h.group("name"): h.group("param") for h in HELPER_PARAM.finditer(text)}
+    for m in PASSED_BARE.finditer(text):
+        callee = m.group("callee")
+        if callee in PARAM_LIST_HEADS:
+            continue
+        out.append((text.count("\n", 0, m.start()) + 1, "%s(%s)" % (callee or "<a later argument>", m.group("recv")),
+                    callee in BARE_CALLEES or helpers.get(callee) in WALKED_NAMES))
     return out
 
 
@@ -259,7 +316,8 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
         # the allow-list (round 4): every call on a playwright receiver is one ALLOWED_CALLS names for that receiver's kind; the
         # deny-list above is the backstop it was, and its gap (the auto-waiting locator READS: textContent, innerText, ariaSnapshot,
         # a locator's evaluate, each under the 30 s default) is what this refuses
-        calls = _receiver_calls(driver)
+        escapes = []
+        calls = _receiver_calls(driver, escapes)
         self.assertTrue(calls, "the walk saw the driver's calls on its playwright receivers")
         unlisted = sorted({(kind, name, ln) for kind, name, ln in calls if name not in ALLOWED_CALLS.get(kind, ())})
         self.assertEqual(unlisted, [], "a call on a playwright receiver that ALLOWED_CALLS does not name for its kind (an auto-waiting read such as a locator's "
@@ -270,6 +328,17 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
                               ("page", "addInitScript"), ("locator", "first"), ("locator", "count"), ("locator", "waitFor"), ("context", "newPage"),
                               ("browser", "newContext"), ("browser", "close"), ("chromium", "launch")}, {(kind, name) for kind, name, _ in calls},
                              "the walk is not vacuous: every receiver call the driver makes today is seen, by kind: %r" % (sorted({(kind, name) for kind, name, _ in calls}),))
+        # the walk's own gap (round 4's fixer pass): a receiver or a locator reaching a name the walk does not follow is refused
+        self.assertEqual(escapes, [], "a locator made on a playwright receiver and not consumed by a call in its own chain (stored, returned or passed on) is read "
+                                      "under a name the walk does not follow, so its reads never reach the allow-list: %r" % (escapes,))
+        leaves = _escaped_receivers(driver)
+        self.assertEqual([(ln, what) for ln, what, ok in leaves if not ok], [],
+                         "a playwright receiver, or a locator made from one, reaching a name the walk does not follow (bound or assigned to a name outside "
+                         "WALKED_NAMES, or passed bare to anything but Object.keys or a driver helper whose one parameter is a walked name); a call on that name "
+                         "is invisible to the allow-list: %r" % ([(ln, what) for ln, what, ok in leaves if not ok],))
+        self.assertLessEqual({"context = browser", "page = context", "pages[app] = page", "snap(pages[app])"}, {what for _, what, ok in leaves if ok},
+                             "the census is not vacuous: the driver's bindings of the context and the page, the page table's assignment and snap's argument "
+                             "are seen: %r" % (sorted({what for _, what, ok in leaves if ok}),))
         self.assertEqual(len(re.findall(r"\bfetch\s*\(", driver)), 2, "the driver's two fetches (ctl and tunnelsStatus) carry no timeout: the acknowledged driver_error road, DRIVER_TIMEOUT_S, "
                                                                         "which the arithmetic does not count; a third fetch is a new uncounted wait")
 
@@ -316,6 +385,33 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
         calls = _receiver_calls("await pages.feed.evaluate((sel) => document.querySelector(sel), cfg.provSel);")
         self.assertEqual([(k, n) for k, n, _ in calls if n not in ALLOWED_CALLS.get(k, ())], [], "a page's evaluate is allowed")
         self.assertEqual(_receiver_calls("const webpage = 1; out.pages[app] = await snap(pages[app]); w.send(d);"), [], "no receiver, no call")
+
+    def test_a_receiver_or_a_locator_that_leaves_the_walk_is_refused(self):
+        """The walk's own gap (round 4's fixer pass): the allow-list reads chains on the names it knows, so a receiver or a locator
+        reaching any other name was invisible to it and a bound locator's `textContent()` left the census green. By cell: a
+        locator bound to a name (refused twice: the binding, and the chain that ended on the maker), a page bound to a name, a
+        destructured page table, a locator passed on or returned unconsumed, a page passed bare to a helper whose parameter is
+        not a walked name and to a helper the text does not define (all refused); the driver's own shapes (the browser, context
+        and page bindings, the page table's assignment, a page passed to snap whose parameter is `page`, Object.keys over the
+        table) and chains consumed by a count or tested for truth (all allowed)."""
+        def refused(text):
+            escapes = []
+            _receiver_calls(text, escapes)
+            return sorted([what for _, what, ok in _escaped_receivers(text) if not ok] + [what for _, what in escapes])
+        self.assertEqual(refused("const row = pages.feed.locator(cfg.provSel); await row.textContent();"), ["locator(...) left its chain unconsumed", "row = pages.feed"])
+        self.assertEqual(refused("const fp = pages.feed; await fp.locator(cfg.provSel).textContent();"), ["fp = pages.feed"])
+        self.assertEqual(refused("const snap = async (page) => 1; const g = function (page, x) {}; const h = async (a, page) => 1;"), [], "a parameter list declares a name, it passes nothing")
+        self.assertEqual(refused("let p2 = page; const { feed } = pages;"), ["p2 = page", "{feed} = pages"])
+        self.assertEqual(refused("const p = await context.newPage(); const b = await chromium.launch({}); const u = page.url;"), ["b = chromium", "p = context", "u = page"],
+                         "a receiver-making call binds a receiver; a member read without a call is refused on the safe side")
+        self.assertEqual(refused("await read(pages.feed.locator(sel)); return pages[app].locator(sel).first();"), ["first(...) left its chain unconsumed", "locator(...) left its chain unconsumed"])
+        self.assertEqual(refused("const read = async (p) => p.locator(sel).textContent(); await read(pages.feed);"), ["read(pages.feed)"])
+        self.assertEqual(refused("await read(pages[app]); await f(1, page);"), ["<a later argument>(page)", "read(pages[app])"])
+        self.assertEqual(refused("let browser; browser = await chromium.launch({}); const context = await browser.newContext({}); const page = await context.newPage(); pages[app] = page;"), [])
+        self.assertEqual(refused("const snap = async (page) => page.evaluate(() => 1); const s = await snap(pages[app]); for (const app of Object.keys(pages)) {}"), [])
+        self.assertEqual(refused("const c = await pages.feed.locator(sel).count(); if (pages.fleet && x) y = 1; x = (await pages.waiting.locator(s).count()) > 0;"), [])
+        allowed = {what for _, what, ok in _escaped_receivers("const context = await browser.newContext({}); const page = await context.newPage(); pages[app] = page; const snap = async (page) => 1; await snap(pages[app]);") if ok}
+        self.assertEqual(allowed, {"context = browser", "page = context", "pages[app] = page", "snap(pages[app])"}, "the allowed shapes are reported as allowed, so the driver's non-vacuity check reads them")
 
     def test_the_new_bundle_class_gates_on_no_knob_and_the_old_hub_class_skips_as_optional(self):
         """Round 1's high (this lab was the one served lab of 94 with no executing test in CI: its base class gated on a knob)
