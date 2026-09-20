@@ -13664,10 +13664,10 @@ function syncViewInner(id: string, atBottom?: boolean, anchored: boolean = atBot
   // that opens a new day), so `keep = spacer + (from - winStart)` counted one node per unit and the
   // extra dividers made it delete that many live turns off the tail, which then never came back.
   // Reading the unit off the node is exact however many nodes a unit owns; the top spacer carries no
-  // data-unit, so it stops the walk on its own.
-  const unitOf = (n: ChildNode): number =>
-    n instanceof HTMLElement && n.dataset.unit != null ? Number(n.dataset.unit) : -1;
-  while (v.el.lastChild && unitOf(v.el.lastChild) >= from) v.el.removeChild(v.el.lastChild);
+  // data-unit, so it ends the walk, and a foreign child met on the way (a hover's rail band) is dropped:
+  // trimUnitsFrom, the one walk both tail paths share (review round 2; this mode's own copy stopped at
+  // the band and re-appended the tail on top of a stale copy of itself, one stranded duplicate per hover).
+  trimUnitsFrom(v.el, from);
   const walk = dayWalkBeforeEvent(s.events, from);   // the day walk's high-water mark up to here (T339)
   for (let i = from; i < len; i++) {
     const prev = prevTimedEpoch(s.events, i);   // the rail's raw previous epoch (the same-minute rule)
@@ -14010,8 +14010,8 @@ function isSpacerNode(n: ChildNode): boolean { return n instanceof HTMLElement &
  *  which the footer patch and the gap redraw then resolved to the stale copy (querySelector's first match). Dropped rather than skipped
  *  over so the invariant the eviction's walk and the footer patch's positional read rely on holds after every paint (the units
  *  contiguous, nothing foreign among them); the rebuild this path replaced removed the band on every frame too, and a hover redraws it
- *  on the next mouseenter. Returns the count of unit nodes removed. Compact mode's tail path (PR E); the normal-mode tail keeps its
- *  own copy of the walk, which still stops at a foreign child (a residual the PR body names). */
+ *  on the next mouseenter. Returns the count of unit nodes removed. Both tail paths walk through here, compact mode's seam (PR E) and
+ *  normal mode's exact tail (review round 2: normal mode kept its own copy of the walk, which stopped at a foreign child, until then). */
 function trimUnitsFrom(host: HTMLElement, u0: number): number {
   let n = 0;
   for (let c: ChildNode | null = host.lastChild; c; ) {

@@ -71,11 +71,14 @@ test("a plain human-prompt append does not set stale: the signature reads the pr
   // shrunken tail or a change inside a scrolled-away window, runs in chat-exact-tail-exec.test.ts)
 });
 
-// ── the desktop's tail path is untouched by PR E (2026-09-19) ─────────────────────────────────────
+// ── the desktop's tail path under PR E (2026-09-19) ────────────────────────────────────────────────
 // Compact mode's tail path by unit (chat-compact-tail.test.ts) was inserted ABOVE normal mode's block and the two fixes to the
 // spacers' measurement live in functions of their own; the normal-mode block (from "Normal mode, pure append." to syncViewInner's
 // closing brace) is recorded here line by line and pinned byte for byte, so a change to the desktop's path is a deliberate edit
-// of this record, never a side effect. On a failure the diff says what moved.
+// of this record, never a side effect. On a failure the diff says what moved. One deliberate edit so far (review round 2): the
+// block's own copy of the tail walk, which stopped at a foreign child (a hover's rail band) and re-appended the tail on top of a
+// stale copy of itself, gave way to trimUnitsFrom, the walk compact mode's seam uses (compact-seam-exec.test.ts executes the call;
+// chat-compact-tail.test.ts drives the walk over a band).
 const NORMAL_MODE_BLOCK = [
   "  // Normal mode, pure append. While BROWSING history (window not at the tail), the new events land below the",
   "  // rendered window → just grow the bottom spacer (no DOM churn); the user sees them on scroll-down.",
@@ -97,10 +100,10 @@ const NORMAL_MODE_BLOCK = [
   "  // that opens a new day), so `keep = spacer + (from - winStart)` counted one node per unit and the",
   "  // extra dividers made it delete that many live turns off the tail, which then never came back.",
   "  // Reading the unit off the node is exact however many nodes a unit owns; the top spacer carries no",
-  "  // data-unit, so it stops the walk on its own.",
-  "  const unitOf = (n: ChildNode): number =>",
-  "    n instanceof HTMLElement && n.dataset.unit != null ? Number(n.dataset.unit) : -1;",
-  "  while (v.el.lastChild && unitOf(v.el.lastChild) >= from) v.el.removeChild(v.el.lastChild);",
+  "  // data-unit, so it ends the walk, and a foreign child met on the way (a hover's rail band) is dropped:",
+  "  // trimUnitsFrom, the one walk both tail paths share (review round 2; this mode's own copy stopped at",
+  "  // the band and re-appended the tail on top of a stale copy of itself, one stranded duplicate per hover).",
+  "  trimUnitsFrom(v.el, from);",
   "  const walk = dayWalkBeforeEvent(s.events, from);   // the day walk's high-water mark up to here (T339)",
   "  for (let i = from; i < len; i++) {",
   "    const prev = prevTimedEpoch(s.events, i);   // the rail's raw previous epoch (the same-minute rule)",
@@ -121,7 +124,7 @@ const NORMAL_MODE_BLOCK = [
   "}"
 ].join("\n") + "\n";
 
-test("normal mode's tail block is byte-identical to the recorded text, sits after compact mode's seam and the rebuild, and reads none of the compact seam's helpers", () => {
+test("normal mode's tail block is byte-identical to the recorded text, sits after compact mode's seam and the rebuild, and reads none of the compact seam's plan, eviction or measurement helpers (the trim is the one walk both paths share)", () => {
   const sync = RENDER.slice(RENDER.indexOf("function syncViewInner("), RENDER.indexOf("function patchWorkedFooters("));
   const at = sync.indexOf("  // Normal mode, pure append.");
   assert.ok(at > 0, "the block's opening comment");
@@ -129,6 +132,9 @@ test("normal mode's tail block is byte-identical to the recorded text, sits afte
   assert.ok(sync.slice(at + NORMAL_MODE_BLOCK.length).trimStart().startsWith("//"), "the block closes syncViewInner: only the next function's comment follows it");
   const seamAt = sync.indexOf("if (settings.compact) {\n    const plan = compactTailPlan("), rebuildAt = sync.indexOf("if (settings.compact || v.stale) {");
   assert.ok(seamAt > 0 && seamAt < rebuildAt && rebuildAt < at, "the compact seam, then the rebuild, then normal mode");
-  assert.doesNotMatch(NORMAL_MODE_BLOCK, /compactTailPlan|trimUnitsFrom|evictCompactTop|v\.units|measureDue|applyMeasure/, "no compact or measurement helper inside normal mode's block");
+  // trimUnitsFrom is not in this list since review round 2: the trim is unitOfNode's walk, the one predicate for what a view's child is,
+  // and normal mode's own copy of it stopped at a foreign child (the block's one deliberate edit)
+  assert.doesNotMatch(NORMAL_MODE_BLOCK, /compactTailPlan|evictCompactTop|reseedWindowHead|v\.units|measureDue|applyMeasure/, "no compact plan, eviction or measurement helper inside normal mode's block");
+  assert.match(NORMAL_MODE_BLOCK, /\n  trimUnitsFrom\(v\.el, from\);\n/, "normal mode trims through the shared walk, from the first changed event");
   assert.ok(NORMAL_MODE_BLOCK.split("\n").length > 30, "the record holds the whole block, not a stub");
 });

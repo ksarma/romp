@@ -39,7 +39,7 @@ class FakeEl {
 type Call = any[];
 const SENTINEL = 424242;   // the reference railChainBefore hands back, so the seed appendItem receives is traceable to it
 
-function liftSeam(sessions: Map<string, any>, views: Map<string, any>, itemsOf: (s: any) => DisplayItem[], calls: Call[]) {
+function liftSeam(sessions: Map<string, any>, views: Map<string, any>, itemsOf: (s: any) => DisplayItem[], calls: Call[], compact = true) {
   const js = liftBetween("function syncViewInner(", "function patchWorkedFooters(");
   // itemFirstEvent is LIFTED with the seam, never hand-copied (review round 1b, the verifier's pass): a copy re-creates the drift the
   // next time production's first-event rule moves, and the seam's footer `from` (the first re-rendered unit's first event) would then be
@@ -52,7 +52,7 @@ function liftSeam(sessions: Map<string, any>, views: Map<string, any>, itemsOf: 
     const subParts = () => null;
     const sessions = H.sessions, views = H.views;
     const ensureView = (id) => views.get(id);
-    const settings = { compact: true };
+    const settings = { compact: H.compact !== false };   // compact mode unless the world says normal (the desktop's exact tail, review round 2)
     const displayItems = (s) => H.itemsOf(s);
     const WINDOW_TAIL = 80;
     const lastCompactUnit = () => 0;
@@ -68,12 +68,12 @@ function liftSeam(sessions: Map<string, any>, views: Map<string, any>, itemsOf: 
     const appendItem = (v, s, items, u, prevEpoch) => { H.calls.push(["appendItem", u, prevEpoch]); return prevEpoch; };
     const evictCompactTop = (v, ws) => { H.calls.push(["evict", ws]); if (ws <= (v.winStart ?? 0)) return false; v.winStart = ws; return true; };   // the real one's answer: whether it evicted
     const reseedWindowHead = (v, s, items) => { H.calls.push(["reseed", v.winStart, items.length]); };
-    // normal mode's names: never reached in a compact world
+    // normal mode's names: reached in a normal-mode world alone (the renderer records the event it drew)
     const dayWalkBeforeEvent = () => new H.DayWalk(); const prevTimedEpoch = () => null; const eventEpoch = () => null; const dayDividerFor = () => null;
-    const renderEvent = () => new H.FakeEl("div"); const turnWorkedSecs = () => null; const stampWalkDay = () => {};
+    const renderEvent = (ev) => { H.calls.push(["renderEvent", ev.uuid]); return new H.FakeEl("div", "turn"); }; const turnWorkedSecs = () => null; const stampWalkDay = () => {};
     const HTMLElement = H.FakeEl; const el = (t, c) => new H.FakeEl(t, c || "");
   `;
-  return new Function("HOOKS", prelude + first + js + "\nreturn syncViewInner;")({ sessions, views, itemsOf, calls, compactTailPlan, DayWalk, FakeEl, SENTINEL }) as (id: string, atBottom?: boolean, anchored?: boolean) => any;
+  return new Function("HOOKS", prelude + first + js + "\nreturn syncViewInner;")({ sessions, views, itemsOf, calls, compactTailPlan, DayWalk, FakeEl, SENTINEL, compact }) as (id: string, atBottom?: boolean, anchored?: boolean) => any;
 }
 /** renderWindowItems lifted alone (its own gate on the flag) over a recording applyMeasure and stubs for what it appends. */
 function liftBuild(calls: Call[]) {
@@ -90,14 +90,15 @@ function liftBuild(calls: Call[]) {
 }
 const ev = (index: number): DisplayItem => ({ kind: "event", index });
 const tg = (...indices: number[]): DisplayItem => ({ kind: "toolgroup", indices });
-/** A world: a session over `kinds`, its view built from `prevItems` over the whole list (winStart given), the first changed event `from`. */
-function world(kinds: string[], prevItems: DisplayItem[], itemsNow: DisplayItem[], from: number, winStart = 0, working = true) {
+/** A world: a session over `kinds`, its view built from `prevItems` over the whole list (winStart given), the first changed event `from`;
+ *  `compact` false is the desktop's normal mode (a unit is an event). */
+function world(kinds: string[], prevItems: DisplayItem[], itemsNow: DisplayItem[], from: number, winStart = 0, working = true, compact = true) {
   const calls: Call[] = [];
   const s = { id: "A", events: kinds.map((kind, i) => ({ kind, uuid: "e" + i, ts: "2026-09-19T10:00:0" + (i % 10) + "Z" })), status: { state: working ? "working" : "ready" } };
   const host = new FakeEl("div");
   for (let u = winStart; u < prevItems.length; u++) { const n = new FakeEl("div", "turn"); n.dataset.unit = String(u); host.appendChild(n); }
   const v: any = { el: host, rendered: from, stale: false, winStart, winEnd: prevItems.length, unitTotal: prevItems.length, units: prevItems, working: !working, shown: true, stick: true };
-  const sync = liftSeam(new Map([["A", s]]), new Map([["A", v]]), () => itemsNow, calls);
+  const sync = liftSeam(new Map([["A", s]]), new Map([["A", v]]), () => itemsNow, calls, compact);
   return { calls, s, v, sync };
 }
 
@@ -178,6 +179,24 @@ test("a change below a browsed window patches the worked footers from the first 
   assert.equal(w.v.spacerCountBot, 3, "total less winEnd: the units the bottom spacer stands for");
   assert.equal(w.v.rendered, 7, "the bookkeeping moves v.rendered to len after the patch"); assert.equal(w.v.unitTotal, 7); assert.deepEqual(w.v.units, now);
   assert.equal(w.v.el.children.length, 6, "no unit node added or removed");
+});
+
+test("normal mode's exact tail trims through the shared walk (trimUnitsFrom from the first changed event), then re-renders from there and patches the footers with no unit list: no plan, no compact helper (review round 2: its own copy of the walk stopped at a hover's band and re-appended the tail on top of a stale copy)", () => {
+  // the desktop (compact off): the reply at event 1 edited (from = 1) in a two-event view; the walk is asked from event 1, the events from
+  // it re-rendered in order, the footers patched from it with no unit list (a unit is an event in normal mode)
+  const w = world(["user", "assistant"], [ev(0), ev(1)], [ev(0), ev(1)], 1, 0, true, false);
+  w.sync("A", true);
+  assert.deepEqual(w.calls.filter((c) => c[0] === "trim"), [["trim", 1]], "one trim, from the first changed event (the shared walk drops a foreign child on its way: chat-compact-tail.test.ts)");
+  assert.deepEqual(w.calls.filter((c) => c[0] === "renderEvent"), [["renderEvent", "e1"]], "the events from the change re-rendered");
+  assert.deepEqual(w.calls.filter((c) => c[0] === "patchWorkedFooters"), [["patchWorkedFooters", 1, true, null]], "the footers patched from the change, no unit list");
+  assert.deepEqual(w.calls.filter((c) => c[0] === "appendItem" || c[0] === "renderWindowItems" || c[0] === "evict" || c[0] === "reseed"), [], "no compact helper, no rebuild");
+  assert.ok(w.calls.findIndex((c) => c[0] === "trim") < w.calls.findIndex((c) => c[0] === "renderEvent"), "the trim before the re-render");
+  assert.equal(w.v.rendered, 2); assert.equal(w.v.winEnd, 2); assert.equal(w.v.spacerCountBot, 0);
+  assert.equal(w.v.el.children[w.v.el.children.length - 1].dataset.unit, "1", "the re-rendered node carries its event index as its unit");
+  // an append at the tail (from = len before the append): the walk is asked from the new event, where nothing stands yet
+  const w2 = world(["user", "assistant", "user"], [ev(0), ev(1)], [ev(0), ev(1), ev(2)], 2, 0, true, false);
+  w2.sync("A", true);
+  assert.deepEqual(w2.calls.filter((c) => c[0] === "trim" || c[0] === "renderEvent"), [["trim", 2], ["renderEvent", "e2"]]);
 });
 
 test("a paint of the view ends a re-window's follow of its rebuilt rows: the mark armed by the stick re-window is cleared before any branch runs (review round 1b; the reader's own scroll is the other ending event, tail-shrink.test.ts)", () => {
