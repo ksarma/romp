@@ -393,8 +393,9 @@ the S cases keep touching, state instead the RULE every red case satisfies and c
 (MUTATIONS, the exact text replaced in tests/conftest.py), TheMutationCellsApply pins that each replaced text occurs
 exactly once at this tree and that the matrix and the table name the same cells, and
 `python -B tests/test_sdk_singleton_ratchet.py --derive <id>` plants the cell in a detached worktree at HEAD, runs this
-module there, prints the red cases by case id with the head it ran at, and removes the worktree: a cell's current list
-is that run's, at the head it prints, and none is written here. The count of cells is the table's the same way:
+module there, prints the red cases by case id with the head it ran at, and removes the worktree (derive, whose parts
+TheDerivationIsRunnable executes, the run itself faked): a cell's current list is that run's, at the head it prints,
+and none is written here. The count of cells is the table's the same way:
 `python -B tests/test_sdk_singleton_ratchet.py --count` prints it at the tree it runs in, by block and in total
 (cell_counts), and no sentence here states it (the pin holds one form absent from this docstring, a numeral or number
 word followed by the word cells, and reads no other: a count written in prose is measured once and outlives the cell
@@ -535,7 +536,9 @@ text of the cells refusal-named-guard and refusal-class-guard; the _sdk_named te
 S13); and no others.
 """
 import ast
+import contextlib
 import inspect
+import io
 import os
 import re
 import shutil
@@ -679,11 +682,13 @@ MUTATIONS = {
 # plant is the plant's and not a case's (each class's docstring says how): the applicability pin, which reds under any
 # plant, and the conftest roster pin, which reds under a plant that changes a text the conftest renders for the refusal
 # (refusal_text_names is keyed on those texts, so a case reading the changed text alone leaves the derived population
-# while the roster, which the plant does not touch, still names it). No case is deselected. derive() refuses a node id
-# here that names no test of this module: pytest ignores an unmatched --deselect without a word, so a renamed pin would
-# print as a red again under every plant it reads.
-DERIVE_DESELECT = ("tests/test_sdk_singleton_ratchet.py::TheMutationCellsApply",
-                   "tests/test_sdk_singleton_ratchet.py::TheCaseRostersNameEveryCase::"
+# while the roster, which the plant does not touch, still names it). No case is deselected. derive_deselect_targets
+# refuses a node id here that names no test of this module (pytest ignores an unmatched --deselect without a word, so
+# a renamed pin would print as a red again under every plant it reads), and TheDerivationIsRunnable resolves every
+# node id here and executes that refusal, so a renamed pin reds the suite, not the next manual derivation.
+MODULE_PATH = "tests/test_sdk_singleton_ratchet.py"    # this module from the repository root: what a node id opens on
+DERIVE_DESELECT = (MODULE_PATH + "::TheMutationCellsApply",
+                   MODULE_PATH + "::TheCaseRostersNameEveryCase::"
                    "test_the_conftests_roster_names_every_case_that_reads_the_refusal_and_no_other")
 # What nested_run pops from its child's environment, the one copy (the round-7 review found derive's list a second
 # hand-kept copy of the tuple in nested_run's loop, bound by no pin): pytest's own variables, the recipe's temp root,
@@ -774,6 +779,69 @@ def mutation_cell_text(doc, cell):
     return doc[doc.index(" ", start) + 1:end]
 
 
+def derive_deselect_targets(nodes=None):
+    """The (class, method) pairs the node ids of DERIVE_DESELECT (or `nodes`) name on this module, in order, or a loud
+    SystemExit naming the first node id that names no test of this module: pytest ignores an unmatched --deselect
+    without a word, so a renamed pin would print as a red again under every plant it reads. What a node id is held to:
+    it opens on MODULE_PATH; its class is a unittest.TestCase subclass this module defines (read by getattr on the
+    module and by the class's __module__, so a name this module only imports, a function or a base that is no test
+    case is refused); and its method, when the node id names one, is a callable of that class whose name opens on
+    "test", the prefix unittest and pytest collect (a helper is refused). A node id naming a class alone deselects the
+    class, and its method is None here. derive_command calls this before it builds the command, so derive refuses
+    before the scratch directory and the plant; TheDerivationIsRunnable executes it over the tuple and over a wrong
+    path, an unknown class, a function, a base that is no test case, an unknown method, a helper and a bare path."""
+    module = sys.modules[__name__]
+    targets = []
+    for node in DERIVE_DESELECT if nodes is None else nodes:
+        path, _, rest = node.partition("::")
+        cls, _, test = rest.partition("::")
+        klass = getattr(module, cls, None) if path == MODULE_PATH and cls else None
+        method = getattr(klass, test, None) if test else None
+        if not (isinstance(klass, type) and issubclass(klass, unittest.TestCase) and klass.__module__ == module.__name__
+                and (not test or (test.startswith("test") and callable(method)))):
+            raise SystemExit("derive: DERIVE_DESELECT names no test of this module: %s" % node)
+        targets.append((klass, method))
+    return targets
+
+
+def derive_command(nodes=None):
+    """The argv derive runs in the worktree: this module under the interpreter running it, `-B -m pytest -p
+    no:cacheprovider -q -rf` (-rf prints the FAILED lines derive_red_lines reads), one --deselect per node id of
+    DERIVE_DESELECT (or `nodes`) in the tuple's order, and MODULE_PATH last. The node ids are resolved first
+    (derive_deselect_targets), so no command is built over a node id that names no test of this module.
+    TheDerivationIsRunnable holds the shape, and holds through derive over a faked subprocess.run that derive runs
+    exactly this argv."""
+    nodes = DERIVE_DESELECT if nodes is None else tuple(nodes)
+    derive_deselect_targets(nodes)
+    cmd = [sys.executable, "-B", "-m", "pytest", "-p", "no:cacheprovider", "-q", "-rf"]
+    for node in nodes:
+        cmd += ["--deselect", node]
+    cmd.append(MODULE_PATH)
+    return cmd
+
+
+def derive_red_lines(stdout):
+    """The lines derive prints for a run's red classes, from its -rf output: "red: <id> (<Class>): <tests>", one per
+    class with a FAILED line of this module (`FAILED <MODULE_PATH>::<Class>::<test>`, read by that shape; another
+    module's FAILED line is not read), its tests sorted and joined by ", ", the lines sorted by (id, class). The id is
+    the case's, by the SCRATCH object's identity: the tails of the SCRATCH_<id> names of this module whose value is
+    the object the class's SCRATCH attribute binds, joined by "/" when several names bind it; "-" for a class that
+    binds no such object (a pin, or a class this module does not define), so a red printed with no case id is never
+    a case's. TheDerivationIsRunnable holds this over a fabricated output carrying a case class, a pin and a class the
+    module does not define."""
+    module = sys.modules[__name__]
+    failed = {}
+    for cls, test in re.findall(r"^FAILED %s::(\w+)::(\w+)" % re.escape(MODULE_PATH), stdout, re.M):
+        failed.setdefault(cls, []).append(test)
+    ids = {}
+    for cls in failed:
+        scratch_text = getattr(getattr(module, cls, None), "SCRATCH", None)
+        names = [n[len("SCRATCH_"):] for n, v in vars(module).items() if n.startswith("SCRATCH_") and v is scratch_text]
+        ids[cls] = "/".join(sorted(names)) if isinstance(scratch_text, str) and names else "-"
+    return ["red: %s (%s): %s" % (ids[cls], cls, ", ".join(sorted(failed[cls])))
+            for cls in sorted(failed, key=lambda c: (ids[c], c))]
+
+
 def derive(cell):
     """Plant the cell's mutation in a detached worktree at HEAD, run this module there, print the red cases by case id
     with the head, and remove the worktree: the runnable derivation of the cell's current red set, which no sentence in
@@ -789,17 +857,14 @@ def derive(cell):
     which the plant does not touch, still names it, and the pin reports a roster entry with no class). Neither is a
     case, and neither is any cell's set; a red this prints with no case id is a pin's, and the fix is a deselect here or
     a pin that reads the plant's text no longer, never a case list. A node id in that tuple that names no test of this
-    module is a loud error before the plant: pytest ignores an unmatched --deselect without a word. The run's
-    environment is the test recipe's (every ROMP_* variable and the pytest variables nested_run pops dropped, TMPDIR
-    fresh)."""
+    module is a loud error before the plant (derive_deselect_targets, run by derive_command before the scratch
+    directory is made: pytest ignores an unmatched --deselect without a word). The run's environment is the test
+    recipe's (every ROMP_* variable and the pytest variables nested_run pops dropped, TMPDIR fresh). The parts are
+    functions the suite executes (TheDerivationIsRunnable): the node ids' resolution, the command, the red lines'
+    reading, and this function over a faked subprocess.run, so the derivation's code is run by the suite and not by
+    the next manual derivation alone."""
     target, subs = MUTATIONS[cell]
-    module = sys.modules[__name__]
-    for node in DERIVE_DESELECT:              # an unmatched --deselect is silently a no-op: refuse it before the plant
-        path, _, rest = node.partition("::")
-        cls, _, test = rest.partition("::")
-        klass = getattr(module, cls, None) if path == "tests/test_sdk_singleton_ratchet.py" else None
-        if not (isinstance(klass, type) and (not test or callable(getattr(klass, test, None)))):
-            raise SystemExit("derive: DERIVE_DESELECT names no test of this module: %s" % node)
+    cmd = derive_command()                    # resolves DERIVE_DESELECT: a node id naming no test refuses here, before the plant
     scratch = tempfile.mkdtemp(prefix="derive-")
     tree = os.path.join(scratch, "tree")
     added = False
@@ -830,26 +895,13 @@ def derive(cell):
         print("# planted: %s, %d substitution(s)" % (target, len(subs)))
         env = {k: v for k, v in os.environ.items() if not k.startswith("ROMP_") and k not in DERIVE_ENV_DROPPED}
         env.update(TMPDIR=scratch, PYTHONDONTWRITEBYTECODE="1")
-        cmd = [sys.executable, "-B", "-m", "pytest", "-p", "no:cacheprovider", "-q", "-rf"]
-        for node in DERIVE_DESELECT:
-            cmd += ["--deselect", node]
-        cmd.append("tests/test_sdk_singleton_ratchet.py")
         print("# run: %s (in the worktree)" % " ".join(cmd[1:]))
         r = subprocess.run(cmd, cwd=tree, env=env, capture_output=True, text=True, timeout=1200)
         if r.returncode not in (0, 1):
             raise SystemExit("%s: pytest exited %d, not 0 or 1:\n%s"
                              % (cell, r.returncode, r.stdout[-4000:] + r.stderr[-2000:]))
-        failed = {}
-        for cls, test in re.findall(r"^FAILED tests/test_sdk_singleton_ratchet\.py::(\w+)::(\w+)", r.stdout, re.M):
-            failed.setdefault(cls, []).append(test)
-        ids = {}
-        for cls in failed:
-            scratch_text = getattr(getattr(module, cls, None), "SCRATCH", None)
-            names = [n[len("SCRATCH_"):] for n, v in vars(module).items()
-                     if n.startswith("SCRATCH_") and v is scratch_text]
-            ids[cls] = "/".join(sorted(names)) if isinstance(scratch_text, str) and names else "-"
-        for cls in sorted(failed, key=lambda c: (ids[c], c)):
-            print("red: %s (%s): %s" % (ids[cls], cls, ", ".join(sorted(failed[cls]))))
+        for line in derive_red_lines(r.stdout):
+            print(line)
         lines = [line for line in r.stdout.splitlines() if line.strip()]
         print("summary: %s" % (lines[-1] if lines else "(no output)"))
         print("cell: %s" % (mutation_cell_text(__doc__, cell)
@@ -3446,6 +3498,144 @@ class TheDeriveEnvironmentIsNestedRuns(unittest.TestCase):
         for source, message in reds:
             with self.assertRaisesRegex(AssertionError, message):
                 self._assert_pops_in_one_loop(source)
+
+
+class TheDerivationIsRunnable(unittest.TestCase):
+    """derive()'s parts are executed by the suite, each over what it keys on. derive_deselect_targets: every node id
+    of DERIVE_DESELECT resolves on this module (its class a unittest.TestCase subclass this module defines, its
+    method, when named, a callable test of that class), and a node id naming no test is refused with a SystemExit
+    naming it before any scratch directory is made (tempfile.mkdtemp mocked to raise, so the wrong road is a loud
+    AssertionError and never a real derivation, minutes long, against this checkout). derive_command: the argv pairs
+    every node id with its own --deselect, in the tuple's order, and ends in MODULE_PATH. derive_red_lines: over a
+    fabricated -rf output, the lines carry the case id by SCRATCH identity (the case class taken from
+    case_population's map, never written here), the class and its sorted tests, "-" for a pin and for a class this
+    module does not define, another module's FAILED line unread. derive itself: over a faked subprocess.run
+    (rev-parse answering a fabricated head, worktree add copying the real conftest into the tree, status answering
+    clean, the pytest call recorded and answering the fabricated output, worktree remove recorded) and a real
+    mkdtemp under the test's directory, it prints the cell, the head, the plant, the run line, the red lines, the
+    summary and the cell's text, runs derive_command()'s argv in the added tree under the recipe's environment, and
+    removes the tree and the scratch directory. Before this class no test called derive: the round-7 review found the
+    two behaviours last added to it (the second --deselect and the refusal) executed by no run of the suite, so
+    derive replaced by a raiser left the module green. Not read here: a real pytest run and a real
+    worktree; the plant's exact-once count is TheMutationCellsApply's."""
+
+    def test_every_deselected_node_names_a_test_of_this_module(self):
+        module = sys.modules[__name__]
+        targets = derive_deselect_targets()
+        self.assertEqual(len(targets), len(DERIVE_DESELECT))
+        for node, (klass, method) in zip(DERIVE_DESELECT, targets):
+            self.assertTrue(node.startswith(MODULE_PATH + "::"), node)
+            self.assertTrue(isinstance(klass, type) and issubclass(klass, unittest.TestCase), node)
+            self.assertIs(getattr(module, klass.__name__), klass, node)
+            self.assertEqual(klass.__module__, module.__name__, node)
+            if method is not None:
+                self.assertTrue(callable(method) and method.__name__.startswith("test")
+                                and getattr(klass, method.__name__) is method, node)
+        self.assertEqual([(klass.__name__, method and method.__name__) for klass, method in targets],
+                         [(node.split("::")[1], node.split("::")[2] if node.count("::") == 2 else None)
+                          for node in DERIVE_DESELECT])
+
+    def test_a_node_naming_no_test_is_refused_before_the_plant(self):
+        module = sys.modules[__name__]
+        bad = ("tests/test_other.py::TheMutationCellsApply", MODULE_PATH + "::NoSuchClass", MODULE_PATH + "::nested_run",
+               MODULE_PATH + "::_NestedRun", MODULE_PATH + "::TheMutationCellsApply::test_no_such",
+               MODULE_PATH + "::TheCaseRostersNameEveryCase::_assert_same", MODULE_PATH)
+        for node in bad:
+            with mock.patch.object(module, "DERIVE_DESELECT", DERIVE_DESELECT + (node,)), \
+                 mock.patch.object(tempfile, "mkdtemp", side_effect=AssertionError("the plant ran")) as mkdtemp, \
+                 self.assertRaises(SystemExit) as refused:
+                derive(sorted(MUTATIONS)[0])
+            self.assertEqual(str(refused.exception), "derive: DERIVE_DESELECT names no test of this module: %s" % node)
+            mkdtemp.assert_not_called()
+
+    def test_the_command_deselects_every_pin_and_runs_this_module(self):
+        cmd = derive_command()
+        self.assertEqual(cmd[0], sys.executable)
+        self.assertEqual(cmd[1:8], ["-B", "-m", "pytest", "-p", "no:cacheprovider", "-q", "-rf"])
+        self.assertEqual(cmd[8:-1], [arg for node in DERIVE_DESELECT for arg in ("--deselect", node)],
+                         "the command does not pair every node id of DERIVE_DESELECT with its own --deselect, in the "
+                         "tuple's order: %r" % (cmd,))
+        self.assertEqual(cmd[-1], MODULE_PATH)
+        self.assertEqual(derive_command(DERIVE_DESELECT[:1])[8:], ["--deselect", DERIVE_DESELECT[0], MODULE_PATH])
+        with self.assertRaisesRegex(SystemExit, "names no test of this module: " + re.escape(MODULE_PATH + "::NoSuchClass")):
+            derive_command((MODULE_PATH + "::NoSuchClass",))
+
+    def _fabricated_output(self):
+        """A -rf output: FAILED lines for the case class case_population maps to the id that sorts first (two tests,
+        in reverse order), for a pin (TheCaseRostersNameEveryCase) and for a class this module does not define, one
+        for another module, the lines around them and a summary line; and the red lines derive_red_lines owes for it,
+        sorted by (id, class), "-" sorting before every case id."""
+        _, _, cases = case_population(names=())
+        cid, case = min((i, c) for c, i in cases.items())
+        stdout = ("...F.F..F.F                                                              [100%%]\n"
+                  "=================================== FAILURES ===================================\n"
+                  "=========================== short test summary info ============================\n"
+                  "FAILED %(m)s::%(case)s::test_b - AssertionError: b\n"
+                  "FAILED %(m)s::TheCaseRostersNameEveryCase::test_d - AssertionError: d\n"
+                  "FAILED tests/test_other.py::Elsewhere::test_e - AssertionError: e\n"
+                  "FAILED %(m)s::NoSuchClass::test_c - AssertionError: c\n"
+                  "FAILED %(m)s::%(case)s::test_a - AssertionError: a\n"
+                  "4 failed, 191 passed in 60.00s (0:01:00)\n" % {"m": MODULE_PATH, "case": case})
+        reds = ["red: - (NoSuchClass): test_c", "red: - (TheCaseRostersNameEveryCase): test_d",
+                "red: %s (%s): test_a, test_b" % (cid, case)]
+        return stdout, reds
+
+    def test_the_red_lines_carry_the_case_id_the_class_and_its_tests(self):
+        stdout, reds = self._fabricated_output()
+        self.assertEqual(derive_red_lines(stdout), reds)
+        self.assertEqual(derive_red_lines("195 passed in 60.00s\n"), [])
+
+    def test_derive_runs_the_command_in_a_worktree_and_prints_the_plant_the_reds_and_the_cell(self):
+        cell = sorted(MUTATIONS)[0]
+        target, subs = MUTATIONS[cell]
+        head = "1111111122222222333333334444444455555555"
+        stdout, reds = self._fabricated_output()
+        seen = {"added": [], "removed": [], "pytest": None, "planted": None}
+        real_mkdtemp = tempfile.mkdtemp
+
+        def fake_run(argv, **kw):
+            done = lambda rc, out="": subprocess.CompletedProcess(argv, rc, out, "")
+            if argv[:3] != ["git", "-C", ROOT]:                                   # the module's run
+                with open(os.path.join(kw["cwd"], "tests", target)) as f:
+                    planted = f.read()
+                seen["planted"] = all(new in planted for _, new in subs)
+                seen["pytest"] = (argv, kw)
+                return done(1, stdout)
+            if argv[3] == "rev-parse":
+                return done(0, head + "\n")
+            if argv[3:5] == ["worktree", "add"]:
+                tree = argv[-2]
+                os.makedirs(os.path.join(tree, "tests"))
+                shutil.copy(os.path.join(HERE, target), os.path.join(tree, "tests", target))
+                seen["added"].append(tree)
+                return done(0)
+            if argv[3] == "status":
+                return done(0)
+            if argv[3:5] == ["worktree", "remove"]:
+                seen["removed"].append(argv[-1])
+                return done(0)
+            raise AssertionError("a git call derive does not make: %r" % (argv,))
+
+        out = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.dict(os.environ, {"ROMP_PROBE": "1", "PYTEST_ADDOPTS": "-x", "CLAUDE_CODE_SESSION_ID": "s"}), \
+                 mock.patch.object(subprocess, "run", side_effect=fake_run), \
+                 mock.patch.object(tempfile, "mkdtemp", side_effect=lambda **kw: real_mkdtemp(dir=tmp, **kw)), \
+                 contextlib.redirect_stdout(out):
+                derive(cell)
+            self.assertEqual(os.listdir(tmp), [], "derive left its scratch directory")
+        argv, kw = seen["pytest"]
+        self.assertEqual(argv, derive_command())
+        self.assertEqual(seen["added"], [kw["cwd"]], "the module ran outside the worktree derive added")
+        self.assertEqual(seen["removed"], seen["added"], "the worktree derive added was not the one it removed")
+        self.assertTrue(seen["planted"], "the module ran over a tree without the cell's plant")
+        self.assertTrue(kw["env"]["TMPDIR"].startswith(tmp + os.sep), kw["env"]["TMPDIR"])
+        self.assertEqual(kw["env"]["PYTHONDONTWRITEBYTECODE"], "1")
+        self.assertEqual([k for k in kw["env"] if k.startswith("ROMP_") or k in DERIVE_ENV_DROPPED], [])
+        self.assertEqual(out.getvalue().splitlines(),
+                         ["# cell: %s" % cell, "# head: %s" % head, "# planted: %s, %d substitution(s)" % (target, len(subs)),
+                          "# run: %s (in the worktree)" % " ".join(derive_command()[1:])] + reds
+                         + ["summary: 4 failed, 191 passed in 60.00s (0:01:00)", "cell: %s" % mutation_cell_text(__doc__, cell)])
 
 
 class TheMutationCellsApply(unittest.TestCase):
