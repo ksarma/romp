@@ -57,7 +57,7 @@ test("figureTarget reads the web address before the model's join, so a protocol-
   assert.match(fn, /figurePath reads a protocol-relative source \(`\/\/host\/pic\.svg`\) as an\n\s*\/\/ absolute path of the disk/, "the comment says why the order matters");
 });
 
-test("the one decision: figureWantsControl reads the figure's state by one rule (figureHasPicture: a control only for a state with a picture to name, loaded or a stand-in; fetching, failed and any later state get none), then the floor, the target and any link above; decideFigureControl adds or removes against the control standing, handing the keyboard to the viewer's body before a removal; the floor is 48px on either side, read from the loaded picture's rendered box (or its own size when not laid out); linkAbove is any anchor; the load, the error and the figures' own ResizeObserver all run the decision, a 0 by 0 report runs none, and the width watch's repaint runs none; figureTarget refuses on the same rule", () => {
+test("the one decision: figureWantsControl reads the figure's state by one rule (figureHasPicture: a control only for a state with a picture to name, loaded or a stand-in; fetching, failed and any later state get none), then the floor, the target and any link above; decideFigureControl adds or removes against the control standing, handing the keyboard to the viewer's body before a removal; the floor is 48px on either side, read from the loaded picture's laid-out box as it is while the figure is in the document (or its own size before it is); linkAbove is any anchor; the load, the error and the figures' own ResizeObserver all run the decision, a 0 by 0 report runs none, no arm precedes the first paint, and the width watch's repaint runs none; figureTarget refuses on the same rule, and no reader names a refused state", () => {
   const want = between(VIEW, "function figureWantsControl(img: Element, anchor: Element, filePath: string): boolean {", "function decideFigureControl(");
   inOrder(want, [
     "if (img.closest('[data-act=\"' + GATE_ACT + '\"]')) return false;",
@@ -93,7 +93,19 @@ test("the one decision: figureWantsControl reads the figure's state by one rule 
   assert.match(VIEW, /\ntype FigureState = "standin" \| "fetching" \| "loaded" \| "failed";\n/, "the domain: four states");
   const rule = between(VIEW, "function figureHasPicture(state: FigureState): boolean {", "\n}\n");
   assert.match(rule, /\n\s*return state === "loaded" \|\| state === "standin";$/, "the allowance: loaded (the browser answered with a picture) or a stand-in (no browser to ask); every other value refused");
-  assert.doesNotMatch(VIEW, /state === "fetching" \|\| state === "failed"/, "no reader lists the refused states");
+  // the guard against a list is keyed on the property, not on one spelling of the list (the file review's round 3, tests-3: a pin
+  // over `state === "fetching" || state === "failed"` passed the same two in the other order): the refused set is derived, the
+  // domain's members less the ones the allowance names, and each refused member's string literal stands nowhere in the file but
+  // the type line and figureState's body (the two places that must name every member), comments included, so a reader that
+  // names one in any form (a comparison in either order, a `case`, an array or a Set) fails here
+  const domain = VIEW.match(/\ntype FigureState = ((?:"[a-z]+"(?: \| )?)+);\n/);
+  assert.ok(domain, "the FigureState type line");
+  const members = Array.from(domain![1].matchAll(/"([a-z]+)"/g), (m) => m[1]);
+  const allowed = Array.from(rule.matchAll(/state === "([a-z]+)"/g), (m) => m[1]);
+  const refused = members.filter((m) => !allowed.includes(m));
+  assert.ok(members.length >= 3 && allowed.length >= 1 && refused.length >= 1 && allowed.every((a) => members.includes(a)), "a derived refused set: " + JSON.stringify({ members, allowed, refused }));
+  const elsewhere = VIEW.replace(domain![0], "\n").replace(state, "");
+  for (const m of refused) assert.equal((elsewhere.match(new RegExp('"' + m + '"', "g")) || []).length, 0, "no reader names the refused state \"" + m + "\": its literal stands only on the type line and in figureState (a comparison in any order, a case, an array or a Set names it, and so does a comment quoting it; write `" + m + "` in prose)");
   assert.match(VIEW, /\nconst FIGOPEN_MIN_PX = 48;\n/, "the floor: the control's 22px box, its 6px inset and as much figure again");
   const small = between(VIEW, "function figureTooSmall(img: Element): boolean {", "\n}\n");
   assert.match(small, /const b = figureBox\(img\);\n\s*return b !== null && \(b\.w < FIGOPEN_MIN_PX \|\| b\.h < FIGOPEN_MIN_PX\);/, "under the floor on EITHER side (a badge is wide and short)");

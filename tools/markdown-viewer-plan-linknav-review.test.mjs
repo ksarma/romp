@@ -227,7 +227,16 @@ test('the file review: L3 names the one decision, its verdict and the state it r
   assert.ok(viewer.includes('\ntype FigureState = "standin" | "fetching" | "loaded" | "failed";\n'), 'the domain: four states');
   const rule = between(viewer, 'function figureHasPicture(state: FigureState): boolean {', '\n}\n');
   assert.ok(rule.includes('return state === "loaded" || state === "standin";'), 'the allowance: loaded, or a stand-in outside a browser; every other value refused');
-  assert.ok(!viewer.includes('state === "fetching" || state === "failed"'), 'no reader lists the refused states');
+  // keyed on the property, not one spelling (the file review's round 3, tests-3): each refused member's literal stands only on the type
+  // line and in figureState's body, so a reader naming one in any form, the two in either order included, fails here
+  const domain = viewer.match(/\ntype FigureState = ((?:"[a-z]+"(?: \| )?)+);\n/);
+  assert.ok(domain, 'the FigureState type line');
+  const members = Array.from(domain[1].matchAll(/"([a-z]+)"/g), (m) => m[1]);
+  const allowed = Array.from(rule.matchAll(/state === "([a-z]+)"/g), (m) => m[1]);
+  const refused = members.filter((m) => !allowed.includes(m));
+  assert.ok(allowed.length >= 1 && refused.length >= 1, 'a derived refused set: ' + JSON.stringify({ members, allowed, refused }));
+  const elsewhere = viewer.replace(domain[0], '\n').replace(state, '');
+  for (const m of refused) assert.equal((elsewhere.match(new RegExp('"' + m + '"', 'g')) || []).length, 0, 'no reader names the refused state "' + m + '" (its literal stands only on the type line and in figureState)');
   assert.ok(L3.includes('the two are the refused states of ONE rule, a target only for a state with a picture to name (`figureHasPicture`: `loaded`, the browser having answered with a picture, or a stand-in outside a browser'), 'L3 states the rule');
   assert.ok(L3.includes('so a state `figureState` gains later is refused by both readers with no edit to either'), 'L3: why the rule and not the list');
   assert.ok(read('ui', 'webview', 'file-view-figure-state-browser.test.ts').includes('a FAILED local figure with a box (a non-empty alt, laid out as text) wears no control, and its plain click opens nothing'), 'the state leg drives a failed figure with a box');

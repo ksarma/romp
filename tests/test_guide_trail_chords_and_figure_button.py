@@ -18,7 +18,7 @@ sentence to the shell's lines, to `onNavKey`'s stand-downs (a prevented key, a t
 
 The picture sentence. The guide names four kinds of picture without the button once the browser has answered for it: a
 picture that failed to load (the file review's round 2: `figureState`, refused by `figureWantsControl` and by
-`figureTarget` alike, on one rule since before the review's round 3, `figureHasPicture`, a target or a button only for a
+`figureTarget` alike, on one rule since before the file review's round 3, `figureHasPicture`, a target or a button only for a
 state with a picture to name, so the button and the plain click agree and nothing opens), a `data:` picture (`figureTarget`
 null), one under `FIGOPEN_MIN_PX` on either side (a badge, an inline icon; `figureTooSmall`, read by the one decision
 `decideFigureControl` at the load and at each reflow of the figure's own box, `watchFigureBoxes`), and one inside a link
@@ -209,13 +209,25 @@ class PicturesWithoutTheButton(GuideSentences):
         viewer and pushed it onto the trail, and a plain click on a failed remote figure opened a tab at a host whose image
         request had answered 404. Both readers now refuse on ONE rule, read before the candidate: a target or a button only for a
         state with a picture to name (figureHasPicture: loaded, or a stand-in outside a browser), so fetching, failed and any
-        state figureState gains later are refused alike (before the review's round 3 each reader listed the two states it
+        state figureState gains later are refused alike (before the file review's round 3 each reader listed the two states it
         refused, a list a new value passes). The clause that a picture which did not load has nothing to open is true by this
         pin and by file-view-figure-state-browser.test.ts's execution."""
         self.assertIn('\ntype FigureState = "standin" | "fetching" | "loaded" | "failed";\n', self.viewer, "the domain: four states")
         rule = _body(self.viewer, "function figureHasPicture(state: FigureState): boolean {", "}")
         self.assertIn('return state === "loaded" || state === "standin";', rule, "the allowance: loaded, or a stand-in; every other value refused")
-        self.assertNotIn('state === "fetching" || state === "failed"', self.viewer, "no reader lists the refused states")
+        # keyed on the property, not one spelling (the file review's round 3, tests-3: a pin over the list in one order passed the
+        # other order): the refused set is the domain's members less the ones the allowance names, and each refused member's
+        # literal stands only on the type line and in figureState's body, so a reader naming one in any form fails here
+        domain = re.search(r'\ntype FigureState = ((?:"[a-z]+"(?: \| )?)+);\n', self.viewer)
+        assert domain, "the FigureState type line"
+        members = re.findall(r'"([a-z]+)"', domain.group(1))
+        allowed = re.findall(r'state === "([a-z]+)"', rule)
+        refused = [m for m in members if m not in allowed]
+        self.assertTrue(allowed and refused and all(a in members for a in allowed), {"members": members, "allowed": allowed, "refused": refused})
+        state_fn = _body(self.viewer, "function figureState(img: Element): FigureState {", "}")
+        elsewhere = self.viewer.replace(domain.group(0), "\n").replace(state_fn, "")
+        for m in refused:
+            self.assertEqual(elsewhere.count('"%s"' % m), 0, "no reader names the refused state %r: its literal stands only on the type line and in figureState" % m)
         target = _body(self.viewer, "function figureTarget(img: Element, filePath: string): FigureTarget | null {", "}")
         self.assertIn("const state = figureState(img);", target)
         self.assertIn("if (!figureHasPicture(state)) return null;", target, "no target for a state without a picture to name")
