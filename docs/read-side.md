@@ -282,7 +282,16 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   kernel's 403 line under a stale cookie, its 500 page, a proxy's 502 body) is
   a failure like an error page: re-parked with the retry control and one
   `pane-load-failed` row (since 2026-09-19; the 200 scope since review round 4
-  the same day).
+  the same day). On the desktop layout a pane a flip promoted files the same
+  two rows (its promotion arms the same load listener and 30 s backstop): the
+  episode's first failure hands the url back to `data-src` and promotes once
+  more; the second is the bound, which drops a document the kernel sent (the
+  frame to about:blank, the url under `data-lazy-src`) and keeps the browser's
+  own error page (review round 5); a fetch still in flight at the backstop is
+  held on its kept src and its load ends the episode. No loader and no retry
+  control outside the phone layout: a flip to the phone parks a bound or held
+  pane with the failed state, where a tap recovers it, and a reload is the
+  other road.
   A redial declares itself (`reconnect=1` on the `/ws` URL) once the kernel's
   caps frame has answered the bundle's ready; before that, with the ready still
   queued, or after a socket that died before the caps frame came back, it dials
