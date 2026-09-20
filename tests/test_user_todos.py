@@ -701,6 +701,41 @@ class PruneSweep(_StoreSandbox):
         km._prune_user_todos()
         self.assertNotIn(SID2, km._UT_FLOOR_ARM, "an EMPTY store (read, not failed) still spends a record no row backs")
 
+    def test_a_fault_that_begins_after_the_prunes_first_read_leaves_every_arm_record_alone(self):
+        # round four's refusal asked _user_todos_unreadable (a read) and the empty-store arm then read the store AGAIN, so
+        # a fault beginning between the two reads answered the empty stand-in at the second with the flag set, and the
+        # arm spent every arm record off a read the refusal had never seen. The pass reads ONCE now, under the store
+        # lock, and every arm branches on that read's flag: a stat that succeeds on the first call and raises EIO from
+        # the second on leaves every row and record alone, writes nothing, and never reaches the reader as a fault
+        km._add_user_todo(SID, "Need the auth-scheme decision to wire login", blocking=True)
+        self.addCleanup(km._UT_FLOOR_ARM.clear)
+        with km._UT_FLOOR_ARM_LOCK:
+            km._UT_FLOOR_ARM[SID] = (frozenset({"ut-11111111"}), NOW - 30)
+            km._UT_FLOOR_ARM[SID2] = (frozenset({"ut-22222222"}), NOW - 30)
+        p = jd.STATE / "user-todos.json"
+        before = p.read_bytes()
+        km._user_todos_cache.clear()
+        real = Path.stat
+        looks = []
+
+        def fake(path, *a, **k):
+            if path.name == "user-todos.json":
+                looks.append(1)
+                if len(looks) > 1:
+                    raise OSError(errno.EIO, os.strerror(errno.EIO), str(path))
+            return real(path, *a, **k)
+
+        err = io.StringIO()
+        with mock.patch.object(Path, "stat", fake), contextlib.redirect_stderr(err):
+            km._prune_user_todos()
+        self.assertEqual(km._UT_FLOOR_ARM.get(SID), (frozenset({"ut-11111111"}), NOW - 30), "the record stands")
+        self.assertEqual(km._UT_FLOOR_ARM.get(SID2), (frozenset({"ut-22222222"}), NOW - 30),
+                         "and so does the one no row backs: on a store with rows only a death record spends it")
+        self.assertEqual(p.read_bytes(), before, "nothing written")
+        self.assertEqual(len(km._open_user_todos(SID)), 1, "the open row too")
+        self.assertNotIn("could not be read", err.getvalue(), "no fault reached the reader")
+        self.assertEqual(len(looks), 1, "one read per pass: nothing left for a later fault to reach")
+
     def test_the_sweep_runs_once_per_housekeeping_pass_and_never_from_a_build(self):
         # one call per pass of the housekeeping jobs, as its own stage; never from a per-session or tab
         # build (the first cut called it from the tab-list build several times per cycle). The executed count,
@@ -2112,6 +2147,39 @@ class LostAnswerReopens(_StoreSandbox):
             km._user_todo_answer_lost(SID, "ut-00000000", "Re: Need the staging port\n\n8443.", wait=True)
         self.assertIn("nothing reopened", err.getvalue())
         self.assertIn("ut-00000000", err.getvalue())
+
+    def test_a_reopen_the_store_cannot_write_is_said_and_the_seams_thread_ends_without_a_traceback(self):
+        # what the writer raises: _atomic_write re-raises an OSError (a disk error, a permission), and _write_user_todos
+        # raises RuntimeError while the store stands flagged. The reopen ran under the store lock with no catch, inside a
+        # daemon thread whose other failures are caught and said, so the thread ended with a traceback and no verdict
+        # line while the row went on reading answered. Caught now the way the recall's reopen is
+        # (_cancel_backend_queued): one line naming the fault and what stands, and the inline verdict names it
+        tid, body = self._stamped()
+        fault = OSError(errno.EIO, "Input/output error")
+        err = io.StringIO()
+        with mock.patch.object(km, "_atomic_write", side_effect=fault), contextlib.redirect_stderr(err):
+            self.assertIsNone(km._user_todo_answer_lost(SID, tid, body), "the threaded default")
+            for t in threading.enumerate():
+                if t.name == "user-todo-lost":
+                    t.join(30)
+                    self.assertFalse(t.is_alive(), "the seam's thread ended")
+        self.assertNotIn("Traceback", err.getvalue(), err.getvalue())
+        lines = err.getvalue().splitlines()
+        self.assertEqual(len(lines), 1, lines)
+        self.assertIn(tid, lines[0])
+        self.assertIn("Input/output error", lines[0], "the fault is named")
+        self.assertIn("still", lines[0], "and what stands: the row still reads answered")
+        self.assertEqual(km._user_todos()[SID][0]["resolved"]["kind"], "answered", "the row is as it was")
+        err = io.StringIO()
+        with mock.patch.object(km, "_atomic_write", side_effect=fault), contextlib.redirect_stderr(err):
+            self.assertEqual(km._user_todo_answer_lost(SID, tid, body, wait=True), "unwritten", "the verdict names it")
+        self.assertEqual(len(err.getvalue().splitlines()), 1, err.getvalue())
+        self.assertIn("could not write the reopen", err.getvalue())
+        with mock.patch.object(km, "_write_user_todos", side_effect=RuntimeError("write refused")), \
+                contextlib.redirect_stderr(err):
+            self.assertEqual(km._user_todo_answer_lost(SID, tid, body, wait=True), "unwritten")
+        self.assertIn("refused the reopen", err.getvalue(), "the writer's own refusal while the store stands flagged")
+        self.assertEqual(km._user_todos()[SID][0]["resolved"]["kind"], "answered")
 
     def test_the_kernel_passes_the_seam_to_the_backend_at_construction(self):
         # the callback must ride construction: the boot reseed fires drop marks from inside __init__

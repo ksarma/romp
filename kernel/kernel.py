@@ -8686,9 +8686,20 @@ def _user_todos_unreadable():
     Makes the read itself first (cached, so a stat), because the flag is only ever set by a read. A
     missing file is the empty store, never an unreadable one; a file whose stat or read FAILED is unreadable
     (the could-not-read flag that read just set or kept), the distinction the store reader itself cannot
-    make in its return value."""
-    p = jd.STATE / "user-todos.json"
+    make in its return value. The read, then the flag check, which is its own def (_user_todos_flag_stands) for the
+    one caller that makes the read itself and must branch on THAT read (the prune, under the store lock)."""
     _user_todos()
+    return _user_todos_flag_stands()
+
+
+def _user_todos_flag_stands():
+    """The check _user_todos_unreadable makes AFTER its read, off the flag slot alone: True while _user_todos_bad holds
+    a could-not-read flag for the store (the read just made set or kept it), or a version flag the file on disk still
+    matches (the check _write_user_todos makes before refusing); False with no flag, or a flagged file since removed or
+    replaced. For a caller that has read the store itself and branches on the outcome of that ONE read: the prune asked
+    _user_todos_unreadable and then read the store again for its empty-store arm, so a fault beginning between the two
+    reads answered the empty stand-in at the second with the flag set, and the arm spent every arm record on it."""
+    p = jd.STATE / "user-todos.json"
     bad = _user_todos_bad.get(str(p))
     if bad is None:
         return False
@@ -9074,18 +9085,22 @@ def _prune_user_todos():
     on the same corroborated death evidence, never on a listing miss. An EMPTY store returns before any death read (the
     switch-off install pays one cached dict check per pass); a record no row backs is stale then, and is dropped.
 
-    A store that CANNOT BE READ (_user_todos_unreadable: a stat or read that failed, or a file that is not a store)
-    returns before THAT, touching nothing: the reader's empty stand-in is not "no records", and off it the empty-store
-    arm spent every arm record while a resolved row's removal would have published the stand-in over the store (the
-    project's reviewer executed the stat raising EIO). The reader said why; the next pass reads again."""
-    if _user_todos_unreadable():
-        return
-    if not _user_todos():
-        with _UT_FLOOR_ARM_LOCK:
-            _UT_FLOOR_ARM.clear()
-        return
+    A store that CANNOT BE READ (a stat or read that failed, or a file that is not a store: the flag
+    _user_todos_unreadable reads, _user_todos_flag_stands) returns before THAT, touching nothing: the reader's empty
+    stand-in is not "no records", and off it the empty-store arm spent every arm record while a resolved row's removal
+    would have published the stand-in over the store (the project's reviewer executed the stat raising EIO). The reader
+    said why; the next pass reads again. The pass reads the store ONCE, under the store lock, and the refusal, the
+    empty-store arm and the sweep all branch on that one read: the refusal first asked _user_todos_unreadable (a read of
+    its own) and the empty-store arm then read again, so a fault beginning between the two reads answered the stand-in
+    at the second with the flag set, and the arm spent every arm record off a read the refusal had never seen."""
     with _user_todos_lock:
-        cur = _user_todos()
+        cur = _user_todos()                          # the pass's one read; every arm below branches on it
+        if _user_todos_flag_stands():
+            return                                   # could not be read, or not a store: the stand-in is not "no records"
+        if not cur:
+            with _UT_FLOOR_ARM_LOCK:
+                _UT_FLOOR_ARM.clear()
+            return
         out = {}
         changed = False
         for s, rows in cur.items():
@@ -9349,7 +9364,9 @@ def _user_todo_answer_lost(sid, tid, text, wait=False):
 
     REPORTS ITS VERDICT when run inline (wait=True; the threaded default returns None): "landed" (the
     stamp stands), "reopened" (the lift landed), "open" (the row is still open: an earlier loss already
-    reopened it, or the stamp never landed) or "stale" (cleared meanwhile, or evicted by the history cap).
+    reopened it, or the stamp never landed), "stale" (cleared meanwhile, or evicted by the history cap) or
+    "unwritten" (the lift could not be written: the store stands flagged and the writer refused, or the write
+    itself failed; said on stderr, the row still reading answered).
 
     THREADED by default; `wait` is the test seam. The callback's own frame returns at once and touches
     nothing but the thread start: the backend fires it from the session's asyncio loop and, at boot, from
@@ -9388,7 +9405,22 @@ def _user_todo_answer_lost(sid, tid, text, wait=False):
     except Exception as e:
         sys.stderr.write("user-todos: landed check for %s (%s) failed, reopening anyway: %s\n" % (tid, sid[:8], e))
     with _user_todos_lock:
-        if _reopen_user_todo(sid, tid):
+        try:
+            lifted = _reopen_user_todo(sid, tid)
+        except (RuntimeError, OSError) as e:
+            # the writer refused the lift (RuntimeError: the store stands flagged, not a store or could not be read) or
+            # the write itself failed (OSError, re-raised by _atomic_write: a disk error, a permission). Caught the way
+            # the recall's reopen catches it (_cancel_backend_queued): this runs on the seam's own daemon thread, whose
+            # only record is stderr, so uncaught it ended the thread with a traceback and no verdict line while the row
+            # went on reading answered. Said instead, LOUD like the stale arm below: the row still reads answered and
+            # nothing is reopened, so the line is the record that the user still owes the session an answer (a drop
+            # mark that persists on the echo reaches the boot pass, which hands the loss over again)
+            how = "refused the reopen" if isinstance(e, RuntimeError) else "could not write the reopen"
+            sys.stderr.write("user-todos: %s's answer for %s was lost, but the request store %s (%s); the row still "
+                             "reads answered and nothing is reopened, so the user still owes the session that answer\n"
+                             % (sid[:8], tid, how, e))
+            return "unwritten"
+        if lifted:
             verdict = "reopened"
         else:
             row = next((t for t in (_user_todos().get(sid) or [])
