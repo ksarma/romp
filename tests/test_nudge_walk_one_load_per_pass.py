@@ -645,8 +645,14 @@ def _traversal_references(tree):
     owner) tuples, in three forms keyed on the NAME and never on the road to the module: `attribute`, an Attribute named like one on
     any base at all (`ast.walk`; `_a.walk` after `import ast as _a`; `importlib.import_module("ast").walk`, `__import__("ast").walk`,
     `sys.modules["ast"].walk`; `_m.walk` after `_m = ast`; a NodeVisitor or NodeTransformer base is spelled this way too), the base
-    spelled by ast.unparse for the message; `from-import`, `from ast import walk`, with or without `as`, and `from ast import *`, a
-    reference to every name, reported as `*`; and `getattr`, a getattr on any first argument whose second argument holds the name in
+    spelled by ast.unparse for the message; `from-import`, keyed on the imported name alone whatever module the road names (`from
+    ast import walk`, with or without `as`; `from myast import walk` after `sys.modules["myast"] = ast`; `from pkg.ast import walk`;
+    `from . import walk`), and a star import from any module, a reference to every name reported as `*`, the road spelled from the
+    node's level and module for the message (review round 5, tests-4: the branch tested n.module == "ast" while this docstring said
+    every form keys on the name and never on the road, and a from-import through a sys.modules alias of the module passed); the
+    name-keying's false positive, the price of keying on the closed set, is that `from os import walk` and any star import are
+    references too, bought off by a _WALK_EXEMPT row if this module ever needs one (clean today: the module from-imports load_source
+    and Path only); and `getattr`, a getattr on any first argument whose second argument holds the name in
     a string constant anywhere under it, read through _walk over that argument the way the birth pin reads a constant, so a
     no-placeholder f-string (`getattr(ast, f"walk")`, a JoinedStr holding the Constant) is a reference beside the plain string
     (review round 5, extra5-1: the form tested the argument itself as a Constant, the sibling of the defect round 4 ruled on the
@@ -677,10 +683,11 @@ def _traversal_references(tree):
         owner = owners.get(id(n), "<module>")
         if isinstance(n, ast.Attribute) and n.attr in _TRAVERSAL:
             out.append((n.lineno, n.attr, "attribute", ast.unparse(n), owner))
-        elif isinstance(n, ast.ImportFrom) and n.module == "ast":
+        elif isinstance(n, ast.ImportFrom):
+            road = "." * n.level + (n.module or "")      # the message's spelling only: the branch keys on the imported name
             for a in n.names:
                 if a.name in _TRAVERSAL or a.name == "*":
-                    out.append((n.lineno, a.name, "from-import", "from ast import %s%s" % (a.name, " as " + a.asname if a.asname else ""), owner))
+                    out.append((n.lineno, a.name, "from-import", "from %s import %s%s" % (road, a.name, " as " + a.asname if a.asname else ""), owner))
         elif isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "getattr" and len(n.args) >= 2:
             hit = [sub.value for sub in _walk(n.args[1]) if isinstance(sub, ast.Constant) and sub.value in _TRAVERSAL]
             if hit:
@@ -2859,8 +2866,10 @@ class TheGrammarIsTheOneTheWalkersClassify(unittest.TestCase):
         guard green; a one-spelling contract is a list of length one). _traversal_references reads every reference to the four
         traversal names in three forms keyed on the name and not on the road to the module: an attribute named like one on any base
         (the ast module, a name it is imported under or rebound to, importlib.import_module("ast"), __import__("ast"),
-        sys.modules["ast"]; a NodeVisitor base is spelled this way too), a from-import with or without `as` (a star import from ast
-        counts as every name), and getattr on any first argument with the name in a string constant anywhere under its second
+        sys.modules["ast"]; a NodeVisitor base is spelled this way too), a from-import of the name from any module at all, with or
+        without `as` (a star import from any module counts as every name; review round 5, tests-4: the branch was keyed on the
+        module road, `from ast`, so a from-import through a sys.modules alias of the module passed), and getattr on any first
+        argument with the name in a string constant anywhere under its second
         argument, a plain string or a no-placeholder f-string (review round 5, extra5-1) (a verifier of the round-4
         fixes: keyed on the names the module was imported under, the attribute and getattr forms let a walk through importlib,
         __import__, sys.modules or a rebound module name pass, the list shape once more). Every reference sits inside _walk but for
@@ -2901,6 +2910,13 @@ class TheGrammarIsTheOneTheWalkersClassify(unittest.TestCase):
             ("import ast\ndef kids(n):\n    return list(ast.iter_child_nodes(n))\n", (3, "iter_child_nodes", "attribute", "ast.iter_child_nodes", "kids")),
             ("from ast import walk as _w\ndef census(t):\n    return list(_w(t))\n", (1, "walk", "from-import", "from ast import walk as _w", "<module>")),
             ("from ast import *\n", (1, "*", "from-import", "from ast import *", "<module>")),
+            # the from-import keyed on the imported name whatever the road (review round 5, tests-4): an alias of the module in
+            # sys.modules, a dotted road, a relative one; ast.unparse and the derived spelling agree on 3.10 through 3.14t
+            ("import ast, sys\nsys.modules['myast'] = ast\nfrom myast import walk\n", (3, "walk", "from-import", "from myast import walk", "<module>")),
+            ("from pkg.ast import walk\n", (1, "walk", "from-import", "from pkg.ast import walk", "<module>")),
+            ("from . import walk\n", (1, "walk", "from-import", "from . import walk", "<module>")),
+            # the name-keying's false positive, held as such: a walk that is not the ast module's is a reference too (a row buys it off)
+            ("from os import walk\n", (1, "walk", "from-import", "from os import walk", "<module>")),
             ("import ast as _a\ndef census(t):\n    return list(_a.walk(t))\n", (3, "walk", "attribute", "_a.walk", "census")),
             ("import ast\ndef census(t):\n    return list(getattr(ast, 'walk')(t))\n", (3, "walk", "getattr", "getattr(ast, 'walk')", "census")),
             # the getattr key as a no-placeholder f-string, a JoinedStr holding the Constant (review round 5, extra5-1), as a call and
