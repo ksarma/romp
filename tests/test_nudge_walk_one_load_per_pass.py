@@ -455,6 +455,7 @@ import tempfile
 import textwrap
 import types
 import unittest
+import unittest.mock
 from romp_load import load_source
 from pathlib import Path
 
@@ -547,7 +548,8 @@ _UNSET = object()
 # instead of scanning less. The classification itself is the walkers': _loader_sites reads Name, Attribute and alias as sites and
 # every other class here as no site; _bump_sites reads AugAssign and its target; _pass_through_lines reads Call; _loader_births
 # reads Attribute, Name, alias, arg, keyword, the two def classes, Subscript, Call and Constant; a class outside this table is classified by
-# none of them and is refused before any of them answers.
+# none of them and is refused before any of them answers (held by execution over every census entry point of this module, the
+# roster _CENSUSES, in TheWalkersRefuseAStrangerByExecution: a stranger statement planted in a real tree, each refuses naming it).
 _AST_CONCRETE = {
     # mod
     "Module": None, "Interactive": None, "Expression": None, "FunctionType": None,
@@ -924,6 +926,117 @@ def _loader_births(path, judge):
         if _door_text(n) in _DOOR_SPELLINGS and id(n) not in reported:
             born.append((n.lineno, "a loader-naming string constant %r %s in %s" % (n.value, receiver(n, p), enclosing(n))))
     return sorted(born), called, defs, sorted(handoffs)
+
+
+def _door_bump_key(n):
+    """The key a bump node of the door moves, `_shared_bump("<key>")` or `_SHARED_STATS["<key>"] += ...`; None for any other
+    node. The roster pin's reader (TheCountersOneSite), a module-level def since the round-5 fixes so that the pin's reading of
+    the door's tree, _door_regions, is a census entry point the witness by execution can drive (TheWalkersRefuseAStrangerByExecution)."""
+    if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "_shared_bump" and n.args and isinstance(n.args[0], ast.Constant):
+        return n.args[0].value
+    if (isinstance(n, ast.AugAssign) and isinstance(n.target, ast.Subscript) and isinstance(n.target.value, ast.Name)
+            and n.target.value.id == "_SHARED_STATS" and isinstance(n.target.slice, ast.Constant)):
+        return n.target.slice.value
+    return None
+
+
+def _door_stmt_key(s):
+    """The key a bump STATEMENT of the door moves: an Expr whose value is the _shared_bump call, or the AugAssign itself."""
+    return _door_bump_key(s.value if isinstance(s, ast.Expr) else s)
+
+
+def _door_regions(tree):
+    """The roster pin's three reads of the door's tree, (bumps, blocks, tries): every bump as (line, key); every statement list
+    of the door, each list-valued field of a walked node whose members are all statements (a body, an orelse, a finalbody, a
+    handler's body; Try.handlers holds ExceptHandler nodes, so no try region is collected twice; ast.iter_fields here lists the
+    fields of a node _walk yielded and traverses nothing, the traversal is _walk); and every try statement, the one node class
+    with a finalbody field. The first read walks the whole tree, so a node the grammar table does not classify anywhere in
+    `tree` is refused here, before the pin's own reads over the subtrees these hold (the deep count per list, the bumps under
+    each finalbody, the try subtrees) run."""
+    bumps = [(n.lineno, _door_bump_key(n)) for n in _walk(tree) if _door_bump_key(n) is not None]
+    blocks = [val for node in _walk(tree) for _field, val in ast.iter_fields(node)
+              if isinstance(val, list) and val and all(isinstance(s, ast.stmt) for s in val)]
+    tries = [node for node in _walk(tree) if hasattr(node, "finalbody")]
+    return bumps, blocks, tries
+
+
+_TREE_READERS = ("ast.parse", "inspect.getsource", "inspect.getsourcelines")   # the calls by attribute that make a def a reader of a tree it parses
+
+
+def _census_floor(tree):
+    """The mechanical floor under the roster of census entry points (_CENSUSES), read from this module's own AST: (defs, methods).
+    `defs` maps every module-level def other than _walk whose subtree calls _walk by name, or one of _TREE_READERS by attribute
+    (ast.parse, inspect.getsource, inspect.getsourcelines: the calls that make a def a reader of a tree it parses), to the sorted
+    calls it makes, so every such def must be a row of the roster; `methods` maps every method whose subtree calls _walk by
+    name to its calls, the inline readers the witness pins by name with the reason each is outside the roster. Itself a census
+    over a tree (a reader that passed over a node it does not classify would report a def absent), so it is a row of the
+    roster and drives like the rest. Its limit, stated rather than closed by another list: a census handed a pre-parsed tree
+    under any parameter name that walks it by hand calls none of these four and is outside this floor; it joins the roster by
+    the rule in the roster's comment, and the roster's count pin is what notices the edit."""
+    owners = {}
+    for stmt in tree.body:
+        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for n in _walk(stmt):
+                owners[id(n)] = (stmt.name, True)
+        elif isinstance(stmt, ast.ClassDef):
+            for item in stmt.body:
+                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    for n in _walk(item):
+                        owners[id(n)] = (stmt.name + "." + item.name, False)
+    calls = {}
+    for n in _walk(tree):
+        if not isinstance(n, ast.Call) or id(n) not in owners:
+            continue
+        if isinstance(n.func, ast.Name) and n.func.id == "_walk":
+            spelled = "_walk"
+        elif isinstance(n.func, ast.Attribute) and isinstance(n.func.value, ast.Name) and n.func.value.id + "." + n.func.attr in _TREE_READERS:
+            spelled = n.func.value.id + "." + n.func.attr
+        else:
+            continue
+        calls.setdefault(owners[id(n)], set()).add(spelled)
+    defs = {name: sorted(c) for (name, top), c in calls.items() if top and name != "_walk"}
+    methods = {name: sorted(c) for (name, top), c in calls.items() if not top and "_walk" in c}
+    return defs, methods
+
+
+_STRANGER = type("Frobnicate", (ast.stmt,), {"_fields": ()})   # a statement class the ast module does not define: _walk refuses it by identity
+
+
+def _plant_stranger(tree):
+    """`tree` with a _STRANGER statement appended to its module body and to the body of the first module-level def (a census that
+    walks defs first meets one, a census that walks the module meets the other), for TheWalkersRefuseAStrangerByExecution: a
+    census that walks through _walk refuses the tree naming Frobnicate; one that walks by hand passes both plants over. Reads
+    the module body as a list and traverses nothing."""
+    first = next((s for s in tree.body if isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef))), None)
+    if first is None:
+        raise AssertionError("the plant needs a module-level def to land in and the tree holds none")
+    tree.body.append(_STRANGER())
+    first.body.append(_STRANGER())
+    return tree
+
+
+# The census entry points of this module: every reader that walks a tree and answers a census, as (name, shape, drive) rows, the
+# roster TheWalkersRefuseAStrangerByExecution drives over a tree with a stranger statement planted (_plant_stranger) and asserts
+# each refuses by name (the grammar refusal in _walk), so a census that walked around _walk would pass the stranger over and red
+# the witness naming it. `shape` says where the entry point gets its tree: "tree", it is handed one (the drive takes a parser and
+# parses the source the entry point reads with it); "parses", it parses inside (inspect.getsource, then ast.parse by attribute,
+# which the witness patches so the plant lands exactly where that entry point parses). The rule: a new census joins this roster
+# with its row. The witness pins the roster's count and its floor, _census_floor's derivation over this module's own AST (a
+# module-level def that calls _walk by name or parses a source by attribute must be a row here); a def handed a pre-parsed tree
+# that walks it by hand is outside that floor and joins by this rule alone, the count pin noticing the edit. Not entry points,
+# and outside the roster on purpose: TheCountersOneSite._the_named_def (parses a helper and reads .body[0], walking nothing),
+# the enumeration's inspect.getsourcelines for a line number, and the refusal case's _walk over a synthetic grammar tree (the
+# control the _WALK_EXEMPT row names).
+_CENSUSES = (
+    ("_traversal_references", "tree", lambda parse: _traversal_references(parse(Path(os.path.realpath(__file__)).read_text(encoding="utf-8")))),
+    ("_pass_through_lines", "parses", lambda _parse: _pass_through_lines(jd._or_fault, "loader")),
+    ("_loader_sites", "parses", lambda _parse: _loader_sites(km._auto_nudge_session, "load_goals")),
+    ("_bump_sites", "parses", lambda _parse: _bump_sites(km._auto_nudge_session)),
+    ("_loader_births", "parses", lambda _parse: _loader_births(Path(os.path.realpath(jd.__file__)), judge=True)),
+    ("_loader_births", "parses", lambda _parse: _loader_births(Path(os.path.realpath(km.__file__)), judge=False)),
+    ("_door_regions", "tree", lambda parse: _door_regions(parse(textwrap.dedent(inspect.getsource(jd.load_goals_shared))))),
+    ("_census_floor", "tree", lambda parse: _census_floor(parse(Path(os.path.realpath(__file__)).read_text(encoding="utf-8")))),
+)
 
 
 def _caller(frame, boundary):
@@ -1762,21 +1875,10 @@ class TheCountersOneSite(unittest.TestCase):
         self.assertEqual((door.__code__.co_name, os.path.basename(os.path.realpath(door.__code__.co_filename))), ("load_goals_shared", JUDGE_FILE),
                          "the door read here is the judge's own (a harness case's recorder is gone by its cleanup)")
         tree = ast.parse(textwrap.dedent(inspect.getsource(door)))
-
-        def bump_key(n):
-            """The key a bump node moves, `_shared_bump("<key>")` or `_SHARED_STATS["<key>"] += ...`; None for any other node."""
-            if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "_shared_bump" and n.args and isinstance(n.args[0], ast.Constant):
-                return n.args[0].value
-            if (isinstance(n, ast.AugAssign) and isinstance(n.target, ast.Subscript) and isinstance(n.target.value, ast.Name)
-                    and n.target.value.id == "_SHARED_STATS" and isinstance(n.target.slice, ast.Constant)):
-                return n.target.slice.value
-            return None
-
-        def stmt_key(s):
-            """The key a bump STATEMENT moves: an Expr whose value is the _shared_bump call, or the AugAssign itself."""
-            return bump_key(s.value if isinstance(s, ast.Expr) else s)
-
-        bumps = [(n.lineno, bump_key(n)) for n in _walk(tree) if bump_key(n) is not None]
+        # the three reads of the tree are module-level defs since the round-5 fixes (_door_bump_key, _door_stmt_key, _door_regions), so
+        # the witness by execution drives this pin's reading of the door over a planted stranger too (TheWalkersRefuseAStrangerByExecution);
+        # the reads below over the subtrees they hold stay inline, behind the whole-tree walk _door_regions makes first
+        bumps, blocks, tries = _door_regions(tree)
         self.assertEqual({k for _ln, k in bumps}, set(SHARED_CALL_KEYS) | set(SHARED_SECOND_KEYS),
                          "the keys load_goals_shared bumps are exactly the call keys the shared reconciliation sums and the second keys the "
                          "second-bump bound sums (a key here and in neither roster is a bump no reconciliation reads; a key in a roster and "
@@ -1784,16 +1886,14 @@ class TheCountersOneSite(unittest.TestCase):
         self.assertLess(max(ln for ln, k in bumps if k in SHARED_CALL_KEYS), min(ln for ln, k in bumps if k in SHARED_SECOND_KEYS),
                         "every second-key bump sits below every call-key bump in the door's body (the fill road follows the miss or "
                         "compare_miss bump), the structure the bound in _pass rests on; the bumps by line: %r" % sorted(bumps))
-        # the at-most-one, over every statement list of the door: each list-valued field whose members are all statements (a body, an
-        # orelse, a finalbody, a handler's body; Try.handlers holds ExceptHandler nodes, so no try region is collected twice)
-        blocks = [val for node in _walk(tree) for _field, val in ast.iter_fields(node)
-                  if isinstance(val, list) and val and all(isinstance(s, ast.stmt) for s in val)]
+        # the at-most-one, over every statement list of the door (`blocks`: each list-valued field whose members are all statements, a
+        # body, an orelse, a finalbody, a handler's body; Try.handlers holds ExceptHandler nodes, so no try region is collected twice)
         holding, fill_entries = 0, set()
         for blk in blocks:
-            direct = [k for k in (stmt_key(s) for s in blk) if k is not None]
+            direct = [k for k in (_door_stmt_key(s) for s in blk) if k is not None]
             if any(k in SHARED_SECOND_KEYS for k in direct):
                 holding += 1
-                deep = [(x.lineno, bump_key(x)) for s in blk for x in _walk(s) if bump_key(x) is not None]
+                deep = [(x.lineno, _door_bump_key(x)) for s in blk for x in _walk(s) if _door_bump_key(x) is not None]
                 second = [(ln, k) for ln, k in deep if k in SHARED_SECOND_KEYS]
                 self.assertEqual(len(second), 1,
                                  "the statement list holding the second-key bump at line %d holds exactly one second-key bump over the full "
@@ -1819,17 +1919,16 @@ class TheCountersOneSite(unittest.TestCase):
         # the two constructs that leave a clean list and bump again (a verifier of the round-4 fixes): a finalbody runs after its try's
         # body or a handler returned, so a bump under one adds to theirs on the same path; a Raise ending a second-key list can be
         # caught by a handler above, which goes on. A try statement is the one node class with a finalbody field, so the try regions
-        # are the subtrees of those nodes
-        tries = [node for node in _walk(tree) if hasattr(node, "finalbody")]
-        in_finally = sorted((x.lineno, bump_key(x)) for node in tries for st in node.finalbody for x in _walk(st) if bump_key(x) is not None)
+        # are the subtrees of those nodes (`tries`)
+        in_finally = sorted((x.lineno, _door_bump_key(x)) for node in tries for st in node.finalbody for x in _walk(st) if _door_bump_key(x) is not None)
         self.assertEqual(in_finally, [], "no bump of a call key or a second key sits under a finally clause of the door: a finalbody runs after its "
                                          "try's body or a handler returned, so a bump there adds to the one the returning list made on the same "
                                          "path with every statement list reading clean on its own (two second keys on one call, or a second call "
                                          "key, with the at-most-one clause green); the clean door's one finally closes a descriptor and bumps "
                                          "nothing; bumps under a finalbody by line: %r" % in_finally)
         under_try = {id(x) for node in tries for x in _walk(node)}
-        raising = sorted((blk[-1].lineno, [k for k in (stmt_key(st) for st in blk) if k in SHARED_SECOND_KEYS]) for blk in blocks
-                         if isinstance(blk[-1], ast.Raise) and any(stmt_key(st) in SHARED_SECOND_KEYS for st in blk) and id(blk[-1]) in under_try)
+        raising = sorted((blk[-1].lineno, [k for k in (_door_stmt_key(st) for st in blk) if k in SHARED_SECOND_KEYS]) for blk in blocks
+                         if isinstance(blk[-1], ast.Raise) and any(_door_stmt_key(st) in SHARED_SECOND_KEYS for st in blk) and id(blk[-1]) in under_try)
         self.assertEqual(raising, [], "a statement list holding a second-key bump and ending in a Raise sits under no try statement of the door: a "
                                       "handler above could catch the raise and go on to bump again on the same path, with every list reading "
                                       "clean on its own; the clean door's second-key lists all end in a Return; such lists by the raise's line "
@@ -2560,6 +2659,153 @@ class TheGrammarIsTheOneTheWalkersClassify(unittest.TestCase):
             got = _traversal_references(ast.parse(source))
             self.assertEqual(got, [], "the finder reads %r as no reference: a traversal name read from the module's namespace by string is "
                                       "the limit the docstring states, and a change here is a widening the docstring must follow: %r" % (source, got))
+
+
+class TheWalkersRefuseAStrangerByExecution(unittest.TestCase):
+    """The walker contract by execution (review round 5, correctness-2, tests-1, extra5-2 and regression-2, and the reviewer's
+    ruling on approach). The contract: a node class the grammar table does not classify is REFUSED by every census of this
+    module, never passed over as no site. The finder beside this class (_traversal_references, the case in
+    TheGrammarIsTheOneTheWalkersClassify) keys on four traversal NAMES and so is wrong in both directions: an innocent use of a
+    listed name costs a _WALK_EXEMPT row (the parent map in _loader_births), and a real walk under an unlisted name, a
+    recursion over ast.iter_fields, node._fields or ast.dump, is invisible to it with no row at all; the ruling stops the list
+    widening, keeps the finder as an early warning that refuses the forms it names and is silent on the rest, and carries the
+    contract here, on something that enumerates no syntax. Every census entry point in _CENSUSES is driven over a real tree
+    with a stranger statement spliced in (_plant_stranger: a class of ast.stmt the ast module does not define, planted at
+    module level and inside the first def, so a census that walks defs first meets one and a census that walks the module
+    meets the other), and each must raise _walk's refusal naming the class; unplanted, each returns. An entry point that takes
+    a tree is handed the planting parse; one that parses inside runs under a patch of ast.parse that plants what the real parse
+    returns, so the splice lands exactly where that entry point parses (the module reads ast.parse by attribute at call time;
+    _walk calls ast.walk, which the patch does not touch; the patch is lifted on exit, and no thread parses during the case).
+    A census rewritten as a hand-rolled recursion passes the stranger over, answers a census and reds the first case naming it,
+    whatever name it walks under. The second case holds the roster: its count, its floor by derivation (_census_floor over this
+    module's own AST: every module-level def calling _walk by name or parsing a source by attribute is a row, and the floor is
+    alive, since every row that parses inside is in it), that every row names a module-level def, and that the methods reading
+    through _walk inline are exactly the roster pin (its inline reads are over subtrees _door_regions, a row, holds after a
+    whole-tree walk that refuses first) and the refusal case (the control over a synthetic grammar tree, the _WALK_EXEMPT row).
+    The third case is the negative control and the reason the contract rides on execution: two hand-rolled recursions, one
+    over ast.iter_fields and one over node._fields, walk the same planted tree, return a census listing the stranger twice with
+    no refusal, and the finder answers no reference over either; ast.iter_fields is deliberately NOT added to _TRAVERSAL."""
+
+    def _planting_parse(self):
+        """(the real ast.parse, a parse that plants the stranger in what the real one returns, the list of trees it planted)."""
+        real, planted = ast.parse, []
+
+        def planted_parse(source, *a, **k):
+            tree = real(source, *a, **k)
+            planted.append(tree)
+            return _plant_stranger(tree)
+        return real, planted_parse, planted
+
+    def test_every_census_entry_point_refuses_a_planted_stranger_and_returns_unplanted(self):
+        door = jd.load_goals_shared
+        self.assertEqual((door.__code__.co_name, os.path.basename(os.path.realpath(door.__code__.co_filename))), ("load_goals_shared", JUDGE_FILE),
+                         "the door the _door_regions row reads is the judge's own (a harness case's recorder is gone by its cleanup)")
+        real, planted_parse, planted = self._planting_parse()
+        accept, refuse = [], []
+        for i, (name, shape, drive) in enumerate(_CENSUSES):
+            label = "%s (row %d, shape %s)" % (name, i, shape)
+            try:
+                got = drive(real)
+            except Exception as e:                      # noqa: BLE001  the accept side collects whatever an entry point raised
+                accept.append("%s raised %s: %s" % (label, type(e).__name__, str(e)[:160]))
+                continue
+            if got is None:
+                accept.append("%s answered None" % label)
+            del planted[:]
+            try:
+                if shape == "parses":
+                    with unittest.mock.patch.object(ast, "parse", planted_parse):
+                        drive(planted_parse)
+                else:
+                    drive(planted_parse)
+            except AssertionError as e:
+                if "Frobnicate" not in str(e) or "do not classify" not in str(e):
+                    refuse.append("%s raised an AssertionError that is not the grammar refusal: %s" % (label, str(e)[:200]))
+                elif not planted:
+                    refuse.append("%s refused, but parsed nothing through the planting parse, so the refusal is not the plant's" % label)
+            except Exception as e:                      # noqa: BLE001  any other raise is not the refusal either
+                refuse.append("%s raised %s instead of the grammar refusal: %s" % (label, type(e).__name__, str(e)[:160]))
+            else:
+                refuse.append("%s PASSED THE STRANGER OVER and answered a census (%d tree(s) planted)" % (label, len(planted)))
+        self.assertEqual(accept, [], "the accept side: every census entry point, driven unplanted over the tree it really reads, returns an "
+                                     "answer: %s" % "; ".join(accept))
+        self.assertEqual(refuse, [], "the refuse side: every census entry point, driven over the same tree with a stranger statement planted at "
+                                     "module level and inside the first def, raises _walk's grammar refusal naming Frobnicate. One that did not "
+                                     "walks around _walk (a hand-rolled recursion over ast.iter_fields, node._fields, ast.dump or any other name) "
+                                     "and would report a site absent where it could not read; route it through _walk: %s" % "; ".join(refuse))
+
+    def test_the_roster_holds_its_count_and_its_floor(self):
+        tree = ast.parse(Path(os.path.realpath(__file__)).read_text(encoding="utf-8"))
+        defs, methods = _census_floor(tree)
+        names = {name for name, _shape, _drive in _CENSUSES}
+        self.assertEqual(len(_CENSUSES), 8, "the roster holds eight rows: the finder over this module's text, the hand-off line reader, the site "
+                                            "census, the bump census, the birth pin over the judge and over the kernel, the roster pin's reading "
+                                            "of the door and the floor itself (a census added or removed changes this count with its reason): %r"
+                                            % [(name, shape) for name, shape, _drive in _CENSUSES])
+        self.assertEqual(sorted(set(defs) - names), [],
+                         "a module-level def that calls _walk by name or parses a source by attribute (ast.parse, inspect.getsource, "
+                         "inspect.getsourcelines) and is not a row of _CENSUSES: %r. It reads a tree and answers a census, so the witness must "
+                         "drive it over a planted stranger; add its row. The floor by def: %r" % (sorted(set(defs) - names), defs))
+        parses = {name for name, shape, _drive in _CENSUSES if shape == "parses"}
+        self.assertEqual(sorted(parses - set(defs)), [],
+                         "the floor is alive: every row that parses inside calls ast.parse or an inspect source reader by attribute, so the "
+                         "derivation must find it, and a derivation answering less (an empty floor would pass the line above) reds here: %r "
+                         "missing from %r" % (sorted(parses - set(defs)), sorted(defs)))
+        top = {s.name for s in tree.body if isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef))}
+        self.assertEqual(sorted(names - top), [], "every roster row names a module-level def of this module (a misspelled or moved row would "
+                                                   "drive nothing under that name): %r" % sorted(names - top))
+        self.assertEqual(sorted(methods),
+                         ["TheCountersOneSite.test_the_shared_doors_bump_roster_is_the_reconciliations_and_its_second_bumps_sit_below_the_fills",
+                          "TheGrammarIsTheOneTheWalkersClassify.test_a_walker_refuses_a_node_it_does_not_classify_by_name"],
+                         "the methods that read through _walk inline are exactly two, each outside the roster for a stated reason: the roster "
+                         "pin's inline reads (the deep count per list, the bumps under each finalbody, the try subtrees) are over subtrees "
+                         "_door_regions, a roster row, holds after a whole-tree walk that refuses a stranger first; the refusal case's _walk is "
+                         "the control over a synthetic grammar tree (the _WALK_EXEMPT row). A third method walking inline joins the roster "
+                         "through a module-level def or states its reason here: %r" % methods)
+
+    def test_a_hand_rolled_recursion_passes_the_stranger_over_and_the_finder_does_not_see_it(self):
+        def over_iter_fields(tree):
+            """A whole walk written over ast.iter_fields, with no _walk: the class the name-keyed finder cannot see."""
+            seen = []
+
+            def rec(node):
+                seen.append(type(node).__name__)
+                for _field, value in ast.iter_fields(node):
+                    for child in (value if isinstance(value, list) else [value]):
+                        if isinstance(child, ast.AST):
+                            rec(child)
+            rec(tree)
+            return seen
+
+        def over_node_fields(tree):
+            """The same walk over node._fields and getattr: no name of the ast module at all."""
+            seen = []
+
+            def rec(node):
+                seen.append(type(node).__name__)
+                for field in node._fields:
+                    value = getattr(node, field, None)
+                    for child in (value if isinstance(value, list) else [value]):
+                        if isinstance(child, ast.AST):
+                            rec(child)
+            rec(tree)
+            return seen
+
+        source = "def f(sid):\n    return jd.load_goals_shared(sid)\n"
+        with self.assertRaises(AssertionError) as cm:      # the control: a roster census refuses the same planted tree
+            _traversal_references(_plant_stranger(ast.parse(source)))
+        self.assertIn("Frobnicate", str(cm.exception), "a census that reads through _walk refuses the planted tree naming the class: %s" % cm.exception)
+        for census in (over_iter_fields, over_node_fields):
+            seen = census(_plant_stranger(ast.parse(source)))
+            self.assertEqual(seen.count("Frobnicate"), 2,
+                             "%s walks the whole planted tree, meets the stranger at module level and inside the def, and passes both over with "
+                             "no refusal, answering a census of %d nodes: %r. This is the class the walker contract must be held against by "
+                             "execution, since the finder below does not see it" % (census.__name__, len(seen), seen))
+            refs = _traversal_references(ast.parse(textwrap.dedent(inspect.getsource(census))))
+            self.assertEqual(refs, [], "the finder answers no reference over %s: it keys on four traversal names, and a recursion over "
+                                       "ast.iter_fields or node._fields spells none, so it is silent on this whole class (the early warning's "
+                                       "stated limit; the contract rides on the execution case above, and iter_fields is deliberately not "
+                                       "added to _TRAVERSAL): %r" % (census.__name__, refs))
 
 
 class Docs(unittest.TestCase):
