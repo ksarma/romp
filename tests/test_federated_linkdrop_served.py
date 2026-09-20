@@ -63,10 +63,12 @@ private clone of this repository under its scratch directory, checked out detach
 815; the objects are borrowed and nothing is written under this clone's .git), build the bundle there over this
 checkout's node_modules, boot the hub from it and let the scratch's removal take it at teardown (the mint needs that
 sha in the clone's history and the extension's node deps, so CI's served job skips the class as optional).
-A runner who sets ROMP_LINKDROP_OLD_HUB_BUILD=1 sets ROMP_SERVED_TESTS_REQUIRE=1 too: lab_dist raises SkipTest when
-the minted bundle fails to build (every served lab's stance for an environment that cannot build), and that switch
-turns the skip into a failure carrying the build's own words instead of a green run with the class skipped.
-ROMP_CORNER_REPORT_DIR gets one JSON per class with everything recorded.
+A hub a knob asked for is an error when its bundle cannot be made ready: lab_dist raises SkipTest when a build fails
+(every served lab's stance for an environment that cannot build), and for this checkout's own bundle that skip stands,
+but under ROMP_LINKDROP_OLD_HUB_BUILD=1, ROMP_CORNER_OLD_HUB_ROOT or ROMP_LINKDROP_HUB_ROOT the class re-raises it as
+a RuntimeError carrying the build's words (_ready_dist), so a mint that succeeds and a build that fails cannot leave a
+green run with the class skipped; ROMP_SERVED_TESTS_REQUIRE=1 still turns every remaining skip into a failure, as on
+CI's served step. ROMP_CORNER_REPORT_DIR gets one JSON per class with everything recorded.
 
 What the old hub showed (2026-09-19, the bundle at 01d4fbe43): the old bundle dials no caps and decodes no patch, so
 its Outline files one delta-unapplied row per remote feed patch. That correspondence is what the class pins: in each
@@ -124,6 +126,7 @@ import lab_dist
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
 EXT = os.path.join(ROOT, "vscode-extension")
+KERNEL_BIN = os.path.join("bin", "romp-kernel")   # a checkout's kernel entry point, relative: what _boot requires of every root it boots from
 sys.path.insert(0, HERE)
 import test_federated_dial_terms_served as _dial                   # noqa: E402  the two-kernel boot and check-in (the module)
 import test_federated_capability_corners_served as _corners        # noqa: E402  the corners lab's constants and diag readers (the module)
@@ -606,6 +609,8 @@ class _LinkDrop(unittest.TestCase):
     bundle, whether the local drop runs, the waits."""
     maxDiff = None
     hub_root = None            # the hub kernel's checkout (bin/) and, when not None, its PREBUILT vscode-extension/dist
+    hub_knob = None            # the environment knob that named hub_root, when one did: the runner ASKED for that hub, so its
+    #                            bundle failing to come ready is an error with the build's words, not a skip (_boot)
     remote_root = None         # the remote kernel's checkout (bin/)
     old_hub_build = False      # _boot mints hub_root as a private clone checked out at OLD_HUB_SHA under the lab (the old-hub class's second knob)
     old_hub_wt = None          # that checkout's path while it exists: under cls.lab, so the lab's rmtree takes it down
@@ -668,6 +673,8 @@ class _LinkDrop(unittest.TestCase):
         cls._knobs()
         if cls.hub_root is None and not cls.old_hub_build:
             cls.hub_root = _root_knob("ROMP_LINKDROP_HUB_ROOT")   # the base-hub lever, for a class that names no hub of its own
+            if cls.hub_root:
+                cls.hub_knob = "ROMP_LINKDROP_HUB_ROOT"
         for route in ("/notice", "/usertodo"):
             if not _corners._serves(cls.remote_root, route):
                 raise unittest.SkipTest("the remote kernel at %s serves no %s: this lab's change bundle needs it" % (cls.remote_root or ROOT, route))
@@ -675,19 +682,9 @@ class _LinkDrop(unittest.TestCase):
         if cls.old_hub_build:
             cls.hub_root = cls._mint_old_hub()
         for root in (cls.hub_root, cls.remote_root):
-            if root and not os.path.isfile(os.path.join(root, "bin", "romp-kernel")):
-                raise unittest.SkipTest("no bin/romp-kernel under %s" % root)
-        if cls.old_hub_wt:
-            # the minted checkout's bundle, built by the harness bound to THAT checkout (its own dist, lock and marker,
-            # its own config's inputs) and copied serve-ready, as copy_dist does for this checkout's
-            lab_dist.DistBuild(ext=os.path.join(cls.old_hub_wt, "vscode-extension"), root=cls.old_hub_wt).copy_to(os.path.join(cls.lab, "dist"))
-        elif cls.hub_root:
-            src = os.path.join(cls.hub_root, "vscode-extension", "dist")
-            if not os.path.isfile(os.path.join(src, "federation.js")):
-                raise unittest.SkipTest("no prebuilt dist under %s (build the extension there first)" % cls.hub_root)
-            lab_dist.copy_prebuilt(src, os.path.join(cls.lab, "dist"))
-        else:
-            lab_dist.copy_dist(os.path.join(cls.lab, "dist"))
+            if root and not os.path.isfile(os.path.join(root, KERNEL_BIN)):
+                raise unittest.SkipTest("no %s under %s" % (KERNEL_BIN, root))
+        cls._ready_dist()
         for name in ("testhost", "hub"):
             root = os.path.join(cls.lab, name, "xdg", "romp")
             os.makedirs(root, exist_ok=True)
@@ -717,6 +714,36 @@ class _LinkDrop(unittest.TestCase):
         cls.hub_diag_rows = _corners.read_hub_diag_rows(cls.lab)
         cls.remote_wsopen = cls._remote_wsopen_rows()
         cls._report()
+
+    @classmethod
+    def _ready_dist(cls):
+        """The hub's bundle, serve-ready under the lab: the minted checkout's, built by the harness bound to THAT checkout
+        (its own dist, lock and marker, its own config's inputs) and copied, as copy_dist does for this checkout's; a
+        knob-named checkout's PREBUILT dist copied; else this checkout's own. lab_dist answers an environment that cannot
+        build with unittest.SkipTest (esbuild failing, node finding no package: every served lab's stance), and for this
+        checkout's own bundle that skip stands, as in every other served lab. When a knob ASKED for the hub
+        (ROMP_LINKDROP_OLD_HUB_BUILD=1 minting it, or ROMP_CORNER_OLD_HUB_ROOT or ROMP_LINKDROP_HUB_ROOT naming it:
+        hub_knob) the same skip is re-raised as a RuntimeError carrying the build's words, because a mint that succeeds and
+        a build that fails otherwise skip the class and the run reports green (round 1's tests-3, ruled twice), while the
+        mint's own failure raises by design; the WHOLE statement is wrapped, the constructor included, since DistBuild's
+        default inputs can skip through esbuild_exports before copy_to runs. tests/test_federated_linkdrop_driver_bound.py
+        pins both arms against a stub build."""
+        asked = "ROMP_LINKDROP_OLD_HUB_BUILD=1" if cls.old_hub_build else cls.hub_knob
+        try:
+            if cls.old_hub_wt:
+                lab_dist.DistBuild(ext=os.path.join(cls.old_hub_wt, "vscode-extension"), root=cls.old_hub_wt).copy_to(os.path.join(cls.lab, "dist"))
+            elif cls.hub_root:
+                src = os.path.join(cls.hub_root, "vscode-extension", "dist")
+                if not os.path.isfile(os.path.join(src, "federation.js")):
+                    raise unittest.SkipTest("no prebuilt dist under %s (build the extension there first)" % cls.hub_root)
+                lab_dist.copy_prebuilt(src, os.path.join(cls.lab, "dist"))
+            else:
+                lab_dist.copy_dist(os.path.join(cls.lab, "dist"))
+        except unittest.SkipTest as e:
+            if not asked:
+                raise
+            raise RuntimeError("%s asked for the hub at %s and its bundle could not be made ready (a skip in every other served lab, an "
+                               "error here because the runner asked): %s" % (asked, cls.old_hub_wt or cls.hub_root, e)) from e
 
     @classmethod
     def _mint_old_hub(cls):
@@ -1405,6 +1432,7 @@ class LinkDropOldLocal(_LinkDrop):
                                     % cls.UNEXECUTED)
         cls.hub_root = _root_knob("ROMP_CORNER_OLD_HUB_ROOT")
         if cls.hub_root:
+            cls.hub_knob = "ROMP_CORNER_OLD_HUB_ROOT"
             return
         if (os.environ.get("ROMP_LINKDROP_OLD_HUB_BUILD") or "").strip() == "1":
             cls.old_hub_build = True    # _boot mints the checkout under the lab's scratch once that exists

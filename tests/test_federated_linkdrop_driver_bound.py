@@ -17,8 +17,10 @@ kernel or a browser:
   spends the budget once and is recorded, every later wait returns at once, no timeout handed on is ever 0 (playwright
   reads 0 as no timeout), and a wait that comes spends only what it took.
 
-One more pin rides here because the module it pins has no kernel-free test of its own: LinkDropBothNew gates on no
-knob and LinkDropOldLocal skips as optional (round 1's high, closed by a value; round 2 asked for the pin).
+Two more pins ride here because the module they pin has no kernel-free test of its own: LinkDropBothNew gates on no
+knob and LinkDropOldLocal skips as optional (round 1's high, closed by a value; round 2 asked for the pin), and a hub a
+knob asked for whose bundle cannot be made ready is an error through _boot, while this checkout's own bundle failing to
+build stays a skip (round 1's tests-3, ruled twice).
 
 Synthetic: no kernel, no browser; stub classes over scratch directories.
 """
@@ -112,6 +114,99 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
         self.assertTrue(reason.startswith("optional:"), "the old-hub class's skip is optional (the CI census reads the prefix): %r" % (reason,))
         self.assertIn("ROMP_LINKDROP_LAB", reason, "…and names the knob that runs it")
         self.assertIn(" -rs ", self._served_step_line(), "CI's served step prints skip reasons (-rs), so the optional skip is visible there")
+
+    def _boot_stub(self, base, **attrs):
+        """A class over a scratch lab that _boot runs to its build statement without node deps or a browser: L.EXT repointed
+        at a scratch with a playwright package directory, the node probe answered by the spy with a path that exists, every
+        other subprocess a failure of the test (the kernels are never reached), the remote's routes read from this checkout's
+        kernel. Returns the class; the caller cleans its lab."""
+        scratch = tempfile.mkdtemp(prefix="linkdrop-boot-")
+        self.addCleanup(shutil.rmtree, scratch, True)
+        os.makedirs(os.path.join(scratch, "node_modules", "playwright"))
+        self.addCleanup(setattr, L, "EXT", L.EXT)
+        L.EXT = scratch
+
+        class Boot(base):
+            pass
+        Boot.procs, Boot.proxy, Boot.ctl = [], None, None
+        for k, v in attrs.items():
+            setattr(Boot, k, v)
+        test = self
+
+        def probe_only(cmd, *a, **kw):
+            if cmd[:2] == ["node", "-e"]:
+                return subprocess.CompletedProcess(cmd, 0, stdout=scratch + "\n", stderr="")
+            test.fail("_boot ran a subprocess past the build statement: %r" % (cmd,))
+        p = mock.patch.object(L.subprocess, "run", probe_only)
+        p.start()
+        self.addCleanup(p.stop)
+        return Boot
+
+    def _boot_expecting_error(self, Boot):
+        """_boot's outcome as one of three: a RuntimeError (returned), a SkipTest (a failure of the pin, never a skip), a return."""
+        try:
+            Boot._boot()
+        except RuntimeError as e:
+            return e
+        except unittest.SkipTest as e:
+            self.fail("a build the runner asked for skipped instead of erring (the class would skip and the run report green): %s" % e)
+        finally:
+            shutil.rmtree(getattr(Boot, "lab", "") or "", ignore_errors=True)
+        self.fail("_boot returned without building")
+
+    def test_a_hub_a_knob_asked_for_errs_when_its_bundle_cannot_be_made_ready_and_this_checkouts_stays_a_skip(self):
+        """Round 1's tests-3, through _boot with a stub build: the mint knob with a build that skips (lab_dist's esbuild
+        failure) is a RuntimeError carrying the knob and the build's words; a knob-named root with no prebuilt dist is the
+        same, under the old-hub class's own knob and under the base-hub lever; and with no knob this checkout's own bundle
+        failing to build stays a SkipTest, as in every other served lab."""
+        words = "esbuild failed here: the stub build"
+
+        class StubBuild:
+            def __init__(self, ext, root):
+                self.ext, self.root = ext, root
+
+            def copy_to(self, dest):
+                raise unittest.SkipTest(words)
+        # the mint knob: a mint that succeeds (stubbed: the checkout's kernel and extension directory appear) and a build that skips
+        def mint(cls):
+            wt = os.path.join(cls.lab, "oldhub")
+            os.makedirs(os.path.dirname(os.path.join(wt, L.KERNEL_BIN)))   # the kernel entry point _boot requires, by the module's own name for it
+            os.makedirs(os.path.join(wt, "vscode-extension"))
+            with open(os.path.join(wt, L.KERNEL_BIN), "w") as f:
+                f.write("#!/bin/sh\n")
+            cls.old_hub_wt = wt
+            return wt
+        with _without_knobs(), mock.patch.dict(os.environ, {"ROMP_LINKDROP_LAB": "1", "ROMP_LINKDROP_OLD_HUB_BUILD": "1"}), mock.patch.object(L.lab_dist, "DistBuild", StubBuild):
+            Boot = self._boot_stub(L.LinkDropOldLocal, _mint_old_hub=classmethod(mint))
+            e = self._boot_expecting_error(Boot)
+        self.assertIn("ROMP_LINKDROP_OLD_HUB_BUILD=1", str(e), "the error names the knob that asked: %s" % e)
+        self.assertIn(words, str(e), "…and carries the build's words: %s" % e)
+        self.assertTrue(Boot.old_hub_wt and Boot.old_hub_wt in str(e), "…and the minted checkout: %s" % e)
+        # a knob-named root with a kernel and no prebuilt dist, under the old-hub class's knob and under the base-hub lever
+        for base, knob, env in ((L.LinkDropOldLocal, "ROMP_CORNER_OLD_HUB_ROOT", {"ROMP_LINKDROP_LAB": "1"}), (L.LinkDropBothNew, "ROMP_LINKDROP_HUB_ROOT", {})):
+            root = tempfile.mkdtemp(prefix="linkdrop-hubroot-")
+            self.addCleanup(shutil.rmtree, root, True)
+            os.makedirs(os.path.dirname(os.path.join(root, L.KERNEL_BIN)))
+            with open(os.path.join(root, L.KERNEL_BIN), "w") as f:
+                f.write("#!/bin/sh\n")
+            with _without_knobs(), mock.patch.dict(os.environ, dict(env, **{knob: root})):
+                Boot = self._boot_stub(base)
+                e = self._boot_expecting_error(Boot)
+            self.assertEqual(Boot.hub_knob, knob, "the knob that named the hub is recorded")
+            self.assertIn(knob, str(e), "the error names the knob that asked: %s" % e)
+            self.assertIn("no prebuilt dist under %s" % root, str(e), "…and says what was missing: %s" % e)
+        # no knob: this checkout's own bundle, whose failed build stays a skip
+        def skip_dist(dest):
+            raise unittest.SkipTest(words)
+        with _without_knobs(), mock.patch.object(L.lab_dist, "copy_dist", skip_dist):
+            Boot = self._boot_stub(L.LinkDropBothNew)
+            try:
+                with self.assertRaises(unittest.SkipTest) as cm:
+                    Boot._boot()
+            finally:
+                shutil.rmtree(getattr(Boot, "lab", "") or "", ignore_errors=True)
+        self.assertEqual(str(cm.exception), words, "the unknobbed arm's skip is lab_dist's own, unwrapped")
+        self.assertIsNone(Boot.hub_knob)
 
     def test_drive_sends_the_timeout_the_budget_and_the_caps(self):
         lab = tempfile.mkdtemp(prefix="linkdrop-bound-")
