@@ -417,7 +417,7 @@ class OptionalPanes(unittest.TestCase):
                          "the shown optional panes load from data-src; the hidden one never gets a src")
         self.assertEqual(b["hidden"], {"chat": False, "timeline": False, "fleet": False, "feed": True, "waiting": False, "files": False}, "its rail button and phone tab are hidden")
         self.assertFalse(b["cls"], "no po-feed body class: the column is not shown")
-        self.assertEqual(b["tabs"], ["chat"], "a phone left on the hidden pane's tab goes back to the chat")
+        self.assertEqual(b["tabs"], ["chat"], "the stored tab named the hidden pane: the switch to the chat runs on either layout (this harness is the desktop; review round 5, 2026-09-20, ui-2: the gear's set is per browser and the tab bar hides that tab on the phone too, so the remembered tab is moved to a place the phone can show and a flip lands on a shown pane; the one road into show() beside the boot show that reads no layout, by design, MobileShowRoads)")
         self.assertEqual(b["sets"], {"timeline": 1, "fleet": 1}, "src set once per shown pane")
 
     def test_the_rail_toggle_refuses_a_hidden_pane_and_the_persisted_set_omits_it(self):
@@ -519,6 +519,8 @@ Object.defineProperty(global, 'navigator', { configurable: true, value: {   // a
   setAppBadge: (n) => { BADGES.push(n); return Promise.resolve(); }, clearAppBadge: () => { BADGES.push(0); return Promise.resolve(); } } });
 let FEED_OFF = false;   // the gear's Panes section has the Feed pane off in this browser (the head script's reader, stubbed)
 global.__rompPaneEnabled = (k) => !(k === 'feed' && FEED_OFF);
+const PTOGGLES = [];   // reveal()'s un-hide (__rompPaneToggle, the collapse script's, stubbed): recorded on both layouts (review round 5, ui-2)
+global.__rompPaneToggle = (k, on) => PTOGGLES.push([k, !!on]);
 global.encodeURIComponent = (s) => s;
 global.location = { protocol: 'http:', host: 'TESTHOST:1' };
 global.sessionStorage = { getItem: () => 'wid1' };
@@ -555,7 +557,9 @@ MATCHES = false;
 out.desktop = window.__rompMobileOn();
 window.__rompMobileTab('nowhere');
 out.unknown = { tab: TAB };
-// the relay remembered a tab; the person's own tap on another tab drops that memory, the relay's own switch keeps it
+// the relay remembered a tab; the person's own tap on another tab drops that memory, the relay's own switch keeps it. On the PHONE:
+// the tab bar exists there alone, and since review round 5 (2026-09-20, ui-2) userSwitch itself reads the layout
+MATCHES = true;
 window.__rompFilesTabFrom = 'chat'; TAPS.feed();
 out.tap = { tab: TAB, from: window.__rompFilesTabFrom };
 window.__rompFilesTabFrom = 'chat'; window.__rompMobileTab('files');
@@ -563,12 +567,23 @@ out.relaySwitch = { tab: TAB, from: window.__rompFilesTabFrom };
 // a reveal aimed at the person (a feed card's tap into a session, the kernel's reveal) and the chat header's
 // Outline pill (toggleFleet) arrive as window messages and are switches they made too
 const arrive = (m) => MSGS.forEach((f) => f({ data: m }));
-window.__rompFilesTabFrom = 'chat'; arrive({ romp: 'reveal', pane: 'feed' });
-out.reveal = { tab: TAB, from: window.__rompFilesTabFrom, listeners: MSGS.length };
+window.__rompFilesTabFrom = 'chat'; PTOGGLES.length = 0; arrive({ romp: 'reveal', pane: 'feed' });
+out.reveal = { tab: TAB, from: window.__rompFilesTabFrom, listeners: MSGS.length, toggles: PTOGGLES.slice() };
 window.__rompFilesTabFrom = 'chat'; arrive({ romp: 'toggleFleet', to: 'chat' });
 out.pill = { tab: TAB, from: window.__rompFilesTabFrom };
 window.__rompFilesTabFrom = 'chat'; arrive({ romp: 'toggleFleet' });
 out.pillOutline = { tab: TAB, from: window.__rompFilesTabFrom };
+// the DESKTOP layout (review round 5, ui-2): the same arrivals switch no tab and drop no memory, since show() there would persist the
+// remembered phone tab (romp-mobile-tab) from a desktop gesture; the reveal's un-hide runs as ever. The relay's own switch first (its
+// callers gate it, the hook itself does not), so the tab and the store are known before the arrivals
+MATCHES = false; window.__rompMobileTab('files'); window.__rompFilesTabFrom = 'chat';
+PTOGGLES.length = 0; arrive({ romp: 'reveal', pane: 'feed' });
+out.deskReveal = { tab: TAB, from: window.__rompFilesTabFrom, store: STORE['romp-mobile-tab'], toggles: PTOGGLES.slice() };
+arrive({ romp: 'toggleFleet', to: 'chat' }); arrive({ romp: 'toggleFleet' });
+out.deskPill = { tab: TAB, from: window.__rompFilesTabFrom, store: STORE['romp-mobile-tab'] };
+TAPS.feed();   // the bar's button, an element the desktop stylesheet hides (a tap that cannot happen there): it switches nothing either
+out.deskTap = { tab: TAB, from: window.__rompFilesTabFrom, store: STORE['romp-mobile-tab'] };
+MATCHES = true; window.__rompMobileTab('fleet');   // back on the phone, on the tab the pill left it on above, for the steps below
 // a tab the pane controller hid (its pane is off in the gear's Panes section): not a place to go
 TELLS.length = 0; BUTTONS.feed.hidden = true; window.__rompMobileTab('feed');
 out.hiddenTab = { tab: TAB, tells: TELLS.slice(), store: STORE['romp-mobile-tab'] };
@@ -649,9 +664,26 @@ class MobileScript(unittest.TestCase):
     def test_a_reveal_and_the_chat_headers_outline_pill_drop_the_remembered_tab_too(self):
         # the same rule as the tap: the relay's memory serves the file's close only while the person has not
         # moved on their own; a reveal (the feed's tap into a session) and the header pill are their moves
-        self.assertEqual(self.out["reveal"], {"tab": "feed", "from": None, "listeners": 1})
+        self.assertEqual(self.out["reveal"], {"tab": "feed", "from": None, "listeners": 1, "toggles": [["feed", True]]})
         self.assertEqual(self.out["pill"], {"tab": "chat", "from": None})
         self.assertEqual(self.out["pillOutline"], {"tab": "fleet", "from": None})
+
+    def test_on_the_desktop_layout_a_reveal_unhides_and_switches_nothing_and_the_pill_and_a_tap_switch_nothing(self):
+        # review round 5 (2026-09-20, ui-2; the round-3 ruling's class): show() persists the remembered phone tab and sets body data-tab
+        # on every layout, so a reveal aimed at a desktop dashboard (a feed card's tap, the kernel's push on a notification tap) or the
+        # header's pill rewrote the tab the phone boots on. userSwitch, the one function every such arrival passes through, reads the
+        # layout: the reveal's un-hide still runs, the tab, the store and the relay's remembered tab stand
+        d = self.out["deskReveal"]
+        self.assertEqual(d, {"tab": "files", "from": "chat", "store": "files", "toggles": [["feed", True]]}, "the pane is un-hidden; no switch, the memory kept: %r" % (d,))
+        self.assertEqual(self.out["deskPill"], {"tab": "files", "from": "chat", "store": "files"}, "the pill's two words switch nothing (the collapse script toggles the pane on the desktop)")
+        self.assertEqual(self.out["deskTap"], {"tab": "files", "from": "chat", "store": "files"})
+        # the source: the fork declares userSwitch again after the project's line, gated on the layout probe, and a function body binds
+        # the later declaration; the project's line stands unedited
+        js = km._LANDING_MOBILE_JS
+        self.assertIn(_USER_SWITCH_UPSTREAM, js, "the project's declaration is untouched")
+        self.assertIn(_USER_SWITCH_FORK, js, "the fork's gated declaration")
+        self.assertLess(js.index(_USER_SWITCH_UPSTREAM), js.index(_USER_SWITCH_FORK), "the fork's follows, so it is the one bound")
+        self.assertEqual(js.count("function userSwitch(p){"), 2)
 
     def test_a_hidden_tab_is_skipped(self):
         # the pane controller hides the tab of a pane this browser does not show (the gear's Panes section, the
@@ -676,6 +708,98 @@ class MobileScript(unittest.TestCase):
         # apply that follows tells the panes), and the relay's tab switch happens at message time, after both
         html = km._landing()
         self.assertLess(html.index("window.__rompMobileTab=show;"), html.index("window.__rompPanesTell=broadcastAll;"))   # broadcastAll since review round 1 of D3 (2026-09-18): the re-tell reaches every iframe
+
+
+# ── every road into the mobile script's show() (review round 5, 2026-09-20, ui-2) ─────────────────────────
+# show() is the one writer of body data-tab and the remembered tab (romp-mobile-tab). Round 3 ruled one of its callers (the Log row's
+# switch, gated on the layout probe) and round 4 found another ungated (the feed's browse arm): a fix at one site with the population
+# unread. The population is DERIVED here from the served page's scripts: every call of the hook the other scripts use (`__rompMobileTab(`
+# in _landing()'s HTML; the export `window.__rompMobileTab=show;` is not a call) and, inside the mobile script, every call of show(),
+# userSwitch() and reveal() outside a declaration, comments cut. Each is classified by the text at it; an unclassified site is a red, so
+# a new caller must say which layout it serves.
+_MOBILE_ON_GATE = "window.__rompMobileOn&&window.__rompMobileOn()"
+_RECONCILE_SWITCH = "if(!en&&document.body.getAttribute('data-tab')===k&&window.__rompMobileTab)window.__rompMobileTab('chat');"
+_USER_SWITCH_UPSTREAM = "function userSwitch(p){window.__rompFilesTabFrom=null;show(p);}"
+_USER_SWITCH_FORK = "function userSwitch(p){if(!mobileOn())return;window.__rompFilesTabFrom=null;show(p);}"
+
+
+def _js_code(ln):
+    """The line's code: a whole-line comment is nothing, a trailing comment (`   //`, or `;//` right after a statement) is cut."""
+    if ln.lstrip().startswith("//"):
+        return ""
+    for mark in ("   //", ";//"):
+        if mark in ln:
+            ln = ln.split(mark)[0] + (";" if mark == ";//" else "")
+    return ln
+
+
+def _mobile_show_roads():
+    """The call sites, each {kind, line, above, cls}: kind `hook` (a `__rompMobileTab(` call anywhere in the served page) or the mobile
+    script's `show`, `userSwitch`, `reveal`; `above` is the two lines before a hook site (a relay arm opens its gate on the line above the
+    call); `cls` the classification: `gated` (the layout probe on the site's line or the lines above), `through userSwitch` (reveal, the
+    toggleFleet arm and the bar's buttons all pass through userSwitch, whose fork declaration reads the layout), `userSwitch declaration,
+    gated` and `userSwitch declaration, shadowed` (the fork's and the project's: the later binds, pinned apart), `phone-only by
+    construction` (the failed overlay's retry, an element the desktop stylesheet hides, pinned apart), `both layouts by design` (the boot
+    show, so a flip to the phone has a tab; the controller's reconcile, a tab whose pane this browser has off being no place to go on
+    either layout), or `UNCLASSIFIED`."""
+    hlines = km._landing().split("\n")
+    sites = []
+    for i, raw in enumerate(hlines):
+        ln = _js_code(raw)
+        for _ in re.finditer(r"__rompMobileTab\(", ln):
+            sites.append({"kind": "hook", "line": ln, "above": "\n".join(_js_code(x) for x in hlines[max(0, i - 2):i])})
+    for raw in km._LANDING_MOBILE_JS.split("\n"):
+        ln = _js_code(raw)
+        for m in re.finditer(r"(?<![A-Za-z0-9_.$])(show|userSwitch|reveal)\(", ln):
+            if ln[max(0, m.start() - 9):m.start()] == "function ":
+                continue   # the declaration, not a call
+            sites.append({"kind": m.group(1), "line": ln, "above": ""})
+    for s in sites:
+        ln, kind = s["line"], s["kind"]
+        if kind == "hook":
+            s["cls"] = "gated" if (_MOBILE_ON_GATE in ln or _MOBILE_ON_GATE in s["above"]) else "both layouts by design" if _RECONCILE_SWITCH in ln else "UNCLASSIFIED"
+        elif kind == "reveal":
+            s["cls"] = "through userSwitch"   # reveal() un-hides and calls userSwitch
+        elif kind == "userSwitch":
+            via = ln.startswith("function reveal(p){") or "b.addEventListener('click',function(){userSwitch(pk);})" in ln or ln.startswith("if(m.romp==='toggleFleet')userSwitch(")
+            s["cls"] = "through userSwitch" if via else "UNCLASSIFIED"
+        elif ln == _USER_SWITCH_FORK:
+            s["cls"] = "userSwitch declaration, gated"
+        elif ln == _USER_SWITCH_UPSTREAM:
+            s["cls"] = "userSwitch declaration, shadowed"
+        elif ln.startswith("var retry=function(){"):
+            s["cls"] = "phone-only by construction"
+        elif ln.rstrip().endswith("show(last);"):
+            s["cls"] = "both layouts by design"
+        else:
+            s["cls"] = "UNCLASSIFIED"
+    return sites
+
+
+class MobileShowRoads(unittest.TestCase):
+    def test_every_road_into_show_is_classified_and_a_desktop_gesture_reaches_it_through_a_gate(self):
+        sites = _mobile_show_roads()
+        self.assertEqual([s["line"] for s in sites if s["cls"] == "UNCLASSIFIED"], [], "every call into show() says which layout it serves; a new caller is classified here, not left to run on both")
+        self.assertGreaterEqual(len(sites), 17, "the population is derived from the served scripts; seventeen sites at review round 5 (a derived population that reads empty is no census): %r" % ([s["line"][:60] for s in sites],))
+        by = {}
+        for s in sites:
+            by[s["cls"]] = by.get(s["cls"], 0) + 1
+        self.assertEqual(by.get("both layouts by design"), 2, "the boot show and the controller's reconcile, no other: %r" % (by,))
+        self.assertEqual(by.get("phone-only by construction"), 1, "the failed overlay's retry")
+        self.assertEqual((by.get("userSwitch declaration, gated"), by.get("userSwitch declaration, shadowed")), (1, 1), "the fork's gated declaration and the project's, once each: %r" % (by,))
+        self.assertGreaterEqual(by.get("through userSwitch", 0), 5, "reveal's body, its two arrivals, the toggleFleet arm, the bar's buttons")
+        self.assertGreaterEqual(by.get("gated", 0), 7, "the Log row, the two Files arms, the viewer's close, the feed's browse arm, the apply's two")
+        js = km._LANDING_MOBILE_JS
+        self.assertLess(js.index(_USER_SWITCH_UPSTREAM), js.index(_USER_SWITCH_FORK), "the fork's declaration follows the project's, so it is the one a function body binds")
+        # phone-only by construction: the tab bar and the failed overlay are display:none outside the phone media block and shown inside it
+        html = km._landing()
+        mq = html.index("@media " + km._MOBILE_MQ + "{")
+        for rule in ("#mtabs{display:none}", "#pane-load{display:none}"):
+            self.assertLess(html.index(rule), mq, rule + " is the rule outside the media block")
+        self.assertGreater(html.index("#mtabs{display:flex;"), mq, "the bar shows inside the phone media block alone")
+        self.assertGreater(html.index("body.pane-failed #pane-load{display:flex"), mq, "the failed overlay shows inside the phone media block alone")
+        self.assertEqual(html.count("#mtabs{display:"), 2)
+        self.assertEqual(html.count("#pane-load{display:"), 3, "hidden, loading, failed")
 
 
 # ── the settings listener's arms ──────────────────────────────────────────────────────────────────
@@ -754,6 +878,9 @@ send({ romp: 'viewFile', path: '/p', sid: SID });
 out.noPane = snap(); reset();
 send({ romp: 'browseFiles', path: '/repo/notes-api', sid: SID });
 out.browse = snap(); reset();
+MOBILE = true; TAB = 'chat';   // the same ask on the phone (review round 5, ui-2: the step above runs on the desktop, where the switch is gated now)
+send({ romp: 'browseFiles', path: '/repo/notes-api', sid: SID });
+out.browsePhone = snap(); reset(); MOBILE = false;
 // the Files page is still loading when the click arrives: the forward waits for the iframe's load, once
 FILES_READY = 'loading';
 send({ romp: 'viewFile', pane: 'pane', path: '/repo/notes-api/src/app.py', sid: SID, identity });
@@ -1044,8 +1171,14 @@ class RelayArms(unittest.TestCase):
     def test_the_feeds_browse_relay_and_the_quote_seed_forward_are_untouched(self):
         b = self.out["browse"]
         self.assertEqual(b["feed"], [{"romp": "browseFiles", "path": "/repo/notes-api", "sid": SID}])
-        self.assertEqual(b["tabs"], ["feed"], "the feed's browser still switches a phone to the Feed tab")
+        self.assertEqual(b["tabs"], [], "desktop: no tab switch (review round 5, 2026-09-20, ui-2: the grid shows the feed already, and show() would persist the remembered phone tab; this step runs on the desktop, and before the gate its pin read the switch as a phone's)")
         self.assertEqual(b["files"], [])
+        p = self.out["browsePhone"]
+        self.assertEqual(p["feed"], [{"romp": "browseFiles", "path": "/repo/notes-api", "sid": SID}], "the phone: the same forward")
+        self.assertEqual(p["tabs"], ["feed"], "the feed's browser switches a phone to the Feed tab")
+        js = km._LANDING_SETTINGS_JS
+        self.assertIn("try{if(window.__rompMobileOn&&window.__rompMobileOn())window.__rompMobileTab&&window.__rompMobileTab('feed');}catch(e){}", js, "the switch is gated on the layout probe, the Files arms' and the Log row's gate")
+        self.assertNotIn("try{window.__rompMobileTab&&window.__rompMobileTab('feed');}catch(e){}", js, "no ungated switch left in the feed's browse arm")
         s = self.out["seed"]
         self.assertEqual(s["chat"], [{"type": "editorSelection", "text": "the auth check", "sid": SID, "src": "src/app.py:12"}])
 

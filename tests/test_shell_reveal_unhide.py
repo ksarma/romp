@@ -26,6 +26,18 @@ class RevealUnhidesThePane(unittest.TestCase):
         self.assertIn("if(m&&m.type==='reveal'&&m.pane)reveal(m.pane);", SRC,
                       "the kernel's app=shell push")
 
+    def test_on_the_desktop_layout_the_tab_switch_behind_a_reveal_is_gated_by_the_forks_later_declaration(self):
+        # review round 5 (2026-09-20, ui-2; the round-3 ruling's class, correctness-3 and regression-3): show() persists the remembered
+        # phone tab (romp-mobile-tab) and sets body data-tab on every layout, so a reveal on a desktop dashboard rewrote the tab the phone
+        # boots on. The project's userSwitch line stands unedited; the fork declares userSwitch AGAIN after it, gated on the layout probe,
+        # and a function body binds the later declaration (both var-scoped), so a desktop reveal un-hides the pane and switches nothing.
+        # Executed in tests/test_pane_state_broadcast.py (MobileScript's desktop pins; MobileShowRoads classifies every road into show()).
+        up = "function userSwitch(p){window.__rompFilesTabFrom=null;show(p);}"
+        fork = "function userSwitch(p){if(!mobileOn())return;window.__rompFilesTabFrom=null;show(p);}"
+        self.assertIn(fork, SRC, "the fork's gated declaration")
+        self.assertLess(SRC.index(up), SRC.index(fork), "…after the project's, so it is the one bound")
+        self.assertEqual(SRC.count("function userSwitch(p){"), 2, "the two declarations and no third")
+
     def test_hover_paths_stay_reveal_free(self):
         # showAskPath / glowTurns are hover affordances — they must never yank a hidden pane open.
         # They send no reveal at all, so it's enough that ONLY the two arrivals above call reveal().

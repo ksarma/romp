@@ -67602,7 +67602,7 @@ if(m.romp==='browseFiles'&&(m.pane==='pane'||!feedHere())){var fb=document.getEl
 else if(m.romp==='browseFiles'){var bf=document.getElementById('f-feed');
   if(!document.body.classList.contains('po-feed')){window.__rompFeedWasOff=true;
     try{window.__rompPaneToggle&&window.__rompPaneToggle('feed',true);}catch(e){}}
-  try{window.__rompMobileTab&&window.__rompMobileTab('feed');}catch(e){}   // phone: one pane at a time
+  try{if(window.__rompMobileOn&&window.__rompMobileOn())window.__rompMobileTab&&window.__rompMobileTab('feed');}catch(e){}   // the phone's one-pane tab swap, gated on the layout as the two Files arms above and the Log row are (review round 5, 2026-09-20, ui-2: the desktop grid shows the feed already, and show() there would persist the remembered phone tab, romp-mobile-tab, from a desktop gesture); the lift above and the post below run on both layouts
   try{bf&&bf.contentWindow&&bf.contentWindow.postMessage({romp:'browseFiles',path:m.path,sid:m.sid},'*');}catch(e){}}
 // A passage selected in a viewer hosted by a pane with NO composer (the Files pane, the feed) posts up in
 // the editorSelection shape the chat already handles (file-view.ts composerWindow); the shell forwards it
@@ -68637,6 +68637,19 @@ function reveal(p){try{window.__rompPaneToggle&&window.__rompPaneToggle(p,true);
 // relay's: the tab the relay remembered for the viewer's close (the settings listener's __rompFilesTabFrom) is
 // dropped, so closing a file much later cannot jump them back to a tab they left on their own
 function userSwitch(p){window.__rompFilesTabFrom=null;show(p);}
+// [fork] review round 5 (2026-09-20, ui-2; the round-3 ruling's class, correctness-3 and regression-3): the switches the person makes are the
+// PHONE's. show() is the one writer of body data-tab and the remembered tab (KT, romp-mobile-tab), and on the desktop layout a reveal aimed
+// at this window (a feed card's tap into a session, the Waiting pane's, a remote link, the kernel's push on a notification tap) and the chat
+// header's Outline pill reached it through userSwitch above, so a desktop gesture rewrote the tab the phone boots on. The Log row and the
+// file relays gate the same switch on the layout probe; this is the one function every other arrival passes through (reveal, the toggleFleet
+// arm, the tab bar's buttons, which the desktop stylesheet hides anyway), so it is gated here: on the desktop a reveal's un-hide stands alone
+// (reveal's __rompPaneToggle) and the pill's toggle is the collapse script's (_LANDING_FLEET_JS), and the relay's remembered tab is left as
+// it was, a phone tab the person did not leave. Declared AGAIN rather than edited: the declaration above is the project's line, and a
+// function body binds the LAST declaration of a name (both are var-scoped, in strict code too), so the gate is inserted around it. Two
+// roads into show() keep both layouts on purpose: the boot show (show(last) below: a flip to the phone needs a tab) and the pane controller's
+// reconcile (a tab whose pane this browser has off is not a place to go on either layout, the gear's set being per browser); the census in
+// tests/test_pane_state_broadcast.py (MobileShowRoads) derives every road from the served scripts and classifies each.
+function userSwitch(p){if(!mobileOn())return;window.__rompFilesTabFrom=null;show(p);}
 for(var i=0;i<B.length;i++)(function(b){var pk=b.getAttribute('data-pane');b.addEventListener('click',function(){userSwitch(pk);});})(B[i]);
 // the rail's actions on mobile: settings opens the settings iframe's modal (the same __rompOpenSettings
 // the desktop gear calls, _LANDING_SETTINGS_JS), net opens the shell's remotes panel, usage opens the
