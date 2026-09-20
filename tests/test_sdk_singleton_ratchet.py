@@ -28,9 +28,9 @@ that changed), the 94 that load the kernel under its shared name, the 272 whose 
 _rebind_state in process (the private-kernel modules among them included: a private name isolates the kernel's
 globals and not jd's, so they move the shared jd.STATE, and their own singletons are outside this fixture by the
 stated limit; unprotected is a private-name kernel's dangling backend over a removed directory that a sibling file
-reads and gets the silent empty-registry answer this fixture exists to stop, live today on romp_kernel_mc, which
-tests/test_kernel_interrupt_machine_cut.py leaves dangling and two of the three files that load it read, that one and
-tests/test_kernel_msgcaption.py; the loop cannot land here because the private-kernel harnesses carry 90 or more
+reads and gets the silent empty-registry answer this fixture exists to stop, live on romp_kernel_mc (its readers measured
+2026-09-19), which tests/test_kernel_interrupt_machine_cut.py leaves dangling and two of the three files that load it
+read, that one and tests/test_kernel_msgcaption.py; the loop cannot land here because the private-kernel harnesses carry 90 or more
 pre-existing teardown leaks (the 90 measured over the three romp_kernel_mc files in one run, on the missing road; the
 round-1 refuters' 574 over the 18 files, their count, its road not recorded, and a teardown count does not depend on the
 road, since SdkBackend constructs on both), so their save-and-restore product code lands first, then the ratchet's
@@ -2566,19 +2566,46 @@ LIMIT_UNPROTECTED = ("a private-name kernel's dangling backend over a removed di
                      "silent empty-registry answer this fixture exists to stop")
 LIMIT_BLOCKER = "the loop cannot land here because the private-kernel harnesses carry 90 or more pre-existing teardown leaks"
 LIMIT_ORDER = "so their save-and-restore product code lands first, then the ratchet's private-kernel arm"
-LIMIT_READERS = ("two of the three", "tests/test_kernel_interrupt_machine_cut.py", "tests/test_kernel_msgcaption.py")
+LIMIT_READING = ("tests/test_kernel_interrupt_machine_cut.py", "tests/test_kernel_msgcaption.py")   # the loaders that read the
+                                                                                                    # dangling object, measured 2026-09-19
+PRIVATE_KERNEL_NAME = "romp_kernel_mc"
+MC_LOADER = re.compile(r'load_source\(\s*"%s"' % PRIVATE_KERNEL_NAME)
+NUMBER_WORDS = ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve")
+RATCHET_COMMENT_OPENS = "No test may leave the kernel's backend singleton changed"
 
 
-def conftest_comment_text():
-    """tests/conftest.py's comment lines, the hash stripped, joined by one space with whitespace collapsed, so a needle
-    reads across the wrapped lines of a paragraph."""
-    lines = []
+def private_kernel_loaders():
+    """The test files that load the kernel under PRIVATE_KERNEL_NAME, derived from the tree: every tests/*.py whose text
+    calls load_source with that name as its first argument (MC_LOADER), sorted, as tests/<file>. A count of them written
+    in prose is measured once and outlives the file added after it; the wording pin reads this and holds the prose to
+    it."""
+    found = []
+    for name in sorted(os.listdir(HERE)):
+        if name.endswith(".py"):
+            with open(os.path.join(HERE, name)) as f:
+                if MC_LOADER.search(f.read()):
+                    found.append("tests/" + name)
+    return found
+
+
+def ratchet_comment_text():
+    """The ratchet's design comment in tests/conftest.py, the hash stripped, joined by one space with whitespace
+    collapsed, so a needle reads across the wrapped lines of a paragraph: the contiguous block of comment lines that
+    opens with RATCHET_COMMENT_OPENS and ends at the first line that is not a comment, the code it documents. A conftest
+    without the opener raises. The round-7 review found the first form joining every comment line in the file, so the
+    stated-limit paragraph could leave the design comment for the end of the file with its pin green."""
     with open(os.path.join(HERE, "conftest.py")) as f:
-        for line in f:
-            s = line.strip()
-            if s.startswith("#"):
-                lines.append(s[1:].strip())
-    return re.sub(r"\s+", " ", " ".join(lines))
+        lines = f.read().split("\n")
+    start = next((i for i, line in enumerate(lines) if line.startswith("# " + RATCHET_COMMENT_OPENS)), None)
+    if start is None:
+        raise AssertionError("no comment line in tests/conftest.py opens with %r: the design comment was not found"
+                             % RATCHET_COMMENT_OPENS)
+    block = []
+    for line in lines[start:]:
+        if not line.startswith("#"):
+            break
+        block.append(line[1:].strip())
+    return re.sub(r"\s+", " ", " ".join(block))
 
 
 LIMIT_COUNT = ("a boundary failure on an item whose own teardown also fails folds into that item's one teardown report, an "
@@ -2603,23 +2630,47 @@ class TheCountLimitIsStatedBesideTheCount(unittest.TestCase):
 
 
 class TheStatedLimitIsWorded(unittest.TestCase):
-    """The stated limit (a private kernel's own dangling singleton is outside the fixture) is worded, in the conftest
-    comment and in this module's docstring, with what it leaves unprotected, the two files that read the dangling
-    object today, and the blocker in its order (the harness fixes first, then the private-kernel arm); an edit that
-    drops any of them reds here."""
+    """The stated limit (a private kernel's own dangling singleton is outside the fixture) is worded, in the ratchet's
+    design comment in the conftest and in this module's docstring, with what it leaves unprotected, the two files that
+    read the dangling object (a measurement of 2026-09-19, dated in both texts), and the blocker in its order (the
+    harness fixes first, then the private-kernel arm); an edit that drops any of them reds here. The count of files
+    that load the private name is derived from the tree (private_kernel_loaders), never pinned as a word: the conftest
+    names the loaders in one parenthesis, held equal to the derived set, and both texts state the count as the number
+    word of the derived length. The round-7 review found the first form reading every comment line in the conftest
+    and pinning "two of the three" by its spelling, so a fourth loader left the sentence false with the pin green."""
 
     def _assert_worded(self, text, where):
-        for needle in (LIMIT_UNPROTECTED, LIMIT_BLOCKER, LIMIT_ORDER) + LIMIT_READERS:
-            self.assertIn(needle, text, "%s does not say: %s" % (where, needle))
+        for needle in (LIMIT_UNPROTECTED, LIMIT_BLOCKER, LIMIT_ORDER) + LIMIT_READING:
+            self.assertTrue(needle in text, "%s does not say: %s" % (where, needle))   # not assertIn: the failure would
+                                                                                       # quote the whole comment
         self.assertLess(text.index(LIMIT_UNPROTECTED), text.index(LIMIT_BLOCKER),
                         "%s: what is unprotected is said before the blocker" % where)
         self.assertLess(text.index(LIMIT_BLOCKER), text.index(LIMIT_ORDER), "%s: the blocker before the order" % where)
 
     def test_the_conftest_comment_says_what_is_unprotected_and_names_the_blocker_in_order(self):
-        self._assert_worded(conftest_comment_text(), "tests/conftest.py")
+        self._assert_worded(ratchet_comment_text(), "the ratchet's design comment in tests/conftest.py")
 
     def test_this_modules_docstring_says_the_same(self):
         self._assert_worded(re.sub(r"\s+", " ", __doc__), "the module docstring")
+
+    def test_the_loader_count_is_the_trees_and_the_conftest_names_the_loaders(self):
+        loaders = private_kernel_loaders()
+        self.assertGreaterEqual(len(loaders), 1, "no test file loads %s: a derived population that comes back empty is "
+                                "a failure, not a pass" % PRIVATE_KERNEL_NAME)
+        word = NUMBER_WORDS[len(loaders)]
+        text = ratchet_comment_text()
+        m = re.search(re.escape(PRIVATE_KERNEL_NAME) + r" is loaded by (\w+) files \(([^()]*)\)", text)
+        self.assertIsNotNone(m, "the design comment states no 'is loaded by <count> files (<the files>)' for %s"
+                             % PRIVATE_KERNEL_NAME)
+        self.assertEqual(m.group(1), word, "the design comment counts the loaders as %s; the tree has %d: %r"
+                         % (m.group(1), len(loaders), loaders))
+        self.assertEqual(set(re.split(r", | and ", m.group(2))), set(loaders),
+                         "the design comment's loaders and the tree's differ: %r against %r" % (m.group(2), loaders))
+        self.assertIn("two of the %s read" % word, text, "the design comment's reading count is stated over the derived "
+                      "loader count (%s)" % word)
+        self.assertIn("two of the %s files that load it read" % word, re.sub(r"\s+", " ", __doc__),
+                      "the module docstring's reading count is stated over the derived loader count (%s)" % word)
+        self.assertTrue(set(LIMIT_READING) <= set(loaders), "a reader that does not load the name: %r" % loaders)
 
 
 RESIDUAL_GREEN = "proves no leak occurred in that run and not that no test would leak alone"
@@ -2902,7 +2953,7 @@ def case_list_ids(doc):
 
 
 def conftest_roster_ids(text):
-    """The ids the conftest's roster of the refusal's cases names, read from conftest_comment_text(): the parenthesis
+    """The ids the conftest's roster of the refusal's cases names, read from ratchet_comment_text(): the parenthesis
     that follows CONFTEST_ROSTER_OPENS, its entries split on semicolons, each opening with its id, or its ids joined
     by "and", before the entry's first comma; the last entry may open with "and". An entry in any other shape raises.
     Ids in roster order, duplicates kept for the pin to name."""
@@ -2950,7 +3001,7 @@ class TheCaseRostersNameEveryCase(unittest.TestCase):
         _, readers, _ = case_population(names=names)
         self._assert_same("the conftest's roster of the refusal's cases (keyed on a reference to one of %s, this "
                           "module's copies of the texts the conftest renders for the refusal and its links)"
-                          % ", ".join(names), readers, conftest_roster_ids(conftest_comment_text()))
+                          % ", ".join(names), readers, conftest_roster_ids(ratchet_comment_text()))
 
     def test_the_derivation_reads_the_classes_by_shape_and_the_rosters_by_their_openers(self):
         """A case inherits its id from a base that binds SCRATCH; a subclass binding its own has its own; a reference
