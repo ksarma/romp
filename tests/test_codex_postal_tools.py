@@ -447,14 +447,35 @@ class RequestTools(unittest.TestCase):
         self.assertEqual(self.pushed, [], "nothing changed, nothing to push")
 
     def test_while_the_switch_is_off_both_refuse_in_the_bus_tools_words_and_nothing_is_written(self):
+        # A write is DUE on both roads before the switch flips: the session holds an open row (a withdraw of a row
+        # nobody holds writes nothing whatever the switch says, so that alone proves nothing) and the add's text is
+        # one the route would file. The store is read back byte for byte: the writer's file is its one artifact (an
+        # atomic rename, sort_keys) and the route's _push_soon its one side channel. The sentences are the bus
+        # module's own off sentences, not the kernel's copies.
+        store = jd.STATE / "user-todos.json"
+        tid = km._add_user_todo(SID, "Need the staging port")          # filed while the switch is on (setUp)
         km._set_user_todos(False)
+        self.assertFalse(km._user_todos_on())
+        before = store.read_bytes()
+        del self.pushed[:]
         with bus() as log:
-            ok, text = call("add_user_todo", {"text": "Need the port"})
+            ok, text = call("add_user_todo", {"text": "Need the port", "detail": "which one", "blocking": True})
             self.assertEqual((ok, text), (False, pm.USER_TODOS_OFF_ADD))
-            ok, text = call("withdraw_user_todo", {"id": "ut-9f2c1a34"})
+            ok, text = call("withdraw_user_todo", {"id": tid})
             self.assertEqual((ok, text), (False, pm.USER_TODOS_OFF_WITHDRAW))
+        self.assertEqual(log, [], "no loopback round trip: the kernel is the caller")
+        self.assertEqual(store.read_bytes(), before, "the store is byte-identical: no row filed, no stamp")
+        rows = self._rows()
+        self.assertEqual([r["id"] for r in rows], [tid])
+        self.assertNotIn("resolved", rows[0], "the row stays open")
+        self.assertEqual(self.pushed, [], "nothing changed, nothing to push")
+        # and with no store at all (the shipped default): the same sentences, and still no file
+        self._clear_store()
+        with bus() as log:
+            self.assertEqual(call("add_user_todo", {"text": "Need the port"}), (False, pm.USER_TODOS_OFF_ADD))
+            self.assertEqual(call("withdraw_user_todo", {"id": "ut-9f2c1a34"}), (False, pm.USER_TODOS_OFF_WITHDRAW))
         self.assertEqual(log, [])
-        self.assertFalse((jd.STATE / "user-todos.json").exists())
+        self.assertFalse(store.exists())
         self.assertEqual(self.pushed, [])
 
     def test_through_the_backends_tool_call_the_thread_binds_the_session_and_only_declared_arguments_pass(self):
