@@ -4870,12 +4870,15 @@ The two rows, as the kernel writes them (`t` its clock, `wid` the dashboard id):
   own attach and detach history differs from a fresh pane's first answer.
   `GET /tunnels`, an authenticated route, is that order and so a
   position-to-name map in its own right, as is the state directory the file
-  sits in, whose host registries `remotes.json` (the live set) and
-  `remotes-known.json` (the detached hosts) hold the roster in that order
-  beside the file: a holder of either maps any position to a name with no
-  client-diag row at all, and after the file's rotation (8 MB, two files) a
-  pane's host-naming rows can be gone while its later perf rows remain.
-  Reading a registry is itself a join, and what any of these roads yields is
+  sits in, whose host registries sit beside the file: `remotes.json` holds
+  the attached set, written in the `/tunnels` row order, so a holder of it
+  maps any position to a name with no client-diag row at all;
+  `remotes-known.json` holds every host ever attached or trusted, attached
+  ones included, each with a `lastAttachedAt` stamp refreshed by every
+  writer (attach, detach, trust and share), written with the newest stamp
+  first, so it names the hosts and not their order. After the file's rotation (8 MB, two
+  files) a pane's host-naming rows can be gone while its later perf rows
+  remain. Reading a registry is itself a join, and what any of these roads yields is
   exact for a pane life that attached one host; for several it is an order
   inference, holding while `remotes.json` still carries the row order the
   pane's `/tunnels` answer had. The
@@ -4887,8 +4890,11 @@ The two rows, as the kernel writes them (`t` its clock, `wid` the dashboard id):
   `res`, `frames`, `loaf` and federation's `counts` alike): a nested string
   value is cut at 64 characters, a nested key is stored as posted. Host names reach the file wherever
   an admitted value can hold one, in three forms: a bare name under a `host`
-  key (the shell's push-test row, federation's `hostconn` rows and the
-  kernel's own `wsopen` row for a spliced relay, `kind` `hub`, above); a
+  key (the shell's push-test row; every federation row that carries its
+  conn's host, the `hostconn`, `feedDelta-nobase`, `feedDelta-stale`,
+  `sendqueue` and `senddrop` rows, with the poll rows carrying an empty
+  host; and the kernel's own `wsopen` row for a spliced relay,
+  `kind` `hub`, above); a
   host-prefixed session id, `<host>:<uuid>`, when the row concerns a remote
   session (the chat surface's `sid`, `id`, `ids` and `active`: every remote
   session id a federated page holds carries its host, and the 64-character

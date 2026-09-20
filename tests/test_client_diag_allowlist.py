@@ -107,7 +107,8 @@ CENSUS = {
         "hiddenMs": (NONE, _INT), "quietMs": (NONE, _INT), "attempts": (NONE, _INT), "firstFailMs": (NONE, _INT), "ms": (NONE, _INT),
     },
     "federation": {   # federation.ts diag(): hostconn, feedDelta-nobase, feedDelta-stale, feedmerge, sendqueue, senddrop
-        "host": (BARE, "the conn's host on every hostconn, feedDelta and send row; empty on the poll rows, local on the local nobase row"),
+        "host": (BARE, "the conn's host on every hostconn, feedDelta-nobase, feedDelta-stale, sendqueue and senddrop row (federation_host_row_kinds, "
+                       "derived from federation.ts); empty on the poll rows, local on the local nobase row"),
         "ev": (NONE, "the hostconn event word"),
         "why": (NONE, "a cause word, a slot name, the remote's build id, or the page's own /tunnels fetch failure text cut at 200"),
         "quietMs": (NONE, _INT), "foreground": (NONE, _BOOL), "msgType": (NONE, "a message type word"), "rs": (NONE, "a readyState"),
@@ -169,6 +170,15 @@ def host_carrying_keys():
         if keys:
             out[surface] = keys
     return out
+
+
+def federation_host_row_kinds():
+    """The federation row kinds that carry the conn's host, derived from federation.ts: every `this.diag("<what>", ...)` call
+    whose data literal names `host` on the call's line (the literal's first key at every site today). The disclosure copies
+    name each kind (round 1, 2026-09-20: the copies said "hostconn rows" where the census reason said every hostconn,
+    feedDelta and send row); a new host-carrying row kind fails the pin until the copies name it."""
+    src = open(os.path.join(os.path.dirname(HERE), "ui", "webview", "federation.ts"), encoding="utf-8").read()
+    return set(re.findall(r'this\.diag\("([\w-]+)",[^\n{]*\{[^\n}]*\bhost\b', src))
 
 
 def disclosure_copies():
@@ -743,6 +753,8 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         # Each copy must now state the rule (a value can carry a host name bare under a host key, as a host-prefixed session id
         # when the row concerns a remote session, or as a host-keyed map), name the chat road's condition and its independence
         # from the share switch, and name every host-carrying surface the census derives; a copy that drops a clause fails here.
+        # The tokens are the rule's terms and the clauses the round asked for (the chat road's age, its frequency and its use, the
+        # map clause, the registries' stamp); a copy's other sentences are not read here.
         copies = disclosure_copies()
         self.assertEqual(sorted(copies), ["docs", "kernel", "ledger"])
         for name, text in sorted(copies.items()):
@@ -750,14 +762,24 @@ class ClientDiagAllowlistTest(unittest.TestCase):
             self.assertGreater(len(text), 200, name)
             for token in (r"host-prefixed session id", r"host-keyed map", r"remote session", r"share switch", r"`?host`? key", r"positions and no host name",
                           r"GET /tunnels", r"in (its|their) own right",
-                          r"remotes\.json", r"remotes-known\.json", r"exact for", r"order inference",
+                          r"remotes\.json", r"remotes-known\.json", r"lastAttachedAt", r"exact for", r"order inference",
+                          r"older than", r"most frequent", r"routine use", r"not from chat rows alone",
                           r"\bmints\b", r"does not inspect the map's keys", r"nested key"):
                 self.assertIsNotNone(re.search(token, text, re.I), "%s: the disclosure no longer states %r" % (name, token))
-        # the stability caveat lives where the position rule is stated for readers, the docs (and the PR body outside the tree): a
-        # reload re-derives the assignment from the same /tunnels order, so the caveat must carry its condition, never read as a
-        # de-linking property (round 1, correctness-2)
-        for token in (r"names the same one again", r"dialable rows", r"first poll", r"attach and detach history", r"rotation"):
-            self.assertIsNotNone(re.search(token, copies["docs"], re.I), "docs: the reload sentence no longer states %r" % token)
+        # the bare-name example is derived, not hand-kept: every federation row kind that carries the conn's host, read from
+        # federation.ts's diag call sites, is named by every copy (round 1, 2026-09-20: the copies named hostconn alone)
+        kinds = federation_host_row_kinds()
+        self.assertEqual(kinds, {"hostconn", "feedDelta-nobase", "feedDelta-stale", "sendqueue", "senddrop"},
+                         "the federation row kinds carrying a host, as derived; a change here is a change to the disclosure copies")
+        for name, text in sorted(copies.items()):
+            for kind in sorted(kinds):
+                self.assertIsNotNone(re.search(r"\b%s\b" % re.escape(kind), text), "%s: the disclosure does not name federation's %s rows" % (name, kind))
+        # the stability caveat lives where the position rule is stated for readers, the docs and the ledger (and the PR body outside
+        # the tree): a reload re-derives the assignment from the same /tunnels order, so the caveat must carry its condition, never
+        # read as a de-linking property (round 1, correctness-2; the ledger's copy since the round's own read)
+        for name in ("docs", "ledger"):
+            for token in (r"names the same one again", r"dialable rows", r"first poll", r"attach and detach history", r"rotation"):
+                self.assertIsNotNone(re.search(token, copies[name], re.I), "%s: the reload sentence no longer states %r" % (name, token))
         named = {"chat": r"\bchat\b", "federation": r"\bfederation\b", "shell": r"\bshell\b", "kernel": r"\bwsopen\b"}
         carrying = host_carrying_keys()
         self.assertTrue(carrying)

@@ -3543,8 +3543,10 @@ CLIENT_DIAG_KEYS = {
                                             # _client_diag_scrub). Host names reach this file wherever an admitted VALUE
                                             # can hold one, in three forms, and tests/test_client_diag_allowlist.py classifies every admitted key of
                                             # every surface by content, so a new key fails there until classified: a bare name under a `host` key (the
-                                            # shell's push-test row, federation's hostconn rows, and the kernel's own wsopen row for a spliced relay,
-                                            # written by _note_ws_open); a host-prefixed session id, <host>:<uuid>, when the row concerns a remote
+                                            # shell's push-test row; every federation row that carries its conn's host, the hostconn, feedDelta-nobase,
+                                            # feedDelta-stale, sendqueue and senddrop rows (the poll rows carry an empty host), a set the same test derives from
+                                            # federation.ts's diag call sites; and the kernel's own wsopen row for a spliced relay, written by _note_ws_open);
+                                            # a host-prefixed session id, <host>:<uuid>, when the row concerns a remote
                                             # session (the chat surface's sid, id, ids and active: federation.ts prefixes every remote session id the
                                             # page holds, and the cut at CLIENT_DIAG_STR_MAX keeps the head, prefix included); and a host-keyed map
                                             # (federation's feedmerge counts). The chat road is older than this field, is not gated by the perf share
@@ -3552,12 +3554,15 @@ CLIENT_DIAG_KEYS = {
                                             # so on a federated page it is the most frequent host-carrying row type; the position-to-name MAP itself
                                             # follows from the rows that record a host at attach (federation's hostconn open rows of the same pane
                                             # document), not from chat rows alone, which name a host without its position. Two maps need no client-diag
-                                            # row at all: GET /tunnels, the authenticated route whose row order the positions are assigned in, and the
-                                            # state directory this file sits in, whose host registries remotes.json (the live set) and remotes-known.json
-                                            # (the detached hosts) hold the roster in that order beside this file, each a position-to-name map in its
-                                            # own right. Reading either is itself a join, and what any of these roads yields is exact for a pane life
-                                            # that attached one host; for several it is an order inference, holding while remotes.json still carries
-                                            # the row order the pane's /tunnels answer had. This entry says that and no more.
+                                            # row at all: GET /tunnels, the authenticated route whose row order the positions are assigned in, a position-to-name
+                                            # map in its own right, and the state directory this file sits in, whose host registries sit beside this file:
+                                            # remotes.json holds the attached set, written in the /tunnels row order (list_remotes and _remotes_rows_for_save
+                                            # read one dict), so a holder of it maps any position to a name; remotes-known.json holds every host ever attached
+                                            # or trusted, attached ones included, each with a lastAttachedAt stamp refreshed by every writer (attach, detach,
+                                            # trust and share: _known_note), written with the newest stamp first (_known_save), so it names the hosts and not
+                                            # their order. Reading either is itself a join, and what any of these roads yields is exact for a pane life that attached
+                                            # one host; for several it is an order inference, holding while remotes.json still carries the row order the pane's
+                                            # /tunnels answer had. This entry says that and no more.
     "pane-shim": frozenset(("app", "why", "ready", "quietMs", "hidden",                                         # staleDiag rows
                             "decision", "resumed", "hiddenMs", "frozenMs", "quietAtResumeMs", "resent",         # return
                             "ms", "bytesSince", "redialed",                                                     # return-fresh
