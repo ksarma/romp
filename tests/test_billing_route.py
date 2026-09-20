@@ -1076,13 +1076,18 @@ class RefusedRecordWrites(_RouteServer):
         self.assertNotIn(SID, km._pending_ops)
 
     def test_the_kernels_park_hook_queues_the_pick_before_its_one_line_that_could_raise_so_a_parked_follower_holds_it(self):
+        # CHARACTERISATION PIN (round 3 of the review, 2026-09-20; its tests-3 with extra7-2, both refuters): what this
+        # pins is an ORDERING COMPOSITION that is UNOBSERVABLE IN PRODUCTION at this head. _park_moving appends and
+        # mirrors the op, then writes its best-effort line through _exit_log, which swallows every exception (kernel.py),
+        # so no kernel hook can raise here in production; the injector is _exit_log itself patched to raise, one of the
+        # census's without-a-production-road sites. The pin holds the append-before-the-raise ordering the walk's
+        # "filed as parked" contract rests on, so it cannot regress silently.
         # the walk lens's residual (2026-09-20): the walk files a follower whose park hook raised as PARKED on the premise that
         # the kernel's hook queued the op before the line that raised (_park_moving: _park_op appends and mirrors, then the
-        # best-effort line). Since kernel-2 nothing in the hook raises, so the ordering had no pin. The real hooks through
-        # the real handler, with _exit_log itself raising, the one line after the append and the mirror: the moving
-        # follower's queue holds the pick exactly once, nothing is written for it, the walk goes on to the next follower,
-        # and the row says the pick is queued. A raise placed before the append would leave the queue empty and the row
-        # false, and this reds
+        # best-effort line). The real hooks through the real handler, with _exit_log itself raising, the one line after the
+        # append and the mirror: the moving follower's queue holds the pick exactly once, nothing is written for it, the walk
+        # goes on to the next follower, and the row says the pick is queued. A raise placed before the append would leave the
+        # queue empty and the row false, and this reds
         d = tempfile.mkdtemp()
         Path(d, "session-hosts").write_text("off")   # a test that mints its own state root pins hosts off (2026-09-11)
         be = sb.SdkBackend(d, "/bin/true", lambda *a, **k: None, log=lambda m: None)
@@ -1134,6 +1139,144 @@ class RefusedRecordWrites(_RouteServer):
         with a, b:
             code, resp = self._get("web")
         self.assertEqual((code, resp), (409, {"ok": False, "error": "web's record would not read"}))
+
+    def test_a_chip_write_that_fails_after_the_record_lands_answers_200_not_409_on_the_now_and_plain_roads(self):
+        # cluster B (round 3 of the review, 2026-09-20; its correctness-1 and extra6-1, both refuters, one defect): the
+        # /auth chip is post-commit, fired by set_auth_guarded OUTSIDE the guard with the step at chip=False, so a chat
+        # write that cannot land answers 200 with the pick applied and a problem row naming the chip, never 409 blaming a
+        # record that wrote. Red on the round-2 head 676054c2f, where the chip ran inside the guarded step: the append
+        # raised, the guard rolled the pick back and _refuse_pick_write answered 409 "its record would not write".
+        real = sb.append_cmd_gesture
+
+        def boom(state_dir, sid, text, t=None):
+            if sid == SID:
+                raise PermissionError(13, "Permission denied", str(Path(state_dir, "states", sid + ".jsonl")))
+            return real(state_dir, sid, text, t=t)
+        for road, body in (("now", {"target": "web", "pick": "key", "now": True}), ("plain", {"target": "web", "pick": "key"})):
+            with self.subTest(road=road):
+                be, s, d = self._picked()
+                seq0 = be._problem_seq
+                a, b = self._local(be)
+                with a, b, mock.patch.object(sb, "append_cmd_gesture", boom):
+                    code, resp = self._post(body)
+                self.assertEqual((code, resp.get("ok")), (200, True), (road, json.dumps(resp)[:400]))
+                self.assertEqual(sb.read_reg(d, SID)["auth"], "key", "%s: the record kept the pick" % road)
+                self.assertNotIn("would not write", json.dumps(resp), "%s: no 409 blaming a write that succeeded" % road)
+                rows = [p["text"] for p in be.problems(10) if p["seq"] > seq0]
+                self.assertEqual(len(rows), 1, (road, rows))
+                self.assertTrue(rows[0].startswith("auth (web):"), rows[0])
+                self.assertIn("chat acknowledgement", rows[0], "the row names the /auth chip that could not be recorded")
+
+    def test_the_dashboard_setAuth_arm_carries_the_doors_sentence_never_the_generic_text(self):
+        # cluster D (round 3 of the review, 2026-09-20; its correctness-2, regression-1 and kernel-2): the WS setAuth arm
+        # takes the guarded door, so a refused record write returns False where it used to raise; the arm builds `why` as
+        # _auth_refusal does (auth_unavailable_why on the parsed pick, then the door's own sentence at pop_auth_refusal),
+        # so the toast names the write, never the generic three-cause text. A BEHAVIOURAL pin: the source pin cannot tell
+        # this arm from the machine-scope arm, which keeps the identical line. Red on the round-2 head, where the arm read
+        # auth_unavailable_why on the raw value alone and showed the generic text over the door's unread sentence.
+        be, s, d = self._picked()
+        sent = []
+        client = {"send": lambda m: sent.append(json.loads(m))}
+        real_write = sb.write_reg
+
+        def refused(state_dir, sid, reg):
+            if sid == SID:
+                raise PermissionError(13, "Permission denied", str(sb._reg_path(state_dir, sid)))
+            return real_write(state_dir, sid, reg)
+        saved = (km.Sessions.backend_for, km._kernel_knows, km._push_soon, km._gate_or_park)
+        try:
+            km.Sessions.backend_for = staticmethod(lambda sid: be)
+            km._kernel_knows = lambda *a, **k: True
+            km._push_soon = lambda: None
+            km._gate_or_park = lambda sid, op: False
+            with mock.patch.object(sb, "write_reg", refused):
+                km._drive({"type": "setAuth", "id": SID, "value": "key"}, client)
+        finally:
+            km.Sessions.backend_for, km._kernel_knows, km._push_soon, km._gate_or_park = saved
+        self.assertEqual(sent[-1]["type"], "warn", sent)
+        self.assertIn("its record would not write", sent[-1]["text"], "the door's own sentence, not the generic text")
+        self.assertNotIn("it isn't a Claude Code session", sent[-1]["text"], "not the generic three-cause text")
+        self.assertNotRegex(json.dumps(sent[-1]), r"/[A-Za-z0-9_.-]+/", "no absolute path in the toast")
+
+
+class SettingsUnreadableRoutes(_RouteServer):
+    """Cluster A / the HIGH (round 3 of the review, 2026-09-20; its extra7-1, escalated to high, both refuters): a
+    non-UTF-8 operator settings file made the settings read raise UnicodeDecodeError out of `_billing_request`, and
+    do_POST/do_GET's catch-all answered HTTP 500 with a traceback body carrying this box's absolute paths, over the
+    tailnet. Closed at the READER (kernel/credentials.py: the decode raises CredentialError, which every cannot-tell
+    caller already handles), not at the route, since a route-side guard misses the walk's pre-check into
+    set_auth_followers, billing_view's own GET road, and four non-route callers. Bytes assembled at run time, so no
+    non-UTF-8 byte sits in the repo."""
+
+    @staticmethod
+    def _non_utf8_cfg():
+        cfg = tempfile.mkdtemp()
+        Path(cfg, "settings.json").write_bytes(b'{"apiKeyHelper": "' + bytes([0xff, 0xfe]) + b'"}')
+        return cfg
+
+    def _point_operator_settings(self, cfg):
+        """Point the backend's REAL settings read at `cfg`'s non-UTF-8 user file, with no managed file, and undo it."""
+        saved_env = os.environ.get("CLAUDE_CONFIG_DIR")
+        os.environ["CLAUDE_CONFIG_DIR"] = cfg
+        saved_managed = sb._cred.managed_settings_path
+        sb._cred.managed_settings_path = lambda: os.path.join(cfg, "no-managed-here.json")
+
+        def undo():
+            sb._cred.managed_settings_path = saved_managed
+            if saved_env is None:
+                os.environ.pop("CLAUDE_CONFIG_DIR", None)
+            else:
+                os.environ["CLAUDE_CONFIG_DIR"] = saved_env
+        self.addCleanup(undo)
+
+    def test_the_reader_and_the_four_non_route_callers_answer_cannot_tell_never_a_raise(self):
+        d = tempfile.mkdtemp()
+        Path(d, "session-hosts").write_text("off")   # a test that mints its own state root pins hosts off (2026-09-11)
+        be = sb.SdkBackend(d, "/bin/true", lambda *a, **k: None, log=lambda m: None)
+        be.login_ok = lambda: False                  # a box with no login, so the login side answers a sentence
+        self._point_operator_settings(self._non_utf8_cfg())
+        # the reader degrades to cannot-tell instead of the decode escaping: key_state 'unknown', _helper_source_read
+        # (None, False), and auth_unavailable_why still answers a sentence about the side it CAN read (login_ok)
+        self.assertEqual(be.key_state(), "unknown")
+        self.assertEqual(be._helper_source_read(), (None, False))
+        self.assertEqual(be.auth_unavailable_why("login"), sb._cred.WHY_NO_LOGIN)
+        # the four pre-existing non-route callers a route-side guard would have left raising, each cannot-tell, none raising
+        saved = km._sdk
+        try:
+            km._sdk = lambda: be
+            self.assertIs(km._auth_key_present(), False)
+            self.assertIs(km._auth_both(), False)
+            self.assertIs(km._auth_avail()["key"], False)
+            self.assertIs(km._auth_avail_status()["key"], False)
+        finally:
+            km._sdk = saved
+
+    def test_no_billing_route_answers_500_with_a_traceback_when_the_operator_settings_are_not_utf8(self):
+        d = tempfile.mkdtemp()
+        Path(d, "session-hosts").write_text("off")   # a test that mints its own state root pins hosts off (2026-09-11)
+        be = sb.SdkBackend(d, "/bin/true", lambda *a, **k: None, log=lambda m: None)
+        be.login_ok = lambda: True
+        reg = {"sid": SID, "name": "web", "cwd": d, "alive": True, "lastSid": SID, "auth": "login"}
+        sb.write_reg(Path(d), SID, reg)
+        s = sb.SdkSession(be, dict(reg))
+        s._launched_auth = "login"
+        s.auth_live = "login"
+        be.sessions[SID] = s
+        self._point_operator_settings(self._non_utf8_cfg())
+        roads = (("POST default", "POST", {"target": "web", "pick": "default"}),
+                 ("POST now", "POST", {"target": "web", "pick": "key", "now": True}),
+                 ("POST plain", "POST", {"target": "web", "pick": "key"}),
+                 ("POST all-following", "POST", {"pick": "key", "allFollowing": True}),
+                 ("GET", "GET", "web"))
+        a, b = self._local(be)
+        with a, b, mock.patch.object(km, "_sdk", lambda: be):
+            for label, method, body in roads:
+                with self.subTest(road=label):
+                    code, resp = (self._get(body) if method == "GET" else self._post(body))
+                    text = json.dumps(resp)
+                    self.assertNotEqual(code, 500, (label, code, text[:400]))
+                    self.assertNotIn("Traceback", text, label)
+                    self.assertNotRegex(text, r"/[A-Za-z0-9_.-]+/", "%s: no absolute path in the body" % label)
 
 
 class AllFollowing(_RouteServer):
@@ -1399,7 +1542,7 @@ class RemoteForwarding(_RouteServer):
         self.assertEqual(code, 404)
         self.assertEqual(resp, {"ok": False, "error": "no live session named far-web (the kernel on TESTHOST)"})
         # a far text/plain 404 is the far catch-all, a kernel from before these routes: named with the remedy (round 2 of
-        # the review; the bare relay "HTTP 404: not found" told the user neither), still 404 with a JSON body so the verb
+        # the review, 2026-09-18; the bare relay "HTTP 404: not found" told the user neither), still 404 with a JSON body so the verb
         # prints the sentence as it prints every kernel refusal
         code, resp, _ = self._forward("POST", {"target": FAR_SID, "pick": "key"}, None, far_status=404, far_text="not found")
         self.assertEqual(code, 404)
@@ -1472,6 +1615,85 @@ class BackendHelpers(unittest.TestCase):
         t = self._sess("api", launched="login")
         self.assertTrue(self.be.set_auth(t.sid, "key"))
         self.assertEqual(self._gestures(t.sid), ["/auth key"], "the dashboard's path is unchanged: one chip")
+
+    def test_a_chip_write_that_fails_after_the_record_lands_leaves_the_pick_and_no_orphaned_reconnect(self):
+        # cluster B (round 3 of the review, 2026-09-20; its correctness-1 and extra6-1, both refuters): set_auth_guarded's
+        # step runs set_auth with chip=False, so the /auth chip's durable append (the only statement that could raise
+        # after the mirror) is post-commit, fired outside the guard. A chat write that cannot land leaves the pick's
+        # record written, the reconnect it legitimately asked STANDING (not orphaned by a rollback), one problem row
+        # naming the chip, and set_auth_guarded returns True. Red on the round-2 head 676054c2f: the chip ran inside the
+        # guarded step, the append raised, the guard rolled the pending back and returned False, and the reconnect
+        # callback the request branch had already queued survived over a pending it had just cleared.
+        s = self._sess("web", auth="login", launched="login")
+        s.auth_live = "login"
+        q = self._queue_loop(s)
+        real = sb.append_cmd_gesture
+
+        def boom(state_dir, sid, text, t=None):
+            if sid == s.sid:
+                raise PermissionError(13, "Permission denied", str(Path(state_dir, "states", sid + ".jsonl")))
+            return real(state_dir, sid, text, t=t)
+        seq0 = self.be._problem_seq
+        with mock.patch.object(sb, "append_cmd_gesture", boom):
+            ok = self.be.set_auth_guarded(s.sid, "key")
+        self.assertTrue(ok, "the pick applied: the record wrote and the chip is post-commit")
+        self.assertEqual((s.auth, s._auth_pending, self._reg(s.sid)["auth"]), ("key", "key", "key"), "the record kept the pick")
+        self.assertEqual((s._auth_pending, len(q)), ("key", 1), "the reconnect the pick asked stands, not orphaned by a rollback")
+        rows = [p["text"] for p in self.be.problems(10) if p["seq"] > seq0]
+        self.assertEqual(len(rows), 1, rows)
+        self.assertTrue(rows[0].startswith("auth (web):"), rows[0])
+        self.assertIn("chat acknowledgement", rows[0], "the row names the /auth chip that could not be recorded")
+        self.assertNotIn("would not write", rows[0], "the chip failed, not the record: no false record-write blame")
+        self.assertEqual(self.be.pop_auth_refusal(s.sid), "", "no refusal sentence: the pick was not refused")
+
+    def test_a_refused_record_write_never_moves_the_machine_seed_on_any_road(self):
+        # cluster C (round 3 of the review, 2026-09-20; its regression-2 with kernel-1, both refuters): the machine seed
+        # (write_sdk_default) is written at set_auth's single `return True`, after the per-session record write, so a
+        # refused write never moves the remembered account and the next session born inherits nothing from a refused
+        # pick. NOT snapshot-and-restore. Red on the round-2 head 676054c2f, where the seed moved before the record write.
+        real_write = sb.write_reg
+
+        def refused_for(sid_):
+            def refused(state_dir, sid, reg):
+                if sid == sid_:
+                    raise OSError(28, "No space left on device", str(sb._reg_path(state_dir, sid)))
+                return real_write(state_dir, sid, reg)
+            return refused
+        # (a) START WITH NO SEED (absence must be preserved), refuse a key pick, then a spawn inherits nothing
+        web = self._sess("web", auth="login", launched="login")
+        web.auth_live = "login"
+        self._queue_loop(web)
+        self.assertEqual(sb.read_sdk_defaults(Path(self.d)), {}, "no seed to start")
+        with mock.patch.object(sb, "write_reg", refused_for(web.sid)):
+            self.assertFalse(self.be.set_auth_guarded(web.sid, "key"))
+        self.assertEqual(sb.read_sdk_defaults(Path(self.d)), {}, "the refused pick left the seed ABSENT, not moved to key")
+        u = self.be.spawn("u", "/tmp")
+        self.assertEqual(sb.read_reg(self.be.state_dir, u).get("auth", ""), "",
+                         "a session spawned after the refusal inherits no pick from the refused write")
+        # (b) START WITH A SEED (login), a refused pick leaves it untouched
+        sb.write_sdk_default(Path(self.d), auth="login", authLogin="")
+        before = sb.read_sdk_defaults(Path(self.d))
+        api = self._sess("api", auth="login", launched="login")
+        api.auth_live = "login"
+        self._queue_loop(api)
+        with mock.patch.object(sb, "write_reg", refused_for(api.sid)):
+            self.assertFalse(self.be.set_auth_guarded(api.sid, "key"))
+        self.assertEqual(sb.read_sdk_defaults(Path(self.d)), before, "the refused per-session pick left the seed on login")
+        # (c) THE WALK ROAD: a follower whose step raises leaves the seed
+        tests = self._sess("tests", launched="login")
+        tests.auth_live = "login"
+        self._queue_loop(tests)
+        with mock.patch.object(sb, "write_reg", refused_for(tests.sid)):
+            out = self.be.set_auth_followers("key")
+        self.assertIn("tests", out["failed"], "the walk's follower failed on the refused write")
+        self.assertEqual(sb.read_sdk_defaults(Path(self.d)), before, "the walk's refused follower did not move the seed")
+        # (d) THE DORMANT ROAD
+        self.n += 1
+        dsid = "11111111-2222-3333-4444-%012d" % self.n
+        sb.write_reg(Path(self.d), dsid, {"sid": dsid, "name": "docs", "cwd": self.d, "alive": False, "lastSid": dsid, "auth": "login"})
+        with mock.patch.object(sb, "write_reg", refused_for(dsid)):
+            self.assertFalse(self.be.set_auth_guarded(dsid, "key"))
+        self.assertEqual(sb.read_sdk_defaults(Path(self.d)), before, "the dormant refused write did not move the seed")
 
     def test_set_auth_followers_moves_the_followers_and_skips_the_picked(self):
         web = self._sess("web", launched="login")
@@ -2656,15 +2878,15 @@ class BackendHelpers(unittest.TestCase):
         # (_launch_shape) inside the guarded step, so a raise there is the guard's to contain (_follow_default_guarded: the
         # pending pair restored to what stood, the mirror retried, one row naming the pick's next deciding event) and the
         # init handler's tail still runs. Round 5 pinned that for the served branch's mirror; this pins it for the new read:
-        # the pending stands for the next pick, nothing is asked, nothing is closed. A REQUIREMENT PIN, not a
-        # characterisation (round 2 of the billing verb's review, 2026-09-20; its correctness-1 and the refuted extra6-1,
-        # both refuters of the latter): the read has a production road. The settings read decodes the operator's Claude Code
-        # settings file as UTF-8 inside credentials._read_settings, whose guards convert OSError and json's ValueError to
-        # CredentialError and let UnicodeDecodeError through, so a settings file that is not UTF-8 (a torn rewrite of one
-        # holding a non-ASCII byte included) raises out of _launch_shape with nothing patched, through key_state and
-        # _helper_source_read, which catch CredentialError alone; the login records' read catches its own faults
-        # (OSError, ValueError). The OSError injected here stands in for that class at the same site: the row formats the
-        # exception's class name, which is what the assertion below pins
+        # the pending stands for the next pick, nothing is asked, nothing is closed. A CHARACTERISATION PIN as of round 3
+        # of the review (2026-09-20; its extra7-1, ruled high, both refuters, relabelled from the round-2 requirement pin
+        # this was): the _launch_shape read has NO production raise road at this head. It reads the operator's settings
+        # through key_state and _helper_source_read (which catch credentials.CredentialError) and the login records' read
+        # (which catches OSError and ValueError); round 3 closed the last escape, a non-UTF-8 settings file, at the reader
+        # (credentials._read_settings now raises CredentialError on UnicodeDecodeError too, caught here like the rest), so
+        # be._launch_shape returns a shape rather than raising. The OSError injected here is a synthetic fault with no
+        # production road; what it pins is the guard's containment of any such fault a caller could reach the closer with,
+        # and the row's format of the exception's class name, which is what the assertion below pins
         a = self._stored_login("Alpha")
         leased = self._box_with_nothing_to_fall_to()
         s, q = self._picked_survivor_on("web", a, a, leased)
@@ -3306,7 +3528,19 @@ class BackendHelpers(unittest.TestCase):
         self.assertIs(self.be.record_reads("11111111-2222-3333-4444-999999999999"), False, "no record at all: the absent file")
 
     # ---- round 2 of the billing verb's review (2026-09-20, the reviewer's 02:25Z rulings): the walk's hooks inside its
-    # containment. Red on the round-2 head 676054c2f (the raise escaped set_auth_followers)
+    # containment, the guarded door's entry clear and dormant road, the door's row on road "pick", and the unchanged
+    # branch's memo. THE RED-BEFORE RECORD, RE-DERIVED PER TEST BY RUNNING (round 3 of the review, 2026-09-20; its
+    # tests-1, both refuters): this file copied into a detached checkout of the round-2 head 676054c2f and the four run
+    # there (3 failed, 1 passed). Only test_a_raising_after_write_or_park_hook... reds for the stated reason, and as an
+    # ERROR BEFORE ITS ASSERTION, not an assertion-red: it errors at the CALL UNDER TEST (set_auth_followers, the OSError
+    # of the raising after_write escaping the walk, whose hooks ran outside the containment at that head). The two
+    # set_auth_guarded tests (test_set_auth_guarded_clears_the_sids_slot... and test_the_doors_row_follows...) are also
+    # error-before-assertion there, an EMPTY red about their subject: AttributeError, since set_auth_guarded lands with
+    # the round-2 fix and does not exist at 676054c2f; their real red is by MUTATION at the head (removing the entry
+    # slot clear reds the first, "a sentence nobody read" != ""; the follower wording on both row expressions reds the
+    # second). test_set_auths_unchanged_branch... is GREEN there (the unchanged branch predates the door), a
+    # CHARACTERISATION PIN whose discriminating mutation is clearing _relaunch_bounded in that branch, which reds it at
+    # the assertEqual below (tests/test_billing_route.py:3676: ('', False, False, True) != ('', False, True, True)).
 
     def test_a_raising_after_write_or_park_hook_never_aborts_the_walk_and_each_follower_keeps_its_true_outcome(self):
         # CHARACTERISATION PIN at this commit (the injector census, 2026-09-20): the kernel's hooks had ONE raise road on the

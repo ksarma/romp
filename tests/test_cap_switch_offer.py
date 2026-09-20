@@ -5,9 +5,9 @@ _cap_switch_offer mints only when every leg holds: a plain retryable API error (
 carry their own remedies), a login-account window at its cap with a readable reset ahead, THIS
 session billing the login, and a key on hand to offer. Self-expires with the window. The pick's one
 path is the setAuth route a gear billing pick takes — pinned by census below. Synthetic fixtures."""
+import ast
 import json
 import os
-import re
 import tempfile
 import time
 import unittest
@@ -70,23 +70,71 @@ class CapSwitchOffer(unittest.TestCase):
         self.assertIsNone(km._cap_switch_offer(SID, ERR))
 
     def test_no_path_flips_billing_without_the_explicit_pick_both_directions(self):
-        # CENSUS PIN: the ONLY set_auth call sites in the kernel are the setAuth route's helper and
-        # the parked-op replay of that same user pick: no auto path, either direction. A new caller
-        # lands here first. POST /billing (`romp billing`, 2026-09-18) is the user's explicit pick from
-        # the shell and takes the helper too, its --now road with the FIFO gate off (park=False), so the
-        # census holds at two; the helper has answered a verdict by name since then (the route reads
-        # "parked" apart from "ok"), and the replay reads the backend's refusal off the same call.
-        src = Path(os.path.join(os.path.dirname(HERE), "kernel", "kernel.py")).read_text()
-        sites = [l.strip() for l in src.splitlines() if re.search(r"\bbe\.set_auth\(", l)]
-        self.assertEqual(len(sites), 2, "exactly the helper + the parked replay: %r" % sites)
-        self.assertTrue(any('return "ok" if be.set_auth(sid, value) else "refused"' in l for l in sites))
-        self.assertTrue(any("be.set_auth(sid, op[1])" in l for l in sites))
-        self.assertIn("_set_auth_or_park_verdict(be, sid, pick, park=False)", src,
-                      "the verb's --now pick passes the same door with the gate off, never a raw call of its own")
-        self.assertIn('elif t == "setAuth" and lg.parse_pick(msg.get("value"))[0]:', src,
+        # CENSUS PIN, ON THE PROPERTY (round 3 of the review, 2026-09-20; tests-2, regression-3 and kernel-3, all
+        # refuters): a new kernel call site that reaches SdkBackend.set_auth by ANY spelling must red this pin. The
+        # billing write flips which account a session bills; the pin exists so no AUTOMATIC path can (the user's
+        # binding ruling, 2026-08-30), and a new caller lands here first. A regex on `be.set_auth(` was blind three
+        # ways at once: the delta's guarded door is a getattr, set_auth_followers' door is a getattr, and a
+        # differently named receiver escapes the literal `be`. So the mechanism is an ast walk of both kernel files.
+        ROOT = os.path.dirname(HERE)
+        sdk_src = Path(os.path.join(ROOT, "kernel", "sdk_backend.py")).read_text()
+        ker_src = Path(os.path.join(ROOT, "kernel", "kernel.py")).read_text()
+        # (1) the SdkBackend methods that REACH set_auth: set_auth itself, and transitively any method whose body
+        # calls one already in the set. set_auth_guarded and set_auth_followers each run self.set_auth in their step;
+        # no other method reaches it. Derived, not listed, so a new reaching method both grows this set and, being a
+        # name the kernel census below looks for, cannot be called from kernel.py without redding.
+        cls = next(n for n in ast.walk(ast.parse(sdk_src)) if isinstance(n, ast.ClassDef) and n.name == "SdkBackend")
+        methods = {m.name: m for m in cls.body if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef))}
+        reach = {"set_auth"}
+        changed = True
+        while changed:
+            changed = False
+            for name, m in methods.items():
+                if name in reach:
+                    continue
+                if any(isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute) and c.func.attr in reach
+                       for c in ast.walk(m)):
+                    reach.add(name)
+                    changed = True
+        self.assertEqual(reach, {"set_auth", "set_auth_guarded", "set_auth_followers"},
+                         "set_auth and the two entry points whose step runs it; a new reaching backend method reds here")
+        # (2) every kernel.py call site reaching one of those names by ANY spelling: a direct attribute call on ANY
+        # receiver (be.set_auth(, or a differently named receiver), and a getattr(x, "<name>", ...) door (the guarded
+        # door and the walk door are both getattrs; door()/walk() is a call on the local the getattr returned). A
+        # lambda-wrapped call is walked too. Recorded as (enclosing def, kind), so a docstring or comment mention (not
+        # a Call) never counts and a bare line-shift never moves the pin. A new site anywhere adds a tuple and reds.
+        sites, stack = [], []
+
+        class V(ast.NodeVisitor):
+            def visit_FunctionDef(self, n):
+                stack.append(n.name)
+                self.generic_visit(n)
+                stack.pop()
+            visit_AsyncFunctionDef = visit_FunctionDef
+
+            def visit_Call(self, n):
+                f = n.func
+                where = stack[-1] if stack else "<module>"
+                if isinstance(f, ast.Attribute) and f.attr in reach:
+                    sites.append((where, "call:" + f.attr))
+                if (isinstance(f, ast.Name) and f.id == "getattr" and len(n.args) >= 2
+                        and isinstance(n.args[1], ast.Constant) and n.args[1].value in reach):
+                    sites.append((where, "getattr:" + n.args[1].value))
+                self.generic_visit(n)
+
+        V().visit(ast.parse(ker_src))
+        self.assertEqual(sorted(sites), [
+            ("_apply_pending_ops", "call:set_auth"),               # the parked-op drain replays the user's OWN pick; its refusal is read
+            ("_billing_request", "getattr:set_auth_followers"),    # the --all-following walk door (the user's explicit verb)
+            ("_set_auth_or_park_verdict", "call:set_auth"),        # the fallback for a backend without the guarded door (a fake, the Codex backend)
+            ("_set_auth_or_park_verdict", "getattr:set_auth_guarded"),  # the guarded door every explicit per-session pick takes
+        ], "the ONLY kernel roads to set_auth are the explicit-pick helper (two spellings) and the parked replay: %r" % sorted(sites))
+        # the verb's --now pick takes the same helper with the FIFO gate off, never a raw call of its own
+        self.assertIn("_set_auth_or_park_verdict(be, sid, pick, park=False)", ker_src)
+        self.assertIn('elif t == "setAuth" and lg.parse_pick(msg.get("value"))[0]:', ker_src,
                       "the route is a user gesture, and the ONLY door (T346: 'login' | 'key' | 'login:<id>')")
-        self.assertNotIn("set_auth", src[src.index("def _cap_switch_offer"):
-                                         src.index("def _judge_limit_view")],
+        self.assertNotIn("set_auth", ker_src[ker_src.index("def _cap_switch_offer"):
+                                             ker_src.index("def _judge_limit_view")],
                          "the offer itself never switches anything")
 
 

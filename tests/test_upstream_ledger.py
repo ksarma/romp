@@ -1116,6 +1116,46 @@ class WhereDerivedFromTheDiff(unittest.TestCase):
             rc = L.main(["--root", str(d), "where-check", "x-thing", base, "--head", "WORKTREE"])
         self.assertEqual((rc, out.getvalue().startswith("ok: the where: line names every file and definition")), (0, True))
 
+    def _deco_repo(self):
+        """A file whose only changes are a decorator line, a decorated method beside a body change, and a class NESTED
+        under a module-level try: the four shapes the one-level, decorator-blind walk derived a bare path for (round 3
+        of the review, 2026-09-20; correctness-3 and extra8-2, both refuters). `Base1`/`Base2` are never defined; the
+        derivation parses, it does not run."""
+        d = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, d)
+        _git(d, "init", "-q", "-b", "main")
+        (d / "kernel").mkdir()
+        (d / "kernel" / "deco.py").write_text(
+            "import functools\n\n\n@functools.cache\ndef p():\n    return 1\n\n\ndef q():\n    return 2\n\n\n"
+            "try:\n    class C(Base1):\n        FLAG = 1\n\n        def r(self):\n            return 3\nexcept ImportError:\n    C = None\n",
+            encoding="utf-8")
+        _git(d, "add", "-A")
+        _git(d, "commit", "-q", "-m", "base", date="2026-01-10T12:00:00+00:00")
+        base = _git(d, "rev-parse", "HEAD").stdout.strip()
+        src = (d / "kernel" / "deco.py").read_text(encoding="utf-8")
+        src = src.replace("    return 1\n", "    return 10\n")               # MIXED: p's body changes while q gains a decorator
+        src = src.replace("def q():\n", "@functools.cache\ndef q():\n")      # decorator-only: the added line names q
+        src = src.replace("    class C(Base1):\n", "    class C(Base2):\n")   # class-header: a base-class change names the class
+        src = src.replace("        FLAG = 1\n", "        FLAG = 2\n")         # a class-level assignment under a module-level try
+        src = src.replace("            return 3\n", "            return 30\n")  # a method's body under that class-under-try
+        (d / "kernel" / "deco.py").write_text(src, encoding="utf-8")
+        return d, base
+
+    def test_a_decorator_a_mixed_change_a_class_under_try_and_a_class_header_are_each_named(self):
+        d, base = self._deco_repo()
+        t = L.touched(d, base, None)
+        self.assertEqual(t, {"kernel/deco.py": ["C", "FLAG", "p", "q", "r"]},
+                         "q by its added decorator line, p by its body (the mixed change), FLAG and r under the try, C by its header")
+        self.assertEqual(L.derive_where(t), "kernel/deco.py (C, FLAG, p, q, r)")
+        _git(d, "add", "-A")
+        _git(d, "commit", "-q", "-m", "change", date="2026-01-11T12:00:00+00:00")
+        self.assertEqual(L.touched(d, base, "HEAD"), t, "the commit derives what its tree derived")
+        # each of the four shapes reds where-check when its name is the one the line omits
+        for omit in ("q", "p", "r", "C"):
+            keep = [n for n in ("C", "FLAG", "p", "q", "r") if n != omit]
+            self.assertEqual(L.where_missing("kernel/deco.py (%s), tests/test_deco.py" % ", ".join(keep), t),
+                             ["kernel/deco.py: %s" % omit], "the omitted %s is reported" % omit)
+
 
 class AddedDate(unittest.TestCase):
     """`added` is the author date of the first commit whose diff introduced the row; a row first

@@ -18757,14 +18757,27 @@ class SdkBackend:
         bubble retires against. On a dormant session nothing landed, so a typed "/model X" sat as an
         unconfirmed dashed bubble for its TTL and then vanished with no trace — though the pick had
         applied to the reg. `fsid` is the live session's resume target, or the reg's last known one for
-        a dormant session."""
+        a dormant session.
+
+        The DURABLE twin's write is BEST-EFFORT (round 3 of the review, 2026-09-20; its correctness-1 and extra6-1,
+        as an addition to the guard-scope fix, not a substitute): the acknowledgment is not the pick, so a chat record
+        that cannot be written (a full or read-only state directory) never fails a pick whose own record already wrote.
+        The live chip stands and one problem row names the miss (the authoritative-sources rule: loud, not silent), so
+        this never raises into a caller whose pick applied. set_auth_guarded's containment around this call is the
+        belt-and-suspenders for a fault the in-memory stash could raise."""
         t = int(time.time())
         uid = "cmd:%d:%s" % (t, command.lstrip("/"))
         self._stash_live(sid, uid, {
             "type": "user", "uuid": uid, "session_id": sid, "fsid": fsid, "parentUuid": None,
             "t": t, "author": "human", "command": command, "_echo_text": disp,
             "message": {"role": "user", "content": [{"type": "text", "text": disp}]}})
-        append_cmd_gesture(self.state_dir, sid, disp, t=t)
+        try:
+            append_cmd_gesture(self.state_dir, sid, disp, t=t)
+        except Exception as e:
+            name = self.sessions[sid].name if sid in self.sessions else str(sid)[:8]
+            self._log("%s (%s): the pick applied and its record wrote, but the chat acknowledgement could not be recorded "
+                      "(%s: %s); it stands and the chat shows it from the next message"
+                      % (command.lstrip("/"), name, type(e).__name__, _mask_ids(e)), problem=True)
         self._wake_push_live(sid)
 
     def set_fast(self, sid: str, value: str) -> bool:
@@ -19329,18 +19342,10 @@ class SdkBackend:
             return False
         s = self.sessions.get(sid)
         value = self.login_display(login_id) if login_id else side   # the stored login's display label (T346), else the side word; `value` is spent
-        # the seed for the NEXT new session, like model/effort: every pick, the unchanged ones below included (review
-        # round 1); the guards decide only whether THIS session reconnects. Until the user sets the machine's default
-        # EXPLICITLY (set_auth_default, the Billing flyout's Default group, T380): from then on a per-session pick is
-        # about that session and moves no default. This write carries no authExplicit: the launch (_explicit_default)
-        # and the init check (_declared_auth) follow the file's auth only beside the flag, while the spawn's seed and
-        # the new-session picker's preselection (_auth_avail) read the flag-less value as the remembered pick, as
-        # before (whether they should is a change of which account new sessions bill, split out of the follower fix
-        # into its own PR: the reviewer's round 2, 2026-09-19, its fresh-5). authLogin rides beside it: the stored
-        # login a login pick names, "" for the machine's own (written as "" so a plain pick clears an earlier stored
-        # one).
-        if not read_sdk_defaults(self.state_dir).get("authExplicit"):
-            write_sdk_default(self.state_dir, auth=side, authLogin=login_id)
+        # The machine seed (write_sdk_default) is written at the END, at the single `return True` every accepted road
+        # reaches, so a refused per-session record write never moves it (round 3 of the review, 2026-09-20; its
+        # regression-2 with kernel-1). It USED to run here, before the record write, so a refused write still moved the
+        # remembered account and the next session born inherited a pick the user's own session was told did not apply.
         # the pick, the side the connect in progress launches, the side the running process launched and the side a
         # reconnect is applying, each as (side, stored login id): "" for the machine's own login and for the key
         pick = (side, login_id)
@@ -19522,8 +19527,20 @@ class SdkBackend:
             # Acknowledge the pick in the chat exactly as set_effort does: the reconnect writes no
             # transcript record, so without a synthesized chip an idle session's auth change shows
             # nothing at all. One chip, every path; its word is the stored login's display label (T346),
-            # else the side word.
+            # else the side word. The guarded door (set_auth_guarded) passes chip=False and fires the chip
+            # OUTSIDE the guard, so a chat write that cannot land never rolls back a pick whose record wrote.
             self._ack_cmd_chip(sid, "/auth", "/auth " + value, s.resume_sid)
+        # THE MACHINE SEED, AT THE ONE POINT EVERY ACCEPTED ROAD REACHES (round 3 of the review, 2026-09-20; its
+        # regression-2 with kernel-1): the seed for the NEXT new session, like model/effort, written after the per-session
+        # record write so a refused write never moves it. Every accepted road (never-landed, already-applying, unchanged,
+        # request, dormant) converges here; any raise before this skips the seed. NOT snapshot-and-restore: write_sdk_default
+        # skips None so it cannot restore an ABSENT key, and a write-back can clobber a concurrent session's landed pick, the
+        # hazard _TOKENED_DEFAULTS's own comment documents. Until the user sets the machine's default EXPLICITLY (set_auth_default,
+        # T380) a per-session pick moves no default; this write carries no authExplicit, so the launch and the init check follow
+        # the file's auth only beside the flag while the spawn's seed and the new-session picker read the flag-less value as the
+        # remembered pick (whether they should is fresh-5's own PR, the reviewer's round 2, 2026-09-19). authLogin rides beside it.
+        if not read_sdk_defaults(self.state_dir).get("authExplicit"):
+            write_sdk_default(self.state_dir, auth=side, authLogin=login_id)
         return True
 
     def set_auth_followers(self, value: str, park=None, after_write=None) -> "dict | None":
@@ -19796,7 +19813,18 @@ class SdkBackend:
         sentences. A dormant session (no object) has nothing to snapshot, and set_auth's record write is its whole change:
         wrapped as follow_default_auth's dormant road is, the record untouched by the failure. Not the walk's door:
         set_auth_followers runs set_auth inside its own guarded step, where a raise means `failed` and a False `unwritten`,
-        two different sentences to the user, and nothing here changes that. Never raises for a fault in the step."""
+        two different sentences to the user, and nothing here changes that. Never raises for a fault in the step.
+
+        THE GUARDED STEP ENDS AT THE MIRROR (round 3 of the review, 2026-09-20; its correctness-1 with extra6-1, both
+        refuters, one defect from both ends). The step runs set_auth with chip=False, so the only statement that could raise
+        after s._mirror_auth (append_cmd_gesture's durable write inside the /auth chip) is no longer inside the guard: a
+        chat acknowledgement that cannot write never rolls a pick whose record wrote back and never answers 409 blaming a
+        write that succeeded, and no reconnect callback is left queued from a rolled-back state. The chip fires HERE, after
+        a True return, outside the guard, with its own containment and a problem row; _ack_cmd_chip's durable write is
+        best-effort besides. Everything else after s._mirror_auth in set_auth is post-commit and cannot raise:
+        _note_reconnect_ask is memory-only, request_reconnect goes through _call_on_loop (a queued callback, never a raise),
+        and the log line writes through _backend_log/_exit_log (best-effort). The rule is what keeps a statement someone adds
+        later out of the rollback, not the chip move alone."""
         self._auth_refusals.pop(str(sid), None)   # a sentence an earlier call left unread never answers for this one
         side, login_id = _logins.parse_pick(value)
         label = (self.login_display(login_id) if login_id else side) or value
@@ -19811,7 +19839,7 @@ class SdkBackend:
 
         def step():
             try:
-                out.append(self.set_auth(sid, value))
+                out.append(self.set_auth(sid, value, chip=False))   # the chip is post-commit, fired below outside the guard
             except Exception as e:
                 err.append(e)   # the class for the sentence; the guard files the row and restores the session
                 raise
@@ -19819,7 +19847,17 @@ class SdkBackend:
                                           head="auth (%s): the pick %s was asked of this session, but its step failed" % (s.name, label))
         if not ok:
             return self._refuse_pick_write(sid, s.name, label, err[0] if err else RuntimeError("the step failed"), row=False)
-        return bool(out and out[0])
+        applied = bool(out and out[0])
+        if applied:
+            # THE /auth CHIP IS POST-COMMIT: fired after the pick's record wrote, outside the guard, so a chat write that
+            # cannot land never undoes the pick. _ack_cmd_chip's durable write is best-effort and files its own row; this
+            # containment is the belt-and-suspenders for a fault the in-memory stash could raise (round 3, correctness-1).
+            try:
+                self._ack_cmd_chip(sid, "/auth", "/auth " + label, s.resume_sid)
+            except Exception as e:
+                self._log("auth (%s): the pick %s applied and its record wrote, but the chat acknowledgement could not be "
+                          "posted (%s: %s); the pick stands" % (s.name, label, type(e).__name__, _mask_ids(e)), problem=True)
+        return applied
 
     def _refuse_pick_write(self, sid: str, name: str, label: str, e: BaseException, row: bool) -> bool:
         """set_auth_guarded's refusal (round 2 of the billing verb's review, 2026-09-20; its kernel-1), the twin of
@@ -20000,7 +20038,7 @@ class SdkBackend:
         if waiting:
             return "queued"
         # a quiet session whose asked relaunch is bounded waits for its spawn slot first, with the CLI still serving (round 1
-        # of the reviewer's review: the arm draws the slot, _arm_reconnect_if_quiet); "now" promised the moment it delays
+        # of the reviewer's review, 2026-09-18: the arm draws the slot, _arm_reconnect_if_quiet); "now" promised the moment it delays
         return "staggered" if self.auth_relaunch_staggered(sid) else "now"
 
     def auth_relaunch_staggered(self, sid: str) -> bool:
@@ -20199,10 +20237,27 @@ class SdkBackend:
         session as the pick found it, the pick pair included, and the row's subject and event follow the restored pair: a
         picked session keeps its own pick until the next pick, a follower keeps following the default until the next
         default write. Until then those roads called set_auth bare, and a refused mirror raised out of the route with the
-        live object on the new pick and the record on the old one."""
+        live object on the new pick and the record on the old one.
+
+        THE GUARDED STEP ENDS AT THE MIRROR (round 3 of the review, 2026-09-20; its correctness-1 with extra6-1, one defect
+        from both ends). What the step covers stops at s._mirror_auth; every statement after it in set_auth is post-commit
+        and set_auth_guarded runs it OUTSIDE this guard (the /auth chip, whose durable write is the one that could raise,
+        fired after a True return with its own containment; request_reconnect through _call_on_loop and the log line cannot
+        raise). So a chat write that cannot land never rolls a pick whose record wrote back, never answers 409 for a write
+        that succeeded, and leaves no reconnect callback queued from a rolled-back state. apiKeyAuth rides the snapshot
+        (before_apikey, derived from the still-running CLI's report with no I/O) and the step's retry mirror, since set_auth
+        clears it to None for the reconnect it asks and a rollback must restore the report that still describes the process
+        (refuter 1: it was left out of the pair before). The rule is what keeps a statement someone adds after the mirror
+        out of the rollback, not any one statement's move."""
         with s._hold_lock:
             before = (s._auth_pending_target(), bool(getattr(s, "_relaunch_bounded", False)),
                       (getattr(s, "auth", None), getattr(s, "auth_login", "") or ""), bool(getattr(s, "_landing_ask_bounded", False)))
+            # apiKeyAuth for the snapshot, derived from the still-running CLI's report with NO I/O: auth_live is the report
+            # ("login"/"key"/""), and "" is no report, which the reg carries as None (the live_sessions row's own mapping).
+            # set_auth's step clears apiKeyAuth to None for the reconnect it asked; a rollback restores the report that
+            # still describes the running process (round 3, extra6-1: apiKeyAuth was cleared out of step with the pair).
+            _report = getattr(s, "auth_live", "") or ""
+            before_apikey = (_report == "key") if _report in ("login", "key") else None
         try:
             if step is not None:
                 step()                                     # the picked closer (round 5) on the init road; the verb's walk step
@@ -20223,7 +20278,7 @@ class SdkBackend:
                     standing = s._auth_pending
                 try:
                     if step is not None:
-                        s._mirror_auth()            # the pair the step may have mirrored goes back with the flag
+                        s._mirror_auth(apiKeyAuth=before_apikey)   # the pair AND apiKeyAuth go back: the report the step's clear rolled off
                     else:
                         s._mirror_auth_pending()
                 except Exception:

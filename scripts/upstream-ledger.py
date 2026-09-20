@@ -127,14 +127,30 @@ def deleted_lines(root, base, head, path):
 
 
 def names_by_line(source):
-    """Line -> the name a `where:` line owes for it: a module-level def, a method (by its bare name, as the ledger's
-    lines have always named them), or the target of a module-level or class-level assignment; a line in no such
-    statement (imports, module docstrings, bare expressions) owes nothing. A nested def belongs to the def it lives in:
-    a closure is not named apart from its function."""
+    """Line -> the name a `where:` line owes for it: a def, a method (by its bare name, as the ledger's lines have always
+    named them), the target of a module-level or class-level assignment, or a class (by its own name, for its header and
+    decorators); a line in no such statement (imports, module docstrings, bare expressions) owes nothing. A nested def
+    belongs to the def it lives in: a closure is not named apart from its function.
+
+    The walk RECURSES through the compound statements a definition can nest under (If/Try/With/For/While and class
+    bodies), not just the module's top level, so a def under a module-level `try` or `if` and a class member are named
+    (2026-09-20, the lenses over round 2's commit of fork PR #813; its correctness-3 and extra8-2, both refuters): the
+    old walk read one level and a change confined to such a definition derived a bare path, where-check then printing ok
+    for a `where:` line that named none of it. A definition's owned span starts at the FIRST of its decorator lines
+    (min decorator lineno), so a change confined to a decorator line names the def it decorates. A CLASS owns its header
+    and decorators (its own lines, down to its first body statement), so a base-class change or a class decorator names
+    the class and a class removed whole is named through its header; each member then owns its own lines (own() uses
+    setdefault, so the class header claimed only the lines above the body). A class IS a definition by the usage block's
+    words, so the success line and the usage block keep "every ... definition"; the alternative (dropping that phrase)
+    was declined here (round 3 of the review, 2026-09-20; its correctness-3/extra8-2 adjacent-gap ruling)."""
     owed = {}
 
-    def own(node, name):
-        for n in range(node.lineno, getattr(node, "end_lineno", node.lineno) + 1):
+    def start(node):
+        return min([node.lineno] + [d.lineno for d in getattr(node, "decorator_list", None) or []])
+
+    def own(node, name, end=None):
+        last = getattr(node, "end_lineno", node.lineno) if end is None else end
+        for n in range(start(node), last + 1):
             owed.setdefault(n, name)
 
     def targets(node):
@@ -145,19 +161,25 @@ def names_by_line(source):
                     names.append(leaf.id)
         return names
 
-    for node in ast.parse(source).body:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            own(node, node.name)
-        elif isinstance(node, ast.ClassDef):
-            for sub in node.body:
-                if isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    own(sub, sub.name)
-                elif isinstance(sub, (ast.Assign, ast.AnnAssign)):
-                    for name in targets(sub):
-                        own(sub, name)
-        elif isinstance(node, (ast.Assign, ast.AnnAssign)):
-            for name in targets(node):
-                own(node, name)
+    def walk(body):
+        for node in body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                own(node, node.name)                    # the whole def, a closure inside it folded in (setdefault)
+            elif isinstance(node, ast.ClassDef):
+                header_end = start(node.body[0]) - 1 if node.body else getattr(node, "end_lineno", node.lineno)
+                own(node, node.name, end=max(header_end, node.lineno))   # the class's own header and decorators
+                walk(node.body)                         # then each member owns its own lines
+            elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+                for name in targets(node):
+                    own(node, name)
+            elif isinstance(node, (ast.If, ast.Try, ast.With, ast.AsyncWith, ast.For, ast.AsyncFor, ast.While)):
+                walk(getattr(node, "body", []) or [])
+                walk(getattr(node, "orelse", []) or [])
+                walk(getattr(node, "finalbody", []) or [])
+                for h in getattr(node, "handlers", []) or []:
+                    walk(getattr(h, "body", []) or [])
+
+    walk(ast.parse(source).body)
     return owed
 
 

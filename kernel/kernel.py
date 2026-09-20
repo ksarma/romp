@@ -23919,10 +23919,19 @@ def _drive(msg, client):
         # like /effort; mid-compaction → parked in the same FIFO. LOUD on refusal (fail loudly): Codex
         # sessions and a keyless manager can't apply it, and a silent swallow leaves a dead control.
         if not _set_auth_or_park(be, sid, str(msg["value"])):
-            # the backend names the reason it refused (no login signed in / no apiKeyHelper / a managed
-            # helper: auth_unavailable_why) when it had one; the generic text covers the rest (a Codex
-            # session, an unknown sid)
-            why = str(getattr(be, "auth_unavailable_why", lambda v: "")(str(msg["value"])) or "")
+            # BUILD `why` AS _auth_refusal DOES (round 3 of the review, 2026-09-20; its correctness-2, regression-1 and
+            # kernel-2, both refuters): the box's reason for the PARSED pick first (auth_unavailable_why, the one Billing
+            # vocabulary; the arm used to pass the whole value as `side`, so a stored-login pick got the generic text),
+            # then the sentence the guarded door filed for THIS refusal (pop_auth_refusal, read by sid). The arm now
+            # takes the guarded door (_set_auth_or_park_verdict), so a refused record write returns False where it used
+            # to raise, and the door's own sentence would otherwise sit unread while the generic three-cause text, false
+            # for that fault, showed. NOT _auth_refusal itself: its last fallback ("record would not read") never lets
+            # the generic text answer a Codex or unknown-sid backend, which has neither reader. Mirrors _auth_refusal's
+            # order (auth_unavailable_why, then the slot) so the two surfaces do not drift; the two are mutually exclusive
+            # today. Not swept onto the machine-scope arm above, whose one-argument test fake would raise TypeError on
+            # the two-argument auth_unavailable_why call.
+            why = (str(getattr(be, "auth_unavailable_why", lambda *a: "")(*lg.parse_pick(str(msg["value"]))) or "")
+                   or str(getattr(be, "pop_auth_refusal", lambda s: "")(sid) or ""))
             client["send"](json.dumps({"type": "warn",
                                        "text": ("Couldn't switch the account this session bills: %s." % why) if why
                                        else "Couldn't switch the account this session bills — "
@@ -41211,7 +41220,7 @@ def _billing_request(b):
         # setAuth scope=machine arm, _reconnect_default_followers) runs the same ungated step at the base and is not gated
         # here. A follower's parked dashboard pick would fire over the walk's write at the next quiet cycle (round 2 of the
         # review): dropped PER FOLLOWER, right after that follower's write and before the next one's (the walk's second
-        # hook, that round's correctness-2: dropped after the whole walk, a drain cycle inside the walk fired a parked pick
+        # hook, round 1 of the review, 2026-09-19; its correctness-2: dropped after the whole walk, a drain cycle inside the walk fired a parked pick
         # over an earlier follower's write while the answer said none was superseded), with the count riding the answer
         def _park_moving(sid):
             if str(sid) not in _moving:
