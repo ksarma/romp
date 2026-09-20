@@ -1222,3 +1222,32 @@ test("the two roads' latches are independent: a remote stall does not move the l
     fm.conns.get(HOST).closed = true;
   });
 });
+
+// ── the fourth shape the served mirror does not read, an ACCEPTANCE (the maintainer's round 5, extra7-1) ───────────────────
+// Every remote frame passes the conn's receiver before the arms, and the receiver decodes the feed slot (a kernel too old to read
+// the caps term serves the feed as {type: "delta", slot: "feed"} patches), so such a patch reassembles into a {type: "feed"} frame
+// that enters the feed arm and RE-SEEDS Conn.feedHeld from the reassembled frame's gen: the patch's rest.gen (content no frame
+// recorder keeps), the receiver's feed base's gen with the rev reset, or nothing under restAll. The served mirror (held_pair,
+// tests/test_federated_dial_terms_served.py) reads no delta frame on the feed slot and holds the pair the deltas before it left,
+// so this is a divergence and not a refusal; the RECEIVER_BLIND rows feed-slotpatch-* hold these three readings, measured here. No
+// kernel in this repo sends the patch to a socket that announced caps=feedDelta, and none stamps a gen on that road.
+test("a delta slot:feed patch re-seeds the feed pair from the frame the receiver reassembles: rest.gen gives (rest.gen, 0), an empty rest the base's gen at rev 0, restAll with a rest carrying no gen clears it; the served mirror reads (G, 1) for all three", async () => {
+  const drive = async (patch: any) => {
+    let held: any = "unread";
+    await withManager(({ fm }) => {
+      fm.openRemote(HOST, true);
+      const ws = last(FakeWS.made);
+      ws.open();
+      ws.frame(stamped({ buildId: 2 }));
+      ws.frame(cycle(G, 0, 2));
+      assert.deepEqual(heldOf(fm), { gen: G, rev: 1 }, "the rig: the pair the deltas left, the mirror's reading for every case below");
+      ws.frame({ type: "delta", slot: "feed", base: 0, rev: 1, coll: {}, ...patch });
+      held = heldOf(fm);
+      fm.conns.get(HOST).closed = true;
+    });
+    return held;
+  };
+  assert.deepEqual(await drive({ rest: { gen: G2, now: 600, buildId: 9 } }), { gen: G2, rev: 0 }, "rest.gen: re-seeded under the patch's own gen, content no recorder keeps");
+  assert.deepEqual(await drive({ rest: { now: 600, buildId: 9 } }), { gen: G, rev: 0 }, "an empty rest: the receiver's feed base's gen, the rev reset");
+  assert.equal(await drive({ rest: { type: "feed", now: 600 }, restAll: true }), undefined, "restAll with a rest carrying no gen: the reassembled frame carries none, the pair cleared");
+});
