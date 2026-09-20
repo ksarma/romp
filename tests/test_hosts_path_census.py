@@ -1,15 +1,27 @@
 #!/usr/bin/env python3
-"""The census of every use of a path under `hosts/`, derived by ORIGIN over the three modules that mint one (round 7 of
-fork PR #814's review, 2026-09-20; the round-6 rulings' condition 2; the follow rules widened by BINDING FORM in the
-round-7 addendum, after the round's verifiers planted ten shapes and six were missed in silence).
+"""The census of every syscall on a path under `hosts/`, derived by ORIGIN over the three modules that mint one
+(kernel/host_transport.py, kernel/session_host.py, kernel/sdk_backend.py): a data-flow walk over their sources that
+seeds on the literal segment, follows the value through the binding forms it knows, and classes each syscall the value
+reaches as by-descriptor, by-path, mixed or exec-arg. Round 7 of fork PR #814's review (2026-09-20) and its addenda.
 
-WHY BY ORIGIN. Through round 6 the PR's record enumerated the residual (the reads under hosts/ that still take a path
-before any descriptor guard) with a line grep over kernel/sdk_backend.py, widened three times to the spellings each
-round's verifier had used. The round-6 verifiers planted eleven by-path readers under hosts/, every one assembled from a
-part whose value is `hosts`, and the published command found none of them; in the tree it also missed the binding of
-spawn.json's path in the very function it censused and the line that hands that path to the host process. A grep over
-spellings cannot carry a claim about paths. This census follows VALUES: it seeds on the literal segment and follows the
-value wherever the code carries it, so a reader is found by what it reads, not by how its line is spelled.
+THE JOB SINCE THE ROAD WAS CLOSED (the second and third addenda, 2026-09-20, on the reviewer's ruling that the kernel's
+residual reads under hosts/ take descriptors the way the spawn road does). The pin no longer tracks taint through the
+data model to publish a road and a provenance for every member; it holds that a CONSTRUCT DOES NOT EXIST: no code in
+the three files makes a by-path syscall on a hosts path except the sites `RESIDUAL` lists, each with its role and its
+reason. The roles: UNCONVERTED, the sites the classification left by path because each is a change of mechanism the
+ruling sends to its own PR (the connect to the published socket, a Unix socket connected by the path in its address;
+the two journal globs; sh.read_journal_dir's glob and the two reads that take the paths it yields); HELPER, the two
+directory helpers' path-taking syscalls before the spawn road's descent (condition 1's window, stated in
+write_spawn_spec); GUARD, the descent's own open of hosts/ by path with O_NOFOLLOW off the state root and the lstat
+that words its refusal, and host side the lstat of hosts/ before the bind; UNREACHABLE, the two dir_fd=None arms held
+so by the forwarding pin; HANDOFF, the spec path in the host's argv; HOST, the host process's own road under its
+constructor's and prelude's guards, and its open of the spec before them (the host-side item the queue keeps). A
+by-path terminal outside the list reds; a listed one that is gone or changed class reds; the converted reads are held
+by-descriptor (`CONVERTED`); and the unconverted set is asserted non-empty while such sites exist (the assertion flips
+to empty when the last is converted). What a silent miss costs now is a regression guard and nothing more: the road is
+closed by the code, pinned by execution in tests/test_host_transport.py (BackendHostRules, ReadDescent) and
+tests/test_session_host.py (PreludeRefusalRead), and this census guards that a NEW by-path read does not slip back in;
+a reader written in a form the walk drops would be missed by the guard, not admitted by the code.
 
 THE METHOD, in the order it runs.
   SEED. Every expression in the three files where the literal segment enters a path: a str or bytes constant equal to
@@ -57,41 +69,49 @@ THE METHOD, in the order it runs.
   the subprocess constructors; a `**` splat into one is taken as its path position. `by-descriptor`: a `dir_fd` keyword,
   or the first argument of fstat, fchmod, fdopen, scandir or write, carries `fd` taint, and a subprocess's stdin, stdout
   or stderr keyword too. `by-path`: a path position carries `path` or `text` taint and no descriptor does. `exec-arg`: a
-  subprocess's argv carries the path. And `escape`: a `path`-tainted value at a form the walk does not follow, reported
-  by file and line with the form named, counted, never dropped: a value the census cannot follow is a finding, not a
-  silence. The forms: a call the walk cannot resolve to a function of the three files, a pure conversion, a container
-  operation or a data sink (a logger, an exception's message, a file's `.write`); a method the walk does not know called
-  on a path-tainted receiver; a callable (a terminal's name, a function of the files, a lambda) handed as a VALUE into a
-  call outside the files beside a path-tainted argument (`map(open, paths)`, `sorted(paths, key=os.path.getmtime)`: the
-  callee applies it where the walk cannot see); a store with a name the walk cannot read (`setattr(o, name, p)`); and a
-  decorator the walk does not know on a function that holds or returns a path (the decorator rebinds the name to a value
-  the walk cannot follow). A `text`-tainted value at such a form is a message (that is what tells the two kinds apart at
+  subprocess's argv carries the path. `mixed`: one call reached by a path at one site and by a name under a descriptor
+  at another. And `escape`: a `path`-tainted value at one of the SIX forms the escape rule covers, reported by file and
+  line with the form named (a call the walk cannot resolve to a function of the three files, a pure conversion, a
+  container operation or a data sink; a method the walk does not know called on a path-tainted receiver; a callable
+  handed as a VALUE into a call outside the files beside a path-tainted argument, `map(open, paths)`; a store with a
+  name the walk cannot read, `setattr(o, name, p)`; a decorator the walk does not know on a function that holds or
+  returns a path; a dynamic attribute read on a receiver the walk cannot type while a path is stored by attribute name
+  on such a receiver). A `text`-tainted value at such a form is a message (that is what tells the two kinds apart at
   the use) and is not reported.
-  PIN. `ROADS` below is the published list: every terminal, carrier and mint at this head, keyed by file, enclosing
-  function, the operation, the argument's text and its ordinal in that function (never a line number, which main's
-  insertions move), with the mechanical class the census derived and, for the reader, the road it sits on and whether the
-  round's ruling counts it as residual. The test holds the derived set equal to it: a new terminal, a lost one, one whose
-  class changed, or a changed set of origins reds; the expected set is non-empty; and the escapes over the real tree are
-  `[]`, so a value the walk loses at any form above reds the census rather than thinning it. Run the module directly to
-  print the list with line numbers at the head it reads.
-  WHAT THE CENSUS CANNOT SEE is what it PRINTS: every escape, by file and line with the form named (the ESCAPES section
-  of the printer, the `escapes:` count of its summary line, and `test_no_use_escapes_the_walk`), derived from the code at
-  the head it reads and not from a list kept in prose; a follow rule the code outgrows shows up there as a member, never
-  as a silence. Two kinds lie outside the census by construction, and are the whole of what it cannot print: (1) a path
-  that reaches a syscall as an argument STRING of a subprocess is followed to the exec boundary and no further (the
-  `exec-arg` terminal; the host's side re-seeds its `spec_path` by declaration, above), so a syscall the child makes on
-  it is the child's census, not this one's; (2) a syscall made inside a C extension, or by code outside the three files
-  given a value this census did class (the wide pin holds no other product module builds such a path itself, and a
-  library given a path is the escape at the call). Everything else it does not follow is an escape at the form, with
-  three consequences the reader should hold: the walk is flow-insensitive within a function, so it reports a use on a
-  road a guard makes unreachable exactly as it reports a live one (the dir_fd=None arms of the readers are that shape;
-  `test_every_road_into_a_by_path_fallback_arm_passes_a_descriptor` holds, transitively over their in-file callers, that
-  every caller passes a dir_fd that is not None, which is the argument for "unreachable today", made by the census rather
-  than by a sentence); the seed rule is a definition, not a follow rule, so a hosts path that never passes through the
-  literal segment in these files (a segment spelled otherwise, a whole path read from a file or the environment) is
-  never tainted and is outside what the escapes can show, which is why the seed scan runs over every product module as
-  well; and a leaf name reassembled onto an untainted base after `.name` dropped the taint is a drop by rule (a bare
-  name cannot leave its directory), not an escape.
+  PIN. `RESIDUAL` below: every by-path, mixed and exec-arg terminal at this head, keyed by file, enclosing function,
+  the operation, the argument's text and its ordinal in that function (never a line number, which main's insertions
+  move), with its class, its role and its reason. `CONVERTED`: the read roads' terminals since the second addendum,
+  held by-descriptor. Run the module directly to print the derived table with line numbers at the head it reads
+  (`--residual` prints the pinned view for pasting).
+
+WHAT THE ESCAPE RULE COVERS, AND NO MORE. The walk prints an escape at the six forms named under CLASSIFY and at no
+other; over this tree that list is empty by pin (`test_no_use_escapes_the_walk`). A value the walk drops at any OTHER
+form is a silence, not an escape. The addendum's sentence that what the census cannot see is what it prints was false
+at the commit that made it (HISTORY, below), and this module makes no such promise: the follow rules above are what the
+walk follows, the six forms are what it prints, and everything else it does not follow it does not report. Two kinds
+lie outside the census by construction as well: a path that reaches a syscall as an argument STRING of a subprocess is
+followed to the exec boundary and no further (the `exec-arg` terminal; the host's side re-seeds its `spec_path` by
+declaration), and a syscall made inside a C extension or by code outside the three files given a value this census did
+class (the wide pin holds that no other product module builds such a path itself). The walk is flow-insensitive within
+a function, so it reports a use on a road a guard makes unreachable as it reports a live one (the dir_fd=None arms are
+that shape, listed UNREACHABLE and held so by `test_every_road_into_a_by_path_fallback_arm_passes_a_descriptor`); the
+seed rule is a definition, so a hosts path that never passes through the literal segment in these files is never
+tainted; and a leaf name reassembled onto an untainted base after `.name` dropped the taint is a drop by rule.
+
+HISTORY. Round 7 replaced a grep over spellings, which the round-6 verifiers' eleven planted readers had all evaded,
+with this walk. The round-7 addendum widened the follow rules by BINDING FORM after that round's verifiers planted ten
+shapes and six were missed in silence, and pinned twenty-seven plants found or printed. The second addendum's two
+verifiers planted twenty-four forms at the addendum's commit: three were printed as escapes and twenty-one were silent
+(a path passed by keyword to a known terminal; a called parameter's return; an attribute read through an untyped
+receiver's typed element; `getattr(self, "name")(...)` as a call target; a dict literal's key; a store through
+`self.__dict__[...]`; text-kind taint at an unfollowed form; and the data model's protocols: `__getattr__`,
+`__getitem__`, `__call__`, `__enter__`, `__get__`, `__fspath__`, `property(f)` in a class body, a constructor without
+`__init__`, an exception class's `__init__`, a tainted `cwd=` or `env=` at Popen, a subscript store into a call result).
+Their survey of the real tree found that none of the twenty-one forms carries a hosts path in the three files at that
+head, which is the evidence that the published list was right there and that closing the road was a bounded change.
+The one engine change since (the third addendum): the exception rule, which read a constructor's NAME against a regex,
+also reads a class's bases, since HostDirAbsent, a subclass of HostDirRefused, was printed as an escape at the second
+addendum's commit.
 """
 import ast
 import glob
@@ -135,7 +155,9 @@ YIELDS_PATHS = {"glob", "rglob", "iterdir", "os.scandir", "os.listdir"}
 # be read back later (then it is a STORE: the arguments' tags land on the receiver)? A member is a SINK only when the
 # answer is no on both counts: its return cannot carry the value (a bool, an int, a hash, a type, None) and it keeps no
 # argument (it compares, counts, closes, logs, writes out, or leaves the process). A call in none of the lists with a
-# path-tainted argument or receiver is an escape, never a silence. Moved by that question in the addendum: `setdefault`
+# path-tainted argument or receiver is printed as an escape when the walk cannot resolve it (the escape rule's first two
+# forms); a called PARAMETER is a sink by declaration and its return is dropped, one of the twenty-one silent forms the
+# second addendum's verifiers found (the module docstring's HISTORY). Moved by that question in the addendum: `setdefault`
 # from PURE to STORE_RETURN (it stores its default AND returns it); `put` and `put_nowait` from SINK to STORE (a queue is
 # read back by `.get`); `split`, `rsplit` and `splitlines` from SINK to PURE (they return pieces of the receiver, from
 # which a path is reassembled); `re.sub`, `re.match` and `re.search` from SINK to PURE beside the other `re` functions
@@ -369,9 +391,6 @@ class Terminal:
 
     def key(self):
         return (self.fn.file, self.fn.qual, self.op, self.arg_text, self.ordinal)
-
-    def origin_keys(self):
-        return tuple(sorted(set(t.key() for t in self.origins)))
 
 
 class Census:
@@ -1108,22 +1127,22 @@ class Census:
         self._tag_group.setdefault((fn.file, fn.qual, text), set()).add((node.lineno, node.col_offset))
         return n
 
-    def stable_key(self, tag):
-        """A tag's pinned key with its ordinal counted in SOURCE order among the same text in the same function (the
-        walk meets the two `host_dir(state_dir, sid)` of write_spawn_spec in an order its passes decide; the pin must
-        not move when the walk does)."""
-        pos = self._tag_pos.get((tag.file, tag.qual, tag.text, tag.ordinal))
-        if pos is None:
-            return tag.key()
-        group = sorted(self._tag_group[(tag.file, tag.qual, tag.text)])
-        return (tag.kind, tag.file, tag.qual, tag.text[:72], group.index(pos) + 1)
-
-    def origin_keys(self, t):
-        return tuple(sorted(set(self.stable_key(o) for o in t.origins)))
-
     def _is_exception(self, f):
+        """A call that constructs an exception is a message sink (its text is the sink, never a syscall): the callee's
+        NAME has the shape (`...Error`, `...Exception`, `...Refused`, `...Like`, `...Warning`, `...Interrupt`), or it is a
+        class of the files whose base chain reaches such a name (HostDirAbsent under HostDirRefused; the third addendum:
+        through the second the rule read the name alone and that subclass's constructor was printed as an escape)."""
         name = f.id if isinstance(f, ast.Name) else (f.attr if isinstance(f, ast.Attribute) else "")
-        return bool(re.search(r"(Error|Exception|Refused|Like|Warning|Interrupt)$", name))
+        seen, todo = set(), [name]
+        while todo:
+            n = todo.pop()
+            if not n or n in seen:
+                continue
+            seen.add(n)
+            if re.search(r"(Error|Exception|Refused|Like|Warning|Interrupt)$", n):
+                return True
+            todo.extend(self.bases.get(n, ()))
+        return False
 
     def _bind_call(self, call, callee, fn, arg_tags, kw_tags):
         """Bind a call's arguments to the callee's parameters: their tags, and their type when the walk knows it (a
@@ -1567,9 +1586,17 @@ class Census:
         return out
 
     def derived(self):
-        """{member key: (mech, origin keys)}: the pinned view. A terminal's key names its operation; a carrier's or a
-        mint's names its kind."""
-        return {t.key(): (t.mech, self.origin_keys(t)) for t in self.members()}
+        """{member key: mech} over every member (terminals, carriers, mints, escapes): the view the plant harness diffs a
+        scratch copy against. A terminal's key names its operation; a carrier's or a mint's names its kind."""
+        return {t.key(): t.mech for t in self.members()}
+
+    def residual(self):
+        """{terminal key: mech} for every terminal that is not by-descriptor (by-path, mixed, exec-arg): the set the pin
+        holds equal to RESIDUAL's keys."""
+        return {t.key(): t.mech for t in self.members() if t.op not in ("carrier", "mint", "escape") and t.mech != "by-descriptor"}
+
+    def by_descriptor(self):
+        return {t.key(): t.mech for t in self.members() if t.op not in ("carrier", "mint", "escape") and t.mech == "by-descriptor"}
 
     def escape_lines(self):
         """Every escape as `file:line qual  text  [why]`, the printed form of what the census cannot follow."""
@@ -1638,497 +1665,90 @@ def wide_census(root=ROOT):
     return out
 
 
-# The published list at this head: every member the census derives, keyed by file, enclosing function, the operation
-# (a terminal's syscall; `carrier` or `mint` for a road), the argument text and its ordinal in that function; the value
-# is the mechanical class and the ROAD, written for the reader: `kernel` or `host` is the process; `guard` a syscall
-# that decides a refusal; `HELPER` one of the two directory helpers write_spawn_spec runs before the descent, the
-# window condition 1 states; `RESIDUAL (queued)` a by-path read the queued item owns; `unreachable today` a
-# dir_fd=None arm held by test_every_road_into_a_by_path_fallback_arm_passes_a_descriptor; a `holder` carrier hands
-# a HostDirs (its descriptors in its attributes) to a function of the files. ORIGINS below is the
-# derived provenance of each terminal (the seeds and minting calls whose value reaches it), generated by
-# `python3 tests/test_hosts_path_census.py --expected` and pasted; a road's origins are the empty tuple.
-ROADS = {
+# The pinned list since the road was closed (the second and third addenda of round 7, 2026-09-20): every by-path, mixed
+# and exec-arg terminal at this head, keyed by file, enclosing function, the operation, the argument text and its ordinal
+# in that function, with its class, its ROLE and its reason. The roles are the module docstring's. Paste new keys from
+# `python3 tests/test_hosts_path_census.py --residual`; write the role and the reason by hand.
+UNCONVERTED, HELPER, GUARD, UNREACHABLE, HANDOFF, HOST = "unconverted", "helper", "guard", "unreachable", "handoff", "host"
+ROLES = (UNCONVERTED, HELPER, GUARD, UNREACHABLE, HANDOFF, HOST)
+RESIDUAL = {
     ('kernel/host_transport.py', '_open_dir_nofollow', 'os.open', 'name', 1):
-        ('mixed', "kernel; guard: the descent's open, hosts/ by PATH with O_DIRECTORY|O_NOFOLLOW off the state root, <sid> by NAME under the first descriptor; the removal road's hosts/ the same"),
+        ('mixed', GUARD, "the descent's own open: hosts/ by PATH with O_DIRECTORY|O_NOFOLLOW off the state root, <sid> by NAME under the first descriptor; the spawn, read and removal roads all enter here"),
     ('kernel/host_transport.py', '_open_dir_nofollow', 'os.lstat', 'name', 1):
-        ('mixed', "kernel; guard's wording: the lstat after a refused open (a link or a non-directory), by path for hosts/, by name under the descriptor for <sid>; it decides nothing"),
-    ('kernel/host_transport.py', '_open_dir_nofollow', 'os.fstat', 'fd', 1):
-        ('by-descriptor', "kernel; guard: the descent's checks on the object opened (a directory, this uid, no group or other bits)"),
-    ('kernel/host_transport.py', 'HostDirs.__exit__', 'mint', 'self.close(...)', 1):
-        ('enters', 'kernel; a call into HostDirs.close, a seeding function by the seed rule\'s letter: it spells the literal as an attribute NAME (`for name in ("hosts", "dir")`), reads each descriptor by getattr and closes it; nothing under hosts/ is named or opened there (the round-7 addendum, whose walk resolves a method spelled like a sink before treating it as one)'),
-    ('kernel/host_transport.py', 'open_host_dirs', 'carrier', '_open_dir_nofollow(str(hosts_path), hosts_path)', 1):
-        ('path', "kernel; the descent's first component, by path"),
-    ('kernel/host_transport.py', 'open_host_dirs', 'carrier', '_open_dir_nofollow(hosts_path / str(sid), dir_fd=hfd)', 1):
-        ('fd+path', "kernel; the descent's second component, by name under the first"),
-    ('kernel/host_transport.py', 'open_host_dirs', 'carrier', 'HostDirs(hfd, dfd, hosts_path / str(sid))', 1):
-        ('fd+path', 'kernel; the two descriptors and the wording path handed to the holder'),
-    ('kernel/host_transport.py', '_open_file_nofollow', 'os.open', 'name', 1):
-        ('by-descriptor', 'kernel; spawn.json and host.stderr opened by NAME under the verified <sid> descriptor, O_NOFOLLOW'),
-    ('kernel/host_transport.py', 'host_stderr_open', 'carrier', '_open_file_nofollow(dirs)', 1):
-        ('holder', "kernel; the HostDirs holder handed to the by-name open of host.stderr, its two descriptors in its attributes (round 7 listed this call as a mint by its fd return; the addendum's holder rule lists what it carries)"),
-    ('kernel/host_transport.py', 'host_stderr_open', 'os.fchmod', 'fd', 1):
-        ('by-descriptor', 'kernel; host.stderr tightened on its descriptor (round 5, kernel-1)'),
-    ('kernel/host_transport.py', 'host_stderr_size', 'os.stat', '"host.stderr"', 1):
-        ('by-descriptor', "kernel; host.stderr's watermark by name under the descriptor"),
-    ('kernel/host_transport.py', '_rmtree_at', 'os.open', 'name', 1):
-        ('by-descriptor', "kernel; the removal road: each directory opened by name under its parent's descriptor"),
-    ('kernel/host_transport.py', '_rmtree_at', 'os.fstat', 'fd', 1):
-        ('by-descriptor', "kernel; the removal road's uid check on the object opened"),
-    ('kernel/host_transport.py', '_rmtree_at', 'os.scandir', 'fd', 1):
-        ('by-descriptor', "kernel; the removal road's listing off the descriptor"),
-    ('kernel/host_transport.py', '_rmtree_at', 'carrier', '_rmtree_at(fd)', 1):
-        ('fd', "kernel; the removal road's recursion, the descriptor passed down"),
-    ('kernel/host_transport.py', '_rmtree_at', 'os.unlink', 'e.name', 1):
-        ('by-descriptor', "kernel; the removal road's unlink by name under the descriptor"),
-    ('kernel/host_transport.py', '_rmtree_at', 'os.rmdir', 'name', 1):
-        ('by-descriptor', "kernel; the removal road's rmdir by name under the parent's descriptor"),
-    ('kernel/host_transport.py', 'remove_host_dir', 'carrier', '_open_dir_nofollow(str(hosts_path), hosts_path)', 1):
-        ('path', "kernel; guard: the removal road's hosts/ opened by path with O_NOFOLLOW"),
-    ('kernel/host_transport.py', 'remove_host_dir', 'carrier', '_rmtree_at(hfd)', 1):
-        ('fd', "kernel; the removal road's walk of <sid> under the hosts/ descriptor"),
-    ('kernel/host_transport.py', 'remove_host_dir', 'os.stat', 'str(sid)', 1):
-        ('by-descriptor', "kernel; the already-absent arm's stat by name under the hosts/ descriptor"),
+        ('mixed', GUARD, "the wording of a refused open (a link or a non-directory), by path for hosts/, by name under the descriptor for <sid>; it decides nothing"),
     ('kernel/host_transport.py', '_open_host_log', 'open', 'host_dir(state_dir, sid) / "host.log"', 1):
-        ('by-path', 'kernel; unreachable today: the dir_fd=None arm, held by the forwarding pin (every caller passes a descriptor)'),
-    ('kernel/host_transport.py', '_open_host_log', 'mint', 'host_dir(...)', 1):
-        ('path', "kernel; unreachable today: the dir_fd=None arm's binding"),
-    ('kernel/host_transport.py', '_open_host_log', 'os.open', '"host.log"', 1):
-        ('by-descriptor', "kernel; host.log opened by name under the <sid> descriptor with O_NOFOLLOW (the refused roads' reads)"),
-    ('kernel/host_transport.py', '_open_host_log', 'os.fdopen', 'fd', 1):
-        ('by-descriptor', 'kernel; the same descriptor as a file object'),
-    ('kernel/host_transport.py', 'host_log_mark', 'os.stat', '"host.log"', 1):
-        ('by-descriptor', 'kernel; the spawn watermark by name under the descriptor'),
+        ('by-path', UNREACHABLE, "the dir_fd=None arm, held by the forwarding pin: every caller passes a descriptor"),
     ('kernel/host_transport.py', 'host_log_mark', 'os.stat', 'host_dir(state_dir, sid) / "host.log"', 1):
-        ('by-path', 'kernel; unreachable today: the dir_fd=None arm, held by the forwarding pin'),
-    ('kernel/host_transport.py', 'host_log_mark', 'mint', 'host_dir(...)', 1):
-        ('path', "kernel; unreachable today: the dir_fd=None arm's binding"),
-    ('kernel/host_transport.py', 'host_log_rows', 'carrier', '_open_host_log(dir_fd)', 1):
-        ('fd', 'kernel; the descriptor forwarded to the open'),
-    ('kernel/host_transport.py', 'host_exit_reason', 'carrier', 'host_log_rows(dir_fd=dir_fd)', 1):
-        ('fd', 'kernel; the descriptor forwarded to the rows read'),
-    ('kernel/host_transport.py', 'helper_shape_refusal', 'mint', 'host_dir(...)', 1):
-        ('path', 'kernel; the sentence for a shape errno of the helpers names the component: hosts/<sid>/ when the errno carried no path (a message, no syscall)'),
-    ('kernel/host_transport.py', 'write_spawn_spec', 'mint', 'sh.hosts_dir(...)', 1):
-        ('path', "kernel; HELPER (condition 1's window): hosts/ made and checked by path before the descent"),
-    ('kernel/host_transport.py', 'write_spawn_spec', 'carrier', 'sh.owner_only_dir(host_dir(state_dir, sid))', 1):
-        ('path', "kernel; HELPER (condition 1's window): hosts/<sid>/ made and checked by path before the descent"),
-    ('kernel/host_transport.py', 'write_spawn_spec', 'mint', 'host_dir(...)', 1):
-        ('path', 'kernel; the path the second helper takes'),
-    ('kernel/host_transport.py', 'write_spawn_spec', 'mint', 'helper_shape_refusal(...)', 1):
-        ('path', "kernel; the refusal's sentence, built from the failing path (a message, no syscall; the exception is the sink)"),
-    ('kernel/host_transport.py', 'write_spawn_spec', 'mint', 'host_dir(...)', 2):
-        ('path', "kernel; spawn.json's path, the value returned: spec_path in _host_transport_for, handed to the host in argv"),
-    ('kernel/host_transport.py', 'write_spawn_spec', 'mint', 'open_host_dirs(...)', 1):
-        ('enters', "kernel; the spec write's own descent"),
-    ('kernel/host_transport.py', 'write_spawn_spec', 'carrier', '_open_file_nofollow(dirs)', 1):
-        ('holder', 'kernel; the holder handed to the by-name open of spawn.json, after the descent (a mint by its fd return through round 7)'),
-    ('kernel/host_transport.py', 'write_spawn_spec', 'os.fchmod', 'fd', 1):
-        ('by-descriptor', 'kernel; spawn.json tightened on its descriptor before the write'),
-    ('kernel/host_transport.py', 'write_spawn_spec', 'os.fdopen', 'fd', 1):
-        ('by-descriptor', 'kernel; spawn.json written through its descriptor'),
-    ('kernel/host_transport.py', 'HostTransport.from_journal', 'carrier', 'cls(journal_dir=journal_dir)', 1):
-        ('path', "kernel; the replay transport given the orphan's directory"),
+        ('by-path', UNREACHABLE, "the dir_fd=None arm, held by the forwarding pin"),
     ('kernel/host_transport.py', 'HostTransport.connect', 'asyncio.open_unix_connection', 'self.sock_path', 1):
-        ('by-path', 'kernel; RESIDUAL (queued): the connect to the published socket by path, reached from three roads (the attach by lease, the first connect after the spawn wait, the end by lease)'),
-    ('kernel/host_transport.py', 'HostTransport._read_journal', 'carrier', 'sh.read_journal_dir(self.journal_dir)', 1):
-        ('path', "kernel; RESIDUAL (queued): the replay's read of the orphan journal by path"),
-    ('kernel/session_host.py', 'Journal.__init__', 'carrier', 'owner_only_dir(directory)', 1):
-        ('path', "host; HELPER: hosts/<sid>/ made and checked by path in the host's constructor"),
+        ('by-path', UNCONVERTED, "a Unix socket is connected by the path in its address and connect has no descriptor-relative form; reached from the attach by lease, the first connect after the spawn wait and the end by lease"),
     ('kernel/session_host.py', 'Journal._open_segment', 'open', 'self._path(first)', 1):
-        ('by-path', "host; a journal segment opened by path under hosts/<sid>/, after the constructor's guard"),
-    ('kernel/session_host.py', 'Journal._open_segment', 'mint', 'self._path(...)', 1):
-        ('path', "host; a segment's path"),
+        ('by-path', HOST, "a journal segment opened by path under hosts/<sid>/, after the constructor's guard"),
     ('kernel/session_host.py', 'Journal._persist_gaps', 'open', 'tmp', 1):
-        ('by-path', "host; gaps.json's temp written by path under hosts/<sid>/"),
+        ('by-path', HOST, "gaps.json's temp written by path under hosts/<sid>/"),
     ('kernel/session_host.py', 'Journal._persist_gaps', 'os.replace', 'tmp', 1):
-        ('by-path', 'host; gaps.json replaced by path'),
+        ('by-path', HOST, "gaps.json replaced by path"),
     ('kernel/session_host.py', 'Journal._persist_gaps', 'os.unlink', 'tmp', 1):
-        ('by-path', "host; gaps.json's temp unlinked by path on failure"),
+        ('by-path', HOST, "gaps.json's temp unlinked by path on failure"),
     ('kernel/session_host.py', 'Journal._turn_boundary', 'os.unlink', 'self._path(seg)', 1):
-        ('by-path', 'host; an acknowledged segment deleted by path'),
-    ('kernel/session_host.py', 'Journal._turn_boundary', 'mint', 'self._path(...)', 1):
-        ('path', "host; a segment's path"),
+        ('by-path', HOST, "an acknowledged segment deleted by path"),
     ('kernel/session_host.py', 'Journal.read_from', 'open', 'self._path(seg)', 1):
-        ('by-path', 'host; a segment read by path'),
-    ('kernel/session_host.py', 'Journal.read_from', 'mint', 'self._path(...)', 1):
-        ('path', "host; a segment's path"),
+        ('by-path', HOST, "a segment read by path"),
     ('kernel/session_host.py', 'read_journal_dir', 'glob', 'd', 1):
-        ('by-path', "kernel; RESIDUAL (queued): the orphan road's journal listing by path (from _host_orphan_recover and the replay transport)"),
+        ('by-path', UNCONVERTED, "the orphan journal's segment listing is a glob over the directory; the descriptor form is a scandir off the <sid> descriptor with a name match, a rewrite of the function and its two callers (the orphan road's tail check, the replay transport's _read_journal)"),
     ('kernel/session_host.py', 'read_journal_dir', 'read_text', 'd / "gaps.json"', 1):
-        ('by-path', "kernel; RESIDUAL (queued): the orphan road's gaps.json read by path"),
+        ('by-path', UNCONVERTED, "gaps.json read by the path of the directory the glob lists; converted with the glob"),
     ('kernel/session_host.py', 'read_journal_dir', 'open', 'p', 1):
-        ('by-path', "kernel; RESIDUAL (queued): the orphan road's segment read by path"),
+        ('by-path', UNCONVERTED, "each segment opened by the path the glob yields; converted with the glob"),
     ('kernel/session_host.py', 'owner_only_dir', 'mkdir', 'd', 1):
-        ('by-path', "HELPER (condition 1's window): the mkdir by path; hosts/ for hosts_dir's three callers, hosts/<sid>/ for write_spawn_spec and the host's Journal"),
+        ('by-path', HELPER, "the mkdir by path; hosts/ for hosts_dir's callers, hosts/<sid>/ for write_spawn_spec and the host's Journal (condition 1's window)"),
     ('kernel/session_host.py', 'owner_only_dir', 'os.lstat', 'd', 1):
-        ('by-path', 'HELPER: the lstat by path that decides symlink, non-directory, foreign uid and loose'),
+        ('by-path', HELPER, "the lstat by path that decides symlink, non-directory, foreign uid and loose"),
     ('kernel/session_host.py', 'owner_only_dir', 'os.chmod', 'd', 1):
-        ('by-path', "HELPER (condition 1's window): the chmod by path of a loose directory of ours; it follows a link swapped in between the lstat above and this call onto any object this uid owns"),
+        ('by-path', HELPER, "the chmod by path of a loose directory of ours; it follows a link swapped in between the lstat and this call onto any object this uid owns"),
     ('kernel/session_host.py', 'owner_only_dir', 'os.lstat', 'd', 2):
-        ('by-path', 'HELPER: the read-back by path'),
-    ('kernel/session_host.py', 'hosts_dir', 'carrier', 'owner_only_dir(root / "hosts")', 1):
-        ('path', "HELPER: hosts/ through owner_only_dir, for the kernel's write_spawn_spec and the host's constructor and prelude"),
+        ('by-path', HELPER, "the read-back by path"),
     ('kernel/session_host.py', 'SessionHost.__init__', 'open', 'self.spec_path', 1):
-        ('by-path', 'host; RESIDUAL (queued), the deferred road: the spec opened by path with no O_NOFOLLOW before any guard'),
-    ('kernel/session_host.py', 'SessionHost.__init__', 'mint', 'hosts_dir(...)', 1):
-        ('path', "host; the constructor's guard of hosts/, by path"),
-    ('kernel/session_host.py', 'SessionHost.__init__', 'carrier', 'Journal(self.dir)', 1):
-        ('path', "host; the constructor's Journal over hosts/<sid>/"),
+        ('by-path', HOST, "the spec opened by path with no O_NOFOLLOW before any guard: the host-side item the queue keeps (the launcher's argv contract), not this PR's"),
     ('kernel/session_host.py', 'SessionHost.log', 'open', 'self.log_path', 1):
-        ('by-path', "host; host.log appended by path after the constructor's guard"),
+        ('by-path', HOST, "host.log appended by path after the constructor's guard"),
     ('kernel/session_host.py', 'SessionHost._sweep_stale_temps', 'glob', 'self.sock_path.parent', 1):
-        ('by-path', "host; the prelude's listing of hosts/ by path"),
+        ('by-path', HOST, "the prelude's listing of hosts/ by path"),
     ('kernel/session_host.py', 'SessionHost._sweep_stale_temps', 'unlink', 'p', 1):
-        ('by-path', "host; a dead owner's temp unlinked by path"),
-    ('kernel/session_host.py', 'SessionHost._prepare_socket', 'mint', 'hosts_dir(...)', 1):
-        ('path', "host; the prelude's guard of hosts/, by path"),
+        ('by-path', HOST, "a dead owner's temp unlinked by path"),
     ('kernel/session_host.py', 'SessionHost._prepare_socket', 'unlink', 'self.sock_path', 1):
-        ('by-path', "host; a dead host's published socket unlinked by path (the prelude)"),
+        ('by-path', HOST, "a dead host's published socket unlinked by path (the prelude)"),
     ('kernel/session_host.py', 'SessionHost._serve_socket', 'os.lstat', 'self.sock_path.parent', 1):
-        ('by-path', 'host; guard: the lstat of hosts/ before the bind (round 4, extra6-1)'),
+        ('by-path', GUARD, "host side: the lstat of hosts/ before the bind (round 4, extra6-1)"),
     ('kernel/session_host.py', 'SessionHost._serve_socket', 'asyncio.start_unix_server', 'str(self.sock_tmp)', 1):
-        ('by-path', 'host; the bind by path; the microseconds after the lstat above are unguarded'),
+        ('by-path', HOST, "the bind by path; the microseconds after the lstat above are unguarded"),
     ('kernel/session_host.py', 'SessionHost._serve_socket', 'os.chmod', 'self.sock_tmp', 1):
-        ('by-path', 'host; the temp tightened by path'),
+        ('by-path', HOST, "the temp tightened by path"),
     ('kernel/session_host.py', 'SessionHost._serve_socket', 'os.rename', 'self.sock_tmp', 1):
-        ('by-path', 'host; the publish: the temp renamed onto the published path'),
+        ('by-path', HOST, "the publish: the temp renamed onto the published path"),
     ('kernel/session_host.py', 'SessionHost._serve_socket', 'unlink', 'self.sock_tmp', 1):
-        ('by-path', "host; the failure arm's temp unlink"),
+        ('by-path', HOST, "the failure arm's temp unlink"),
     ('kernel/session_host.py', 'SessionHost.run', 'write_text', 'self.dir / "identity.json"', 1):
-        ('by-path', "host; identity.json written by path after the constructor's guard"),
+        ('by-path', HOST, "identity.json written by path after the constructor's guard"),
     ('kernel/session_host.py', 'SessionHost.run', 'unlink', 'self.sock_path', 1):
-        ('by-path', "host; the exit's unlink of the published socket"),
-    ('kernel/session_host.py', 'main', 'mint', 'SessionHost(...)', 1):
-        ('enters', 'host; the entry: argv[0] is the spec path the kernel handed over (the declared seed)'),
-    ('kernel/sdk_backend.py', 'SdkSession._amain', 'mint', 'self.backend._host_transport_for(...)', 1):
-        ('enters', "kernel; the session's entry into the spawn road, passing nothing tainted: the call enters the function that mints the spec path and holds the descent (resolved since the addendum typed `backend`, an attribute stored on a receiver the walk could not type)"),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_lease_applies', 'mint', '_ht().host_dir(...)', 1):
-        ('path', "kernel; the lease-applies read's binding"),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_lease_applies', 'exists', 'hdir / "identity.json"', 1):
-        ('by-path', "kernel; RESIDUAL (queued): the connect road's identity.json existence read before the spawn, by path"),
+        ('by-path', HOST, "the exit's unlink of the published socket"),
     ('kernel/sdk_backend.py', 'SdkBackend._host_lease_applies', 'glob', 'hdir', 1):
-        ('by-path', "kernel; RESIDUAL (queued): the connect road's journal glob before the spawn, by path"),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'mint', 'ht.host_dir(...)', 1):
-        ('path', "kernel; the connect road's binding"),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'exists', 'hdir', 1):
-        ('by-path', "kernel; RESIDUAL (queued): the leftover arm's trigger, by path"),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'carrier', 'self._new_host_transport(ht.host_sock(self.state_dir, sess.sid))', 1):
-        ('path', 'kernel; RESIDUAL (queued): the attach-by-lease road hands the published path to the transport (its connect, above)'),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'mint', 'ht.host_sock(...)', 1):
-        ('path', 'kernel; the published path for the attach'),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'mint', 'ht.write_spawn_spec(...)', 1):
-        ('path', 'kernel; spec_path: the path under hosts/ the launcher hands the host (a round-6 miss of the retired grep)'),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'mint', 'ht.open_host_dirs(...)', 1):
-        ('enters', "kernel; the road's descent, held across the spawn wait"),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'mint', 'ht.host_sock(...)', 2):
-        ('path', "kernel; the published path for the spawn wait's poll and the first connect"),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'os.unlink', 'sock.name', 1):
-        ('by-descriptor', "kernel; a dead host's published socket unlinked by name under the hosts/ descriptor"),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'carrier', 'ht.host_log_mark(dir_fd=dirs.dir)', 1):
-        ('fd', 'kernel; the spawn watermark through the descriptor'),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'carrier', 'ht.host_stderr_size(dirs)', 1):
-        ('holder', "kernel; host.stderr's watermark by name under the holder's <sid> descriptor, taken before the launcher runs (kernel-1 and correctness-1, round 4)"),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'carrier', 'self._spawn_host(spec_path)', 1):
-        ('path', 'kernel; the spec path handed to the launcher'),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'exists', 'sock', 1):
-        ('by-path', "kernel; RESIDUAL (queued): the spawn wait's poll of the published path, by path, after the descent"),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'carrier', 'ht.host_exit_reason(dir_fd=dirs.dir)', 1):
-        ('fd', "kernel; the exited arm's reason through the descriptor"),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'carrier', 'ht.host_stderr_size(dirs)', 2):
-        ('holder', "kernel; the watermark read again on the exited-before-serving arm, to say whether THIS launch's host wrote to host.stderr"),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'carrier', 'self._file_refused_launch_context(dir_fd=dirs.dir)', 1):
-        ('fd', "kernel; the exited arm's untested-row read through the descriptor"),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'carrier', 'self._record_refused_launch_position(dir_fd=dirs.dir)', 1):
-        ('fd', "kernel; the exited arm's position through the descriptor"),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'carrier', 'ht.host_exit_reason(dir_fd=dirs.dir)', 2):
-        ('fd', "kernel; the deadline arm's reason through the descriptor"),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'carrier', 'ht.host_stderr_size(dirs)', 3):
-        ('holder', 'kernel; the watermark read again on the did-not-serve-in-time arm, the same question'),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'carrier', 'self._file_refused_launch_context(dir_fd=dirs.dir)', 2):
-        ('fd', "kernel; the deadline arm's untested-row read through the descriptor"),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'carrier', 'self._record_refused_launch_position(dir_fd=dirs.dir)', 2):
-        ('fd', "kernel; the deadline arm's position through the descriptor"),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'mint', 'dirs.close(...)', 1):
-        ('enters', 'kernel; the holder closed on the spawn road (HostDirs.close, a seeding function by the attribute-name literal, as its __exit__ road above; nothing under hosts/ named or opened)'),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'carrier', 'self._new_host_transport(sock)', 1):
-        ('path', 'kernel; RESIDUAL (queued): the first connect after the wait hands the published path to the transport (its connect, above)'),
-    ('kernel/sdk_backend.py', 'SdkBackend._new_host_transport', 'carrier', 'ht.HostTransport(str(sock))', 1):
-        ('path', "kernel; the transport's sock_path (its connect, above)"),
-    ('kernel/sdk_backend.py', 'SdkBackend._spawn_host', 'mint', 'ht.open_host_dirs(...)', 1):
-        ('enters', "kernel; the launcher's own descent"),
-    ('kernel/sdk_backend.py', 'SdkBackend._spawn_host', 'carrier', 'ht.host_stderr_open(dirs)', 1):
-        ('holder', "kernel; the holder handed to the launcher's host.stderr open, whose descriptor becomes the child's stderr (a mint by its fd return through round 7)"),
+        ('by-path', UNCONVERTED, "the connect road's journal glob, reached only after the identity read that now takes the descent; a glob's descriptor form is a scandir under the <sid> descriptor, a change of mechanism"),
     ('kernel/sdk_backend.py', 'SdkBackend._spawn_host', 'subprocess.Popen', 'argv', 1):
-        ('exec-arg', "kernel; THE HANDOFF: the spec path leaves the process in argv (host.stderr's descriptor as the child's stderr beside it); the host re-opens that path by path in its constructor (above), the deferred road"),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_orphan_recover', 'mint', 'ht.host_dir(...)', 1):
-        ('path', "kernel; the orphan road's binding"),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_orphan_recover', 'read_text', 'hdir / "identity.json"', 1):
-        ('by-path', "kernel; RESIDUAL (queued): the orphan road's identity.json read, by path"),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_orphan_recover', 'carrier', 'ht.sh.read_journal_dir(hdir)', 1):
-        ('path', "kernel; RESIDUAL (queued): the orphan road's journal tail, by path"),
+        ('exec-arg', HANDOFF, "the spec path leaves the process in argv (host.stderr's descriptor as the child's stderr beside it); the host re-opens it by path in its constructor, the host-side item"),
     ('kernel/sdk_backend.py', 'SdkBackend._host_orphan_recover', 'glob', 'hdir', 1):
-        ('by-path', "kernel; RESIDUAL (queued): the orphan road's journal glob, by path"),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_orphan_recover', 'carrier', 'ht.HostTransport.from_journal(hdir)', 1):
-        ('path', "kernel; RESIDUAL (queued): the replay transport over the orphan's directory, by path"),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_orphan_recover', 'mint', 'ht.remove_host_dir(...)', 1):
-        ('enters', "kernel; the orphan road's removal, by descriptors"),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_ended', 'mint', '_ht().remove_host_dir(...)', 1):
-        ('enters', "kernel; the ended road's removal, by descriptors"),
-    ('kernel/sdk_backend.py', 'SdkBackend._file_refused_launch_context', 'carrier', '_ht().host_log_rows(dir_fd=dir_fd)', 1):
-        ('fd', 'kernel; the descriptor forwarded to the rows read'),
-    ('kernel/sdk_backend.py', 'SdkBackend._record_refused_launch_position', 'carrier', '_ht()._open_host_log(dir_fd)', 1):
-        ('fd', 'kernel; the descriptor forwarded to the open'),
-    ('kernel/sdk_backend.py', 'SdkBackend._file_host_log_rows', 'mint', '_ht().host_dir(...)', 1):
-        ('path', "kernel; the served road's binding"),
-    ('kernel/sdk_backend.py', 'SdkBackend._file_host_log_rows', 'read_text', 'p', 1):
-        ('by-path', "kernel; RESIDUAL (queued), THE SERVED ROAD: host.log read by path at the hello and at the exit, after the spawn road's descriptors are closed"),
-    ('kernel/sdk_backend.py', 'SdkBackend._end_host_by_lease', 'mint', 'ht.host_sock(...)', 1):
-        ('path', 'kernel; the published path for the end by lease'),
-    ('kernel/sdk_backend.py', 'SdkBackend._end_host_by_lease.go', 'carrier', 'ht.HostTransport(str(sock))', 1):
-        ('path', 'kernel; RESIDUAL (queued): the end-by-lease road hands the published path to the transport (its connect, above) (inside the nested coroutine `go`, a scope of its own since the addendum)'),
+        ('by-path', UNCONVERTED, "the orphan road's journal glob, reached only when the road's descent admitted the directory; the same descriptor form as the other glob"),
 }
-
-
-ORIGINS = {
-    ('kernel/host_transport.py', '_open_dir_nofollow', 'os.open', 'name', 1):
-        (('fd', 'kernel/host_transport.py', '_open_dir_nofollow', 'os.open(name, _DIR_FLAGS, dir_fd=dir_fd)', 1), ('fd', 'kernel/host_transport.py', 'open_host_dirs', '_open_dir_nofollow(str(hosts_path), "hosts directory", hosts_path)', 1), ('path', 'kernel/host_transport.py', 'open_host_dirs', '"hosts"', 1), ('path', 'kernel/host_transport.py', 'remove_host_dir', '"hosts"', 1)),
-    ('kernel/host_transport.py', '_open_dir_nofollow', 'os.lstat', 'name', 1):
-        (('fd', 'kernel/host_transport.py', '_open_dir_nofollow', 'os.open(name, _DIR_FLAGS, dir_fd=dir_fd)', 1), ('fd', 'kernel/host_transport.py', 'open_host_dirs', '_open_dir_nofollow(str(hosts_path), "hosts directory", hosts_path)', 1), ('path', 'kernel/host_transport.py', 'open_host_dirs', '"hosts"', 1), ('path', 'kernel/host_transport.py', 'remove_host_dir', '"hosts"', 1)),
-    ('kernel/host_transport.py', '_open_dir_nofollow', 'os.fstat', 'fd', 1):
-        (('fd', 'kernel/host_transport.py', '_open_dir_nofollow', 'os.open(name, _DIR_FLAGS, dir_fd=dir_fd)', 1),),
-    ('kernel/host_transport.py', 'HostDirs.__exit__', 'mint', 'self.close(...)', 1):
-        (),
-    ('kernel/host_transport.py', 'open_host_dirs', 'carrier', '_open_dir_nofollow(str(hosts_path), hosts_path)', 1):
-        (),
-    ('kernel/host_transport.py', 'open_host_dirs', 'carrier', '_open_dir_nofollow(hosts_path / str(sid), dir_fd=hfd)', 1):
-        (),
-    ('kernel/host_transport.py', 'open_host_dirs', 'carrier', 'HostDirs(hfd, dfd, hosts_path / str(sid))', 1):
-        (),
-    ('kernel/host_transport.py', '_open_file_nofollow', 'os.open', 'name', 1):
-        (('fd', 'kernel/host_transport.py', '_open_dir_nofollow', 'os.open(name, _DIR_FLAGS, dir_fd=dir_fd)', 1), ('fd', 'kernel/host_transport.py', 'open_host_dirs', '_open_dir_nofollow(str(sid), "host directory", hosts_path / str(sid), di', 1)),
-    ('kernel/host_transport.py', 'host_stderr_open', 'carrier', '_open_file_nofollow(dirs)', 1):
-        (),
-    ('kernel/host_transport.py', 'host_stderr_open', 'os.fchmod', 'fd', 1):
-        (('fd', 'kernel/host_transport.py', '_open_file_nofollow', 'os.open(name, flags | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0), 0o600', 1), ('fd', 'kernel/host_transport.py', 'host_stderr_open', '_open_file_nofollow("host.stderr", os.O_WRONLY | os.O_CREAT | os.O_APPEN', 1)),
-    ('kernel/host_transport.py', 'host_stderr_size', 'os.stat', '"host.stderr"', 1):
-        (('fd', 'kernel/host_transport.py', '_open_dir_nofollow', 'os.open(name, _DIR_FLAGS, dir_fd=dir_fd)', 1), ('fd', 'kernel/host_transport.py', 'open_host_dirs', '_open_dir_nofollow(str(sid), "host directory", hosts_path / str(sid), di', 1)),
-    ('kernel/host_transport.py', '_rmtree_at', 'os.open', 'name', 1):
-        (('fd', 'kernel/host_transport.py', '_open_dir_nofollow', 'os.open(name, _DIR_FLAGS, dir_fd=dir_fd)', 1), ('fd', 'kernel/host_transport.py', '_rmtree_at', 'os.open(name, _DIR_FLAGS, dir_fd=dir_fd)', 1), ('fd', 'kernel/host_transport.py', 'remove_host_dir', '_open_dir_nofollow(str(hosts_path), "hosts directory", hosts_path, priva', 1)),
-    ('kernel/host_transport.py', '_rmtree_at', 'os.fstat', 'fd', 1):
-        (('fd', 'kernel/host_transport.py', '_rmtree_at', 'os.open(name, _DIR_FLAGS, dir_fd=dir_fd)', 1),),
-    ('kernel/host_transport.py', '_rmtree_at', 'os.scandir', 'fd', 1):
-        (('fd', 'kernel/host_transport.py', '_rmtree_at', 'os.open(name, _DIR_FLAGS, dir_fd=dir_fd)', 1),),
-    ('kernel/host_transport.py', '_rmtree_at', 'carrier', '_rmtree_at(fd)', 1):
-        (),
-    ('kernel/host_transport.py', '_rmtree_at', 'os.unlink', 'e.name', 1):
-        (('fd', 'kernel/host_transport.py', '_rmtree_at', 'os.open(name, _DIR_FLAGS, dir_fd=dir_fd)', 1),),
-    ('kernel/host_transport.py', '_rmtree_at', 'os.rmdir', 'name', 1):
-        (('fd', 'kernel/host_transport.py', '_open_dir_nofollow', 'os.open(name, _DIR_FLAGS, dir_fd=dir_fd)', 1), ('fd', 'kernel/host_transport.py', '_rmtree_at', 'os.open(name, _DIR_FLAGS, dir_fd=dir_fd)', 1), ('fd', 'kernel/host_transport.py', 'remove_host_dir', '_open_dir_nofollow(str(hosts_path), "hosts directory", hosts_path, priva', 1)),
-    ('kernel/host_transport.py', 'remove_host_dir', 'carrier', '_open_dir_nofollow(str(hosts_path), hosts_path)', 1):
-        (),
-    ('kernel/host_transport.py', 'remove_host_dir', 'carrier', '_rmtree_at(hfd)', 1):
-        (),
-    ('kernel/host_transport.py', 'remove_host_dir', 'os.stat', 'str(sid)', 1):
-        (('fd', 'kernel/host_transport.py', '_open_dir_nofollow', 'os.open(name, _DIR_FLAGS, dir_fd=dir_fd)', 1), ('fd', 'kernel/host_transport.py', 'remove_host_dir', '_open_dir_nofollow(str(hosts_path), "hosts directory", hosts_path, priva', 1)),
-    ('kernel/host_transport.py', '_open_host_log', 'open', 'host_dir(state_dir, sid) / "host.log"', 1):
-        (('path', 'kernel/host_transport.py', '_open_host_log', 'host_dir(state_dir, sid)', 1), ('path', 'kernel/host_transport.py', 'host_dir', '"hosts"', 1)),
-    ('kernel/host_transport.py', '_open_host_log', 'mint', 'host_dir(...)', 1):
-        (),
-    ('kernel/host_transport.py', '_open_host_log', 'os.open', '"host.log"', 1):
-        (('fd', 'kernel/host_transport.py', '_open_dir_nofollow', 'os.open(name, _DIR_FLAGS, dir_fd=dir_fd)', 1), ('fd', 'kernel/host_transport.py', 'open_host_dirs', '_open_dir_nofollow(str(sid), "host directory", hosts_path / str(sid), di', 1)),
-    ('kernel/host_transport.py', '_open_host_log', 'os.fdopen', 'fd', 1):
-        (('fd', 'kernel/host_transport.py', '_open_host_log', 'os.open("host.log", os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC', 1),),
-    ('kernel/host_transport.py', 'host_log_mark', 'os.stat', '"host.log"', 1):
-        (('fd', 'kernel/host_transport.py', '_open_dir_nofollow', 'os.open(name, _DIR_FLAGS, dir_fd=dir_fd)', 1), ('fd', 'kernel/host_transport.py', 'open_host_dirs', '_open_dir_nofollow(str(sid), "host directory", hosts_path / str(sid), di', 1)),
-    ('kernel/host_transport.py', 'host_log_mark', 'os.stat', 'host_dir(state_dir, sid) / "host.log"', 1):
-        (('path', 'kernel/host_transport.py', 'host_dir', '"hosts"', 1), ('path', 'kernel/host_transport.py', 'host_log_mark', 'host_dir(state_dir, sid)', 1)),
-    ('kernel/host_transport.py', 'host_log_mark', 'mint', 'host_dir(...)', 1):
-        (),
-    ('kernel/host_transport.py', 'host_log_rows', 'carrier', '_open_host_log(dir_fd)', 1):
-        (),
-    ('kernel/host_transport.py', 'host_exit_reason', 'carrier', 'host_log_rows(dir_fd=dir_fd)', 1):
-        (),
-    ('kernel/host_transport.py', 'helper_shape_refusal', 'mint', 'host_dir(...)', 1):
-        (),
-    ('kernel/host_transport.py', 'write_spawn_spec', 'mint', 'sh.hosts_dir(...)', 1):
-        (),
-    ('kernel/host_transport.py', 'write_spawn_spec', 'carrier', 'sh.owner_only_dir(host_dir(state_dir, sid))', 1):
-        (),
-    ('kernel/host_transport.py', 'write_spawn_spec', 'mint', 'host_dir(...)', 1):
-        (),
-    ('kernel/host_transport.py', 'write_spawn_spec', 'mint', 'helper_shape_refusal(...)', 1):
-        (),
-    ('kernel/host_transport.py', 'write_spawn_spec', 'mint', 'host_dir(...)', 2):
-        (),
-    ('kernel/host_transport.py', 'write_spawn_spec', 'mint', 'open_host_dirs(...)', 1):
-        (),
-    ('kernel/host_transport.py', 'write_spawn_spec', 'carrier', '_open_file_nofollow(dirs)', 1):
-        (),
-    ('kernel/host_transport.py', 'write_spawn_spec', 'os.fchmod', 'fd', 1):
-        (('fd', 'kernel/host_transport.py', '_open_file_nofollow', 'os.open(name, flags | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0), 0o600', 1), ('fd', 'kernel/host_transport.py', 'write_spawn_spec', '_open_file_nofollow("spawn.json", os.O_WRONLY | os.O_CREAT | os.O_TRUNC,', 1)),
-    ('kernel/host_transport.py', 'write_spawn_spec', 'os.fdopen', 'fd', 1):
-        (('fd', 'kernel/host_transport.py', '_open_file_nofollow', 'os.open(name, flags | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0), 0o600', 1), ('fd', 'kernel/host_transport.py', 'write_spawn_spec', '_open_file_nofollow("spawn.json", os.O_WRONLY | os.O_CREAT | os.O_TRUNC,', 1)),
-    ('kernel/host_transport.py', 'HostTransport.from_journal', 'carrier', 'cls(journal_dir=journal_dir)', 1):
-        (),
-    ('kernel/host_transport.py', 'HostTransport.connect', 'asyncio.open_unix_connection', 'self.sock_path', 1):
-        (('path', 'kernel/host_transport.py', 'host_sock', '"hosts"', 1), ('path', 'kernel/sdk_backend.py', 'SdkBackend._end_host_by_lease', 'ht.host_sock(self.state_dir, sid)', 1), ('path', 'kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'ht.host_sock(self.state_dir, sess.sid)', 1), ('path', 'kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'ht.host_sock(self.state_dir, sess.sid)', 2)),
-    ('kernel/host_transport.py', 'HostTransport._read_journal', 'carrier', 'sh.read_journal_dir(self.journal_dir)', 1):
-        (),
-    ('kernel/session_host.py', 'Journal.__init__', 'carrier', 'owner_only_dir(directory)', 1):
-        (),
-    ('kernel/session_host.py', 'Journal._open_segment', 'open', 'self._path(first)', 1):
-        (('path', 'kernel/session_host.py', 'Journal.__init__', 'owner_only_dir(directory, "host directory")', 1), ('path', 'kernel/session_host.py', 'Journal._open_segment', 'self._path(first)', 1), ('path', 'kernel/session_host.py', 'SessionHost.__init__', 'spec_path: the path under hosts/ the kernel hands the host in argv (decl', 1)),
-    ('kernel/session_host.py', 'Journal._open_segment', 'mint', 'self._path(...)', 1):
-        (),
-    ('kernel/session_host.py', 'Journal._persist_gaps', 'open', 'tmp', 1):
-        (('path', 'kernel/session_host.py', 'Journal.__init__', 'owner_only_dir(directory, "host directory")', 1), ('path', 'kernel/session_host.py', 'SessionHost.__init__', 'spec_path: the path under hosts/ the kernel hands the host in argv (decl', 1)),
-    ('kernel/session_host.py', 'Journal._persist_gaps', 'os.replace', 'tmp', 1):
-        (('path', 'kernel/session_host.py', 'Journal.__init__', 'owner_only_dir(directory, "host directory")', 1), ('path', 'kernel/session_host.py', 'SessionHost.__init__', 'spec_path: the path under hosts/ the kernel hands the host in argv (decl', 1)),
-    ('kernel/session_host.py', 'Journal._persist_gaps', 'os.unlink', 'tmp', 1):
-        (('path', 'kernel/session_host.py', 'Journal.__init__', 'owner_only_dir(directory, "host directory")', 1), ('path', 'kernel/session_host.py', 'SessionHost.__init__', 'spec_path: the path under hosts/ the kernel hands the host in argv (decl', 1)),
-    ('kernel/session_host.py', 'Journal._turn_boundary', 'os.unlink', 'self._path(seg)', 1):
-        (('path', 'kernel/session_host.py', 'Journal.__init__', 'owner_only_dir(directory, "host directory")', 1), ('path', 'kernel/session_host.py', 'Journal._turn_boundary', 'self._path(seg)', 1), ('path', 'kernel/session_host.py', 'SessionHost.__init__', 'spec_path: the path under hosts/ the kernel hands the host in argv (decl', 1)),
-    ('kernel/session_host.py', 'Journal._turn_boundary', 'mint', 'self._path(...)', 1):
-        (),
-    ('kernel/session_host.py', 'Journal.read_from', 'open', 'self._path(seg)', 1):
-        (('path', 'kernel/session_host.py', 'Journal.__init__', 'owner_only_dir(directory, "host directory")', 1), ('path', 'kernel/session_host.py', 'Journal.read_from', 'self._path(seg)', 1), ('path', 'kernel/session_host.py', 'SessionHost.__init__', 'spec_path: the path under hosts/ the kernel hands the host in argv (decl', 1)),
-    ('kernel/session_host.py', 'Journal.read_from', 'mint', 'self._path(...)', 1):
-        (),
-    ('kernel/session_host.py', 'read_journal_dir', 'glob', 'd', 1):
-        (('path', 'kernel/host_transport.py', 'host_dir', '"hosts"', 1), ('path', 'kernel/sdk_backend.py', 'SdkBackend._host_orphan_recover', 'ht.host_dir(self.state_dir, sess.sid)', 1)),
-    ('kernel/session_host.py', 'read_journal_dir', 'read_text', 'd / "gaps.json"', 1):
-        (('path', 'kernel/host_transport.py', 'host_dir', '"hosts"', 1), ('path', 'kernel/sdk_backend.py', 'SdkBackend._host_orphan_recover', 'ht.host_dir(self.state_dir, sess.sid)', 1)),
-    ('kernel/session_host.py', 'read_journal_dir', 'open', 'p', 1):
-        (('path', 'kernel/host_transport.py', 'host_dir', '"hosts"', 1), ('path', 'kernel/sdk_backend.py', 'SdkBackend._host_orphan_recover', 'ht.host_dir(self.state_dir, sess.sid)', 1)),
-    ('kernel/session_host.py', 'owner_only_dir', 'mkdir', 'd', 1):
-        (('path', 'kernel/host_transport.py', 'host_dir', '"hosts"', 1), ('path', 'kernel/host_transport.py', 'write_spawn_spec', 'host_dir(state_dir, sid)', 1), ('path', 'kernel/session_host.py', 'SessionHost.__init__', 'spec_path: the path under hosts/ the kernel hands the host in argv (decl', 1), ('path', 'kernel/session_host.py', 'hosts_dir', '"hosts"', 1)),
-    ('kernel/session_host.py', 'owner_only_dir', 'os.lstat', 'd', 1):
-        (('path', 'kernel/host_transport.py', 'host_dir', '"hosts"', 1), ('path', 'kernel/host_transport.py', 'write_spawn_spec', 'host_dir(state_dir, sid)', 1), ('path', 'kernel/session_host.py', 'SessionHost.__init__', 'spec_path: the path under hosts/ the kernel hands the host in argv (decl', 1), ('path', 'kernel/session_host.py', 'hosts_dir', '"hosts"', 1)),
-    ('kernel/session_host.py', 'owner_only_dir', 'os.chmod', 'd', 1):
-        (('path', 'kernel/host_transport.py', 'host_dir', '"hosts"', 1), ('path', 'kernel/host_transport.py', 'write_spawn_spec', 'host_dir(state_dir, sid)', 1), ('path', 'kernel/session_host.py', 'SessionHost.__init__', 'spec_path: the path under hosts/ the kernel hands the host in argv (decl', 1), ('path', 'kernel/session_host.py', 'hosts_dir', '"hosts"', 1)),
-    ('kernel/session_host.py', 'owner_only_dir', 'os.lstat', 'd', 2):
-        (('path', 'kernel/host_transport.py', 'host_dir', '"hosts"', 1), ('path', 'kernel/host_transport.py', 'write_spawn_spec', 'host_dir(state_dir, sid)', 1), ('path', 'kernel/session_host.py', 'SessionHost.__init__', 'spec_path: the path under hosts/ the kernel hands the host in argv (decl', 1), ('path', 'kernel/session_host.py', 'hosts_dir', '"hosts"', 1)),
-    ('kernel/session_host.py', 'hosts_dir', 'carrier', 'owner_only_dir(root / "hosts")', 1):
-        (),
-    ('kernel/session_host.py', 'SessionHost.__init__', 'open', 'self.spec_path', 1):
-        (('path', 'kernel/session_host.py', 'SessionHost.__init__', 'spec_path: the path under hosts/ the kernel hands the host in argv (decl', 1),),
-    ('kernel/session_host.py', 'SessionHost.__init__', 'mint', 'hosts_dir(...)', 1):
-        (),
-    ('kernel/session_host.py', 'SessionHost.__init__', 'carrier', 'Journal(self.dir)', 1):
-        (),
-    ('kernel/session_host.py', 'SessionHost.log', 'open', 'self.log_path', 1):
-        (('path', 'kernel/session_host.py', 'SessionHost.__init__', 'spec_path: the path under hosts/ the kernel hands the host in argv (decl', 1),),
-    ('kernel/session_host.py', 'SessionHost._sweep_stale_temps', 'glob', 'self.sock_path.parent', 1):
-        (('path', 'kernel/session_host.py', 'SessionHost.__init__', '"hosts"', 1),),
-    ('kernel/session_host.py', 'SessionHost._sweep_stale_temps', 'unlink', 'p', 1):
-        (('path', 'kernel/session_host.py', 'SessionHost.__init__', '"hosts"', 1),),
-    ('kernel/session_host.py', 'SessionHost._prepare_socket', 'mint', 'hosts_dir(...)', 1):
-        (),
-    ('kernel/session_host.py', 'SessionHost._prepare_socket', 'unlink', 'self.sock_path', 1):
-        (('path', 'kernel/session_host.py', 'SessionHost.__init__', '"hosts"', 1),),
-    ('kernel/session_host.py', 'SessionHost._serve_socket', 'os.lstat', 'self.sock_path.parent', 1):
-        (('path', 'kernel/session_host.py', 'SessionHost.__init__', '"hosts"', 1),),
-    ('kernel/session_host.py', 'SessionHost._serve_socket', 'asyncio.start_unix_server', 'str(self.sock_tmp)', 1):
-        (('path', 'kernel/session_host.py', 'SessionHost.__init__', '"hosts"', 1),),
-    ('kernel/session_host.py', 'SessionHost._serve_socket', 'os.chmod', 'self.sock_tmp', 1):
-        (('path', 'kernel/session_host.py', 'SessionHost.__init__', '"hosts"', 1),),
-    ('kernel/session_host.py', 'SessionHost._serve_socket', 'os.rename', 'self.sock_tmp', 1):
-        (('path', 'kernel/session_host.py', 'SessionHost.__init__', '"hosts"', 1),),
-    ('kernel/session_host.py', 'SessionHost._serve_socket', 'unlink', 'self.sock_tmp', 1):
-        (('path', 'kernel/session_host.py', 'SessionHost.__init__', '"hosts"', 1),),
-    ('kernel/session_host.py', 'SessionHost.run', 'write_text', 'self.dir / "identity.json"', 1):
-        (('path', 'kernel/session_host.py', 'SessionHost.__init__', 'spec_path: the path under hosts/ the kernel hands the host in argv (decl', 1),),
-    ('kernel/session_host.py', 'SessionHost.run', 'unlink', 'self.sock_path', 1):
-        (('path', 'kernel/session_host.py', 'SessionHost.__init__', '"hosts"', 1),),
-    ('kernel/session_host.py', 'main', 'mint', 'SessionHost(...)', 1):
-        (),
-    ('kernel/sdk_backend.py', 'SdkSession._amain', 'mint', 'self.backend._host_transport_for(...)', 1):
-        (),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_lease_applies', 'mint', '_ht().host_dir(...)', 1):
-        (),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_lease_applies', 'exists', 'hdir / "identity.json"', 1):
-        (('path', 'kernel/host_transport.py', 'host_dir', '"hosts"', 1), ('path', 'kernel/sdk_backend.py', 'SdkBackend._host_lease_applies', '_ht().host_dir(self.state_dir, sess.sid)', 1)),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_lease_applies', 'glob', 'hdir', 1):
-        (('path', 'kernel/host_transport.py', 'host_dir', '"hosts"', 1), ('path', 'kernel/sdk_backend.py', 'SdkBackend._host_lease_applies', '_ht().host_dir(self.state_dir, sess.sid)', 1)),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'mint', 'ht.host_dir(...)', 1):
-        (),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'exists', 'hdir', 1):
-        (('path', 'kernel/host_transport.py', 'host_dir', '"hosts"', 1), ('path', 'kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'ht.host_dir(self.state_dir, sess.sid)', 1)),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'carrier', 'self._new_host_transport(ht.host_sock(self.state_dir, sess.sid))', 1):
-        (),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'mint', 'ht.host_sock(...)', 1):
-        (),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'mint', 'ht.write_spawn_spec(...)', 1):
-        (),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'mint', 'ht.open_host_dirs(...)', 1):
-        (),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'mint', 'ht.host_sock(...)', 2):
-        (),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'os.unlink', 'sock.name', 1):
-        (('fd', 'kernel/host_transport.py', '_open_dir_nofollow', 'os.open(name, _DIR_FLAGS, dir_fd=dir_fd)', 1), ('fd', 'kernel/host_transport.py', 'open_host_dirs', '_open_dir_nofollow(str(hosts_path), "hosts directory", hosts_path)', 1)),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'carrier', 'ht.host_log_mark(dir_fd=dirs.dir)', 1):
-        (),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'carrier', 'ht.host_stderr_size(dirs)', 1):
-        (),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'carrier', 'self._spawn_host(spec_path)', 1):
-        (),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'exists', 'sock', 1):
-        (('path', 'kernel/host_transport.py', 'host_sock', '"hosts"', 1), ('path', 'kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'ht.host_sock(self.state_dir, sess.sid)', 2)),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'carrier', 'ht.host_exit_reason(dir_fd=dirs.dir)', 1):
-        (),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'carrier', 'ht.host_stderr_size(dirs)', 2):
-        (),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'carrier', 'self._file_refused_launch_context(dir_fd=dirs.dir)', 1):
-        (),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'carrier', 'self._record_refused_launch_position(dir_fd=dirs.dir)', 1):
-        (),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'carrier', 'ht.host_exit_reason(dir_fd=dirs.dir)', 2):
-        (),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'carrier', 'ht.host_stderr_size(dirs)', 3):
-        (),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'carrier', 'self._file_refused_launch_context(dir_fd=dirs.dir)', 2):
-        (),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'carrier', 'self._record_refused_launch_position(dir_fd=dirs.dir)', 2):
-        (),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'mint', 'dirs.close(...)', 1):
-        (),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'carrier', 'self._new_host_transport(sock)', 1):
-        (),
-    ('kernel/sdk_backend.py', 'SdkBackend._new_host_transport', 'carrier', 'ht.HostTransport(str(sock))', 1):
-        (),
-    ('kernel/sdk_backend.py', 'SdkBackend._spawn_host', 'mint', 'ht.open_host_dirs(...)', 1):
-        (),
-    ('kernel/sdk_backend.py', 'SdkBackend._spawn_host', 'carrier', 'ht.host_stderr_open(dirs)', 1):
-        (),
-    ('kernel/sdk_backend.py', 'SdkBackend._spawn_host', 'subprocess.Popen', 'argv', 1):
-        (('fd', 'kernel/host_transport.py', '_open_file_nofollow', 'os.open(name, flags | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0), 0o600', 1), ('fd', 'kernel/host_transport.py', 'host_stderr_open', '_open_file_nofollow("host.stderr", os.O_WRONLY | os.O_CREAT | os.O_APPEN', 1), ('fd', 'kernel/sdk_backend.py', 'SdkBackend._spawn_host', 'ht.host_stderr_open(dirs)', 1), ('path', 'kernel/host_transport.py', 'host_dir', '"hosts"', 1), ('path', 'kernel/host_transport.py', 'write_spawn_spec', 'host_dir(state_dir, sid)', 2), ('path', 'kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'ht.write_spawn_spec(self.state_dir, sess.sid, spec)', 1)),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_orphan_recover', 'mint', 'ht.host_dir(...)', 1):
-        (),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_orphan_recover', 'read_text', 'hdir / "identity.json"', 1):
-        (('path', 'kernel/host_transport.py', 'host_dir', '"hosts"', 1), ('path', 'kernel/sdk_backend.py', 'SdkBackend._host_orphan_recover', 'ht.host_dir(self.state_dir, sess.sid)', 1)),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_orphan_recover', 'carrier', 'ht.sh.read_journal_dir(hdir)', 1):
-        (),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_orphan_recover', 'glob', 'hdir', 1):
-        (('path', 'kernel/host_transport.py', 'host_dir', '"hosts"', 1), ('path', 'kernel/sdk_backend.py', 'SdkBackend._host_orphan_recover', 'ht.host_dir(self.state_dir, sess.sid)', 1)),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_orphan_recover', 'carrier', 'ht.HostTransport.from_journal(hdir)', 1):
-        (),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_orphan_recover', 'mint', 'ht.remove_host_dir(...)', 1):
-        (),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_ended', 'mint', '_ht().remove_host_dir(...)', 1):
-        (),
-    ('kernel/sdk_backend.py', 'SdkBackend._file_refused_launch_context', 'carrier', '_ht().host_log_rows(dir_fd=dir_fd)', 1):
-        (),
-    ('kernel/sdk_backend.py', 'SdkBackend._record_refused_launch_position', 'carrier', '_ht()._open_host_log(dir_fd)', 1):
-        (),
-    ('kernel/sdk_backend.py', 'SdkBackend._file_host_log_rows', 'mint', '_ht().host_dir(...)', 1):
-        (),
-    ('kernel/sdk_backend.py', 'SdkBackend._file_host_log_rows', 'read_text', 'p', 1):
-        (('path', 'kernel/host_transport.py', 'host_dir', '"hosts"', 1), ('path', 'kernel/sdk_backend.py', 'SdkBackend._file_host_log_rows', '_ht().host_dir(self.state_dir, sess.sid)', 1)),
-    ('kernel/sdk_backend.py', 'SdkBackend._end_host_by_lease', 'mint', 'ht.host_sock(...)', 1):
-        (),
-    ('kernel/sdk_backend.py', 'SdkBackend._end_host_by_lease.go', 'carrier', 'ht.HostTransport(str(sock))', 1):
-        (),
-}
+# The read roads' terminals since the second addendum, each held by-descriptor: the stat of identity.json by name
+# (host_file_exists), the open by name under the <sid> descriptor that read_host_file shares with spawn.json and
+# host.stderr (_open_file_nofollow) and its fdopen, and the poll's stat of the published name under the hosts/
+# descriptor (host_sock_present).
+CONVERTED = (
+    ('kernel/host_transport.py', 'host_file_exists', 'os.stat', 'name', 1),
+    ('kernel/host_transport.py', '_open_file_nofollow', 'os.open', 'name', 1),
+    ('kernel/host_transport.py', 'read_host_file', 'os.fdopen', 'fd', 1),
+    ('kernel/host_transport.py', 'host_sock_present', 'os.stat', 'name', 1),
+)
 
 
 PLANTED_READERS = '''
@@ -2363,40 +1983,47 @@ class HostsPathCensus(unittest.TestCase):
                    for rel, c in wide_census().items() if c.terminals}
         self.assertEqual(outside, {}, "a module outside the three uses a path under hosts/: %r" % (outside,))
 
-    def test_the_derived_set_equals_the_published_list_and_is_not_empty(self):
-        derived = self.census.derived()
-        self.assertGreater(len(derived), 0, "the census found no use of a path under hosts/: the seed rule is broken")
-        self.assertGreater(len(ROADS), 0, "the published list is empty")
-        self.assertEqual(sorted(ROADS), sorted(ORIGINS), "every published member has a road and a provenance")
-        missing = sorted(k for k in ROADS if k not in derived)
-        new = sorted(k for k in derived if k not in ROADS)
-        changed = sorted((k, ROADS[k][0], derived[k][0]) for k in ROADS if k in derived and ROADS[k][0] != derived[k][0])
-        origins = sorted((k, ORIGINS[k], derived[k][1]) for k in ROADS if k in derived and tuple(ORIGINS[k]) != derived[k][1])
-        self.assertEqual((missing, new, changed, origins), ([], [], [], []),
-                         "the census at this head differs from the published list (a new member needs its road written in "
-                         "ROADS and its provenance in ORIGINS, from `python3 tests/test_hosts_path_census.py --expected`): "
-                         "missing %r, new %r, class changed %r, origins changed %r" % (missing, new, changed, origins))
+    def test_no_by_path_syscall_on_a_hosts_path_remains_except_the_listed_sites(self):
+        """The pin since the road was closed (the third addendum): the derived set of terminals that are not by-descriptor
+        (by-path, mixed, exec-arg) equals RESIDUAL's keys, class for class; a by-path syscall on a path under hosts/
+        outside the list is a new road or a read moved back onto a path; a listed one that is gone or now takes a
+        descriptor is removed from the list. The read roads' terminals are by-descriptor (CONVERTED). Every entry has a
+        role of the six and a reason; the unconverted ones are kernel-side and by-path, and the set is non-empty while
+        such sites exist (when the last is converted this assertion becomes `assertEqual(unconverted, [])`)."""
+        derived = {t.key(): t.mech for t in self.census.members() if t.op not in ("carrier", "mint", "escape")}
+        self.assertGreater(len(derived), 0, "the census found no syscall on a path under hosts/: the seed rule is broken")
+        residual = self.census.residual()
+        new = sorted(k for k in residual if k not in RESIDUAL)
+        gone = sorted(k for k in RESIDUAL if k not in residual)
+        self.assertEqual(new, [], "a by-path syscall on a path under hosts/ that RESIDUAL does not list: a new road, or a read moved "
+                                  "back onto a path; convert it, or list it by role with its reason (`--residual` prints the key): %r" % (new,))
+        self.assertEqual(gone, [], "a listed site is gone or now takes a descriptor: remove it from RESIDUAL: %r" % (gone,))
+        changed = sorted((k, RESIDUAL[k][0], residual[k]) for k in RESIDUAL if RESIDUAL[k][0] != residual[k])
+        self.assertEqual(changed, [], "a listed site changed class: %r" % (changed,))
+        for k in CONVERTED:
+            self.assertEqual(derived.get(k), "by-descriptor", "%r: a read the second addendum moved onto the descent is not by-descriptor" % (k,))
+        for k, (mech, role, why) in RESIDUAL.items():
+            self.assertIn(role, ROLES, k)
+            self.assertTrue(why, "%r: a reason" % (k,))
+            if role == HOST:
+                self.assertEqual(k[0], "kernel/session_host.py", "%r: the host's own road is the host's module" % (k,))
+            if role == UNCONVERTED:
+                self.assertEqual(mech, "by-path", "%r: an unconverted site is a by-path read" % (k,))
+            if role == HANDOFF:
+                self.assertEqual(mech, "exec-arg")
+        unconverted = sorted(k for k, v in RESIDUAL.items() if v[1] == UNCONVERTED)
+        self.assertGreater(len(unconverted), 0, "no unconverted site is listed: the road is closed whole, and this assertion becomes assertEqual(unconverted, [])")
+        self.assertEqual(sorted(k[1] for k in unconverted),
+                         sorted(["HostTransport.connect", "read_journal_dir", "read_journal_dir", "read_journal_dir",
+                                 "SdkBackend._host_lease_applies", "SdkBackend._host_orphan_recover"]),
+                         "the unconverted sites by function: the connect, read_journal_dir's three reads, the two journal globs")
 
     def test_no_use_escapes_the_walk(self):
-        """What the census cannot follow it prints as an escape, by file and line with the form named; over the real
-        tree that list is empty, so a value the walk loses at any form (a call it cannot resolve, a method it does not
-        know on a tainted receiver, a callable applied outside it, a store under a name it cannot read, a decorator it
-        does not know) reds here instead of thinning the list in silence (the round-7 addendum, after six planted shapes
-        were lost that way)."""
-        esc = [k for k, v in ROADS.items() if v[0] == "escape"] + self.census.escape_lines()
-        self.assertEqual(esc, [], "an escape is a value the census could not follow; classify it or follow it: %r" % (esc,))
-
-    def test_the_residual_the_queued_item_owns_is_exactly_the_by_path_reads_labelled_so(self):
-        """The road words are not decoration: every member whose road says RESIDUAL is a by-path terminal or a carrier
-        of a path (never a descriptor use), and every kernel-side by-path terminal outside the helpers, the guards and
-        the unreachable arms is labelled RESIDUAL. A kernel by-path read that is none of those is a new road the
-        queued item does not own yet."""
-        for k, (mech, road) in ROADS.items():
-            if "RESIDUAL" in road:
-                self.assertIn(mech, ("by-path", "path"), "%r: a residual is a by-path use, not %s" % (k, mech))
-            if k[0] != "kernel/session_host.py" and mech == "by-path" and k[2] not in ("carrier", "mint"):
-                self.assertTrue(any(w in road for w in ("RESIDUAL", "HELPER", "guard", "unreachable today")),
-                                "%r: a kernel by-path syscall on a path under hosts/ is residual, a helper, a guard or unreachable; this one is labelled %r" % (k, road))
+        """The six forms the escape rule covers (the module docstring, CLASSIFY) are printed as escapes by file and line;
+        over the real tree that list is empty. What this holds: no value the walk follows reaches one of those six forms
+        in these files. What it does not hold: that every form is one of the six (the retracted promise; the module
+        docstring says what a silent miss costs now)."""
+        self.assertEqual(self.census.escape_lines(), [], "an escape is a value the census could not follow at one of the six forms; classify it or follow it")
 
     def test_the_eleven_planted_reader_shapes_are_all_found(self):
         """The instrument's own check, the shapes of round 6's plants (extra5-1's eleven: an f-string in two steps, a
@@ -2450,11 +2077,13 @@ class HostsPathCensus(unittest.TestCase):
         self.assertEqual(missing, [], "the builder's shapes the census did not find: %r (found %r)" % (missing, found))
         self.assertEqual(sum(1 for _, mech in found.get("m02", []) if mech == "by-path"), 2, "both reads of the class constant: %r" % (found.get("m02"),))
 
-    def test_a_form_the_walk_does_not_follow_is_an_escape_and_not_a_silence(self):
-        """The escape rule itself, one shape per form the docstring names: a path handed to a call the walk cannot
+    def test_each_of_the_six_escape_forms_is_printed_as_an_escape(self):
+        """The escape rule, one shape per form it covers (five of the six here; the sixth, a dynamic read on an untyped
+        receiver while a path is stored that way, is the ten-shapes case's q09): a path handed to a call the walk cannot
         resolve; a method it does not know on a path-tainted receiver; a callable applied outside it beside a path; a
         store under a name it cannot read; a decorator it does not know on a function returning a path. Each is printed
-        with its form and counted; none is a terminal and none is dropped."""
+        with its form and counted. A form outside the six is a silence (the module docstring); this case pins the rule's
+        reach, not its completeness."""
         src = '''
 
 def _q814_unknown_decorator(f):
@@ -2496,10 +2125,11 @@ class _Q814Escapes:
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     c = derive(Path(args[0]) if args else ROOT)
-    if "--expected" in sys.argv:
-        # the pinned view as Python, for pasting into ROADS (each entry's road written by hand) and ORIGINS
+    if "--residual" in sys.argv:
+        # the pinned view as Python, for pasting into RESIDUAL (each entry's role and reason written by hand)
         for t in c.members():
-            print("    %r: (%r, %r,\n        %r)," % (t.key(), t.mech, "ROAD", c.origin_keys(t)))
+            if t.op not in ("carrier", "mint", "escape") and t.mech != "by-descriptor":
+                print("    %r:\n        (%r, ROLE, \"why\")," % (t.key(), t.mech))
         return
     print("SEEDS")
     for _, t in sorted(c.seeds, key=lambda x: (c.files.index(x[1].file), x[1].line)):
@@ -2510,12 +2140,28 @@ def main():
                                                ("  " + t.why) if t.why else ""))
         for o in sorted(set(t.origins), key=lambda o: (o.file, o.line)):
             print("      <- %s %s:%d %s  %s #%d" % (o.kind, o.file, o.line, o.qual, o.text, o.ordinal))
-    print("ESCAPES (what the census cannot follow, by file and line; [] over this tree by pin)")
+    print("RESIDUAL (every terminal that is not by-descriptor, with its role from the pin; UNLISTED reds the census)")
+    by_role = {}
+    for t in c.members():
+        if t.op in ("carrier", "mint", "escape") or t.mech == "by-descriptor":
+            continue
+        mech, role, why = RESIDUAL.get(t.key(), (t.mech, "UNLISTED", "not in RESIDUAL"))
+        by_role[role] = by_role.get(role, 0) + 1
+        print("  %s:%d %s  %s(%s) #%d  [%s]  %s: %s" % (t.fn.file, t.node.lineno, t.fn.qual, t.op, t.arg_text, t.ordinal, t.mech, role, why))
+    print("BY-DESCRIPTOR")
+    for t in c.members():
+        if t.op not in ("carrier", "mint", "escape") and t.mech == "by-descriptor":
+            print("  %s:%d %s  %s(%s) #%d%s" % (t.fn.file, t.node.lineno, t.fn.qual, t.op, t.arg_text, t.ordinal,
+                                                "  CONVERTED" if t.key() in CONVERTED else ""))
+    print("ESCAPES (the six forms the rule covers, by file and line; [] over this tree by pin)")
     for line in c.escape_lines():
         print("  " + line)
     roads = c.roads()
-    print("terminals: %d, escapes: %d, carriers: %d, mints: %d, seeds: %d"
-          % (len(c.terminals), len(c.escapes), sum(1 for r in roads if r.op == "carrier"), sum(1 for r in roads if r.op == "mint"), len(c.seeds)))
+    residual = c.residual()
+    print("terminals: %d, by-descriptor: %d, residual: %d (%s), escapes: %d, carriers: %d, mints: %d, seeds: %d"
+          % (len(c.terminals), len(c.by_descriptor()), len(residual),
+             ", ".join("%s %d" % (r, by_role.get(r, 0)) for r in ROLES + tuple(sorted(set(by_role) - set(ROLES)))),
+             len(c.escapes), sum(1 for r in roads if r.op == "carrier"), sum(1 for r in roads if r.op == "mint"), len(c.seeds)))
     holes, fns = c.dir_fd_forwarding()
     print("dir_fd fallback arms: %s; holes: %s" % (fns, holes))
     if "--wide" in sys.argv:
