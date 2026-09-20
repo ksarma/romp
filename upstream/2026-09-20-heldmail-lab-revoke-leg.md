@@ -1,0 +1,50 @@
+---
+title: The held-mail chat lab drives the case the footprint fix exists for: a box first showing under a revoked follow record
+status: candidate
+where: tests/test_held_mail_chat_served.py (the project; the fork has no copy): a new leg beside the (1b) race leg, run as its own scenario with the boot hold deferred (the existing class writes the hold in setUpClass before the kernel starts), the boot-time hold leg kept as it is
+added: 2026-09-20
+pr:
+tier: docs
+offered:
+closed:
+---
+The fix in https://github.com/romp-on/romp/pull/1926 landed with its wiring guarded by text pins alone: no executed test upstream drives its case, a box first showing while the follow record is revoked, so a head that passes the base content-rect delta (dh for dfoot) passes the shipped lab and, of the 65 extension tests that reference the box-below helpers, every one but a single regex. The leg proposed here executes the case with page-side hooks and no timer: base red, a dh-reverted mutant red with the payload shape, head green, in every run of our round. Tests only, so docs tier.
+
+## What the leg executes, and why the gap matters
+
+The PR's diff is five files under ui/webview: render.ts (boxFootprint, lastFoot, dfoot, and the wasAtBottom line calling atBottomBeforeGrowth with dfoot), scroll-keep.ts (the pure helper), and three test files whose changes are source-text pins plus one pure test over the captured numbers. The pure test exercises the helper without its call site; the pins match the text of render.ts. Our round (the tests lens and two refuters) executed the gap in scratch archives of the base (10f33abb5), the head (eba5eaa5f) and a mutant of the head with one edit, atBottomBeforeGrowth(..., dh) in place of (..., dfoot), the base's arithmetic in the new helper's clothing:
+
+- The shipped lab on the mutant: green in all seven stock runs of the round (five plain, two under CDP CPU throttling at 10x and 20x). The first leg's pass record is n 2, repinned true, scrollTop 8372: the RECORDED follow mode re-pinned and the geometric read was never consulted.
+- Every extension test that references the box-below helpers (a census of ui/webview/*.test.ts for followBoxBelow, romp:box-below, wasAtBottom, boxFootprint, atBottomBeforeGrowth and the three-box list: nine files, 65 tests) on the mutant: 64 pass, 1 fail, the one red the box-below.test.ts regex on the wasAtBottom line. The three pin files alone: 17 of 18, the same regex.
+- So the text pin catches a literal revert of the call site. What nothing executed catches is a footprint read that is wrong at runtime, or a rewrite that re-aims the pin with the behaviour reverted. The shipped lab can catch the mutant only when the load race lands, which is how the PR's own red arose (a whole-suite run); alone, the record re-pins first. The accurate statement is that no test discriminates the wiring deterministically.
+
+The proposed leg, executed by both refuters with the product code untouched (an env-gated patch of the lab in the scratch archives): base red 3 of 3 (1 failed, 5 passed; first.atBottom False, pass.repinned False, geometry sh 8819, scrollTop 8174, clientHeight 447, box 189.27, 198 px short, the settled wait ok), mutant red 4 of 4 with the same payload, head green 4 of 4 (6 passed; repinned True, scrollTop 8372, 0 short); the finder's own build of the leg added one more pair, base red and head green. The (1b) race leg stayed green at all three trees (the two deltas agree for a box growing while shown, which executes the PR's claim about why the shipped race scenario never caught it). Each lab run 9 to 20 s wall, one process, capped.
+
+## The leg's design (the round's Fix and both refuters' notes)
+
+Page-side hooks only, no timer. A name in the lab's style: test_a_box_first_showing_under_a_revoked_follow_record_re_pins_the_at_bottom_reader.
+
+1. Boot with no pre-boot hold. The existing class writes the held message in setUpClass before the kernel starts, so the leg needs its own boot with the hold deferred (an env knob on the class, or a second class at the cost of one more kernel boot of about 10 s). The boot-time hold leg stays as it is: that scenario is the load flake's own, the backfill path.
+2. Wait until the transcript is scrollable and at the bottom (page.waitForFunction on #content: scrollHeight > clientHeight + 40 and scrollHeight - scrollTop - clientHeight < 2), through the lab's timed helper so the wait's ok flag is asserted rather than swallowed. Record the pre-show geometry: scrollHeight, scrollTop, clientHeight (645 here), the box's display (none).
+3. Install a MutationObserver on #notices with attributeFilter ["style"] that, the instant display leaves none, records the geometry, dispatches one synthetic scroll event on #content, and disconnects. A MutationObserver microtask runs after renderNotices' task and before the rendering update, so the synthetic scroll precedes the box's ResizeObserver pass; pendingBuildRaf is null by then, so the scroll listener's followReader records the reader from the GROWN geometry (stick false): the revoked record, the race's exact state. From there only the pass's geometric read can re-pin.
+4. Write the hold (the queue file), then take the first leg's reads: row, settled, ring, facts, geometry.
+
+Assertions: first.atBottom and pass.repinned True (the fix's road); the hook fired exactly once and its post-scroll distance is about the footprint (198 px, the integer-rounded 197.27), so the leg cannot pass vacuously the way the (1b) leg's swallowed scroll-up can; and the pre-show to post-show clientHeight delta (645 to 447, 198) read beside the footprint pins the dfoot arithmetic inside the 2 px band, which the pure test cannot reach (it takes one delta and has nothing to compare it with). One correction for the author's version: the scratch version waited 400 ms after the at-bottom wait and before the hold; that is a timer and the leg should not carry it (the at-bottom waitForFunction alone was the working condition; a hold on the footer's romp:box-below pass is the event-based form).
+
+## The exact match with our own record
+
+The payload the PR's body quotes (sh 8819, scrollTop 8174, clientHeight 447, box 189.265625; pass n 2, height 187.265625, repinned false) is the same four numbers our own record carries from a different run: the whole-suite verification of the 994 merge (merge head b170c5bee, ending 2026-09-20 11:52Z, 5 failed of 15216, this lab's first leg among them), while the lab alone passed 2 of 2 at the project tip 10f33abb5 and 2 of 2 at that merge head. The layout is deterministic (sixty synthetic turns, one font); only the race is load-dependent, which is why the numbers repeat across runs and machines: an exact match, not a resemblance. The arithmetic: 8819 - 8174 - 447 = 198 px short after the box first showed. Adding back the content-rect delta 187.27 leaves 10.73 (outside the 2 px band, no re-pin: the base); the border box alone 189.27 leaves 8.73 (also outside); the footprint 197.27, the border box plus the 8 px top margin (#notices has border 1px top and bottom and margin 8px 10px 0, 4px under body.dense-chrome), leaves 0.73, inside the band: re-pin. The leg's forced red at the base reproduces this shape on every run, and the head's green reads scrollTop 8372 = 8819 - 447, the bottom.
+
+## Dependency
+
+The fix rides on the pre-growth decider of https://github.com/romp-on/romp/pull/1915 (wasAtBottom in the boxes-below observer, the romp:box-below pass event, the lab's settled hold), which the fork's main does not carry: the fork's observer list is bg-tasks and footer (its block has no wasAtBottom; https://github.com/romp-on/romp/pull/1890, the approval box and the lab's creation, is declined there), its scroll-keep.ts has no atBottomBeforeGrowth, and tests/test_held_mail_chat_served.py does not exist on the fork (created by 1890, edited by https://github.com/romp-on/romp/pull/1897, 1915 and https://github.com/romp-on/romp/pull/1923). So the leg is offered against the project, where the lab and the fix live, and would enter the fork only with the fold that brings 1915 and 1926 (the fold list of 2026-09-21 takes both with notes). The fold's note on 1915, that the (1b) race leg's scroll-up premise is a swallowed wait (executed: that leg passed with the scroll-up disabled), is a separate item and stays with that PR's row; this leg's own waits go through the timed helper.
+
+## Why upstream wants it
+
+The PR's executed red before the fix was the flaky shard run alone; the round's forced pair (base red, head green, one lab change, product code untouched) is the executed fails-before the PR itself lacks, and it holds the wiring against the class the pins cannot see. It is one scenario in a file the project owns and edits per PR, event-driven like the rest of the lab, and costs one more kernel boot.
+
+## Tier
+
+docs (tier 0). By the fork's rule a fix is a product-code fix with a test that fails before it, and a change confined to tests/ is documentation tier (precedent: the webpush no-crypto helper entry, tests only, docs). Upstream's tier check treats docs as merge on green for every author.
+
+2026-09-20: filed from round one on https://github.com/romp-on/romp/pull/1926 (merged 2026-09-20 18:27:52Z as ef13dd803 while the round ran; head eba5eaa5f). The leg was built by two refuters independently from scratch archives with the product code untouched. Not yet cut as a PR anywhere; the offer is the user's per-change call.
