@@ -260,6 +260,20 @@ class NoticeRowTypeFault(unittest.TestCase):
         self.assertEqual([r["key"] for r in rows], ["figure"])
 
 
+def _forget_said_once():
+    """What a case of HeldMailReader must not inherit from an earlier one: the bell ring and every said-once registry the
+    held-mail reader keys on a path under a root, a file it could not read (_HOLD_UNREADABLE_SAID), a record moved aside
+    that it says again once its row has left the ring (_HOLD_ASIDE_SAID, the manager's round 1 follow-on, extra6-4) and a
+    store fault (_state_fault_seen). Called on both sides of every case, so the class leaves nothing to the next module in
+    the process either. getattr with a default: the fails-before runs of this module meet kernels that keep neither hold
+    registry."""
+    getattr(km, "_HOLD_UNREADABLE_SAID", set()).clear()
+    getattr(km, "_HOLD_ASIDE_SAID", {}).clear()
+    km._state_fault_seen.clear()
+    with km._SYNC_LOCK:
+        del km._SYNC_NOTICES[:]
+
+
 class HeldMailReader(unittest.TestCase):
     """F3, F4 and F5, one fix with three faces: the quarantine directory reader. F3: a fault listing the directory returned
     [] with nothing said, so an unreadable directory drew a clean board with every hold invisible (and on this Python the
@@ -278,10 +292,7 @@ class HeldMailReader(unittest.TestCase):
         self.r = _Root()
         self.now = int(time.time())
         self._modes = []
-        getattr(km, "_HOLD_UNREADABLE_SAID", set()).clear()
-        km._state_fault_seen.clear()
-        with km._SYNC_LOCK:
-            del km._SYNC_NOTICES[:]
+        _forget_said_once()
 
     def tearDown(self):
         for p, mode in self._modes:                  # restore every mode this test changed, so the root can be removed
@@ -289,6 +300,7 @@ class HeldMailReader(unittest.TestCase):
                 os.chmod(p, mode)
             except OSError:
                 pass
+        _forget_said_once()
         self.r.close()
 
     def _chmod(self, p, mode):
@@ -427,6 +439,24 @@ class HeldMailReader(unittest.TestCase):
         src = inspect.getsource(km._held_records)
         self.assertIn("os.listdir(qdir)", src, "the listing raises on an unreadable directory")
         self.assertNotIn(".glob(", src, "Path.glob swallows a PermissionError on this Python and yields nothing")
+
+    def test_the_next_case_inherits_no_aside_episode(self):
+        """The aside registry the manager's round 1 follow-on added (extra6-4; _HOLD_ASIDE_SAID, an aside's path to the seq
+        of the bell row that carries it) is dropped between cases with the read-fault registry and the ring: without that,
+        a case of this class that moved a hold aside left its entry, keyed on a root that no longer existed, to every later
+        case in the process. Fails under a mutation that drops the clear from _forget_said_once over the tree (the root's
+        key is still listed at the assertion after the call); over the 0a589d1e4 archive the kernel keeps no such
+        registry, the premise. Green here."""
+        self.r.write_hold("qc-good")
+        (self.r.qdir / "qc-list.json").write_text(json.dumps([1, 2, 3]))
+        cards, _ = self._cards()
+        self.assertEqual([c["itemId"] for c in cards], ["quarantine:qc-good"])
+        qdir = str(self.r.qdir)
+        self.assertEqual(len([k for k in km._HOLD_ASIDE_SAID if k.startswith(qdir)]), 1, "the scene: the aside's episode is open")
+        self.assertEqual(len(self._refused()), 1)
+        _forget_said_once()
+        self.assertEqual([k for k in km._HOLD_ASIDE_SAID if k.startswith(qdir)], [], "what the next case's setUp forgets")
+        self.assertEqual(self._refused(), [], "and the ring with it")
 
 
 if __name__ == "__main__":

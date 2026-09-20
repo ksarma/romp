@@ -13,7 +13,11 @@
 //  5. ACCENT CHROME FOLLOWS THE THEME (2026-09-19): a button whose text is var(--accent) draws its border
 //     from the same token in both theme blocks, never from a dark-accent literal. The held-mail card's
 //     Approve button (.fdismiss.fq-ok) wrote its border as rgba(156, 210, 255, 0.6), the dark accent at
-//     0.6, so in the light theme it computed the clay text inside a blue edge.
+//     0.6, so in the light theme it computed the clay text inside a blue edge. The census at the end
+//     (2026-09-20) holds the rule for every rule of the three sheets, not one selector: no rule, and no
+//     keyframe taken whole, names an accent token beside a dark-accent literal outside a var() fallback.
+//     The same class had two more members when the Approve button was fixed: revealPulse's glow in
+//     feed.css and .staged-chip's dashed edge in styles.css, both written through the token now.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -152,5 +156,105 @@ test("the held-mail Approve button's edge follows the theme's accent: no dark-ac
     assert.deepEqual(text.slice(0, 3), accent, name + ": the text resolves to the theme's accent");
     assert.deepEqual(edge.slice(0, 3), accent, name + ": the edge is the same hue as the text");
     assert.equal(edge[3], 0.6, name + ": the edge keeps the 0.6 tint the dark theme always drew");
+  }
+});
+
+/** THE RULE-SCOPED CENSUS (2026-09-20). A rule that paints from an accent token and from the dark accent written out draws
+ *  two hues in the light theme, whichever declarations carry them: .staged-chip put the token on border-left and the literal
+ *  on border, so a read scoped to one declaration missed it. The unit is the RULE: a plain rule's whole body; a @keyframes
+ *  block taken whole, since one stop's ring and another stop's glow paint on one element; a rule inside an @media block on
+ *  its own. Not a literal, by construction: the dark accent inside a var() fallback (the no-sheet value, never the light
+ *  theme's); the accent tokens' own definitions (--accent and --accent-wash in a :root, in body.theme-light, or in a surface
+ *  that stays dark in both themes, styles.css #romp-lightbox); and a literal at alpha 0, which paints no hue (feed.css
+ *  romp-card-pulse fades the outline out to rgba(156, 210, 255, 0)). This pins the WRITTEN form: a text scan cannot tell a
+ *  painted mismatch from an inert one, so the written form is what it holds, and a new rule resolves through the token. */
+type Rule = { sheet: string; head: string; body: string };
+/** Every rule of a sheet, comments stripped first; a block at-rule that wraps rules (@media, @supports, @container, @layer) is
+ *  walked into, any other block (a plain rule, @keyframes, @font-face, @property) is one rule. */
+function rulesOf(css: string, sheet: string): Rule[] {
+  const out: Rule[] = [];
+  const walk = (text: string, from: number, to: number) => {
+    let i = from;
+    while (i < to) {
+      const open = text.indexOf("{", i);
+      if (open < 0 || open >= to) break;
+      const head = text.slice(i, open).trim();
+      let depth = 1, j = open + 1;
+      while (j < to && depth > 0) { if (text[j] === "{") depth++; else if (text[j] === "}") depth--; j++; }
+      if (/^@(media|supports|container|layer)\b/.test(head)) walk(text, open + 1, j - 1);
+      else out.push({ sheet, head, body: text.slice(open + 1, j - 1) });
+      i = j;
+    }
+  };
+  const text = css.replace(/\/\*[\s\S]*?\*\//g, "");
+  walk(text, 0, text.length);
+  return out;
+}
+/** The dark accent in any spelling: the 156, 210, 255 triple in either rgb() syntax, or its hex, each with an optional alpha. */
+const DARK_ACCENT = [
+  /rgba?\(\s*156\s*,\s*210\s*,\s*255\s*(?:,\s*([\d.]+)(%?))?\s*\)/gi,
+  /rgba?\(\s*156\s+210\s+255\s*(?:\/\s*([\d.]+)(%?))?\s*\)/gi,
+  /#9cd2ff([0-9a-f]{2})?(?![0-9a-z-])/gi,
+];
+function darkAccentLiterals(body: string): Array<{ text: string; alpha: number }> {
+  const out: Array<{ text: string; alpha: number }> = [];
+  for (const re of DARK_ACCENT) {
+    for (const m of body.matchAll(re)) {
+      let alpha = 1;
+      if (re === DARK_ACCENT[2]) { if (m[1]) alpha = parseInt(m[1], 16) / 255; }
+      else if (m[1] !== undefined) alpha = parseFloat(m[1]) / (m[2] === "%" ? 100 : 1);
+      out.push({ text: m[0], alpha });
+    }
+  }
+  return out;
+}
+/** var(--x, <fallback>) read as var(--x): the fallback paints only where no sheet defines the token, so never under a theme.
+ *  Two levels of parentheses inside the fallback (a color-mix carrying a var()). */
+const withoutFallbacks = (s: string) => s.replace(/var\((--[a-z0-9-]+)\s*,\s*(?:[^()]|\((?:[^()]|\([^()]*\))*\))*\)/gi, "var($1)");
+/** The accent's tokens: the hue, the text on it and the wash, every one re-inked by the light theme. */
+const ACCENT_TOKEN = /var\(--accent(?:-fg|-wash)?\)/;
+/** The rules of one sheet that name an accent token beside a painted dark-accent literal, each as "<sheet> <head>: <literals>". */
+function mixedAccentRules(css: string, sheet: string): string[] {
+  const out: string[] = [];
+  for (const r of rulesOf(css, sheet)) {
+    const body = withoutFallbacks(r.body).replace(/--accent(?:-wash)?\s*:\s*[^;]+;/g, "");
+    if (!ACCENT_TOKEN.test(body)) continue;
+    const painted = darkAccentLiterals(body).filter((l) => l.alpha > 0).map((l) => l.text);
+    if (painted.length) out.push(`${sheet} ${r.head}: ${painted.join(", ")}`);
+  }
+  return out;
+}
+
+test("the census reader: the rule is the unit, a keyframe is one rule, and a fallback, an alpha-0 stop or the token's own definition is no literal", () => {
+  // a synthetic sheet in the sheets' own shapes: the two members' forms, the exemptions, and the spellings
+  const css = [
+    ":root { --accent: #9cd2ff; --accent-wash: rgba(156, 210, 255, 0.12); --kind: var(--accent); }",
+    "/* a comment naming rgba(156, 210, 255, 0.6) beside var(--accent) */",
+    ".two-decls { border: 1px dashed rgba(156, 210, 255, 0.45);\n  border-left: 2px solid var(--accent); }",
+    "@keyframes two-stops {\n  0% { outline-color: var(--accent); }\n  100% { outline-color: #9CD2FF; }\n}",
+    "@keyframes fades-out {\n  0% { outline-color: var(--accent, #9cd2ff); }\n  100% { outline-color: rgba(156, 210, 255, 0); }\n}",
+    ".fallback { outline: 2px solid var(--accent, #9cd2ff); background: var(--accent-wash, rgba(156, 210, 255, 0.12)); }",
+    ".nested-fallback { border-color: var(--edge, color-mix(in srgb, var(--accent) 60%, transparent)); color: #9cd2ff00; }",
+    "@media (prefers-reduced-motion: reduce) {\n  .nested { color: var(--accent-fg); background: rgb(156 210 255 / 50%); }\n}",
+    ".literal-alone { color: #9cd2ff; }",
+    ".wash { background: var(--accent-wash); border: 1px solid rgb(156 210 255 / 40%); }",
+    ".fixed { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 60%, transparent); }",
+  ].join("\n");
+  assert.deepEqual(mixedAccentRules(css, "t"), [
+    "t .two-decls: rgba(156, 210, 255, 0.45)",
+    "t @keyframes two-stops: #9CD2FF",
+    "t .nested: rgb(156 210 255 / 50%)",
+    "t .wash: rgb(156 210 255 / 40%)",
+  ]);
+  assert.deepEqual(rulesOf(css, "t").map((r) => r.head).filter((h) => h.startsWith("@")), ["@keyframes two-stops", "@keyframes fades-out"], "a keyframe is one rule and an @media wrap is walked into");
+});
+
+test("no rule of the three sheets names an accent token beside the dark accent written out (two hues on one element in the light theme)", () => {
+  const found = ([["styles.css", CHAT], ["feed.css", FEED], ["gear.css", GEAR]] as const).flatMap(([sheet, css]) => mixedAccentRules(css, sheet));
+  assert.deepEqual(found, [], "rules mixing an accent token with the dark accent written out:\n  " + found.join("\n  "));
+  // the reader saw the sheets: the Approve button, the two rules the census widened onto and the alpha-0 keyframe are rules it read
+  const heads = new Set([...rulesOf(FEED, "feed.css"), ...rulesOf(CHAT, "styles.css")].map((r) => r.head));
+  for (const head of [".fdismiss.fq-ok", "@keyframes revealPulse", ".staged-chip", "@keyframes romp-card-pulse", ":root", "body.theme-light"]) {
+    assert.ok(heads.has(head), head + " is a rule the census read");
   }
 });

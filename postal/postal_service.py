@@ -3931,10 +3931,16 @@ def _hold_fault_row(exc):
 def _hold_rows():
     """This bus's OWN quarantine holds, summarized for gossip: enough for a peer's popover to say who
     is waiting where (mid, from -> to, true origin, a one-line gist) without shipping bodies around.
-    Bounded: past 20 the COUNT is the story and the holder's own dashboard has the rest. The gist names a body that is not
-    text by its type (_hold_text). A directory that exists and cannot be listed is one row carrying `fault`
-    (_hold_fault_row), never no rows: a summary never ends the exchange it rides in, so no raise, but a section that
-    vanished on every other machine's dashboard was a false board there (2026-09-20)."""
+    Bounded: past 20 the COUNT is the story and the holder's own dashboard has the rest. Every field a row carries wears
+    the belt the kernel's card wears: mid, frm, to and origin through _hold_text (a string as it is, a number spelled, a
+    container named by its type and never formatted), the gist the body's text or its type name, and `at` through
+    _hold_sort_at's integer rule (an int, or 0 for a value int() refuses), so a field of any JSON type reaches every
+    peer's popover as text or an integer and never as an object, which the popover's JS would render as its object
+    placeholder (the fork PR's extra6-5, 2026-09-20: before it the fields were copied as they were, so one type-wrong
+    record on this machine was a wrong line on every peer's popover, for as long as it was held). The mid is always
+    text: the walk admits no record whose mid it cannot decide (extra6-1). A directory that exists and cannot be listed
+    is one row carrying `fault` (_hold_fault_row), never no rows: a summary never ends the exchange it rides in, so no
+    raise, but a section that vanished on every other machine's dashboard was a false board there (2026-09-20)."""
     out = []
     try:
         recs = _held_records_bus()
@@ -3942,9 +3948,9 @@ def _hold_rows():
         # said in the log once per episode by the walk; the bell row on THIS machine is the kernel's, whose own reader of
         # the directory files one (_note_hold_dir_fault); the viewing machines hear it through the fault row
         return [_hold_fault_row(e)]
-    for m in recs:                                   # every one a JSON object: the walk skipped and said the rest
-        out.append({"mid": m.get("mid"), "frm": m.get("frm") or "?", "to": m.get("to") or "?",
-                    "origin": m.get("origin") or "", "at": m.get("at") or 0,
+    for m in recs:                                   # every one a JSON object whose mid is text: the walk skipped and said the rest
+        out.append({"mid": _hold_text(m.get("mid")), "frm": _hold_text(m.get("frm"), "?"),
+                    "to": _hold_text(m.get("to"), "?"), "origin": _hold_text(m.get("origin")), "at": _hold_sort_at(m),
                     "gist": " ".join(_hold_text(m.get("body")).split())[:90]})
     return out[:20]
 

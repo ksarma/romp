@@ -1342,6 +1342,93 @@ class AHolderWhoseStoreCannotBeListedSaysSoOnTheWire(_HeldStore):
         self.assertEqual([r["atHost"] for r in ps.remote_holds()], ["TESTHOST"])
 
 
+class HoldSummaryFieldsAreNamedNeverFormatted(_HeldStore):
+    """Every field _hold_rows ships wears the belt the kernel's card wears (the fork PR's extra6-5, 2026-09-20). Before it
+    the summary copied mid, frm, to, origin and at out of the record as they were, so a field of any JSON type rode into
+    the exchange payload and onto EVERY peer's popover, whose JS concatenates frm, to and origin into one line: a dict frm
+    rendered as the object placeholder on every other machine for as long as the record was held, while the kernel's card
+    for the same record named the container by its type through _hold_text. The kernel does not move a record aside for a
+    type-wrong frm, to or origin (a record that parsed is handled by the field, never the file), so the wrong line was
+    permanent, not bounded by the next build. Now mid, frm, to and origin go through the bus's _hold_text (a string as it
+    is, a number spelled out, a container named by its type and never formatted; the kernel's twin, pinned equal over one
+    probe set by HeldBodyThatIsNotTextKeepsItsHold) and `at` through _hold_sort_at's integer rule (an int, or 0 for a value
+    int() refuses), and the receiving bus carries the same text with atHost set. The record is never skipped for a field's
+    type: it stays listed and decidable, and nothing is said of it (the skip would have dropped the hold from the approve
+    and deny surface while its file sat undelivered).
+
+    Fails before over a git archive of 0a589d1e4 (the round 1 fixes; the defect predates the PR, and bc88256e8 shows the
+    same): the row's frm is the dict itself, its to the list, its at the text, and the deep frm raises out of the payload's
+    json.dumps. Synthetic: placeholder mids, invented text, the peer name TESTHOST, the deep value built iteratively."""
+
+    FRM, TO = {"name": "invented-inner-frm"}, ["invented-inner-to", "tests"]
+
+    def setUp(self):
+        super().setUp()
+        self.addCleanup(ps.PEER_STATE.pop, "TESTHOST", None)
+
+    def _typed(self):
+        return self._write(self.M2, json.dumps(dict(self.HOLD, mid=self.M2, frm=self.FRM, to=self.TO, origin=7,
+                                                    at="yesterday-at-noon")))
+
+    def test_container_and_numeric_fields_summarize_as_type_names_and_an_integer(self):
+        f2 = self._typed()
+        rows = {r["mid"]: r for r in ps._hold_rows()}
+        self.assertEqual(set(rows), {self.HOLD["mid"], self.M2}, "the record keeps its hold: handled by the field, never skipped")
+        r = rows[self.M2]
+        self.assertEqual((r["frm"], r["to"], r["origin"], r["at"], r["gist"]), ("dict", "list", "7", 0, "invented held text"))
+        self.assertIs(type(r["at"]), int)
+        good = rows[self.HOLD["mid"]]
+        self.assertEqual((good["frm"], good["to"], good["origin"], good["at"]), ("api", "web", "TESTHOST", 1700000000),
+                         "a text field is the text it is, an int at the int")
+        payload = ps.holds_payload("other")
+        self.assertEqual({p["mid"]: p for p in payload}[self.M2], r, "the payload carries the summary's row as it is")
+        for p in payload:
+            for k, v in p.items():
+                self.assertIsInstance(v, (str, int), "%s rides the wire as text or an integer, never a %s" % (k, type(v).__name__))
+        self.assertNotIn("invented-inner", json.dumps(payload), "a container's contents never reach the wire")
+        self.assertEqual([h["mid"] for h in ps.quarantine_list()], [self.HOLD["mid"], self.M2],
+                         "listed and decidable, the type-wrong at sorting as the oldest")
+        self.assertEqual(self._said(), [], "nothing is said of a record that keeps its hold")
+        self.assertTrue(f2.is_file(), "nothing moved aside")
+
+    def test_the_receiving_bus_carries_the_same_text_with_at_host(self):
+        self._typed()
+        payload = ps.holds_payload("other")
+        # the receiving bus folds the payload in as the dialer's half of the exchange does
+        ps.peer_exchange_apply("TESTHOST", {}, {"presence": [], "epoch": 1, "holds": payload})
+        remote = {r["mid"]: r for r in ps.remote_holds()}
+        self.assertEqual(set(remote), {self.HOLD["mid"], self.M2})
+        r = remote[self.M2]
+        self.assertEqual((r["atHost"], r["frm"], r["to"], r["origin"], r["at"]), ("TESTHOST", "dict", "list", "7", 0))
+        snap = ps.peers_snapshot()["remoteHolds"]
+        self.assertEqual(snap, ps.remote_holds(), "what the kernel proxies to the panel")
+        self.assertNotIn("invented-inner", json.dumps(snap), "a container's contents never reach the panel")
+
+    def test_a_deep_field_is_named_never_formatted_out_of_the_payload(self):
+        deep = self._write(self.M3, json.dumps(dict(self.HOLD, mid=self.M3, frm="DEEP")).replace('"DEEP"', DEEP))
+        with _parser_returning({'{"mid": "%s"' % self.M3: dict(self.HOLD, mid=self.M3, frm=_deep_list())}):
+            rows = {r["mid"]: r for r in ps._hold_rows()}
+            wire = json.dumps(ps.holds_payload("other"))
+        self.assertEqual(rows[self.M3]["frm"], "list", "the type name; str() of the value would overflow the stack")
+        self.assertLess(len(wire), 2000, "the payload never carries the value")
+        self.assertTrue(deep.is_file(), "nothing moved aside")
+
+    def test_every_summary_field_agrees_with_the_kernels_helper_over_the_probe_set(self):
+        kernel_hold_text = _kernel_hold_text()
+        probes = ["", None, "invented text", " spaced  text ", 0, 7, -3, 2.5, True, False, [], [1, 2], {}, {"a": 1}]
+        at_expected = [0, 0, 0, 0, 0, 7, -3, 2, 1, 0, 0, 0, 0, 0]     # the sort's integer rule: an int, or 0 for what int() refuses
+        for v, at in zip(probes, at_expected):
+            with self.subTest(value=repr(v)):
+                self._write(self.M2, json.dumps(dict(self.HOLD, mid=self.M2, frm=v, to=v, origin=v, at=v)))
+                r = {row["mid"]: row for row in ps._hold_rows()}[self.M2]
+                self.assertEqual((r["frm"], r["to"], r["origin"]),
+                                 (kernel_hold_text(v, "?"), kernel_hold_text(v, "?"), kernel_hold_text(v)),
+                                 "the summary's fields are the kernel's card's text")
+                self.assertEqual(r["at"], at)
+                self.assertIs(type(r["at"]), int)
+                self.assertEqual(r["mid"], self.M2, "the mid the walk admitted, as text")
+
+
 class RecallOfAParkedRecordInAStoreThatCannotBeListed(unittest.TestCase):
     """The outbox store's fourth reader, missed by review round 1's F3 postal fix (review round 2, 2026-09-19): _recall's
     outbox arm (the unsend of a parked cross-host record) enumerated OUTBOX/<host> with Path.glob, which on Python 3.12

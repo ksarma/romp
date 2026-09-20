@@ -2559,10 +2559,14 @@ a.fileview-gh-note { border-style: dashed; }
 .reveal-pulse { animation: revealPulse 1.6s ease; }
 @keyframes revealPulse {
   0%, 100% { box-shadow: none; }
-  15%, 40% { box-shadow: 0 0 0 2px var(--accent), 0 0 16px rgba(156, 210, 255, 0.5); }
+  15%, 40% { box-shadow: 0 0 0 2px var(--accent), 0 0 16px color-mix(in srgb, var(--accent) 50%, transparent); }
   55% { box-shadow: none; }
-  70%, 85% { box-shadow: 0 0 0 2px var(--accent), 0 0 16px rgba(156, 210, 255, 0.5); }
+  70%, 85% { box-shadow: 0 0 0 2px var(--accent), 0 0 16px color-mix(in srgb, var(--accent) 50%, transparent); }
 }
+/* ^ the glow is the accent at 0.5 through the sheet's tint idiom (.fdismiss.fq-ok above), so the light theme's clay
+   reaches it. Written as the dark literal rgba(156, 210, 255, 0.5), the ring followed the theme's accent and the glow
+   stayed the dark blue: two hues on one card in the light theme (button-vocab.test.ts's census reads every rule of
+   both sheets for that pair, a keyframe taken whole). */
 
 /* ── per-card notification bell (the user 2026-07-28) ─────────────────────────────────────────────
    Right-click a card → a one-item context menu (the chat tab menu's chrome, mirrored here because the

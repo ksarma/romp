@@ -72,6 +72,7 @@ class _Root:
         getattr(km, "_NOTICE_BAD_ROW_SAID", {}).clear()
         getattr(km, "_NOTICE_SWEPT", {}).clear()
         getattr(km, "_HOLD_UNREADABLE_SAID", set()).clear()
+        getattr(km, "_HOLD_ASIDE_SAID", {}).clear()  # an aside's path -> its bell row's seq (the manager's round 1 follow-on, extra6-4)
         km._state_fault_seen.clear()
         with km._SYNC_LOCK:
             del km._SYNC_NOTICES[:]
@@ -568,6 +569,32 @@ class OffFrameCountsPassOverHoldRows(_Case):
         self._ledger([(NOTICE_ID, self.now - 100), ("quarantine:qa-1", self.now - 50), ("quarantine:qa-2", self.now - 50)])
         f, _ = self._off_frame()
         self.assertEqual((f["canUndoClear"], f["dismissedCount"]), (True, 1), "the user's clear, and only it")
+
+
+class TheHarnessLeavesNoEpisodeBehind(_Case):
+    """The harness's contract (_Root: every memo and every said-once registry keyed on a state path is dropped on both
+    sides) covers the aside registry the manager's round 1 follow-on added (extra6-4; _HOLD_ASIDE_SAID, an aside's path to
+    the seq of the bell row that carries it, so a listing says the aside again once that row has left the ring). The
+    round 1 harness predates the registry, so a case that moved a hold aside left its entry, keyed on a root that no longer
+    existed, to every later case of every module built on this harness (this one, the round 2 module and the manager's
+    round 1 module; the follow-on module cleared it in its own setUp and tearDown). Harmless while two roots never share a
+    path, and a leak all the same. Fails under a mutation that drops the clear from _Root._reset over the tree (the closed
+    root's key is still listed where none is due); over the 0a589d1e4 archive the kernel keeps no such registry, the
+    premise. Green here."""
+
+    def test_a_closed_root_takes_its_aside_episode_with_it(self):
+        self.r.write_hold("qc-good")
+        (self.r.qdir / "qc-list.json").write_text(json.dumps([1, 2, 3]))
+        cards, _ = self._cards()
+        self.assertEqual(cards, ["quarantine:qc-good"])
+        self.assertEqual(len(self._asides("qc-list")), 1, "the scene: one aside under this root")
+        qdir = str(self.r.qdir)
+        self.assertEqual(len([k for k in km._HOLD_ASIDE_SAID if k.startswith(qdir)]), 1, "the listing keyed the aside on its bell row")
+        self.assertEqual(len(_refused()), 1)
+        self.r.close()
+        self.assertEqual([k for k in km._HOLD_ASIDE_SAID if k.startswith(qdir)], [], "the closed root's aside episode is gone with it")
+        self.assertEqual(_refused(), [], "and the ring")
+        self.r = _Root()                             # a fresh root for tearDown to close
 
 
 if __name__ == "__main__":
