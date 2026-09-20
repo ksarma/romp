@@ -6757,8 +6757,14 @@ def _note_read_fault_once(path, text, fold=None, fold_head="", name=""):
     the notices reader skips the row and says so. (3) A record that parsed whose FIELD has an unexpected type: a `body`,
     `frm`, `to`, `origin` or `toId` that is not text, or an `at` that is not an integer. The field is handled and the
     file is never moved or refused for it, on either daemon: a text field is named by its type alone and never
-    formatted (_hold_text), and an `at` int() refuses takes the build's clock on the kernel's card and sorts as the
-    oldest on the bus (postal_service._hold_sort_at), the one place the two readers' handling of a field differs.
+    formatted (_hold_text), and an `at` that is not an integer is the one field the two readers handle apart, and what
+    a person sees is this: the kernel's card takes the build's clock, so the held message reads as just arrived, dated
+    the moment the feed was built and re-dated by every build, and sorts with the board's newest cards (at the top of
+    its column when the feed is sorted newest first), while the bus gives the same message 0 for its `at`
+    (postal_service._hold_sort_at, where an absent `at` lands too) and sorts it as the oldest of everything held, the
+    last row of its newest-first list on GET /quarantine and a 0 in the summary every peer's popover reads; one
+    message, dated now in one place and older than everything in the other. The bus's side is the one to change, a
+    follow-up recorded in the ledger entry upstream/2026-09-19-heldmail-readers.md under Recorded, not fixed.
     Declaring a file corrupt is a judgement only a successful read supports: unreadable is not unparseable, and neither
     is corrupt.
 
@@ -77079,6 +77085,16 @@ class Handler(BaseHTTPRequestHandler):
                 pass
         elif msg and msg.get("type") == "clearAll":
             d = build_feed(int(time.time())) if _task_tracking_on() else _feed_off_frame(int(time.time()))   # off (T404 round two, low 8): no build; nothing to clear
+            # RESIDUAL, recorded and not fixed (the held-mail readers PR's third review pass, 2026-09-20; the ledger entry
+            # upstream/2026-09-19-heldmail-readers.md, Recorded, not fixed): while Task tracking is off `d` is the off frame,
+            # whose asks are empty, so _asked is empty, _clear_all writes nothing, _left is empty and no clearAllResult goes
+            # back: a press is answered with NOTHING, no toast, no bell row, no refusal. The feed pane hides its Clear all
+            # while off (feed.ts feedOff), so its own button cannot press this door; three surfaces still can, with a button
+            # the pane fix does not reach, and each gets silence: the shell's hidden pane, a VS Code view that renders no
+            # off notice, and an attached off host under federation (mergeHostFeeds keeps `off` as the local kernel's word,
+            # so a remote off host's kernel is still pressed and answers nothing). A silent press is the class ranked below
+            # a visible refusal. The door-side answer, a clearAllResult naming the switch when a press took nothing, is
+            # untaken by ruling; placing it is the follow-up the ledger entry records.
             # `items` (the old stream deliverables) is no longer a payload key; indexing it raised before
             # _clear_all ever ran, so Clear-all cleared nothing and only the receive loop's stderr line knew.
             # A held message's id reaches _clear_all with the rest and is declined there (a hold is decided,
