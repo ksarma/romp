@@ -12,9 +12,11 @@ When the SDK is not importable the class still exists, duck-typed, so the pure p
 from __future__ import annotations
 import asyncio
 import collections
+import errno
 import json
 import os
 import re
+import stat
 import time
 from pathlib import Path
 
@@ -103,7 +105,196 @@ def host_sock(state_dir, sid: str) -> Path:
     return Path(state_dir) / "hosts" / (str(sid)[:8] + ".sock")
 
 
-def host_log_mark(state_dir, sid: str) -> int:
+class HostDirRefused(OSError):
+    """A `hosts/` or `hosts/<sid>/` the kernel will not write under: a symlink, not a directory, another uid's, or
+    group/world-accessible, found by write_spawn_spec's two directory guards (sh.hosts_dir, sh.owner_only_dir) or by
+    open_host_dirs' descriptor checks. The text is the reason with the path; sdk_backend._host_transport_for files it
+    as a problem row with the remedy and refuses the launch (round 4 of the review, 2026-09-20)."""
+
+
+_DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+
+
+def _open_dir_nofollow(name, what: str, shown: Path, dir_fd=None, private: bool = True) -> int:
+    """One component of the descent: `name` opened O_DIRECTORY|O_NOFOLLOW (relative to `dir_fd` when given), then
+    fstat'd and refused unless it is a directory this uid owns and, with `private` (the spawn road's writes), one with no
+    group or other bits, the shape the create road (sh.owner_only_dir) guarantees. Returns the descriptor. A symlink at
+    the name fails the open itself, so no check ever runs on a link's behalf; `shown` is the path the refusal names.
+    `private` is False on the removal road (remove_host_dir): a loose hosts/ of ours is hosts_dir's repair on the next
+    launch, not a reason to leave a dead host's directory standing, and what the removal must not do is follow a link or
+    touch another uid's directory."""
+    try:
+        fd = os.open(name, _DIR_FLAGS, dir_fd=dir_fd)
+    except OSError as e:
+        if e.errno in (errno.ELOOP, errno.ENOTDIR):
+            # the refusal is the open's; the lstat after it only words the reason (Linux answers ENOTDIR, not ELOOP,
+            # for a symlink under O_DIRECTORY|O_NOFOLLOW, the directory check running first in its open)
+            try:
+                is_link = stat.S_ISLNK(os.lstat(name, dir_fd=dir_fd).st_mode)
+            except OSError:
+                is_link = False
+            raise HostDirRefused("%s %s %s" % (what, shown, "is a symlink, not a directory" if is_link else "is not a directory")) from None
+        if e.errno == errno.ENOENT:
+            raise HostDirRefused("%s %s does not exist" % (what, shown)) from None
+        raise
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISDIR(st.st_mode):
+            raise HostDirRefused("%s %s is not a directory" % (what, shown))
+        if st.st_uid != os.geteuid():
+            raise HostDirRefused("%s %s belongs to uid %d, not to us (uid %d)" % (what, shown, st.st_uid, os.geteuid()))
+        if private and st.st_mode & 0o077:
+            raise HostDirRefused("%s %s is group/world-accessible (mode %04o)" % (what, shown, stat.S_IMODE(st.st_mode)))
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
+class HostDirs:
+    """Descriptors on `<state>/hosts/` (`hosts`) and `hosts/<sid>/` (`dir`), the kernel's handle on the two directories
+    it writes under on a host's spawn road, opened by open_host_dirs and closed by close() or the `with` exit. Every
+    open, stat or unlink the kernel makes under them takes a NAME relative to one of these descriptors (dir_fd), so
+    no component of the path can be re-pointed under it: a descriptor names an inode, not a path (round 4 of the
+    review, 2026-09-20: through round 3 the launcher opened hosts/<sid>/host.stderr by path before Popen, and a
+    hosts/ swapped for a symlink after the spec was written had that file, carrying the host's traceback with the
+    absolute state root in it, written into the link's target)."""
+
+    def __init__(self, hosts: int, dir: int):
+        self.hosts, self.dir = hosts, dir
+
+    def close(self) -> None:
+        for name in ("hosts", "dir"):
+            fd = getattr(self, name)
+            if fd is not None:
+                setattr(self, name, None)
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+
+def open_host_dirs(state_dir, sid: str) -> HostDirs:
+    """The descent to `hosts/<sid>/`: `hosts/` opened O_DIRECTORY|O_NOFOLLOW off the state root and verified (a directory,
+    this uid's, no group or other bits), then `<sid>` opened the same way relative to that descriptor and verified the
+    same way. Follows no symlink at either component: a link at hosts/ or at hosts/<sid>/ fails its open (ELOOP) and
+    is refused as one, a foreign or loose directory is refused by the fstat of the object opened, and nothing is refused
+    or accepted on a path's say-so. Raises HostDirRefused with the reason and the path. The state root's own ancestors
+    are the operator's (a symlinked ~/.local/state is followed as ever): the guard is against a re-point INSIDE the
+    root, where hosts/ lives. The caller holds the descriptors for as long as its writes and reads under the directory
+    run (sdk_backend._host_transport_for keeps them across the spawn wait, so its reads of host.stderr's size and
+    host.log go to the directory the spec was written in, whatever hosts/ names by then) and closes them after."""
+    hosts_path = Path(state_dir) / "hosts"
+    hfd = _open_dir_nofollow(str(hosts_path), "hosts directory", hosts_path)
+    try:
+        dfd = _open_dir_nofollow(str(sid), "host directory", hosts_path / str(sid), dir_fd=hfd)
+    except BaseException:
+        os.close(hfd)
+        raise
+    return HostDirs(hfd, dfd)
+
+
+def host_stderr_open(dirs: HostDirs) -> int:
+    """`hosts/<sid>/host.stderr` opened for the host's stderr through the descent: O_WRONLY|O_CREAT|O_APPEND|O_NOFOLLOW at
+    0600, relative to the session directory's descriptor, so the file is created in the directory the kernel verified
+    and never through a link at any component. Append, so a previous launch's bytes stay where they are and the kernel's
+    watermark (host_stderr_size before the spawn) tells this launch's bytes from them. The caller passes the descriptor
+    to Popen as the child's stderr and closes its own copy after the spawn."""
+    return os.open("host.stderr", os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0),
+                   0o600, dir_fd=dirs.dir)
+
+
+def host_stderr_size(dirs: HostDirs) -> int:
+    """host.stderr's size in bytes through the descent (a stat relative to the session directory's descriptor, no
+    symlink followed), 0 when there is no such file: the watermark the kernel takes beside host_log_mark before it
+    spawns, and reads again at a refusal to say whether THIS launch's host wrote to the file (kernel-1 and
+    correctness-1, round 4 of the review, 2026-09-20: the file is append-only and a refused launch clears nothing, so
+    a spawn-wait message naming host.stderr for a launch that wrote nothing sent the operator to a previous launch's
+    traceback)."""
+    try:
+        return os.stat("host.stderr", dir_fd=dirs.dir, follow_symlinks=False).st_size
+    except OSError:
+        return 0
+
+
+def _rmtree_at(dir_fd: int, name: str) -> None:
+    """The tree at `name` under the directory descriptor `dir_fd` removed by descriptors alone: the entry opened
+    O_DIRECTORY|O_NOFOLLOW relative to dir_fd (a symlink at the entry fails the open: nothing under a link is ever
+    walked), its entries read off the descriptor, each subdirectory taken the same way and every other entry (a symlink
+    among them, as an entry) unlinked relative to it, then the directory itself removed relative to dir_fd. The shape
+    shutil.rmtree takes on a platform with dir_fd support, written out because rmtree's own dir_fd parameter is 3.11's and
+    CI runs 3.10."""
+    fd = os.open(name, _DIR_FLAGS, dir_fd=dir_fd)
+    try:
+        st = os.fstat(fd)
+        if st.st_uid != os.geteuid():               # another uid's directory under ours: not ours to empty
+            raise HostDirRefused("directory %s belongs to uid %d, not to us (uid %d)" % (name, st.st_uid, os.geteuid()))
+        with os.scandir(fd) as it:
+            entries = list(it)
+        for e in entries:
+            if e.is_dir(follow_symlinks=False):
+                _rmtree_at(fd, e.name)
+            else:
+                os.unlink(e.name, dir_fd=fd)
+    finally:
+        os.close(fd)
+    os.rmdir(name, dir_fd=dir_fd)
+
+
+def remove_host_dir(state_dir, sid: str, log=None) -> bool:
+    """`hosts/<sid>/` cleared through the descent, for the two roads that clear a host's directory (sdk_backend's
+    _host_orphan_recover, before the spawn that follows a recovery, and _host_ended, after an end the kernel asked for):
+    `hosts/` opened O_DIRECTORY|O_NOFOLLOW off the state root and verified (a directory, this uid's; its mode is not a
+    condition here, see _open_dir_nofollow), then the tree under `<sid>` removed by descriptors (_rmtree_at, which refuses
+    a `<sid>` that is a link or another uid's), so no component is followed as a link. True
+    when the directory is gone afterwards (already absent counts); False when `hosts/` was refused or a removal failed,
+    in which case NOTHING was deleted through the refusal and `log`, when given, is told why. Round 4 of the review
+    (2026-09-20): these roads ran shutil.rmtree on a path with errors ignored, and with `hosts/` swapped for a symlink to
+    a peer's directory the leftover arm of the connect road (a `hosts/<sid>/` seen through the link, no lease) deleted
+    the peer's `<sid>/` through it, a write onto a target of the peer's choosing on the road every session start takes.
+    The reads that arm makes before this call (the directory's existence, identity.json, the journal's tail) still take
+    paths and are named as the residual in the PR's record; they are the orphan road's, not this fix's."""
+    hosts_path = Path(state_dir) / "hosts"
+    try:
+        hfd = _open_dir_nofollow(str(hosts_path), "hosts directory", hosts_path, private=False)
+    except HostDirRefused as e:
+        if log is not None:
+            log("host directory hosts/%s not cleared: %s" % (sid, e))
+        return False
+    try:
+        _rmtree_at(hfd, str(sid))
+    except FileNotFoundError:
+        return True
+    except HostDirRefused as e:
+        if log is not None:
+            log("host directory hosts/%s not cleared: %s" % (sid, e))
+        return False
+    except OSError as e:
+        if log is not None:
+            log("host directory hosts/%s not cleared: %s: %s" % (sid, type(e).__name__, getattr(e, "strerror", "") or ""))
+        return False
+    finally:
+        os.close(hfd)
+    return True
+
+
+def _open_host_log(state_dir, sid: str, dir_fd=None):
+    """hosts/<sid>/host.log for reading: by path, or, with `dir_fd` (the session directory's descriptor from
+    open_host_dirs), by name relative to it with O_NOFOLLOW, so a read on the spawn road goes to the directory the
+    spec was written in and not through whatever hosts/ names by then."""
+    if dir_fd is None:
+        return open(host_dir(state_dir, sid) / "host.log", "rb")
+    fd = os.open("host.log", os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0), dir_fd=dir_fd)
+    return os.fdopen(fd, "rb")
+
+
+def host_log_mark(state_dir, sid: str, dir_fd=None) -> int:
     """The size of hosts/<sid>/host.log in bytes, or 0 without one: the watermark the kernel takes right before it
     spawns a host, so every read of what THAT host wrote (host_exit_reason, the untested-version row the refused
     roads file) starts past everything already in the file. The closing check of the review (2026-09-18) replaced
@@ -125,18 +316,24 @@ def host_log_mark(state_dir, sid: str) -> int:
     position that launch recorded, which is host.log's WHOLE line count at the refusal
     (sdk_backend._record_refused_launch_position), so a previous host's row that no road had filed (a
     reader-behind, an end-forced) is skipped by every road and VANISHES: no problem row, anywhere. Bounding the
-    served road on this mark is the queued served-road change, where that behaviour is fixed, not this one."""
+    served road on this mark is the queued served-road change, where that behaviour is fixed, not this one.
+
+    `dir_fd` (round 4 of the review, 2026-09-20): the session directory's descriptor from open_host_dirs, when the caller
+    holds one; the size is then read by name relative to it, never through a path a re-pointed hosts/ could redirect."""
     try:
+        if dir_fd is not None:
+            return os.stat("host.log", dir_fd=dir_fd, follow_symlinks=False).st_size
         return os.stat(host_dir(state_dir, sid) / "host.log").st_size
     except OSError:
         return 0
 
 
-def host_log_rows(state_dir, sid: str, since: int = 0) -> list:
+def host_log_rows(state_dir, sid: str, since: int = 0, dir_fd=None) -> list:
     """The parsed rows of hosts/<sid>/host.log from byte `since` on (a host_log_mark; 0 is the whole file), in
-    order; [] for a missing or unreadable log. A line that is not a JSON object is skipped."""
+    order; [] for a missing or unreadable log. A line that is not a JSON object is skipped. `dir_fd`: the session
+    directory's descriptor (open_host_dirs), when the caller holds one; the file is then opened by name relative to it."""
     try:
-        with open(host_dir(state_dir, sid) / "host.log", "rb") as f:
+        with _open_host_log(state_dir, sid, dir_fd) as f:
             f.seek(int(since or 0))
             data = f.read()
     except OSError:
@@ -152,7 +349,7 @@ def host_log_rows(state_dir, sid: str, since: int = 0) -> list:
     return rows
 
 
-def host_exit_reason(state_dir, sid: str, since: int = 0) -> str:
+def host_exit_reason(state_dir, sid: str, since: int = 0, dir_fd=None) -> str:
     """What a host that exited before serving its socket said last: the `error` of its final `host-crashed` or
     `cli-spawn-failed` row, for the kernel's launch error; "" when no row says (an unreadable log, a host that
     died without one). `since` is the host_log_mark the kernel took before the spawn: the rows read are the ones
@@ -162,13 +359,20 @@ def host_exit_reason(state_dir, sid: str, since: int = 0) -> str:
     SdkInternalsMismatch) reaches the card with both versions and the repin command instead of "see host.log"
     (the box admin's hazard review of the pull-in, 2026-09-16).
 
-    What the text is (correctness-2 and kernel-3, round 1 of the review, 2026-09-18): a host-composed row (the SDK
-    mismatch) is carried whole, and its text is the host's own prose (two version strings, a module path, the
-    remedy). The generic host-crashed row is not prose the host authored: it is the last line of a Python
-    traceback, capped at 200 characters by main(), so it can read "OSError: AF_UNIX path too long" and, in
-    principle, whatever an exception message carries. It is carried anyway, because that line is what diagnoses
-    a real failure (the path-too-long case was hit on 2026-09-18). The host writes no spec field and no
+    What the text is (correctness-2 and kernel-3, round 1 of the review, 2026-09-18; the generic row restated at
+    round 4, kernel-3 and extra8-1, 2026-09-20): a host-composed row (the SDK mismatch) is carried whole, and its text
+    is the host's own prose (two version strings, a module path, the remedy, and the cause's type and message bounded
+    at SDK_CAUSE_CAP characters). The generic host-crashed row carries the exception's class name as `error`, its errno
+    as `errno` when the exception is an OSError with an integer errno, and the failing frame as `at`, never the text
+    (session_host.py main(): an OSError's text carries the path it failed on, a spec field). This function returns the
+    `error` field alone, so for that row the card reads the bare class name (`OSError`) and the errno and the frame
+    stay in host.log; the diagnosis of a socket failure is the host's socket-bind-failed row beside it (step, the error
+    class, errno, pathLen, limit, at). Through round 2 of the socket-mode fix the generic row carried the traceback's
+    last line and could read "OSError: AF_UNIX path too long"; it no longer can. The host writes no spec field and no
     environment value to host.log (its module docstring); that is the guarantee, not "prose".
+
+    `dir_fd` (round 4, 2026-09-20): the session directory's descriptor (open_host_dirs) when the caller holds one; the
+    rows are then read by name relative to it (host_log_rows).
 
     A cli-spawn-failed row is a bare exception type name, and it stays the first word. When this host also wrote
     an sdk-version-untested row (the SDK imports at a version other than the pin, and its internals resolved), the
@@ -186,7 +390,7 @@ def host_exit_reason(state_dir, sid: str, since: int = 0) -> str:
     recorded whenever it holds, the remedy rides with the fact, and no failure is attributed by its type. The
     untested row is the one gate left: the host writes it only when the SDK is importable and the version differs,
     so a machine with no SDK at all (the pipe transport's spawn failing the same arm) keeps the bare type name."""
-    rows = host_log_rows(state_dir, sid, since)
+    rows = host_log_rows(state_dir, sid, since, dir_fd=dir_fd)
     for i in range(len(rows) - 1, -1, -1):
         row = rows[i]
         if row.get("kind") not in ("host-crashed", "cli-spawn-failed") or not row.get("error"):
@@ -287,18 +491,31 @@ def write_spawn_spec(state_dir, sid: str, spec: dict) -> Path:
     not retroactive for a descriptor another uid opened while the file sat at its old looser mode: it reads the new
     overlay through it. The 0700 directory above, and the 0700 state root above that, close that road today (review
     round 2, 2026-09-19). A raising fchmod closes the descriptor before the error propagates (round 2 too: os.fdopen
-    was the only close)."""
-    sh.hosts_dir(state_dir)
-    d = sh.owner_only_dir(host_dir(state_dir, sid), "host directory")
-    p = d / "spawn.json"
-    fd = os.open(str(p), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    was the only close).
+    THE OPEN TAKES NO PATH (round 4 of the review, 2026-09-20): once both directories are made and checked, the file is
+    opened by NAME relative to a descriptor on hosts/<sid>/ reached by open_host_dirs (hosts/ opened O_DIRECTORY|O_NOFOLLOW
+    off the root and verified by fstat, then <sid> the same way relative to it), with O_NOFOLLOW on the file too. So
+    the residual the two helpers' docstrings state for a path-taking open, a hosts/ or hosts/<sid>/ re-pointed between
+    the helper's read-back and the open, is closed for this write: a link swapped in at either component fails the
+    open with ELOOP and the spawn is refused with the reason (HostDirRefused, which the kernel files as a problem row
+    with the remedy). Both helpers' refusals are raised under the same class here, so the kernel tells the class apart
+    from any other OSError of the write (a full disk) without reading the text."""
     try:
-        os.fchmod(fd, 0o600)
-    except BaseException:
-        os.close(fd)          # closed and re-raised, not a finally: the file object closes it on the success road
-        raise
-    with os.fdopen(fd, "w") as f:
-        json.dump(spec, f)
+        sh.hosts_dir(state_dir)
+        sh.owner_only_dir(host_dir(state_dir, sid), "host directory")
+    except OSError as e:
+        raise HostDirRefused(str(e)) from e
+    p = host_dir(state_dir, sid) / "spawn.json"
+    with open_host_dirs(state_dir, sid) as dirs:
+        fd = os.open("spawn.json", os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0),
+                     0o600, dir_fd=dirs.dir)
+        try:
+            os.fchmod(fd, 0o600)
+        except BaseException:
+            os.close(fd)          # closed and re-raised, not a finally: the file object closes it on the success road
+            raise
+        with os.fdopen(fd, "w") as f:
+            json.dump(spec, f)
     return p
 
 

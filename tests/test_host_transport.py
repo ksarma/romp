@@ -288,7 +288,8 @@ class SpawnSpec(unittest.TestCase):
                       "before it spawns its CLI or binds its socket", para,
                       "the host's road runs at its start, ahead of the CLI, since round 3 of the fix (the reorder ruling, 2026-09-19)")
         self.assertIn("the host exits, having started no CLI and written no lease", para, "and a refusal there starts nothing")
-        self.assertIn("after the lease only the bind, the tightening and the rename run", para, "the interval the lease readers race, stated")
+        self.assertIn("after the lease only one check of `hosts/`, the bind, the tightening and the rename run", para,
+                      "the interval the lease readers race, stated (the check is round 4's lstat at the bind, 2026-09-20)")
         self.assertIn("each `hosts/<sid>/` when the specification is written and when the host opens its journal", para,
                       "the sibling directory is named with its two creators")
         self.assertIn("one that is a symlink, that belongs to another user, or that stays loose after the tightening is refused on every one of them.", para,
@@ -364,9 +365,55 @@ class SpawnSpec(unittest.TestCase):
         with mock.patch.object(os, "open", open_probe), mock.patch.object(os, "fchmod", fchmod_refused), \
                 mock.patch.object(os, "close", close_probe), self.assertRaises(PermissionError):
             ht.write_spawn_spec(d, SID, {"env": {"FEATURE_FLAG": "1"}, "sid": SID})
-        self.assertEqual(len(opened), 1, "one descriptor, spawn.json's")
-        self.assertEqual(closed, opened, "closed on the failure road")
+        # three descriptors since round 4 of the socket-mode fix (2026-09-20): the descent's two directory descriptors
+        # (hosts/, then hosts/<sid>/ relative to it) and spawn.json's, opened relative to the second; all three closed
+        self.assertEqual(len(opened), 3, "hosts/, hosts/<sid>/ and spawn.json's descriptors: %r" % (opened,))
+        self.assertEqual(sorted(closed), sorted(opened), "every descriptor closed on the failure road")
         self.assertEqual(os.stat(ht.host_dir(d, SID)).st_mode & 0o777, 0o700, "the directory's chmod ran")
+
+    def test_the_spec_is_opened_through_descriptors_so_a_link_swapped_in_after_the_directory_checks_is_refused(self):
+        """The round's high, on the kernel's spec write (round 4 of the socket-mode fix, 2026-09-20): through round 3
+        write_spawn_spec checked hosts/ and hosts/<sid>/ by path and then opened spawn.json by PATH, so a hosts/ or
+        hosts/<sid>/ swapped for a symlink between the helper's read-back and the open had the specification, the
+        launch's environment overlay in it, written into the link's target (the TOCTOU residual owner_only_dir's
+        docstring stated). Now the file is opened by name relative to a descriptor on hosts/<sid>/ reached through
+        O_DIRECTORY|O_NOFOLLOW opens of each component (open_host_dirs): a link at either fails its open. Interposed on
+        sh.owner_only_dir, a module attribute both helpers reach (so the plant is seen on every interpreter, 3.10
+        included): after the session directory's call returns, hosts/ (arm 1) or hosts/<sid>/ (arm 2) is renamed aside
+        and a symlink to a directory of a peer's put in its place, holding an empty <sid>/ where the spec would land.
+        write_spawn_spec raises HostDirRefused naming the link as a symlink and its path, and the peer's directory
+        receives nothing (its listing, empty). Red on the head before the fix: the spec landed in the peer's directory
+        (['spawn.json'] listed there)."""
+        self.addCleanup(os.umask, os.umask(0o022))
+        spec = {"sid": SID, "name": "web", "version": "abc12345", "state_dir": "/state", "protocol": 1, "env": {"FEATURE_FLAG": "1"}}
+        real = sh.owner_only_dir
+        for arm, noun in (("hosts", "hosts directory"), ("session-dir", "host directory")):
+            with self.subTest(arm=arm):
+                root = tempfile.mkdtemp()
+                self.addCleanup(shutil.rmtree, root, True)
+                peer = Path(root) / "peer"
+                (peer / SID).mkdir(parents=True, mode=0o755)
+                hosts, sdir = Path(root) / "hosts", Path(root) / "hosts" / SID
+                link = hosts if arm == "hosts" else sdir
+                target = peer if arm == "hosts" else peer / SID
+
+                def swap_after(path, what="directory", parents=False, link=link, target=target):
+                    d = real(path, what, parents)
+                    if what == "host directory":                 # the last check before the open: the swap lands here
+                        os.rename(link, Path(root) / "moved")
+                        link.symlink_to(target)
+                    return d
+                with mock.patch.object(sh, "owner_only_dir", swap_after), self.assertRaises(ht.HostDirRefused) as cm:
+                    ht.write_spawn_spec(root, SID, spec)
+                msg = str(cm.exception)
+                self.assertTrue(msg.startswith(noun + " "), msg)
+                self.assertIn("is a symlink, not a directory", msg)
+                self.assertIn(os.fspath(link), msg)
+                self.assertTrue(link.is_symlink(), "the link is left, not replaced")
+                self.assertEqual(sorted(p.name for p in (peer / SID).iterdir()), [], "the peer's directory received nothing")
+                self.assertEqual(sorted(str(p.relative_to(peer)) for p in peer.rglob("*")), [SID], "nothing anywhere under it")
+                moved = Path(root) / "moved"
+                self.assertFalse((moved / (SID if arm == "hosts" else "") / "spawn.json").exists(), "and no spec was written anywhere: the open was refused")
 
     @unittest.skipUnless(SDK, "the SDK is not importable here")
     def test_the_spec_fields_track_what_the_sdk_transport_reads(self):

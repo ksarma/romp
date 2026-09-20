@@ -289,7 +289,8 @@ class VersionCheck(unittest.TestCase):
         long = ModuleNotFoundError("x" * 1000, name=LEAF)
         text = sh.sdk_mismatch_text(OTHER, LEAF + "." + NAME, cause=long)
         cause_part = text[len(plain):]
-        self.assertLessEqual(len(cause_part), sh.SDK_CAUSE_CAP + 8, "capped as the generic host-crashed row caps its line")
+        self.assertLessEqual(len(cause_part), sh.SDK_CAUSE_CAP + 8, "the host-composed row's cap on the cause text (the generic "
+                             "host-crashed row carries the class, errno and frame, never text, so no cap applies to it)")
         self.assertIn("ModuleNotFoundError: xxx", cause_part)
 
     def test_another_version_whose_internals_resolve_proceeds_with_one_row_saying_newer_or_older(self):
@@ -919,8 +920,9 @@ class HostProcess(unittest.TestCase):
     # The mutation pass after round 3 (2026-09-19): the early return that carries a host-crashed row WHOLE was held by
     # no case, so with it dropped a crash row after an untested row had the version fact composed onto the host's own
     # prose and the suite stayed green. The composed fact is for a cli-spawn-failed row, whose error is a bare type
-    # name; a host-crashed row is the host's own text (the mismatch verdict names both versions itself, a traceback's
-    # last line names its error) and gets nothing appended. The real road for the pair is the `_process` guard at
+    # name; a host-crashed row is carried whole (the mismatch verdict names both versions itself; the generic crash row
+    # carries the exception's class name, its errno and the failing frame, never a traceback's text, since the
+    # socket-mode fix) and gets nothing appended. The real road for the pair is the `_process` guard at
     # another version, whose host writes its untested row and then its crash record in one run.
     def test_a_crash_row_after_an_untested_row_is_carried_whole_with_no_version_fact_composed_onto_it(self):
         d = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, d, True)
@@ -1260,7 +1262,10 @@ class HostProcess(unittest.TestCase):
         text = str(exc)
         rows = events()
         self.assertEqual([r["kind"] for r in rows], ["host.never-served-socket"], "no drift row: the untested row in the file is a previous host's")
-        self.assertTrue(text.endswith("did not serve its socket within 0 s; it was ended; see hosts/%s/host.log" % SID), text)
+        # the deadline arm's no-reason sentence since round 4 of the socket-mode fix (kernel-5, 2026-09-20): the host was
+        # alive and was ended, which leaves no traceback, and host.stderr's watermark says this launch wrote nothing there
+        self.assertTrue(text.endswith("did not serve its socket within 0 s; it was ended, which leaves no traceback; hosts/%s/host.stderr "
+                                      "carries nothing from this launch; see hosts/%s/host.log" % (SID, SID)), text)
         self.assertTrue(rows[0]["text"].endswith("see hosts/%s/host.log" % SID), rows[0]["text"])
         # the recorded launch error, the card's source, ends there too
         real = sb.SdkSession(be, sb.read_reg(Path(d), SID))

@@ -11,6 +11,7 @@ the SDK venv, and skips otherwise.
 """
 import ast
 import asyncio
+import contextlib
 import errno
 import json
 import os
@@ -125,10 +126,11 @@ class SpawnSecrets(unittest.TestCase):
     def _spawn(self, cli_scope, secret_env, which=None):
         """_spawn_host with subprocess.Popen replaced: returns (argv, kwargs) of the one launch."""
         d = Path(self.state) / "hosts" / SID
-        d.mkdir(parents=True, exist_ok=True)
+        (Path(self.state) / "hosts").mkdir(mode=0o700, exist_ok=True)   # the layout write_spawn_spec leaves: both directories
+        d.mkdir(mode=0o700, exist_ok=True)                                 # 0700, which the launcher's descent verifies (round 4)
         spec_path = d / "spawn.json"
         spec_path.write_text("{}")
-        me = types.SimpleNamespace(cli_scope=cli_scope)
+        me = types.SimpleNamespace(cli_scope=cli_scope, state_dir=self.state)
         sess = types.SimpleNamespace(sid=SID, name="web")
         seen = {}
 
@@ -1147,7 +1149,8 @@ class SocketMode(unittest.TestCase):
         self.assertEqual(stat.S_IMODE(os.stat(self.sdir).st_mode), 0o700, "hosts/<sid>/ untouched at 0700")
 
     PRELUDE_STEPS = ("hosts-dir", "budget", "prelude")     # _prepare_socket's steps, run before the CLI is spawned
-    SERVE_STEPS = ("bind", "chmod", "rename")               # _serve_socket's, run after the spawn and its lease
+    SERVE_STEPS = ("bind-hosts", "bind", "chmod", "rename")  # _serve_socket's, run after the spawn and its lease (bind-hosts:
+    #                                                          round 4's lstat of hosts/ immediately before the bind, 2026-09-20)
 
     def _assert_refused(self, rc, step, error, errno_=None, at="session_host.py:"):
         """The loud road, whole: the row names the step, nothing is bound or published, no temp is left in hosts/, no
@@ -1515,6 +1518,41 @@ class SocketMode(unittest.TestCase):
         self._assert_refused(rc, "hosts-dir", "OSError")
         self.assertEqual(stat.S_IMODE(os.stat(hosts).st_mode), 0o777, "still loose, and the host said so rather than binding")
 
+    def test_a_hosts_re_pointed_after_the_lease_and_before_the_bind_is_refused_at_the_bind_and_the_target_gets_no_socket(self):
+        """extra6-1 (round 4 of the review, 2026-09-20): round 3 moved every hosts/ check ahead of the CLI's spawn, which
+        put the spawn between the last check and the bind (about 1.1 s on the production road against 0.4 ms through
+        round 2, both by strace in that round's review), so a hosts/ re-pointed in that stretch was followed by the bind
+        where round 2's road refused it. _serve_socket now lstat's hosts/ immediately before start_unix_server. Planted at
+        the last moment the sequence allows from outside, the lease write (the step before _serve_socket): hosts/ is
+        renamed aside and a symlink put in its place pointing at the moved directory (so the host's own writes by path,
+        its rows, still land where the case reads them). The bind is refused with step bind-hosts and errno ELOOP under
+        the post-spawn class's bookkeeping (the lease written and removed, the CLI stand-in closed), start_unix_server is
+        never called, and the link's target holds no socket and no temp. Red on the head before the guard: the bind
+        followed the link, the socket was published in the target and the case read a served host. What remains is the
+        bind's own window between this lstat and the bind, stated in _serve_socket's docstring."""
+        hosts, target = self.pub.parent, Path(self.root) / "elsewhere"
+        binds = []
+        real_start = asyncio.start_unix_server
+
+        async def start(*a, **k):
+            binds.append(k.get("path"))
+            return await real_start(*a, **k)
+        write = self.lease_api["write_lease"]
+
+        def plant(sd, lease):
+            write(sd, lease)
+            os.rename(hosts, target)                    # the session directory moves with it; the host's paths resolve through the link
+            hosts.symlink_to(target)
+        self.lease_api["write_lease"] = plant
+        with mock.patch.object(asyncio, "start_unix_server", start):
+            mode, rc = self._run_host()
+        self.assertIsNone(mode, "nothing was published")
+        self._assert_refused(rc, "bind-hosts", "OSError", errno.ELOOP)
+        self.assertEqual(binds, [], "start_unix_server was never called: the lstat refused first")
+        self.assertTrue(hosts.is_symlink(), "the link is left, not replaced")
+        self.assertEqual(sorted(p.name for p in target.iterdir() if p.name.endswith((".sock", ".tmp"))), [], "the target holds no socket and no temp")
+        self.assertEqual(self.lease_calls, ["write", "remove"], "the lease was written at the spawn and removed on the failure")
+
     def test_a_failed_publish_closes_the_listening_socket_it_bound(self):
         """The except arm's server.close() (the mutation pass of round 1, 2026-09-19: the rename-failure case below checks
         the rows, the temp, the lease and the CLI, and a listening socket left open behind an unlinked temp is invisible
@@ -1554,7 +1592,9 @@ class SocketMode(unittest.TestCase):
         root = tempfile.mkdtemp(prefix=marker + "-", dir=system_tmp())
         self.addCleanup(shutil.rmtree, root, True)
         self._spec_at(root)
-        self.assertLessEqual(len(os.fsencode(str(self.pub))), sh.SOCK_PATH_MAX, "within the budget, so the rename is the leg that fails")
+        self.assertLessEqual(len(os.fsencode(str(self.pub))), sh.SOCK_PATH_MAX,
+                             "within the budget, so the rename is the leg that fails; the system temp dir %s is too deep: run the suite "
+                             "under a shorter TMPDIR (a failure, not a skip, so a green module means this ran)" % system_tmp())
         self.pub.mkdir()
         (self.pub / "keep").write_text("not a socket")
         stub = self._NoCli(self)
@@ -2053,40 +2093,33 @@ class SocketBudget(unittest.TestCase):
         self.assertEqual(under("linux"), 107, "Linux: sun_path is 108 bytes, 107 usable")
         self.assertEqual(under(sys.platform), sh.SOCK_PATH_MAX, "the expression read is the one the module evaluated")
 
-    def test_the_floor_is_the_minimum_over_the_platform_expressions_two_arms(self):
-        """SOCK_PATH_FLOOR, one flat number for a guard that must hold on every platform (round 5 of the review, 2026-09-19;
-        asked for the queued session-host lab fix's setUp guard, a queue item in the review notes with no PR of its own): pinned to the minimum over
-        SOCK_PATH_MAX's two literal arms as the source holds them, and to the minimum of that expression evaluated under
-        both platform names, never to a second hand-typed 103 alone. Refusable: SOCK_PATH_FLOOR = 104 reds both."""
-        src = Path(sh.__file__).read_text()
-        node = next(n for n in ast.parse(src).body if isinstance(n, ast.Assign)
-                    and any(isinstance(t, ast.Name) and t.id == "SOCK_PATH_MAX" for t in n.targets))
-        self.assertIsInstance(node.value, ast.IfExp, "the platform expression: one literal arm per platform")
-        arms = (node.value.body.value, node.value.orelse.value)                  # the literals, read from the source
-        expr = compile(ast.Expression(body=node.value), sh.__file__, "eval")
-        under = lambda platform: eval(expr, {"sys": types.SimpleNamespace(platform=platform)})
-        self.assertEqual(sh.SOCK_PATH_FLOOR, min(arms), "the floor is the smaller arm as written: %r" % (arms,))
-        self.assertEqual(sh.SOCK_PATH_FLOOR, min(under("darwin"), under("linux")), "and the smaller value the expression gives")
-        self.assertLessEqual(sh.SOCK_PATH_FLOOR, sh.SOCK_PATH_MAX, "never above the platform's own budget")
-
 
 class StateRootByHostsDir(unittest.TestCase):
-    """kernel-7 (round 5 of the review, 2026-09-19; fixed at round 6): the state root's mode when hosts_dir's parents=True
-    makes it, READ BACK under five umasks (the runner's, 002, 022, 077 and 000) and never assumed. pathlib's Path.mkdir
-    applies `mode` to the leaf alone and makes a missing parent with its default 0777 masked by the umask, so before the
-    fix the root landed at the umask's mode (0775 under 002, 0755 under 022, 0700 under 077, 0777 under 000) while hosts/
-    below it was 0700 in every case; round 5 filed that as a finding and this class read the umask's mode back. The fix
-    (hosts_dir's docstring) tightens the root this call made to 0700 by a chmod read back, on the create road alone. Pinned
-    here: the root reads 0700 under every umask when hosts_dir made it, hosts/ 0700 below it, and the ancestor the parents
-    mkdir made on the way keeps the umask's mode (the rejected alternative, tightening every missing ancestor, would red
-    that read); a root pre-existing at 0755 stays 0755 with hosts/ 0700 below it, and no chmod names it (the create-only
-    scope); and a read-back that disagrees is refused with the mode read and the remedy. Refusable: the chmod removed on a
-    scratch copy reds the 002, 022 and 000 arms (077 stays green, the umask's mode being the code's there); a chmod that
-    does not take, or a stubbed lstat answering 0755 on the read-back, fires the refusal. The addendum to round 6 pins
-    three more edges the lenses found unpinned: a pre-existing root at 0777 is left as planted too (the 0755 case's second
-    arm); a live symlink at the root's path takes the pre-existing road (exists() follows it, hosts/ is made 0700 under
-    its target, the target is never read or tightened) while a link swapped in after the read is refused as not a
-    directory with its target untouched; and the read-back is an lstat, so a stat that disagrees is inert."""
+    """kernel-7 (round 5 of the review, 2026-09-19; fixed at round 6; the tighten moved onto a descriptor at round 4 of the
+    review of this head, 2026-09-20): the state root's mode when hosts_dir's parents=True makes it, READ BACK under five
+    umasks (the runner's, 002, 022, 077 and 000) and never assumed. pathlib's Path.mkdir applies `mode` to the leaf alone
+    and makes a missing parent with its default 0777 masked by the umask, so before the fix the root landed at the umask's
+    mode (0775 under 002, 0755 under 022, 0700 under 077, 0777 under 000) while hosts/ below it was 0700 in every case;
+    round 5 filed that as a finding and this class read the umask's mode back. The fix (hosts_dir's docstring) tightens
+    the root this call made to 0700, on the create road alone: an lstat with owner_only_dir's three refusals, then the
+    root OPENED O_DIRECTORY|O_NOFOLLOW, its fstat repeating the directory and uid refusals on the object opened, fchmod on
+    that descriptor, and the read-back an fstat on the same descriptor. Pinned here: the root reads 0700 under every
+    umask when hosts_dir made it, hosts/ 0700 below it, and the ancestor the parents mkdir made on the way keeps the
+    umask's mode (the rejected alternative, tightening every missing ancestor, would red that read); a root pre-existing
+    at 0755 or 0777 stays as planted with hosts/ 0700 below it, and no chmod and no fchmod names it (the create-only
+    scope); a live symlink at the root's path takes the pre-existing road (exists() follows it, hosts/ is made 0700 under
+    its target, the target is never read or tightened) while a link swapped in after the exists() read is refused at the
+    lstat as not a directory with its target untouched; a link swapped in BETWEEN the lstat and the open (kernel-4,
+    round 4) fails the open and is refused with its target's mode unchanged, where the chmod by path through round 6
+    tightened the target first; a root another uid owns is refused before any mode call, whether the lstat or the
+    descriptor's fstat reads the uid (regression-1 and kernel-2, round 4: the refusal was held by no test); the read-back
+    is an fstat on the descriptor, so a stat or an lstat by path that disagrees is inert; and a read-back that disagrees
+    is refused with the mode read and the remedy. Every mode here is read back from the object it was set on (lstat on the
+    path, fstat on the descriptor), never asserted from a picture. Refusable, each run on a scratch copy: the fchmod
+    removed reds the 002, 022 and 000 arms (077 stays green, the umask's mode being the code's there); an fchmod that does
+    not take, or a stubbed fstat answering 0755 on the read-back, fires the refusal; the lstat's foreign-uid refusal
+    deleted reds that case's lstat arm; the open's O_NOFOLLOW dropped, or the tighten put back on the path, reds the
+    swapped-link case on the target's mode."""
 
     def _made_under(self, umask, root=None):
         """hosts_dir over a root not yet on disk, under `umask` (restored); the root's and hosts/'s modes as read back.
@@ -2109,6 +2142,31 @@ class StateRootByHostsDir(unittest.TestCase):
             os.umask(old)
         return stat.S_IMODE(os.lstat(root).st_mode), stat.S_IMODE(os.lstat(root / "hosts").st_mode)
 
+    @staticmethod
+    def _ident(path, real_lstat=os.lstat):
+        """(st_dev, st_ino) of the object at `path`, by the lstat given (the real one when a case has patched os.lstat)."""
+        st = real_lstat(path)
+        return (st.st_dev, st.st_ino)
+
+    @contextlib.contextmanager
+    def _mode_spies(self):
+        """Every mode-setting call this class watches, recorded and performed: os.chmod by path as (path, mode) and
+        os.fchmod by descriptor as ((st_dev, st_ino) of the descriptor's object, mode), so a case says WHICH object a mode
+        went onto by identity, and a tighten that moved back onto a path, or onto the wrong object, is read as such."""
+        chmods, fchmods = [], []
+        real_chmod, real_fchmod, real_fstat = os.chmod, os.fchmod, os.fstat
+
+        def chmod(path, mode, *a, **k):
+            chmods.append((os.fspath(path), mode))
+            return real_chmod(path, mode, *a, **k)
+
+        def fchmod(fd, mode):
+            st = real_fstat(fd)
+            fchmods.append(((st.st_dev, st.st_ino), mode))
+            return real_fchmod(fd, mode)
+        with mock.patch.object(os, "chmod", chmod), mock.patch.object(os, "fchmod", fchmod):
+            yield chmods, fchmods
+
     def test_the_umask_is_put_back_when_hosts_dir_raises(self):
         """The restore on the raising road, by execution (round 5's addendum, 2026-09-19): a parent that is a regular
         file makes owner_only_dir's mkdir raise (NotADirectoryError, an OSError) before any mode exists to read back,
@@ -2127,7 +2185,7 @@ class StateRootByHostsDir(unittest.TestCase):
     def test_the_root_hosts_dir_makes_on_the_way_is_0700_under_every_umask_and_hosts_below_it_is_0700(self):
         """The fix's pin (round 6): the root this call made reads 0700 under each umask, where round 5 read the umask's
         mode; hosts/ 0700 as before. The 000 arm is the one the mkdir alone can never give (0777 there); 077 is the one
-        arm the mkdir gives 0700 by itself, so it is the arm the chmod's removal leaves green."""
+        arm the mkdir gives 0700 by itself, so it is the arm the fchmod's removal leaves green."""
         current = os.umask(0)                           # the runner's own umask, read and put back
         os.umask(current)
         for umask in (current, 0o002, 0o022, 0o077, 0o000):
@@ -2140,29 +2198,27 @@ class StateRootByHostsDir(unittest.TestCase):
     def test_only_the_root_is_tightened_and_the_ancestor_made_on_the_way_keeps_the_umasks_mode(self):
         """The rejected alternative would tighten every directory the parents mkdir made; the fix touches the root alone.
         A root two levels under a fresh base: the intermediate the mkdir made on the way reads the umask's mode (0755
-        under 022), the root 0700, hosts/ 0700, and the one chmod the call made names the root and nothing else."""
+        under 022), the root 0700, hosts/ 0700, and the one mode call the road made is an fchmod on a descriptor whose
+        object is the root (by identity), with no chmod by path at all: hosts/ is born 0700 by its mkdir, and the root's
+        tighten goes through the descriptor since round 4."""
         base = tempfile.mkdtemp(prefix="sr-")
         self.addCleanup(shutil.rmtree, base, True)
         between = Path(base) / "xdg"
         root = between / "state"
         self.assertFalse(between.exists())
-        chmods = []
-        real_chmod = os.chmod
-
-        def spy(path, mode, *a, **k):
-            chmods.append((os.fspath(path), mode))
-            return real_chmod(path, mode, *a, **k)
-        with mock.patch.object(os, "chmod", spy):
+        with self._mode_spies() as (chmods, fchmods):
             root_mode, hosts_mode = self._made_under(0o022, root=root)
         self.assertEqual(stat.S_IMODE(os.lstat(between).st_mode), 0o755, "the ancestor made on the way: the umask's mode, untouched")
         self.assertEqual((root_mode, hosts_mode), (0o700, 0o700))
-        self.assertEqual(chmods, [(os.fspath(root), 0o700)], "one chmod, the root's; the ancestor and hosts/ (born 0700) are not named")
+        self.assertEqual(chmods, [], "no chmod by path: the root's tighten is an fchmod, and hosts/ (born 0700) needs none")
+        self.assertEqual(fchmods, [(self._ident(root), 0o700)], "one fchmod, on the descriptor whose object is the root; the ancestor and hosts/ are not named")
 
     def test_a_root_already_on_disk_is_left_as_it_is_and_hosts_below_it_is_0700(self):
         """The create-only scope, by execution: a root planted before the call keeps its mode (its creator's business,
-        kernel/judge.py's on every install), hosts/ under it is 0700, and no chmod names the root. Two arms, 0755 and
-        0777 (the addendum to round 6 added 0777, the loosest mode and the one the fix's 0700 would change the most),
-        both under 022, the umask that would leave a made root at 0755, so neither read can be the umask's doing."""
+        kernel/judge.py's on every install), hosts/ under it is 0700, and no chmod and no fchmod names the root. Two
+        arms, 0755 and 0777 (the addendum to round 6 added 0777, the loosest mode and the one the fix's 0700 would change
+        the most), both under 022, the umask that would leave a made root at 0755, so neither read can be the umask's
+        doing."""
         base = tempfile.mkdtemp(prefix="sr-")
         self.addCleanup(shutil.rmtree, base, True)
         for planted in (0o755, 0o777):
@@ -2171,41 +2227,32 @@ class StateRootByHostsDir(unittest.TestCase):
                 root.mkdir(mode=planted)
                 os.chmod(root, planted)                 # the mkdir's mode is masked by the runner's umask; this is not
                 self.assertEqual(stat.S_IMODE(os.lstat(root).st_mode), planted, "planted")
-                chmods = []
-                real_chmod = os.chmod
-
-                def spy(path, mode, *a, **k):
-                    chmods.append(os.fspath(path))
-                    return real_chmod(path, mode, *a, **k)
                 old = os.umask(0o022)
                 try:
-                    with mock.patch.object(os, "chmod", spy):
+                    with self._mode_spies() as (chmods, fchmods):
                         self.assertEqual(sh.hosts_dir(root), root / "hosts")
                 finally:
                     os.umask(old)
                 self.assertEqual(stat.S_IMODE(os.lstat(root).st_mode), planted, "a pre-existing root keeps its mode")
                 self.assertEqual(stat.S_IMODE(os.lstat(root / "hosts").st_mode), 0o700, "hosts/ below it is 0700")
-                self.assertNotIn(os.fspath(root), chmods, "no chmod named the pre-existing root")
+                self.assertNotIn(os.fspath(root), [c[0] for c in chmods], "no chmod named the pre-existing root")
+                self.assertEqual(fchmods, [], "and no fchmod at all: the create road was not taken")
 
     def test_a_live_symlink_at_the_roots_path_is_a_root_on_disk_and_one_swapped_in_after_the_read_is_refused(self):
         """Two symlink arms (the addendum to round 6; HostsDir pins a symlink at hosts/, these are at the root). (1) A live
         symlink at the root's path, pointing at a directory that exists, takes the pre-existing road: exists() follows
         the link and answers True, hosts/ is made under the target and is 0700, and the target (planted 0755) is never
-        read back or tightened; no chmod names the root or the target, and the link is still a link afterwards, as it
-        was under the parent's hosts_dir (the create-only scope). (2) The race the docstring names: a link swapped in
-        AFTER exists() said False (a Path.exists that plants the link as it answers False for this root) is refused by
-        the read-back's first lstat as not a directory, the text carrying the root's path, and the target is not
+        read back or tightened; no chmod and no fchmod names the root or the target, and the link is still a link
+        afterwards, as it was under the parent's hosts_dir (the create-only scope). (2) The race the docstring names: a
+        link swapped in AFTER exists() said False (a Path.exists that plants the link as it answers False for this root)
+        is refused by the create road's lstat as not a directory, the text carrying the root's path, and the target is not
         tightened on the link's behalf: its mode is still 0755, and the hosts/ under it, made through the link by the
         parents mkdir before the refusal, is 0700, ours. Refusable: that lstat swapped for a stat sees the target's
-        directory, passes, and chmods the target to 0700, which reds (2) on the target's mode and the chmod list."""
+        directory and passes, and the road then opens the root O_NOFOLLOW and refuses the link there (round 4's open);
+        through round 6 it chmodded the target to 0700, which reds (2) on the target's mode. The interleaving after the
+        lstat is the next case's."""
         base = tempfile.mkdtemp(prefix="sr-")
         self.addCleanup(shutil.rmtree, base, True)
-        chmods = []
-        real_chmod = os.chmod
-
-        def spy(path, mode, *a, **k):
-            chmods.append(os.fspath(path))
-            return real_chmod(path, mode, *a, **k)
 
         def plant(name):
             target = Path(base) / (name + "-target")
@@ -2218,14 +2265,14 @@ class StateRootByHostsDir(unittest.TestCase):
         self.assertTrue(root.exists(), "exists() follows the link: a root on disk, to this call")
         old = os.umask(0o022)
         try:
-            with mock.patch.object(os, "chmod", spy):
+            with self._mode_spies() as (chmods, fchmods):
                 self.assertEqual(sh.hosts_dir(root), root / "hosts")
         finally:
             os.umask(old)
         self.assertTrue(stat.S_ISLNK(os.lstat(root).st_mode), "the link is still a link")
         self.assertEqual(stat.S_IMODE(os.lstat(target).st_mode), 0o755, "the target is neither read back nor tightened")
         self.assertEqual(stat.S_IMODE(os.lstat(target / "hosts").st_mode), 0o700, "hosts/ under the target, 0700")
-        self.assertEqual(chmods, [], "no chmod: not the root, not the target (hosts/ is born 0700)")
+        self.assertEqual((chmods, fchmods), ([], []), "no chmod, no fchmod: not the root, not the target (hosts/ is born 0700)")
         # (2) the link swapped in after exists() said False
         target2, root2 = plant("swapped")
         real_exists = Path.exists
@@ -2237,7 +2284,7 @@ class StateRootByHostsDir(unittest.TestCase):
             return real_exists(self_path, *a, **k)
         old = os.umask(0o022)
         try:
-            with mock.patch.object(Path, "exists", exists), mock.patch.object(os, "chmod", spy), \
+            with mock.patch.object(Path, "exists", exists), self._mode_spies() as (chmods, fchmods), \
                     self.assertRaises(OSError) as cm:
                 sh.hosts_dir(root2)
         finally:
@@ -2248,63 +2295,163 @@ class StateRootByHostsDir(unittest.TestCase):
         self.assertEqual(stat.S_IMODE(os.lstat(target2).st_mode), 0o755, "not tightened on the link's behalf")
         self.assertEqual(stat.S_IMODE(os.lstat(target2 / "hosts").st_mode), 0o700,
                          "made through the link by the parents mkdir, before the refusal; 0700, ours")
-        self.assertEqual(chmods, [], "no chmod on either arm")
+        self.assertEqual((chmods, fchmods), ([], []), "no mode call on either arm")
 
-    def test_the_read_back_is_an_lstat_so_a_stat_that_disagrees_is_inert(self):
-        """The read-back reads the root by os.lstat, the shape owner_only_dir uses, not by os.stat (the addendum to round
-        6: every other case here stays green with the read-back swapped to os.stat, so this one pins the choice). A
-        stubbed os.stat answers S_IFDIR|0755 for the root once the chmod has run, exactly as the disagreement case's
-        lstat stub does; hosts_dir returns normally, the root reads 0700 by the real lstat, and the chmod ran once.
-        Refusable: the read-back's os.lstat swapped for os.stat makes the stub's 0755 the mode read, and the refusal
-        fires where this asserts a return."""
+    def test_a_link_swapped_in_between_the_lstat_and_the_open_is_refused_and_its_target_keeps_its_mode(self):
+        """kernel-4 (round 4 of the review, 2026-09-20), the interleaving the case above does not reach: the link lands
+        AFTER the create road's lstat has read a real directory and BEFORE the tighten. Through round 6 the tighten was
+        os.chmod by path, so it followed the link and set 0700 on whatever the link pointed at (a directory of ours here;
+        the round's refuters read a file of ours tightened the same way), and the call refused only at the read-back and
+        for the wrong reason (the link's own mode); the uid check never read the swapped target, having decided on the
+        pre-swap root. Now the root is opened O_DIRECTORY|O_NOFOLLOW right after the lstat: the open fails on the link
+        (ELOOP), hosts_dir refuses naming the root and the swap, and the target's mode is what it was. Interposed on
+        os.lstat, a direct call in hosts_dir (so the plant is seen on every interpreter, 3.10 included): the first lstat
+        of the root's path answers the truth and then performs the swap (the root renamed aside with the hosts/ already
+        made under it, a symlink to a 0755 directory put in its place). Read back from the objects: the target by lstat,
+        still 0755; the moved root's hosts/ 0700; no chmod and no fchmod recorded. Red on the head before this fix: the
+        target reads 0700 and the chmod spy names the root's path."""
         base = tempfile.mkdtemp(prefix="sr-")
         self.addCleanup(shutil.rmtree, base, True)
-        root = Path(base) / "state"
-        real_stat, real_chmod = os.stat, os.chmod
-        chmodded = []
-
-        def chmod(path, mode, *a, **k):
-            chmodded.append(os.fspath(path))
-            return real_chmod(path, mode, *a, **k)
-
-        def lying_stat(path, *a, **k):
-            st = real_stat(path, *a, **k)
-            if not isinstance(path, int) and os.fspath(path) == os.fspath(root) and chmodded:
-                return os.stat_result((stat.S_IFDIR | 0o755,) + tuple(st)[1:])
-            return st
-        old = os.umask(0o022)
-        try:
-            with mock.patch.object(os, "chmod", chmod), mock.patch.object(os, "stat", lying_stat):
-                self.assertEqual(sh.hosts_dir(root), root / "hosts")
-        finally:
-            os.umask(old)
-        self.assertEqual(chmodded, [os.fspath(root)], "the chmod ran once, on the root")
-        self.assertEqual(stat.S_IMODE(os.lstat(root).st_mode), 0o700, "the real mode, by lstat")
-
-    def test_a_read_back_that_disagrees_is_refused_with_the_mode_and_the_remedy(self):
-        """The read-back's disagreement arm, driven by a stubbed lstat: after the real chmod, the lstat that reads the
-        root back answers 0755, and hosts_dir raises an OSError naming the root, the mode read (0755) and the remedy
-        (chmod 700). The stub answers for the root alone, and only on the read after the chmod, so owner_only_dir's
-        own reads of hosts/ and the pre-chmod read of the root are the real ones. The same arm fires for a chmod that
-        does not take (os.chmod stubbed to a no-op), the shape SpawnSpec pins for hosts/."""
-        base = tempfile.mkdtemp(prefix="sr-")
-        self.addCleanup(shutil.rmtree, base, True)
-        root = Path(base) / "state"
-        real_lstat, real_chmod = os.lstat, os.chmod
-        chmodded = []
-
-        def chmod(path, mode, *a, **k):
-            chmodded.append(os.fspath(path))
-            return real_chmod(path, mode, *a, **k)
+        root, moved, target = Path(base) / "state", Path(base) / "moved", Path(base) / "target"
+        target.mkdir(mode=0o755)
+        os.chmod(target, 0o755)
+        real_lstat, swapped = os.lstat, []
 
         def lstat(path, *a, **k):
             st = real_lstat(path, *a, **k)
-            if os.fspath(path) == os.fspath(root) and chmodded:     # the read-back, after the chmod
+            if not swapped and not isinstance(path, int) and os.fspath(path) == os.fspath(root) and stat.S_ISDIR(st.st_mode):
+                os.rename(root, moved)                  # the swap: after the read that decided the root is a directory of ours
+                os.symlink(target, root)
+                swapped.append(True)
+            return st
+        old = os.umask(0o022)
+        try:
+            with self._mode_spies() as (chmods, fchmods), mock.patch.object(os, "lstat", lstat), self.assertRaises(OSError) as cm:
+                sh.hosts_dir(root)
+        finally:
+            os.umask(old)
+        self.assertEqual(swapped, [True], "the swap landed after the lstat")
+        self.assertEqual(stat.S_IMODE(real_lstat(target).st_mode), 0o755, "the target's mode, read back: untouched by the refused tighten")
+        self.assertEqual((chmods, fchmods), ([], []), "no mode call reached anything")
+        msg = str(cm.exception)
+        self.assertIn(os.fspath(root), msg)
+        self.assertIn("not a directory", msg)
+        self.assertTrue(stat.S_ISLNK(real_lstat(root).st_mode), "the swapped-in link stands")
+        self.assertEqual(stat.S_IMODE(real_lstat(moved / "hosts").st_mode), 0o700, "hosts/ was made 0700 under the real root before the swap")
+
+    def test_a_root_another_uid_owns_is_refused_before_any_mode_is_set(self):
+        """regression-1 and kernel-2 (round 4 of the review, 2026-09-20): the create road's foreign-uid refusal was held by
+        no test, while the two refusals beside it each red a case. Two arms. (1) os.lstat answers st_uid + 1 for the
+        root's path alone (an int argument, a descriptor, is left to the real call; owner_only_dir's own reads are of
+        hosts/, never the root, so they read the truth): hosts_dir raises OSError carrying "belongs to uid" and the root's
+        path, no chmod and no fchmod was made, and the root's real mode read back by the unpatched lstat is the umask's,
+        0755 under 022, so the refusal came BEFORE the tighten (under 077 the mkdir alone gives 0700 and that read would
+        say nothing: the umask is the discriminating choice, as the round's refuters noted). (2) The lstat truthful and
+        os.fstat answering st_uid + 1 for the root's descriptor: the shape of a foreign DIRECTORY renamed onto the root's
+        path between the lstat and the open (O_NOFOLLOW refuses a link there, not a directory); the descriptor's check
+        refuses the same way, before the fchmod. The reachable shape is a directory another uid wins into the root's path
+        between hosts_dir's exists() read and the parents mkdir, the race window the swapped-link case pins. The
+        refusal is outcome-bearing at euid 0 or with CAP_FOWNER: an ordinary euid's chmod of a foreign directory raises
+        EPERM by itself, so for an ordinary euid this pin holds the clear message and that no mode call is made at all.
+        Refusable: the lstat's uid refusal deleted reds arm (1) with OSError not raised; the fstat's reds arm (2)."""
+        real_lstat, real_fstat = os.lstat, os.fstat
+
+        def foreign(st):
+            fields = list(st)
+            fields[4] = st.st_uid + 1                   # st_uid: someone else's directory at our path
+            return os.stat_result(fields)
+        for arm in ("lstat", "fstat"):
+            with self.subTest(arm=arm):
+                base = tempfile.mkdtemp(prefix="sr-")
+                self.addCleanup(shutil.rmtree, base, True)
+                root = Path(base) / "state"
+
+                def lstat(path, *a, **k):
+                    st = real_lstat(path, *a, **k)
+                    if arm == "lstat" and not isinstance(path, int) and os.fspath(path) == os.fspath(root):
+                        return foreign(st)
+                    return st
+
+                def fstat(fd):
+                    st = real_fstat(fd)
+                    if arm == "fstat" and stat.S_ISDIR(st.st_mode) and (st.st_dev, st.st_ino) == self._ident(root, real_lstat):
+                        return foreign(st)
+                    return st
+                old = os.umask(0o022)
+                try:
+                    with self._mode_spies() as (chmods, fchmods), mock.patch.object(os, "lstat", lstat), \
+                            mock.patch.object(os, "fstat", fstat), self.assertRaises(OSError) as cm:
+                        sh.hosts_dir(root)
+                finally:
+                    os.umask(old)
+                msg = str(cm.exception)
+                self.assertTrue(msg.startswith("state root "), msg)
+                self.assertIn("belongs to uid %d, not to us (uid %d)" % (os.geteuid() + 1, os.geteuid()), msg)
+                self.assertIn(os.fspath(root), msg)
+                self.assertEqual((chmods, fchmods), ([], []), "refused before any mode call")
+                self.assertEqual(stat.S_IMODE(real_lstat(root).st_mode), 0o755, "the root still reads the umask's mode by the real lstat: not tightened")
+                self.assertEqual(stat.S_IMODE(real_lstat(root / "hosts").st_mode), 0o700, "hosts/ under it was made 0700 before the refusal")
+
+    def test_the_read_back_is_an_fstat_on_the_descriptor_so_a_stat_or_lstat_by_path_that_disagrees_is_inert(self):
+        """The read-back reads the root back by os.fstat on the descriptor the fchmod acted on, not by any path (round 4
+        of the review, 2026-09-20; the addendum to round 6 pinned an lstat read-back against a lying os.stat, and this
+        case pins the descriptor read-back against both path readers). Once the fchmod has run, stubbed os.stat and
+        os.lstat both answer S_IFDIR|0755 for the root's path (an int argument is left to the real call); hosts_dir returns
+        normally, the fchmod ran once, and the root reads 0700 by the unpatched lstat. Refusable: the read-back swapped
+        for os.lstat(root) or os.stat(root) makes the stub's 0755 the mode read, and the refusal fires where this asserts
+        a return."""
+        base = tempfile.mkdtemp(prefix="sr-")
+        self.addCleanup(shutil.rmtree, base, True)
+        root = Path(base) / "state"
+        real_stat, real_lstat, real_fchmod = os.stat, os.lstat, os.fchmod
+        fchmodded = []
+
+        def fchmod(fd, mode):
+            fchmodded.append(mode)
+            return real_fchmod(fd, mode)
+
+        def lying(real):
+            def read(path, *a, **k):
+                st = real(path, *a, **k)
+                if not isinstance(path, int) and os.fspath(path) == os.fspath(root) and fchmodded:
+                    return os.stat_result((stat.S_IFDIR | 0o755,) + tuple(st)[1:])
+                return st
+            return read
+        old = os.umask(0o022)
+        try:
+            with mock.patch.object(os, "fchmod", fchmod), mock.patch.object(os, "stat", lying(real_stat)), \
+                    mock.patch.object(os, "lstat", lying(real_lstat)):
+                self.assertEqual(sh.hosts_dir(root), root / "hosts")
+        finally:
+            os.umask(old)
+        self.assertEqual(fchmodded, [0o700], "the fchmod ran once")
+        self.assertEqual(stat.S_IMODE(real_lstat(root).st_mode), 0o700, "the real mode, by the unpatched lstat")
+
+    def test_a_read_back_that_disagrees_is_refused_with_the_mode_and_the_remedy(self):
+        """The read-back's disagreement arm, driven by a stubbed fstat: after the real fchmod, the fstat that reads the
+        root's descriptor back answers 0755 (the stub is keyed on the descriptor's inode, the root's, and answers only
+        once the fchmod has run, so the uid check's fstat before it is the real one), and hosts_dir raises an OSError
+        naming the root, the mode read (0755) and the remedy (chmod 700). The same arm fires for an fchmod that does not
+        take (os.fchmod stubbed to a no-op): the real fstat reads the umask's 0755, the same refusal, the root left at
+        0755."""
+        base = tempfile.mkdtemp(prefix="sr-")
+        self.addCleanup(shutil.rmtree, base, True)
+        root = Path(base) / "state"
+        real_fstat, real_fchmod, real_lstat = os.fstat, os.fchmod, os.lstat
+        fchmodded = []
+
+        def fchmod(fd, mode):
+            fchmodded.append(real_fstat(fd).st_ino)
+            return real_fchmod(fd, mode)
+
+        def fstat(fd):
+            st = real_fstat(fd)
+            if fchmodded and st.st_ino == fchmodded[0]:                 # the read-back, after the fchmod, on the root's descriptor
                 return os.stat_result((stat.S_IFDIR | 0o755,) + tuple(st)[1:])
             return st
         old = os.umask(0o022)
         try:
-            with mock.patch.object(os, "chmod", chmod), mock.patch.object(os, "lstat", lstat), \
+            with mock.patch.object(os, "fchmod", fchmod), mock.patch.object(os, "fstat", fstat), \
                     self.assertRaises(OSError) as cm:
                 sh.hosts_dir(root)
         finally:
@@ -2313,19 +2460,18 @@ class StateRootByHostsDir(unittest.TestCase):
         self.assertIn(os.fspath(root), msg)
         self.assertIn("0755", msg, "the mode as read back")
         self.assertIn("chmod 700", msg, "the one-step remedy")
-        self.assertEqual(chmodded, [os.fspath(root)], "the chmod ran once, on the root, before the read-back disagreed")
-        self.assertEqual(stat.S_IMODE(real_lstat(root).st_mode), 0o700, "the real mode: the stub, not the chmod, disagreed")
-        # the no-op chmod arm: the root stays at the umask's mode, the real read-back disagrees, the same refusal
+        self.assertEqual(fchmodded, [real_lstat(root).st_ino], "the fchmod ran once, on the root's descriptor, before the read-back disagreed")
+        self.assertEqual(stat.S_IMODE(real_lstat(root).st_mode), 0o700, "the real mode: the stub, not the fchmod, disagreed")
+        # the no-op fchmod arm: the root stays at the umask's mode, the real read-back disagrees, the same refusal
         other = Path(base) / "state2"
         old = os.umask(0o022)
         try:
-            with mock.patch.object(os, "chmod", lambda *a, **k: None), self.assertRaises(OSError) as cm2:
+            with mock.patch.object(os, "fchmod", lambda *a, **k: None), self.assertRaises(OSError) as cm2:
                 sh.hosts_dir(other)
         finally:
             os.umask(old)
         self.assertIn("0755", str(cm2.exception))
-        self.assertEqual(stat.S_IMODE(os.lstat(other).st_mode), 0o755, "left at the umask's mode by the chmod that did not take")
-
+        self.assertEqual(stat.S_IMODE(os.lstat(other).st_mode), 0o755, "left at the umask's mode by the fchmod that did not take")
 
 class HostsDir(unittest.TestCase):
     """sh.hosts_dir called directly, the checks it takes whole from kernel/judge.py's _ensure_judge_scratch (the review of
@@ -2764,71 +2910,86 @@ class KeptLease(unittest.TestCase):
 
 
 class PreludeRefusalRead(unittest.TestCase):
-    """The kernel's side of a prelude refusal (round 3, the reviewer's ruling of 2026-09-19): the real backend's spawn
-    road (_host_transport_for: write the spec, start the host, poll for the published path while the host lives) over a
-    state root padded so the published path is one byte over the budget, with _spawn_host replaced by a launcher of the
-    REAL bin/romp-session-host (KeptLease's harness with a real host in place of its recorder). The host refuses at the
-    budget before it spawns a CLI and exits 1; the wait reads that exit and raises naming the code; afterwards the root
-    holds no lease, no socket and no temp, and host.log reads host-started, socket-bind-failed, host-crashed and nothing
-    else: no cli-spawned row, so no CLI was ever started for the kernel to reap and no lease for its orphan road to wait
-    on. The CLI the spec names is a marker script that records its start, so "no CLI ever ran" is read from the
-    marker's absence and not from the host's rows alone. Through round 2 the same launch spawned a CLI and wrote a lease
-    first, then ended the CLI and removed the lease. Each root the class mints declares the host road it drives (`on` in
-    session-hosts, the standing rule). The second case is the CONSTRUCTOR refusal (round 3, kernel-2 and regression-2):
-    hosts/ re-pointed to a symlink between the kernel's spec write and the launch, so the host exits before it opens its
-    journal and before any host.log row exists, and the spawn wait's message must send the operator to the file that
-    does exist for it, host.stderr, not to a host.log that is not there."""
+    """The kernel's side of a refusal before the socket, on the PRODUCTION road: the real backend's spawn road
+    (_host_transport_for: write the spec, descend to hosts/<sid>/ by descriptors, start the host through the real
+    _spawn_host, poll for the published path while the host lives) over the real bin/romp-session-host. Since round 4
+    of the review (2026-09-20) nothing in the launcher is replaced: the harness observes subprocess.Popen (to kill and
+    count what it starts) and gives the host the environment the launcher inherits, this process's minus the credential
+    names, with ROMP_SDK_SITE naming no directory, so the host runs the built-in pipe transport over a marker CLI that
+    records its start and lives to EOF. Through round 3 the class replaced _spawn_host with a launcher of its own that
+    sent the host's stderr OUTSIDE the state root, and its symlinked-hosts/ case passed a "nothing written through the
+    link" assertion the production launcher failed: that launcher opened hosts/<sid>/host.stderr by PATH before Popen,
+    so a hosts/ swapped for a symlink after the spec was written had that file, carrying the host's traceback with the
+    absolute state root in it, written into the link's target (the round's high). The cases here drive the production
+    road and read the link's target. Each root the class mints declares the host road it drives (`on` in session-hosts,
+    the standing rule)."""
 
     def setUp(self):
-        self.scratch = tempfile.mkdtemp()               # the marker CLI, its mark and the host's stderr: not under the state root
+        self.scratch = tempfile.mkdtemp()               # the marker CLI and its mark: not under any state root
         self.addCleanup(shutil.rmtree, self.scratch, True)
         self.marker = os.path.join(self.scratch, "cli-started")
         self.cli = os.path.join(self.scratch, "marker_cli.py")
         Path(self.cli).write_text("#!%s\nimport sys\nopen(%r, 'w').close()\nsys.stdin.read()\n" % (sys.executable, self.marker))   # marks its start, lives to EOF
         os.chmod(self.cli, 0o700)
-        self.stderr_path = os.path.join(self.scratch, "host.stderr")
-        self.logs, self.hosts, self.plants = [], [], []
+        self.logs, self.hosts = [], []
+        self.before_popen = []                          # plants run inside the Popen wrapper, after the kernel's descents and before the process exists
+        self.host_env = {"PYTHONUNBUFFERED": "1", "ROMP_SDK_SITE": os.path.join(self.scratch, "no-sdk-here")}
 
     def _harness(self, state):
-        """The real backend over `state`, with _spawn_host replaced by the launcher below."""
+        """The real backend over `state`; the launcher is the production one (a plain new-session child: cli_scope off,
+        since the scoped arm needs a user systemd)."""
         self.state = state
         Path(state, "session-hosts").write_text("on")   # this root means the host road (tests/conftest.py floors the run's root off)
         self.be = sb.SdkBackend(self.state, "/bin/true", lambda *a, **k: None, log=self.logs.append)
-        self.be._spawn_host = self._spawn_host
+        self.be.cli_scope = False
         self.sess = types.SimpleNamespace(sid=SID, name="web", _host_intent=True, _host=None, _host_is_attach=False,
                                           _seed_for_dead_cli=lambda cli: None, _options_login="", _host_end_grace=None,
                                           _on_cli_stderr=lambda line: None)
         self.opts = types.SimpleNamespace(cli_path=self.cli, cwd=self.scratch, permission_prompt_tool_name="stdio",
                                           permission_mode="default", max_buffer_size=1024 * 1024, env={})
 
-    def _spawn_host(self, sess, spec_path, secret_env=None):
-        for plant in self.plants:                       # what a case does to the root between the spec's write and the launch
-            plant()
-        env = dict(os.environ, PYTHONUNBUFFERED="1", ROMP_SDK_SITE=os.path.join(self.scratch, "no-sdk-here"))
-        for name in sb.AUTH_ENV_NAMES:
-            env.pop(name, None)
-        proc = subprocess.Popen([sys.executable, os.path.join(BIN, "romp-session-host"), spec_path],
-                                stdout=subprocess.DEVNULL, stderr=open(self.stderr_path, "w"), env=env,
-                                start_new_session=True)
-        self.addCleanup(HostProcess._kill_group, proc)
-        self.hosts.append(proc)
-        return proc
+    def _connect(self, timeout=60):
+        """The kernel's connect road once, through the production launcher; returns the launch error's text (the road
+        raises on every refusal here). subprocess.Popen is wrapped, not replaced: the plants in before_popen run, the real
+        Popen runs with the launcher's own arguments, and the process is recorded and killed at teardown."""
+        real_popen = subprocess.Popen
 
-    def _connect(self):
-        """The kernel's connect road once; returns the launch error's text (the road raises on both refusals)."""
-        with self.assertRaises(Exception) as cm:
-            asyncio.run(asyncio.wait_for(self.be._host_transport_for(self.sess, self.opts, (None, None, None)), 60))
+        def popen(argv, **kw):
+            for plant in self.before_popen:
+                plant()
+            proc = real_popen(argv, **kw)
+            self.addCleanup(HostProcess._kill_group, proc)
+            self.hosts.append(proc)
+            return proc
+        with mock.patch.dict(os.environ, self.host_env), mock.patch.object(sb.subprocess, "Popen", popen):
+            for name in sb.AUTH_ENV_NAMES:
+                os.environ.pop(name, None)
+            with self.assertRaises(Exception) as cm:
+                asyncio.run(asyncio.wait_for(self.be._host_transport_for(self.sess, self.opts, (None, None, None)), timeout))
         return str(cm.exception)
 
+    def _events(self):
+        p = Path(self.state) / sb.SESSION_EVENTS_FILE
+        return [json.loads(l) for l in p.read_text().splitlines()] if p.exists() else []
+
+    @staticmethod
+    def _texts_under(d):
+        """Every regular file under `d` as text, by relative path: what a directory received, for the no-traceback read."""
+        return {str(p.relative_to(d)): p.read_text(errors="replace") for p in Path(d).rglob("*") if p.is_file()}
+
     def test_the_spawn_wait_names_host_stderr_for_a_host_refused_before_its_first_row(self):
-        """regression-2 (review round 3, 2026-09-19), on the real kernel road with a real host: hosts/ becomes a symlink
-        between write_spawn_spec and the launch (the kernel's own guard ran before that re-point), so the host's
-        constructor refuses it (kernel-2) and the process exits 1 before its journal, host.log or identity.json exist and
-        before any CLI is spawned. The spawn wait reads that exit, and its message names what exists for this class:
-        the exit code, and host.stderr beside host.log, since the traceback of a constructor refusal lands on the host's
-        captured stderr and no host.log row is ever written. Through round 3's start the message named host.log alone,
-        which for this refusal is a file that is not there. Read off the kernel's real message, the real host's stderr,
-        the target the link points at (the spec alone, before and after) and the marker CLI (never started)."""
+        """regression-2 (round 3), on the production road since round 4: hosts/ is renamed aside and a symlink put in its
+        place pointing at the moved directory, planted AFTER the kernel's descents have opened host.stderr by descriptor
+        and before the host process exists (inside the Popen wrapper). The host reads the spec through the link, its
+        constructor's hosts_dir refuses the link (kernel-2), and the process exits 1 before its journal, host.log or
+        identity.json exist and before any CLI is spawned; its traceback goes to the descriptor it inherited, the file in
+        the moved directory. The kernel's wait reads that exit through the descriptors it holds (the moved directory:
+        host.log absent, host.stderr grown past the mark), so the message names the exit code, host.stderr under the
+        condition, then the host.log tail. The moved directory holds exactly the spec and host.stderr, the file the
+        kernel opened by descriptor before the swap, 0600 read back, which moved with the directory: the host wrote
+        nothing (no host.log, no identity.json, no journal segment, no socket, no temp, no lease) and nothing reached that
+        directory by way of the link. Round 3's version of this case asserted the spec alone, which held only because its
+        own launcher redirected stderr out of the state root."""
         state = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, state, True)
         self._harness(state)
@@ -2837,29 +2998,110 @@ class PreludeRefusalRead(unittest.TestCase):
         def plant():
             os.rename(hosts, target)
             hosts.symlink_to(target)
-        self.plants.append(plant)
+        self.before_popen.append(plant)
         msg = self._connect()
         self.assertIn("exited before serving its socket (code 1)", msg, "the spawn wait read the host's exit")
-        self.assertIn("hosts/%s/host.log" % SID, msg, "the file a host that wrote a row leaves")
-        self.assertIn("host.stderr", msg, "and the one a host refused before its first row leaves")
+        self.assertIn("see hosts/%s/host.stderr when host.log is missing or has no row from this launch, else see hosts/%s/host.log" % (SID, SID),
+                      msg, "host.stderr grew past the mark, so it is named under the condition, then the host.log tail")
         self.assertEqual(len(self.hosts), 1, "one host was started")
         self.assertEqual(self.hosts[0].wait(10), 1)
         self.assertTrue(hosts.is_symlink(), "the link is left, not replaced")
         self.assertFalse((target / SID / "host.log").exists(), "no host.log exists for this refusal: a message naming it alone points at nothing")
-        self.assertEqual(sorted(p.name for p in (target / SID).iterdir()), ["spawn.json"], "nothing written through the link")
-        err = open(self.stderr_path).read()
+        self.assertEqual(sorted(p.name for p in (target / SID).iterdir()), ["host.stderr", "spawn.json"],
+                         "the spec, and the file the kernel opened by descriptor before the swap; nothing the host writes")
+        err_path = target / SID / "host.stderr"
+        self.assertEqual(stat.S_IMODE(os.lstat(err_path).st_mode), 0o600, "opened 0600 by the kernel, read back off the file")
+        err = err_path.read_text()
         self.assertIn("hosts directory", err, err[-800:])
         self.assertIn("is not a directory", err)
         self.assertFalse(os.path.exists(self.marker), "the CLI never started: its marker is absent")
         self.assertIsNone(sb.read_lease(state, SID), "no lease was ever written")
         self.assertEqual(sorted(p.name for p in target.glob("*.tmp")) + sorted(p.name for p in target.glob("*.sock")), [], "nothing bound, nothing published")
+        self.assertEqual([r["kind"] for r in self._events()], ["host.exited-before-socket"])
+
+    def test_a_hosts_swapped_for_a_link_to_a_peers_directory_is_refused_and_the_peers_directory_receives_nothing(self):
+        """THE ROUND'S HIGH (tests-1 with extra5-3 and extra8-2, round 4 of the review, 2026-09-20), driven on the production
+        road at every point the sequence allows from outside. The swap is what a peer with write on a non-0700 state root
+        can make: hosts/ renamed aside (hosts.moved, still ours) and a symlink put at hosts/ pointing at a directory of the
+        peer's own, holding an empty <sid>/ the peer made. Four plant points, each over a fresh root: before the spec
+        write; after write_spawn_spec returns and before the kernel's descent; after that descent and before the
+        launcher's own (the real _spawn_host wrapped to plant, then delegate); and after both descents, before the host
+        process exists (inside the Popen wrapper). At the first three the launch is refused before any process starts:
+        the launch error and a host.directory-refused row name the link's path and the remedy, subprocess.Popen is never
+        called, and the peer's directory receives NOTHING (its <sid>/ lists empty). At the fourth the host starts holding
+        the descriptor the kernel opened before the swap, reads the spec through the link (absent in the peer's
+        directory) and exits 1 with its traceback in hosts.moved/<sid>/host.stderr, ours; the peer's directory still
+        receives nothing, and the kernel's message, read through the held descriptors, names host.stderr. No file under
+        the peer's directory and no line of the kernel's log carries a traceback, at any point. Red on the head before
+        this fix at the third and fourth points: the launcher's open(<path>, "ab") resolved through the link and the
+        peer's <sid>/ listed host.stderr, a traceback naming the state root (the run pasted in the PR body)."""
+        for point in ("before-spec", "after-spec", "before-launcher", "before-popen"):
+            with self.subTest(point=point):
+                self.setUp()
+                state = tempfile.mkdtemp()
+                self.addCleanup(shutil.rmtree, state, True)
+                self._harness(state)
+                hosts, moved = Path(state) / "hosts", Path(state) / "hosts.moved"
+                peer = Path(self.scratch) / "peer"
+                (peer / SID).mkdir(parents=True, mode=0o755)
+
+                def swap(hosts=hosts, moved=moved, peer=peer):
+                    if os.path.lexists(hosts):
+                        os.rename(hosts, moved)
+                    hosts.symlink_to(peer)
+                ht = sb._ht()
+                real_write, real_spawn = ht.write_spawn_spec, self.be._spawn_host
+                with contextlib.ExitStack() as stack:
+                    if point == "before-spec":
+                        swap()
+                    elif point == "after-spec":
+                        def write_then_swap(*a, **k):
+                            p = real_write(*a, **k)
+                            swap()
+                            return p
+                        stack.enter_context(mock.patch.object(ht, "write_spawn_spec", write_then_swap))
+                    elif point == "before-launcher":
+                        def swap_then_launch(sess, spec_path, secret_env=None):
+                            swap()
+                            return real_spawn(sess, spec_path, secret_env)
+                        self.be._spawn_host = swap_then_launch
+                    else:
+                        self.before_popen.append(swap)
+                    msg = self._connect()
+                # what the peer's directory received, at every point: nothing
+                self.assertTrue(hosts.is_symlink(), "the link is left, not replaced")
+                self.assertEqual(sorted(os.listdir(peer)), [SID], "the peer's directory holds what the peer put there")
+                self.assertEqual(os.listdir(peer / SID), [], "and its <sid>/ received nothing: no host.stderr, no spec, no row")
+                self.assertEqual(self._texts_under(peer), {}, "no file anywhere under the peer's directory")
+                self.assertNotIn("Traceback", "\n".join(str(l) for l in self.logs), "no traceback in the kernel's log")
+                self.assertNotIn("Traceback", msg, "nor in the launch error")
+                events = self._events()
+                if point != "before-popen":
+                    self.assertEqual(self.hosts, [], "no host process was started: the launch was refused before Popen")
+                    self.assertTrue(msg.startswith("the session host was not started: hosts directory %s " % hosts), msg)
+                    self.assertIn("is not a directory" if point == "before-spec" else "is a symlink, not a directory", msg,
+                                  "before the spec write hosts_dir's lstat refuses the link; after it the descent's open does")
+                    self.assertIn("ROMP_STATE_DIR", msg, "the remedy rides with the reason")
+                    self.assertEqual([r["kind"] for r in events], ["host.directory-refused"], "one row, its own kind")
+                    self.assertIn(os.fspath(hosts), events[0]["text"], "the row names the link")
+                    self.assertFalse((moved / SID / "host.stderr").exists() if moved.exists() else False, "no launch, no host.stderr anywhere")
+                else:
+                    self.assertEqual(len(self.hosts), 1, "the host started with the descriptor the kernel opened before the swap")
+                    self.assertEqual(self.hosts[0].wait(10), 1)
+                    self.assertIn("exited before serving its socket (code 1)", msg)
+                    self.assertIn("see hosts/%s/host.stderr when host.log is missing" % SID, msg, "host.stderr grew: named, read through the held descriptor")
+                    err = (moved / SID / "host.stderr").read_text()
+                    self.assertIn("Traceback", err, "the host's traceback landed in the directory the kernel verified, moved aside")
+                    self.assertEqual([r["kind"] for r in events], ["host.exited-before-socket"])
+                self.assertFalse(os.path.exists(self.marker), "the CLI never started: its marker is absent")
+                self.assertIsNone(sb.read_lease(state, SID), "no lease was ever written")
 
     def test_the_spawn_wait_reads_the_exit_of_a_host_refused_before_its_cli_and_finds_no_lease_and_no_cli(self):
         self._harness(padded_root(self, sh.SOCK_PATH_MAX + 1, os.path.join("hosts", SID[:8] + ".sock")))
         msg = self._connect()
         self.assertIn("exited before serving its socket (code 1)", msg, "the spawn wait read the host's exit")
         self.assertEqual(len(self.hosts), 1, "one host was started")
-        self.assertEqual(self.hosts[0].wait(10), 1, open(self.stderr_path).read()[-800:])
+        self.assertEqual(self.hosts[0].wait(10), 1, (Path(self.state) / "hosts" / SID / "host.stderr").read_text()[-800:])
         rows = [json.loads(l) for l in (Path(self.state) / "hosts" / SID / "host.log").read_text().splitlines()]
         self.assertEqual([r["kind"] for r in rows], ["host-started", "socket-bind-failed", "host-crashed"], rows)
         # the reason arm on a real host (round 5's addendum, 2026-09-19): this refusal wrote its rows, so the kernel read
@@ -2878,24 +3120,64 @@ class PreludeRefusalRead(unittest.TestCase):
         self.assertFalse((hosts / (SID[:8] + ".sock")).exists(), "nothing published")
         self.assertEqual(sorted(p.name for p in hosts.glob("*.tmp")), [], "no temp left")
 
+    def test_a_host_that_stalls_before_its_socket_is_ended_at_the_deadline_and_the_message_says_it_left_no_traceback(self):
+        """kernel-5 (round 4 of the review, 2026-09-20), the deadline arm by execution on a real host: a fake
+        claude_agent_sdk whose import sleeps stands where the SDK would be (ROMP_SDK_SITE and PYTHONPATH name its site),
+        so the host writes its host-started row, runs the prelude, and stalls in _spawn's import before any CLI, lease or
+        socket exists. With the kernel's wait patched short the deadline arm ends it: terminate(), SIGTERM, rc -15. What
+        is true of that class, read back: host.stderr is 0 bytes (a host ended this way writes no traceback, so the
+        exited arm's clause would have sent the operator to an empty file), host.log holds host-started and no failing
+        row, no lease, no marker. The message says so: ended, which leaves no traceback, host.stderr carries nothing from
+        this launch, then the host.log tail main's pins hold; the row is host.never-served-socket. Through round 3 the
+        arm said "see host.log" alone for the class."""
+        site = Path(self.scratch) / "stall-sdk"
+        (site / "claude_agent_sdk").mkdir(parents=True)
+        (site / "claude_agent_sdk" / "__init__.py").write_text("import time\ntime.sleep(600)\n")
+        self.host_env = {"PYTHONUNBUFFERED": "1", "ROMP_SDK_SITE": str(site), "PYTHONPATH": str(site)}
+        state = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, state, True)
+        self._harness(state)
+        with mock.patch.object(sb._ht(), "SOCKET_WAIT_S", 5.0):
+            msg = self._connect()
+        self.assertEqual(len(self.hosts), 1, "one host was started")
+        self.assertEqual(self.hosts[0].wait(10), -signal.SIGTERM, "ended by terminate() at the deadline, not exited")
+        err = Path(state) / "hosts" / SID / "host.stderr"
+        self.assertEqual(os.stat(err).st_size, 0, "no traceback: the host was ended, it did not fail")
+        rows = [json.loads(l) for l in (Path(state) / "hosts" / SID / "host.log").read_text().splitlines()]
+        self.assertEqual([r["kind"] for r in rows], ["host-started"], "the host got past its start and stalled before the CLI")
+        self.assertEqual(msg, "the session host did not serve its socket within 5 s; it was ended, which leaves no traceback; "
+                              "hosts/%s/host.stderr carries nothing from this launch; see hosts/%s/host.log" % (SID, SID))
+        self.assertEqual([r["kind"] for r in self._events()], ["host.never-served-socket"])
+        self.assertFalse(os.path.exists(self.marker), "the CLI never started: its marker is absent")
+        self.assertIsNone(sb.read_lease(state, SID), "no lease was ever written")
+
 
 class SpawnWaitMessageArms(unittest.TestCase):
     """The spawn wait's message, composed per arm (round 5's addendum, 2026-09-19, closing the lens's two notes on round
     5's one string: with a reason in hand the kernel had already resolved "when it wrote no host.log", and over a
-    host.log a previous host left that clause was false). The real backend's exited road (_host_transport_for, the
-    proc.poll() is not None arm) over a fake _spawn_host whose host has exited, the harness tests/test_session_host_sdk_pin.py
-    HostProcess uses; the WHOLE message is read on each arm, the launch error and the error centre's row alike, never a
-    substring alone. Three shapes: a host that wrote a failing row (what happened, then the one file that holds the
-    reason, the reason as its tail, and host.stderr not named); a host that wrote nothing and left no host.log (what
-    happened, then host.stderr under the condition the operator can read off the file, then the host.log tail main's
-    pins hold); and a host that wrote nothing over a host.log a previous host left, which a stale kernel-held lease keeps
-    across launches: the same message as the second, read against a file that exists on disk with a stale row only and
-    a previous reason the message does not carry. Each root declares the host road (`on` in session-hosts)."""
+    host.log a previous host left that clause was false; round 4 of the review, 2026-09-20, split the no-reason arm on
+    host.stderr's watermark, kernel-1 and correctness-1, and gave the deadline arm the same treatment, kernel-5). The
+    real backend's two refused roads (_host_transport_for: the proc.poll() is not None arm, and the deadline arm with
+    SOCKET_WAIT_S patched short) over a fake _spawn_host, the harness tests/test_session_host_sdk_pin.py HostProcess uses;
+    the WHOLE message is read on each arm, the launch error and the error centre's row alike, never a substring alone. The
+    shapes: a host that wrote a failing row (what happened, then the one file that holds the reason, the reason as its
+    tail, and host.stderr not named); a host that wrote nothing anywhere (host.stderr named as carrying nothing from this
+    launch, then the host.log tail main's pins hold); a host that wrote nothing over a host.log a previous host left,
+    which a stale kernel-held lease keeps across launches (the same message as the second, read against a file that
+    exists on disk with a stale row only and a previous reason the message does not carry); a host that wrote nothing
+    over a host.stderr a PREVIOUS launch left (the same again: the previous traceback is not this launch's reason, which
+    is what the watermark is for); a host that wrote to host.stderr through the kernel's own open (named under the
+    condition the operator can read off host.log); and the deadline arm's three shapes. Each root declares the host road
+    (`on` in session-hosts)."""
 
     _STALE_LEASE = {"pid": 2 ** 22 - 1, "start": "gone", "t": 0, "holder": {"kind": "kernel", "pid": 2 ** 22 - 2, "start": "gone"}}
     _HAPPENED = "the session host exited before serving its socket (code 1)"
-    _NO_REASON = _HAPPENED + ("; see hosts/%s/host.stderr when host.log is missing or has no row from this launch, else see "
-                              "hosts/%s/host.log" % (SID, SID))
+    _NO_REASON_QUIET = _HAPPENED + "; hosts/%s/host.stderr carries nothing from this launch; see hosts/%s/host.log" % (SID, SID)
+    _NO_REASON_STDERR = _HAPPENED + ("; see hosts/%s/host.stderr when host.log is missing or has no row from this launch, else see "
+                                     "hosts/%s/host.log" % (SID, SID))
+    _ENDED = "the session host did not serve its socket within 0 s; it was ended"
+    _ENDED_QUIET = _ENDED + ", which leaves no traceback; hosts/%s/host.stderr carries nothing from this launch; see hosts/%s/host.log" % (SID, SID)
+    _ENDED_STDERR = _ENDED + "; hosts/%s/host.stderr carries what it wrote before it stalled; see hosts/%s/host.log" % (SID, SID)
 
     def _root(self):
         d = tempfile.mkdtemp(prefix="swm-")
@@ -2904,10 +3186,13 @@ class SpawnWaitMessageArms(unittest.TestCase):
         sb.write_reg(Path(d), SID, {"sid": SID, "name": "web", "alive": True, "lastSid": SID, "cwd": d})
         return d
 
-    def _launch(self, d, rows, code=1):
+    def _launch(self, d, rows, code=1, stderr=None, stall=None):
         """One connect through a host that appended `rows` to host.log (opening the file only when there is a row to
-        write, so a host that wrote nothing leaves no file) and exited `code`; the launch error's text and the error
-        centre's rows."""
+        write, so a host that wrote nothing leaves no file), wrote `stderr` (bytes) to host.stderr through the KERNEL'S
+        own open (open_host_dirs and host_stderr_open, so the file's existence follows the launcher's road and is not the
+        test's doing) and exited `code`; or, with `stall` (a list), a host that never exits: poll() stays None,
+        SOCKET_WAIT_S is patched to 0.3 s and terminate() appends to the list. Returns the launch error's text and the
+        error centre's rows."""
         be = sb.SdkBackend(d, "/bin/true", lambda *a, **k: None, log=lambda m, *a, **k: None)
         sess = types.SimpleNamespace(sid=SID, name="web", _host_intent=True, _host=None, _host_is_attach=False,
                                      _options_login="", _seed_for_dead_cli=lambda cli: None)
@@ -2917,8 +3202,21 @@ class SpawnWaitMessageArms(unittest.TestCase):
                 with open(Path(spec_path).parent / "host.log", "a") as f:
                     for row in rows:
                         f.write(json.dumps(row) + "\n")
+            if stderr is not None:
+                ht = sb._ht()
+                with ht.open_host_dirs(d, SID) as dirs:
+                    fd = ht.host_stderr_open(dirs)
+                try:
+                    os.write(fd, stderr)
+                finally:
+                    os.close(fd)
+            if stall is not None:
+                return types.SimpleNamespace(poll=lambda: None, returncode=None, pid=4242, terminate=lambda: stall.append(1))
             return types.SimpleNamespace(poll=lambda: code, returncode=code, pid=4242, terminate=lambda: None)
-        with mock.patch.object(be, "_spawn_host", spawn):
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(mock.patch.object(be, "_spawn_host", spawn))
+            if stall is not None:
+                stack.enter_context(mock.patch.object(sb._ht(), "SOCKET_WAIT_S", 0.3))
             with self.assertRaises(sb.CLIConnectionErrorLike) as cm:
                 asyncio.run(be._host_transport_for(sess, types.SimpleNamespace(), (None, None, None)))
         p = Path(d) / sb.SESSION_EVENTS_FILE
@@ -2932,18 +3230,20 @@ class SpawnWaitMessageArms(unittest.TestCase):
                          [("host.exited-before-socket", 1, "the session host for web " + msg[len("the session host "):])],
                          "the error centre's row carries the same sentence")
 
-    def test_a_host_that_left_no_host_log_is_sent_to_host_stderr_under_the_condition_the_operator_can_read(self):
+    def test_a_host_that_left_no_host_log_and_wrote_nothing_to_host_stderr_gets_host_stderr_named_as_empty_and_the_host_log_tail(self):
         d = self._root()
         msg, events = self._launch(d, [])
-        self.assertFalse((sb._ht().host_dir(d, SID) / "host.log").exists(), "the shape: no host.log exists for this launch")
-        self.assertEqual(msg, self._NO_REASON)
+        hd = sb._ht().host_dir(d, SID)
+        self.assertFalse((hd / "host.log").exists(), "the shape: no host.log exists for this launch")
+        self.assertFalse((hd / "host.stderr").exists(), "and no host.stderr either: the kernel's watermark is a stat, it creates nothing")
+        self.assertEqual(msg, self._NO_REASON_QUIET)
         self.assertEqual([(r["kind"], r["code"], r["text"]) for r in events],
                          [("host.exited-before-socket", 1, "the session host for web " + msg[len("the session host "):])])
 
     def test_a_host_that_wrote_nothing_over_a_previous_hosts_log_gets_the_same_message_and_none_of_that_hosts_reason(self):
         """The shape round 5's clause was false for: host.log exists on disk, left by a previous host and kept by a stale
-        kernel-held lease, and this launch's host added nothing to it. The message's condition, missing or without a row
-        from this launch, is the one that holds; the previous host's reason is not this launch's."""
+        kernel-held lease, and this launch's host added nothing to it. The previous host's reason is not this launch's,
+        and host.stderr, unchanged, is named as carrying nothing from this launch."""
         d = self._root()
         hd = sb._ht().host_dir(d, SID)
         hd.mkdir(parents=True)
@@ -2954,11 +3254,73 @@ class SpawnWaitMessageArms(unittest.TestCase):
         msg, events = self._launch(d, [])
         self.assertTrue((hd / "host.log").exists(), "the shape: a host.log exists, and it is the previous host's")
         self.assertEqual([json.loads(l)["t"] for l in (hd / "host.log").read_text().splitlines()], [1, 2], "this launch's host added no row")
-        self.assertEqual(msg, self._NO_REASON)
+        self.assertEqual(msg, self._NO_REASON_QUIET)
         self.assertNotIn("previous launch", msg, "the previous host's reason is not this launch's")
         self.assertEqual([(r["kind"], r["code"]) for r in events], [("host.exited-before-socket", 1)])
         self.assertNotIn("previous launch", events[0]["text"])
 
+    def test_a_host_that_wrote_nothing_over_a_previous_launchs_host_stderr_is_not_sent_to_that_traceback(self):
+        """kernel-1 and correctness-1 (round 4 of the review, 2026-09-20): host.stderr is opened append-only by the launcher
+        and a refused launch clears nothing, so under a stale kernel-held lease (which keeps the directory) a previous
+        launch's traceback sits in the file when the next host runs. Through round 3 the no-reason arm named host.stderr
+        whatever the file held, so the operator read that traceback as this launch's reason, the misattribution the kernel
+        already prevents for host.log with its watermark. Now the kernel takes host.stderr's size beside host_log_mark,
+        through the descriptor it holds, and a host that appended nothing gets the message that says so: host.stderr
+        carries nothing from this launch, then the host.log tail; the planted traceback's text is in neither the launch
+        error nor the row, and the file is byte-identical after the launch. Red on the head before the fix: the message
+        named host.stderr under its condition."""
+        d = self._root()
+        hd = sb._ht().host_dir(d, SID)
+        hd.mkdir(parents=True)
+        previous = b"Traceback (most recent call last):\n  File \"session_host.py\", line 1, in <module>\nOSError: a previous launch's reason\n"
+        (hd / "host.stderr").write_bytes(previous)
+        sb.write_lease(d, dict(self._STALE_LEASE, sid=SID))
+        self.assertEqual(sb.lease_state(sb.read_lease(d, SID), time.time()), "no-live-process", "the precondition: a stale kernel-held lease")
+        msg, events = self._launch(d, [])
+        self.assertEqual((hd / "host.stderr").read_bytes(), previous, "this launch's host appended nothing")
+        self.assertEqual(msg, self._NO_REASON_QUIET)
+        self.assertNotIn("see hosts/%s/host.stderr" % SID, msg, "the operator is not sent to the previous launch's traceback")
+        self.assertNotIn("previous launch", msg)
+        self.assertEqual([(r["kind"], r["code"]) for r in events], [("host.exited-before-socket", 1)])
+        self.assertNotIn("previous launch", events[0]["text"])
+        self.assertNotIn("see hosts/%s/host.stderr" % SID, events[0]["text"])
+
+    def test_a_host_that_wrote_to_host_stderr_and_no_host_log_is_sent_to_host_stderr_under_the_condition(self):
+        """The grown arm: the host wrote to host.stderr (through the kernel's own open, the launcher's road) and no host.log,
+        the constructor-refusal class PreludeRefusalRead drives on a real host. The watermark shows the growth, so
+        host.stderr is named under the condition the operator can read off host.log, then the host.log tail; the file is
+        0600, read back."""
+        d = self._root()
+        msg, events = self._launch(d, [], stderr=b"Traceback (most recent call last):\nOSError: this launch's reason\n")
+        hd = sb._ht().host_dir(d, SID)
+        self.assertFalse((hd / "host.log").exists())
+        self.assertEqual(stat.S_IMODE(os.lstat(hd / "host.stderr").st_mode), 0o600, "opened 0600 through the descent, read back")
+        self.assertEqual(msg, self._NO_REASON_STDERR)
+        self.assertEqual([(r["kind"], r["code"], r["text"]) for r in events],
+                         [("host.exited-before-socket", 1, "the session host for web " + msg[len("the session host "):])])
+
+    def test_the_deadline_arm_says_an_ended_host_left_no_traceback_and_names_host_stderr_only_when_it_wrote_there(self):
+        """kernel-5 (round 4 of the review, 2026-09-20): the deadline arm, three shapes over a fake host that never exits
+        (SOCKET_WAIT_S 0.3 s; terminate() recorded). A host that wrote nothing: ended, which leaves no traceback,
+        host.stderr carries nothing from this launch, then the host.log tail main's pins hold. A host that wrote to
+        host.stderr before it stalled: that file named for what it wrote, then the tail. A host that wrote a failing row
+        and then wedged: host.log alone, the reason as the tail. Never the exited arm's clause (a traceback in
+        host.stderr), which is false for a host ended by terminate(); PreludeRefusalRead drives the first shape on a real
+        stalled host and reads host.stderr at 0 bytes."""
+        for shape, rows, stderr, want in (
+                ("wrote nothing", [], None, self._ENDED_QUIET),
+                ("wrote to host.stderr", [], b"a warning line before the stall\n", self._ENDED_STDERR),
+                ("wrote a failing row", [{"t": 1, "kind": "host-started"}, {"t": 2, "kind": "cli-spawn-failed", "error": "TypeError"}], None,
+                 self._ENDED + "; see hosts/%s/host.log: TypeError" % SID)):
+            with self.subTest(shape=shape):
+                d = self._root()
+                ended = []
+                msg, events = self._launch(d, rows, stderr=stderr, stall=ended)
+                self.assertEqual(ended, [1], "the host was ended")
+                self.assertEqual(msg, want)
+                self.assertEqual([(r["kind"], r["text"]) for r in events],
+                                 [("host.never-served-socket", "the session host for web " + msg[len("the session host "):])])
+                self.assertNotIn("code", events[0], "ended, not exited: no return code to record")
 
 class SocketFchmod(unittest.TestCase):
     def test_fchmod_on_a_bound_socket_descriptor_leaves_the_path_mode_alone(self):

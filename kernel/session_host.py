@@ -110,7 +110,9 @@ class SdkInternalsMismatch(RuntimeError):
     message of the import error behind it), never a spec field or an environment value."""
 
 
-SDK_CAUSE_CAP = 200                          # the cause text appended to a mismatch, capped as main() caps the generic crash line
+SDK_CAUSE_CAP = 200                          # the cause's type and message appended to a mismatch text, bounded to this many
+#                                              characters: the host-composed row's cap. The generic host-crashed row carries the
+#                                              class, the errno and the frame, never text (main()), so no cap applies to it.
 
 
 def installed_sdk_version() -> "str | None":
@@ -686,13 +688,6 @@ class PipeCliTransport:
 # derives the number by binding throwaway sockets at the lengths around it, so this is a measured limit, not an
 # assumed one.
 SOCK_PATH_MAX = 103 if sys.platform == "darwin" else 107
-# The floor: SOCK_PATH_MAX's minimum across the platforms the expression above names (darwin's 103), one number under
-# one name. It exists because a guard that reads SOCK_PATH_MAX is exactly as permissive as the platform it runs on: a
-# setUp guard on Linux lets a root through at 104 to 107 bytes that the same test then breaks on at darwin's 103, with
-# no run having said so. A guard that must hold everywhere reads this (asked for the queued session-host lab fix's setUp
-# guard, a queue item in the review notes with no PR of its own, 2026-09-19). tests/test_session_host.py SocketBudget pins it equal to the minimum
-# over the expression's two literal arms, read from this source, so a change to either arm that leaves this behind reds.
-SOCK_PATH_FLOOR = 103
 
 _TEMP_DIGITS = "0123456789abcdefghijklmnopqrstuv"        # base 32 as int(s, 32) reads it back
 _TEMP_NAME = re.compile(r"^([0-9a-v]{5})[0-9a-v]{4}\.tmp$")
@@ -796,16 +791,33 @@ def hosts_dir(state_dir) -> Path:
     `hosts/` (owner-only by this code) and of the registry and the parked-ops files (owner-only since fork PR #789), and
     its traverse bit is what stands between a peer uid and any of them. THE FIX, the create road only: whether the root is
     on disk is read BEFORE the mkdir, and when it was not, the root this call made is tightened to 0700 by a chmod the
-    line after `hosts/` is made, then READ BACK by lstat, and a read-back that is not 0700 is refused with the mode read
-    and the one-step remedy (the shape owner_only_dir uses, with its lstat, its not-a-directory and its foreign-uid
-    refusals, so a symlink swapped into the root's place is refused rather than tightened on behalf of its target; a live
-    symlink at the root's path, pointing at a directory, is a root on disk to this call: exists() follows it, `hosts/` is
-    made under its target, and the target is never read back or tightened). Only
+    line after `hosts/` is made, then READ BACK, and a read-back that is not 0700 is refused with the mode read and the
+    one-step remedy. The read and the chmod (round 6, corrected at round 4 of the review, kernel-4, 2026-09-20): the root
+    is read by lstat first, owner_only_dir's shape (a link or a non-directory at the path refused, a foreign uid refused),
+    then OPENED with O_DIRECTORY|O_NOFOLLOW, read again by fstat on that descriptor (the same directory and uid refusals,
+    decided on the object the chmod will act on), tightened by fchmod on the descriptor, and read back by fstat on it. So
+    a link present at the lstat is refused there, and a link swapped in between the lstat and the open fails the open
+    (ELOOP) and is refused with the reason: no mode reaches anything a link points at. Through round 6 the chmod took the
+    path, so a link swapped in after the lstat had whatever it pointed at (a directory or a file of ours) tightened to
+    0700 before the read-back refused, and a foreign target raised EPERM at the chmod; the uid check never read the
+    swapped target, since it had decided on the pre-swap root. A live symlink at the root's path, pointing at a
+    directory, is a root on disk to this call: exists() follows it, `hosts/` is made under its target, and the target
+    is never read back or tightened. Only
     the root is touched: the ancestors the parents mkdir made on the way (an XDG parent such as `~/.local/state`, which
     romp does not own) keep the umask's mode, and a root already on disk, at whatever mode, is left as it is (its mode is
     the creator's business, kernel/judge.py's for every install's root; this call never reads or repairs it). Between the
-    parents mkdir and the chmod the root holds `hosts/` alone, itself 0700 from its own mkdir, so nothing under the root is
-    readable by a peer uid during that stretch; what a 0777 root exposes for it is its one-entry listing. Where the create
+    parents mkdir and the fchmod the root holds `hosts/` alone, itself 0700 from its own mkdir, so nothing under the root
+    is readable by a peer uid during that stretch. What the root itself grants in that stretch depends on the umask
+    (extra5-1, round 4 of the review, 2026-09-20): under 000 (0777, every uid) and 002 (0775, the group; the umask the
+    live host runs at) it carries the write bit for the peer class, which on a non-sticky directory is create, rename
+    and unlink of any name in it, so the exposure is a SWAP of `hosts/` (a peer renaming `hosts/` out and putting a
+    symlink in its place), which is the TOCTOU residual owner_only_dir's docstring states for a state root that is not
+    0700; this stretch supplies that condition. Under 022 and 077 the peer class has no write bit there. The
+    create-only scope does not protect against a world-writable non-sticky state root, because the parent governs
+    creating and deleting entries: another user can rename or replace `hosts/` regardless of its 0700; the socket
+    inside is safe, the directory holding it is not. What narrows that swap on the roads that write: the kernel's
+    spawn road opens everything under `hosts/` through descriptors (kernel/host_transport.py open_host_dirs), and the
+    host re-reads `hosts/` by lstat just before its bind (_serve_socket). Where the create
     road reaches: kernel/judge.py's import is the road every install's root takes, and it is a different creator; the kernel
     writes the spawn specification in a process that made that root at import, and the host's two calls here (its
     constructor and _prepare_socket) run over the specification's state_dir, so on the roads this code runs today the root
@@ -813,8 +825,11 @@ def hosts_dir(state_dir) -> Path:
     host run by hand over one). tests/test_session_host.py StateRootByHostsDir pins the fix: the root reads 0700 under the
     runner's umask, 002, 022, 077 and 000 when this call made it, with `hosts/` 0700 and the ancestor made on the way at
     the umask's mode; a root pre-existing at 0755 or 0777 stays as planted with `hosts/` 0700 below it; a live symlink at
-    the root's path takes the pre-existing road and one swapped in after the read is refused with its target untouched;
-    the read-back is an lstat, so a stat that disagrees is inert; and the refusal fires when the read-back disagrees."""
+    the root's path takes the pre-existing road, one swapped in after the exists() read is refused at the lstat with its
+    target untouched, and one swapped in between the lstat and the open is refused at the open with its target's mode
+    unchanged; a root another uid owns is refused before any mode is set, whether the lstat or the descriptor's fstat
+    reads the uid; the read-back is an fstat on the descriptor, so a stat or an lstat by path that disagrees is inert;
+    and the refusal fires when the read-back disagrees."""
     root = Path(state_dir)
     made_root = not root.exists()               # the create road, decided before the mkdir: a root already on disk is left as it is
     d = owner_only_dir(root / "hosts", "hosts directory", parents=True)
@@ -824,8 +839,29 @@ def hosts_dir(state_dir) -> Path:
             raise OSError("state root %s is not a directory" % root)
         if st.st_uid != os.geteuid():
             raise OSError("state root %s belongs to uid %d, not to us (uid %d)" % (root, st.st_uid, os.geteuid()))
-        os.chmod(root, 0o700)                   # born at the umask's mode by the parents mkdir above; ours, so a repair
-        mode = stat.S_IMODE(os.lstat(root).st_mode)
+        # the chmod goes through a descriptor (kernel-4, round 4 of the review, 2026-09-20): opened O_DIRECTORY|O_NOFOLLOW
+        # right after the lstat, so a link swapped in between fails the open (ELOOP) and is refused before any mode
+        # reaches what it points at, where a chmod by path tightened the link's target and refused only at the
+        # read-back; the fstat repeats the directory and uid checks on the object the fchmod acts on, and the read-back
+        # is an fstat on the same descriptor, never a stat by path
+        try:
+            fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        except OSError as e:
+            if e.errno == errno.ELOOP:
+                raise OSError("state root %s is a symlink, not a directory (swapped in after it was made)" % root) from None
+            if e.errno == errno.ENOTDIR:
+                raise OSError("state root %s is not a directory (replaced after it was made)" % root) from None
+            raise
+        try:
+            st = os.fstat(fd)
+            if not stat.S_ISDIR(st.st_mode):
+                raise OSError("state root %s is not a directory" % root)
+            if st.st_uid != os.geteuid():
+                raise OSError("state root %s belongs to uid %d, not to us (uid %d)" % (root, st.st_uid, os.geteuid()))
+            os.fchmod(fd, 0o700)                # born at the umask's mode by the parents mkdir above; ours, so a repair
+            mode = stat.S_IMODE(os.fstat(fd).st_mode)
+        finally:
+            os.close(fd)
         if mode != 0o700:                       # read back, never assumed
             raise OSError("state root %s reads mode %04o after its chmod to 0700: run chmod 700 on it, then start again" % (root, mode))
     return d
@@ -1347,7 +1383,7 @@ class SessionHost:
 
     def _socket_failed(self, step: str, e: OSError) -> None:
         """The one row both halves of the socket road write on a refusal (_prepare_socket's steps hosts-dir, budget and
-        prelude; _serve_socket's bind, chmod and rename): the step, the error class, its errno, the published path's byte
+        prelude; _serve_socket's bind-hosts, bind, chmod and rename): the step, the error class, its errno, the published path's byte
         length and the limit, and the failing frame. Never the error's text, which carries the path: host.log carries no
         spec field (the review of this fix, 2026-09-19)."""
         self.log("socket-bind-failed", step=step, error=type(e).__name__, errno=e.errno,
@@ -1385,9 +1421,19 @@ class SessionHost:
             raise
 
     async def _serve_socket(self) -> None:
-        """Serve `hosts/<sid8>.sock` owner-only from the moment the path exists, or fail loudly and serve nothing: the
-        bind, the chmod and the rename, and nothing else (round 3 moved every other step of the road to _prepare_socket,
-        which run() calls before the CLI is spawned). asyncio.start_unix_server binds and listens at the umask's mode, and
+        """Serve `hosts/<sid8>.sock` owner-only from the moment the path exists, or fail loudly and serve nothing: one
+        lstat of `hosts/`, the bind, the chmod and the rename, and nothing else (round 3 moved every other step of the
+        road to _prepare_socket, which run() calls before the CLI is spawned). THE LSTAT AT THE BIND (extra6-1, round 4 of
+        the review, 2026-09-20): round 3's move put the CLI's whole start between the prelude's last look at `hosts/` and
+        the bind (about 1.1 s on the production road against 0.4 ms through round 2, both by strace in round 4's
+        review), so a `hosts/` re-pointed during the spawn was followed by the bind where round 2 refused it. The guard
+        sits at the bind again: `hosts/`, the directory the temp is bound in and the published path's parent (one
+        directory, one read), is lstat'd immediately before start_unix_server and refused as a symlink (ELOOP), not a
+        directory (ENOTDIR), another uid's or group/world-accessible (EPERM), step `bind-hosts`, before anything is bound.
+        It costs one lstat (about two microseconds, measured in that round) inside the lease-to-socket interval. What
+        remains between this lstat and the bind is the bind's own window, a re-point landing in those microseconds is
+        followed; and the guard narrows the band in which the HOST refuses, not the reach of a re-point after the
+        publish, which needs a state root that is not 0700 and is stated at owner_only_dir. asyncio.start_unix_server binds and listens at the umask's mode, and
         until 2026-09-18 the chmod to 0600 came one line after the bind, so the published path stood at the umask's mode
         for the gap (PR 789's round 1, finding fresh-5: the last member of the create-then-tighten class that PR closed
         for the kernel's credential files; behind the owner-only state root, the one guard then, so a window, not a live
@@ -1404,7 +1450,7 @@ class SessionHost:
         guard and the first cut's claim that it was one was false for the umask we run: 002 leaves the group write bit,
         the permission an AF_UNIX connect needs (the review of this fix, 2026-09-19; pinned by tests/test_session_host.py
         SocketMode's umask cases, which stat the temp at its chmod). The published path never exists at a loose mode.
-        This method runs AFTER _spawn has written the lease, so the three steps here are the whole of the lease-to-socket
+        This method runs AFTER _spawn has written the lease, so the four steps here are the whole of the lease-to-socket
         interval the kernel's lease-keyed attach roads race (measured cold through the real launcher in round 3; the
         prelude's directory read, proportional to the entries in `hosts/`, sat in that interval through round 2). Every
         failure here is loud and leaves nothing: the socket-bind-failed row naming the step (_socket_failed), the bound
@@ -1413,8 +1459,18 @@ class SessionHost:
         the kernel's spawn wait reads an exit, not a socket. Cleanup of the published path is unchanged: asyncio's
         Server.close never unlinks a path on 3.12, and 3.13's cleanup compares the bound path's inode and finds the temp
         gone, so run()'s own unlink stays the one."""
-        step, server = "bind", None
+        step, server = "bind-hosts", None
         try:
+            st = os.lstat(self.sock_path.parent)        # hosts/: the temp's directory and the published path's parent
+            if stat.S_ISLNK(st.st_mode):
+                raise OSError(errno.ELOOP, "hosts directory is a symlink at the bind")
+            if not stat.S_ISDIR(st.st_mode):
+                raise OSError(errno.ENOTDIR, "hosts directory is not a directory at the bind")
+            if st.st_uid != os.geteuid():
+                raise OSError(errno.EPERM, "hosts directory belongs to another uid at the bind")
+            if st.st_mode & 0o077:
+                raise OSError(errno.EPERM, "hosts directory is group/world-accessible at the bind")
+            step = "bind"
             server = await asyncio.start_unix_server(self._on_client, path=str(self.sock_tmp))
             step = "chmod"
             os.chmod(self.sock_tmp, 0o600)
@@ -1435,8 +1491,8 @@ class SessionHost:
     async def run(self) -> int:
         """The whole life, in this order: the host-started row and identity.json; the socket road's prelude
         (_prepare_socket: the directory, the budget, a dead socket, stale temps, none of which needs the CLI or the
-        lease); the CLI (_spawn, which writes the lease at its end); the socket (_serve_socket: bind, chmod, rename, the
-        only steps after the lease); then the tasks until the CLI is gone. The directory work came before the CLI in
+        lease); the CLI (_spawn, which writes the lease at its end); the socket (_serve_socket: an lstat of hosts/, bind,
+        chmod, rename, the only steps after the lease); then the tasks until the CLI is gone. The directory work came before the CLI in
         round 3 of the socket-mode fix (the reviewer's ruling, 2026-09-19): through round 2 it ran after the lease and
         made up most of the lease-to-socket interval the kernel's lease-keyed attach roads race. Two failure arms, one
         per half of the road: a prelude refusal has started nothing (no CLI, no lease, no transport), so it closes the
