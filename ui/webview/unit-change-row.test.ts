@@ -67,6 +67,23 @@ test("the tail unit's own change files the existing tailchange row and not this 
   assert.deepEqual(mixed.map((x) => [x.cls, x.dh, x.fromTail]), [["turn turn-assistant", 10, 1]]);
 });
 
+test("a hover's rail band as the thread's last child is not the tail when the unit index is given: the real tail unit still files nothing, a unit above it counts units to the real tail, and the rail's label names the real tail (PR E review round 2)", () => {
+  // drawRailBand appends the band to the thread with no data-unit; under the old spacer rule it became the tail, so the tail unit filed
+  // unitchange rows it is meant to skip, fromTail fell back from units to child distance, and the tailchange row named the band
+  const w = window();
+  const band: U = { className: "rail-band rail-band-local" };
+  const children = [w.top, w.a, w.b, w.c, band, w.bot];
+  w.heights.set(band, 4);
+  assert.deepEqual(unitChanges([{ target: w.c, height: 350 }], children, w.heights, unitOf), [], "the tail unit is still the rail's, band or no band");
+  const above = unitChanges([{ target: w.b, height: 260 }], children, w.heights, unitOf);
+  assert.deepEqual(above.map((x) => [x.cls, x.dh, x.fromTail]), [["turn turn-assistant", 60, 1]], "one unit above the real tail, whatever stands after it");
+  assert.equal(tailLabel(children, (c) => unitOf(c) != null), "turn turn-tool", "the rail's label names the real tail (render.ts passes unitOfNode's predicate)");
+  assert.equal(tailLabel(children), "rail-band rail-band-local", "…where the spacer rule alone names the band");
+  // with no unit index the old rule stands: the band is the last non-spacer child, and the tool row above it files by child distance
+  const byChild = unitChanges([{ target: w.c, height: 380 }], children, w.heights);
+  assert.deepEqual(byChild.map((x) => [x.cls, x.dh, x.fromTail]), [["turn turn-tool", 30, 1]], "no unit index: the spacer rule, the band the tail (kept for callers that pass none)");
+});
+
 test("spacers, units that left the window and a window with no tail file nothing", () => {
   const w = window();
   assert.deepEqual(unitChanges([{ target: w.top, height: 4483 }], w.children, w.heights), [], "a spacer re-estimate has its own spacer row");
@@ -132,8 +149,9 @@ test("render.ts wires one observer per view over every unit, through the mutatio
   assert.match(ev, /scrollDiagRow\("unitchange", unitChangeRow\(id, c\.dh, c\.cls, c\.fromTail, view3\.stick, atBottom\(content\), content\.scrollHeight, content\.clientHeight\)\)/);
   assert.match(ev, /rec\.addedNodes\.forEach\(\(n\) => \{ if \(n instanceof Element\) view2\.uo\?\.observe\(n\); \}\);/, "units entering the window are observed");
   assert.match(ev, /rec\.removedNodes\.forEach\(\(n\) => \{ if \(n instanceof Element\) \{ view2\.uo\?\.unobserve\(n\); unitHeights\.delete\(n\); \} \}\);/, "units leaving are dropped");
-  // the rail's own filing is untouched: the tail's change still files tailchange from the view observer
-  assert.match(ev, /if \(content && lastH >= 0 && activeId === id && view\.shown && h !== lastH\)\s*\n\s*scrollDiagRow\("tailchange", tailChangeRow\(id, h - lastH, tailLabel\(view\.el\.children\)/);
+  // the rail's own filing is untouched: the tail's change still files tailchange from the view observer, the tail read by the one unit
+  // predicate (unitOfNode, PR E review round 2: a hover's band is not the tail)
+  assert.match(ev, /if \(content && lastH >= 0 && activeId === id && view\.shown && h !== lastH\)\s*\n\s*scrollDiagRow\("tailchange", tailChangeRow\(id, h - lastH, tailLabel\(view\.el\.children, \(c\) => unitOfNode\(c\) >= 0\)/);
   assert.equal((RENDER.match(/v\.uo\?\.disconnect\(\); v\.ro\?\.disconnect\(\); v\.mo\?\.disconnect\(\); v\.el\.remove\(\);/g) || []).length, 2, "both view-removal sites disconnect it");
   assert.equal((RENDER.match(/"unitchange"/g) || []).length, 3, "the kind in the router's union, the unit filing and the box filing");
   assert.doesNotMatch(ev.split("v.uo = new ResizeObserver")[1].split("v.mo = new MutationObserver")[0], /writeScroll|scrollTop =/, "a row only: the unit observer never writes");

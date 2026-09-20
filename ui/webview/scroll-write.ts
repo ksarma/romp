@@ -89,11 +89,14 @@ export function tailChangeRow(sid: string, dh: number, last: string, stick: bool
   return { sid, dh, last: String(last || "").slice(0, 60), stick, sh, ch };
 }
 
-/** The class list of the tail element of a view: its last child that is not a virtualization spacer. */
-export function tailLabel(children: ArrayLike<{ className?: string }>): string {
+/** The class list of the tail element of a view: its last child that carries a unit when `isUnit` is given (the pane's data-unit,
+ *  render.ts unitOfNode: a hover's rail band, drawn as the thread's last child with no unit, is not the tail), else its last child that
+ *  is not a virtualization spacer (the rule before PR E review round 2, kept for callers that pass none). DOM-free: the caller says what
+ *  a unit is. */
+export function tailLabel<T extends { className?: string }>(children: ArrayLike<T>, isUnit?: (c: T) => boolean): string {
   for (let i = children.length - 1; i >= 0; i--) {
     const c = String(children[i]?.className || "");
-    if (c.indexOf("tx-spacer") < 0) return c;
+    if (isUnit ? isUnit(children[i]) : c.indexOf("tx-spacer") < 0) return c;
   }
   return "";
 }
@@ -136,15 +139,19 @@ export function boxChanges<T extends { id?: string; className?: string }>(entrie
  *  observed units with their new heights, `children` the view's children in order, `heights` the last height seen
  *  per unit (a WeakMap in the pane). The first observation of a unit is its baseline and files nothing (observe()
  *  reports once on attach); an unchanged height files nothing; a virtualization spacer never files (its spacer rows
- *  say what it did); the TAIL unit (the last child that is not a spacer, tailLabel's rule) never files here, because
- *  the view rail's row already carries its change; a unit no longer in the window files nothing. `fromTail` counts
- *  UNITS when `unitOf` can say which unit a child belongs to (the pane's data-unit: a day divider is a child of its
- *  own carrying the unit it opens, so counting children would read one turn plus a divider as two turns); it falls
- *  back to child distance where no unit index exists. */
+ *  say what it did); the TAIL unit never files here, because the view rail's row already carries its change; a unit
+ *  no longer in the window files nothing. The tail is the last child with a unit index when `unitOf` is given (the
+ *  trim's rule, render.ts unitOfNode: a hover's rail band, the thread's last child with no unit, is neither the tail
+ *  nor a unit, and the real tail unit keeps its exemption; PR E review round 2), else the last child that is not a
+ *  spacer (the rule before, kept for callers that pass no `unitOf`). `fromTail` counts UNITS when `unitOf` can say
+ *  which unit a child belongs to (the pane's data-unit: a day divider is a child of its own carrying the unit it
+ *  opens, so counting children would read one turn plus a divider as two turns); it falls back to child distance
+ *  where no unit index exists. */
 export function unitChanges<T extends { className?: string }>(entries: Array<{ target: T; height: number }>, children: ArrayLike<T>,
                                                                 heights: UnitHeights<T>, unitOf?: (t: T) => number | undefined): Array<{ target: T; dh: number; cls: string; fromTail: number }> {
+  const hasUnit = (c: T): boolean => { const u = unitOf!(c); return typeof u === "number" && !Number.isNaN(u); };
   let tail = -1;
-  for (let i = children.length - 1; i >= 0; i--) if (String(children[i]?.className || "").indexOf("tx-spacer") < 0) { tail = i; break; }
+  for (let i = children.length - 1; i >= 0; i--) if (unitOf ? hasUnit(children[i]) : String(children[i]?.className || "").indexOf("tx-spacer") < 0) { tail = i; break; }
   const out: Array<{ target: T; dh: number; cls: string; fromTail: number }> = [];
   for (const e of entries) {
     const prev = heights.get(e.target);

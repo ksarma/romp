@@ -26,10 +26,23 @@ test("the tail label is the last child that is not a virtualization spacer", () 
   assert.equal(tailLabel([]), "");
 });
 
+test("with a unit predicate the tail is the last child that carries a unit: a hover's rail band, the thread's last child with none, is not the tail (PR E review round 2; the spacer rule stands for callers that pass none)", () => {
+  // drawRailBand appends the band to the thread as its last child with no data-unit; the pane passes render.ts unitOfNode's predicate
+  type C = { className: string; unit?: number };
+  const isUnit = (c: C) => c.unit != null;
+  const children: C[] = [{ className: "tx-spacer tx-spacer-top" }, { className: "turn turn-user", unit: 5 }, { className: "turn turn-assistant", unit: 6 }, { className: "rail-band rail-band-local" }];
+  assert.equal(tailLabel(children, isUnit), "turn turn-assistant", "the band is passed over: the tail is the last unit");
+  assert.equal(tailLabel(children), "rail-band rail-band-local", "the spacer rule alone would name the band (the old reading, kept for callers with no predicate)");
+  assert.equal(tailLabel(children.concat([{ className: "tx-spacer tx-spacer-bot" }]), isUnit), "turn turn-assistant", "a bottom spacer is passed over too");
+  assert.equal(tailLabel([{ className: "tx-spacer tx-spacer-top" }, { className: "rail-band" }], isUnit), "", "no unit, no tail");
+});
+
 test("render.ts files the row from both tail observers, beside the tail-shrink rule, through the capped diag path", () => {
   assert.match(RENDER, /import \{ ScrollDiagBudget, classifyScroll, scrollWriteRow, tailChangeRow, tailLabel, spacerRow, readScrollDiagCap, summarizeTailMutations, tailMutRow, unitChangeRow, unitChanges, boxChanges, boxLabel, BOX_FROM_TAIL \} from "\.\/scroll-write";/);   // + spacerRow, readScrollDiagCap (T262j)
   assert.match(RENDER, /function scrollDiagRow\(kind: "scrollwrite" \| "scrollgesture" \| "tailchange" \| "spacer" \| "tailmut" \| "unitchange" \| "regionask" \| "landmiss", data: any\): void \{/);   // + spacer (T262j)
-  assert.match(RENDER, /if \(content && lastH >= 0 && activeId === id && view\.shown && h !== lastH\)\s*\n\s*scrollDiagRow\("tailchange", tailChangeRow\(id, h - lastH, tailLabel\(view\.el\.children\), view\.stick, content\.scrollHeight, content\.clientHeight\)\);/);
+  // the view's tail by the one unit predicate (render.ts unitOfNode, the trim's and the measure's): a hover's band as the last child is not
+  // the tail this row names (PR E review round 2)
+  assert.match(RENDER, /if \(content && lastH >= 0 && activeId === id && view\.shown && h !== lastH\)\s*\n\s*scrollDiagRow\("tailchange", tailChangeRow\(id, h - lastH, tailLabel\(view\.el\.children, \(c\) => unitOfNode\(c\) >= 0\), view\.stick, content\.scrollHeight, content\.clientHeight\)\);/);
   assert.match(RENDER, /if \(content && tailLastH >= 0 && v && v\.shown && h !== tailLastH\)\s*\n\s*scrollDiagRow\("tailchange", tailChangeRow\(activeId \|\| "", h - tailLastH, "live-ask", v\.stick, content\.scrollHeight, content\.clientHeight\)\);/);
   assert.equal((RENDER.match(/"tailchange"/g) || []).length, 3, "the kind in the router's union and the two filings");
 });

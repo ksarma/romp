@@ -13406,7 +13406,7 @@ function ensureView(id: string): View {
         // the tail's height change, named (T262f): which element grew or shrank under the reader — Chrome moves a
         // bottom reader for both without a pane write, so the scroll rows alone cannot say which element flapped
         if (content && lastH >= 0 && activeId === id && view.shown && h !== lastH)
-          scrollDiagRow("tailchange", tailChangeRow(id, h - lastH, tailLabel(view.el.children), view.stick, content.scrollHeight, content.clientHeight));
+          scrollDiagRow("tailchange", tailChangeRow(id, h - lastH, tailLabel(view.el.children, (c) => unitOfNode(c) >= 0), view.stick, content.scrollHeight, content.clientHeight));   // the tail by the one unit predicate: a hover's band is not it (review round 2)
         if (content && lastH >= 0 && activeId === id && view.shown && content.clientHeight > 0 && followTailShrink(view.stick, h - lastH)) {
           writeScroll(content, content.scrollHeight, "tail-shrink", true);
           view.scrollTop = content.scrollTop;
