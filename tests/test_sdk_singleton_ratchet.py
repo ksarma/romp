@@ -371,8 +371,9 @@ exactly once at this tree and that the matrix and the table name the same cells,
 module there, prints the red cases by case id with the head it ran at, and removes the worktree: a cell's current list
 is that run's, at the head it prints, and none is written here. The count of cells is the table's the same way:
 `python -B tests/test_sdk_singleton_ratchet.py --count` prints it at the tree it runs in, by block and in total
-(cell_counts), and no sentence here states it (the pin holds a number of cells absent from this docstring: a count
-written in prose is measured once and outlives the cell added after it).
+(cell_counts), and no sentence here states it (the pin holds one form absent from this docstring, a numeral or number
+word followed by the word cells, and reads no other: a count written in prose is measured once and outlives the cell
+added after it).
   the reads (_sdk_read): the marker ignored, every test on the same-marker road (A.c fails falsely on the stale
     pre-reload object); a None marker before treated as the same-marker road (H2.a fails falsely) or as an exemption
     (H.a passes); os.path.isdir replaced by os.path.exists (D.One's boundary verdict disappears, A.g); isdir forced
@@ -496,7 +497,7 @@ written in prose is measured once and outlives the cell added after it).
     yield removed).
   the function fixture not naming the object it accused (A.h gets an inherited report, E, D).
 The count of cells is the table's, printed by `python -B tests/test_sdk_singleton_ratchet.py --count` (above).
-Four are pinned by no run at the round-6 close head, each for a stated reason: the unreadable reference root granting
+The cells pinned by no run at the round-6 close head, each for a stated reason: the unreadable reference root granting
 the allowance (not constructible: the kernel always binds jd); the yield's identity condition dropped (redundant by
 construction: when the end value is the last read's and is not the last window's value, a class teardown inside the
 scope installed it, and that class's own boundary judged it against its start, which only a restore of the value the
@@ -2714,12 +2715,15 @@ class TheMutationCellsApply(unittest.TestCase):
         self.assertEqual(counts["in total"], len(MUTATIONS))
 
     def test_the_count_is_printed_never_written(self):
-        """The count of cells is the table's: no sentence in the module docstring states a number of cells, the docstring
-        names the command that prints it, and that command, run as the docstring gives it, prints cell_counts() at this
-        tree, block by block and in total, whose blocks sum to the table's length."""
+        """The count of cells is the table's: the module docstring carries no numeral or number word followed by the word
+        cells (NUMBER_OF_CELLS, the one form this pin reads; a count phrased with a word between the number and "cells",
+        or without the word, is not read here, and the docstring keeps none by the rule stated beside --count), the
+        docstring names the command that prints it, and that command, run as the docstring gives it, prints
+        cell_counts() at this tree, block by block and in total, whose blocks sum to the table's length."""
         doc = re.sub(r"\s+", " ", __doc__)
-        self.assertIsNone(NUMBER_OF_CELLS.search(doc), "the docstring states a number of cells: %r"
-                          % (NUMBER_OF_CELLS.search(doc) and NUMBER_OF_CELLS.search(doc).group(0)))
+        stated = NUMBER_OF_CELLS.search(doc)
+        self.assertIsNone(stated, "the module docstring carries a number followed by the word cells: %r"
+                          % (stated and stated.group(0)))
         self.assertIn("`python -B tests/test_sdk_singleton_ratchet.py --count`", doc,
                       "the docstring does not name the command that prints the count")
         counts = cell_counts()
