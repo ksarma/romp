@@ -16,9 +16,31 @@ import { spacerRow, unitChanges } from "./scroll-write";
 import { meanRowHeight, perTurnEstimate, rowsFor } from "./turn-estimate";
 import type { DisplayItem } from "./compact";
 import { hideEdges } from "../test-dom-shim";
+import * as ts from "typescript";
 
 const requireCjs = createRequire(__filename);
 const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "render.ts"), "utf8");
+
+/** The source with its comments removed and nothing else: the comment ranges are the compiler's own (every token's leading and trailing
+ *  trivia over the parsed file), so a `//` or a `/*` inside a string, a template or a regular expression is text, never a comment. The
+ *  regex stripper this replaces (review round 3) cut a line at the `//` of a quoted URL, which hid an alias written after it on the same
+ *  line from the bare-reference census below, opened a block comment at a quoted glob (`"image/*"`) and swallowed the code to the next
+ *  `*\/`, and cut `u.replace(/^file:\/\//, "")` at the regular expression's slashes. The writer census (writer-census.ts) reads render.ts
+ *  the same way for the same reason. */
+function codeOf(src: string): string {
+  const sf = ts.createSourceFile("render.ts", src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const cut: Array<[number, number]> = [];
+  const walk = (n: ts.Node): void => {
+    for (const r of ts.getLeadingCommentRanges(src, n.getFullStart()) ?? []) cut.push([r.pos, r.end]);
+    for (const r of ts.getTrailingCommentRanges(src, n.getEnd()) ?? []) cut.push([r.pos, r.end]);
+    for (const c of n.getChildren(sf)) walk(c);
+  };
+  walk(sf);
+  cut.sort((a, b) => a[0] - b[0]);
+  let out = "", at = 0;
+  for (const [p, e] of cut) { if (p < at) continue; out += src.slice(at, p); at = e; }
+  return out + src.slice(at);
+}
 
 function liftBetween(startAnchor: string, endAnchor: string): string {
   const a = RENDER.indexOf(startAnchor), b = RENDER.indexOf(endAnchor, a);
@@ -404,7 +426,11 @@ test("a hover's rail band among the view's children is not a row: the rows' aver
 // ── source pins on what the harness does not lift ────────────────────────────────────────────────
 
 test("render.ts: the render task's spacer code holds no layout read; the unit observer records border-box heights and measures in both of its branches", () => {
-  const code = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");   // the code alone: the comments name the reads that are gone
+  const code = codeOf;   // the code alone (the compiler's comment ranges): the comments name the reads that are gone
+  // the stripper's own pin (review round 3): a `//` in a quoted URL leaves the alias after it standing for the census, a quoted glob opens
+  // no block comment, a regular expression's slashes are not a comment, and the comments themselves go
+  assert.equal(code('const u = "http://h"; const rwi = renderWindowItems; // c\nz("image/*"); y(); /* c */ q(/^file:\\/\\//, ""); // d\n'),
+    'const u = "http://h"; const rwi = renderWindowItems; \nz("image/*"); y();  q(/^file:\\/\\//, ""); \n', "the stripper keeps string, template and regular-expression literals whole and drops comments alone");
   const span = RENDER.slice(RENDER.indexOf("function gapUnitsOf("), RENDER.indexOf("function unitAtScroll("));
   const inFrame = span.slice(span.indexOf("function queueSpacerRow("), span.indexOf("// The window's two figures"));
   const paintSide = code(span.replace(inFrame, ""));
