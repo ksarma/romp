@@ -2703,7 +2703,7 @@ def private_kernel_loaders(sources=None):
     without the name is not parsed (the prefilter); a text with the name that does not parse raises, naming the file,
     since a loader that cannot be read is not a non-loader. `sources` is a mapping {"tests/<file>": text} for a
     synthetic test; None reads the tree's tests directory. A count of them written in prose is measured once and
-    outlives the file added after it; the wording pin reads this and holds the prose to it. The round-8 review found
+    outlives the file added after it; the wording pin reads this and holds the prose to it. The round-7 review found
     the first form a regex over the double-quoted spelling load_source("<name>", so a single-quoted or prefixed loader
     was outside the census with the count word green, and a string carrying that spelling was inside it."""
     if sources is None:
@@ -2792,7 +2792,7 @@ class TheStatedLimitIsWorded(unittest.TestCase):
     number word of LIMIT_READING's length beside the loader count as the number word of the derived set's length,
     each count sentence held as one needle so a failure names the sentence and not the text it was sought in. The
     round-7 review found the first form reading every comment line in the conftest and pinning "two of the three"
-    by its spelling, so a fourth loader left the sentence false with the pin green; the round-8 review found the
+    by its spelling, so a fourth loader left the sentence false with the pin green; the round-7 review found the
     census a regex over the double-quoted spelling, so a fourth loader written single-quoted was outside it with the
     count word green, and the reading count still pinned as the word two, so a third reader left it false with the
     pin green."""
@@ -3255,9 +3255,9 @@ class TheCaseRostersNameEveryCase(unittest.TestCase):
     cell's set. The case-list test's verdict does not depend on the conftest's texts (it holds the module docstring's
     list to the classes' SCRATCH bindings; the names case_population derives on the way are unused by it), though its
     derivation reads them through case_population's names default and raises under a conftest that renders no refusal
-    text, a red the plant's, which derive prints with no case id (the round-8 review found this sentence saying the
+    text, a red the plant's, which derive prints with no case id (the round-7 review found this sentence saying the
     test reads no conftest text); the third test reads synthetic texts only, under a HERE pointed at a directory with
-    no conftest, so a call of its that falls to a default read is a loud FileNotFoundError (the round-8 review found
+    no conftest, so a call of its that falls to a default read is a loud FileNotFoundError (the round-7 review found
     its SCRATCH-shape call reading the real conftest through the names default); both stay selected."""
 
     def _assert_same(self, what, derived, named):
@@ -3427,7 +3427,7 @@ class TheReadersRosterNamesEveryReader(unittest.TestCase):
     the file that statement sits (a call passing the output under another name, a renamed local or a forwarding
     parameter, is outside: no name is resolved); the roster is read by shape (readers_roster_names), and the two are
     held equal both ways, the failure naming the missing and the extra names, so a reader added without its entry reds
-    here and so does an entry whose helper is gone. The round-8 review found the candidates read from the module's
+    here and so does an entry whose helper is gone. The round-7 review found the candidates read from the module's
     top-level statements alone and the output read from the first positional argument alone, so a reader under a
     version gate or a try, or one passed the output by keyword, was outside the population with the module green: the
     second test plants all three and reads them found. Until round 7 the derivation matched the spelling `out` in the
