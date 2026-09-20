@@ -180,7 +180,7 @@ type Scene = { page: any; errors: string[]; figureLog: Line[]; proxyLog: Line[];
  *  `drain` makes one round trip through the proxy to the harness and waits 250 ms, so a request the engine issued before it
  *  has reached the logs. */
 async function inEngine(t: any, engine: "chromium" | "firefox" | "webkit", body: (s: Scene) => Promise<void>): Promise<void> {
-  if (!pw) { t.skip("playwright is not installed under vscode-extension; the browser legs need it (CI installs no browsers); file-view-figures-gate-adopt.test.ts, the node scene, is the guard that runs where this leg skips"); return; }
+  if (!pw) { t.skip("playwright is not installed under vscode-extension; the browser legs need it (CI installs no browsers before npm test); file-view-figures-gate-adopt.test.ts, the node scene, is the guard that runs where this leg skips"); return; }
   const figureLog: Line[] = [], proxyLog: Line[] = [], harnessLog: Line[] = [];
   const figures = figureServer(figureLog);
   const harness = harnessServer(filesBundle(), harnessLog);
@@ -190,7 +190,7 @@ async function inEngine(t: any, engine: "chromium" | "firefox" | "webkit", body:
   let browser: any = null;
   try {
     try { browser = await pw[engine].launch({ proxy: { server: "http://127.0.0.1:" + proxyPort } }); }
-    catch (e) { t.skip("no playwright " + engine + " on this box; this leg needs it (CI installs none; file-view-figures-gate-adopt.test.ts, the node scene, runs where this leg skips): " + String((e as Error).message).split("\n")[0]); return; }
+    catch (e) { t.skip("no playwright " + engine + " on this box; this leg needs it (CI installs none before npm test; file-view-figures-gate-adopt.test.ts, the node scene, runs where this leg skips): " + String((e as Error).message).split("\n")[0]); return; }
     const errors: string[] = [];
     const page = await browser.newPage({ viewport: { width: 900, height: 700 } });
     page.on("pageerror", (e: Error) => { errors.push(e.message); });

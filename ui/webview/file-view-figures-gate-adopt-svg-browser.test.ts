@@ -48,8 +48,9 @@ const XLINK_FIGURE = "http://other.test/drawing-xlink.png";
  *  and the gate) is the chain's work that put the strip past Firefox's cancel window in the runs that sized this: 400 plain
  *  paragraphs, 2000 plain ones, 400 with a link, code and emphasis each, and forty svg figures before these two each left the
  *  request out in one run of three or none, 3000 paragraphs with a link each in three of three (the `href` figure, Firefox
- *  alone). The leg's own three base runs, both figures, are at the top of this file; the plan section "Fix: the gate before
- *  adoption (2026-09-20)" holds every count under "Run counts, the svg vectors". */
+ *  alone). The leg's own base runs (three, both figures requested in each Firefox run, the `xlink:href` figure in each WebKit
+ *  run) are the measurement the header above states; the plan section "Fix: the gate before adoption (2026-09-20)" holds every
+ *  count under "Run counts, the svg vectors". */
 const PARAGRAPHS = 3000;
 const NOTE = "# Drawings at the end of a long note\n\n"
   + Array.from({ length: PARAGRAPHS }, (_, i) => "Paragraph " + (i + 1) + " with a [link](https://example.test/p/" + (i + 1) + "), prose the reader scrolls past on the way to the drawings.\n\n").join("")
@@ -159,7 +160,7 @@ type Scene = { page: any; errors: string[]; figureLog: Line[]; proxyLog: Line[];
  *  awaits a fresh rendered box; `drain` makes one round trip through the proxy to the harness and waits 250 ms, so a request
  *  the engine issued before it has reached the logs. */
 async function inEngine(t: any, engine: "chromium" | "firefox" | "webkit", body: (s: Scene) => Promise<void>): Promise<void> {
-  if (!pw) { t.skip("playwright is not installed under vscode-extension; the browser legs need it (CI installs no browsers); file-view-figures-gate-adopt.test.ts, the node scene, is the guard that runs where this leg skips"); return; }
+  if (!pw) { t.skip("playwright is not installed under vscode-extension; the browser legs need it (CI installs no browsers before npm test); file-view-figures-gate-adopt.test.ts, the node scene, is the guard that runs where this leg skips"); return; }
   const figureLog: Line[] = [], proxyLog: Line[] = [], harnessLog: Line[] = [];
   const figures = figureServer(figureLog);
   const harness = harnessServer(filesBundle(), harnessLog);
@@ -169,7 +170,7 @@ async function inEngine(t: any, engine: "chromium" | "firefox" | "webkit", body:
   let browser: any = null;
   try {
     try { browser = await pw[engine].launch({ proxy: { server: "http://127.0.0.1:" + proxyPort } }); }
-    catch (e) { t.skip("no playwright " + engine + " on this box; this leg needs it (CI installs none; file-view-figures-gate-adopt.test.ts, the node scene, runs where this leg skips): " + String((e as Error).message).split("\n")[0]); return; }
+    catch (e) { t.skip("no playwright " + engine + " on this box; this leg needs it (CI installs none before npm test; file-view-figures-gate-adopt.test.ts, the node scene, runs where this leg skips): " + String((e as Error).message).split("\n")[0]); return; }
     const errors: string[] = [];
     const page = await browser.newPage({ viewport: { width: 900, height: 700 } });
     page.on("pageerror", (e: Error) => { errors.push(e.message); });

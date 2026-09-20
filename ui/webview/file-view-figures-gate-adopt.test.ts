@@ -10,7 +10,9 @@
 //       attribute (an img's or a source's src or srcset, a video's src or poster, an audio's or a track's src, an svg image's
 //       href or xlink:href, an svg paint attribute naming a url) whose host is outside the allowed set, or that names a
 //       page-relative path (a figure of the file's folder before the rewrite to /file; a URL document's figure before its
-//       resolution against the document);
+//       resolution against the document); read over every move into the live document whose parent is the Rendered box or
+//       stands under it, so a node a later pass brings in at any depth of the box is read at its own moment too, and then
+//       over the box's end state once the render is done, whatever road a node took;
 //   (b) across the whole render, no write of such an attribute lands on an element whose node document is the live one
 //       (the writes the chain makes all land while the nodes are the sanitizer's), and a live write the scene itself makes is
 //       recorded, so the zero is measured;
@@ -31,16 +33,23 @@
 // scene's own oracle (a URL parse against the page, the host against the allowed set, a same-origin path against /file or the
 // document's directory), never by figure-gate's remoteHost; the engines' own loading, DOMPurify's document and its inertness
 // (the seam test's premise pin), and the bytes are the browser legs'.
-// Mutations, each applied to a scratch copy of the branch head 8a599db74 and run with this scene alone (2026-09-20; the scene
-// compiled through esbuild's testBuild, the build's report holds the commands): (i) the base's order, the branch's file-view.ts
-// diff applied in reverse (the adoption first, the chain over `box` after): 2 of 4 tests red, the file kind on road (a) with 16
-// leaks at the adoption (every remote source, both svg image spellings, the paint reference, and three page-relative paths, the
-// folder figure's, the picture img's and the video's), the URL kind on road (a) with 4 (the relative img and the relative svg
-// image page-relative, the two remote imgs); (ii) the two gateRemoteFigures calls alone moved after the adoption, over `box`:
-// 2 of 4 red, the file kind on road (a) with 13 leaks (every remote source; the rewrite still ran on `clean`, so nothing
-// page-relative), the URL kind with 2; (iii) one added line after the adoption, `box.querySelectorAll("[data-fv-gated-src]")`
-// writing each element's gated source back into `src`: 2 of 4 red, road (a) green and road (b) red, five live writes in the
-// file kind and two in the URL kind. At the head, 4 of 4 green. So (a) and (b) each hold on their own.
+// Mutations, each applied to a scratch copy of the branch head and run with this scene alone (2026-09-20, at 8a599db74 with
+// the scene as first built and again at the head after the review's third round, which added road (a)'s tree-wide read and
+// the end-state pin; the scene compiled through esbuild's testBuild, the build's report holds the commands): (i) the base's
+// order, the branch's file-view.ts diff applied in reverse (the adoption first, the chain over `box` after): 2 of 4 tests red,
+// the file kind on road (a) with 16 leaks at the adoption (every remote source, both svg image spellings, the paint reference,
+// and three page-relative paths, the folder figure's, the picture img's and the video's), the URL kind on road (a) with 4 (the
+// relative img and the relative svg image page-relative, the two remote imgs); (ii) the two gateRemoteFigures calls alone
+// moved after the adoption, over `box`: 2 of 4 red, the file kind on road (a) with 13 leaks (every remote source; the rewrite
+// still ran on `clean`, so nothing page-relative), the URL kind with 2; (iii) one added line after the adoption,
+// `box.querySelectorAll("[data-fv-gated-src]")` writing each element's gated source back into `src`: 2 of 4 red, road (a)
+// green and road (b) red, five live writes in the file kind and two in the URL kind; (iv) one added line after the adoption
+// minting an img in the sanitizer's document with a src on an unlisted host and appending it into the box's first paragraph:
+// with road (a) read at the box's top level alone (the scene before the third round) the file kind stayed GREEN, since the
+// adoption's parent was the paragraph and the src write landed while the img was the sanitizer's, so road (b) held it inert;
+// the tree-wide read reds it, 2 of 4, one leak at that adoption in each kind. At the head, 4 of 4 green. So (a) and (b) each
+// hold on their own, and the tree-wide read runs before the batch-count pin, so an order regression names the leak, not a
+// count.
 // Synthetic values only: the notes-api world, a placeholder sid, .test hosts.
 import { test, type TestContext } from "node:test";
 import * as assert from "node:assert/strict";
@@ -549,6 +558,9 @@ function rendered(): { body: El; md: El } {
 }
 /** The adoption batches whose parent is the Rendered box: the chain's nodes moving into the live document. */
 const intoBox = (md: El): Adoption[] => adoptions.filter((a) => a.parent === md);
+/** Every move into the live document whose parent stands under the box (or is it) once the render is done: the batch above
+ *  and any node a later pass brings in from another document, into any depth of the box. */
+const intoBoxTree = (md: El): Adoption[] => adoptions.filter((a) => a.parent === md || md.contains(a.parent));
 /** The placeholders under `md` (by the delegated action, as regateFigures finds them). */
 const placeholders = (md: El): El[] => md.querySelectorAll('span[data-act="fv-load"]');
 /** The placeholder around `el`, or null when it stands unwrapped. */
@@ -611,8 +623,9 @@ test("the file kind: the chain runs before the adoption, so the nodes that enter
   assert.equal(sanitized.length, 1, "one Rendered paint, one sanitize");
   for (const u of FIXTURE_URLS) assert.ok(sanitized[0].includes(u), "the dirty string carries " + u);
   // A3, road (a): one batch of adoptions into the box, the body's children, and the snapshot at that moment shows no leak
+  assert.deepEqual(leaksIn(intoBoxTree(md).flatMap((a) => a.snapshot), FILE_KIND, allowedNow()), [], "road (a): no node that entered the live document anywhere under the Rendered box, at any depth, by any pass, carried a fetching attribute on an unlisted host or page-relative at that moment");
   const batch = intoBox(md);
-  assert.equal(batch.length, FILE_ROOTS, "every top-level child of the sanitizer's body entered the live document, once each, into the Rendered box");
+  assert.equal(batch.length, FILE_ROOTS, "every top-level child of the sanitizer's body entered the live document, once each, into the Rendered box, adopted as it is (no wrapper around the batch, no re-parse)");
   const snapshot = batch.flatMap((a) => a.snapshot);
   assert.deepEqual(leaksIn(snapshot, FILE_KIND, allowedNow()), [], "road (a): no fetching attribute on an unlisted host, none page-relative, on any node at the moment it entered the live document");
   assert.deepEqual(snapshot.map((r) => r.tag.toLowerCase() + "[" + r.attr + "]=" + r.value).sort(), ["img[src]=" + OK, "img[src]=" + fileSrc("fig.png")].sort(),
@@ -626,6 +639,8 @@ test("the file kind: the chain runs before the adoption, so the nodes that enter
   const live = writes.filter((w) => w.live);
   assert.deepEqual(leaksIn(live, FILE_KIND, allowedNow()), [], "road (b): no write of a fetching attribute on an unlisted host, or page-relative, landed on a live-document element");
   assert.equal(live.length, 0, "no write of a fetching attribute landed on a live-document element at all during this render (the passes after the adoption write styles, classes, anchors' attributes and fences)");
+  // the end state: whatever road a node took, nothing under the box carries a leaking fetching attribute once the render is done
+  assert.deepEqual(leaksIn(fetchRefsOf(md), FILE_KIND, allowedNow()), [], "the rendered box holds no fetching attribute on an unlisted host and none page-relative");
   // A4, the shape: eleven placeholders, each naming its host, the sources moved aside with the value the chain left
   const f = figures(md);
   assert.equal(placeholders(md).length, FILE_PLACEHOLDERS, "eleven gated roots");
@@ -695,8 +710,9 @@ test("the URL kind: resolveFigureRefs and the gate run on the sanitizer's body, 
   const { md } = rendered();
   assert.equal(sanitized.length, 1, "one paint");
   for (const u of ["rel.png", REMOTE, PROTO, "d.png"]) assert.ok(sanitized[0].includes(u), "the dirty string carries " + u);
+  assert.deepEqual(leaksIn(intoBoxTree(md).flatMap((a) => a.snapshot), URL_KIND, allowedNow()), [], "road (a): no node that entered the live document anywhere under the Rendered box carried a leaking fetching attribute at that moment");
   const batch = intoBox(md);
-  assert.equal(batch.length, URL_ROOTS, "every top-level child of the sanitizer's body entered the live document, once each");
+  assert.equal(batch.length, URL_ROOTS, "every top-level child of the sanitizer's body entered the live document, once each, adopted as it is (no wrapper around the batch, no re-parse)");
   const snapshot = batch.flatMap((a) => a.snapshot);
   assert.ok(snapshot.length >= 2, "the snapshot saw the live sources (the relative img's, the svg image's): " + snapshot.length);
   assert.deepEqual(leaksIn(snapshot, URL_KIND, allowedNow()), [], "road (a) for a URL document: nothing page-relative, nothing outside the document's directory on its own host, no unlisted host");
@@ -705,6 +721,7 @@ test("the URL kind: resolveFigureRefs and the gate run on the sanitizer's body, 
   assert.ok(writes.some((w) => w.attr === "src" && w.value === NOTE_DIR + "rel.png" && !w.live), "the resolution's write on the relative img, inert");
   assert.deepEqual(leaksIn(live, URL_KIND, allowedNow()), [], "road (b): no live write of a fetching attribute on an unlisted host or page-relative");
   assert.equal(live.length, 0, "no live write of a fetching attribute at all");
+  assert.deepEqual(leaksIn(fetchRefsOf(md), URL_KIND, allowedNow()), [], "the rendered box holds no leaking fetching attribute once the render is done");
   const imgs = md.querySelectorAll("img");
   assert.equal(imgs.length, 3);
   const [rel, far, proto] = imgs;

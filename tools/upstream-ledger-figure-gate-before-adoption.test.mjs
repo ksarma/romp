@@ -100,14 +100,14 @@ test('the node scene is named in the where: line and in the body, is a node test
   assert.ok(where.includes(NODE_SCENE), `where: names ${NODE_SCENE} by its path`);
   assert.ok(where.includes('one node scene'), 'the line counts the scene');
   assert.ok(body.includes(path.basename(NODE_SCENE)), 'the body names the scene');
-  assert.ok(body.includes('red on the base\'s order and on two other mutations in scratch copies of the head, green at the head'), 'the body records the mutation runs');
+  assert.ok(body.includes('red on the base\'s order and on three other mutations in scratch copies of the head, green at the head'), 'the body records the mutation runs');
   assert.ok(!path.basename(NODE_SCENE).includes('browser'), 'a node test: no browser in its name, so npm test runs it under node');
   const scene = read(NODE_SCENE);
   assert.ok(!/(?:require\w*\(|from )["']playwright/.test(scene), 'the scene reaches no browser: no import or require of playwright (its comments may name the legs\' engines)');
   assert.ok(scene.includes('hideEdges(this)'), 'its stand-in is on the shim rule (ui/test-dom-shim.test.ts)');
   for (const leg of [IMG_LEG, SVG_LEG]) {
     const src = read(leg);
-    assert.ok(src.includes('t.skip("playwright is not installed under vscode-extension; the browser legs need it (CI installs no browsers); file-view-figures-gate-adopt.test.ts, the node scene, is the guard that runs where this leg skips")'), `${leg}'s skip names the scene`);
+    assert.ok(src.includes('t.skip("playwright is not installed under vscode-extension; the browser legs need it (CI installs no browsers before npm test); file-view-figures-gate-adopt.test.ts, the node scene, is the guard that runs where this leg skips")'), `${leg}'s skip names the scene`);
     assert.ok(src.split('\nimport ')[0].includes('file-view-figures-gate-adopt.test.ts executes the'), `${leg}'s header names the scene`);
   }
 });

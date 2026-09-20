@@ -95,7 +95,7 @@ test('the section records the hole, the fix, the instrument, the measurement, th
     '400 plain paragraphs 1 of 3 (the `xlink:href` figure; WebKit 3 of 3 `xlink:href` and Chromium 0 of 3 in those runs), 2000 plain 1 of 3 (the `href` figure), 400 with a link, code and emphasis each 1 of 3 (the `xlink:href` figure), 400 plain with forty gated svg figures on a third host before the two 0 of 3.',
     'one svg image spelt `href` followed by 300 gated img figures 4 of 5; the same image alone 0 of 6 and 0 of 4; beside one img figure 0 of 5, 0 of 5 and 0 of 6;',
     'the last of two or three svg images in a short note 2 of 3, 3 of 5 and 1 of 5.',
-    'Chromium: no svg figure requested in any run by any instrument. After the fix, no request in any engine in any run: the leg 3 of 3 per engine; the refuters 18 of 18, then 4, 4 and 2 runs, then 3 per engine.',
+    'Chromium: no svg figure requested in any run by any instrument. After the fix, no request in any engine in any run: the leg once per engine at the fix and once per engine in each later run of it (the review\'s sweep and the head runs); the refuters 18 of 18, then 4, 4 and 2 runs, then 3 per engine.',
     // the fix
     'The whole figure chain now runs over that body and the adoption comes after: `const clean = sanitizeMd(dirty, mintHeadingIds)`, then resolveFigureRefs, rewriteFigureSrcs and gateRemoteFigures over `clean`, then `box.replaceChildren(...Array.from(clean.childNodes))`.',
     'no pass after the adoption sets, repoints or moves a fetching attribute.',
@@ -112,8 +112,8 @@ test('the section records the hole, the fix, the instrument, the measurement, th
     '**Tests.** ' + LEG + ', above: red in WebKit at 2d41e5c9b in all three scenes, green in Chromium and Firefox there, green in all three engines after the fix.',
     SVG_LEG + ', the second leg: red in Firefox and in WebKit at 2d41e5c9b, green in Chromium there, green in all three after the fix.',
     'Both legs skip where Playwright\'s engines are absent, and CI\'s npm test runs before its one browser install, so in CI the legs skip and the node scene runs: ' + NODE_SCENE + ' drives the real openFileView and openUrlView under plain node over a stand-in with two documents, the sanitizer\'s body inert and the viewer\'s document live, and pins by execution that no node entering the live document carries a fetching attribute on an unlisted host or a page-relative path',
-    'that no write of such an attribute lands on a live-document element across the render, that the gated figures stand as placeholders holding their sources in data-fv-gated-* and a click on the host restores exactly them, and that the folder figure is requested through /file.',
-    'Red on three mutations of file-view.ts in scratch copies of the head (2026-09-20): the base\'s order (the adoption first: 16 leaks at the adoption in the file kind and 4 in the URL kind), the gate alone moved after the adoption (13 and 2), and one added post-adoption write of a gated src back into src (5 live writes and 2); green at the head.',
+    'that no write of such an attribute lands on a live-document element across the render, that nothing under the box carries one once the render is done, that the gated figures stand as placeholders holding their sources in data-fv-gated-* and a click on the host restores exactly them, and that the folder figure is requested through /file.',
+    'Red on four mutations of file-view.ts in scratch copies of the head (2026-09-20): the base\'s order (the adoption first: 16 leaks at the adoption in the file kind and 4 in the URL kind), the gate alone moved after the adoption (13 and 2), one added post-adoption write of a gated src back into src (5 live writes and 2), and one added post-adoption line appending an img minted in the sanitizer\'s document with a src on an unlisted host into the box\'s first paragraph (1 leak at that adoption in each kind, read tree-wide under the box; the top-level read alone stayed green in the file kind); green at the head.',
     'It sees no bytes: a leak there is an attribute the browser would fetch through, judged by the scene\'s own oracle, never by figure-gate\'s remoteHost;',
     'file-view-seam.test.ts pins the order in mdBlock (sanitize, rewrite, gate on `clean`, then the adoption, and no figure pass over `box`) and holds the inertness premise, which no node test can execute: its test ' + SEAM_GUARD + ' pins',
     'tools/upstream-ledger-figure-gate-before-adoption.test.mjs holds the ledger entry\'s file list, its count and its engine statements to the tree and the legs;',
@@ -193,6 +193,12 @@ test('the Tests paragraph\'s premise guard is a test in file-view-seam.test.ts, 
   assert.ok(scene.includes('hideEdges(this)'), 'the stand-in is on the shim rule');
   assert.ok(scene.includes('"road (a): no fetching attribute on an unlisted host, none page-relative, on any node at the moment it entered the live document"'), 'road (a), the adoption');
   assert.ok(scene.includes('"road (b): no write of a fetching attribute on an unlisted host, or page-relative, landed on a live-document element"'), 'road (b), the writes');
+  // road (a) read tree-wide, ahead of the batch-count pin, and the end state (the review's third round: an img appended into a
+  // paragraph after the adoption passed the top-level read and road (b), since its src was written while it was the sanitizer's)
+  assert.ok(scene.includes('"road (a): no node that entered the live document anywhere under the Rendered box, at any depth, by any pass, carried a fetching attribute on an unlisted host or page-relative at that moment"'), 'road (a), tree-wide');
+  assert.ok(scene.indexOf('intoBoxTree(md).flatMap') < scene.indexOf('every top-level child of the sanitizer'), 'the tree-wide read runs before the batch-count pin, so an order regression names the leak first');
+  assert.ok(scene.includes('"the rendered box holds no fetching attribute on an unlisted host and none page-relative"'), 'the end state, the file kind');
+  assert.ok(scene.includes('"the rendered box holds no leaking fetching attribute once the render is done"'), 'the end state, the URL kind');
   assert.ok(scene.includes('loadGatedHost("remote.test", doc as unknown as ParentNode);'), 'the click phase restores through the product\'s own door');
 });
 
