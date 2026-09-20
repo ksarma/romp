@@ -101,32 +101,48 @@ class CapSwitchOffer(unittest.TestCase):
             return out
         # (1) the callables of kernel/sdk_backend.py that REACH set_auth: set_auth itself, and transitively any callable
         # whose body reaches for one already in the set, by attribute or by name (getattr(self, "set_auth") included).
-        # EVERY DEF AT THE MODULE'S TOP LEVEL OR IN THE BODY OF ANY CLASS THE MODULE DEFINES, WHEREVER THAT CLASS SITS
-        # (round 4 of the review, 2026-09-20; its correctness-2, tests-2 and extra6-1, all refuters, and the round's
-        # independent verifier): round 3 derived the set from SdkBackend's own methods alone, so a kernel call reaching
-        # set_auth through a module-level function of this file or through a method of another class here (SdkSession's,
-        # a mixin's) stayed green, ordinary spellings and not adversarial ones. The round-4 commit then walked the
-        # module's TOP-LEVEL classes only, so a staticmethod on a class nested in SdkBackend that reached set_auth stayed
-        # green too (the verifier's plant); the classes are now collected by ast.walk, so a class nested in a class body
-        # or in a def is walked like a top-level one. A def nested in a DEF (a closure) is not walked on its own
-        # (set_auth_guarded's `step` would otherwise join the set as a name no kernel site spells): its reach is its
-        # enclosing def's, which the walk over that def already sees. Two classes can share a method name, so nodes are
-        # kept per name. set_auth_guarded and set_auth_followers each run self.set_auth in their step; no other callable
-        # in the file reaches it. Derived, not listed, so a new reaching callable of any of those shapes both grows this
-        # set and, being a name the kernel census below looks for, cannot be called from kernel.py without redding. THE
-        # RESIDUALS, stated, each a carrier this walk does not visit: a reaching helper defined in a THIRD kernel module
-        # (neither kernel/sdk_backend.py nor kernel/kernel.py) is outside both walks; a non-def carrier in this file (a
-        # lambda, or an assignment binding a reaching method to another name, at module level or in a class body) is no
-        # def and grows nothing; and the run-time-assembled name above. The class SdkBackend must still exist by that
-        # name: the widened derivation no longer stops on it.
+        # EVERY DEF WHOSE NEAREST ENCLOSING SCOPE IS THE MODULE OR A CLASS, WHATEVER STATEMENT WRAPS IT (round 5 of the
+        # review, 2026-09-20; its correctness-1, regression-2 and extra5-2, all refuters): round 3 derived the set from
+        # SdkBackend's own methods alone, so a kernel call reaching set_auth through a module-level function of this file or
+        # through a method of another class here (SdkSession's, a mixin's) stayed green, ordinary spellings and not
+        # adversarial ones. Round 4 walked the module's TOP-LEVEL classes only, so a staticmethod on a class nested in
+        # SdkBackend that reached set_auth stayed green too (the verifier's plant); its addendum collected the classes by
+        # ast.walk but still took the DIRECT children of the module body and of each class body, so a def inside any
+        # compound statement at either scope (a module-level try: or if:, a class-body if:) never joined the set and its
+        # kernel.py call site was never censused, while this message claimed any def shape (round 5's plants: the same
+        # def inside try: and inside if: both green at 7 passed, the plain def red). The defs are collected from the WHOLE
+        # tree now, with a parent map: a def joins when the nearest def, lambda or class above it is a class or nothing
+        # (the module), so the statement wrapping it no longer matters. A def nested in a DEF or a lambda (a closure) is
+        # still not walked on its own (set_auth_guarded's `step` would otherwise join the set as a name no kernel site
+        # spells): its reach is its enclosing def's, which the walk over that def already sees, so a reaching closure in a
+        # new def reds through that def's name; a class nested in a def resets the rule, so its methods join (round 4's
+        # widening). Two classes can share a method name, so nodes are kept per name. set_auth_guarded and
+        # set_auth_followers each run self.set_auth in their step; no other callable in the file reaches it. Derived, not
+        # listed, so a new reaching def at module or class scope both grows this set and, being a name the kernel census
+        # below looks for, cannot be called from kernel.py without redding. THE RESIDUALS, stated, each a carrier this walk
+        # does not visit: a reaching helper defined in a THIRD kernel module (neither kernel/sdk_backend.py nor
+        # kernel/kernel.py) is outside both walks; a NON-DEF binding at module or class scope grows nothing (DERIVED by the
+        # same parent-map walk over kernel/sdk_backend.py, counting every name-binding node whose nearest scope is the
+        # module or a class, defs aside: AnnAssign 9, Assign 199, ClassDef 8, Import 20, ImportFrom 3, Lambda 9 at the
+        # round-6 head; of these only an Assign or AnnAssign whose value is a lambda or a bound method could carry a call to
+        # set_auth under another name, and no kernel.py site spells such a name); and the run-time-assembled name above. The
+        # class SdkBackend must still exist by that name: the widened derivation no longer stops on it.
         mod = ast.parse(sdk_src)
         self.assertTrue(any(isinstance(n, ast.ClassDef) and n.name == "SdkBackend" for n in mod.body),
                         "the kernel census below is keyed on SdkBackend's method names; a rename must re-derive it")
+        parent = {c: p for p in ast.walk(mod) for c in ast.iter_child_nodes(p)}
+        scopes = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
+
+        def scope_of(node):
+            """The nearest def, lambda or class enclosing `node`; the module when none does."""
+            p = parent.get(node)
+            while p is not None and not isinstance(p, scopes):
+                p = parent.get(p)
+            return p if p is not None else mod
         defs = {}
-        for scope in [mod] + [n for n in ast.walk(mod) if isinstance(n, ast.ClassDef)]:
-            for d in scope.body:
-                if isinstance(d, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    defs.setdefault(d.name, []).append(d)
+        for d in ast.walk(mod):
+            if isinstance(d, (ast.FunctionDef, ast.AsyncFunctionDef)) and isinstance(scope_of(d), (ast.ClassDef, ast.Module)):
+                defs.setdefault(d.name, []).append(d)
         reach = {"set_auth"}
         changed = True
         while changed:
@@ -136,8 +152,8 @@ class CapSwitchOffer(unittest.TestCase):
                     reach.add(name)
                     changed = True
         self.assertEqual(reach, {"set_auth", "set_auth_guarded", "set_auth_followers"},
-                         "set_auth and the two entry points whose step runs it; a new reaching callable of any def shape in "
-                         "kernel/sdk_backend.py reds here")
+                         "set_auth and the two entry points whose step runs it; a new reaching def at module or class scope in "
+                         "kernel/sdk_backend.py, whatever statement wraps it, reds here (a closure reds through its enclosing def)")
         # (2) every kernel.py site that reaches for one of those names, recorded as (enclosing def, kind): "call:" an
         # attribute call on any receiver; "ref:" an attribute reference that is not the func of a call (a bound method
         # handed on as a value: a partial, an alias); "name:" a string constant equal to the name (the getattr doors, a

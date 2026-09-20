@@ -18786,13 +18786,16 @@ class SdkBackend:
         as an addition to the guard-scope fix, not a substitute): the acknowledgment is not the pick, so a chat record
         that cannot be written (a full or read-only state directory) never fails a pick whose own record already wrote.
         The live chip stands until the human-floor prune retires it and one problem row names the miss (the
-        authoritative-sources rule: loud, not silent), so this never raises into a caller whose pick applied. THE THREE
-        CALLERS SHARE IT (round 4 of the review, 2026-09-20; its regression-4 and extra7-1): set_model and set_effort
-        answer a failed chat append with the same row where they raised it out of their pick, a deliberate spillover of
-        round 3's at-source choice, and one the parked-op drain needed on those roads too (kernel.py's catch-all dropped
-        the session's whole parked queue on such a raise); pinned per caller in tests/test_kernel_cmd_gesture.py.
-        set_auth_guarded's containment around this call is the belt-and-suspenders for a fault the in-memory stash could
-        raise."""
+        authoritative-sources rule: loud, not silent), so this never raises into a caller whose pick applied. FOUR CALL
+        SITES SHARE IT, derived not listed (git grep -n '_ack_cmd_chip(' -- kernel bin cli postal, minus this def; round 5
+        of the review, 2026-09-20, its extra7-3: the roster here said three): set_model, set_effort, set_auth and
+        set_auth_guarded. The first two answer a failed chat append with the same row where they raised it out of their
+        pick (round 4, 2026-09-20; its regression-4 and extra7-1), a deliberate spillover of round 3's at-source choice
+        the parked-op drain needed too (kernel.py's catch-all dropped the whole parked queue on such a raise). Pinned per
+        caller: those two in tests/test_kernel_cmd_gesture.py, set_auth's and set_auth_guarded's chip-row cells in
+        tests/test_billing_route.py; the set itself, and append_cmd_gesture's one site in this builder, by an ast census
+        over kernel/*.py in the gesture module. set_auth_guarded's containment around this call is the belt-and-suspenders
+        for a fault the in-memory stash could raise."""
         t = int(time.time())
         uid = "cmd:%d:%s" % (t, command.lstrip("/"))
         self._stash_live(sid, uid, {
@@ -19570,30 +19573,42 @@ class SdkBackend:
             # else the side word. The guarded door (set_auth_guarded) passes chip=False and fires the chip
             # OUTSIDE the guard, so a chat write that cannot land never rolls back a pick whose record wrote.
             self._ack_cmd_chip(sid, "/auth", "/auth " + value, s.resume_sid)
-        # THE MACHINE SEED, AT THE ONE POINT EVERY ACCEPTED ROAD REACHES (round 3 of the review, 2026-09-20; its
-        # regression-2 with kernel-1): the seed for the NEXT new session, like model/effort, written after the per-session
-        # record write so a refused write never moves it. Every accepted road (never-landed, already-applying, unchanged,
-        # request, dormant) converges here; any raise before this skips the seed. NOT snapshot-and-restore: write_sdk_default
-        # skips None so it cannot restore an ABSENT key, and a write-back can clobber a concurrent session's landed pick, the
-        # hazard _TOKENED_DEFAULTS's own comment documents. Until the user sets the machine's default EXPLICITLY (set_auth_default,
-        # T380) a per-session pick moves no default; this write carries no authExplicit, so the launch and the init check follow
-        # the file's auth only beside the flag while the spawn's seed and the new-session picker read the flag-less value as the
-        # remembered pick (whether they should is fresh-5's own PR, the reviewer's round 2, 2026-09-19). authLogin rides beside it.
-        # THE SEED WRITE IS BEST-EFFORT (the owner's lenses over round 3's commit, 2026-09-20; the tail lens's finding 1 and
+        # THE MACHINE'S RECORD OF THE LAST PICK, AT THE ONE POINT EVERY ACCEPTED ROAD REACHES (round 3 of the review,
+        # 2026-09-20; its regression-2 with kernel-1): written after the per-session record write so a refused write never
+        # moves it. Every accepted road (never-landed, already-applying, unchanged, request, dormant) converges here; any
+        # raise before this skips it. NOT snapshot-and-restore: write_sdk_default skips None so it cannot restore an ABSENT
+        # key, and a write-back can clobber a concurrent session's landed pick, the hazard _TOKENED_DEFAULTS's own comment
+        # documents. Until the user sets the machine's default EXPLICITLY (set_auth_default, T380) a per-session pick moves
+        # no default. WHAT THE WRITE IS (fork PR #819, 2026-09-18: the reader story main carries at this write, which this
+        # branch takes at its merge of main in round 6 of the review; this comment used to say the spawn's seed and the
+        # new-session picker read the flag-less value as the remembered pick, which that PR made false): it carries no
+        # authExplicit, and every reader follows the file's auth only beside that flag: a spawn with no pick of its own
+        # (the seed), the launch (_explicit_default), the init check (_declared_auth) and the new-session picker's
+        # preselection (_auth_avail's default). The flag-less value is the record of the last pick; a spawn reads it only
+        # to say, once, that the pick it names was left unseeded (main's _note_pick_not_seeded); hand-editing the file stays
+        # the escape hatch. authLogin rides beside it. WRITERS AND READERS of the file's auth (round 6 of the review, the
+        # reviewer's rule; derived: git grep -n 'write_sdk_default(\|read_sdk_defaults(' -- kernel): written here without
+        # the flag, and by set_auth_default with it (the explicit default) or cleared with it (auto); read by _declared_auth,
+        # spawn, _explicit_default and effective_auth in this module, by _auth_avail in kernel/kernel.py, and here (the
+        # flag alone). The model, mode and effort writes to the same file carry no auth.
+        # THE WRITE IS BEST-EFFORT (the owner's lenses over round 3's commit, 2026-09-20; the tail lens's finding 1 and
         # the docs lens's F1, both by execution): a filesystem write AFTER the mirror is inside the guarded step on the door,
         # the walk and the dormant road, and round 3's move put this one there uncontained. A state root that would not take
-        # the seed's temp file (the record's own directory writable, the root not; a directory at the temp path) then rolled
+        # this file's temp file (the record's own directory writable, the root not; a directory at the temp path) then rolled
         # a pick whose record had written back, answered 409 blaming that record, left the reconnect callback queued from a
         # rolled-back state, and on the dormant road left the record on the new pick under the 409. The pick IS the record
-        # write; the seed is the memory of it for the next new session, so a seed that cannot be written never fails the
-        # pick: the pick stands, one problem row names the miss, and the next new session inherits the seed as it stood
+        # write; this file is the memory of it, and since fork PR #819 no new session inherits it, so a write that cannot
+        # land never fails the pick: the pick stands, one problem row names the miss, and nothing else changes. THE ROW'S
+        # TAIL (round 6 of the review, 2026-09-20; the merge scout's follow-up) said the next new session inherits the
+        # default as it stood, the mechanism that PR removed; it says what the write is now.
         try:
             if not read_sdk_defaults(self.state_dir).get("authExplicit"):
                 write_sdk_default(self.state_dir, auth=side, authLogin=login_id)
         except Exception as e:
             recorded = (getattr(s, "_record_writes", 0) > writes0) if s else dormant_wrote   # true on every road (kernel-4)
-            self._log("auth (%s): the pick %s applied%s, but the machine's remembered default could not be "
-                      "written (%s: %s); the pick stands and the next new session inherits the default as it stood"
+            self._log("auth (%s): the pick %s applied%s, but the machine's record of the last pick could not be "
+                      "written (%s: %s); the pick stands; that record seeds no new session (only the explicit default does), "
+                      "so nothing else changes"
                       % (s.name if s else (reg.get("name") or str(sid)[:8]), value,
                          " and its record wrote" if recorded else ", its record untouched", type(e).__name__, _mask_ids(e)), problem=True)
         return True

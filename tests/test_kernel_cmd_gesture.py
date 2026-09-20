@@ -8,8 +8,10 @@ high"} line alongside the live chip (same t, same text), and build_session inter
 Right side keeps what you did; the applied note keeps that it happened.
 
 Behavioural tests of the marker (append_cmd_gesture) + the kernel reader (_cmd_gestures), plus source pins on
-the three write sites and the build interleave/dedup.
+the chip builder's call sites (derived in CmdGestureSourcePins, not listed) and the build interleave/dedup.
 """
+import ast
+import glob
 import inspect
 import json
 import os
@@ -153,9 +155,9 @@ class CmdGestureSourcePins(unittest.TestCase):
     def test_backend_writes_the_marker_beside_each_synthesized_live_chip(self):
         # every setter that synthesizes a live command chip (set_model / set_effort / set_auth) writes the
         # durable twin with the SAME t and disp, so build_session's (t, text) dedup holds while the chip is
-        # live and the durable event takes over seamlessly once stale_cmd retires it. The three share ONE
-        # builder (_ack_cmd_chip — so the chip fires on a dormant session too); the property is pinned on
-        # the builder, and every setter must go through it.
+        # live and the durable event takes over seamlessly once stale_cmd retires it. The setters share ONE
+        # builder (_ack_cmd_chip, so the chip fires on a dormant session too; its call sites are derived
+        # below, not listed here); the property is pinned on the builder, and every setter must go through it.
         for cmd in ("/model", "/effort", "/auth"):
             self.assertEqual(BACKEND_SRC.count('self._ack_cmd_chip(sid, "%s", "%s " + value, ' % (cmd, cmd)), 1, cmd)
         i = BACKEND_SRC.index("def _ack_cmd_chip(")
@@ -164,6 +166,46 @@ class CmdGestureSourcePins(unittest.TestCase):
         k = BACKEND_SRC.index("self._wake_push_live(sid)", i)   # the chip is a live-tail change: the wake carries the sid
         self.assertLess(j, k, "the marker is on disk before the push that rebuilds the chat")
         self.assertEqual(BACKEND_SRC.count("append_cmd_gesture(self.state_dir, sid, disp, t=t)"), 1, "one builder, no stray copies")
+
+    def test_the_chip_builders_call_sites_and_the_durable_writes_one_site_are_derived_not_listed(self):
+        # round 5 of fork PR #813's review (2026-09-20; its extra7-3): _ack_cmd_chip's docstring said THREE callers, pinned
+        # per caller here, and the backend had four call sites (set_model, set_effort, set_auth, set_auth_guarded), two of
+        # them pinned here and two in tests/test_billing_route.py. Derived now, over every Python source under kernel/ (the
+        # backend and the kernel; a CLI process has no backend to call), as the OUTERMOST enclosing def of each call, never
+        # the nearest (a call inside a closure such as set_auth_guarded's step belongs to the setter). The refuter keyed the
+        # rule on the WRITE too: a setter that bypasses the builder with an append_cmd_gesture of its own is caught by the
+        # second set, which the text pin above cannot see when the spelling differs. A fifth caller adds a tuple to the first
+        # set and reds; a bypass write adds one to the second and reds (both run as plants in round 6).
+        sources = sorted(glob.glob(os.path.join(os.path.dirname(HERE), "kernel", "*.py")))
+        self.assertIn(os.path.join(os.path.dirname(HERE), "kernel", "sdk_backend.py"), sources, "the population holds the backend")
+        chip_sites, write_sites = set(), set()
+        for path in sources:
+            stack = []
+            base = os.path.basename(path)
+
+            class V(ast.NodeVisitor):
+                def visit_FunctionDef(self, n):
+                    stack.append(n.name)
+                    self.generic_visit(n)
+                    stack.pop()
+                visit_AsyncFunctionDef = visit_FunctionDef
+
+                def visit_Call(self, n):
+                    f = n.func
+                    name = f.attr if isinstance(f, ast.Attribute) else (f.id if isinstance(f, ast.Name) else "")
+                    where = (base, stack[0] if stack else "<module>")
+                    if name == "_ack_cmd_chip":
+                        chip_sites.add(where)
+                    elif name == "append_cmd_gesture":
+                        write_sites.add(where)
+                    self.generic_visit(n)
+            V().visit(ast.parse(Path(path).read_text()))
+        self.assertEqual(chip_sites, {("sdk_backend.py", "set_model"), ("sdk_backend.py", "set_effort"), ("sdk_backend.py", "set_auth"),
+                                      ("sdk_backend.py", "set_auth_guarded")},
+                         "the builder's call sites, each pinned under the append fault (two here, two in tests/test_billing_route.py); "
+                         "a new caller adds a tuple, reds here and owes a cell")
+        self.assertEqual(write_sites, {("sdk_backend.py", "_ack_cmd_chip")},
+                         "the durable twin is written by the builder alone; a setter writing its own would step around the best-effort rule")
 
     def test_build_session_interleaves_and_dedups_against_the_live_chip(self):
         src = inspect.getsource(km.build_session)
