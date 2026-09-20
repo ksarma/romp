@@ -2681,6 +2681,7 @@ LIMIT_BLOCKER = "the loop cannot land here because the private-kernel harnesses 
 LIMIT_ORDER = "so their save-and-restore product code lands first, then the ratchet's private-kernel arm"
 LIMIT_READING = ("tests/test_kernel_interrupt_machine_cut.py", "tests/test_kernel_msgcaption.py")   # the loaders that read the
                                                                                                     # dangling object, measured 2026-09-19
+LIMIT_MEASURED = "measured 2026-09-19"      # the date of that measurement, held in both texts
 PRIVATE_KERNEL_NAME = "romp_kernel_mc"
 NUMBER_WORDS = ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve")
 RATCHET_COMMENT_OPENS = "No test may leave the kernel's backend singleton changed"
@@ -2769,9 +2770,10 @@ class TheCountLimitIsStatedBesideTheCount(unittest.TestCase):
 class TheStatedLimitIsWorded(unittest.TestCase):
     """The stated limit (a private kernel's own dangling singleton is outside the fixture) is worded, in the ratchet's
     design comment in the conftest and in this module's docstring, with what it leaves unprotected, the files that
-    read the dangling object (LIMIT_READING, named in both texts; a measurement of 2026-09-19, dated in both), and
-    the blocker in its order (the harness fixes first, then the private-kernel arm); an edit that drops any of them
-    reds here. Neither count is pinned as a word: the count of files that load the private name is derived from the
+    read the dangling object (LIMIT_READING, named in both texts; a measurement of 2026-09-19, dated in both by the
+    needle LIMIT_MEASURED: the round-8 review found the date claimed here and held by no needle, so the conftest's
+    date dropped left the pin green), and the blocker in its order (the harness fixes first, then the private-kernel
+    arm); an edit that drops any of them reds here. Neither count is pinned as a word: the count of files that load the private name is derived from the
     tree (private_kernel_loaders, which reads the load_source call by AST, not a quote spelling), the conftest names
     the loaders in one parenthesis held equal to the derived set, and both texts state the reading count as the
     number word of LIMIT_READING's length beside the loader count as the number word of the derived set's length,
@@ -2783,7 +2785,7 @@ class TheStatedLimitIsWorded(unittest.TestCase):
     pin green."""
 
     def _assert_worded(self, text, where):
-        for needle in (LIMIT_UNPROTECTED, LIMIT_BLOCKER, LIMIT_ORDER) + LIMIT_READING:
+        for needle in (LIMIT_UNPROTECTED, LIMIT_BLOCKER, LIMIT_ORDER, LIMIT_MEASURED) + LIMIT_READING:
             self.assertTrue(needle in text, "%s does not say: %s" % (where, needle))   # not assertIn: the failure would
                                                                                        # quote the whole comment
         self.assertLess(text.index(LIMIT_UNPROTECTED), text.index(LIMIT_BLOCKER),
