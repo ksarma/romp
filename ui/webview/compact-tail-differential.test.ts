@@ -11,9 +11,11 @@
 // a lone event, a tool run, a notice run, a gap) and the states the stream delivers (working, compacting, ready).
 // - append, per unit kind and fold state: a prompt, a reply, a tool, a notice landing; an edit of the last block and of a tool inside
 //   a run (a result landing); a hidden thinking block landing at the tail (no unit reaches it: nothing re-rendered); a tool joining a
-//   run and a run extending (a fold boundary, closed and open); a notice run forming on an anchor out of order, and one of the three
-//   notice shapes production folds (a retried, a user-shaped and an assistant-shaped member, minted through isFoldableNoticeShape); a
-//   reply landing while idle (the footer moves off the reply before it); a day crossing (the divider the seam appends); a hover's rail
+//   run and a run extending (a fold boundary, closed and open); a notice run forming on an anchor out of order, and a run with one
+//   member from each branch of isFoldableNoticeShape (a notice kind, a user-shaped and an assistant-shaped member; the predicate admits
+//   four kinds and three user shapes, so the run stands for its branches, not for every shape it admits, and the list is minted
+//   through the predicate itself); a reply landing while idle (the footer moves off the reply before it); a day crossing (the divider
+//   the seam appends); a hover's rail
 //   band present as the thread's last child, and the rings and glow it lit (dropped with it, as the rebuild's wipe dropped them); an
 //   eviction (the window's span kept, the promoted head unit's stamp; a gap promoted to the head, the stamp of the first marker after
 //   it).
@@ -439,15 +441,18 @@ for (const [fold, open] of FOLDS) {
     assert.equal(footerOn(w2, "a4"), null, "no longer the turn's last reply: the footer came off, below a browsed window");
   });
 
-  test(`a notice run of the three shapes production folds, run ${fold}: a retried, then a user-shaped and an assistant-shaped foldable notice (isFoldableNoticeShape), each appended and compared against a rebuild`, () => {
+  test(`a notice run with one member from each branch of isFoldableNoticeShape, run ${fold}: a retried (a notice kind), then a user-shaped and an assistant-shaped foldable notice, each appended and compared against a rebuild`, () => {
     // the unit list is minted through production's own predicate, so the run forms here as it does in render.ts displayItems; a hand
-    // copy of one shape (`kind === "retried"`) could mint none of these (review round 2: hardening, no failing-before of its own)
+    // copy of one shape (`kind === "retried"`) could mint none of these (review round 2: hardening, no failing-before of its own). The
+    // predicate has three branches (four notice kinds; a user row by interrupt marker, rompSystem note or peer source; an assistant
+    // row by interruptSettle): one member per branch, not one per shape (review round 3: the name said "the three shapes production
+    // folds", a count the predicate does not have)
     const w = world(base(), new Set(open));
     frame(w, "a retried notice lands", (ev) => ev.concat([notice("n5", at(10, 5, 0))]), "append");
     frame(w, "a user-shaped notice joins: the run forms", (ev) => ev.concat([sysNotice("n6", at(10, 5, 20))]), "append");
     frame(w, "an assistant-shaped notice extends the run", (ev) => ev.concat([settleNotice("n7", at(10, 5, 40))]), "append");
     const last = itemsOf(w.s)[itemsOf(w.s).length - 1];
-    assert.deepEqual(last, { kind: "noticegroup", indices: [7, 8, 9] }, "the three fold into one notice run (production's predicate admits all three shapes)");
+    assert.deepEqual(last, { kind: "noticegroup", indices: [7, 8, 9] }, "the three fold into one notice run (production's predicate admits a member from each of its branches)");
     const rows = units(project(w.v.el)).filter((r) => r.unit === itemsOf(w.s).length - 1);
     assert.equal(rows.length, fold === "open" ? 4 : 1, "the run's head, and a row per member when the fold is open");
   });
