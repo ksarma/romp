@@ -489,7 +489,9 @@ class RefitsWhenTheVisibleHeightChanges(unittest.TestCase):
         # visual viewport down the layout viewport (offsetTop > 0) with no document scroll to undo, so a body sized to
         # vv.height at layout y 0 left the bottom offsetTop pixels of the screen bare under the composer. fit() publishes
         # the pan as --app-top under the same coarse guard (a fine pointer writes 0px whatever the visual viewport says; the
-        # consumer is gated on the layout query, a different population, see the fit() comment). Under a pinch (scale above 1.01) the last pan
+        # consumer is gated on the layout query, a different population, see the fit() comment). Under a pinch (pinched: a scale at or
+        # above h/(h - 0.5), the smallest zoom whose own pan can round to a pixel, derived in the kernel beside the helper; round 8,
+        # 2026-09-20, it had been the literal 1.01) the last pan
         # holds, a zoom pans too and never re-lays the shell, CLAMPED AT USE to the layout viewport less the height the same
         # run publishes, so a keyboard dismissed while zoomed cannot leave the body hanging below the viewport (round 2,
         # 2026-09-19); the layout viewport is document.documentElement.clientHeight, the same height in both engine models
@@ -499,8 +501,8 @@ class RefitsWhenTheVisibleHeightChanges(unittest.TestCase):
         # run and the road published 0px whatever the hold; the harness drives both models); the clamp bounds what is published and never writes back into the hold (round 4, 2026-09-20: it had,
         # so the hold decayed to 0 the first time the clamp bound and a keyboard raised again under the zoom reopened the
         # band). Every road that WRITES the hold writes the value it publishes: the measured road its measurement, the 0px
-        # road a zero, and that only in a true no-pan state (no visual viewport, or one at or under the pinch road's cut, scale
-        # 1.01, whose offsetTop rounds to no positive pixel, panPx, the one reading the measured road stores too, so a sub-pixel
+        # road a zero, and that only in a true no-pan state (no visual viewport, or one under the pinch road's cut,
+        # whose offsetTop rounds to no positive pixel, panPx, the one reading the measured road stores too, so a sub-pixel
         # pan is the same answer on both roads, round 8, 2026-09-20; round 6, 2026-09-20: written on every fine run, the zero had reopened the band after a pointer flip under a keyboard or a
         # zoom); the clamp road publishes a bound of the hold and stores nothing, so --app-top can sit below the hold until a
         # road WRITES it, the measured road or the 0px road in a no-pan state (round 8, 2026-09-20: the 0px road runs without
@@ -511,10 +513,13 @@ class RefitsWhenTheVisibleHeightChanges(unittest.TestCase):
         # confirmed it); the 0px road has no height to belong to and publishes unconditionally. Behaviour:
         # test_kernel_mobile.MobileFitExecutes.
         self.assertIn("\nvar lastPan=0;\n", self.js)
-        self.assertIn("\nfunction panPx(vv){return Math.round(vv.offsetTop||0);}\nfunction fit(){", self.js, "the one reading of the pan, declared before fit()")
-        self.assertIn("if(!coarse||!vv){if(!vv||((vv.scale||1)<=1.01&&!(panPx(vv)>0)))lastPan=0;document.documentElement.style.setProperty('--app-top','0px');}", self.js)
+        self.assertIn("\nfunction panPx(vv){return Math.round(vv.offsetTop||0);}\n", self.js, "the one reading of the pan, declared before fit()")
+        self.assertIn("\nfunction pinched(vv,h){return !(h>0&&(vv.scale||1)<h/(h-0.5));}\nfunction fit(){", self.js,
+                      "the pinch cut, derived from the measured road's rounding (round 8, 2026-09-20), declared before fit()")
+        self.assertNotIn("1.01", served_css.js_code(self.js), "the cut is derived, not a literal (the code, comments blanked: the derivation's comment names the old literal)")
+        self.assertIn("if(!coarse||!vv){if(!vv||(!pinched(vv,h)&&!(panPx(vv)>0)))lastPan=0;document.documentElement.style.setProperty('--app-top','0px');}", self.js)
         self.assertNotIn("vv.offsetTop>0", self.js, "the 0px road reads the shared rounding, never the raw offsetTop")
-        self.assertIn("else if(h&&(vv.scale||1)<=1.01)document.documentElement.style.setProperty('--app-top',(lastPan=panPx(vv))+'px');\n"
+        self.assertIn("else if(h&&!pinched(vv,h))document.documentElement.style.setProperty('--app-top',(lastPan=panPx(vv))+'px');\n"
                       "else if(h)document.documentElement.style.setProperty('--app-top',Math.min(lastPan,Math.max(0,document.documentElement.clientHeight-h))+'px');", self.js)
         self.assertNotIn("innerHeight-h", self.js, "the clamp reads the layout viewport (clientHeight), not innerHeight, which WebKit shrinks under a pinch")
         self.assertNotIn("lastPan=Math.min", self.js, "the clamp is at use: nothing writes its result back into the hold")
@@ -531,7 +536,7 @@ class RefitsWhenTheVisibleHeightChanges(unittest.TestCase):
         # or below the band's bottom edge or ending at or above its top edge, the whole height wholly inside, the overlap
         # between (round 4, 2026-09-20: the reservation had been all-or-nothing on a visibility verdict, a bar-tall strip
         # over a bar showing a few pixels; and the pinch term had handed the verdict back to upstream's height difference,
-        # which collapsed the strip at the 1.01 scale cut under a deep pan; round 6, 2026-09-20: the first proportional
+        # which collapsed the strip at the pinch cut (then the literal 1.01) under a deep pan; round 6, 2026-09-20: the first proportional
         # form read the bottom edge only, so a band whose top sat below the bar's top reserved pixels above the band, the
         # whole bar over a bar with no pixel inside it). Upstream's barfit stands only where the box or the band cannot be
         # read (no bar, no visualViewport, no getPropertyValue, a run before both variables are published). Behaviour:

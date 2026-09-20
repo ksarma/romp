@@ -69850,6 +69850,15 @@ var lastPan=0;
 // no-pan test reads it, so an offsetTop that rounds to no pixel (0.4) is no pan on both roads and one that rounds up (0.5) a pan on
 // both. The 0px road had read the raw offsetTop, so a pan in (0, 0.5) was a standing hold there and a stored 0 here.
 function panPx(vv){return Math.round(vv.offsetTop||0);}
+// [fork] round 8 (2026-09-20): the pinch CUT, derived from the measured road's own rounding (it had been the literal 1.01, with no
+// derivation anywhere and no cell driven inside (1, 1.01)). A zoom at scale s pans the visual viewport by at most h(1 - 1/s) with no
+// keyboard behind it, and the measured road stores round(offsetTop), so the cut is the scale at which that largest zoom pan reaches
+// the half pixel that rounds up: s = h/(h - 0.5), 1.0006 in an 844 px layout viewport and 1.0011 at 460. Below it a pure zoom
+// stores 0 and the measured road is safe to run; at or above it a zoom could store a pixel as a keyboard pan, so the report is a
+// pinch: offsetTop is never published and the last pan holds. Both engines report exactly 1 at rest (Playwright's WebKit and
+// Chromium, eight descriptor contexts). With no layout height (h 0) the cut is undefined and the report counts as pinched, so the
+// hold stands rather than being cleared against a height that is not there.
+function pinched(vv,h){return !(h>0&&(vv.scale||1)<h/(h-0.5));}
 function fit(){try{var vv=window.visualViewport;
 var coarse=window.matchMedia&&matchMedia('(pointer: coarse)').matches;
 var h=(!coarse||!vv)?window.innerHeight:Math.round(vv.height*(vv.scale||1));
@@ -69870,7 +69879,8 @@ if(h)document.documentElement.style.setProperty('--app-h',h+'px');
 // on the LAYOUT query, which a window at or under 820 px matches at any pointer and a coarse one up to 1024 px. So a
 // fine-pointer window at or under 820 px takes the fixed body at top 0 and lays out as before, and a coarse document wider
 // than 1024 px publishes a pan no rule consumes and keeps its body in flow (tests/test_keyboard_gap_served.py drives
-// both; test_kernel_mobile's harness turns the pointer fine from a panned state). A PINCH (scale above 1.01) pans
+// both; test_kernel_mobile's harness turns the pointer fine from a panned state). A PINCH (pinched: a scale at or above the
+// cut h/(h - 0.5), the smallest zoom whose own pan can round to a pixel, derived beside the helper) pans
 // the visual viewport too, with no keyboard behind it, so its offsetTop is never published and the last pan holds (a zoom
 // never re-lays the shell, the pinch-aware note above), CLAMPED AT USE to the layout viewport's height less h (round 2,
 // 2026-09-19): the same run recomputes --app-h from the zoomed viewport, so a pan measured under a keyboard that has since
@@ -69899,7 +69909,7 @@ if(h)document.documentElement.style.setProperty('--app-h',h+'px');
 // when the height changes is a design call not taken here; the harness and served legs re-raise the same keyboard). Two
 // roads WRITE the hold and each writes the value it publishes: the measured road its measurement, and the 0px road a zero,
 // only in a true no-pan state, one an unzoomed coarse run would have measured as 0: no visual viewport, or one at or under
-// the pinch road's cut, scale 1.01, whose offsetTop rounds to no positive pixel (panPx, the reading the measured road stores;
+// the pinch road's cut (pinched), whose offsetTop rounds to no positive pixel (panPx, the reading the measured road stores;
 // round 6 and round 8, 2026-09-20: the 0px road had read the raw offsetTop, so a pan in (0, 0.5) was no pan by this rule and a
 // kept hold by that test). A pointer that turns fine with a pan standing (the keyboard up on iOS) or under a
 // standing zoom leaves the hold for the keyboard it was measured with, so coarse again under that zoom the pinch road
@@ -69913,8 +69923,8 @@ if(h)document.documentElement.style.setProperty('--app-h',h+'px');
 // beside the prior height rather than moving the fixed body by a pan measured against nothing; the 0px road has no height
 // to belong to and publishes unconditionally (only its write into the hold carries the no-pan condition above). The visual
 // viewport's scroll event, where a pan lands, is already bound below, so no new listener.
-if(!coarse||!vv){if(!vv||((vv.scale||1)<=1.01&&!(panPx(vv)>0)))lastPan=0;document.documentElement.style.setProperty('--app-top','0px');}
-else if(h&&(vv.scale||1)<=1.01)document.documentElement.style.setProperty('--app-top',(lastPan=panPx(vv))+'px');
+if(!coarse||!vv){if(!vv||(!pinched(vv,h)&&!(panPx(vv)>0)))lastPan=0;document.documentElement.style.setProperty('--app-top','0px');}
+else if(h&&!pinched(vv,h))document.documentElement.style.setProperty('--app-top',(lastPan=panPx(vv))+'px');
 else if(h)document.documentElement.style.setProperty('--app-top',Math.min(lastPan,Math.max(0,document.documentElement.clientHeight-h))+'px');
 // iOS ignores interactive-widget and reveals a focused input by SCROLLING this overflow:hidden page
 // (a UA scroll bypasses the clamp) — the shell then sits a keyboard-height up until dragged back
@@ -69947,7 +69957,7 @@ document.documentElement.style.setProperty('--mtabs-h',(kbOpen()?0:(bar.offsetHe
 // height of pan values, the bar partly inside the band, the strip stood bar-tall over a bar showing a few pixels, the very
 // band this change exists to close; the strip now follows the pixels. The PUBLISHED band rather than the live visual
 // viewport, so a pinch (whose --app-top holds and whose --app-h is upstream's scale arithmetic) judges the bar against the
-// shell it laid out and the strip never flips at the 1.01 scale cut (round 4: the pinch term had handed the verdict back to
+// shell it laid out and the strip never flips at the pinch cut (round 4: the pinch term had handed the verdict back to
 // upstream's height reading, which disagrees with the box under a deep pan). A bar the engine keeps ABOVE the keyboard
 // (Android Chrome under resizes-content: innerHeight shrinks and fixed bottom:0 rides the shrunken bottom) is wholly inside
 // by this reading, so its strip stays reserved; the focused-field and shrunken-innerHeight readings considered instead would

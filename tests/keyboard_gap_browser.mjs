@@ -152,7 +152,7 @@ try {
   out.kbUpDeep = await move(508, 336);
   // round 4 (2026-09-20): a pinch over the deep pan (scale 2, height 254: h = 508 again, the pan holds at 336). The band the shell
   // published is unchanged, the bar is inside it, and the strip must stand; the round-3 reading handed a pinch back to the
-  // height difference and collapsed it at the 1.01 scale cut
+  // height difference and collapsed it at the pinch cut (then the literal 1.01)
   out.deepZoomed = await move(254, 336, 2);
   out.settledDeep = await move(844, 0);
   // round 4 (2026-09-20): the pan at an INTERIOR position (508 + 320 = 828 against a bar whose box starts at 844 less its height):

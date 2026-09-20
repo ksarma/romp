@@ -589,6 +589,16 @@ out.pan = { appTop: appTop(), appH: appH(), barH: barH() };
 visualViewport.offsetTop = 0.4; fire(VV, 'scroll'); flush(); out.subPixelMeasured = appTop();
 visualViewport.offsetTop = 0.5; fire(VV, 'scroll'); flush(); out.halfPixelMeasured = appTop();
 visualViewport.offsetTop = 83; fire(VV, 'scroll'); flush();
+// round 8 (2026-09-20): the pinch CUT, derived from the measured road's rounding: a zoom at scale s pans the visual viewport by at
+// most h(1 - 1/s) with no keyboard behind it, and the measured road stores round(offsetTop), so the cut is the scale at which that
+// largest zoom pan reaches the half pixel that rounds up, s = h/(h - 0.5): 1.00109 at h 460 (the keyboard up). Below it (1.0009,
+// the largest zoom pan 0.41 px) the measured road runs and stores the pan it reads; at or above it (1.0012, 0.55 px) the report is
+// a pinch and the hold stands, where the measured road would have published the zoomed offsetTop (98)
+visualViewport.scale = 1.0009; visualViewport.height = 459.59; visualViewport.offsetTop = 90.4; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+out.cutBelow = { appTop: appTop(), appH: appH() };
+visualViewport.scale = 1.0012; visualViewport.height = 459.45; visualViewport.offsetTop = 97.6; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+out.cutAbove = { appTop: appTop(), appH: appH() };
+visualViewport.scale = 1; visualViewport.height = 460; visualViewport.offsetTop = 83; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
 // round 4 (2026-09-20): a height report the run REFUSES (h 0) publishes no pan either. The pan belongs to the height it was
 // measured with, so a report of height 0 with offsetTop 300 leaves --app-top and --app-h where the last valid run put them
 // (83 and 460); publishing the pan alone had moved the fixed body 300 px down under a height that never followed
@@ -730,7 +740,8 @@ visualViewport.scale = 1; visualViewport.height = 844; visualViewport.offsetTop 
 out.coarseAgainBack = { appTop: appTop(), appH: appH(), barH: barH() };
 // round 6 (2026-09-20): the 0px road's CONDITION, both sides of every variable in it. The road clears the hold only in a true
 // no-pan state, one an unzoomed coarse run would have measured as 0: no visual viewport, or one at or under the pinch road's
-// cut (scale 1.01) whose offsetTop rounds to no positive pixel, the reading the measured road stores (panPx; round 8, 2026-09-20:
+// cut (pinched: h/(h - 0.5), the scale at which a zoom's own pan can round to a pixel; 1.0006 at the fine road's h of 844) whose
+// offsetTop rounds to no positive pixel, the reading the measured road stores (panPx; round 8, 2026-09-20:
 // the road had read the raw offsetTop, so 0.4 kept the hold here and stored 0 there) (the keyboard gone in the same run the
 // pointer turned fine, the kernel-4 case); a
 // standing pan (one pixel) or a standing zoom (scale 1.02) leaves it. Each state: the hold from a pan (83), the pointer turns
@@ -749,7 +760,8 @@ const flip = (label, vvState) => {
 };
 flip('noVV', null);                                             // no visual viewport: no pan is possible, cleared
 flip('atRest', { height: 844, offsetTop: 0, scale: 1 });        // the keyboard gone in the flip's own run: cleared
-flip('scaleAtCut', { height: 844, offsetTop: 0, scale: 1.01 }); // at the pinch road's cut, unzoomed: cleared
+flip('scaleUnderCut', { height: 843.578, offsetTop: 0, scale: 1.0005 }); // under the cut (a zoom pan of at most 0.42 px), unzoomed: cleared (round 8)
+flip('scaleOverCut', { height: 843.41, offsetTop: 0, scale: 1.0007 });   // over the cut (0.59 px could round to a pixel): a pinch, the hold stands (round 8)
 flip('scaleAboveCut', { height: 844, offsetTop: 0, scale: 1.02 }); // a standing zoom: the hold stands
 flip('onePixelPan', { height: 460, offsetTop: 1, scale: 1 });   // a standing pan of one pixel: the hold stands
 flip('subPixelPan', { height: 460, offsetTop: 0.4, scale: 1 }); // rounds to no pixel, the measured road would have stored 0: cleared (round 8)
@@ -1031,7 +1043,7 @@ class MobileFitExecutes(unittest.TestCase):
         # round 4 (2026-09-20): the bar wholly inside the band under a deep pan (384: the band 384..844), then a pinch (scale 2,
         # vv.height 230). The shell publishes the same band (the pan holds, --app-h is 230 * 2), so the bar is still inside it
         # and the strip stands. The round-3 reading handed a pinch back to upstream's height difference (844 - 460 > 120: a
-        # keyboard), so crossing scale 1.01 flipped the strip from 44px to 0 and the bar painted over the composer's bottom
+        # keyboard), so crossing the pinch cut (then the literal 1.01) flipped the strip from 44px to 0 and the bar painted over the composer's bottom
         # while the zoom held. kbDownZoomed (the clamp test above) is unchanged by this: with the keyboard gone under the zoom
         # the published band is the whole layout viewport and the bar is inside it there too.
         self.assertEqual(self.out["barInTheBandZoomed"], {"appTop": "384px", "appH": "460px", "barH": "44px"}, "the strip under the zoom")
@@ -1052,7 +1064,7 @@ class MobileFitExecutes(unittest.TestCase):
         # again under a zoom then published the 0 the fine window laid out), and that reopened this change's own band: with
         # the keyboard up and its pan standing the pinch road published 0px under a keyboard-sized --app-h. The road now clears
         # the hold only in a true no-pan state, one an unzoomed coarse run would have measured as 0 (no visual viewport, or
-        # one at or under the pinch road's cut, scale 1.01, whose offsetTop rounds to no positive pixel); with a pan standing, or under a standing zoom, the hold stands for the keyboard it
+        # one under the pinch road's cut, whose offsetTop rounds to no positive pixel); with a pan standing, or under a standing zoom, the hold stands for the keyboard it
         # was measured with. Every writing road writes the value it publishes; the clamp road writes nothing. Round 8
         # (2026-09-20): the no-pan test reads the value the measured road stores, one helper (panPx) for both roads, so a
         # sub-pixel offsetTop is the same answer on both: 0.4 is no pan (cleared here, 0px stored there) and 0.5 a pan (the
@@ -1064,13 +1076,29 @@ class MobileFitExecutes(unittest.TestCase):
         flips = self.out["flips"]
         self.assertEqual({k: v["fine"] for k, v in flips.items()}, {k: {"appTop": "0px", "appH": "844px"} for k in flips}, "the fine pointer publishes 0px and innerHeight in every state")
         self.assertEqual({k: v["coarseAgainZoomed"] for k, v in flips.items()},
-                         {"noVV": {"appTop": "0px", "appH": "460px"}, "atRest": {"appTop": "0px", "appH": "460px"}, "scaleAtCut": {"appTop": "0px", "appH": "460px"},
+                         {"noVV": {"appTop": "0px", "appH": "460px"}, "atRest": {"appTop": "0px", "appH": "460px"}, "scaleUnderCut": {"appTop": "0px", "appH": "460px"},
+                          "scaleOverCut": {"appTop": "83px", "appH": "460px"},
                           "scaleAboveCut": {"appTop": "83px", "appH": "460px"}, "onePixelPan": {"appTop": "83px", "appH": "460px"},
                           "subPixelPan": {"appTop": "0px", "appH": "460px"}, "halfPixelPan": {"appTop": "83px", "appH": "460px"},
                           "zoomedTop": {"appTop": "83px", "appH": "460px"}, "zoomPan": {"appTop": "83px", "appH": "460px"}},
                          "cleared where no pan stands and the viewport is unzoomed; kept under a standing pan or zoom")
         self.assertEqual((self.out["subPixelMeasured"], self.out["halfPixelMeasured"]), ("0px", "1px"),
                          "the measured road stores the same reading: 0.4 rounds to no pixel, 0.5 up to one")
+
+    def test_the_pinch_cut_is_the_scale_at_which_a_zooms_own_pan_can_round_to_a_pixel(self):
+        # round 8 (2026-09-20): the cut between an unzoomed report and a pinch had been the literal 1.01, undriven inside (1, 1.01)
+        # and derived nowhere (its origin commit said only "above 1"). It is derived from the measured road's own rounding now: a
+        # zoom at scale s pans by at most h(1 - 1/s) with no keyboard behind it, and the measured road stores round(offsetTop), so
+        # the cut is s = h/(h - 0.5), the scale at which the largest zoom pan reaches the half pixel that rounds up (1.00109 at h
+        # 460, 1.00059 at 844). Cells on both sides on both roads: the measured road runs under the cut and stores the pan it reads
+        # (90 from 90.4 at 1.0009), and at or over it the report is a pinch, the hold stands and the zoomed offsetTop (97.6, which
+        # the measured road would have published as 98px) is never published; the 0px road's flips clear under the cut (1.0005 at h
+        # 844) and keep the hold over it (1.0007). A cut of 1.01 publishes 98px here and clears the hold at 1.0007.
+        self.assertEqual(self.out["cutBelow"], {"appTop": "90px", "appH": "460px"}, "under the cut the measured road runs and stores its reading")
+        self.assertEqual(self.out["cutAbove"], {"appTop": "90px", "appH": "460px"}, "at or over the cut the report is a pinch: the hold stands, the zoomed offsetTop is never published")
+        flips = self.out["flips"]
+        self.assertEqual((flips["scaleUnderCut"]["coarseAgainZoomed"]["appTop"], flips["scaleOverCut"]["coarseAgainZoomed"]["appTop"]), ("0px", "83px"),
+                         "the 0px road clears under the cut and keeps the hold over it")
 
     def test_the_clamp_reads_the_layout_viewport_in_both_engine_models_and_binds_only_below_zero(self):
         # round 7 (2026-09-20). The clamp had read window.innerHeight as the layout viewport's height, which holds in Chromium

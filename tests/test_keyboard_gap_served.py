@@ -244,7 +244,7 @@ class KeyboardGap(unittest.TestCase):
         # round 4 (2026-09-20): a PINCH over the deep pan. The shell publishes the same band (the pan holds at 336, --app-h is
         # 254 * 2) and the bar is inside it, so the strip stands and the composer keeps its place above the bar. The round-3
         # reading handed a pinch back to upstream's height difference (844 - 508 > 120: a keyboard) and collapsed the strip
-        # at the 1.01 scale cut, so the bar painted over the composer's bottom for as long as the zoom held.
+        # at the pinch cut (then the literal 1.01), so the bar painted over the composer's bottom for as long as the zoom held.
         dzm = r["deepZoomed"]
         self.assertEqual(dzm["vv"]["scale"], 2, where + "the shell read the zoom: %r" % (dzm["vv"],))
         self.assertEqual((_px(dzm["appTop"]), _px(dzm["appH"])), (336, KB_H), where + "zoomed over the deep pan, the pan holds and --app-h is the scaled height: %r" % (dzm,))
