@@ -2748,7 +2748,11 @@ LIMIT_COUNT = ("a boundary failure on an item whose own teardown also fails fold
 
 class TheCountLimitIsStatedBesideTheCount(unittest.TestCase):
     """The limit of pytest's error count is stated where a reader of the count meets it: in summary_mismatch's docstring,
-    the matcher every run's count goes through, and beside ERRORS in the runs' shared half, which points at it."""
+    the matcher every run's count goes through, and beside ERRORS in the runs' shared half, which points at it. Keyed
+    on needles: LIMIT_COUNT in the docstring; summary_mismatch's name, THE COUNT'S LIMIT and the phrase "is not a
+    second count" in the ERRORS comment, read from _NestedRun's source by the comment's shape. The round-8 review
+    found the third needle the word "boundary" with a message claiming the meaning, so a comment saying the opposite
+    in a sentence carrying the word stayed green."""
 
     def test_the_matchers_docstring_states_the_limit(self):
         self.assertIn(LIMIT_COUNT, re.sub(r"\s+", " ", summary_mismatch.__doc__),
@@ -2763,8 +2767,10 @@ class TheCountLimitIsStatedBesideTheCount(unittest.TestCase):
                       "the comment beside _NestedRun.ERRORS does not point at summary_mismatch: %r" % note)
         self.assertIn("THE COUNT'S LIMIT", note,
                       "the comment beside _NestedRun.ERRORS does not name the limit (THE COUNT'S LIMIT): %r" % note)
-        self.assertIn("boundary", note,
-                      "the comment beside _NestedRun.ERRORS does not say a boundary verdict is no second count: %r" % note)
+        self.assertIn("is not a second count", note,
+                      "the comment beside _NestedRun.ERRORS does not say a boundary verdict on a last test that fails on "
+                      "its own is not a second count (the phrase 'is not a second count', the needle this pin reads): %r"
+                      % note)
 
 
 class TheStatedLimitIsWorded(unittest.TestCase):
