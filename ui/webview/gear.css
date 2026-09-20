@@ -85,7 +85,14 @@ body.rs-lifted.rs-pane-gone::before { display: none; }
    own text (what fast mode is and costs, why a greyed box is greyed, a refusal) is reachable by no road there, the pointer's
    included. gear-sub-focus-browser.test.ts parses the sheet and holds both (no rule mixes a :has() arm with a :has()-free
    arm; every :has() rule's loss is classified, the box's road by name) and drives the model, the sheet with every :has() rule
-   removed, in a browser, reading a row and the box. Not :is() to make the list forgiving: two rules say it. */
+   removed, in a browser, reading a row and the box. Not :is() to make the list forgiving: two rules say it. The same
+   unforgiving list applies to :focus-visible (Chromium before 86, Firefox before 85, WebKit before Safari 15.4, the WebKit
+   generation that also lacks :has()): this sheet's :focus-visible arms all ride :has() rules but one, the grip's
+   `.rs-grip:hover, .rs-grip:focus-visible` rule below, the sheet's ONE selector list mixing a plain arm with a modern one; on
+   such an engine the whole rule goes and the grip loses its hover style with it (a hover colour and wash, no description and no
+   road). Upstream's rule from before this branch, left as it is here (splitting it is a two-line change on an upstream line,
+   the maintainer's call); the parsed-sheet pin names it as the one classified exception, so a second such list reds (the
+   author's fixer pass after round 5, exclusions-6). */
 #rsettings .rs-row:hover .rs-sub, #rsettings .rs-widget:hover .rs-sub { display: block; position: absolute; left: 0; right: 0; top: 100%; z-index: 10;
   margin-top: 2px; color: var(--text-soft, #cdd3da); font-size: 0.92em; line-height: 1.35; background: var(--input-bg, #1b1b1c); border: 1px solid var(--hairline, #3a3a3a);
   border-radius: 6px; padding: 6px 9px; box-shadow: 0 4px 14px #000000aa; pointer-events: none; }

@@ -130,6 +130,15 @@ test("the sheet shows a description while its row holds a KEYBOARD focus: the sh
   // failure text names the rule
   const mixed = GEAR_RULES.filter((r) => { const n = r.arms.filter((a) => /:has\(/.test(a)).length; return n > 0 && n < r.arms.length; });
   assert.deepEqual(mixed.map((r) => r.selector), [], "no rule's selector list mixes a :has() arm with a :has()-free arm (an engine without :has() drops the whole rule, the plain arms with it)");
+  // the same walk over the OTHER modern pseudo-classes an older engine drops a list for (the author's fixer pass after round 5,
+  // exclusions-6): :focus-visible (Chromium before 86, Firefox before 85, Safari before 15.4), :is(), :where(), :focus-within;
+  // the one classified exception is the grip's hover/focus-visible rule, upstream's from before this branch, whose loss the sheet
+  // states (the grip's hover style goes with it, no description and no road); a second mixed list reds until classified
+  const MODERN: ReadonlyArray<readonly [string, RegExp]> = [[":focus-visible", /:focus-visible/], [":is()", /:is\(/], [":where()", /:where\(/], [":focus-within", /:focus-within/]];
+  const mixedModern = MODERN.flatMap(([tok, re]) => GEAR_RULES.filter((r) => { const n = r.arms.filter((a) => re.test(a)).length; return n > 0 && n < r.arms.length; }).map((r) => tok + " " + r.selector));
+  assert.deepEqual(mixedModern, [":focus-visible #rsettings .rs-grip:hover, #rsettings .rs-grip:focus-visible"],
+    "the sheet's one selector list mixing a plain arm with a modern pseudo-class arm is the grip's (upstream's rule; its loss on an engine without :focus-visible is stated in the sheet); a second such list reds here until its degradation is stated");
+  assert.match(GEAR_CSS, /the grip's\s+`\.rs-grip:hover, \.rs-grip:focus-visible` rule below, the sheet's ONE selector list mixing a plain arm with a modern one/, "the sheet states the exception by name");
   // and every :has() rule's loss on such an engine is named by its shape, never by a list: a STAND-DOWN (display: none: its loss
   // costs an extra tooltip, never a missing one), a KEYBOARD TWIN (every arm keyed on :focus-visible and a :focus-visible-free rule
   // with the same declarations standing: its loss costs the keyboard road alone), or the BOX's own pointer road (a :hover inside
