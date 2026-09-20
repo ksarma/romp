@@ -124,17 +124,19 @@ def _call_args(text, i):
     raise AssertionError("no closing parenthesis from %d" % i)
 
 
-# a wait-shaped call with the receiver before its dot captured whole (round 4): `budget.waitFor(` is the poll, `mybudget.waitFor(`
-# a locator's; the round-3 lookback read the seven characters BEFORE the dot and compared them to "budget.", which could never
-# match, so the receiver form of the poll classified as an uncapped locator wait, green only because the driver uses the alias
-WAIT_SITE = re.compile(r"(?:(?P<recv>[\w$]*)(?P<dot>\.))?\b(?P<name>goto|reload|goBack|goForward|waitFor\w*)\s*\(")
+# a wait-shaped call with the receiver before its dot captured whole, every dotted segment of it (round 4): `budget.waitFor(` is
+# the poll; `mybudget.waitFor(`, `obj.budget.waitFor(` and `this.budget.waitFor(` are a locator's or a member's. The round-3
+# lookback read the seven characters BEFORE the dot and compared them to "budget.", which could never match, so the receiver
+# form of the poll classified as an uncapped locator wait, green only because the driver uses the alias; round 4's first capture
+# took one segment, so a receiver whose LAST segment was budget read as the poll (the fixer pass)
+WAIT_SITE = re.compile(r"(?:(?P<recv>(?:[\w$]+\.)*[\w$]*)(?P<dot>\.))?\b(?P<name>goto|reload|goBack|goForward|waitFor\w*)\s*\(")
 
 
 def _wait_sites(text):
     """Every call site of a wait-shaped name in the (comment-stripped) driver: (form, args, line), the navigations included
     (round 3: `page.reload()` waited under playwright's default and was neither listed nor flagged). `.waitFor(` on a locator
-    is the form ".waitFor"; a bare `waitFor(` or `budget.waitFor(` is the budget's poll, the receiver compared whole (WAIT_SITE),
-    so a receiver merely ending in budget is a locator's."""
+    is the form ".waitFor"; a bare `waitFor(` or `budget.waitFor(` is the budget's poll, the receiver compared whole across its
+    dots (WAIT_SITE), so a receiver merely ending in budget, or whose last segment is budget (`obj.budget`), is a locator's."""
     out = []
     for m in WAIT_SITE.finditer(text):
         name = m.group("name")
@@ -274,18 +276,20 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
     def test_a_wait_site_is_classified_by_the_receiver_before_its_dot(self):
         """The census's classifier (_wait_sites), by cell: the budget's poll through the alias and through its receiver (`waitFor(`,
         `budget.waitFor(`) is the budget form, whose positional timeout makeBudget caps; a locator's `.waitFor(` (a bare receiver,
-        a chain) is the timeout form the census requires capped; a receiver merely ending in budget (`mybudget`, `xbudget`) is a
-        locator's; a navigation and a waitFor* keep their names; the alias assignment is no site. Round 4: the round-3 head's
-        lookback compared the seven characters before the dot to "budget." and could never match, so `budget.waitFor(` classified
-        as an uncapped locator wait (a driver with the alias deleted and every poll written through the receiver redded the census
-        with seven false "no timeout key" entries); the six-character compare the findings offered would have taken `mybudget` for
-        the poll, which is why the receiver is captured whole."""
+        a chain) is the timeout form the census requires capped; a receiver merely ending in budget (`mybudget`, `xbudget`) or
+        whose last dotted segment is budget (`obj.budget`, `this.budget`) is a locator's or a member's, never the poll; a
+        navigation and a waitFor* keep their names; the alias assignment is no site. Round 4: the round-3 head's lookback
+        compared the seven characters before the dot to "budget." and could never match, so `budget.waitFor(` classified as an
+        uncapped locator wait (a driver with the alias deleted and every poll written through the receiver redded the census
+        with seven false "no timeout key" entries); the six-character compare the findings offered would have taken `mybudget`
+        for the poll, which is why the receiver is captured whole; and round 4's first capture took one segment, so
+        `obj.budget.waitFor(` read as the poll (the fixer pass), which is why the capture spans every dotted segment."""
         self.assertEqual(_wait_sites('await budget.waitFor(fn, 1, "w");'), [("waitFor", 'fn, 1, "w"', 1)])
         self.assertEqual(_wait_sites('await waitFor(fn, cfg.waitsMs.held, "w");'), [("waitFor", 'fn, cfg.waitsMs.held, "w"', 1)])
         self.assertEqual(_wait_sites('await row.waitFor({ timeout: budget.capped(x) })'), [(".waitFor", "{ timeout: budget.capped(x) }", 1)])
         self.assertEqual(_wait_sites('\nawait pages.feed.locator(s).first().waitFor({ state: "attached", timeout: budget.capped(ms) });'),
                          [(".waitFor", '{ state: "attached", timeout: budget.capped(ms) }', 2)])
-        for recv in ("mybudget", "xbudget", "budget2", "the_budget"):
+        for recv in ("mybudget", "xbudget", "budget2", "the_budget", "$budget", "obj.budget", "this.budget", "a.b.budget"):
             self.assertEqual([n for n, _, _ in _wait_sites('await %s.waitFor(fn, 1, "w")' % recv)], [".waitFor"], "%s is not the budget" % recv)
         self.assertEqual([n for n, _, _ in _wait_sites('await page.goto(u, { timeout: budget.capped(x) }); await page.waitForFunction(f, null, { timeout: budget.capped(x) });')],
                          ["goto", "waitForFunction"])
