@@ -190,7 +190,11 @@ class Shell(unittest.TestCase):
         _has(self, "if(sPend){sPend=false;var o=sOpen;sOpen=null;if(o)o();}});}return;}", js)   # the load listener is armed once for the element's life (review round 3 of the lazy panes, 2026-09-19: a re-fetch over a dead document reuses it) and posts the ask the tap that fetched recorded (review round 4, correctness-2: it closed over the first tap's)
         # the tap-time read (the same round, kernel-3; the marker read added in review round 4, kernel-2): no document, about:blank, or a document without the
         # pane shim's marker (an error body) drops the src and the pending flag so the promotion below fetches again
-        _has(self, "if(f.getAttribute('src')){var live=false;try{var sd=f.contentDocument;live=!!(sd&&sd.URL&&sd.URL!=='about:blank'&&f.contentWindow&&typeof f.contentWindow.__rompApp==='string');}catch(e){}", js)
+        _has(self, "if(f.getAttribute('src')){var live=false,parsed=false;try{var sd=f.contentDocument;parsed=!!(sd&&sd.URL&&sd.URL!=='about:blank');live=!!(parsed&&f.contentWindow&&typeof f.contentWindow.__rompApp==='string');}catch(e){}", js)
+        # review round 5 (2026-09-20, ui-1): a committed document with no marker and the pending flag still up is a fetch in flight, so the tap
+        # rides it once (its ask re-recorded for the load) and a further tap in the unchanged state restarts; the dead shapes restart as before
+        _has(self, "if(!live&&parsed&&sPend&&!sDeferred){sDeferred=true;sOpen=open;return;}", js)
+        _has(self, "if(!live){try{f.removeAttribute('src');}catch(e){}sPend=false;}}", js)
         _has(self, "if(sPend)return;", js)
         _has(self, "if(gear)gear.onclick=function(){window.__rompOpenSettings();};", js, "the rail's gear")
         _has(self, "if(m.romp==='openSettings')window.__rompOpenSettings(m.tab,m.section);", js, "a pane's ask is forwarded, its tab and its section with it (T379)")

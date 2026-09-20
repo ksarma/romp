@@ -67501,6 +67501,7 @@ function feedHere(){return !(window.__rompPaneEnabled&&!window.__rompPaneEnabled
 // document still on its way would be dropped, and the first click would show nothing. A second ask while that
 // one waits is not queued: the page's opener toggles, so two would open and close it.
 var sPend=false,sArmed=false,sOpen=null;   // sOpen: the poster of the ask the fetch in flight answers, written by the tap that fetched and read once by the one load listener (review round 4, 2026-09-19, correctness-2 and extra6-2)
+var sDeferred=false;   // [fork] review round 5 (2026-09-20, ui-1): a tap has ridden the fetch in flight (the deferral below), once per fetch; cleared where a fetch starts
 window.__rompOpenSettings=function(tab,section){var f=document.getElementById('f-settings');if(!f)return;
 // tab and section (T379): the chat strip's tab-widgets gear asks for the Chat tab at its Tab widgets section; the rail's gear names none (the remembered tab)
 var msg={romp:'openSettings'};if(typeof tab==='string'&&tab)msg.tab=tab;if(typeof section==='string'&&section)msg.section=section;
@@ -67515,13 +67516,20 @@ var open=function(){try{f.contentWindow&&f.contentWindow.postMessage(msg,'*');}c
 // under a stale cookie, a proxy's 502 body) is not the page: it cannot hear the ask, and this frame is display:none until the page
 // speaks, so the lazy panes' shown-as-served rule has no bearing here; before this a same-origin error body left the gear dead for the
 // page's life, every tap posting into it. A body that stays an error leaves the gear silently unopenable still (a disclosed residual).
-// A tap while the first fetch is still in flight, before the document commits or before its inline shim has run (the page's two
-// stylesheets load ahead of it), reads not-live too and restarts it (one open still, at that load, one page fetch later; the earlier "not
-// queued" rule kept a second tap from toggling the page twice, and the restart keeps that); the gear paints no failure state, a second tap is the recovery.
-if(f.getAttribute('src')){var live=false;try{var sd=f.contentDocument;live=!!(sd&&sd.URL&&sd.URL!=='about:blank'&&f.contentWindow&&typeof f.contentWindow.__rompApp==='string');}catch(e){}
+// A tap while the first fetch is still in flight reads not-live too. Before the document commits (about:blank, or no document) it restarts
+// the fetch (one open still, at that load; the earlier "not queued" rule kept a second tap from toggling the page twice, and the restart
+// keeps that). Once the document has COMMITTED at the url but its inline shim has not run (the page's two stylesheets load ahead of it),
+// the marker alone cannot tell "still in flight" from "finished and not the page": the LOAD EVENT can (review round 5, 2026-09-20, ui-1),
+// since the listener below clears the pending flag on the page's load. With the flag still up, the tap rides the fetch already running,
+// re-recording its own ask so the load posts this tap's tab and section, and it does so ONCE: a further tap in the unchanged state
+// restarts (the refuter's rule: a link lost mid-load, the document committed and its shim never arriving, must not leave the gear
+// unopenable for the page's life). Before this the second tap tore the navigation down and started a second load, where the parent
+// rode the one running. The gear paints no failure state; a further tap is the recovery.
+if(f.getAttribute('src')){var live=false,parsed=false;try{var sd=f.contentDocument;parsed=!!(sd&&sd.URL&&sd.URL!=='about:blank');live=!!(parsed&&f.contentWindow&&typeof f.contentWindow.__rompApp==='string');}catch(e){}
+  if(!live&&parsed&&sPend&&!sDeferred){sDeferred=true;sOpen=open;return;}   // [fork] review round 5 (ui-1): committed at the url, no marker yet, no load yet: the fetch is in flight, so this tap rides it once (its ask recorded for the load; the comment above)
   if(!live){try{f.removeAttribute('src');}catch(e){}sPend=false;}}
 if(!f.getAttribute('src')){var u=f.getAttribute('data-src');if(!u)return;sPend=true;f.setAttribute('src',u);
-  sOpen=open;   // [fork] review round 4 (2026-09-19, correctness-2 and extra6-2): the ask THIS fetch answers, read by the listener below at the page's load. The listener is armed once for the element's life and closed over the first tap's open (and so its msg), so every re-fetch after a dead document, and the restart a tap during the first fetch makes, opened the gear at the FIRST tap's tab and section whatever the later tap named; the tap that fetches records its own ask here and the listener posts and clears it
+  sOpen=open;sDeferred=false;   // [fork] review round 4 (2026-09-19, correctness-2 and extra6-2): the ask THIS fetch answers (sDeferred: a new fetch, no tap has ridden it yet, review round 5 ui-1), read by the listener below at the page's load. The listener is armed once for the element's life and closed over the first tap's open (and so its msg), so every re-fetch after a dead document, and the restart a tap during the first fetch makes, opened the gear at the FIRST tap's tab and section whatever the later tap named; the tap that fetches records its own ask here and the listener posts and clears it
   if(!sArmed){sArmed=true;f.addEventListener('load',function(){try{if(f.contentDocument&&f.contentDocument.URL==='about:blank')return;}catch(e){}   // the empty document's own load, not the page's; ONE listener for the element's life (a re-fetch after a failed one reuses it: review round 3)
     if(sPend){sPend=false;var o=sOpen;sOpen=null;if(o)o();}});}return;}
 if(sPend)return;

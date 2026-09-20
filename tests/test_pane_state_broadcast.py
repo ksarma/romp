@@ -964,6 +964,28 @@ window.__rompOpenSettings('panes', 'files');
 out.gearInFlightSecond = Object.assign(snap(), { src: ATTRS['f-settings'].src, sets: SETTINGS_SETS - setsBefore, waiting: SETTINGS_LOADS.length });
 SETTINGS_URL = 'http://TESTHOST:1/settings'; SETTINGS_APP = 'settings'; SETTINGS_LOADS.slice().forEach((f) => f());   // the restarted fetch's page loads
 out.gearInFlightLoaded = Object.assign(snap(), { sets: SETTINGS_SETS - setsBefore }); reset();
+// (g) review round 5 (2026-09-20, ui-1): a tap while the page has COMMITTED at /settings but its inline shim has not run (no marker yet,
+// no load event yet: the stylesheets load ahead of the shim). Round 4's read called that not-live and restarted, tearing down the
+// navigation in flight where the parent rode it. The load event tells the two apart: with the pending flag still up the tap rides the
+// fetch once, re-recording its own ask so the load posts THIS tap's names; a further tap in the unchanged state restarts (the refuter's
+// once rule: a link lost mid-load must not leave the gear unopenable); no document and about:blank restart as before ((a), (b), (f))
+delete ATTRS['f-settings'].src; SETTINGS_URL = 'about:blank'; SETTINGS_APP = undefined;
+window.__rompOpenSettings();                                   // the first tap fetches
+SETTINGS_URL = 'http://TESTHOST:1/settings';                   // the document commits at the url; its shim has not run, its load has not fired
+window.__rompOpenSettings('chat', 'tab-widgets');              // the second tap rides the fetch, its ask recorded
+out.gearCommittedSecond = Object.assign(snap(), { src: ATTRS['f-settings'].src, sets: SETTINGS_SETS - setsBefore, waiting: SETTINGS_LOADS.length });
+window.__rompOpenSettings('panes', 'files');                   // a third tap in the unchanged state: the restart
+out.gearCommittedThird = Object.assign(snap(), { src: ATTRS['f-settings'].src, sets: SETTINGS_SETS - setsBefore, waiting: SETTINGS_LOADS.length });
+SETTINGS_APP = 'settings'; SETTINGS_LOADS.slice().forEach((f) => f());   // the restarted fetch's page loads
+out.gearCommittedLoaded = Object.assign(snap(), { sets: SETTINGS_SETS - setsBefore }); reset();
+// (h) the same, with no third tap: the load delivers the rider's ask, its names with it
+delete ATTRS['f-settings'].src; SETTINGS_URL = 'about:blank'; SETTINGS_APP = undefined;
+window.__rompOpenSettings();
+SETTINGS_URL = 'http://TESTHOST:1/settings';
+window.__rompOpenSettings('chat', 'tab-widgets');
+out.gearRode = Object.assign(snap(), { sets: SETTINGS_SETS - setsBefore });
+SETTINGS_APP = 'settings'; SETTINGS_LOADS.slice().forEach((f) => f());
+out.gearRodeLoaded = Object.assign(snap(), { sets: SETTINGS_SETS - setsBefore }); reset();
 // the Feed pane off in this browser (the gear's Panes section): a browse ask naming no pane takes the Files pane's
 // arm (the feed cannot be lifted), a browseClosed puts nothing back, and a phone gets the Files tab, not the feed's
 FEED_OFF = true;
@@ -1133,9 +1155,31 @@ class RelayArms(unittest.TestCase):
         self.assertEqual((self.out["gearErrorBodyLoaded"]["settings"], self.out["gearErrorBodyLoaded"]["sets"]), ([{"romp": "openSettings"}], 3), "the re-fetched page's load, its marker set, delivers the open once")
         self.assertEqual((self.out["gearErrorBodyMirror"]["sets"], self.out["gearErrorBodyMirror"]["settings"]), (3, [{"romp": "openSettings"}]), "the marked page is not re-fetched")
         js = km._LANDING_SETTINGS_JS
-        self.assertIn("if(f.getAttribute('src')){var live=false;try{var sd=f.contentDocument;live=!!(sd&&sd.URL&&sd.URL!=='about:blank'&&f.contentWindow&&typeof f.contentWindow.__rompApp==='string');}catch(e){}", js, "the tap-time read, before the promotion branch: the url and the marker")
+        self.assertIn("if(f.getAttribute('src')){var live=false,parsed=false;try{var sd=f.contentDocument;parsed=!!(sd&&sd.URL&&sd.URL!=='about:blank');live=!!(parsed&&f.contentWindow&&typeof f.contentWindow.__rompApp==='string');}catch(e){}", js, "the tap-time read, before the promotion branch: the url (parsed) and the marker (live)")
         self.assertIn("if(!live){try{f.removeAttribute('src');}catch(e){}sPend=false;}}", js)
-        self.assertLess(js.index("var live=false;"), js.index("if(!f.getAttribute('src')){var u=f.getAttribute('data-src');"), "…so the promotion below re-fetches in the same tap")
+        self.assertLess(js.index("var live=false,parsed=false;"), js.index("if(!f.getAttribute('src')){var u=f.getAttribute('data-src');"), "…so the promotion below re-fetches in the same tap")
+
+    def test_a_tap_over_a_committed_page_whose_shim_has_not_run_rides_the_fetch_once_and_a_further_tap_restarts(self):
+        # review round 5 (2026-09-20, ui-1): round 4's tap-time read counted a settings page that had committed but whose inline shim had
+        # not run as not-live, so a second tap in that window tore down the navigation in flight and started a second load, where the
+        # parent rode the one running. The load event distinguishes the two (the listener clears the pending flag on the page's load):
+        # with the flag up the tap rides the fetch ONCE, re-recording its own ask; a further tap in the unchanged state restarts (the
+        # refuter's amendment: a link lost mid-load must not leave the gear unopenable for the page's life)
+        s2 = self.out["gearCommittedSecond"]
+        self.assertEqual((s2["src"], s2["sets"], s2["settings"], s2["waiting"]), ("/settings", 7, [], 1), "the second tap over a committed document with no marker and the pending flag up rides the fetch: no new src assignment, nothing posted, still one listener: %r" % (s2,))
+        s3 = self.out["gearCommittedThird"]
+        self.assertEqual((s3["src"], s3["sets"], s3["settings"], s3["waiting"]), ("/settings", 8, [], 1), "a third tap in the unchanged state restarts the fetch (the once rule): one more assignment: %r" % (s3,))
+        self.assertEqual(self.out["gearCommittedLoaded"]["settings"], [{"romp": "openSettings", "tab": "panes", "section": "files"}], "the restarted fetch's load delivers the THIRD tap's ask")
+        r = self.out["gearRode"]
+        self.assertEqual((r["sets"], r["settings"]), (9, []), "the rider alone: one fetch for the two taps, nothing posted yet: %r" % (r,))
+        self.assertEqual(self.out["gearRodeLoaded"]["settings"], [{"romp": "openSettings", "tab": "chat", "section": "tab-widgets"}], "the load delivers the tap that rode the fetch, its names with it (the re-recorded ask)")
+        self.assertEqual(self.out["gearRodeLoaded"]["sets"], 9)
+        js = km._LANDING_SETTINGS_JS
+        self.assertIn("var sDeferred=false;", js, "the once flag, in the shared scope")
+        self.assertIn("  if(!live&&parsed&&sPend&&!sDeferred){sDeferred=true;sOpen=open;return;}", js, "the deferral: committed, no marker, no load yet, not yet ridden")
+        self.assertLess(js.index("var live=false,parsed=false;"), js.index("if(!live&&parsed&&sPend&&!sDeferred)"), "read, then the deferral")
+        self.assertLess(js.index("if(!live&&parsed&&sPend&&!sDeferred)"), js.index("if(!live){try{f.removeAttribute('src');}catch(e){}sPend=false;}}"), "…before the restart, which the dead shapes still take")
+        self.assertIn("\n  sOpen=open;sDeferred=false;", js, "a fetch starting clears the flag, on the fork line after the upstream promotion line")
 
     def test_the_re_fetched_pages_load_delivers_the_latest_taps_ask_with_its_tab_and_section(self):
         # review round 4 (2026-09-19, correctness-2 and extra6-2): the gear's one load listener (armed for the element's life since round 3) closed
