@@ -1723,19 +1723,45 @@ _CENSUSES = (
 )
 
 
+def _nested_codes(code):
+    """The code object `code` and every code object reachable from it through co_consts, recursively, each once by identity, `code`
+    first: the frames a call of the function compiled to `code` can run inside the function's own source, the function itself, the
+    defs and lambdas nested in it at any depth, and the comprehensions the interpreter compiles as functions (generator expressions on
+    every interpreter this module runs on; list, set and dict comprehensions on 3.10 and 3.11, which 3.12 and later inline, so the
+    set's size is the interpreter's and no count is pinned). The door witness traces the door through this set (review round 7, the
+    seventh-axis hunt: the trace read the door's own code object alone, a hand-written singleton where the interpreter holds the
+    population, so the corrupt bump moved into a helper defined inside the door's handler executed in a frame the trace did not read,
+    and the corrupt drive red its executed-sites line with a false cause, the site named as not executed while the counters had seen
+    it). Derives: the set from the interpreter's constants, every level down. Bounds: a function defined outside `code` and called from
+    it, a callee, is among no constant of it and is not in the set; a bump in a callee is no site of the door's tree either
+    (_door_regions reads the door's source), so the counters alone see it, the drive reds where the trace and the counters must agree,
+    and which callee each drive reaches is the door witness's class docstring's derivation."""
+    found, todo = {id(code): code}, [code]
+    while todo:
+        for const in todo.pop().co_consts:
+            if isinstance(const, types.CodeType) and id(const) not in found:
+                found[id(const)] = const
+                todo.append(const)
+    return tuple(found.values())
+
+
 @contextlib.contextmanager
-def _line_trace(code, hit):
-    """Record in `hit` the line number of every 'line' event in frames running `code` while the block runs: sys.settrace on this
-    thread, a tracer that traces those frames alone (any other frame gets no local tracer) and is put back the way it was found. The
-    door witness reads through it which bump sites a call of the door executed, so a site is tied to a drive by execution and not by
-    the name of the key it bumps (review round 6, lens two)."""
+def _line_trace(codes, hit):
+    """Record in `hit` the line number of every 'line' event in frames running any code object of `codes`, by identity, while the
+    block runs: sys.settrace on this thread, a tracer that traces those frames alone (any other frame gets no local tracer) and is put
+    back the way it was found. The door witness hands it the door's code object and every code object nested in it (_nested_codes),
+    so a bump site of the door is tied to a drive by execution and not by the name of the key it bumps (review round 6, lens two),
+    whether the site runs in the door's own frame or in the frame of a helper defined inside the door (review round 7, the
+    seventh-axis hunt). Derives: nothing; it records the lines that run. Bounds: `codes`, the caller's set, and this thread."""
+    ids = {id(c) for c in codes}
+
     def local(frame, event, _arg):
         if event == "line":
             hit.add(frame.f_lineno)
         return local
 
     def tracer(frame, event, _arg):
-        return local if event == "call" and frame.f_code is code else None
+        return local if event == "call" and id(frame.f_code) in ids else None
     previous = sys.gettrace()
     sys.settrace(tracer)
     try:
@@ -2469,7 +2495,8 @@ class TheDoorBumpsAtMostOneSecondKeyPerCall(_WalkHarness):
     second refuse branch conditioned on state no drive arranges, was on no driven road with the module green): the sites are read
     from the real door's source as (key, ordinal) pairs, the ordinal counting a key's sites in source order (_door_regions, the
     roster pin's read, mapped to the file's lines as _pass_through_lines maps a hand-off), each row of ROADS names the sites its
-    call executes, each drive asserts by a trace of the door's own frame (_line_trace) that exactly those sites ran, and the
+    call executes, each drive asserts by a trace of the door's frames, its own code object and every code object nested in it
+    (_line_trace over _nested_codes), that exactly those sites ran, and the
     coverage case derives that every site of the door is named by a row or by UNDRIVEN_SITES, with none in both, so a new site
     reds naming its line until a drive or a statement names it. UNDRIVEN_SITES is empty: every bump site of the door is executed by
     a drive. The door's `if store.get("_unread")` arm, the second unreadable_journal site, was its one row until the round-7 fixes, on
@@ -2498,16 +2525,21 @@ class TheDoorBumpsAtMostOneSecondKeyPerCall(_WalkHarness):
     unreadable_journal, whose journal read raises before the parse; one on the door's _unread arm, between its bump and its return,
     by the unread drive alone and by no harness case's pass (the harness's stores carry no mark and their journals read).
     Derives: the door's bump sites as (key, ordinal) from the real door's source through _door_regions (_sites); the sites each call
-    executed, by a trace of the door's own code object (_line_trace); the coverage, the door's sites against the rows' sites plus
+    executed, by a trace of the door's code object and every code object nested in it, the set derived from co_consts (_line_trace
+    over _nested_codes), the set checked by the coverage case against the defs nested in the door's statement lists both ways and, since
+    the door holds no nested code object today, by execution over a stand-in with a def two levels down, a lambda and a generator
+    expression, the old singleton as the control; the coverage, the door's sites against the rows' sites plus
     UNDRIVEN_SITES both ways and none in both; the keys ROADS expects against both rosters both ways; the rows against the class's
     method names both ways; per site, whether the statement list holding it hands the read to load_goals (_door_hands_off, the roster
     pin's predicate), each row's hand-off column against the count over its sites, and the no-hand-off sites of hand-off keys, the
     _unread arm alone today, each executed by a drive and in no row of UNDRIVEN_SITES; the counters per call from the real
     _SHARED_STATS and goal_io loads. Bounds: the expected call-key and second-key deltas per road and each road's arrangement,
     hand-written and held by execution; the arrangement's limit, a one-node store for one sid and one
-    call, so a bump conditioned on state no drive arranges is on no driven road; and the trace, which reads the door's own code
-    object alone, so a site that executes in the frame of a helper defined inside the door is seen by the counters and not by the
-    trace (the two must agree per call, so such a bump reds its drive by the counters, with the site's line unnamed)."""
+    call, so a bump conditioned on state no drive arranges is on no driven road; the stand-in's shape, hand-written, a contract over
+    the mechanism; and the trace's reach, the door's source: a bump in a function defined outside the door and called from it, a
+    callee, is no site of the door's tree (_door_regions reads the door's source) and runs in no frame of the derived set, so the
+    counters alone see it and the drive reds at the line where the trace's keys and the counters' must agree, naming the key, and
+    which callee each drive witnesses is the derivation above."""
 
     # The roads and the deltas each drive asserts: road -> (call keys, second keys, goal_io loads hand-offs, the exception the call
     # propagates or None, the bump SITES the call executes as (key, ordinal) pairs, the ordinal counting that key's sites in the door's
@@ -2515,8 +2547,8 @@ class TheDoorBumpsAtMostOneSecondKeyPerCall(_WalkHarness):
     # rosters, that a row's sites name exactly the keys its deltas name, that the sites over every row plus UNDRIVEN_SITES are
     # exactly the door's own bump sites (_sites), that each row's hand-off column is the number of its sites whose statement list ends
     # in `return load_goals(...)` (_sites reads it from the door's lists through _door_hands_off, the roster pin's predicate), and from
-    # the class's method names that every road here has a method named for it; each drive asserts by a trace of the door's frame that
-    # its call executed exactly its row's sites.
+    # the class's method names that every road here has a method named for it; each drive asserts by a trace of the door's frames (its
+    # code object and every code object nested in it) that its call executed exactly its row's sites.
     ROADS = {
         "hit": ({"hit": 1}, {}, 0, None, (("hit", 0),)),
         "miss": ({"miss": 1}, {}, 0, None, (("miss", 0),)),
@@ -2547,18 +2579,24 @@ class TheDoorBumpsAtMostOneSecondKeyPerCall(_WalkHarness):
         pin's read of the door, a roster row) and mapped to the file's lines as _pass_through_lines maps a hand-off (inspect gives the
         source with its first line's number); and whether the statement list holding each as a direct statement hands the read to
         load_goals (_door_hands_off, the roster pin's predicate over the same lists). A bump that is a direct statement of no list (an
-        assignment's value, say) hands nothing off here, and the row whose drive reads a load at it disagrees with the derivation. The
+        assignment's value, say) hands nothing off here, and the row whose drive reads a load at it disagrees with the derivation. Third,
+        the sorted names of the defs nested in the door, every FunctionDef or AsyncFunctionDef that is a statement of one of the same
+        lists below the parsed source's own body (which holds the door's def), at any depth, the tree's side of the coverage case's
+        check on the traced code objects (_nested_codes). The
         real door is the one setUp saved before it stood the recorder on the name."""
         door = self.saved_jd["load_goals_shared"]
         src, start = inspect.getsourcelines(door)
-        bumps, blocks, _tries = _door_regions(ast.parse(textwrap.dedent("".join(src))))
+        tree = ast.parse(textwrap.dedent("".join(src)))
+        bumps, blocks, _tries = _door_regions(tree)
         handing = {(s.lineno, _door_stmt_key(s)): _door_hands_off(blk) for blk in blocks for s in blk if _door_stmt_key(s) is not None}
         by_key = {}
         for rel, key in sorted(bumps):
             by_key.setdefault(key, []).append(rel)
         lines = {(key, i): start - 1 + rel for key, rels in by_key.items() for i, rel in enumerate(rels)}
         hands = {(key, i): handing.get((rel, key), False) for key, rels in by_key.items() for i, rel in enumerate(rels)}
-        return lines, hands
+        nested = sorted(s.name for blk in blocks if blk is not tree.body      # the parsed source's own body holds the door's def
+                        for s in blk if isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef)))
+        return lines, hands, nested
 
     def _store_path(self):
         return jd.GOALDIR / (SID_C + ".json")
@@ -2572,11 +2610,15 @@ class TheDoorBumpsAtMostOneSecondKeyPerCall(_WalkHarness):
                         "%s drives %r" % (self._testMethodName, road))
         expect_calls, expect_second, expect_loads, raises, expect_sites = self.ROADS[road]
         here = os.path.basename(os.path.realpath(__file__))
-        (sites, _hands), hit = self._sites(), set()
+        (sites, _hands, _nested), hit = self._sites(), set()
+        door = self.saved_jd["load_goals_shared"]
+        codes = _nested_codes(door.__code__)
+        self.assertIs(codes[0], door.__code__, "the set the trace reads is derived from the real door's code object, which heads it: %r"
+                                               % [c.co_name for c in codes])
         s0, g0 = jd.shared_store_stats(), jd.goal_io_stats()["loads"]
         self.calls.clear(); self.writer.clear()
         err, store, exc = io.StringIO(), None, None
-        with contextlib.redirect_stderr(err), _line_trace(self.saved_jd["load_goals_shared"].__code__, hit):
+        with contextlib.redirect_stderr(err), _line_trace(codes, hit):
             if raises is None:
                 store = jd.load_goals_shared(SID_C)
             else:
@@ -2588,7 +2630,8 @@ class TheDoorBumpsAtMostOneSecondKeyPerCall(_WalkHarness):
         second = {k: s1[k] - s0[k] for k in SHARED_SECOND_KEYS if s1[k] != s0[k]}
         executed = sorted(site for site, line in sites.items() if line in hit)
         self.assertEqual(executed, sorted(expect_sites),
-                         "%s road: the bump sites the call executed, read by a trace of the door's own frame against the sites _door_regions "
+                         "%s road: the bump sites the call executed, read by a trace of the door's frames (its code object and every code "
+                         "object nested in it, derived from co_consts) against the sites _door_regions "
                          "reads from its source ((key, ordinal), the ordinal counting that key's sites in source order), are exactly the "
                          "road's, %r, and were %r; so a site is tied to this drive by execution and not by its key's name, and a second site "
                          "bumping an already driven key is on no driven road until a row names it (review round 6, lens two); the sites by "
@@ -2641,7 +2684,7 @@ class TheDoorBumpsAtMostOneSecondKeyPerCall(_WalkHarness):
                              "%s: the sites column names exactly the keys the row's deltas name (a site of a key whose counter the road "
                              "does not move, or a moved key with no site, is a row that disagrees with itself): sites %r, deltas %r"
                              % (road, road_sites, sorted(set(calls) | set(second))))
-        sites, hands = self._sites()
+        sites, hands, nested = self._sites()
         driven = {site for _road, row in self.ROADS.items() for site in row[4]}
         stated = set(self.UNDRIVEN_SITES)
         self.assertEqual(sorted(driven & stated), [], "a site a drive executes is stated undriven: remove the statement: %r" % sorted(driven & stated))
@@ -2672,6 +2715,60 @@ class TheDoorBumpsAtMostOneSecondKeyPerCall(_WalkHarness):
                          "which reads 0 hand-offs at it, and is in no row of UNDRIVEN_SITES: a pass that reached it would red _pass's writer "
                          "reconciliation (every bump of a hand-off key counted as a load), so a drive outside any pass is its one witness; "
                          "such sites %r, of which undriven %r" % (silent, sorted(set(silent) - driven)))
+        # the trace's reach (review round 7, the seventh-axis hunt): the drives trace the door through _nested_codes, its code object and
+        # every code object nested in it, derived from co_consts. The set against the door's tree: every def nested in the door's
+        # statement lists (the third map of _sites, read from the lists _door_regions holds) is a code object of the set by name, and
+        # every unbracketed name of the set below the door is such a def, both ways (the bracketed names, <lambda>, <genexpr> and the
+        # comprehensions of 3.10 and 3.11, are no statement and are traced without a tree-side twin). The door holds no nested code
+        # object today, so both sides are empty there and the check would pass with a derivation answering the door alone; the mechanism
+        # is therefore held by execution over a stand-in, each of its code objects traced alone first
+        door = self.saved_jd["load_goals_shared"]
+        codes = _nested_codes(door.__code__)
+        self.assertIs(codes[0], door.__code__, "the derived set is headed by the real door's code object: %r" % [c.co_name for c in codes])
+        self.assertEqual(sorted(c.co_name for c in codes[1:] if not c.co_name.startswith("<")), nested,
+                         "the defs nested in the door by the interpreter's constants (_nested_codes, the unbracketed names below the door) "
+                         "are the defs nested in the door's statement lists by its tree (_sites), both ways: by the constants %r, by the tree "
+                         "%r; a def the tree holds and the constants do not is a frame the trace would not read"
+                         % (sorted(c.co_name for c in codes[1:] if not c.co_name.startswith("<")), nested))
+
+        def stand_in(x):
+            def helper(y):
+                def deeper(z):
+                    return z + 1
+                return deeper(y) + 1
+            twice = lambda v: (
+                v * 2)
+            return helper(x) + twice(x) + sum(w for w in (x,))
+
+        derived = _nested_codes(stand_in.__code__)
+        self.assertEqual(sorted(c.co_name for c in derived), ["<genexpr>", "<lambda>", "deeper", "helper", "stand_in"],
+                         "the stand-in's code objects by the derivation: itself, a def, a def nested in that def, a lambda and a generator "
+                         "expression (its shape, a contract), and were %r" % sorted(c.co_name for c in derived))
+        own = {}
+        for code in derived:
+            with _line_trace((code,), set()) as lines:
+                self.assertEqual(stand_in(1), 6, "the stand-in ran: helper(1) is 3, twice(1) is 2, the sum over (1,) is 1")
+            own[code.co_name] = set(lines)
+        self.assertEqual(sorted(name for name, lines in own.items() if not lines), [],
+                         "every code object of the stand-in ran a line under a trace of it alone (a code object the trace never sees is a "
+                         "frame a bump could hide in): none recorded for %r" % sorted(name for name, lines in own.items() if not lines))
+        with _line_trace(derived, set()) as together:
+            stand_in(1)
+        self.assertEqual(together, set().union(*own.values()),
+                         "a trace of the derived set records exactly the lines the traces of its members record one at a time (the set is "
+                         "the composition of the singletons): together %r, one at a time %r" % (sorted(together), sorted(set().union(*own.values()))))
+        outer = own["stand_in"]
+        alone = {name: lines - outer for name, lines in own.items() if not name.startswith("<")}
+        self.assertEqual(sorted(name for name, lines in alone.items() if name != "stand_in" and not lines), [],
+                         "each def nested in the stand-in runs a line the stand-in's own frame never runs (the lines the singleton lost): "
+                         "none for %r" % sorted(name for name, lines in alone.items() if name != "stand_in" and not lines))
+        with _line_trace((stand_in.__code__,), set()) as control:
+            stand_in(1)
+        self.assertEqual(control, outer, "the control, the singleton the trace read until the round-7 fixes, records the stand-in's own "
+                                         "lines alone: %r against %r" % (sorted(control), sorted(outer)))
+        self.assertEqual(sorted(control & set().union(*(alone[n] for n in alone if n != "stand_in"))), [],
+                         "and none of the lines the nested defs alone run, so a bump on such a line was invisible to it: %r"
+                         % sorted(control & set().union(*(alone[n] for n in alone if n != "stand_in"))))
 
     def test_the_miss_road_a_seeded_store_read_once_fills_and_publishes(self):
         self._seed(SID_C, stamped=False)
