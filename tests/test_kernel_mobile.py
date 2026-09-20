@@ -23,6 +23,7 @@ os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XD
 km = load_source("romp_kernel_mobile", os.path.join(BIN, "romp-kernel"))
 sys.path.insert(0, HERE)
 from test_pane_shim_return import HARNESS as _PANE_HARNESS   # noqa: E402  the pane shim's node fakes (never its TestCases), for the linked runs below
+import served_css   # noqa: E402  the served page's parsed rules (loads no romp code)
 
 
 def _mobile_js():
@@ -171,7 +172,8 @@ class LandingShell(unittest.TestCase):
         # regression: the mobile pane was sized with height:auto + bottom offset; mobile browsers read
         # height:auto on an iframe as "size to content" and collapse it (chat shrank to its tab bar).
         html = km._landing()
-        self.assertIn("100dvh", html)                          # explicit, address-bar-aware viewport height
+        # the unit read from the parsed declarations (a served comment spells 100dvh too; a page-text pin was satisfiable by it)
+        self.assertTrue(any("100dvh" in v for r in served_css.rules(html) for _, v in r.decls), "explicit, address-bar-aware viewport height")
         self.assertNotIn("height:auto;display:none", html)     # the collapsing iframe rule is gone
 
     def test_shell_reserves_the_bar_height_so_it_cannot_cover_the_pane(self):
@@ -265,7 +267,7 @@ class LandingShell(unittest.TestCase):
         self.assertEqual(html.count("viewport-fit=cover"), 1)         # exactly the runtime flip…
         self.assertIn("if(navigator.standalone)", html)               # …behind the iOS-standalone gate
         self.assertLess(html.index("if(navigator.standalone)"), html.index("viewport-fit=cover"))
-        self.assertIn("100dvh", html)            # still address-bar-aware
+        self.assertTrue(any("100dvh" in v for r in served_css.rules(html) for _, v in r.decls), "still address-bar-aware (a parsed declaration, not page text)")
         self.assertIn("user-scalable=no", _viewport_meta_tokens(html))  # pinch-zoom governance preserved alongside the change, read from the meta
 
     def test_keyboard_shrinks_content_and_never_strands_a_scroll(self):
@@ -316,12 +318,17 @@ class TimelineTouchSurface(unittest.TestCase):
         # that into a native horizontal scroller that beat the one-finger pan gesture. On a touch device the
         # SVG must fit the screen (width:100%) with no overflow scroller, so the gesture owns horizontal pan.
         # The wrapper styles moved to ui/webview/timeline-pane.css (shared with the VS Code view); the
-        # kernel reads that file live, so pin the served page rather than a constant.
-        css = km._timeline_page()
-        self.assertIn("@media (pointer:coarse)", css)
-        self.assertIn("overflow-x:hidden", css)
-        self.assertIn("touch-action:pan-y", css)
-        self.assertIn(".romp-tl-wrap svg{width:100%", css)
+        # kernel reads that file live, so pin the served page rather than a constant. The declarations are read from
+        # the PARSED rule (round 4, 2026-09-20): two served script comments spell touch-action:pan-y, so a page-text pin
+        # was satisfied with the declaration gone. The runtime authority for the gesture is the inline style the view
+        # sets unconditionally when it builds the wrap (ui/romp-timeline-view.js, `this.wrap.style.touchAction = 'pan-y'`
+        # in the constructor that creates .romp-tl-wrap); this rule is the sheet's copy for a wrap before or without it.
+        page = km._timeline_page()
+        coarse = [r for r in served_css.rules(page) if r.at == ("@media (pointer:coarse)",)]
+        self.assertTrue(coarse, "the coarse-pointer media block is in the served timeline page")
+        wrap = [dict(r.decls) for r in coarse if r.selector == ".romp-tl-wrap"]
+        self.assertEqual(wrap, [{"overflow-x": "hidden", "touch-action": "pan-y"}], "the wrap's coarse-pointer declarations")
+        self.assertEqual([dict(r.decls).get("width") for r in coarse if r.selector == ".romp-tl-wrap svg"], ["100%"], "the SVG fits the screen")
 
 
 class ChatSessionPicker(unittest.TestCase):

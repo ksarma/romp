@@ -33,6 +33,8 @@ jd = load_source("romp_judge", os.path.join(BIN, "romp-judge"))
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ["ROMP_SERVE_TOKEN"] = "testtok"            # known token for the serve-security test
 km = load_source("romp_kernel", os.path.join(BIN, "romp-kernel"))
+sys.path.insert(0, HERE)
+import served_css   # noqa: E402  the served page's parsed rules and comment-free code (loads no romp code)
 
 # The ACCOUNT gate (_limit_hold: a usage limit / monthly spend cap parks every drive op, tested in
 # tests/test_kernel_limit_queue.py) is a SEPARATE axis from the compaction/busy gates this module
@@ -7791,9 +7793,15 @@ class ServeSecurity(unittest.TestCase):
         import urllib.request
         with urllib.request.urlopen("http://127.0.0.1:%d/?token=testtok" % self.port, timeout=5) as r:
             body = r.read().decode("utf-8", "replace")
-        self.assertIn("visualViewport", body)               # the live-visible-height source
-        self.assertIn("--app-h", body)                      # the custom prop the JS drives
-        self.assertIn("height:var(--app-h,100dvh)", body)   # body height reads it, dvh only as fallback
+        # read from the fetched page's code with its comments blanked and from its parsed rules: the fit script's comments spell
+        # both tokens, so a page-text pin was satisfiable by them (tests/test_served_pins_read_elements.py; a fetched body is
+        # outside that census's derivation, re-pointed here by hand)
+        code = served_css.code(body)
+        rules = served_css.rules(body)
+        self.assertIn("visualViewport", code)               # the live-visible-height source
+        self.assertIn("setProperty('--app-h'", code)        # the custom prop the JS drives
+        self.assertIn(("height", "var(--app-h,100dvh)"), [d for r in rules if r.selector in ("body", "html,body") for d in r.decls],
+                      "body height reads it, dvh only as fallback")
 
     def test_cross_site_origin_rejected(self):
         self.assertEqual(self._code("/feed", {"Origin": "http://evil.example"}), 403)

@@ -10,6 +10,7 @@ import inspect
 import json
 import os
 import re
+import sys
 import tempfile
 import time
 import unittest
@@ -23,6 +24,8 @@ os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)
 km = load_source("romp_kernel_spenddetail", os.path.join(BIN, "romp-kernel"))
+sys.path.insert(0, HERE)
+import served_css   # noqa: E402  the served page's parsed rules and comment-free code (loads no romp code)
 
 WEB, API, TESTS = ("11111111-2222-3333-4444-000000000001", "11111111-2222-3333-4444-000000000002",
                    "11111111-2222-3333-4444-000000000003")
@@ -595,10 +598,11 @@ class SpendDetail(unittest.TestCase):
                       "background:rgba(0,0,0,0.55)}", html, "the panel rule: a centered card over rgba(0,0,0,0.55)")
         self.assertNotIn("__ROMP_LOADER__", html.split("_LANDING_JS")[0] if "_LANDING_JS" in html else html,
                          "the loader markup is spliced, not left as a placeholder")
-        self.assertIn("rl-word", html)
+        code = served_css.code(html)   # the code and markup with every served comment blanked: the spend script's comments spell these strings too
+        self.assertIn("rl-word", code)
         self.assertNotIn("this machine only", html, "T247c: every attached kernel's sessions are in — no such note")
-        self.assertIn("not reachable", html)
-        self.assertIn("older build", html)
+        self.assertIn("not reachable", code)
+        self.assertIn("older build", code)
         self.assertIn("aligned by clock time across machines", html)
         self.assertIn("recorded before per-session tracking", html, "unattributed spend is named, never folded")
         self.assertIn("var rows=spendRowsHTML(LAST||[]);", html, "the modal's window numbers are the hover's own renderer")

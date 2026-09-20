@@ -20,10 +20,11 @@ selectors, `can_match(a, b)` whether two compounds can select one element (one's
 other's: `iframe` and `iframe.lifted`, `body` and `body.picker-open`; not `#f-chat` and `iframe.lifted`, which a static
 reading of the sheet cannot unite), `specificity(member)` the (ids, classes, types) triple.
 
-Script code: `scripts(html)` is every <script> element's code with its comments removed, by a scanner over string,
-template and regular-expression literals and both comment forms, and `comment_spans(html)` is every span of the page
+Script code and markup: `scripts(html)` is every <script> element's code with its comments removed, by a scanner over
+string, template and regular-expression literals and both comment forms; `comment_spans(html)` is every span of the page
 that is comment text (an HTML comment, a /* */ inside a style element, a /* */ or // inside a script element), which
-tests/test_served_pins_read_elements.py reads to find a pin a comment could satisfy.
+tests/test_served_pins_read_elements.py reads to find a pin a comment could satisfy; `code(html)` is the page with
+every such span blanked, for a token that has no parsed form (a markup attribute, a string inside a script).
 
 Loads no romp code, so it needs no state preamble.
 """
@@ -302,6 +303,12 @@ def comment_spans(html):
     for m in _SCRIPT.finditer(html):
         spans += [(m.start(1) + s, m.start(1) + e) for s, e in js_comment_spans(m.group(1))]
     return sorted(spans)
+
+
+def code(html):
+    """The page with every comment span blanked (HTML comments, style-element comments, script-element comments): the
+    markup and the code a pin can read where no parsed form of the token exists (a markup attribute, a script string)."""
+    return _blank(html, comment_spans(html))
 
 
 def scripts(html):

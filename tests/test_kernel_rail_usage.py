@@ -6,6 +6,7 @@ data to the shell ({romp:'usage'}) and the shell renders compact vertical bar-pa
 import inspect
 import os
 import pathlib
+import sys
 import unittest
 from romp_load import load_source
 import tempfile
@@ -19,11 +20,16 @@ os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 km = load_source("romp_kernel", os.path.join(BIN, "romp-kernel"))
+sys.path.insert(0, HERE)
+import served_css   # noqa: E402  the served page's parsed rules and comment-free code (loads no romp code)
 
 
 class RailUsage(unittest.TestCase):
     def setUp(self):
         self.html = km._landing()
+        # the code and markup with every served comment blanked: the usage script's comments spell several of the tokens
+        # pinned below, and a page-text pin was satisfiable by them (tests/test_served_pins_read_elements.py)
+        self.code = served_css.code(self.html)
 
     def test_the_rail_usage_leads_the_scroll_group_with_refresh_and_settings_pinned_right(self):
         # the user 2026-06-26/27; bottom bar 2026-07-05: usage sits in the scrollable group (after the toggles);
@@ -44,8 +50,8 @@ class RailUsage(unittest.TestCase):
         for win in ("fiveHour", "sevenDay"):
             self.assertIn(win, self.html, "renders both rate-limit windows")
         # the used bar wears the SELECTED COLORMAP colour (server-computed in _usage_limits, read here as seg.color)
-        self.assertIn("seg.color", self.html, "the used bar is colored by the selected colormap")
-        self.assertIn("seg.tone", self.html, "and the yatharth themes pick the tone shipped beside it (PR #763)")
+        self.assertIn("seg.color", self.code, "the used bar is colored by the selected colormap")
+        self.assertIn("seg.tone", self.code, "and the yatharth themes pick the tone shipped beside it (PR #763)")
         self.assertIn('"color": list(cm.ramp(pct / 100.0, cm.stops_for(_colormap())))', inspect.getsource(km._usage_limits),
                       "classic seg.color stays the recency-colormap sample, byte-identical to main (PR #763 item 1)")
         self.assertIn("cm.context_rgb(pct)", inspect.getsource(km._usage_limits),
@@ -75,8 +81,8 @@ class RailUsage(unittest.TestCase):
         self.assertLess(one.index("ru-name"), one.index("ru-bars"))
         self.assertLess(one.index("ru-bars"), one.index("ru-pct"))
         # expanded labels use the 5th WINS field (plenty of horizontal room)
-        self.assertIn("'5 hours'", self.html)
-        self.assertIn("'7 days'", self.html)
+        self.assertIn("'5 hours'", self.code)
+        self.assertIn("'7 days'", self.code)
 
     def test_the_usage_tooltip_is_one_shared_panel_reproducing_both_windows_bars(self):
         # a SINGLE tooltip on the whole rail-usage area (mouseenter on el), not a per-window panel
@@ -149,7 +155,7 @@ class RailUsage(unittest.TestCase):
         # detail is per HOST now, one object per fleet row — the footer itself is unchanged.)
         self.assertIn("det._t=(typeof r.usage.t==='number')?r.usage.t:null", self.html,
                       "the renderer keeps each host's snapshot time")
-        self.assertIn("ru-tip-age", self.html, "the tooltip carries an age footer")
+        self.assertIn("ru-tip-age", self.code, "the tooltip carries an age footer")
         self.assertIn("updated '+fmtAgo(d._t)", self.html, "formatted as 'updated ... ago'")
         self.assertIn("function fmtAgo(ep)", self.html)
 

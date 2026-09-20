@@ -79,6 +79,8 @@ jd.STATE = Path(_STATE_TD.name)
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ.setdefault("ROMP_SERVE_TOKEN", "test-token-DO-NOT-USE")
 km = load_source("romp_kernel_webpush", os.path.join(BIN, "romp-kernel"))
+sys.path.insert(0, HERE)
+import served_css   # noqa: E402  the served page's parsed rules and comment-free code (loads no romp code)
 
 
 def _b64u(b):
@@ -1865,7 +1867,7 @@ class LandingRevealPins(unittest.TestCase):
         for what in ("settle('landed',", "settle('superseded',", "settle('dropped',"):
             self.assertIn(what, km._LANDING_REVEAL_JS, what)
         self.assertIn("fetch('/reveal'", html)     # ONE activation path: the kernel aims the focus…
-        self.assertIn("romp:wid", html)            # …at the shell's own per-window id
+        self.assertIn("romp:wid", served_css.code(html))   # …at the shell's own per-window id (the code, comments blanked: a comment spells the key too)
         self.assertIn("romp:'revealCard'", html)   # a card kind also scrolls the feed to the card…
         self.assertIn("m.romp==='ready'&&m.app==='feed'", html)   # …once the feed has its cards
         # the TAP's scripts post no focus straight into the chat iframe any more (the kernel aims it). The split
@@ -1933,7 +1935,7 @@ class LandingRevealPins(unittest.TestCase):
     def test_shell_ws_trues_up_the_badge(self):
         html = km._landing()
         self.assertIn("{type:'ready'}", html)      # connect → the kernel answers with the current count
-        self.assertIn("setAppBadge", html)
+        self.assertIn("setAppBadge", served_css.code(html))   # the code, comments blanked: a served comment spells the API too
         self.assertIn("clearAppBadge", html)       # zero clears, never leaves a stale number
 
     def test_the_shell_files_its_own_diag_rows_over_a_socket_that_carries_its_wid(self):
