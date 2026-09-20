@@ -1829,7 +1829,11 @@ def _line_trace(codes, hit):
     back the way it was found. The door witness hands it the door's code object and every code object nested in it (_nested_codes),
     so a bump site of the door is tied to a drive by execution and not by the name of the key it bumps (review round 6, lens two),
     whether the site runs in the door's own frame or in the frame of a helper defined inside the door (review round 7, the
-    seventh-axis hunt). Derives: nothing; it records the lines that run. Bounds: `codes`, the caller's set, and this thread."""
+    seventh-axis hunt). Derives: nothing; it records the lines that run. Bounds: `codes`, the caller's set; this thread; and a tracer
+    already installed on it, which is set aside for the block, receives no event for anything entered inside it (a frame of a code
+    object in `codes` or not), and is put back after it, so a coverage tool or a debugger over this module records nothing the
+    drives run (measured with an outer tracer over the door witness on every interpreter this module runs on: it saw none of the
+    thirteen in-window door calls and every door call outside a window)."""
     ids = {id(c) for c in codes}
 
     def local(frame, event, _arg):
