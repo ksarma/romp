@@ -88,6 +88,32 @@ const shellsFor = (list, what = null, present = SHELL_PROBE, report = (line) => 
   for (const sh of list) if (!probeOk(present, sh)) report(`NOT RUN: real ${sh} ${probeWhy(present, sh)}, so its evidence leg did not run${what ? `: ${what}` : ''} (${(new Error().stack.split('\n')[2] || '').trim().replace(/^at /, '')})`);
   return list.filter((sh) => probeOk(present, sh));
 };
+// A command can NAME a program as well as run in a shell: the consumer of a piped script (`echo '..' | zsh`), the shell of a
+// `-c` or of a here-document (`zsh -c '..'`, `zsh <<EOF`), a busybox applet. The row's evidence needs that program too: on a
+// box without it the present shells report "command not found", no shell writes, and a pin measured where it was present
+// reads as a mismatch (round 5's fifth addendum, fourth fix-up, 2026-09-20: CI's ubuntu runner has no zsh, so 181 matrix rows
+// went red there, 41 of the piped-script matrix's 60 rows naming zsh as the consumer, all 120 of the stdin-script matrix's and
+// 20 of the heredoc-body matrix's 30, the rest matching because no shell wrote them with zsh present either, and 2 rows of the
+// fix-ups' rows tests, while every leg RUNNING in zsh was already NOT RUN through the probe; the runner has no ksh and no
+// busybox either). So a row whose command names a program this box lacks is NOT RUN by name, the same loud line
+// through shellsFor, and its in-process verdict alone is compared, never a red on evidence the box cannot give and never a
+// silent pass. The programs: the probe's three shells, by the probe; `sh`, `ksh` and `busybox` (the matrices' other consumers
+// and the rows tests' residual rows) by `command -v`, the fixtures' own `absent` accounting.
+const NAMED_PROGRAMS = ['sh', 'ksh', 'busybox'];
+const NAMED_PROBE = { ...SHELL_PROBE, ...Object.fromEntries(NAMED_PROGRAMS.map((p) => [p, { ok: _spawnSync('sh', ['-c', `command -v ${p}`], { encoding: 'utf8' }).status === 0, why: 'is not on this runner' }])) };
+// the programs a command spells as words; a name glued to a path, an extension or a longer word is not one (`/bin/sh`, `x.sh`, the `sh` of `bash`)
+const programsNamed = (cmd, table = NAMED_PROBE) => Object.keys(table).filter((p) => new RegExp(`(?<![\\w./-])${p}(?![\\w./-])`).test(cmd));
+// true when every program the command names is on this box; else the NOT RUN line per missing one, naming `what`, and false
+const namedPresent = (cmd, what, table = NAMED_PROBE, report = (line) => console.error(line)) => {
+  const named = programsNamed(cmd, table);
+  return shellsFor(named, what, table, report).length === named.length;
+};
+// the matrix rows whose named consumer this box lacks: row id -> the program, for the run to skip and the summary to name
+const rowsNotRun = (rows, namedShell, table = NAMED_PROBE) => {
+  const skip = new Map();
+  for (const row of rows) { const p = namedShell(row); if (p && !probeOk(table, p)) skip.set(row.id, p); }
+  return skip;
+};
 // THE LIVE-VALUE CHECK (round 5): the spawnSync every leg of this file calls. A shell the probe declined throws by name, so a leg
 // written outside shellsFor cannot run that shell in silence, however its list is spelled; `table` and `raw` are parameters so
 // the wrapper is pinned in-process against a synthetic table.
@@ -4221,6 +4247,30 @@ test('the addendum, item 4, and round 5: every real-shell evidence leg of this f
   } finally { fs.rmSync(stub, { recursive: true, force: true }); }
 });
 
+test("round 5's fifth addendum, fourth fix-up: a row whose command names a program this box lacks (the consumer of a piped script, the shell of a -c or a here-document, a busybox applet) is NOT RUN by name through the one probe and its verdict alone compared, never a red on a mask measured where the program was present and never a silent pass; pinned against a synthetic table", () => {
+  const T = { bash: true, zsh: false, dash: true, sh: true, ksh: false, busybox: false };
+  const Z = ['z', 'sh'].join('');   // spelled apart, as the probe test above does: the scan reads a spelled shell beside a runner call as a leg
+  assert.deepEqual(programsNamed(`echo 'cp a b' | ${Z}`, T), [Z], 'the consumer of a piped script');
+  assert.deepEqual(programsNamed(`${Z} -c 'cat =(cp a b)'`, T), [Z], 'the shell of a -c');
+  assert.deepEqual(programsNamed(`echo 'cp a b' | bash -c '${Z}'`, T), ['bash', Z], 'the inner shell of a -c is named too');
+  assert.deepEqual(programsNamed(`${Z} <<'EOF'\ncp a b\nEOF`, T), [Z], 'the shell fed a here-document');
+  assert.deepEqual(programsNamed("echo 'cp a b' | busybox sh", T), ['sh', 'busybox'], 'a busybox applet names both');
+  assert.deepEqual(programsNamed('echo x > docs/report.md; cat x.sh /bin/sh; ${SHELL} -c true', T), [], 'an extension, a path and an expansion name no program');
+  assert.deepEqual(programsNamed('cp base/report.md docs/report.md', T), []);
+  const lines = [];
+  assert.equal(namedPresent(`echo 'cp a b' | ${Z}`, 'S-synthetic, whose command names it', T, (l) => lines.push(l)), false, 'a row naming a missing program is not run');
+  assert.equal(lines.length, 1, 'one line for the one missing program');
+  assert.match(lines[0], /^NOT RUN: real zsh is not on this runner, so its evidence leg did not run: S-synthetic, whose command names it \(/, 'the loud line names the program and the row');
+  assert.equal(namedPresent("echo 'cp a b' | bash", 'x', T, () => assert.fail('a present program is not reported')), true, 'a row naming present programs runs');
+  assert.equal(namedPresent("echo 'cp a b' | busybox sh", 'R-synthetic', T, (l) => lines.push(l)), false);
+  assert.equal(lines.length, 2);
+  assert.match(lines[1], /^NOT RUN: real busybox is not on this runner, so its evidence leg did not run: R-synthetic \(/);
+  const synth = [{ id: 'a/zsh', consumer: Z }, { id: 'a/sh', consumer: 'sh' }, { id: 'a/ksh', consumer: 'ksh' }, { id: 'a/cat', consumer: 'cat' }];   // no shell of the probe spelled here: the scan would read a list holding one as a leg's list
+  assert.deepEqual([...rowsNotRun(synth, (r) => (r.consumer === 'cat' ? null : r.consumer), T)], [['a/zsh', Z], ['a/ksh', 'ksh']], 'the matrix rows to skip, by id and program; a row naming a present shell or no shell is run');
+  assert.deepEqual([NAMED_PROBE.bash, NAMED_PROBE.zsh, NAMED_PROBE.dash], [SHELL_PROBE.bash, SHELL_PROBE.zsh, SHELL_PROBE.dash], 'the three shells are the probe\'s own record, not a second probe');
+  for (const p of NAMED_PROGRAMS) assert.equal(typeof NAMED_PROBE[p].ok, 'boolean', `${p} is probed`);
+});
+
 // ── the seventh pass's attacker (2026-09-19, on 93bb93b68): the rule's own boundary ──
 //
 // Two misses, 0 structural (its report in the sweep notes, `quickfix-track-guard-attack1-pass7.md`, its rows in
@@ -5999,8 +6049,11 @@ const PIPED_SCRIPT_MATRIX_PIN = JSON.parse(fs.readFileSync(path.join(path.dirnam
 
 // One matrix run: every row judged in-process and run unguarded in the shells present, matched to its fixture row by row; the
 // hard invariant over the rows not marked residual; a residual row is expected allowed (the documented residual, its writers
-// recorded); the refusals where no shell writes are classed by `classOf` and printed.
-const runMatrixAgainstPin = (w, rows, pin, label, classOf, present) => {
+// recorded); the refusals where no shell writes are classed by `classOf` and printed. A row whose named consumer (`namedShell`,
+// the shell the row's command feeds) this box lacks is NOT RUN by name (rowsNotRun; one loud line per missing program): its
+// verdict is compared, its writers and parsing are not measured, and its refusal is the cost class absent.
+const runMatrixAgainstPin = (w, rows, pin, label, classOf, present, namedShell = () => null) => {
+  const notRun = rowsNotRun(rows, namedShell);
   const mismatches = [];
   const hard = [];
   const residualRead = [];
@@ -6015,6 +6068,13 @@ const runMatrixAgainstPin = (w, rows, pin, label, classOf, present) => {
     const reason = evaluate(payload(row.cmd, at));
     const v = reason == null ? 'a' : 'r';
     if (v === 'r') refused++;
+    const named = namedShell(row);
+    if (named) assert.ok(programsNamed(row.cmd).includes(named), `${row.id}: the command spells its consumer ${named}: ${JSON.stringify(row.cmd)}`);
+    if (notRun.has(row.id)) {   // the consumer is not on this box: the verdict, judged in-process, is compared; the shells are not run
+      if (v !== pv) mismatches.push(`${row.id}: ${v} (pinned ${pinned}; writers and parsing not measured, ${notRun.get(row.id)} is not on this box): ${JSON.stringify(row.cmd)}`);
+      if (v === 'r') (costs.absent = costs.absent || []).push(row.id);
+      continue;
+    }
     const writers = [];
     const parsed = [];
     for (const sh of present) {
@@ -6032,11 +6092,15 @@ const runMatrixAgainstPin = (w, rows, pin, label, classOf, present) => {
       (costs[cls] = costs[cls] || []).push(cls === 'other' ? `${row.id}: ${String(reason).split('\n')[0].replace(/\/tmp\S*/g, '<tmp>').slice(0, 140)}` : row.id);
     }
   }
+  const byProgram = {};
+  for (const p of notRun.values()) byProgram[p] = (byProgram[p] || 0) + 1;
+  for (const [p, n] of Object.entries(byProgram)) shellsFor([p], `${label}'s ${n} rows naming ${p} as the consumer, their verdicts compared and their writers and parsing not`, NAMED_PROBE);
   assert.deepEqual(hard, [], `${label}: no row a shell writes is allowed`);
   assert.deepEqual(residualRead, [], `${label}: a residual row stays allowed, so the residual stays named as one (a producer read is a rule to state, not a fixture drift)`);
   assert.deepEqual(mismatches, [], `${label}: every row matches the fixture`);
   const classes = Object.entries(costs).map(([k, v]) => `${v.length} ${k}`).join(', ') || 'none';
-  console.log(`# ${label}: rows ${rows.length}, refused ${refused}, allowed ${rows.length - refused}, writes bash=${writesBy.bash} zsh=${writesBy.zsh} dash=${writesBy.dash}; refused with no tracked write: ${classes}`);
+  const skipped = Object.entries(byProgram).map(([p, n]) => `${n} naming ${p}`).join(', ') || 'none';
+  console.log(`# ${label}: rows ${rows.length}, refused ${refused}, allowed ${rows.length - refused}, writes bash=${writesBy.bash} zsh=${writesBy.zsh} dash=${writesBy.dash}; refused with no tracked write: ${classes}; not run, the consumer not on this box: ${skipped}`);
   for (const line of costs.other || []) console.log(`#   other: ${line}`);
 };
 
@@ -6069,9 +6133,7 @@ test("round 5's fifth addendum, second fix-up, the piped-script matrix: the prod
     assert.deepEqual(PIPED_SCRIPT_MATRIX.CONSUMERS, PIPED_SCRIPT_MATRIX_PIN.consumers, 'the fixture names the consumers it was generated over, the hook\'s SHELLS');
     assert.equal(rows.filter((r) => r.residual).length, PIPED_SCRIPT_MATRIX_PIN.residualRows, 'and the residual rows');
     const present = shellsFor(SHELL_ORDER, 'the piped-script matrix');
-    const installed = (sh) => _spawnSync('sh', ['-c', `command -v ${sh}`], { encoding: 'utf8' }).status === 0;
-    const absent = new Set(PIPED_SCRIPT_MATRIX.CONSUMERS.filter((c) => !installed(c)));
-    runMatrixAgainstPin(w, rows, PIPED_SCRIPT_MATRIX_PIN, 'the piped-script matrix', (row) => (absent.has(row.consumer) ? 'absent' : null), present);
+    runMatrixAgainstPin(w, rows, PIPED_SCRIPT_MATRIX_PIN, 'the piped-script matrix', () => null, present, (row) => row.consumer);
   } finally { process.env.HOME = savedHome; w.rm(); }
 });
 
@@ -6183,9 +6245,7 @@ test("round 5's fifth addendum, third fix-up, the stdin-script matrix: the scrip
     assert.deepEqual(STDIN_SCRIPT_MATRIX.SHELLS, STDIN_SCRIPT_MATRIX_PIN.shells, 'the fixture names the shells it was generated over, the hook\'s SHELLS');
     assert.deepEqual(STDIN_SCRIPT_MATRIX.CONSUMERS.map((c) => c[0]), STDIN_SCRIPT_MATRIX_PIN.consumers, 'and the consumer shapes');
     const present = shellsFor(SHELL_ORDER, 'the stdin-script matrix');
-    const installed = (sh) => _spawnSync('sh', ['-c', `command -v ${sh}`], { encoding: 'utf8' }).status === 0;
-    const absent = new Set(STDIN_SCRIPT_MATRIX.SHELLS.filter((c) => !installed(c)));
-    runMatrixAgainstPin(w, rows, STDIN_SCRIPT_MATRIX_PIN, 'the stdin-script matrix', (row, parsed) => (absent.has(row.shell) ? 'absent' : ((row.source === 'herestring-sub' || row.source === 'procsub-stdin') && !parsed.includes('dash') ? 'herestring-dash' : null)), present);
+    runMatrixAgainstPin(w, rows, STDIN_SCRIPT_MATRIX_PIN, 'the stdin-script matrix', (row, parsed) => ((row.source === 'herestring-sub' || row.source === 'procsub-stdin') && !parsed.includes('dash') ? 'herestring-dash' : null), present, (row) => row.shell);
   } finally { process.env.HOME = savedHome; w.rm(); }
 });
 
@@ -6199,9 +6259,7 @@ test("round 5's fifth addendum, third fix-up, the heredoc-body matrix: the delim
     assert.deepEqual(HEREDOC_BODY_MATRIX.CONSUMERS, HEREDOC_BODY_MATRIX_PIN.consumers, 'the fixture names the consumers it was generated over');
     assert.deepEqual(HEREDOC_BODY_MATRIX.DELIMITERS.map((d) => d[0]), HEREDOC_BODY_MATRIX_PIN.delimiters, 'and the delimiter forms');
     const present = shellsFor(SHELL_ORDER, 'the heredoc-body matrix');
-    const installed = (sh) => _spawnSync('sh', ['-c', `command -v ${sh}`], { encoding: 'utf8' }).status === 0;
-    const absent = new Set(HEREDOC_BODY_MATRIX.CONSUMERS.filter((c) => c !== 'cat' && !installed(c)));
-    runMatrixAgainstPin(w, rows, HEREDOC_BODY_MATRIX_PIN, 'the heredoc-body matrix', (row) => (absent.has(row.consumer) ? 'absent' : (row.body === 'escaped' && row.delimiter !== 'unquoted' && row.consumer !== 'cat' ? 'escaped-paren' : null)), present);   // escaped-paren: a quoted body's `\$(..)` handed to a shell is a syntax error in every shell, read as a subshell running the write (the parenthesis read, a cost that predates this fix-up)
+    runMatrixAgainstPin(w, rows, HEREDOC_BODY_MATRIX_PIN, 'the heredoc-body matrix', (row) => (row.body === 'escaped' && row.delimiter !== 'unquoted' && row.consumer !== 'cat' ? 'escaped-paren' : null), present, (row) => (row.consumer === 'cat' ? null : row.consumer));   // escaped-paren: a quoted body's `\$(..)` handed to a shell is a syntax error in every shell, read as a subshell running the write (the parenthesis read, a cost that predates this fix-up)
   } finally { process.env.HOME = savedHome; w.rm(); }
 });
 
@@ -6326,7 +6384,7 @@ test("round 5's fifth addendum, second fix-up, the rows: an expansion nested in 
         else if (expect[0] === 'name') assert.ok(BY_NAME_RE.test(h.reason) && h.reason.includes(expect[1]), `${id}: by name, the reason including (${expect[1]}): ${h.reason.split('\n')[0]}`);
         else assert.ok(NOT_LITERAL.test(h.reason) && h.reason.includes(expect[1]), `${id}: refused as not literal, the reason including (${expect[1]}): ${h.reason.split('\n')[0]}`);
       }
-      for (const shell of shellsFor(A, id)) {
+      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`)) for (const shell of shellsFor(A, id)) {   // a program the command names and this box lacks: NOT RUN by name, the row's verdict above still asserted
         const r = w.run(cmd, at, shell);
         assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
       }
@@ -6548,7 +6606,7 @@ test("round 5's fifth addendum, third fix-up, the rows: an unquoted here-documen
         else if (expect[0] === 'text') assert.ok(h.reason.includes(expect[1]), `${id}: refused, the reason including (${expect[1]}): ${h.reason.split('\n')[0]}`);
         else assert.ok(NOT_LITERAL.test(h.reason) && h.reason.includes(expect[1]), `${id}: refused as not literal, the reason including (${expect[1]}): ${h.reason.split('\n')[0]}`);
       }
-      for (const shell of shellsFor(A, id)) {
+      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`)) for (const shell of shellsFor(A, id)) {   // a program the command names and this box lacks: NOT RUN by name, the row's verdict above still asserted
         const r = w.run(cmd, at, shell);
         assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
       }

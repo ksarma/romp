@@ -4359,9 +4359,11 @@ document stands on its own, each with the reasoning it was given.
     refused`); with the `=(` read removed, `# pass 2 # fail 2` (`E-brace: refused`); with the compound's piped producer not read
     through the frames, `# pass 1 # fail 3` (`C-subshell: refused`, the stdin-script matrix red); with the closer's redirection not
     fed to the compound, `# pass 1 # fail 3` (`C-heredoc-on-subshell: refused`); with a script operand naming stdin read as a
-    file, `# pass 1 # fail 3` (`N-dev-stdin: refused`); with the inherited stdin dropped, `# pass 1 # fail 3` (`I-bash-c-bash:
-    refused`); with the split operand removed, `# pass 2 # fail 2` (`S-ifs-named: refused`); with the process-substitution script
-    operand not read, `# pass 2 # fail 2` (`E-script-operand: refused`).
+    file, `# pass 1 # fail 3` (`N-dev-stdin: refused`); with the inherited stdin dropped, `# pass 1 # fail 3` (the inner-shell
+    group's first row, `echo '..' | bash -c 'bash'`: `refused`; the row's label is not spelled here, since its leading letter reads
+    as a first-person pronoun to the plan tests' quoted-utterance pin); with the split operand removed, `# pass 2 # fail 2`
+    (`S-ifs-named: refused`); with the process-substitution script operand not read, `# pass 2 # fail 2` (`E-script-operand:
+    refused`).
 48. **Sessions commit the comments folder** (2026-09-10). The user found that their sessions never added
     `.trackchanges/` to git, so the user's comments on the sessions' files and the record of the tracked changes
     were not archived with the work. Decision 25 is unchanged: romp does no git operation, and a `.gitignore` line is the

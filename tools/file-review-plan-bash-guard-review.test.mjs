@@ -198,7 +198,7 @@ test('decision 47 and the Tests bullet name the shapes module, credit it to the 
     "test('python or node with options and a heredoc on stdin is read: -u, -B, -I, -X utf8, --input-type=module, --no-warnings'",
     "test('a prefix with options still leads to the command: sudo -u, sudo -n, env -u, timeout -s, exec -a, time -p, command -p'",
     "test('pushd moves the cwd like cd; popd leaves it unknown'",
-    "test('[[ a > b ]] and (( a > b )) compare and write nothing; [ a > b ] and test a > b redirect, as in the shell'",
+    "test('[[ a > b ]] and (( a > b )) compare in bash and zsh, and are a command named `[[` with a redirection, and a subshell running `a` with one, in dash (round 5\\'s fifth addendum, 2026-09-20): a tracked target refuses by name with dash and the construct named, a read or an untracked target stays allowed, a for head gets no dash reading; [ a > b ] and test a > b redirect in every shell'",
     "test('a function definition is not a run: a cd in its body moves nothing after it; a write in it is still a target'",
     "test('Path(x).open with a write mode, open with keyword arguments in any order, io.open, and fs.openSync with a write flag are writes'",
     "test('node inline scripts in each spelling: -e, --eval, -p, --print'",
@@ -211,7 +211,7 @@ test('decision 47 and the Tests bullet name the shapes module, credit it to the 
     "test('a directory copy to an untracked destination walks the project once, not once per landing file'",
     "test('the per-call closure agrees with store-io\\'s isTrackedFile on every kind of path'",
     // the second round's shapes, each named in the bullet
-    "test('&& and || inside [[ ... ]] stay in the test: a > after them compares; after ]] they end it and a > redirects'",
+    "test('&& and || inside [[ ... ]] stay in the test for bash and zsh (a > after them compares there); dash reads the words after them as a further command, so a tracked target there refuses naming the construct (the `||` branch runs when `[[` is not found, measured; the `&&` branch is read as running too, the safe side); an unquoted parenthesis inside is a syntax error in dash, so those rows stay allowed; after ]] the operators end the test and a > redirects'",
     "test('a quoted or escaped [[ is data, as is [[ in operand position: a > after it redirects'",
     "test('a brace list is expanded before the operands are read: mv x{.new,}, cp {a,b}/x, tee and sed -i lists, nested lists and sequences'",
     "test('a python open( call whose arguments span lines is read: a formatter wraps a heredoc script that way'",
