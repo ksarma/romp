@@ -301,6 +301,52 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
         self.assertEqual(str(cm.exception), words, "the unknobbed arm's skip is lab_dist's own, unwrapped")
         self.assertIsNone(Boot.hub_knob)
 
+    def test_an_empty_phase_is_excused_only_by_a_whole_frame_after_the_bundles_last_notice(self):
+        """The old-hub storm's allowance (_outline_caught_up_whole, both floors) excuses a phase with no patch and no row only
+        for a whole keyed feed frame the Outline received after the earliest the bundle's LAST notice could have been posted
+        (the change record's t0 plus the gaps between the notices) and before the window's padded end. Round 3 found the key
+        was the window: a frame at A0 + 5 ms or between notice 1 and notice 2 excused a stripped phase, though it could not have
+        carried the notices posted after it. Over a synthetic record (one Outline relay socket, one frame), by cell: before
+        the window, before the first post, between the notices, one millisecond before the last notice's earliest post (all
+        no excuse), at it, after the bundle, at the right pad's edge (all an excuse), past the pad and unkeyed (no excuse); a
+        frame on the feed page's socket counts for nothing; a phase with no change record fails rather than widening."""
+        A0 = 1_000_000
+        made = {"phase": "A", "t0": A0 / 1000.0 + 0.010, "t1": A0 / 1000.0 + 2.015, "noticeKeys": ["k1", "k2", "k3"], "noticeRevs": [1, 2, 3], "notices": []}
+        last_post = (made["t0"] + (L.NOTICES_PER_PHASE - 1) * L.NOTICE_GAP_S) * 1000   # the earliest the last notice's post could start
+        A1 = int(made["t1"] * 1000) + L.PHASE_SETTLE_MS
+        self.assertGreater(last_post, A0 + 1000, "the cells straddle the key: the last notice comes after the between-notices cell")
+        self.assertLess(last_post, A1, "…and before the phase's end")
+
+        def frame(at, asks=11):
+            return {"t": "feed", "slot": "", "len": 1, "at": at, "asks": asks, "buildId": None}
+        cells = [(A0 - 500, 11, False, "before the window (the ready-time frame)"),
+                 (A0 + 5, 11, False, "inside the window, before the bundle's first post"),
+                 (A0 + 1000, 11, False, "after notice 1, before notices 2 and 3"),
+                 (int(last_post) - 1, 11, False, "one millisecond before the last notice's earliest post"),
+                 (int(last_post) + 1, 11, True, "just after the last notice's earliest post"),
+                 (A0 + 3000, 11, True, "after the bundle (the recorded churn frames came 2.8 to 2.9 s in)"),
+                 (A1 + 1500, 11, True, "at the right pad's edge"),
+                 (A1 + 1501, 11, False, "past the right pad"),
+                 (A0 + 3000, None, False, "unkeyed (no asks list)")]
+
+        class Rec(L.LinkDropOldLocal):
+            driver_error = None
+
+        def record(fleet_frames, feed_frames=()):
+            Rec.result = {"marks": {"A0": A0, "A1": A1, "end": A1 + 1}, "died": None,
+                          "pages": {"fleet": {"socks": [{"relay": True, "frames": list(fleet_frames)}]}, "feed": {"socks": [{"relay": True, "frames": list(feed_frames)}]}}}
+            Rec.changes_made = [dict(made)]
+            return Rec("test_nothing_was_asked_of_the_remote")   # an instance for the helper; the test method is never run
+        for at, asks, want, why in cells:
+            got = record([frame(at, asks)])._outline_caught_up_whole("A0", "A1")
+            self.assertEqual(bool(got), want, "a whole frame %s (at A0 %+d ms; the last notice's earliest post at A0 %+d ms) %s excuse an empty phase A: %r"
+                             % (why, at - A0, int(last_post) - A0, "should" if want else "must not", got))
+        self.assertEqual(record([], [frame(A0 + 3000)])._outline_caught_up_whole("A0", "A1"), [], "a frame on the feed page's socket is not the Outline's")
+        t = record([frame(A0 + 3000)])
+        Rec.changes_made = []
+        with self.assertRaises(AssertionError):
+            t._outline_caught_up_whole("A0", "A1")
+
     def test_drive_sends_the_timeout_the_budget_and_the_caps(self):
         lab = tempfile.mkdtemp(prefix="linkdrop-bound-")
         self.addCleanup(shutil.rmtree, lab, True)

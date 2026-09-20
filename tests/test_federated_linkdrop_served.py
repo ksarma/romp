@@ -1066,15 +1066,24 @@ class _LinkDrop(unittest.TestCase):
         return frames
 
     def _outline_caught_up_whole(self, k0, k1, slack_s=1.5):
-        """The whole keyed feed frames that reached the Outline's relay sockets inside [k0, k1 + slack_s]: the old bundle's
-        socket churn (its relay socket closes every few seconds, the 2 s retry redials, the remote serves the new socket a
-        whole frame), whose whole frame absorbs the notices posted while the socket was down, so that phase's change
-        crosses as no patch and files no row. The distinguishing datum an empty window needs (round 2's ruling on
-        correctness-1: the allowance is keyed on this EVENT, read from the hook's frames, never a dropped requirement).
-        No left pad, on purpose: the ready-time whole frame before A0 must not excuse an empty phase A; the right pad is
-        _rows_in's, for a retry's frame landing just past the settle."""
+        """The whole keyed feed frames that reached the Outline's relay sockets AFTER the phase's bundle could have been posted
+        whole and before k1 + slack_s: the old bundle's socket churn (its relay socket closes every few seconds, the 2 s retry
+        redials, the remote serves the new socket a whole frame), whose whole frame absorbs the notices posted while the
+        socket was down, so that phase's change crosses as no patch and files no row. The distinguishing datum an empty
+        window needs (round 2's ruling on correctness-1: the allowance is keyed on this EVENT, read from the hook's frames,
+        never a dropped requirement). The key is a frame after the bundle's LAST notice, not a frame in the window: the left
+        edge is the later of the window's mark and the earliest the last notice's post could have started (the phase's
+        change record's t0 plus the gaps between the notices, _change's own timing), because a frame before that carries at
+        most the earlier notices and cannot explain the later ones reaching the Outline as nothing (round 3: a frame anywhere
+        in the window's first two seconds excused a stripped phase). No pad on that edge, on purpose: the ready-time whole
+        frame before A0 must not excuse an empty phase A; the right pad is _rows_in's, for a retry's frame landing just past
+        the settle. The phase's change record must exist (the window is a phase's), else this fails rather than widening."""
         m = self._marks()
-        t0, t1 = m[k0], m[k1] + slack_s * 1000
+        made = [c for c in self.changes_made if c.get("phase") == k0[0]]   # the phase's bundle, by the mark's letter (A0 -> A)
+        self.assertEqual(len(made), 1, "the control door made phase %s's change bundle once (the allowance is keyed on its last notice): %r"
+                         % (k0[0], [c.get("phase") for c in self.changes_made]))
+        last_post_ms = (made[0]["t0"] + (NOTICES_PER_PHASE - 1) * NOTICE_GAP_S) * 1000
+        t0, t1 = max(m[k0], last_post_ms), m[k1] + slack_s * 1000
         return [f for s in self._page("fleet")["socks"] if s["relay"] for f in s["frames"]
                 if f["t"] == "feed" and f.get("asks") is not None and t0 <= f["at"] <= t1]
 
@@ -1082,10 +1091,10 @@ class _LinkDrop(unittest.TestCase):
         """The old bundle's storm as an invariant, not a count: in the window (padded on both sides as _rows_in pads,
         the whole drive without marks) the outline/delta-unapplied rows correspond one to one, by rev, with the feed
         slot patches the Outline's own relay sockets received there, and every such row names the feed slot. With
-        patches_due the window must hold at least one patch OR a whole keyed feed frame the Outline received inside it
-        (_outline_caught_up_whole: a churned socket's retry absorbs the notices into one whole frame and files no row, so
-        a count is one drive's, and a window with neither a patch nor such a frame is a change that reached the Outline as
-        nothing, not the storm); without, both sides are empty. With attach_after (a mark) the return window's allowance
+        patches_due the window must hold at least one patch OR a whole keyed feed frame the Outline received there after the
+        bundle's last notice could have been posted (_outline_caught_up_whole: a churned socket's retry absorbs the notices
+        into one whole frame and files no row, so a count is one drive's, and a window with neither a patch nor such a frame
+        is a change that reached the Outline as nothing, not the storm); without, both sides are empty. With attach_after (a mark) the return window's allowance
         reaches into this window's right pad: a card-less feed-family patch at or after that mark is the connect push's
         ledgers attach, by design and with no card in it, and it and the row the old bundle files for it (matched by rev
         over the drive's attaches, _attach_revs_since) are the return's, not this window's. Returns the row count, for
@@ -1108,8 +1117,9 @@ class _LinkDrop(unittest.TestCase):
         if patches_due:
             wholes = self._outline_caught_up_whole(k0, k1) if k0 and k1 else []
             self.assertTrue(patches or wholes, "the Outline received a feed slot patch in %s (the storm has a patch to file a row for), or a whole keyed feed "
-                                               "frame caught it up there (the old bundle's socket churn: the retry's whole frame absorbs the notices posted while "
-                                               "the socket was down, so no patch and no row); neither happened" % where)
+                                               "frame caught it up there after the bundle's last notice could have been posted (the old bundle's socket churn: the "
+                                               "retry's whole frame absorbs the notices posted while the socket was down, so no patch and no row; a frame before "
+                                               "the last notice explains nothing); neither happened" % where)
         else:
             self.assertEqual(patches, [], "no feed slot patch reached the Outline in %s: %r" % (where, patches))
         return len(rows)
@@ -1442,8 +1452,9 @@ class LinkDropOldLocal(_LinkDrop):
     the gate), and it RESUMES after each redial's whole frame (the whole
     frame catches the page up once; the next patch freezes again). The class pins the correspondence, not a count: per
     window and over the whole drive, the rows equal the Outline's own feed slot patches by rev, non-empty in every
-    phase unless a whole keyed feed frame caught the Outline up inside it (the old bundle's socket churn absorbing the
-    phase's notices: no patch, so no row; the allowance is keyed on that frame, _outline_caught_up_whole) and empty
+    phase unless a whole keyed feed frame caught the Outline up inside it after the bundle's last notice could have been
+    posted (the old bundle's socket churn absorbing the phase's notices: no patch, so no row; the allowance is keyed on that
+    frame, _outline_caught_up_whole) and empty
     while the link was down. One drive's count on the bundle at 01d4fbe43 (2026-09-19, the round-2
     head): 3 / 0 / 3 / 3 across phase A, the link down, phase B and phase C; a reviewer's drive at round 1's head gave
     3 / 0 / 1 / 3 when socket churn inside phase B absorbed two notices into whole frames (the module docstring gives
@@ -1511,7 +1522,8 @@ class LinkDropOldLocal(_LinkDrop):
         ua = self._outline_unapplied(A)
         self.assertTrue(len(ua) >= 1 or self._outline_caught_up_whole("A0", "A1"),
                         "the old Outline filed a delta-unapplied row for the remote feed patches in phase A, or a whole keyed feed frame caught it up "
-                        "there (the old bundle's socket churn absorbing the notices; no left pad, so the ready-time frame does not count); rows by kind: %r"
+                        "there after the bundle's last notice could have been posted (the old bundle's socket churn absorbing the notices; a frame before "
+                        "that, the ready-time frame included, does not count); rows by kind: %r"
                         % (self._rows_by_kind(A),))
         self.assertTrue(all((d or {}).get("slot") == "feed" for d in ua), "…each naming the feed slot: %r" % (ua,))
         self.assertTrue(self._sends("fleet", "local", "needSlot"), "…and posted its needSlot to the LOCAL kernel")
