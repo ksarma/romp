@@ -364,22 +364,23 @@ export function pageMarks(marks: Record<string, unknown> | null, paints: readonl
  *  received characters in the minute: the row closing a detach's minute carries the host's characters and the rows after
  *  it carry no key for it, an attached idle host (a down one; an up one hears a keepalive every 10 s) reads 0, and a
  *  position both detached and silent is left off. Every qualifying position keeps its own key, h1, h2 and so on; no cap,
- *  one number per attached host (the owner's decision of 2026-09-19). Null when no position qualifies (no remote host attached at
+ *  one number per attached host (the owner's decision of 2026-09-19). A key is carried as matched and never rebuilt from its
+ *  parsed ordinal, so an ordinal past 2**53 (which no manager mints; the window slot is read unvalidated) keeps its own key
+ *  and its own number rather than a NaN that JSON writes as null. Null when no position qualifies (no remote host attached at
  *  the flush and none received characters in the minute, a page that never attached one included), and the caller leaves
  *  the key off the row. Pure. */
 export function bytesByHost(now: Record<string, unknown> | null, base: Record<string, number>, attached: readonly string[] | null): Record<string, number> | null {
   if (!now || typeof now !== "object") return null;
   const up = new Set(attached || []);
-  const ords: number[] = [];
-  for (const k of Object.keys(now)) {
+  const ords: [number, string][] = [];   // the ordinal for the order and the key AS MATCHED for the reads: a key rebuilt from
+  for (const k of Object.keys(now)) {    // the parsed ordinal missed its own entry past 2**53 and landed as null (round 1, 2026-09-20)
     const m = /^h([1-9][0-9]*)$/.exec(k);
     const v = now[k];
-    if (m && typeof v === "number" && isFinite(v)) ords.push(Number(m[1]));
+    if (m && typeof v === "number" && isFinite(v)) ords.push([Number(m[1]), k]);
   }
-  ords.sort((a, b) => a - b);
+  ords.sort((a, b) => a[0] - b[0]);
   const out: Record<string, number> = {};
-  for (const o of ords) {
-    const k = "h" + o;
+  for (const [, k] of ords) {
     const d = Math.max(0, Math.round((now[k] as number) - (base[k] || 0)));
     if (d <= 0 && !up.has(k)) continue;   // detached at the flush and silent in the minute: no key
     out[k] = d;

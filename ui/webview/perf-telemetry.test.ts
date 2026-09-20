@@ -1302,6 +1302,10 @@ test("bytesByHost: the minute's characters per remote host position from federat
   assert.deepEqual(Object.keys(named!), ["h1", "h2", "h3", "h4", "h5", "h6", "h7", "h8"], "in numeric order, and no key of another shape");
   assert.deepEqual(bytesByHost({ h1: 1, h5: 9 }, { h5: 9 }, ["h1", "h5"]), { h1: 1, h5: 0 }, "a fifth position attached and idle reads 0 under its own key");
   assert.deepEqual(bytesByHost({ h1: 1, h5: 9 }, { h5: 9 }, ["h1"]), { h1: 1 }, "a fifth position detached and silent has no key, like any other");
+  // an ordinal past 2**53 (no manager mints one; the window slot is unvalidated) passes the pattern and cannot round-trip through
+  // Number: a key rebuilt from the parsed ordinal missed its own entry and landed as NaN, which JSON writes as null, the one
+  // value the field never carries (review round 1, 2026-09-20). The key is carried as matched, so the entry keeps its number.
+  assert.deepEqual(bytesByHost({ h9007199254740993: 5 }, {}, null), { h9007199254740993: 5 }, "an ordinal past 2**53 keeps the key it was matched under: never rebuilt as a lossy number, never null");
   assertIdentifiersOnly(named);
 });
 
