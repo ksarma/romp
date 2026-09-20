@@ -673,12 +673,17 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
         the first set and not the second, through the helpers at both since values and through the gate leg's own read
         (_rows_down_minus_attaches, which carries its since; round 4's fixer pass: the leg's inline since was reached by no
         test, and a mutation moving it to the resume stayed green). And the return window's read (_return_window_stray, the
-        third reader of the attaches, which kept a set of revs until the fixer pass): one row of an attach's rev in the window
-        is the attach's, a second row of the same rev is stray (the set passed both), a row of a rev no attach carries is
-        stray, and a row of the attach's rev two seconds before its floored second is stray. Nothing here reaches the test
-        methods' own lines; the replays over recorded drives do (0 rows and 0 attaches in every recorded down window and
-        return window, so neither exemption fires on any recorded drive: the census is in the served module's
-        _minus_attach_rows docstring)."""
+        third reader of the attaches, which kept a set of revs until the fixer pass), in cells beside the down window's: one
+        row of an attach's rev in the window is the attach's and nothing is stray (the control); two rows of the same rev
+        leave one stray, so the gate leg's exact zero reds on the second where the set passed both; a row of a rev no attach
+        carries is stray; a row of the attach's rev two seconds before its floored second is stray. The switch's witness is
+        the down window's own: the two-row shape injected over a recorded old-hub drive (the connect push's attach 1.54 s
+        after the resume, two rows of its rev at its floored second and a second later) passed the gate leg's stray
+        assertion through the module before the switch, whose message promised one row per attach, and reds it through the
+        module after, the second row reported as the stray; these cells red through the set restored inside the helper.
+        Nothing here reaches the test methods' own lines; the replays over recorded drives do (0 rows and 0 attaches in every
+        recorded down window and return window, so neither exemption fires on any recorded drive: the census is in the
+        served module's _minus_attach_rows docstring)."""
         DROP, RESUME = 1_000_000, 1_030_000
         B0, END = RESUME + 20_000, RESUME + 60_000
 
@@ -729,13 +734,22 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
         self.assertEqual((t._minus_attach_rows(stamped, RESUME - 1500), t._minus_attach_rows(stamped, RESUME)), ([], [{"rev": 5, "slot": "feed"}]),
                          "…so the gate leg's since exempts its row and the storm test's does not")
         self.assertEqual(t._rows_down_minus_attaches(), [], "…and the gate leg's own read, which carries its since of 1.5 s before the resume, exempts the row (at the resume it would not)")
-        # the return window's read (the third reader of the attaches): one row per attach the Outline received there, matched to it
+        # the return window's read (the third reader of the attaches, _return_window_stray): one row per attach the Outline
+        # received there, matched to it; cells beside the down window's two above, the same shapes through the third reader
         late = patch(RESUME + 1540, ["ledgers"], rev=1)   # the connect push's ledgers attach 1.54 s after the resume, past the down window's patch pad
         f = (RESUME + 1540) // 1000   # the attach's floored second; row() takes milliseconds and floors them the same way
-        self.assertEqual(record([row(1, f * 1000)], [late])._return_window_stray(), ([], [(1, f)]), "one row of the attach's rev at its floored second is the attach's, not stray")
-        self.assertEqual(record([row(1, f * 1000), row(1, (f + 1) * 1000)], [late])._return_window_stray()[0], [{"rev": 1, "slot": "feed"}], "a second row of the attach's rev is stray (the set of revs passed both)")
-        self.assertEqual(record([row(1, f * 1000), row(2, (f + 2) * 1000)], [late])._return_window_stray()[0], [{"rev": 2, "slot": "feed"}], "a row of a rev no attach carries is stray")
-        self.assertEqual(record([row(1, (f - 2) * 1000)], [late])._return_window_stray()[0], [{"rev": 1, "slot": "feed"}], "a row of the attach's rev two seconds before its floored second is not the attach's")
+        with self.subTest(window="the return window, one row per attach"):
+            self.assertEqual(record([row(1, f * 1000)], [late])._return_window_stray(), ([], [(1, f)]),
+                             "one row of the attach's rev at its floored second is the attach's: nothing stray, the attach listed (the control the leg's zero passes on)")
+        with self.subTest(window="the return window, two rows of the attach's rev"):
+            self.assertEqual(record([row(1, f * 1000), row(1, (f + 1) * 1000)], [late])._return_window_stray(), ([{"rev": 1, "slot": "feed"}], [(1, f)]),
+                             "of two rows of the attach's rev, stamped at its floored second and a second later, one is the attach's and the other is stray, so the "
+                             "leg's exact zero reds on the second (the set of revs passed both)")
+        with self.subTest(window="the return window, a row of a rev no attach carries"):
+            self.assertEqual(record([row(1, f * 1000), row(2, (f + 2) * 1000)], [late])._return_window_stray()[0], [{"rev": 2, "slot": "feed"}], "a row of a rev no attach carries is stray")
+        with self.subTest(window="the return window, a row two seconds before the attach"):
+            self.assertEqual(record([row(1, (f - 2) * 1000)], [late])._return_window_stray()[0], [{"rev": 1, "slot": "feed"}],
+                             "a row of the attach's rev two seconds before its floored second is not the attach's (the slack is one second; the set passed it)")
 
     def test_the_margin_leg_takes_no_expired_or_unshown_wait_as_a_delivery(self):
         """The gate's control in time (_assert_the_down_window_outlasts_the_drives_slowest_delivery) reads a phase's
