@@ -963,10 +963,19 @@ interface Conn {
   // The pair the raw feed base holds for a resume declaration (2026-09-19): (gen, 0) at a full carrying gen, advanced by
   // each feedDelta that applies under the gen gate to (newGen when the frame carries one, else gen; the frame's rev, which
   // the gate holds equal to its through: applyRemoteFeedDelta), absent at a full carrying none and while no full has
-  // landed. Set and cleared together
-  // with feedRaw, nowhere else: connect() keeps a base holding a pair across a redial and writes the pair on the dial
-  // (remoteDialUrl, held:feed:<gen>.<rev>), so the declared pair is the applied one and has no home but the base's. The
-  // gen is the kernel's string (view-deltas.ts genOf: the boot's token and a counter joined by '-'), never a number.
+  // landed. Set and cleared together with feedRaw, nowhere else: connect() keeps a base holding a pair across a redial and
+  // writes the pair on the dial (remoteDialUrl, held:feed:<gen>.<rev>), so the declared pair is the applied one and has no
+  // home but the base's. The gen is the kernel's string (view-deltas.ts genOf: the boot's token and a counter joined by
+  // '-'), never a number.
+  // What the pair does today, stated here once (2026-09-20; applyRemoteFeedDelta, remoteDialUrl and view-deltas.ts's
+  // Base point here): no kernel in this repo stamps a gen yet, so nothing declares one today. Every full this side
+  // receives carries no gen, so no base ever holds a pair (this field and the receiver's Base.gen stay absent), every
+  // dial carries the decoder word alone, and every branch keyed on a gen, on both roads (the gate and its stale row,
+  // the composed-frame arm, the held members, connect()'s gated reset), is unreachable against every kernel in this
+  // repo, whose needFullFeed handler serves a full frame at once whatever the ask carries and reads no held member. The
+  // branches are the client half of the reconnect design, written for a kernel that stamps its frames: that kernel
+  // would seed the pair at its stamped full, advance it as above, read the declared member at the compose and answer
+  // with a composed frame; nothing in this repo does any of that.
   feedHeld?: { gen: string; rev: number };
 }
 
@@ -1489,8 +1498,10 @@ export class FederationManager {
    *
    *  The gen gate (2026-09-19): a delta carrying `gen` (a kernel that stamps its frames) applies only when its gen is
    *  the held pair's, its base at or below the held rev, its `through` at or above the held rev and its rev equal to its
-   *  through; else the pair is stale for this stream and the ask carries the held pair (kernel.py reads it at the compose),
-   *  nothing applied. The
+   *  through; else the pair is stale for this stream and the ask carries the held pair, nothing applied. The pair on the
+   *  ask is for a kernel that stamps its frames to compose from; kernel.py's handler above serves a full frame at once
+   *  whatever the ask carries and reads no pair, and no kernel in this repo stamps a gen yet, so nothing declares one today
+   *  and this whole gen branch is unreachable against today's kernel (Conn.feedHeld says what the pair does today). The
    *  gate is keyed on gen alone and never on the frame carrying through: the kernel that stamps its frames stamps
    *  through on EVERY delta (equal to the rev on a per-cycle delta, R on a composed frame), so through's presence tells
    *  nothing about the frame's shape, the through test stands for every gen-carrying frame, and a stamped delta carrying
@@ -2101,8 +2112,9 @@ export class FederationManager {
   // that day, but the slot path costs the remote a re-encode of every card per build). Beside it ride the held
   // members (2026-09-19), each written from the CONN's own base after connect()'s gated reset and omitted when that
   // base is absent or holds no gen: held:feed:<gen>.<rev> from the pair beside conn.feedRaw, held:bars:<gen>.<rev>
-  // from the receiver's bars base (ViewDeltas.held), on a first dial and a redial alike (the kernel reads the member
-  // at the compose on either). Never the page's caps string: the page's held members are the pair it holds for its
+  // from the receiver's bars base (ViewDeltas.held), on a first dial and a redial alike (a kernel that stamps its frames
+  // reads the member at the compose on either; no kernel in this repo stamps a gen yet, so nothing declares one today:
+  // Conn.feedHeld says what the pair does). Never the page's caps string: the page's held members are the pair it holds for its
   // LOCAL kernel, which this host's kernel would count a miss, and its hold words (readyGate, chatResume) are holds
   // on the page's own socket that this manager never answers; an older remote kernel ignores the words it does not
   // know. `delta` stays among the page's terms on purpose: it puts the remote's timeline bars on the view-delta

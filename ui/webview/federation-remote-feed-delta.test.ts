@@ -12,6 +12,8 @@
 // Synthetic only (host TESTHOST, placeholder uuids, the notes-api demo: sessions `api` and `worker`).
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { FederationManager, REMOTE_REDIAL_MS, REMOTE_STALE_MS } from "./federation";
 import * as fed from "./federation";
 // the manager's announced capability, read off the module namespace so this file still bundles (and runs red) against a
@@ -672,7 +674,7 @@ test("the watchdog's abandon-and-dial declares the same pair, without reconnect 
     assert.notEqual(ws2, ws);
     assert.equal(fm.conns.get(HOST), conn);
     const q = qOf(ws2.url);
-    assert.equal(q.get("caps"), "feedDelta,held:feed:" + G + ".2", "declared without reconnect: the kernel reads the member at the compose on either dial");
+    assert.equal(q.get("caps"), "feedDelta,held:feed:" + G + ".2", "declared without reconnect: a kernel that stamps its frames reads the member at the compose on either dial; no kernel in this repo stamps a gen yet, so nothing declares one today");
     assert.equal(q.get("reconnect"), null);
     assert.ok(conn.feedRaw, "the base survived");
     fm.conns.get(HOST).closed = true;
@@ -866,5 +868,23 @@ test("the gen's form: a non-empty string holding neither '.' nor ',' (the kernel
       assert.equal(qOf(last(FakeWS.made).url).get("caps"), "feedDelta", "nothing declared for a base holding no gen: " + JSON.stringify(bad));
       fm.conns.get(HOST).closed = true;
     });
+  }
+});
+
+// The one statement of what the declared pair does today (round 3, 2026-09-20): federation.ts says it once, at
+// Conn.feedHeld, in the words the other sites point at, and no comment on either road claims in the present tense that
+// kernel.py reads the pair at the compose (no kernel in this repo reads a held member or an ask's pair). A source pin, the
+// way perf-beacon-settings.test.ts pins the gear copy.
+test("federation.ts states once what the pair does today (no kernel in this repo stamps a gen yet, so nothing declares one today) and no comment on either road says kernel.py reads the pair at the compose", () => {
+  const UI = path.resolve(process.cwd(), "..", "ui", "webview");
+  // the comments' wrapping is not part of the claim: a line break and its comment marker read as one space
+  const flat = (f: string) => fs.readFileSync(path.join(UI, f), "utf8").replace(/\n\s*(\/\/|\*)\s?/g, " ").replace(/\s+/g, " ");
+  const fedSrc = flat("federation.ts"), vdSrc = flat("view-deltas.ts");
+  const home = "no kernel in this repo stamps a gen yet, so nothing declares one today";
+  assert.equal(fedSrc.split("What the pair does today, stated here once").length, 2, "the home statement, once, at Conn.feedHeld");
+  assert.ok(fedSrc.includes(home) && vdSrc.includes(home), "both files carry the statement's words");
+  for (const [name, src] of [["federation.ts", fedSrc], ["view-deltas.ts", vdSrc]]) {
+    assert.doesNotMatch(src, /kernel\.py reads (it|the (pair|member)) at the compose/, name + ": kernel.py is not said to read the pair");
+    assert.doesNotMatch(src, /\bthe kernel reads the member at the compose\b/, name + ": no unqualified present-tense read");
   }
 });

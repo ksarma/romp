@@ -36,7 +36,8 @@ type Collection = { order: string[]; items: Map<string, any> };
 // whose gen the gate in receive() holds equal to the base's (a frame carrying another gen recovers, 2026-09-20). A kernel
 // before the stamp seeds none, a stamped frame onto such a base seeds none either (receive() says why), and held() then
 // reports no pair, so nothing is declared for that base. The gen is a string in the kernel's form (genOf below), never a
-// number.
+// number. What the pair does today is stated once, at federation.ts's Conn.feedHeld: no kernel in this repo stamps a gen
+// yet, so nothing declares one today, and this field stays absent on every base.
 type Base = { rev: number; gen?: string; msg: Frame; maps: Map<string, Collection> };
 export const VIEW_DELTA_KINDS: Record<Slot, Record<string, string>> = {
   feed: { asks: "byid:itemId" },
