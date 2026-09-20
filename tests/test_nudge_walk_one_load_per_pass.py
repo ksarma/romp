@@ -795,6 +795,16 @@ CASE_JD = ("_freeze_store",)
 # rebinds it is not checked, so a row that outlives its rebinding is unseen here.
 TICK_REBOUND_KM = {}
 TICK_REBOUND_JD = {}
+# _INTERPRETER_GLOBALS: the names the interpreter itself writes into a module's globals, which are no case's rebinding and which
+# _restore's check sets aside. One today: `__warningregistry__`, which the warnings module creates in the globals of the frame a
+# warning is attributed to the first time one is raised from that module's code (warnings.warn's globals.setdefault, before the
+# filters decide what becomes of the warning; the C path does the same), so the first warning of a process raised from the kernel
+# inside a harness case would otherwise be named a leak at that case's cleanup, deleted there, and named again at the next
+# (review round 7, a records pass re-taking the first paragraph's bypass plants at the round's head: the plant that opens the store
+# file in the kernel's pass loop left its handle to the collector, whose unclosed-file warning carries the kernel's frame, and five
+# harness cases red at their cleanup naming this name and no stub). A bound, not a derivation: which names the interpreter writes
+# is the interpreter's, stated here and set aside by name.
+_INTERPRETER_GLOBALS = frozenset({"__warningregistry__"})
 REPLACED_KM = ("_alive_sessions", "_wait_for_graph", "_session_flag", "_compacting_now", "_api_error",
                "_interrupt_suppresses_nudge", "_backend_rewind_pending", "_last_state",
                "_session_awaiting", "_turn_romp_injected", "_closer_settled", "_revivers_pending",
@@ -2011,7 +2021,9 @@ class _WalkHarness(unittest.TestCase):
         stub live for every later test). Derives: the leaked names from both modules' globals against the snapshot. Bounds: the
         names the restoring rebind moves, subtracted, so a stub a case leaves on one of the judge's directory or path names is
         overwritten by the rebind and not named (setUp's check has the same edge); TICK_REBOUND_KM and TICK_REBOUND_JD, the
-        allowance for a global the tick itself rebinds, empty today and checked only to name a live global."""
+        allowance for a global the tick itself rebinds, empty today and checked only to name a live global; and _INTERPRETER_GLOBALS,
+        the warnings registry the interpreter writes into a module's globals on the first warning raised from it, set aside by name
+        (a kernel warning inside a harness case is no stub; before this, it red the case's cleanup naming the registry)."""
         journals = [jd._overrides_dir() / (sid + ".jsonl") for sid in SIDS + (SID_C,)]   # under this test's root, resolved before the rebind back
         for k, v in self.saved.items():
             setattr(km, k, v)
@@ -2045,7 +2057,7 @@ class _WalkHarness(unittest.TestCase):
         for label, mod, before, allowed, subtract in (("kernel", km, self.before_km, TICK_REBOUND_KM, set()),
                                                       ("judge", jd, self.before_jd, TICK_REBOUND_JD, moved)):
             now = dict(vars(mod))
-            names = sorted(k for k in (set(before) | set(now)) - subtract - set(allowed)
+            names = sorted(k for k in (set(before) | set(now)) - subtract - set(allowed) - _INTERPRETER_GLOBALS
                            if now.get(k, _UNSET) is not before.get(k, _UNSET))
             for k in names:                              # back to the snapshot's object first, so the tests after this one are undisturbed
                 if k in before:
