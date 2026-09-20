@@ -647,7 +647,13 @@ column, the count of its sites whose list hands off, and the no-hand-off sites o
 by a drive and in no row of UNDRIVEN_SITES; both mutations red the roster pin since, naming the key (1 failed, 38 passed each), and
 the corrupt handler's hand-off rewritten through a temporary, `store = load_goals(fsid)` then `return store`, reds the roster pin
 naming corrupt and the coverage case at the corrupt row's hand-off column, 1 against 0 (2 failed, 37 passed), the coverage case alone
-with the tuple edited to match (1 failed, 38 passed). The
+with the tuple edited to match (1 failed, 38 passed). The cleanup's restore (the plan's hunt for a seventh axis, the class of
+extra7-1), on the tree of the round's eighth fix: CASE_KM and CASE_JD bounded what _restore put back while nothing checked that a
+case replaced only those, so the wedge-gate sweep case standing a new-identity pass-through on km._nudge_response_ready, a kernel
+name in neither list, left the module green on the tree of the round's seventh fix (39 passed) with the stub live for every later
+test; setUp keeps its first snapshots and _restore, after the saved names go back and the root is rebound, checks every kernel and
+judge global against them by identity, the names the restoring rebind moves subtracted, and puts a leaked name back, so the same
+plant reds that case at its cleanup since, naming the kernel name (1 failed, 38 passed). The
 clean module at this head, the head of the round-7 fixes: 39 passed single-process on 3.10, 3.11, 3.12, 3.13 and 3.14t.
 
 Drives the real pass (_auto_nudge_tick) over two alive sessions with real transcript files and real goal stores, on the
@@ -763,8 +769,9 @@ KERNEL_FILE = os.path.basename(os.path.realpath(km.__file__))   # the kernel's r
 # setUp beside them). Their real bodies never run under the fixture, so the source census in TheCountersOneSite is the only
 # witness for a loader inside them. _session_working is not in the list: its real body runs (the event model reads the
 # fixture turns, both ended, as not working, the answer the stub gave), and the state-gate case replaces it for its own world.
-# CASE_KM: names a CASE may replace after setUp for its own world, saved with the rest and restored by the cleanup; setUp
-# leaves them real (the agreement check there). The two writers are the wedge-gate sweep case's: their real bodies load
+# CASE_KM: names a CASE may replace after setUp for its own world, saved with the rest and restored by the cleanup, which then
+# checks every other global of both modules against setUp's first snapshot (_restore); setUp leaves them real (the agreement
+# check there). The two writers are the wedge-gate sweep case's: their real bodies load
 # through the writer door at their write moments by design (the reference's jobs block names them among the store's other
 # readers), so the census has nothing to say about them.
 CASE_KM = ("_session_working", "_mark_nudge_failed", "_file_wake_answer")
@@ -773,6 +780,14 @@ CASE_KM = ("_session_working", "_mark_nudge_failed", "_file_wake_answer")
 # refuse roads (TheDoorBumpsAtMostOneSecondKeyPerCall): a wrapper over the real function that calls through, so its real body runs on
 # every fill and is covered by execution, not by the census.
 CASE_JD = ("_freeze_store",)
+# TICK_REBOUND_KM / TICK_REBOUND_JD: a kernel or judge global the tick itself rebinds (a `global` statement run by the pass), which
+# _restore's check against setUp's first snapshot would name at every harness case's cleanup: name -> the reason the rebinding is
+# the tick's and not a case's leak. Empty: over the whole module on 3.12 and 3.14t no harness case ends with a global of either
+# module rebound outside the saved lists (the kernel's _PREV_ALIVE, which the tick rebinds, is in REPLACED_KM and goes back with
+# them). A row here must name a global the snapshot holds (a row for a name that is gone reds as stale); whether the tick still
+# rebinds it is not checked, so a row that outlives its rebinding is unseen here.
+TICK_REBOUND_KM = {}
+TICK_REBOUND_JD = {}
 REPLACED_KM = ("_alive_sessions", "_wait_for_graph", "_session_flag", "_compacting_now", "_api_error",
                "_interrupt_suppresses_nudge", "_backend_rewind_pending", "_last_state",
                "_session_awaiting", "_turn_romp_injected", "_closer_settled", "_revivers_pending",
@@ -1808,19 +1823,22 @@ class _WalkHarness(unittest.TestCase):
     before the first rebind (unittest skips tearDown when setUp raises and runs the cleanups regardless). Derives: what setUp
     rebinds, against REPLACED_KM and REPLACED_JD both ways (set equality over the kernel's and the judge's globals by identity, the
     names jd._rebind_state moves subtracted) with Sessions.backend_for beside them; the two doors' identity before the recorders
-    stand; the wrappers' hand-off lines and call counts from their source (_pass_through_lines), one line and one call each; and per
-    pass, in _pass, every counter delta against the recorded calls. Bounds: REPLACED_KM, REPLACED_JD, CASE_KM and CASE_JD, what the
-    fixture replaces and what a case may, a policy, the first two pinned by execution here and the last two by nothing (_restore
-    puts the saved names back and checks no other name, so a case that stubs a name outside every list leaks it to the tests after
-    it unseen: a new-identity pass-through on such a kernel name left the module green at the head the round-7 plan read);
-    REPLACED_DATA, the two data names the census skips, read one way (a data name left off it errors in the census's identity
+    stand; the wrappers' hand-off lines and call counts from their source (_pass_through_lines), one line and one call each; per
+    pass, in _pass, every counter delta against the recorded calls; and in the cleanup, _restore, every kernel and judge global
+    against setUp's first snapshot by identity once the saved names are back, the names the restoring rebind moves subtracted, so a
+    name a case rebound outside every list is named at that case's cleanup and put back (until the round-7 fixes _restore put the
+    saved names back and checked no other name, so a new-identity pass-through on such a kernel name left the module green and the
+    stub live for every later test). Bounds: REPLACED_KM, REPLACED_JD, CASE_KM and CASE_JD, what the fixture replaces and what a
+    case may, a policy, the first two pinned by execution in setUp and the last two by the cleanup's check (a case may replace only
+    names on the saved lists, since any other is named as leaked); REPLACED_DATA, the two data names the census skips, read one way (a data name left off it errors in the census's identity
     check, a callable put on it is skipped unseen); the window, one tick; the doors recorded, the judge's two; WALK, GATE and SWEEP,
     the callers the condition names; the boundary set, three wrappers hand-picked as the judge's, held against the judge's AST by
     the birth pin's hand-offs line; KEYS, the walk counters the cases pin exactly (a tuple derived from km._NUDGE_WALK_STATS would
     report more with nothing asserting it); and the fixture constants, SIDS, NOW and the seeded stores."""
 
     def setUp(self):
-        before_km, before_jd = dict(vars(km)), dict(vars(jd))   # FIRST: the agreement check at the end of setUp compares against these
+        before_km, before_jd = dict(vars(km)), dict(vars(jd))   # FIRST: the agreement check at the end of setUp compares against these,
+        self.before_km, self.before_jd = before_km, before_jd   #   and _restore compares every global of both modules against them
         self.td = tempfile.TemporaryDirectory()
         self.addCleanup(self.td.cleanup)                  # cleanups run last in, first out: the seams go back, then the dir
         td = Path(self.td.name)
@@ -1976,8 +1994,16 @@ class _WalkHarness(unittest.TestCase):
 
     def _restore(self):
         """Every seam back the way setUp found it: the saved kernel and judge names, the backend, the caches, the counters, the
-        journals, the state root. Derives: nothing. Bounds: the names put back are the saved lists' (REPLACED_KM, CASE_KM,
-        REPLACED_JD, CASE_JD and the two doors); a name a case rebound outside them stays rebound, unseen here."""
+        journals, the state root; then the check the saved lists cannot make: every kernel and judge global is the object setUp's
+        first snapshot held, by identity, over the union of the names then and now, the names jd._rebind_state moves subtracted (the
+        diff across the restoring rebind, as setUp reads them across its own). A name a case rebound, added or deleted outside
+        REPLACED_KM, CASE_KM, REPLACED_JD, CASE_JD and the two doors is put back and this cleanup reds naming it, so the case that
+        leaked it fails and the tests after it run over the modules setUp found (review round 7, the seventh-axis hunt: before this
+        check a new-identity pass-through on km._nudge_response_ready, a kernel name in neither list, left the module green with the
+        stub live for every later test). Derives: the leaked names from both modules' globals against the snapshot. Bounds: the
+        names the restoring rebind moves, subtracted, so a stub a case leaves on one of the judge's directory or path names is
+        overwritten by the rebind and not named (setUp's check has the same edge); TICK_REBOUND_KM and TICK_REBOUND_JD, the
+        allowance for a global the tick itself rebinds, empty today and checked only to name a live global."""
         journals = [jd._overrides_dir() / (sid + ".jsonl") for sid in SIDS + (SID_C,)]   # under this test's root, resolved before the rebind back
         for k, v in self.saved.items():
             setattr(km, k, v)
@@ -2002,7 +2028,28 @@ class _WalkHarness(unittest.TestCase):
                 j.unlink()
             except OSError:
                 pass
+        pre_rebind = dict(vars(jd))                      # the judge's globals AT the restoring rebind, so the names it moves are the diff
         jd._rebind_state(self.saved_state)               # the root goes back the way it was found (the parse entries go with it)
+        moved = {k for k, v in vars(jd).items() if pre_rebind.get(k, _UNSET) is not v}
+        stale = ([k for k in TICK_REBOUND_KM if k not in self.before_km] + [k for k in TICK_REBOUND_JD if k not in self.before_jd])
+        self.assertEqual(stale, [], "an allowance row names a global the snapshot holds; these name none: %r" % stale)
+        leaked = {}
+        for label, mod, before, allowed, subtract in (("kernel", km, self.before_km, TICK_REBOUND_KM, set()),
+                                                      ("judge", jd, self.before_jd, TICK_REBOUND_JD, moved)):
+            now = dict(vars(mod))
+            names = sorted(k for k in (set(before) | set(now)) - subtract - set(allowed)
+                           if now.get(k, _UNSET) is not before.get(k, _UNSET))
+            for k in names:                              # back to the snapshot's object first, so the tests after this one are undisturbed
+                if k in before:
+                    setattr(mod, k, before[k])
+                else:
+                    delattr(mod, k)
+            if names:
+                leaked[label] = names
+        self.assertEqual(leaked, {}, "every kernel and judge global is the object setUp's first snapshot held once the saved names are "
+                                     "back (the names the rebind moves subtracted); these were rebound, added or deleted by this case "
+                                     "outside REPLACED_KM, CASE_KM, REPLACED_JD, CASE_JD and the two doors, and are put back here: %r"
+                                     % leaked)
 
     def _toggle(self, enabled):
         (jd.STATE / "auto-nudge.json").write_text(json.dumps({"enabled": enabled, "nudged": {}}))
