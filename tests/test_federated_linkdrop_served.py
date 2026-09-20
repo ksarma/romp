@@ -1158,18 +1158,21 @@ class _LinkDrop(unittest.TestCase):
         read from the hook's frames, never a dropped requirement). Round 4 added the gap because the frame alone was no key:
         on the old bundle a routine redial produces a whole frame after the phase's notices were already delivered as
         patches, so the frame-only excuse was available in 47 of the 78 phase windows (A, B, C) over the 26 unmutated
-        old-hub records in the builder's cache as of the drive at `r7/lab-ci5.log` (2026-09-20), load-bearing in 5, and a
-        planted gating miss (a phase's patches and rows removed from the record) stayed green at both floors; keyed on the gap
-        it is available in 5 of those 78, the phase-A windows of the five drives whose Outline socket churned inside phase A,
-        and the planted miss reds. Over all 78 windows the planted miss (the phase's feed patches and rows removed, every
-        frame kept) reds the floor in 73 and stays excused in those 5: a real gating miss during a churn is indistinguishable
-        from the churn in the record, the excuse's remaining hole and the price of excusing the churn at all. Every figure in
-        this paragraph, the population, its drive and the counts, is ONE derivation (round 5: a hand-kept pair of a count and
-        a drive drifted apart twice, one drive behind each time): `population_drive.py <tests_dir> <round-3 tests_dir>` in the
-        builder's cache outside the repo lists the records by `population6.py`, names the newest drive by its log's header
-        stamp and checks its records are in the population, then runs this helper over each record's windows
-        (`excuse_census.py`, the round-3 module's copy for the frame-only key) and the floor over each window with the miss
-        planted (`census_module.py`), and prints these sentences; they are pasted, never retyped. The post times
+        old-hub records in the builder's cache as of the drive at `r7/lab-ci5.log` (2026-09-20), load-bearing (a window with
+        no patch) in 5 of the 47, and a planted gating miss (a phase's patches and rows removed from the record) stayed green
+        at both floors; keyed on the gap it is available in 5 of those 78 and load-bearing in 5, the phase-A windows of the
+        five drives whose Outline socket churned inside phase A, and the planted miss reds. Over all 78 windows the planted
+        miss (the phase's feed patches and rows removed, every frame kept) reds the floor in 73 and stays excused in 5: a
+        real gating miss during a churn is indistinguishable from the churn in the record, the excuse's remaining hole and
+        the price of excusing the churn at all. Every figure in this paragraph, the population, its drive and the counts, is
+        ONE derivation (round 5: a hand-kept pair of a count and a drive drifted apart twice, one drive behind each time):
+        `population_drive.py --check <tests_dir> <round-3 tests_dir>` in the builder's cache outside the repo lists the
+        records by `population6.py`, names the newest drive by its log's header stamp, and refuses to print anything for a
+        drive still in flight (no end line in its log), a newest drive with no record, or a complete record the listing does
+        not hold (round 5's fixer pass: it dated an in-flight drive and exited 0); then it runs this helper over each record's
+        windows (`excuse_census.py`, the round-3 module's copy for the frame-only key) and the floor over each window with
+        the miss planted (`census_module.py`), prints the three figure-bearing sentences of this paragraph WHOLE, and under
+        --check reads this docstring for them, whitespace folded, so a retyped figure is its exit 3, not a paste. The post times
         are DERIVED from the change record (its t0 plus i x NOTICE_GAP_S, _change's own sleeps between the posts, on the
         poster's clock at millisecond resolution); each notice's answer in the record carries the remote kernel's own stamp
         for the notice too (`at`, `t`), but in whole seconds and on the other clock, too coarse for a millisecond gap check,
@@ -1406,13 +1409,15 @@ class _LinkDrop(unittest.TestCase):
         restart at 1 on every relay socket, so a rev is no identity over a drive, and a set of revs let every row of a
         colliding rev through where the assertions' messages promise one row per attach. The exemption fires on no recorded
         drive: over the 68 unmutated records of both classes in the builder's cache as of the drive at `r7/lab-ci5.log`
-        (2026-09-20) the down windows hold 0 rows and 0 attaches, and the return window holds 0 rows, so 0 rows are exempted
-        at any of the three readers, by the set before round 4 and by this match after it; the pin over a synthetic record
-        in tests/test_federated_linkdrop_driver_bound.py is where the match is exercised. The count and its drive are one
-        derivation, `population_drive.py` in the builder's cache outside the repo (the population by `population6.py`, the
-        newest drive by its log's header stamp with its records checked into the population, then `attach_census.py`, these
-        helpers over each record), and the sentence is pasted from its output (round 5: the pair was retyped one drive
-        behind, twice). Returns the rows' data, _outline_unapplied's shape."""
+        (2026-09-20) the down windows hold 0 rows and 0 attaches and the return window holds 0 rows, so 0 rows are exempted
+        at the storm site, 0 at the gate leg's read and 0 in the return window, by the set before round 4 and by this match
+        after it; the pin over a synthetic record in tests/test_federated_linkdrop_driver_bound.py is where the match is
+        exercised. The count and its drive are one derivation, `population_drive.py --check` in the builder's cache outside
+        the repo (the population by `population6.py`, the newest drive by its log's header stamp, refused while in flight or
+        with a record the listing does not hold, then `attach_census.py`, these helpers over each record), which prints the
+        sentence before this one whole and reads this docstring for it under --check (round 5: the pair was retyped one
+        drive behind, twice; the fixer pass found the tool printed fragments and the figures were transcribed). Returns the
+        rows' data, _outline_unapplied's shape."""
         pool = list(self._attaches_since(since_ms))
         out = []
         for d, t in stamped:
