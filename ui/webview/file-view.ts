@@ -2181,9 +2181,9 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // placeholder restored, the chat page's heal landing a retry): the body's `load` capture listener, armed once per open like
   // the labels' and dropped with the viewer.
   ctx.onClose(armFigureControls(body, path));
-  // Every figure's own laid-out box watched (watchFigureBoxes: one ResizeObserver per open, re-armed at each text paint through
-  // the seam's onRendered), so the control is decided again at every reflow of the figure, the body's width and a text-size step
-  // alike; null outside a browser, where nothing reflows.
+  // Every figure's own laid-out box watched (watchFigureBoxes: one ResizeObserver per open, armed at each text paint through
+  // the seam's onRendered, the first paint's included; the body is empty here), so the control is decided again at every reflow
+  // of the figure, the body's width and a text-size step alike; null outside a browser, where nothing reflows.
   const figureWatch = watchFigureBoxes(body, path, ctx.onRendered);
   if (figureWatch) ctx.onClose(figureWatch);
   // The write, at the moments the reader leaves the file (runLeave: closeFileView and both replace paths; the window's
@@ -5086,7 +5086,9 @@ function watchFigureBoxes(body: HTMLElement, filePath: string, onRendered: (cb: 
   });
   const rearm = (): void => { ro.disconnect(); body.querySelectorAll(".fileview-md img").forEach((img) => { ro.observe(img); }); };
   onRendered((why) => { if (why !== "reflow") rearm(); });
-  rearm();
+  // No arm here: the open runs this before its first paint, so an arm at this point observed nothing (the file review's round 3,
+  // tests-4: measured in Chromium at the fix over the fresh open, the replace, Back, Forward and a reopen after a close, the body
+  // holding no `.fileview-md img` on any of the five, the loader alone), and the first paint's arm follows.
   return () => { ro.disconnect(); };
 }
 

@@ -137,13 +137,19 @@ test("the one decision: figureWantsControl reads the figure's state by one rule 
     'if (img.isConnected && figureState(img) !== "standin") decideFigureControl(img, filePath);',
     'body.querySelectorAll(".fileview-md img").forEach((img) => { ro.observe(img); });',
     'onRendered((why) => { if (why !== "reflow") rearm(); });',
-    "rearm();",
     "return () => { ro.disconnect(); };",
-  ], "watchFigureBoxes: the guard, the observer over the figures, the 0 by 0 report skipped before the decision, the re-arm at each paint, the drop");
-  // a 0 by 0 report is a box not laid out (the viewer hidden, a gated placeholder's img), not a figure's size: decided over it,
-  // figureBox fell back to the natural size and a hidden figure under the floor at its real width gained a control while hidden and
-  // lost it at the show; file-view-figure-floor-browser.test.ts drives the hide and the show
-  assert.match(watch, /A 0 by 0 report is a box that is not laid out, not a figure's size/, "the comment says what the report is");
+  ], "watchFigureBoxes: the guard, the observer over the figures, the 0 by 0 report skipped before the decision, the arm at each paint, the drop");
+  // no standalone arm between the paint's arm and the drop (the file review's round 3, tests-4): the open runs this before its
+  // first paint, over an empty body, so a `rearm();` there observed nothing on any road (measured in Chromium over the fresh open,
+  // the replace, Back, Forward and a reopen); the mark is anchored to the whole line, since a bare "rearm();" was satisfied by the
+  // substring inside the onRendered line before it
+  assert.doesNotMatch(watch, /^\s*rearm\(\);\s*$/m, "no standalone arm: the paint's arm is the only one, and a line that observes nothing carries no pin");
+  assert.equal((watch.match(/rearm\(\)/g) || []).length, 1, "rearm is called from the onRendered hook alone (its definition aside)");
+  // a 0 by 0 report is skipped: the transient box of a figure the viewer hides or of a gated placeholder's img, whose show or
+  // restore reports the real box; the skip is no guard for a figure whose REAL box is 0 by 0, which the floor refuses at its load
+  // (the file review's round 3, correctness-1); file-view-figure-floor-browser.test.ts drives the hide, the show and both authored shapes
+  assert.match(watch, /A 0 by 0 report is skipped: it is the transient box of a figure the viewer hides/, "the comment says what the report is");
+  assert.match(watch, /The skip decides nothing, so it is no guard for a figure whose real box is 0 by 0/, "and what it is not: the loaded figure with no box is the floor's");
   assert.match(VIEW, /const figureWatch = watchFigureBoxes\(body, path, ctx\.onRendered\);\n\s*if \(figureWatch\) ctx\.onClose\(figureWatch\);/, "armed once per open beside the load and error pair, dropped through the close hooks");
   const paint = between(VIEW, "function addFigureControls(box: HTMLElement, filePath: string): void {", "\n}\n");
   assert.match(paint, /box\.querySelectorAll\("img"\)\.forEach\(\(img\) => \{ decideFigureControl\(img, filePath\); \}\);/, "the paint runs the same decision (a stand-in's only one)");
