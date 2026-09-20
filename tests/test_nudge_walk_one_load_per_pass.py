@@ -64,7 +64,9 @@ claim. By the store's own counters, a witness keyed on the store rather than on 
 door: every call that reaches the shared cache's branch and returns moves exactly one of hit, miss, compare_miss, absent
 and fallback in `jd.shared_store_stats()` (a call whose open or read raises moves none, and reds as a recorded call that
 took no read; held by execution since the round-5 fixes by the door witness's two raise-road drives, a symlink loop and a directory at
-the store path, each propagating its OSError with no key moved), so per pass the delta of those five must equal the walk's, the gate's and the sweep's recorded calls
+the store path, each propagating its OSError with no key moved; a call whose fill raises after its miss bump, a malformed journal row
+raising out of the replay, moves that one call key and no second key, held by the witness's third raise-road drive since the round-5
+consolidation), so per pass the delta of those five must equal the walk's, the gate's and the sweep's recorded calls
 together; and the door's second bumps, unreadable_journal, corrupt, dup and refuse (SHARED_SECOND_KEYS), each sit on the fill
 road below the miss or compare_miss bump and return, so per pass their sum never exceeds the fills, miss plus compare_miss
 (the second-bump bound, ruling 1 of the reviewer's rulings on the pre-emption: corrupt and unreadable_journal are hand-off keys
@@ -81,15 +83,16 @@ counters that the recorders do not wrap, or through a reference to a real door t
 even though it cannot be named. Outside both witnesses: a reader below the judge's loaders or beside its module, the
 kernel opening and parsing the store file itself, the kernel calling the judge's own file reader (`jd._read_store_json`,
 below the loaders) or a second judge module loaded under another name with a cache and counters of its own (three plants,
-each per session in the pass loop, re-taken at this head, the head of the round-5 fixes, over its 36 cases, one at a time with
+each per session in the pass loop, re-taken by the round-5 fixers at the head the round-5 verifiers read, over its 36 cases, one at a time with
 the kernel, the judge and this module hashed before the plant, across the run and after the revert: the first two leave every case
 green with no file changed across a run, so they stay outside every witness here; the third has been refused since the consolidation
 pass by the kernel-wide birth pin, whose called population names `_PJ.load_goals_shared` as a fifth loader spelling, so a second judge
 module is outside both execution witnesses and inside the static pin, which reds alone while every execution case stays green; and
 the alias control beside them reds the shared reconciliation on each of the five harness cases that drive a pass, and the birth pin
-(6 failed, 30 passed at this head, the head of the round-5 fixes; the door witness's cases call the door outside any pass and stay
-green, so the control reds five of the seventeen harness cases; review round 5, extra7-1: this sentence said every harness case, and
-one of the six at the head the round-5 ruling read drove no pass). Review round 3, correctness-2 and
+(6 failed, 30 passed at the head the round-5 verifiers read; the door witness's twelve cases there ran outside any pass, eleven calling
+the door once and one reading the table, and stayed green, so the control reds five of the seventeen harness cases of that head; review
+round 5, extra7-1: this sentence said every harness case, and one of the six at the head the round-5 ruling read drove no pass; a verifier
+of the round-5 fixes: it then said the door witness's cases call the door, one of them reading the table). Review round 3, correctness-2 and
 regression-2: this sentence had been written at the head of the build's verifier pass after the round-2 fixes, over that
 head's cases, said every case green of all three plants, and went stale as cases and the pin were added, so the count here is pinned by
 a Docs case against the loader's count of this module's cases, and the plants are re-taken whenever it moves). The two
@@ -452,10 +455,12 @@ list-of-syntax problem by construction, so each AST clause is kept as an early w
 the rest, and the two contracts, the walker's and the at-most-one, are carried by execution). The reviewer's correction: four findings
 said the roster pin walks outside _walk at its iter_fields read; it does not (the traversal is _walk, and iter_fields lists a walked
 node's fields), and no exemption row was added there. Three fixers landed the round's fixes in sequence, the two execution witnesses,
-the finder and the Docs count pin, and the prose; every state below was taken at this head, the head of the round-5 fixes, over its 36
-cases (the round's fixes add fourteen: the walker witness's three and the door witness's eleven beyond the corrupt case), each landed
-on kernel/kernel.py, kernel/judge.py or this module and reverted with the file hashed before the plant and after the revert, the module
-run single-process on 3.12 through the clean runner, so a figure here reads against 36 and names no other head. The walker contract
+the finder and the Docs count pin, and the prose; every state below was taken by the round's fixers at the head the round-5 verifiers
+read, over its 36 cases (the round's fixes add fourteen: the walker witness's three and the door witness's eleven beyond the corrupt
+case), each landed on kernel/kernel.py, kernel/judge.py or this module and reverted with the file hashed before the plant and after the
+revert, the module run single-process on 3.12 through the clean runner, so a figure in this paragraph reads against 36 and names no
+other head; the consolidation of the round-5 fixes then added one case, the door witness's drive of the fill's own raise road, at this
+head, the head of the round-5 fixes, over its 37 cases. The walker contract
 by execution (correctness-2, tests-1, extra5-2, regression-2): every census entry point of this module, the roster of eight rows in
 _CENSUSES read against a derivation over its own AST (_census_floor), refuses a planted stranger statement naming its class, and
 unplanted returns; _loader_sites rewritten as an ast.iter_fields recursion around _walk reds the witness naming it while the finder
@@ -489,14 +494,16 @@ regression-3, extra4-1), held on its side by kernel plants as real loads in the 
 never runs under the harness: the door's name as a utf-16 bytes literal decoded at getattr, and a chars-strip of a padded name handed
 to a partial of getattr, each leave the module green (36 passed each, the assembled class), while the same bytes literal in ASCII at
 getattr and the chars-strip handed to getattr itself, a listed receiver, each red the birth pin naming the constant and its receiver
-(1 failed, 35 passed each, the string class). The bypass plants and the alias control, re-taken at this head over its 36 cases, each
-landed on the kernel alone with the kernel, the judge and this module hashed before the plant, across the run and after the revert:
+(1 failed, 35 passed each, the string class). The bypass plants and the alias control, re-taken by the fixers at the head the round-5
+verifiers read, over its 36 cases, each landed on the kernel alone with the kernel, the judge and this module hashed before the plant,
+across the run and after the revert:
 the kernel opening and parsing the store file itself and the kernel calling jd._read_store_json, per session in the pass loop, 36
 passed each and no file changed across a run; a second judge module loaded under another name reds the birth pin alone, naming
 `_PJ.load_goals_shared` (1 failed, 35 passed); the alias control, the shared door bound at kernel import and called per session, reds
 the shared reconciliation on each of the five harness cases that drive a pass, 2 against 0, 7 against 5 twice, 6 against 4 and 3
-against 1, and the birth pin (6 failed, 30 passed). The clean module at this head, the head of the round-5 fixes: 36 passed
-single-process on 3.10, 3.11, 3.12, 3.13 and 3.14t, and with four workers on 3.12.
+against 1, and the birth pin (6 failed, 30 passed). The clean module at the head the round-5 verifiers read: 36 passed single-process
+on 3.10, 3.11, 3.12, 3.13 and 3.14t, and with four workers on 3.12. The clean module at this head, the head of the round-5 fixes:
+37 passed single-process on 3.10, 3.11, 3.12, 3.13 and 3.14t, and with two workers on 3.12.
 
 Drives the real pass (_auto_nudge_tick) over two alive sessions with real transcript files and real goal stores, on the
 suite's fake clock (the pass takes `now`). SYNTHETIC fixtures only; a PRIVATE synthetic sid pair (the goal-store fixture
@@ -561,13 +568,16 @@ SHARED_HANDOFF_KEYS = ("absent", "fallback", "corrupt", "unreadable_journal")
 # (SHARED_FILL_KEYS below, miss and compare_miss): _pass's second-bump bound (ruling 1 of the reviewer's rulings on the pre-emption).
 # The bound rests on three premises about the body. Two are pinned against the door's own source by the roster pin in
 # TheCountersOneSite: the keys the door bumps are the two rosters exactly, and every second-key bump sits below every call-key bump.
-# The third, that a call bumps AT MOST ONE second key, is carried by execution: TheDoorBumpsAtMostOneSecondKeyPerCall drives every
-# road of both rosters on the real door and reads the counters per call. The roster pin's three AST clauses are an early warning
-# for that premise: they refuse the forms they name (a second-key list holding two, a list not ending in a return or a raise, a
-# bump under a finally clause, a second-key raise list under a try statement) and are silent on the rest (a helper defined inside
-# the door and called from a second-key list, a return whose expression raises into a bumping handler, an exception from a clean
-# list's other statement caught by one, contextlib.suppress, and any construct nobody listed), each of which the witness catches on
-# the road it sits on (review round 4, tests-2, regression-2 and extra4-1: the pin read the first two premises and the third was
+# The third, that a call bumps AT MOST ONE second key, is carried by execution: TheDoorBumpsAtMostOneSecondKeyPerCall drives one
+# road per key of both rosters, nine roads, and three raise roads on the real door and reads the counters per call. The roster pin's
+# AST clauses are an early warning for that premise: they refuse the forms they name (a second-key bump that is not a statement of a
+# list, an assignment's value, a with item or a lambda body, say; a second-key list holding two; a list not ending in a return or a
+# raise; a bump under a finally clause; a second-key raise list under a try statement) and are silent on the rest (a helper defined
+# inside the door and called from a second-key list, a return whose expression raises into a bumping handler, an exception from a
+# clean list's other statement caught by one, contextlib.suppress, and any construct nobody listed), each of which the witness catches
+# on the road it sits on when a drive reaches that road; the drives seed a one-node store for one sid and call once, so a bump
+# conditioned on state no drive arranges is on no driven road, stated in the witness's docstring (review round 4, tests-2,
+# regression-2 and extra4-1: the pin read the first two premises and the third was
 # held by reading the body; a verifier of the round-4 fixes: a bump in a finally clause left the list predicate green; review round
 # 5, correctness-1, regression-1 and extra6-1: the first three constructs above, each planted on the corrupt road, bumped two second
 # keys with every clause green, so the clauses stopped being the premise's pin). Two of the second keys,
@@ -1460,9 +1470,10 @@ class _WalkHarness(unittest.TestCase):
         TheDoorBumpsAtMostOneSecondKeyPerCall, and per pass
         unreadable_journal + corrupt + dup + refuse <= miss + compare_miss. Of the three premises of that reading, the rosters and
         the order are pinned against the door's AST by the roster pin in TheCountersOneSite; the at-most-one is carried by that
-        witness, which drives every road of both rosters on the real door and reads the counters per call, and the roster pin's
-        three AST clauses are its early warning, refusing the forms they name (a second-key list holding two, a list not ending in
-        a return or a raise, a bump under a finally clause, a second-key raise list under a try statement) and silent on the rest;
+        witness, which drives one road per key of both rosters and three raise roads on the real door and reads the counters per
+        call, and the roster pin's AST clauses are its early warning, refusing the forms they name (a second-key bump that is not a
+        statement of a list, a second-key list holding two, a list not ending in a return or a raise, a bump under a finally clause,
+        a second-key raise list under a try statement) and silent on the rest;
         the fill keys the right-hand side sums are derived by the pin from the same AST and asserted equal to SHARED_FILL_KEYS,
         which this method sums (review round 4, tests-2, regression-2 and extra4-1: the two named by hand here, and the
         at-most-one held by nothing; review round 5, correctness-1, regression-1 and extra6-1: held by the clauses alone, and three
@@ -1830,7 +1841,8 @@ class TheSweepIsItsOwnBoundedReader(_WalkHarness):
 
 
 class TheDoorBumpsAtMostOneSecondKeyPerCall(_WalkHarness):
-    """The at-most-one premise of the second-bump bound by execution, over every road of both rosters (review round 4, tests-2,
+    """The at-most-one premise of the second-bump bound by execution, over one road per key of both rosters, nine roads, and three
+    raise roads on neither (review round 4, tests-2,
     regression-2 and extra4-1 for the corrupt road; review round 5, correctness-1, regression-1, extra6-1 and extra6-2, and the
     reviewer's ruling on approach: the roster pin's three AST clauses in TheCountersOneSite are an early warning that refuses
     the forms they name and are silent on the rest, and this class carries the contract on something that enumerates no
@@ -1842,8 +1854,9 @@ class TheDoorBumpsAtMostOneSecondKeyPerCall(_WalkHarness):
     recorded call, made by _drive in this file; the call keys' delta exactly the road's; AT MOST ONE second key bumped, the
     line every construct nobody listed reds (a helper defined inside the door and called from a second-key list, a Return whose
     expression raises into a handler that bumps, an exception from any other statement of a clean list caught by a bumping
-    handler, contextlib.suppress: each is caught here on the road it sits on; the first three, each planted on the corrupt road,
-    bumped two with the AST clauses green, and the round-5 history paragraph records the figures); the second keys' delta exactly the road's, so a bump
+    handler, contextlib.suppress: each is caught here on the road it sits on when a drive reaches that road; the first three, each
+    planted on the corrupt road, bumped two with the AST clauses green, and the round-5 history paragraph records the figures); the
+    second keys' delta exactly the road's, so a bump
     outside the fill road (in _shared_forget on the absent road, say) reds too; the hand-offs, goal_io loads, exactly the road's;
     and the writer recorder empty. ROADS is the table of expected deltas per road, one method per road named for it
     (`test_the_<road>_road...`; _drive checks the name), and the coverage case derives from the table that the drives cover
@@ -1860,23 +1873,32 @@ class TheDoorBumpsAtMostOneSecondKeyPerCall(_WalkHarness):
     from a seam on _freeze_store between the door's two archive-key reads, what a concurrent fill does at its publish:
     {'miss': 1}, {'dup': 1}, none, the published object answered); refuse (an archive file written from the same seam, so the
     archive key moved under the replay: {'miss': 1}, {'refuse': 1}, none, nothing published, and a following call is a miss
-    that fills); and two raise roads on neither roster, a symlink loop at the store path (the open raises) and a directory
-    there (the read raises), each moving no key and propagating the OSError: the module docstring's sentence that a call whose
-    open or read raises moves none, held by execution. The seam on jd._freeze_store is a wrapper over the real function
+    that fills); and three raise roads on neither roster: a symlink loop at the store path (the open raises) and a directory
+    there (the read raises), each moving no key and propagating the OSError, the module docstring's sentence that a call whose
+    open or read raises moves none, held by execution; and a journal row whose instant is not a number (fill_raises: the replay's
+    int() raises out of _finish_load after the miss bump and the loads_shared bump, {'miss': 1}, no second key, no hand-off, the
+    ValueError propagated, nothing cached; a verifier of the round-5 fixes found this road neither driven nor named, and a
+    second-key bump planted in a handler around _finish_load was witnessed by nothing). The seam on jd._freeze_store is a wrapper over the real function
     (functools.wraps, calling through), a name CASE_JD lists so the cleanup restores it; _archive_key stays real. Undriven,
     stated: the door's `if store.get("_unread")` arm, the second unreadable_journal bump with no hand-off (the door's own
     comment calls it unreachable while _journal_read hands the rows as lines; a bump planted there is witnessed by neither
     these drives nor _pass); a compare_miss entering the dup or refuse arm (the drives enter both from a miss; past the fill's
     first statement the code is the same); and any second bump conditioned on the hand-off itself raising (load_goals raising
     on the corrupt road: the drive's load_goals quarantines and answers a fresh store, so a Return whose expression raises is
-    exercised by another raise, not by a raising hand-off). Which callee each drive witnesses, as a dup bump planted in each and
-    run derives it: a bump in _shared_forget by the absent, unreadable_journal and corrupt drives and the two raise roads (and
-    by _pass's per-pass lines on the no-store sweep case); one in _guard_nodes or _finish_load by the miss, compare_miss, dup,
-    refuse and unreadable_journal drives (the last through load_goals' own tail on the hand-off; the corrupt drive's load_goals
-    answers a fresh store after the quarantine and runs neither) and by _pass's reconciliation on fill passes; one in
-    _freeze_store by the miss, compare_miss, dup and refuse drives and by _pass on fill passes; one in _journal_read by every
-    drive that enters the fill road (miss, compare_miss, corrupt, unreadable_journal, dup, refuse) and one in _disk_parse by
-    those but unreadable_journal, whose journal read raises before the parse; one on the door's _unread road by neither."""
+    exercised by another raise, not by a raising hand-off); and the arrangement itself: every drive seeds a one-node store for
+    one sid and calls the door once, so a second bump conditioned on state no drive arranges (a store of two or more nodes,
+    another sid, a call count) is on no driven road, and the at-most-one line holds against whatever nobody listed ON A DRIVEN
+    ROAD (a verifier of the round-5 fixes: a dup bump under a two-node condition after _finish_load left every drive green with
+    the AST clauses green, and a two-node store moved it). Which callee each drive witnesses, as a dup bump planted in each and
+    run derives it: a bump in _shared_forget by the absent, unreadable_journal and corrupt drives and the open_raises and
+    read_raises drives (and by _pass's per-pass lines on the no-store sweep case; the fill's raise propagates before the door
+    would call it); one in _guard_nodes or _finish_load by the miss, compare_miss, dup, refuse, unreadable_journal and
+    fill_raises drives (unreadable_journal through load_goals' own tail on the hand-off; fill_raises because the bump runs before
+    the replay raises; the corrupt drive's load_goals answers a fresh store after the quarantine and runs neither) and by
+    _pass's reconciliation on fill passes; one in _freeze_store by the miss, compare_miss, dup and refuse drives and by _pass on
+    fill passes; one in _journal_read by every drive that enters the fill road (miss, compare_miss, corrupt, unreadable_journal,
+    dup, refuse, fill_raises) and one in _disk_parse by those but unreadable_journal, whose journal read raises before the parse;
+    one on the door's _unread road by neither."""
 
     # The roads and the deltas each drive asserts: road -> (call keys, second keys, goal_io loads hand-offs, the exception the call
     # propagates or None). The coverage case derives from this table that the call and second keys over every row are exactly both
@@ -1893,6 +1915,7 @@ class TheDoorBumpsAtMostOneSecondKeyPerCall(_WalkHarness):
         "refuse": ({"miss": 1}, {"refuse": 1}, 0, None),
         "open_raises": ({}, {}, 0, OSError),
         "read_raises": ({}, {}, 0, OSError),
+        "fill_raises": ({"miss": 1}, {}, 0, ValueError),
     }
 
     def _store_path(self):
@@ -1928,8 +1951,9 @@ class TheDoorBumpsAtMostOneSecondKeyPerCall(_WalkHarness):
                              "the second-bump bound's derivation rests on, and this call bumped %d: %r. This line reads the real counters "
                              "after one call on the real door, so it holds against every construct the roster pin's AST clauses do not name "
                              "(a helper defined inside the door, a Return whose expression raises into a bumping handler, an exception from a "
-                             "clean list's other statement caught by one, contextlib.suppress, and whatever nobody listed); the call keys "
-                             "moved: %r" % (road, sum(second.values()), second, calls))
+                             "clean list's other statement caught by one, contextlib.suppress, and whatever nobody listed on a driven road: "
+                             "the drives seed a one-node store for one sid and call once, so a bump conditioned on state no drive arranges "
+                             "is on none); the call keys moved: %r" % (road, sum(second.values()), second, calls))
         self.assertEqual(calls, expect_calls, "%s road: the call keys' delta is exactly the road's, %r, and was %r (a call that reaches the "
                                               "cache's branch and returns moves exactly one; a call whose open or read raises moves none)"
                                               % (road, expect_calls, calls))
@@ -2096,6 +2120,25 @@ class TheDoorBumpsAtMostOneSecondKeyPerCall(_WalkHarness):
         self.assertIsInstance(exc, IsADirectoryError, "the read raised EISDIR and the door re-raised it: %r" % exc)
         self.assertNotIn(str(path), jd._SHARED, "nothing cached for the path")
 
+    def test_the_fill_raises_road_a_malformed_journal_row_raises_out_of_the_replay_after_the_miss_bump(self):
+        """The fill's own raise road (a verifier of the round-5 fixes found it neither driven nor named): a journal row whose instant
+        is not a number raises out of _replay_overrides and _finish_load after the miss bump and the loads_shared bump, with no
+        second key, no hand-off and nothing cached, the ValueError propagated as the door's comment on that line says (a malformed
+        row raises, as in load_goals). A second-key bump planted in a handler around _finish_load was witnessed by nothing before
+        this drive; it reds here at the second keys' line and at the raise, since the handler returns instead."""
+        self._seed(SID_C, stamped=False)
+        jdir = jd._overrides_dir()
+        jdir.mkdir(parents=True, exist_ok=True)
+        (jdir / (SID_C + ".jsonl")).write_text(json.dumps({"op": "block", "node": SID_C + ":g1", "t": "abc"}) + "\n")   # int("abc") raises in the replay
+        ls0 = jd.goal_io_stats()["loads_shared"]
+        _store, _err, exc = self._drive("fill_raises")
+        self.assertIn("invalid literal for int()", str(exc), "the replay's int() of the row's instant raised, out of _finish_load and the door: %r" % exc)
+        self.assertEqual(jd.goal_io_stats()["loads_shared"] - ls0, 1, "loads_shared moved once before the tail raised: the fill had passed the "
+                                                                    "journal read, the parse and the guard, and the miss bump before them")
+        self.assertNotIn(str(self._store_path()), jd._SHARED, "nothing cached for the path: the fill never reached its publish")
+        with self.assertRaises(ValueError):               # the same row raises out of load_goals: the road is the loaders' shared tail's
+            jd.load_goals(SID_C)
+
 
 class TheRecorderNamesTheAsker(unittest.TestCase):
     def test_a_load_inside_a_stand_in_wrapper_is_named_for_the_wrapper_and_its_hand_off_for_the_caller(self):
@@ -2223,24 +2266,29 @@ class TheCountersOneSite(unittest.TestCase):
         verifier of the round-4 fixes planted a second-key bump in a finally beside the corrupt handler, which the execution case
         alone caught, and beside the unreadable_journal handler, a road no case drives, which nothing caught); and a second-key
         list that ends in a Raise sits under no try statement of the door, since a handler above could catch the raise and go on
-        to bump (the clean door's second-key lists all end in a Return, and its one finally closes a descriptor). The three clauses
+        to bump (the clean door's second-key lists all end in a Return, and its one finally closes a descriptor). Before either,
+        every second-key bump is a statement of some list, an Expr of the call or the AugAssign itself, so a bump written as an
+        assignment's value, a with item or a lambda body reds the count of lists against bumps (a verifier of the round-5 fixes: the
+        early-warning sentences named four refused forms while this clause refuses a fifth). The clauses
         refuse the forms they name and are silent on the rest: a helper defined inside the door and called from a second-key list
         (its body reads as a clean list of its own), a second-key list ending in a Return whose expression raises into a handler
         that bumps, an exception from any other statement of a clean list caught by a bumping handler, contextlib.suppress, and any
         construct nobody listed (review round 5, correctness-1, regression-1 and extra6-1, after this docstring said that with the
         two constructs above refused no path the door's own body shows bumps two second keys: the first three, each planted on the
         corrupt road, bumped two with every clause green). So the clauses are an early warning, and the contract, at most one second
-        key per call, is carried by execution in TheDoorBumpsAtMostOneSecondKeyPerCall over every road of both rosters on the real
-        door, where each of those constructs is caught on the road it sits on. What the clauses do not read: a callee's body; which
+        key per call, is carried by execution in TheDoorBumpsAtMostOneSecondKeyPerCall over one road per key of both rosters and
+        three raise roads on the real door, where each of those constructs is caught on the road it sits on when a drive reaches
+        that road (the witness's docstring names the undriven arms and the arrangement's limit). What the clauses do not read: a callee's body; which
         drive witnesses a bump there is derived by planting one in each callee (review round 5, extra6-2: this sentence named the
         corrupt road alone, on which two of the three callees it listed never run). A bump in _shared_forget is witnessed by the
-        absent, unreadable_journal and corrupt drives, by the two raise-road drives, and by _pass's per-pass lines on the no-store
-        sweep case; one in _guard_nodes or _finish_load by the miss, compare_miss, dup and refuse drives, by the unreadable_journal
-        drive (load_goals runs the same tail on that hand-off; the corrupt drive's load_goals answers a fresh store after the
-        quarantine and runs neither), and by _pass's reconciliation on fill passes; one in _freeze_store by the miss, compare_miss,
-        dup and refuse drives and by _pass on fill passes; one in _journal_read by every drive that enters the fill road, and one in
-        _disk_parse by those but unreadable_journal, whose journal read raises before the parse; one on the door's own _unread road
-        by neither the drives nor _pass. From the same lists the fill road's entry keys are derived: the call keys whose list does
+        absent, unreadable_journal and corrupt drives, by the open_raises and read_raises drives, and by _pass's per-pass lines on the
+        no-store sweep case; one in _guard_nodes or _finish_load by the miss, compare_miss, dup and refuse drives, by the
+        unreadable_journal drive (load_goals runs the same tail on that hand-off), by the fill_raises drive (the bump runs before the
+        replay raises; the corrupt drive's load_goals answers a fresh store after the quarantine and runs neither), and by _pass's
+        reconciliation on fill passes; one in _freeze_store by the miss, compare_miss, dup and refuse drives and by _pass on fill
+        passes; one in _journal_read by every drive that enters the fill road, fill_raises among them, and one in _disk_parse by
+        those but unreadable_journal, whose journal read raises before the parse; one on the door's own _unread road by neither the
+        drives nor _pass. From the same lists the fill road's entry keys are derived: the call keys whose list does
         not end in a Return or a Raise fall through into the fill, and they must be SHARED_FILL_KEYS, which _pass sums as the bound's
         right-hand side, so a call key that starts falling through, or one of these that stops, reds here rather than leaving _pass
         summing the wrong keys. Review round 4, tests-2, regression-2 and extra4-1: the pin read the rosters and the order, the
@@ -2273,8 +2321,9 @@ class TheCountersOneSite(unittest.TestCase):
                 second = [(ln, k) for ln, k in deep if k in SHARED_SECOND_KEYS]
                 self.assertEqual(len(second), 1,
                                  "the statement list holding the second-key bump at line %d holds exactly one second-key bump over the full "
-                                 "subtrees of its statements, so no path through it bumps two (a call bumps at most one second key, the premise "
-                                 "the bound's derivation rests on; two here and the bound no longer follows from the body): %r"
+                                 "subtrees of its statements, the form this clause refuses (a helper defined inside the door, a return whose "
+                                 "expression raises into a bumping handler, or an exception from another statement caught by one can still bump "
+                                 "twice on a path through it; the door witness holds the at-most-one by execution): %r"
                                  % (second[0][0], second))
                 self.assertIsInstance(blk[-1], (ast.Return, ast.Raise),
                                       "and ends in a Return or a Raise, so the path leaves the door after its one second bump (the clean door "
