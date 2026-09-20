@@ -4,7 +4,11 @@
 // sentences to what the code does: the adoption line in file-view.ts comes after the chain and its comment says so; the
 // browser leg the section names exists and reads real servers' request logs through a proxy, never a route; the scope
 // facts (the VS Code panes' CSP, the kernel's Referrer-Policy) stand in the files they cite; and the two pointers, at
-// Slice 1's fetch-on-render paragraph and the Slice 4 record's item 9, name the section. Synthetic: the repo's own text
+// Slice 1's fetch-on-render paragraph and the Slice 4 record's item 9, name the section. The section is read from its
+// heading to the next `## ` heading or the end of the plan, and it is held to follow "## Out of scope", not to be the
+// plan's last: the link-navigation and print follow-ons (branches filereview-linknav and filereview-print, in flight)
+// land at the same place, and the print pin holds that one last, so a "last" assertion here would turn red on main
+// whichever of the two landed second (found by the review of this fix, 2026-09-20). Synthetic: the repo's own text
 // only. Run: node --test tools/markdown-viewer-plan-gate-adopt.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -34,13 +38,24 @@ function between(text, from, to) {
   assert.ok(b > a, `${to} not found after ${from}`);
   return text.slice(a, b);
 }
-const section = () => plan.slice(plan.indexOf('\n' + HEADING + '\n') + 1);
+/** The section's text: from its heading line to the next `## ` heading, or the end of the plan when none follows. */
+function section() {
+  const start = plan.indexOf('\n' + HEADING + '\n') + 1;
+  assert.ok(start > 0, 'the fix section is in the plan');
+  const next = plan.indexOf('\n## ', start);
+  return plan.slice(start, next < 0 ? plan.length : next);
+}
 
-test('the plan ends with the fix section, its heading written once and last', () => {
+test('the fix section is in the plan once, after Out of scope, and its text stops at the next section', () => {
   assert.equal((plan.match(/^## Fix: the gate before adoption \(2026-09-20\)$/gm) || []).length, 1, 'one heading');
-  const headings = plan.match(/^## .*$/gm) || [];
-  assert.equal(headings[headings.length - 1], HEADING, 'the last ## heading is the fix section');
-  assert.ok(plan.indexOf('\n' + HEADING + '\n') > plan.indexOf('\n## Out of scope\n'), 'after Out of scope');
+  const headAt = plan.indexOf('\n' + HEADING + '\n');
+  const scopeAt = plan.indexOf('\n## Out of scope\n');
+  assert.ok(scopeAt >= 0 && scopeAt < headAt, 'the section follows "## Out of scope"');
+  // Not held to be the plan's last section: sibling follow-ons land at the same place (the header comment says which).
+  const s = section();
+  assert.ok(s.startsWith(HEADING + '\n'), 'the section opens with its heading');
+  assert.equal(s.indexOf('\n## '), -1, 'the section holds no other ## heading, so a sibling section appended after it is not read as its own');
+  assert.ok(s.includes('**Tests.**'), 'the section runs to its Tests paragraph');
 });
 
 test('Slice 1 points at the section with one dated sentence, at the paragraph about attributes that fetch on render', () => {
@@ -61,7 +76,7 @@ test('the section records the hole, the fix, the instrument, the measurement, th
   const s = flat(section());
   for (const sentence of [
     // the hole
-    '`mdBlock` (file-view.ts) adopted the sanitized nodes into its live-document box first (`box.replaceChildren(...sanitizeMd(dirty, mintHeadingIds).childNodes)`) and ran the figure chain after: resolveFigureRefs for a URL document, rewriteFigureSrcs for a file, gateRemoteFigures for both.',
+    '`mdBlock` (file-view.ts) adopted the sanitized nodes into its live-document box first (`box.replaceChildren(...Array.from(sanitizeMd(dirty, mintHeadingIds).childNodes))`) and ran the figure chain after: resolveFigureRefs for a URL document, rewriteFigureSrcs for a file, gateRemoteFigures for both.',
     'Under WebKit a figure on an unlisted host was requested while the gate\'s placeholder, "Image from <host>. Click to load.", stood, so the placeholder was a false assurance.',
     'In Chromium and Firefox the servers\' logs held no line for either figure before the chain ran, so neither leaked; the engines\' scheduling of the fetch was not instrumented, the logs were read.',
     // the fix

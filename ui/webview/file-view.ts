@@ -4194,13 +4194,19 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
   // with the chain after the adoption the bytes had left for the unlisted host by the time the gate's placeholder said
   // "Click to load", and a figure of the file's folder was requested against the PAGE, as the attribute read before
   // rewriteFigureSrcs repointed it, and then again through /file. In Chromium and Firefox the servers' logs held no line
-  // for either figure before the chain ran (measured at the base, 2026-09-20, by the leg named below), so only WebKit
-  // fetched: the kernel-served pages (the dashboard, and the iOS web app, which is the same page in Safari's engine) were
-  // reachable, the VS Code panes not (their CSP names no remote img-src). Every pass that sets, repoints or moves a
-  // fetching attribute is in this block; the passes after the adoption write a video's style, a list item's class, anchors'
-  // attributes, fences' markup and the prose's links (found by the review of the link-navigation follow-on, 2026-09-20;
-  // file-view-figures-gate-adopt-browser.test.ts reads real servers' request logs in all three engines; the section "Fix:
-  // the gate before adoption (2026-09-20)" of plans/markdown-viewer.md records the hole, the instrument and the scope).
+  // for either of those <img> figures before the chain ran (measured at the base, 2026-09-20, by the first leg named
+  // below). An inline svg's <image> is loaded by another path, and there the gate held in Chromium alone: Firefox requested
+  // a gated svg image, in either spelling, while its placeholder stood when the chain's work between the adoption and that
+  // element's strip was long (over 400 plain paragraphs in one run of three, over 3000 paragraphs with a link each in every
+  // run of six; measured at the base by the second leg named below), and WebKit requested the `xlink:href` spelling in every
+  // run and the `href` spelling in none. So the kernel-served pages (the dashboard, in Safari and in Firefox, and the iOS web
+  // app, which is the same page in Safari's engine) were reachable, the VS Code panes not (their CSP names no remote
+  // img-src). Every pass that sets, repoints or moves a fetching attribute is in this block; the passes after the adoption
+  // write a video's style, a list item's class, anchors' attributes, fences' markup and the prose's links (found by the
+  // review of the link-navigation follow-on, 2026-09-20; file-view-figures-gate-adopt-browser.test.ts, an HTML img in two
+  // scenes, and file-view-figures-gate-adopt-svg-browser.test.ts, two inline svg images at the end of a long note, read real
+  // servers' request logs in all three engines; the section "Fix: the gate before adoption (2026-09-20)" of
+  // plans/markdown-viewer.md records the hole, the instrument and the scope).
   if (doc && doc.kind === "url") {
     // Every attribute a figure fetches through resolves against the document (resolveFigureRefs, below): this arm read
     // `img[src]` alone, so a relative `srcset` candidate, a video's `src` or `poster`, an audio's, a `source`'s or a
@@ -4226,8 +4232,10 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
     // change in the gear reaches the next paint, and an open document through the settings listener the gate installs.
     gateRemoteFigures(clean, document.baseURI);
   }
-  // Adopted as they are, no re-parse, every fetching attribute gated or repointed above, so the adoption itself starts no
-  // fetch in any engine (the leg's logs: no line for the gated host, one line through /file for the folder's figure).
+  // Adopted as they are, no re-parse, every fetching attribute gated or repointed above, so the adoption starts no fetch to
+  // an unlisted host and none at a pre-rewrite URL, in any engine; what it does start is the fetch of every figure left with
+  // a live attribute, the folder's through /file and an allowed host's as written (the legs' logs: no line for a gated host,
+  // one line through /file for the folder's figure).
   box.replaceChildren(...Array.from(clean.childNodes));
   // A pixel-sized <video> keeps the author's shape (keepVideoShape, below): the sheets give it `height: auto` so it
   // shrinks in ratio with the column, and the browser's own `aspect-ratio: auto W / H` would hand that ratio to the poster.

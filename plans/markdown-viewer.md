@@ -7739,13 +7739,13 @@ fix-tier PR and a privacy surface, so it lands on the owner's word.
 
 **The hole.** Under WebKit a figure on an unlisted host was requested while the gate's placeholder, "Image from <host>.
 Click to load.", stood, so the placeholder was a false assurance. `mdBlock` (file-view.ts) adopted the sanitized nodes into
-its live-document box first (`box.replaceChildren(...sanitizeMd(dirty, mintHeadingIds).childNodes)`) and ran the figure
-chain after: resolveFigureRefs for a URL document, rewriteFigureSrcs for a file, gateRemoteFigures for both. WebKit starts
-an img's fetch synchronously when the element's node document becomes one with a render tree; the adoption is enough, a
-place in the tree is not needed. A figure of the file's own folder was requested against the page, as the attribute read
-before rewriteFigureSrcs repointed it, and then again through /file. In Chromium and Firefox the servers' logs held no line
-for either figure before the chain ran, so neither leaked; the engines' scheduling of the fetch was not instrumented, the
-logs were read.
+its live-document box first (`box.replaceChildren(...Array.from(sanitizeMd(dirty, mintHeadingIds).childNodes))`) and ran
+the figure chain after: resolveFigureRefs for a URL document, rewriteFigureSrcs for a file, gateRemoteFigures for both.
+WebKit starts an img's fetch synchronously when the element's node document becomes one with a render tree; the adoption
+is enough, a place in the tree is not needed. A figure of the file's own folder was requested against the page, as the
+attribute read before rewriteFigureSrcs repointed it, and then again through /file. In Chromium and Firefox the servers'
+logs held no line for either figure before the chain ran, so neither leaked; the engines' scheduling of the fetch was
+not instrumented, the logs were read.
 
 **The fix.** `sanitizeMd` (md-sanitize.ts) returns the body of DOMPurify's own parse document (RETURN_DOM; DOMPurify
 parses the markup with DOMParser, or into `implementation.createDocument` when that fails), a document with no browsing

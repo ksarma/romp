@@ -16,14 +16,25 @@
 // scene is the rewrite's half of the same rule: a note with a figure of its own folder, `![local](fig.png)`, whose src
 // rewriteFigureSrcs repoints at /file; the harness log must hold that one request and none for the page-relative
 // `/fig.png` the attribute named before the rewrite.
-// Red before the fix in WebKit alone, both scenes: mdBlock adopted the sanitized nodes into a live-document element before
-// the figure chain ran, and WebKit starts an <img>'s fetch synchronously when the element's node document becomes one
-// with a render tree, so the figure server logged GET /fig.png while the placeholder stood, and the harness logged a
-// GET /fig.png against the page before the one through /file; in Chromium and Firefox both logs held no line for either
-// figure before the chain ran, so both scenes were green there (measured 2026-09-20 at the base 2d41e5c9b; the engines'
-// scheduling of the fetch was not instrumented, the logs were read). Each engine is its own test
-// and skips, saying so, when its binary is absent. Synthetic values only: an invented note, TESTHOST paths, a placeholder
-// sid, .test hosts.
+// The third scene is the URL kind's half of the rule (openUrlView; mdBlock's `kind === "url"` arm: resolveFigureRefs over
+// the document's URL, the own-host arm, then the gate), which shares no pass with the file kind but the gate, so a
+// regression confined to that arm (a helper that hands the nodes to a live document before resolveFigureRefs runs) is
+// seen by this scene alone: the slice's other tests pin the arm's order by its source text (file-view-seam.test.ts,
+// md-url-view.test.ts), and the URL-kind legs before this one drove Chromium under page.route. A document at
+// /notes/note.md on the harness holds a figure of its own folder, `![r](rel.png)`, the figure on the unlisted host, and a
+// protocol-relative `<img src="//remote.test/proto.png">`; while the two placeholders stand, neither log holds a request for
+// either remote figure, and the harness log holds the folder figure once, under the document's directory
+// (/notes/rel.png), never as the page-relative /rel.png the attribute named before resolveFigureRefs ran; the click loads
+// both figures of the host, one request each, under Host remote.test with no Referer.
+// Red before the fix in WebKit alone, all three scenes: mdBlock adopted the sanitized nodes into a live-document element
+// before the figure chain ran, and WebKit starts an <img>'s fetch synchronously when the element's node document becomes
+// one with a render tree, so the figure server logged GET /fig.png while the placeholder stood, and the harness logged a
+// GET /fig.png against the page before the one through /file; for the URL document the figure server logged GET /fig.png
+// and GET /proto.png under Host remote.test while both placeholders stood, and the harness logged a page-relative GET
+// /rel.png before GET /notes/rel.png. In Chromium and Firefox both logs held no line for any of these figures before the
+// chain ran, so every scene was green there (measured 2026-09-20 at the base 2d41e5c9b; the engines' scheduling of the
+// fetch was not instrumented, the logs were read). Each engine is its own test and skips, saying so, when its binary is
+// absent. Synthetic values only: an invented note, TESTHOST paths, a placeholder sid, .test hosts.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -48,15 +59,22 @@ const FIGURE = "http://remote.test/fig.png";
 const REMOTE_NOTE = "# One figure\n\nBefore ![fig](" + FIGURE + ") after.\n\nLast para.\n";
 const LOCAL_NOTE = "# A figure of the folder\n\nBefore ![local](fig.png) after.\n";
 const LABEL = "Image from remote.test. Click to load.";
+/** The URL kind's document: same-origin to the page (openUrlView fetches with mode same-origin), at a directory of its own. */
+const URL_DIR = "http://romp.test/notes/";
+const URL_DOC = URL_DIR + "note.md";
+const PROTO_FIGURE = "//remote.test/proto.png";
+const PROTO_RESOLVED = "http://remote.test/proto.png";   // resolveFigureRefs gives a protocol-relative figure the document's scheme
+const URL_NOTE = "# A document at a URL\n\nOwn ![r](rel.png) far ![f](" + FIGURE + ") and <img src=\"" + PROTO_FIGURE + "\" alt=\"p\"> end.\n";
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64");
 /** The /file URL rewriteFigureSrcs gives a figure of the note's folder (preview.ts fileUrl: the path encoded whole, then the sid). */
 const FILE_URL = (name: string) => "/file?path=" + encodeURIComponent(DIR + name) + "&sid=" + SID;
 
 const BUILD = { bundle: true, write: false, format: "iife", platform: "browser", target: "es2020",
   nodePaths: [path.join(EXT, "node_modules")], external: ["*.png", "*.svg", "*.woff", "*.ttf", "../media/*.woff2"], logLevel: "silent" };
-/** The Files pane's bundle plus the real sanitizer, for the premise probe. */
+/** The Files pane's bundle plus the real sanitizer, for the premise probe, and the URL viewer, which the pane's page does not
+ *  otherwise reach, for the third scene. */
 function filesBundle(): string {
-  const contents = 'import "./files";\nimport { sanitizeMd } from "./md-sanitize";\n(window as any).__rompProbe = { sanitizeMd };\n';
+  const contents = 'import "./files";\nimport { sanitizeMd } from "./md-sanitize";\nimport { openUrlView } from "./file-view";\n(window as any).__rompProbe = { sanitizeMd, openUrlView };\n';
   const r = requireCjs("esbuild").buildSync({ ...BUILD, stdin: { contents, resolveDir: UI, loader: "ts", sourcefile: "files-probe.ts" } });
   return r.outputFiles[0].text;
 }
@@ -108,7 +126,7 @@ function figureServer(log: Line[]): http.Server {
   });
 }
 /** The harness server (romp.test through the proxy): the pane page, its bundle, the two notes and the folder's figure through
- *  /file, and the sentinel; every request logged. The kernel's Referrer-Policy rides on every response, as it does on every
+ *  /file, the URL document under /notes/ and its folder figure beside it, and the sentinel; every request logged. The kernel's Referrer-Policy rides on every response, as it does on every
  *  page the kernel serves (kernel.py, the header's comment), so what the figure server sees in Referer is what it would see
  *  from the dashboard. */
 function harnessServer(js: string, log: Line[]): http.Server {
@@ -124,6 +142,8 @@ function harnessServer(js: string, log: Line[]): http.Server {
       if (note !== null) { head(200, "text/plain; charset=utf-8", { "X-Romp-Mtime-Ns": "1", "X-Romp-Text-Utf8": "1" }); res.end(note); return; }
       if (p === DIR + "fig.png") { head(200, "image/png"); res.end(PNG); return; }
     }
+    if (u.pathname === "/notes/note.md") { head(200, "text/markdown; charset=utf-8"); res.end(URL_NOTE); return; }
+    if (u.pathname === "/notes/rel.png") { head(200, "image/png"); res.end(PNG); return; }
     if (u.pathname.startsWith("/sentinel/")) { head(200, "text/plain"); res.end("ok"); return; }
     head(404, "text/plain"); res.end("");
   });
@@ -152,10 +172,11 @@ function proxyServer(map: Record<string, number>, log: Line[]): http.Server {
   return server;
 }
 
-type Scene = { page: any; errors: string[]; figureLog: Line[]; proxyLog: Line[]; harnessLog: Line[]; open: (p: string) => Promise<void>; drain: () => Promise<void> };
+type Scene = { page: any; errors: string[]; figureLog: Line[]; proxyLog: Line[]; harnessLog: Line[]; open: (p: string) => Promise<void>; openUrl: (u: string) => Promise<void>; drain: () => Promise<void> };
 /** The three servers, the engine launched through the proxy, the pane page open. `open` posts the pane's relay for a note and
- *  awaits a fresh rendered box; `drain` makes one round trip through the proxy to the harness and waits a beat, so a request
- *  the engine issued before it has reached the logs. */
+ *  awaits a fresh rendered box; `openUrl` opens a document from its URL through the real openUrlView and awaits the same;
+ *  `drain` makes one round trip through the proxy to the harness and waits a beat, so a request the engine issued before it
+ *  has reached the logs. */
 async function inEngine(t: any, engine: "chromium" | "firefox" | "webkit", body: (s: Scene) => Promise<void>): Promise<void> {
   if (!pw) { t.skip("playwright is not installed under vscode-extension; the browser legs need it (CI installs no browsers)"); return; }
   const figureLog: Line[] = [], proxyLog: Line[] = [], harnessLog: Line[] = [];
@@ -179,12 +200,14 @@ async function inEngine(t: any, engine: "chromium" | "firefox" | "webkit", body:
       assert.equal(status, 200, "the sentinel went through the proxy to the harness");
       await page.waitForTimeout(250);
     };
-    const open = async (p: string) => {
+    const fresh = async (start: () => Promise<void>) => {
       await page.evaluate(() => { const md = document.querySelector("#romp-fileview .fileview-md"); if (md) (md as any).__old = true; });
-      await page.evaluate(([f, sid]: [string, string]) => { window.postMessage({ romp: "viewFile", path: f, sid }, "*"); }, [p, SID] as [string, string]);
+      await start();
       await page.waitForFunction(() => { const md = document.querySelector("#romp-fileview .fileview-body .fileview-md"); return !!md && !(md as any).__old; }, null, { timeout: 15000 });
     };
-    await body({ page, errors, figureLog, proxyLog, harnessLog, open, drain });
+    const open = (p: string) => fresh(() => page.evaluate(([f, sid]: [string, string]) => { window.postMessage({ romp: "viewFile", path: f, sid }, "*"); }, [p, SID] as [string, string]));
+    const openUrl = (u: string) => fresh(() => page.evaluate((h: string) => { (window as any).__rompProbe.openUrlView(h); }, u));
+    await body({ page, errors, figureLog, proxyLog, harnessLog, open, openUrl, drain });
     assert.deepEqual(errors, [], "no page errors");
   } finally {
     if (browser) await browser.close();
@@ -244,6 +267,51 @@ for (const engine of ["chromium", "firefox", "webkit"] as const) {
       const lines = forPng(s.harnessLog, "fig.png").map((l) => l.method + " " + l.url);
       assert.deepEqual(lines, ["GET " + FILE_URL("fig.png")], engine + ": the harness saw exactly the one request through /file, and none for the page-relative /fig.png: " + JSON.stringify(lines));
       assert.equal(show(forPng(s.figureLog, "fig.png")), "[]", "nothing for the figure server: a figure of the folder names no other host");
+    });
+  });
+
+  test(engine + ": a document opened from its URL: while the placeholders for its two figures on the unlisted host stand, one written absolute and one protocol-relative, neither log holds a request for them, and the figure of its own folder is requested once under the document's directory and never page-relative; the click loads both, one request each, under the unlisted Host with no Referer", { timeout: 120000 }, async (t) => {
+    await inEngine(t, engine, async (s) => {
+      const { page } = s;
+      // the document opens through the real openUrlView (the chat's route for a same-origin .md link); both placeholders on screen
+      await s.openUrl(URL_DOC);
+      const gates = page.locator('#romp-fileview .fileview-body .fileview-md .fv-gate[data-fv-host="remote.test"]');
+      await gates.nth(1).waitFor({ state: "visible", timeout: 15000 });
+      assert.equal(await gates.count(), 2, "one placeholder per figure of the unlisted host");
+      assert.deepEqual(await gates.locator("[data-fv-label]").allTextContents(), [LABEL, LABEL]);
+      // the folder figure, resolved against the document by resolveFigureRefs, shows from under /notes/
+      await page.waitForFunction(() => { const i = document.querySelector('#romp-fileview .fileview-md img[alt="r"]') as HTMLImageElement | null; return !!i && i.complete; }, null, { timeout: 15000 });
+      const shown: { rel: { src: string | null; w: number; gated: boolean }; far: string | null; proto: string | null } = await page.evaluate(() => {
+        const q = (alt: string) => document.querySelector('#romp-fileview .fileview-md img[alt="' + alt + '"]') as HTMLImageElement;
+        const r = q("r"), f = q("f"), p = q("p");
+        return { rel: { src: r.getAttribute("src"), w: r.naturalWidth, gated: r.closest(".fv-gate") !== null }, far: f.getAttribute("data-fv-gated-src"), proto: p.getAttribute("data-fv-gated-src") };
+      });
+      assert.deepEqual(shown, { rel: { src: URL_DIR + "rel.png", w: 1, gated: false }, far: FIGURE, proto: PROTO_RESOLVED },
+        "the folder figure resolved under the document and shows ungated; both remote figures' src moved aside under their placeholders, the protocol-relative one resolved to the document's scheme first");
+      await s.drain();
+      // one reading of every log line for the document's three figures, so a failure names everything that left at once
+      const terse = (lines: Line[]) => lines.map((l) => l.method + " " + l.url);
+      const before = {
+        figures: { fig: terse(forPng(s.figureLog, "fig.png")), proto: terse(forPng(s.figureLog, "proto.png")), rel: terse(forPng(s.figureLog, "rel.png")) },
+        proxy: { fig: terse(forPng(s.proxyLog, "fig.png")), proto: terse(forPng(s.proxyLog, "proto.png")) },
+        harness: { rel: terse(forPng(s.harnessLog, "rel.png")) },
+      };
+      assert.deepEqual(before, { figures: { fig: [], proto: [], rel: [] }, proxy: { fig: [], proto: [] }, harness: { rel: ["GET /notes/rel.png"] } },
+        engine + ": while both placeholders stood, neither the figure server nor the proxy saw a request for either remote figure, and the harness saw the folder figure exactly once, under the document's directory, never as the page-relative /rel.png the attribute named before resolveFigureRefs ran; the servers' lines: " + JSON.stringify(before));
+      // one click loads every figure of the host in the document (loadGatedHost): both pictures, one request each, no Referer
+      await gates.first().click();
+      await page.waitForFunction(([u1, u2]: [string, string]) => {
+        const done = (alt: string, u: string) => { const i = document.querySelector('#romp-fileview .fileview-md img[alt="' + alt + '"]') as HTMLImageElement | null; return !!i && i.getAttribute("src") === u && i.complete && i.naturalWidth === 1; };
+        return done("f", u1) && done("p", u2);
+      }, [FIGURE, PROTO_RESOLVED] as [string, string], { timeout: 10000 });
+      await s.drain();
+      for (const [name, url] of [["fig.png", FIGURE], ["proto.png", PROTO_RESOLVED]] as Array<[string, string]>) {
+        const seen = forPng(s.figureLog, name);
+        assert.equal(seen.length, 1, "one request for " + name + " after the click: " + show(s.figureLog));
+        assert.deepEqual([seen[0].method, seen[0].url, seen[0].host, seen[0].referer], ["GET", "/" + name, "remote.test", null], "GET /" + name + " under Host remote.test, no Referer");
+        assert.equal(forPng(s.proxyLog, name).map((l) => l.method + " " + l.url).join(","), "GET " + url, "the proxy carried that one request and no other for " + name);
+      }
+      assert.equal(await page.evaluate(() => document.querySelectorAll("#romp-fileview .fv-gate").length), 0, "both placeholders are gone");
     });
   });
 }
