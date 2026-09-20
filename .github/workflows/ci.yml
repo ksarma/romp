@@ -350,11 +350,18 @@ jobs:
         # this step does not run; see the install step above). The matrix jobs are unchanged: still no
         # browser, still skipping these. --durations=20 names the slowest labs in the log: this step is
         # the job's long phase (12 min 44 s on main, 2026-09-14, against the job's cap above), and every
-        # served lab added grows it, so the next growth should be visible by name.
+        # served lab added grows it, so the next growth should be visible by name. Two additions on 2026-09-20
+        # (the wsBytesByHost review, round 1), both pinned by tests/test_served_labs_under_ci.py: the pytest line
+        # names tests/test_relay_dial_declares_held_pair.py by file, a raw-socket kernel leg that needs the built
+        # dist this job has and no browser, so no glob names it and it ran in no job (its filename is plain on
+        # purpose, so its gen-key skip stays a skip here rather than a REQUIRE failure); and ROMP_CORNER_TWO_HOSTS
+        # runs the two-host lab (TwoHostsBytesByHost in the corners module), about a minute of three kernels
+        # and Chromium, whose knob keeps every other runner unchanged.
         working-directory: ${{ github.workspace }}
         env:
           ROMP_SERVED_TESTS_REQUIRE: "1"
           ROMP_SERVED_TESTS_ENGINES: chromium
+          ROMP_CORNER_TWO_HOSTS: "1"
         run: |
           python -m pip install --upgrade pip pytest pytest-timeout cryptography
-          python -m pytest tests/test_*_browser.py tests/test_*_served.py -q -rs -p no:cacheprovider --durations=20 --timeout=600 --timeout-method=thread
+          python -m pytest tests/test_*_browser.py tests/test_*_served.py tests/test_relay_dial_declares_held_pair.py -q -rs -p no:cacheprovider --durations=20 --timeout=600 --timeout-method=thread

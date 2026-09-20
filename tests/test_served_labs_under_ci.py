@@ -61,14 +61,48 @@ def served_labs():
     return out
 
 
+def ci_served_step():
+    """The served step as the workflow file states it, read by text (the runner installs no YAML reader): its env block (the
+    one setting ROMP_SERVED_TESTS_REQUIRE to 1) as {name: value} and its pytest line's arguments; None when the step's
+    anchors are gone, so a caller fails on nothing rather than passing on nothing."""
+    with open(CI_YML, encoding="utf-8") as f:
+        lines = f.read().split("\n")
+    at = [i for i, l in enumerate(lines) if 'ROMP_SERVED_TESTS_REQUIRE: "1"' in l]
+    if len(at) != 1:
+        return None
+    i = at[0]
+    j = i
+    while j >= 0 and lines[j].strip() != "env:":
+        j -= 1
+    k = i
+    while k < len(lines) and "python -m pytest" not in lines[k]:
+        k += 1
+    if j < 0 or k >= len(lines):
+        return None
+    env = {}
+    for l in lines[j + 1:k]:
+        if l.strip().startswith("run:"):
+            break
+        m = re.match(r'\s+([A-Z_]+): "?([^"#]*?)"?\s*(#.*)?$', l)
+        if m:
+            env[m.group(1)] = m.group(2)
+    return {"env": env, "pytest": lines[k].split("python -m pytest", 1)[1].split()}
+
+
 def ci_served_globs():
     """The file globs on the served step's pytest line: the step that sets ROMP_SERVED_TESTS_REQUIRE to 1."""
-    with open(CI_YML, encoding="utf-8") as f:
-        text = f.read()
-    step = re.search(r'ROMP_SERVED_TESTS_REQUIRE: "1".*?python -m pytest ([^\n]*)', text, re.S)
-    if not step:
+    step = ci_served_step()
+    if step is None:
         raise AssertionError("ci.yml has no pytest line after ROMP_SERVED_TESTS_REQUIRE: \"1\"")
-    return [tok for tok in step.group(1).split() if tok.startswith("tests/")]
+    return [tok for tok in step["pytest"] if tok.startswith("tests/") and "*" in tok]
+
+
+def ci_served_files():
+    """The test modules the served step names by file, beside its globs."""
+    step = ci_served_step()
+    if step is None:
+        raise AssertionError("ci.yml has no pytest line after ROMP_SERVED_TESTS_REQUIRE: \"1\"")
+    return [tok for tok in step["pytest"] if tok.startswith("tests/") and "*" not in tok]
 
 
 class _Item:
@@ -96,6 +130,32 @@ class ServedLabsUnderCI(unittest.TestCase):
         self.assertTrue(globs, "the served step's pytest line names no tests/ globs")
         missed = [n for n in served_labs() if not any(fnmatch.fnmatch("tests/" + n, g) for g in globs)]
         self.assertEqual(missed, [], "served labs no CI glob %s runs: %s" % (globs, missed))
+
+    def test_the_handler_parse_leg_is_named_on_the_served_step_by_file(self):
+        """tests/test_relay_dial_declares_held_pair.py drives one hermetic kernel over a raw socket and needs the extension's
+        built dist (lab_dist), which the Python matrix runners never have, so there it skips; no browser drives it, so the
+        census above leaves it out and no glob names it, and it ran in no CI job (review round 1 of the wsBytesByHost
+        change, 2026-09-20). The served step names it by file: the one job with the deps runs its executed part (the first
+        dials and their wsopen rows), and its gen-key skip stays a plain skip there, since the conftest's REQUIRE rule reads
+        file names and this module carries no served suffix on purpose (the precedent is tests/test_session_host_restart.py,
+        whose docstring records the same decision): `optional:` is a runner-declared capability gap, and a kernel vintage
+        that stamps no gen is a condition every runner shares."""
+        files = ci_served_files()
+        self.assertIn("tests/test_relay_dial_declares_held_pair.py", files, "the served step no longer names the handler-parse leg")
+        for f in files:
+            self.assertTrue(os.path.exists(os.path.join(ROOT, f)), "the served step names a module that is gone: %s" % f)
+            self.assertFalse(conftest_module()._is_served_test_file(_Item(os.path.basename(f))),
+                             "%s matches a served glob already; naming it by file is redundant" % f)
+
+    def test_the_two_host_lab_runs_on_the_served_step(self):
+        """TwoHostsBytesByHost (tests/test_federated_capability_corners_served.py) is the one end-to-end lab of the
+        wsBytesByHost field, gated by ROMP_CORNER_TWO_HOSTS with an `optional:` skip so a contributor clone and the Python
+        matrix runners leave it alone. The served step, which has the three kernels' deps and the browser, sets the knob
+        (review round 1, 2026-09-20), so the lab runs there and a miss is a failure under REQUIRE, as its other skips are."""
+        step = ci_served_step()
+        self.assertIsNotNone(step, "ci.yml has no served step: re-aim ci_served_step()")
+        self.assertEqual(step["env"].get("ROMP_SERVED_TESTS_REQUIRE"), "1")
+        self.assertEqual(step["env"].get("ROMP_CORNER_TWO_HOSTS"), "1", "the served step does not set the two-host lab's knob: %r" % (step["env"],))
 
     def test_the_ci_globs_are_the_conftest_suffixes(self):
         self.assertEqual(sorted(ci_served_globs()), ["tests/test_*_browser.py", "tests/test_*_served.py"])

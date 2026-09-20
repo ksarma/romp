@@ -53,7 +53,8 @@ fails-before lever (the stand-in's card never shows and the Outline files delta-
 corner's timeline lane freezes at the seed's six bars while the pre-delta corner's still moves on whole frames).
 ROMP_CORNER_REPORT_DIR, when set, gets one JSON per class with everything recorded, for a written record.
 ROMP_CORNER_TWO_HOSTS (any value) runs TwoHostsBytesByHost, a hub with TWO checked-in remotes whose feed page's minute
-row is cross-checked against the sockets' own byte counts (wsBytesByHost, 2026-09-19); skipped without it.
+row is cross-checked against the sockets' own byte counts (wsBytesByHost, 2026-09-19); skipped without it, and set by CI's
+served step since 2026-09-20.
 
 This lab boots subprocess kernels and drives Chromium; it loads no romp code in-process, so it carries no in-process
 state-isolation preamble and is not scanned by tests/test_state_isolation_order.py (as its two siblings). Synthetic
@@ -1028,7 +1029,9 @@ class TwoHostsBytesByHost(unittest.TestCase):
     the order the hosts first appeared to the page (federation's hosts(), attach order with nothing detached here), which
     must agree with the hub's /tunnels row order the page read. The row names positions, never hosts; wsBytes stays the
     local socket's figure. Run with ROMP_CORNER_TWO_HOSTS set (any value); skipped without it, as the other knob-gated
-    corners are (three kernels and a browser)."""
+    corners are (three kernels and a browser). CI's served step sets the knob (2026-09-20), so the lab runs there under
+    ROMP_SERVED_TESTS_REQUIRE, where its other skips (deps, browser, an empty drive) are failures as they are for every
+    served lab; the knob stays so a contributor clone and the Python matrix runners are unchanged."""
     maxDiff = None
 
     @classmethod
