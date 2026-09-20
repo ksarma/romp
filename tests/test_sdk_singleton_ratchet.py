@@ -4015,8 +4015,15 @@ class ClassTeardownInstallsAValue(_NestedRun, unittest.TestCase):
     the identity term holds and the refusal is never consulted): none of the three boundary verdicts, each the
     start-to-end judgment, Two's on the object One.a built, Three's on the one Two's teardown built (both real) and
     Five's on None, names a refused object. The clause is written on membership by identity (_sdk_refused), and a clause
-    emitted on every start-to-end verdict lands on all three here (the kill cell, derive: boundary-link-unconditional),
-    while S10 and S10B, whose found object is the refused one, stay green."""
+    emitted on every start-to-end verdict lands on all three here (the kill cell, derive: boundary-link-unconditional).
+    That cell widens the gate and rewrites nothing the gate already wrote, so what separates its green from its red is
+    whether the gate as written clauses the verdict a case reads. A start-to-end verdict on a found object the refusal
+    named, at a scope that ended under the marker it started with, carries the clause under either gate and reads the
+    same. A start-to-end verdict the gate keeps bare, on a found object no refusal named, or on the reload road, where
+    the scope's end marker is not its start's whatever object it found, gains the clause under the cell and reds every
+    case that reads it for the clause's absence or to its last words. The found object's being the refused one is one
+    of the gate's two terms and not the green side by itself: the same found object at a scope that ends on a
+    re-execution is judged on the reload road and reds."""
     SCRATCH = SCRATCH_M
     ERRORS = 3
 
