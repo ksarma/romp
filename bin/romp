@@ -2361,7 +2361,10 @@ elif len(skipped) == 1:
 else:
     tail = "%d skipped (%s): they have their own picks" % (len(skipped), ", ".join(skipped))
 if unwritten:
-    # a record that would not read: nothing was written, and it is not a pick of that session's own (round 1 of the review, 2026-09-18)
+    # a record that would not read: nothing was written, and it is not a pick of that session's own (round 1 of the review, 2026-09-18).
+    # Two roads fill it since round 6 of the review (2026-09-20): the record unreadable at the walk's door, before anything moved, and
+    # the record unreadable at the follower's own write, whose skip the kernel restored before filing it here (the Log names that
+    # fault); one bucket and one sentence, since the person picks again once the record reads on either road
     tail += "; %d not written (%s): %s" % (len(unwritten), ", ".join(unwritten),
                                            "its record would not read" if len(unwritten) == 1 else "their records would not read")
 if failed:

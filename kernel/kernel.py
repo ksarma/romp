@@ -41088,9 +41088,10 @@ def _set_auth_or_park_verdict(be, sid, value, park=True):
     `park` False leaves the FIFO gate out: POST /billing's `now` road (its comment says why a --now pick is never
     parked) still hands its pick to the backend THROUGH this helper, so the user's explicit pick has one door into
     be.set_auth, the WS arm's, the verb's and the parked replay's alike, and the census tests/test_cap_switch_offer.py
-    keeps of the kernel's set_auth call sites stays at the helper and the replay (round 2 addendum of the billing
-    verb's review, 2026-09-18: the road's own raw call was a third site, and the pin that keeps every automatic path
-    off billing in either direction went red)."""
+    keeps of the kernel's set_auth call sites stays at the helper (round 2 addendum of the billing verb's review,
+    2026-09-18: the road's own raw call was a third site, and the pin that keeps every automatic path off billing in
+    either direction went red; since round 6 of the review, 2026-09-20, the parked replay in _apply_pending_ops takes
+    this helper with `park` False too, its comment says why, so the census reads the helper alone)."""
     if not lg.parse_pick(value)[0]:          # "login" | "key" | "login:<id>" (a stored login, T346)
         return "refused"
     if park and _gate_or_park(sid, ("auth", value)):
@@ -41249,7 +41250,10 @@ def _billing_request(b):
             return {"ok": False, "error": why or "the pick was refused", "_status": 409}
         superseded = int(out.get("superseded") or 0)
         _push_soon()
-        unwritten = out.get("unwritten") or []    # the followers whose record would not read: nothing written, said apart
+        unwritten = out.get("unwritten") or []    # the followers whose record would not read: nothing written, said apart (at the
+        #                                           door before anything moved, or at the step's own write, skipped, its live pair
+        #                                           put back by the guard first; round 6 of the review, 2026-09-20: one bucket,
+        #                                           since the person picks again once the record reads on either road)
         failed = out.get("failed") or []          # the followers whose step raised: left following the default, no ask (the
         #                                           walk's per-session try, the rebase follow-up of 2026-09-18); the Log names the fault
         parked = out.get("parked") or []          # the followers whose queue a move holds: the pick parked behind the move
@@ -41876,8 +41880,22 @@ def _apply_pending_ops(now=None):
                         # at fire time (a stored login removed or expired between the park and the settle, a record that
                         # will not read) is reported below with the effort and fast arms; dropped, the queued chip retired
                         # as if the pick had landed while the session kept billing the old side, and `romp billing` had
-                        # answered exit 0 with a promised apply
-                        refused = be.set_auth(sid, op[1]) is False
+                        # answered exit 0 with a promised apply. THROUGH THE ONE DOOR (round 6 of the review, 2026-09-20; its
+                        # kernel-1, extra7-1 and extra8-2): the replay takes _set_auth_or_park_verdict with the FIFO gate off
+                        # (this walk is the gate's own lift), so the SDK backend's set_auth runs inside set_auth_guarded's
+                        # guard, as POST /billing's roads and the dashboard's arm run it. A pick whose own record write is
+                        # SKIPPED over a record that exists and would not read now raises RegUnreadable inside set_auth after
+                        # the live pair and the pending moved (SdkBackend._mirror_pick), and the guard is the only frame that
+                        # can put them back and file the row; called bare, as until round 6, the raise reached the per-sid
+                        # `except Exception` below, which pops the session's WHOLE parked queue, and a catch in this frame
+                        # could restore nothing and would have had to say of a session that moved that nothing changed. So
+                        # the drain's catch for the raise is the door: the guard answers False, this arm reads it as the
+                        # refusal it is, pops this op alone, says so on the settingRefused frame in the guard's own sentence
+                        # (`sid` hands _auth_refusal the sentence the door left) and delivers the ops behind it. A backend
+                        # without the door (a fake, the Codex backend) takes set_auth bare through the helper's fallback, as
+                        # before; the census tests/test_cap_switch_offer.py keeps of the kernel's set_auth sites reads the
+                        # helper alone now
+                        refused = _set_auth_or_park_verdict(be, sid, op[1], park=False) == "refused"
                     elif op[0] == "env":
                         be.set_env(sid, op[1])
                     # (an unknown op kind gets no call: it is popped below and dropped — never wedge the queue)
@@ -41925,7 +41943,7 @@ def _apply_pending_ops(now=None):
                         if op[0] == "effort":
                             why = _effort_refusal(be, op[1])
                         elif op[0] == "auth":
-                            why = _auth_refusal(be, _name_of(sid) or sid[:8], str(op[1]))
+                            why = _auth_refusal(be, _name_of(sid) or sid[:8], str(op[1]), sid=sid)   # the door's own sentence (round 6)
                         else:
                             why = "Couldn't toggle fast mode: the session's backend refused it."
                         sys.stderr.write("pending ops apply: %s refused %r for %s\n" % (type(be).__name__, what, sid[:8]))

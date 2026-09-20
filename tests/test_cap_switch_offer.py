@@ -186,13 +186,19 @@ class CapSwitchOffer(unittest.TestCase):
 
         V().visit(ast.parse(ker_src))
         self.assertEqual(sorted(sites), [
-            ("_apply_pending_ops", "call:set_auth"),               # the parked-op drain replays the user's OWN pick; its refusal is read
             ("_billing_request", "name:set_auth_followers"),       # the --all-following walk door (the user's explicit verb), a getattr
             ("_set_auth_or_park_verdict", "call:set_auth"),        # the fallback for a backend without the guarded door (a fake, the Codex backend)
             ("_set_auth_or_park_verdict", "name:set_auth_guarded"),  # the guarded door every explicit per-session pick takes, a getattr
-        ], "the ONLY kernel roads to set_auth are the explicit-pick helper (two spellings) and the parked replay: %r" % sorted(sites))
+        ], "the ONLY kernel road to set_auth is the explicit-pick helper (two spellings); the parked replay takes the helper too "
+           "since round 6 of the review: %r" % sorted(sites))
         # the verb's --now pick takes the same helper with the FIFO gate off, never a raw call of its own
         self.assertIn("_set_auth_or_park_verdict(be, sid, pick, park=False)", ker_src)
+        # the parked-op drain's replay takes the same helper with the gate off (round 6 of the review, 2026-09-20; its kernel-1,
+        # extra7-1 and extra8-2): the SDK backend's set_auth then runs inside set_auth_guarded's guard, the one frame that can
+        # restore a pick whose own record write skipped and raised; until round 6 the drain called set_auth bare and was the
+        # second site this census listed. tests/test_billing_route.py drives the skip through the drain by execution
+        self.assertIn("_set_auth_or_park_verdict(be, sid, op[1], park=False)", ker_src,
+                      "the drain's replay reaches set_auth through the guarded door's helper, never a raw call of its own")
         self.assertIn('elif t == "setAuth" and lg.parse_pick(msg.get("value"))[0]:', ker_src,
                       "the route is a user gesture, and the ONLY door (T346: 'login' | 'key' | 'login:<id>')")
         self.assertNotIn("set_auth", ker_src[ker_src.index("def _cap_switch_offer"):

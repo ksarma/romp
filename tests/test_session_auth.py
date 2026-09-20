@@ -1659,7 +1659,12 @@ class DrivePlumbing(unittest.TestCase):
         self.assertNotIn("a stored login can't be the machine's default yet", src)
         self.assertIn('_gate_or_park(sid, ("auth", value))', src)   # parks on the gate, or hands over (2026-09-05)
         self.assertIn('elif op[0] == "auth":', src)
-        self.assertIn("be.set_auth(sid, op[1])", src)
+        # the replay takes the guarded door's helper with the FIFO gate off since round 6 of fork PR #813's review (2026-09-20):
+        # the SDK backend's set_auth then runs inside set_auth_guarded's guard, the frame that restores a pick whose own record
+        # write skipped and raised; until then the drain called set_auth bare, the text this pin held. The skip is driven
+        # through the drain by execution in tests/test_billing_route.py (ARecordSkipAtTheDrain)
+        self.assertIn("_set_auth_or_park_verdict(be, sid, op[1], park=False)", src)
+        self.assertNotIn("be.set_auth(sid, op[1])", src, "no raw set_auth call at the drain: the door's helper is the one road")
 
     def test_create_paths_pass_the_pick_through(self):
         src = open(os.path.join(BIN, "romp-kernel")).read()

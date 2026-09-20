@@ -2046,10 +2046,12 @@ class BackendHelpers(unittest.TestCase):
                                            "posted (RuntimeError: "), rows[0])
         # (f) the door's own chip row on a road whose record WROTE says so (round 5 of the review, 2026-09-20; its tests-3,
         # unjudged there and reproduced in round 6 by execution: `recorded = False` at that row left this module green, since
-        # (e) drives the unchanged road alone, while `recorded = True` redded (e)). The clause reads the session's
-        # _record_writes against the door's snapshot; that count's writers are SdkSession.__init__ (zero) and the two mirrors
-        # (_mirror_auth, _mirror_auth_pending: one per landed write), its readers set_auth's seed row, this row and its
-        # snapshot, and _follow_default_guarded's snapshot and divergence check. The request road under the same stash fault:
+        # (e) drives the unchanged road alone, while `recorded = True` redded (e)). The clause read the session's
+        # _record_writes against the door's snapshot until round 6 of the review (its regression-1, correctness-2, extra5-3
+        # and extra8-1): that count's writers were SdkSession.__init__ (zero) and the two mirrors, from any thread, and its
+        # readers set_auth's seed row, this row and its snapshot, and _follow_default_guarded's snapshot and divergence check;
+        # all six read the step's own carrier now (StepWrite: minted by set_auth_guarded here, handed to set_auth's mirror,
+        # written into by _update_reg under _reg_lock), which no other thread's mirror reaches. The request road under the same stash fault:
         # a login session picked to the key mirrors its record once, and the clause says so. Red with `recorded = False` at
         # the row: the row said ", its record untouched" of a record that wrote.
         notes = self._sess("notes", auth="login", launched="login")
@@ -2065,31 +2067,383 @@ class BackendHelpers(unittest.TestCase):
         self.assertTrue(rows[0].startswith("auth (notes): the pick key applied and its record wrote, but the chat acknowledgement could not be "
                                            "posted (RuntimeError: "), rows[0])
 
-    def test_a_record_that_exists_and_will_not_read_is_skipped_and_never_counted_as_a_landed_write(self):
-        # round 4 of the review (2026-09-20; its kernel-2): _record_writes advanced whenever _mirror_auth returned, but
+    def test_a_record_that_exists_and_will_not_read_is_skipped_and_never_lands_in_the_steps_carrier(self):
+        # round 4 of the review (2026-09-20; its kernel-2): the record-write count advanced whenever _mirror_auth returned, but
         # _update_reg returns WITHOUT writing when the record exists and will not read (a torn file: its skip rather than
         # gutting the reg), so the guard could conclude a step's record write landed when none did, the input to the
-        # divergence verdict extra6-2 made truthful. _update_reg says whether it wrote now, and the count moves only on True.
-        # A REAL torn record, no patched reader. Red at round 4's base at the first assertion: (2, None, None) != (0, False, False).
+        # divergence verdict extra6-2 made truthful. _update_reg says whether it wrote, and since round 6 of the review (its
+        # regression-1, extra5-3 and extra8-1) the landing is recorded in the STEP'S OWN carrier (StepWrite) the caller hands
+        # the mirror, never in a per-session count: `landed` moves only once write_reg returned, and `replaced` holds what
+        # the write replaced, from the RMW's own read. A REAL torn record, no patched reader. Red at round 4's base at the
+        # first assertion (the count's shape then): (2, None, None) != (0, False, False).
         web = self._sess("web", auth="login", launched="login")
         p = sb._reg_path(Path(self.d), web.sid)
         p.write_text("{torn")
-        n0 = web._record_writes
+        t = sb.StepWrite()
         with mock.patch.object(sys, "stderr", io.StringIO()):   # _update_reg's own skip line, kept out of the runner's output
-            wrote, wrote_pending = web._mirror_auth(), web._mirror_auth_pending()
-        self.assertEqual((web._record_writes - n0, wrote, wrote_pending), (0, False, False), "skipped twice, counted never")
+            wrote, wrote_pending = web._mirror_auth(token=t), web._mirror_auth_pending(token=t)
+        self.assertEqual((t.landed, t.replaced, wrote, wrote_pending), (False, {}, False, False), "skipped twice, landed never, replaced nothing")
         self.assertEqual(p.read_text(), "{torn", "nothing was written over the torn record")
         sb.write_reg(Path(self.d), web.sid, {"sid": web.sid, "name": "web", "cwd": self.d, "alive": True, "lastSid": web.sid, "auth": "login"})
-        self.assertIs(web._mirror_auth(), True, "the record reads again: the write lands")
-        self.assertEqual((web._record_writes - n0, self._reg(web.sid)["auth"]), (1, "login"), "counted once the write landed")
+        self.assertIs(web._mirror_auth(token=t), True, "the record reads again: the write lands")
+        self.assertEqual((t.landed, self._reg(web.sid)["auth"]), (True, "login"), "landed once the write did")
+        self.assertEqual(t.replaced, {"auth": "login", "authLogin": None, "authPending": None},
+                         "what the landed write replaced, field by field, from the RMW's read: the pair as the record held it, and no flag")
         # the pending's mirror declares the landing too (round 5 of the review, 2026-09-20; its tests-2): its return is read
-        # by _follow_default_guarded's step-is-None retry (False mints the RegUnreadable the divergence verdict carries) and
-        # by its own counter; every other call site drops it (_served_by_connect, _recover_picked_pending_at_init,
-        # _connect_landed, set_auth, _follow_default_unlanded, _follow_default). Only the False side was pinned above, so a
-        # mirror that always answered False stayed green and filed a false divergence over a retry that landed. Red under
-        # that mutant at the first assertion below: False is not True.
+        # by _follow_default_guarded's step-is-None retry (False mints the RegUnreadable the divergence verdict carries);
+        # every other call site drops it (_served_by_connect, _recover_picked_pending_at_init, _connect_landed, set_auth's
+        # roads through _mirror_pick, which raises on False since round 6, _follow_default_unlanded, _follow_default). Only
+        # the False side was pinned above, so a mirror that always answered False stayed green and filed a false divergence
+        # over a retry that landed. Red under that mutant at the first assertion below: False is not True.
         self.assertIs(web._mirror_auth_pending(), True, "the record reads: the pending's write lands and says so")
-        self.assertEqual(web._record_writes - n0, 2, "counted once more, the pending's landed write")
+        self.assertEqual(t.replaced.get("authPending"), None, "a mirror handed no carrier writes into none: the first replaced value per field stands")
+
+    def test_a_loop_thread_mirror_landing_inside_a_failing_steps_window_files_no_divergence_over_a_record_the_step_never_wrote(self):
+        # round 6 of the review (2026-09-20; its regression-1, correctness-2, extra5-3 and extra8-1, with round 4's kernel-2 and
+        # kernel-4): the guard read SdkSession._record_writes, a per-session count every mirror advanced from any thread, as
+        # "the step's own write landed", so a loop-thread mirror landing inside a request-thread step's window (the mirrors'
+        # eleven loop-reachable sites: _served_by_connect, _recover_picked_pending_at_init, _connect_landed, the guard's own
+        # retry and _follow_default on the loop) made a step whose OWN write was refused file a divergence over a record it
+        # never wrote: the door's sentence said its record could not be put back, the walk's diverged bucket named it. The
+        # step's own write is carried by the StepWrite its caller mints and hands to the mirrors (written into under
+        # _reg_lock), and the retry writes into none. The concurrent landing here is REAL: a second thread runs the session's
+        # pending mirror (what _connect_landed's served clear runs on the loop) inside the step, after the guard's snapshot
+        # and before the step's own write, which the disk then refuses; the record the other thread wrote is the record as
+        # the step found it (its flag unchanged). Red at the round-6 merge commit at the first assertion: the divergence
+        # sentence ("its record could not be put back (OSError)") against the plain refusal. The TRUE divergence, the step's
+        # own write landed and the retry failed, is pinned by
+        # test_a_retry_mirror_that_fails_after_the_records_first_write_landed_files_the_divergence_on_the_door_and_the_walk.
+        real_write = sb.write_reg
+
+        def racing(s):
+            """The other thread's mirror lands at set_auth's first hold on this session, then every write of this session's
+            record is refused (the step's own, and the guard's retry)."""
+            real_hold, fired, refuse = s._hold_write, [], []
+
+            def hold():
+                if not fired:
+                    fired.append(1)
+                    t = threading.Thread(target=s._mirror_auth_pending, name="q813-loop-landing")
+                    t.start()
+                    t.join(10)
+                    self.assertFalse(t.is_alive(), "the other thread's mirror landed")
+                    refuse.append(1)
+                return real_hold()
+
+            def write(state_dir, sid, reg):
+                if sid == s.sid and refuse:
+                    raise OSError(28, "No space left on device", str(sb._reg_path(state_dir, sid)))
+                return real_write(state_dir, sid, reg)
+            return hold, write
+        # the door
+        web = self._sess("web", auth="login", launched="login")
+        web.auth_live = "login"
+        q = self._queue_loop(web)
+        hold, write = racing(web)
+        seq0 = self.be._problem_seq
+        with mock.patch.object(web, "_hold_write", hold), mock.patch.object(sb, "write_reg", write):
+            self.assertFalse(self.be.set_auth_guarded(web.sid, "key"))
+        self.assertEqual(self.be.pop_auth_refusal(web.sid),
+                         "web's pick key was not applied: its record would not write (OSError), so the session bills as it did",
+                         "no divergence: the step's own write never landed, whatever another thread wrote meanwhile")
+        self.assertEqual((web.auth, web._auth_pending, len(q)), ("login", "", 0), "the running session is as the step found it")
+        reg = self._reg(web.sid)
+        self.assertEqual((reg["auth"], bool(reg.get("authPending"))), ("login", False), "the record is as the step found it")
+        rows = [p["text"] for p in self.be.problems(10) if p["seq"] > seq0]
+        self.assertEqual(len(rows), 1, rows)
+        self.assertNotIn("could not be put back", rows[0], rows[0])
+        # the walk
+        tests = self._sess("tests", launched="login")
+        tests.auth_live = "login"
+        self._queue_loop(tests)
+        hold, write = racing(tests)
+        with mock.patch.object(tests, "_hold_write", hold), mock.patch.object(sb, "write_reg", write):
+            out = self.be.set_auth_followers("key")
+        self.assertEqual((out["failed"], out["diverged"], out["unwritten"]), (["tests"], [], []),
+                         "a failed follower and not a diverged one: its own write never landed")
+
+    def test_the_retry_puts_back_the_report_the_steps_own_write_replaced_not_the_door_time_value(self):
+        # round 6 of the review (2026-09-20; its correctness-3 and kernel-3, the report-BEFORE-the-clear cell): the guard read
+        # the record's apiKeyAuth at the door and the retry wrote that value back, blind to the loop thread, which writes the
+        # field at any moment (_note_auth_source's persist of the CLI's report; _connect_landed's served launch and
+        # _stamp_launch_login's retirement write None). A report that landed between the door and the step's clear was
+        # overwritten by the door-time value. The retry now puts back what the step's OWN write replaced, carried out of
+        # that write's RMW in the step's carrier (StepWrite.replaced), and only where the field still holds the None the
+        # clear wrote. The persist is the production RMW (_update_reg), landing right before the step's own mirror. Red at
+        # the round-6 merge commit at the assertion: ('login', 'login', False) != ('login', 'login', True), the door-time
+        # False restored over the CLI's True.
+        web = self._sess("web", auth="login", launched="login")
+        web.auth_live = "login"
+        self.be._update_reg(web.sid, apiKeyAuth=False)   # the record's report at the door
+        q = self._queue_loop(web)
+        real, fired = web._mirror_auth, []
+
+        def report_then_mirror(**kw):
+            if not fired:
+                fired.append(1)
+                self.be._update_reg(web.sid, apiKeyAuth=True)   # the loop thread's persist, between the door and the step's clear
+            return real(**kw)
+        with mock.patch.object(web, "_mirror_auth", report_then_mirror), \
+                mock.patch.object(web, "_note_reconnect_ask", side_effect=RuntimeError("a synthetic fault after the mirror")):
+            self.assertFalse(self.be.set_auth_guarded(web.sid, "key"))
+        reg = self._reg(web.sid)
+        self.assertEqual((reg["auth"], web.auth, reg.get("apiKeyAuth")), ("login", "login", True),
+                         "the report the step's own clear took off went back, not the value read at the door")
+        self.assertEqual(len(q), 0, "nothing queued from a rolled-back state")
+
+    def test_a_report_that_lands_after_the_steps_clear_wins_over_the_retry(self):
+        # round 6 of the review (2026-09-20; its correctness-3 and kernel-3, the report-AFTER-the-clear cell, kernel-3's
+        # refuter's reproduction): the step's clear lands (None), the loop thread's persist then lands a fresh report, the
+        # step raises, and the retry must NOT put the older value over the CLI's newer report. The compare-and-swap in
+        # _update_reg (only_if_none) writes the carried value only where the field still holds None, under the same lock as
+        # the read it compares. Red at the round-6 merge commit at the assertion: ('login', False) != ('login', True), the
+        # retry writing the door-time False over the CLI's True.
+        web = self._sess("web", auth="login", launched="login")
+        web.auth_live = "login"
+        self.be._update_reg(web.sid, apiKeyAuth=False)
+        q = self._queue_loop(web)
+
+        def report_then_raise(*a, **k):
+            self.be._update_reg(web.sid, apiKeyAuth=True)   # the loop thread's persist, between the step's clear and the retry
+            raise RuntimeError("a synthetic fault after the mirror")
+        with mock.patch.object(web, "_note_reconnect_ask", side_effect=report_then_raise):
+            self.assertFalse(self.be.set_auth_guarded(web.sid, "key"))
+        reg = self._reg(web.sid)
+        self.assertEqual((reg["auth"], reg.get("apiKeyAuth")), ("login", True), "the newer report stands: the retry restored nothing over it")
+        self.assertEqual((web.auth, web._auth_pending, len(q)), ("login", "", 0))
+
+    def test_a_retirement_written_in_the_gap_is_overwritten_by_the_restore_the_documented_residual(self):
+        # THE RESIDUAL round 6 of the review names (2026-09-20; its correctness-3 and kernel-3, the reviewer's ruling): a None
+        # written between the step's clear and the retry by _connect_landed's follower-served launch or by
+        # _stamp_launch_login (a legitimate retirement at a launch) is indistinguishable BY VALUE from the None the step's
+        # own clear wrote, and the record carries no generation, per-write stamp or writer tag to tell them apart
+        # (write_reg writes a flat dict; _REG_CACHE's stat triple moves on every RMW of any field), so the compare-and-swap
+        # puts the report back over that retirement, in that gap; the next launch retires it again. Pinned as the DOCUMENTED
+        # BEHAVIOUR: a later change that closes this gap must update this pin, and its comment says the gap is closed.
+        # Green at the round-6 merge commit too (the door-time value was the same report): this test discriminates nothing
+        # at that head and exists to hold the residual in view.
+        web = self._sess("web", auth="login", launched="login")
+        web.auth_live = "login"
+        self.be._update_reg(web.sid, apiKeyAuth=True)
+        self._queue_loop(web)
+
+        def retire_then_raise(*a, **k):
+            self.be._update_reg(web.sid, apiKeyAuth=None)   # the launch's retirement, as _stamp_launch_login writes it, in the gap
+            raise RuntimeError("a synthetic fault after the mirror")
+        with mock.patch.object(web, "_note_reconnect_ask", side_effect=retire_then_raise):
+            self.assertFalse(self.be.set_auth_guarded(web.sid, "key"))
+        self.assertEqual(self._reg(web.sid).get("apiKeyAuth"), True,
+                         "the documented residual: the report went back over a retirement written in the gap")
+
+    def test_a_skipped_record_write_on_each_live_pick_road_raises_restores_files_the_row_and_answers_refused(self):
+        # round 6 of the review (2026-09-20; its kernel-1, extra7-1 and extra8-2, all refuters, the refuters' shape): set_auth's
+        # five live roads each write the live pick pair and the pending under the hold and then mirror them, and each dropped
+        # the mirror's answer, so a record that tore between the door read and the mirror (a real torn file, _update_reg's
+        # skip) left the running session moved, the record unwritten, and set_auth returning True: the door answered applied
+        # with no row. The skip raises RegUnreadable at the mirror now (_mirror_pick), the guard restores the pair, the
+        # pending and the slot flags, files the row naming the skip, and the door answers refused in the route's own words
+        # for a record that would not read. Every road is driven through the door on a REAL torn record, torn by the first
+        # hold on the session (after the door read, before the mirror). Red at the round-6 merge commit at the first
+        # assertion of every road: True is not false (the pick "applied").
+        roads = {
+            # a CLI no landing has stamped, with a report: the pick is written for the landing to decide
+            "never-landed": dict(auth="", launched=None, live="login", pending=""),
+            # a follower whose pending already names the pick: the pick is taken as its own, no new request
+            "already-applying": dict(auth="", launched="login", live="login", pending="key"),
+            # the running side re-picked while another pick's reconnect was pending: the pending is withdrawn
+            "revert": dict(auth="login", launched="key", live="key", pending="login"),
+            # a follower whose CLI already runs the side: the pick is taken as its intent, no reconnect
+            "unchanged": dict(auth="", launched="key", live="key", pending=""),
+            # the running side differs: the pending reconnect is asked
+            "request": dict(auth="login", launched="login", live="login", pending=""),
+        }
+        for road, c in roads.items():
+            with self.subTest(road=road):
+                s = self._sess("web" + str(self.n + 1), auth=c["auth"], launched=c["launched"])
+                s.auth_live = c["live"]
+                s._auth_pending = c["pending"]
+                q = self._queue_loop(s)
+                p = sb._reg_path(Path(self.d), s.sid)
+                real_hold, torn = s._hold_write, []
+
+                def hold(real_hold=real_hold, torn=torn, p=p):
+                    if not torn:
+                        torn.append(1)
+                        p.write_text("{torn")   # the record tears after the door read and before the step's own mirror
+                    return real_hold()
+                before = (s.auth, s.auth_login, s._auth_pending, s._auth_pending_login, s._relaunch_bounded, s._landing_ask_bounded)
+                seq0 = self.be._problem_seq
+                with mock.patch.object(s, "_hold_write", hold), mock.patch.object(sys, "stderr", io.StringIO()):
+                    ok = self.be.set_auth_guarded(s.sid, "key")
+                self.assertIs(ok, False, "refused: the pick's own record write was skipped")
+                self.assertEqual((s.auth, s.auth_login, s._auth_pending, s._auth_pending_login, s._relaunch_bounded, s._landing_ask_bounded),
+                                 before, "the live object is as the step found it")
+                self.assertEqual(len(q), 0, "no reconnect queued from a rolled-back state")
+                self.assertEqual(p.read_text(), "{torn", "nothing was written over the torn record")
+                self.assertEqual(self.be.pop_auth_refusal(s.sid),
+                                 "%s's pick key was not applied: its record would not read, so nothing was written and the session bills "
+                                 "as it did" % s.name)
+                rows = [r["text"] for r in self.be.problems(10) if r["seq"] > seq0]
+                self.assertEqual(len(rows), 1, rows)
+                self.assertTrue(rows[0].startswith("auth (%s): the pick key was asked of this session, but its step failed (RegUnreadable: the "
+                                                   "record exists and would not read, so the pick's record write was skipped); " % s.name), rows[0])
+                self.assertNotIn("could not be put back", rows[0], "no divergence: nothing of the step's landed")
+
+    def test_the_walk_files_a_follower_whose_own_write_skipped_under_unwritten_after_the_restore(self):
+        # round 6 of the review (2026-09-20; its kernel-1, extra7-1 and extra8-2, with the reviewer's correction of the round-5
+        # record): unwrittenSessions had ONE writer, set_auth's door read answering None inside the walk's step, before anything
+        # moved, and its sentence ("its record would not read: nothing written") was true of that road alone. A follower whose
+        # record tore at its own write was filed under moved with nothing written. The skip raises now, the guard puts the
+        # live pair and the pending back, and ONLY THEN is the follower filed under unwritten: one bucket for both roads, since
+        # the person does the same for either (picks again once the record reads) and "nothing written" is true of both once
+        # the restore has run; the second road leaves a problem row besides. Red at the round-6 merge commit at the first
+        # assertion: ([], [], [], ['api', 'tests']) != (['tests'], [], [], ['api']).
+        tests = self._sess("tests", launched="login")
+        tests.auth_live = "login"
+        q = self._queue_loop(tests)
+        api = self._sess("api", launched="login")   # a second follower the walk still moves: one follower's skip never aborts the walk
+        api.auth_live = "login"
+        self._queue_loop(api)
+        p = sb._reg_path(Path(self.d), tests.sid)
+        real_hold, torn = tests._hold_write, []
+
+        def hold():
+            if not torn:
+                torn.append(1)
+                p.write_text("{torn")
+            return real_hold()
+        seq0 = self.be._problem_seq
+        with mock.patch.object(tests, "_hold_write", hold), mock.patch.object(sys, "stderr", io.StringIO()):
+            out = self.be.set_auth_followers("key")
+        self.assertEqual((out["unwritten"], out["failed"], out["diverged"], out["moved"]), (["tests"], [], [], ["api"]))
+        self.assertEqual((tests.auth, tests._auth_pending, len(q)), ("", "", 0), "a follower again, nothing queued: filed only after the restore")
+        self.assertEqual(p.read_text(), "{torn")
+        self.assertEqual((self._reg(api.sid)["auth"], api.auth, api._auth_pending), ("key", "key", "key"), "the other follower moved")
+        rows = [r["text"] for r in self.be.problems(10) if r["seq"] > seq0]
+        self.assertEqual([r for r in rows if r.startswith("auth (tests):")],
+                         [r for r in rows if "RegUnreadable: the record exists and would not read, so the pick's record write was skipped" in r],
+                         "one row for the skipped follower, naming the skip")
+        line = [str(m) for m in self.logs if "following the default now carr" in str(m)][-1]
+        self.assertIn("; 1 record would not read (tests)", line)
+        self.assertNotIn("step failed", line, "not a failed follower: the walk's unwritten bucket, in its own words")
+
+    @staticmethod
+    def _tearing_read(sid, p):
+        """read_reg for a record that tears between a dormant road's door read (the first read for the sid) and its RMW's own
+        read inside _update_reg (the second): the file is torn and the read answers None, so _update_reg skips."""
+        real_read, reads = sb.read_reg, []
+
+        def read(state_dir, sid_):
+            if sid_ == sid:
+                reads.append(1)
+                if len(reads) == 2:
+                    p.write_text("{torn")
+                    return None
+            return real_read(state_dir, sid_)
+        return read
+
+    def test_a_skipped_record_write_on_set_auths_dormant_road_answers_false_with_a_row(self):
+        # round 6 of the review (2026-09-20; its kernel-1, extra7-1 and extra8-2, the refuters: the two purely dormant roads take
+        # a plain False, since the record write is their whole change and nothing else moved). set_auth's dormant road read
+        # the bool for the seed row alone and returned True over an unwritten record. Red at the round-6 merge commit at the
+        # first assertion: True is not False. The route's sentence for set_auth's bare False is the record-would-not-read one
+        # already (_auth_refusal), so no sentence is left for it, and the row says what happened.
+        tearing_read = self._tearing_read
+        self.n += 1
+        sid = "11111111-2222-3333-4444-%012d" % self.n
+        sb.write_reg(Path(self.d), sid, {"sid": sid, "name": "dormant", "cwd": self.d, "alive": False, "lastSid": sid})
+        p = sb._reg_path(Path(self.d), sid)
+        seq0 = self.be._problem_seq
+        with mock.patch.object(sb, "read_reg", tearing_read(sid, p)), mock.patch.object(sys, "stderr", io.StringIO()):
+            self.assertIs(self.be.set_auth(sid, "key"), False, "refused: the record write was the whole change and it was skipped")
+        self.assertEqual(p.read_text(), "{torn", "nothing was written over the torn record")
+        rows = [r["text"] for r in self.be.problems(10) if r["seq"] > seq0]
+        self.assertEqual(rows, ["auth (dormant): the pick key was NOT applied: the record exists and would not read, so its write was "
+                                "skipped and nothing was changed; pick again once the record reads"])
+        self.assertEqual(self.be.pop_auth_refusal(sid), "", "no sentence of its own: the route's record-would-not-read sentence is the right one")
+        self.assertEqual(km._auth_refusal(self.be, "dormant", "key", sid=sid), "dormant's record would not read, so nothing was changed")
+        self.assertEqual(sb.read_sdk_defaults(Path(self.d)).get("auth"), None, "no seed write for a refused pick")
+
+    def test_a_skipped_clear_on_the_default_roads_dormant_session_refuses_in_the_record_would_not_read_words(self):
+        # round 6 of the review (2026-09-20; its kernel-1, extra7-1 and extra8-2): follow_default_auth's dormant road dropped
+        # the bool and said the pick was cleared over an unwritten record; its record write is the road's whole change, so a
+        # plain False is true of the skip, and its own refusal says it in the record-would-not-read words. Red at the round-6
+        # merge commit at the first assertion: True is not False.
+        tearing_read = self._tearing_read
+        self.n += 1
+        sid2 = "11111111-2222-3333-4444-%012d" % self.n
+        sb.write_reg(Path(self.d), sid2, {"sid": sid2, "name": "picked", "cwd": self.d, "alive": False, "lastSid": sid2, "auth": "login"})
+        p2 = sb._reg_path(Path(self.d), sid2)
+        seq0 = self.be._problem_seq
+        with mock.patch.object(sb, "read_reg", tearing_read(sid2, p2)), mock.patch.object(sys, "stderr", io.StringIO()):
+            self.assertIs(self.be.follow_default_auth(sid2), False, "refused: the clear was not written")
+        self.assertEqual(p2.read_text(), "{torn")
+        self.assertEqual(self.be.pop_auth_refusal(sid2),
+                         "picked's pick was not cleared: its record would not read, so nothing was written and it keeps its own pick")
+        rows = [r["text"] for r in self.be.problems(10) if r["seq"] > seq0]
+        self.assertEqual(len(rows), 1, rows)
+        self.assertTrue(rows[0].startswith("auth (picked): its own pick was NOT cleared: the record write failed (RegUnreadable: the record "
+                                           "exists and would not read, so the clear's record write was skipped); the pick stands"), rows[0])
+
+    def test_a_skipped_clear_on_the_default_roads_live_session_restores_the_pair_and_refuses(self):
+        # round 6 of the review (2026-09-20; its kernel-1, extra7-1 and extra8-2): follow_default_auth's live road clears the pair
+        # under the hold and mirrors it inside its own restoring unit (round 1 of the billing verb's review, fresh-2), and
+        # dropped the mirror's answer, so a record that tore between the door read and the mirror left the live object a
+        # follower, the record still carrying the pick, and the road saying the pick was cleared. The skip raises inside the
+        # unit now, the pair goes back and the road refuses in the record-would-not-read words. Red at the round-6 merge
+        # commit at the first assertion: True is not false.
+        live = self._sess("live", auth="login", launched="login")
+        live.auth_live = "login"
+        p = sb._reg_path(Path(self.d), live.sid)
+        real_hold, torn = live._hold_write, []
+
+        def hold():
+            if not torn:
+                torn.append(1)
+                p.write_text("{torn")
+            return real_hold()
+        seq0 = self.be._problem_seq
+        with mock.patch.object(live, "_hold_write", hold), mock.patch.object(sys, "stderr", io.StringIO()):
+            self.assertIs(self.be.follow_default_auth(live.sid), False, "refused: the clear's own record write was skipped")
+        self.assertEqual((live.auth, live.auth_login), ("login", ""), "the pair went back")
+        self.assertEqual(p.read_text(), "{torn")
+        self.assertEqual(self.be.pop_auth_refusal(live.sid),
+                         "live's pick was not cleared: its record would not read, so nothing was written and it keeps its own pick")
+        rows = [r["text"] for r in self.be.problems(10) if r["seq"] > seq0]
+        self.assertEqual(len(rows), 1, rows)
+        self.assertIn("(RegUnreadable: the record exists and would not read, so the clear's record write was skipped)", rows[0])
+
+    def test_every_guarded_step_caller_hands_the_guard_the_steps_carrier(self):
+        # round 6 of the review (2026-09-20): a step handed no carrier reads to the guard as having landed nothing (the guard's
+        # comment says so), so the property that keeps the divergence verdict truthful is that EVERY caller of
+        # _follow_default_guarded that passes a `step` passes the same `token`, that every set_auth call inside such a step
+        # passes it on, and that the init closer's call does too. A census over kernel/sdk_backend.py by ast, derived at run
+        # time, so a new step caller that forgets the carrier reds here. Each derived set is asserted non-empty first.
+        mod = ast.parse(Path(BIN, "romp_sdk_backend.py").read_text())
+        guard_calls = [n for n in ast.walk(mod) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                       and n.func.attr == "_follow_default_guarded"]
+        step_calls = [n for n in guard_calls if any(k.arg == "step" for k in n.keywords)]
+        self.assertEqual(len(step_calls), 3, "the three step callers: set_auth_guarded, set_auth_followers and _note_auth_source's closer")
+        for n in step_calls:
+            self.assertIn("token", [k.arg for k in n.keywords], "a guarded step hands the guard its carrier (line %d)" % n.lineno)
+        parent = {c: p for p in ast.walk(mod) for c in ast.iter_child_nodes(p)}
+
+        def inside_step(n):
+            p = parent.get(n)
+            while p is not None:
+                if isinstance(p, ast.FunctionDef) and p.name == "step":
+                    return True
+                p = parent.get(p)
+            return False
+        set_auth_in_steps = [n for n in ast.walk(mod) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                             and n.func.attr == "set_auth" and inside_step(n)]
+        self.assertEqual(len(set_auth_in_steps), 2, "set_auth_guarded's step and set_auth_followers' step")
+        for n in set_auth_in_steps:
+            self.assertIn("token", [k.arg for k in n.keywords], "set_auth inside a step takes the step's carrier (line %d)" % n.lineno)
+        closer = [n for n in ast.walk(mod) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                  and n.func.attr == "_recover_picked_pending_at_init"]
+        self.assertEqual(len(closer), 1)
+        self.assertIn("token", [k.arg for k in closer[0].keywords], "the init closer takes the step's carrier")
 
     def test_a_retry_that_skips_over_a_record_torn_after_the_steps_write_landed_is_carried_as_the_divergence_it_is(self):
         # kernel-2's inverse hole (round 4 of the review, 2026-09-20; the refuter): a retry mirror that SKIPS (the record torn
@@ -4380,6 +4734,98 @@ class ParkedPickRefusedAtTheDrain(unittest.TestCase):
         err = self._drain(fake)
         self.assertEqual([c[0] for c in fake.calls], ["set_auth"])
         self.assertEqual((self.frames, err), ([], ""), "nothing to say: the pick landed")
+
+
+class ARecordSkipAtTheDrain(unittest.TestCase):
+    """The parked-op drain on a REAL SdkBackend whose session's record tears at the pick's own write (round 6 of the
+    review, 2026-09-20; its kernel-1, extra7-1 and extra8-2): the replay takes the guarded door's helper now, so the skip's
+    raise is contained where the live object can be put back, the op is refused on the settingRefused frame in the guard's
+    sentence, and the ops behind it and the other sessions' ops deliver. Until round 6 the drain called set_auth bare: at the
+    merge commit the skip returned True and the chip retired as if the pick had landed over an unwritten record; with the
+    raise and a bare call, the per-sid `except Exception` popped the session's whole parked queue. Synthetic only."""
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        Path(self.d, "session-hosts").write_text("off")
+        self.logs = []
+        self.be = sb.SdkBackend(self.d, "/bin/true", lambda *a, **k: None, log=self.logs.append)
+        self.be.login_ok = lambda: True
+        self.be.key_state = lambda: "ok"
+        self.frames = []
+        self.sids = []
+
+        def clean():
+            for sid in self.sids:
+                km._pending_ops.pop(sid, None)
+                km._moving.discard(sid)
+                km._inflight_ops.pop(sid, None)
+                km._drain_hold.pop(sid, None)
+            km._save_pending_ops()
+        self.addCleanup(clean)
+
+    def _sess(self, name, auth="", launched=None):
+        sid = "11111111-2222-3333-4444-%012d" % (900 + len(self.sids))
+        self.sids.append(sid)
+        reg = {"sid": sid, "name": name, "cwd": self.d, "alive": True, "lastSid": sid}
+        if auth:
+            reg["auth"] = auth
+        sb.write_reg(Path(self.d), sid, reg)
+        s = sb.SdkSession(self.be, dict(reg))
+        s._launched_auth = launched
+        self.be.sessions[sid] = s
+        queued = []
+        s.loop = type("_Queue", (), {"call_soon_threadsafe": lambda self_, cb, *a: queued.append((cb, a))})()
+        return s, queued
+
+    def test_a_parked_pick_whose_record_write_skips_is_refused_at_the_drain_and_the_ops_behind_it_and_the_other_sids_deliver(self):
+        # Red at the round-6 merge commit at the frames assertion: [] != [one settingRefused frame] (the drain's bare set_auth
+        # returned True over the torn record, web moved onto the key with its record unwritten, the chip retired as landed;
+        # the effort assertion before it held there, since nothing raised). The mutation "the drain calls set_auth bare again"
+        # at this commit's code reds at the effort assertion: [] != [(web.sid, 'high')] (the raise reached the per-sid except,
+        # which popped web's whole queue), so the two assertions tell the two failures apart; the api assertions below say the
+        # other session's ops deliver either way.
+        import io
+        from contextlib import redirect_stderr
+        web, q = self._sess("web", auth="login", launched="login")
+        web.auth_live = "login"
+        api, q2 = self._sess("api", auth="login", launched="login")
+        api.auth_live = "login"
+        p = sb._reg_path(Path(self.d), web.sid)
+        real_hold, torn = web._hold_write, []
+
+        def hold():
+            if not torn:
+                torn.append(1)
+                p.write_text("{torn")   # web's record tears after set_auth's door read, before its own mirror
+            return real_hold()
+        effort = []
+        km._park_op(web.sid, ("auth", "key"))
+        km._park_op(web.sid, ("effort", "high"))   # the op behind the pick, of another kind (a same-kind park replaces in place)
+        km._park_op(api.sid, ("auth", "key"))
+        err = io.StringIO()
+        names = {web.sid: "web", api.sid: "api"}
+        with mock.patch.multiple(km, **{
+                "_compacting_now": lambda sid, **k: False, "_working_now": lambda sid: False,
+                "_limit_hold": lambda sid, usage=None: None, "_name_of": lambda sid: names.get(sid, ""),
+                "_send_to_app": lambda app, m: self.frames.append((app, m))}), \
+             mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda sid: self.be)), \
+             mock.patch.object(web, "_hold_write", hold), \
+             mock.patch.object(self.be, "set_effort", lambda sid, v: effort.append((sid, v)) or True), \
+             redirect_stderr(err):
+            km._apply_pending_ops()
+        self.assertEqual(effort, [(web.sid, "high")], "the op behind the refused pick delivered: the queue was kept")
+        self.assertEqual(self.frames, [("chat", {"type": "settingRefused", "gesture": "command", "sid": web.sid, "flag": "auth",
+                                                 "text": "web's pick key was not applied: its record would not read, so nothing was "
+                                                         "written and the session bills as it did"})],
+                         "the refusal, in the guard's own sentence, on the frame the live setEffort and setFast ops answer with")
+        self.assertEqual((web.auth, web._auth_pending, len(q)), ("login", "", 0), "web is as the pick found it")
+        self.assertEqual(p.read_text(), "{torn", "nothing was written over web's torn record")
+        self.assertEqual((sb.read_reg(Path(self.d), api.sid)["auth"], api.auth, api._auth_pending, len(q2)), ("key", "key", "key", 1),
+                         "the other session's pick landed and its reconnect is queued")
+        self.assertNotIn(web.sid, km._pending_ops, "popped: a refused pick is never replayed forever")
+        self.assertNotIn(api.sid, km._pending_ops)
+        self.assertIn("pending ops apply: SdkBackend refused '/auth key' for %s" % web.sid[:8], err.getvalue())
+        self.assertIn("update_reg: %s unreadable" % web.sid[:8], err.getvalue(), "_update_reg's own skip line")
 
 
 class VerbWords(unittest.TestCase):
