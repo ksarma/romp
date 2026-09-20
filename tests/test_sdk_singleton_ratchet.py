@@ -32,12 +32,12 @@ reads and gets the silent empty-registry answer this fixture exists to stop, liv
 2026-09-19), which tests/test_kernel_interrupt_machine_cut.py leaves dangling and two of the three files that load it
 read, that one and tests/test_kernel_msgcaption.py; the loop cannot land here because the private-kernel harnesses carry 90 or more
 pre-existing teardown leaks (the 90 measured over the three romp_kernel_mc files in one run, on the missing road; the
-round-1 refuters' 574 over the 18 files, their count, its road not recorded, and a teardown count does not depend on the
-road, since SdkBackend constructs on both), so their save-and-restore product code lands first, then the ratchet's
-private-kernel
-arm; Y pins the limit as behaviour, a private-name leak over a removed root with the ratchet silent and the run green,
-red the day that arm lands), and the 316 the first sweep ran, module alone on the missing road; 364 modules in all. The
-first sweep, over its 316 at the base, module alone on the missing road, found the 4 red on these leaks and 1 red for an
+round-1 refuters' 574 over the 18 files that then shared a private name, their count, its road not recorded, and a
+teardown count does not depend on the road, since SdkBackend constructs on both), so their save-and-restore product
+code lands first, then the ratchet's private-kernel arm; Y pins the limit as behaviour, a private-name leak over a
+removed root with the ratchet silent and the run green, red the day that arm lands), and the 316 the first sweep ran,
+module alone on the missing road; 364 modules in all. The first sweep, over its 316 at the base, module alone on the
+missing road, found the 4 red on these leaks and 1 red for an
 unrelated pre-existing reason (tests/test_sdk_rate_limit_usage.py, an unrestored ROMP_SERVE_TOKEN setdefault the judge
 fixture's environment check names; identical with the ratchet off);
 the sweep repeated over all 364 after the fixes was green alone (the missing road, CI's) except that one. The full-suite
@@ -2689,43 +2689,53 @@ LIMIT_READING = ("tests/test_kernel_interrupt_machine_cut.py", "tests/test_kerne
                                                                                                     # dangling object, measured 2026-09-19
 LIMIT_MEASURED = "measured 2026-09-19"      # the date of that measurement, held in both texts
 PRIVATE_KERNEL_NAME = "romp_kernel_mc"
+PRIVATE_KERNEL_PREFIX = "romp_kernel_"     # a kernel loaded under a private name: load_source's first argument opens on it
 NUMBER_WORDS = ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve")
 RATCHET_COMMENT_OPENS = "No test may leave the kernel's backend singleton changed"
 
 
-def private_kernel_loaders(sources=None):
-    """The test files that load the kernel under PRIVATE_KERNEL_NAME, derived from the tree: every tests/*.py whose text
-    calls load_source with that name as its first argument, sorted, as tests/<file>. The call is read by AST: a file is
-    a loader when some Call in it names load_source, bare or as an attribute (romp_load.load_source), with a str
-    constant equal to PRIVATE_KERNEL_NAME as its first positional argument. So the quote spelling and a module prefix
-    are not the key; a mention in a comment or inside a string is not a call, and the name in a later argument is not
-    a load (a keyword spelling of the first argument, load_source(name=...), is outside what this reads). A text
-    without the name is not parsed (the prefilter); a text with the name that does not parse raises, naming the file,
-    since a loader that cannot be read is not a non-loader. `sources` is a mapping {"tests/<file>": text} for a
-    synthetic test; None reads the tree's tests directory. A count of them written in prose is measured once and
-    outlives the file added after it; the wording pin reads this and holds the prose to it. The round-7 review found
-    the first form a regex over the double-quoted spelling load_source("<name>", so a single-quoted or prefixed loader
-    was outside the census with the count word green, and a string carrying that spelling was inside it."""
+def private_kernel_census(sources=None):
+    """The test files that load the kernel under each private name, derived from the tree: {name: [tests/<file>, ...]},
+    the files sorted, for every name a call loads. The call is read by AST: a file loads a name when some Call in it
+    names load_source, bare or as an attribute (romp_load.load_source), with a str constant opening on
+    PRIVATE_KERNEL_PREFIX as its first positional argument, and the name is that constant. So the quote spelling and a
+    module prefix are not the key; a mention in a comment or inside a string is not a call, and the name in a later
+    argument is not a load (a keyword spelling of the first argument, load_source(name=...), is outside what this
+    reads). A text without the prefix is not parsed (the prefilter); a text with it that does not parse raises,
+    naming the file, since a loader that cannot be read is not a non-loader. `sources` is a mapping
+    {"tests/<file>": text} for a synthetic test; None reads the tree's tests directory. A count of these written in
+    prose is measured once and outlives the file added after it; the wording pins read this and hold the prose to
+    it: the loaders of PRIVATE_KERNEL_NAME (private_kernel_loaders) and the names shared by two or more files
+    (TheStatedLimitIsWorded)."""
     if sources is None:
         sources = {}
         for name in sorted(os.listdir(HERE)):
             if name.endswith(".py"):
                 with open(os.path.join(HERE, name)) as f:
                     sources["tests/" + name] = f.read()
-    found = []
+    census = {}
     for path in sorted(sources):
         text = sources[path]
-        if PRIVATE_KERNEL_NAME not in text:
+        if PRIVATE_KERNEL_PREFIX not in text:
             continue
         for node in ast.walk(ast.parse(text, filename=path)):
             if isinstance(node, ast.Call) and node.args and isinstance(node.args[0], ast.Constant) \
-                    and isinstance(node.args[0].value, str) and node.args[0].value == PRIVATE_KERNEL_NAME:
+                    and isinstance(node.args[0].value, str) and node.args[0].value.startswith(PRIVATE_KERNEL_PREFIX):
                 func = node.func
                 callee = func.id if isinstance(func, ast.Name) else func.attr if isinstance(func, ast.Attribute) else None
-                if callee == "load_source":
-                    found.append(path)
-                    break
-    return found
+                if callee == "load_source" and path not in census.setdefault(node.args[0].value, []):
+                    census[node.args[0].value].append(path)
+    return census
+
+
+def private_kernel_loaders(sources=None):
+    """The test files that load the kernel under PRIVATE_KERNEL_NAME, sorted, as tests/<file>: private_kernel_census's
+    entry for the name, [] when no file loads it (the pin that reads this holds an empty answer to be a failure).
+    The census reads the load_source call by AST, so the quote spelling and a module prefix are not the key and a
+    mention in a comment or a string is not a call; the round-7 review found the first form a regex over the
+    double-quoted spelling load_source("<name>", so a single-quoted or prefixed loader was outside the census with
+    the count word green, and a string carrying that spelling was inside it."""
+    return private_kernel_census(sources).get(PRIVATE_KERNEL_NAME, [])
 
 
 def ratchet_comment_text():
@@ -2790,8 +2800,11 @@ class TheStatedLimitIsWorded(unittest.TestCase):
     tree (private_kernel_loaders, which reads the load_source call by AST, not a quote spelling), the conftest names
     the loaders in one parenthesis held equal to the derived set, and both texts state the reading count as the
     number word of LIMIT_READING's length beside the loader count as the number word of the derived set's length,
-    each count sentence held as one needle so a failure names the sentence and not the text it was sought in. The
-    round-7 review found the first form reading every comment line in the conftest and pinning "two of the three"
+    each count sentence held as one needle so a failure names the sentence and not the text it was sought in; the
+    conftest's sentence on the private names shared by files is derived the same way (private_kernel_census: the
+    number word of the names two or more files load, and the number words of those names' file counts, ascending,
+    joined by "or"; the round-8 review found that figure hand-written beside the derived loader count, pinned by
+    nothing). The round-7 review found the first form reading every comment line in the conftest and pinning "two of the three"
     by its spelling, so a fourth loader left the sentence false with the pin green; the round-7 review found the
     census a regex over the double-quoted spelling, so a fourth loader written single-quoted was outside it with the
     count word green, and the reading count still pinned as the word two, so a third reader left it false with the
@@ -2854,8 +2867,34 @@ class TheStatedLimitIsWorded(unittest.TestCase):
         self.assertEqual(private_kernel_loaders(sources),
                          ["tests/test_double_quoted.py", "tests/test_prefixed.py", "tests/test_single_quoted.py"],
                          "the census keys on the load_source call with the name as its first argument, by AST")
+        self.assertEqual(private_kernel_census(sources),
+                         {name: ["tests/test_double_quoted.py", "tests/test_prefixed.py", "tests/test_single_quoted.py"],
+                          "romp_kernel_other": ["tests/test_other_name.py"]},
+                         "the census by name (private_kernel_census over the synthetic sources: every str constant opening "
+                         "on PRIVATE_KERNEL_PREFIX passed first to a load_source call, its files sorted; the comment, the "
+                         "string and the second argument are no load)")
         with self.assertRaisesRegex(SyntaxError, "test_unparseable"):
             private_kernel_loaders({"tests/test_unparseable.py": "km = load_source('%s',\n" % name})
+
+    def test_the_shared_private_names_sentence_is_the_trees(self):
+        """The conftest's sentence on the private names shared by files is derived from the tree: private_kernel_census
+        gives every private name's loaders; the names loaded by two or more files are the shared ones, their count the
+        number word before "private names are shared by", and the distinct counts of their files, ascending and joined
+        by " or ", the number words before "files each"; held as one needle so a failure names the sentence. A census
+        with no shared name is a failure, not a pass, and the name the limit is measured on is among the shared."""
+        census = private_kernel_census()
+        shared = {name: files for name, files in census.items() if len(files) >= 2}
+        self.assertGreaterEqual(len(shared), 1, "no private name is loaded by two or more test files: a derived population "
+                                "that comes back empty is a failure, not a pass (private_kernel_census over the tree: %r)"
+                                % sorted(census))
+        self.assertIn(PRIVATE_KERNEL_NAME, shared, "the name the limit is measured on is loaded by fewer than two files "
+                      "(private_kernel_census over the tree): %r" % census.get(PRIVATE_KERNEL_NAME))
+        each = " or ".join(NUMBER_WORDS[n] for n in sorted({len(files) for files in shared.values()}))
+        needle = "%s private names are shared by %s files each" % (NUMBER_WORDS[len(shared)], each)
+        self.assertTrue(needle in ratchet_comment_text(),
+                        "the ratchet's design comment in tests/conftest.py does not say: %s (the count of names two or "
+                        "more files load and their distinct file counts, as number words, from private_kernel_census: %r)"
+                        % (needle, {name: len(files) for name, files in sorted(shared.items())}))
 
 
 RESIDUAL_GREEN = "proves no leak occurred in that run and not that no test would leak alone"

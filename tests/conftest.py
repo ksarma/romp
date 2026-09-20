@@ -660,7 +660,7 @@ def restore_env(name, prior):
 # looped over every sys.modules name starting with romp_kernel (round 1's proposed fix) is the arm that would
 # cover it, and the loop cannot land here because the private-kernel harnesses carry 90 or more pre-existing
 # teardown leaks (the 90 above are one name's, on the missing road; the round-1 refuters counted 574 would-fail
-# outcomes over the 18 files that share a private name, their count, its road not recorded: a teardown's leaving a
+# outcomes over the 18 files that then shared a private name, their count, its road not recorded: a teardown's leaving a
 # dangling backend does not depend on the road, since SdkBackend constructs on both), so their save-and-restore
 # product code lands first, then the
 # ratchet's private-kernel arm.
