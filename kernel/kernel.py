@@ -3561,7 +3561,9 @@ CLIENT_DIAG_KEYS = {
                                             # row at all: GET /tunnels, the authenticated route whose row order the positions are assigned in, a position-to-name
                                             # map in its own right, and the state directory this file sits in, whose host registries sit beside this file:
                                             # remotes.json holds the attached set, written in the /tunnels row order (list_remotes and _remotes_rows_for_save
-                                            # read one dict), so a holder of it maps any position to a name; remotes-known.json holds every host ever attached
+                                            # read one dict), so a holder of it maps any position to a name with no client-diag row and no page-life correlation,
+                                            # the order being the kernel's own attached-host order persisted in the same state directory as this file;
+                                            # remotes-known.json holds every host ever attached
                                             # or trusted, attached ones included, each with a lastAttachedAt stamp refreshed by every writer (attach, detach,
                                             # trust and share: _known_note), written with the newest stamp first (_known_save), so it names the hosts and not
                                             # their order. Reading either is itself a join, and what any of these roads yields is exact for a pane life that attached

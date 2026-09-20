@@ -764,6 +764,7 @@ class ClientDiagAllowlistTest(unittest.TestCase):
                           r"several positions for one machine",   # the per-document grain's consequence (round 3, fresh-2)
                           r"GET /tunnels", r"in (its|their) own right",
                           r"remotes\.json", r"remotes-known\.json", r"lastAttachedAt", r"exact for", r"order inference",
+                          r"no page-life correlation", r"attached-host order",   # the fourth road's whole statement (round 3, extra8-1)
                           r"older than", r"most frequent", r"routine use", r"not from chat rows alone",
                           r"\bmints\b", r"does not inspect the map's keys", r"nested key"):
                 self.assertIsNotNone(re.search(token, text, re.I), "%s: the disclosure no longer states %r" % (name, token))

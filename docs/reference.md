@@ -4877,7 +4877,9 @@ The two rows, as the kernel writes them (`t` its clock, `wid` the dashboard id):
   position-to-name map in its own right, as is the state directory the file
   sits in, whose host registries sit beside the file: `remotes.json` holds
   the attached set, written in the `/tunnels` row order, so a holder of it
-  maps any position to a name with no client-diag row at all;
+  maps any position to a name with no client-diag row and no page-life
+  correlation, the order being the kernel's own attached-host order persisted
+  in the same state directory as this file;
   `remotes-known.json` holds every host ever attached or trusted, attached
   ones included, each with a `lastAttachedAt` stamp refreshed by every
   writer (attach, detach, trust and share), written with the newest stamp
