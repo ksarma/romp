@@ -8547,38 +8547,60 @@ _user_todos_lock = threading.RLock()  # store read-modify-writes run on route, W
 #                                       lock, or two buses registering concurrently lose confirmed rows
 #                                       and a racing answer and dismiss both "win". Re-entrant: the withdraw
 #                                       account looks up and stamps in one critical section that nests the
-#                                       locked stamp helper.
+#                                       locked stamp helper. The READERS take no lock (the pusher's
+#                                       _open_user_todos and _user_todo_fp run per build), so a writer
+#                                       branches on the verdict of its OWN read (_user_todos_read), never on
+#                                       the flag slot at its write moment, which a reader may have lifted.
 
 
 def _user_todos():
-    """The store, (mtime_ns, size) cached: {sid: [record, ...]}. A missing file is the empty store, silent by
-    design. A file that is NOT a request store (a settings blob such as the switch's own `{"enabled": ...}`
-    written here by hand, a JSON list, unparsable text) reads as EMPTY, says so on stderr ONCE per file
-    version, and pins that version in _user_todos_bad so _write_user_todos refuses to overwrite it: fail
-    loudly, never silently replace the store. Without the guard every writer copies this (empty) read, and
-    the next register would replace the whole store with a one-row one.
+    """The store, {sid: [record, ...]}: _user_todos_read's first element, for the readers that need no verdict (the
+    payload, the signature, the card). A missing file is the empty store; a file that is not a store or cannot be
+    read is the EMPTY stand-in, flagged (the reader's docstring). A caller that must branch on whether ITS read
+    came back flagged (every writer; _user_todos_unreadable) takes the verdict from _user_todos_read."""
+    return _user_todos_read()[0]
 
-    A file that CANNOT BE READ (its stat or its read raising an OSError other than FileNotFoundError: a disk
-    error, a permission) is the SAME flagged state, never the empty store: the empty stand-in comes back, the
-    fault is said ONCE per errno (the said-once key is the failure itself, _user_todos_on's shape, since a
-    failed stat has no file version to key by), and the flag stands until a stat or read succeeds again, so
-    every writer refuses meanwhile (_write_user_todos) and the prune touches nothing (_prune_user_todos). The
-    lift READS the file again rather than answering it from the cache: the two flags share one slot, so a
-    version the shape guard had flagged lost its flag to the fault, and the re-read is what flags it again
-    (said once more, the one exception to once per version). The
-    bare `except OSError: return {}` this replaces read a stat raising EIO as no store at all: the prune then
-    read that as no records and spent every arm record, and a writer's copy of the stand-in would have
-    replaced the store. The readers that must not answer a definite state off the stand-in ask
-    _user_todos_unreadable, which distinguishes no store from could-not-read."""
+
+def _user_todos_read():
+    """The store and THIS read's verdict, (store, flag). `store` is {sid: [record, ...]}, (mtime_ns, size) cached.
+    `flag` is None for a read that came back healthy (the file read as a store, or no file: the empty store,
+    silent by design), else the flag this read set or kept in _user_todos_bad, and the store is the EMPTY
+    stand-in:
+    - the version key ((mtime_ns, size)) of a file that is NOT a request store (a settings blob such as the
+      switch's own `{"enabled": ...}` written here by hand, a JSON list, unparsable text): read as EMPTY, said
+      on stderr ONCE per file version, the version pinned in _user_todos_bad so _write_user_todos refuses to
+      overwrite it: fail loudly, never silently replace the store. Without the guard every writer copies this
+      (empty) read, and the next register would replace the whole store with a one-row one;
+    - the could-not-read flag (("stat" | "read", errno)) of a file that CANNOT BE READ (its stat or its read
+      raising an OSError other than FileNotFoundError: a disk error, a permission): the SAME flagged state,
+      never the empty store. The fault is said ONCE per errno (the said-once key is the failure itself,
+      _user_todos_on's shape, since a failed stat has no file version to key by), and the flag stands until a
+      stat or read succeeds again, so every writer refuses meanwhile (_write_user_todos) and the prune
+      touches nothing (_prune_user_todos). The lift READS the file again rather than answering it from the
+      cache: the two flags share one slot, so a version the shape guard had flagged lost its flag to the
+      fault, and the re-read is what flags it again (said once more, the one exception to once per version).
+      The bare `except OSError: return {}` this replaces read a stat raising EIO as no store at all: the prune
+      then read that as no records and spent every arm record, and a writer's copy of the stand-in would have
+      replaced the store.
+
+    The verdict rides the return because the slot alone cannot carry it to a writer: the readers on other
+    threads take no lock and lift a fault flag the instant a stat succeeds again, so between a writer's
+    faulted read and its write (both under the store lock, which the readers never take) a healthy read on
+    the pusher's thread cleared the slot, _write_user_todos found nothing to refuse on at its write moment,
+    and the empty stand-in plus the new row REPLACED THE STORE (the project's reviewer executed it: one row on
+    disk, a stat raising EIO on the writer's read alone, a healthy read before the write; the store held only
+    the new row). The window came in with the shape guard's version flag; the fault flag widened its trigger
+    from a rare version race to a disk blink. Every writer now hands _write_user_todos the flag of the read it
+    copied, and the readers that must not answer a definite state off the stand-in (_user_todos_unreadable)
+    branch on their own read's verdict the same way."""
     p = jd.STATE / "user-todos.json"
     try:
         st = p.stat(); key = (st.st_mtime_ns, st.st_size)
     except FileNotFoundError:
         _user_todos_bad.pop(str(p), None)            # gone: the empty store, with no version or fault left to flag
-        return {}
+        return {}, None
     except OSError as e:
-        _user_todos_fault(p, "stat", e)
-        return {}
+        return {}, _user_todos_fault(p, "stat", e)
     flag = _user_todos_bad.get(str(p))
     if _ut_flag_is_fault(flag):
         # the stat succeeds again under a fault flag. The file is READ again below, never answered from the cache: the
@@ -8592,16 +8614,17 @@ def _user_todos():
             _user_todos_bad.pop(str(p), None)
     hit = _user_todos_cache.get(str(p))
     if hit is not None and hit[0] == key:
-        return hit[1]
+        # the cached version: a not-a-store version's stand-in is cached too, with its key in the slot, so the verdict
+        # is the version flag when the slot still holds THIS version's key, and healthy when it holds no flag for it
+        return hit[1], (key if flag == key else None)
     try:
         d = json.loads(p.read_text())
         found = ", ".join(sorted(map(str, d)))[:200] if isinstance(d, dict) else type(d).__name__
     except FileNotFoundError:
         _user_todos_bad.pop(str(p), None)            # removed between the stat and the read: the empty store
-        return {}
+        return {}, None
     except OSError as e:
-        _user_todos_fault(p, "read", e)              # not cached: the next call reads again
-        return {}
+        return {}, _user_todos_fault(p, "read", e)   # not cached: the next call reads again
     except Exception as e:
         d, found = None, "unparsable JSON (%s)" % e
     if not _user_todo_store_shaped(d):
@@ -8611,11 +8634,11 @@ def _user_todos():
                              "each mapping to a list of records; found: %s). Reading it as EMPTY and "
                              "refusing to overwrite it until it is fixed or removed. The on/off switch "
                              "lives in %s, not here.\n" % (p, found or "<empty object>", USER_TODOS_SWITCH_FILE))
-        d = {}
-    else:
-        _user_todos_bad.pop(str(p), None)
+        _user_todos_cache[str(p)] = (key, {})
+        return {}, key
+    _user_todos_bad.pop(str(p), None)
     _user_todos_cache[str(p)] = (key, d)
-    return d
+    return d, None
 
 
 def _user_todo_store_shaped(d):
@@ -8638,24 +8661,40 @@ def _ut_flag_is_fault(flag):
 def _user_todos_fault(p, what, e):
     """Flag the store could-not-read after its `what` (stat | read) raised the OSError `e`, said ONCE per errno
     (_user_todos_on's shape for its switch file: the said-once key is the failure itself, never a version). The
-    line names the file, the call and the errno, and what follows: the empty stand-in, every write refused."""
+    line names the file, the call and the errno, and what follows: the empty stand-in, every write refused.
+    Returns the flag, the verdict of the read that raised (_user_todos_read's second element)."""
     said = (what, getattr(e, "errno", None))
     if _user_todos_bad.get(str(p)) != said:
         _user_todos_bad[str(p)] = said
         sys.stderr.write("user-todos: %s could not be read (%s failed: %s). Reading it as EMPTY and refusing every "
                          "write until it can be read again; the requests on disk stay as they are.\n"
                          % (p, what, _errno_text(e)))
+    return said
 
 
-def _write_user_todos(cur):
-    """Publish the store (atomic rename, sort_keys: byte-stable for an unchanged store). REFUSES
-    (RuntimeError, loud) while the file on disk is still the version _user_todos flagged as not a store, or
-    while the store stands flagged could-not-read (a stat or read that failed; the flag lifts only when a
-    read succeeds, and every writer reads under the store lock before it writes): every writer copies the
-    (empty) read and would otherwise replace the unreadable store with a one-row one. A fixed or removed
-    file (its stat key changed) lets the write through again; a flagged version whose stat fails NOW is
-    refused too, since nothing says it was fixed."""
+def _write_user_todos(cur, read_flag=None):
+    """Publish the store (atomic rename, sort_keys: byte-stable for an unchanged store). REFUSES (RuntimeError,
+    loud) on two checks, the first load-bearing:
+    - `read_flag`, the verdict of the read `cur` was copied from (_user_todos_read's second element, handed over
+      by every writer in this file: register, stamp, reopen, the prune). A flag there means that read came back
+      as the empty stand-in (the file could not be read, or is not a store), so `cur` is the stand-in plus
+      whatever the writer added, and publishing it would replace the store with a one-row one: refused on THAT,
+      whatever the slot holds now. The slot cannot carry this verdict: the readers on the pusher's thread take no
+      lock and lift a fault flag the instant a stat succeeds again, so a healthy read between a writer's faulted
+      read and its write cleared the slot, and the write went through (the project's reviewer executed the loss;
+      the reader's docstring has the shape). A caller with no read of its own (a test seeding the store) hands
+      nothing and leans on the slot alone.
+    - the slot, for a flag a READER set since the writer's read: the file on disk still the version _user_todos
+      flagged as not a store, or the store standing flagged could-not-read (a stat or read that failed; the flag
+      lifts only when a read succeeds). A fixed or removed file (its stat key changed) lets the write through
+      again; a flagged version whose stat fails NOW is refused too, since nothing says it was fixed."""
     p = jd.STATE / "user-todos.json"
+    if read_flag is not None:
+        what = "could not be read" if _ut_flag_is_fault(read_flag) else "is not a request store"
+        sys.stderr.write("user-todos: refusing to overwrite %s: the read this write copied came back flagged (the file %s; "
+                         "see the earlier line), so the copy about to be written is the empty stand-in, whatever the "
+                         "store reads as now.\n" % (p, what))
+        raise RuntimeError("the request store %s; write refused (%s)" % (what, p))
     bad = _user_todos_bad.get(str(p))
     if bad is not None:
         if _ut_flag_is_fault(bad):
@@ -8678,40 +8717,17 @@ def _write_user_todos(cur):
 
 
 def _user_todos_unreadable():
-    """True while the file on disk is the version _user_todos flagged as not a store: the check
-    _write_user_todos makes before refusing, for the READERS that must not answer a definite state
-    off the guard's empty read. Taken at face value that read told the agent its own row did not exist
-    (the withdraw account's "unknown, not yours"), the person that a row was "already settled" (the two
-    drive ops), and the card nothing at all, when the truth was that the kernel could not read the file.
-    Makes the read itself first (cached, so a stat), because the flag is only ever set by a read. A
-    missing file is the empty store, never an unreadable one; a file whose stat or read FAILED is unreadable
-    (the could-not-read flag that read just set or kept), the distinction the store reader itself cannot
-    make in its return value. The read, then the flag check, which is its own def (_user_todos_flag_stands) for the
-    one caller that makes the read itself and must branch on THAT read (the prune, under the store lock)."""
-    _user_todos()
-    return _user_todos_flag_stands()
-
-
-def _user_todos_flag_stands():
-    """The check _user_todos_unreadable makes AFTER its read, off the flag slot alone: True while _user_todos_bad holds
-    a could-not-read flag for the store (the read just made set or kept it), or a version flag the file on disk still
-    matches (the check _write_user_todos makes before refusing); False with no flag, or a flagged file since removed or
-    replaced. For a caller that has read the store itself and branches on the outcome of that ONE read: the prune asked
-    _user_todos_unreadable and then read the store again for its empty-store arm, so a fault beginning between the two
-    reads answered the empty stand-in at the second with the flag set, and the arm spent every arm record on it."""
-    p = jd.STATE / "user-todos.json"
-    bad = _user_todos_bad.get(str(p))
-    if bad is None:
-        return False
-    if _ut_flag_is_fault(bad):
-        return True                                  # the read just made could not read the file
-    try:
-        st = p.stat()
-    except FileNotFoundError:
-        return False                                 # gone: the empty store
-    except OSError:
-        return True                                  # flagged, and it cannot even be stat'ed now
-    return (st.st_mtime_ns, st.st_size) == bad
+    """True when a read of the store made NOW comes back flagged: the file is the version _user_todos flagged as
+    not a store, or its stat or read FAILED (the could-not-read flag that read just set or kept). For the READERS
+    that must not answer a definite state off the guard's empty stand-in: taken at face value that read told the
+    agent its own row did not exist (the withdraw account's "unknown, not yours"), the person that a row was
+    "already settled" (the two drive ops), and the card nothing at all, when the truth was that the kernel could
+    not read the file. Makes the read itself (cached, so a stat) and answers THAT read's verdict
+    (_user_todos_read), never the slot's state afterwards: a reader on another thread may lift the slot between
+    a read and a later look at it, the window the writers refuse across. A missing file is the empty store,
+    never an unreadable one. A caller that reads the store itself and branches on that one read (the prune,
+    under the store lock) takes the verdict from its own _user_todos_read."""
+    return _user_todos_read()[1] is not None
 
 
 # Bounds on the two agent-supplied strings a row carries. Both ride every chat payload of the owning
@@ -8758,8 +8774,9 @@ def _add_user_todo(sid, text, detail="", blocking=False):
         raise ValueError("the request's sid must be a session id (a safe path component): %r" % (str(sid)[:80],))
     _user_todo_check_size(text, detail)
     with _user_todos_lock:                           # full read-modify-write under the lock: a racing
-        cur = dict(_user_todos())                    # register otherwise loses CONFIRMED rows (copy:
-        lst = [dict(t) for t in cur.get(sid) or [] if isinstance(t, dict)]   # never mutate the cache)
+        cur, flag = _user_todos_read()               # register otherwise loses CONFIRMED rows; the read's own
+        cur = dict(cur)                              # verdict goes to the write (copy: never mutate the cache)
+        lst = [dict(t) for t in cur.get(sid) or [] if isinstance(t, dict)]
         taken = {t.get("id") for t in lst}
         tid = "ut-" + uuid.uuid4().hex[:8]
         while tid in taken:
@@ -8771,7 +8788,7 @@ def _add_user_todo(sid, text, detail="", blocking=False):
             rec["blocking"] = True
         lst.append(rec)
         cur[sid] = lst
-        _write_user_todos(cur)
+        _write_user_todos(cur, flag)                 # a flagged read: refused here, whatever the slot holds now
     return tid
 
 
@@ -8798,7 +8815,8 @@ def _resolve_user_todo(sid, tid, kind):
     answer (that would take K newer resolutions in the same session while the recalled answer sat unfed),
     and the recall's reopen then no-ops loudly instead of corrupting anything."""
     with _user_todos_lock:
-        cur = dict(_user_todos())                    # copy: never mutate the cached dict in place
+        cur, flag = _user_todos_read()               # the read's own verdict goes to the write
+        cur = dict(cur)                              # copy: never mutate the cached dict in place
         lst = [dict(t) for t in cur.get(sid) or [] if isinstance(t, dict)]
         hit = next((t for t in lst if t.get("id") == tid and not t.get("resolved")), None)
         if hit is None:
@@ -8812,7 +8830,7 @@ def _resolve_user_todo(sid, tid, kind):
             drop = {p[0] for p in resolved[:len(resolved) - _USER_TODO_RESOLVED_KEEP]}
             lst = [t for i, t in enumerate(lst) if i not in drop]
         cur[sid] = lst
-        _write_user_todos(cur)
+        _write_user_todos(cur, flag)
     return True
 
 
@@ -8986,7 +9004,8 @@ def _reopen_user_todo(sid, tid):
     never fires from inference: every caller keys on the exact delivery-failure event of the send the
     stamp recorded."""
     with _user_todos_lock:
-        cur = dict(_user_todos())                    # copy: never mutate the cached dict in place
+        cur, flag = _user_todos_read()               # the read's own verdict goes to the write
+        cur = dict(cur)                              # copy: never mutate the cached dict in place
         lst = [dict(t) for t in cur.get(sid) or [] if isinstance(t, dict)]
         hit = next((t for t in lst
                     if t.get("id") == tid and (t.get("resolved") or {}).get("kind") == "answered"), None)
@@ -8994,7 +9013,7 @@ def _reopen_user_todo(sid, tid):
             return False
         del hit["resolved"]
         cur[sid] = lst
-        _write_user_todos(cur)
+        _write_user_todos(cur, flag)
     return True
 
 
@@ -9085,17 +9104,19 @@ def _prune_user_todos():
     on the same corroborated death evidence, never on a listing miss. An EMPTY store returns before any death read (the
     switch-off install pays one cached dict check per pass); a record no row backs is stale then, and is dropped.
 
-    A store that CANNOT BE READ (a stat or read that failed, or a file that is not a store: the flag
-    _user_todos_unreadable reads, _user_todos_flag_stands) returns before THAT, touching nothing: the reader's empty
+    A store that CANNOT BE READ (a stat or read that failed, or a file that is not a store: the flag the reader
+    answers as its verdict, _user_todos_read) returns before THAT, touching nothing: the reader's empty
     stand-in is not "no records", and off it the empty-store arm spent every arm record while a resolved row's removal
     would have published the stand-in over the store (the project's reviewer executed the stat raising EIO). The reader
     said why; the next pass reads again. The pass reads the store ONCE, under the store lock, and the refusal, the
-    empty-store arm and the sweep all branch on that one read: the refusal first asked _user_todos_unreadable (a read of
-    its own) and the empty-store arm then read again, so a fault beginning between the two reads answered the stand-in
-    at the second with the flag set, and the arm spent every arm record off a read the refusal had never seen."""
+    empty-store arm and the sweep all branch on that one read's OWN verdict: the refusal first asked _user_todos_unreadable
+    (a read of its own) and the empty-store arm then read again, so a fault beginning between the two reads answered the
+    stand-in at the second with the flag set, and the arm spent every arm record off a read the refusal had never seen;
+    and a refusal that read the flag slot after its read could be talked out of it by a reader on another thread lifting
+    the slot in between (the writers' window, the reader's docstring), so the verdict rides the read's return."""
     with _user_todos_lock:
-        cur = _user_todos()                          # the pass's one read; every arm below branches on it
-        if _user_todos_flag_stands():
+        cur, flag = _user_todos_read()               # the pass's one read; every arm below branches on it
+        if flag is not None:
             return                                   # could not be read, or not a store: the stand-in is not "no records"
         if not cur:
             with _UT_FLOOR_ARM_LOCK:
@@ -9117,7 +9138,7 @@ def _prune_user_todos():
             elif rows:
                 out[s] = rows
         if changed:
-            _write_user_todos(out)
+            _write_user_todos(out, flag)
     with _UT_FLOOR_ARM_LOCK:
         armed = list(_UT_FLOOR_ARM)
     for s in armed:

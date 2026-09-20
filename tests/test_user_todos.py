@@ -334,6 +334,98 @@ class UnreadableStore(_StoreSandbox):
         self.assertEqual(sum("Fix or remove the file first" in l for l in err.getvalue().splitlines()), 1, "the writer's own line")
 
 
+class WriterCarriesItsOwnVerdict(_StoreSandbox):
+    """A writer refuses on the outcome of the read it COPIED, never on the flag slot's state at its write moment. The
+    readers on other threads (the pusher's _open_user_todos and _user_todo_fp) take no lock and lift a could-not-read
+    flag the instant a stat succeeds again, so between a writer's faulted read and its write a healthy read elsewhere
+    cleared the slot, the write's slot check found nothing to refuse on, and the empty stand-in plus the new row
+    replaced the store: DATA LOSS, the store holding only the new row. The project's reviewer executed it: one row on
+    disk, a stat raising EIO on the writer's read alone, a healthy _user_todos() before the write. The window came in
+    with the shape guard and its version flag; the could-not-read flag widened its trigger from a rare version race to
+    a disk blink. The writer's read answers its own verdict now (_user_todos_read), and _write_user_todos takes it."""
+
+    def _one_shot_stat_fault(self):
+        """The store's stat raises EIO on its FIRST call alone (the writer's read); every later stat runs as before
+        (the disk back by the time anything else looks)."""
+        real = Path.stat
+        looks = []
+
+        def fake(path, *a, **k):
+            if path.name == "user-todos.json":
+                looks.append(1)
+                if len(looks) == 1:
+                    raise OSError(errno.EIO, os.strerror(errno.EIO), str(path))
+            return real(path, *a, **k)
+
+        return mock.patch.object(Path, "stat", fake)
+
+    def test_a_reader_lifting_the_flag_between_the_writers_read_and_its_write_does_not_let_the_write_through(self):
+        # the reviewer's probe: one row on disk; a stat raising EIO on the writer's read alone; a healthy read before
+        # the write, inline, the way a concurrent reader on the pusher's thread runs (the writer holds the store lock,
+        # which the readers never take)
+        tid = km._add_user_todo(SID, "Need the staging port")
+        p = jd.STATE / "user-todos.json"
+        before = p.read_bytes()
+        real_write = km._write_user_todos
+        slot_at_write = []
+
+        def reader_then_write(cur, *a, **k):
+            km._user_todos()                             # the concurrent reader: the disk is back, so its read lifts the flag
+            slot_at_write.append(dict(km._user_todos_bad))
+            return real_write(cur, *a, **k)
+
+        err = io.StringIO()
+        with self._one_shot_stat_fault(), mock.patch.object(km, "_write_user_todos", reader_then_write), \
+                contextlib.redirect_stderr(err):
+            with self.assertRaises(RuntimeError):
+                km._add_user_todo(SID, "Need a staging API key")
+        self.assertEqual(slot_at_write, [{}], "the probe's premise: the reader lifted the flag before the write")
+        self.assertEqual(p.read_bytes(), before, "byte for byte as it was: never the stand-in plus the new row")
+        self.assertEqual([t["id"] for t in km._user_todos()[SID]], [tid])
+        self.assertIn("refusing to overwrite", err.getvalue(), "the writer's own line")
+
+    def test_with_nothing_reading_between_the_write_is_still_refused(self):
+        tid = km._add_user_todo(SID, "Need the staging port")
+        p = jd.STATE / "user-todos.json"
+        before = p.read_bytes()
+        with self._one_shot_stat_fault(), contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(RuntimeError):
+                km._add_user_todo(SID, "Need a staging API key")
+        self.assertEqual(p.read_bytes(), before, "byte for byte as it was")
+        self.assertEqual([t["id"] for t in km._user_todos()[SID]], [tid], "the disk back: the row reads again")
+
+    def test_the_reader_answers_its_own_verdict(self):
+        # (store, flag): None for a healthy read or no file; the could-not-read flag this read set or kept; the version
+        # key of a file that is not a store, from the read and from the cache alike
+        p = jd.STATE / "user-todos.json"
+        self.assertEqual(km._user_todos_read(), ({}, None), "no file: the empty store, no flag")
+        tid = km._add_user_todo(SID, "Need the staging port")
+        rows, flag = km._user_todos_read()
+        self.assertEqual(([t["id"] for t in rows[SID]], flag), ([tid], None))
+        self.assertIs(km._user_todos(), rows, "the plain reader is the same read, without the verdict")
+        with _store_stat_fails(errno.EIO), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(km._user_todos_read(), ({}, ("stat", errno.EIO)))
+        with _store_read_fails(errno.EACCES), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(km._user_todos_read(), ({}, ("read", errno.EACCES)))
+        self.assertEqual(km._user_todos_read()[1], None, "the disk back: the flag lifts with the read")
+        p.write_text(json.dumps({"enabled": True}))
+        st = p.stat()
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(km._user_todos_read(), ({}, (st.st_mtime_ns, st.st_size)), "not a store: its version is the flag")
+            self.assertEqual(km._user_todos_read(), ({}, (st.st_mtime_ns, st.st_size)), "and the same from the cache")
+            self.assertTrue(km._user_todos_unreadable(), "the unreadable check is that read's verdict")
+
+    def test_every_kernel_call_of_the_writer_hands_it_the_flag_of_the_read_it_copied(self):
+        # a writer that leaves the flag out leans on the slot alone, the window this class exists for
+        src = (Path(HERE).parent / "kernel" / "kernel.py").read_text()
+        calls = [n for n in ast.walk(ast.parse(src))
+                 if isinstance(n, ast.Call) and getattr(n.func, "id", None) == "_write_user_todos"]
+        self.assertGreaterEqual(len(calls), 4, "the writers: register, stamp, reopen, prune")
+        for c in calls:
+            self.assertTrue(len(c.args) == 2 or any(k.arg == "read_flag" for k in c.keywords),
+                            "kernel.py:%d calls _write_user_todos without the flag of the read its copy came from" % c.lineno)
+
+
 class RegistrationCaps(_StoreSandbox):
     """`text` and `detail` are agent-supplied and ride every chat payload and every chat-signature component of the
     owning session, so both are bounded at the one writer that mints rows (_USER_TODO_TEXT_CAP,
@@ -447,11 +539,11 @@ class StoreLock(_StoreSandbox):
         real_write = km._write_user_todos
         seen = []
 
-        def guarded(cur):
+        def guarded(cur, *a, **k):
             # the lock is re-entrant and an RLock has no .locked(): _is_owned() is the claim, since every
             # mutation publishes on the thread that took the lock
             seen.append(km._user_todos_lock._is_owned())
-            real_write(cur)
+            real_write(cur, *a, **k)
 
         km._write_user_todos = guarded
         try:
