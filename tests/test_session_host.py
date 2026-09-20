@@ -3082,8 +3082,10 @@ class PreludeRefusalRead(unittest.TestCase):
         directory) and exits 1 with its traceback in hosts.moved/<sid>/host.stderr, ours; the peer's directory still
         receives nothing, and the kernel's message, read through the held descriptors, names host.stderr. No file under
         the peer's directory and no line of the kernel's log carries a traceback, at any point. Red on the head before
-        this fix at the third and fourth points: the launcher's open(<path>, "ab") resolved through the link and the
-        peer's <sid>/ listed host.stderr, a traceback naming the state root (the run pasted in the PR body)."""
+        this fix at the second and third points: the launcher's open(<path>, "ab") resolved through the link and the
+        peer's <sid>/ listed host.stderr, a traceback naming the state root; red at the first point on the peer's <sid>/
+        itself, deleted through the link by the leftover arm's rmtree; green at the fourth, where that launcher's open
+        ran before Popen, so a swap inside the Popen wrapper landed after it (the run pasted in the PR body)."""
         for point in ("before-spec", "after-spec", "before-launcher", "before-popen"):
             with self.subTest(point=point):
                 self.setUp()

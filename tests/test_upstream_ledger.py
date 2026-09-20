@@ -1100,10 +1100,10 @@ class HostSocketModeWhereLine(unittest.TestCase):
     touches, `path (name, name, ...)`, the names being the defs and classes whose bodies the -U0 hunks fall in (a
     `Class.method` when a hunk lies inside one method, the class when it spans more; `text` for a non-Python file),
     segments joined by `; `. Two rules hold it. Every file the PR's diff touches is named: the list below is
-    `git diff --name-only <merge-base>..HEAD` at the round-5 commit, pasted, since the merge-base is not derivable once
-    the branch lands (a later PR that edits the entry re-derives it). And every name the line gives for a Python file
-    resolves to a def or class in that file at this head, by ast, so a withdrawn or renamed name reds here where the
-    ledger's own `check` (a format check) cannot see it."""
+    `git diff --name-only <merge-base>..HEAD` at the commit applying round 4's rulings, pasted, since the merge-base is
+    not derivable once the branch lands (a later PR that edits the entry re-derives it). And every name the line gives
+    for a Python file resolves to a def or class in that file at this head, by ast, so a withdrawn or renamed name reds
+    here where the ledger's own `check` (a format check) cannot see it."""
 
     ENTRY = "upstream/2026-09-18-host-socket-mode.md"
     FILES = ("docs/reference.md", "kernel/host_transport.py", "kernel/judge.py", "kernel/sdk_backend.py", "kernel/session_host.py",

@@ -491,7 +491,9 @@ def write_spawn_spec(state_dir, sid: str, spec: dict) -> Path:
     after its chmod, and this spawn then fails before a spec is written: the failure surfaces as the launch
     error, naming the directory, never as a host started over a directory we do not own (the review of the
     socket-mode fix, 2026-09-19). The residual the helper's docstring states (a re-point between its read-back
-    and the open below) holds here too: the open takes a path.
+    and a path-taking open) is closed for this write since round 4 of the review: the open below takes a name
+    relative to a held descriptor, not a path, and a link swapped in after the read-back fails it (the paragraph
+    on the open, below).
     The file's mode is set on the descriptor BEFORE the write (os.fchmod): a
     pre-existing file keeps its old mode through O_CREAT|O_TRUNC, and the trailing chmod this had until
     2026-09-18 tightened it only after the overlay was already in it (PR 789, review round 1, the same
