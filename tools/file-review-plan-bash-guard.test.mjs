@@ -107,7 +107,7 @@ test('decision 47 states what passes, and the hook agrees: reads, opaque command
   assert.ok(hook.includes("const NUMERIC_EXPANSIONS = ['$$', '${$}'];"), 'the numeric set is the two spellings of the process id');
   assert.ok(!/NUMERIC_EXPANSIONS = \[[^\]]*(RANDOM|SECONDS|BASHPID)/.test(hook) && !/['"](RANDOM|SECONDS|BASHPID)['"]/.test(hook), 'no other name is in the set, and no code names one');
   assert.ok(!hook.includes('KEEPS_NUMERIC_SPECIALS') && !hook.includes('POSIX_SH_NUMERIC') && !hook.includes('numericSetFor'), 'the per-shell table is gone');
-  assert.ok(hook.includes('recurse(sh.script.text, name)') && hook.includes("recurse(body, name, undefined, '', [])") && hook.includes('lex(command, shell)') && hook.includes("const ANSI_C_SHELLS = new Set(['bash', 'zsh']);"), 'a script handed to a shell is lexed as that shell reads `$\'...\'`');
+  assert.ok(hook.includes('for (const t of scriptTexts(sh.script, `\\`${name} -c\\` script`)) recurse(t, name, undefined,') && hook.includes("recurse(body, name, undefined, '', [])") && hook.includes('lex(command, shell)') && hook.includes("const ANSI_C_SHELLS = new Set(['bash', 'zsh']);"), 'a script handed to a shell is lexed as that shell reads `$\'...\'`');
   assert.ok(d47.includes('`$\'...\'` is ANSI-C quoting in bash and zsh, a literal word') && hook.includes('function ansiC(body)') && hook.includes("if (e.kind === 'ansi') {"), 'ANSI-C quoting');
   // the target's own project, asked first for every target the hook can place (round 2 for a numeric one, round 3 for
   // every unreadable word and for a relative spelling), and the fold judged as the kernel opens the path
@@ -374,7 +374,7 @@ test('decision 47 records the sixth pass: the unreachable poison line is gone, t
   assert.ok(d47.includes('The sixth pass (2026-09-19;') && hook.includes('THE SIXTH PASS (2026-09-19;'), 'both surfaces record the pass');
   assert.ok(!hook.includes("if (cmd.unknown || cmd.opaque || 'script' in cmd) { varsPoisoned = true; return; }"), 'the unreachable poison line in recordAssignments is gone');
   assert.ok(hook.includes('varsPoisoned = true;   // B2: what the wrapper ran is not known') && hook.includes('varsPoisoned = true;   // B2\n'), 'the poison of an unknown wrapper option and of an env -S string is set in its own branch of extract');
-  assert.ok(hook.includes('if (cmd.script && cmd.script.literal) recurse(cmd.script.text, shell, true);') && hook.includes('const moveUnknown = (why) => { oldDir = null; setUnknown(why); };'), 'a flock -c string is read in a fresh scope and poisons nothing; a cd the guard cannot follow clears OLDPWD');
+  assert.ok(hook.includes("for (const t of scriptTexts(cmd.script, `\\`${cmd.scriptFlag || 'flock -c'}\\` script`)) recurse(t, shell, true,") && hook.includes('const moveUnknown = (why) => { oldDir = null; setUnknown(why); };'), 'a flock -c string is read in a fresh scope and poisons nothing; a cd the guard cannot follow clears OLDPWD');
   assert.ok(d47.includes('is not pinned, disclosed for a ruling') && hook.includes('is not pinned, disclosed for a ruling') && d47.includes('Not pinned, for a ruling:'), 'the poison left for a ruling is disclosed, not claimed pinned');
   assert.ok(!d47.includes(String.fromCharCode(0x2014)), 'no em dash in decision 47');
 });
@@ -566,8 +566,8 @@ test("decision 47, the hook and the prose surfaces record the fifth addendum's s
   assert.ok(hook.includes("const nested = lex(inner, shell, { comments: false, quotes: dq ? 'double' : 'plain', depth: nestDepth + 1, braceWord: true, oneWord: true, noSplit: true, ifsNamed });"), 'the inner text is lexed with no comment, in its quoting, one level deeper (as one brace word, unsplit, with the IFS fact, since the third fix-up)');
   assert.ok(hook.includes("if (c === '#' && !inWord && comments) {") && hook.includes("if (c === \"'\" && !dqInner) {"), 'a # opens no comment inside the word; a single quote is a character in a double-quoted one');
   assert.ok(hook.includes("for (const t of s.subs) seg.viaSubs.push({ text: t, via: BRACE_WORD_VIA });"), 'the nested substitutions join the segment with the word named');
-  assert.ok(hook.includes("out.push(...pipedScripts(p));") && hook.includes("if (producer.name === 'echo') return echoOutput(producer.args);") && hook.includes("if (producer.name === 'printf') return printfOutput(producer.args);"), 'the piped script joins the stdin bodies, from an echo or a printf alone');
-  assert.ok(hook.includes("if (segments[p].paren) return [];") && hook.includes("if (idx > 0 && segments[idx - 1].op === '|') return idx - 1;"), 'the producer is the command directly before the pipe (or, since the third fix-up, before the compound holding the consumer: producerAt), never a subshell');
+  assert.ok(hook.includes("out.push(...pipedScripts(p));") && hook.includes("const pipedScripts = (p) => (segments[p].paren ? [] : scriptTexts(segments[p].printed, 'piped script', 'file'));") && hook.includes("return cmd.name === 'echo' ? echoOutput(cmd.args) : printfOutput(cmd.args);"), 'the piped script joins the stdin bodies, from an echo or a printf alone (round 6: the producer\'s printed text is placed on the segment by the lexer and read through scriptTexts)');
+  assert.ok(hook.includes("(segments[p].paren ? [] :") && hook.includes("if (idx > 0 && segments[idx - 1].op === '|') return idx - 1;"), 'the producer is the command directly before the pipe (or, since the third fix-up, before the compound holding the consumer: producerAt), never a subshell');
   // the residual, named with busybox on the header, the decision and the README
   for (const [name, text] of [['the hook header', hook], ['decision 47', d47], ['hooks/README.md', hooksReadme]]) {
     const flat = text.replace(/\n\s*\/\/ ?/g, ' ').replace(/\s+/g, ' ');
@@ -631,7 +631,7 @@ test("decision 47, the hook and the prose surfaces record the fifth addendum's t
   // the homes: the lexer resolves through literalOutput, the ${ read reads the default word from the one descent, the body is expanded
   // through the lexer in its own mode, =( is zsh's alone, the stdin names are read by shellScript and the interpreter walk, the
   // compounds carry the producer and the closer's text, a -c script inherits its caller's stdin, and the copying writers' one operand
-  assert.ok(hook.includes("const texts = literalOutput(inner, shell, nestDepth);") && hook.includes("if (!resolvedSub('$(' + inner + ')', inner)) { opaqueExpansion(hdInner ? '$(' + inner + ')' : undefined); seg.subs.push(inner); }"), 'a $(...) is resolved before it is read as a command');
+  assert.ok(hook.includes("return placeReading(literalOutput(inner, shell, nestDepth), spelling, 'text');") && hook.includes("if (!resolvedSub('$(' + inner + ')', inner)) { opaqueExpansion(hdInner ? '$(' + inner + ')' : undefined); seg.subs.push(inner); }"), 'a $(...) is resolved before it is read as a command');
   assert.ok(hook.includes("if (op && nested) defaultReading(inner, op[0].length, nested);"), 'the default word from the one descent');
   assert.ok(hook.includes("const x = lex(body, shell, { quotes: 'heredoc', comments: false, depth: nestDepth + 1, ifsNamed });") && hook.includes("if (q || !/[$`]/.test(body) || nestDepth >= NESTED_DEPTH_CAP) { owner.heredocs.push(body); continue; }"), 'an unquoted body is expanded through the lexer, a quoted one kept');
   assert.ok(hook.includes("const zshGrammar = shell == null || shell === 'zsh';") && hook.includes("if (zshGrammar && c === '(' && eqProcsubStart()) {"), "=( is read under zsh's grammar");

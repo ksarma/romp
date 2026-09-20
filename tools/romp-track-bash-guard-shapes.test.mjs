@@ -28,6 +28,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import { evaluate, extractWriteTargets, scriptWriteTargets, lex, isGuardedPath } from '../hooks/romp-track-bash-guard.mjs';
+import * as guard from '../hooks/romp-track-bash-guard.mjs';   // a namespace for the exports added since (round 6's dqSingleField), so a run against an older hook reports the test alone
 
 const HOOK = fileURLToPath(new URL('../hooks/romp-track-bash-guard.mjs', import.meta.url));
 const ROMP_SID = '11111111-2222-3333-4444-555555555555';
@@ -895,7 +896,8 @@ test("round 5's fifth addendum, third fix-up: the lexer resolves a substitution 
   assert.deepEqual(seg("bash <<< $(echo 'echo x > f')").heredocs, ['echo x > f'], 'a here-string word is one text, never split');
   assert.deepEqual(seg("echo x > $(echo 'r.md')").redirects.map((r) => [r.target.text, r.target.literal]), [['r.md', true]], 'a redirection target is one literal word');
   assert.deepEqual(seg("bash -c \"`echo 'cp a b'`\"").words[2].text, 'cp a b', 'a backtick resolves as a $(...) does');
-  assert.deepEqual(seg("bash -c \"$(printf '%s %s' cp 'a b')\"").words[2].text, 'cp a b', 'printf too, its conversions taking the operands');
+  assert.deepEqual([seg("bash -c \"$(printf '%s %s' cp 'a b')\"").words[2].literal, seg("bash -c \"$(printf '%s %s' cp 'a b')\"").words[2].readings], [false, ['cp a b']], 'printf too, its conversions taking the operands; a conversion is an interpretation, so the text is a reading of the word on the script road and the word stays an expansion (round 6, THE RESOLVER\'S CONTRACT)');
+  assert.deepEqual(seg("bash -c \"$(printf 'cp a b')\"").words[2].text, 'cp a b', 'a printf whose format holds no conversion and no backslash is plain: its text stands in the word');
   assert.equal(seg("echo $(echo '*.md')").words[1].glob, true, "a glob character in the text globs (mark 'e' is unquoted for a glob), as bash and dash glob a substitution's result");
   assert.deepEqual(texts("echo x > $(echo '{a,b}.md')"), ['echo', 'x'], 'and no brace list: the target is the literal name');
   assert.deepEqual(seg("echo x > $(echo '{a,b}.md')").redirects.map((r) => r.target.text), ['{a,b}.md']);
@@ -960,4 +962,12 @@ test("round 5's fifth addendum, third fix-up: the lexer resolves a substitution 
   const split = evaluate(payload('cp $(cat f)'));
   assert.ok(split && /may split into several words/.test(split), `a copying writer with one unquoted expansion as its operand is refused while the project is in play: the shell may split it (THE SPLIT OPERAND): ${split}`);
   assert.equal(evaluate(payload('cp "$(cat f)"')), null, 'double-quoted, one operand: no write');
+  // round 6, THE SINGLE FIELD (round 5's extra7-1: `cp "$@"` copied in every shell while every double-quoted word was exempt): a
+  // double-quoted operand is exempt from THE SPLIT OPERAND only when the guard proves it one field; every `@` form, a `[@]` subscript,
+  // bash's `${!..}` and zsh's `(`, `=`, `~` and `^` openers may split. Pinned in both directions; the rows with the shells that write
+  // are the round-6 rows of tools/romp-track-bash-guard.test.mjs.
+  const splitRefused = (cmd) => { const r = evaluate(payload(cmd)); assert.ok(r && /may split into several words/.test(r), `refused, may split: ${cmd}: ${r}`); };
+  for (const cmd of ['cp "$@"', 'cp "${@}"', 'cp "${@:2}"', 'cp "${@#x}"', 'cp "${arr[@]}"', 'cp "${arr[@]:1}"', 'cp "${!m[@]}"', 'cp "${(@)arr}"', 'cp "${=s}"', 'cp "${(s: :)s}"', 'cp "${(f)s}"', 'cp "${(z)s}"', 'cp "$arr[@]"', 'cp "x$@"', 'cp "${!BB@}"']) splitRefused(cmd);
+  for (const cmd of ['cp "$x"', 'cp "${x}"', 'cp "$*"', 'cp "${arr[*]}"', 'cp "${x:-a b}"', 'cp "${x#zz}"', 'cp "$1"', 'cp "$#"', 'cp "`cat f`"', 'cp "$((1+2))"', 'cp "a $x b"']) assert.equal(evaluate(payload(cmd)), null, `double-quoted and one field: no write: ${cmd}`);
+  assert.deepEqual(['"$x"', '"$@"', '"${a[@]}"', '"${(@)a}"', '"${=s}"', '"$a[@]"', '"${!p@}"', '$x', '"a"x'].map((raw) => guard.dqSingleField(raw)), [true, false, false, false, false, false, false, false, false], 'the predicate: one field only for a wholly double-quoted word with no splitting form; a word not wholly quoted is never exempt');
 });

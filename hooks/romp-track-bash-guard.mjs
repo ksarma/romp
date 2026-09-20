@@ -528,6 +528,43 @@
 // shell x the script, 600 rows, `FALSE ALLOWS 0`; the delimiter's quoting x the body's line x the consumer, 180 rows, `FALSE ALLOWS 0`,
 // the refusals where no shell writes counted by class. The verdicts of the earlier fixtures are unchanged.
 //
+// ROUND 6 (2026-09-20; round 5's ruling on the third fix-up's head): THE RESOLVER'S CONTRACT, stated in full at the reading
+// functions (echoOutput, printfOutput, segmentOutput, literalOutput, defaultWordReading) and consumed in two places, lex's
+// placeReading and extract's scriptTexts. Round 5 found four readings of the third fix-up that turned a refusal of the base into an
+// allow, each a reading the machinery believed and trusted: (1) printfOutput ignored a conversion's width and precision, so `echo x >
+// $(printf '%.9s' report.mdXX)` from docs/ was judged on report.mdXX and allowed while bash, zsh and dash wrote report.md (and the
+// same through an assignment, a double-quoted copy operand, `%c`, `%.0s`, `%.*s`, a `-c` script, a pipe, a process substitution, a
+// here-string and a here-document); (2) an unquoted glob character made the default word and an echo operand non-literal, so the
+// readings switched off and `bash -c "${x:-cp ../base/*.md report.md}"`, `$(echo cp ../base/*.md report.md)` alone and their kin went to
+// the shell unread and allowed while every shell copied; (3) the union of echo's and `%b`'s readings lacked the octal escape without
+// a leading zero, so `echo x > $(echo 'repor\164.md')` was judged on repor\164.md and allowed while dash wrote report.md, and
+// `$(printf '%b' 'repor\164.md')` while bash and dash did; (4) THE SPLIT OPERAND exempted every double-quoted word, so `cp "$@"`
+// with the positional parameters set to the copy's two operands was allowed while every shell copied (and `"${@}"`, `"${@:2}"`,
+// `"${arr[@]}"`, `"${!m[@]}"`, zsh's `"${(@)arr}"`, `"${=s}"`, `"${(s: :)s}"`, `"${(f)s}"`, `"${(z)s}"` and `"$arr[@]"`). THE RULES:
+// a reading function answers sound texts, unresolvable, or null, and nothing else; a reading takes the text road (the word's
+// literal characters) only when plain, one text from no interpretation, and every other reading travels the script road, so no
+// conversion, escape or option a reader could get wrong reaches a target judgement, and UNRESOLVABLE refuses in both places
+// (placeReading marks the word and writes no text; scriptTexts records it as a target the hook cannot read and returns no
+// text). printf's `%s` and `%b` are read with the `-` flag, a width and a precision (the shells agree on them, measured), `%%`
+// and the escapes of each shell's format and `%b` readers; every other conversion, flag, a `*` from a non-digit operand, a width
+// or precision over a non-ASCII operand, an option word and a missing format are UNRESOLVABLE, and `-v` is the empty text every
+// shell prints (THE PRINTF GRAMMAR at printfOutput says why each). THE ESCAPE READERS (nine, one per reader and shell) are derived from the manuals and pinned by
+// execution, the octal forms among them. A glob character, a brace list or a shell-dependent quoting in an echo operand or in the
+// default word is UNRESOLVABLE, as is an expansion the resolver does not read inside either (`$(echo $t)`, `${x:-$(cat f)}`), so
+// `s='cp ..'; echo "$s" | bash`, the piped-script matrix's residual-value producer, is refused now (the fixture's rows moved out of
+// the residual set). THE SINGLE FIELD (dqSingleField) exempts a double-quoted operand from the split rule only when the guard
+// proves it one field. THE CRASH (round 5's correctness-3): `printf` with no format, `printf --` and `printf -v` gave an empty
+// reading, the walk threw, and the catch-all refused inside a project and passed outside one while every shell wrote
+// (`cd <project>/docs && cp ../base/report.md $(printf)report.md` from a scratch directory); the missing format is UNRESOLVABLE now
+// and `-v` the empty text it prints, judged by name, and THE
+// CATCH-ALL REFUSES FROM EVERY CWD (evaluate says why: the walk throws before the hook knows what the command reaches, and the
+// cwd bounds nothing). Pinned: the structural test that derives the reading functions from this source and reds when one is
+// called outside the two places or a word's readings are read elsewhere, the readers and the printf forms by execution in the
+// three shells, the rows test's round-6 group (the four readings' allows, refused, with the shells that write), the shapes
+// test's single-field rows, and the catch-all's three stages from a cwd in no project. Not closed here, stated: zsh's glob
+// grouping (`cp ../base/(r)eport.md report.md` handed to zsh, literal or through a reading) is read as a subshell by the
+// lexer's zsh grammar and allowed while zsh copies, a lexer gap outside the resolver, named for the round.
+//
 // THE LISTS THAT REMAIN are not written here (round 5 of the review, 2026-09-20). The hand-written census that stood here
 // omitted the two lists whose gap falls on the WRITE side, the compound-head frame push and CLOSERS, and that omission is
 // how a `select` missing from both slipped through round 3: an instrument built to bound the hand-maintained lists that
@@ -939,6 +976,7 @@ export function lex(command, shell = null, opts = {}) {
   let expect = null;
   let inDq = false;          // inside a double-quoted string of the main loop (a resolved substitution is one text there)
   let wordReadings = null;   // the texts the word under way can stand for beyond its spelling, with the spelling they belong to (THE RESOLVED SUBSTITUTION, THE DEFAULT WORD)
+  let wordUnresolvable = null;   // { raw, why }: the resolver looked at an expansion of the word under way and could not establish its text (THE RESOLVER'S CONTRACT: placeReading below)
   let fdDigits = null;       // the descriptor number glued before the operator being read (`3<`), so a `<` on another descriptor is not the standard input
   const pendingHeredocs = [];
   let i = 0;
@@ -981,8 +1019,23 @@ export function lex(command, shell = null, opts = {}) {
         // operator); both readings are judged, and the refusal names the one that lands on a tracked file
         if (expect.bang === 'glued') seg.redirects.push({ op: expect.op, target: mk('!' + buf, 'u' + marks) });
       } else if (expect.kind === 'heredoc') pendingHeredocs.push({ delim: buf, stripTabs: expect.stripTabs, owner: seg, quoted: /q/.test(marks) });   // any quoted character in the delimiter: the body is not expanded (the third fix-up, readHeredocBodies)
-      else if (expect.kind === 'herestring') { const rd = readingsOf(); if (rd.length) seg.heredocs.push(...rd); else seg.heredocs.push(buf); }   // a word with readings stands for each of them, and for nothing else (the third fix-up)
-      else if (expect.kind === 'data') seg.stdin.push(Object.assign(mk(buf, marks), { fd: expect.fd == null ? null : expect.fd }));   // a `<` into the standard input, or into the descriptor numbered before it (the third fix-up)
+      else if (expect.kind === 'herestring') {
+        // a word with readings stands for each of them, and for nothing else (the third fix-up); one the resolver could not establish is
+        // recorded on the segment's stdin for scriptTexts to refuse (THE RESOLVER'S CONTRACT), never handed to the consumer as its spelling
+        const rd = readingsOf();
+        if (wordUnresolvable) seg.stdin.push(Object.assign(word(buf, false, raw, { marks }), { fd: null, unresolvableReading: wordUnresolvable, herestring: true }));
+        else if (rd.length) seg.heredocs.push(...rd);
+        else seg.heredocs.push(buf);
+      }
+      else if (expect.kind === 'data') {
+        // a `<` into the standard input, or into the descriptor numbered before it (the third fix-up); the word carries the readings a
+        // `<(echo '..')` stands for and the resolver's mark, for extract's scriptTexts (THE RESOLVER'S CONTRACT)
+        const rd = readingsOf();
+        const extra = { fd: expect.fd == null ? null : expect.fd };
+        if (rd.length) extra.readings = rd;
+        if (wordUnresolvable) extra.unresolvableReading = wordUnresolvable;
+        seg.stdin.push(Object.assign(mk(buf, marks), extra));
+      }
       expect = null;
     } else {
       // the keyword: unquoted, in command position (first in its segment, or after unquoted reserved words alone; round 5's
@@ -996,8 +1049,9 @@ export function lex(command, shell = null, opts = {}) {
       else for (const [t, m] of alts) seg.words.push(mk(t, m));
       const rd = readingsOf();
       if (rd.length && (!alts || alts.length === 1)) seg.words[seg.words.length - 1].readings = rd;   // the word alone carries its readings (THE RESOLVED SUBSTITUTION, THE DEFAULT WORD)
+      if (wordUnresolvable) for (let k = alts ? alts.length : 1; k > 0; k--) seg.words[seg.words.length - k].unresolvableReading = wordUnresolvable;   // every word the expansion is part of (each brace alternative) carries the mark (THE RESOLVER'S CONTRACT)
     }
-    buf = ''; raw = ''; marks = ''; sawExpansion = false; numericOnly = true; inWord = false; wordReadings = null;
+    buf = ''; raw = ''; marks = ''; sawExpansion = false; numericOnly = true; inWord = false; wordReadings = null; wordUnresolvable = null;
   };
   // A word of the test's own grammar (`>` or `&&` inside [[ ... ]]): ends any word under way, stands alone.
   const bareWord = (t) => { endWord(); inWord = true; buf = t; raw = t; marks = 'u'.repeat(t.length); endWord(); };
@@ -1007,6 +1061,7 @@ export function lex(command, shell = null, opts = {}) {
     if (inTest) closeTest(opAt);   // a test the operator ends before its `]]`: dash's command ends at the same operator
     inTest = false;
     seg.op = op;
+    if (op === '|' && seg.words.some((w) => w.literal && /^(echo|printf)$/.test(path.basename(w.text)))) placeReading(segmentOutput(seg), seg.words.map((w) => w.raw).join(' '), 'segment');   // THE PIPED SCRIPT: the producer's printed text, for extract's pipedScripts (THE RESOLVER'S CONTRACT)
     if (seg.words.length || seg.redirects.length || seg.heredocs.length || seg.subs.length || seg.arith.length || seg.viaSubs.length) segments.push(seg);
     else if (op && segments.length && segments[segments.length - 1].paren && !segments[segments.length - 1].op) {
       // the operator after a `)` (`(cd a) && cd b`): the segment it would end is empty, so it is kept on the paren
@@ -1051,6 +1106,7 @@ export function lex(command, shell = null, opts = {}) {
       const w = x.segments.length === 1 && x.segments[0].words.length === 1 ? x.segments[0].words[0] : null;
       owner.heredocs.push(w ? w.text : body);
       if (w && w.readings) for (const t of w.readings) if (t !== w.text) owner.heredocs.push(t);
+      if (w && w.unresolvableReading) owner.stdin.push(Object.assign(word(w.text, false, w.raw, { marks: w.marks }), { fd: null, unresolvableReading: w.unresolvableReading, herestring: true }));   // the body's text is not known: scriptTexts refuses the consumer (THE RESOLVER'S CONTRACT)
       for (const sg of x.segments) {
         for (const t of sg.subs) owner.viaSubs.push({ text: t, via: HEREDOC_BODY_VIA });
         for (const v of sg.viaSubs) owner.viaSubs.push(v);
@@ -1188,17 +1244,42 @@ export function lex(command, shell = null, opts = {}) {
   // non-literal rule as a target or a writer's operand; a `-c` operand so built is the residual decision 47 names). Not resolved: a
   // substitution among unquoted operands while the command names IFS (its result splits by a rule the guard does not read: `IFS=:;
   // cp $(echo 'a:b')` copies in all three), and a here-document delimiter, which no shell expands.
-  const resolvedSub = (spelling, inner) => {
-    if (expect && expect.kind === 'heredoc') return false;
-    const texts = literalOutput(inner, shell, nestDepth);
-    if (!texts) return false;
-    const trimmed = [...new Set(texts.map((t) => t.replace(/\n+$/, '')))];
+  // THE ONE PLACE in lex where a reading reaches a word (THE RESOLVER'S CONTRACT, stated at the reading functions below the lexer):
+  // `r` is a reading function's answer (sound texts, unresolvable, or null), `spelling` the expansion as typed, `mode` where the
+  // reading goes: 'text', a `$(...)` or a backtick whose printed text stands where the shell puts it (THE RESOLVED SUBSTITUTION);
+  // 'readings', a word that stands for each text (THE DEFAULT WORD, a `<(...)` or `=(...)` read as the file it stands for);
+  // 'segment', the text a segment's command prints into a pipe (THE PIPED SCRIPT). Returns false when the resolver does not apply
+  // (null), and the caller keeps the word an expansion as before, its command read; true when the reading was placed or the
+  // word marked unresolvable. UNRESOLVABLE never writes a text: the word stays an expansion (the base's refusal as a target) and
+  // carries the reason (`word.unresolvableReading`, attached at endWord), so a script consumer refuses it too (extract's scriptTexts). A
+  // plain reading alone (one text produced by no interpretation) takes the text road; every other reading is the word's
+  // `readings`, read on the script road while the word keeps the non-literal rule as a target.
+  const placeReading = (r, spelling, mode) => {
+    if (r == null) return false;
+    const printed = (props) => Object.assign(word('\0', false, seg.words.map((w) => w.raw).join(' '), { marks: 'x' }), props);
+    if (r.unresolvableReading) {
+      if (mode === 'segment') { seg.printed = printed({ unresolvableReading: { raw: spelling, why: r.unresolvableReading } }); return true; }
+      if (!sawExpansion) opaqueExpansion();
+      inWord = true;
+      wordUnresolvable = { raw: spelling, why: r.unresolvableReading };
+      return true;
+    }
+    const trimmed = [...new Set(r.texts.map((t) => t.replace(/\n+$/, '')))];   // trailing newlines dropped as the shells drop them
+    if (mode === 'segment') { seg.printed = printed({ readings: trimmed }); return true; }
     inWord = true;
-    if (trimmed.length > 1) { opaqueExpansion(); wordReadings = { raw: spelling, texts: trimmed }; return true; }
+    if (mode === 'readings' || trimmed.length > 1 || !r.plain) {
+      // the script road: the word is an expansion standing for each text; as a target it keeps the non-literal rule
+      if (!sawExpansion) opaqueExpansion();
+      wordReadings = { raw: spelling, texts: trimmed };
+      return true;
+    }
+    // the text road: one plain text stands in the word where the shell puts it, whole where no shell splits an expansion's
+    // result and split at blanks among unquoted operands (bash and dash; zsh splits nothing, and its reading, the whole text, is
+    // the default word's)
     const text = trimmed[0];
     if (dqInner || hdInner || inDq || noSplitOpt || oneWord || (expect && expect.kind === 'herestring')) { quoted(text); return true; }
     if (expect) { buf += text; marks += 'e'.repeat(text.length); return true; }   // a redirection target, or a `<`: one word, globbed
-    if (ifsNamed) { opaqueExpansion(); seg.subs.push(inner); return true; }
+    if (ifsNamed) return false;   // among unquoted operands while the command names IFS the result splits by a rule the guard does not read: not resolved, the expansion stays and its command is read
     const parts = text.split(/[ \t\n]+/);   // '' at an end when the text begins or ends with a blank: the word under way ends there
     parts.forEach((part, k) => {
       if (k > 0) { endWord(); raw = spelling; }
@@ -1206,6 +1287,10 @@ export function lex(command, shell = null, opts = {}) {
     });
     if (!buf && raw === spelling) inWord = false;   // an empty result alone makes no word, as in the shells
     return true;
+  };
+  const resolvedSub = (spelling, inner) => {
+    if (expect && expect.kind === 'heredoc') return false;   // a here-document delimiter, which no shell expands
+    return placeReading(literalOutput(inner, shell, nestDepth), spelling, 'text');
   };
   const substitution = () => {
     raw += '$('; i += 2; const inner = skipNested('(', ')'); raw += inner + ')';
@@ -1241,14 +1326,7 @@ export function lex(command, shell = null, opts = {}) {
   // result (`bash -c ${x:-cp a b}` unquoted copies in zsh and hands `cp` alone to bash in bash and dash, measured); the `${...}` word
   // itself keeps the non-literal rule everywhere else, and a `${name}` with no operator, `${name:?word}` (the shell exits, the word
   // is a message) and every other form give no reading.
-  const defaultReading = (inner, prefixLen, nested) => {
-    if (nested.opaque || nested.segments.length !== 1 || nested.segments[0].words.length !== 1) return;
-    const [s] = nested.segments;
-    const [w] = s.words;
-    if (s.subs.length || s.viaSubs.length || s.redirects.length || s.heredocs.length || (s.stdin && s.stdin.length)) return;
-    if (w.literal) wordReadings = { raw: '${' + inner + '}', texts: [w.text.slice(prefixLen)] };   // the name and operator are literal characters at the text's start
-    else if (w.readings && w.marks && /^x+$/.test(w.marks.slice(prefixLen))) wordReadings = { raw: '${' + inner + '}', texts: w.readings };   // the word is one expansion with readings of its own (a nested default word, a two-reading echo): they are this word's too
-  };
+  const defaultReading = (inner, prefixLen, nested) => placeReading(defaultWordReading(nested, prefixLen), '${' + inner + '}', 'readings');
   // THE NESTED EXPANSION (round 5's fifth addendum, second fix-up, 2026-09-20; the fix-up's verifiers found `echo ${x:-$(cp
   // ../base/report.md report.md)}` from docs/ allowed while bash, zsh and dash copied, and the same through `${x-..}`, `${x:=..}`,
   // `${x#..}`, `${x:?..}`, `${x/b/..}`, `${x[..]}`, a backtick, a `<(...)` in bash, a `${` nested two deep, inside double quotes,
@@ -1435,6 +1513,7 @@ export function lex(command, shell = null, opts = {}) {
         inWord = true;
         const t = c + '(' + inner + ')';
         opaqueExpansion(t); raw += t;
+        if (c === '<') placeReading(literalOutput(inner, shell, nestDepth), t, 'readings');   // the file the word stands for holds the text a literal echo or printf prints (extract's `bash <(echo '..')`, `bash < <(echo '..')`; THE RESOLVER'S CONTRACT)
         endWord();
         continue;
       }
@@ -1454,6 +1533,7 @@ export function lex(command, shell = null, opts = {}) {
         seg.subs.push(inner);
         const t = '=(' + inner + ')';
         opaqueExpansion(t); raw += t;
+        placeReading(literalOutput(inner, shell, nestDepth), t, 'readings');   // as `<(cmd)`: the file holds what a literal echo or printf prints (`zsh =(echo '..')`)
         endWord();
         continue;
       }
@@ -2677,83 +2757,296 @@ function shellScript(args, shell) {
   return { file: operand };   // a script file, whose contents are not in the command, unless it is a process substitution printing text the guard can read (extract, `bash <(echo '..')`)
 }
 
-// What an echo or a printf prints, from its words as the lexer read them, for THE PIPED SCRIPT (extract's stdinBodies): the
-// readings a shell may give the line, since the guard does not know which shell runs it. echo: the operands joined by one space,
-// once as spelled (bash's default) and once with the escapes interpreted (`\\n`, `\\t`, an octal `\\0nnn`: zsh's and dash's default,
-// bash's `-e`), the leading option words bash and zsh take (`-n`, `-e`, `-E`, clustered) dropped (dash prints them, a reading whose
-// writes the stripped one covers: a `-e` in command position runs nothing and every redirection of the line is in both). printf:
-// the format's escapes interpreted, each conversion taking the next operand (`%b` with its escapes interpreted, `%%` a percent,
-// a `*` width or precision an operand of its own; the flags, width and precision otherwise ignored, so a `%.2s` reads the whole
-// operand, the safe side), the format reused while operands remain, as the shells do; `-v` prints nothing.
-function shellEscapes(text, octalZero = false) {
-  const simple = { a: '\x07', b: '\b', e: '\x1b', E: '\x1b', f: '\f', n: '\n', r: '\r', t: '\t', v: '\v', '\\': '\\', '"': '"', "'": "'" };
+// THE RESOLVER'S CONTRACT (round 6 of the review of fork PR #780, 2026-09-20; round 5 found four readings that turned a refusal
+// of the base into an allow: a printf whose width or precision the reading ignored, a glob character that switched the readings
+// off, an octal escape one reader lacked, and a double-quoted `"$@"` the split rule exempted; each a reading the machinery
+// believed and trusted). A reading function (echoOutput, printfOutput, segmentOutput, literalOutput, defaultWordReading below)
+// answers ONE of three things and nothing else: `sound(texts)`, the set of texts a shell could print or a word could stand for,
+// every text a shell could produce among them, so no other reading is needed; `unresolvable(why)`, the resolver looked and cannot
+// establish the text (a conversion or an option it does not model, a glob character or a brace list the shell would expand, a
+// quoting whose reading depends on the shell, an escape producing a byte it does not decode, a text no path can hold); or
+// `null`, the resolver does not apply (the command is no echo or printf, the word carries an expansion the resolver never reads),
+// so the word keeps the rule it had before the resolver existed. A reading reaches the command in ONE place per layer, and
+// nowhere else: in lex, `placeReading`, which puts a reading into the word under way; in extract, `scriptTexts`, through which
+// every script-consuming site (a `-c` operand, an interpreter's inline code, a here-string, an unquoted here-document body, a
+// piped producer, a process substitution read as a file, a command whose name is an expansion) obtains the texts it reads.
+// THE TWO ROADS. The text road (placeReading, one text): a reading becomes the word's literal characters, judged as a target, a
+// writer's operand or a value, ONLY when it is plain: one text produced by no escape interpretation and no conversion (an echo
+// whose operands hold no backslash and take the same options in every shell; a printf whose format holds neither `%` nor a
+// backslash), so nothing a reader could get wrong ever reaches a target judgement; every other reading leaves the word an
+// expansion (non-literal: the base's refusal as a target while a project is in play) and travels the script road alone. The
+// script road (word.readings, scriptTexts): the union of readings, each read as a script; a reading the union lacks can at worst
+// leave the script as unread as the base left it (the base read no script held in an expansion: the residual decision 47
+// names), never refuse less than the base; the readers are pinned by execution against bash, zsh and dash over the escape and
+// printf grammars. UNRESOLVABLE refuses in both places: placeReading marks the word (`word.unresolvableReading`), never writes a text, and
+// scriptTexts records the word as a target the hook cannot read (cannotRead, the non-literal refusal) and returns no text, so no
+// consumer can turn it into the residual pass. tools/romp-track-bash-guard.test.mjs derives the reading functions from this
+// source (a body that calls `sound(` or `unresolvable(`) and reds when one is called outside a reading function or the two
+// places, or when a word's readings are read outside them.
+const sound = (texts) => ({ texts: [...new Set(texts)] });
+const unresolvable = (why) => ({ unresolvableReading: why });
+// A plain reading (the text road): the texts came from no interpretation, so a single text may stand in the word.
+const plain = (texts) => ({ texts: [...new Set(texts)], plain: true });
+
+// THE ESCAPE READERS, derived from the manuals (bash: echo and printf in Shell Builtin Commands; dash(1): echo and printf;
+// zshbuiltins(1): echo and printf) and pinned by execution in the three shells (the test runs every form through every reader):
+// what each shell makes of a backslash in an echo operand (bash with `-e` or xpg_echo; its default prints the text as spelled),
+// in a printf format and in a `%b` operand. Common to every reader: \a \b \f \n \r \t \v \; an escape a reader does not know keeps
+// its backslash. `octal`: 'zero' reads `\0` and up to three octal digits after it (bash's and zsh's echo, zsh's %b); 'bare' reads
+// one to three octal digits (every printf format, the `\0` of `\0101` being a digit: backspace then 1); 'both' reads the zero form
+// when the first digit is 0 and the bare form otherwise (dash's echo, bash's and dash's %b). `hex`: `\x` and one or two hex digits
+// (bash), zero to two (zsh, where `\x` alone is a NUL), none (dash). `unicode`: `\u` with one to four hex digits and `\U` with one
+// to eight (bash, zsh); dash reads `\u` with exactly four and no `\U`; a form a reader knows is DECLINED (Undecodable), since
+// the character printed depends on the shell's locale, and a form it does not know keeps its backslash. `E`: bash alone reads `\E` as escape. `quotes`: bash's
+// printf format alone reads `\"`, `\'` and `\?` as the character (measured; every other reader keeps the backslash). `c`: `\c` ends the
+// output ('stop': every echo, every %b, zsh's format) or is text ('literal': bash's and dash's printf format).
+// A reader missing an escape a shell interprets yields a text the union lacks, a script the guard reads under the wrong text: the
+// WRITE side of the census, bounded by the execution pin.
+export const ESCAPE_READERS = {
+  'echo bash': { octal: 'zero', hex: 'bash', unicode: 'full', E: true, c: 'stop' },
+  'echo zsh': { octal: 'zero', hex: 'zsh', unicode: 'full', E: false, c: 'stop' },
+  'echo dash': { octal: 'both', hex: null, unicode: 'four', E: false, c: 'stop' },
+  'format bash': { octal: 'bare', hex: 'bash', unicode: 'full', E: true, c: 'literal', quotes: true },
+  'format zsh': { octal: 'bare', hex: 'zsh', unicode: 'full', E: false, c: 'stop' },
+  'format dash': { octal: 'bare', hex: null, unicode: 'four', E: false, c: 'literal' },
+  '%b bash': { octal: 'both', hex: 'bash', unicode: 'full', E: true, c: 'stop' },
+  '%b zsh': { octal: 'zero', hex: 'zsh', unicode: 'full', E: false, c: 'stop' },
+  '%b dash': { octal: 'both', hex: null, unicode: 'four', E: false, c: 'stop' },
+};
+// A thrown marker: the reader met a byte it does not decode (an octal or hex escape at or above 0x80: the shell writes one raw byte
+// where this text holds characters; a `\u` or `\U` escape, whose output depends on the shell's locale) or a NUL (a text no path
+// can hold, and which the shells drop from a substitution's result).
+class Undecodable extends Error {}
+// `text` read by `reader` (a key of ESCAPE_READERS): { text, stopped } where `stopped` says a `\c` ended the output.
+export function shellEscapes(text, reader) {
+  const r = ESCAPE_READERS[reader];
+  if (!r) throw new Error(`no escape reader named ${reader}`);
+  const simple = { a: '\x07', b: '\b', e: '\x1b', f: '\f', n: '\n', r: '\r', t: '\t', v: '\v', '\\': '\\' };
+  const byte = (n) => { if (n === 0 || n >= 0x80) throw new Undecodable(); return String.fromCharCode(n); };
   let out = '';
   for (let k = 0; k < text.length; k++) {
     if (text[k] !== '\\' || k + 1 >= text.length) { out += text[k]; continue; }
     const n = text[k + 1];
+    const rest = text.slice(k + 1);
+    let m;
     if (Object.hasOwn(simple, n)) { out += simple[n]; k++; continue; }
-    if (n === 'c') break;   // `\\c`: the rest is not printed
-    const oct = text.slice(k + 1).match(octalZero ? /^0[0-7]{0,3}/ : /^[0-7]{1,3}/);
-    if (oct) { out += String.fromCharCode(parseInt(oct[0] || '0', 8)); k += oct[0].length; continue; }
-    const hex = text.slice(k + 1).match(/^x[0-9A-Fa-f]{1,2}/);
-    if (hex) { out += String.fromCharCode(parseInt(hex[0].slice(1), 16)); k += hex[0].length; continue; }
-    out += text[k];   // an escape no shell knows keeps its backslash
+    if (n === 'E' && r.E) { out += '\x1b'; k++; continue; }
+    if (r.quotes && (n === '"' || n === "'" || n === '?')) { out += n; k++; continue; }
+    if (n === 'c') { if (r.c === 'stop') return { text: out, stopped: true }; out += '\\'; continue; }
+    if (r.octal === 'zero' || (r.octal === 'both' && n === '0')) {
+      if ((m = rest.match(/^0[0-7]{0,3}/))) { out += byte(parseInt(m[0], 8)); k += m[0].length; continue; }
+    }
+    if (r.octal === 'bare' || r.octal === 'both') {
+      if ((m = rest.match(/^[0-7]{1,3}/))) { out += byte(parseInt(m[0], 8)); k += m[0].length; continue; }
+    }
+    if (r.hex === 'bash' && (m = rest.match(/^x[0-9A-Fa-f]{1,2}/))) { out += byte(parseInt(m[0].slice(1), 16)); k += m[0].length; continue; }
+    if (r.hex === 'zsh' && (m = rest.match(/^x[0-9A-Fa-f]{0,2}/))) { out += byte(m[0].length > 1 ? parseInt(m[0].slice(1), 16) : 0); k += m[0].length; continue; }
+    if ((r.unicode === 'full' && ((m = rest.match(/^u[0-9A-Fa-f]{1,4}/)) || (m = rest.match(/^U[0-9A-Fa-f]{1,8}/)))) || (r.unicode === 'four' && (m = rest.match(/^u[0-9A-Fa-f]{4}/)))) {
+      // the output depends on the shell's locale (bash and dash print `A` for `\u0041` in a UTF-8 locale and the escape as spelled in
+      // the C locale, measured), a text the guard does not establish: declined, whatever the code point
+      throw new Undecodable();
+    }
+    out += '\\';   // an escape this reader does not know keeps its backslash; the character after it is read on its own
   }
-  return out;
+  return { text: out, stopped: false };
 }
-function echoOutput(words) {
+// The option words each shell's echo takes off the front (the manuals, pinned by execution): bash and zsh take `-n`, `-e`, `-E`
+// and their clusters; zsh alone then drops a `-` that ends the options; dash takes one `-n` and nothing else (it prints `-e`).
+const ECHO_SHELLS = ['bash', 'zsh', 'dash'];
+function echoOperands(words, shell) {
   let k = 0;
-  while (k < words.length && /^-[neE]+$/.test(words[k].text)) k++;
-  const raw = words.slice(k).map((w) => w.text).join(' ');
-  const interpreted = shellEscapes(raw, true);
-  return interpreted === raw ? [raw] : [raw, interpreted];
+  if (shell === 'dash') { if (words.length && words[0].text === '-n') k = 1; }
+  else {
+    while (k < words.length && /^-[neE]+$/.test(words[k].text)) k++;
+    if (shell === 'zsh' && k < words.length && words[k].text === '-') k++;
+  }
+  return words.slice(k).map((w) => w.text);
+}
+// What an echo prints: the union over the shells of the operands joined by one space, bash's default (the text as spelled) and
+// each shell's escape reading (bash's `-e` and xpg_echo, zsh's and dash's defaults), so every text one of the three prints is in
+// it. Plain (the text road) only when no operand holds a backslash and every shell takes the same option words.
+function echoOutput(words) {
+  const spelled = ECHO_SHELLS.map((sh) => echoOperands(words, sh).join(' '));
+  const backslash = spelled.some((t) => t.includes('\\'));
+  if (!backslash) return spelled.every((t) => t === spelled[0]) ? plain([spelled[0]]) : sound(spelled);
+  const texts = [spelled[0]];   // bash's default reading
+  try { ECHO_SHELLS.forEach((sh, k) => texts.push(shellEscapes(spelled[k], `echo ${sh}`).text)); }
+  catch (e) { if (e instanceof Undecodable) return unresolvable('an operand of the echo holds an escape for a byte or a NUL I do not decode'); throw e; }
+  return sound(texts);
+}
+// THE PRINTF GRAMMAR (bash: printf in Shell Builtin Commands; dash(1) and zshbuiltins(1): printf; pinned by execution):
+// `printf [-v name] format [argument ...]` in bash and zsh, `printf format [argument ...]` in dash, `--` ending the options; a first
+// word beginning with `-` that is not `--` or `-` alone is an option to bash and dash (rejected, nothing printed) and a format to
+// zsh, and no format prints nothing in every shell while the shells differ on what they report: each is UNRESOLVABLE (round 5's
+// correctness-3: an empty reading crashed the walk); `-v` prints nothing in every shell too (bash and zsh assign the text, dash rejects
+// the option), measured, so it reads as the empty text, plain (a `printf -v t '..' | bash` feeds bash nothing, the second fix-up's
+// row, and a `$(printf -v x a)report.md` is the name report.md, judged by name). The format's escapes are read by the shell's format reader; a `%` opens a
+// conversion `%[flags][width][.precision]letter` with flags among `-+ #0`, a width of digits or `*` (the next operand), a precision
+// of digits, `*` or nothing after the dot (zero), and the letter. Modelled: `%%` with nothing between (a percent); `%s` and `%b` with
+// the `-` flag alone, a width, a precision and `*` from an operand that is a run of digits (the shells agree on these, measured:
+// `%.3s`, `%5s`, `%-5s`, `%5.2s`, `%.s`, `%*s`, `%.*s`); a missing operand is the empty string; `%b` reads its operand by the shell's
+// `%b` reader and a `\c` there ends the whole output; the format is reused while operands remain and printed once when none is
+// consumed. UNRESOLVABLE: every other letter (`%c` prints one character in bash and zsh and a byte in dash; `%q` is bash's and
+// zsh's quoting and dash's error; `%d` and the numeric conversions read their operand by rules the shells do not share, an invalid
+// one printing 0 with an error in bash and dash and silently in zsh; `%(fmt)T` is the clock), a flag other than `-` (the shells
+// ignore `+`, ` `, `#` and `0` on `%s`, measured, but the rule is stated for what is modelled), a `*` from an operand that is not
+// digits (a negative width left-justifies), a width or precision on an operand holding a character outside ASCII (bash and dash
+// count bytes, zsh characters: `%.2s` of an accented word differs), a `%` with nothing after it or an unknown letter (an error, the
+// output cut short), and an escape for a byte or a NUL. Every conversion leaves the reading on the script road (not plain).
+const PRINTF_SHELLS = ['bash', 'zsh', 'dash'];
+const CONVERSION = /^%([-+ #0]*)(\*|\d+)?(?:\.(\*|\d*))?([\s\S]?)/;
+function printfFor(shell, fmt, operands) {
+  const reader = `format ${shell}`;
+  const bReader = `%b ${shell}`;
+  let out = '';
+  let n = 0;
+  let plainText = true;
+  for (let pass = 0; pass < 1 || n < operands.length; pass++) {
+    let consumed = false;
+    for (let k = 0; k < fmt.length;) {
+      if (fmt[k] === '\\' && fmt[k + 1] === '%') { out += '\\'; k++; plainText = false; continue; }   // the backslash is text and the `%` a conversion, as the shells read it (measured: `\%Z` is an invalid directive)
+      if (fmt[k] !== '%') {
+        const j = fmt.indexOf('%', k);
+        const piece = j < 0 ? fmt.slice(k) : fmt.slice(k, j);
+        if (piece.includes('\\')) plainText = false;
+        const r = shellEscapes(piece, reader);
+        out += r.text;
+        if (r.stopped) return { text: out, plain: false };
+        k = j < 0 ? fmt.length : j;
+        continue;
+      }
+      const m = fmt.slice(k).match(CONVERSION);
+      const [whole, flags, width, precision, letter] = m;
+      plainText = false;
+      if (letter === '%') { if (flags || width || precision != null) return unresolvable(`a \`${whole}\` I do not model (a percent with a flag, width or precision is an error in every shell)`); out += '%'; k += whole.length; continue; }
+      if (letter !== 's' && letter !== 'b') return unresolvable(letter ? `a \`${whole}\` conversion I do not model (I read \`%s\` and \`%b\` with the \`-\` flag, a width and a precision, and \`%%\`)` : 'a `%` with no conversion letter, an error in every shell');
+      if (flags && flags !== '-') return unresolvable(`the \`${flags}\` flag on \`${whole}\`, which I do not model (I read the \`-\` flag alone)`);
+      const take = (spec) => {
+        if (spec === '*') { const v = n < operands.length ? operands[n] : ''; n++; if (!/^\d+$/.test(v)) throw unresolvable(`a \`*\` width or precision taken from \`${v}\`, not a run of digits (a negative one justifies left)`); return Number(v); }
+        return spec == null ? null : (spec === '' ? 0 : Number(spec));
+      };
+      let w;
+      let p;
+      try { w = take(width); p = take(precision); } catch (e) { if (e && e.unresolvableReading) return e; throw e; }
+      let arg = n < operands.length ? operands[n] : '';
+      n++;
+      consumed = true;
+      let stopped = false;
+      if (letter === 'b') { const r = shellEscapes(arg, bReader); arg = r.text; stopped = r.stopped; }
+      if ((w != null || p != null) && /[^\x00-\x7f]/.test(arg)) return unresolvable('a width or precision on an operand holding a character outside ASCII (bash and dash count bytes, zsh characters)');
+      if (p != null) arg = arg.slice(0, p);
+      if (w != null && arg.length < w) arg = flags === '-' ? arg + ' '.repeat(w - arg.length) : ' '.repeat(w - arg.length) + arg;
+      out += arg;
+      if (stopped) return { text: out, plain: false };
+      k += whole.length;
+    }
+    if (!consumed) break;   // a format with no conversion prints once, whatever the operands
+  }
+  return { text: out, plain: plainText };
 }
 function printfOutput(words) {
   let k = 0;
-  while (k < words.length && words[k].text.startsWith('-') && words[k].text.length > 1) {
-    if (words[k].text === '-v') return [];   // into a variable: nothing printed
-    if (words[k].text === '--') { k++; break; }
-    k++;
-  }
-  if (k >= words.length) return [];
+  if (!words.length) return unresolvable('a printf with no format, which prints nothing and reports an error');
+  const first = words[0].text;
+  if (first === '--') { k = 1; if (words.length < 2) return unresolvable('a printf with no format after `--`, which prints nothing and reports an error'); }
+  else if (first === '-v') return plain(['']);   // prints nothing in every shell (bash and zsh assign the text to the name; dash rejects the option and prints nothing), measured: the empty text, plain
+  else if (first.length > 1 && first[0] === '-') return unresolvable(`a printf whose first word is \`${first}\`: an option bash and dash reject and a format zsh prints`);
   const fmt = words[k].text;
   const operands = words.slice(k + 1).map((w) => w.text);
-  const conv = /%([-+ #0]*)(\*|\d+)?(?:\.(\*|\d+))?([A-Za-z%])/g;
-  let out = '';
-  let n = 0;
-  do {
-    let consumed = false;
-    let last = 0;
-    for (const m of fmt.matchAll(conv)) {
-      out += shellEscapes(fmt.slice(last, m.index));
-      last = m.index + m[0].length;
-      if (m[4] === '%') { out += '%'; continue; }
-      if (m[2] === '*') n++;
-      if (m[3] === '*') n++;
-      const arg = n < operands.length ? operands[n] : '';
-      n++;
-      consumed = true;
-      out += m[4] === 'b' ? shellEscapes(arg, true) : arg;
-    }
-    out += shellEscapes(fmt.slice(last));
-    if (!consumed) break;   // a format with no conversion prints once, whatever the operands
-  } while (n < operands.length);
-  return [out];
+  const texts = [];
+  let plainText = true;
+  for (const sh of PRINTF_SHELLS) {
+    let r;
+    try { r = printfFor(sh, fmt, operands); }
+    catch (e) { if (e instanceof Undecodable) return unresolvable('an escape in the printf for a byte or a NUL I do not decode'); throw e; }
+    if (r.unresolvableReading) return r;
+    texts.push(r.text);
+    if (!r.plain) plainText = false;
+  }
+  return plainText && texts.every((t) => t === texts[0]) ? plain([texts[0]]) : sound(texts);
+}
+// What one lexed segment prints when its command is a literal echo or printf with no redirection, here-document, substitution or
+// further command: echoOutput's or printfOutput's reading, UNRESOLVABLE when an operand carries a glob character or a brace list
+// the shell expands before the command prints (the text printed is what the expansion gives, which the resolver does not compute)
+// or a quoting whose reading depends on the shell, or is an expansion whose value the resolver does not read (`$(echo $t)`: the
+// resolver applies to the echo and cannot establish what it prints), and null when the command is anything else (a text the guard
+// cannot see, the residual: `$(cat f)`).
+function segmentOutput(s) {
+  if (s.paren || s.redirects.length || s.heredocs.length || (s.stdin && s.stdin.length) || s.subs.length || s.viaSubs.length || s.arith.length || (s.closerTail && s.closerTail.length) || (s.op && s.op !== ';' && s.op !== '\n' && s.op !== '|')) return null;
+  const cmd = commandOf(s.words);
+  if (!cmd || cmd.unknown || cmd.opaque || 'script' in cmd || cmd.chdirs.length || cmd.writes.length || (cmd.name !== 'echo' && cmd.name !== 'printf')) return null;
+  const inner = cmd.args.find((w) => w.unresolvableReading);
+  if (inner) return unresolvable(inner.unresolvableReading.why);   // an operand built from a reading the resolver could not establish: neither can this one
+  if (cmd.args.some((w) => (w.marks && w.marks.includes('x')) || w.text.includes('\0'))) return unresolvable(`an operand of the ${cmd.name} is an expansion whose value I do not read, so the text printed is not known`);   // the resolver applies to the command and cannot establish what it prints (a value it never reads: `$(echo $t)`)
+  if (!cmd.args.every((w) => w.literal)) return unresolvable(`an operand of the ${cmd.name} carries a glob character, a brace list or a quoting the shell expands before the ${cmd.name} prints, so the text printed is not the text spelled`);
+  return cmd.name === 'echo' ? echoOutput(cmd.args) : printfOutput(cmd.args);
 }
 // What a `$(...)`, a backtick or a `<(...)` prints when its command is one echo or printf with literal operands and no redirection,
-// here-document, substitution or further command (THE RESOLVED SUBSTITUTION in lex; the script a `bash <(echo '..')` or a `bash <
-// <(echo '..')` reads in extract): the readings echoOutput or printfOutput give, or null when the command is anything else, the
-// text the guard cannot see. `depth` is the lexer's nesting, capped as the `${` descent is.
+// here-document, substitution or further command (THE RESOLVED SUBSTITUTION in lex; the file a `bash <(echo '..')` or a `bash <
+// <(echo '..')` reads): segmentOutput's reading of the one segment, or null when the command is anything else. `depth` is the
+// lexer's nesting, capped as the `${` descent is.
 function literalOutput(inner, shell, depth = 0) {
   if (depth >= NESTED_DEPTH_CAP || !/echo|printf/.test(inner)) return null;
   const r = lex(inner, shell, { depth: depth + 1 });
   if (r.opaque || r.segments.length !== 1) return null;
-  const s = r.segments[0];
-  if (s.paren || s.redirects.length || s.heredocs.length || (s.stdin && s.stdin.length) || s.subs.length || s.viaSubs.length || s.arith.length || (s.closerTail && s.closerTail.length) || (s.op && s.op !== ';' && s.op !== '\n')) return null;
-  const cmd = commandOf(s.words);
-  if (!cmd || cmd.unknown || cmd.opaque || 'script' in cmd || cmd.chdirs.length || cmd.writes.length || (cmd.name !== 'echo' && cmd.name !== 'printf')) return null;
-  if (!cmd.args.every((w) => w.literal)) return null;
-  return cmd.name === 'echo' ? echoOutput(cmd.args) : printfOutput(cmd.args);
+  return segmentOutput(r.segments[0]);
+}
+// THE DEFAULT WORD's reading (lex's braceParameter reads `${name:-word}` and its kin through this): the one word the nested lex made
+// of the operator's word, its name and operator peeled (`prefixLen` literal characters at the text's start). Sound when the word is
+// literal (every character quoted or plain), or is one expansion carrying readings of its own (a nested default word, a two-reading
+// echo). UNRESOLVABLE when the word is no expansion the resolver leaves alone and still not literal: a glob character or a brace list
+// (the shells expand it where the word is unquoted, and the guard does not compute the result), or a `$'...'` whose reading depends on
+// the shell (round 5's correctness-2: a `*` made the word non-literal and the script went to the shell unread), or an expansion
+// whose value the resolver does not read (`${x:-$(cat f)}`, `${x:-$y}`: the resolver applies to the operator's word and cannot
+// establish it; the plain `${x}`, which has no operator, is no reading of this function and keeps the residual). null when the
+// operator's word is several segments or empty.
+function defaultWordReading(nested, prefixLen) {
+  if (nested.opaque || nested.segments.length !== 1 || !nested.segments[0].words.length) return null;
+  const [s] = nested.segments;
+  if (s.words.length > 1) return unresolvable('the word holds a brace list, which zsh expands where the word is unquoted while bash and dash close the `${...}` at its first brace, so the text the shell makes of it is not the text spelled');   // oneWord mode makes one word of the text but for a brace list
+  const [w] = s.words;
+  if (s.subs.length || s.viaSubs.length) return unresolvable('the word holds a substitution whose text I do not read, so the text the shell makes of it is not known');   // `${x:-$(cat f)}`, `${x:-$(cp a b)}`: the command runs (read through viaSubs) and its output is the word
+  if (s.redirects.length || s.heredocs.length || (s.stdin && s.stdin.length)) return null;
+  if (w.literal) return sound([w.text.slice(prefixLen)]);   // the name and operator are literal characters at the text's start
+  if (w.unresolvableReading) return unresolvable(w.unresolvableReading.why);
+  if (w.readings && w.marks && /^x+$/.test(w.marks.slice(prefixLen))) return sound(w.readings);   // the word is one expansion with readings of its own (a nested default word, a two-reading echo): they are this word's too
+  if ((w.marks && w.marks.slice(prefixLen).includes('x')) || w.text.includes('\0')) return unresolvable('the word holds an expansion whose value I do not read, so the text the shell makes of it is not known');   // `${x:-$(cat f)}`, `${x:-$y}`: the resolver applies to the operator\'s word and cannot establish it
+  return unresolvable('the word holds a glob character, a brace list or a quoting whose reading depends on the shell, so the text the shell makes of it is not the text spelled');
+}
+// THE SINGLE FIELD (round 6, 2026-09-20; for THE SPLIT OPERAND in extract): whether a word spelled entirely inside one pair of double
+// quotes is one field in bash, zsh and dash after expansion. THE PROPERTY: inside double quotes no expansion splits except the ones
+// the shells define to produce one word per element, so the word is one field unless it holds one of those. Derived from the
+// grammars (bash: Special Parameters and Arrays; dash(1): Parameter Expansion; zshexpn(1): Parameter Expansion and its flags):
+// `$@` and every `${@...}` (`"${@}"`, `"${@:2}"`, `"${@:1:2}"`, `"${@#x}"`, `"${@/x/y}"`) give one word per positional parameter in
+// every shell; a subscript `[@]` (`"${arr[@]}"`, `"${arr[@]:1}"`, `"${!arr[@]}"`, `"${arr[@]/x/y}"`, and zsh's unbraced `"$arr[@]"`)
+// one per element; bash's `${!prefix@}` one per name; zsh's flags and modifiers open the brace with `(`, `=`, `~` or `^` (`"${(@)arr}"`,
+// `"${(s: :)s}"`, `"${(f)s}"`, `"${(z)s}"`, `"${=s}"`) and split or expand by rules the guard does not read. So a `${...}` whose inner
+// text opens with `!`, `(`, `=`, `~` or `^`, or holds an `@`, and a `$@` or `$name[@]` anywhere in the word, make it a word that MAY
+// split (the safe side: an unknown form is refused, never exempted); `$name`, `${name}`, `${name<op>...}`, `$*`, `${arr[*]}`, `$#`,
+// `$?`, `$$`, `$!`, `$0`, a `$(...)`, a backtick and `$((...))` are one field. Pinned by execution in the three shells
+// (tools/romp-track-bash-guard-shapes.test.mjs).
+export function dqSingleField(raw) {
+  const m = raw.match(/^"([^"]*)"$/);
+  if (!m) return false;
+  const inner = m[1];
+  for (let i = 0; i < inner.length; i++) {
+    if (inner[i] === '\\') { i++; continue; }
+    if (inner[i] !== '$') continue;
+    const n = inner[i + 1];
+    if (n === '@') return false;
+    if (n === '{') {
+      let depth = 1;
+      let j = i + 2;
+      while (j < inner.length && depth > 0) { if (inner[j] === '{') depth++; else if (inner[j] === '}') depth--; j++; }
+      const body = inner.slice(i + 2, depth > 0 ? inner.length : j - 1);
+      if (/^[!(=~^]/.test(body) || body.includes('@')) return false;
+      i = j - 1;
+      continue;
+    }
+    const name = inner.slice(i + 1).match(/^[A-Za-z_][A-Za-z0-9_]*/);
+    if (name && inner.startsWith('[@]', i + 1 + name[0].length)) return false;   // zsh's unbraced subscript
+  }
+  return true;
 }
 // The command inside a word that is one process substitution (`<(cmd)`, `>(cmd)`, zsh's `=(cmd)`), as the lexer spells such a word
 // (the spelling, every character an expansion's), or null.
@@ -3337,6 +3630,7 @@ function extract(command, ctx) {
     const g = !hasX && hasGlobChar(text, marks);
     const resolved = word(text, !hasX && !g, w.raw, { glob: g, marks, at: w.at, numeric: hasX && numericRunsOnly(text, marks) && !hasGlobChar(text, marks), why: named });
     if (w.readings) resolved.readings = w.readings;   // the texts a `-c` operand or a here-string can stand for survive the resolution (the third fix-up)
+    if (w.unresolvableReading) resolved.unresolvableReading = w.unresolvableReading;   // and so does the resolver's mark (THE RESOLVER'S CONTRACT)
     return resolved;
   };
   // THE PREDICATE of the readability rule (the statement is at RESOLVED_NAME). Three parts share it, each run once a segment's
@@ -3755,6 +4049,23 @@ function extract(command, ctx) {
     try { addInner(w, how); }
     catch (e) { if (isUnknownPath(e) && !(e.why && e.why.how)) e.why = { ...(e.why || {}), how: how + viaOf(), raw: w && w.raw ? w.raw : (w && w.text) || 'the path' }; throw e; }
   };
+  // THE ONE PLACE in extract where a script-consuming site obtains the texts a word stands for (THE RESOLVER'S CONTRACT, stated at
+  // the reading functions above extract). `role` 'text': the word's own text is the script (a `-c` operand, an interpreter's inline
+  // code); 'file': the word names what the script is read from (a here-string or a `<` into the standard input, a process
+  // substitution as the script operand, a piped producer's printed text), so only its readings count; 'head': the command's name,
+  // where a word the resolver could not establish is refused and anything else is the command the walk reads on its own. A word the resolver could not establish is a target the hook cannot read (cannotRead: refused while a project is in
+  // play, with the reason) and yields no text, so no site can hand such a script to the shell as the residual pass; a word with
+  // readings yields them; a literal word its text (role 'text'); anything else is a script the guard cannot see, the residual
+  // decision 47 names, marked opaque.
+  const scriptTexts = (w, how, role = 'text') => {
+    if (!w) return [];
+    if (w.unresolvableReading) { cannotRead(w, how, { kind: 'unresolvableReading', spelling: w.unresolvableReading.raw, text: w.unresolvableReading.why }); return []; }
+    if (role === 'head') return [];
+    if (w.readings) return w.readings;
+    if (role === 'text' && w.literal) return [w.text];
+    if (role === 'text' || w.herestring || procsubOf(w) != null) sawOpaqueCommand = true;
+    return [];
+  };
   const addInner = (w, how) => {
     if (!w) return;   // a word that is only an expansion (`"$(mktemp)"`) has no text after quote removal, and is still a target
     // class D: the command reassigned HOME, so a word that expanded it (marked 'h') is unreadable. Recorded by its
@@ -3774,7 +4085,7 @@ function extract(command, ctx) {
       // command removed, renamed or linked is unreadable for THAT reason, so the family-3 refusal and the alias's source
       // decide, from any cwd; before, it was recorded with no reason and judged against a tree where the link did not exist
       const m = mutatedUnderLiteralPart(w);
-      cannotRead(w, how, m ? mutatedWhy(m) : (w.why || null));
+      cannotRead(w, how, m ? mutatedWhy(m) : (w.why || null));   // the non-literal rule: a word the resolver looked at and could not establish is refused here as any expansion is (THE RESOLVER'S CONTRACT, the text road)
       return;
     }
     if (!w.text) return;
@@ -3877,9 +4188,7 @@ function extract(command, ctx) {
     const out = [...seg.heredocs];
     for (const s of seg.stdin || []) {
       if (s.fd != null && s.fd !== '0') continue;
-      const ps = procsubOf(s);
-      const texts = ps != null ? literalOutput(ps, shell) : null;
-      if (texts) out.push(...texts);
+      out.push(...scriptTexts(s, s.herestring ? 'here-string script' : 'standard-input script', 'file'));   // a `<(echo '..')` carries the printed text as its readings; a here-string or body the resolver could not establish refuses
     }
     return out;
   };
@@ -3930,14 +4239,7 @@ function extract(command, ctx) {
   };
   // THE PIPED SCRIPT (the second fix-up), read at the producer's segment `p` (the segment before the consumer, or before the compound
   // holding it): the words a literal echo or printf would print
-  const pipedScripts = (p) => {
-    if (segments[p].paren) return [];
-    const producer = commandOf(segments[p].words);
-    if (!producer || producer.unknown || producer.opaque || 'script' in producer) return [];
-    if (producer.name === 'echo') return echoOutput(producer.args);
-    if (producer.name === 'printf') return printfOutput(producer.args);
-    return [];
-  };
+  const pipedScripts = (p) => (segments[p].paren ? [] : scriptTexts(segments[p].printed, 'piped script', 'file'));   // lex placed the producer's printed text on the segment (placeReading, mode 'segment')
   // Open scopes, innermost last: a subshell frame holds the dir to restore at its `)`; a function
   // frame (`f() { ... }`, a body defined, not run) holds the dir to restore at its closing brace;
   // a compound frame (if, while, until, for, case) records whether a cd ran in its body.
@@ -4364,11 +4666,14 @@ function extract(command, ctx) {
       continue;
     }
     if ('script' in cmd) {   // `flock … -c 'string'` runs the string through `$SHELL -c`, read like `sh -c` (round 4)
-      if (cmd.script && cmd.script.literal) recurse(cmd.script.text, shell, true);   // `$SHELL -c`: a fresh shell, the names not inherited (B2)
-      else if (cmd.script && cmd.script.readings) for (const t of cmd.script.readings) recurse(t, shell, true, READING_VIA(cmd.script.raw));   // the third fix-up
-      else if (cmd.script) sawOpaqueCommand = true;
+      for (const t of scriptTexts(cmd.script, `\`${cmd.scriptFlag || 'flock -c'}\` script`)) recurse(t, shell, true, cmd.script.literal ? '' : READING_VIA(cmd.script.raw));   // `$SHELL -c`: a fresh shell, the names not inherited (B2); the texts the word stands for, each a script (the third fix-up)
       continue;
     }
+    // a command whose name is an expansion runs the text the expansion gives: one the resolver could not establish refuses (THE
+    // RESOLVER'S CONTRACT; round 5's correctness-2: `$(echo cp ../base/*.md report.md)` alone ran the globbed copy in bash, zsh and
+    // dash while its head was an unread expansion), one the resolver never read stays the residual decision 47 names
+    const headWord = cmd.args ? seg.words[seg.words.length - cmd.args.length - 1] : null;
+    if (headWord) scriptTexts(headWord, 'command name', 'head');
     const asSpelled = cmd.args;
     let { name } = cmd;
     if (/^(python[0-9.]*|pypy[0-9]*)$/.test(name)) name = 'python';
@@ -4503,9 +4808,12 @@ function extract(command, ctx) {
         // named no target, and an unquoted expansion the shell splits into several words was that missing operand). THE RULE: when a
         // copying writer has fewer operands than its two and one of them is an unquoted expansion the guard did not resolve, the
         // shell may split it into the operands the writer needs, so that operand is a target the hook cannot read (refused while a
-        // project is in play, the non-literal rule); a double-quoted expansion never splits and stays as before.
+        // project is in play, the non-literal rule). Round 6 (2026-09-20; round 5's extra7-1 found `cp "$@"` copying onto the tracked
+        // file in every shell while the rule exempted every double-quoted word): a double-quoted word is exempt only when the guard
+        // can prove it one field (dqSingleField, the property stated there); a double-quoted expansion it cannot prove single may
+        // split, the `@` forms of every shell and zsh's splitting flags among them.
         const operandsAsSpelled = args.filter((a) => !(a.text.startsWith('-') && a.text.length > 1));
-        const maySplit = (a) => !a.literal && !!a.marks && a.marks.includes('x') && !/^"[^"]*"$/.test(a.raw);
+        const maySplit = (a) => !a.literal && !!a.marks && a.marks.includes('x') && !dqSingleField(a.raw);
         if (operandsAsSpelled.length < 2 && operandsAsSpelled.some(maySplit)) cannotRead(operandsAsSpelled.find(maySplit), name, { kind: 'splitOperand' });
         // copyTargets stats the destination to see whether it is a directory, so a stat error there (the walk-around lens second pass, family 4)
         // is an UnknownPath; attach the verb and the last operand's spelling for the refusal before it propagates.
@@ -4605,9 +4913,7 @@ function extract(command, ctx) {
           for (const tpl of r.template) cannotRead(word(tpl, false, tpl, { marks: 'x'.repeat(tpl.length) }), `${kind} script`, { kind: 'templatePath' });
         };
         if (inline) {
-          if (inline.literal) scan(inline.text);
-          else if (inline.readings) for (const t of inline.readings) scan(t);   // the texts the word can stand for (the third fix-up)
-          else sawOpaqueCommand = true;
+          for (const t of scriptTexts(inline, `${kind} script`)) scan(t);   // the texts the word can stand for (the third fix-up; THE RESOLVER'S CONTRACT)
         } else if (stdin) {
           for (const body of stdinBodies(idx)) scan(body);
         }
@@ -4620,17 +4926,13 @@ function extract(command, ctx) {
           // options a cluster takes a word for differ; shellScript and lex)
           const sh = shellScript(args, name);
           if ('script' in sh) {
-            if (sh.script && sh.script.literal) recurse(sh.script.text, name);
-            else if (sh.script && sh.script.readings) for (const t of sh.script.readings) recurse(t, name, undefined, READING_VIA(sh.script.raw));   // the texts the word can stand for, each a script (THE RESOLVED SUBSTITUTION, THE DEFAULT WORD)
-            else if (sh.script) sawOpaqueCommand = true;
+            for (const t of scriptTexts(sh.script, `\`${name} -c\` script`)) recurse(t, name, undefined, sh.script.literal ? '' : READING_VIA(sh.script.raw));   // the texts the word can stand for, each a script (THE RESOLVED SUBSTITUTION, THE DEFAULT WORD; THE RESOLVER'S CONTRACT)
           } else if (sh.stdin) {
             for (const body of stdinBodies(idx)) recurse(body, name, undefined, '', []);   // bash <<'EOF' ... EOF, a pipe, `bash /dev/stdin`: the body is the script, and the shell has consumed it (nothing passes on)
           } else if (sh.file) {
             // `bash <(echo 'cp a b')`, zsh's `=(...)`: the file the shell reads is the text a literal echo or printf prints (the third fix-up;
             // bash and zsh copied); any other file's contents are not in the command
-            const ps = procsubOf(sh.file);
-            const texts = ps != null ? literalOutput(ps, shell) : null;
-            if (texts) for (const t of texts) recurse(t, name);
+            if (procsubOf(sh.file) != null) for (const t of scriptTexts(sh.file, `\`${name}\` script operand`, 'file')) recurse(t, name);
           }
         }
     }
@@ -4812,10 +5114,7 @@ export function isGuardedPath(file, closures) {
     if (guardedByName(file, closures, st)) return true;
     const real = realPathOf(file, 0, st);
     return real != null && real !== file && guardedByName(real, closures);
-  } catch (e) {
-    if (isUnknownPath(e)) throw e;   // the walk-around lens second pass: an answer the hook does not have is the caller's to refuse, never a false
-    return false;
-  } finally { activeMemo = prev; }
+  } finally { activeMemo = prev; }   // an exception here is the caller's to refuse: an UnknownPath by its own text, anything else by the catch-all (round 6; until then any other throw was read as not guarded, an allow on an internal error)
 }
 
 // ── a target the hook could not read: which project is in play ─────
@@ -5260,26 +5559,36 @@ export function evaluate(raw) {
   const command = payload.tool_input && payload.tool_input.command;
   if (typeof command !== 'string' || !command) return null;
   const cwd = typeof payload.cwd === 'string' && payload.cwd ? payload.cwd : process.cwd();
-  // THE CATCH-ALL REFUSES (round 5 of the review, 2026-09-20). An exception the walk did not anticipate is the strongest
-  // signal the guard has that it does not understand the command in front of it, and until this round every catch in
-  // evaluate turned one into the most permissive answer available, an allow (round 4's extra4-4: a command word that is an
-  // Object.prototype key threw inside the walk and the command ran). Now any exception other than an UnknownPath (which has
-  // its own refusal) refuses while a tracked project is in play, naming the exception, and passes with no project in play,
-  // the guard's subject being tracked files inside projects; when it cannot tell whether one is in play it refuses.
+  // THE CATCH-ALL REFUSES, EVERYWHERE (round 5 of the review, 2026-09-20; round 6 the same day). An exception the walk did not
+  // anticipate is the strongest signal the guard has that it does not understand the command in front of it, and until round 5
+  // every catch in evaluate turned one into the most permissive answer available, an allow (round 4's extra4-4: a command word
+  // that is an Object.prototype key threw inside the walk and the command ran). Round 5 refused while the payload's cwd sat in a
+  // tracked project and passed elsewhere. Round 6 refuses from every cwd, for the ORDER of the decisions: judge reads the command
+  // (extractWriteTargets) before it asks which project any target puts in play, and it asks per target, of the target's own
+  // directory, a `cd` it followed, or a copy's landing folder, never of the cwd alone (a literal `<project>/docs/report.md` from a
+  // cwd in no project is refused by name, and a `cd <project> && cp ..` from one by the moved directory). So a throw inside the
+  // walk comes BEFORE the hook knows whether the command reaches a tracked file, and the cwd is no bound on what it reaches: an
+  // allow on that throw from a cwd in no project protected nothing (round 5's correctness-3 measured it: a `$(printf)` in a target
+  // threw a TypeError, and `cd <project>/docs && cp ../base/report.md $(printf)report.md` from a scratch directory wrote the
+  // tracked file while the same command from docs/ was refused). Any exception other than an UnknownPath (which has its own
+  // refusal) now refuses from any cwd, naming the exception; the cost, an internal error refusing ordinary work outside every
+  // project until it is fixed, is one retry and a visible defect, where the allow was an invisible one.
   try { return judge(command, cwd); }
   catch (e) { return internalErrorRefusal(e, cwd); }
 }
-// The refusal for an exception evaluate did not anticipate (the catch-all above): the exception's name and message, the
-// project in play named as every refusal names it.
+// The refusal for an exception evaluate did not anticipate (the catch-all above): the exception's name and message, from any
+// cwd (round 6). The project the cwd sits in, when one does, is named as every refusal names it; from a cwd in no project the
+// refusal says why it refuses there too. A root that came from TRACKCHANGES_ROOT is named by the variable, never by its value.
 function internalErrorRefusal(e, cwd) {
   const named = `${(e && e.name) || 'Error'}: ${String((e && e.message) || e).replace(/\s+/g, ' ').slice(0, 300)}`;
   let hit;
   try { hit = trackingRootAt(cwd, { closures: new Map(), roots: new Map(), refusable: new Map() }); }
   catch (e2) { hit = { root: null, dir: cwd, fromEnv: false, unknown: `${(e2 && e2.name) || 'Error'}: ${String((e2 && e2.message) || e2).replace(/\s+/g, ' ').slice(0, 300)}` }; }
-  if (!hit) return null;   // no tracked project in play from this directory: the guard's subject is not here
-  const where = hit.unknown ? `whether ${cwd} sits in a project that tracks files is not known either (${hit.unknown}), and such a project` : `${hit.fromEnv ? 'the project TRACKCHANGES_ROOT names' : hit.root}`;
+  const where = !hit ? 'a command can name a tracked file of any project from any directory (an absolute path, a `cd`), so I refuse here too'
+    : hit.unknown ? `whether ${cwd} sits in a project that tracks files is not known either (${hit.unknown}), and such a project tracks files whose changes are recorded for me to accept or reject`
+      : `${hit.fromEnv ? 'the project TRACKCHANGES_ROOT names' : hit.root} tracks files whose changes are recorded for me to accept or reject`;
   return `This command is blocked here: while reading it I hit an error of my own (${named}), so I cannot tell whether it `
-    + `writes a tracked file, and ${where} tracks files whose changes are recorded for me to accept or reject. Run it in a `
+    + `writes a tracked file, and ${where}. Run it in a `
     + `plainer form (one command, its paths spelled out), or make the change with track-edit, which records it for me to accept `
     + `or reject:\n${TRACK_EDIT}`;
 }
@@ -5417,6 +5726,15 @@ function judge(command, cwd) {
         + `whose changes are recorded for me to accept or reject. Spell the target as an absolute path, or cd to a literal directory `
         + `that exists first: outside that project the command then runs as usual, and a tracked file takes its change through `
         + `track-edit instead:\n${TRACK_EDIT}`;
+    }
+    if (u.why && u.why.kind === 'unresolvableReading') {
+      // THE RESOLVER'S CONTRACT (round 6): the word is built from an echo, a printf or a `${...}` word the resolver looked at and
+      // could not establish, so it says what it could not read, and the remedy is the literal text
+      return `This command is blocked here: its ${u.how} is filled in from ${u.why.spelling}, a text the shell produces when the `
+        + `command runs, and I could not establish that text: ${u.why.text}. I cannot tell what it would write, and ${where} tracks `
+        + `files whose changes are recorded for me to accept or reject. Spell the text out (the path, or the script, as literal `
+        + `words): outside that project the command then runs as usual, and a tracked file takes its change through track-edit `
+        + `instead:\n${TRACK_EDIT}`;
     }
     if (u.why && u.why.kind === 'splitOperand') {
       // THE SPLIT OPERAND (the third fix-up): the writer's one operand is an unquoted expansion the shell may split into the two it needs

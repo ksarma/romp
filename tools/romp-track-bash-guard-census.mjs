@@ -75,6 +75,9 @@ export const CENSUS = {
   NODE_OPEN: { side: 'WRITE', consumer: 'for (const m of t.matchAll(NODE_OPEN)) if (', why: 'as NODE_WRITE' },
   NODE_COPY: { side: 'WRITE', consumer: 'for (const m of t.matchAll(NODE_COPY)) take(', why: 'as NODE_WRITE' },
   WRITER_CASES: { side: 'WRITE', consumer: 'switch (name) {', why: 'the writer cases of extract\'s switch: a writer not listed falls to `default`, the contract\'s allow-by-default for an unmodelled writer, stated on the four surfaces with the list of the ones the passes found' },
+  ESCAPE_READERS: { side: 'WRITE', consumer: 'const r = ESCAPE_READERS[reader];', why: 'a reader missing an escape a shell interprets (an octal form, a hex digit count, `\\u` in dash) yields a text the union lacks, so a script the shell runs under that text is read under another (round 5\'s regression-2: the bare octal dash\'s echo reads); the readers are pinned by execution over the escape grammar, and a reading reaches a target only when plain (THE RESOLVER\'S CONTRACT)' },
+  ECHO_SHELLS: { side: 'WRITE', consumer: "const spelled = ECHO_SHELLS.map((sh) => echoOperands(words, sh).join(' '));", why: 'a shell missing from the union has no reading of its echo, so a text it alone prints is not read as a script' },
+  PRINTF_SHELLS: { side: 'WRITE', consumer: 'for (const sh of PRINTF_SHELLS) {', why: 'a shell missing from the union has no reading of its printf, so a text it alone prints is not read as a script' },
   ROOT_MARKERS: { side: 'WRITE', consumer: "for (const m of ['.obsidian', '.git', '.trackchanges'])", why: 'markerAt mirrors store-io\'s root markers; a marker store-io adds and this list lacks would make family 5 miss a nested root, a WRITE only if store-io adds one' },
 };
 export const SIDES = new Set(['WRITE', 'REFUSE', 'NONE']);

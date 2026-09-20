@@ -4364,6 +4364,35 @@ document stands on its own, each with the reasoning it was given.
     as a first-person pronoun to the plan tests' quoted-utterance pin); with the split operand removed, `# pass 2 # fail 2`
     (`S-ifs-named: refused`); with the process-substitution script operand not read, `# pass 2 # fail 2` (`E-script-operand:
     refused`).
+    ROUND 6 (2026-09-20; round 5's ruling on the third fix-up's head): THE RESOLVER'S CONTRACT. Round 5 found four readings of the
+    third fix-up that turned a refusal of the base into an allow, each a text the machinery computed, believed and trusted: printf's
+    width and precision ignored (`echo x > $(printf '%.9s' report.mdXX)` from docs/ judged on report.mdXX while bash, zsh and dash
+    wrote report.md), an unquoted glob character switching the readings off (`bash -c "${x:-cp ../base/*.md report.md}"` handed to
+    the shell unread), the octal escape without a leading zero missing from the union (`$(echo 'repor\164.md')` judged on the
+    spelling while dash wrote report.md; `$(printf '%b' ..)` while bash and dash did), and THE SPLIT OPERAND exempting every
+    double-quoted word (`cp "$@"` copying in every shell). The contract, stated at the reading functions in the hook and consumed in
+    two places (lex's `placeReading`, extract's `scriptTexts`): a reading function answers sound texts (every text some shell could
+    produce), UNRESOLVABLE (the resolver looked and cannot establish the text), or null (the resolver does not apply), and nothing
+    else; a reading takes the text road, the word's literal characters judged as a target, only when plain, one text from no
+    interpretation, so nothing a reader could get wrong reaches a target judgement; every other reading travels the script road,
+    where a reading the union lacks can at worst leave a script as unread as the base left it; and UNRESOLVABLE refuses in both
+    places, never the residual pass. printf's `%s` and `%b` are read with the `-` flag, a width and a precision, `%%` and each shell's
+    escapes; every other conversion, flag, a `*` from a non-digit operand, a non-ASCII operand under a width or precision, an option
+    word and a missing format are UNRESOLVABLE, and `-v` is the empty text every shell prints. Nine escape readers (echo, a printf format and `%b`, in bash, zsh and dash) are
+    derived from the manuals and pinned by execution. A glob character, a brace list, a shell-dependent quoting or an expansion the
+    resolver does not read in an echo operand or the default word is UNRESOLVABLE, so `s='cp ..'; echo "$s" | bash`, the piped-script
+    matrix's residual-value producer, is refused now and its five rows moved out of the residual set (ids `value-unread/..`,
+    verdict r, the same writers). `dqSingleField` exempts a double-quoted operand from the split rule only when proven one field
+    (the `@` forms, `[@]`, `${!..}` and zsh's `(`, `=`, `~` and `^` openers may split). The crash round 5's correctness-3 found (`printf`
+    with no format, `printf --`, `printf -v`: an empty reading, a TypeError, a refusal inside a project and an allow outside one
+    while every shell wrote) is closed by the same rule (the missing format UNRESOLVABLE, `-v` the empty text, so
+    `$(printf -v x a)report.md` is judged by name from any cwd), and the catch-all refuses from every cwd, because the walk throws before
+    the hook knows what a command reaches and the cwd bounds nothing (a `cd <project>/docs && cp .. $(printf)report.md` from a
+    scratch directory wrote the tracked file). Pinned: a structural test deriving the reading functions from the hook's source
+    (called outside the two places, or a word's readings read elsewhere, reds), the readers and the printf forms by execution in the
+    three shells, the rows test's round-6 group, the shapes test's single-field rows and the catch-all's three stages from a cwd in
+    no project. Stated, not closed: zsh's glob grouping (`cp ../base/(r)eport.md report.md` handed to zsh, literal or through a
+    reading) is read as a subshell by the lexer's zsh grammar and allowed while zsh copies, a lexer gap outside the resolver.
 48. **Sessions commit the comments folder** (2026-09-10). The user found that their sessions never added
     `.trackchanges/` to git, so the user's comments on the sessions' files and the record of the tracked changes
     were not archived with the work. Decision 25 is unchanged: romp does no git operation, and a `.gitignore` line is the

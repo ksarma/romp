@@ -18,6 +18,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 import * as guard from '../hooks/romp-track-bash-guard.mjs';
+import engine from '../vendor/track-changents/engine.js';   // the module the hook holds, so a throw planted in it reaches the hook (round 6's catch-all stages)
 import { CENSUS, census, enumerateLists } from './romp-track-bash-guard-census.mjs';
 
 // a namespace import, so a run of this file against an older hook (the red-on-base check) reports each test on its own
@@ -4708,7 +4709,7 @@ test("round 5, peel for the frame, not for the freeze: a `readonly`, `declare -r
   } finally { process.env.HOME = savedHome; w.rm(); }
 });
 
-test('round 5, the catch-all refuses: a command word that is an Object.prototype key inside a body no longer throws (an own-property lookup on the compound tables), so the write after it is refused by name where the throw was swallowed into an allow; and an exception planted inside the walk refuses while a tracked project is in play, naming the exception, and passes with no project in play', () => {
+test('round 5, the catch-all refuses: a command word that is an Object.prototype key inside a body no longer throws (an own-property lookup on the compound tables), so the write after it is refused by name where the throw was swallowed into an allow; and an exception planted inside the walk refuses, naming the exception, from the tracked cwd and (round 6) from a cwd in no project too, at each of the three stages of judge: the walk, the literal judgement and the in-play decision', () => {
   const w = sixthPassWorld();
   const savedHome = process.env.HOME;
   process.env.HOME = w.HOME;
@@ -4730,7 +4731,12 @@ test('round 5, the catch-all refuses: a command word that is an Object.prototype
       const inPlay = evaluate(payload('cp base/report.md scratch/keep.md', w.NA));
       assert.ok(inPlay && inPlay.includes('an error of my own (Error: planted by the test)') && inPlay.includes(w.NA) && inPlay.includes('track-edit'), `the planted throw refuses, naming it and the project: ${inPlay}`);
       assert.ok(!/\u2014/.test(inPlay) && !ROMP_NOUNS.test(inPlay.split(w.W).join('<w>')), 'no em dash, no romp noun');
-      assert.equal(evaluate(payload('cp x.md y.md', w.OUT)), null, 'from a cwd in no project the same throw passes: the guard\'s subject is not there');
+      // ROUND 6: the catch-all refuses from EVERY cwd. judge reads the command before it asks which project any target puts in play, so a
+      // throw in the walk comes before the hook knows what the command reaches, and the cwd bounds nothing (a literal absolute target or a
+      // `cd` reaches a project from any directory); round 5's allow here protected nothing (correctness-3: a `$(printf)` target threw and
+      // `cd <project>/docs && cp ../base/report.md $(printf)report.md` from a scratch directory wrote the tracked file)
+      const outRefusal = evaluate(payload('cp x.md y.md', w.OUT));
+      assert.ok(outRefusal && outRefusal.includes('an error of my own (Error: planted by the test)') && outRefusal.includes('from any directory'), `stage (a), the walk: from a cwd in no project the same throw refuses too, and says why it refuses there: ${outRefusal}`);
       // the in-play check itself throwing (round 5's addendum, the mutation lens M22): with the config read planted to fail too, the
       // refusal says the project in play is not known either, naming that error, and still refuses (a null there was an allow)
       const realAccess = fs.accessSync;
@@ -4741,6 +4747,26 @@ test('round 5, the catch-all refuses: a command word that is an Object.prototype
       } finally { fs.accessSync = realAccess; }
     } finally { path.basename = real; }
     assert.equal(evaluate(payload('cp base/report.md scratch/keep.md', w.NA)), null, 'with the plant removed the copy is judged as ever');
+    // the other two stages, each planted in a function the hook reaches only there and each from a cwd in no project: (b) the literal
+    // judgement (engine.isTracked, reached through isGuardedPath for a literal target inside a project; until round 6 isGuardedPath's own
+    // catch read any other throw as not guarded, an allow on an internal error), (c) the in-play decision for a target the hook cannot
+    // read (path.relative, reached through outside() when TRACKCHANGES_ROOT names a root)
+    const refusesEverywhere = (label, cmd, cwd) => { const r = evaluate(payload(cmd, cwd)); assert.ok(r && r.includes('an error of my own (Error: planted by the test)') && r.includes('track-edit'), `${label}: refused from ${cwd === w.OUT ? 'a cwd in no project' : 'the tracked cwd'}, naming the exception: ${r}`); return r; };
+    const realIsTracked = engine.isTracked;
+    try {
+      engine.isTracked = () => { throw new Error('planted by the test'); };
+      refusesEverywhere('stage (b), the literal judgement', `cp ${w.NA}/base/report.md ${w.NA}/docs/other.md`, w.OUT);
+      refusesEverywhere('stage (b), the literal judgement', 'cp base/report.md scratch/keep.md', w.NA);
+    } finally { engine.isTracked = realIsTracked; }
+    const realRelative = path.relative;
+    const savedRoot = process.env.TRACKCHANGES_ROOT;
+    try {
+      process.env.TRACKCHANGES_ROOT = w.NA;
+      path.relative = () => { throw new Error('planted by the test'); };
+      const c = refusesEverywhere('stage (c), the in-play decision', 'cp x.md $y', w.OUT);
+      assert.ok(!c.includes(w.NA), 'the root TRACKCHANGES_ROOT names stays out of the refusal');
+    } finally { path.relative = realRelative; if (savedRoot === undefined) delete process.env.TRACKCHANGES_ROOT; else process.env.TRACKCHANGES_ROOT = savedRoot; }
+    assert.equal(evaluate(payload('cp x.md y.md', w.OUT)), null, 'with every plant removed a copy from a cwd in no project is judged as ever');
     // the process-level catch (M26): a throw that escapes evaluate itself, here process.cwd() on a directory removed after the hook
     // started (the payload names no cwd), refuses with the exception named rather than exiting 0
     const gone = fs.mkdtempSync(path.join(os.tmpdir(), 'romp-bash-guard-gone-'));
@@ -5943,7 +5969,8 @@ test("round 5's fifth addendum, the construct matrix: head (the command-position
 // the quoting of the script (single, double) x the script (a copy every shell performs; `[[ x > report.md ]]`, a redirection in
 // dash's grammar alone; `[[ a ]]>report.md`, a redirection in every grammar) x the consumer (each shell of the hook's SHELLS) x
 // its form (bare, `-s`, `-`), from docs/; and, marked residual, the producers the guard does not read piped into each consumer (a
-// `cat f`, a `"$s"` whose value has whitespace and is never resolved, a `tee`, a subshell, a group, a function): those rows are
+// `cat f`, a `tee`, a subshell, a group, a function; a `"$s"` whose value has whitespace was among them until round 6, when THE
+// RESOLVER'S CONTRACT made an echo operand the resolver cannot read UNRESOLVABLE, so its rows are refused, `value-unread/*`): those rows are
 // expected ALLOWED, the documented residual, and the fixture records the shells that write. The hard invariant holds over the
 // literal rows; the refusals where no shell writes are the cost, by class: absent (a consumer not installed on the box: ksh
 // here), skipped-test (the `[[ x > report.md ]]` script handed to a consumer of the test grammar whose `[[` compares, refused
@@ -6016,7 +6043,6 @@ const PIPED_SCRIPT_MATRIX = {
   // the producers the guard does not read (the residual), given the single-quoted copy script
   RESIDUAL: [
     ['cat', (q) => 'cat ../scratch/other.md'],
-    ['value', (q) => `s=${q}; echo "$s"`],
     ['tee', (q) => `echo ${q} | tee /dev/null`],
     ['subshell', (q) => `(echo ${q})`],
     ['group', (q) => `{ echo ${q}; }`],
@@ -6040,6 +6066,11 @@ const pipedScriptMatrixRows = () => {
     for (const consumer of PIPED_SCRIPT_MATRIX.CONSUMERS) {
       rows.push({ id: `residual-${producer}/single/cp/${consumer}/bare`, producer: `residual-${producer}`, quoting: 'single', script: 'cp', consumer, form: 'bare', residual: true, cwd: 'nad', cmd: `${prodOf("'cp ../base/report.md report.md'")} | ${consumer}` });
     }
+  }
+  // round 6 (THE RESOLVER'S CONTRACT): an echo whose operand is an expansion the resolver does not read is UNRESOLVABLE, so the
+  // `value` producer is refused, not residual; its rows keep their place in the fixture under ids of their own
+  for (const consumer of PIPED_SCRIPT_MATRIX.CONSUMERS) {
+    rows.push({ id: `value-unread/single/cp/${consumer}/bare`, producer: 'value-unread', quoting: 'single', script: 'cp', consumer, form: 'bare', residual: false, cwd: 'nad', cmd: `s='cp ../base/report.md report.md'; echo "$s" | ${consumer}` });
   }
   return rows;
 };
@@ -6350,13 +6381,13 @@ test("round 5's fifth addendum, second fix-up, the rows: an expansion nested in 
       ['S-echo-sh-dash', 'nad', "echo 'cp ../base/report.md report.md' | sh -", A, 'name'],
       ['S-echo-dq', 'nad', 'echo "cp ../base/report.md report.md" | bash', A, 'name'],
       ['S-echo-wrapped', 'nad', "command echo 'cp ../base/report.md report.md' | env bash", A, 'name'],   // the producer and the consumer behind wrappers the hook peels
-      ['S-echo-expansion-kept', 'nad', "echo 'cp ../base/report.md' $t | bash", N, ['literal', '$t']],   // an expansion in the script keeps its spelling: the non-literal rule (bash: the copy has one operand and fails)
+      ['S-echo-expansion-kept', 'nad', "echo 'cp ../base/report.md' $t | bash", N, ['text', 'an operand of the echo is an expansion whose value I do not read']],   // round 6 (THE RESOLVER'S CONTRACT): an echo operand the resolver does not read makes the printed text UNRESOLVABLE, so the piped script refuses with that reason (until round 6 the spelling `$t` stood in the script and the copy's operand was refused as not literal; no shell writes: the copy has one operand and fails)
       ['S-echo-untracked', 'nad', "echo 'cp ../base/report.md ../scratch/keep.md' | bash", N, 'allow'],
       ['S-echo-read', 'nad', "echo 'cat report.md' | bash", N, 'allow'],
       ['S-echo-c', 'nad', "echo 'cp ../base/report.md report.md' | bash -c 'true'", N, 'allow'],   // a -c script: the pipe is not the script
       ['S-printf-v', 'nad', "printf -v t 'cp ../base/report.md report.md' | bash", N, 'allow'],   // into a variable, nothing printed
       // (5) the residual, named: a producer the guard does not read
-      ['R-value', 'nad', "s='cp ../base/report.md report.md'; echo \"$s\" | bash", A, 'allow'],   // a value with whitespace is never resolved (the readability rule), as `bash <<< \"$s\"` is not read
+      ['R-value', 'nad', "s='cp ../base/report.md report.md'; echo \"$s\" | bash", A, ['text', 'an operand of the echo is an expansion whose value I do not read']],   // a value with whitespace is never resolved (the readability rule); round 6: the echo is a producer the resolver reads and its operand one it cannot establish, UNRESOLVABLE, so the piped script refuses (`bash <<< \"$s\"` stays the unread residual: no resolver applies to a here-string word)
       ['R-cat', 'nad', 'cat ../scratch/other.md | bash', N, 'allow'],
       ['R-tee', 'nad', "echo 'cp ../base/report.md report.md' | tee /dev/null | bash", A, 'allow'],
       ['R-subshell', 'nad', "(echo 'cp ../base/report.md report.md') | bash", A, 'allow'],
@@ -6382,6 +6413,7 @@ test("round 5's fifth addendum, second fix-up, the rows: an expansion nested in 
         assert.ok(!/\u2014/.test(h.reason) && !ROMP_NOUNS.test(h.reason.split(w.W).join('<w>')), `${id}: no em dash, no romp noun`);
         if (expect === 'name') assert.match(h.reason, BY_NAME_RE, `${id}: by name: ${h.reason.split('\n')[0]}`);
         else if (expect[0] === 'name') assert.ok(BY_NAME_RE.test(h.reason) && h.reason.includes(expect[1]), `${id}: by name, the reason including (${expect[1]}): ${h.reason.split('\n')[0]}`);
+        else if (expect[0] === 'text') assert.ok(h.reason.includes(expect[1]), `${id}: refused, the reason including (${expect[1]}): ${h.reason.split('\n')[0]}`);   // round 6: a reading the resolver could not establish
         else assert.ok(NOT_LITERAL.test(h.reason) && h.reason.includes(expect[1]), `${id}: refused as not literal, the reason including (${expect[1]}): ${h.reason.split('\n')[0]}`);
       }
       if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`)) for (const shell of shellsFor(A, id)) {   // a program the command names and this box lacks: NOT RUN by name, the row's verdict above still asserted
@@ -6712,5 +6744,351 @@ test("round 5's addendum, the freeze lens: a `readonly` freezes the guard's name
     assert.deepEqual(extractWriteTargets('x=scratch/keep.md; readonly x; x=docs/report.md; cp base/report.md $x', w.NA).targets.map((t) => t.path), [path.join(w.NA, 'scratch', 'keep.md')], 'the unwrapped freeze resolves');
     assert.deepEqual(extractWriteTargets('x=scratch/keep.md; if false; then readonly x; fi; x=docs/report.md; cp base/report.md $x', w.NA).targets, [], 'a freeze in a body taints, so the later write is not read as skipped');
     assert.deepEqual(extractWriteTargets('x=scratch/keep.md; { readonly x; } | cat; x=docs/report.md; cp base/report.md $x', w.NA).targets, [], 'a freeze in a piped group is undone at its brace');
+  } finally { process.env.HOME = savedHome; w.rm(); }
+});
+
+// ── round 6 (2026-09-20): THE RESOLVER'S CONTRACT ─────────────────────────────────────────────────────────────────────────
+//
+// Round 5 found four readings of the third fix-up that turned a refusal of the base into an allow (printf's width and precision
+// ignored, a glob character switching the readings off, the octal escape without a leading zero missing from the union, `"$@"`
+// exempted from the split rule), and a crash (`printf` with no format) refusing inside a project and allowing outside one. The
+// contract at the hook's reading functions makes the resolver's failure mode the base's refusal: a reading is sound texts,
+// UNRESOLVABLE or null; a reading reaches a word only in lex's placeReading and a script only through extract's scriptTexts; a
+// plain reading alone takes the text road. Pinned here: the structure, derived from the source; the escape readers and the printf
+// grammar by execution in the three shells; the rows, each run unguarded; the catch-all's stages.
+
+// The structure, derived from the source: the reading functions are the column-0 functions whose body calls a reading constructor
+// (`sound(`, `plain(`, `unresolvable(`), and every column-0 function that calls one, to a fixpoint; the two places are lex's `placeReading` and extract's `scriptTexts`, inner arrows at two spaces
+// closed by `  };`. A reading function may be called from a reading function's body or as placeReading's first argument, and
+// nowhere else; a constructor appears in a reading function or its own declaration; a word's `readings` or `unresolvable` is read
+// inside lex, inside scriptTexts, inside a reading function, or copied whole by resolveWord (`if (w.X) resolved.X = w.X;`); the mark is
+// `unresolvableReading`, a name of its own (the path fold's `unresolvable` prefix is another thing). Comment
+// lines and the hook's `  // ` trailing comments are not code here.
+const readingStructure = (src) => {
+  const lines = src.split('\n');
+  const code = (l) => (/^\s*\/\//.test(l) ? '' : l.replace(/\s{2,}\/\/ .*$/, ''));
+  const fns = [];
+  lines.forEach((l, i) => {
+    const m = l.match(/^(?:export )?function ([A-Za-z_$][\w$]*)\(/);
+    if (!m) return;
+    let j = i + 1;
+    while (j < lines.length && lines[j] !== '}') j++;
+    fns.push({ name: m[1], start: i, end: j });
+  });
+  const CONSTRUCTOR = /\b(?:sound|plain|unresolvable)\(/;
+  const bodyCode = (f) => lines.slice(f.start, f.end + 1).map(code).join('\n');
+  const readers = fns.filter((f) => CONSTRUCTOR.test(bodyCode(f)));
+  // and a column-0 function that calls a reading function OTHER than as placeReading's argument is one too (literalOutput wraps
+  // segmentOutput; lex, which calls the readers only through placeReading, is not), to a fixpoint
+  const direct = (f) => bodyCode(f).replace(/placeReading\([A-Za-z_$][\w$]*\(/g, 'placeReading((');
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const f of fns) if (!readers.includes(f) && readers.some((r) => new RegExp(`\\b${r.name}\\(`).test(direct(f)))) { readers.push(f); grew = true; }
+  }
+  const inner = (name) => {
+    const i = lines.findIndex((l) => l.startsWith(`  const ${name} = (`));
+    if (i < 0) return null;
+    let j = i + 1;
+    while (j < lines.length && lines[j] !== '  };') j++;
+    return { name, start: i, end: j };
+  };
+  const placeReading = inner('placeReading');
+  const scriptTexts = inner('scriptTexts');
+  const lexFn = fns.find((f) => f.name === 'lex') || null;
+  const within = (i, span) => !!span && i >= span.start && i <= span.end;
+  const inReader = (i) => readers.some((r) => within(i, r));
+  const problems = [];
+  lines.forEach((raw, i) => {
+    const l = code(raw);
+    if (!l) return;
+    for (const r of readers) {
+      if (!new RegExp(`\\b${r.name}\\(`).test(l)) continue;
+      if (i === r.start) continue;   // its own declaration
+      if (inReader(i)) continue;
+      if (new RegExp(`placeReading\\(${r.name}\\(`).test(l)) continue;   // consumed through the one place in lex
+      problems.push(`${r.name} is called outside a reading function and not through placeReading at line ${i + 1}: ${l.trim().slice(0, 140)}`);
+    }
+    if (CONSTRUCTOR.test(l) && !/^const (?:sound|plain|unresolvable) = /.test(l) && !inReader(i)) problems.push(`a reading constructor outside a reading function at line ${i + 1}: ${l.trim().slice(0, 140)}`);
+    if (/\.(?:readings|unresolvableReading)\b/.test(l) && !within(i, lexFn) && !within(i, scriptTexts) && !inReader(i) && !/^\s*if \(w\.(readings|unresolvableReading)\) resolved\.\1 = w\.\1;$/.test(l)) problems.push(`a word's readings or mark is read outside lex and scriptTexts at line ${i + 1}: ${l.trim().slice(0, 140)}`);
+  });
+  return { readers: readers.map((r) => r.name), placeReading, scriptTexts, lexFn, problems };
+};
+
+test("round 6, THE RESOLVER'S CONTRACT is structural: the reading functions are derived from the hook's source (a body that calls a reading constructor), each is called only from a reading function or as placeReading's argument, a constructor appears only in a reading function, and a word's readings or unresolvable mark is read only inside lex, inside scriptTexts, inside a reading function or copied whole; a reading planted elsewhere, a consumer planted elsewhere and a new reading function consumed elsewhere each red", () => {
+  const src = fs.readFileSync(HOOK, 'utf8');
+  const s = readingStructure(src);
+  assert.ok(s.placeReading && s.scriptTexts && s.lexFn, 'the two places and lex are found in the source');
+  assert.ok(s.readers.length >= 5, `at least five reading functions are derived (got ${s.readers.join(', ')})`);
+  for (const name of ['echoOutput', 'printfOutput', 'segmentOutput', 'literalOutput', 'defaultWordReading']) assert.ok(s.readers.includes(name), `${name} is a reading function by derivation`);
+  assert.deepEqual(s.problems, [], 'every reading is consumed through the two places');
+  // the contract is stated where the readings live and recorded on the header
+  assert.ok(src.includes("// THE RESOLVER'S CONTRACT (round 6 of the review of fork PR #780, 2026-09-20;") && src.includes('THE TWO ROADS.') && src.includes("// ROUND 6 (2026-09-20; round 5's ruling on the third fix-up's head): THE RESOLVER'S CONTRACT"), 'the contract is written at the reading functions and recorded on the header');
+  // planted: a consumer elsewhere, a reading called elsewhere, a new reading function consumed elsewhere
+  const consumer = readingStructure(src + '\nfunction plantedConsumer(w) { return w.readings; }\n');
+  assert.ok(consumer.problems.some((p) => p.includes("a word's readings or mark is read outside") && p.includes('plantedConsumer')), `a planted consumer reds: ${consumer.problems.join(' | ')}`);
+  const call = readingStructure(src + "\nconst plantedCall = literalOutput('echo x', null, 0);\n");
+  assert.ok(call.problems.some((p) => p.startsWith('literalOutput is called outside')), `a planted call reds: ${call.problems.join(' | ')}`);
+  const fresh = readingStructure(src + "\nfunction plantedReading(w) {\n  return w.literal ? sound([w.text]) : unresolvable('planted');\n}\nconst plantedUse = plantedReading({ literal: true, text: 'x' });\n");   // a column-0 function closed by its own `}` line, as the hook's are
+  assert.ok(fresh.readers.includes('plantedReading') && fresh.problems.some((p) => p.startsWith('plantedReading is called outside')), `a new reading function is derived and its consumer elsewhere reds: ${fresh.problems.join(' | ')}`);
+  const mark = readingStructure(src + "\nfunction plantedMark(w) { if (w.unresolvableReading) return []; return [w.text]; }\n");
+  assert.ok(mark.problems.some((p) => p.includes('plantedMark')), 'a planted read of the mark reds');
+});
+
+// The escape forms the manuals name (bash: echo and printf under Shell Builtin Commands; dash(1): echo and printf; zshbuiltins(1):
+// echo and printf), each letter with the digit-count edges of the octal, hex and unicode forms, an escape no manual names, and
+// `\c`. `\%` is left to the printf test (in a format it opens a conversion).
+const ESCAPE_FORMS = ['\\a', '\\b', '\\e', '\\E', '\\f', '\\n', '\\r', '\\t', '\\v', '\\\\', '\\"', "\\'", '\\?', '\\q', '\\8', '\\/', '\\0', '\\01', '\\012', '\\0101', '\\1', '\\12', '\\101', '\\1011', '\\x4', '\\x41', '\\x411', '\\xg', '\\u41', '\\u0041', '\\u00411', '\\U1F600', '\\U0001F600', '\\c'];
+// how each reader is reached in its shell, the text handed in through the environment so no quoting rewrites it
+const READER_COMMANDS = {
+  'echo bash': ['bash', ['--norc', '--noprofile', '-c', 'echo -e "$F"']],
+  'echo zsh': ['zsh', ['-f', '-c', 'echo "$F"']],
+  'echo dash': ['dash', ['-c', 'echo "$F"']],
+  'format bash': ['bash', ['--norc', '--noprofile', '-c', 'printf "$F"']],
+  'format zsh': ['zsh', ['-f', '-c', 'printf "$F"']],
+  'format dash': ['dash', ['-c', 'printf "$F"']],
+  '%b bash': ['bash', ['--norc', '--noprofile', '-c', 'printf %b "$F"']],
+  '%b zsh': ['zsh', ['-f', '-c', 'printf %b "$F"']],
+  '%b dash': ['dash', ['-c', 'printf %b "$F"']],
+};
+
+test("round 6, the escape readers by execution: every reader the hook derives (echo, a printf format, a `%b` operand, in bash, zsh and dash) is run in its shell, in the C and the UTF-8 locale, over every escape form the manuals name, and the hook's reading equals the shell's output byte for byte (a `\\c` stopping where the shell stops; a byte, a NUL or a locale-dependent code point the hook does not decode declared, and the shell's output showing why); bash's xpg_echo reads as its `-e` does; and echo's union, read through the lexer, holds every shell's output and nothing no shell prints", () => {
+  const present = shellsFor(['bash', 'zsh', 'dash'], 'the escape readers');
+  const readers = Object.keys(guard.ESCAPE_READERS);
+  assert.equal(readers.length, 9, 'nine readers: three contexts in three shells');
+  // every shell run below is a shell the probe passed (`present`), in two locales: a `\u` or `\U` code point at or above 0x80 prints
+  // as the character in a UTF-8 locale and as the escape spelled in the C locale (bash, measured), so a form whose output differs
+  // between the two, or holds a byte at or above 0x80 or a NUL, is one the hook must decline rather than read
+  const LOCALES = ['C', 'C.UTF-8'];
+  const runIn = (sh, argv, text, locale) => spawnSync(sh, argv, { encoding: 'buffer', env: { PATH: process.env.PATH, F: text, LC_ALL: locale }, timeout: 10000 }).stdout;
+  const undecodable = (outs) => outs.some((o) => o.includes(0) || [...o].some((b) => b >= 0x80)) || !outs.every((o) => o.equals(outs[0]));
+  let compared = 0;
+  for (const key of readers) {
+    const [sh, argv] = READER_COMMANDS[key];
+    assert.ok(argv, `the test knows how to reach ${key}`);
+    if (!present.includes(sh)) continue;
+    for (const form of ESCAPE_FORMS) {
+      const text = `A${form}Z`;
+      const outs = LOCALES.map((locale) => runIn(sh, argv, text, locale));
+      let got;
+      try { got = guard.shellEscapes(text, key); }
+      catch (e) {
+        assert.equal(e.constructor.name, 'Undecodable', `${key} ${form}: only an undecodable byte throws: ${e.message}`);
+        assert.ok(undecodable(outs) || /^\\[uU]/.test(form), `${key} ${form}: the hook declines a text the shell prints as a byte above 0x7f, a NUL, or differently by locale (a unicode escape is declined in every reader, since bash and dash print it by locale): ${JSON.stringify(outs.map((o) => o.toString('latin1')))}`);
+        compared++;
+        continue;
+      }
+      for (const [k, locale] of LOCALES.entries()) {
+        let out = outs[k];
+        if (key.startsWith('echo') && !got.stopped) { assert.equal(out[out.length - 1], 0x0a, `${key} ${form} (${locale}): echo ends with a newline`); out = out.subarray(0, -1); }
+        assert.equal(out.toString('utf8'), got.text, `${key} ${form} (${locale}): the reader's text is the shell's output${got.stopped ? ' (stopped at the c escape)' : ''}`);
+      }
+      compared++;
+    }
+  }
+  const bashLeg = present.find((sh) => sh === 'bash') || null;   // the probe's bash, or none: a leg never names a shell beside a runner call
+  if (bashLeg) for (const form of ESCAPE_FORMS) {   // xpg_echo is the -e reading
+    const e = runIn(bashLeg, ['--norc', '--noprofile', '-c', 'echo -e "$F"'], `A${form}Z`, 'C.UTF-8');
+    const x = runIn(bashLeg, ['--norc', '--noprofile', '-c', 'shopt -s xpg_echo; echo "$F"'], `A${form}Z`, 'C.UTF-8');
+    assert.ok(e.equals(x), `xpg_echo prints as -e does for ${form}`);
+  }
+  assert.ok(compared >= ESCAPE_FORMS.length * 3 * present.length, `every form was compared in every present shell (${compared})`);
+  // echo's union through the lexer: the word of `bash -c "$(echo '..')"` stands for every shell's output, and for nothing no shell prints
+  const echoArgv = (sh, e = false) => (sh === 'bash' ? ['--norc', '--noprofile', '-c', e ? 'echo -e "$F"' : 'echo "$F"'] : sh === 'zsh' ? ['-f', '-c', 'echo "$F"'] : ['-c', 'echo "$F"']);
+  let unions = 0;
+  let declined = 0;
+  let quoteForms = 0;
+  for (const form of ESCAPE_FORMS) {
+    if (form === '\\"' || form === "\\'") { quoteForms++; continue; }   // one quoting for every form below: the single-quoted operand, which a quote form would end
+    const text = `A${form}Z`;
+    const w = lex(`bash -c "$(echo '${text}')"`).segments[0].words[2];
+    const union = w.readings || (w.literal ? [w.text] : null);
+    const raw = [];
+    for (const sh of present) for (const locale of LOCALES) raw.push(runIn(sh, echoArgv(sh), text, locale));
+    if (bashLeg) for (const locale of LOCALES) raw.push(runIn(bashLeg, echoArgv(bashLeg, true), text, locale));
+    const produced = new Set(raw.map((o) => o.toString('utf8').replace(/\n+$/, '')));
+    if (union == null) {
+      assert.ok(w.unresolvableReading, `${form}: no union means the word is marked unresolvable`);
+      assert.ok(undecodable(raw) || /^\\[uU]/.test(form), `${form}: unresolvable only where a shell prints a byte or NUL the hook does not decode, or differently by locale, or a unicode escape (declined whatever the shells print, since bash and dash print it by locale)`);
+      declined++;
+      continue;
+    }
+    for (const t of produced) assert.ok(union.includes(t), `${form}: a shell's output ${JSON.stringify(t)} is in the union ${JSON.stringify(union)}`);
+    if (present.length === 3) for (const t of union) assert.ok(produced.has(t), `${form}: the union's ${JSON.stringify(t)} is printed by some shell (${JSON.stringify([...produced])})`);
+    unions++;
+  }
+  assert.equal(unions + declined + quoteForms, ESCAPE_FORMS.length, `every form was either checked as a union (${unions}), declined for a reason the shells show (${declined}) or a quote form the operand's quoting cannot carry (${quoteForms})`);
+  assert.ok(unions >= 20 && declined >= 5, `both kinds are populated (${unions} unions, ${declined} declined)`);
+});
+
+// THE PRINTF GRAMMAR's form space: [format, ...operands] as the shells receive them, spelled single-quoted in the command; `resolved`
+// says whether the hook must read the form (a sound set equal to the shells' outputs) or declare it unresolvable
+const PRINTF_FORMS = [
+  // resolved: %s and %b with the - flag, a width, a precision, * from a digit operand, %%, reuse, missing operands, no conversion
+  { f: ['%s', 'ab'], resolved: true }, { f: ['%5s', 'ab'], resolved: true }, { f: ['%-5s|', 'ab'], resolved: true }, { f: ['%.2s', 'abcd'], resolved: true },
+  { f: ['%5.2s', 'abcd'], resolved: true }, { f: ['%.s', 'abc'], resolved: true }, { f: ['%.0s|', 'abc'], resolved: true }, { f: ['%3.s|', 'abc'], resolved: true },
+  { f: ['%*s', '4', 'ab'], resolved: true }, { f: ['%.*s', '2', 'abcdef'], resolved: true }, { f: ['%-*s|', '4', 'ab'], resolved: true },
+  { f: ['%b', 'a\\tb'], resolved: true }, { f: ['%b', 'repor\\164.md'], resolved: true }, { f: ['%b', 'repor\\0164.md'], resolved: true }, { f: ['%b', '\\x41'], resolved: true },
+  { f: ['%.3b|', 'a\\tbcd'], resolved: true }, { f: ['%5b', 'x'], resolved: true }, { f: ['%b|%s', 'a\\cb', 'z'], resolved: true },
+  { f: ['%%'], resolved: true }, { f: ['%s%%', 'a'], resolved: true }, { f: ['[%s]', 'a', 'b', 'c'], resolved: true }, { f: ['%s|%s', 'only'], resolved: true },
+  { f: ['x', 'a', 'b'], resolved: true }, { f: ['cp a b'], resolved: true }, { f: ['%s %s', 'cp', 'a b'], resolved: true }, { f: ['repor\\164.md'], resolved: true },
+  { f: ['a\\cb%s', 'z'], resolved: true }, { f: ['%.30s', 'cp ../base/report.md report.mdXX'], resolved: true }, { f: ['%.9s', 'report.mdXX'], resolved: true },
+  // unresolvable: other conversions, other flags, a * from a non-digit, a non-ASCII operand under a precision, a bad %, an option word, no format
+  { f: ['%d', '7'], resolved: false }, { f: ['report-%03d.md', '7'], resolved: false }, { f: ['%c%s', 'rx', 'eport.md'], resolved: false }, { f: ['%q', 'a b'], resolved: false },
+  { f: ['%x', '255'], resolved: false }, { f: ['%05s', 'ab'], resolved: false }, { f: ['%+s', 'ab'], resolved: false }, { f: ['%*s', '-4', 'ab'], resolved: false },
+  { f: ['%.2s', 'héllo'], resolved: false }, { f: ['%5%'], resolved: false }, { f: ['abc%'], resolved: false }, { f: ['%|'], resolved: false }, { f: ['\\%s', 'a'], resolved: true },   // `\%s`: the backslash is text and `%s` a conversion in every shell (measured), so the hook reads it as the shells do
+  { f: ['-v', 'x', '%s', 'a'], resolved: true }, { f: ['--'], resolved: false }, { f: [], resolved: false }, { f: ['-1', 'x'], resolved: false }, { f: ['a\\0b'], resolved: false }, { f: ['%b', '\\303\\251'], resolved: false },
+];
+
+test("round 6, THE PRINTF GRAMMAR by execution: over the form space (the flags, a width, a precision, `*`, the conversions, `%%`, argument reuse, missing operands, `%b` with its escapes and `\\c`, an option word, a missing format) the hook reads exactly the forms the contract models, each as the set of texts the three shells print (every shell's output in the set, every text of the set printed by some shell), and declares every other form unresolvable, never a guess", () => {
+  const present = shellsFor(['bash', 'zsh', 'dash'], 'the printf grammar');
+  const q = (s) => `'${s.replace(/'/g, `'\\''`)}'`;
+  const outOf = (sh, words) => {
+    const argv = sh === 'bash' ? ['--norc', '--noprofile', '-c', `printf ${words.map(q).join(' ')}`] : sh === 'zsh' ? ['-f', '-c', `printf ${words.map(q).join(' ')}`] : ['-c', `printf ${words.map(q).join(' ')}`];
+    return spawnSync(sh, argv, { encoding: 'buffer', env: { PATH: process.env.PATH }, timeout: 10000 }).stdout.toString('utf8').replace(/\n+$/, '');
+  };
+  let resolvedForms = 0;
+  let unresolvableForms = 0;
+  for (const { f, resolved } of PRINTF_FORMS) {
+    const cmd = `bash -c "$(printf ${f.map(q).join(' ')})"`;
+    const w = lex(cmd).segments[0].words[2];
+    const union = w && (w.readings || (w.literal ? [w.text] : null));
+    if (!resolved) {
+      assert.ok(w && w.unresolvableReading, `${JSON.stringify(f)}: declared unresolvable (got ${JSON.stringify(union)}, mark ${JSON.stringify(w && w.unresolvableReading)})`);
+      unresolvableForms++;
+      continue;
+    }
+    assert.ok(union, `${JSON.stringify(f)}: read (mark ${JSON.stringify(w && w.unresolvableReading)})`);
+    const produced = new Set(present.map((sh) => outOf(sh, f)));
+    for (const t of produced) assert.ok(union.includes(t), `${JSON.stringify(f)}: a shell's output ${JSON.stringify(t)} is in the union ${JSON.stringify(union)}`);
+    if (present.length === 3) for (const t of union) assert.ok(produced.has(t), `${JSON.stringify(f)}: the union's ${JSON.stringify(t)} is printed by some shell (${JSON.stringify([...produced])})`);
+    resolvedForms++;
+  }
+  assert.equal(resolvedForms, PRINTF_FORMS.filter((x) => x.resolved).length);
+  assert.equal(unresolvableForms, PRINTF_FORMS.filter((x) => !x.resolved).length);
+  assert.ok(resolvedForms >= 20 && unresolvableForms >= 15, 'both halves of the form space are populated');
+  // the text road takes a plain printf alone: no conversion and no backslash
+  assert.equal(lex(`bash -c "$(printf 'cp a b')"`).segments[0].words[2].literal, true, 'a conversion-free, backslash-free format is plain: the text stands in the word');
+  assert.equal(lex(`bash -c "$(printf '%s' 'cp a b')"`).segments[0].words[2].literal, false, 'a conversion is an interpretation: the word stays an expansion with the text as its reading');
+  assert.equal(lex(`echo x > $(printf '%.9s' report.mdXX)`).segments[0].redirects[0].target.literal, false, 'so a target built from a conversion is never judged on the resolved text (the base\'s refusal as a target)');
+});
+
+test("round 6, the rows: the four readings round 5 found allowing a write the base refused, refused, with the shells that write (printf's width, precision and other conversions; a glob character, a brace list or an unread expansion in a default word or an echo operand; the octal escape without a leading zero in echo and `%b`, and `\\u`; the double-quoted split forms of every shell) and their allowed twins; the empty-format crash refuses as a target the hook cannot read, never as an internal error, and from a cwd in no project the base's leading-expansion residual is what remains", () => {
+  const w = sixthPassWorld();
+  const savedHome = process.env.HOME;
+  process.env.HOME = w.HOME;
+  try {
+    const A = ['bash', 'zsh', 'dash'];
+    const BZ = ['bash', 'zsh'];
+    const BD = ['bash', 'dash'];
+    const B = ['bash'];
+    const Z = ['zsh'];
+    const D = ['dash'];
+    const N = [];
+    const CP = 'cp ../base/report.md report.md';
+    const UNREAD = 'I could not establish that text';
+    const GLOB = 'glob character';
+    const SPLIT = 'may split into several words';
+    const rows = [
+      // (1) printf: a conversion never reaches the text road (a target or a value keeps the non-literal rule), a script is read under the exact text
+      ['R6-P-target-precision', 'nad', "echo poison > $(printf '%.9s' report.mdXX)", A, ['literal', 'printf']],
+      ['R6-P-assign-precision', 'nad', "x=$(printf '%.9s' report.mdXX); cp ../base/report.md $x", A, ['literal', '$x']],
+      ['R6-P-cp-dq-precision', 'nad', "cp ../base/report.md \"$(printf '%.9s' report.mdXX)\"", A, ['literal', 'printf']],
+      ['R6-P-target-c', 'nad', "echo poison > $(printf '%c%s' rx eport.md)", A, ['literal', 'printf']],
+      ['R6-P-target-dot0', 'nad', "echo poison > $(printf '%s%.0s' report.md junk)", A, ['literal', 'printf']],
+      ['R6-P-target-fmt-precision', 'nad', "echo poison > $(printf 'report.%.2s' mdX)", A, ['literal', 'printf']],
+      ['R6-P-target-star', 'nad', "echo poison > $(printf '%.*s' 9 report.mdXX)", A, ['literal', 'printf']],
+      ['R6-P-target-width-cost', 'nad', "echo poison > $(printf '%-9s' report.md)X", N, ['literal', 'printf']],   // the cost: a width no shell writes through, refused as any expansion (the base)
+      ['R6-P-target-d-cost', 'nad', "echo poison > $(printf 'report-%03d.md' 7)", N, ['literal', 'printf']],   // a numeric conversion is unresolvable: the base's refusal (no shell writes the tracked file)
+      ['R6-P-script-truncating', 'nad', `bash -c "$(printf '%.30s' '${CP}XX')"`, A, 'name'],   // the precision cuts the XX: read under the exact text, refused by name
+      ['R6-P-script-wide', 'nad', `bash -c "$(printf '%.60s' '${CP}')"`, A, 'name'],
+      ['R6-P-piped-truncating', 'nad', `printf '%.30s\\n' '${CP}XX' | bash`, A, 'name'],
+      ['R6-P-procsub-truncating', 'nad', `bash <(printf '%.30s\\n' '${CP}XX')`, BZ, 'name'],
+      ['R6-P-herestring-truncating', 'nad', `bash <<< "$(printf '%.30s' '${CP}XX')"`, BZ, 'name'],
+      ['R6-P-heredoc-truncating', 'nad', `bash <<EOF\n$(printf '%.30s' '${CP}XX')\nEOF`, A, 'name'],
+      ['R6-P-script-q-unresolvable', 'nad', `bash -c "$(printf '%q' '${CP}')"`, N, ['text', 'conversion I do not model']],   // bash and zsh quote the text into one command name, dash rejects %q: no shell writes, the script refuses as one the resolver cannot establish
+      ['R6-P-script-d-unresolvable', 'nad', `bash -c "$(printf '%s %d' 'true;' 1) || ${CP}"`, A, ['text', 'conversion I do not model']],   // the printed `true; 1` fails on `1` and the `||` copy runs in every shell: refused as a script the resolver cannot establish
+      // (B) the empty format: a target the hook cannot read (the base), never an internal error; from a cwd in no project the moved directory puts the project in play
+      ['R6-C-bare-printf', 'nad', 'cp ../base/report.md $(printf)report.md', A, ['literal', 'printf']],
+      ['R6-C-dashdash', 'nad', 'cp ../base/report.md $(printf --)report.md', A, ['literal', 'printf']],
+      ['R6-C-v', 'nad', 'cp ../base/report.md $(printf -v x a)report.md', A, 'name'],   // `printf -v` prints nothing in every shell (measured), a plain empty text: the target is report.md by name
+      ['R6-C-v-dq', 'nad', 'cp ../base/report.md "$(printf -v x a)"report.md', A, 'name'],
+      ['R6-C-from-out-cd', 'out', 'cd {NA}/docs && cp ../base/report.md $(printf)report.md', A, ['literal', 'printf']],
+      ['R6-C-from-out-leading', 'out', 'cp {NA}/base/report.md $(printf -v x a){NA}/docs/report.md', A, 'name'],   // round 5's head threw here and allowed; the empty text resolves and the absolute path is judged by name from a cwd in no project
+      ['R6-C-from-out-leading-bare', 'out', 'cp {NA}/base/report.md $(printf){NA}/docs/report.md', A, 'allow'],   // THE RESIDUAL the four surfaces state: a leading opaque expansion from a cwd in no project (the base's verdict, kept: the missing format is unresolvable and the word non-literal)
+      // (2) a glob character, a brace list or an unread expansion in a default word or an echo operand: unresolvable, refused, never skipped
+      ['R6-G-dq-default-star', 'nad', `bash -c "\${x:-cp ../base/*.md report.md}"`, A, ['text', GLOB]],
+      ['R6-G-dq-default-qmark', 'nad', `bash -c "\${x:-cp ../base/repor?.md report.md}"`, A, ['text', GLOB]],
+      ['R6-G-dq-default-bracket', 'nad', `bash -c "\${x:-cp ../base/[r]eport.md report.md}"`, A, ['text', GLOB]],
+      ['R6-G-dq-default-target-glob', 'nad', `bash -c "\${x:-cp ../base/report.md re[p]ort.md}"`, A, ['text', GLOB]],
+      ['R6-G-echo-star-command', 'nad', '$(echo cp ../base/*.md report.md)', A, ['text', GLOB]],
+      ['R6-G-echo-star-dq-c', 'nad', 'bash -c "$(echo cp ../base/*.md report.md)"', A, ['text', GLOB]],
+      ['R6-G-echo-star-herestring', 'nad', 'bash <<< "$(echo cp ../base/*.md report.md)"', BZ, ['text', GLOB]],
+      ['R6-G-backtick-star', 'nad', 'bash -c "`echo cp ../base/*.md report.md`"', A, ['text', GLOB]],
+      ['R6-G-default-star-piped', 'nad', `echo "\${x:-cp ../base/*.md report.md}" | bash`, A, ['text', GLOB]],
+      ['R6-G-unquoted-default-brace', 'nad', `bash -c \${x:-cp ../base/{report.md,x.txt} .}`, Z, ['text', 'brace list']],   // zsh expands the brace list in the unquoted word and hands the copy to bash; bash and dash close the ${...} at the first brace
+      ['R6-G-default-unread-sub', 'nad', `bash -c "\${x:-$(cat ../scratch/other.md)}"`, N, ['text', 'whose text I do not read']],   // the resolver applies to the operator's word and cannot establish it (the file names no command that writes)
+      ['R6-G-echo-unread-var', 'nad', `bash -c "$(echo $t)"`, N, ['text', 'whose value I do not read']],
+      ['R6-G-sq-echo-star-twin', 'nad', `bash -c "$(echo 'cp ../base/*.md report.md')"`, A, 'name'],   // quoted, the text is exact and the copy is read by name
+      ['R6-G-plain-name-residual', 'nad', 'bash -c "${x}"', N, 'allow'],   // no operator: no reading of the default word, the residual decision 47 names
+      // (3) the octal escape without a leading zero (dash's echo; bash's and dash's %b) and `\u` (bash's -e and zsh): the union holds them, so the word is not literal
+      ['R6-O-echo-bare-octal-target', 'nad', "echo poison > $(echo 'repor\\164.md')", D, ['literal', 'echo']],
+      ['R6-O-echo-bare-octal-cp', 'nad', "cp ../base/report.md $(echo 'repor\\164.md')", D, ['literal', 'echo']],
+      ['R6-O-b-bare-octal-target', 'nad', "echo poison > $(printf '%b' 'repor\\164.md')", BD, ['literal', 'printf']],
+      ['R6-O-b-bare-octal-assign', 'nad', "x=$(printf '%b' 'repor\\164.md'); cp ../base/report.md $x", BD, ['literal', '$x']],
+      ['R6-O-echo-bare-octal-script', 'nad', "bash -c \"$(echo 'cp ../base/report.md repor\\164.md')\"", D, 'name'],   // read under dash's text too, where the copy names report.md
+      ['R6-O-b-piped-bare-octal', 'nad', "printf '%b\\n' 'cp ../base/report.md repor\\164.md' | bash", BD, 'name'],
+      ['R6-O-echo-unicode-target', 'nad', "echo poison > $(echo 'repor\\u0074.md')", Z, ['literal', 'echo']],
+      ['R6-O-echo-zero-octal-twin', 'nad', "echo poison > $(echo 'repor\\0164.md')", ['zsh', 'dash'], ['literal', 'echo']],
+      ['R6-O-fmt-octal-twin', 'nad', "echo poison > $(printf 'repor\\164.md')", A, ['literal', 'printf']],   // a backslash in the format is an interpretation: the script road only, the target keeps the non-literal rule
+      // (4) THE SPLIT OPERAND inside double quotes: every `@` form of every shell, zsh's splitting flags, and the single-field twins
+      ['R6-S-at', 'nad', `set -- ../base/report.md report.md; cp "$@"`, A, ['text', SPLIT]],
+      ['R6-S-brace-at', 'nad', `set -- ../base/report.md report.md; cp "\${@}"`, A, ['text', SPLIT]],
+      ['R6-S-at-offset', 'nad', `set -- x ../base/report.md report.md; cp "\${@:2}"`, BZ, ['text', SPLIT]],
+      ['R6-S-at-offset-len', 'nad', `set -- ../base/report.md report.md x; cp "\${@:1:2}"`, BZ, ['text', SPLIT]],
+      ['R6-S-at-strip', 'nad', `set -- x../base/report.md xreport.md; cp "\${@#x}"`, BZ, ['text', SPLIT]],
+      ['R6-S-at-subst', 'nad', `set -- ../base/report.md report.mX; cp "\${@/mX/md}"`, BZ, ['text', SPLIT]],
+      ['R6-S-arr-at', 'nad', `arr=(../base/report.md report.md); cp "\${arr[@]}"`, BZ, ['text', SPLIT]],
+      ['R6-S-arr-at-offset', 'nad', `arr=(x ../base/report.md report.md); cp "\${arr[@]:1}"`, BZ, ['text', SPLIT]],
+      ['R6-S-assoc-keys', 'nad', `declare -A m; m[../base/report.md]=1; m[report.md]=1; cp "\${!m[@]}"`, B, ['text', SPLIT]],
+      ['R6-S-arr-at-subst', 'nad', `arr=(../base/report.md report.mX); cp "\${arr[@]/mX/md}"`, BZ, ['text', SPLIT]],
+      ['R6-S-zsh-flag-at', 'nad', `arr=(../base/report.md report.md); cp "\${(@)arr}"`, Z, ['text', SPLIT]],
+      ['R6-S-zsh-eq', 'nad', `s='../base/report.md report.md'; cp "\${=s}"`, Z, ['text', SPLIT]],
+      ['R6-S-zsh-s-flag', 'nad', `s='../base/report.md report.md'; cp "\${(s: :)s}"`, Z, ['text', SPLIT]],
+      ['R6-S-zsh-f-flag', 'nad', `s=$'../base/report.md\\nreport.md'; cp "\${(f)s}"`, Z, ['text', SPLIT]],
+      ['R6-S-zsh-z-flag', 'nad', `s='../base/report.md report.md'; cp "\${(z)s}"`, Z, ['text', SPLIT]],
+      ['R6-S-zsh-unbraced-at', 'nad', `arr=(../base/report.md report.md); cp "$arr[@]"`, Z, ['text', SPLIT]],
+      ['R6-S-mv-at', 'nad', `set -- ../base/report.md report.md; mv "$@"`, A, ['text', SPLIT]],
+      ['R6-S-install-at', 'nad', `set -- ../base/report.md report.md; install "$@"`, A, ['text', SPLIT]],
+      ['R6-S-ln-at', 'nad', `set -- ../base/report.md report.md; ln -f "$@"`, A, ['text', SPLIT]],
+      ['R6-S-twin-name', 'nad', `x='../base/report.md report.md'; cp "$x"`, N, 'allow'],
+      ['R6-S-twin-brace-name', 'nad', `x='../base/report.md report.md'; cp "\${x}"`, N, 'allow'],
+      ['R6-S-twin-star', 'nad', `set -- ../base/report.md report.md; cp "$*"`, N, 'allow'],
+      ['R6-S-twin-arr-star', 'nad', `arr=(../base/report.md report.md); cp "\${arr[*]}"`, N, 'allow'],
+      ['R6-S-twin-sub', 'nad', `cp "$(cat ../scratch/other.md)"`, N, 'allow'],
+      ['R6-S-twin-default', 'nad', `cp "\${x:-../base/report.md report.md}"`, N, 'allow'],
+      ['R6-S-twin-strip', 'nad', `x='../base/report.md report.md'; cp "\${x#zz}"`, N, 'allow'],
+    ];
+    const cwds = { ...w.cwds };
+    let n = 0;
+    for (const [id, cwd, raw, writers, expect] of rows) {
+      const cmd = w.fill(raw);
+      const at = cwds[cwd];
+      const h = w.hook(cmd, at);
+      n++;
+      assert.ok(!h.reason.includes('an error of my own'), `${id}: no internal error (round 5's correctness-3): ${h.reason.split('\n')[0]}`);
+      if (expect === 'allow') assert.equal(h.status, 0, `${id}: allowed: ${cmd}: ${h.reason}`);
+      else {
+        assert.equal(h.status, 2, `${id}: refused: ${cmd}: ${h.reason}`);
+        assert.ok(!/\u2014/.test(h.reason) && !ROMP_NOUNS.test(h.reason.split(w.W).join('<w>')), `${id}: no em dash, no romp noun`);
+        if (expect === 'name') assert.match(h.reason, BY_NAME_RE, `${id}: by name: ${h.reason.split('\n')[0]}`);
+        else if (expect[0] === 'text') assert.ok(h.reason.includes(expect[1]) && (expect[1] !== GLOB || h.reason.includes(UNREAD)), `${id}: refused, the reason including (${expect[1]}): ${h.reason.split('\n')[0]}`);
+        else assert.ok(NOT_LITERAL.test(h.reason) && h.reason.includes(expect[1]), `${id}: refused as not literal, the reason including (${expect[1]}): ${h.reason.split('\n')[0]}`);
+      }
+      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`)) for (const shell of shellsFor(A, id)) {
+        const r = w.run(cmd, at, shell);
+        assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
+      }
+    }
+    assert.equal(n, 73);
   } finally { process.env.HOME = savedHome; w.rm(); }
 });
