@@ -8,8 +8,11 @@
 // both browser legs are named in the line and in the body; the body's engine statements match the legs' own headers (the
 // img leg red in WebKit alone at the base, the svg leg red in Firefox and in WebKit, green in Chromium); the reach names
 // Firefox beside Safari, as the chain block's comment in file-view.ts does; no em dash. The file list is the branch's diff
-// at its head, written down: the entry is a record of that branch, so this module reads no git. Synthetic: the repo's own
-// text only. Run: node --test tools/2026-09-20-figure-gate-before-adoption-ledger.test.mjs
+// at its head, written down: the entry is a record of that branch, so this module reads no git. Named by its subject and
+// not by the entry's date: a tools module whose name opens with four digits is read as an ADR's by
+// tools/file-review-plan-sidecar-adr-modules.test.mjs, which requires a docs/adr/<NNNN>-*.md behind it (the branch's
+// first full sweep, 2026-09-20, was red there on the dated name). Synthetic: the repo's own text only.
+// Run: node --test tools/upstream-ledger-figure-gate-before-adoption.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -26,9 +29,9 @@ const SVG_LEG = 'ui/webview/file-view-figures-gate-adopt-svg-browser.test.ts';
 /** `git diff --name-only 2d41e5c9b HEAD` at the branch's head, sorted as git prints it. */
 const FILES = [
   'plans/markdown-viewer.md',
-  'tools/2026-09-20-figure-gate-before-adoption-ledger.test.mjs',
   'tools/file-review-viewer-recipe.test.mjs',
   'tools/markdown-viewer-plan-gate-adopt.test.mjs',
+  'tools/upstream-ledger-figure-gate-before-adoption.test.mjs',
   IMG_LEG,
   SVG_LEG,
   'ui/webview/file-view-figures-gate-browser.test.ts',

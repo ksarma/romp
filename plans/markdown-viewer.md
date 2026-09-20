@@ -7815,6 +7815,6 @@ attribute, which no profile here allows), and `clean` reaching the four chain ca
 adoption (the review's refuters measured that one added profile key, `ADD_ATTR: ["shadowrootmode"]`, made DOMPurify
 clone the body into the live document with every CI-run module green and WebKit fetching the gated figure again).
 md-url-view.test.ts pins the URL kind's resolution before the adoption; tools/file-review-viewer-recipe.test.mjs pins
-the sanitize and adoption statements; tools/2026-09-20-figure-gate-before-adoption-ledger.test.mjs holds the ledger
+the sanitize and adoption statements; tools/upstream-ledger-figure-gate-before-adoption.test.mjs holds the ledger
 entry's file list, its count and its engine statements to the tree and the legs;
 tools/markdown-viewer-plan-gate-adopt.test.mjs holds this section's sentences to the code, its comment and the leg.

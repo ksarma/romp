@@ -100,7 +100,7 @@ test('the section records the hole, the fix, the instrument, the measurement, th
     '**Tests.** ' + LEG + ', above: red in WebKit at 2d41e5c9b in all three scenes, green in Chromium and Firefox there, green in all three engines after the fix.',
     SVG_LEG + ', the second leg: red in Firefox and in WebKit at 2d41e5c9b, green in Chromium there, green in all three after the fix.',
     'file-view-seam.test.ts pins the order in mdBlock (sanitize, rewrite, gate on `clean`, then the adoption, and no figure pass over `box`) and holds the premise where CI runs, since both legs skip where Playwright\'s engines are absent and CI\'s npm test runs before its one browser install: its test ' + SEAM_GUARD + ' pins',
-    'tools/2026-09-20-figure-gate-before-adoption-ledger.test.mjs holds the ledger entry\'s file list, its count and its engine statements to the tree and the legs;',
+    'tools/upstream-ledger-figure-gate-before-adoption.test.mjs holds the ledger entry\'s file list, its count and its engine statements to the tree and the legs;',
     'tools/markdown-viewer-plan-gate-adopt.test.mjs holds this section\'s sentences to the code, its comment and the leg.',
   ]) assert.ok(s.includes(sentence), 'the section says: ' + sentence);
 });
