@@ -72,8 +72,12 @@ SHARED = {"nav": {"type": "reload", "responseEnd": 210, "domContentLoaded": 656,
 # the tail of a postal message id inside the value, <epoch>.<pid>_<hex>.<host>: postal_service.py _unique bakes self_host() in);
 # a fifth would classify itself. NONE names the producer chain and answers whether any branch reaches a host name. A shorthand
 # reason (_BOOL, _INT, _ENUM) is a claim about EVERY writer of the key, checked by the fixture rows in
-# test_one_fixture_row_per_poster_call_site_passes_whole_and_the_table_names_nothing_else, one per call site with the values
-# the writers post. A census keyed on the NAME `host` had missed the chat surface, whose sid, id, ids and active are the tab ids
+# test_one_fixture_row_per_poster_call_site_passes_whole_and_the_table_names_nothing_else and, for the perf, pane-shim and
+# reload-core surfaces, test_todays_rows_pass_whole_and_quietly: one row per call site with the values the writers post, and
+# every value posted under a shorthand row asserted to the row's shape (assert_shorthand_shapes: a number, a boolean, a
+# string), so a fixture value of another shape reds (round 4's fixer pass: the pass-whole loop compares the stored row to the
+# posted one and reads no shape, and three chat values had contradicted their rows green). A census keyed on the NAME `host`
+# had missed the chat surface, whose sid, id, ids and active are the tab ids
 # the page holds, which federation.ts prefixes for every remote session (prefixInbound on SCALAR_ID and ARRAY_ID, the tab records
 # through OBJ_ID); the cut at CLIENT_DIAG_STR_MAX keeps the head of a string, prefix included, and a suffix survives it by 64
 # less the head's length. The kernel admits a surface's top-level keys and cuts nested string values; it inspects no nested key
@@ -106,8 +110,8 @@ CENSUS = {
         "awaitLink": (NONE, _BOOL), "linkUpMs": (NONE, _INT), "parked": (NONE, _BOOL),
     },
     "reload-core": {   # kernel.py's _RELOAD_CORE_JS, the one writer heldLong (a hold that has stood for the bound files one breadcrumb, once per owed request)
-        "reason": (NONE, "held: owed.reason, the literal build (a dist offer) or fresh (a reconnect's fresh window)"),
-        "detail": (NONE, "held: owed.detail, String(offered.dv || offered.code) on a build offer (the offered dist token or the kernel's code word, a number's text), '' on fresh"),
+        "reason": (NONE, "held: owed.reason, the literal build (accept, the Reload click: owed={reason:'build',...}) or required (demand: request('required', why) on a {type:'reloadRequired'} frame on the pane's or the shell's local socket, which no kernel sends today), the core's two writers of owed and no other; never a hold word: fresh is busy()'s, the row's sibling hold field's vocabulary, which no writer assigns to reason"),
+        "detail": (NONE, "held: owed.detail: on build the offer's dist token, a decimal integer's text (_dist_ver, the max mtime of dist/*.js, through the shim's or the shell's ka frame or the page-origin /version), or its code identity (_code_ident's 12 hex characters, or ROMP_CODE_IDENT's string), both the SERVING kernel's and never a peer's (federation.ts never touches __rompReload); on required the frame's why, cut at 64 (no sender today); '' when that why is empty"),
         "hold": (NONE, "held: busy()'s word, the first clocked pane word behind any gesture (paneHere, busyHere: code literals of the gesture and hold tables) or fresh"),
         "ageMs": (NONE, "held: Date.now() less the hold's start, a number"),
     },
@@ -215,8 +219,8 @@ CENSUS = {
     },
     "outline": {   # fleet.ts: a feedDelta or a delta frame that reached the pane unapplied (federation.js absent or older than the receiver), the frame's own stamps posted raw
         "buildId": (NONE, "feedDelta-unapplied: the frame's buildId as its kernel sent it, _next_feed_build_id's integer counter on every kernel in this repo"),
-        "slot": (NONE, "delta-unapplied: the frame's slot word, the kernel's frame type literal (_send_slot's ftype, one of _DELTA_SLOTS's names)"),
-        "rev": (NONE, "delta-unapplied: the frame's rev, the kernel's per-slot integer counter"),
+        "slot": (NONE, "delta-unapplied: the frame's slot word, bars or feed from a kernel in this repo (_send_slot's ftype, one of _DELTA_SLOTS's names); on the pre-receiver federation.js road (the handler's comment: a bundle older than the per-conn receiver handing the pane a remote kernel's raw delta) the remote's own string, cut at 64; at this head no bundle road hands the pane a delta frame (the shim and the receiver each recover instead), so the row is a mixed-build breadcrumb"),
+        "rev": (NONE, "delta-unapplied: the frame's rev, the kernel's per-slot integer counter (_send_slot); on the pre-receiver federation.js road the remote's value as the wire carried it, slot's scope clause"),
     },
     "waiting": {"buildId": (NONE, "feedDelta-unapplied (waiting.ts): the frame's buildId as its kernel sent it, _next_feed_build_id's integer counter")},
     "kernel": {   # the kernel's four direct writers: _note_ws_open, _note_history_reply, _note_chat_withheld_at_close, _implicit_handshake
@@ -379,19 +383,46 @@ class ClientDiagAllowlistTest(unittest.TestCase):
             for surface, keys in km.CLIENT_DIAG_KEYS.items():
                 self.assertNotIn(marker, keys, "%s: a kernel-written marker is admitted from no poster, or a page could forge one" % surface)
 
+    def assert_shorthand_shapes(self, surface, what, data):
+        """Every value a fixture posts under a census row whose reason is a shorthand (_INT, _BOOL, _ENUM) has that shape
+        (round 4's fixer pass, 2026-09-20): the header's claim that the fixture rows check the shorthand reasons had been
+        satisfied by no assertion (the pass-whole loop compares the stored row to the posted one and reads no shape), and
+        three chat values contradicted their rows green. A bool is an int in Python, so a number must not be one."""
+        for key, value in data.items():
+            reason = CENSUS[surface][key][1]
+            if reason == _INT:
+                ok = isinstance(value, (int, float)) and not isinstance(value, bool)
+            elif reason == _BOOL:
+                ok = isinstance(value, bool)
+            elif reason == _ENUM:
+                ok = isinstance(value, str)
+            else:
+                continue
+            self.assertTrue(ok, "%s %s: the census says %s is %s; the fixture posts %r" % (surface, what, key, reason, value))
+
     def test_todays_rows_pass_whole_and_quietly(self):
-        err = self.post("perf", "minute", MINUTE)
-        err += self.post("perf", "slowframe", {"app": "chat", "type": "session", "ms": 150.2, "dom": 53306, "loaf": {"ms": 160, "blocking_ms": 110, "top": []}})
-        err += self.post("pane-shim", "wsclose", {"app": "feed", "code": 1006, "reason": "", "wasClean": False, "sinceOpenMs": 5000, "quietMs": 31000, "everConnected": True, "bundleReady": True})
-        err += self.post("pane-shim", "return", {"decision": "redial-closed", "resumed": False, "hiddenMs": 29000, "frozenMs": 0, "quietMs": 29500, "quietAtResumeMs": -1, "ready": 3, "app": "chat", "resent": True})
-        err += self.post("pane-shim", "return-fresh", {"ms": 5600, "bytesSince": 40000, "redialed": True, "app": "chat"})
-        err += self.post("pane-shim", "wsconnfail", {"app": "chat", "attempts": 3, "firstFailMs": 30000})
-        err += self.post("pane-shim", "page-load", {"wasDiscarded": True, "nav": "reload", "app": "feed"})
-        err += self.post("pane-shim", "watchdog-close", {"app": "feed", "why": "quiet", "ready": 1, "quietMs": 31000, "hidden": False})
-        err += self.post("reload-core", "held", {"reason": "fresh", "detail": "", "hold": "fresh", "ageMs": 61000})
+        todays = [
+            ("perf", "minute", MINUTE),
+            ("perf", "slowframe", {"app": "chat", "type": "session", "ms": 150.2, "dom": 53306, "loaf": {"ms": 160, "blocking_ms": 110, "top": []}}),
+            ("pane-shim", "wsclose", {"app": "feed", "code": 1006, "reason": "", "wasClean": False, "sinceOpenMs": 5000, "quietMs": 31000, "everConnected": True, "bundleReady": True}),
+            ("pane-shim", "return", {"decision": "redial-closed", "resumed": False, "hiddenMs": 29000, "frozenMs": 0, "quietMs": 29500, "quietAtResumeMs": -1, "ready": 3, "app": "chat", "resent": True}),
+            ("pane-shim", "return-fresh", {"ms": 5600, "bytesSince": 40000, "redialed": True, "app": "chat"}),
+            ("pane-shim", "wsconnfail", {"app": "chat", "attempts": 3, "firstFailMs": 30000}),
+            ("pane-shim", "page-load", {"wasDiscarded": True, "nav": "reload", "app": "feed"}),
+            ("pane-shim", "watchdog-close", {"app": "feed", "why": "quiet", "ready": 1, "quietMs": 31000, "hidden": False}),
+            # the reload core's two writers of owed (the census, reload-core.reason): accept's row names the build with the
+            # offer's dist token, demand's names required with the frame's why (empty here); the hold is busy()'s word, a
+            # sibling field whose vocabulary the earlier fixture had posted as the reason, a value no writer sends
+            ("reload-core", "held", {"reason": "build", "detail": "1757100000", "hold": "fresh", "ageMs": 61000}),
+            ("reload-core", "held", {"reason": "required", "detail": "", "hold": "sends", "ageMs": 61000}),
+        ]
+        err = ""
+        for surface, what, data in todays:
+            err += self.post(surface, what, data)
+            self.assert_shorthand_shapes(surface, what, data)
         self.assertEqual(err, "", "nothing dropped, nothing said")
         rows = self.rows()
-        self.assertEqual(len(rows), 9)
+        self.assertEqual(len(rows), 10)
         self.assertEqual(sorted(rows[0]), ["data", "reconnect", "surface", "t", "what", "wid"], "the row's own shape is unchanged")
         self.assertEqual(rows[0]["data"], MINUTE)
         self.assertEqual(rows[2]["data"]["reason"], "")
@@ -1061,15 +1092,15 @@ class ClientDiagAllowlistTest(unittest.TestCase):
                 ("cancel-provisional", {"mdLen": 12, "queuedLeft": 0}),
                 ("live-omitted-kept", {"ids": [sid, "TESTHOST:11111111-2222-3333-4444-666666666666"]}),
                 ("skeleton", {"n": 4, "active": sid}),
-                ("send", {"sid": sid, "ts": 1700000000000, "len": 42, "route": "local"}),
-                ("empty-session-frame", {"id": sid, "held": True}),
+                ("send", {"sid": sid, "ts": 1700000000000, "len": 42, "route": "plain"}),   # render.ts: followup on a goal cite, quote on a quote cite, else plain
+                ("empty-session-frame", {"id": sid, "held": 12}),   # render.ts: held is prev.events.length, the events the pane holds for the id; the earlier fixture posted a boolean
                 ("federation-missing", {"load": load, "first": None}),
                 ("federation-missing", {"recovered": True, "first": load}),
                 ("cancel-miss", {"sid": sid, "mdLen": 12, "hadRestore": False}),
                 ("scrollwrite", {"sid": sid, "writer": "paintAll", "before": 100, "after": 120, "delta": 20, "stick": True, "gesture": False, "sh": 5000, "ch": 800}),
                 ("landmiss", {"sid": sid, "anchor": "bbb.TESTHOST", "proto": 2, "events": 3, "regions": True, "headKnown": True, "headFrom": 0, "older": False, "noframe": False, "trail": ["pointer-fetch-older", "pointer-not-rendered"]}),   # the anchor as the message connector's road leaves it: the tail of a postal message id (the census, chat.anchor)
-                ("tailchange", {"sid": sid, "dh": 12, "last": "u9", "stick": True, "sh": 5000, "ch": 800}),
-                ("unitchange", {"sid": sid, "dh": 4, "cls": "turn", "fromTail": True, "stick": False, "atBottom": True, "sh": 5000, "ch": 800}),
+                ("tailchange", {"sid": sid, "dh": 12, "last": "turn turn-user", "stick": True, "sh": 5000, "ch": 800}),   # tailLabel: the tail element's className (scroll-write.ts), or the literal live-ask
+                ("unitchange", {"sid": sid, "dh": 4, "cls": "turn", "fromTail": 1, "stick": False, "atBottom": True, "sh": 5000, "ch": 800}),   # fromTail counts units above the tail (unitChangeRow), 1 the unit just above it
                 ("tailmut", {"sid": sid, "where": "tail", "removed": ["turn"], "added": ["turn", "live-ask"], "reAdded": False, "shBefore": 5000, "shAfter": 5010, "st": 4200, "ch": 800}),
                 ("spacer", {"sid": sid, "top": [40, 48], "bot": [0, 0], "dTop": 8, "dBot": 0, "sh": 5000, "ch": 800}),
                 ("scrollgesture", {"sid": sid, "top": 4100, "gesture": True, "sh": 5000, "ch": 800}),
@@ -1082,8 +1113,8 @@ class ClientDiagAllowlistTest(unittest.TestCase):
                 ("hostconn", {"host": host, "ev": "dial-deferred", "why": "local-down"}),   # a relay dial put off while the pane's local socket is down (2026-09-18)
                 ("hostconn", {"host": host, "ev": "hold", "msgType": "setAutoNudge", "rs": 0}),
                 ("hostconn", {"host": host, "ev": "flush-halt", "flushed": ["setAutoNudge"], "held": ["setJudgeModel"]}),
-                ("hostconn", {"host": host, "ev": "tunnels-poll-failing", "why": "http", "unread": 3}),
-                ("hostconn", {"host": host, "ev": "tunnels-poll-recovered", "unread": 3, "endedUnread": 1}),
+                ("hostconn", {"host": host, "ev": "tunnels-poll-failing", "why": "http", "unread": True}),   # unread is !this.hostsRead, a boolean (federation.ts); the earlier fixture posted a count
+                ("hostconn", {"host": host, "ev": "tunnels-poll-recovered", "unread": False, "endedUnread": True}),   # both booleans: !this.hostsRead and firstRead
                 ("hostconn", {"host": host, "ev": "open", "flushed": ["setAutoNudge"]}),
                 ("hostconn", {"host": host, "ev": "close", "code": 1006, "clean": False, "detached": False}),
                 ("hostconn", {"host": host, "ev": "detach", "pendingDropped": ["setAutoNudge", "needFull"]}),
@@ -1127,6 +1158,7 @@ class ClientDiagAllowlistTest(unittest.TestCase):
                 self.assertEqual(err, "", "%s %s: %s" % (surface, what, err))
                 row = self.rows()[-1]
                 self.assertEqual((row["surface"], row["what"], row["data"]), (surface, what, data), "%s %s passes whole" % (surface, what))
+                self.assert_shorthand_shapes(surface, what, data)
                 sent |= set(data)
             self.assertEqual(sent, set(km.CLIENT_DIAG_KEYS[surface]), "%s: the fixtures' keys are the table's, both ways" % surface)
 
