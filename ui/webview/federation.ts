@@ -982,7 +982,11 @@ interface Conn {
   // asked: the throw happened and the bare ask went, once per stall (a second throw while the ask is out asks nothing: a second
   // ask is a second full from the kernel, the flood the bound exists to stop); answered: a full landed after the ask (the feed
   // arm); stopped: a delta threw again after that full, so the full the kernel sent back did not repair the stream, no further
-  // ask goes and the shell is told once (refuseRemoteApply). Cleared by a delta that applies (progress is the reset); reset with
+  // ask goes and the shell is told once (refuseRemoteApply). Cleared by a delta that applies (progress is the reset); a FULL is
+  // not progress (the author's fixer pass after round 5, refusal-4): it moves asked to answered and clears nothing, so a throw
+  // after an answering full with no applying delta between, however long the quiet interval, is read as the same stall and
+  // files stopped with no ask (clearing on the full would re-open the poisoned-full loop the answered state exists to stop;
+  // whether a throw under a later build should ask again is the maintainer's call). Reset with
   // the socket in connect() (a fresh socket's first frame is whole or composed from the declared pair, a new stream for the bound
   // to judge, so a stall across redials costs one ask per socket life); gone with the conn in closeRemote. The local road's twin
   // is FederationManager.localFeedApply, since the local socket has no conn.
@@ -1034,8 +1038,13 @@ export class FederationManager {
   // The LOCAL road's apply-throw latch (Conn.feedApply's twin; the 19:31Z ruling of the maintainer's round 5: the local road has no
   // conn, so its bound is the manager's, per document, the page's life): the same three states, moved by the local feedDelta arm
   // (a throw: asked, then stopped after the answering full; an apply: cleared) and the feed arm (a local full after the ask:
-  // answered); a page reload is its reset, since the local socket's life is the page's. saidLocalDelta latches the two rows the
-  // road files, one per word per document, as Conn.saidDelta does per conn for the remote road.
+  // answered). Its reset is the page's life alone, by choice and not because the local socket's life is the page's (the author's
+  // fixer pass after round 5, refusal-3): the shim redials the local socket in-page after a drop (kernel.py's connect(), the
+  // reconnect=1 term), a dial this manager never sees, so unlike Conn.feedApply, which connect() resets per socket, nothing but
+  // an applying delta moves this latch off stopped; a redialed socket's full still lands and refreshes the cards (the feed arm
+  // stores and emits every full whatever the latch), so a stopped stall costs one ask per page life, never a pane frozen past the
+  // next full. saidLocalDelta latches the two rows the road files, one per word per document, as Conn.saidDelta does per conn
+  // for the remote road.
   private localFeedApply?: "asked" | "answered" | "stopped";
   private saidLocalDelta = new Set<string>();
   private perHostTl: Record<string, any> = {}; //   last timeline lanes payload ({type:"data"}.data) per host
@@ -1629,7 +1638,10 @@ export class FederationManager {
    *  rests on neither the base, whose own content is a suspect (a full carrying a null ask lands and makes every later delta
    *  throw), nor the stream, and this repo's needFullFeed handler serves the full frame now whatever the ask carries. A second
    *  throw while the ask is out asks nothing; a throw after the answering full landed (Conn.feedApply answered, the feed arm)
-   *  stops the asking and tells the shell once, since the full the kernel sent back did not repair the stream. The row is
+   *  stops the asking and tells the shell once, since the full the kernel sent back did not repair the stream. A full is not
+   *  progress: after the answering full the latch stays answered until a delta applies, so a throw after a quiet interval with no
+   *  applying delta between is read as the same stall and stops the asking (the edge the design accepts, the author's fixer pass
+   *  after round 5, refusal-4: clearing on the full re-opens the poisoned-full loop). The row is
    *  latched per word and per remote build (sayDeltaOnce), the ask is bounded by the latch itself. Before this a throw escaped
    *  the socket's message handler: the pane stayed on its last frame with nothing said and nothing asked. */
   private refuseRemoteApply(c: Conn, host: string, d: any, error: unknown): void {
@@ -1650,8 +1662,9 @@ export class FederationManager {
    *  handler forgets what it believes this socket holds and serves the full frame now (kernel.py), the repair the no-base arm
    *  above already asks for through __rompLocalSend, so the catch asks it once per stall. The bound has no conn to live on, so it
    *  is the manager's, per document (localFeedApply): asked until the local full lands (the feed arm: answered), then a second
-   *  throw stops the asking and tells the shell once, with a message that names the page reload as the way out; a delta that
-   *  applies clears it. The row's road is local (this kernel's, no peer implicated), latched per word per document. Before this
+   *  throw stops the asking and tells the shell once, with a message that names both ways out, the connection's reconnect (the
+   *  shim's in-page redial earns a full, which the feed arm shows whatever the latch) and a page reload; a delta that applies
+   *  clears it. The row's road is local (this kernel's, no peer implicated), latched per word per document. Before this
    *  the throw escaped inbound into the shim's FIFO drain, which dropped the frame, delivered the rest of the burst and rethrew at
    *  the end of the task: console only, the pane on its last frame, nothing asked. */
   private refuseLocalApply(m: any, error: unknown): void {
@@ -1667,7 +1680,7 @@ export class FederationManager {
     if (why === "asked") {
       const s = (window as any).__rompLocalSend;
       if (typeof s === "function") s({ type: "needFullFeed" });
-    } else this.tellShell("error", "The cards are frozen at their last update. An update from the kernel could not be applied, and neither could the whole feed it sent back. Reload the page to refresh them.");
+    } else this.tellShell("error", "The cards are frozen at their last update. An update from the kernel could not be applied, and neither could the whole feed it sent back. They refresh when the connection reconnects, or when you reload the page.");
   }
 
   /** A message for the person, through the shell's error center: the {romp: "notify"} post render.ts, waiting.ts and feed.ts make

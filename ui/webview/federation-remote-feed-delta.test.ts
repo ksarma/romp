@@ -1182,7 +1182,7 @@ test("the LOCAL road's twin: a local feedDelta whose apply throws is refused wit
   });
 });
 
-test("the LOCAL bound: after the local full landed a second throw stops the asking and tells the shell once, with the page reload as the way out; further throws are silent; the local road implicates no peer (host local, road local) and touches no remote socket", async () => {
+test("the LOCAL bound: after the local full landed a second throw stops the asking and tells the shell once, naming both ways out (the connection's reconnect, a page reload); further throws are silent; a later local full still shows (the cards refresh) and leaves the stop standing, since the shim's in-page redial is a dial this manager never sees; the local road implicates no peer (host local, road local) and touches no remote socket", async () => {
   await withManager(({ fm, emitted, sent, notified }) => {
     const ws = attached(fm);
     fm.inbound("", { type: "feed", now: 420, buildId: 9, asks: [card(SID_L, 1)], ledgers: [ledger(SID_L, "web")] });
@@ -1198,10 +1198,19 @@ test("the LOCAL bound: after the local full landed a second throw stops the aski
     assert.equal(told.length, 1, "the shell told once");
     assert.equal(told[0].kind, "error");
     assert.match(told[0].text, /^The cards are frozen at their last update\./);
-    assert.match(told[0].text, /Reload the page to refresh them\.$/, "the local road's way out is the page reload (the local socket's life is the page's)");
+    assert.match(told[0].text, /They refresh when the connection reconnects, or when you reload the page\.$/, "the local road's two ways out: the shim redials the local socket in-page after a drop and the feed arm shows the full it earns whatever the latch, or the page is reloaded (the author's fixer pass after round 5, refusal-3: the message had named the reload alone, on the premise that the local socket's life is the page's, which the shim's reconnect=1 redial refutes)");
     assert.equal(feeds(emitted).length, before);
     fm.inbound("", { type: "feedDelta", now: 451, buildId: 13, asks: { not: "a list" } });
     assert.equal(sent.filter((x) => x && x.type === "needFullFeed").length, 1); assert.equal(applyRows(sent).length, 2); assert.equal(notifies(notified).length, 1);
+    // a later LOCAL full (the redialed socket's, or a kernel restart's): it lands and shows, the cards refreshing as the message
+    // says, and the stop stands (a full is not progress; the manager sees no dial event for the local socket, so the page's life
+    // is the local bound's), so the next throw asks nothing and files nothing
+    fm.inbound("", { type: "feed", now: 460, buildId: 14, asks: [card(SID_L, 3)], ledgers: [ledger(SID_L, "web")] });
+    assert.equal(feeds(emitted).length, before + 1, "the later local full shows: the feed arm stores and emits every full whatever the latch");
+    assert.equal(last(feeds(emitted)).asks.find((a: any) => a.sid === SID_L).text, card(SID_L, 3).text, "and it is the full's content the cards now show");
+    assert.equal(fm.localFeedApply, "stopped", "the stop stands past the full (only an applying delta clears it; no dial resets the local bound)");
+    fm.inbound("", { type: "feedDelta", now: 461, buildId: 15, asks: { not: "a list" } });
+    assert.equal(sent.filter((x) => x && x.type === "needFullFeed").length, 1, "a throw after the later full asks nothing"); assert.equal(applyRows(sent).length, 2, "and files nothing"); assert.equal(notifies(notified).length, 1, "and tells nothing further");
     assert.deepEqual(ws.sent, [], "the remote socket carried nothing for any of it");
     assert.equal(fm.conns.get(HOST).feedApply, undefined, "and the remote conn's latch is untouched");
     fm.conns.get(HOST).closed = true;

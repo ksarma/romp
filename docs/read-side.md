@@ -184,8 +184,12 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   the same way on both roads, bounded by progress: one bare ask per stall,
   a `feedDelta-apply` row naming the road (wire or local), and after the
   answering full a second throw stops the asking and tells the shell once,
-  the pane staying on its last frame until a delta applies (or, on the local
-  road, the page reloads). A
+  the pane staying on its last frame until the next full or applying delta
+  lands (a full lands and shows whatever the latch; an applying delta alone
+  lifts the stop, so a throw after a quiet interval with no applying delta
+  between is read as the same stall and asks nothing); the remote bound
+  resets with its socket, the local one with the page alone, since the shim
+  redials the local socket in-page and the manager sees no dial for it. A
   remote host's view-delta patches (the timeline's bars; the feed from a kernel
   too old to read the caps term) are reassembled per relay socket
   (`Conn.viewDeltas`) before the merge. A build that carries no `ledgers`

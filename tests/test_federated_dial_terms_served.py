@@ -196,7 +196,9 @@ def held_pair(frames, slot):
     (3) the feed road's content refusals, which are applyFeedDelta's throws (ui/webview/feed-delta.ts: asks not a list, an ask
     or a ledger item null, removeAsks not iterable): caught in tryApplyFeedDelta and refused before Conn.feedHeld is written
     (the maintainer's round 5, refusals-2), so the client's pair STANDS while it asks once, bare, per stall and stops asking
-    after the answering full, so its divergence from this rule persists across the refused frames where classes 1 and 2 recover
+    after the answering full (a full is not progress: the stop lifts on an applying delta alone, so a throw after an answering
+    full and a quiet interval is read as the same stall, the fixer pass after round 5, refusal-4), so its divergence from this
+    rule persists across the refused frames where classes 1 and 2 recover
     at the next keyable whole frame; this rule advances it, the one class whose over-demand does not clear on its own. The gate
     itself refuses nothing on content.
     A MOVEMENT from a producer or field outside the set above, of which one exists, and it is an ACCEPTANCE, not a refusal (an
