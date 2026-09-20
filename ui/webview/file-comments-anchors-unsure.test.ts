@@ -317,7 +317,7 @@ function rows(code: El, src: string): void {
 }
 function world(over: { path?: string; sid?: string | null; todoId?: string | null; src?: string } = {}): World {
   const main = new El("div"); main.className = "fileview-main";
-  const body = new El("div"); body.className = "fileview-body";
+  const body = new El("div"); body.className = "fileview-body"; body.rect = { left: 0, top: 100, right: 1000, bottom: 600, width: 1000, height: 500 };   // the pane's clip: the offer refuses a selection whose box lies outside it (onSelection, inBodyBox); every selection rect below sits inside
   const actions = new El("div"); actions.className = "fileview-actions"; actions.appendChild(new Txt("Rendered · Raw"));
   const wrap = new El("div"); wrap.className = "fileview-code";
   const pre = new El("pre"); pre.className = "fileview-pre fileview-wrap";

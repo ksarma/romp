@@ -9104,7 +9104,7 @@ def prune_judge_scratch(max_age_s=24 * 3600, now=None):
         with os.scandir(_proj_dir(JUDGE_SCRATCH)) as it:
             for e in it:
                 try:
-                    if e.name.endswith(".jsonl") and now - e.stat().st_mtime > max_age_s:
+                    if e.name.endswith(".jsonl") and now - _entry_stat(e).st_mtime > max_age_s:
                         os.unlink(e.path)
                         n += 1
                 except OSError:
@@ -9585,7 +9585,7 @@ def _discover_impl(now, window=None, forks=True):
                         if not n.endswith(".jsonl"):
                             continue
                         try:
-                            mt = e.stat().st_mtime      # DirEntry stat — cached from the scandir where the OS allows
+                            mt = _entry_stat(e).st_mtime   # DirEntry stat, cached from the scandir where the OS allows
                         except OSError:
                             continue
                         cached.append((n[:-6], e.path, mt))   # stem = name without ".jsonl"
@@ -18163,6 +18163,18 @@ def rearm_failed_summaries(now=None, auto=False):
 # (absent_hits/absent_misses), so `romp perf` shows the hit rate beside the load rate.
 _ABSENT_FLAGS = {}        # store path string -> (identity from _store_identity, (open_handoff, owed_distill))
 _ABSENT_FLAGS_LOCK = threading.Lock()
+
+
+def _entry_stat(e, **kw):
+    """The kernel's _entry_stat twin: a scandir entry's stat, counted on the kernel's open chat signature (its
+    memos.chatSig.stats) through the thread-local the kernel hangs on its os.stat wrapper, read by attribute because
+    this module never imports the kernel (a DirEntry stats in C and reaches no wrapper). event_model.py and
+    sdk_backend.py carry the same body. The kernel's source pin derives every scandir entry name in kernel/ and holds
+    its .stat() to the kernel's helper and the three twins."""
+    tl = getattr(os.stat, "_romp_sig_counting", None)
+    if tl is not None and tl.active:
+        tl.stats += 1
+    return e.stat(**kw)
 
 
 def _store_identity(fsid):

@@ -78,6 +78,10 @@ class _Keyed(unittest.TestCase):
 
     def setUp(self):
         self.d = tempfile.mkdtemp()
+        # per-session hosts are on by default (T348), and a backend over a state root with no `session-hosts` file starts
+        # a real host for any session it connects: a state root minted here writes `off` itself (the repo's testing
+        # rule; round 2 of the review, 2026-09-18), so a case that spawns and constructs a session stays inside the belt
+        open(os.path.join(self.d, "session-hosts"), "w").write("off")
         self.cfg = tempfile.mkdtemp()
         self._cfg_before = os.environ.get("CLAUDE_CONFIG_DIR")
         os.environ["CLAUDE_CONFIG_DIR"] = self.cfg
@@ -1031,12 +1035,30 @@ class SetAuth(_Keyed):
         self.assertEqual(len(chips), 1, "an idle session's switch must still show SOMETHING in the chat")
 
     def test_a_stranded_pending_flag_heals_on_construction(self):
-        sid = self.be.spawn("n", "/tmp")
+        # a PICKED session's pending heals: its pick rides the next connect through the reg
+        sid = self.be.spawn("n", "/tmp", auth="login")
         self.be._update_reg(sid, authPending=True)
         self._sess(1, sid=sid)
         s = sb.SdkSession(self.be, sb.read_reg(self.be.state_dir, sid))
         self.assertFalse(sb.read_reg(self.be.state_dir, sid).get("authPending"),
                          "a fresh construction applies the reg on its next connect — pending is over")
+        self.assertEqual(s._auth_pending, "")
+
+    def test_a_followers_pending_stands_across_construction(self):
+        # a FOLLOWER's pending is set_auth_default's ask to move onto the machine default (round 1 of the review,
+        # 2026-09-18): the CLI outlives the kernel and still runs the old side, so a fresh construction keeps the flag
+        # and carries the ask, targeted at the side the default resolves to now; the first landing decides
+        sid = self.be.spawn("n", "/tmp")                              # spawned before the default: a follower (a spawn after it would be seeded)
+        sb.write_sdk_default(self.be.state_dir, auth="login", authExplicit=True)
+        self.be._update_reg(sid, authPending=True, effortPending=True, apiKeyAuth=True)
+        self.assertNotIn("auth", sb.read_reg(self.be.state_dir, sid))
+        s = sb.SdkSession(self.be, sb.read_reg(self.be.state_dir, sid))
+        reg = sb.read_reg(self.be.state_dir, sid)
+        self.assertTrue(reg.get("authPending"), "the follower's ask stands on the reg")
+        self.assertFalse(reg.get("effortPending"), "...while the effort flag heals as before")
+        self.assertEqual(s._auth_pending, "login", "the carried ask targets the machine default")
+        self.assertEqual(s.auth_live, "key", "the CLI's last report is kept: it describes the process that still runs")
+        self.assertTrue(s.snapshot()["authPending"])
 
     def test_snapshot_and_dormant_rows_both_carry_the_choice(self):
         sid = self.be.spawn("n", "/tmp", auth="login")
