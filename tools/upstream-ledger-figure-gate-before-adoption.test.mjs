@@ -111,9 +111,9 @@ test('the reach names Firefox beside Safari, as the chain block\'s comment in fi
   assert.ok(!header.title.includes('WebKit'), 'the title names no engine');
 });
 
-test('the entry keeps the record rules: fix tier, a candidate, pr: blank until filed, no em dash', () => {
+test('the entry keeps the record rules: fix tier, a candidate, pr: blank until filed and then the fork PR number, no em dash', () => {
   assert.equal(header.tier, 'fix');
   assert.equal(header.status, 'candidate');
-  assert.equal(header.pr, '', 'pr: is blank until the PR exists');
+  assert.match(header.pr, /^(|[1-9][0-9]*)$/, 'pr: is blank until the PR exists, then its fork number (the guard rule: blank or an integer)');
   assert.ok(!entry.includes(String.fromCharCode(0x2014)), 'no em dash');
 });
