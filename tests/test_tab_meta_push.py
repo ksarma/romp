@@ -56,6 +56,7 @@ class TabMetaPush(unittest.TestCase):
         km.NAMES = self.names
         km.jd.STATE = Path(self.tmp) / "state"
         km.jd.STATE.mkdir(parents=True, exist_ok=True)
+        km.jd.STATE.chmod(0o700)   # owner-only, as production leaves it (2026-09-20): a pass on a umask-mode root exits the process
         km._pal_cache.update({"name": km.pal.DEFAULT, "mt": None})
         km._live_map = lambda: {}
         km._live_names = lambda tm: {self._name(): SID}

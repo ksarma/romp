@@ -88,6 +88,8 @@ class _World(unittest.TestCase):
         self.saved = jd.STATE
         jd.STATE = Path(self.tmp) / "state"
         jd.STATE.mkdir()
+        os.chmod(jd.STATE, 0o700)   # 0700 as kernel/judge.py's import leaves it: a subdir made under a group-writable
+        #                             umask is 0775, which the state-root check (2026-09-20) reads writable and refuses on
         km._user_todos_cache.clear()
         km._user_todos_bad.clear()
         km._set_user_todos(True)

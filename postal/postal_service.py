@@ -86,6 +86,198 @@ USER_TODOS_SWITCH = STATE.parent / "user-todos-enabled.json"   # the kernel's pe
 CODEX_REGISTRY = STATE.parent / "codex" / "registry.json"   # the kernel's Codex backend's store: rows keyed by the stable sid, each carrying the native thread id ("tid"); read by _codex_self_id only
 
 
+# ── the state root's mode (2026-09-20) ─────────────────────────────────────────────────────────────────
+# The bus is a second serving daemon on the same state root as the kernel, kept alive by the kernel itself
+# (its _ensure_postal_bus) and by every session's MCP process (`ensure`), and it writes under that root:
+# mailboxes, markers, the timeline log, its pid file. Until 2026-09-20 it had no look at the root's mode at
+# all, so a root writable by other local users (the cross-session code-execution road: another local user
+# can plant or replace entries under it) that stopped the kernel left the bus accepting and writing mail
+# (the 2026-09-20 review's fresh-3). Now the bus refuses the same root the same way: a mode with a group
+# or other write bit, or a mode that cannot be read, exits 2, at START before the serve token below is read
+# or minted and before the bind (_state_root_gate, run at import in serve mode and again in serve() after
+# the root is made), and from the monitor loop every POLL while serving (os._exit from that thread: no
+# drain, no further write). A root that is not 0700 but not writable by others is said once per transition
+# on stderr (the bus has no error centre; server.log carries it). The start gate READS FIRST like every
+# other check and records what it read (_STATE_ROOT_MODE_AT_START), but its verdict is on the mode as it
+# reads AFTER the check's own repair (the settled rule, round 2b of that review, the kernel's import gate's
+# shape): a pre-existing root that read writable and was tightened a moment ago is not refused, since the
+# same rule would refuse the first start after every creation of the root by another tool under a
+# group-writable umask (the manager's mkdirSync, the CLI's mkdir -p, every test harness), but it is SAID,
+# one loud line with the distrust remedy (entries planted while it was writable are not to be trusted:
+# remove serve-token and repo-root, restart), and a root that reads 0755 is re-tightened AND said, so the
+# tightening leaves a trace (a chmod-first start erased its own evidence). What the start refuses: a root
+# whose chmod could not tighten it (it still reads writable) and one that cannot be read. The POLL gate's
+# verdict is on the mode as READ, before its repair: a loosening after start exits whichever way the chmod
+# then goes (the ruling's arm D). UNVERIFIED IS REFUSED, one exception: a root that
+# does not exist yet at START is not unverified but unmade (nothing has created it in this process; the
+# kernel's judge module creates the kernel's, the token mint and serve() create the bus's), so the import
+# gate lets ENOENT through and records it, and serve(), which makes the root, then chmods it 0700 FIRST
+# and checks it (a fresh directory carries the umask's mode, a creation default and not a loosening; the
+# kernel's judge module treats its own mkdir the same way). Once serving, ENOENT means the root was
+# removed or renamed, and the bus exits like the kernel does.
+#
+# _state_root_mode_check is a reduced COPY of kernel/judge.py's state_root_mode_check (KEEP IN SYNC, as
+# _serve_token_read_or_mint below is a copy of the kernel's): the bus imports nothing from kernel/ by
+# design. The contract the two share: the mode is READ first and the verdict comes from that read; the
+# best-effort chmod 0700 runs after and is reported, never relied on; a failed call is named by its errno
+# alone (never the exception's text, which carries the path); and the check never creates the root.
+STATE_ROOT_REFUSE_MASK = 0o022
+
+
+def _errno_text(e):
+    """"ENAME: strerror" for an OSError, from its errno alone (kernel/judge.py's, KEEP IN SYNC)."""
+    code = getattr(e, "errno", None)
+    if code is None:
+        return "%s: %s" % (type(e).__name__, getattr(e, "strerror", None) or "no errno")
+    return "%s: %s" % (errno.errorcode.get(code, "E%d" % code), os.strerror(code))
+
+
+def _state_root_mode_check(root):
+    """The state root's mode as a verdict (a reduced copy of kernel/judge.py's state_root_mode_check; KEEP IN SYNC):
+    {verdict: ok | warn | refuse | unknown, modeRead, modeReadText, repaired, modeAfter, err, statErrno, repairErrno,
+    line, remedy}. Read first; verdict from the read (a group or other write bit refuses, any other mode that is not
+    0700 warns, an unreadable mode is unknown); then the best-effort chmod 0700, reported (repaired, modeAfter: the
+    mode read back after it, or None when that read failed)."""
+    r = Path(root)
+    stat_err = None
+    try:
+        mode = stat.S_IMODE(os.stat(r).st_mode)
+    except OSError as e:
+        mode, stat_err = None, _errno_text(e)
+    if mode is None:
+        verdict = "unknown"
+    elif mode & STATE_ROOT_REFUSE_MASK:
+        verdict = "refuse"
+    elif mode != 0o700:
+        verdict = "warn"
+    else:
+        verdict = "ok"
+    repair_err, mode_after = None, mode
+    if mode is not None:
+        try:
+            os.chmod(r, 0o700)
+        except OSError as e:
+            repair_err = _errno_text(e)
+        try:
+            mode_after = stat.S_IMODE(os.stat(r).st_mode)
+        except OSError:
+            mode_after = None
+    repaired = mode is not None and mode != 0o700 and repair_err is None and mode_after == 0o700
+    errs = (["stat failed: " + stat_err] if stat_err else []) + (["chmod 700 failed: " + repair_err] if repair_err else [])
+    err = "; ".join(errs) or None
+    fail = (" (%s)" % err) if err else ""
+    mode_text = ("%04o" % mode) if mode is not None else None
+    stat_errno = stat_err.split(":", 1)[0] if stat_err else None
+    repair_errno = repair_err.split(":", 1)[0] if repair_err else None
+    if verdict == "unknown":
+        remedy = "restore the state root at %s (it could not be read: %s)" % (r, stat_errno)
+        line = "state root %s could not be read%s: an unverified root is not served from; %s" % (r, fail, remedy)
+    elif verdict == "refuse":
+        remedy = ("remove serve-token and repo-root under %s (entries planted while it was writable are not to be "
+                  "trusted; the next boot re-mints them), then chmod 700 it" % r)
+        line = ("state root %s is mode %s, writable by other local users (a group or other write bit)%s: the bus refuses "
+                "to serve from it%s; %s" % (r, mode_text, fail, " (re-tightened to 0700 after the read; the refusal stands "
+                                                                "on what was read)" if repaired else "", remedy))
+    elif verdict == "warn" and repaired:
+        remedy = "nothing to do now (re-tightened to 0700); find what loosened %s" % r
+        line = ("state root %s was mode %s, re-tightened to 0700%s: something loosened it after it was made 0700; %s"
+                % (r, mode_text, fail, remedy))
+    elif verdict == "warn":
+        remedy = ("the root is not this uid's to change: make %s owned by this uid, then chmod 700 it" % r
+                  if repair_errno in ("EPERM", "EACCES") else "chmod 700 %s" % r)
+        line = ("state root %s is mode %s, not 0700%s: every file under it is only as private as its own mode; %s"
+                % (r, mode_text, fail, remedy))
+    elif repair_err:
+        remedy = "the root is not this uid's to change: make %s owned by this uid" % r
+        line = ("state root %s is mode 0700, but chmod 700 failed (%s): the mode is right today and not this uid's to "
+                "keep; %s" % (r, repair_err, remedy))
+    else:
+        remedy, line = "chmod 700 %s" % r, None
+    return {"verdict": verdict, "modeRead": mode, "modeReadText": mode_text, "repaired": repaired, "modeAfter": mode_after,
+            "err": err, "statErrno": stat_errno, "repairErrno": repair_errno, "line": line, "remedy": remedy}
+
+
+_STATE_ROOT_SAID = [None]   # the last (verdict, mode, repaired, errnos) said on stderr: one line per transition, not per poll
+_STATE_ROOT_UNMADE_AT_START = [False]   # the import gate found no root (ENOENT): this process makes it, so serve() establishes 0700 first
+_STATE_ROOT_MODE_AT_START = [None]      # the mode the start gate READ at import, before its own repair (the kernel's
+#                                         _STATE_ROOT_MODE_AT_IMPORT), or None when there was no root or it could not be read
+
+
+def _state_root_gate(where, absent_ok=False, establish=False):
+    """The bus's refusal (2026-09-20; the block above): the root's mode checked at `where` ("start" at import in
+    serve mode and in serve() before the bind; "poll" from the monitor loop). Verdict refuse or unknown: the full line
+    (the root's path in full: stderr is this uid's surface) and exit 2, SystemExit from the main thread at start and
+    os._exit from the monitor thread (a SystemExit raised there would be swallowed by the thread bootstrap and stop
+    the monitor alone). `absent_ok`: the start gate at import, where a root that does not exist yet is unmade rather
+    than unverified (recorded in _STATE_ROOT_UNMADE_AT_START; the token mint or serve() creates it). `establish`:
+    serve()'s gate for a root this process made (the import gate found none): the fresh directory carries the umask's
+    mode, a creation default and not a loosening, so it is chmod'ed 0700 before the read, the way kernel/judge.py's
+    import treats its own mkdir. Verdict warn, or ok with a failed chmod: one stderr line per transition (keyed on
+    the verdict and its cause). Returns the check.
+
+    The check READS BEFORE IT REPAIRS (the _state_root_mode_check contract), and the two gates stand on different
+    reads (the settled rule, round 2b of the 2026-09-20 review). The START gate's verdict is on the mode as it reads
+    AFTER the check's own repair, the kernel's import gate's shape: a pre-existing root this uid owns that read 0777
+    and reads 0700 now is served, and SAID, one loud line with the distrust remedy (entries planted while it was
+    writable are not to be trusted: remove serve-token and repo-root under the root and restart); a pre-existing 0755
+    root is re-tightened AND said ("was mode 0755, re-tightened to 0700"), so the tightening leaves a trace where a
+    chmod-first start erased its own evidence; a root the chmod could not tighten still reads writable and is refused
+    before the serve token under it is read or minted; a root that cannot be read is refused. The POLL gate's verdict
+    is on the mode as READ: a loosening after start exits whichever way the chmod then goes."""
+    if establish:
+        try:
+            os.chmod(STATE.parent, 0o700)          # a root this process made: the umask's mode is a creation default
+        except OSError:
+            pass
+    chk = _state_root_mode_check(STATE.parent)
+    root = STATE.parent
+    if where == "start":
+        if absent_ok:
+            _STATE_ROOT_MODE_AT_START[0] = chk["modeRead"]   # the first read in this process, before its repair
+        if chk["verdict"] == "unknown" and absent_ok and chk["statErrno"] == "ENOENT":
+            _STATE_ROOT_UNMADE_AT_START[0] = True
+            return chk
+        after = chk["modeAfter"]                   # the mode as it reads NOW, after this gate's own repair
+        verdict = ("unknown" if after is None else "refuse" if after & STATE_ROOT_REFUSE_MASK
+                   else "warn" if after != 0o700 else "ok")
+        line = chk["line"]
+        if verdict == "unknown" and chk["verdict"] != "unknown":
+            line = ("state root %s could not be read back after the start's repair: an unverified root is not served "
+                    "from; restore the state root at %s" % (root, root))
+    else:
+        verdict, line = chk["verdict"], chk["line"]
+    if verdict in ("refuse", "unknown"):
+        sys.stderr.write("romp-postal-service: %s. The bus %s (exit 2).\n"
+                         % (line, "did NOT start" if where == "start" else "stops now, found by its monitor"))
+        sys.stderr.flush()
+        if where == "start":
+            raise SystemExit(2)
+        os._exit(2)
+    key = (chk["verdict"], chk["modeReadText"], chk["repaired"], chk["repairErrno"], chk["statErrno"])
+    if where == "start" and not establish and chk["modeRead"] is not None \
+            and (chk["modeRead"] & STATE_ROOT_REFUSE_MASK) and chk["repaired"]:
+        # a pre-existing root that read writable and was tightened by this gate's chmod: served, and said LOUD (the
+        # kernel's boot says the same line for its own root); the serve token under it is read next, and the loader's
+        # own fault on a symlink or a foreign-owned token is what stops a planted entry
+        if key != _STATE_ROOT_SAID[0]:
+            sys.stderr.write("romp-postal-service: state root %s read %04o at start (writable by other local users), "
+                             "re-tightened to 0700; entries planted while it was writable are not to be trusted: remove "
+                             "serve-token and repo-root under %s and restart, so the next boot re-mints them\n"
+                             % (root, chk["modeRead"], root))
+        _STATE_ROOT_SAID[0] = key
+        return chk
+    if line and key != _STATE_ROOT_SAID[0]:
+        sys.stderr.write("romp-postal-service: %s\n" % line)
+    _STATE_ROOT_SAID[0] = key
+    return chk
+
+
+if sys.argv[1:2] == ["serve"]:
+    # the bus's start, in serve mode alone (the CLI and a session's MCP process are clients of the bus and write
+    # nothing under the root themselves): BEFORE the serve token below is read or minted from that root
+    _state_root_gate("start", absent_ok=True)
+
+
 # ── serve-token gate (Jupyter's model; the same 0600 file the kernel mints) ─────
 # Loopback is reachable by EVERY local user on the machine, so the bus — which can wake sessions
 # and hand them mail as their next turn — requires the machine's serve token on every
@@ -3192,6 +3384,7 @@ def _monitor(httpd, boot_fp=""):
     idle = 0
     while True:
         time.sleep(POLL)
+        _state_root_gate("poll")           # the state root's mode (2026-09-20): a root loosened under us exits 2 here, every POLL
         _maybe_restart_for_code(boot_fp)   # reload if the on-disk code changed under us (does not return on restart)
         idle, stop = _monitor_tick(idle)
         if stop:
@@ -3599,7 +3792,10 @@ def serve():
     if why:
         _refuse_loudly(why)
         return 2
-    STATE.mkdir(parents=True, exist_ok=True)
+    STATE.mkdir(parents=True, exist_ok=True)   # the root now exists (made here or by the token mint when the import gate found none)
+    _state_root_gate("start", establish=_STATE_ROOT_UNMADE_AT_START[0])   # the state root's mode (2026-09-20): a root this process
+    #                                            made is chmod'ed 0700 first (a creation default); any other is read, repaired and
+    #                                            judged on what it reads now; refuse or unknown exits 2 before the bind
     MAILROOT.mkdir(parents=True, exist_ok=True)
     _reconcile_markers()
     _sweep_unfinished_writes()             # temps a crash left: removed, said, their ledgers closed (2026-09-08)

@@ -44,6 +44,7 @@ class World:
         self.orig_state, self.orig_names = km.jd.STATE, km.NAMES   # the conftest guard: shared state goes back at close
         km.jd._rebind_state(root / "state")
         (km.jd.STATE / "session-hosts").parent.mkdir(parents=True, exist_ok=True)
+        km.jd.STATE.chmod(0o700)   # owner-only, as production leaves it (2026-09-20): a request on a umask-mode root exits the process
         (km.jd.STATE / "session-hosts").write_text("off\n")
         km.jd.NAMES.mkdir(parents=True, exist_ok=True)
         (km.jd.NAMES / SID).write_text("web\t%s\t#1EA1EB\t#ffffff\n" % self.cwd)

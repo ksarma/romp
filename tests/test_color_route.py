@@ -53,6 +53,8 @@ class ColorRoute(unittest.TestCase):
                        km._mark_views_dirty)
         km.NAMES = self.names
         km.jd.STATE = Path(self.tmp) / "state"
+        km.jd.STATE.mkdir()
+        km.jd.STATE.chmod(0o700)   # the root exists and is owner-only (2026-09-20): a request on an absent or umask-mode root exits the process
         km._pal_cache.update({"name": km.pal.DEFAULT, "mt": None})   # drop the mtime cache between sandboxes
         km._live_map = lambda: {}
         km._live_names = lambda tm: {"web": SID}

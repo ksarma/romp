@@ -173,6 +173,7 @@ class World:
         self.saved_state = jd.STATE
         jd.STATE = tmp_path / "state"
         jd.STATE.mkdir()
+        jd.STATE.chmod(0o700)   # owner-only, as production leaves it (2026-09-20): a request on a umask-mode root exits the process
         km._user_todos_cache.clear()
         km._user_todos_bad.clear()
         km._set_user_todos(True)

@@ -176,12 +176,25 @@ STATE    = Path(os.environ.get("ROMP_STATE_DIR")   # per-kernel state root overr
 # import so every romp Python tool that uses STATE secures it; best-effort, and
 # since review round 2 of PR 789 (2026-09-19) the mode is read back afterwards
 # and said once on stderr when it is not 0700 (_state_root_mode_line). Since
-# 2026-09-20 a failed mkdir or chmod is recorded with its errno
-# (_STATE_ROOT_REPAIR_ERROR) rather than only swallowed, and state_root_mode_check
-# below is the kernel's check: it re-attempts the chmod, reads the mode back and
-# returns a verdict (refuse when group or other can write the root, warn when it
-# is not 0700, unknown when it cannot be read), run at the kernel's boot and on a
-# cadence after it (kernel.py: _state_root_boot_check, _state_root_verdict).
+# 2026-09-20 the import records the mode it READ before its own chmod
+# (_STATE_ROOT_MODE_AT_IMPORT), whether its own mkdir CREATED the root
+# (_STATE_ROOT_CREATED_AT_IMPORT: a fresh directory carries the umask's mode,
+# which is a creation default and not a loosening) and a failed mkdir or chmod
+# with its errno and the call that failed (_STATE_ROOT_REPAIR_STEP,
+# _STATE_ROOT_REPAIR_ERROR) rather than only swallowing it, and
+# state_root_mode_check below is the kernel's and the bus's check: it reads the
+# mode FIRST, takes its verdict from that read (refuse when group or other can
+# write the root, warn when it is not 0700, unknown when it cannot be read), THEN
+# re-attempts the chmod and records what the repair did. The kernel's boot
+# REPORTS the import's pre-chmod read (kernel.py: a pre-existing root that read
+# anything but 0700 at import and was tightened by this chmod boots with one loud
+# line and one error-centre row, with the distrust remedy when the read carried a
+# write bit: entries planted while it was writable are not to be trusted); the
+# kernel's refusals stand on the mode as read at each of its own checks (the
+# settled rule, round 2b). Run at the kernel's import, at its boot and on a
+# cadence after it (kernel.py: _state_root_import_gate, _state_root_boot_check,
+# _state_root_verdict); postal/postal_service.py carries a reduced copy for the
+# bus (KEEP IN SYNC).
 
 
 def _state_root_mode_line(root):
@@ -216,15 +229,40 @@ def _errno_text(e):
     return "%s: %s" % (errno.errorcode.get(code, "E%d" % code), os.strerror(code))
 
 
+# The import's own repair, recorded (2026-09-20). The mode is read BEFORE the chmod, so what the chmod changed is a
+# fact the kernel can report ("read 0755 at import, re-tightened to 0700": the loosening leaves a trace, kernel.py's
+# _state_root_boot_check) instead of a repair that erases its own evidence; a call that failed is recorded with its
+# errno and WHICH call it was (mkdir or chmod: one string covered both and mislabelled a mkdir failure as a chmod's,
+# the 2026-09-20 review's correctness-3). Whether the mkdir CREATED the root is recorded too (round 2 of that review):
+# the mkdir runs without exist_ok, so FileExistsError means the root was there before this process, and a root this
+# process made a moment ago at the umask's mode (0775 under a group-writable umask, then 0700 by the chmod below) is
+# a creation default, not a loosening, and nothing could have been planted in it; a PRE-EXISTING root that read
+# writable is the other thing entirely: the kernel's boot says so, loud (one line and one error-centre row naming the
+# distrust remedy), and refuses only when this chmod could not tighten it, since every refusal stands on the mode as
+# read at the gate that refuses (round 2b: refusing a root that reads 0700 now would refuse the first boot after every
+# creation by another tool under a group-writable umask). The CLI still starts whatever happened here: a failure here
+# must not stop a tool; the kernel's state_root_mode_check folds these four into its own check when it checks its own
+# root.
+_STATE_ROOT_MODE_AT_IMPORT = None   # stat.S_IMODE of the root as read before the import's chmod, or None when it could not be read
+_STATE_ROOT_CREATED_AT_IMPORT = False   # True when the mkdir below made the root (it did not exist before this process)
+_STATE_ROOT_REPAIR_STEP = None      # "mkdir" or "chmod 700": the call that failed at import, or None when both ran
+_STATE_ROOT_REPAIR_ERROR = None     # that call's "ENAME: strerror" (_errno_text), or None
 try:
-    STATE.mkdir(parents=True, exist_ok=True)
-    os.chmod(STATE, 0o700)
-    _STATE_ROOT_REPAIR_ERROR = None
+    STATE.mkdir(parents=True, exist_ok=False)
+    _STATE_ROOT_CREATED_AT_IMPORT = True
+except FileExistsError:
+    pass                            # pre-existing (a file at the path is pre-existing too; the stat below reads what it is)
 except OSError as _repair_e:
-    # Recorded, not only swallowed (2026-09-20): a chmod that could not run is not a quieter version of one that ran.
-    # The CLI still starts (a failure here must not stop a tool); the kernel's state_root_mode_check reads this back
-    # and puts it, with its errno, on the surfaces the mode itself reaches.
-    _STATE_ROOT_REPAIR_ERROR = _errno_text(_repair_e)
+    _STATE_ROOT_REPAIR_STEP, _STATE_ROOT_REPAIR_ERROR = "mkdir", _errno_text(_repair_e)
+try:
+    _STATE_ROOT_MODE_AT_IMPORT = stat.S_IMODE(os.stat(STATE).st_mode)
+except OSError:
+    pass
+if _STATE_ROOT_REPAIR_STEP is None:
+    try:
+        os.chmod(STATE, 0o700)
+    except OSError as _repair_e:
+        _STATE_ROOT_REPAIR_STEP, _STATE_ROOT_REPAIR_ERROR = "chmod 700", _errno_text(_repair_e)
 _STATE_ROOT_MODE_LINE = _state_root_mode_line(STATE)   # the line said at import, or None: read back, not assumed
 if _STATE_ROOT_MODE_LINE:
     sys.stderr.write(_STATE_ROOT_MODE_LINE + "\n")
@@ -233,35 +271,45 @@ STATE_ROOT_REFUSE_MASK = 0o022    # a group or other WRITE bit on the root: anot
 #                                   entries under it, which is the cross-session code-execution road; refuse to serve
 
 
-def state_root_mode_check(root=None, repair=True):
-    """The state root's mode as a verdict, for the kernel's boot check and its re-check (2026-09-20). Returns a dict:
-    root (str), mode (int or None), modeText ("%04o" or None), err (str or None: a failed stat and/or a failed
-    repair, each as "ENAME: strerror"), verdict ("ok" | "warn" | "refuse" | "unknown"), line (the one sentence to
-    say; None only when the verdict is ok AND the repair ran or was not asked for), remedy (str) and t (time.time()).
+def _errno_name(text):
+    """The errno name at the head of an _errno_text ("EPERM" of "EPERM: Operation not permitted"), or None."""
+    return text.split(":", 1)[0] if text else None
 
-    With `repair` the best-effort chmod 0700 is re-attempted first, its OSError recorded with its errno and never
-    raised; without it, and for the module's own STATE, the import's recorded repair error stands in. The mode is
-    then read back. Verdict: a stat that fails is "unknown" (surfaced like warn); a mode with a group or other
-    write bit (mode & 0o022) is "refuse", since write access by another local user is what enables the
-    cross-session code-execution road; any other mode that is not 0700 is "warn", a privacy fault and not a
-    code-execution one; 0700 is "ok". The line names the root, the mode read back, the repair error when there is
-    one and the remedy: `chmod 700 <root>`, or, when the repair failed with EPERM or EACCES, that the root is not
-    this uid's to change. A root that reads 0700 but whose chmod failed (a root another uid owns) is verdict ok
-    WITH a line: the mode is right today and not this uid's to keep, and the failed chmod is the signal, so it
-    reaches every surface the mode does (review of 2026-09-20). Two conditions, two consequences: the kernel refuses
-    to serve on "refuse" and files an error-centre row on "warn", "unknown" and ok-with-a-repair-error (kernel.py:
-    _state_root_boot_check, _state_root_verdict). The check reads the mode of the path the root resolves to and
-    nothing else: not the parent directories, not the owner, not whether it is a directory; the repair chmods that
-    resolved path. tests/test_state_root_mode.py pins the discriminator."""
+
+def state_root_mode_check(root=None):
+    """The state root's mode as a verdict, for the kernel's import gate, its boot check and its re-check (2026-09-20;
+    postal/postal_service.py carries a reduced copy for the bus, KEEP IN SYNC). Returns a dict: root (str), modeRead
+    (int or None: the mode as READ, before any repair), modeReadText ("%04o" or None), verdict ("ok" | "warn" |
+    "refuse" | "unknown"), repaired (bool: this call's chmod changed the mode to 0700), modeAfter (int or None: the
+    mode read back after the repair), err (str or None: the failed stat and/or chmod, each as "ENAME: strerror",
+    and, for the module's own root, the import's failed call labelled as the import's), statErrno and repairErrno
+    (the errno names, for a caller keying transitions on the cause), importModeRead (the mode the import read before
+    its chmod, for the module's own root; else None), importCreated (True when the import's own mkdir made the root,
+    so importModeRead is a creation default and not a loosening; False for a pre-existing root or another root),
+    importRepairError (the import's failed call, labelled; else None), line (the one full sentence to say, naming
+    the root; None when nothing is to be said), point (the same
+    fact with no path, for a bounded surface), remedy (str, naming the root), remedyPublic (the remedy with the root
+    named as "the state root") and t (time.time()).
+
+    READ BEFORE REPAIR (the 2026-09-20 review, extra6-1): the mode is read first and the verdict comes from that read;
+    the best-effort chmod 0700 runs afterwards and is REPORTED (repaired, modeAfter, repairErrno), never raised. Until
+    then the chmod ran first, so a root this uid owns that was loosened after boot was silently re-tightened and read
+    ok: the case the re-check exists to report left no trace. For the module's own root the FIRST read in the process
+    is the import's (importModeRead, taken before the import's chmod), which the kernel's boot REPORTS rather than
+    refuses on (kernel.py: _state_root_import_mode_row, one loud line and one row for a pre-existing root that read
+    anything but 0700 and was tightened by this module's chmod, with the distrust remedy for a writable read); every
+    refusal of the kernel's stands on the mode as read at that check (round 2b). Verdict: a mode with a group or
+    other write bit
+    (mode & 0o022) is "refuse", since write access by another local user is what enables the cross-session
+    code-execution road; any other mode that is not 0700 is "warn", a privacy fault and not a code-execution one;
+    0700 is "ok"; a root whose mode cannot be read is "unknown", which the kernel and the bus treat as refuse-class
+    (kernel.py: the argument beside _state_root_import_gate). A root that reads 0700 but whose chmod failed (a root
+    another uid owns) is verdict ok WITH a line: the mode is right today and not this uid's to keep, so the failed
+    chmod is the signal. The check never creates the root: the import did that once, and a per-check mkdir would
+    re-create a root an operator removed (correctness-3); a stat that fails skips the chmod. The check reads the mode
+    of the path the root resolves to and nothing else: not the parent directories, not the owner, not whether it is
+    a directory; the repair chmods that resolved path. tests/test_state_root_mode.py pins the discriminator."""
     r = STATE if root is None else Path(root)
-    repair_err = None
-    if repair:
-        try:
-            os.chmod(r, 0o700)
-        except OSError as e:
-            repair_err = _errno_text(e)
-    elif root is None:
-        repair_err = _STATE_ROOT_REPAIR_ERROR
     stat_err = None
     try:
         mode = stat.S_IMODE(os.stat(r).st_mode)
@@ -275,35 +323,85 @@ def state_root_mode_check(root=None, repair=True):
         verdict = "warn"
     else:
         verdict = "ok"
+    # THEN the repair, best-effort and reported: only when there was a mode to read (a stat that failed means no
+    # directory to chmod, and never a mkdir: see the docstring)
+    repair_err, mode_after = None, mode
+    if mode is not None:
+        try:
+            os.chmod(r, 0o700)
+        except OSError as e:
+            repair_err = _errno_text(e)
+        try:
+            mode_after = stat.S_IMODE(os.stat(r).st_mode)
+        except OSError:
+            mode_after = None
+    repaired = mode is not None and mode != 0o700 and repair_err is None and mode_after == 0o700
+    import_mode, import_err, import_created = None, None, False
+    if root is None:
+        import_mode, import_created = _STATE_ROOT_MODE_AT_IMPORT, _STATE_ROOT_CREATED_AT_IMPORT
+        if _STATE_ROOT_REPAIR_ERROR:
+            import_err = "%s failed at import: %s" % (_STATE_ROOT_REPAIR_STEP, _STATE_ROOT_REPAIR_ERROR)
     errs = []
     if stat_err:
         errs.append("stat failed: " + stat_err)
     if repair_err:
         errs.append("chmod 700 failed: " + repair_err)
+    if import_err:
+        errs.append(import_err)
     err = "; ".join(errs) or None
-    if repair_err and repair_err.split(":", 1)[0] in ("EPERM", "EACCES"):
-        remedy = "the root is not this uid's to change: make %s owned by this uid, then chmod 700" % r
-    else:
-        remedy = "chmod 700 %s" % r
+    not_ours = _errno_name(repair_err) in ("EPERM", "EACCES")
     mode_text = ("%04o" % mode) if mode is not None else None
     fail = (" (%s)" % err) if err else ""
-    if verdict == "ok" and repair_err:
-        # the mode reads right, the chmod that keeps it so could not run: said, since the failed chmod is the signal
-        line = ("state root %s is mode 0700, but chmod 700 failed (%s): the mode is right today and not this uid's to "
-                "keep; %s" % (r, repair_err, remedy))
-    elif verdict == "ok":
-        line = None
-    elif verdict == "unknown":
-        line = ("state root %s could not be checked for its mode%s: every file under it is only as private as its "
-                "own mode; %s" % (r, fail, remedy))
+    if verdict == "unknown":
+        remedy = "restore the state root at %s (it could not be read: %s)" % (r, _errno_name(stat_err))
+        bell = "restore the state root (it could not be read: %s)" % _errno_name(stat_err)
+        point = "the state root's mode could not be read (%s)" % _errno_name(stat_err)
+        line = ("state root %s could not be read%s: an unverified root is not served from; %s" % (r, fail, remedy))
     elif verdict == "refuse":
+        # the remedy restores the CONTENTS as well as the mode (the 2026-09-20 review, fresh-1): entries planted while
+        # the root was writable are not to be trusted, the serve token and the repo-root record first among them
+        remedy = ("remove serve-token and repo-root under %s (entries planted while it was writable are not to be "
+                  "trusted; the next boot re-mints them), then chmod 700 it" % r)
+        bell = "remove serve-token and repo-root, then chmod 700 the root (its contents are not to be trusted)"
+        if not_ours:
+            remedy += (", which failed here (%s): make the root itself this uid's, not its entries (adopt nothing "
+                       "you did not create)" % repair_err)
+            bell = "make the root itself this uid's, then remove serve-token and repo-root under it (adopt nothing)"
+        point = "the state root is mode %s, writable by other local users" % mode_text
         line = ("state root %s is mode %s, writable by other local users (a group or other write bit)%s: romp refuses "
-                "to serve until it is 0700; %s" % (r, mode_text, fail, remedy))
-    else:
+                "to serve from it%s; %s" % (r, mode_text, fail, " (re-tightened to 0700 after the read; the refusal stands "
+                                                                "on what was read)" if repaired else "", remedy))
+    elif verdict == "warn" and repaired:
+        remedy = "nothing to do now (re-tightened to 0700); find what loosened %s" % r
+        bell = "re-tightened to 0700; find what loosened it"
+        point = "the state root was mode %s, re-tightened to 0700" % mode_text
+        line = ("state root %s was mode %s, re-tightened to 0700%s: something loosened it after it was made 0700; %s"
+                % (r, mode_text, fail, remedy))
+    elif verdict == "warn":
+        if not_ours:
+            remedy = "the root is not this uid's to change: make %s owned by this uid, then chmod 700 it" % r
+            bell = "the root is not this uid's: make it this uid's, then chmod 700"
+        else:
+            remedy = "chmod 700 %s" % r
+            bell = "chmod 700 the state root"
+        point = "the state root is mode %s, not 0700" % mode_text
         line = ("state root %s is mode %s, not 0700%s: every file under it is only as private as its own mode; %s"
                 % (r, mode_text, fail, remedy))
-    return {"root": str(r), "mode": mode, "modeText": mode_text, "err": err, "verdict": verdict, "line": line,
-            "remedy": remedy, "t": time.time()}
+    elif repair_err:
+        # the mode reads right, the chmod that keeps it so could not run: said, since the failed chmod is the signal
+        remedy = "the root is not this uid's to change: make %s owned by this uid" % r
+        bell = "the root is not this uid's to change: make it this uid's"
+        point = "the state root is 0700, but chmod 700 failed (%s)" % _errno_name(repair_err)
+        line = ("state root %s is mode 0700, but chmod 700 failed (%s): the mode is right today and not this uid's to "
+                "keep; %s" % (r, repair_err, remedy))
+    else:
+        remedy, bell, point, line = "chmod 700 %s" % r, "chmod 700 the state root", None, None
+    return {"root": str(r), "modeRead": mode, "modeReadText": mode_text, "verdict": verdict, "repaired": repaired,
+            "modeAfter": mode_after, "err": err, "statErrno": _errno_name(stat_err), "repairErrno": _errno_name(repair_err),
+            "importModeRead": import_mode, "importCreated": import_created, "importRepairError": import_err,
+            "line": line, "point": point,
+            "remedy": remedy, "remedyPublic": remedy.replace(str(r), "the state root"), "bellRemedy": bell,
+            "t": time.time()}
 NAMES    = STATE / "names"
 PROJECTS = Path(os.environ.get("CLAUDE_CONFIG_DIR") or str(HOME / ".claude")) / "projects"   # per-kernel Claude root (plans/multi-kernel.md phase 2)
 CAPDIR   = STATE / "captions"            # the new summaries/ — one .jsonl per transcript, keyed by unit id

@@ -5506,54 +5506,113 @@ are read in place from where Claude Code writes them (`~/.claude/projects/`)
 and never copied.
 
 The state root's mode is checked, and the check has a consequence (since
-2026-09-20). Every romp tool makes the root owner-only (`0700`) when it
-loads, best-effort; the kernel reads the mode back at boot and re-reads it
-on a cadence (a read stands for 15 seconds; the housekeeping pass, every
-HTTP request and every WebSocket frame a client sends re-read it once it
-is older), and the same rule applies at every check. Four arms. One: a
-root writable by its group or by others (`0777`, `0770`, `0707`, `0722`
-and the like) is refused, because write access by another local user is
-what lets that user plant or replace entries under it. At boot the kernel
-prints one line naming the root, the mode read back and the remedy, and
-exits with code 2 before any thread starts (the manager restarts it and it
-refuses again). Found after boot, every request except `/healthz` and
-`/version` answers 503 with a JSON body (the error, the mode read back and
-a remedy with no filesystem path in it) and its route does not run, until
-the root reads tight again, when serving resumes on its own. A dashboard
-already connected over a WebSocket is not disconnected by the latch, but a
-frame it sends while the latch holds runs no operation: the kernel answers
-that socket one `stateRootRefused` frame (the 503 body plus `type` and
-`status`) per latch episode and drops the frame, and drops the episode's
-later frames without another answer; a new connection gets the 503. Pushes
-to an open socket keep flowing, and the kernel's background loops (the
-judges, the pusher, the housekeeping jobs) keep running and writing under
-the root while the latch holds: the latch stops serving, not the process.
-The manager's `/busy` poll answers 503 under the latch too, which the
-manager counts as a missed poll; after three consecutive misses (about
-nine seconds) it treats the kernel as unreachable and applies a parked
-deploy, and the restarted kernel, if the root still reads writable by
-others, refuses at boot with exit 2. Two: a root that is not `0700` but
-not writable by others (`0750`, `0755`, `0711`) is a privacy fault, not a
-code-execution one: one row in the dashboard's error center and one
-kernel-log line per transition, and no refusal. A root whose mode cannot
-be read (the check's `stat` failed, or the check itself raised) is
-reported the same way, as `unknown`, and lifts no latch: only a mode read
-back with no group or other write bit does, and the row that says serving
-resumed names that mode. Three: the re-check catches a root tightened at
-boot and loosened later; entering or leaving a state is said once, not
-once per pass. Four: a `chmod` or `mkdir` the repair could not run travels
-with its errno name and text on every one of these surfaces, since a chmod
-that could not run is not a quieter version of one that ran; a root that
-reads `0700` but that this user's `chmod` cannot change (a root another
-user owns) is one row and one line per transition with the verdict still
-`ok`. The check reads the mode of the path the root resolves to and
-nothing else: not the parent directories, not the owner, and not whether
-it is a directory; the repair chmods that resolved path. `/version`
-carries `stateRootMode` (`verdict`, `mode`, `err`, `remedy`, `checkedAt`,
-`refusingSince`) with no filesystem path, since that route answers with no
-token; the kernel log and the error center name the root. The remedy is
-`chmod 700` on the root, or, when the root is not this user's to change,
-making it this user's first.
+2026-09-20): a root another local user can write to, or one whose mode
+cannot be read, stops the process. Every romp tool makes the root
+owner-only (`0700`) when it loads, best-effort; the kernel reads the mode
+back and, when the mode is a problem, refuses. The refusal is one shape
+everywhere, an exit with code 2. A root writable by its group or by
+others (`0777`, `0770`, `0707`, `0722` and the like) is the reason: write
+access by another local user is what lets that user plant or replace
+entries under the root, which is the cross-session code-execution road. A
+root whose mode cannot be read is treated the same way, because an
+unverified root is not one to serve from and a `stat` on a local directory
+does not fail transiently (a missing root means it was removed or renamed,
+and continuing would re-create it under a parent someone else may own).
+
+The check runs three times. First at the kernel's module import, before
+the serve token is read and before the repo-root record is written, so the
+kernel never adopts an entry a writable root already held; a hostile or
+unreadable root exits 2 there. The verdict stands on the mode as read at
+that check, after the import's own best-effort `chmod`: a root that reads
+`0700` at the gate passes, whatever it read a moment before. So a
+pre-existing root that was `0775` or `0777` and that the import tightened
+is not refused; refusing it would refuse the first boot after every
+creation of the root by another tool, since the manager, the command-line
+tools and every test harness make the root at the umask's mode (`0775`
+under a group-writable umask) and the import's `chmod` is what tightens
+it. What the import read is reported instead, loud and not fatal: the
+boot files one kernel-log line and one error-centre row for a pre-existing
+root that read anything but `0700` at import, and when that read carried a
+group or other write bit the row says that entries planted while the root
+was writable are not to be trusted: remove `serve-token` and `repo-root`
+under the root and restart, so the next boot re-mints them. A root the
+import itself created is exempt from that report (a fresh directory
+carries the umask's mode until that `chmod`, a creation default and not a
+loosening). The planted entries themselves are stopped elsewhere: the
+serve-token loader reads no token through a symlink and faults on a
+foreign-owned or unchmodable token, and the repo-root record is written by
+a temp and a rename, so a planted entry at that path is replaced rather
+than written through or left standing, and a write that fails is said in
+the kernel log with its `errno` and filed as an error-centre row at boot.
+What the import gate refuses, then, is a root whose `chmod` could not
+tighten it (a root another user owns, or a refusing mount: it still reads
+writable) and a root whose mode cannot be read; the refuse line's remedy
+names the same distrust of the contents (remove `serve-token` and
+`repo-root`, then `chmod 700` the root).
+Second at boot in `main()`, before any thread starts, under the same rule.
+Third on a cadence while serving: the housekeeping pass re-reads the mode
+as its first job, and every HTTP request re-reads it before routing, each
+read standing for 15 seconds. A refuse or unknown verdict found while
+serving writes the line to the kernel log and calls `os._exit(2)` from
+whichever thread found it, with no drain and no further write, because
+every writer in the process is by then writing under a root another local
+user can write; a second thread that finds the same verdict does not
+return to its request or its stage either. That is the point of the exit:
+it stops the housekeeping pass, the pusher, the judge passes and the
+timers by construction, where a gate on the serving doors alone would
+leave them running. The manager sees the exit, restarts the kernel, and
+the import check refuses again while the root reads so, so the manager
+crash-loops one line per attempt into its log until the root is repaired;
+a deploy parked on the quiet window applies into a kernel that refuses at
+its next boot the same way.
+
+The re-check reads the mode before it repairs. A root this user owns that
+was loosened after boot is re-tightened to `0700` by the check's own
+best-effort `chmod`, but the verdict is taken from the mode as read, so
+the loosening is reported (a writable mode still exits; a `0755` mode files
+a row that says it was re-tightened) rather than silently erased. A root
+that is not `0700` but not writable by others (`0750`, `0755`, `0711`) is a
+privacy fault, not a code-execution one: one row in the dashboard's error
+center, under its own `refused` bell kind, and one kernel-log line per
+transition (keyed on the mode and the cause, so an `errno` that changes
+under a constant mode files again), and no refusal. The row is built to fit
+the bell whole, with the remedy first and the root's path named at most
+once; the full line with the path goes to the kernel log. A `chmod` or
+`mkdir` the repair could not run travels with its `errno` name and text on
+every surface, since a `chmod` that could not run is not a quieter version
+of one that ran; a root that reads `0700` but that this user's `chmod`
+cannot change (a root another user owns) files one row and one line per
+transition with the verdict still `ok`, the import's own failed `chmod`
+folded in and labelled as the import's. The check reads the mode of the
+path the root resolves to and nothing else: not the parent directories,
+not the owner, and not whether it is a directory; the repair chmods that
+resolved path.
+
+`/version` carries `stateRootMode` (`verdict`, `modeRead`, `modeAfter`,
+`repaired`, `err`, `importRepairError`, `remedy`, `checkedAt`) with no
+filesystem path, since that route answers with no token; the kernel log
+names the root. A served kernel only ever shows `verdict` `ok` or `warn`
+there, since a refuse or unknown verdict has already exited the process.
+The remedy is `chmod 700` on the root, or, when the root is not this
+user's to change, making it this user's first.
+
+The postal bus is a second serving daemon on the same state root, kept
+alive by the kernel, so it carries its own copy of the same check (it
+imports nothing from the kernel): a bus that finds the root writable or
+unreadable exits 2 before it reads the serve token and binds, on the mode
+as the root reads after the start's own repair, the kernel's rule (a
+pre-existing `0777` root the bus could tighten is served and said, one
+loud line with the distrust remedy; a pre-existing `0755` root is
+re-tightened and said once; a root the bus makes itself is made `0700`),
+and again from its monitor loop, every poll, on the mode as read before
+that poll's repair, when the root loosens under it; a root that is not
+`0700` but not writable by others logs one line and serves.
+The command-line tools and each session's message server are clients of
+the bus and write nothing under the root themselves, so they do not refuse.
+The check has limits worth stating: it reads the resolved root's own mode,
+not its parents' and not its owner, and it trusts the file system's
+report of the mode; it is a guard against a local co-tenant, not against
+`root`.
 
 The self-updater's report, `update-report.json`, is read once, by the next
 kernel boot or by the running kernel's banner poll, and archived as

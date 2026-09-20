@@ -50,6 +50,62 @@ _ls_spec.loader.exec_module(_ls_mod)
 load_source = _ls_mod.load_source   # file-path imports with load_module()'s sys.modules semantics (kernel/loadsource.py)
 em = load_source("romp_event_model", HERE / "event_model.py")
 jd = load_source("romp_judge", HERE / "judge.py")
+
+
+def _state_root_import_gate():
+    """THE FIRST THING THIS KERNEL DOES WITH ITS STATE ROOT (2026-09-20): read its mode, and refuse to go on when the root
+    is writable by other local users or cannot be read. Run here at import, right after the judge module (whose own
+    import made the root 0700 best-effort and recorded what it read before its chmod), and BEFORE TOKEN = _load_token()
+    reads or mints the serve token and _persist_repo_root() writes under the root. The order is the point (the
+    2026-09-20 review's fresh-2 and fresh-1): until then the boot check ran in main(), after the import had already
+    adopted the serve token the root held and written repo-root into it, and a planted symlink at serve-token killed
+    the import with the token's RuntimeError, so the refusal this check exists for never printed and the operator was
+    sent to the wrong fix. Now a hostile root is refused before any entry under it is trusted, and the remedy says
+    that entries planted while the root was writable are not to be trusted (remove serve-token and repo-root, then
+    chmod 700 the root).
+
+    UNVERIFIED DEFAULTS TO THE RESTRICTED SIDE (the standing rule; the review's section E asked for this to be argued
+    rather than inherited): a root whose mode cannot be read is refused exactly like one read writable. The cost of
+    being wrong the other way is the whole boundary: the root's mode is the premise of _atomic_write's interim-mode
+    argument and of every credential file under it, and serving from a root nobody could verify is serving from a
+    root that may be anyone's. The cost of being wrong this way is small: a stat on a local directory does not fail
+    transiently (no network, no lock, no quota), so an unreadable root is one that was removed, renamed or made
+    untraversable, and ENOENT in particular means the root the import created a moment ago is gone: continuing would
+    re-create it under a parent someone else may own. The same rule holds at runtime (_state_root_verdict).
+
+    THE VERDICT IS ON THE MODE AS READ NOW (the settled rule, round 2b of the 2026-09-20 review): this gate reads
+    after the judge module's import repair, so a root that reads 0700 here passes, whatever it read before that
+    chmod. A root this uid owns that read 0777 at import and reads 0700 now is NOT refused: refusing it would refuse
+    the first boot after every creation by another tool under a group-writable umask (bin/romp-manager's mkdirSync,
+    `romp engine`'s mkdir -p, every test harness's makedirs all make the root at the umask's mode, 0775 under 002,
+    and the judge module's import is what tightens it), and the ruling's arm ONE is stated on the current mode. What
+    the import read is REPORTED instead, loud and not fatal: the judge module recorded it (_STATE_ROOT_MODE_AT_IMPORT,
+    folded into the check as importModeRead), and the boot check files one stderr line and one error-centre row for a
+    pre-existing root that read anything but 0700 at import (_state_root_import_mode_row; a root the import CREATED is
+    exempt, a fresh directory's umask mode being a creation default), with the distrust remedy when the read carried a
+    write bit: remove serve-token and repo-root under the root and restart, so the next boot re-mints them. The
+    adoption risk of a root that was writable before this process tightened it is closed elsewhere: the serve-token
+    loader faults on a symlink, a foreign-owned or unchmodable token (its own RuntimeError, exit 1), and repo-root is
+    replaced by an atomic rename (_persist_repo_root), never written through or left standing. What this gate does
+    refuse: a root whose chmod could not tighten it (a foreign owner, a refusing mount: it still reads writable) and a
+    root that cannot be read. The check's own best-effort chmod runs after its read and is reported, never relied on
+    (kernel/judge.py: state_root_mode_check). SystemExit(2), the exit code every refusal of this kernel carries, and
+    the full line with the root's path on stderr, since this is the operator's surface. Under bin/romp-manager the
+    respawn backoff repeats this refusal until the root is repaired; a kernel that finds its root hostile after boot
+    exits 2 the same way (_state_root_exit_now), so the manager sees one shape. Pinned by execution in a child process
+    (tests/test_state_root_mode.py: TheImportGateComesFirst, AServedKernelRefusesAtRuntime), not by a source index: a
+    self-owned 0777 root is tightened and imports (the boot then says what was read); with a planted symlink at
+    serve-token the token loader's own fault stops the import, exit 1, the link's target untouched; a chmod-refusing
+    0777 root exits 2 with this line before the token work; a 0700 root imports fine; an unreadable root exits 2."""
+    chk = jd.state_root_mode_check()
+    if chk["verdict"] in ("refuse", "unknown"):
+        sys.stderr.write("romp-kernel: %s. romp did NOT start.\n" % chk["line"])
+        sys.stderr.flush()
+        raise SystemExit(2)
+    return chk
+
+
+_STATE_ROOT_IMPORT_CHECK = _state_root_import_gate()   # before any read of the root's contents: the token load below is the first
 cm = load_source("romp_colormap", HERE / "colormap.py")  # age → recency tint
 pal = load_source("romp_palette", HERE / "palette.py")  # session-identity palettes (selectable)
 sb = load_source("romp_session_backend", HERE / "session_backend.py")  # the SessionBackend ABC
@@ -3379,10 +3435,10 @@ def _version_info():
             # the API added beyond the shipped seed, and the last refresh failure — so a stale list
             # is a visible fact in `romp version`, never a guess
             "modelCatalog": _catalog_public_status(),
-            # the state root's mode as last checked (2026-09-20): verdict ok | warn | refuse | unknown (unchecked before
-            # the boot check), the mode read back, the check's error with its errno, a path-free remedy, checkedAt and
-            # refusingSince while the 503 latch holds. The manager reads this route; it now carries the reason. No
-            # path: the root's default sits under $HOME (_state_root_public_status)
+            # the state root's mode as last checked (2026-09-20): verdict ok | warn (a refuse or unknown verdict exits the
+            # process, so a served kernel never shows one; unchecked before any check), the mode as read and after the
+            # repair, whether this check repaired it, the check's error with its errno, the import's own failed call,
+            # a path-free remedy and checkedAt. No path: the root's default sits under $HOME (_state_root_public_status)
             "stateRootMode": _state_root_public_status(),
             "autoNudge": _mv["autoNudge"],   # server-side toggle state → the gear checkbox reflects the kernel
             "compactSuggest": _mv["compactSuggest"],   # T208+: its gear checkbox rides the same read
@@ -3893,6 +3949,10 @@ def _spend_handoff(code):
     return False
 
 
+_REPO_ROOT_WRITE_ERROR = None   # "ENAME: strerror" when the import's repo-root write failed: said on stderr here, filed as an
+#                                 error-centre row by the boot check (_state_root_boot_check), shown by nothing else
+
+
 def _persist_repo_root():
     """The kernel's own repo root, written into state at boot (state/romp/repo-root). This is the
     AUTHORITATIVE answer for a peer kernel's clone-discovery probes (_start_remote_kernel,
@@ -3900,12 +3960,48 @@ def _persist_repo_root():
     file over ssh FIRST instead of guessing conventional dirs — the guess list missed a clone at
     ~/projects/romp while that machine's kernel was literally up, reporting "romp not installed"
     (the user 2026-08-11). Best-effort, unlike the serve-token mint above, which refuses rather
-    than degrade: a wrong repo-root misleads a probe, a wrong token strands every client."""
+    than degrade: a wrong repo-root misleads a probe, a wrong token strands every client.
+
+    Written the way the token mint writes (round 2 of the 2026-09-20 review, fresh-1): a temp created
+    O_EXCL under the root and os.replace'd onto the path. Until then this was write_text in place with
+    the OSError swallowed, so a planted entry this uid could not open (a foreign-owned file) survived
+    every boot unmentioned and was later read and run by a peer's probe, and a planted symlink at the
+    path was written THROUGH, truncating a file outside the root. A rename replaces the entry itself
+    whatever it is (the directory is this uid's), and a write that still fails is said on stderr with
+    its errno and filed as an error-centre row at boot rather than swallowed. No mkdir: the root exists
+    (the judge module's import made it and the import gate read it), and a mkdir here would re-create a
+    root that vanished in between under a parent someone else may own."""
+    global _REPO_ROOT_WRITE_ERROR
+    f = jd.STATE / "repo-root"
+    tmp = f.with_name("%s.%d.tmp" % (f.name, os.getpid()))
+    fd = None
     try:
-        jd.STATE.mkdir(parents=True, exist_ok=True)
-        (jd.STATE / "repo-root").write_text(str(ROOT) + "\n")
-    except OSError:
-        pass
+        try:
+            os.unlink(tmp)                   # a temp a crashed earlier attempt of this pid left; O_EXCL below must not trip on it
+        except FileNotFoundError:
+            pass
+        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        data = (str(ROOT) + "\n").encode()
+        n = os.write(fd, data)
+        if n != len(data):
+            raise OSError(errno.EIO, "short write, %d of %d bytes" % (n, len(data)))
+        os.close(fd)
+        fd = None
+        os.replace(str(tmp), str(f))
+        _REPO_ROOT_WRITE_ERROR = None
+    except OSError as e:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        _REPO_ROOT_WRITE_ERROR = jd._errno_text(e)
+        sys.stderr.write("romp-kernel: the repo-root record %s could not be written (%s): a peer's clone discovery reads it "
+                         "over ssh; remove whatever stands at that path and restart\n" % (f, _REPO_ROOT_WRITE_ERROR))
 
 _persist_repo_root()
 
@@ -7083,9 +7179,10 @@ def _atomic_write(path, text, mode=None):
     mode until its next write, and the owner-only state root is what makes that interim safe: kernel/judge.py
     chmods it 0700 on import and, since review round 2 (2026-09-19), reads the mode back and says so once on
     stderr when it is not 0700, so that premise is checked rather than assumed. Since 2026-09-20 the check has a
-    consequence: a root writable by group or other stops the kernel at boot (exit 2) or, found later by the re-check,
-    latches every request but /healthz and /version to 503 until it reads tight again; a root not 0700 but not writable
-    by others files an error-centre row (_state_root_boot_check, _state_root_verdict). tests/test_kernel_remotes_perms.py
+    consequence: a root writable by group or other, or one whose mode cannot be read, stops the kernel, at import and
+    at boot with exit 2 and, found later by the re-check, with an immediate exit 2 from whichever thread found it, so
+    no writer (this helper included) runs on under it; a root not 0700 but not writable by others files an error-centre
+    row (_state_root_import_gate, _state_root_boot_check, _state_root_verdict). tests/test_kernel_remotes_perms.py
     pins the shape: one fchmod on the descriptor while the temp is still empty, no chmod on any path, the
     requested mode published exactly under a permissive and a restrictive umask, a leftover temp overwritten
     rather than refused, and a raising fchmod closing the descriptor and leaving no temp."""
@@ -22440,26 +22537,51 @@ def _sdk_problem(text):
 # on trust: a root this uid could not tighten was said once on stderr and served anyway, and a root loosened
 # after boot was never read again. The root's mode is the premise of _atomic_write's interim-mode argument (a
 # file this uid wrote at a looser mode is not exposed because the root is owner-only), so the check lives here
-# with a consequence. Two conditions, two consequences: a root WRITABLE by group or other (mode & 0o022) is the
-# cross-session code-execution road (another local user can plant or replace entries under it), and the kernel
-# REFUSES TO SERVE: at boot by exiting 2 before any thread starts (_state_root_boot_check), at runtime by a
-# latch every request but /healthz and /version answers 503 from (Handler._state_root_gate) until the root reads
-# tight again; a root that is not 0700 but not writable by others (0750, 0755, 0711) is a privacy fault, not a
-# code-execution one: one error-centre row per transition (_sdk_problem) and a stderr line, no refusal. The
-# check re-runs on the jobs pass's cadence (_jobs_pass, `jobs.stateRootMode`), before every request and before
-# every WebSocket client frame (_state_root_verdict), each at most every STATE_ROOT_CHECK_S; a chmod that could
-# not run travels with its errno on every surface (the line, the row, /version's stateRootMode), a root that reads
-# 0700 but whose chmod fails included (verdict ok with a line: one row per transition). A verdict the check could
-# not read (unknown: the stat failed, or the check raised) lifts NO latch: only a mode read back with no group or
-# other write bit does, and the resumed row names that mode. Existing WebSocket clients are not force-closed by
-# the latch (out of scope; the docs say so), but a frame one sends while the latch holds runs no op: the socket is
-# answered one refusal frame per latch episode and the frame is dropped (_ws_state_root_gate); pushes to it keep
-# flowing, and the background loops keep running (the latch stops serving, not the process). New /ws upgrades
-# get the 503 like every other route.
+# with a consequence, and the consequence is one shape everywhere: THE PROCESS STOPS. A root WRITABLE by group or
+# other (mode & 0o022) is the cross-session code-execution road (another local user can plant or replace entries
+# under it), and a root whose mode cannot be read is unverified (the argument beside _state_root_import_gate);
+# either verdict exits 2: at import before the serve token is read (_state_root_import_gate), at boot in main()
+# (_state_root_boot_check, SystemExit in the main thread), and found by the re-check after boot, os._exit(2) from
+# whichever thread found it (_state_root_exit_now: the full line to stderr, a flush, no drain and no further
+# write; a second finder does not return to its caller, it raises _StateRootExiting and its thread ends there).
+# Every verdict is on the mode AS READ AT THAT CHECK (round 2b): the import gate and the boot check read after the
+# judge module's import repair, so a pre-existing root that read writable before that chmod and reads 0700 now is
+# not refused; what the import read is reported at boot instead, one loud line and one error-centre row with the
+# distrust remedy (_state_root_import_mode_row; a root the import created is exempt, since a fresh directory's
+# umask mode is a creation default and not a loosening). Refusing the tightened root would refuse the first boot
+# after every creation by another tool under a group-writable umask, which is how the manager, the CLI and every
+# test harness make it. The exit is the round-2 decision (the 2026-09-20 review's section A): round 1 latched every
+# request to 503 and left every internal writer running under the hostile root, the housekeeping pass whose own
+# stage set the latch included, so the doors closed while the write primitive the road depends on carried on. An
+# exit is the only shape that stops every writer by construction: the housekeeping pass, the pusher, the judge
+# passes, the timers, the SDK backend's threads. The manager sees exit 2 and respawns (its backoff grows to 10 s
+# on quick exits); the import gate then refuses again while the root reads hostile, so the manager crash-loops one
+# line per attempt into its log until the root is repaired, and a deploy parked on its quiet window applies into a
+# kernel that refuses at boot the same way. The check runs on the jobs pass's cadence (_jobs_pass, the
+# `jobs.stateRootMode` stage, FIRST in the pass) and before every request (Handler._state_root_recheck), each at
+# most every STATE_ROOT_CHECK_S over one cache (_state_root_verdict). The re-check READS BEFORE IT REPAIRS
+# (judge.state_root_mode_check): a root this uid owns that is loosened to 0755 after boot is re-tightened AND
+# reported ("was 0755, re-tightened to 0700"), so the loosening leaves a trace; one loosened to 0777 exits 2 on what
+# was read, whether or not the chmod could tighten it on the way out. A root that is not 0700 but not writable by
+# others (0750, 0755, 0711) is a privacy fault, not a code-execution one: one error-centre row per transition and a
+# stderr line, no refusal. The rows ride _sync_notice under the bell's "refused" kind (the kind a state file that
+# cannot be read or written wears; not the mutable "sdk" kind of _sdk_problem, whose one mute would hide these with
+# the backend's), are keyed on the verdict AND its cause so an errno that changes under a constant mode refiles,
+# and are built to fit the bell whole (SYNC_NOTICE_FIT) with the point and the remedy first and the root's path at
+# most once (_state_root_row); the full line with the path goes to stderr. A chmod that could not run travels with
+# its errno on every surface (the line, the row, /version's stateRootMode), a root that reads 0700 but whose chmod
+# fails included (verdict ok with a line: one row per transition), and the import's own failed mkdir or chmod is
+# folded in, labelled as the import's (correctness-3). The postal bus, a second daemon on the same root, carries a
+# reduced copy of the check and the same exit (postal/postal_service.py). _sdk_problem's sequence collision (its seq
+# is len(ring)+1 over a ring trimmed to 20, so a long-lived kernel's rows share one signature and the bell drops
+# them) is pre-existing and not touched here; these rows no longer ride it.
 STATE_ROOT_CHECK_S = 15.0                      # the re-check cadence; ROMP_STATE_ROOT_CHECK_S overrides it (tests)
 _STATE_ROOT_MODE = None                        # the last check dict (jd.state_root_mode_check), None before the first
-_STATE_ROOT_REFUSAL = None                     # {t, line} while the root reads writable by other local users, else None
-_STATE_ROOT_LOCK = threading.Lock()
+_STATE_ROOT_KEY = None                         # the last transition key the warn surface filed (_state_root_key)
+_STATE_ROOT_LOCK = threading.Lock()            # one re-read and one transition at a time; the refusal flag below rides it
+_STATE_ROOT_REFUSED = False                    # True once the runtime refusal is on its way: a second finder raises _StateRootExiting
+_state_root_exit = os._exit                    # the runtime refusal's exit, module-level so a test can double it (a raising
+#                                                double stands in for a process that is gone)
 
 
 def _state_root_check_interval():
@@ -22474,169 +22596,220 @@ def _state_root_check_interval():
     return STATE_ROOT_CHECK_S
 
 
-def _state_root_boot_check():
-    """The boot arm, called from main() right after jd._cred.check_boot_environment() and BEFORE any thread starts.
-    Verdict refuse (the root is writable by group or other): the loud line on stderr, naming the root, the mode read
-    back and the remedy, then SystemExit(2); the manager restarts the kernel and it refuses again, which is loud and
-    stops nothing that is not this kernel (credentials.py's check_boot_environment is the start-time refusal this
-    matches, RuntimeError there since the manager logs the traceback; here the one line is the whole message, so
-    the exit code carries it). Verdict warn or unknown, or ok with a repair error (the root reads 0700 but this uid's
-    chmod failed: the failed chmod is the signal): the line on stderr and one error-centre row (_sdk_problem), and
-    the boot goes on. Verdict ok with no line: nothing said. The check is stored for /version (stateRootMode) and
-    as the re-check's previous state, so the first runtime pass files no second row for the same state."""
-    global _STATE_ROOT_MODE
-    chk = jd.state_root_mode_check(repair=True)
-    with _STATE_ROOT_LOCK:
-        _STATE_ROOT_MODE = chk
-    if chk["verdict"] == "refuse":
-        sys.stderr.write("romp-kernel: %s. romp did NOT start.\n" % chk["line"])
-        raise SystemExit(2)
-    if chk["line"]:
-        sys.stderr.write("romp-kernel: %s\n" % chk["line"])
-        _sdk_problem(chk["line"])
-    return chk
-
-
 def _state_root_key(chk):
-    """The state the transition rule compares: the verdict, except that ok WITH a repair error is its own state
-    ("ok+repair": the root reads 0700 but this uid's chmod failed), so entering it files one row and staying in it
-    files none. None for no check."""
+    """The state the transition rule compares: the verdict with its cause (the mode read, whether this check repaired
+    it, the chmod's errno name and the stat's), so a cause that changes under one verdict (EPERM to EACCES under a
+    constant 0755, 0755 to 0750, unrepaired to repaired) is a new transition and refiles (the 2026-09-20 review's
+    extra6-2), while a check that stays in one state files nothing. Plain ok (no error) is one state of its own, so
+    a return to it after warn says nothing. None for no check."""
     if chk is None:
         return None
-    if chk["verdict"] == "ok" and chk.get("err"):
-        return "ok+repair"
-    return chk["verdict"]
+    if chk["verdict"] == "ok" and not chk.get("err"):
+        return ("ok",)
+    return (chk["verdict"], chk.get("modeReadText"), bool(chk.get("repaired")), chk.get("repairErrno"),
+            chk.get("statErrno"))
+
+
+def _state_root_row(chk, point=None, remedy=None):
+    """The error-centre row for a check, built to fit the bell whole (SYNC_NOTICE_FIT, the rule _notice_list and
+    _manager_refusal follow; the 2026-09-20 review's extra7-2): the point and the path-free remedy FIRST, then the
+    check's error text and then the root's path, each appended only while the whole still fits, so a long root costs
+    the path on the row (it is on the stderr line, this uid's surface) and never the way out. The path appears at
+    most once. `point` and `remedy` override the check's (the boot check's import-mode row)."""
+    def cap(t):
+        t = t.strip().rstrip(".")
+        return t[:1].upper() + t[1:]
+    head = "%s. %s." % (cap(point or chk["point"] or ""), cap(remedy or chk.get("bellRemedy") or chk["remedyPublic"]))
+    for tail in ((" (%s)." % chk["err"]) if chk.get("err") else "", " Root: %s." % chk["root"]):
+        if tail and len(head + tail) <= SYNC_NOTICE_FIT:
+            head += tail
+    return head
 
 
 def _state_root_unknown_check(exc_text, now):
-    """The check dict _state_root_verdict caches when jd.state_root_mode_check itself raised (not an OSError, which it
-    catches): verdict unknown with the exception's type name in err, so the cache is refreshed, one row files per
-    transition and the traceback is said once, not on every request."""
+    """The check dict cached when jd.state_root_mode_check itself raised (not an OSError, which it catches): verdict
+    unknown with the exception's type name, so the refusal that follows names its cause; the traceback is written by
+    the caller, once, before the exit."""
     root = str(jd.STATE)
-    return {"root": root, "mode": None, "modeText": None, "err": "check raised: " + exc_text, "verdict": "unknown",
-            "line": ("state root %s could not be checked for its mode (the check raised %s): every file under it is only "
-                     "as private as its own mode; chmod 700 %s" % (root, exc_text, root)),
-            "remedy": "chmod 700 %s" % root, "t": now}
+    return {"root": root, "modeRead": None, "modeReadText": None, "verdict": "unknown", "repaired": False, "modeAfter": None,
+            "err": "check raised: " + exc_text, "statErrno": None, "repairErrno": None, "importModeRead": None,
+            "importCreated": False, "importRepairError": None,
+            "point": "the state root's mode could not be checked (the check raised %s)" % exc_text,
+            "line": ("state root %s could not be checked for its mode (the check raised %s): an unverified root is not "
+                     "served from; restore the state root at %s and report the traceback above" % (root, exc_text, root)),
+            "remedy": "restore the state root at %s and report the traceback above" % root,
+            "remedyPublic": "restore the state root and report the traceback above",
+            "bellRemedy": "restore the state root and report the traceback above", "t": now}
 
 
-def _state_root_verdict(now):
-    """The runtime arm: the root's current verdict, re-read (jd.state_root_mode_check, repair=True) when the cached check
-    is older than the interval, and the transition rule applied under one lock so two roads (the jobs pass and a
-    request) never file one transition twice. Entering refuse latches _STATE_ROOT_REFUSAL = {t, line}, says the line
-    on stderr and files it as an error-centre row; a mode read back with no group or other write bit (verdict ok or
-    warn) while the latch holds clears it, says so and files a "serving resumed" row naming that mode; an unknown
-    verdict (the stat failed, or the check raised) lifts nothing: a mode the check could not read is no evidence the
-    root is tight, so the latch stands and the unknown row says so. Entering warn, unknown, or ok with a repair
-    error (_state_root_key) says the line and files one row per transition, never one per pass; a check that stays
-    in one state says nothing. A check that raises (not an OSError: state_root_mode_check catches those) is cached as
-    an unknown check with the exception's type name (_state_root_unknown_check) and its traceback is said once, on the
-    transition, so a persistent raise neither fails open into a stale cache nor repeats on every request. Returns
-    the verdict string. The cache answers while its age, `now` minus the check's time.time(), is inside
-    [0, interval); a negative age (the jobs pass hands an int second, which can trail a float check time within the
-    same second, or a clock stepped back) re-reads rather than trusting a check the caller's clock says has not
-    happened."""
-    global _STATE_ROOT_MODE, _STATE_ROOT_REFUSAL
+class _StateRootExiting(BaseException):
+    """Raised to the SECOND finder of a runtime refusal (round 2 of the 2026-09-20 review): the first finder is writing
+    its line and calling os._exit(2), and a second road (another request thread, the jobs pass) that found the same
+    verdict must not RETURN to its caller and run its request or stage under the hostile root while the first finder's
+    stderr write is still in flight (a stderr pipe whose reader is behind widens that window to a whole request or
+    pass). A BaseException, not an Exception, so the `except Exception` guards on every road let it through and the
+    thread ends there; the process is gone a moment later. Never raised to the first finder, whose exit does not
+    return (or, under a test's raising double, raises the double)."""
+
+
+def _state_root_exit_now(chk, where):
+    """The runtime refusal (the 2026-09-20 review's section A: the same refusal as the boot's, from wherever the check
+    found it). Idempotent under _STATE_ROOT_LOCK: the first finder sets _STATE_ROOT_REFUSED, writes the full line
+    (the root's path in full: stderr is this uid's surface) with what happens next, flushes, and calls
+    _state_root_exit(2), which is os._exit: no drain, no atexit, no further write of any kind, since every writer in
+    this process is now writing under a root another local user can write. A second finder (the other road, another
+    request thread) raises _StateRootExiting and never returns to its caller, so no request or stage runs on while the
+    first finder's line is in flight. The manager sees exit 2 and respawns; the import gate refuses again while the
+    root reads so. Not SystemExit: raised from a non-main thread (the jobs thread, a request thread) it is swallowed
+    by the thread bootstrap and would kill that thread alone, quietly, leaving every other writer running."""
+    global _STATE_ROOT_REFUSED
+    with _STATE_ROOT_LOCK:
+        if _STATE_ROOT_REFUSED:
+            raise _StateRootExiting()
+        _STATE_ROOT_REFUSED = True
+    try:
+        sys.stderr.write("romp-kernel: %s. romp stops now (exit 2; found by %s): the manager restarts it, and the boot "
+                         "refuses again while the root reads so.\n" % (chk["line"], where))
+        sys.stderr.flush()
+    finally:
+        _state_root_exit(2)
+
+
+def _state_root_read(now):
+    """One read of the root's mode (jd.state_root_mode_check); a check that raises (not an OSError, which it catches) is
+    returned as an unknown check naming the exception's type, with the traceback written first, so the refusal that
+    follows has its cause on the same surface."""
+    try:
+        return jd.state_root_mode_check()
+    except Exception as e:
+        sys.stderr.write("state-root-mode: the check raised:\n%s" % traceback.format_exc())
+        return _state_root_unknown_check(type(e).__name__, now)
+
+
+def _state_root_verdict(now, where="a re-check"):
+    """The runtime arm: the root's current verdict, re-read when the cached check is older than the interval, the
+    transition rule applied under one lock (so two roads, the jobs pass and a request, never file one transition
+    twice), and a refuse or unknown verdict handed to _state_root_exit_now, which does not return. `where` names the
+    road for the exit line. The warn surface: entering warn, or ok with a repair error, or a new cause under either
+    (_state_root_key) says the line on stderr and files one row (_sync_notice, kind "refused"); a check that stays in
+    one state says nothing, and a return to plain ok says nothing. Returns the verdict string. The cache answers
+    while its age, `now` minus the check's time.time(), is inside [0, interval); a negative age (the jobs pass hands
+    an int second, which can trail a float check time within the same second, or a clock stepped back) re-reads
+    rather than trusting a check the caller's clock says has not happened."""
+    global _STATE_ROOT_MODE, _STATE_ROOT_KEY
 
     def fresh(chk):
         return chk is not None and 0 <= (now - float(chk.get("t") or 0)) < _state_root_check_interval()
-    prev = _STATE_ROOT_MODE
-    if fresh(prev):
-        return prev["verdict"]
+    chk = _STATE_ROOT_MODE
+    if not fresh(chk):
+        with _STATE_ROOT_LOCK:
+            chk = _STATE_ROOT_MODE
+            if not fresh(chk):                            # else another thread re-read it while this one waited
+                chk = _state_root_read(now)
+                _STATE_ROOT_MODE = chk
+                if chk["verdict"] not in ("refuse", "unknown"):
+                    key = _state_root_key(chk)
+                    if key != _STATE_ROOT_KEY:
+                        _STATE_ROOT_KEY = key
+                        if chk["line"]:                   # warn, or ok with a repair error: said once per transition
+                            sys.stderr.write("romp-kernel: %s\n" % chk["line"])
+                            _sync_notice(_state_root_row(chk), ok=False, kind="refused")
+    if chk["verdict"] in ("refuse", "unknown"):
+        _state_root_exit_now(chk, where)                  # outside the lock: the flag inside takes it
+    return chk["verdict"]
+
+
+def _state_root_import_mode_row(chk):
+    """The boot's warn-class transition for the import's PRE-CHMOD mode (the 2026-09-20 review, round 2 item 2 and the
+    round-2b settlement): (line, point, bell) when the import read a mode that was not 0700 on a PRE-EXISTING root
+    and its own chmod then tightened it (no import repair error: the root was 0700 the moment the import was done with
+    it); else None. Two shapes. A read that was not writable by others (0755, 0750, 0711): "read 0755 at import,
+    re-tightened to 0700", find what loosened it while romp was down. A read that carried a group or other write bit
+    (0775, 0777): the same fact, LOUD, with the distrust remedy: entries planted while the root was writable are not to
+    be trusted, so remove serve-token and repo-root under the root and restart, and the next boot re-mints them (the
+    fresh-1 remedy; the refuse line carries it too). Not a refusal: the root reads 0700 now, and refusing it would refuse
+    the first boot after every creation by another tool under a group-writable umask (the argument beside
+    _state_root_import_gate). A root the import CREATED is exempt: a fresh directory carries the umask's mode until the
+    chmod that follows it, a creation default and not a loosening, and nothing could have been planted in a directory
+    that did not exist a moment before. Built here, apart from _state_root_boot_check, so the fit test can build the
+    row exactly as the boot does (the bell keeps the remedy whole: SYNC_NOTICE_FIT)."""
+    imp = chk.get("importModeRead")
+    if imp is None or imp == 0o700 or chk.get("importCreated") or chk.get("importRepairError"):
+        return None
+    if imp & jd.STATE_ROOT_REFUSE_MASK:
+        point = "the state root read %04o at import (writable by other local users), re-tightened to 0700" % imp
+        bell = ("remove serve-token and repo-root under the root and restart: entries planted while it was writable are "
+                "not to be trusted")
+        line = ("state root %s read %04o at import (writable by other local users), re-tightened to 0700; entries planted "
+                "while it was writable are not to be trusted: remove serve-token and repo-root under %s and restart, so the "
+                "next boot re-mints them" % (chk["root"], imp, chk["root"]))
+    else:
+        point = "the state root read %04o at import, re-tightened to 0700" % imp
+        bell = "find what loosened the state root while romp was down"
+        line = ("state root %s read %04o at import, re-tightened to 0700 by the import's chmod: something loosened it "
+                "while romp was down; find what loosened %s while romp was down" % (chk["root"], imp, chk["root"]))
+    return line, point, bell
+
+
+def _repo_root_write_row(err, root):
+    """The error-centre row for a repo-root write that failed at import (_persist_repo_root): the point and the
+    remedy first, the root's path only while the whole fits SYNC_NOTICE_FIT, the rule every state-root row follows."""
+    head = ("The repo-root record could not be written (%s). Remove whatever stands at repo-root under the state root and "
+            "restart; a peer's clone discovery reads it." % err)
+    tail = " Root: %s." % root
+    return head + tail if len(head + tail) <= SYNC_NOTICE_FIT else head
+
+
+def _state_root_boot_check():
+    """The boot arm, called from main() right after jd._cred.check_boot_environment() and BEFORE any thread starts: the
+    second look after the import gate (_state_root_import_gate ran before the token load; the root could have moved
+    since, and this is where the warn surface exists). Verdict refuse or unknown, on the mode as read NOW (the settled
+    rule: the same rule the import gate applied): the loud line and SystemExit(2), the import gate's shape (main
+    thread, nothing to drain). Otherwise the warn surface: the import's PRE-CHMOD mode, when it differed from 0700 on
+    a pre-existing root that the import's own chmod then tightened, is a warn-class transition of its own, said and
+    filed, loud and not fatal (_state_root_import_mode_row: "read 0755 at import, re-tightened to 0700", or, for a
+    read that carried a write bit, "read 0775 at import (writable by other local users), re-tightened to 0700" with the
+    distrust remedy); a repo-root write that failed at import is filed (_persist_repo_root said it on stderr; the row
+    is this uid's other surface); then the check's own line (warn, or ok with a repair error) is said and filed. The
+    check is stored as the re-check's previous state, so the first runtime pass files no second row for the same
+    state."""
+    global _STATE_ROOT_MODE, _STATE_ROOT_KEY
+    chk = jd.state_root_mode_check()
     with _STATE_ROOT_LOCK:
-        prev = _STATE_ROOT_MODE
-        if fresh(prev):
-            return prev["verdict"]                        # another thread re-read it while this one waited
-        tb = None
-        try:
-            chk = jd.state_root_mode_check(repair=True)
-        except Exception as e:
-            tb = traceback.format_exc()
-            chk = _state_root_unknown_check(type(e).__name__, time.time())
         _STATE_ROOT_MODE = chk
-        entered = _state_root_key(chk) != _state_root_key(prev)
-        v = chk["verdict"]
-        if v == "refuse":
-            if _STATE_ROOT_REFUSAL is None:
-                _STATE_ROOT_REFUSAL = {"t": chk["t"], "line": chk["line"]}
-                sys.stderr.write("romp-kernel: %s. Every request but /healthz and /version answers 503 until then.\n"
-                                 % chk["line"])
-                _sdk_problem(chk["line"])
-            return v
-        if v == "unknown":
-            # no mode was read: the latch, if it holds, stands (a root that cannot be stat'ed is not one read tight)
-            if entered:
-                held = ". The 503 latch stands until a mode is read back" if _STATE_ROOT_REFUSAL is not None else ""
-                sys.stderr.write("romp-kernel: %s%s\n" % (chk["line"], held))
-                if tb:
-                    sys.stderr.write(tb)
-                _sdk_problem(chk["line"] + held)
-            return v
-        if _STATE_ROOT_REFUSAL is not None:               # ok or warn: a mode was read, and it has no group or other write bit
-            _STATE_ROOT_REFUSAL = None
-            line = ("state root %s is mode %s again (not writable by other local users): serving resumed"
-                    % (chk["root"], chk["modeText"]))
-            sys.stderr.write("romp-kernel: %s\n" % line)
-            _sdk_problem(line)
-        if chk["line"] and entered:                       # warn, or ok with a repair error
-            sys.stderr.write("romp-kernel: %s\n" % chk["line"])
-            _sdk_problem(chk["line"])
-        return v
+    if chk["verdict"] in ("refuse", "unknown"):
+        sys.stderr.write("romp-kernel: %s. romp did NOT start.\n" % chk["line"])
+        sys.stderr.flush()
+        raise SystemExit(2)
+    row = _state_root_import_mode_row(chk)
+    if row:
+        line, point, bell = row
+        sys.stderr.write("romp-kernel: %s\n" % line)
+        _sync_notice(_state_root_row(chk, point=point, remedy=bell), ok=False, kind="refused")
+    if _REPO_ROOT_WRITE_ERROR:
+        _sync_notice(_repo_root_write_row(_REPO_ROOT_WRITE_ERROR, chk["root"]), ok=False, kind="refused")
+    with _STATE_ROOT_LOCK:
+        _STATE_ROOT_KEY = _state_root_key(chk)
+    if chk["line"]:
+        sys.stderr.write("romp-kernel: %s\n" % chk["line"])
+        _sync_notice(_state_root_row(chk), ok=False, kind="refused")
+    return chk
 
 
 def _state_root_public_status():
-    """/version's stateRootMode block: verdict ("unchecked" before the boot check ran), mode as "%04o" or null, err,
-    remedy, checkedAt and refusingSince (the latch's time, or null). NO FILESYSTEM PATH: /version is auth-exempt and
-    its contract is no paths (_version_info's docstring; the state root's default sits under $HOME and names the
-    user), so the remedy here says "the state root" where the stderr line and the error-centre row name it; err is
-    built from errno alone (jd._errno_text), never from an exception's text."""
+    """/version's stateRootMode block: verdict ("unchecked" before any check), modeRead and modeAfter as "%04o" or null,
+    repaired, err, importRepairError, remedy and checkedAt. NO FILESYSTEM PATH: /version is auth-exempt and its contract
+    is no paths (_version_info's docstring; the state root's default sits under $HOME and names the user), so the
+    remedy here is the check's remedyPublic ("the state root" for the path) where the stderr line names the root; err
+    is built from errno alone (jd._errno_text), never from an exception's text."""
     chk = _STATE_ROOT_MODE
-    latch = _STATE_ROOT_REFUSAL
     if chk is None:
-        return {"verdict": "unchecked", "mode": None, "err": None, "remedy": None, "checkedAt": None,
-                "refusingSince": None}
-    return {"verdict": chk["verdict"], "mode": chk["modeText"], "err": chk["err"],
-            "remedy": _state_root_public_remedy(chk), "checkedAt": int(chk["t"]),
-            "refusingSince": int(latch["t"]) if latch else None}
-
-
-def _state_root_public_remedy(chk):
-    """The check's remedy with the root's path replaced by the words "the state root" (the path is on stderr and in the
-    error centre, both this uid's surfaces; /version and the 503 body answer before the token gate)."""
-    return str(chk.get("remedy") or "").replace(chk.get("root") or "\0", "the state root")
-
-
-def _state_root_refused_body():
-    """The 503 body every gated route answers under the latch: the error, the mode read back and the path-free remedy
-    (the reason _state_root_public_status gives). The full line, with the path, is on stderr and in the error centre."""
-    chk = _STATE_ROOT_MODE or {}
-    return {"error": "the state root is writable by other local users", "mode": chk.get("modeText"),
-            "remedy": _state_root_public_remedy(chk) if chk else "chmod 700 the state root"}
-
-
-def _ws_state_root_gate(client):
-    """The latch's WebSocket arm (review of 2026-09-20): run by the handler's read loop before every client frame is
-    dispatched, the third re-check road (a frame is a request: createSession, sendMessage, saveFile and setConserve
-    all write under the root). The mode is re-read when the cached check is stale (_state_root_verdict), and while the
-    latch holds the frame is dropped, no op runs, and the socket is answered ONE refusal frame per latch episode
-    ({type: "stateRootRefused", status: 503} plus the 503 body: the error, the mode read back, a path-free remedy),
-    keyed on the latch's time so a second episode is told again. Returns True when the frame is to be dropped. The
-    socket is not closed (out of scope; the docs say so): pushes to it keep flowing, so the page keeps its state and
-    sees the error-centre row, and its next frame after the root reads tight again acts as before. The frame goes
-    through _client_send like every other, so a dead socket is marked the usual way."""
-    try:
-        _state_root_verdict(time.time())
-    except Exception:
-        sys.stderr.write("state-root-mode (ws frame): %s\n" % traceback.format_exc())
-    latch = _STATE_ROOT_REFUSAL
-    if latch is None:
-        client.pop("stateRootRefusedAt", None)
-        return False
-    if client.get("stateRootRefusedAt") != latch["t"]:
-        client["stateRootRefusedAt"] = latch["t"]
-        body = dict(_state_root_refused_body(), type="stateRootRefused", status=503)
-        _client_send(client, json.dumps(body), ("stateRootRefused",))
-    return True
-
+        return {"verdict": "unchecked", "modeRead": None, "modeAfter": None, "repaired": False, "err": None,
+                "importRepairError": None, "remedy": None, "checkedAt": None}
+    return {"verdict": chk["verdict"], "modeRead": chk["modeReadText"],
+            "modeAfter": ("%04o" % chk["modeAfter"]) if chk.get("modeAfter") is not None else None,
+            "repaired": bool(chk.get("repaired")), "err": chk["err"], "importRepairError": chk.get("importRepairError"),
+            "remedy": chk["remedyPublic"], "checkedAt": int(chk["t"])}
 
 def _auth_key_present():
     """Whether a session with no login pick bills the API key on this box: an apiKeyHelper is configured in
@@ -25367,7 +25540,15 @@ def _ensure_postal_bus():
     silently (the 2026-07-27 federation shakedown: the new box answered /sessions while every message
     to it sat parked). The postal service's own `ensure` is idempotent, respects client-only mode, and
     no-ops when the bus is already up, so the kernel can insist at every boot. Absolute paths: a
-    bootstrap-started kernel's non-login shell has neither the repo's bin/ nor a guaranteed PATH."""
+    bootstrap-started kernel's non-login shell has neither the repo's bin/ nor a guaranteed PATH. The bus
+    checks the state root's mode as this kernel does (2026-09-20; postal_service.py's copy of the check):
+    a bus that finds the root writable by other local users, or unreadable, exits 2 before it reads the
+    serve token or binds (on the mode as it reads after the start's own repair, the rule this kernel's
+    import gate follows; a root that read writable and was tightened is said, one loud line, and served),
+    and again from its monitor loop when the root loosens later, so an `ensure` here
+    on a hostile root starts a bus that leaves at once and is respawned by the next ensure (this kernel's
+    boot, a session's MCP process) until the kernel itself refuses at its import gate, which on the same
+    root it does first."""
     try:
         r = subprocess.run([sys.executable, str(BIN / "romp-postal-service"), "ensure"],
                            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, timeout=30)
@@ -65662,9 +65843,9 @@ def _jobs_pass(now, live_map):
     _own_stat = _files_stat_pass_open(live_map)   # the dirty set taken, the prelude's observers read, the pass's shared ten-file
     #                                               snapshot opened when the caller did not (closed below; the cycle's finally too)
     try:                                  # the state root's mode, re-read on this pass's cadence (2026-09-20): a root loosened after
-        _job_stage('stateRootMode', lambda: _state_root_verdict(now))   # boot latches the 503 gate, one tightened again lifts it;
-    except Exception:                     # FIRST, since the root's mode is the premise of every write below
-        sys.stderr.write("state-root-mode: %s\n" % traceback.format_exc())
+        _job_stage('stateRootMode', lambda: _state_root_verdict(now, "the housekeeping pass"))   # boot exits the process here
+    except Exception:                     # (os._exit 2, nothing below runs); FIRST, since the root's mode is the premise of every
+        sys.stderr.write("state-root-mode: %s\n" % traceback.format_exc())   # write below
     try:                                  # EXACT retraction first: dispatches returned → the stamp is spent,
         _job_stage('liftSpentAwaiting', lambda: _lift_spent_awaiting(now, live_map))   # so the nudge tick below never wakes a wait that already ended
     except Exception:
@@ -73385,28 +73566,18 @@ class Handler(BaseHTTPRequestHandler):
         return bool(TOKEN) and (_ct_eq((q.get("token") or [""])[0], TOKEN)
                                 or _ct_eq(self.headers.get("X-Romp-Token") or "", TOKEN))
 
-    def _state_root_gate(self, path):
-        """The one shared gate every method runs before routing (2026-09-20): the state root's mode is re-read when the
-        cached check is stale (_state_root_verdict, the road that matters: a request is what a loosened root exposes),
-        and while the refusal latch holds every path but /healthz and /version is answered 503 with a JSON body (the
-        error, the mode read back, a path-free remedy) and its route does not run. Returns True when it answered.
-        /healthz and /version keep answering (the manager reads /version, which carries the reason). Runs BEFORE
-        the token gate, so the body carries no filesystem path, like every other answer given before it. A POST's
-        body is still unread here, so the connection closes with the answer (the 403 path's shape). A check that
-        raises leaves the latch as it stood: the gate never takes the handler down. A client frame on an already-open
-        WebSocket runs the same rule in the read loop (_ws_state_root_gate)."""
+    def _state_root_recheck(self):
+        """The request road's look at the state root's mode (2026-09-20), run first by every method before routing: the
+        cached check answers inside the interval, a stale one is re-read (_state_root_verdict), and a refuse or unknown
+        verdict exits the process from this thread (_state_root_exit_now: the client sees the connection drop, never an
+        answer built under a hostile root). Nothing is answered here otherwise: the round-1 503 latch that stood in
+        this place closed the doors and left every internal writer running, so it was replaced by the exit (the
+        2026-09-20 review's section A). A check that raises is folded into an unknown verdict by _state_root_read;
+        the guard here is for the exit double a test installs, so the handler never dies on anything else."""
         try:
-            _state_root_verdict(time.time())
+            _state_root_verdict(time.time(), "a request")
         except Exception:
             sys.stderr.write("state-root-mode (request): %s\n" % traceback.format_exc())
-        if _STATE_ROOT_REFUSAL is None or path in ("/healthz", "/version"):
-            return False
-        headers = None
-        if self.command == "POST":
-            self.close_connection = True
-            headers = {"Connection": "close"}
-        self._send(503, json.dumps(_state_root_refused_body()), "application/json", cache="no-cache", headers=headers)
-        return True
 
     def _file_slice(self, fp, q):
         """GET /file?slice=1[&anchor=slug] — the file preview popover's one fetch (T351): JSON with the kind, the title
@@ -73627,8 +73798,7 @@ class Handler(BaseHTTPRequestHandler):
         q = parse_qs(urlparse(self.path).query)
         self._set_cookie = None
         self._cors_origin = None
-        if self._state_root_gate(urlparse(self.path).path):   # the state-root latch (2026-09-20): a preflight under it is 503 too
-            return
+        self._state_root_recheck()                        # the state root's mode (2026-09-20): a hostile root exits the process here
         ok, _, _ = self._authorize(q)
         origin = self.headers.get("Origin")
         if not (ok and origin):
@@ -73656,8 +73826,7 @@ class Handler(BaseHTTPRequestHandler):
         # foreign origin — the federated dashboard — and a denial clears the echo).
         self._cors_origin = self.headers.get("Origin") if self._origin_ok() else None
         try:
-            if self._state_root_gate(u.path):             # the state-root latch (2026-09-20), before the token gate and the routes
-                return
+            self._state_root_recheck()                    # the state root's mode (2026-09-20): a hostile root exits the process here
             ok, self._set_cookie, why = self._authorize(q)
             self._cors_origin = self.headers.get("Origin") if ok else None   # echoed by _send (CORS delivery)
             if not ok:
@@ -73689,8 +73858,8 @@ class Handler(BaseHTTPRequestHandler):
         # foreign origin — the federated dashboard — and a denial clears the echo).
         self._cors_origin = self.headers.get("Origin") if self._origin_ok() else None
         try:
-            if self._state_root_gate(p):                  # the state-root latch (2026-09-20): every path but /healthz and /version
-                return                                    # answers 503 under it, /ws upgrades included; before the token gate
+            self._state_root_recheck()                    # the state root's mode (2026-09-20): a hostile root exits the process
+            #                                               here, before the token gate and every route, /ws upgrades included
             if p == "/healthz":
                 # liveness probe — exempt from auth. X-Romp-Boot identifies THIS kernel process: the
                 # restart button reloads only when the id flips (a bare 200 can still be the old kernel
@@ -74453,8 +74622,8 @@ class Handler(BaseHTTPRequestHandler):
         # foreign origin — the federated dashboard — and a denial clears the echo).
         self._cors_origin = self.headers.get("Origin") if self._origin_ok() else None
         try:
-            if self._state_root_gate(u.path):             # the state-root latch (2026-09-20): 503 before the token gate, the body
-                return                                    # unread, the connection closed with the answer
+            self._state_root_recheck()                    # the state root's mode (2026-09-20): a hostile root exits the process
+            #                                               here, before the token gate and the routes, the body unread
             if u.path == "/push/ack":
                 # The push worker's word on one push (the ledger block above _push_ledger): {pid, stage: 'shown' |
                 # 'clicked', v}. AUTHENTICATED BY THE PID ALONE, ahead of _authorize on purpose: a worker's fetch
@@ -77917,8 +78086,7 @@ class Handler(BaseHTTPRequestHandler):
                     sys.stderr.write("ws: undecodable client frame dropped (op 0x%x, %d bytes)\n"
                                      % (op, len(payload or b"")))
                 try:
-                    if not _ws_state_root_gate(client):    # the state-root latch (2026-09-20): under it the frame is dropped,
-                        self._dispatch_ws(msg, client)     # the socket told once per episode, and no op runs
+                    self._dispatch_ws(msg, client)
                 except (BrokenPipeError, ConnectionResetError, OSError):
                     raise   # a genuine socket failure → let the outer handler tear the connection down
                 except Exception:
@@ -78831,10 +78999,11 @@ def main():
     # postal bus or the SDK backend spawn anything that could inherit it. RuntimeError: the
     # manager crash-loops the traceback into manager.log until the file is repaired (the serve token's shape).
     jd._cred.check_boot_environment()
-    # The state root's mode (2026-09-20): a root writable by group or other stops the kernel HERE too, with the line
-    # and exit code 2 (the manager restarts it and it refuses again); a root that is not 0700 but not writable by
-    # others files one error-centre row and the boot goes on. Before any thread: nothing serves from a root another
-    # local user can write to. Re-checked on the jobs pass and before every request (_state_root_verdict).
+    # The state root's mode (2026-09-20), the second look: the import gate refused a hostile or unreadable root before
+    # the serve token was read (_state_root_import_gate); this re-reads it here, before any thread, exits 2 the same way
+    # if it moved, and is where the warn surface files (a root not 0700 but not writable by others, the import's own
+    # pre-chmod read when it differed, a chmod this uid cannot run). Re-checked on the jobs pass and before every
+    # request after this (_state_root_verdict), where a hostile root exits the process from the thread that found it.
     _state_root_boot_check()
     _ensure_bundles()
     try:                                                      # the diary boot sweep (2026-07-07): migrate every

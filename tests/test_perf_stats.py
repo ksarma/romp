@@ -1465,7 +1465,7 @@ class ContainerKidsCache(unittest.TestCase):
 
 class JobRowsByOwner(unittest.TestCase):
     """A `jobs.<job>` stage is written from two threads under one prefix: nine jobs in _pusher_cycle_jobs on the pusher and
-    nineteen in _jobs_pass on the jobs thread (plus a job's parts from _sub_stage). Until 2026-09-18 stage() added every
+    the housekeeping jobs in _jobs_pass on the jobs thread (plus a job's parts from _sub_stage). Until 2026-09-18 stage() added every
     writer's wall to the one flat row, so a row said which thread's time it held only by the lists in the source, and a
     job that changed lists, or a test driving both loops on one thread, merged the two silently. Now stage() routes a
     dotted `jobs.` write by the WRITER'S OWNER: the jobs thread's to the flat row (stages_ms), the pusher's to
