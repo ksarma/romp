@@ -692,6 +692,23 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
             self.assertIn("widen down_dwell_ms, never the margin", str(cm.exception), "%s: the inequality's own words: %s" % (cls.__name__, cm.exception))
             self.assertIn("phase C", str(cm.exception), "%s: the failure names the slowest phase: %s" % (cls.__name__, cm.exception))
 
+    def test_a_waited_read_requires_an_empty_expired_list_and_an_unwaited_read_none(self):
+        """_assert_seen's `waited` (round 4, tests-1): a record waitVisible produced (a phase's seen, D's seenAfterReturn) must carry
+        an empty expired list, so a wait that expired with the read catching the cards, or an older driver's record with no list,
+        reds in the expired check's own words; a visible() record carries no list and is read without one. The gate leg's D read
+        after the return is the waited read that had no reader (the record replay of that event is the round's failing-before)."""
+        class Rec(L.LinkDropOldLocal):
+            driver_error = None
+        t = Rec("test_nothing_was_asked_of_the_remote")
+        shown = {"cards": [True, True, True], "waitedMs": 20012}
+        t._assert_seen(dict(shown, expired=[]), True, what="a resolved wait", waited=True)
+        t._assert_seen(dict(shown), True, what="an unwaited read")
+        for why, rec in (("a wait that expired though the read caught the cards", dict(shown, expired=["card"])), ("an older driver's record with no expired list", dict(shown))):
+            with self.assertRaises(AssertionError, msg=why) as cm:
+                t._assert_seen(rec, True, what="phase D after the link's return", waited=True)
+            self.assertIn("resolved before their cap", str(cm.exception), "%s: the failure says why: %s" % (why, cm.exception))
+            self.assertIn("phase D after the link's return", str(cm.exception), "%s: the failure names the read: %s" % (why, cm.exception))
+
     def test_drive_sends_the_timeout_the_budget_and_the_caps(self):
         lab = tempfile.mkdtemp(prefix="linkdrop-bound-")
         self.addCleanup(shutil.rmtree, lab, True)

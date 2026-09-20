@@ -1326,7 +1326,16 @@ class _LinkDrop(unittest.TestCase):
         self.assertEqual(self.result.get("timeouts"), [], "every wait the driver placed was met; the expired ones: %r (quiet gave up: %r)"
                          % (self.result.get("timeouts"), self.result.get("quietGaveUp")))
 
-    def _assert_seen(self, seen, want_cards, todo=None, prompt=None, what=""):
+    def _assert_seen(self, seen, want_cards, todo=None, prompt=None, what="", waited=False):
+        """The visibles a read found. With `waited` the record is one waitVisible produced (a phase's seen, D's seenAfterReturn)
+        and its expired list must be present and empty: the driver names there each visibility wait that ran to its cap (round
+        5), and a missing list is refused rather than read as empty, since an older driver's record cannot establish the
+        outcome. Scoped to the waited reads (round 4, tests-1: phase D's after-return read was the one waitVisible record no
+        reader checked, so a wait that expired with the read catching the cards and nothing in out.timeouts passed every test);
+        a visible() record (seenWhileDown, seenA, seenB, seenD) records no wait and carries no such list."""
+        if waited:
+            self.assertEqual(seen.get("expired"), [], "%s: the visibility waits behind this read all resolved before their cap (the driver records each wait that "
+                                                      "expired in seen.expired; a record with no expired list cannot say which it was): %r" % (what, seen))
         self.assertEqual(seen.get("cards"), [want_cards] * len(seen.get("cards") or []), "%s: the notice cards on the hub's feed page (per card, in posting order): %r" % (what, seen))
         self.assertTrue(seen.get("cards"), "%s: cards were posted" % what)
         if todo is not None:
@@ -1429,7 +1438,7 @@ class _LinkDrop(unittest.TestCase):
                                                       "seen.expired; a wait that ran to its cap is not a delivery, and a record with no expired list cannot say which "
                                                       "it was), so its waitedMs is a delivery the down window can be measured against: %r" % (p, seen))
             self._assert_seen(seen, True, todo=todo, prompt=((rec.get("change") or {}).get("prompt") if "append" in self.changes else None),
-                              what="phase %s's changes on every page (the delivery the down window is measured against)" % p)
+                              what="phase %s's changes on every page (the delivery the down window is measured against)" % p, waited=True)
         deliveries = {p: (self._phase(p).get("seen") or {}).get("waitedMs") for p in self._link_up_phases()}
         self.assertTrue(deliveries and all(isinstance(v, int) and not isinstance(v, bool) and v >= 0 for v in deliveries.values()),
                         "every link-up phase recorded its delivery (seen.waitedMs): %r" % (deliveries,))
@@ -1474,7 +1483,7 @@ class _LinkDrop(unittest.TestCase):
         self.assertEqual(down, [], "no outline/delta-unapplied row filed while the link was down with phase D due (the one row the old bundle files for a "
                                    "ledgers attach the Outline received after the resume is the return's, in this window's right pad by the kernel's whole-second "
                                    "floor: it names the feed slot, carries the attach's rev and is stamped at or after the attach's floored second): %r" % (down,))
-        self._assert_seen(D["seenAfterReturn"], True, todo=todo, prompt=prompt, what="phase D after the link's return (the redial's whole frame carried it)")
+        self._assert_seen(D["seenAfterReturn"], True, todo=todo, prompt=prompt, what="phase D after the link's return (the redial's whole frame carried it)", waited=True)
         for app in self.apps:
             window = [(s, f) for s in self._relay_socks(app) for f in s["frames"] if m["resume"] <= f["at"] < m["B0"]]
             carrying = [(s["i"], f["t"], f["slot"], f.get("asks") if f["t"] == "feedDelta" else f.get("coll"), round((f["at"] - m["resume"]) / 1000.0, 2))
@@ -1535,12 +1544,12 @@ class LinkDropBothNew(_LinkDrop):
     def test_every_phases_changes_show_on_every_page(self):
         A, B = self._phase("A"), self._phase("B")
         self.assertEqual(self.result.get("provBefore"), _corners.SEED_LAST_PROMPT, "the Outline drew api's provisional row with the seed's last prompt before any change")
-        self._assert_seen(A["seen"], True, todo=True, prompt=A["change"]["prompt"], what="phase A (before the drop)")
-        self._assert_seen(B["seen"], True, todo=True, prompt=B["change"]["prompt"], what="phase B (on the redialed socket)")
+        self._assert_seen(A["seen"], True, todo=True, prompt=A["change"]["prompt"], what="phase A (before the drop)", waited=True)
+        self._assert_seen(B["seen"], True, todo=True, prompt=B["change"]["prompt"], what="phase B (on the redialed socket)", waited=True)
         self._assert_seen(B["seenA"], True, todo=True, what="phase A's changes after the redial (the whole frame carried them)")
         if self.local_drop:
             C = self._phase("C")
-            self._assert_seen(C["seen"], True, todo=True, prompt=C["change"]["prompt"], what="phase C (after the local return)")
+            self._assert_seen(C["seen"], True, todo=True, prompt=C["change"]["prompt"], what="phase C (after the local return)", waited=True)
             self._assert_seen(C["seenA"], True, todo=True, what="phase A's changes at the end")
             self._assert_seen(C["seenB"], True, todo=True, what="phase B's changes at the end")
 
@@ -1710,11 +1719,11 @@ class LinkDropOldLocal(_LinkDrop):
         old feed page the cards, so the old page freezes on patches and is caught up by whole frames, not frozen for
         good. Phase B's own cards after the link's return redial, still there after the local restart's redial, and
         phase C's after that one (phase A's would have rendered before the drop, so they say nothing about a redial)."""
-        self._assert_seen(self._phase("B")["seen"], True, what="phase B's cards on the old feed page after the link's return redial")
+        self._assert_seen(self._phase("B")["seen"], True, what="phase B's cards on the old feed page after the link's return redial", waited=True)
         if self.local_drop:
             C = self._phase("C")
             self._assert_seen(C["seenB"], True, what="phase B's cards still shown after the local restart's redial")
-            self._assert_seen(C["seen"], True, what="phase C's cards after the local restart's redial")
+            self._assert_seen(C["seen"], True, what="phase C's cards after the local restart's redial", waited=True)
 
     def test_every_relay_socket_that_opened_was_served_whole_first(self):
         """The old bundle churns its remote socket every few seconds; every socket that opened, churned or lab-caused, was
