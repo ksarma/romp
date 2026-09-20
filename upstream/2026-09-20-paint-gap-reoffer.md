@@ -1,7 +1,7 @@
 ---
 title: Comments panel: the Comment float survives a paint landing in the selectionchange gap, and a drag of selected text ends its press on a source the paint detached
 status: candidate
-where: ui/webview/file-comments.ts (noteSelectionAtHead, pendingChange, lastDelivered, passLeft, afterPaint, onSelectionChange, onSelection, dragBegan, dragSource, dispose); tests ui/webview/file-comments-paint-gap-browser.test.ts (new), file-comments-paint-offer.test.ts (cases 10 to 19, cutOnPaint), file-comments-keyboard-offer.test.ts (the drag scenes and the dispose pin); plans/markdown-viewer.md (the Slice 5 note, item 9, its pointer) with tools/markdown-viewer-plan-paint-gap-pointer.test.mjs
+where: ui/webview/file-comments.ts (noteSelectionAtHead, pendingChange, lastDelivered, passLeft, afterPaint, onSelectionChange, onSelection, dragBegan, dragSource, dispose); tests ui/webview/file-comments-paint-gap-browser.test.ts (new), file-comments-paint-offer.test.ts (cases 10 to 19, cutOnPaint), file-comments-keyboard-offer.test.ts (the drag scenes and the dispose pin), and the eight stand-in worlds whose fileview-body world() carries the pane's rect for the inBodyBox guard: file-comments-anchors-unsure.test.ts, file-comments-behavior.test.ts, file-comments-editing-round3.test.ts, file-comments-filter-fixes.test.ts, file-comments-filter-review.test.ts, file-comments-filter-saved-line.test.ts, file-comments-follow.test.ts, file-comments-tiebreak.test.ts; plans/markdown-viewer.md (the Slice 5 note, item 9, its pointer) with tools/markdown-viewer-plan-paint-gap-pointer.test.mjs
 added: 2026-09-20
 pr: 865
 tier: fix

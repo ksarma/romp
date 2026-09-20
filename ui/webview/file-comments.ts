@@ -1321,8 +1321,13 @@ class Panel {
    *  (the constructor): a change before that had its event before the panel heard, and one whose event is still to come at the install
    *  is heard. Cleared at dispose. */
   lastDelivered: EndsNote = null;
-  /** The selection as the last pass left it, by its ends (EndsNote): afterPaint's read after the writes, every pass, the editor's
-   *  stand-down included. The other note a pass's head compares with: a live selection at it is the last pass's own product, its
+  /** The selection as the last pass left it, by its ends (EndsNote): afterPaint's read after the writes, at the end of paintAll, at
+   *  repaintPresel and at the editor's stand-down (paintAll's first line). paintAll's no-content-root return (a media body: the overlay is
+   *  its only paint) reads the head and reaches no afterPaint, so the note stands from the last pass that wrote one, and that holds
+   *  because its writes cannot move the selection there: the panel's marks live under the content root, so with none there is nothing
+   *  for unpaintChanges and unpaint to unwrap, and the standing note is still the last move a pass made. A change to that road that
+   *  moved the selection would have to note it too, or the next head would read an older pass's ends as the last pass's product (the
+   *  review's round 2, extra7-2). The other note a pass's head compares with: a live selection at it is the last pass's own product, its
    *  event pending (a merged or split text node) or never coming (the lone-child collapse, afterPaint's note), no change of the
    *  person's. A witness only while that event is outstanding: RETIRED by every delivered selectionchange (onSelectionChange's first
    *  lines), since the document posts at most one selectionchange at a time and a delivered one carries every move before it, the
@@ -1348,10 +1353,12 @@ class Panel {
    *  the pass's own event then offered with no gesture; true of a stale record, so the latch stood with nothing coming and every later
    *  pass skipped its record, its re-seat and its hides; and false with no record standing, the ordinary state of an open panel (the
    *  listener drops the record at every collapsed or out-of-body selection), so a pass landing in the gap of a keyboard or
-   *  assistive-technology selection recorded it as its own and the person's event offered nothing. The notes are written by the
-   *  deciding events alone, so none of the three holds: onSelectionChange notes the selection every delivered event finds, and
-   *  afterPaint notes what every pass leaves, so a live selection at neither is one some other hand moved since the listener last
-   *  heard, whose event is posted and not delivered; a pass's own move is at passLeft, its event pending or, for the lone-child
+   *  assistive-technology selection recorded it as its own and the person's event offered nothing. The notes are read from the live
+   *  selection at the deciding moments and never from the record, so none of the three holds: onSelectionChange notes the selection
+   *  every delivered event finds (lastDelivered, seeded at the listener's install from the selection standing then), and afterPaint
+   *  notes what the pass leaves at the end of paintAll, at repaintPresel and at the editor's stand-down (passLeft, which names the one
+   *  return that notes nothing and why), so a live selection at neither is one some other hand moved since the listener last heard,
+   *  whose event is posted and not delivered; a pass's own move is at passLeft, its event pending or, for the lone-child
    *  collapse, never coming, a note the delivered event retires (passLeft: kept past it, the note read a return of the person's to
    *  the ends the pass left as the pass's own move). A raise keyed on the gesture instead (the document's keydown, a press's end) was weighed and not built:
    *  a key that changes nothing (Shift alone, a copy, an arrow at the document's edge) posts no selectionchange, so a latch it raised
@@ -1363,16 +1370,32 @@ class Panel {
    *  the lowering at the next delivered event restores no record, so a pass's own move delivered before any gesture of the person's
    *  would offer with none. That stays a hide only while every such move leaves a selection the listener refuses (collapsed, or an end
    *  outside the body), as the swap's collapse does; a no-event move that left an in-view passage would be an offer with no gesture at
-   *  the next delivered event, and none is known. A pass the editor's stand-down ends (paintAll's first line) reads none of it: the
-   *  editor's selections are edits, as the listener has them. */
+   *  the next delivered event, and none is known. One road posts its event and still turns on the pass, and it is older than this
+   *  latch (measured in Chromium over the fix's base; the review's round 2, extra5-1): a selectionchange delivered under a press is
+   *  noted at lastDelivered (the listener's first read, before its press guard) and not acted on, and a press that ends with no offer
+   *  (the window's blur, a contextmenu) leaves the record stale against that note; an event of the person's then posted with those
+   *  same ends (an assistive tool re-asserting the selection, or two moves inside one gap netting back to them) reads at a head in its
+   *  gap as heard, so the pass records the selection and the event compares equal and offers nothing, where with no pass the event
+   *  compares against the stale record and offers (the keyboard-offer file's case 9 pins the offer). Nothing the page can see tells
+   *  the two apart: an event delivered with the selection at the last delivered note, over a record a press left stale, is the pass's
+   *  own event or the person's re-assert by no sign, the ends unchanged and the assistive road posting no key; bringing the record up
+   *  to the selection at the press's end would make both roads refuse and reds case 9, and a raise over a note delivered but not acted
+   *  on would let a quiet pass drop the record and its own event offer with no gesture, the first version's road. So the pass decides
+   *  there, as it did before this latch. A pass the editor's stand-down ends (paintAll's first line) reads none of it: the editor's
+   *  selections are edits, as the listener has them. */
   pendingChange = false;
   /** Read the selection at the head of a pass, before its writes, into pendingChange: raised when the live selection is at neither
    *  note (atNote: lastDelivered, the last delivered event's; passLeft, the last pass's own). A latch already raised stands: the event
-   *  that lowers it has not run. This head read is a comparison, and what makes it sound is that BOTH notes are written by events and
-   *  by nothing else: lastDelivered by the delivered selectionchange, passLeft by the pass that left the selection there and retired by
-   *  the next delivered selectionchange. A pass never captures its own record here; a compare against the record (the float's own
-   *  offeredFor) was the earlier shape, and it read a stale record, a missing record and an already-delivered event alike as a change
-   *  still to come, so do not fold this read back onto the record. */
+   *  that lowers it has not run. This head read is a comparison, and what makes it sound is where the notes come from: every writer
+   *  of either note is a live read of the selection at a moment the panel knows it current, or a clear, and none derives a note from
+   *  the record (offeredFor), from the latch or from a comparison. lastDelivered is written by the selectionchange the listener hears
+   *  (onSelectionChange's first line, before its guards: the document's event and a text control's alike, one delivered under a press
+   *  or to the editor too), seeded at the listener's install (the constructor) from the selection standing then, since a selection
+   *  can stand that the listener never heard (a passage selected while the panel was closed, case 12 of the paint-offer file), and
+   *  cleared at dispose; passLeft is written by the pass that left the selection there (afterPaint), retired by the next delivered
+   *  selectionchange and cleared at dispose. A pass never captures its own record here: a compare against the record was the earlier
+   *  shape, and it read a stale record, a missing record and an already-delivered event alike as a change still to come, so do not
+   *  fold this read back onto the record, and give neither note a writer that is not such a read. */
   private noteSelectionAtHead(): void {
     if (this.pendingChange) return;
     const sel = typeof window.getSelection === "function" ? window.getSelection() : null;
