@@ -1425,11 +1425,11 @@ class _LinkDrop(unittest.TestCase):
         at the storm site, 0 at the gate leg's read and 0 in the return window, by the set before round 4 and by this match
         after it; the pin over a synthetic record in tests/test_federated_linkdrop_driver_bound.py is where the match is
         exercised. The count and its drive are one derivation, `population_drive.py --check` in the builder's cache outside
-        the repo (the population by `population6.py`, the newest drive by its log's header stamp, refused while in flight or
-        with a record the listing does not hold, then `attach_census.py`, these helpers over each record), which prints the
-        sentence before this one whole and reads this docstring for it under --check (round 5: the pair was retyped one
-        drive behind, twice; the fixer pass found the tool printed fragments and the figures were transcribed). Returns the
-        rows' data, _outline_unapplied's shape."""
+        the repo, whose population, dating rule and refusals are stated once in _outline_caught_up_whole's docstring (round 6:
+        this docstring restated three of them and omitted the one that fired); over each record it runs these helpers
+        (`attach_census.py`), prints the sentence before this one whole and reads this docstring for it under --check (round 5:
+        the pair was retyped one drive behind, twice; the fixer pass found the tool printed fragments and the figures were
+        transcribed). Returns the rows' data, _outline_unapplied's shape."""
         pool = list(self._attaches_since(since_ms))
         out = []
         for d, t in stamped:

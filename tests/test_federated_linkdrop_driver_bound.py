@@ -44,7 +44,8 @@ kernel or a browser:
   construction, and the census that reads those is tests/test_federated_linkdrop_driver_parsed_served.py, the same driver
   through the typescript compiler's parse with every receiver known by its TYPE (it runs where the extension's node deps
   are, CI's served job; this module runs on the Python matrix, which has none). The two are read together: this one is the
-  matrix's backstop and says what it checks; that one refuses the rest.
+  matrix's backstop and says what it checks; that one refuses the rest of those spellings, but for the class its own docstring
+discloses, which neither census sees and no budget bounds.
 
 Three more pins ride here because the module they pin has no kernel-free test of its own: LinkDropBothNew gates on no
 knob, wherever such a gate could sit (a class-level skip, setUpClass, _knobs), and LinkDropOldLocal skips as optional
