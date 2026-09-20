@@ -151,7 +151,10 @@ test('the section records the hole, the run counts, the instrument, the measurem
 
 test('the paragraphs the round-2 push added or changed are held whole: the fix, the fence hole, the re-parse population, the namespace table and its rows, the class statement, the Copy button, the guards after the first-round ruling and the tests; the fence pass\'s comment in mdBlock whole, as prose; the tests paragraph names the seam guard, the node scene and both legs', () => {
   const sec = section();
-  const paragraph = (opener) => { const a = sec.indexOf(opener); assert.ok(a >= 0, 'the section holds a paragraph opening ' + opener); const b = sec.indexOf('\n\n', a); return flat(sec.slice(a, b < 0 ? sec.length : b)); };
+  // Trimmed: with a section after this one, section() ends at the newline before the next heading, so its last
+  // paragraph's slice carries a trailing newline that flat would keep as a trailing space (red for a paragraph
+  // unchanged in the plan once the link-navigation follow-on landed after this section).
+  const paragraph = (opener) => { const a = sec.indexOf(opener); assert.ok(a >= 0, 'the section holds a paragraph opening ' + opener); const b = sec.indexOf('\n\n', a); return flat(sec.slice(a, b < 0 ? sec.length : b)).trim(); };
   for (const [opener, text] of PARAGRAPHS) assert.equal(paragraph(opener), text, 'the paragraph opening ' + opener + ' reads as recorded: a line deleted or a sentence changed is red here, and the fix is to re-derive the text from the code and the runs, never to fit the pin');
   assert.equal((sec.match(/\*\*The fix\.\*\*|\*\*The fence hole\.\*\*|\*\*The re-parse population\.\*\*|\*\*The namespace table\.\*\*|\*\*The Copy button after the move\.\*\*|\*\*The guards after the review's first round\.\*\*|\*\*Tests\.\*\*/g) || []).length, 7, 'each opener once, so the paragraph read is the one meant');
   const tableAt = sec.indexOf('| kept inside an svg by the sanitizer');
