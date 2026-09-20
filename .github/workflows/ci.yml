@@ -127,6 +127,22 @@ jobs:
         # installer, the host's own version check and this step follow the line. The residual is that nothing
         # polls PyPI: a person notices a release, and a break in a newer SDK shows up only when someone moves
         # the constant.
+        # The constant pins the SDK alone. Its dependency closure resolves fresh on every run (26 packages on
+        # 2026-09-20: the 3.12 cell's pip line on run 35518107329 lists 27 names with the SDK, anyio among
+        # them), so a red that no commit explains is a transitive release, and the pin test below does not
+        # catch one: it compares the SDK's own version and nothing else. One of those packages, anyio,
+        # registers a pytest plugin (a pytest11 entry point) that pytest would auto-load in every cell across
+        # the whole suite; the pytest step passes -p no:anyio so it does not (2026-09-20). Blocked because:
+        # the box's pytest never loads it (romp's SDK lives in the venv bin/romp-sdk-setup builds, whose site
+        # joins sys.path at tests/test_host_transport.py's import, after plugin autoload, and the box venvs
+        # carry no anyio), so the cells' plugin set equals the box's; nothing under tests/ is marked anyio or
+        # imports the one thing the plugin serves, the SDK's own pytest-marked conformance suite
+        # claude_agent_sdk.testing, so the plugin does no work here; and blocked, a bad anyio release cannot
+        # fail every cell at pytest startup before a test runs, it reds the SDK-importing tests with the
+        # import in the traceback. Measured before the block, the two gated modules on a 3.12 venv with the
+        # pinned SDK, single process: 653 passed, 1 skipped, 0 warnings with the plugin (header: timeout,
+        # anyio) and the same counts without it (header: timeout). A test that imports the conformance
+        # suite lifts the block, and says why.
         # The step refuses an empty, malformed or duplicated constant rather than installing the unpinned
         # latest, and it carries no continue-on-error: the SDK requires cryptography (through mcp's
         # pyjwt[crypto]), so a cryptography wheel lagging an interpreter fails THIS step, and that must be the
@@ -190,7 +206,10 @@ jobs:
         # (~122 s, leak-scaled) and the 300 s child timeout in test_session_move_live. Its timer
         # waits on an Event, so it can never itself consume a patched sleep. --durations names the
         # slowest tests on every run so a creeping one is visible before it stalls.
-        run: python -m pytest -q --durations=10 --timeout=600 --timeout-method=thread
+        # -p no:anyio: the SDK step's closure carries anyio, whose pytest plugin would otherwise
+        # auto-load here and nowhere else; the SDK step's comment states the decision and its
+        # measurement, and a source pin in tests/test_ci_sdk_pin.py holds the flag.
+        run: python -m pytest -q -p no:anyio --durations=10 --timeout=600 --timeout-method=thread
 
   shell:
     name: Shell (bats, ${{ matrix.os }})

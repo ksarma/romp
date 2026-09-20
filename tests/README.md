@@ -58,7 +58,13 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   which the workflow's "Run pytest" step sets (the same stance as
   `ROMP_SERVED_TESTS_REQUIRE`), that road is a failure naming the interpreter, and
   the install step's own `python -c "import claude_agent_sdk"` reds first when the
-  install missed the interpreter on PATH. To execute the gated tests
+  install missed the interpreter on PATH. The step pins the SDK alone: its
+  dependency closure resolves fresh on every run (26 packages on 2026-09-20, the
+  3.12 cell of run 35518107329), so the pin does not catch a bad transitive
+  release, and one of those packages, anyio, ships a pytest plugin that every cell
+  would auto-load across the whole suite, which the "Run pytest" step blocks with
+  `-p no:anyio` so a cell's plugin set stays the box's (the step's comment in
+  `ci.yml` has the reasons and the measurement). To execute the gated tests
   from a plain venv, put romp's SDK
   venv on the path:
   `PYTHONPATH=~/.local/state/romp/sdkvenv/lib/python3.12/site-packages python3 -m

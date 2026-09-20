@@ -15,7 +15,11 @@ This module holds four things, and it never skips: a pin that skips reports gree
    installs it too: install, import with the GIL off and the gated and host test modules ran green on a free-threaded
    3.14.6 before this landed, the Verify 3.14t stage of 2026-09-20), names the constant and its file, and carries no
    literal `claude-agent-sdk==<digits>`, and bounds its download with a step timeout as the file's other fetching
-   steps do.
+   steps do; and the "Run pytest" line passes `-p no:anyio`: the constant pins the SDK alone, its dependency closure
+   resolves fresh on every run (26 packages on 2026-09-20, the 3.12 cell of run 35518107329), and one of them, anyio,
+   registers a pytest plugin that every cell would otherwise auto-load across the whole suite, which the box's pytest
+   never does (the step's comment states the decision, why, and the measurement behind it). The pin below does not
+   catch a bad transitive release: a red that no commit explains is one, and the comment says so.
 2. The derivation, executed rather than read: the step's own sed run at the repo root prints one well-formed version
    equal to the constant read as a regex over the file (the installer's and the bats test's read) and as the attribute
    of the loaded module (the host's read); and the step's whole run block, run under bash with a `python` shim in a
@@ -166,9 +170,24 @@ class InstallStep(unittest.TestCase):
                         "the Run pytest step does not set ROMP_SDK_REQUIRE=1: a cell whose interpreter lost the SDK reads green")
 
     def test_the_comment_states_the_pin_source_the_bump_and_the_residual(self):
+        # "pytest plugin" and "transitive release" (2026-09-20): the constant pins the SDK alone and its dependency closure
+        # resolves fresh on every run; one of those packages, anyio, registers a pytest plugin, and a comment that stops
+        # saying so lets the pytest environment change again without a word (the line below holds the block itself)
         for phrase in ("SDK_TESTED_VERSION", "kernel/session_host.py", "bin/romp-sdk-setup", "not PyPI's latest",
-                       "run the host tests on it, move the number", "nothing polls PyPI", "continue-on-error", "cryptography"):
+                       "run the host tests on it, move the number", "nothing polls PyPI", "continue-on-error", "cryptography",
+                       "pytest plugin", "transitive release"):
             self.assertIn(phrase, self.comment, "the step's comment lost the sentence about %r" % phrase)
+
+    def test_the_pytest_step_blocks_the_plugin_the_sdk_closure_carries(self):
+        # anyio, in the SDK's dependency closure, registers a pytest11 entry point: without the flag every cell's pytest
+        # auto-loads a plugin the box's pytest never sees (the box venvs carry no anyio, and romp's SDK venv joins sys.path
+        # after plugin autoload). The step's comment above states the decision and its measurement; this pin holds the flag.
+        step = step_block(self.job, "Run pytest")
+        self.assertTrue(step, "no step named 'Run pytest' in the python job: re-anchor this pin")
+        m = re.search(r"^        run: (python -m pytest .*)$", step, re.M)
+        self.assertTrue(m, "the Run pytest step's run line moved: re-anchor this pin")
+        self.assertIn(" -p no:anyio", m.group(1),
+                      "the Run pytest line does not pass -p no:anyio: every cell auto-loads anyio's pytest plugin across the whole suite")
 
 
 class PinDerivation(unittest.TestCase):
