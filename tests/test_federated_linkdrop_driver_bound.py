@@ -410,7 +410,7 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
         self.assertEqual(refused("await read(pages[app]); await f(1, page);"), ["<a later argument>(page)", "read(pages[app])"])
         self.assertEqual(refused("let browser; browser = await chromium.launch({}); const context = await browser.newContext({}); const page = await context.newPage(); pages[app] = page;"), [])
         self.assertEqual(refused("const snap = async (page) => page.evaluate(() => 1); const s = await snap(pages[app]); for (const app of Object.keys(pages)) {}"), [])
-        self.assertEqual(refused("const c = await pages.feed.locator(sel).count(); if (pages.fleet && x) y = 1; x = (await pages.waiting.locator(s).count()) > 0;"), [])
+        self.assertEqual(refused("const c = await pages.feed.locator(sel).count(); if (pages.feed && x) y = 1; x = (await pages.waiting.locator(s).count()) > 0;"), [])
         allowed = {what for _, what, ok in _escaped_receivers("const context = await browser.newContext({}); const page = await context.newPage(); pages[app] = page; const snap = async (page) => 1; await snap(pages[app]);") if ok}
         self.assertEqual(allowed, {"context = browser", "page = context", "pages[app] = page", "snap(pages[app])"}, "the allowed shapes are reported as allowed, so the driver's non-vacuity check reads them")
 
