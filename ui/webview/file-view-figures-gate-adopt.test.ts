@@ -29,9 +29,19 @@
 // tree: `box` is detached until the caller's body.replaceChildren, so a hook on isConnected would see nothing). Every
 // setAttribute of a fetching attribute is recorded with the element's document at write time. The selector engine grew `*`, the
 // child combinator, `:first-child`, `:disabled`, `:scope` and `[*|href]` for the passes mdBlock runs after the adoption.
-// What it cannot see: no fetch happens under node, so a leak here is an attribute the browser WOULD fetch through, judged by the
-// scene's own oracle (a URL parse against the page, the host against the allowed set, a same-origin path against /file or the
-// document's directory), never by figure-gate's remoteHost; the engines' own loading, DOMPurify's document and its inertness
+//   (e) the ORDER, by one clock over every write, every move into the live document and every move-aside the gate makes: the
+//       first move of any node of the sanitizer's body into the live document, read over ALL moves and not the box-filtered
+//       ones, comes after the gate's last move-aside on that body, every move-aside landed while the element was the
+//       sanitizer's, and no fetching attribute of the body was written between the two, so the body and every node of it
+//       stayed out of the page, its fetching attributes as the chain left them, until the gate had run (a caller pass inside
+//       sanitizeMd or a registered post-pass that put the body in the page early is red here by the clock, whatever its name).
+// What it cannot see: no fetch happens under node, so a leak here is an attribute the browser WOULD fetch through, judged over
+// the box's end state by two readers: figure-gate's own gateRefs and unlistedHosts (the product's oracle, remoteHost against the
+// page and the allowed set, so the CI-run guard is keyed on the OUTCOME at the boundary and on no list of passes, calls or names:
+// an element a pass wrote, moved or created under the box with a fetching attribute on an unlisted host is red here whatever the
+// pass is called) and the scene's own oracle (a URL parse against the page, the host against the allowed set, a same-origin path
+// against /file or the document's directory), which alone sees a page-relative leak, since remoteHost answers null for the page's
+// own origin by design; the engines' own loading, DOMPurify's document and its inertness
 // (the seam test's premise pin), and the bytes are the browser legs'. So is the fence pass's re-parse (code-block.ts wrapCodeLines,
 // `code.innerHTML = wrapLinesHtml(code.innerHTML)`), which the round-2 move put before the chain: the stand-in's innerHTML is a
 // plain field, not a parser, so the HTML parser's rename of an svg <image> split from its svg into an HTML <img> cannot happen
@@ -61,7 +71,7 @@ import { inspect } from "node:util";
 import { assertHiddenEvent, hideEdges, staysEnumerable } from "../test-dom-shim";
 import type { FileViewActionCtx } from "./file-view";
 import { setMdSanitizer } from "./md-sanitize";   // the sanitizer seam the node suites install a stand-in through (Slice 7 of plans/markdown-viewer.md)
-import { FIGURE_SEL, PAINT_ATTRS, forgetLoadedHosts, loadGatedHost } from "./figure-gate";
+import { FIGURE_SEL, PAINT_ATTRS, forgetLoadedHosts, gateRefs, loadGatedHost, unlistedHosts } from "./figure-gate";   // gateRefs and unlistedHosts: the gate's own oracle, read over the box's end state
 import { XLINK_NS } from "./md-links";
 
 // ── what the scene records ────────────────────────────────────────────────────────────────────────────
@@ -599,6 +609,23 @@ function assertGateBeforeFirstMove(): { firstMove: Adoption; lastGate: GateMove 
   assert.deepEqual(writes.filter((w) => w.el._sanitized && w.seq > lastGate.seq && w.seq < firstMove.seq), [], "road (e): no fetching attribute of a body element was written between the gate's last move-aside and the first move, so the body's fetching attributes at that move are the chain's");
   return { firstMove, lastGate };
 }
+/** The end state of the Rendered box, through the gate's own oracle and the scene's: no fetching attribute under the box names a
+ *  host outside `allowed` (figure-gate.ts unlistedHosts over gateRefs of the box, against the page's base, as the gate itself
+ *  judges an element), none is page-relative or outside a URL document's directory (the scene's oracle, which alone sees the
+ *  page's own origin), the gate's walk found the figures left live, and every element the gate moved an attribute aside on stands
+ *  under a placeholder naming a host. Keyed on what the box HOLDS when the render is done, so an element a later pass wrote,
+ *  moved or created (the fence class) is read here whatever the pass is called. */
+function assertEndState(md: El, kind: Kind, allowed: Set<string>): void {
+  const box = md as unknown as Element;
+  assert.deepEqual(unlistedHosts(box, PAGE, allowed), [], "the gate's own oracle over the box's end state: no fetching attribute under the Rendered box names an unlisted host (gateRefs over the box, remoteHost against the page, the allowed set as the gate reads it)");
+  const refs = gateRefs(box);
+  assert.ok(refs.length >= 1, "the gate's walk over the box finds the fetching attributes left live (the folder figure's /file src, an allowed host's src): " + refs.length);
+  assert.deepEqual(leaksIn(fetchRefsOf(md), kind, allowed), [], kind.kind === "file" ? "the rendered box holds no fetching attribute on an unlisted host and none page-relative" : "the rendered box holds no leaking fetching attribute once the render is done");
+  assert.deepEqual(refs.map((r) => r.el.tagName.toLowerCase() + "[" + r.attr + "]=" + r.value).sort(), fetchRefsOf(md).map((r) => r.tag.toLowerCase() + "[" + r.attr + "]=" + r.value).sort(), "the two walks read the same attributes off the box (the scene's table is the gate's; a fetching attribute one walk sees and the other does not is a gap in a table)");
+  const gatedEls = new Set(gatedPairs(md).map(([el]) => el));
+  assert.ok(gatedEls.size > 0, "the gate moved attributes aside on the box's figures");
+  for (const el of gatedEls) { const g = gateAround(el); assert.ok(g && (g.getAttribute("data-fv-hosts") || "").length > 0, el.tagName.toLowerCase() + " with a moved-aside attribute stands under a placeholder naming its host"); }
+}
 /** The placeholders under `md` (by the delegated action, as regateFigures finds them). */
 const placeholders = (md: El): El[] => md.querySelectorAll('span[data-act="fv-load"]');
 /** The placeholder around `el`, or null when it stands unwrapped. */
@@ -680,8 +707,12 @@ test("the file kind: the chain runs before the adoption, so the nodes that enter
   const live = writes.filter((w) => w.live);
   assert.deepEqual(leaksIn(live, FILE_KIND, allowedNow()), [], "road (b): no write of a fetching attribute on an unlisted host, or page-relative, landed on a live-document element");
   assert.equal(live.length, 0, "no write of a fetching attribute landed on a live-document element at all during this render (the passes after the adoption write styles, classes, anchors' attributes and fences)");
-  // the end state: whatever road a node took, nothing under the box carries a leaking fetching attribute once the render is done
-  assert.deepEqual(leaksIn(fetchRefsOf(md), FILE_KIND, allowedNow()), [], "the rendered box holds no fetching attribute on an unlisted host and none page-relative");
+  // the end state: whatever road a node took, nothing under the box carries a leaking fetching attribute once the render is done.
+  // Read twice: through the gate's OWN oracle (figure-gate.ts gateRefs over the box, unlistedHosts against the page and the allowed
+  // set, the product's reading of what fetches from where), the CI-run guard keyed on the outcome at the boundary and on no list of
+  // passes, calls or names (the round-1 ruling of the fork PR's review, defect A); and through the scene's oracle, which alone sees a
+  // page-relative leak (remoteHost answers null for the page's own origin by design)
+  assertEndState(md, FILE_KIND, allowedNow());
   // A4, the shape: eleven placeholders, each naming its host, the sources moved aside with the value the chain left
   const f = figures(md);
   assert.equal(placeholders(md).length, FILE_PLACEHOLDERS, "eleven gated roots");
@@ -763,7 +794,7 @@ test("the URL kind: resolveFigureRefs and the gate run on the sanitizer's body, 
   assert.ok(writes.some((w) => w.attr === "src" && w.value === NOTE_DIR + "rel.png" && !w.live), "the resolution's write on the relative img, inert");
   assert.deepEqual(leaksIn(live, URL_KIND, allowedNow()), [], "road (b): no live write of a fetching attribute on an unlisted host or page-relative");
   assert.equal(live.length, 0, "no live write of a fetching attribute at all");
-  assert.deepEqual(leaksIn(fetchRefsOf(md), URL_KIND, allowedNow()), [], "the rendered box holds no leaking fetching attribute once the render is done");
+  assertEndState(md, URL_KIND, allowedNow(NOTE_HOST));   // the document's own host is allowed, as the gate's `extra` makes it
   const imgs = md.querySelectorAll("img");
   assert.equal(imgs.length, 3);
   const [rel, far, proto] = imgs;

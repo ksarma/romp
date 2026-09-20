@@ -1100,7 +1100,12 @@ test("source: the Slice 3 seam members exist with their doc comments; the media 
   // box comes after it (2026-09-20): WebKit starts an img's fetch the moment its node document is one with a render tree, so
   // a chain after the adoption fetched a gated figure while its placeholder stood (file-view-figures-gate-adopt-browser.test.ts)
   assert.ok(sanitizeAt >= 0 && rewriteAt > sanitizeAt && gateAt > rewriteAt && adoptAt > gateAt, "sanitize, then rewrite, then gate, on `clean`, and only then the adoption into `box`");
-  assert.doesNotMatch(mdFn, /(resolveFigureRefs|rewriteFigureSrcs|gateRemoteFigures)\(box,/, "no figure pass runs on the live document's box");
+  // the second layer, a name list: the three chain helpers named today must not be called over `box`. The REQUIRED guard for the
+  // contract (no pass after the adoption sets, repoints, moves or creates a fetching element on an unlisted host) is the node
+  // scene's end-state pin through figure-gate's own gateRefs and unlistedHosts (file-view-figures-gate-adopt.test.ts), keyed on
+  // the outcome under the box and on no list of names: a new helper, or a pass that creates an element (the fence class), is red
+  // there and not here (the round-1 ruling of the fork PR's review, defect A, 2026-09-20)
+  assert.doesNotMatch(mdFn, /(resolveFigureRefs|rewriteFigureSrcs|gateRemoteFigures)\(box,/, "no figure pass runs on the live document's box (a name list, the second layer; the node scene's end-state pin is the guard)");
   assert.ok(mdFn.indexOf("resolveFigureRefs(clean, doc.href);") >= 0 && mdFn.indexOf("resolveFigureRefs(clean, doc.href);") < adoptAt, "the URL kind's resolution runs on `clean` too, before the adoption");
   assert.ok(mdFn.indexOf("return box;") > adoptAt);
   // the fence pass, the one pass that re-parses markup (code-block.ts wrapCodeLines through innerHTML), runs on `clean` between the
