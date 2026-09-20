@@ -190,14 +190,16 @@ type Patch = (v: any, s: any, from: number, working: boolean, items?: any[] | nu
 
 function liftPatch(): (hooks: FootHooks) => Patch {
   const js = liftBetween("function patchWorkedFooters(", "// prevEpoch for event i");
+  // itemFirstEvent is LIFTED with the patch, never hand-copied: a copy without the gap case (a gap's first event is its `before`, not an
+  // `index`) mis-modelled the one unit kind whose first event is not `index`, and a window opening on a gap read NaN (review round 1b)
+  const first = liftBetween("function itemFirstEvent(", "// The display-unit index");
   const prelude = `
     const H = HOOKS;
     const workedFooterPlan = H.workedFooterPlan;
     const eventEpoch = (ev) => (ev.t == null ? null : ev.t);
-    const itemFirstEvent = (it) => (it.kind === "toolgroup" || it.kind === "noticegroup" ? it.indices[0] : it.index);
     const elapsedFooter = (secs) => { const f = new H.FakeEl("div", "turn-elapsed"); f.textContent = String(secs); return f; };
   `;
-  return new Function("HOOKS", prelude + js + "\nreturn patchWorkedFooters;") as (hooks: FootHooks) => Patch;
+  return new Function("HOOKS", prelude + first + js + "\nreturn patchWorkedFooters;") as (hooks: FootHooks) => Patch;
 }
 
 const user = (t: number) => ({ kind: "user", human: true, t });
@@ -254,6 +256,19 @@ test("a day divider shares its turn's unit number and is never the footer's home
   patch(v, s, 3, true);
   assert.equal(divider.children.length, 0, "the divider got nothing");
   assert.ok(nodes[2].querySelector(":scope > .turn-elapsed"), "the turn did");
+});
+
+test("a window that opens ON a gap: the patch reads the window's first event through production's itemFirstEvent (a gap's `before`), so the footer lands and comes off; the harness's hand copy read the gap's index as undefined, the plan was empty, and neither direction ran (review round 1b)", () => {
+  const events = [user(100), tool(110), reply(160)];
+  const items = [{ kind: "gap", lo: 0, hi: 5, before: 0 }, { kind: "event", index: 0 }, { kind: "event", index: 1 }, { kind: "event", index: 2 }];
+  const { patch, v, s, nodes } = footWorld(events, 4, 3);   // unit 0 is the gap element, units 1..3 the three events
+  v.winStart = 0;
+  patch(v, s, 3, false, items);   // idle with the suffix empty: the turn is complete, the reply (event 2, unit 3) gains its footer
+  assert.equal(nodes[3].querySelector(":scope > .turn-elapsed")?.textContent, "60", "the add direction: the footer on the reply behind the gap-headed window");
+  assert.equal(nodes[0].querySelector(":scope > .turn-elapsed"), null, "the gap element got nothing");
+  s.events = [user(100), tool(110), reply(160), reply(170)];   // another reply in the same turn: the footer moves off
+  patch(v, s, 3, true, items);
+  assert.equal(nodes[3].querySelector(":scope > .turn-elapsed"), null, "the remove direction: the stale footer comes off");
 });
 
 test("compact mode: the window start is a unit and the plan wants an event index; the reply's event maps back to its unit; a reply folded into a run is patched by position when the run is open, and left alone (never stale) when it is collapsed", () => {
