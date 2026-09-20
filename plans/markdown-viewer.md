@@ -7986,9 +7986,9 @@ a button inside a link is the link's click too (one click opened the link's targ
 on the trail the reader never asked for); a figure alone in a link keeps its control, after the link. The clicks (the
 body's second click listener, beside the links', since file-view-links.test.ts pins the first listener's text and
 order and the two act on disjoint targets): a plain click on the control or on the bare figure opens it as above; a
-Cmd/Ctrl-click opens the kernel's /file URL in a tab, as a PDF's modified click does (`openFileTab`; a blocked popup
-falls through to the viewer), and stops before the row as a link's modified click does; the figure's own click yields
-to a figure inside a link (the author's link, through the links listener; and an anchor with an href that listener
+Cmd/Ctrl-click on a LOCAL picture opens the kernel's /file URL in a tab, as a PDF's modified click does (`openFileTab`;
+a blocked popup falls through to the viewer), and stops before the row as a link's modified click does; the figure's own click
+yields to a figure inside a link (the author's link, through the links listener; and an anchor with an href that listener
 leaves to the browser, a web address of the markdown, which carries no class: the browser's own open of the address,
 never the picture beside it, the review's round 1; a captioned picture inside a dead link or a named target, an anchor
 with no href, wears no control and its plain click opens the picture, that anchor being none of the links the listener
