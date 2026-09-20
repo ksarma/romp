@@ -64,13 +64,15 @@ jobs:
     # Actions API (2026-09-20): the five Linux cells' pytest phases ran 866 to 1184 s on the run this
     # branch was cut from and 849 to 1175 s across the four main runs before it, and on main's latest
     # run the Linux jobs took 16 min 29 s (3.13) to 19 min 56 s (3.14t) whole, 5.1 to 8.5 minutes
-    # under the 25 min cap; the SDK step below adds 5 to 7 s. An earlier version of this comment
-    # priced the phases at 160 to 300 s (25 min = 300 + 600 + setup). That pricing was wrong; the cap
-    # stands. At the measured phases the invariant above would need about 30 min, but the worst cell
-    # finishes 5 minutes under 25, this fork's binding constraint is the runner queue, and a higher
-    # cap holds a runner that much longer on every stuck cell; a genuine slowdown is caught here
-    # first, and a stall in the last ten minutes of the worst cell is ended by this cap, named by the
-    # job's timeout rather than the test's. The macOS cells (a manual dispatch) run the same suite in
+    # under the 25 min cap; on this branch's first CI run (run 35516364698) the SDK step below took
+    # 5.5 to 7.8 s per cell and the jobs 17 min 20 s to 20 min 56 s whole. An earlier version of this
+    # comment priced the phases at 160 to 300 s (25 min = 300 + 600 + setup). That pricing was wrong;
+    # the cap stands. At the measured phases the invariant above would need about 30 min, but the
+    # worst cell finishes 4 to 5 minutes under 25, this fork's binding constraint is the runner queue,
+    # and a higher cap holds a runner that much longer on every stuck cell; a genuine slowdown is
+    # caught here first, and a stall that begins after minute 15 of the worst cell, its last five
+    # minutes or so, is ended by this cap, named by the job's timeout rather than the test's. The
+    # macOS cells (a manual dispatch) run the same suite in
     # 17 to 25 minutes on the image's slower runners: the 3.10 cell took 24 min 43 s on one dispatch
     # and was cancelled at 25 min 27 s on the next (2026-09-16), a one-minute margin that can kill the
     # release's combined proof for nothing. macOS gets 40; Linux keeps 25.
