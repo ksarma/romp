@@ -4093,6 +4093,330 @@ class _BusHeld(set):
     held = frozenset()
 
 
+# ── the postal tools a Codex thread carries, serviced here (2026-09-19) ──────────────────────────────────────────
+# A Codex session's six postal tools are Codex DYNAMIC TOOLS (codex_backend.POSTAL_TOOL_SPECS); the app-server routes
+# each call back to the backend, which binds it to the calling thread's session and hands it here as
+# postal(tool, sid, name, args). This side dials the bus over loopback with the serve token, AS that session, so no
+# credential enters the sandbox and the model can neither pick its sender nor read another inbox: the same six
+# operations a Claude session's postal MCP has, bounded by the same bus rules (isolation, live-only addressing).
+CODEX_POSTAL_TIMEOUT_S = 3.0   # the reader-thread budget: the backend answers the call inline on the pinned SDK's single
+#                                reader thread, so every Codex session's notifications and interrupt replies wait behind
+#                                this; the bus's own kernel round trip (its GET /sessions, 6 s cap) sits inside it, and a
+#                                bus that is slower than this is answered as unknown, never waited for
+_CODEX_POSTAL_KINDS = ("delegate", "coordinate", "question")
+# the reply hint a Codex session reads at the end of its inbox: the TOOL, never `romp mail send`, which its sandbox
+# refuses by design (the bus's REPLY_HINT names the shell for the CLI and the Claude MCP)
+_CODEX_REPLY_HINT = ("To reply (only if you have something substantive to add, not just to acknowledge): the "
+                     "send_message tool, with a kind — put the whole point in your first sentence.")
+# the bus's REFUSAL_WHYS (bin/romp-postal-service), a KEEP-IN-SYNC copy: a bounce whose reason starts with one of these
+# is a REFUSAL (nothing left this machine, no return note is coming) and the receipt says so; pinned equal to the bus's
+# renderer by tests/test_codex_postal_tools.py (2026-09-19)
+_CODEX_REFUSAL_WHYS = ("not published: ", "not parked:", "outbox record unreadable, moved aside",
+                       "inbox file unreadable, moved aside")
+
+
+def _codex_postal_tools_on():
+    """Whether Codex threads carry the six postal tools: the bare value file STATE/codex-postal-tools, `off` to
+    disable, absent or anything else on (the judge-tier store shape, jd._state_str; default on, the refuter's
+    amendment 9 of 2026-09-19). Read once, where the backend is built (_codex): the callable is a constructor
+    argument, so a change applies at the next kernel start, and the backend logs the off decision once itself."""
+    return jd._state_str("codex-postal-tools", "").strip().lower() != "off"
+
+
+_CODEX_POSTAL_SAID = set()       # the Codex postal tools' bus faults said once per cause per fault spell ("unreachable",
+#                                  "no-answer"): the next answer of any status clears the set
+
+
+def _codex_postal_log(tool, sid, cause, once=None):
+    """The kernel log's one line for a Codex postal tool call that failed, naming the tool, the session and the cause
+    (the review of 2026-09-19: _codex_postal_call never raises, so the backend's raise-only log line never fired, and
+    a refused bus, a hung bus and a store raise each reached the session as a failed result with an empty kernel
+    log, the one cross-session surface). The two bus faults are said once per fault spell PER CAUSE (`once` names
+    the cause, "unreachable" or "no-answer"), after _INTR_MARKS_WRITE_SAID: every Codex session's every call fails
+    the same way until the bus answers again, and _codex_postal_http clears the set on its next answer. One boolean
+    for both causes (the second review of 2026-09-19) let a bus that refused and then hung, with no answer between,
+    log only the refusal, so the log read "could not be reached" while requests were being written and left
+    unanswered. The suffix names that grain too (the third review, 2026-09-19): saying "once per fault spell" while
+    the latch was per cause made a refuse-then-hang spell's two lines each claim to be the spell's one. A store raise
+    is no spell and is said every time. The write is wrapped: a stderr that cannot be written (ENOSPC) must not turn
+    the per-fault sentence the session gets into the generic one."""
+    if once:
+        if once in _CODEX_POSTAL_SAID:
+            return
+        _CODEX_POSTAL_SAID.add(once)
+    try:
+        sys.stderr.write("codex postal tool %s for session %s: %s%s\n"
+                         % (tool or "?", sid or "?", cause,
+                            " (said once per cause per fault spell; re-armed when the mail service answers again)"
+                            if once else ""))
+    except Exception:
+        pass
+
+
+def _codex_postal_http(method, path, payload=None, tool="", sid=""):
+    """One loopback call to the bus for a Codex postal tool: (status, body, written). status 0 when the bus could not
+    be reached (nothing was written: a plain failure), -1 when the request was WRITTEN and no answer came inside
+    CODEX_POSTAL_TIMEOUT_S (written True: the bus may have acted, and the caller's sentence says so, the distinction
+    _bus_send_relay draws as `unknown`), else the bus's status with its JSON body (a dict, {} when unparsable).
+    `tool` and `sid` name the call in the kernel log's line for either fault (_codex_postal_log, once per fault
+    spell per cause); an answer of any status ends the spell."""
+    conn = http.client.HTTPConnection("127.0.0.1", _bus_port(), timeout=CODEX_POSTAL_TIMEOUT_S)
+    try:
+        try:
+            data = json.dumps(payload, ensure_ascii=False).encode("utf-8") if payload is not None else None
+            headers = {"X-Romp-Token": TOKEN}
+            if data is not None:
+                headers["Content-Type"] = "application/json; charset=utf-8"
+            conn.request(method, path, data, headers)
+        except Exception as e:
+            _codex_postal_log(tool, sid, "the mail service could not be reached, nothing written (%s: %s)"
+                              % (type(e).__name__, str(e)[:120]), once="unreachable")
+            return 0, {"error": "The mail service could not be reached just now (%s)." % e.__class__.__name__}, False
+        try:
+            resp = conn.getresponse()
+            raw = resp.read()
+        except Exception as e:
+            _codex_postal_log(tool, sid, "the request was written and no answer came within %.0f s (%s: %s)"
+                              % (CODEX_POSTAL_TIMEOUT_S, type(e).__name__, str(e)[:120]), once="no-answer")
+            return -1, {"error": "No answer from the mail service within %.0f s (%s)."
+                        % (CODEX_POSTAL_TIMEOUT_S, e.__class__.__name__)}, True
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    _CODEX_POSTAL_SAID.clear()                    # an answer, whatever its status, ends the fault spell for both causes: the latch re-arms
+    try:
+        body = json.loads(raw.decode("utf-8", "replace") or "{}")
+    except Exception:
+        body = {}
+    return resp.status, (body if isinstance(body, dict) else {}), True
+
+
+def _codex_postal_fault(status, body, tool):
+    """The failed result's text for a bus answer that is not a 200: the bus's own error text verbatim (bus errors
+    never carry the token), else the status."""
+    err = body.get("error") if isinstance(body, dict) else None
+    if isinstance(err, str) and err:
+        return err
+    return "The mail service answered %s to %s." % (status, tool)
+
+
+def _codex_postal_call(tool, sid, name, args):
+    """postal(tool, sid, name, args) -> (ok, text) for the CodexBackend: the six postal tools onto the bus's routes, AS
+    session `sid` named `name`. The client-side checks are the bus's own MCP tool's (_mcp_call in
+    bin/romp-postal-service: to and body required, a kind outside the three refused rather than downgraded to
+    undeclared, tracked a JSON boolean and a delegate's only), and the delivered sentences are copied from it, pinned
+    equal by tests/test_codex_postal_tools.py. set_working writes the kernel's own store directly (the bus's tool
+    posts to this kernel for it). Never raises: the backend answers the call on the SDK's reader thread, and it
+    logs only a raise, so every fault here is one kernel log line of its own (_codex_postal_log)."""
+    try:
+        args = args if isinstance(args, dict) else {}
+        if tool == "send_message":
+            return _codex_postal_send(sid, name, args)
+        if tool == "check_inbox":
+            status, body, written = _codex_postal_http("GET", "/inbox?id=%s" % quote(sid), tool=tool, sid=sid)
+            if status == 200:
+                return True, (_codex_inbox_text(body.get("messages") or [], sid) or "No new messages.")
+            if status == 503 and body.get("unreadable"):
+                return False, "Your inbox cannot be read right now; your mail waits unread and the next check retries."
+            if status == -1:
+                return False, ("No answer from the mail service within %.0f s. If it had mail for you, that mail may "
+                               "now count as read without having been shown: say so to the person you work for."
+                               % CODEX_POSTAL_TIMEOUT_S)
+            if status == 0:
+                return False, "The mail service could not be reached just now; your mail waits and the next check retries."
+            return False, _codex_postal_fault(status, body, tool)
+        if tool == "list_agents":
+            status, body, written = _codex_postal_http("GET", "/agents?me=%s" % quote(name or ""), tool=tool, sid=sid)
+            if status != 200:
+                return False, _codex_postal_fault(status, body, tool)
+            return True, _codex_agents_text(body.get("agents") or [], sid)
+        if tool == "set_working":
+            if "text" not in args or args.get("text") is None:
+                # a MISSING param is never a clear command (the bus's rule): nothing changes
+                return False, ("set_working needs its `text` argument — nothing was changed. "
+                               "Pass text='' if you mean to clear your published note.")
+            text = str(args.get("text") or "")
+            _set_working_note(sid, text)
+            return True, ("Cleared your 'working on' note." if not text.strip()
+                          else "Published — others see: working on '%s'." % text)
+        if tool == "check_sent":
+            status, body, written = _codex_postal_http("GET", "/sent?id=%s" % quote(sid), tool=tool, sid=sid)
+            if status != 200:
+                return False, _codex_postal_fault(status, body, tool)
+            return True, _codex_receipts_text(body.get("sent") or [])
+        if tool == "recall_message":
+            to, rid = str(args.get("to") or ""), str(args.get("id") or "")
+            if not to and not rid:
+                return False, "Give 'to' (the recipient) and/or 'id' to recall."
+            status, body, written = _codex_postal_http("POST", "/recall", {"from_id": sid, "to": to, "id": rid},
+                                                       tool=tool, sid=sid)
+            if status != 200:
+                return False, _codex_postal_fault(status, body, tool)
+            return True, _codex_recall_text(body.get("removed") or [], body.get("kept") or [])
+        return False, "Unknown tool: %s" % tool
+    except Exception as e:
+        # a raise below the bus call (the working-note store, a renderer): no spell, so every one is said
+        _codex_postal_log(tool, sid, "the call raised (%s: %s)" % (type(e).__name__, str(e)[:200]))
+        return False, "The %s call failed: %s" % (tool, str(e) or e.__class__.__name__)
+
+
+def _codex_postal_send(sid, name, args):
+    to, body = str(args.get("to") or ""), str(args.get("body") or "")
+    kind = str(args.get("kind") or "").strip().lower()
+    if not to or not body:
+        return False, "Need both 'to' and 'body'."
+    if kind not in _CODEX_POSTAL_KINDS:
+        return False, ("Need 'kind': one of delegate (the recipient owns the work now), "
+                       "coordinate (aligning/heads-up), or question (you need an answer).")
+    tracked, terr = _as_bool(args.get("tracked"), "tracked")
+    if terr:
+        return False, "Cannot send: %s. Pass a JSON boolean (tracked: true), not a string." % terr
+    tracked = tracked and kind == "delegate"
+    payload = {"to": to, "from": name or "unknown", "from_id": sid, "body": body, "kind": kind}
+    if tracked:
+        payload["tracked"] = True
+    status, resp, written = _codex_postal_http("POST", "/send", payload, tool="send_message", sid=sid)
+    if status == -1:
+        # WRITTEN, no answer: the bus may have delivered, and a resend would send a delegate twice
+        return False, ("No answer from the mail service within %.0f s: the message may still have gone through. "
+                       "Check check_sent before resending." % CODEX_POSTAL_TIMEOUT_S)
+    if status != 200:
+        return False, _codex_postal_fault(status, resp, "send_message")
+    note = resp.get("note")
+    if note:
+        return True, "Message to '%s': %s" % (to, note)
+    if kind == "question":
+        return True, ("Delivered to '%s' as a question — you are now recorded as waiting on their "
+                      "reply until they answer. If you don't actually need a reply, recall this "
+                      "message and resend it as coordinate." % to)
+    if kind == "delegate" and tracked:
+        return True, ("Delivered to '%s' as a tracked handoff — they do the work, and it stays "
+                      "tracked under you as the one view with their live progress. You are NOT "
+                      "recorded as waiting; their completion checks it off." % to)
+    if kind == "delegate":
+        return True, ("Delivered to '%s' as a handoff — they own it now; you are NOT recorded as "
+                      "waiting (the user 2026-08-15: ownership transferred is not a dependency). "
+                      "If you genuinely need their report before you can proceed, send a question "
+                      "instead." % to)
+    return True, "Delivered to '%s'." % to
+
+
+def _codex_sender_disp(m):
+    """The sender name an inbox line shows; never a literal unknown a broken sender minted."""
+    nm = str(m.get("from") or "").strip()
+    return nm if nm and nm.lower() != "unknown" and nm != "?" else "an unidentified session"
+
+
+def _codex_inbox_text(msgs, me_id):
+    """A Codex session's check_inbox result: the bus's inbox shape (sender, date, the parked and own-message notes,
+    the message-id and kind markers the timeline joins on), with the reply hint naming the tool."""
+    if not msgs:
+        return ""
+    out = ["\U0001F4EC New message(s) from your romp peers:"]
+    for m in msgs:
+        d = " (%s)" % m["date"] if m.get("date") else ""
+        pk = "  ⏸ parked while you were offline — may be stale" if m.get("park") else ""
+        if me_id and m.get("from_id") == me_id:
+            pk += "  (this is YOUR OWN message, arrived back in your inbox: not a reply)"
+        mid = ("\n<!-- romp-msg-id: %s -->" % m["id"]) if m.get("id") else ""
+        if m.get("kind"):
+            mid += "\n<!-- romp-msg-kind: %s -->" % m["kind"]
+        out.append("\n— from %s%s%s:\n%s%s" % (_codex_sender_disp(m), d, pk, m.get("body", ""), mid))
+    out.append("\n" + _CODEX_REPLY_HINT)
+    return "\n".join(out)
+
+
+def _codex_agents_text(agents, me_id):
+    """A Codex session's list_agents result: one line per live session, yours marked by id, a comment thread named
+    by its parent, a remote row by host, the short stable id, the branch, and the working-note with the stale flag
+    when its session is not working now (a claim from a finished turn is read, never asked about)."""
+    if not agents:
+        return "(no live romp sessions)"
+    lines = []
+    for a in agents:
+        rid = str(a.get("id") or "")
+        nm = str(a.get("name") or "?")
+        mine = bool(me_id) and rid == me_id
+        tag = " (you)" if mine else (" [remote]" if a.get("remote") else "")
+        if a.get("thread") and not mine:
+            pn = next((x.get("name") for x in agents if x.get("id") == a.get("parent")), "")
+            tag = " (thread of %s)" % (pn or "a session here")
+        host = rid.split(":", 1)[0] if (a.get("remote") and ":" in rid) else ""
+        disp = ("%s:%s" % (host, nm)) if (host and not nm.startswith(host + ":")) else nm
+        short = (rid.rsplit(":", 1)[-1] if ":" in rid else rid)[:8]
+        br = ("  [%s]" % a["branch"]) if a.get("branch") else ""
+        wk = ""
+        if a.get("working"):
+            st = a.get("state", "")
+            stale = "  (idle now — claim may be stale)" if st and st != "working" else ""
+            wk = "  — %s%s" % (a["working"], stale)
+        lines.append("  %s%s%s%s%s" % (disp, tag, (" · %s" % short) if short else "", br, wk))
+    return "\n".join(lines)
+
+
+def _codex_hhmm(t):
+    try:
+        return datetime.fromtimestamp(int(t)).strftime("%H:%M")
+    except Exception:
+        return "?"
+
+
+def _codex_receipts_text(recs):
+    """A Codex session's check_sent result: the bus's receipt states in the kernel's words (read, recalled, bounced,
+    left for a host and awaiting its confirmation, queued or parked for one, delivered there but unread, pending)."""
+    if not recs:
+        return "No messages sent yet."
+    out = ["Your recent sent messages:"]
+    for r in recs[-15:]:
+        rid = r.get("id", "?")
+        if r.get("exec"):
+            st = "read %s" % _codex_hhmm(r["exec"])
+        elif r.get("recalled"):
+            st = "recalled %s" % _codex_hhmm(r["recalled"])
+        elif r.get("bounced"):
+            why = str(r.get("bouncedWhy") or "")
+            if why.startswith(_CODEX_REFUSAL_WHYS):
+                # a REFUSAL: nothing left this machine and no return note exists, so the refusal is the whole story
+                st = "bounced %s — refused — %s" % (_codex_hhmm(r["bounced"]), why)
+            else:
+                st = "bounced %s — undeliverable, returned to you" % _codex_hhmm(r["bounced"])
+        elif r.get("parked"):
+            if r.get("carried"):
+                st = "left for %s %s — awaiting delivery confirmation · id %s" % (r["parked"], _codex_hhmm(r["carried"]), rid)
+            elif r.get("parkedUp"):
+                st = "queued for relay to %s · id %s" % (r["parked"], rid)
+            elif "parkedUp" in r:
+                st = "parked for %s (unreachable) — delivers on reconnect · id %s" % (r["parked"], rid)
+            else:
+                st = "parked for %s · id %s" % (r["parked"], rid)
+        elif r.get("relayed"):
+            st = "delivered %s (not read yet) · id %s" % (_codex_hhmm(r["relayed"]), rid)
+        else:
+            st = "pending (not read yet) · id %s" % rid
+        out.append("  → %-18s sent %s · %s%s" % (r.get("to", "?"), _codex_hhmm(r.get("sent")), st,
+                                                  " · sent on your behalf" if r.get("onBehalf") else ""))
+    return "\n".join(out)
+
+
+def _codex_recall_text(removed, kept):
+    if not removed and not kept:
+        return ("Nothing to recall — no unread message from you matched "
+                "(it was already read or delivered, or nothing's queued there).")
+    lines = []
+    if removed:
+        lines.append("Recalled %d message(s) before they were read:" % len(removed))
+        for r in removed:
+            lines.append("  ✕ to %s: %s" % (r.get("to", "?"), r.get("body", "")))
+    for k in kept:
+        why = k.get("why") or ("already left for %s and can no longer be withdrawn" % k.get("host", "?"))
+        tail = "; they may already have read it" if k.get("carried") else ""
+        lines.append('  ✗ NOT recalled — to %s (id %s): it %s%s. "%s"'
+                     % (k.get("to", "?"), k.get("id", "?"), why, tail, k.get("body", "")))
+    return "\n".join(lines)
+
+
 ROMP_VOICE_WORDS = ("romp", "card", "board", "goal", "cleared", "dismissal", "status check", "nudge")
 #   the vocabulary an injected body must never speak to a session (CLAUDE.md, "Messages we inject into a session");
 #   tests/test_injected_voice.py's list of the same words, with the why of each, is pinned to this one
@@ -9211,7 +9535,7 @@ def _conserve_tick(now):
     if not be or not hasattr(be, "conserve_close"):
         return
     with _clients_lock:
-        viewer = any(c.get("alive", True) and c.get("app") in ("chat", "fleet", "timeline", "feed", "files")
+        viewer = any(c.get("alive", True) and c.get("app") in ("chat", "fleet", "timeline", "feed", "files", "artifacts")
                      for c in _clients)
     if viewer:
         _conserve_last_viewer[0] = now
@@ -9256,7 +9580,7 @@ def _write_auto_nudge(d):
                                 _auto_nudge_normalize)
 
 
-def _set_auto_nudge(enabled, gt=None, origin=None):
+def _set_auto_nudge(enabled, gt=None, origin=None, scope=None):
     """Returns the applied gesture stamp (epoch ms), or None when a stale `gt` stood down —
     see the gesture-time ordering block above _NUDGE_LOCK — or the store write failed (OSError:
     said once per fault episode by the writer, nothing applied, and the delivering socket hears
@@ -9271,7 +9595,7 @@ def _set_auto_nudge(enabled, gt=None, origin=None):
         d = dict(_auto_nudge_data())
         if _gesture_echo(gt, _gt_int(d.get("gt")), bool(d.get("enabled")) == bool(enabled)):
             return None                                # the same pick again: quietly nothing to do
-        if _pinned_stand_down("auto-nudge", gt, enabled, d, origin):   # the pin (plans/settings-across-machines.md, one A): a remote
+        if _pinned_stand_down("auto-nudge", gt, enabled, d, origin, scope):   # the pin (plans/settings-across-machines.md, one A): a remote
             return None                                             #  machine's click never moves a store this machine pinned
         if _setting_stale("auto-nudge", gt, _gt_int(d.get("gt"))):
             return None
@@ -9298,7 +9622,7 @@ def _compact_suggest_on():
     return bool(_auto_nudge_data().get("compactSuggestEnabled"))
 
 
-def _set_compact_suggest(enabled, gt=None, origin=None):
+def _set_compact_suggest(enabled, gt=None, origin=None, scope=None):
     """Returns the applied gesture stamp (epoch ms), or None when a stale `gt` stood down or the
     store write failed (OSError: said once per fault episode by the writer, nothing applied, nothing
     ticked, and the delivering socket hears the refusal) —
@@ -9310,7 +9634,7 @@ def _set_compact_suggest(enabled, gt=None, origin=None):
         d = dict(_auto_nudge_data())
         if _gesture_echo(gt, _gt_int(d.get("compactSuggestGt")), bool(d.get("compactSuggestEnabled")) == bool(enabled)):
             return None
-        if _pinned_stand_down("compact-suggest", gt, enabled, d, origin):   # the pin (plans/settings-across-machines.md, one A): a remote
+        if _pinned_stand_down("compact-suggest", gt, enabled, d, origin, scope):   # the pin (plans/settings-across-machines.md, one A): a remote
             return None                                             #  machine's click never moves a store this machine pinned
         if _setting_stale("compact-suggest", gt, _gt_int(d.get("compactSuggestGt"))):
             return None
@@ -9341,7 +9665,7 @@ def _file_editing_on():
         return False
 
 
-def _set_file_editing(enabled, gt=None, origin=None):
+def _set_file_editing(enabled, gt=None, origin=None, scope=None):
     """Returns the applied gesture stamp (epoch ms), or None when a stale `gt` stood down —
     see the gesture-time ordering block above _NUDGE_LOCK — or the store write failed (OSError:
     loud on stderr, nothing applied; caught HERE like _set_update_mode's, because a raised OSError
@@ -9358,7 +9682,7 @@ def _set_file_editing(enabled, gt=None, origin=None):
         prev_gt = _gt_int(prev.get("gt")) if isinstance(prev, dict) else 0
         if _gesture_echo(gt, prev_gt, isinstance(prev, dict) and bool(prev.get("enabled")) == bool(enabled)):
             return None
-        if _pinned_stand_down("file-editing", gt, enabled, {}, origin):   # the pin (plans/settings-across-machines.md, one A): a remote
+        if _pinned_stand_down("file-editing", gt, enabled, {}, origin, scope):   # the pin (plans/settings-across-machines.md, one A): a remote
             return None                                             #  machine's click never moves a store this machine pinned
         if _setting_stale("file-editing", gt, prev_gt):
             return None
@@ -9716,7 +10040,7 @@ def _task_tracking_on():
     return on
 
 
-def _set_task_tracking(enabled, gt=None, origin=None):
+def _set_task_tracking(enabled, gt=None, origin=None, scope=None):
     """Returns the applied gesture stamp (epoch ms), or None when the gesture was its own echo (an equal
     stamp carrying the stored value), a stale `gt` stood down (the gesture-time ordering block above
     _NUDGE_LOCK; the delivering socket hears it through _setting_stale's notice), or the write failed
@@ -9731,7 +10055,7 @@ def _set_task_tracking(enabled, gt=None, origin=None):
         prev_on = _tracking_value(prev)[0]           # the one reader (round five, low 3); an unproved prior reads on, as the display does
         if _gesture_echo(gt, prev_gt, prev_on == bool(enabled)):
             return None
-        if _pinned_stand_down("task-tracking", gt, enabled, {}, origin):   # the pin (plans/settings-across-machines.md, one A): a remote
+        if _pinned_stand_down("task-tracking", gt, enabled, {}, origin, scope):   # the pin (plans/settings-across-machines.md, one A): a remote
             return None                                             #  machine's click never moves a store this machine pinned
         if _setting_stale("task-tracking", gt, prev_gt):
             return None
@@ -19500,7 +19824,11 @@ def _codex():
                     # switch: an opt-in override of the managed runtime, not the ambient PATH accident #929 closed
                     # (review find, 2026-09-07). Unset → None → the backend picks the managed runtime.
                     codex_bin=os.environ.get("ROMP_CODEX_BIN") or None,
-                    log=lambda m: sys.stderr.write("codex-backend: %s\n" % m))
+                    log=lambda m: sys.stderr.write("codex-backend: %s\n" % m),
+                    # the six postal tools every Codex thread carries as dynamic tools, serviced here over loopback
+                    # AS the calling session (2026-09-19): the kernel holds the token and knows the sid; the model
+                    # sees a tool, never a credential. None when STATE/codex-postal-tools says off (default on)
+                    postal=(_codex_postal_call if _codex_postal_tools_on() else None))
             except Exception:
                 sys.stderr.write("codex-backend unavailable: %s\n" % traceback.format_exc())
                 _codex_backend = False
@@ -21897,13 +22225,20 @@ def _bus_token_mark():
 
 def _bus_port_census(port, source):
     """One boot census line, and one more per change: the bus port the kernel dials, whether the record or the environment
-    named it, and the mismatch with the environment when there is one (the operator's pointer at the pair)."""
+    named it, and the mismatch with the environment when there is one (the operator's pointer at the pair). The write is
+    wrapped the way _codex_postal_log's is (the second review of 2026-09-19): the dial runs on every loopback call, outside
+    the Codex postal request's try, so a stderr that could not be written (ENOSPC) raised out of a first dial into
+    _codex_postal_call's catch-all, the session got the generic sentence instead of the per-fault one, and the bus was
+    never dialed. Said or not, the census stands as said: the memory is set before the write."""
     cur = (int(port), source)
     if _BUS_PORT_SAID[0] == cur:
         return
     _BUS_PORT_SAID[0] = cur
     note = "" if int(port) == BUS_PORT else " (ROMP_POSTAL_PORT says %d: the environment and the bus disagree; the record wins)" % BUS_PORT
-    sys.stderr.write("romp-kernel: postal bus dialed on 127.0.0.1:%d from the %s%s\n" % (int(port), source, note))
+    try:
+        sys.stderr.write("romp-kernel: postal bus dialed on 127.0.0.1:%d from the %s%s\n" % (int(port), source, note))
+    except Exception:
+        pass
 SSH_BIN = os.environ.get("ROMP_SSH_BIN", "ssh")                  # overridable for tests
 SSH_CONFIG = Path(os.environ.get("ROMP_SSH_CONFIG") or (Path.home() / ".ssh" / "config"))
 _REMOTE_KERNEL_PORT = int(os.environ.get("ROMP_REMOTE_KERNEL_PORT", str(PORT)))   # remote kernels default to our port
@@ -23495,6 +23830,10 @@ def _remote_public(r):
             # reported one (an older kernel): unknown, left out of the mixed calc — never read as a
             # disagreement to click away, exactly the autoNudge rule generalized.
             "settings": r.get("settings") if isinstance(r.get("settings"), dict) else None,
+            # the same poll's stamps and pins (phase two, plans/settings-across-machines.md): the settings' machine selector
+            # shows a picked machine's values and which of its stores it pinned
+            "settingsGt": r.get("settingsGt") if isinstance(r.get("settingsGt"), dict) else None,
+            "settingsPinned": r.get("settingsPinned") if isinstance(r.get("settingsPinned"), dict) else None,
             # fastForward: a push here would only ADD commits (the remote's is an ancestor of ours) — the
             # exact condition the automatic update fires on, so the row can say why it will or won't.
             # autoPush: that host's live phase (pushing / waiting / failed) → the popover's progress line and
@@ -28607,6 +28946,7 @@ def _tunnel_supervisor():
                         r["auto_nudge"] = (rver or {}).get("autoNudge")   # None = that kernel didn't say
                         r["settings"] = (rver or {}).get("settings")      # its whole kernel-side dict (None = older kernel)
                         r["settingsGt"] = (rver or {}).get("settingsGt")  # each store's last-applied stamp (T248b: the adopt seam)
+                        r["settingsPinned"] = (rver or {}).get("settingsPinned")   # its pinned stores (phase two: the gear's scoped view)
                     if ruse is not None:
                         # {} = the host ANSWERED with nothing to show → clear; None = no answer (blip/
                         # rate-gate) → keep the last reading (see _poll_remote_usage)
@@ -37145,8 +37485,10 @@ def _send_or_park(be, sid, text, echo=None, qid=None, user=False, paths=None, us
     2026-09-11: hold while working, and _apply_pending_ops MERGES the held run into one message at turn
     end). Otherwise hand
     it over NOW — a forwards_sends backend (SDK) takes a send even mid-turn and forwards it at the next tool
-    boundary, folds several queued sends into one turn, and holds them across an interrupt (the user
-    2026-07-17: "get user messages in as soon as possible; we don't have to interrupt but get them in"); the
+    boundary (the user 2026-07-17, who wanted messages in as soon as possible, without an interrupt), hands
+    a drained pile of queued sends to the CLI one message each, in order, the next held until the CLI has
+    taken the last (the user 2026-09-20, who accepted one message each for a drained pile, up to one turn
+    each, over the earlier fold of the pile into one turn), and holds them across an interrupt; the
     still-waiting message renders as a queued bubble (its echo is suppressed) until it forwards. `echo` is
     the parked op's author slot, kept for the op's on-disk shape (the SDK and Codex backends echo for
     themselves inside send(); no kernel-side echo exists since the tmux backend's removal, 2026-09-11).
@@ -37496,13 +37838,19 @@ def _route_meta_command(be, sid, text, client=None, floating=False, state=None, 
     """The one route every typed or sent slash command takes (the composer's sendMessage arm, the lane menu's
     sendCommand arm, POST /send and `romp send` through _deliver_text), in front of the setter body it used to
     BE (_route_setter_command: its arms and docstring are unchanged). A Codex session takes only what romp
-    itself performs: /model X and /effort X through the setter arms. Every other slash-shaped text — /clear,
-    /compact, /new, /fast, a bare /model, a skill — is refused here, ABOVE the setter body's one-token guard
-    (which returned False for a bare /clear and let it fall to _send_or_park as prose the model then answered),
-    by the same predicate that parks (_is_slash_command), so the refused set equals the parked set and a refused
-    command is never a ("command",) op. _CODEX_SLASH_HANDLERS is the seam a native /clear or /compact plugs
-    into: a head registered there takes the text instead of the refusal. `qid` is the press-minted copy id
-    (the sendMessage arm's _wire_qid), carried on the refusal frame so the chat retires the bubble it drew. The
+    itself performs: /model X and /effort X through the setter arms. The slash commands the kernel KNOWS a
+    Codex session cannot take (_CODEX_REFUSED_HEADS: /clear, /compact, /new and the rest of that set) and a
+    setter head in the wrong shape (a bare /model) are refused here, ABOVE the setter body's one-token guard
+    (which returned False for a bare /clear and let it fall to _send_or_park as prose the model then answered).
+    The refused set is the KNOWN set, not the parked set: _is_slash_command matches a shape (a leading slash
+    token), and shape is not command-ness ("/tmp is nearly out of space", "/s to skip" are ordinary things
+    to type), so a slash-shaped text whose head is outside the set is prose to a Codex session and takes the
+    road every other backend takes (the setter body answers False for it; the caller sends it idle, parks it
+    as a ("command",) op busy, and the drain hands it to the model). _codex_refuses is the one predicate this
+    arm and the drain read, so the live road and the parked road refuse the same texts by construction.
+    _CODEX_SLASH_HANDLERS is the seam a native /clear or /compact plugs into: a head registered there takes the
+    text instead of the refusal. `qid` is the press-minted copy id (the sendMessage arm's _wire_qid), carried on
+    the refusal frame so the chat retires the bubble it drew. The
     Claude Code and unowned routes are unchanged and take the setter body directly: a dead Codex session routes
     to _UNOWNED (CodexBackend.owns is False once dead) and keeps the unowned refusal, so the identity test is
     the existing arms' `be is _codex()`, not _session_backend. Cost: _is_slash_command (a regex) runs FIRST, so
@@ -37516,7 +37864,9 @@ def _route_meta_command(be, sid, text, client=None, floating=False, state=None, 
             return handler(be, sid, text, client, state, qid)
         if head in _CODEX_SETTER_HEADS and _route_setter_command(be, sid, text, client, floating=floating, state=state):
             return True
-        return _refuse_codex_slash(be, sid, text, client=client, state=state, qid=qid)
+        if _codex_refuses(text):
+            return _refuse_codex_slash(be, sid, text, client=client, state=state, qid=qid)
+        # any other head is prose to a Codex session: the road below, which the setter body answers False for
     return _route_setter_command(be, sid, text, client, floating=floating, state=state)
 
 
@@ -37526,13 +37876,40 @@ def _not_claude_code_reason(be):
     return "this one runs in Codex" if (be is not None and be is _codex()) else "no running backend owns this one"
 
 
-# The setter arms own these for a Codex session (one Codex value each, _route_setter_command); every other slash-shaped
-# text is refused for it (_route_meta_command, 2026-09-19).
+# The setter arms own these for a Codex session (one Codex value each, _route_setter_command); a bare one or a wrong
+# shape is refused with the hint (_codex_slash_refusal, 2026-09-19).
 _CODEX_SETTER_HEADS = ("/model", "/effort")
+# The slash commands the kernel KNOWS a Codex session cannot take: what romp's own surfaces mint for a session or its
+# docs and palette name, and the Codex app-server has no parser for. Census of literal slash heads over kernel/,
+# ui/webview, the timeline view, cli/, bin/ and the extension source (tests excluded): /compact (the chat and timeline
+# battery, _compact_or_park, the judge and event model), /clear (the chat's clear confirm, sdk_backend), /fast (the
+# settings menu and the setter body), /mcp (the composer's palette; the bare form is intercepted client-side, the form
+# with words after it reaches the route), and the Claude CLI commands romp's docs and comments name as things a session
+# types: /new (docs/codex.md, the _CODEX_COMMANDS comment) and /autocompact (the drain's command arm). /help is named
+# by no surface: a Claude CLI built-in the guard has refused since it landed, kept so a typed /help never lands in a Codex
+# conversation as prose. The kernel refuses what it KNOWS a Codex session cannot take, never what looks like a command:
+# a leading slash token is not a decidable command marker ("/tmp is nearly out of space", "/s to skip" are ordinary prose),
+# and for a Codex session there is no CLI to ask what executes. The per-cwd Claude CLI command cache (_commands_for_cwd)
+# is deliberately NOT a source: its warmth would make the same text refused one minute and delivered the next. A Claude
+# built-in outside this set (/init, /cost) typed at a Codex session reaches the model as text; docs/codex.md says so.
+# A head added here is refused on the route and at the drain at once (_codex_refuses); a native handler registered in
+# _CODEX_SLASH_HANDLERS takes precedence on the route (2026-09-19).
+_CODEX_REFUSED_HEADS = ("/clear", "/compact", "/new", "/fast", "/autocompact", "/help", "/mcp")
 # head -> handler(be, sid, text, client, state, qid) -> bool. Empty in this change: a native /clear and /new, then a
 # native /compact, register here, and the refusal stops for each by that one registration (2026-09-19).
 _CODEX_SLASH_HANDLERS = {}
 _CODEX_VALUE_EXAMPLE = {"/model": "/model gpt-5", "/effort": "/effort high"}
+
+
+def _codex_refuses(text):
+    """The one predicate for a slash command a Codex session is refused: the text's head is in the known set
+    (_CODEX_REFUSED_HEADS) or is a setter head (_CODEX_SETTER_HEADS: on the route a bare /model or a wrong shape
+    reaches this after the setter body declined it; at the drain a parked setter head is one a caller that skips
+    the route parked as text). Read by the route (_route_meta_command) and the parked-op drain (_apply_pending_ops)
+    alike, so the live road and the parked road refuse the same texts by construction. False for empty text and
+    for every other head, which is prose to a Codex session (2026-09-19)."""
+    parts = (text or "").strip().split()
+    return bool(parts) and (parts[0] in _CODEX_REFUSED_HEADS or parts[0] in _CODEX_SETTER_HEADS)
 
 
 def _codex_slash_refusal(head):
@@ -37583,14 +37960,17 @@ def _vouched_model(value):
 
 
 def _deliver_send_batch(be, sid, run):
-    """Deliver a run of consecutive parked ('send', text, echo) ops AT ONCE (the user 2026-07-17: a pile of
-    queued messages should all go in together, not one turn each). A backend that forwards its own sends
-    (SDK, Codex) enqueues each — the SDK's inputs() folds them into ONE turn; a backend that can't (none
-    today; the tmux backend, until its removal 2026-09-11) has no fold, so MERGE them into a single message
-    (the user okayed merging for that backend). Nothing is echoed here: every backend echoes inside send()
-    (the kernel-side echo left with the tmux backend). A parked op may carry a seventh slot, the id of the user
-    request it answers (_op_todo): it goes to the backend beside the speaker and the attachment list, and the
-    handover is reported once through _parked_answer_handed_over after the send returned."""
+    """Deliver a run of consecutive parked ('send', text, echo) ops in one pass, in park order. A backend that
+    forwards its own sends (SDK, Codex) enqueues each: the SDK's inputs() hands them to the CLI one message
+    each, the next held until the CLI has taken the last, so a drained pile reaches the agent as separate
+    messages, up to one turn each (the user 2026-09-20, who accepted one message each for a drained pile;
+    this replaces the 2026-07-17 fold of the run into one turn, under which two texts fed during one open
+    turn reached the agent fused). A backend that cannot forward (none today; the tmux backend, until its
+    removal 2026-09-11) has no queue of its own, so MERGE them into a single message (the user okayed merging
+    for that backend). Nothing is echoed here: every backend echoes inside send() (the kernel-side echo left
+    with the tmux backend). A parked op may carry a seventh slot, the id of the user request it answers
+    (_op_todo): it goes to the backend beside the speaker and the attachment list, and the handover is
+    reported once through _parked_answer_handed_over after the send returned."""
     if not run:
         return
     if _forwards_sends(be):
@@ -37638,8 +38018,10 @@ def _apply_pending_ops(now=None):
     2026-07-02, compact-mid-turn): settings ops (model/effort) apply instantly and delivery continues,
     but a SEND or /COMPACT ends the pass — its turn/compaction must finish before the next op fires, so
     "compact, then two messages, then a model pick" lands as pressed. A leading RUN of consecutive sends
-    is delivered together, not one turn each (_deliver_send_batch — the user 2026-07-17, who wanted them sent all at
-    once; the SDK folds the run into one turn; a backend that cannot forward gets them merged).
+    is delivered in one pass (_deliver_send_batch): the SDK hands them to the CLI one message each, the next
+    held until the CLI has taken the last, so a drained pile reaches the agent one message each, up to one
+    turn each (the user 2026-09-20, who accepted this over the 2026-07-17 fold of the run into one turn); a
+    backend that cannot forward gets them merged.
     Event-gated throughout (_compacting
     + the event-model open-turn signal, both off cached parses refreshed by turn-end pokes, plus
     _limit_hold's account gate — a queue held by a usage limit drains on the cycle after the API's own
@@ -37791,10 +38173,12 @@ def _apply_pending_ops(now=None):
                         # send batch (or forwarded mid-turn) it reaches the model as text instead of executing
                         # (the user 2026-08-13: /autocompact absorbed mid-turn got a polite reply and no
                         # setting change). Echo stamped at fire time, like a delivered send.
-                        if be is not None and be is _codex():
-                            # parked before the route refused these (or by a caller that skips the route: a follow-up body
-                            # that is bare slash text): drained ONCE through the same refusal, with the copy's id so the
-                            # chat retires its bubble; never handed to the backend, never replayed (2026-09-19)
+                        if be is not None and be is _codex() and _codex_refuses(op[1]):
+                            # a KNOWN head parked before the route refused it (or by a caller that skips the route: a
+                            # follow-up body that is bare slash text): drained ONCE through the same refusal, with the
+                            # copy's id so the chat retires its bubble; never handed to the backend, never replayed. A
+                            # slash-shaped text outside the known set is prose to a Codex session and takes the road
+                            # below, like every other backend's (2026-09-19)
                             _refuse_codex_slash(be, sid, op[1], qid=_op_qid(op))
                             refused = True
                             said = True
@@ -49917,7 +50301,7 @@ def _keepalive_all(now=None):
     # it raised the reload banner, the user 2026-07-13, whose stale tab sat silent through several rebuilds) —
     # no per-page /version polling. The VS Code extension compares it against its bundled build stamp the same
     # way and keeps its banner: a webview reload cannot fix bundled-code drift.
-    s = json.dumps({"type": "ka", "dv": _dist_ver()})
+    s = json.dumps({"type": "ka", "dv": _dist_ver(), "pv": _panes_rev()})   # pv: the pane set's revision (plans/panes-as-data.md); a page baked with another is offered a reload
     now = _ws_clock() if now is None else now
     with _clients_lock:
         targets = list(_clients)
@@ -50468,6 +50852,7 @@ def _client_reset_chat_sid(client, sid):
     with _client_lock(client):
         client.get("echat", {}).pop(sid, None)
         client.get("sent", {}).pop(("chat", sid), None)
+        client.get("heldTailFirst", {}).pop(sid, None)   # a stale held-tail key for this sid goes with the base (M3, 2026-09-19)
         _release_skeleton_locked(client, sid)   # a needFull for a skeleton tab (a click, the idle prefetch) loads it
         # The client asked for this sid WHOLE (2026-09-19). A set that does not exist yet cannot be released from: on a
         # redial's fresh client the release above is a no-op, and the repair push's own _resolve_reconnect then built the
@@ -50504,7 +50889,7 @@ def _client_reset_chat_base(client):
         # …and the reconnect skeleton set (2026-09-07): a renderer that just evaluated holds NOTHING, so there
         # is nothing it could lazily reload — every tab must arrive whole, and the status slots go with the set;
         # and the asked-whole marks (2026-09-19): it asked nothing either, and the connect push below serves the set
-        client.pop("skeleton", None); client.pop("skeletonOrder", None); client.pop("reconnect", None); client.pop("askedFull", None)
+        client.pop("skeleton", None); client.pop("skeletonOrder", None); client.pop("reconnect", None); client.pop("askedFull", None); client.pop("heldTailFirst", None)
         # A SKELETON client (a later chat column, ?skeleton=1 at its handshake, 2026-09-11): the pop above took the
         # `reconnect` the handshake armed, with the set a pre-ready pusher cycle may have built into a document that
         # could not hear it. Re-armed HERE, from the survivor, so the ready arm's connect push serves the page the same
@@ -52085,6 +52470,32 @@ def _chat_full_reason(pc, pf, pl, change_from, total):
     return "other"                                    # no known shape reaches the full frame past these: counted, never raised
 
 
+def _key_in_transcript(sid, key, now):
+    """True if `key` (a held event's wire key) still appears in the sid's current parse (what the chat can show and its
+    pages serve), not merely in the floored built list. A key gone from here is a fork or a rewind that abandoned those
+    turns: they are genuinely not part of the current session, so the page sets them aside (rebased). Reads the CACHED
+    _parse's turns only, pre-cut turns' uuids included (t["uuids"], no body), so it never re-reads the leaf whole (the
+    proto-2 read budget, test_chat_proto2_served); _parse's own candidate set already covers the resume-fork lineage,
+    so a resume that keeps its older turns keeps the key. Any doubt (no session row, a synthetic key, a parse fault)
+    answers True: keep the rows (content that exists is never dropped, the user 2026-09-19)."""
+    try:
+        u = str(key or "").split("#", 1)[0]   # a second event of a record (uuid#n) rides its record's uuid
+        if not _UUIDISH_RE.match(u):   # only a record uuid is CHECKED; every other key shape is kept: an overlay card's
+            return True                #  kind (todo, compacting, ...), a Codex echo-<hex>, an ordinal orphan:t:n. A false
+        #                                membership must never emit `rebased` on an intact transcript (the user 2026-09-19)
+        sess = next((x for x in _sessions(now) if x["sid"] == sid), None)
+        if sess is None:
+            return True
+        for t in _parse(sess["path"], sid, now)["turns"]:
+            src = t.get("uuids") if t.get("pre") else [a.get("uuid") for a in (t.get("atoms") or [])]
+            for tu in (src or []):
+                if tu and str(tu).split("#", 1)[0] == u:
+                    return True
+        return False
+    except Exception:
+        return True
+
+
 def _send_chat_proto2(c, m, ms, change_from, led_changed, st, pc):
     """The uuid-anchored wire (T323 stage 4b) for a client whose ready said proto 2. Its base is {first, last}: the uuids
     of the oldest and newest events of its TAIL run, the one run every client always holds and always live (T386 stage
@@ -52153,6 +52564,29 @@ def _send_chat_proto2(c, m, ms, change_from, led_changed, st, pc):
     # grows by that turn's head and no more. WIRE_TAIL is a floor, not a ceiling, here. A cut already at the list's start
     # (a floored list shorter than the tail) moves nowhere and still names its turn.
     head_from, tail_lo = _tail_run_start(sid, evs, head_from, int(time.time()))
+    # CONTENT THAT EXISTS NEVER GETS DROPPED (the user 2026-09-19). tail_lo above is re-derived from THIS build's tail
+    # (WIRE_TAIL events from the current end) and reads nothing the client holds, so a SHORTER current transcript (a
+    # fork, a rewind) puts tailLo below a run the page still shows and 1877's merge-by-position would drop it. The
+    # client's held tail run's older edge is pc["first"] for a connected client whose base went away (baseGone), else
+    # the heldTailFirst the page sent on ready / needFull for a reconnected client (its echat was cleared). When that
+    # key still sits in the built list BELOW the cut, serve from there so the frame is a SUPERSET of what the page
+    # holds (guard 3's split.before is empty, it applies, nothing dropped). When it is gone from the whole STITCHED
+    # transcript (not merely floored, and not a resume that stitches it back), those turns are genuinely not part of
+    # the current session: the frame carries `rebased` so the page sets them aside under the one landing notice, the
+    # ONE place rows leave on purpose. Floored-but-present, or a null tail_lo (the cold boot): the plain frame, and the
+    # page keeps its rows (1877 keeps a run below tailLo; guard 3 stays the belt).
+    rebased = False
+    if tail_lo is not None:
+        # `held_first` above is the BOOL _note_chat_full reads; this key is its own local (M2, 2026-09-19 round two).
+        held_key = pc.get("first") if isinstance(pc, dict) else (c.get("heldTailFirst") or {}).get(sid)
+        if held_key:
+            j = _uuid_positions(evs, sid).get(held_key)
+            if j is not None:
+                if j < head_from:
+                    head_from, tail_lo = _tail_run_start(sid, evs, j, int(time.time()))
+            elif not _key_in_transcript(sid, held_key, int(time.time())):
+                rebased = True
+    (c.get("heldTailFirst") or {}).pop(sid, None)   # consumed by THIS full: a later no-key needFull must not read it (M3)
     _release_skeleton_locked(c, sid)
     # …and the full IS the answer to a needFull (2026-09-19): the mark _client_reset_chat_sid set is consumed here, where
     # the echat entry that keeps the sid out of any later set is written; not inside the release, which a click reaches
@@ -52169,6 +52603,8 @@ def _send_chat_proto2(c, m, ms, change_from, led_changed, st, pc):
     m_send["lastUuid"] = _event_key(evs[-1]) if total else None
     m_send["tailLo"] = 0 if head_known else tail_lo   # the tail run's first turn (T386 stage 2), the turn the frame now begins with
     m_send["pageTurns"] = PAGE_TURNS                  # the page the gaps ask by (chat-regions.ts pagesToAsk)
+    if rebased:
+        m_send["rebased"] = True                      # the held tail run is gone from the current session (a fork / rewind): the page sets it aside under the notice
     # The full frame, counted by reason and filed when the client held a base it was owed deltas on: AFTER the send, and only
     # when the frame LEFT (2026-09-19, the review of the anchor fix). _send_client dedupes a frame the client already holds byte
     # for byte within _DEDUP_REPOST_S (a targeted push repeated on one build, the connect handshake's second push) and hands
@@ -52775,6 +53211,8 @@ def _older_peer_settings(rver):
             continue
         if pinned.get(store):
             continue                                   # the peer pinned it: its value stands there by its user's word (one A)
+        if _setting_pinned(store):
+            continue                                   # WE pinned it (phase two): a per-machine value is not the mesh's to receive
         if mine > int(pgt):
             out.append((store, {key: values[key], "gt": mine, "host": _self_host()}))   # the host, for the peer's proposal record
     return out
@@ -52867,7 +53305,7 @@ def _settings_pinned_map():
     return {s: True for s, v in _settings_pins().items() if v.get("pinned")}
 
 
-def _set_setting_pin(store, pinned, gt=None, origin=None):
+def _set_setting_pin(store, pinned, gt=None, origin=None, scope=None):
     """Pin (or unpin) `store` on THIS machine: gt-gated like every setting (a stale gesture stands down, an equal stamp with
     the same state is an echo), written atomically under _SETTINGS_LOCK. A pin drops the store's pending proposals (the pin
     is the standing answer). Returns the applied stamp, or None. Per machine by definition: set only by this kernel's own
@@ -52876,9 +53314,9 @@ def _set_setting_pin(store, pinned, gt=None, origin=None):
     settingStale frame: `pin:<store>` is outside the gear's vocabulary, and a frame it cannot name is worse than none."""
     if store not in _SETTINGS_STORES:
         return None
-    if origin != "local":
+    if origin != "local" and scope != "pinned":
         sys.stderr.write("setting pin %s: a pin is set by this machine's own dashboard alone (origin %r); nothing applied\n" % (store, origin))
-        return None
+        return None                                    # (phase two: an explicit scoped pin or un-pin from another machine's dashboard passes)
     with _SETTINGS_LOCK:
         _stale_seen.last = None
         _stale_seen.refused = None                         # nothing for the arm's _tell_stale_gesture to pop: no frame
@@ -52902,12 +53340,52 @@ def _set_setting_pin(store, pinned, gt=None, origin=None):
         return stamp
 
 
-def _pinned_stand_down(store, gt, enabled, snap, origin):
+def _scoped_pin_after(msg, store, stamp):
+    """A setting gesture that carried `scope` "pinned" (the settings' machine selector picked this machine, phase two) pins
+    the store under the gesture's own stamp once the value applied: a per-machine value that differs from the synchronized
+    one IS a pin. The pin store's gt gate applies (an older scoped gesture pins nothing new). A broadcast carries no scope."""
+    if isinstance(msg, dict) and msg.get("scope") == "pinned":
+        _set_setting_pin(store, True, gt=stamp, origin="local", scope="pinned")
+
+
+def _unpin_to_synchronized(store, gt):
+    """After an un-pin (phase two): the row returns to the SYNCHRONIZED value, the newest stamp across the attached machines,
+    read from this kernel's own per-(store, machine) records (`_propose_peer_settings` keeps a pinned store's as held) for the
+    machines still ATTACHED (a row in _remotes), never a dial at click time. The newest stamp wins, as the mesh's rule has it:
+    a different value applies, the same value lifts the stamp. Applied through the store's own gt-gated setter under that
+    machine's stamp with the local origin (the user's own act here), so the two machines then hold one stamp and nothing is
+    proposed back. Returns the (host, value, stamp) applied, or None when no attached machine holds a newer stamp."""
+    setter = dict((s, f) for _k, s, f in _MESH_ADOPTED_SETTINGS).get(store)
+    key = dict((s, k) for k, s, _f in _MESH_ADOPTED_SETTINGS).get(store)
+    if setter is None:
+        return None
+    values, stamps = _mesh_settings_snapshot()
+    mine, mine_gt = values.get(key), stamps.get(store) or 0
+    with _remotes_lock:
+        attached = set(_remotes)                       # a record from a machine that has LEFT the mesh is not the mesh's value
+    best = None
+    for host, r in ((_settings_proposals().get(store) or {}).get("hosts") or {}).items():
+        rgt = _gt_int(r.get("gt"))
+        if host in attached and isinstance(r.get("value"), bool) and rgt > mine_gt and (best is None or rgt > best[2]):
+            best = (host, r["value"], rgt)             # the NEWEST stamp wins, as the mesh's rule has it: the same value lifts the stamp
+    if best is None:
+        return None
+    if setter(best[1], gt=best[2], origin="local") is None:
+        return None
+    _pop_stale_notice(); _pop_refused_notice()
+    sys.stderr.write("setting %s: un-pinned; back to the synchronized value (%s, %s's gesture %d)\n" % (store, best[1], best[0], best[2]))
+    return best
+
+
+def _pinned_stand_down(store, gt, enabled, snap, origin, scope=None):
     """The setters' pin gate, read BEFORE the stale check and only for a gesture whose origin is not this machine's own
     dashboard (`origin` "local"; the field is set by federation.ts on the broadcast, and a message without it is read as
     remote, the conservative reading for a dashboard from before this change). A refused click is told to the delivering
-    socket the way a refused write is (a settingStale frame, `why` pinned, the kept value named), never a silent refusal."""
-    if origin == "local" or not _setting_pinned(store):
+    socket the way a refused write is (a settingStale frame, `why` pinned, the kept value named), never a silent refusal.
+    `scope` "pinned" (phase two, plans/settings-across-machines.md): the user picked THIS machine in the settings' machine
+    selector, so the gesture is an explicit, scoped intent, never a broadcast: it passes the gate (and the arm pins the store
+    under the gesture's stamp); a broadcast never carries the scope."""
+    if origin == "local" or scope == "pinned" or not _setting_pinned(store):
         return False
     _note_refused_gesture(store, gt, enabled, snap if isinstance(snap, dict) else {}, why="pinned on this machine", known=True, pinned=True)
     sys.stderr.write("setting %s: a remote machine's pick (%s) stood down: pinned on this machine\n" % (store, "on" if enabled else "off"))
@@ -53032,11 +53510,11 @@ def _proposal_cards_follow(before, after):
         a = (after.get(store) or {}).get("hosts") or {}
         for host in sorted(set(b) | set(a)):
             key = _proposal_card_key(store, host)
-            if host not in a:
+            if host not in a or a[host].get("held"):             # gone, or held (a pinned store's record: no card)
                 _row, err = expire_notice("", key)
                 if err and "no notice with key" not in err:
                     sys.stderr.write("setting %s: the proposal card from %s could not be retired (%s)\n" % (store, host, err))
-            elif host not in b or (b[host].get("value"), _gt_int(b[host].get("gt"))) != (a[host].get("value"), _gt_int(a[host].get("gt"))):
+            elif host not in b or b[host].get("held") or (b[host].get("value"), _gt_int(b[host].get("gt"))) != (a[host].get("value"), _gt_int(a[host].get("gt"))):
                 _proposal_card_post(store, host, a[host])
 
 
@@ -53091,7 +53569,7 @@ def _settings_proposals_map():
     out = {}
     for s, rec in _settings_proposals().items():
         rows = [{"host": h, "value": r.get("value"), "gt": _gt_int(r.get("gt")), "current": values.get(key_of.get(s))}
-                for h, r in rec["hosts"].items()]
+                for h, r in rec["hosts"].items() if not r.get("held")]   # a held record (a pinned store's) is no proposal
         if rows:
             out[s] = sorted(rows, key=lambda r: -r["gt"])
     return out
@@ -53126,6 +53604,13 @@ def _propose_peer_settings(host, rver):
             pgt = int(pgt)
             mine, mine_gt = values.get(key), stamps.get(store) or 0
             rec = recs.get(store) or {"hosts": {}, "answered": {}}
+            if (rver.get("settingsPinned") or {}).get(store) if isinstance(rver.get("settingsPinned"), dict) else False:
+                # the PEER pinned this store (phase two's round two): its value stands there by its user's word (a scoped change
+                # from this very dashboard, as often as not), so it is no proposal here: no record, no card, no notice; the
+                # "differs" flag is the surface that says the machines disagree. An open record from it drops.
+                if host in rec["hosts"]:
+                    rec["hosts"].pop(host, None); recs[store] = rec; changed = True
+                continue
             for h in list(rec["hosts"]):                       # a record is a DIFFERENT value under a NEWER stamp, whoever
                 r = rec["hosts"][h]                            # raised it: ours now, or outranked by a later local click, it drops
                 if r.get("value") == mine or _gt_int(r.get("gt")) <= mine_gt:
@@ -53141,14 +53626,21 @@ def _propose_peer_settings(host, rver):
                     #                              its record's) is not news and drops nothing
                 continue
             if _setting_pinned(store):
-                if rec["hosts"]:
-                    rec["hosts"] = {}; recs[store] = rec; changed = True
+                # a PINNED store raises no proposal (no card, not in the gear's map, not pending), but the peer's newer value is
+                # still RECORDED per machine as HELD (phase two): the un-pin returns the row to the newest value across the
+                # attached machines from these records, never a dial at click time. A held record gets no notice.
+                if mine_rec.get("value") != val or _gt_int(mine_rec.get("gt")) != pgt or not mine_rec.get("held"):
+                    for h in list(rec["hosts"]):
+                        if not rec["hosts"][h].get("held"):
+                            rec["hosts"].pop(h, None)              # the pin dropped the open proposals; only held records stand
+                    rec["hosts"][host] = {"value": val, "gt": pgt, "seen": int(time.time()), "current": mine, "held": True}
+                    recs[store] = rec; changed = True
                 continue
             if rec["answered"].get(host) == pgt:           # the user kept theirs against this very stamp from this machine
                 continue
-            if mine_rec.get("value") == val and _gt_int(mine_rec.get("gt")) == pgt:
+            if mine_rec.get("value") == val and _gt_int(mine_rec.get("gt")) == pgt and not mine_rec.get("held"):
                 pending.append(store); continue            # standing, unchanged: nothing said
-            refreshed = bool(mine_rec)
+            refreshed = bool(mine_rec) and not mine_rec.get("held")   # a held record becoming a proposal (the pin lifted) is a fresh raise
             rec["hosts"][host] = {"value": val, "gt": pgt, "seen": int(time.time()), "current": mine}
             rec["answered"].pop(host, None)
             recs[store] = rec; changed = True; pending.append(store)
@@ -53186,12 +53678,13 @@ def _answer_setting_proposal(body):
     rec = _settings_proposals().get(store) or {"hosts": {}, "answered": {}}
     host = body.get("host")
     if not isinstance(host, str) or not host:
-        if len(rec["hosts"]) != 1:
-            return out(False, "no proposal is pending for %s" % store if not rec["hosts"]
+        open_hosts = [h for h, r in rec["hosts"].items() if not r.get("held")]   # a held record (a pinned store's) is no proposal
+        if len(open_hosts) != 1:
+            return out(False, "no proposal is pending for %s" % store if not open_hosts
                        else "name the machine whose proposal you are answering")
-        host = next(iter(rec["hosts"]))
+        host = open_hosts[0]
     prop = rec["hosts"].get(host)
-    if prop is None:
+    if prop is None or prop.get("held"):
         return out(False, "no proposal is pending for %s from %s" % (store, host))
     pgt = _gt_int(prop.get("gt"))
     if _gt_int(body.get("gt")) != pgt:
@@ -56814,6 +57307,260 @@ def _boards():
     return out
 
 
+# ── PANES AS DATA (plans/panes-as-data.md, phase one) ────────────────────────────────────────────────────────────
+# A pane is a record in ONE schema: the shipped panes are the code constants below (_CODE_PANES, checked at
+# import like the code boards), every other pane a JSON document under STATE/panes/<id>.json written by define_pane
+# (the board door, field for field: the check, a reserved id refused, an atomic write, POST /pane, GET /panes,
+# `romp pane`). The shell renders from _pane_order() per request; with an empty registry its output is byte-identical
+# to the five-constant landing (tests/test_pane_registry.py pins it). A URL source is a plain sandboxed iframe with no
+# token and no protocol; a state-root source (pane:<id>) is a static page under STATE/panes/<id>/ served at /pane/<id>/
+# with shim.js and theme.css beside it; a route source is a page the kernel already serves.
+_PANE_ID_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
+_PANE_ROUTE_RE = re.compile(r"^/[A-Za-z0-9_./-]*$")
+_PANE_RESERVED = ("chat", "timeline", "fleet", "feed", "files", "artifacts", "settings")
+_PANE_MEMBERS = ("id", "title", "source", "on", "experimental", "protocol")
+_PANE_TITLE_MAX = 24
+
+
+def _pane_source_kind(src):
+    """The shape of a pane's source: "route" (a kernel route), "state" (pane:<id>, a page under the state root), "url" (an
+    external http(s) page), or None for anything else."""
+    if not isinstance(src, str) or not src:
+        return None
+    if src.startswith("pane:"):
+        return "state" if _PANE_ID_RE.match(src[5:] or "") else None
+    if re.match(r"^https?://[^\s]+$", src):
+        return "url"
+    if src.startswith("/") and not src.startswith("//") and _PANE_ROUTE_RE.match(src):
+        return "route"
+    return None
+
+
+def _pane_check(defn, allow_reserved=False):
+    """The pane schema check -> (defn, None) with every default filled, or (None, error) naming the member and the rule. One
+    function for the code constants (asserted at import) and for every door."""
+    if not isinstance(defn, dict):
+        return None, "a pane definition must be a JSON object"
+    unknown = sorted(k for k in defn if k not in _PANE_MEMBERS)
+    if unknown:
+        return None, "unknown member%s %s (the members are %s)" % ("s" if len(unknown) > 1 else "", ", ".join(unknown), ", ".join(_PANE_MEMBERS))
+    pid = defn.get("id")
+    if not isinstance(pid, str) or not _PANE_ID_RE.match(pid):
+        return None, "id must be a lowercase word, [a-z][a-z0-9_-]{0,31}"
+    if pid in _PANE_RESERVED and not allow_reserved:
+        return None, "id %r is a shipped pane's and is reserved" % pid
+    title = defn.get("title", pid[:1].upper() + pid[1:])
+    if not isinstance(title, str) or not title.strip() or len(title) > _PANE_TITLE_MAX:
+        return None, "title must be 1 to %d characters" % _PANE_TITLE_MAX
+    src = defn.get("source")
+    kind = _pane_source_kind(src)
+    if kind is None:
+        return None, "source must be a kernel route (/<route>), pane:<id> (a page under the state root) or an http(s) URL"
+    if kind == "state" and src != "pane:" + pid:
+        return None, "a state-root source must be pane:%s (the pane's own id)" % pid
+    on = defn.get("on", False)
+    if not isinstance(on, bool):
+        return None, "on must be true or false"
+    experimental = defn.get("experimental", False)
+    if not isinstance(experimental, bool):
+        return None, "experimental must be true or false"
+    protocol = defn.get("protocol", "none" if kind == "url" else "romp")
+    if protocol not in ("romp", "none"):
+        return None, "protocol must be romp or none"
+    if kind == "url" and protocol != "none":
+        return None, "a URL source is protocol none (a plain iframe): it cannot speak the pane protocol"
+    return {"id": pid, "title": title.strip(), "source": src, "on": on, "experimental": experimental, "protocol": protocol}, None
+
+
+# the shipped panes, in the rail's order (the user 2026-07-05): `on` is today's rail default for each
+_CODE_PANES = tuple(_pane_check(d, allow_reserved=True)[0] for d in (
+    {"id": "chat", "title": "Chat", "source": "/chat", "on": True},
+    {"id": "timeline", "title": "Sessions", "source": "/timeline", "on": True},
+    {"id": "fleet", "title": "Outline", "source": "/fleet", "on": False},
+    {"id": "feed", "title": "Feed", "source": "/feed", "on": True},
+    {"id": "files", "title": "Files", "source": "/files", "on": False},
+    {"id": "artifacts", "title": "Artifacts", "source": "/artifacts", "on": False, "experimental": True},   # plans/artifacts-pane.md (2026-09-19): off by default and asked for in the gear (experimental); rendered by the generic build (phase three)
+))
+assert all(_CODE_PANES), "a shipped pane's record failed its own check"
+# THE HAND-WRITTEN LANDING renders these five (the chat, the Sessions band, the Outline, the Feed, the Files pane: the pins name
+# every line of theirs); every other pane in _pane_order(), a shipped record beyond them (the Artifacts pane) or a data pane,
+# is rendered by the GENERIC build below and rides body[data-panes] to the inline scripts (plans/panes-as-data.md, phase three).
+_HAND_PANES = ("chat", "timeline", "fleet", "feed", "files")
+_COLUMN_IDS = tuple(k for k in _HAND_PANES if k != "timeline")   # the hand-written COLUMNS, left to right (the timeline is the bottom band): the gutter chains start from these
+_PANES_MEMO = {"slot": None}        # (listing key, {"data": {id: defn}, "rev": digest}) or None
+_PANES_BAD = set()                  # (path, reason) already said
+_panes_lock = threading.Lock()      # define and remove serialise their read-check-write against each other
+
+
+def _pane_dir():
+    return jd.STATE / "panes"
+
+
+def _pane_path(pid):
+    return _pane_dir() / (str(pid) + ".json")
+
+
+def _panes_snapshot():
+    """ONE listing of STATE/panes -> {"data": {id: defn}, "rev": digest}: the data-defined panes and the pane set's revision
+    from the same directory listing and file stats, memoized on the directory's stat and each file's (mtime_ns, size), the
+    board store's rule (_boards_data). A file that fails the check is skipped and named on stderr once per (file, reason).
+    The landing takes the list once per build (_landing: `panes = _pane_order()`) and hands it to every builder, so a
+    build costs one listing (the 1919 read, low b), not one per builder."""
+    d = _pane_dir()
+    st = _stat_key(d)
+    try:
+        names = sorted(n for n in os.listdir(d) if n.endswith(".json"))
+    except OSError:
+        names = []
+    files = []
+    for n in names:
+        try:
+            fs = os.stat(d / n)
+            files.append((n, fs.st_mtime_ns, fs.st_size))
+        except OSError:
+            files.append((n, None, None))
+    key = ((str(d),) + st + tuple(files)) if st is not None else None
+    slot = _PANES_MEMO["slot"]
+    if key is not None and slot is not None and slot[0] == key:
+        return slot[1]
+    parts = ["%s:%d:%d" % f if f[1] is not None else f[0] for f in files]
+    rev = hashlib.sha1("|".join(parts).encode()).hexdigest()[:10] if parts else "0"
+    out = {}
+    for n in names:
+        fp = d / n
+        try:
+            defn = json.loads(fp.read_text())
+        except (OSError, ValueError) as e:
+            defn, err = None, "%s: %s" % (type(e).__name__, e)
+        else:
+            defn, err = _pane_check(defn)
+            if not err and defn.get("id") != n[:-5]:
+                defn, err = None, "the file names pane %r" % defn.get("id")
+        if err:
+            if (str(fp), err) not in _PANES_BAD:
+                _PANES_BAD.add((str(fp), err))
+                sys.stderr.write("[panes] %s skipped: %s\n" % (fp, err))
+            continue
+        out[defn["id"]] = defn
+    snap = {"data": out, "rev": rev}
+    if key is not None:
+        _PANES_MEMO["slot"] = (key, snap)
+    return snap
+
+
+def _panes_data():
+    """The data-defined panes, {id: defn} (one listing; see _panes_snapshot)."""
+    return _panes_snapshot()["data"]
+
+
+def _panes_rev():
+    """The pane set's revision: a short digest of the data panes' files (name, mtime, size), "0" with none. It rides every
+    keepalive beside the build token, and a page whose baked revision differs is OFFERED a reload (never a self-reload)."""
+    return _panes_snapshot()["rev"]
+
+
+def _pane_order():
+    """Every pane this kernel knows, in the rail's order: the shipped panes, then the data panes by id."""
+    code_ids = {p["id"] for p in _CODE_PANES}
+    return list(_CODE_PANES) + [d for _, d in sorted(_panes_data().items()) if d["id"] not in code_ids]
+
+
+def _generic_panes(panes=None):
+    """The panes the GENERIC build renders, in rail order: every pane of `panes` (a _pane_order() list; listed once when None)
+    that is not one of the hand-written five: the Artifacts record, then the data panes by id."""
+    panes = _pane_order() if panes is None else panes
+    return [p for p in panes if p["id"] not in _HAND_PANES]
+
+
+def _data_panes(panes=None):
+    """The data-defined panes of `panes` (the records behind STATE/panes)."""
+    panes = _pane_order() if panes is None else panes
+    return panes[len(_CODE_PANES):]
+
+
+def define_pane(defn):
+    """Write a data-defined pane's definition whole -> (defn, error). The one validation for every door (the schema, the
+    reserved ids). A define replaces the pane; open dashboards are offered a reload on their next keepalive."""
+    defn, err = _pane_check(defn)
+    if err:
+        return None, err
+    with _panes_lock:
+        try:
+            _pane_dir().mkdir(parents=True, exist_ok=True)
+            _atomic_write(_pane_path(defn["id"]), json.dumps(defn, indent=1, sort_keys=True) + "\n")
+        except OSError as e:
+            return None, "could not write the pane's file: %s" % e
+    return defn, None
+
+
+def remove_pane(pid):
+    """Remove a data-defined pane -> (ok, error): a shipped pane's id and an unknown id are refused by name."""
+    pid = str(pid or "")
+    if pid in _PANE_RESERVED:
+        return False, "pane %r is a shipped pane and cannot be removed" % pid
+    with _panes_lock:
+        if pid not in _panes_data():
+            return False, "no pane %r is defined (romp pane list names them)" % pid
+        try:
+            _pane_path(pid).unlink()
+        except OSError as e:
+            return False, "could not remove the pane's file: %s" % e
+    return True, None
+
+
+def _pane_served_src(p):
+    """The iframe src for a pane record: a route as is, a state-root page at /pane/<id>/, a URL as is (no ?v=, no token)."""
+    kind = _pane_source_kind(p["source"])
+    return "/pane/%s/" % p["id"] if kind == "state" else p["source"]
+
+
+def _panes_attr(panes=None):
+    """The body attribute carrying the GENERIC panes (the Artifacts record and the data panes) to the inline scripts and the
+    pane bundles, `data-panes="[...]"`: id, title, protocol, experimental, on, and builtin for a shipped record. The empty
+    string only when no pane follows the hand-written five."""
+    code = {p["id"] for p in _CODE_PANES}
+    rows = [{"id": p["id"], "title": p["title"], "protocol": p["protocol"], "experimental": p["experimental"], "on": p["on"], "builtin": p["id"] in code}
+            for p in _generic_panes(panes)]
+    return (' data-panes="%s"' % _html_esc(json.dumps(rows, separators=(",", ":")))) if rows else ""
+
+
+def _data_pane_markup(panes=None):
+    """The pane row's markup for the generic panes, after the hand-written columns: a gutter and a .pane with a data-src iframe
+    each (a generic pane loads when it comes ON SCREEN, never when merely enabled in the gear: the Artifacts page's first load
+    walks the remembered session, the feed owner's constraint); a URL source's iframe is sandboxed and marked protocol none."""
+    out = []
+    for p in _generic_panes(panes):
+        pid = p["id"]
+        extra = ' sandbox="allow-scripts allow-forms allow-popups"' if p["protocol"] == "none" else ""
+        out.append('<div class=gv id=gv-%s></div><div class=pane id=%s-pane><iframe id=f-%s data-src="%s" data-protocol=%s%s></iframe></div>'
+                   % (pid, pid, pid, _html_esc(_pane_served_src(p)), p["protocol"], extra))
+    return "".join(out)
+
+
+def _data_pane_mobile_css(panes=None):
+    """The phone's rule for the generic panes, inside the mobile media block: the pane element is display:contents whatever its po
+    class (the hand-written five's rule beside it), so the tab, not the desktop flag, says which pane shows."""
+    ids = [p["id"] for p in _generic_panes(panes)]
+    if not ids:
+        return ""
+    # the pane wrappers dissolve (the tab bar, not the po class, says which pane shows), and the shown tab's iframe displays
+    return (",".join("#%s-pane" % i for i in ids) + "{display:contents!important}"
+            + ",".join("#f-%s.m-on" % i for i in ids) + "{display:block}")
+
+
+def _data_pane_css(panes=None):
+    """The column rules for the generic panes: a grow var and the hide by its po-<id> class, and the gutter's hides (its own
+    pane off, or no shown column before it), the hand-written rules' shape."""
+    out = []
+    before = list(_COLUMN_IDS)   # the hand-written columns, left to right
+    for p in _generic_panes(panes):
+        pid = p["id"]
+        out.append("#%s-pane{flex:var(--g-%s,40) 1 0}body:not(.po-%s) #%s-pane{display:none}" % (pid, pid, pid, pid))
+        out.append("body:not(.po-%s) #gv-%s,body%s #gv-%s{display:none}" % (pid, pid, "".join(":not(.po-%s)" % b for b in before), pid))
+        before.append(pid)
+    return "".join(out)
+
+
 def _default_board(bid, category="notes"):
     """A first-use board's definition (the plan's section 1 defaults; ui/webview/board-def.ts defaultBoard is the same shape):
     the id's title, one neutral category, newest first, no grouping, no bell, no badge, the notice kind."""
@@ -59985,13 +60732,14 @@ body{font-family:var(--vscode-font-family);font-size:13px;color:var(--vscode-for
 # Reload and Not now); the second wording is the same offer once an unknownOp refusal has shown this page to be behind the
 # kernel (design point 3 above); baked into the core (WORDS) by _reload_core, so every surface reads one source. Plain words, no em dash, no romp nouns beyond the build.
 RELOAD_OFFER_MSG = "A newer romp build is ready."
+RELOAD_OFFER_PANES_MSG = "The set of panes changed. Reload to see it."   # plans/panes-as-data.md: a define or remove at the kernel, offered like a build
 RELOAD_OFFER_BEHIND_MSG = ("A newer romp build is ready; this page is behind the kernel and some actions fall back to older "
                            "paths until you reload.")
 
 
 _RELOAD_CORE_JS = r"""/*reload-core*/(function(){if(window.__rompReload)return;
 var LOADED=__LOADEDVER__,BOOT=__ROMP_BOOT__,CODE=__ROMP_CODE__,FRESH_HOLD_MS=60000,NOTNOW_KEY='romp:reloadNotNow',holdTimer=null,holdDue=0,holdStart=0,holdDiag=false,freshSince=0,lastStamps=[],ptr=0,pan=false,drag=false,owed=null,fired=false,refusedFor=null,restarted=0;
-var WORDS={offer:__OFFER_MSG__,behind:__OFFER_BEHIND__},seen={dv:0,code:''},offered=null,behindSeen=false,notNow=null;   /* 2026-09-16: WORDS is the offer's one sentence and its sharpened form (RELOAD_OFFER_MSG, RELOAD_OFFER_BEHIND_MSG), read by every surface through the offer state's text; seen is the newest served build this page has met (a dv above its own, a code identity other than its own); offered is the standing offer; behindSeen latches an unknownOp refusal on this page's socket; notNow is the build the user declined, read once from storage */
+var WORDS={offer:__OFFER_MSG__,behind:__OFFER_BEHIND__,panes:__OFFER_PANES__},PANES0=__LOADEDPV__,seen={dv:0,code:''},offered=null,behindSeen=false,notNow=null;   /* 2026-09-16: WORDS is the offer's one sentence and its sharpened form (RELOAD_OFFER_MSG, RELOAD_OFFER_BEHIND_MSG), read by every surface through the offer state's text; seen is the newest served build this page has met (a dv above its own, a code identity other than its own); offered is the standing offer; behindSeen latches an unknownOp refusal on this page's socket; notNow is the build the user declined, read once from storage */
 function shell(){try{var p=window.parent;if(p&&p!==window&&p.__rompReload)return p.__rompReload;}catch(e){}return null;}
 function editing(){try{var a=document.activeElement;if(!a)return false;var tag=(a.tagName||'').toUpperCase();
 var textual=tag==='TEXTAREA'||(tag==='INPUT'&&/^(text|search|url|email|number|password|tel)$/i.test(a.type||'text'))||!!a.isContentEditable;
@@ -60057,7 +60805,7 @@ if(!owed){owed=next;holdDiag=false;}else if(owed.reason===next.reason)owed.detai
 function offerKey(o){return o?String(o.dv||0)+':'+(o.code||''):'';}
 function readNotNow(){if(notNow!==null)return notNow;notNow=false;try{var raw=localStorage.getItem(NOTNOW_KEY);var d=raw?JSON.parse(raw):null;if(d&&typeof d==='object')notNow={dv:Number(d.dv)||0,code:String(d.code||'')};}catch(e){}return notNow;}
 function declined(){var d=readNotNow();if(!d)return false;return (!seen.dv||seen.dv<=d.dv)&&(!seen.code||seen.code===d.code);}   /* the declined build covers what is served now: a strictly newer dv or another code identity is new information and re-offers */
-function offerState(){return offered?{dv:offered.dv,code:offered.code,behind:behindSeen,text:behindSeen?WORDS.behind:WORDS.offer}:null;}
+function offerState(){return offered?{dv:offered.dv,code:offered.code,behind:behindSeen,text:(offered.code&&String(offered.code).indexOf('panes:')===0)?WORDS.panes:(behindSeen?WORDS.behind:WORDS.offer)}:null;}
 function render(){if(!R.offer)return;try{R.offer(offerState());}catch(e){}}
 function propose(dv,code){var s=shell();if(s){s.propose(dv,code);return;}   /* a pane hands the shell what it saw: ONE offer for the top document */
 var moved=false;dv=Number(dv)||0;code=code?String(code):'';if(dv&&dv>seen.dv){seen.dv=dv;moved=true;}if(code&&code!==seen.code){seen.code=code;moved=true;}
@@ -60069,6 +60817,7 @@ notNow={dv:seen.dv,code:seen.code};try{localStorage.setItem(NOTNOW_KEY,JSON.stri
 function behind(){var s=shell();if(s){s.behind();return;}if(behindSeen)return;behindSeen=true;if(offered)render();}   /* an unknownOp refusal on this page's socket: the standing offer's wording gains the reason; latched, so an offer that comes later wears it too */
 function demand(why){request('required',String(why||''));}   /* the safety valve: {type:"reloadRequired", why} from a kernel that must force a reload for correctness, through the same holds; nothing sends it today */
 function noteDv(dv){if(LOADED&&dv&&dv>LOADED)propose(dv,'');}
+function notePanes(pv){if(pv&&PANES0&&String(pv)!==String(PANES0))propose(0,'panes:'+pv);}   /* the pane set changed at the kernel (plans/panes-as-data.md): one offer per revision, the build's bar and words of its own */
 function noteVersion(v){if(!v)return;if(v.boot&&BOOT&&v.boot!==BOOT){restarted++;BOOT=v.boot;}   /* a restart is counted and BOOT re-latched (restarted() counts restarts, not the polls that follow one); by itself it owes nothing (2026-09-16) */
 if(CODE&&v.code_ident&&v.code_ident!==CODE)propose(0,String(v.code_ident));if(v.dist_ver)noteDv(v.dist_ver);   /* a code identity other than the page's is a changed build; an answer without one decides nothing (the dist_ver stands alone) */
 if(typeof v.taskTracking==='boolean'){window.__rompTaskTracking=v.taskTracking;if(window.__rompApplyPanes)window.__rompApplyPanes();}}   // the Task tracking switch (T404): the shell's rail follows the kernel
@@ -60092,7 +60841,7 @@ var END=['pointerup','touchend','touchcancel','scrollend','dragend','drop','sele
 function ended(){setTimeout(function(){var s=shell();if(s)s.tryFire();else tryFire();},0);}
 for(var k=0;k<END.length;k++)document.addEventListener(END[k],ended,true);
 window.addEventListener('blur',function(){ptr=0;pan=false;drag=false;ended();});
-var R={request:request,propose:propose,accept:accept,dismiss:dismiss,behind:behind,require:demand,tryFire:tryFire,ended:ended,busyHere:busyHere,busy:busy,noteDv:noteDv,noteVersion:noteVersion,checkBoot:checkBoot,announce:announce,restarted:function(){return restarted;},offered:offerState,seen:function(){return seen;},words:WORDS,
+var R={request:request,propose:propose,accept:accept,dismiss:dismiss,behind:behind,require:demand,tryFire:tryFire,ended:ended,busyHere:busyHere,busy:busy,noteDv:noteDv,notePanes:notePanes,noteVersion:noteVersion,checkBoot:checkBoot,announce:announce,restarted:function(){return restarted;},offered:offerState,seen:function(){return seen;},words:WORDS,
 inShell:function(){return !!shell();},owed:function(){return owed;},fired:function(){return fired;},refusedFor:function(){return refusedFor;},refused:null,held:null,offer:null,waiting:'',loaded:LOADED,boot:BOOT};
 window.__rompReload=R;})();/*end-reload-core*/"""
 
@@ -60102,7 +60851,8 @@ def _reload_core(v=0):
     Embedded by _shim (every pane page) and _stale_block (the dashboard landing)."""
     return (_RELOAD_CORE_JS.replace("__LOADEDVER__", str(int(v))).replace("__ROMP_BOOT__", json.dumps(_BOOT_ID))
             .replace("__ROMP_CODE__", json.dumps(_code_ident() or ""))
-            .replace("__OFFER_MSG__", json.dumps(RELOAD_OFFER_MSG)).replace("__OFFER_BEHIND__", json.dumps(RELOAD_OFFER_BEHIND_MSG)))
+            .replace("__OFFER_MSG__", json.dumps(RELOAD_OFFER_MSG)).replace("__OFFER_BEHIND__", json.dumps(RELOAD_OFFER_BEHIND_MSG))
+            .replace("__OFFER_PANES__", json.dumps(RELOAD_OFFER_PANES_MSG)).replace("__LOADEDPV__", json.dumps(_panes_rev())))
 
 
 def _reload_core_js(v=0, boot=None, code=None):
@@ -60112,7 +60862,8 @@ def _reload_core_js(v=0, boot=None, code=None):
     js = _RELOAD_CORE_JS.replace("__LOADEDVER__", str(int(v))).replace(
         "__ROMP_BOOT__", json.dumps(_BOOT_ID if boot is None else boot)).replace(
         "__ROMP_CODE__", json.dumps((_code_ident() or "") if code is None else code)).replace(
-        "__OFFER_MSG__", json.dumps(RELOAD_OFFER_MSG)).replace("__OFFER_BEHIND__", json.dumps(RELOAD_OFFER_BEHIND_MSG))
+        "__OFFER_MSG__", json.dumps(RELOAD_OFFER_MSG)).replace("__OFFER_BEHIND__", json.dumps(RELOAD_OFFER_BEHIND_MSG)).replace(
+        "__OFFER_PANES__", json.dumps(RELOAD_OFFER_PANES_MSG)).replace("__LOADEDPV__", json.dumps(_panes_rev()))
     a, b = "/*reload-core*/", "/*end-reload-core*/"
     i, j = js.find(a), js.find(b)
     if i < 0 or j < i:
@@ -60174,7 +60925,7 @@ var SKEL=new URLSearchParams(location.search).get("skeleton")==="1";
 // kernel retires this page's previous socket on a reconnect, and never another page's (a duplicated tab copies
 // sessionStorage, and with it wid; it must not copy this).
 var IID="";try{IID=(window.crypto&&crypto.randomUUID)?crypto.randomUUID():"";}catch(e){}if(!IID)IID=String(Math.random()).slice(2)+"-"+Date.now();
-var APP="%s";var LABEL="%s";var LOADEDV=%d;var NOSTALE=%s;var lastRecv=0;var STALE_MS=30000;   // watchdog: no frame (incl. keepalive) for this long → the socket is dead → reconnect
+var APP="%s";var LABEL="%s";var LOADEDV=%d;var NOSTALE=%s;var LOADEDPV=%s;var lastRecv=0;var STALE_MS=30000;   // watchdog: no frame (incl. keepalive) for this long → the socket is dead → reconnect
 // the reload core's 'fresh' hold (invisible restarts, 2026-09-14): the chat pane alone, the pane the ruling names, armed at the drop and
 // kept through the redial; a Files or Settings page gets no resync frame, so a hold armed there would never end (the round-two review).
 // Stamped once per hold: a flapping socket or a kernel in a crash loop re-arms without moving the stamp, so the core's bound is
@@ -60377,6 +61128,7 @@ ws.onmessage=function(ev){lastRecv=Date.now();resumeProvisional=0;if(returnAt)re
 if(msg&&msg.type==="caps")readyAcked=true;   // the kernel's answer to a ready it processed: _send_caps, which the ready arm alone sends, after its own pushes. From here a redial may declare itself (the dial term in connect); the frame goes on to the bundle below like any other
 if(msg&&msg.type==="reloadRequired"){try{if(window.__rompReload)window.__rompReload.require(msg.why);}catch(e){}return;}   // the safety valve (2026-09-16): a kernel that must force a reload for correctness; the core honours it through its holds; nothing sends it today
 if(msg&&msg.type==="unknownOp"){try{if(window.__rompReload)window.__rompReload.behind();}catch(e){}}   // this page asked for something the kernel does not know (a page from before the kernel's build): the standing offer's wording gains the reason; the frame goes on to the bundle, whose degrade path answers it (render.ts onUnknownOp)
+if(msg&&msg.type==="ka"&&LOADEDPV&&msg.pv&&msg.pv!==LOADEDPV){var RP=window.__rompReload;if(RP&&RP.notePanes)RP.notePanes(msg.pv);}   // the pane set's revision beside the build token (plans/panes-as-data.md): a moved one is handed to the reload core, which OFFERS a reload
 if(msg&&msg.type==="ka"){if(LOADEDV&&msg.dv&&msg.dv>LOADEDV)raiseBuild(msg.dv);
 if(stalePending&&++staleKa>=2){var sw=stalePending;stalePending="";raiseStale(sw);}   // the SECOND keepalive since the arm, no resync between: a full heartbeat period on THIS socket with the kernel alive, talking to it, and not resyncing it — the view IS stale. (One keepalive alone can be a beat queued at accept, ahead of the resync frame.)
 return;}   // keepalive: stamped lastRecv above and confirmed a resumed keep (resumeProvisional=0: any frame does); carries the build token (drift → reload banner); nothing for the bundle to render
@@ -60552,7 +61304,7 @@ pendingWhy="foreground";freshPending=true;armFresh();   // the reconnect's arm r
 if(ws&&ws.readyState===1)abandon();else{try{if(ws&&ws.readyState===0)ws.close();}catch(e){}}   // OPEN-but-quiet → abandoned + redialed below, now; stuck-CONNECTING → aborted, onclose retries
 if(!ws||ws.readyState===3)connect();
 returnDiag("return",row);});/*end-shim-core*/})();   // filed AFTER the redial so it queues for the new socket instead of vanishing into the dead one
-""" % (_reload_core(v), _RESTART_DIET_JS if app == "chat" else "var RESTART_DIET=false;", app, _pane_label(app), int(v), "true" if no_stale else "false", app, app)
+""" % (_reload_core(v), _RESTART_DIET_JS if app == "chat" else "var RESTART_DIET=false;", app, _pane_label(app), int(v), "true" if no_stale else "false", json.dumps(_panes_rev()), app, app)
 
 
 # The chat shim's restart-diet read (the user 2026-09-14; round two of PR 1661): the main chat pane reads the reload core's durable record
@@ -61061,6 +61813,171 @@ def _files_page():
             % (v, THEME_CSS, files_css, _shim("files", v, no_stale=True), v, v))
 
 
+# THE ARTIFACTS PANE (plans/artifacts-pane.md, the user 2026-09-19): a session selector and, under it, every file that was
+# put into that session's thread, as a list and, for images, a grid of large thumbnails to cycle through large. An on-top
+# read of what already happened by deterministic rules (no judge, no model call): the edit tools' file_path and
+# notebook_path inputs (rule 1), the paths the chat links and renders from the session's prose (rule 2), a drop's saved
+# path in the user turn (rule 3). Like the Files pane it receives no pushed view: one request-and-response op
+# (listArtifacts, at the socket) answered by the kernel that owns the session, and the picker's requestSessions for the
+# selector; the shim runs with the stale opt-out. Thumbnails and the large view ride the token-authed /file route with
+# the session's sid, never a new file server. Optional and off by default: the pane is an EXPERIMENTAL record in
+# _CODE_PANES (plans/panes-as-data.md, phase three), so the gear's Panes row shows its rail toggle when asked for.
+def _artifacts_page():
+    try:
+        css = (UI / "webview" / "artifacts-pane.css").read_text()
+    except OSError:
+        return ("<!DOCTYPE html><html><body style='font-family:Inter,system-ui,-apple-system,sans-serif;color:#999;"
+                "background:#1e1e1e;padding:12px'>romp's Artifacts pane needs the ui/ modules "
+                "(webview/artifacts-pane.css).</body></html>")
+    v = _dist_ver()
+    return ("<!DOCTYPE html><html lang=en><head><meta charset=UTF-8>"
+            "<meta name=viewport content='width=device-width,initial-scale=1'>"
+            "<link rel=icon type=image/svg+xml href=/media/romp-swirl-glyph.svg><title>Romp · artifacts</title>"
+            # the chat's stylesheet provides the lightbox and the link dress; artifacts-pane.css owns the page layout
+            "<link href=/dist/styles.css?v=%d rel=stylesheet>"
+            "<style>%s\n%s</style></head><body class=artifacts-pane>"
+            "<div id=artifacts-root></div>"
+            "<script>%s</script><script src=/dist/federation.js?v=%d></script>"   # multi-kernel manager: after the shim
+            "<script src=/dist/artifacts.js?v=%d></script></body></html>"
+            % (v, THEME_CSS, css, _shim("artifacts", v, no_stale=True), v, v))
+
+
+ARTIFACTS_MAX = 500                                   # the newest entries a listing carries; the page says when it bound
+_ARTIFACT_EDIT_VIA = {"Write": "write", "Edit": "edit", "MultiEdit": "multiedit", "NotebookEdit": "notebook"}   # rule 1's tools (the _EDIT_TOOLS set) and their words
+
+
+def _artifacts_walk(turns, sid, link_cache=None):
+    """Every (path, t, via) the three rules of plans/artifacts-pane.md name over a parsed session's turns, in transcript
+    order, each path absolute (a relative one resolved against the session's cwd the way a click resolves it; a file://
+    URI unwrapped). Rule 1: an assistant tool_use of an edit tool, its file_path or notebook_path. Rule 2: a path-shaped
+    token of the assistant's prose (the chat's token grammar, _path_tokens) that the chat would have linked: one the
+    kernel verified for that message (the path-links cache), one that exists now, or an image path by extension (the
+    figure rule renders it at its mention); a bare word that is no file is not an artifact. Rule 3: a path under the
+    state directory's drops/ in the PERSON's own user turn, as an image block's source path or as text (the shape
+    _user_images reads). Bash commands are not read (the design's road not taken). Best-effort per atom."""
+    out = []
+    cwd = (_cwd_of(sid) or "") if sid else ""
+    drops = str(jd.STATE / "drops") + os.sep
+    link_cache = _PATH_LINK_CACHE if link_cache is None else link_cache
+    em.hydrate({"turns": turns or []}, rompuuid=sid, by="_artifacts_walk")   # bodies before the assembly cut are read on demand (T323 stage 4a): every atom this walk reads, first
+
+    def absolute(p):
+        p = str(p or "")
+        if p.lower().startswith("file://"):
+            p = unquote(p[7:])
+        p = os.path.expanduser(p)
+        if not os.path.isabs(p) and cwd:
+            p = os.path.join(cwd, p)
+        return os.path.normpath(p) if os.path.isabs(p) else ""
+
+    for turn in turns or []:
+        for a in turn.get("atoms") or []:
+            try:
+                t = a.get("t") or turn.get("t") or 0
+                msg = a.get("message") or {}
+                blocks = msg.get("content") if isinstance(msg.get("content"), list) else []
+                text = (" ".join(b.get("text", "") for b in blocks if isinstance(b, dict) and b.get("type") == "text")
+                        if blocks else (msg.get("content") if isinstance(msg.get("content"), str) else ""))
+                if a.get("type") == "assistant":
+                    for b in blocks:
+                        if isinstance(b, dict) and b.get("type") == "tool_use" and b.get("name") in _ARTIFACT_EDIT_VIA:
+                            inp = b.get("input") if isinstance(b.get("input"), dict) else {}
+                            fp = inp.get("file_path") or inp.get("notebook_path")
+                            ap = absolute(fp) if isinstance(fp, str) and fp else ""
+                            if ap:
+                                out.append((ap, t, _ARTIFACT_EDIT_VIA[b["name"]]))
+                    hit = link_cache.get((sid, a.get("uuid"))) if a.get("uuid") else None
+                    verified = set((hit[0] if hit else {}).keys())
+                    for tok in _path_tokens(text or ""):
+                        ap = absolute(tok)
+                        if not ap:
+                            continue
+                        if tok in verified or os.path.isfile(ap) or _PREVIEW_IMG_RE.search(" " + ap):
+                            out.append((ap, t, "rendered"))
+                elif a.get("type") == "user" and a.get("author") in (None, "human"):
+                    for b in blocks:
+                        if isinstance(b, dict) and b.get("type") == "image":
+                            p = (b.get("source") or {}).get("path")
+                            ap = absolute(p) if isinstance(p, str) and p else ""
+                            if ap and ap.startswith(drops):
+                                out.append((ap, t, "drop"))
+                    for tok in _path_tokens(text or ""):
+                        ap = absolute(tok)
+                        if ap and ap.startswith(drops):
+                            out.append((ap, t, "drop"))
+            except Exception:
+                continue
+    return out
+
+
+def _artifacts_items(mentions, sid):
+    """The listing from the walk's mentions: one entry per path with the LATEST mention winning (its time, its rule),
+    newest first, capped at ARTIFACTS_MAX; each stat'd (a missing file is listed and marked, never hidden) and judged by
+    the file route's own rule (a secrets-shaped name, a path outside the session's folder and the home: `refused` names
+    the reason, and the page fetches nothing for it), with two rules of the pane's own: a path under the Claude
+    configuration directory is refused as such (a thread names its own transcripts and task stores, and they are not its
+    files; the shared route's confinement is the chat's contract for path links and is not widened here, plans/artifacts-pane.md
+    section 1), and a kind the preview does not show is an ordinary kind of the listing, `other`, listed plain and judged by
+    the route's other rules (the design's section 2). Returns (items, capped)."""
+    latest = {}
+    for ap, t, via in mentions:
+        cur = latest.get(ap)
+        if cur is None or (t or 0) >= cur["t"]:
+            latest[ap] = {"path": ap, "t": int(t or 0), "via": via}
+    items = sorted(latest.values(), key=lambda it: (-it["t"], it["path"]))
+    capped = len(items) > ARTIFACTS_MAX
+    items = items[:ARTIFACTS_MAX]
+    drops = str(jd.STATE / "drops") + os.sep
+    claude = os.path.realpath(os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude")) + os.sep
+    for it in items:
+        it["name"] = os.path.basename(it["path"]) or it["path"]
+        if it["path"].startswith(drops):                   # the saved file wears a millisecond prefix (_save_dropped_file); the row wears the name the user dropped, whichever rule named it last
+            it["name"] = re.sub(r"^\d{10,}-", "", it["name"]) or it["name"]
+        it["kind"] = _slice_kind(it["path"]) or "other"
+        try:
+            st = os.stat(it["path"])
+            it["exists"] = stat.S_ISREG(st.st_mode)
+            it["size"] = int(st.st_size) if it["exists"] else None
+            it["mtime"] = int(st.st_mtime) if it["exists"] else None
+        except OSError:
+            it["exists"], it["size"], it["mtime"] = False, None, None
+        why = ""
+        if it["exists"]:
+            if os.path.realpath(it["path"]).startswith(claude):
+                why = "under the Claude configuration directory"
+            else:
+                kind, why = _slice_allowed(it["path"], sid)
+                if kind:
+                    why = ""
+                elif why == "not a kind the preview shows":   # kind other: plain, unless the route's confinement would refuse it
+                    why = "" if (_slice_confined(it["path"], sid) or it["path"].startswith(drops)) else "outside the session's folder and your home"
+                elif it["path"].startswith(drops) and why.startswith("outside"):
+                    why = ""                                # a drop is the user's own file, saved by the kernel wherever the state directory lives
+        it["refused"] = why
+    return items, capped
+
+
+def _artifacts_list(sid, now=None):
+    """The listArtifacts answer for `sid`: (body, error). The session resolves through _session_row, the one-sid API (the
+    picker's selector offers thirty days of sessions while _sessions reaches back discover's 48-hour window, so a session
+    idle two days was offered and answered "no transcript"; the verifier of 2026-09-19 executed it with a five-day-old
+    transcript). The parse comes through the existing store: the cached parse under the live key when there is one
+    (_parse_cached: never a parse), else one parsed_session under the SAME key inputs the chat's build and _parse_cached
+    use (the states log, the display's sdk_human), so the next request and the chat's own build find it warm: written
+    under another key, the first write never satisfied the first read and every request re-parsed. Nothing is written."""
+    now = int(now if now is not None else time.time())
+    row = _session_row(sid, now)
+    if row is None:
+        return None, "no session with that id has a transcript here"
+    try:
+        ps = _parse_cached(row["path"]) or jd.parsed_session(sid, [row["path"]], now, states=str(jd.STATE / "states" / (sid + ".jsonl")),
+                                                             sdk_human=_display_sdk_human(sid))
+    except Exception as e:
+        return None, "the session's transcript could not be read (%s)" % e
+    items, capped = _artifacts_items(_artifacts_walk((ps or {}).get("turns") or [], sid), sid)
+    return {"items": items, "capped": capped, "max": ARTIFACTS_MAX}, ""
+
+
 # Settings: the ⛭ gear on a page of its own (the user 2026-09-10). Inside the feed bundle (2026-07-13) the
 # gear made the Feed pane structurally required in the dashboard: every opener posted openSettings into
 # #f-feed and the shell lifted that iframe. This page hosts gear.js alone (ui/webview/settings-page.ts),
@@ -61234,10 +62151,15 @@ var PANES=['chat-pane','fleet-pane','feed-pane','files-pane'];
 var GK='romp-pane-grow',grow={chat:60,fleet:34,feed:40,files:40};
 try{var g=JSON.parse(localStorage.getItem(GK)||'null');if(g)grow=Object.assign(grow,g);}catch(e){}
 function setGrow(k,v){grow[k]=v;row.style.setProperty('--g-'+k,v);}
+// the REGISTRY panes (plans/panes-as-data.md): body[data-panes] names them; each is a column after Files with the
+// default grow, its pane id keyed like a split column (KEYS below), and a gutter of its own (the loop after gv-c)
+var DPANES=[];try{DPANES=JSON.parse(document.body.getAttribute('data-panes')||'[]')||[];}catch(e){DPANES=[];}
+DPANES.forEach(function(p){if(!p||!p.id)return;if(PANES.indexOf(p.id+'-pane')<0)PANES.push(p.id+'-pane');if(typeof grow[p.id]!=='number')grow[p.id]=40;});
 for(var k in grow)setGrow(k,grow[k]);
 // split chat columns (the user 2026-09-08) are made AFTER this runs: they register here so the grab's
 // normalisation and the fair-grow average see them, and gv-a/gv-b's left neighbour is the RIGHTMOST one.
 var KEYS={};
+DPANES.forEach(function(p){if(p&&p.id)KEYS[p.id+'-pane']=p.id;});
 window.__rompRegisterPane=function(id,k){KEYS[id]=k;if(PANES.indexOf(id)<0)PANES.splice(PANES.indexOf('fleet-pane'),0,id);};
 window.__rompUnregisterPane=function(id){var k=KEYS[id];delete KEYS[id];var i=PANES.indexOf(id);if(i>=0)PANES.splice(i,1);
 if(k){delete grow[k];row.style.removeProperty('--g-'+k);try{localStorage.setItem(GK,JSON.stringify(grow));}catch(e){}}};
@@ -61301,6 +62223,11 @@ window.__rompGutter=gutter;   // the split's chat|chat gutters are wired through
 gutter('gv-a',function(){return lastChat();},'fleet-pane');
 gutter('gv-b',function(){return document.body.classList.contains('po-fleet')?'fleet-pane':lastChat();},'feed-pane');
 gutter('gv-c',function(){var c=document.body.classList;return c.contains('po-feed')?'feed-pane':c.contains('po-fleet')?'fleet-pane':lastChat();},'files-pane');
+// a registry pane's gutter: its left neighbour is the rightmost SHOWN column before it (Files, Feed, the Outline, a
+// registry pane defined before it, else the last chat column), the four rules above generalised
+(function(){var seq=""" + json.dumps([c + "-pane" for c in _COLUMN_IDS if c != "chat"]) + """.concat(DPANES.map(function(p){return p.id+'-pane';}));   // the shipped columns after the chat, from _CODE_PANES
+DPANES.forEach(function(p){var me=p.id+'-pane',i=seq.indexOf(me);
+gutter('gv-'+p.id,function(){for(var j=i-1;j>=0;j--){if(document.body.classList.contains('po-'+key(seq[j])))return seq[j];}return lastChat();},me);});})();
 tf&&tf.addEventListener('load',function(){autosize();
 try{new ResizeObserver(autosize).observe(tf.contentDocument.body);}catch(e){}});
 window.addEventListener('resize',autosize);
@@ -61317,6 +62244,7 @@ window.addEventListener('romp-panes',autosize);   // re-fit when the Timeline to
 _LANDING_FOCUS_JS = """
 (function(){var PANE={'f-chat':'chat-pane','f-fleet':'fleet-pane','f-feed':'feed-pane','f-files':'files-pane','f-timeline':'tl-pane'};   // the Outline (key fleet) is its own pane
 var COLS=['f-chat','f-fleet','f-feed','f-files'];   // the side-by-side column panes, left->right (the Outline's key is fleet; Files last)
+try{JSON.parse(document.body.getAttribute('data-panes')||'[]').forEach(function(p){PANE['f-'+p.id]=p.id+'-pane';COLS.push('f-'+p.id);});}catch(e){}   // the registry panes, after Files (plans/panes-as-data.md)
 var TL='f-timeline';                       // the timeline is a bottom BAND under the columns
 var curFocus='f-chat', lastCol='f-chat';   // for Shift-Up out of the timeline: return to the last column used
 // The active pane gets a focus RING (.pane-focused). Same-origin iframes, so the shell sets it directly on
@@ -61350,7 +62278,7 @@ try{f.contentWindow.postMessage({romp:'paneFocus',dir:dir||'',from:'shell'},'*')
 // The chat pane's active tab, handed to the feed pane on this page (T416): the chat posts {romp:'activeTab',id} to its
 // parent on every switch, and the feed's current-session section moves on it at once, ahead of the kernel's relay of
 // the same post over the sockets, which then reconciles. From a child frame of this page only (a chat column).
-window.addEventListener('message',function(e){var m=e&&e.data;if(!m||m.romp!=='activeTab'||!e.source||e.source===window||e.origin!==location.origin)return;
+window.addEventListener('message',function(e){if(!window.__rompPaneSourceOk||!window.__rompPaneSourceOk(e))return;var m=e&&e.data;if(!m||m.romp!=='activeTab')return;
 var ff=document.getElementById('f-feed');try{ff&&ff.contentWindow&&ff.contentWindow.postMessage({romp:'activeChat',id:(typeof m.id==='string'?m.id:null),nonce:(typeof m.nonce==='number'?m.nonce:null),gesture:!!m.gesture},'*');}catch(x){}});
 function moveFocus(dir){
   if(curFocus===TL){                                   // in the timeline band: only Alt-Up leaves it, to the last chat pane worked in (a bottom pane too), else the last column
@@ -61402,7 +62330,7 @@ setFocus('f-chat');})();   // default: the chat section is ringed on open
 # REVEAL the chat pane (so the opened session is visible), NOT hide Fleet. to:'fleet' explicitly shows the
 # Fleet pane; no `to` flips it. The shell's pane controller exposes window.__rompPaneToggle(key,to?).
 _LANDING_FLEET_JS = """
-(function(){window.addEventListener('message',function(e){var m=e.data;if(!m||m.romp!=='toggleFleet')return;
+(function(){window.addEventListener('message',function(e){if(!window.__rompPaneSourceOk||!window.__rompPaneSourceOk(e))return;var m=e.data;if(!m||m.romp!=='toggleFleet')return;
 if(!window.__rompPaneToggle)return;
 if(m.to==='chat')window.__rompPaneToggle('chat',true);
 else if(m.to==='fleet')window.__rompPaneToggle('fleet',true);
@@ -61414,10 +62342,19 @@ else window.__rompPaneToggle('fleet');});})();
 # ({romp:'ready'}) — the timeline lanes render first (no parse), so the splash clears fast — with a 5s
 # backstop so a slow/closed pane can never trap the user behind it. Removed from the DOM after the fade.
 _LANDING_BOOT_JS = """
+// THE PANE PROTOCOL'S SOURCE CHECK (plans/panes-as-data.md, section 5): a message the shell acts on must come from a
+// same-origin iframe of THIS document, the message's IMMEDIATE source, whose iframe is not marked data-protocol=none (a
+// URL pane: a plain sandboxed iframe that cannot speak the protocol, so a forged {romp:...} from it is dropped). The
+// shell's own window, a window this document does not hold, and a frame NESTED inside a pane all fail: a pane's own
+// document relays what it means to say. Defined by the first script on the page; every shell listener, inline and
+// bundled, reads it FAIL-CLOSED (no check, no message), and tests/test_pane_registry.py takes the census.
+window.__rompPaneSourceOk=function(e){try{if(!e||!e.source||e.source===window||e.origin!==location.origin)return false;
+var fs=document.querySelectorAll('iframe');for(var i=0;i<fs.length;i++){if(fs[i].contentWindow===e.source)return fs[i].getAttribute('data-protocol')!=='none';}
+return false;}catch(x){return false;}};
 (function(){var boot=document.getElementById('romp-boot');if(!boot)return;var done=false;
 function hide(){if(done)return;done=true;boot.classList.add('gone');
 setTimeout(function(){if(boot.parentNode)boot.parentNode.removeChild(boot);},450);}
-window.addEventListener('message',function(e){if(e&&e.data&&e.data.romp==='ready')hide();});
+window.addEventListener('message',function(e){if(!window.__rompPaneSourceOk||!window.__rompPaneSourceOk(e))return;if(e&&e.data&&e.data.romp==='ready')hide();});
 setTimeout(hide,5000);})();
 """
 
@@ -61443,14 +62380,14 @@ setTimeout(hide,5000);})();
 # together; a second hardcoded list is the bug this replaces (the bell's PN was the last one, the
 # #957 review). Defined above _LANDING_ERRS_JS because that string is built from it at import.
 # Keys stay internal (timeline/fleet); labels are the user-facing names.
-_PANE_ORDER = (("chat", "Chat"), ("timeline", "Sessions"), ("fleet", "Outline"), ("feed", "Feed"), ("files", "Files"))
+_PANE_ORDER = (*((p["id"], p["title"]) for p in _CODE_PANES),)   # the shipped panes, (key, label), from _CODE_PANES (plans/panes-as-data.md: the data panes join through _pane_order())
 
 
 def _pane_label(app):
     """The label a pane wears on every surface (the rail, the tabs, a line that names it): _PANE_ORDER's word for its key,
     the key's own capitalised form for a page outside that list (Settings). The shim bakes it as LABEL so a line a pane
     says about itself never shows an internal key (the round-three review read the Outline pane's key in such a line)."""
-    return dict(_PANE_ORDER).get(str(app or ""), str(app or "").capitalize())
+    return dict((p["id"], p["title"]) for p in _pane_order()).get(str(app or ""), str(app or "").capitalize())
 
 _LANDING_ERRS_JS = """
 (function(){var icon=document.getElementById('rail-errs'),micon=document.getElementById('merr'),
@@ -61490,7 +62427,7 @@ tell(n);if(!back.hidden)renderList();}
 // before) — told on every repaint and on the panel's own query.
 function tell(n){var f=document.getElementById('f-settings');
 try{f&&f.contentWindow&&f.contentWindow.postMessage({romp:'logUnseen',n:(n===undefined?unseen():n)},'*');}catch(e){}}
-window.addEventListener('message',function(e){var m=e.data;if(m&&m.romp==='logUnseenQuery')tell();});
+window.addEventListener('message',function(e){if(!window.__rompPaneSourceOk||!window.__rompPaneSourceOk(e))return;var m=e.data;if(m&&m.romp==='logUnseenQuery')tell();});
 // each entry leads with the chip its card wears in the feed, so the vocabulary matches across surfaces
 var KINDS=['conn','limit','judge','warn','stalled','nudge','retry','apierror','sdk','sync','locate','cleared','refused','undelivered'];
 var KINDLBL={conn:'offline',limit:'limit',judge:'judge',warn:'warning',stalled:'stalled',
@@ -61571,7 +62508,7 @@ save();paint();};
 // pane iframes can feed the center too; sid/itemId ride along as the entry's jump target. An entry naming a CARD
 // (itemId: the feed's badge mirror, a card still loaded in a pane hidden mid-page) is not this browser's while its
 // Feed pane is off (feedHere above); an entry naming only a session, or nothing, lands as ever.
-window.addEventListener('message',function(e){var m=e&&e.data;
+window.addEventListener('message',function(e){if(!window.__rompPaneSourceOk||!window.__rompPaneSourceOk(e))return;var m=e&&e.data;
 if(m&&m.romp==='notify'&&m.text){if(m.itemId&&!feedHere())return;
 window.__rompNotify(m.kind||'error',m.text,
 (m.sid||m.itemId)?{sid:String(m.sid||''),itemId:String(m.itemId||'')}:null);}});
@@ -61585,8 +62522,9 @@ function shown(k){return document.body.classList.contains('po-'+k);}
 function liveDown(){for(var k in st){if(st[k]==='down'&&shown(k))return true;}for(var c in stc){if(stc[c]==='down'&&shown('chat'))return true;}return false;}
 window.__rompColGone=function(c){delete stc[String(c)];paint();};   // a closed column takes its state with it
 var PN=""" + json.dumps(dict(_PANE_ORDER)) + """;   // key → rail label, from _PANE_ORDER (one list with the rail, the tabs and the drop row); timeline key stays internal — the pane outgrew the name (filter, tags, lane controls — the user 2026-08-24)
+try{JSON.parse(document.body.getAttribute('data-panes')||'[]').forEach(function(p){if(!(p.id in PN))PN[p.id]=String(p.title||p.id);});}catch(e){}   // the registry panes' titles (plans/panes-as-data.md)
 function paneLabel(k){k=String(k||'');return PN[k]||(k?k.charAt(0).toUpperCase()+k.slice(1):k);}   // the page's copy of _pane_label: the rail's word, else the key capitalised for a sentence (Settings), never a raw key (the 1715 lows, low 4)
-window.addEventListener('message',function(e){var m=e&&e.data;if(!m||m.romp!=='wsState')return;
+window.addEventListener('message',function(e){if(!window.__rompPaneSourceOk||!window.__rompPaneSourceOk(e))return;var m=e&&e.data;if(!m||m.romp!=='wsState')return;
 var col=(m.app==='chat'&&window.__rompColOf)?window.__rompColOf(e.source):'';   // a split column reports under its own key (the sender frame says which)
 if(col){var sc=(m.state==='up')?'up':'down',pc=stc[col];stc[col]=sc;
 if(sc==='down'&&pc!=='down'&&shown('chat'))window.__rompNotify('conn','Kernel connection lost: chat split '+col+' (reconnecting)');else paint();return;}
@@ -61645,7 +62583,7 @@ if(closed){e.preventDefault();e.stopPropagation();}}
 function settingsClose(){var f=document.getElementById('f-settings');
 try{var w=f&&f.contentWindow;return !!(w&&w.__rompSettingsClose&&w.__rompSettingsClose());}catch(e){return false;}}
 document.addEventListener('keydown',onEsc,true);
-['f-chat','f-fleet','f-feed','f-files','f-timeline','f-settings'].forEach(function(id){var f=document.getElementById(id);if(!f)return;
+['f-chat','f-fleet','f-feed','f-files','f-timeline','f-settings'].concat((function(){try{return JSON.parse(document.body.getAttribute('data-panes')||'[]').map(function(p){return 'f-'+p.id;});}catch(e){return [];}})()).forEach(function(id){var f=document.getElementById(id);if(!f)return;
 var wire=function(){try{if(f.contentDocument)f.contentDocument.addEventListener('keydown',onEsc,true);}catch(e){}};
 f.addEventListener('load',wire);wire();});
 window.__rompWireEsc=function(f){var wire=function(){try{if(f.contentDocument)f.contentDocument.addEventListener('keydown',onEsc,true);}catch(e){}};
@@ -62467,7 +63405,7 @@ pull(false);                                     // fill on load, independent of
 // (The old vertical-fit degrade ladder (fitRail/data-ruc, the user 2026-06-27/07-01) is gone: it shrank the
 // VERTICAL bars when the left rail ran out of height. The bars are HORIZONTAL in the bottom bar now and only
 // ~text-height tall, so they always fit — nothing to degrade.)
-window.addEventListener('message',function(e){var m=e.data;if(m&&m.romp==='usage')render(m.usage);});})();
+window.addEventListener('message',function(e){if(!window.__rompPaneSourceOk||!window.__rompPaneSourceOk(e))return;var m=e.data;if(m&&m.romp==='usage')render(m.usage);});})();
 """
 
 
@@ -62986,7 +63924,7 @@ open();};
 try{if(location.hash.indexOf('#settings')===0){var sh=location.hash.slice(9);if(sh.charAt(0)==='=')sh=sh.slice(1);
 try{history.replaceState(null,'',location.pathname+location.search);}catch(e){}
 var so=function(){window.__rompOpenSettings(sh||undefined);};if(document.readyState==='complete')setTimeout(so,0);else window.addEventListener('load',so);}}catch(e){}   // a harness without a location object runs the rest
-window.addEventListener('message',function(e){var m=e.data;if(!m)return;
+window.addEventListener('message',function(e){if(!window.__rompPaneSourceOk||!window.__rompPaneSourceOk(e))return;var m=e.data;if(!m)return;
 if(m.romp==='settings'){document.body.classList.toggle('settings-open',!!m.on);
 // closing hides the iframe that held the keyboard, which drops focus onto the shell body; put it back in the
 // chat (the dashboard's default focus, _LANDING_FOCUS_JS rings it) so the next keystroke lands in a pane — the
@@ -63219,7 +64157,7 @@ var _pendPair={},_pairs=null,_pairsBusy=false,_lastArgs=null,_lastUp=0;
 // Retired by the pane's own first payload from that host (its next post drops the name) — no timer.
 var _pend={};
 function pendingIn(h){for(var k in _pend){if(_pend[k].indexOf(h)>=0)return true;}return false;}
-window.addEventListener('message',function(e){var m=e&&e.data;if(!m||m.romp!=='hostsPending')return;
+window.addEventListener('message',function(e){if(!window.__rompPaneSourceOk||!window.__rompPaneSourceOk(e))return;var m=e&&e.data;if(!m||m.romp!=='hostsPending')return;
 _pend[m.app||'?']=(m.hosts||[]).filter(function(h){return typeof h==='string';});
 if(!back.hidden&&_lastArgs)render.apply(null,_lastArgs);});
 // ITS CONNECTIONS (the user 2026-08-11): every up host's row expands into THAT machine's own
@@ -63261,6 +64199,9 @@ if(!keep){_cfg=[];_cfgRead=false;fillHosts();}});}   // the flag goes with the l
 // (/tunnels/of — whitelisted by the kernel too), and the bus gossip below (tiers, relay hosts, holds).
 // Before this, those strings were concatenated into markup as they came (2026-09-08).
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return c==='&'?'&amp;':c==='<'?'&lt;':c==='>'?'&gt;':c==='"'?'&quot;':'&#39;';});}
+// a PINNED machine (plans/settings-across-machines.md, phase two): the stores it keeps against the mesh, from its /tunnels row
+function pinnedStores(t){var p=(t&&t.settingsPinned)||{};return Object.keys(p).filter(function(k){return !!p[k];});}
+function pinMark(t,th){var ps=pinnedStores(t);return ps.length?' <span class=rnet-pin title=\"'+th+' keeps its own value for '+esc(ps.join(', '))+': other machines\u2019 picks are not applied there (Settings, the machine selector).\">pinned</span>':'';}
 var LBL={up:'connected',authorizing:'authorizing\\u2026',connecting:'connecting\\u2026',starting:'connecting\\u2026','no-kernel':'kernel not answering',restarting:'restarting after update\\u2026',down:'reconnecting\\u2026',error:'error'};
 // Every status explains itself on hover (the user 2026-07-22: learn it from tooltips, not the CLI).
 var TIP={up:'Connected: the ssh tunnel is open and that machine\\u2019s romp kernel is answering through it. Its sessions appear in your tabs and timeline.',
@@ -63567,7 +64508,7 @@ row.innerHTML='<span class=rnet-dot style=\"'+dot+'\" title=\"'+(TIP[t.status]||
 // A host mid-attach gets the romp loader inline (the user 2026-07-29): the swirl glyph spinning beside
 // the status word, so "connecting" reads as something HAPPENING rather than a label that might be stuck.
 // The repo's loading rule spelled small: same glyph, same reverse spin as the composer's slash spinner.
-'<span class=nm><b>'+th+'</b> <span class=st title=\"'+(TIP[t.status]||'')+'\">'+(busyStatus(t.status)?spin():'')+(LBL[t.status]||esc(t.status))+((t.status==='up'&&pendingIn(t.host))?' \\u00b7 <span class=rnet-pend title=\"The tunnel is up; this dashboard is still loading '+th+'\\u2019s sessions. They appear the moment its first payload lands.\">'+spin()+'loading sessions\\u2026</span>':'')+(t.checkinPeer?' \\u00b7 checked in here':'')+(t.hasToken?'':' \\u00b7 no token')+(again?' \\u00b7 '+again:'')+ver+'</span></span>'+
+'<span class=nm><b>'+th+'</b>'+pinMark(t,th)+' <span class=st title=\"'+(TIP[t.status]||'')+'\">'+(busyStatus(t.status)?spin():'')+(LBL[t.status]||esc(t.status))+((t.status==='up'&&pendingIn(t.host))?' \\u00b7 <span class=rnet-pend title=\"The tunnel is up; this dashboard is still loading '+th+'\\u2019s sessions. They appear the moment its first payload lands.\">'+spin()+'loading sessions\\u2026</span>':'')+(t.checkinPeer?' \\u00b7 checked in here':'')+(t.hasToken?'':' \\u00b7 no token')+(again?' \\u00b7 '+again:'')+ver+'</span></span>'+
 retry+pull+ask+upd+strt+'<button data-h=\"'+th+'\" title=\"Close the ssh tunnel to '+th+'. It stays in this list as a previously-attached host, keeping its trust level, so you can re-attach in one click.\">Detach</button>'+
 // ITS CONNECTIONS toggle — the keyed expand (progressive disclosure): compact row by default,
 // that machine's own attached list one click deeper, fetched on the click, never the poll.
@@ -63879,7 +64820,7 @@ document.addEventListener('focusout',refit);
 if(window.visualViewport){window.visualViewport.addEventListener('resize',refit);
 window.visualViewport.addEventListener('scroll',refit);}
 function hearBlur(f){try{if(!f.contentDocument)return;f.contentWindow.addEventListener('focusout',refit);}catch(e){}}   // cross-origin → nothing to hear
-['f-chat','f-fleet','f-feed','f-files','f-timeline','f-settings'].forEach(function(id){var f=document.getElementById(id);if(!f)return;
+['f-chat','f-fleet','f-feed','f-files','f-timeline','f-settings'].concat((function(){try{return JSON.parse(document.body.getAttribute('data-panes')||'[]').map(function(p){return 'f-'+p.id;});}catch(e){return [];}})()).forEach(function(id){var f=document.getElementById(id);if(!f)return;
 f.addEventListener('load',function(){hearBlur(f);});hearBlur(f);});   // now (already loaded) + on every (re)load, as the Alt+Arrow wiring does; the gear's document too (its login field)
 // The mobile LAYOUT, as the stylesheet decides it: the SAME media query the grid collapses on (_MOBILE_MQ,
 // one constant for the CSS and this probe), one pane at a time, bottom tabs, the po-* classes ignored. Read by
@@ -63891,6 +64832,7 @@ function mobileOn(){return !!(MQ&&MQ.matches);}
 window.__rompMobileOn=mobileOn;
 var bar=document.getElementById('mtabs');if(!bar)return;
 var F={chat:document.getElementById('f-chat'),fleet:document.getElementById('f-fleet'),feed:document.getElementById('f-feed'),files:document.getElementById('f-files'),timeline:document.getElementById('f-timeline')};
+try{JSON.parse(document.body.getAttribute('data-panes')||'[]').forEach(function(p){F[p.id]=document.getElementById('f-'+p.id);});}catch(e){}   // the registry panes' frames (plans/panes-as-data.md); an experimental one has no tab button, so show() refuses it
 // ONLY the pane tabs (the user 2026-09-08, on the phone: the bell wore its OFF slash while its popover said
 // on). This list once took EVERY button in the bar, and show() toggled `.on` to data-pane===p on each — for
 // the action buttons and the bell (no data-pane) that is always off, so every pane switch stripped the
@@ -63901,6 +64843,10 @@ function filesCtlM(){try{var st=JSON.parse(localStorage.getItem('romp:settings')
 function show(p){if(p==='files'&&!filesCtlM())p='chat';   // the Files tab is hidden while its control is off: the chat shows instead
 if(!F[p])return;for(var i=0;i<B.length;i++)if(B[i].getAttribute('data-pane')===p&&B[i].hidden)return;   // a tab the controller hid (its pane is off in the gear's Panes section) is not a place to go
 document.body.setAttribute('data-tab',p);for(var k in F)if(F[k])F[k].classList.toggle('m-on',k===p);   // a pane this shell lacks is skipped, never a TypeError
+// a phone shows a pane by its TAB, not by its po flag, so the tab is where a lazy pane's iframe loads, once: the generic panes
+// (plans/panes-as-data.md; the registry's data panes, whose src is otherwise set only by the desktop apply on po) and the
+// optional five alike; a src already set is left alone (the 1922 read: a data pane's tab showed a blank pane)
+var sf=F[p];if(sf&&sf.getAttribute&&!sf.getAttribute('src')&&sf.getAttribute('data-src'))sf.setAttribute('src',sf.getAttribute('data-src'));
 for(var i=0;i<B.length;i++)B[i].classList.toggle('on',B[i].getAttribute('data-pane')===p);
 try{localStorage.setItem(KT,p);}catch(e){}
 // a tab switch changes what is on screen: re-tell the panes (the collapse script's broadcast; absent only
@@ -63933,7 +64879,7 @@ restart:function(){try{window.__rompRestart&&window.__rompRestart();}catch(e){}}
 errs:function(){try{window.__rompOpenErrs&&window.__rompOpenErrs();}catch(e){}}};
 Array.prototype.forEach.call(bar.querySelectorAll('button[data-act]'),function(b){
 b.addEventListener('click',function(){var f=A[b.getAttribute('data-act')];if(f)f();});});
-window.addEventListener('message',function(e){var m=e.data;if(!m)return;if(m.romp==='reveal'&&m.pane)reveal(m.pane);// the chat header's Fleet pill / the fleet's back-to-chat post toggleFleet — on mobile that IS a tab switch
+window.addEventListener('message',function(e){if(!window.__rompPaneSourceOk||!window.__rompPaneSourceOk(e))return;var m=e.data;if(!m)return;if(m.romp==='reveal'&&m.pane)reveal(m.pane);// the chat header's Fleet pill / the fleet's back-to-chat post toggleFleet — on mobile that IS a tab switch
 if(m.romp==='toggleFleet')userSwitch(m.to==='chat'?'chat':'fleet');});
 var shellOpened=false;   // T265: this socket's REOPEN is the kernel-restart signal — the shell asks /version whose kernel answered
 function shellWS(){try{var proto=location.protocol==='https:'?'wss://':'ws://';
@@ -63944,6 +64890,7 @@ ws.onopen=function(){try{ws.send(JSON.stringify({type:'ready'}));}catch(e){}
 shellSock=ws;var q=diagQ;diagQ=[];q.forEach(function(m){try{ws.send(JSON.stringify(m));}catch(e){}});   // the rows that waited for this socket
 if(shellOpened&&window.__rompReload)window.__rompReload.checkBoot();shellOpened=true;};
 ws.onmessage=function(ev){var m;try{m=JSON.parse(ev.data);}catch(e){return;}
+if(m&&m.type==='ka'&&m.pv&&window.__rompReload&&window.__rompReload.notePanes)window.__rompReload.notePanes(m.pv);   // the pane set's revision beside the build token (plans/panes-as-data.md): a define or remove at the kernel offers a reload
 if(m&&m.type==='ka'){if(m.dv&&window.__rompReload)window.__rompReload.noteDv(m.dv);}   // build drift on the shell's own keepalive (T265; an OFFER since 2026-09-16)
 else if(m&&m.type==='reloadRequired'){if(window.__rompReload)window.__rompReload.require(m.why);}   // the safety valve (2026-09-16): a kernel that must force a reload for correctness; nothing sends it today
 else if(m&&m.type==='reveal'&&m.pane)reveal(m.pane);
@@ -64184,7 +65131,7 @@ function revealCard(itemId,sid){if(window.__rompPaneEnabled&&!window.__rompPaneE
 if(!feedReady){pendingCard={itemId:itemId,sid:sid};return;}
 var f=document.getElementById('f-feed');
 try{f&&f.contentWindow&&f.contentWindow.postMessage({romp:'revealCard',itemId:itemId,sid:sid,gesture:true},'*');}catch(e){}}
-window.addEventListener('message',function(e){var m=e&&e.data;
+window.addEventListener('message',function(e){if(!window.__rompPaneSourceOk||!window.__rompPaneSourceOk(e))return;var m=e&&e.data;
 if(m&&m.romp==='wsState'&&m.app==='chat'&&m.state==='up')chatUp=true;   // the chat pane's shim, on its socket's open: from here a tap is delivered live
 if(!(m&&m.romp==='ready'&&m.app==='feed'))return;
 feedReady=true;if(pendingCard){var c=pendingCard;pendingCard=null;revealCard(c.itemId,c.sid);}});
@@ -64377,7 +65324,7 @@ _STALE_JS = (
     # connection prompt is moot and retires itself; the user saw it on nearly every dashboard open, offering
     # a reload for a staleness that had already healed in the background. A latched BUILD prompt survives
     # (and re-asserts its wording): a resync delivers state, never new code, so only a reload answers it.
-    "window.addEventListener('message',function(e){var m=e&&e.data;"
+    "window.addEventListener('message',function(e){if(!window.__rompPaneSourceOk||!window.__rompPaneSourceOk(e))return;var m=e&&e.data;"
     "if(m&&m.romp==='wsStale'){if(m.build){if(RL)RL.checkBoot();else buildStale=true;}else connStale=true;paint();}"
     "else if(m&&m.romp==='wsFresh'){connStale=false;paint();}});"
     # T132 (the user 2026-08-27): the banner is DRAGGABLE — movable out of the way so it can STAY up
@@ -64455,13 +65402,21 @@ _LANDING_COLLAPSE_JS = """
   // The chat routes a file-link click by it (ui/webview/file-route.ts fileLinkRoute: an OPEN Files pane takes
   // the click, since the pane being open IS the intent; the setting that once named a closed pane is gone, T404), and a
   // folder click the same way (browseRoute, render.ts openBrowse).
-  var KEYS=""" + json.dumps([k for k, _ in _PANE_ORDER]) + """;
+  var KEYS=""" + json.dumps([k for k, _ in _PANE_ORDER if k in _HAND_PANES]) + """;   // the hand-written five; the generic panes (the Artifacts record, the data panes) join from body[data-panes] below
+  // THE REGISTRY PANES (plans/panes-as-data.md, phase one): body[data-panes] carries every data-defined pane (id, title,
+  // protocol, experimental, on). Each joins KEYS and the OPTIONAL set below: its gear row (gear.js) decides whether it is
+  // in this dashboard at all, its rail toggle whether it is on screen, `on` is its rail default, and an experimental one
+  // is off in the gear until asked for. An empty registry emits no attribute and this block is a no-op.
+  var DP=[];try{DP=JSON.parse(document.body.getAttribute('data-panes')||'[]')||[];}catch(e){DP=[];}
+  var DPX={};DP.forEach(function(p){if(!p||!p.id)return;var k=p.id;if(KEYS.indexOf(k)<0)KEYS.push(k);DPX[k]=!!p.experimental;LBL[k]=String(p.title||k).toLowerCase()+' pane';
+    if(!(k in DEF))DEF[k]=!!p.on;
+    if(qp!==null)po[k]=qp.split(',').map(function(x){return x.trim();}).indexOf(k)>=0;else if(!(k in po))po[k]=(k in stored)?!!stored[k]:!!p.on;});
   // on[k] is "this pane is on screen", not the po flag: in the mobile layout (one tab at a time, the po-*
   // classes ignored, _LANDING_MOBILE_JS) it is the current tab, so a po.files left true by a desktop session
   // or an earlier bring-forward cannot silently steer a phone's file links into a tab nobody is looking at
   function panesMsg(){var mob=!!(window.__rompMobileOn&&window.__rompMobileOn()),tab=mob?document.body.getAttribute('data-tab'):null;
     var on={};KEYS.forEach(function(k){on[k]=mob?(k===tab):!!po[k];});return {romp:'panes',on:on,avail:{files:filesCtl()}};}
-  function tell(f,m){try{f&&f.contentWindow&&f.contentWindow.postMessage(m,'*');}catch(e){}}
+  function tell(f,m){try{if(f&&f.getAttribute&&f.getAttribute('data-protocol')==='none')return;f&&f.contentWindow&&f.contentWindow.postMessage(m,'*');}catch(e){}}   // a URL pane (protocol none) is told nothing: it is not in the protocol (plans/panes-as-data.md)
   function broadcast(){var m=panesMsg();KEYS.forEach(function(k){tell(document.getElementById('f-'+k),m);});}
   window.__rompPanesTell=broadcast;   // the mobile script re-tells on a tab switch / layout flip
   // The OPTIONAL panes (the user 2026-09-10): the gear's Panes section (romp:settings.panes, per browser,
@@ -64481,13 +65436,14 @@ _LANDING_COLLAPSE_JS = """
   // rail toggle is its off switch). The kernel is not told and does not care: judging and task tracking run
   // the same with the Feed pane off in a browser.
   var ALL=KEYS.slice(),OPT=['timeline','fleet','feed'],SK='romp:settings';
-  function optOn(){var on={};OPT.forEach(function(k){on[k]=true;});
-    try{var s=JSON.parse(localStorage.getItem(SK)||'{}'),p=s&&s.panes;if(p&&typeof p==='object')OPT.forEach(function(k){on[k]=p[k]!==false;});}catch(e){}
+  DP.forEach(function(p){if(p&&p.id&&OPT.indexOf(p.id)<0)OPT.push(p.id);});   // a registry pane is an optional pane: the gear's row decides whether it is in this dashboard
+  function optOn(){var on={};OPT.forEach(function(k){on[k]=!DPX[k];});   // an experimental registry pane defaults OFF in the gear (plans/panes-as-data.md)
+    try{var s=JSON.parse(localStorage.getItem(SK)||'{}'),p=s&&s.panes;if(p&&typeof p==='object')OPT.forEach(function(k){if(DPX[k]){on[k]=p[k]===true;}else{on[k]=p[k]!==false;}});}catch(e){}
     return on;}
   function flagOf(k){return (k in stored)?!!stored[k]:DEF[k];}
   function reconcile(live){var on=optOn(),shown=false;
     OPT.forEach(function(k){var en=on[k],f=document.getElementById('f-'+k);
-      if(en){if(f&&!f.getAttribute('src')&&f.getAttribute('data-src'))f.setAttribute('src',f.getAttribute('data-src'));
+      if(en){if(!(k in DPX)&&f&&!f.getAttribute('src')&&f.getAttribute('data-src'))f.setAttribute('src',f.getAttribute('data-src'));   // a hand-written optional pane loads when enabled; a generic pane (DPX) only when it comes on screen (apply below)
         if(!(k in po)){po[k]=live?true:flagOf(k);if(live){shown=true;if(window.__rompGrowFair)window.__rompGrowFair(k);}}}   // live: the pane comes on screen, at a fair width (togglePane's bring-forward)
       else if(k in po)delete po[k];
       Array.prototype.forEach.call(document.querySelectorAll('.rail-btn[data-pane='+k+'],#mtabs button[data-pane='+k+']'),function(b){b.hidden=!en;});
@@ -64510,6 +65466,8 @@ _LANDING_COLLAPSE_JS = """
     document.body.classList.toggle('po-feed',!!po.feed);
     document.body.classList.toggle('po-timeline',!!po.timeline);
     document.body.classList.toggle('po-files',!!po.files);
+    DP.forEach(function(p){if(!p||!p.id)return;var k=p.id;document.body.classList.toggle('po-'+k,!!po[k]);
+      var gf=document.getElementById('f-'+k);if(po[k]&&gf&&!gf.getAttribute('src')&&gf.getAttribute('data-src'))gf.setAttribute('src',gf.getAttribute('data-src'));});   // a generic pane's iframe loads ONCE, when the pane comes on screen (never when merely enabled: the Artifacts page's first load walks the remembered session)   // the registry panes' columns (plans/panes-as-data.md)
     Array.prototype.forEach.call(document.querySelectorAll('.rail-btn[data-pane]'),function(b){
       var k=b.getAttribute('data-pane');b.classList.toggle('on',!!po[k]);
       // tooltip carries the pane command's CURRENT binding (hover discoverability, the user 2026-08-10) —
@@ -64799,7 +65757,7 @@ if(c.pid===last&&!alone){var e=zone(p,'col-drop-edge',null,function(sid){if(e.ge
 e.style.width=edgeWidth(p.getBoundingClientRect().width)+'px';e.style.top=(c.n===from?drag.stripH:0)+'px';if(!canSplit())e.setAttribute('data-refused','1');}
 if(!belowOf(c.n)&&!fromBelow&&!(c.n===from&&colSize(from)===1)){var bz=zone(p,'col-drop-bottom',c.n,function(sid){if(bz.getAttribute('data-refused'))refusePane();else moveTab(sid,'down',c.n);});   // the bottom zone: split THIS column, the dragged tab to the new bottom pane. Suppressed where moveTab would refuse the drop: a target already split (belowOf), a bottom-pane source (fromBelow), or the source's OWN lone column (nothing to split off), matching the edge's !alone. A split adds a PANE, so a refused (capped) drop says refusePane
 bz.style.height=edgeWidth(p.getBoundingClientRect().height)+'px';if(!canSplit())bz.setAttribute('data-refused','1');}});}
-window.addEventListener('message',function(e){var m=e&&e.data;if(!m)return;
+window.addEventListener('message',function(e){if(!window.__rompPaneSourceOk||!window.__rompPaneSourceOk(e))return;var m=e&&e.data;if(!m)return;
 if(m.romp==='tabDrag'){if(!m.on){drag=null;unmountZones();return;}   // the page's dragend: the zones go, whatever ended the drag
 if(!frameOfWin(e.source)||mobile()||typeof m.sid!=='string'||!m.sid)return;   // a chat column's dragstart, on the desktop
 drag={sid:m.sid,name:typeof m.name==='string'?m.name:'',from:Number(colOf(e.source))||1,stripH:Math.max(0,Number(m.stripH)||0)};mountZones();return;}
@@ -65130,19 +66088,21 @@ def _gear_glyph():
     return glyph
 
 
-def _rail_buttons_html():
-    """The desktop rail's pane toggles, in _PANE_ORDER."""
-    return "".join("<div class=rail-btn data-pane=%s>%s</div>" % kv for kv in _PANE_ORDER)
+def _rail_buttons_html(panes=None):
+    """The desktop rail's pane toggles, in _pane_order() (the shipped panes, then the data panes; plans/panes-as-data.md)."""
+    return "".join("<div class=rail-btn data-pane=%s>%s</div>" % (p["id"], _html_esc(p["title"])) for p in (_pane_order() if panes is None else panes))
 
 
-def _mtab_buttons_html():
+def _mtab_buttons_html(panes=None):
     """The mobile bottom bar's pane tabs — the SAME order as the desktop rail, by construction.
     class=on keys on the chat KEY (the initially shown pane), never on position."""
     return "".join("<button data-pane=%s%s>%s</button>"
-                   % (k, " class=on" if k == "chat" else "", lbl) for k, lbl in _PANE_ORDER)
+                   % (p["id"], " class=on" if p["id"] == "chat" else "", _html_esc(p["title"]))
+                   for p in (_pane_order() if panes is None else panes) if not p["experimental"])   # an experimental data pane has no phone tab (the plan, section 1)
 
 
 def _landing():
+    panes = _pane_order()   # ONE listing of the pane registry per build (plans/panes-as-data.md): every builder below takes this list
     # one flex row of up to FOUR independently-toggled panes (chat | fleet | feed | timeline) behind a far-left
     # rail; draggable gutters between visible panes; the rail also pins the ⛭ settings + ↻ refresh actions at
     # its bottom. Pane on/off + sizes persist in localStorage.
@@ -65498,6 +66458,8 @@ def _landing():
             # 11px matches every other annotation on the row (fonts: reuse, don't multiply)
             ".rnet-trust.rnet-applying{border-color:var(--accent);opacity:0.8}"
             ".rnet-pend{color:var(--accent);font-size:11px;margin-left:4px}"
+            # a PINNED machine's mark in the Remote kernels popover (phase two): the quiet chip vocabulary, the accent's outline
+            ".rnet-pin{margin-left:6px;padding:0 6px;border-radius:9px;border:1px solid var(--accent,#9cd2ff);color:var(--accent,#9cd2ff);font-size:10px;font-weight:400;line-height:1.5;white-space:nowrap}"
             # "Previously attached": a quiet section header + dimmed rows, so remembered hosts read as
             # history you can act on and never as something currently connected. Hover restores full
             # opacity (they're interactive, not decoration).
@@ -65794,6 +66756,7 @@ def _landing():
             # off hides it AND the now-orphaned gutters. Fixed order: chat, outline, feed, files. Timeline is the band.
             "#chat-pane{flex:var(--g-chat,60) 1 0}#fleet-pane{flex:var(--g-fleet,34) 1 0}#feed-pane{flex:var(--g-feed,40) 1 0}#files-pane{flex:var(--g-files,40) 1 0}"
             "body:not(.po-chat) #chat-pane{display:none}body:not(.po-fleet) #fleet-pane{display:none}body:not(.po-feed) #feed-pane{display:none}body:not(.po-files) #files-pane{display:none}"
+            + _data_pane_css(panes) +   # the GENERIC panes' column and gutter rules (plans/panes-as-data.md)
             # split chat columns (the user 2026-09-08): every column past the first is a client-made .pane.chat-col
             # (_LANDING_SPLIT_JS) with its own /chat?col=N iframe and its own grow var, set inline. They ride the
             # chat group's toggle: off hides every column and the chat|chat gutters with it.
@@ -65908,6 +66871,7 @@ def _landing():
             # the Outline (fleet) rides the tab bar like every other pane (the user 2026-07-11, who couldn't
             # access the outline view in the mobile UI — it was desktop-only before)
             "#chat-pane,#fleet-pane,#feed-pane,#files-pane,#tl-pane{display:contents!important}"
+            + _data_pane_mobile_css(panes) +   # the GENERIC panes likewise: on a phone the tab, not the po flag, says which pane shows (plans/panes-as-data.md)
             ".chat-col,.gv-chat{display:none!important}"   # one pane at a time here: split columns never show (nor are made, see _LANDING_SPLIT_JS)
             # reset the desktop iframe absolute-fill (the bare `iframe` reset below re-flows them as tab panes)
             ".pane>iframe{position:static;inset:auto;width:100%;height:100%}"
@@ -66149,7 +67113,7 @@ def _landing():
             "body.theme-light #mtabs button{color:#5D574E}"
             "body.theme-light #mtabs button.on{color:#C2410C}"
             "body.theme-light #mtabs .mtabs-div{background:#DCD2C4}"
-            "</style></head><body class='po-chat po-feed po-timeline'>"
+            "</style></head><body class='po-chat po-feed po-timeline'" + _panes_attr(panes) + ">"
             + _THEME_READER +
             "<div id=romp-boot>" + _loader_inner() + "</div>"
             # the bell popover (2026-09-05; driven by _LANDING_PUSH_JS): the two switches that ONE bell
@@ -66210,6 +67174,7 @@ def _landing():
             "<div class=pane id=feed-pane><iframe id=f-feed data-src=/feed></iframe></div>"
             "<div class=gv id=gv-c></div>"
             "<div class=pane id=files-pane><iframe id=f-files src=/files></iframe></div>"
+            + _data_pane_markup(panes) +   # the GENERIC panes, after Files: the Artifacts record and the data panes (plans/panes-as-data.md)
             "</div>"
             "<div id=gv-ghost></div>"   # the divider drag's landing line (position:fixed; gutter() in _LANDING_JS moves it)
             "<div id=col-ghost></div>"   # a tab drag's provisional rectangle: the right half of the rightmost chat column (position:fixed; _LANDING_SPLIT_JS places it)
@@ -66225,7 +67190,7 @@ def _landing():
             "<div class=pane-rail>"
             "<div class=rail-scroll>"
             # the pane toggles, from _PANE_ORDER — the ONE ordering the mobile tabs share
-            + _rail_buttons_html() +
+            + _rail_buttons_html(panes) +
             # the Claude /usage rate-limit bars (Pro/Max): three compact vertical bar-pairs (used % colored +
             # elapsed % slate), %-label, full detail on hover — side-by-side in the bottom bar.
             "<div id=rail-usage data-keycmd=usage.open></div>"
@@ -66287,7 +67252,7 @@ def _landing():
             "<nav id=mtabs>"
             # the pane tabs, from _PANE_ORDER — the desktop rail's exact order (the user 2026-08-30:
             # mobile is a re-layout, never a re-ordering)
-            + _mtab_buttons_html() +
+            + _mtab_buttons_html(panes) +
             # the rail's ACTIONS, reachable on mobile too (the user 2026-07-11): settings + the network
             # panel + a usage panel showing the desktop tooltip's window bars. data-act (not data-pane) —
             # they fire, they don't switch the shown pane.
@@ -67157,6 +68122,11 @@ class Handler(BaseHTTPRequestHandler):
                               "records": {k: v for k, v in (nd.get("nudged") or {}).items() if mine(k)},
                               "walkGates": {k: v for k, v in (nd.get("walkGates") or {}).items() if mine(k)}},
                 }), "application/json", cache="no-cache")
+            if p == "/panes":
+                # every pane this kernel knows, for `romp pane list|show` and a page asking what exists: the shipped panes
+                # marked builtin, then the data panes (plans/panes-as-data.md, phase one)
+                rows = [dict(d, builtin=True) for d in _CODE_PANES] + [dict(d, builtin=False) for d in _data_panes()]
+                return self._send(200, json.dumps({"panes": rows, "rev": _panes_rev()}), "application/json", cache="no-cache")
             if p == "/boards":
                 # every board this kernel knows, for `romp board list|show`: the code-defined table and the data-defined
                 # files, each marked with its source (plans/card-boards.md, phase three)
@@ -67438,6 +68408,9 @@ class Handler(BaseHTTPRequestHandler):
             if p == "/files":
                 _client_seen[0] = time.time()
                 return self._send(200, _files_page(), "text/html; charset=utf-8", cache="no-cache")
+            if p == "/artifacts":
+                _client_seen[0] = time.time()
+                return self._send(200, _artifacts_page(), "text/html; charset=utf-8", cache="no-cache")
             if p == "/settings":
                 _client_seen[0] = time.time()
                 return self._send(200, _settings_page(), "text/html; charset=utf-8", cache="no-cache")
@@ -67518,6 +68491,28 @@ class Handler(BaseHTTPRequestHandler):
                 # subscription and states where its page runs (its Referer — a same-origin GET carries no Origin)
                 _push_backfill_origin(_pep, _request_page_origin(self.headers))
                 return self._send(200, json.dumps(_push_pending(_pep)), "application/json", cache="no-cache")
+            if p.startswith("/pane/"):
+                # a STATE-ROOT pane's page (plans/panes-as-data.md, section 3): /pane/<id>/ serves STATE/panes/<id>/index.html,
+                # /pane/<id>/shim.js the pane shim for that id (so the page speaks the pane protocol by one script tag),
+                # /pane/<id>/theme.css the dashboard's theme tokens, and /pane/<id>/<file> a file under the pane's directory,
+                # with the /dist route's traversal guard. Only a defined pane whose source is pane:<id>; anything else is 404.
+                rest = p[len("/pane/"):]
+                pid, _, sub = rest.partition("/")
+                rec = _panes_data().get(pid)
+                if not rec or _pane_source_kind(rec["source"]) != "state":
+                    return self._send(404, "not found", "text/plain")
+                if sub == "shim.js":
+                    return self._send(200, _shim(pid, _dist_ver()), "text/javascript", cache="no-cache")
+                if sub == "theme.css":
+                    return self._send(200, THEME_CSS, "text/css", cache="no-cache")
+                base = (_pane_dir() / pid).resolve()
+                fp = (base / (sub or "index.html")).resolve()
+                if base not in fp.parents or not fp.is_file():
+                    return self._send(404, "not found", "text/plain")
+                ct = {"js": "text/javascript", "css": "text/css", "svg": "image/svg+xml", "html": "text/html; charset=utf-8",
+                      "json": "application/json", "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif",
+                      "woff": "font/woff", "woff2": "font/woff2", "ttf": "font/ttf", "map": "application/json"}.get(fp.suffix.lstrip("."), "text/plain")
+                return self._send(200, fp.read_bytes(), ct, cache="no-cache")
             if p.startswith("/dist/") or p.startswith("/media/"):
                 base = DIST if p.startswith("/dist/") else MEDIA
                 fp = (base / p.split("/", 2)[2]).resolve()
@@ -68629,6 +69624,24 @@ class Handler(BaseHTTPRequestHandler):
                 if hint:
                     resp["hint"] = hint
                 return self._send(200, json.dumps(resp), "application/json")
+            if u.path == "/pane":
+                # Define or remove a DATA-DEFINED PANE (plans/panes-as-data.md, phase one): door two of define_pane, in /board's
+                # shape. Body: the definition itself, or {"remove": <id>}. 400 for a malformed body; 200 {"ok": false, "error"}
+                # for a definition the schema refuses, a reserved id, or a remove of an unknown or shipped pane; 200 {"ok": true,
+                # "pane": <defn>, "rev"} on a define and {"ok": true, "rev"} on a remove (open dashboards see the rev on their
+                # next keepalive and offer a reload).
+                b, berr = _json_object_body(raw_body)
+                if berr:
+                    return self._send(400, json.dumps({"ok": False, "error": berr}), "application/json")
+                if "remove" in b:
+                    ok, err = remove_pane(b.get("remove"))
+                    return self._send(200, json.dumps({"ok": True, "rev": _panes_rev()} if ok else {"ok": False, "error": err}), "application/json")
+                if not b:
+                    return self._send(400, json.dumps({"ok": False, "error": "a pane definition (or {\"remove\": <id>}) required"}), "application/json")
+                defn, err = define_pane(b)
+                if err:
+                    return self._send(200, json.dumps({"ok": False, "error": err}), "application/json")
+                return self._send(200, json.dumps({"ok": True, "pane": defn, "rev": _panes_rev()}), "application/json")
             if u.path == "/board":
                 # Define or remove a DATA-DEFINED BOARD (plans/card-boards.md, phase three): door two of define_board, in
                 # /watch's shape. Body: the definition itself (the schema's members), or {"remove": <id>}. 400 for a malformed
@@ -69365,7 +70378,12 @@ class Handler(BaseHTTPRequestHandler):
             # the second identical refusal), so the kernel must not dedup here. A kernel dedup dropped a GENUINE second gap
             # ask inside its window and, with the page's awaitingFull still set, the tab then discarded every later delta
             # and never re-asked until a reconnect (round two MEDIUM). A legit repeat gets the frame again.
-            _client_reset_chat_sid(client, sid)               # …and drop the dedup slot, so the full send lands
+            _client_reset_chat_sid(client, sid)               # …and drop the dedup slot (and a stale held-tail key), so the full send lands
+            if msg.get("heldTailFirst"):
+                # the page's tail run FIRST key for THIS ask (2026-09-19), stored AFTER the reset cleared any stale one:
+                # the repair full below serves from it (a superset) or, if the turns are gone, sets them aside via `rebased`.
+                # _send_chat_proto2 consumes it, so a later no-key needFull (a click, the prefetch) is not served from it (M3).
+                client.setdefault("heldTailFirst", {})[sid] = msg["heldTailFirst"]
             self._push_one(client)                            # repair NOW, not on the next 0.5-3s tick
             return
         if msg and msg.get("type") in ("loadOlder", "loadAround", "loadNewer", "loadTurns") and msg.get("id") \
@@ -69764,7 +70782,9 @@ class Handler(BaseHTTPRequestHandler):
             if ferr:
                 _refuse_ws_flag(client, msg["type"], ferr, "enabled", msg.get("enabled"))
                 return
-            if _set_auto_nudge(enabled, gt=_gesture_ms(msg), origin=msg.get("origin")) is not None:
+            _st = _set_auto_nudge(enabled, gt=_gesture_ms(msg), origin=msg.get("origin"), scope=msg.get("scope"))
+            if _st is not None:
+                _scoped_pin_after(msg, "auto-nudge", _st)   # phase two: a scoped pick pins the store here
                 # turn-ON acts at once instead of waiting out the pusher's 0.5 s backstop; turning off
                 # has nothing to act on (the tick is a no-op when off, so this also spares the WS
                 # thread the listing fork). The single-flight rule, the dead-wait sweep skip and the
@@ -69785,7 +70805,9 @@ class Handler(BaseHTTPRequestHandler):
             if ferr:
                 _refuse_ws_flag(client, msg["type"], ferr, "enabled", msg.get("enabled"))
                 return
-            if _set_compact_suggest(enabled, gt=_gesture_ms(msg), origin=msg.get("origin")) is not None:
+            _st = _set_compact_suggest(enabled, gt=_gesture_ms(msg), origin=msg.get("origin"), scope=msg.get("scope"))
+            if _st is not None:
+                _scoped_pin_after(msg, "compact-suggest", _st)
                 _ws_act_now_tick()
             else:
                 _tell_stale_gesture(client, msg)
@@ -69801,8 +70823,11 @@ class Handler(BaseHTTPRequestHandler):
             if ferr:
                 _refuse_ws_flag(client, msg["type"], ferr, "enabled", msg.get("enabled"))
                 return
-            if _set_file_editing(enabled, gt=_gesture_ms(msg), origin=msg.get("origin")) is None:
+            _st = _set_file_editing(enabled, gt=_gesture_ms(msg), origin=msg.get("origin"), scope=msg.get("scope"))
+            if _st is None:
                 _tell_stale_gesture(client, msg)
+            else:
+                _scoped_pin_after(msg, "file-editing", _st)
         elif msg and msg.get("type") == "setThinkingSummaries" and msg.get("enabled") is not None:
             # The gear's Thinking summaries checkbox (2026-09-01) — kernel-side like setFileEditing but
             # PER-INSTALL (not a KERNEL_SETTING: nothing to propagate), gt-gated all the same; the SDK
@@ -69844,8 +70869,11 @@ class Handler(BaseHTTPRequestHandler):
             if ferr:
                 _refuse_ws_flag(client, msg["type"], ferr, "pinned", msg.get("pinned"))
                 return
-            if _set_setting_pin(str(msg.get("store")), pinned, gt=_gesture_ms(msg), origin=msg.get("origin")) is None:
+            _pst = _set_setting_pin(str(msg.get("store")), pinned, gt=_gesture_ms(msg), origin=msg.get("origin"), scope=msg.get("scope"))
+            if _pst is None:
                 _tell_stale_gesture(client, msg)
+            elif not pinned:
+                _unpin_to_synchronized(str(msg.get("store")), _pst)   # phase two: the row returns to the synchronized value
         elif msg and msg.get("type") == "setTaskTracking" and msg.get("enabled") is not None:
             # The gear's Task tracking master switch (T404): kernel-side, gt-gated like its siblings, a
             # KERNEL_SETTING in federation. Applied, the producer is woken so the tiers stop or start at the
@@ -69854,10 +70882,11 @@ class Handler(BaseHTTPRequestHandler):
             if ferr:
                 _refuse_ws_flag(client, msg["type"], ferr, "enabled", msg.get("enabled"))
                 return
-            stamp = _set_task_tracking(enabled, gt=_gesture_ms(msg), origin=msg.get("origin"))
+            stamp = _set_task_tracking(enabled, gt=_gesture_ms(msg), origin=msg.get("origin"), scope=msg.get("scope"))
             if stamp is None:
                 _tell_stale_gesture(client, msg)       # a stale stand-down or a refused write, told on this socket
             else:
+                _scoped_pin_after(msg, "task-tracking", stamp)   # phase two: a scoped pick pins the store here
                 _views_dirty[0] = time.time()          # the feed cache serves its warmed build while the view signature stands: the flip is
                 _drop_pure_feed()                      # a kernel-side mutation the signature cannot see, so it marks the views dirty (the
                 _producer_wake.set()                   # optimistic-mutation door) and drops the GET copy; the next push builds the off frame
@@ -70376,6 +71405,14 @@ class Handler(BaseHTTPRequestHandler):
             _reply(client, dict({"type": "dirCompletions", "reqId": msg.get("reqId"), "host": "",
                                  "value": _val, "status": _dir_status(_val)},
                                 **_dir_completions(_val)))
+        elif msg and msg.get("type") == "listArtifacts":
+            # the Artifacts pane's one request (plans/artifacts-pane.md): the files a session's thread named, answered by
+            # the kernel that OWNS the sid (federation routes by it) on this socket; nothing is pushed and nothing written.
+            # reqId echoes back so a slow answer landing after a newer selection is dropped by the page, never rendered.
+            _asid = str(msg.get("sid") or "")
+            _abody, _aerr = _artifacts_list(_asid) if _asid else (None, "no session named")
+            _reply(client, dict({"type": "artifactsListing", "reqId": msg.get("reqId"), "sid": _asid, "error": _aerr or ""},
+                                **(_abody or {"items": [], "capped": False, "max": ARTIFACTS_MAX})))
         elif msg and msg.get("type") == "listDir":
             # The dashboard's file browser. Answered by the kernel that OWNS the sid's session —
             # federation routes by the sid field, so browsing a remote session lists THAT machine's

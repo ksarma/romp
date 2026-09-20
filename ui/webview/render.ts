@@ -35,7 +35,7 @@ import { markerLabel, dayContext, DayWalk, relativeLabel, relativeLines } from "
 import { composeStatusWidgets, folderIconNode, folderLink, type StatusRecord } from "./status-widgets";
 import { REVEAL_LABEL, revealFraction, revealShownFraction, residentSpan, revealCountWords, revealPercentWords, messageCount } from "./reveal-progress";
 import { compactDisplay, isFoldableNoticeShape, itemAnchor, type DisplayItem } from "./compact";
-import { insertRun, regionsFromRuns, gapHeight, pagesToAsk, gapAt, gapFraction, landingNotice, runsOf, turnsBeforeTail, splitHeldAgainstFrame, OVERLAY_KINDS, type Region, type Run, type Gap, type Ev } from "./chat-regions";
+import { insertRun, regionsFromRuns, gapHeight, pagesToAsk, gapAt, gapFraction, landingNotice, setAsideNotice, runsOf, turnsBeforeTail, splitHeldAgainstFrame, OVERLAY_KINDS, type Region, type Run, type Gap, type Ev } from "./chat-regions";
 import { senderKind, SenderKind } from "./sender-identity";
 import { loadSettings, saveSettings, onExternalSettingsChange, installSettingsSync, type RompSettings } from "./settings";
 import { backendLabel, effectiveDefaultBackend } from "./backend-names";
@@ -48,7 +48,7 @@ import { prebuildPlan, type ViewState } from "./prebuild";
 import { historyMarks, historyBands, windowSpans, HIST_H, HIST_GAP } from "./glow-history";
 import { newSkeletonState, applyTabOrderSkeleton, onStatus, holdStatus, onFull, onDismiss, onSocketUp, nextPrefetch, renderKind } from "./skeleton-tabs";
 import { reconcileTabOrder, adoptArrival } from "./tab-order";
-import { writeViewOrder } from "./view-order";
+import { applyViewOrder, readViewOrder, writeViewOrder } from "./view-order";   // the read: a page with no federation manager arranges its own strip (applyTabOrder, frame-listener.ts paneArranges)
 import { planStrip, readTabGroups, writeTabGroups, setSectionCollapsed, sectionRef, isPinned, setPinned, prunePinned, reachableFrom, headWords,
          followAdoption, reorderTagOrder, homeSectionOf, neighborOfFolded, revealedTabs, TABGROUPS_KEY, TABGROUPS_EVENT, type TabSection, type StripItem } from "./tab-groups";
 import { snapshotModel, snapshotHeading, rowWords, type SnapModel, type SnapRow } from "./tab-snapshot";
@@ -120,7 +120,7 @@ import { acceptDragEnter } from "./drag-accept";
 import { perfFrameHandler } from "./perf-telemetry";
 import { linkifyPrRefs, senderPrRepo, postalSenderHost } from "./pr-links";
 import { SETTLE_MS, SETTLE_FIRST_PAINT_MS, SETTLE_ROW_VIEWPORT_CAP, settleStep, settleRowFields, reachableOffset, gestureEvidence, scrollerGrab, writerIsReader, type SettleSample } from "./landing-settle";   // a deep-link landing settles before its row is filed (T386 stage 1)
-import { listenForFrames, federationMissing, federationLoadEntry, fedRetryKey } from "./frame-listener";
+import { listenForFrames, federationMissing, federationLoadEntry, fedRetryKey, paneArranges } from "./frame-listener";
 import { highlightHtml } from "./highlight-cache";
 import { wrapCodeLines, addCopyBtn } from "./code-block";   // a fence's per-line rows and Copy button, shared with the file viewer
 import { turnWorkedSecs as workedSecsOf, workedFooterPlan } from "./worked-footer";
@@ -242,7 +242,7 @@ type ChatEvent = (
   // `held` DOES come from the kernel (_limit_hold): the queue is stuck on the ACCOUNT rather than on this
   // session — a usage limit or a monthly spend cap holds every send — so the head names what it is waiting
   // for, and how long is left when the API reported a reset (the user 2026-07-24).
-  | { kind: "queued"; texts: { md: string; followUp?: boolean; goal?: string; goalId?: string; paths?: string[]; fuCtx?: string; idx?: number; park?: number; cancelable?: boolean; optimistic?: boolean; romp?: boolean; rompSystem?: boolean; rompAuto?: boolean; gist?: string; imgPaths?: string[]; lost?: string; qts?: number; qid?: string; hiddenByPending?: boolean; landing?: boolean }[]; ts?: string; uuid?: string; bare?: boolean; held?: { reason: string; resetsAt?: number | null; what: string; detail?: string } }   // imgPaths: an optimistic echo's dragged-image attachments → thumbnails, the landed form's own renderer (the user 2026-08-25); lost: client-only, the connection dropped after this unconfirmed send; qts: on OUR optimistic copy the pending entry's identity (its press time) so the ✕ removes ITS entry, on a kernel copy its enqueue stamp (T252c); qid: the copy's identity (T252c): minted at the press on OUR copy and posted with the send, so the kernel's copy wears the same one; the ✕ names it on both (send-pending.ts)
+  | { kind: "queued"; texts: { md: string; followUp?: boolean; goal?: string; goalId?: string; paths?: string[]; fuCtx?: string; idx?: number; park?: number; cancelable?: boolean; optimistic?: boolean; romp?: boolean; rompSystem?: boolean; rompAuto?: boolean; gist?: string; imgPaths?: string[]; lost?: string; qts?: number; qid?: string; hiddenByPending?: boolean; landing?: boolean; handed?: boolean }[]; ts?: string; uuid?: string; bare?: boolean; held?: { reason: string; resetsAt?: number | null; what: string; detail?: string } }   // imgPaths: an optimistic echo's dragged-image attachments → thumbnails, the landed form's own renderer (the user 2026-08-25); lost: client-only, the connection dropped after this unconfirmed send; qts: on OUR optimistic copy the pending entry's identity (its press time) so the ✕ removes ITS entry, on a kernel copy its enqueue stamp (T252c); qid: the copy's identity (T252c): minted at the press on OUR copy and posted with the send, so the kernel's copy wears the same one; the ✕ names it on both (send-pending.ts)
   // The turn stopped on an API error (event-based: transcript isApiErrorMessage). The session is BLOCKED
   // until retried — a red-dot card at the bottom with a Retry button (the user 2026-06-16).
   | { kind: "apiError"; text: string; status?: number; ts?: string; uuid?: string }
@@ -545,7 +545,13 @@ function reconcileOptimisticInner(s: Session): void {
   // position. No "N queued messages" header to claim what we can't back. A copy hidden out of a HELD kernel
   // group (a usage limit holds every send) hands its reason to our bubble, so the wait still says what it is
   // waiting for.
-  s.events.push({ kind: "queued", bare: true, texts: inject.map(mk), uuid: OPT_PREFIX + inject[0].ts,
+  // a send the kernel's ECHO covers with no queued copy left (send-pending.ts `handed`, 2026-09-19): the backend passed it
+  // on — the SDK fed it to the CLI, which holds it behind the running turn until its next step — and no recall exists
+  // there, so the bubble loses its ✎ (a rescind could only answer "too late") and says where the message is. The kernel
+  // pushes this session the moment the copy leaves its queue (sdk_backend.py inputs()), so the flip is not a cycle late.
+  const handedSet = new Set(r.handed);
+  const texts = inject.map((p) => handedSet.has(p) ? { ...mk(p), cancelable: false, handed: true } : mk(p));
+  s.events.push({ kind: "queued", bare: true, texts, uuid: OPT_PREFIX + inject[0].ts,
                   held: inject.map((p) => heldBy.get(p)).find((h) => !!h) });
   // the signature is the texts alone: the tail slot moves with every kernel push by design, and chatTail's
   // incremental repaint strips our group before applying a kernel index, so the slot is never trusted
@@ -4957,7 +4963,8 @@ function reflowQueuedGroup(turn: HTMLElement): void {
     // …from the SURVIVING bubbles' own states (data-lost), so a ✕ on the lost bubble leaves the rest
     // reading "sending…" — the label used to keep "not confirmed" for whoever remained
     const nLost = bubbles.filter((b) => (b as HTMLElement).dataset.lost === "1").length;
-    fillBareLabel(label, nLost, bubbles.length - nLost);
+    const nHanded = bubbles.filter((b) => (b as HTMLElement).dataset.handed === "1").length;   // taken by the session (renderQueued marks them)
+    fillBareLabel(label, nLost, bubbles.length - nLost - nHanded, nHanded);
     return;
   }
   const nCmd = bubbles.filter((b) => b.querySelector(".slash-cmd-chip")).length;
@@ -4978,12 +4985,12 @@ function strHash32(str: string): string {
 // The bare group's label from its bubbles' states (send-pending.ts bareGroupLabel): the lost part wears
 // the warn color, the sending part stays dim. Shared by the render and the ✕'s recount so the two can
 // never disagree.
-function fillBareLabel(label: HTMLElement, nLost: number, nSending: number): void {
-  const { parts, title } = bareGroupLabel(nLost, nSending);
+function fillBareLabel(label: HTMLElement, nLost: number, nSending: number, nHanded: number = 0): void {
+  const { parts, title } = bareGroupLabel(nLost, nSending, nHanded);
   label.replaceChildren();
   parts.forEach((part, i) => {
     if (i) label.appendChild(document.createTextNode(" · "));
-    const span = el("span", part.lost ? "lost" : "");
+    const span = el("span", part.lost ? "lost" : part.handed ? "handed" : "");
     span.textContent = part.text;
     label.appendChild(span);
   });
@@ -4999,7 +5006,7 @@ function fillBareLabel(label: HTMLElement, nLost: number, nSending: number): voi
 const pendingGroupNode = new Map<string, { sig: string; node: HTMLElement }>();
 function renderPendingGroup(ev: Extract<ChatEvent, { kind: "queued" }>): HTMLElement {
   const sid = renderingSid || activeId || "";
-  const sig = JSON.stringify(ev.texts.map((t) => [t.md, !!t.lost, t.qts, t.imgPaths || null])) + "|" + JSON.stringify(ev.held || null)
+  const sig = JSON.stringify(ev.texts.map((t) => [t.md, !!t.lost, !!t.handed, t.qts, t.imgPaths || null])) + "|" + JSON.stringify(ev.held || null)
     + (ev.held && ev.held.resetsAt ? "|" + Math.floor(Date.now() / 60000) : "")   // a held countdown reads the minute: re-rendered as it ticks
   const fresh = renderQueued(ev);
   const cached = pendingGroupNode.get(sid);
@@ -5037,7 +5044,8 @@ function renderQueued(ev: Extract<ChatEvent, { kind: "queued" }>): HTMLElement {
     // progress romp cannot see — and the ✕ is its way back to the composer; the others in the same
     // group still read "sending…". One label, both counts when both states are present.
     const nLost = texts.filter((t) => t.lost).length;
-    fillBareLabel(label, nLost, texts.length - nLost);
+    const nHanded = texts.filter((t) => t.handed && !t.lost).length;   // taken by the session, not landed (send-pending.ts `handed`)
+    fillBareLabel(label, nLost, texts.length - nLost - nHanded, nHanded);
     if (ev.held) {   // the reason a hidden kernel copy carried (a usage limit holds every send): the wait says so
       label.appendChild(document.createTextNode(" · " + ev.held.what
         + (ev.held.resetsAt ? " · in " + fmtReset(ev.held.resetsAt, Math.floor(Date.now() / 1000)) : "")));
@@ -5091,13 +5099,16 @@ function renderQueued(ev: Extract<ChatEvent, { kind: "queued" }>): HTMLElement {
     // one phrase separating OUR unconfirmed echo from a real queued message, which the session has accepted
     // and is holding (the user 2026-07-16)
     if (t.optimistic && t.lost) bubble.title = "not confirmed — the connection dropped after this was sent; ✕ moves it back to the composer to send again";
+    // taken by the session (send-pending.ts `handed`, 2026-09-19): the copy left romp's queue for the CLI, which holds it
+    // behind the running turn until its next step — no ✎ (cancelable is off), the dashes close (styles.css .handed)
+    else if (t.optimistic && t.handed) { bubble.classList.add("handed"); bubble.dataset.handed = "1"; bubble.title = "taken by the session — it's waiting for the session's current step to finish; it can't be recalled now, and joins the conversation when the session reads it"; }
     else if (t.optimistic) bubble.title = "sent just now — romp hasn't confirmed the session has it yet";
     else if (t.landing) { bubble.classList.add("landing"); bubble.title = "the session has taken this — it joins the conversation as soon as its record lands"; }
     // a queued entry with NO ✕ (the user 2026-07-20): the queue lives inside the session's own CLI —
     // there is no recall — so instead of a cancel that would only ever say "too late", the tooltip says
     // where the message actually is. (SDK mid-turn forwards land here.)
     else if (!t.cancelable && t.idx !== undefined)
-      bubble.title = "queued in the session — it can't be recalled, and joins the conversation at the session's next step";
+      bubble.title = "queued inside the session's own process — it can't be recalled from here, and joins the conversation at the session's next step";
     const isCmd = renderSlashCmd(bubble, t.md);
     // what romp itself queued wears the LANDED romp grammar (T243, the user 2026-09-07), split exactly as the
     // landed message splits: a SYSTEM notice (restart / resume / a watch landing) is the gray notice card;
@@ -5981,7 +5992,15 @@ function applyTabOrder(o: any, tabs?: any, report?: OrderReport, live?: any) {
     syncSessionsFromTabMeta(tabs, (id) => sessions.get(id), pendingTabMeta);
   }
   // Adopt the kernel order verbatim, keeping any just-arrived tab the push doesn't carry yet (see tab-order.ts).
-  const kernelOrder = Array.isArray(o) ? o.filter((x: any) => typeof x === "string") : [];
+  const seed = Array.isArray(o) ? o.filter((x: any) => typeof x === "string") : [];
+  // …verbatim as the frame ARRIVES: on the browser page federation.js has already arranged it by the viewer's
+  // stored order at its merge point, so this is the arranged order. A page that never loads that layer (a VS Code
+  // webview — frame-listener.ts paneArranges) gets the kernel's raw seed, and until 2026-09-19 adopted it as-is:
+  // a drag wrote the store (commitTabOrder) and this very adoption undid it on the next push. Such a page
+  // arranges here, re-reading the store per frame as the manager does (view-order-wiring.test.ts). The frame's
+  // ID SET is unchanged, so every rule below — the omission teardown, the live keep, the reconcile — reads the
+  // same ids it always did; a page whose manager is MISSING is not this page (fedMissing shows the seed).
+  const kernelOrder = paneArranges(window as any) ? applyViewOrder(seed, readViewOrder()) : seed;
   ackClosingTabs(kernelOrder, report);
   // A kernel-owned tab the push no longer carries gets the SAME teardown the `closed` event runs — the
   // session map, its view, drafts and the active-tab reselect all go, not just the strip entry. Under
@@ -14279,11 +14298,29 @@ if (typeof ResizeObserver === "function") {
       const h = entries[0]?.contentRect?.height ?? 0;
       const content = document.getElementById("content");
       const v = activeId ? views.get(activeId) : null;
-      if (content && !snapView && lastH >= 0 && content.clientHeight > 0 && v && v.shown && followBoxBelow(v.stick, h - lastH)) {   // a transcript rule: it stands down while the overview owns #content (the footer's hide is not a box below the reader, T322)
+      const dh = h - lastH;
+      // Where the reader stood BEFORE the growth, from the geometry (2026-09-19, the load flake behind main's red at bee556e8). The
+      // recorded mode is the pre-growth truth only while nothing scrolled between the growth and this pass, and something can: a
+      // scroll event from any other cause in that window (the append path's tail rebuild anchoring the reader, a compensation
+      // write's echo) reads the GROWN geometry, sees the reader a box's height above the new bottom, and records scrolled-up; this
+      // pass then had nothing to re-pin, and the reader stayed above the bottom, text covered, for good. The browser keeps scrollTop
+      // across a growth (no clamp, no event of its own), so the pre-growth position is this geometry with the growth added back to
+      // #content's height; either truth re-pins. A shrink is the browser's clamp: the recorded mode alone, as before.
+      const wasAtBottom = !!(content && lastH >= 0 && dh > 0 && atBottomDist(content.scrollHeight - content.scrollTop - (content.clientHeight + dh)));
+      let repinned = false;
+      if (content && !snapView && lastH >= 0 && content.clientHeight > 0 && v && v.shown && followBoxBelow(v.stick || wasAtBottom, dh)) {   // a transcript rule: it stands down while the overview owns #content (the footer's hide is not a box below the reader, T322)
         writeScroll(content, content.scrollHeight, "box-below", true);
         v.scrollTop = content.scrollTop;                      // keep the per-view saved position in sync
+        v.stick = true;                                       // the record agrees: a follow-mode reader, whichever truth said so
+        repinned = true;
       }
       lastH = h;
+      // the pass is the EVENT a reader of the bottom holds at (the same flake: under load a lab read scrollTop after the box grew
+      // and before this pass, and saw the reader a box's height above the bottom the write restores). One DOM event per pass, named
+      // by the box, carrying the height this pass acted on: a reader is settled when the box's current height is the one the last
+      // pass reported (a box at its max-height grows no further and passes no more, so "a pass came" is the wrong wait). Page-side,
+      // the way PR 1897's socket hold is lab-side.
+      window.dispatchEvent(new CustomEvent("romp:box-below", { detail: { id: boxId, height: h, repinned } }));
     });
     bro.observe(box);
   }
@@ -14482,6 +14519,30 @@ function showLandingNotice(sid: string, t: number | null | undefined): void {
     content.parentNode.insertBefore(anchor, content);
   }
   landingNoticeEl.classList.remove("pulse");   // a pulse cut short by the hide (no animationend) must not replay on this re-show (low 1)
+  landingNoticeEl.style.display = "";
+}
+/** The set-aside notice for a `rebased` frame (2026-09-19): the same notice element, an informational message with the
+ *  count; a click dismisses it (cancelLanding has no live ask to cancel, so it just hides). Never silent. */
+function showSetAsideNotice(sid: string, n: number): void {
+  // independent of the reveal-progress guard showLandingNotice keeps (2026-09-19 round two, the LOW): a set-aside must
+  // never be silent, so it shows even while a reveal line is up, and carries its OWN tooltip, not the landing notice's.
+  const content = document.getElementById("content");
+  if (!content || !content.parentNode) return;
+  if (!landingNoticeEl) {
+    landingNoticeEl = document.createElement("div");
+    landingNoticeEl.className = "tx-landing-notice";
+    landingNoticeEl.addEventListener("click", () => cancelLanding());
+  }
+  landingNoticeEl.title = "these earlier messages are no longer part of this session; click to dismiss";
+  landingNoticeEl.textContent = setAsideNotice(n);
+  landingNoticeSid = sid;
+  if (!landingNoticeEl.isConnected) {
+    const anchor = document.createElement("div");
+    anchor.className = "tx-loading-anchor";
+    anchor.appendChild(landingNoticeEl);
+    content.parentNode.insertBefore(anchor, content);
+  }
+  landingNoticeEl.classList.remove("pulse");
   landingNoticeEl.style.display = "";
 }
 function hideLandingNotice(): void {
@@ -17682,7 +17743,13 @@ function upsert(msg: any) {
     // has an empty split.before, so it applies.
     for (const r of runsOf(prev.regions)) {
       if (!r.events.length || r.lo < tl || (r.hi != null && r.hi <= tl)) continue;   // above tailLo (kept) or straddling (its before is kept, the rest is a legit retraction)
-      if (splitHeldAgainstFrame(r.events, frameEv, txRow).before.some(txRow)) { desyncWhy = "would-drop-held"; break; }
+      if (splitHeldAgainstFrame(r.events, frameEv, txRow).before.some(txRow)) {
+        // a `rebased` full may set aside a run the frame shares NO key with (a fork / rewind abandoned it, the kernel
+        // confirmed it gone from the transcript); a run the frame PARTIALLY carries is a loss (a lying low tailLo),
+        // refused even with the flag, so a false or lying rebased can never drop content (2026-09-19 round two, M1b).
+        if (msg.rebased && !sharesAnyUuid(msg.events, r.events as unknown as ChatEvent[])) continue;
+        desyncWhy = "would-drop-held"; break;
+      }
     }
   }
   const keepResident = kept || !!desyncWhy;
@@ -17765,6 +17832,15 @@ function upsert(msg: any) {
         if (first && !frameKeys.has(first) && prev.events.some((e) => frameKeys.has(keyOf(e as unknown as Ev) ?? ""))) chatDiagRow("regions-dropped", { id: msg.id, why: "regions-less", heldRuns: 0, heldEvents: prev.events.length, frameEvents: events.length });
       }
       events = all;
+      if (msg.rebased && prev) {
+        // rebased: the kernel says the held tail run's turns are gone from the current session (a fork or a rewind).
+        // This is the ONE place rows leave on purpose (the user 2026-09-19). The merge above already set them aside;
+        // say so, never silently: a diag row and the landing notice with the count.
+        const keptKeys = new Set<string>(); for (const e of all) { const k = keyOf(e as unknown as Ev); if (k) keptKeys.add(k); }
+        let setAside = 0;
+        for (const e of prev.events) { const ev = e as unknown as Ev; if (transcriptRow(ev) && !keptKeys.has(keyOf(ev) ?? "")) setAside++; }
+        if (setAside) { chatDiagRow("regions-dropped", { id: msg.id, why: "rebased", heldRuns: runsOf(prev.regions || []).length, setAside }); showSetAsideNotice(msg.id, setAside); }
+      }
     } else if (prev?.regions) {
       // the kernel could not name where its tail starts: no regions without a tail start (chat-proto2-exec.test.ts pins the rule), so
       // the held runs go with this frame. Said in the journal (2026-09-19), so the kernel's null frames become countable; nothing on the
@@ -17985,6 +18061,16 @@ function clearRefusedLatch(id: string): void {
 // chain; skeleton-delta = a delta for a tab held as skeleton (a contract violation). The return-to-tab harness
 // counts asks by it — a nobase on a reconnect row means the skeleton branch missed a frame type.
 type NeedFullWhy = "gap" | "nobase" | "skeleton-click" | "prefetch" | "skeleton-delta";   // (reattach retired with the detached client, T386 stage 2)
+/** The page's resident TAIL run's first event key for `id`, sent with a needFull so the kernel serves the repair full
+ *  from the held base (a superset, nothing dropped) or, when those turns are gone from the transcript, sets them aside
+ *  via `rebased` (CONTENT THAT EXISTS NEVER GETS DROPPED, the user 2026-09-19). undefined when the page holds no tail run. */
+function heldTailFirstKey(id: string): string | undefined {
+  const rs = sessions.get(id)?.regions;
+  if (!rs) return undefined;
+  const tail = rs.find((r) => r.kind === "run" && r.hi == null) as Run | undefined;
+  const first = tail && tail.events.length ? tail.events[0] : undefined;
+  return first ? (keyOf(first as unknown as Ev) ?? undefined) : undefined;
+}
 function requestFullSession(id: string, why: NeedFullWhy): void {
   if (!id) return;
   if (awaitingFull.has(id)) {
@@ -17996,7 +18082,10 @@ function requestFullSession(id: string, why: NeedFullWhy): void {
     return;
   }
   awaitingFull.add(id);
-  vscodeApi?.postMessage({ type: "needFull", id, why });
+  const ask: { type: "needFull"; id: string; why: NeedFullWhy; heldTailFirst?: string } = { type: "needFull", id, why };
+  const held = heldTailFirstKey(id);
+  if (held) ask.heldTailFirst = held;   // the held tail run first key: the kernel serves the repair from it (a superset) or sets it aside (rebased); omitted when the page holds no tail run
+  vscodeApi?.postMessage(ask);
   pendingFullWhy.set(id, why);   // the reason, for upsert's merge-or-replace decision when the answer lands (round 2, item 3)
 }
 // A relay's reopen (romp:hostRelayUp) releases that host's parked full asks (2026-09-19). After it the remote kernel holds a

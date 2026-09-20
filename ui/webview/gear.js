@@ -77,6 +77,12 @@ var GEAR_HTML =
   // title in the menu vocabulary; every row keeps its id and its key. The tab-widgets gear on the chat strip opens the
   // Chat tab scrolled to its Tab widgets section (openSettings(tab, section)); the last tab used is remembered per
   // browser (romp:settingsTab). RS_TABS is the one list the pills, the panes and selectTab read.
+  // the MACHINE SELECTOR (plans/settings-across-machines.md, phase two; the user 2026-09-19): above the tabs, only when more
+  // than one kernel is connected. "All kernels" is the synchronized view; a pick scopes the four synchronized rows to the
+  // picked kernels and a change there pins them; the count on the button says how many rows differ across the kernels.
+  '<div id=rs-scope hidden><button id=rs-scope-btn type=button aria-haspopup=listbox aria-expanded=false>'
+  + '<span id=rs-scope-label>All kernels</span><span id=rs-scope-count class=rs-differs hidden></span><span class=rs-scope-caret aria-hidden=true>\u25be</span></button>'
+  + '<div id=rs-scope-list role=listbox hidden></div></div>' +
   '<div class=rs-tabs id=rs-tabs role=tablist>' + RS_TABS.map(function (t) { return '<button class=rs-tab type=button role=tab data-tab=' + t[0] + ' aria-selected=false>' + t[1] + '</button>'; }).join('') + '</div>' +
   '<div class=rs-pane data-pane=general hidden>' +
   // GENERAL (T400, the user 2026-09-12): the account this machine is logged in as, which panes this browser's dashboard shows at
@@ -136,6 +142,10 @@ var GEAR_HTML =
   '<span><b>Pane docking</b>' +
   '<span class=rs-sub>Move panes by grabbing their empty space: the frame around a pane, the gap in its top row, or Option-drag (Alt) anywhere over it. A blue outline shows where the pane will land; drop it on another pane\'s left, right, top or bottom half. Off (the default) keeps the fixed layout.</span>' +
   '</span></label>' +
+  // the REGISTRY panes (plans/panes-as-data.md): one Panes row per data pane, rendered at open from the dashboard's own
+  // pane list (the shell's body attribute, read across the same-origin frame boundary), so a pane defined at the kernel
+  // shows up here without a gear release; an experimental pane wears the word and is off until its row is checked
+  '<div id=rs-panes-data></div>' +
   // APPEARANCE, a section of General since T404 (the user 2026-09-13; a tab of its own before, renamed from Colors 2026-08-28): the
   // theme, the colormap and the session palette; an older ask or remembered tab named appearance lands here (TAB_ALIASES)
   "<div class='rs-sec' data-section=appearance>Appearance</div>" +
@@ -393,6 +403,7 @@ function initGear(post, opts) {
   if (document.getElementById('rsettings')) return;
   var ownPage = !!(opts && opts.ownPage);
   document.body.insertAdjacentHTML('beforeend', GEAR_HTML);
+  setTimeout(function () { ensurePinGlyphs(); wireScope(); }, 0);   // phase two: the rows' pin glyphs and the selector, once the closure below is built
 
   var g = document.getElementById('rgear'), p = document.getElementById('rsettings'),
     b = document.getElementById('rsver'), cc = document.getElementById('rs-compact'), tl = document.getElementById('rs-tablock'),
@@ -462,6 +473,34 @@ function initGear(post, opts) {
   // as shown everywhere, settings.ts paneSet), and the shell hears the save as a storage event
   function panesOf(s) { var p = (s && s.panes && typeof s.panes === 'object') ? s.panes : {}; return { timeline: p.timeline !== false, fleet: p.fleet !== false, feed: p.feed !== false }; }
   Object.keys(pn).forEach(function (k) { if (pn[k]) pn[k].addEventListener('change', function () { var s = load(); var p = panesOf(s); p[k] = pn[k].checked; s.panes = p; save(s); }); });
+  // the registry panes' rows (plans/panes-as-data.md): the dashboard emits its data panes as a body attribute when the
+  // registry holds any; the gear reads it from the shell (the settings page is a same-origin frame of it, and on VS Code's
+  // panel there is no dashboard and no list). A row's box writes settings.panes[id]; the shell's reconcile reads it (absent
+  // means on for a normal pane, off for an experimental one).
+  // what a SHIPPED record beyond the hand-written five shows, for its generic Panes row (the registry's rows carry no description;
+  // plans/panes-as-data.md phase three): the Artifacts pane's words are its first landing's row's
+  var BUILTIN_HINTS = { artifacts: 'A session\'s written, shown and dropped files as a list and a grid of large thumbnails.' };
+  function registryPanes() {
+    try { var doc = (window.parent && window.parent !== window) ? window.parent.document : document; var raw = doc.body.getAttribute('data-panes'); var arr = raw ? JSON.parse(raw) : []; return Array.isArray(arr) ? arr.filter(function (p) { return p && typeof p.id === 'string'; }) : []; } catch (e) { return []; }
+  }
+  function renderRegistryRows(s) {
+    var box = document.getElementById('rs-panes-data'); if (!box) return;
+    var rows = registryPanes(); box.textContent = '';
+    var pans = (s && s.panes && typeof s.panes === 'object') ? s.panes : {};
+    rows.forEach(function (p) {
+      var lab = document.createElement('label'); lab.className = 'rs-row rs-panes-row';
+      var cb = document.createElement('input'); cb.type = 'checkbox'; cb.id = 'rs-pane-' + p.id;
+      var v = pans[p.id]; cb.checked = (typeof v === 'boolean') ? v : !p.experimental;
+      var span = document.createElement('span'); var b = document.createElement('b'); b.textContent = String(p.title || p.id);
+      var sub = document.createElement('span'); sub.className = 'rs-sub';
+      // the hint: what a shipped record shows (BUILTIN_HINTS, the words its first landing's row carried), or that a data pane is
+      // defined at the kernel; then the row's meaning, the experimental default said only where it applies (the 1922 read, lows a and b)
+      sub.textContent = (p.experimental ? 'Experimental. ' : '') + (p.builtin ? ((BUILTIN_HINTS[p.id] || '') && BUILTIN_HINTS[p.id] + ' ') : 'A pane defined at the kernel (romp pane). ')
+        + 'Off' + (p.experimental ? ' (the default for an experimental pane)' : '') + ', its column and its button are gone from this browser; on, the rail\'s toggle shows it.';
+      span.appendChild(b); span.appendChild(sub); lab.appendChild(cb); lab.appendChild(span); box.appendChild(lab);
+      cb.addEventListener('change', function () { var st = load(); var pp = (st.panes && typeof st.panes === 'object') ? st.panes : panesOf(st); pp[p.id] = cb.checked; st.panes = pp; save(st); });
+    });
+  }
   // the section is the dashboard's: VS Code's panels have no dashboard shell to hide a pane from
   if (!ownPage) Array.prototype.forEach.call(document.querySelectorAll('#rs-panes-sec,.rs-panes-row'), function (el) { el.hidden = true; });
   // ── the settings' value-picker DROPDOWNS (T117, the user 2026-08-27, screenshot: the Chat
@@ -1091,7 +1130,7 @@ function initGear(post, opts) {
     if (ut1) ut1.hidden = !!on;
   }
   function tellShellTracking(on) { try { (window.parent !== window ? window.parent : window).postMessage({ romp: 'taskTracking', on: !!on }, '*'); } catch (e) {} }
-  if (tk) tk.addEventListener('change', function () { post({ type: 'setTaskTracking', enabled: tk.checked, gt: gclock.stamp('task-tracking') }); });
+  if (tk) tk.addEventListener('change', function () { post(scoped({ type: 'setTaskTracking', enabled: tk.checked, gt: gclock.stamp('task-tracking') })); });
   window.addEventListener('message', function (e) {
     var m = e.data;
     if (!m || m.type !== 'taskTracking' || typeof m.on !== 'boolean') return;   // the kernel's echo of an applied flip
@@ -1106,11 +1145,11 @@ function initGear(post, opts) {
   // the click picks one answer and every machine takes it.
   if (an) an.addEventListener('change', function () {
     clearAutoNudgeSplit();
-    post({ type: 'setAutoNudge', enabled: an.checked, gt: gclock.stamp('auto-nudge') });
+    post(scoped({ type: 'setAutoNudge', enabled: an.checked, gt: gclock.stamp('auto-nudge') }));
   });
-  if (fe) fe.addEventListener('change', function () { post({ type: 'setFileEditing', enabled: fe.checked, gt: gclock.stamp('file-editing') }); });
+  if (fe) fe.addEventListener('change', function () { post(scoped({ type: 'setFileEditing', enabled: fe.checked, gt: gclock.stamp('file-editing') })); });
   if (cvm) cvm.addEventListener('change', function () { post({ type: 'setConserve', enabled: cvm.checked }); });
-  if (csg) csg.addEventListener('change', function () { post({ type: 'setCompactSuggest', enabled: csg.checked, gt: gclock.stamp('compact-suggest') }); });
+  if (csg) csg.addEventListener('change', function () { post(scoped({ type: 'setCompactSuggest', enabled: csg.checked, gt: gclock.stamp('compact-suggest') })); });
   // ── the in-dashboard LOGIN flow (T157): the dashboard is already on the phone over Tailscale,
   // so streaming the CLI's paste-code OAuth URL here IS the phone login. The code input is a pure
   // pass-through to the kernel's PTY — nothing is stored or logged on any side.
@@ -1820,7 +1859,7 @@ function initGear(post, opts) {
     var mine = (v && v.settings) || null;
     [['updateMode', upm], ['judgeModel', jm], ['judgeEffort', je], ['indexModel', im],
      ['indexEffort', ie], ['judgeConcurrency', jc], ['distillModel', dm], ['distillEffort', de], ['fileEditing', fe],
-     ['compactSuggest', csg], ['taskTracking', tk],
+     ['compactSuggest', csg], ['taskTracking', tk], ['autoNudge', an],   // autoNudge: its tri-state box is fillAutoNudge's; its FLAG is this list's (phase two, round two)
      ['commentModel', cmm], ['commentEffort', cme], ['commentFast', cmf],
      ['judgeFast', jf], ['distillFast', df], ['indexFast', xf],
      ['alwaysFast', afb], ['retryUpgrade', rub]].forEach(function (pair) {
@@ -1837,8 +1876,18 @@ function initGear(post, opts) {
           && String(t.settings[key]) !== String(mine[key]);
       }).map(function (t) { return t.host; });
       if (!split.length) return;
-      mark.textContent = 'mixed';
-      mark.title = 'differs on: ' + split.join(', ') + ' — picking here sets every machine the same way';
+      // the four synchronized settings wear the unmistakable FLAG (phase two): the word "differs" in the warning tone, the
+      // machines and their values on hover; every other kernel-side control keeps the quiet mixed mark
+      var sync = Object.keys(STORE_KEY).filter(function (s) { return STORE_KEY[s] === key; })[0];
+      if (sync) {
+        mark.textContent = 'differs'; mark.classList.add('rs-differs');
+        var vals = [kernelName('') + ' ' + (mine[key] ? 'on' : 'off')].concat((rows || []).filter(function (t) { return t && t.status === 'up' && t.settings && typeof t.settings[key] !== 'undefined'; })
+          .map(function (t) { return t.host + ' ' + (t.settings[key] ? 'on' : 'off'); }));
+        mark.title = 'The kernels disagree: ' + vals.join(', ') + '. Under All kernels a click sets every machine the same way; pick a machine above to set it alone.';
+      } else {
+        mark.textContent = 'mixed'; mark.classList.remove('rs-differs');
+        mark.title = 'differs on: ' + split.join(', ') + ' \u2014 picking here sets every machine the same way';
+      }
       mark.hidden = false;
     });
   }
@@ -1849,13 +1898,132 @@ function initGear(post, opts) {
   // user's answer to /setting-proposal with the proposal's stamp (the kernel refuses a stamp the peer has since moved
   // past, and the re-fill shows the new one). A pinned store says so under its row. Rows: one per synchronized store.
   var PROPOSAL_ROWS = { 'auto-nudge': 'rs-autonudge', 'compact-suggest': 'rs-suggestcompact', 'file-editing': 'rs-fileedit', 'task-tracking': 'rs-tasktrack' };
+  var PIN_HTML = "<button type=button class=rs-pin data-store='%s' hidden aria-pressed=false aria-label='Pin this value on the picked machine'><svg viewBox='0 0 12 12' width=12 height=12 aria-hidden=true><path d='M7.5 1 11 4.5 8.6 5.4 6.2 7.8 6.4 10 5.6 10.8 3.6 8.8 1 11.4.6 11 3.2 8.4 1.2 6.4 2 5.6 4.2 5.8 6.6 3.4Z' fill='currentColor'/></svg></button>";
+  var STORE_KEY = { 'auto-nudge': 'autoNudge', 'compact-suggest': 'compactSuggest', 'file-editing': 'fileEditing', 'task-tracking': 'taskTracking' };
+  // ── the MACHINE SELECTOR and the SCOPED rows (phase two) ──────────────────────────────────────────────────────────────
+  // scopeHosts: [] is All kernels (the synchronized view, the broadcast as today); else the picked kernels, '' this machine.
+  // kernels: the connected kernels from /tunnels (up rows), each {host, settings, settingsPinned}; the local one is v.
+  var scopeHosts = [], kernels = [], lastV = null, selfName = '';
+  function scopeOn() { return scopeHosts.length > 0; }
+  function scoped(m) {   // a setting message under a scope carries the picked kernels; federation stamps each copy's origin and the scope
+    refillSoon();   // any click moves the kernels' agreement: the flags and the selector's count follow the local kernel's next poll
+    if (!scopeOn()) return m;
+    m.hosts = scopeHosts.slice(); m.scope = 'pinned';
+    return m;
+  }
+  var refillTimers = [];
+  function refillSoon() {   // re-read the kernel's values and the rows a few times after a scoped change or a pin: a remote kernel's state
+    refillTimers.forEach(clearTimeout); refillTimers = [];   // arrives with the supervisor's next poll, a few seconds later
+    [700, 2500, 5000, 8000, 12000, 16000, 21000].forEach(function (ms) { refillTimers.push(setTimeout(function () { if (!p.hidden) fill(); }, ms)); });   // the poll's cadence is seconds; the last read lands after it
+  }
+  function kernelName(h) { return h ? h : (selfName ? selfName + ' (this machine)' : 'this machine'); }
+  function kernelSettings(h) {   // a kernel's values and pins, from the same reads the mixed marks make
+    if (!h) return { settings: (lastV && lastV.settings) || {}, pinned: (lastV && lastV.settingsPinned) || {} };
+    var t = kernels.filter(function (k) { return k.host === h; })[0];
+    return { settings: (t && t.settings) || {}, pinned: (t && t.settingsPinned) || {} };
+  }
+  function scopeValue(store) {   // the picked kernels' value for a store: true/false when they agree, null when they differ or none knows it
+    var key = STORE_KEY[store], seen = [];
+    scopeHosts.forEach(function (h) { var s = kernelSettings(h).settings; if (typeof s[key] === 'boolean' && seen.indexOf(s[key]) < 0) seen.push(s[key]); });
+    return seen.length === 1 ? seen[0] : null;
+  }
+  function differing(v) {   // the synchronized rows whose connected kernels disagree: [{store, values: [{host, value}]}]
+    var out = [];
+    Object.keys(STORE_KEY).forEach(function (store) {
+      var key = STORE_KEY[store], mine = v && v.settings ? v.settings[key] : undefined;
+      if (typeof mine !== 'boolean') return;
+      var vals = [{ host: '', value: mine }], differ = false;
+      kernels.forEach(function (t) { if (t.settings && typeof t.settings[key] === 'boolean') { vals.push({ host: t.host, value: t.settings[key] }); if (t.settings[key] !== mine) differ = true; } });
+      if (differ) out.push({ store: store, values: vals });
+    });
+    return out;
+  }
+  function pinGlyph(store) { return document.querySelector('#rsettings .rs-pin[data-store="' + store + '"]'); }
+  function ensurePinGlyphs() {   // one glyph per synchronized row, at the row's right edge, appended once
+    Object.keys(PROPOSAL_ROWS).forEach(function (store) {
+      if (pinGlyph(store)) return;
+      var row = proposalHost(store); if (!row) return;
+      var tpl = document.createElement('template'); tpl.innerHTML = PIN_HTML.replace('%s', store);
+      var b = tpl.content.firstChild; row.appendChild(b);
+      b.addEventListener('click', function (e) {
+        e.preventDefault(); e.stopPropagation();
+        var targets = scopeOn() ? scopeHosts.slice() : [''];
+        var lit = b.getAttribute('aria-pressed') === 'true';
+        post({ type: 'setSettingPin', store: store, pinned: !lit, gt: gclock.stamp(store), hosts: targets, scope: 'pinned' });
+        refillSoon();   // the kernel's answer lands in its stores (a remote's through the next poll); the fills read them (the arm sends no frame on success)
+      });
+    });
+  }
+  function fillScope(v) {
+    var box = document.getElementById('rs-scope'), btn = document.getElementById('rs-scope-btn'), lbl = document.getElementById('rs-scope-label'),
+      cnt = document.getElementById('rs-scope-count'), list = document.getElementById('rs-scope-list');
+    if (!box) return;
+    var many = kernels.length > 0;
+    box.hidden = !many;
+    if (!many) { scopeHosts = []; }
+    var diffs = differing(v);
+    if (cnt) { cnt.textContent = diffs.length ? (diffs.length + (diffs.length === 1 ? ' differs' : ' differ')) : ''; cnt.hidden = !diffs.length;
+      cnt.title = diffs.map(function (d) { return d.store.replace('-', ' ') + ': ' + d.values.map(function (x) { return kernelName(x.host) + ' ' + (x.value ? 'on' : 'off'); }).join(', '); }).join('\n'); }
+    if (lbl) lbl.textContent = scopeOn() ? scopeHosts.map(kernelName).join(', ') : 'All kernels';
+    if (list) {
+      list.innerHTML = '';
+      var all = document.createElement('button'); all.type = 'button'; all.className = 'rs-scope-opt' + (scopeOn() ? '' : ' on'); all.setAttribute('role', 'option');
+      all.setAttribute('aria-selected', String(!scopeOn())); all.textContent = 'All kernels'; all.title = 'The synchronized view: a change applies on every connected kernel (a pinned machine keeps its own)';
+      all.addEventListener('click', function (e) { e.stopPropagation(); scopeHosts = []; closeScope(); fill(); });
+      list.appendChild(all);
+      [''].concat(kernels.map(function (t) { return t.host; })).forEach(function (h) {
+        var o = document.createElement('label'); o.className = 'rs-scope-opt' + (scopeHosts.indexOf(h) >= 0 ? ' on' : ''); o.setAttribute('role', 'option');
+        var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = scopeHosts.indexOf(h) >= 0;
+        cb.addEventListener('change', function () { var i = scopeHosts.indexOf(h); if (cb.checked && i < 0) scopeHosts.push(h); if (!cb.checked && i >= 0) scopeHosts.splice(i, 1); fill(); });
+        var tx = document.createElement('span'); tx.textContent = kernelName(h);
+        o.title = 'Scope the synchronized settings to ' + kernelName(h) + ': a change applies there alone and pins it there';
+        o.appendChild(cb); o.appendChild(tx); list.appendChild(o);
+      });
+    }
+    if (btn) btn.setAttribute('aria-expanded', String(list && !list.hidden));
+  }
+  function closeScope() { var l = document.getElementById('rs-scope-list'), b = document.getElementById('rs-scope-btn'); if (l) l.hidden = true; if (b) b.setAttribute('aria-expanded', 'false'); }
+  function wireScope() {
+    var btn = document.getElementById('rs-scope-btn'), list = document.getElementById('rs-scope-list');
+    if (!btn || !list) return;
+    btn.addEventListener('click', function (e) { e.stopPropagation(); list.hidden = !list.hidden; btn.setAttribute('aria-expanded', String(!list.hidden)); });
+    document.addEventListener('click', function (e) { if (!list.hidden && !list.contains(e.target) && e.target !== btn && !btn.contains(e.target)) closeScope(); });
+  }
+  // the four rows under a scope: the picked kernels' value (indeterminate when they differ), the pin glyph lit when the picked
+  // kernel pinned the store (under All: this machine), its hover naming the synchronized value beside the pinned one
+  function fillScopedRows(v) {
+    var many = kernels.length > 0;
+    Object.keys(PROPOSAL_ROWS).forEach(function (store) {
+      var box = document.getElementById(PROPOSAL_ROWS[store]), key = STORE_KEY[store], g = pinGlyph(store);
+      if (box && scopeOn()) {
+        var sv = scopeValue(store);
+        box.indeterminate = sv === null; if (sv !== null) box.checked = sv;
+      }   // scope off: the box is fill()'s and fillAutoNudge's (its tri-state stands; round two, medium 2)
+      if (!g) return;
+      var localPinned = !!kernelSettings('').pinned[store];
+      g.hidden = !(many || localPinned);   // a store THIS machine pins shows its glyph whatever the kernel count: the un-pin lives there (round two, medium 4)
+      if (g.hidden) return;
+      var targets = scopeOn() ? scopeHosts : [''];
+      var pinnedAll = targets.every(function (h) { return !!kernelSettings(h).pinned[store]; });
+      g.setAttribute('aria-pressed', String(pinnedAll)); g.classList.toggle('on', pinnedAll);
+      var others = [], mineV = null;
+      [''].concat(kernels.map(function (t) { return t.host; })).forEach(function (h) {
+        var s = kernelSettings(h).settings; if (typeof s[key] !== 'boolean') return;
+        if (targets.indexOf(h) >= 0) { if (mineV === null) mineV = s[key]; } else others.push(kernelName(h) + ' ' + (s[key] ? 'on' : 'off'));
+      });
+      var where = targets.map(kernelName).join(', ');
+      g.title = pinnedAll
+        ? 'Pinned on ' + where + ': ' + (mineV === null ? 'its value' : (mineV ? 'on' : 'off')) + ' here' + (others.length ? '; elsewhere ' + others.join(', ') : '') + '. Click to un-pin and return to the synchronized value.'
+        : 'Pin ' + where + "'s value against the other machines" + (others.length ? ' (' + others.join(', ') + ')' : '') + '.';
+    });
+  }
   function proposalHost(store) {
     var box = document.getElementById(PROPOSAL_ROWS[store]);
     var row = box && box.closest ? (box.closest('label') || box.closest('.rs-row')) : null;
     return row || null;
   }
   function clearProposalLines() {
-    Array.prototype.forEach.call(document.querySelectorAll('#rsettings .rs-proposal, #rsettings .rs-pinned'), function (el) { el.parentNode.removeChild(el); });
+    Array.prototype.forEach.call(document.querySelectorAll('#rsettings .rs-proposal'), function (el) { el.parentNode.removeChild(el); });
   }
   function answerProposal(store, host, gt, answer) {
     return fetch(ku('/setting-proposal'), { method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1887,12 +2055,8 @@ function initGear(post, opts) {
         line.appendChild(txt); line.appendChild(apply); line.appendChild(keep);
         after.parentNode.insertBefore(line, after.nextSibling); after = line;
       });
-      if (!rows.length && pins[store]) {
-        var pin = document.createElement('div');
-        pin.className = 'rs-pinned'; pin.setAttribute('data-store', store);
-        pin.textContent = 'Pinned on this machine: other machines\' picks are not applied here.';
-        row.parentNode.insertBefore(pin, row.nextSibling);
-      }
+      // (the pinned NOTE that stood under a pinned row folded into the row's pin glyph, phase two: the glyph is lit and its hover
+      // says what the note said, with the synchronized value beside the pinned one)
     });
   }
   // setShow — fill()'s write path for every kernel-backed select below — sits beside paintChoices, which
@@ -1904,9 +2068,13 @@ function initGear(post, opts) {
     // A failed /tunnels leaves the local answers standing, unmarked — same fallback as before.
     fetch(ku('/tunnels'), { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (d) {
       var rows = (d && d.tunnels) || [];
+      kernels = rows.filter(function (t) { return t && t.status === 'up'; });
       fillAutoNudge(v.autoNudge, rows);
       fillMixedMarks(v, rows);
-    }).catch(function () { fillAutoNudge(v.autoNudge, []); fillMixedMarks(v, []); });
+      fillScope(v); fillScopedRows(v);   // phase two: the machine selector and the scoped rows read the same rows
+    }).catch(function (e) { try { console.error('romp: settings: the /tunnels read or the cross-machine fill failed', e); } catch (_e) {}   // fail loudly: a swallowed fault hid the selector
+      kernels = []; fillAutoNudge(v.autoNudge, []); fillMixedMarks(v, []); fillScope(v); fillScopedRows(v); });
+    lastV = v; selfName = (typeof v.host === 'string' && v.host) ? v.host : selfName;
     if (ths) ths.checked = !!v.thinkingSummaries;   // per-install opt-in: this kernel's persisted answer is authoritative
     if (utd) utd.checked = !!v.userTodos;           // the Requests switch (default off): the same per-install rule
     if (wcf) wcf.checked = !!v.wholeChatFrames;     // the Whole chat frames switch: the same per-install rule
@@ -2023,7 +2191,7 @@ function initGear(post, opts) {
     // burned the whole 5-frame retry against a display:none pane, latched rs-pane-gone, and the
     // full-viewport fallback box blacked out every pane behind the modal.
     try { if (window.parent !== window) window.parent.postMessage({ romp: 'logUnseenQuery' }, '*'); } catch (e) { /* no shell to ask */ }   // T290: the Open log count
-    p.hidden = false; feedFull(true); setModalCls(true); var s = load(); cc.checked = !!s.compact; tl.checked = !!s.tabsLocked; jix.checked = (s.showIndexJudges !== undefined ? !!s.showIndexJudges : !!s.debug); jtr.checked = (s.showTriageJudges !== undefined ? !!s.showTriageJudges : !!s.debug); if (sr) sr.checked = s.stripGroupRows !== false; if (dn) dn.checked = s.denseChrome === true; if (fsc) fsc.checked = (s.showFilesControl === true); if (pdk) pdk.checked = (s.paneDocking === true); (function (p) { Object.keys(pn).forEach(function (k) { if (pn[k]) pn[k].checked = p[k]; }); })(panesOf(s)); tcPaint(); paintWidgets(); csPaint(); ttPaint(); if (fc) fc.checked = s.collapsed === true; cmBuild(); cmPaint(s.colormap || 'aurora'); if (bk) { bk.value = BN.effectiveDefaultBackend(s.backend); repaintSelectPicks(); } if (dd) dd.value = s.defaultDir || ''; plFill(); fill(); if (section) showSection(section); else clearSectionScroll(); }
+    p.hidden = false; feedFull(true); setModalCls(true); var s = load(); cc.checked = !!s.compact; tl.checked = !!s.tabsLocked; jix.checked = (s.showIndexJudges !== undefined ? !!s.showIndexJudges : !!s.debug); jtr.checked = (s.showTriageJudges !== undefined ? !!s.showTriageJudges : !!s.debug); if (sr) sr.checked = s.stripGroupRows !== false; if (dn) dn.checked = s.denseChrome === true; if (fsc) fsc.checked = (s.showFilesControl === true); if (pdk) pdk.checked = (s.paneDocking === true); renderRegistryRows(s); (function (p) { Object.keys(pn).forEach(function (k) { if (pn[k]) pn[k].checked = p[k]; }); })(panesOf(s)); tcPaint(); paintWidgets(); csPaint(); ttPaint(); if (fc) fc.checked = s.collapsed === true; cmBuild(); cmPaint(s.colormap || 'aurora'); if (bk) { bk.value = BN.effectiveDefaultBackend(s.backend); repaintSelectPicks(); } if (dd) dd.value = s.defaultDir || ''; plFill(); fill(); if (section) showSection(section); else clearSectionScroll(); }
   if (g) g.onclick = function (e) { e.stopPropagation(); openSettings(); };   // hidden anchor; hosts open via the message below
   window.addEventListener('message', function (e) { if (e.data && e.data.romp === 'openSettings') openSettings(typeof e.data.tab === 'string' ? e.data.tab : undefined, typeof e.data.section === 'string' ? e.data.section : undefined); });   // the tab and its section ride the ask (T379: the strip's gear opens Chat at Tab widgets)
   // Escape, relayed by the web shell's Escape chain (_LANDING_ESC_JS captures keydown in this same-origin

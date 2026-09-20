@@ -379,7 +379,7 @@ class LiveTail(unittest.TestCase):
     def test_forwards_sends_is_true_for_the_sdk(self):
         be = sb.SdkBackend(tempfile.mkdtemp(), "/bin/true", lambda *a, **k: None)
         self.assertTrue(be.forwards_sends(),
-                        "the SDK forwards its own sends (mid-turn + fold + interrupt-hold) — the kernel hands "
+                        "the SDK forwards its own sends (mid-turn + one message each + interrupt-hold): the kernel hands "
                         "composer sends straight over instead of parking them (the user 2026-07-17)")
 
     def test_queued_turns_survive_an_interrupt_and_release_when_the_turn_settles(self):
@@ -4482,10 +4482,14 @@ class ReconnectReconcilesInflight(unittest.TestCase):
             async def get_context_usage(self): return {"percentage": 2, "model": "claude-x"}
 
             async def receive_messages(self):
-                yield _sdk.SystemMessage("init", {"session_id": self.options.session_id or "fsid"})
+                # the CLI's init opens a TURN (one per turn, none on a turn-less connect: _on_message's init
+                # branch says so), so the fake streams it with the first dequeued turn. Streamed at connect, the
+                # SECOND client's init read as a turn the CLI started (a turn frame at inflight 0 counts as one,
+                # the CLI-owned-turn count) and held inflight at 1 for the stall's whole life.
                 while True:
                     turn = await self._turnq.get()
                     StallClient.received.append(turn["message"]["content"][0]["text"])
+                    yield _sdk.SystemMessage("init", {"session_id": self.options.session_id or "fsid"})
                     await _aio.sleep(3600)           # stall this turn forever (never a ResultMessage)
 
         _sdk.ClaudeSDKClient = StallClient
@@ -5410,6 +5414,19 @@ class PushSessionCallback(unittest.TestCase):
         be._push_session(self.SID)
         self.assertTrue(done.wait(5), "the callback fires, on its own thread")
         self.assertEqual(got, [self.SID])
+
+    def test_the_hand_off_to_the_cli_pushes_its_one_session(self):
+        # The pop in inputs() is the moment a queued copy leaves _pending for the CLI's stdin, where no recall
+        # exists: the chat's bubble must flip from "sending… ✎" to "taken by the session" NOW, not at the next
+        # full cycle (the user 2026-09-19: the ✎ stayed for the whole wait and answered "too late"). Source-
+        # pinned like the other inputs() rules (a nested closure); the callback's mechanics are the tests here.
+        import inspect
+        src = inspect.getsource(sb.SdkSession)
+        i = src.index("self._inflight_texts.append(item)")
+        k = src.index('yield {"type": "user",', i)
+        j = src.find("self.backend._push_session(self.sid)", i, k)
+        self.assertGreater(j, 0, "the targeted push sits between the pop and the yield that hands the text to the CLI")
+        self.assertIn("self.backend._poke()", src[i:j], "…after the poke that wakes the fleet cycle")
 
     def test_without_the_callback_it_falls_back_to_the_pusher_wake(self):
         # an older kernel (or a test) that didn't wire push_session still gets the pre-existing

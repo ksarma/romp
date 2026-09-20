@@ -68,7 +68,7 @@ class SettingsSectionsTest(unittest.TestCase):
         self.assertIn("+ SHORTCUT_ROWS +", panes["general"])
         # Panes (the user 2026-09-10): three rows, one hint each, Sessions before Outline before Feed; the chat is required, Files keeps its rail toggle
         pn = panes["general"]   # the Panes section moved to General (T400)
-        self.assertEqual(pn.count('<label class="rs-row rs-panes-row">'), 5)   # Sessions, Outline, Feed, the Files row since the T404 tidy, and the Pane docking switch (plans/pane-docking.md phase two: a Panes row, so the off-dashboard hide takes it)
+        self.assertEqual(pn.count('<label class="rs-row rs-panes-row">'), 5)   # the Artifacts pane's row is the generic registry row (plans/panes-as-data.md phase three), rendered at open, not in the markup   # Sessions, Outline, Feed, the Files row since the T404 tidy, and the Pane docking switch (plans/pane-docking.md phase two: a Panes row, so the off-dashboard hide takes it)
         self.assertLess(pn.index("<b>Sessions</b>"), pn.index("<b>Outline</b>"))
         self.assertLess(pn.index("<b>Outline</b>"), pn.index("<b>Feed</b>"))
         self.assertNotIn("id=rs-pane-chat", h, "the chat is required")

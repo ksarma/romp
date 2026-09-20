@@ -31,6 +31,8 @@ HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
 BIN = os.path.join(ROOT, "bin")
 EXT = os.path.join(ROOT, "vscode-extension")
+PANES_ROWS = 5      # Sessions, Outline, Feed, Files and the Pane docking switch: the driver's rows list names each
+GENERIC_ROWS = 1    # the registry rows the gear renders at open from body[data-panes]: the Artifacts record on a kernel with no data pane (plans/panes-as-data.md phase three)
 sys.path.insert(0, HERE)
 import test_ship_reship_served as _lab   # noqa: E402  the lab kernel's environment: a list of names, never a copy of the runner's
 
@@ -185,7 +187,7 @@ const out = {};
       return { subHeight: sr.height, roomAbove: rr.top - cr.top, roomBelow: cr.bottom - rr.bottom, up: row.classList.contains("rs-up"), subTop: sr.top, subBottom: sr.bottom, cardTop: cr.top, cardBottom: cr.bottom, viewport: window.innerHeight }; });
     await page.mouse.move(4, 4);
     await page.setViewportSize({ width: 1200, height: 800 }); await page.waitForTimeout(200);
-    // the off-dashboard hide's outcome (round two, low 4): the selector the hide uses takes the five Panes rows (the Pane docking switch
+    // the off-dashboard hide's outcome (round two, low 4): the selector the hide uses takes the six Panes rows (the Pane docking switch
     // joined Sessions, Outline, Feed and Files, plans/pane-docking.md phase two) and their head; hidden,
     // each reads display none and height 0; shown again, display flex (its trigger is the VS Code host, ownPage false, not this page)
     out.panesHide = await setF.evaluate(() => {
@@ -451,10 +453,10 @@ class ServedSettingsTabs(unittest.TestCase):
         # round two, low 4: the outcome, not the class: hidden by the selector the hide uses, every row reads display none and height 0
         r = self._run(); h = r["panesHide"]; table = "\n  " + json.dumps(h) + " classes: " + json.dumps(r.get("panesRowClasses"))
         self.assertTrue(h["covered"], "the hide's selector reaches all five Panes rows (the Files row since the T404 tidy, the Pane docking switch since phase two)" + table)
-        self.assertEqual(h["count"], 6, "the head and the five rows, nothing else" + table)
+        self.assertEqual(h["count"], PANES_ROWS + GENERIC_ROWS + 1, "the head, the five hand-written rows and the one generic row (the Artifacts record), nothing else" + table)
         for x in h["hidden"]:
             self.assertEqual((x["display"], x["height"]), ("none", 0), "hidden: display none, height 0" + table)
-        self.assertEqual(h["shown"], ["flex"] * 5, "shown again: display flex" + table)
+        self.assertEqual(h["shown"], ["flex"] * PANES_ROWS, "shown again: display flex" + table)
 
     def test_the_fast_mode_boxes_popovers_stay_inside_the_card_at_a_short_window(self):
         # round two, the medium: the box's own popover, nested in the judge row, ran 15 px past the card at 380 px (48 at 300)
