@@ -729,14 +729,16 @@ class ExplicitBinFailures(unittest.TestCase):
 
 
 class PostalTools(unittest.TestCase):
-    """The six postal tools ride every Codex thread as Codex DYNAMIC TOOLS, and the kernel services the calls
-    (2026-09-19). thread/start and thread/resume carry `dynamicTools` (the bus's six specs, a KEEP-IN-SYNC copy in the
-    backend) and the bus's instructions as the thread's `developerInstructions`; the app-server's `item/tool/call`
-    server request reaches _handle_approval FIRST (before the declined-request warn), is bound to the session by its
-    threadId ONLY, forwards only the arguments the tool's schema declares, runs the kernel's callable with NO backend
-    lock held, and never raises out of the SDK's single reader thread. The FakeClient mints thread ids T-1, T-2, ...
-    in spawn order. Synthetic fixtures only (web/api, /TESTDIR, placeholder uuids); the fake postal takes no token."""
-    TOOLS = ["check_inbox", "check_sent", "list_agents", "recall_message", "send_message", "set_working"]
+    """The eight postal tools (six for peer mail, two for requests to the person the session works for) ride every
+    Codex thread as Codex DYNAMIC TOOLS, and the kernel services the calls (2026-09-19). thread/start and thread/resume
+    carry `dynamicTools` (the bus's eight specs, a KEEP-IN-SYNC copy in the backend) and the bus's instructions as the
+    thread's `developerInstructions`; the app-server's `item/tool/call` server request reaches _handle_approval FIRST
+    (before the declined-request warn), is bound to the session by its threadId ONLY, forwards only the arguments the
+    tool's schema declares, runs the kernel's callable with NO backend lock held, and never raises out of the SDK's
+    single reader thread. The FakeClient mints thread ids T-1, T-2, ... in spawn order. Synthetic fixtures only
+    (web/api, /TESTDIR, placeholder uuids); the fake postal takes no token."""
+    TOOLS = ["add_user_todo", "check_inbox", "check_sent", "list_agents", "recall_message", "send_message",
+             "set_working", "withdraw_user_todo"]
 
     @staticmethod
     def _call(tid, tool, args, turn="t-1", call="exec-1"):

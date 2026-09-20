@@ -130,15 +130,26 @@ The current profile grants write access to the entire workspace, including
 `.git`, `.agents`, and `.codex`. Metadata protection needs narrower filesystem
 rules; it is not provided by this profile.
 
-**Mail.** A Codex session messages its peers through the same six postal tools
-a Claude session has (`send_message`, `check_inbox`, `list_agents`,
-`set_working`, `check_sent`, `recall_message`). They reach the session as
-Codex tool calls that romp itself performs on the session's behalf: the
-kernel posts to the postal bus as that session, so no credential is ever
-exposed to the commands the session runs, the sender is always the session
-itself, and the bus's rules (live-only addressing, the per-session mailbox
-toggle) apply exactly as they do to Claude sessions. Sandboxed and Auto mail
-the same way; no reviewer is involved. The shell command `romp mail` is
+**Mail.** A Codex session messages its peers through the same postal tools a
+Claude session has: the six for peer mail (`send_message`, `check_inbox`,
+`list_agents`, `set_working`, `check_sent`, `recall_message`) and the two for
+requests to the person it works for (`add_user_todo`, `withdraw_user_todo`;
+see [Requests from sessions](guide.md#requests-from-sessions) in the guide).
+They reach the session as Codex tool calls that romp itself performs on the
+session's behalf: the kernel posts to the postal bus as that session, or files
+and withdraws a request in its own store as that session, so no credential is
+ever exposed to the commands the session runs, the sender is always the
+session itself, and the bus's rules (live-only addressing, the per-session
+mailbox toggle) and the request routes' rules (the caps, the switch, the
+account of a withdrawal) apply exactly as they do to Claude sessions.
+Sandboxed and Auto mail the same way; no reviewer is involved. The two request
+tools ride every Codex thread whatever the **Requests from sessions** switch
+says, since a thread's tools are fixed when it starts (the postal bus lists
+them to a Claude session only while the switch is on); while the switch is
+off, a call is answered that requests are turned off on this machine, and
+nothing is saved. The block of open requests a Claude session gets back after
+a resume, a compaction or a clear rides Claude Code's SessionStart hook;
+nothing equivalent is given to a Codex thread. The shell command `romp mail` is
 refused inside the sandbox (its identity lookup and the serve token both live
 outside the mounts) or, in a workspace without a romp checkout, not there at
 all; either way a Codex session mails through the tools. Note what the
@@ -180,8 +191,8 @@ Two host notes:
 Working today: lanes and status, task cards and judging, full chat (prompts,
 replies, thinking, commands, file diffs, web searches), steering a running
 turn, interrupts, model and reasoning-effort switches, resume after restarts,
-and postal mail both ways: delivery into Codex sessions, and the six postal
-tools from inside them (the Sandboxing section above). A Codex session's
+and postal mail both ways: delivery into Codex sessions, and the postal tools
+from inside them (the Sandboxing section above). A Codex session's
 sends show in its chat and timeline under the same name a Claude session's do.
 and postal delivery into Codex sessions. A resume whose reply the pinned SDK
 cannot read, because the thread's history holds an item kind newer than the

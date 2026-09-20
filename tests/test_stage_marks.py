@@ -122,7 +122,9 @@ CALLBACK_ALLOW = {
     ("CodexBackend", "poke", "_wake_kernel"): "sets the kernel's wake event",
     ("CodexBackend", "push", "_pusher_wake.set"): "sets the pusher's wake event",
     ("CodexBackend", "log", "<lambda>"): "a stderr line",
-    ("CodexBackend", "postal", "_codex_postal_call"): "loopback HTTP to the bus and a working-note file write; no session parse, "
+    ("CodexBackend", "postal", "_codex_postal_call"): "loopback HTTP to the bus, a working-note file write, and the request "
+                                                       "store's register and withdraw through the /usertodo routes' own "
+                                                       "functions (a store file write and a pusher wake); no session parse, "
                                                        "build or hydrate",
     # handed by ATTRIBUTE assignment on the constructed backend (kernel.py, after the SDK constructor): the same rows
     ("SdkBackend", "login_ok", "<lambda>"): "reads the credential store's account state",

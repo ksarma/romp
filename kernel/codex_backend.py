@@ -20,9 +20,10 @@ Shape of the machine:
 - Auth is machine-global (`codex login`): a missing login is surfaced PER SESSION via launch_error,
   loudly, the moment a session tries to run (the 2026-07-28 rule: never a silent non-start).
 
-- Mail: every thread carries the six postal tools as Codex DYNAMIC TOOLS (POSTAL_TOOL_SPECS); the app-server's
-  `item/tool/call` lands in _handle_approval and the kernel's `postal` callable posts to the bus AS the session,
-  so no credential enters the sandbox and Sandboxed and Auto mail alike (2026-09-19).
+- Mail: every thread carries the eight postal tools (six for peer mail, two for requests to the person the session
+  works for) as Codex DYNAMIC TOOLS (POSTAL_TOOL_SPECS); the app-server's `item/tool/call` lands in _handle_approval
+  and the kernel's `postal` callable posts to the bus, or writes the kernel's own stores, AS the session, so no
+  credential enters the sandbox and Sandboxed and Auto mail alike (2026-09-19).
 
 Everything Claude-only returns its documented empty value and the kernel stays loud about it:
 set_fast/set_auth/stop_task/rewind_files → False, on_ask → False, current_ask → None.
@@ -109,12 +110,13 @@ def _approval_params(mode="sandboxed"):
 # and the kernel accept one credential, the kernel's serve token, and the sandbox profile above leaves the state
 # directory that holds it unmounted on purpose (docs/codex.md, Sandboxing): `romp mail` inside the sandbox fails on
 # credential, identity and reachability alike, and the one way it ever worked was an out-of-sandbox escalation that
-# Codex's own reviewer allowed on some threads and refused on others. So the six postal tools are registered as Codex
+# Codex's own reviewer allowed on some threads and refused on others. So the eight postal tools are registered as Codex
 # DYNAMIC TOOLS on thread/start (and again on thread/resume, harmless: the registration persists in the rollout's
 # session_meta; probed live 2026-09-19 on runtime 0.153.3 through the pinned 0.144.4 client, whose _params_dict passes
 # a plain dict through unchanged, its ThreadStartParams knowing no such field). Each call comes back as the
 # `item/tool/call` server request, which _handle_approval routes to _postal_tool_call, and the kernel's callable
-# (`postal`, kernel.py _codex_postal_call) posts to the bus over loopback AS the session: no credential enters the
+# (`postal`, kernel.py _codex_postal_call) posts to the bus over loopback AS the session (set_working and the two
+# request tools write the kernel's own stores, which the bus's tool posts to the kernel for): no credential enters the
 # sandbox, the sender is the thread's own sid by construction, and Sandboxed and Auto behave the same (no approval or
 # reviewer step touches a dynamic tool call in either mode: probed).
 #
@@ -146,6 +148,23 @@ POSTAL_TOOL_SPECS = [
      "description": "Publish what you're working on (files/surface) so peers steer clear; your branch shows automatically. Empty text clears it (romp also auto-clears once your work is done and the session idles).",
      "inputSchema": {"type": "object",
                      "properties": {"text": {"type": "string", "description": "short note, e.g. 'editing postal/postal_service.py + the drain hook'"}}}},
+    # The two request tools (plans/user-todos.md), in the bus's place and words: an obligation to the PERSON THE SESSION
+    # WORKS FOR, so their descriptions name no romp machinery (tests/test_injected_voice.py scans the bus's copy). The
+    # bus lists them only while the Requests switch is on; a Codex thread's tools are fixed at thread/start (see
+    # _postal_tools), so the pair rides every thread and the kernel's arm reads the switch at each call, answering the
+    # bus tool's own off sentence, the answer a Claude session that connected while the switch was on hears too.
+    {"type": "function", "name": "add_user_todo",
+     "description": "File a request with the person you work for: a decision, an input or an action only they can provide, while you keep working on what you can. Give one short line saying what you need and why; add detail only when the line cannot carry it. Set blocking only when you cannot go on without the answer. Returns an id: withdraw it (withdraw_user_todo) the moment the need is met or moot. Not for status updates or FYIs, only things you are waiting on them for.",
+     "inputSchema": {"type": "object",
+                     "properties": {"text": {"type": "string", "description": "one short line: what you need from them and why"},
+                                    "detail": {"type": "string", "description": "longer context, only when the short line cannot carry it"},
+                                    "blocking": {"type": "boolean", "description": "true only when you cannot go on without the answer; the default false means you keep working on what you can"}},
+                     "required": ["text"]}},
+    {"type": "function", "name": "withdraw_user_todo",
+     "description": "Take back a request you filed (by id) once it is met, answered some other way, or no longer applies, so the person you work for does not act on a stale request.",
+     "inputSchema": {"type": "object",
+                     "properties": {"id": {"type": "string", "description": "the id add_user_todo returned"}},
+                     "required": ["id"]}},
     {"type": "function", "name": "check_sent",
      "description": "See your recently sent messages and whether each was read/acted on by the recipient yet, or is still pending — instead of asking 'did you get it?'.",
      "inputSchema": {"type": "object", "properties": {}}},
@@ -180,7 +199,7 @@ An isolation refusal is FINAL. A mailbox toggled off is a boundary the user drew
 
 
 def _postal_tools(postal):
-    """The thread/start and thread/resume params that register the postal tools: the six dynamic tools, and the
+    """The thread/start and thread/resume params that register the postal tools: the eight dynamic tools, and the
     bus's instructions as the thread's developer instructions (a dynamic tool carries no instructions block of its
     own, so the kind semantics and the isolation rule would otherwise never reach the model; the pinned
     ThreadStartParams and ThreadResumeParams both know `developerInstructions`). {} when the backend was handed no
@@ -535,7 +554,7 @@ class CodexBackend:
         self.push_session = push_session or (lambda sid: None)
         self.codex_bin = codex_bin
         # postal(tool, sid, name, args) -> (ok, text): the kernel's loopback call to the bus AS the session, behind the
-        # six dynamic tools every thread registers (_postal_tools); None registers no tool, said once (_postal_params)
+        # eight dynamic tools every thread registers (_postal_tools); None registers no tool, said once (_postal_params)
         self.postal = postal
         self._postal_unset_said = False
         raw_log = log or (lambda m: sys.stderr.write("codex-backend: %s\n" % m))

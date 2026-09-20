@@ -4094,10 +4094,11 @@ class _BusHeld(set):
 
 
 # ── the postal tools a Codex thread carries, serviced here (2026-09-19) ──────────────────────────────────────────
-# A Codex session's six postal tools are Codex DYNAMIC TOOLS (codex_backend.POSTAL_TOOL_SPECS); the app-server routes
+# A Codex session's eight postal tools are Codex DYNAMIC TOOLS (codex_backend.POSTAL_TOOL_SPECS); the app-server routes
 # each call back to the backend, which binds it to the calling thread's session and hands it here as
-# postal(tool, sid, name, args). This side dials the bus over loopback with the serve token, AS that session, so no
-# credential enters the sandbox and the model can neither pick its sender nor read another inbox: the same six
+# postal(tool, sid, name, args). This side dials the bus over loopback with the serve token, AS that session (or, for
+# set_working and the two request tools, writes the kernel's own stores the bus's tool would have posted to it for), so
+# no credential enters the sandbox and the model can neither pick its sender nor read another inbox: the same eight
 # operations a Claude session's postal MCP has, bounded by the same bus rules (isolation, live-only addressing).
 CODEX_POSTAL_TIMEOUT_S = 3.0   # the reader-thread budget: the backend answers the call inline on the pinned SDK's single
 #                                reader thread, so every Codex session's notifications and interrupt replies wait behind
@@ -4116,7 +4117,7 @@ _CODEX_REFUSAL_WHYS = ("not published: ", "not parked:", "outbox record unreadab
 
 
 def _codex_postal_tools_on():
-    """Whether Codex threads carry the six postal tools: the bare value file STATE/codex-postal-tools, `off` to
+    """Whether Codex threads carry the eight postal tools: the bare value file STATE/codex-postal-tools, `off` to
     disable, absent or anything else on (the judge-tier store shape, jd._state_str; default on, the refuter's
     amendment 9 of 2026-09-19). Read once, where the backend is built (_codex): the callable is a constructor
     argument, so a change applies at the next kernel start, and the backend logs the off decision once itself."""
@@ -4203,13 +4204,14 @@ def _codex_postal_fault(status, body, tool):
 
 
 def _codex_postal_call(tool, sid, name, args):
-    """postal(tool, sid, name, args) -> (ok, text) for the CodexBackend: the six postal tools onto the bus's routes, AS
-    session `sid` named `name`. The client-side checks are the bus's own MCP tool's (_mcp_call in
+    """postal(tool, sid, name, args) -> (ok, text) for the CodexBackend: the eight postal tools onto the bus's routes,
+    AS session `sid` named `name`. The client-side checks are the bus's own MCP tool's (_mcp_call in
     bin/romp-postal-service: to and body required, a kind outside the three refused rather than downgraded to
     undeclared, tracked a JSON boolean and a delegate's only), and the delivered sentences are copied from it, pinned
-    equal by tests/test_codex_postal_tools.py. set_working writes the kernel's own store directly (the bus's tool
-    posts to this kernel for it). Never raises: the backend answers the call on the SDK's reader thread, and it
-    logs only a raise, so every fault here is one kernel log line of its own (_codex_postal_log)."""
+    equal by tests/test_codex_postal_tools.py. set_working writes the kernel's own store directly, and the two request
+    tools go straight to the /usertodo routes' own functions (the bus's tool posts to this kernel for all three).
+    Never raises: the backend answers the call on the SDK's reader thread, and it logs only a raise, so every fault
+    here is one kernel log line of its own (_codex_postal_log)."""
     try:
         args = args if isinstance(args, dict) else {}
         if tool == "send_message":
@@ -4241,6 +4243,10 @@ def _codex_postal_call(tool, sid, name, args):
             _set_working_note(sid, text)
             return True, ("Cleared your 'working on' note." if not text.strip()
                           else "Published — others see: working on '%s'." % text)
+        if tool == "add_user_todo":
+            return _codex_user_todo_add(sid, args)
+        if tool == "withdraw_user_todo":
+            return _codex_user_todo_withdraw(sid, args)
         if tool == "check_sent":
             status, body, written = _codex_postal_http("GET", "/sent?id=%s" % quote(sid), tool=tool, sid=sid)
             if status != 200:
@@ -4301,6 +4307,127 @@ def _codex_postal_send(sid, name, args):
                       "If you genuinely need their report before you can proceed, send a question "
                       "instead." % to)
     return True, "Delivered to '%s'." % to
+
+
+# The two request tools (plans/user-todos.md) ride a Codex thread too. The bus's tool posts them to THIS kernel's
+# /usertodo routes as the calling session; here the kernel is the caller, so each goes straight to the route's own
+# function (_user_todo_register_route, _user_todo_withdraw_route) with the thread's sid as the id, and the same shape
+# errors, switch, caps, store guard and account come back. A Codex session is this kernel's own (the backend minted the
+# sid), so the routes' remote forward never runs for one. The sentences are the bus tool's (bin/romp-postal-service
+# _mcp_call, KEEP-IN-SYNC copies pinned equal by tests/test_codex_postal_tools.py), in the veil the descriptions keep:
+# an obligation to the person the session works for, no romp machinery named (tests/test_injected_voice.py scans the
+# bus's copy). The bus lists the pair only while the Requests switch is on; a Codex thread's tools are fixed at
+# thread/start, so the switch is read here at each call, and the off sentence is the bus tool's own.
+_CODEX_USER_TODOS_OFF_ADD = ("Requests to the person you work for are turned off on this machine, so this was not saved and "
+                             "they will NOT see it. Say what you need in your next reply instead.")
+_CODEX_USER_TODOS_OFF_WITHDRAW = ("Requests to the person you work for are turned off on this machine, so there is nothing to "
+                                  "withdraw. Nothing changed.")
+_CODEX_USER_TODO_UNSAVED = ("Couldn't save that: the person you work for will NOT see it. Say what you need directly "
+                            "in your next reply instead, or try again shortly.")
+
+
+def _codex_user_todo_add(sid, args):
+    """add_user_todo from a Codex thread: the bus tool's own checks first (the switch, then the text), then the register
+    route's function AS `sid`, its answer worded by _codex_user_todo_add_text. `blocking` rides through as given (the
+    route refuses a non-boolean), None as the bus passes it, False."""
+    if not _user_todos_on():
+        return False, _CODEX_USER_TODOS_OFF_ADD
+    text = str(args.get("text") or "").strip()
+    if not text:
+        return False, "Need 'text': one short line, what you need from them and why."
+    blocking = args.get("blocking")
+    status, res = _user_todo_register_route({"id": sid, "text": text, "detail": str(args.get("detail") or "").strip(),
+                                             "blocking": False if blocking is None else blocking})
+    return _codex_user_todo_add_text(status, res)
+
+
+def _codex_user_todo_add_text(status, res):
+    """The bus tool's wording of the register route's answer (its _kernel_post hands it the same status and body): a
+    status outside 2xx is "Not saved" with the route's own reason; a 2xx without a minted id is the loud unsaved
+    sentence, never a silent drop; the id comes back with the withdraw contract."""
+    if status // 100 != 2:
+        return False, "Not saved: %s." % _codex_user_todo_reason(status, res)
+    tid = res.get("todoId") if isinstance(res, dict) else None
+    if not tid:
+        return False, _CODEX_USER_TODO_UNSAVED
+    return True, ("Noted (id %s): the person you work for will see the request. Withdraw it (withdraw_user_todo) "
+                  "the moment the need is met or moot." % tid)
+
+
+def _codex_user_todo_reason(status, res):
+    """The bus's _kernel_refusal_reason over the route's answer body: its error text without a closing period, else
+    the status."""
+    err = str(res.get("error") or "").strip() if isinstance(res, dict) else ""
+    return err.rstrip(".") or ("HTTP %s" % status)
+
+
+def _codex_user_todo_withdraw(sid, args):
+    """withdraw_user_todo from a Codex thread: the switch, then the id, then the withdraw route's function AS `sid`,
+    worded by _codex_user_todo_withdraw_text."""
+    if not _user_todos_on():
+        return False, _CODEX_USER_TODOS_OFF_WITHDRAW
+    tid = str(args.get("id") or "").strip()
+    if not tid:
+        return False, "Need 'id': the one add_user_todo returned when you filed the request."
+    status, res = _user_todo_withdraw_route({"id": sid, "todoId": tid})
+    return _codex_user_todo_withdraw_text(tid, status, res)
+
+
+def _codex_user_todo_withdraw_text(tid, status, res):
+    """The bus tool's wording of the withdraw route's answer: the status first (a 409 is the switch, never "already
+    settled"), then the account on an ok:false, of which only a not-yours or unknown id, an unreadable record or an
+    unreadable store is the agent's error; a request the person answered or dismissed, or this session already
+    withdrew, is the need met, said in full with its time and not flagged."""
+    if status // 100 != 2:
+        return False, "The withdrawal of %s did not happen: %s." % (tid, _codex_user_todo_reason(status, res))
+    if not isinstance(res, dict):
+        return False, "Couldn't withdraw %s: it still stands. Try again shortly." % tid
+    if res.get("ok"):
+        return True, "Withdrawn: %s no longer stands." % tid
+    state = str(res.get("state") or "")
+    if state == "unknown" and "owner" in res and res["owner"] is None:
+        # the kernel could not LOOK: the store on disk is not one it can read. Neither "not yours" nor closed:
+        # the request, if there is one, still stands, and nothing was stamped.
+        return False, ("Couldn't read the store that holds these requests, so %s was not withdrawn. Nothing changed; "
+                       "if the need is met, say so in your next reply." % tid)
+    if state == "unknown" and res.get("owner") is True:
+        # the asker's OWN request, in a shape the kernel could not read (a damaged or hand-edited record)
+        return False, ("Couldn't read the record of %s (%s). Nothing changed; if the need still stands, say it "
+                       "directly in your next reply." % (tid, res.get("error") or "its closing record is unreadable"))
+    if res.get("owner") is False or state == "unknown":
+        return False, "No request %s of yours. Nothing changed." % tid
+    when = _codex_when_words(res.get("at"))
+    if state in ("answered", "dismissed"):
+        return True, "Already closed: the person you work for %s %s%s. Nothing to withdraw." % (state, tid, when)
+    if state == "withdrawn":
+        return True, "Already withdrawn: %s was taken back%s. Nothing changed." % (tid, when)
+    # a kernel that predates the account answers ok:false alone: the one-size answer
+    return False, ("No open request %s of yours: it was already answered, dismissed, or withdrawn. Nothing changed."
+                   % tid)
+
+
+def _codex_when_words(t, now=None):
+    """The bus's _when_words, a KEEP-IN-SYNC copy (pinned equal by tests/test_codex_postal_tools.py): an epoch as a
+    phrase a reader can place without a date table, " at 14:05 today", " at 14:05 yesterday" or " on 2026-09-05 at
+    14:05" (local time, a leading space so it drops into a sentence); "" for no time (None, 0, junk, an epoch no
+    calendar holds). `now` is the reference epoch (tests pin it)."""
+    try:
+        t = int(t)
+    except (TypeError, ValueError):
+        return ""
+    if t <= 0:
+        return ""
+    try:
+        d = datetime.fromtimestamp(t)
+        ref = datetime.fromtimestamp(time.time() if now is None else now)
+    except (OverflowError, OSError, ValueError):
+        return ""
+    days = (ref.date() - d.date()).days
+    if days == 0:
+        return " at %s today" % d.strftime("%H:%M")
+    if days == 1:
+        return " at %s yesterday" % d.strftime("%H:%M")
+    return " on %s at %s" % (d.strftime("%Y-%m-%d"), d.strftime("%H:%M"))
 
 
 def _codex_sender_disp(m):
@@ -8645,8 +8772,8 @@ def _user_todo_register_route(body):
     """POST /usertodo's answer, (status, body), for a parsed JSON object `body` ({"id": <sid>, "text": <one short
     line>, "detail"?: <longer context>, "blocking"?: true|false}); 200 {"ok": true, "todoId": "ut-..."} when the
     request was filed. One function for the two roads a request arrives by: the route itself (the postal bus's
-    add_user_todo, posting as the calling session) and the Codex postal tool (the kernel filing AS the thread's
-    session), so the two cannot drift on a check. The shape errors come first, then the switch, then
+    add_user_todo, posting as the calling session) and the Codex postal tool (_codex_user_todo_add, the kernel filing
+    AS the thread's session), so the two cannot drift on a check. The shape errors come first, then the switch, then
     the caps, then the forward: the sid check sits BEFORE the switch and the forward because this is the one writer
     that can mint a top-level key the store's reader refuses (one such key flags the whole file), and a malformed id
     is never relayed to another kernel."""
@@ -8720,8 +8847,8 @@ def _user_todo_withdraw_route(body):
     """POST /usertodo/withdraw's answer, (status, body), for a parsed JSON object `body` ({"id": <sid>, "todoId":
     <the minted id>}): 200 with the ACCOUNT (_withdraw_user_todo) when the kernel could look, `ok` true iff this
     call stamped the row; the shape errors' 400, the switch's 409, the flagged store's 503, and a remote session's
-    call forwarded to the machine that owns it, status kept. Shared by the route and the Codex postal tool, as
-    _user_todo_register_route is."""
+    call forwarded to the machine that owns it, status kept. Shared by the route and the Codex postal tool
+    (_codex_user_todo_withdraw), as _user_todo_register_route is."""
     sid = str(body.get("id") or "")
     tid = str(body.get("todoId") or "")
     if not sid or not tid:
@@ -69948,7 +70075,7 @@ class Handler(BaseHTTPRequestHandler):
                 # posts /working. Body: {"id": <sid>, "text": <one short line>, "detail"?: <longer context>,
                 # "blocking"?: true|false}, answered {"ok": true, "todoId": "ut-..."}. Only answer, dismiss and
                 # withdraw ever clear it; no judge writes this store. The answer is _user_todo_register_route's, the
-                # one function this route and the Codex postal tool share.
+                # one function this route and the Codex postal tool (_codex_user_todo_add) share.
                 body, berr = _json_object_body(raw_body)
                 if berr:
                     return self._send(400, json.dumps({"ok": False, "error": berr}), "application/json")
@@ -69961,7 +70088,7 @@ class Handler(BaseHTTPRequestHandler):
                 # store could not be read), so the tool can say WHICH kind of nothing-to-do this was: a row the
                 # person already answered or dismissed is the need met, not the agent's error. `ok` means this call
                 # stamped it. An unknown or already-cleared id answers ok:false and the tool says so loudly. The
-                # answer is _user_todo_withdraw_route's, shared with the Codex postal tool.
+                # answer is _user_todo_withdraw_route's, shared with the Codex postal tool (_codex_user_todo_withdraw).
                 body, berr = _json_object_body(raw_body)
                 if berr:
                     return self._send(400, json.dumps({"ok": False, "error": berr}), "application/json")

@@ -1,21 +1,25 @@
 #!/usr/bin/env python3
-"""The kernel's half of the Codex postal tools (2026-09-19): `_codex_postal_call(tool, sid, name, args)` maps the six
+"""The kernel's half of the Codex postal tools (2026-09-19): `_codex_postal_call(tool, sid, name, args)` maps the eight
 tools a Codex thread carries as Codex dynamic tools onto the postal bus's routes over loopback, as the kernel (the serve
 token never enters the sandbox), with the sender fixed to the calling session's sid; it is the callable kernel.py hands
 CodexBackend as `postal=`. Pinned here against a fake bus socket: the /send payload (from_id the sid, from the name,
 tracked only on a delegate), the client-side checks the bus's own MCP tool makes (to/body/kind/tracked), a bus refusal
 echoed as a failed result, a written-but-unanswered send said as MAYBE delivered, the inbox rendered with the tool
-named for the reply (never the shell command the sandbox refuses), set_working landing in the kernel's own store, and
-the sentences copied from the bus pinned against the bus module itself, loaded by path the way
-tests/test_postal_live_only.py loads it (the kernel never imports it: the bus is its own process). The bus's own half is
-here too: the push banner names the tool for a Codex recipient, and `romp mail send` from a Codex shell points at it.
-Synthetic ids and the notes-api demo's session names only; the fakes carry no token."""
+named for the reply (never the shell command the sandbox refuses), set_working landing in the kernel's own store, the
+two request tools (add_user_todo, withdraw_user_todo) filing and withdrawing in the kernel's own request store through
+the /usertodo routes' own functions as the calling session, and the sentences copied from the bus pinned against the
+bus module itself, loaded by path the way tests/test_postal_live_only.py loads it (the kernel never imports it: the bus
+is its own process). The bus's own half is here too: the push banner names the tool for a Codex recipient, and
+`romp mail send` from a Codex shell points at it. Synthetic ids and the notes-api demo's session names only; the fakes
+carry no token."""
 import contextlib
 import io
 import json
 import os
 import re
 import tempfile
+import threading
+import time
 import unittest
 from unittest import mock
 from types import SimpleNamespace
@@ -309,6 +313,182 @@ class OtherTools(unittest.TestCase):
             km._codex_backend = saved
 
 
+class RequestTools(unittest.TestCase):
+    """The two request tools (plans/user-todos.md) from a Codex thread: add_user_todo files a request with the person
+    the session works for, withdraw_user_todo takes it back. The bus's tool posts them to this kernel's /usertodo routes
+    as the calling session; the kernel's arm goes straight to the routes' own functions (_user_todo_register_route,
+    _user_todo_withdraw_route) with the thread's sid as the id, so the store, the caps, the switch and the withdrawal's
+    account are the route's and no loopback round trip is made (as for set_working). The refusals the bus tool makes
+    before any post are made here before any write, and the sentences are pinned equal to the bus tool's in
+    ParityWithTheBus. The state root is this module's own temp XDG root; the switch is written on for each test and
+    the store removed after it."""
+
+    def setUp(self):
+        self._push = km._push_soon
+        self.pushed = []
+        km._push_soon = lambda: self.pushed.append(True)
+        self._clear_store()
+        km._set_user_todos(True)
+
+    def tearDown(self):
+        km._push_soon = self._push
+        self._clear_store()
+        (jd.STATE / km.USER_TODOS_SWITCH_FILE).unlink(missing_ok=True)
+        km._user_todos_switch_cache.clear()
+
+    @staticmethod
+    def _clear_store():
+        (jd.STATE / "user-todos.json").unlink(missing_ok=True)
+        km._user_todos_cache.clear()
+        km._user_todos_bad.clear()
+
+    @staticmethod
+    def _rows(sid=SID):
+        return km._user_todos().get(sid) or []
+
+    def test_add_files_the_request_as_the_calling_session_with_no_bus_round_trip(self):
+        with bus() as log:
+            ok, text = call("add_user_todo", {"text": "Need the auth-scheme decision to wire login",
+                                              "detail": "OAuth vs cookie", "blocking": True,
+                                              "from_id": OTHER, "id": OTHER})    # a claimed filer: never read
+        self.assertTrue(ok, text)
+        rows = self._rows()
+        self.assertEqual(len(rows), 1, rows)
+        rec = rows[0]
+        self.assertRegex(rec["id"], r"^ut-[0-9a-f]{8}$")
+        self.assertEqual(text, "Noted (id %s): the person you work for will see the request. Withdraw it "
+                               "(withdraw_user_todo) the moment the need is met or moot." % rec["id"])
+        self.assertEqual((rec["text"], rec["detail"], rec["blocking"]),
+                         ("Need the auth-scheme decision to wire login", "OAuth vs cookie", True))
+        self.assertNotIn(OTHER, km._user_todos(), "the request is the SESSION's, whatever the arguments claimed")
+        self.assertEqual(log, [], "the kernel owns the store and the route's function: no loopback round trip")
+        self.assertEqual(self.pushed, [True], "ack-fast: the pusher is woken, the card never built here")
+        # the bus tool's defaults: no detail stores no key, an absent or null blocking stores no key
+        with bus():
+            ok, text = call("add_user_todo", {"text": "Need the staging port", "blocking": None})
+        self.assertTrue(ok, text)
+        rec = self._rows()[1]
+        self.assertEqual(rec["text"], "Need the staging port")
+        self.assertNotIn("detail", rec)
+        self.assertNotIn("blocking", rec)
+
+    def test_withdraw_stamps_the_sessions_own_row_and_words_the_account(self):
+        with bus():
+            ok, _ = call("add_user_todo", {"text": "Need the staging port"})
+        self.assertTrue(ok)
+        tid = self._rows()[0]["id"]
+        del self.pushed[:]
+        with bus() as log:
+            ok, text = call("withdraw_user_todo", {"id": tid, "from_id": OTHER})
+        self.assertEqual((ok, text), (True, "Withdrawn: %s no longer stands." % tid))
+        self.assertEqual(self._rows()[0]["resolved"]["kind"], "withdrawn")
+        self.assertEqual(log, [], "no loopback round trip")
+        self.assertEqual(self.pushed, [True], "ack-fast: the row leaves the card on the woken cycle")
+        # again: the need no longer stands, which is what the caller wanted: a plain answer with the time, not flagged
+        with bus():
+            ok, text = call("withdraw_user_todo", {"id": tid})
+        self.assertTrue(ok, text)
+        at = self._rows()[0]["resolved"]["t"]
+        self.assertEqual(text, "Already withdrawn: %s was taken back%s. Nothing changed." % (tid, km._codex_when_words(at)))
+        self.assertIn(" was taken back at ", text, "the closing time rides the answer")
+        # a peer's row is unknown, never described, and nothing is stamped on it
+        km._add_user_todo(WEB, "Need the fixture format pick")
+        other = self._rows(WEB)[0]["id"]
+        with bus():
+            ok, text = call("withdraw_user_todo", {"id": other})
+        self.assertEqual((ok, text), (False, "No request %s of yours. Nothing changed." % other))
+        self.assertNotIn("resolved", self._rows(WEB)[0])
+        with bus():
+            ok, text = call("withdraw_user_todo", {"id": "ut-deadbeef"})
+        self.assertEqual((ok, text), (False, "No request ut-deadbeef of yours. Nothing changed."))
+        self.assertEqual(self.pushed, [True], "a refused withdraw wakes nothing")
+
+    def test_refuses_what_the_bus_tool_refuses_before_any_write(self):
+        # the sibling of SendMessage.test_refuses_what_the_bus_tool_refuses_before_any_request: the bus tool's checks
+        # before its post are the kernel's before the route's function
+        cases = [("add_user_todo", {}, "text"), ("add_user_todo", {"text": "   "}, "text"),
+                 ("add_user_todo", {"detail": "x", "blocking": True}, "text"),
+                 ("withdraw_user_todo", {}, "id"), ("withdraw_user_todo", {"id": "  "}, "id")]
+        for tool, args, word in cases:
+            with bus() as log:
+                ok, text = call(tool, args)
+            self.assertFalse(ok, (tool, args))
+            self.assertIn("'%s'" % word, text, (tool, args))
+            self.assertEqual(log, [], (tool, args))
+        self.assertFalse((jd.STATE / "user-todos.json").exists(), "nothing written")
+        self.assertEqual(self.pushed, [])
+
+    def test_the_routes_own_refusals_reach_the_session_with_the_routes_reason(self):
+        # the register route's 400s (a non-boolean blocking, the caps) and its 503 (a flagged store), and the
+        # withdraw account's owner-null arm: the same refusals a Claude session's tool relays, worded the same
+        with bus() as log:
+            ok, text = call("add_user_todo", {"text": "Need the port", "blocking": "yes"})
+            self.assertFalse(ok)
+            self.assertTrue(text.startswith("Not saved: 'blocking' must be true or false"), text)
+            self.assertTrue(text.endswith("."), text)
+            ok, text = call("add_user_todo", {"text": "n" * (km._USER_TODO_TEXT_CAP + 1)})
+            self.assertFalse(ok)
+            self.assertTrue(text.startswith("Not saved: text is %d characters, over the %d-character cap"
+                                            % (km._USER_TODO_TEXT_CAP + 1, km._USER_TODO_TEXT_CAP)), text)
+            ok, text = call("add_user_todo", {"text": "Need the port", "detail": "d" * (km._USER_TODO_DETAIL_CAP + 1)})
+            self.assertFalse(ok)
+            self.assertIn("over the %d-character cap" % km._USER_TODO_DETAIL_CAP, text)
+        self.assertEqual(log, [])
+        self.assertFalse((jd.STATE / "user-todos.json").exists(), "a refused register writes nothing")
+        (jd.STATE / "user-todos.json").write_text(json.dumps({"enabled": True, "gt": 1}))   # not a request store
+        km._user_todos_cache.clear()
+        with contextlib.redirect_stderr(io.StringIO()), bus() as log:
+            ok, text = call("add_user_todo", {"text": "Need the port"})
+            self.assertEqual((ok, text), (False, "Not saved: %s." % km._USER_TODOS_UNREADABLE_ERR))
+            ok, text = call("withdraw_user_todo", {"id": "ut-9f2c1a34"})
+        self.assertFalse(ok)
+        self.assertIn("so ut-9f2c1a34 was not withdrawn", text, "the store could not be read: never 'not yours'")
+        self.assertEqual(log, [])
+        self.assertEqual(self.pushed, [], "nothing changed, nothing to push")
+
+    def test_while_the_switch_is_off_both_refuse_in_the_bus_tools_words_and_nothing_is_written(self):
+        km._set_user_todos(False)
+        with bus() as log:
+            ok, text = call("add_user_todo", {"text": "Need the port"})
+            self.assertEqual((ok, text), (False, pm.USER_TODOS_OFF_ADD))
+            ok, text = call("withdraw_user_todo", {"id": "ut-9f2c1a34"})
+            self.assertEqual((ok, text), (False, pm.USER_TODOS_OFF_WITHDRAW))
+        self.assertEqual(log, [])
+        self.assertFalse((jd.STATE / "user-todos.json").exists())
+        self.assertEqual(self.pushed, [])
+
+    def test_through_the_backends_tool_call_the_thread_binds_the_session_and_only_declared_arguments_pass(self):
+        # the backend's _postal_tool_call, with the kernel's real callable behind it: the session is the thread's
+        # (never an argument's), and only the schema's arguments are forwarded; `id` is withdraw_user_todo's own
+        # argument (the request's id), so it passes there and is dropped for add_user_todo
+        self.assertEqual(cb._POSTAL_TOOL_ARGS["add_user_todo"], frozenset({"text", "detail", "blocking"}))
+        self.assertEqual(cb._POSTAL_TOOL_ARGS["withdraw_user_todo"], frozenset({"id"}))
+        logs = []
+        s = SimpleNamespace(lock=threading.Lock(), tid="T-1", dead=False, sid=SID, name="api")
+        be = SimpleNamespace(postal=km._codex_postal_call, log=logs.append, _session_items=lambda: [(SID, s)])
+        params = {"threadId": "T-1", "turnId": "t-1", "callId": "exec-1", "namespace": None, "tool": "add_user_todo",
+                  "arguments": {"text": "Need the port", "id": OTHER, "from_id": OTHER}}
+        with bus() as log:
+            out = cb.CodexBackend._postal_tool_call(be, params)
+        self.assertTrue(out["success"], out)
+        rows = self._rows()
+        self.assertEqual(len(rows), 1, rows)
+        self.assertTrue(out["contentItems"][0]["text"].startswith("Noted (id %s)" % rows[0]["id"]), out)
+        self.assertNotIn(OTHER, km._user_todos())
+        params = dict(params, tool="withdraw_user_todo", arguments={"id": rows[0]["id"], "from_id": OTHER})
+        out = cb.CodexBackend._postal_tool_call(be, params)
+        self.assertEqual(out, {"success": True, "contentItems": [{"type": "inputText",
+                                                                  "text": "Withdrawn: %s no longer stands." % rows[0]["id"]}]})
+        self.assertEqual(self._rows()[0]["resolved"]["kind"], "withdrawn")
+        # a thread no live session holds files nothing
+        out = cb.CodexBackend._postal_tool_call(be, dict(params, threadId="T-9", tool="add_user_todo",
+                                                         arguments={"text": "Need the port"}))
+        self.assertFalse(out["success"])
+        self.assertEqual(len(self._rows()), 1)
+        self.assertEqual(log, [])
+        self.assertEqual(logs, ["codex tool call refused: add_user_todo from thread 'T-9', which no live session holds"])
+
+
 class ParityWithTheBus(unittest.TestCase):
     """The backend's copy of the bus's tool table and instructions, and the kernel's copies of the bus's result
     sentences, pinned against the bus module itself (a KEEP-IN-SYNC copy is only honest with this test beside it)."""
@@ -429,6 +609,105 @@ class ParityWithTheBus(unittest.TestCase):
         for args in ({"text": "editing the exporter"}, {"text": ""}, {}):
             theirs = pm._mcp_call("set_working", dict(args))
             self.assertEqual(call("set_working", dict(args)), (not theirs[1], theirs[0]), args)
+
+    def test_the_request_tool_sentences_match_the_bus_tool(self):
+        # The bus tool words the kernel's answer off _kernel_post's result: the body itself on a 2xx, and on a refusal
+        # {"ok": False, "status", "error": <the body's text>}; the kernel's arm words the route's (status, body)
+        # directly. Every shape the two routes answer, through both, plus the checks before any post and the switch.
+        saved = (pm._kernel_post, pm._user_todos_on)
+        switch = jd.STATE / km.USER_TODOS_SWITCH_FILE
+        saved_switch = switch.read_bytes() if switch.exists() else None
+        T0 = 1781200000
+
+        def kernel_post(status, body):
+            def _post(path, payload, timeout=2):
+                return dict(body) if status // 100 == 2 else {"ok": False, "status": status, "error": json.dumps(body)}
+            return _post
+        try:
+            pm._user_todos_on = lambda: True
+            km._set_user_todos(True)
+            add_shapes = [
+                (200, {"ok": True, "todoId": "ut-9f2c1a34"}),
+                (200, {"ok": False, "todoId": ""}),
+                (400, {"ok": False, "error": "id and text required"}),
+                (400, {"ok": False, "error": "'blocking' must be true or false, got \"yes\""}),
+                (400, {"ok": False, "error": "text is 501 characters, over the 500-character cap: keep the request to "
+                                             "one line and put the rest in your reply"}),
+                (409, {"ok": False, "error": km._USER_TODOS_OFF_ERR}),
+                (409, {"ok": False, "host": "TESTHOST", "error": "requests from sessions are turned off on TESTHOST"}),
+                (502, {"ok": False, "error": "the tunnel to TESTHOST is not answering (re-dialing)", "host": "TESTHOST"}),
+                (503, {"ok": False, "error": km._USER_TODOS_UNREADABLE_ERR}),
+            ]
+            for status, body in add_shapes:
+                pm._kernel_post = kernel_post(status, body)
+                theirs = pm._mcp_call("add_user_todo", {"text": "Need the port"})
+                self.assertEqual(km._codex_user_todo_add_text(status, dict(body)), (not theirs[1], theirs[0]),
+                                 (status, body))
+            closed = {"ok": False, "error": "no open request with that id"}
+            withdraw_shapes = [
+                (200, {"ok": True, "state": "withdrawn", "at": T0, "owner": True}),
+                (200, {"ok": True}),
+                (200, dict(closed)),
+                (200, dict(closed, state="answered", at=T0, owner=True)),
+                (200, dict(closed, state="dismissed", at=T0, owner=True)),
+                (200, dict(closed, state="withdrawn", at=T0, owner=True)),
+                (200, dict(closed, state="answered", owner=True)),
+                (200, dict(closed, state="answered", at=None, owner=True)),
+                (200, dict(closed, state="unknown", at=None, owner=False)),
+                (200, dict(closed, state="answered", at=T0, owner=False)),
+                (200, dict(closed, state="unknown", at=None, owner=True)),
+                (200, dict(closed, state="unknown", at=None, owner=True,
+                           error="malformed closing stamp on ut-9f2c1a34: resolved=True (a stamp is {kind: answered | "
+                                 "dismissed | withdrawn, t})")),
+                (200, dict(closed, state="unknown", at=None, owner=None, error=km._USER_TODOS_UNREADABLE_ERR)),
+                (400, {"ok": False, "error": "id and todoId required"}),
+                (409, {"ok": False, "error": km._USER_TODOS_OFF_ERR}),
+                (502, {"ok": False, "host": "TESTHOST",
+                       "error": "the kernel on TESTHOST predates /usertodo/withdraw: update romp there and restart it"}),
+                (503, {"ok": False, "error": km._USER_TODOS_UNREADABLE_ERR}),
+            ]
+            for status, body in withdraw_shapes:
+                pm._kernel_post = kernel_post(status, body)
+                theirs = pm._mcp_call("withdraw_user_todo", {"id": "ut-9f2c1a34"})
+                self.assertEqual(km._codex_user_todo_withdraw_text("ut-9f2c1a34", status, dict(body)),
+                                 (not theirs[1], theirs[0]), (status, body))
+            # the checks before any post, through both roads (neither posts nor writes)
+            pm._kernel_post = lambda *a, **k: self.fail("the bus tool posted for a call it refuses first")
+            for tool, args in (("add_user_todo", {}), ("add_user_todo", {"text": "  "}),
+                               ("withdraw_user_todo", {}), ("withdraw_user_todo", {"id": ""})):
+                theirs = pm._mcp_call(tool, dict(args))
+                with bus():
+                    mine = call(tool, dict(args))
+                self.assertEqual(mine, (not theirs[1], theirs[0]), (tool, args))
+            self.assertFalse((jd.STATE / "user-todos.json").exists())
+            # the switch, off on both sides: the bus tool's own sentence, before any post or write
+            pm._user_todos_on = lambda: False
+            km._set_user_todos(False)
+            for tool, args in (("add_user_todo", {"text": "Need the port"}), ("withdraw_user_todo", {"id": "ut-9f2c1a34"})):
+                theirs = pm._mcp_call(tool, dict(args))
+                with bus():
+                    mine = call(tool, dict(args))
+                self.assertEqual(mine, (not theirs[1], theirs[0]), (tool, args))
+                self.assertIn("turned off on this machine", mine[1])
+            self.assertFalse((jd.STATE / "user-todos.json").exists())
+        finally:
+            pm._kernel_post, pm._user_todos_on = saved
+            if saved_switch is None:
+                switch.unlink(missing_ok=True)
+            else:
+                switch.write_bytes(saved_switch)
+            km._user_todos_switch_cache.clear()
+
+    def test_the_when_words_match_the_bus(self):
+        # the closing time's phrase, the kernel's copy against the bus's: today, yesterday, a dated day, a future day,
+        # and every no-time shape (None, 0, junk, a negative, an epoch no calendar holds, a numeric string, a float)
+        noon = 1781179200
+        for t in (noon - 3600, noon - 86400, noon - 3 * 86400, noon + 2 * 86400, noon, None, 0, "", "soon", -5,
+                  10 ** 20, "1781179200", 1781179200.7, True):
+            self.assertEqual(km._codex_when_words(t, now=noon), pm._when_words(t, now=noon), repr(t))
+        now = int(time.time())
+        self.assertEqual(km._codex_when_words(now), pm._when_words(now))
+        self.assertTrue(km._codex_when_words(now).endswith(" today"))
 
 
 class _DeadStderr(io.TextIOBase):
