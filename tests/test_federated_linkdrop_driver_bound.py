@@ -167,6 +167,10 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
                                     "to its cap is refused by the margin leg itself, seen.expired, never measured); with the room the per-drive margin pin "
                                     "holds for every drive whose link-up waits all resolved and showed, and reds only for a window shorter than that"
                                     % (cls.__name__, cls.down_dwell_ms, L.DOWN_WINDOW_MARGIN, cls.wait_ms, L.DOWN_READ_ROOM_MS))
+        self.assertGreaterEqual(L.DOWN_WINDOW_MARGIN, 2.0, "round 2's ruling: the while-down read comes at least twice this drive's slowest link-up delivery after phase D's "
+                                                          "post; widen down_dwell_ms, never the margin. The floor is pinned here because the margin pin's cells are derived from "
+                                                          "the constant and shrink with it (a lowered margin passes them all); the relation pin above ceilings it at 2.0 for the "
+                                                          "dwell and the cap as they stand, so the constant is bracketed from both sides")
         self.assertLessEqual(L.DRIVER_TIMEOUT_S + L.BOOT_ROOM_S, L.CI_TEST_TIMEOUT_S,
                              "the subprocess timeout leaves BOOT_ROOM_S of CI's per-test cap for the rest of setUpClass")
         served = self._served_step_line()
@@ -528,7 +532,14 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
         the words of the check that refused it (the expired check's own clause, not a token the record's repr carries: the seen
         record embeds 'expired' as a key, so that word alone would let a visibles failure pass for an expired one); a resolved wait
         at 20,012 ms with the visibles present passes, since a resolved wait ended by its cap and the excess is the reads
-        (DOWN_READ_ROOM_MS)."""
+        (DOWN_READ_ROOM_MS). Then the inequality itself, which every cell above exercises the guards of and none the bound (round
+        4: the bound deleted, the margin lowered to 0.001, and that with the dwell reverted to round 2's 12 s left every
+        kernel-free test green): with every wait resolved and shown and the slowest delivery 19,900 ms, a window one millisecond
+        under DOWN_WINDOW_MARGIN times it reds in the inequality's own words. Two halves pin the margin and both are needed: this
+        cell is derived from the constant, so it moves with it and catches a deleted or inverted bound but not a lowered constant,
+        and the floor on DOWN_WINDOW_MARGIN in test_the_arithmetic_and_the_cap_it_is_chosen_against catches the lowered constant but
+        not a deleted bound. No passing sibling at the bound itself: int() truncation of the product would make such a cell red for
+        arithmetic reasons rather than for the property."""
         span_ms = 42005                     # settled less phase D's t1: 42.004 to 42.010 s over the recorded head drives
         d_t1 = 2_000_000.0                  # phase D's post end, in the control door's seconds
         settled = int(d_t1 * 1000) + span_ms
@@ -551,7 +562,7 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
                     v["expired"] = list(expired)
                 return v
 
-            def record(**over):
+            def record(settled=settled, **over):
                 Rec.result = {"marks": {"settled": settled, "resume": settled + 20, "end": settled + 60000}, "died": None, "timeouts": [],
                               "phases": {p: {"change": change(p), "seen": over.get(p) or seen(1000 * (i + 1), p)} for i, p in enumerate("ABC")}}
                 Rec.changes_made = [change(p) for p in "ABC"] + [{"phase": "D", "t0": d_t1 - 2.0, "t1": d_t1, "noticeKeys": ["k1", "k2", "k3"]}]
@@ -571,6 +582,12 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
                     self.assertIn(token, str(cm.exception), "%s: %s: the failure says why: %s" % (cls.__name__, why, cm.exception))
                 span_s, deliveries = record(**{X: seen(20012, X, shown=True, expired=[])})._assert_the_down_window_outlasts_the_drives_slowest_delivery()
                 self.assertEqual(deliveries[X], 20012, "%s: a resolved wait at the cap's edge with the visibles shown is a delivery in phase %s (the reads after the wait)" % (cls.__name__, X))
+            # the bound: every wait resolved and shown, the slowest delivery 19,900 ms, the window one millisecond under the margin times it
+            under = int(d_t1 * 1000) + int(L.DOWN_WINDOW_MARGIN * 19900) - 1
+            with self.assertRaises(AssertionError, msg="%s: a window under DOWN_WINDOW_MARGIN times the slowest delivery must fail the inequality" % cls.__name__) as cm:
+                record(settled=under, C=seen(19900, "C"))._assert_the_down_window_outlasts_the_drives_slowest_delivery()
+            self.assertIn("widen down_dwell_ms, never the margin", str(cm.exception), "%s: the inequality's own words: %s" % (cls.__name__, cm.exception))
+            self.assertIn("phase C", str(cm.exception), "%s: the failure names the slowest phase: %s" % (cls.__name__, cm.exception))
 
     def test_drive_sends_the_timeout_the_budget_and_the_caps(self):
         lab = tempfile.mkdtemp(prefix="linkdrop-bound-")
