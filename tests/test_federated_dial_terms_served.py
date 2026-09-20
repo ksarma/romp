@@ -129,9 +129,10 @@ def held_pair(frames, slot):
     key the client cannot read (_stamp_field None with the key present, _stamp_present), or whose gen matched and whose
     newGen it cannot read, is a refusal on both roads and is modelled as the client answers it (round 4, 2026-09-20:
     unparseable is not absent): on the feed road the pair stands (needFullFeed with the held pair, nothing applied), on the
-    bars road the base is dropped (needSlot), so nothing is held until the next whole frame re-seeds it. Two refusals are
-    modelled, then: the through-less stamped delta and the unreadable gen or newGen. Every OTHER refusal the gate makes on a
-    stamped delta is not modelled (a lab's stream is the kernel's own and applies): the set is applyRemoteFeedDelta's ladder
+    bars road the base is dropped (needSlot), so nothing is held until the next whole frame re-seeds it. Three refusals are
+    modelled, then: a stamped delta onto no pair (the feed road's unpaired: nothing applied, no pair; the bars road applies
+    it and seeds no gen, so None on both), the through-less stamped delta and the unreadable gen or newGen. Every OTHER
+    refusal the gate makes on a stamped delta is not modelled (a lab's stream is the kernel's own and applies): the set is applyRemoteFeedDelta's ladder
     in federation.ts, whose words tests/test_client_diag_allowlist.py's stale_why_words() derives from the source and holds
     to STALE_WHY_WORDS, so the bound this docstring states is that derivation's and not a list kept here (review round 3,
     tests-3: a hand list here went stale twice in one day). None when no pair is held."""
