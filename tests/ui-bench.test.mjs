@@ -1175,8 +1175,8 @@ const requireOrSkip = (why) => { if (why) assert.fail(`ROMP_UI_BENCH_REQUIRE is 
 // developer machine; CI never sets it); otherwise one that did not hold is a diagnostic line in the log,
 // never a failure.
 const TIMING = !!process.env.ROMP_UI_BENCH_TIMING;
-const timingCheck = (t, live = true) => (cond, msg) => {   // live false: a stub clock measures nothing, so a diagnostic under TIMING too
-  if (TIMING && live) assert.ok(cond, msg);
+const timingCheck = (t) => (cond, msg) => {
+  if (TIMING) assert.ok(cond, msg);
   else if (!cond) t.diagnostic(`timing relation not held on this run (informational; ROMP_UI_BENCH_TIMING=1 asserts it): ${msg}`);
 };
 
@@ -1555,14 +1555,16 @@ const FROZEN_DELIVERY_CLOCK = `
 // The third entry replays the timeline stream into a page that reports itself hidden (--hidden): the same
 // assertions hold (Chromium renders the page, so every settle stamp lands), and the report must show the view
 // expanding nothing under the hold and the return step expanding the held bars. The fourth is the third under
-// FROZEN_DELIVERY_CLOCK: every delivery reads 0.0 ms and the same assertions hold, because the bundle column
-// asserts that each delivery was measured, not that it took time; its timing relations stay diagnostics under
-// ROMP_UI_BENCH_TIMING too, since a stub clock measures nothing.
+// FROZEN_DELIVERY_CLOCK: every delivery reads 0.0 ms and the hidden page's assertions hold, because on a hidden page
+// the bundle column asserts that each delivery was measured, not that it took time (the two visible entries keep the
+// strict claim, their deliveries rendering inside the bracket). Its timing relations are the third entry's, asserted
+// under ROMP_UI_BENCH_TIMING like every entry's, except the parse against the bundle reading, which the stub holds
+// at 0 (the entry's own pin) and which is therefore no relation of this entry's.
 for (const { app, hidden, frozenClock } of [{ app: "feed", hidden: false }, { app: "timeline", hidden: false }, { app: "timeline", hidden: true }, { app: "timeline", hidden: true, frozenClock: true }]) {
   test(`replay: a synthetic ${app} stream renders in headless Chromium${hidden ? " with the page hidden" : ""}${frozenClock ? " and its clock standing still across each delivery (every bundle reading 0.0 ms)" : ""}, every frame type measured and accounted for by the handoff, no console errors`,
     { ...gate(skipReplay), timeout: 180_000 }, async (t) => {
       requireOrSkip(skipReplay);
-      const timing = timingCheck(t, !frozenClock);
+      const timing = timingCheck(t);
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "romp-ui-bench-replay-"));
       try {
         const frames = synthesizeFrames(app, 40);
@@ -1606,20 +1608,18 @@ for (const { app, hidden, frozenClock } of [{ app: "feed", hidden: false }, { ap
           assert.equal(s.delivered + s.coalesced + s.shim + s.queued, s.count, `${type}: every frame accounted for (${JSON.stringify(s)})`);
           assert.equal(s.queued, 0, `${type}: nothing still queued`);
           assert.equal(s.bundleMs.n, s.delivered, `${type}: a bundle time for each frame delivered on its own`);
-          // The bundle column is a performance.now() difference rounded to 0.1 ms, and the property is that every
-          // delivery was MEASURED, not that it took time: a hidden page's view buffers a whole-state frame and returns
-          // before draw(), so a skeleton re-push's delivery is a merge of about 0.1 ms that reads 0.0 by clock phase
-          // (CI 2026-09-19: this row's `data` p50 in 4 of 131 runs; the frozen-clock entry makes every reading 0.0).
-          // The count above is the witness: the instrument's row starts at -1, and a reading it never took, or one
-          // below 0, drops out of n (buildReport). The percentiles are its shape.
-          if (s.delivered) assert.ok(typeof s.bundleMs.p50 === "number" && s.bundleMs.p50 >= 0 && s.bundleMs.max >= s.bundleMs.p50, `${type}: bundle percentiles ${JSON.stringify(s.bundleMs)}`);
+          // The bundle column is a performance.now() difference rounded to 0.1 ms. On a VISIBLE page every type's
+          // deliveries render inside the bracket (the feed's board, the timeline's draw()), so its p50 is above 0: the
+          // strict claim the file has always made there, where it read 4.5 to 90 ms and never fired. On a HIDDEN page the
+          // property is that every delivery was MEASURED, not that it took time: the view buffers a whole-state frame
+          // under the paint hold and returns before draw(), so a skeleton re-push's delivery is a merge of about 0.1 ms
+          // that reads 0.0 by clock phase (CI 2026-09-19: this row's `data` p50 in 4 of 131 runs; the frozen-clock entry
+          // makes every reading 0.0). There the count above is the witness (the instrument's row starts at -1, and a
+          // reading it never took, or one below 0, drops out of n: buildReport), and this line reads the sample's shape.
+          if (s.delivered) assert.ok(hidden ? typeof s.bundleMs.p50 === "number" && s.bundleMs.p50 >= 0 && s.bundleMs.max >= s.bundleMs.p50 : s.bundleMs.p50 > 0 && s.bundleMs.max >= s.bundleMs.p50, `${type}: bundle percentiles ${JSON.stringify(s.bundleMs)}${hidden ? " (hidden page: each delivery measured, 0.0 allowed)" : " (visible page: rendered inside the bracket, p50 above 0)"}`);
           if (type === "ka") { assert.equal(s.shim, s.count, "keepalives are the shim's alone"); assert.equal(s.delivered, 0); }
           else if (s.delivered) assert.ok(s.settleMs.max >= s.bundleMs.p50, `${type}: the main thread is free no sooner than a delivery returns`);
         }
-        // On a visible page a whole-state frame's delivery renders inside the bracket (the feed's board, the
-        // timeline's draw()), so at least one delivery reads above 0: the bundle column is a measurement, not a
-        // constant. A hidden page holds every paint for the return step, whose expansion counts are asserted below.
-        if (!hidden) assert.ok(Object.values(report.types).some((s) => s.bundleMs.max > 0), `a visible page's deliveries render inside the bracket: ${JSON.stringify(Object.fromEntries(Object.entries(report.types).map(([k, s]) => [k, s.bundleMs])))}`);
         // The frozen entry's own witness: the stub took effect, so every delivery read exactly 0.0 (a held clock minus
         // itself). Without this pin a stub that stopped wrapping the instrument (the accessor's name moved, say) would
         // leave the entry a second copy of the hidden replay, green, with the all-zero column the assertions above are
@@ -1647,13 +1647,18 @@ for (const { app, hidden, frozenClock } of [{ app: "feed", hidden: false }, { ap
         // margin of two animation frames, a keepalive's settle at least one frame interval, how many deltas reach the
         // bundle on their own at this gap, the forced collection freeing garbage) is the scheduler's to decide on a
         // loaded runner, so those are timing() relations: asserted under ROMP_UI_BENCH_TIMING, diagnostics otherwise.
-        // The strict `> 0` below is the one such claim left in the file after the bundle column's (2026-09-19): the
-        // first content frame's parse read 0.2 to 0.4 ms in 12 of 12 probe runs, two clock steps above the floor, so a
-        // faster runner could bring it to the bundle column's 0.0 reading; a red here would be that, not a lost measurement.
+        // The strict `> 0` claims on a per-delivery timing in this loop are four lines: the two handler readings below, on
+        // every entry, and the bundle column's per-type p50 (above) and first-frame reading (further down) on the two
+        // visible entries; the hidden entries make none since 2026-09-19 (the 0.0 reading). The first content frame's
+        // parse read 0.2 to 0.4 ms in 12 of 12 probe runs, two clock steps above the floor, so a faster runner could bring
+        // it to a 0.0 reading; a red here would be that, not a lost measurement.
         assert.ok(report.first.handlerMs > 0, `the first frame's handler time is a measurement: ${report.first.handlerMs}`);
         assert.ok(report.types[report.first.type].handlerMs.max > 0);
         if (report.first.handoff === "delivered") {
-          timing(report.first.handlerMs < report.first.bundleMs, `the shim's parse is cheaper than the bundle's render: ${JSON.stringify(report.first)}`);
+          // Under the frozen clock the first frame's bundle reading is the stub's 0 (pinned above), so the parse against the
+          // render would compare a measurement with a constant: no relation of that entry's. The settle margin reads the
+          // real clock on every entry (settleAfter's stamps land after the delivery returned and the stub let the clock go).
+          if (!frozenClock) timing(report.first.handlerMs < report.first.bundleMs, `the shim's parse is cheaper than the bundle's render: ${JSON.stringify(report.first)}`);
           timing(report.first.settleMs - report.first.bundleMs - report.first.handlerMs >= 5, `settle waits for the main thread after the delivery: ${JSON.stringify(report.first)}`);
         }
         timing(report.types.ka.settleMs.p50 >= 10, `a keepalive settles two animation frames after receipt, not when its handler returns: ${JSON.stringify(report.types.ka.settleMs)}`);
@@ -1671,11 +1676,12 @@ for (const { app, hidden, frozenClock } of [{ app: "feed", hidden: false }, { ap
         assert.equal(report.first.type, app === "feed" ? "feed" : "data");
         assert.ok(report.first.bytes > 1000);
         assert.ok(["delivered", "coalesced"].includes(report.first.handoff), `the first content frame reached the bundle: ${JSON.stringify(report.first)}`);
-        // When the first frame went to the bundle alone: its delivery measured (0.0 on a hidden page, as in the bundle
-        // column above) and settled no sooner than it returned. Whether it went alone is the scheduler's under the fast
-        // pacing (the frozen entry's first frame went alone in 18 of 20 runs on a developer box and coalesced in 2), so
-        // this line's negative is exercised only on the runs where it does; the frozen entry's pin above holds the reading at 0 there.
-        if (report.first.handoff === "delivered") assert.ok(report.first.bundleMs >= 0 && report.first.settleMs >= report.first.bundleMs, `the first frame's delivery measured and settled no sooner than it returned: ${JSON.stringify(report.first)}`);
+        // When the first frame went to the bundle alone: its delivery timed above 0 on a visible page (it renders inside the
+        // bracket; 4.5 to 89.5 ms on record, never a red), measured on a hidden page (0.0 allowed, as in the bundle column
+        // above), and settled no sooner than it returned. Whether it went alone is the scheduler's under the fast pacing
+        // (the frozen entry's first frame went alone in 18 of 20 runs on a developer box and coalesced in 2), so this
+        // line's negative is exercised only on the runs where it does; the frozen entry's pin above holds the reading at 0 there.
+        if (report.first.handoff === "delivered") assert.ok((hidden ? report.first.bundleMs >= 0 : report.first.bundleMs > 0) && report.first.settleMs >= report.first.bundleMs, `the first frame's delivery ${hidden ? "measured" : "timed above 0"} and settled no sooner than it returned: ${JSON.stringify(report.first)}`);
         assert.deepEqual(report.console.errors, [], "console errors");
         assert.deepEqual(report.console.pageErrors, [], "uncaught exceptions");
         assert.deepEqual(report.console.failedResources, [], "every page resource served");
