@@ -4769,7 +4769,8 @@ frames it received is measured in the panes themselves, by
   bounded at 24 KiB of JSON, a bound derived from the collector's own caps so
   that no row it can build is touched while its `wsBytesByHost` map, the one
   key without a cap, is under the crossing (its worst case, every cap reached at
-  once, is about 17.9 KB with share off and 21.3 KB with share on): a `perf`
+  once and eight attached hosts, is about 17.9 KB with share off and 21.5 KB
+  with share on): a `perf`
   minute row over the bound sheds `wsBytesByHost` whole, then `frames`,
   `loaf`, `free` and `slow`, in that order until it fits, keeps its other
   keys, and carries `capped: {bytes, dropped}` (the line's bytes before the

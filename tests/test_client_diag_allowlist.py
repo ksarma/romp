@@ -632,6 +632,18 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         share_on = re.findall(r"\((\d+\.\d) KB(?: share on\)|; the derivation above\))", ksrc)
         self.assertEqual(len(share_on), 2, "the derivation and CLIENT_DIAG_ROW_MAX's own comment each state the share-on figure once")
         self.assertEqual(set(share_on), {"%.1f" % (on / 1000)}, "both share-on figures are this row's size in KB (%d bytes)" % on)
+        # docs/reference.md states the same two figures for the same derivation, in its own phrasing: a third copy, which this
+        # change moved in kernel.py and the body and left at the old figure in the docs (review round 1, 2026-09-20). Its own
+        # pattern, whitespace-flattened (the doc wraps), and a not-None guard before the comparison, so a rephrased doc fails
+        # here rather than passing on nothing; the assumed host count is read back too, since "every cap reached at once" is
+        # not a bound on the one key that has no cap
+        dsrc = re.sub(r"\s+", " ", open(os.path.join(os.path.dirname(HERE), "docs", "reference.md"), encoding="utf-8").read())
+        doc = re.search(r"is about (\d+\.\d) KB with share off and (\d+\.\d) KB with share on\)", dsrc)
+        self.assertIsNotNone(doc, "docs/reference.md no longer states the two worst-case figures: re-aim this read")
+        self.assertEqual(doc.groups(), ("%.1f" % (off / 1000), "%.1f" % (on / 1000)), "the docs' figures are this row's (%d and %d bytes)" % (off, on))
+        count = re.search(r"every cap reached at once and (\w+) attached hosts", dsrc)
+        self.assertIsNotNone(count, "docs/reference.md no longer states the assumed host count beside the figures: re-aim this read")
+        self.assertEqual(count.group(1), words[HOSTS], "the docs' host count word is the HOSTS this test states")
         for data in (minute, dict(minute, **shared)):
             self.assertEqual(self.post("perf", "minute", data), "", "nothing shed, nothing said")
             row = self.rows()[-1]
