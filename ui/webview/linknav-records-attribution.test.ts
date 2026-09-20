@@ -535,8 +535,10 @@ test("the convention: the branch's review has rounds 1 and 2, the file review's 
 /** The count of this follow-on's units in the shared ui/webview/file-view.ts at the swept head: the units selected by the
  *  vocabulary that name the file review or carry a phrase the keyed rule judges as ours. Derived, never fitted: a deleted or an added
  *  attribution comment there moves it, and the fix is to re-derive this number at the new head (the file review's round 5,
- *  correctness-6 with tests-5 and extra8-4: a floor of ten had stood against fourteen, so four could go with the guard green). */
-const VIEWER_UNITS = 14;
+ *  correctness-6 with tests-5 and extra8-4: a floor of ten had stood against fourteen, so four could go with the guard green).
+ *  Fifteen since the author's closing pass after the file review's round 5 (records-1: the figure control's glyph holder,
+ *  whose comment names that pass). */
+const VIEWER_UNITS = 15;
 
 test("road 1, every checkout, a rule over the tree: every file git lists at the repo root, tracked or untracked and not ignored, whose text names the file review or carries an id of the author's family, plus the files the branch created, the plan's section, the guide's Links paragraph and the browser plan's pointer; the created files and the three records in full, the rest keyed on the review named, so another review's rounds are left alone; no round outside the convention and no finding of the author's outside a pass; road 2, on the open PR branch where main has moved past its last merge (the merge-base off origin/main and the diff adding this module): every unit the branch added or touched, the working tree against the merge-base", (t) => {
   const reviews = convention();

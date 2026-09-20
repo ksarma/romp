@@ -7912,10 +7912,11 @@ pass's re-parse), both inside the fence pass over `clean`. The passes after the 
 item's class, anchors' attributes (class, title, data-*, target, rel, tabindex, role, an href set, resolved or removed)
 and new anchors and spans in place of the prose's and the code blocks' text nodes (`tn.replaceWith(frag)` over text
 nodes and elements created by `document.createElement`, path-links.ts and url-links.ts), and none re-parses. The same
-grep over the whole of file-view.ts finds twelve sites: eleven outside mdBlock, all the viewer's own constant markup
-(the tray's icon constants, the loading glyph, codeBlock's numbered rows over escaped or hljs text), and the twelfth the
-highlight's write inside the fence pass, judged above; reader-place.ts's two DOMParser reads parse the note's source
-into a document of their own that is read, never adopted. file-view-seam.test.ts derives the callee list (every bare
+grep over the whole of file-view.ts finds fourteen sites: thirteen outside mdBlock, all the viewer's own constant markup
+(the tray's icon constants, the trail's two arrows in the bar, the figure control's glyph parsed once onto a holder that
+enters no document and cloned into each control, the loading glyph, codeBlock's numbered rows over escaped or hljs text),
+and the fourteenth the highlight's write inside the fence pass, judged above; reader-place.ts's two DOMParser reads parse
+the note's source into a document of their own that is read, never adopted. file-view-seam.test.ts derives the callee list (every bare
 call in the region, with no method call on an imported binding and no namespace or default import from `./` in
 file-view.ts or a reached module, so a pass in either form is red there rather than hidden from the list), the module
 set, the two judged sites and the whole file's count of twelve from the code and pins them (its test "no re-parse after
@@ -8532,7 +8533,7 @@ bypassed: no request reaches a host the gate still holds. The build's record her
 the contract said the same; the claim was false, and the follow-on is a privacy surface, landing on the owner's word
 (open point 11). The verifications: `git diff --stat $(git merge-base origin/main HEAD) HEAD -- kernel/` is empty and
 `git diff --name-only $(git merge-base origin/main HEAD) HEAD` lists files under ui/webview, docs, plans, tools,
-upstream or tests alone (39 files, the ledger entry's where line; run 2026-09-20 at the head after the merge of the fork's
+upstream or tests alone (40 files, the ledger entry's where line; run 2026-09-20 at the head after the merge of the fork's
 main for the file review's round 5, where the merge-base is the fork's main itself and the listing is the branch's whole
 delta over it; the two earlier runs, at the commit that built the one reader for the file review's round 4 and at the head
 that closed the author's closing pass after the file review's round 4, listed 38 from the older merge-base they shared,

@@ -1414,7 +1414,10 @@ test("the inertness premise, held where CI runs: MD_PURIFY is its six-key litera
 // createElement\(\s*[^)]*template|\bel\(\s*[^)]*template' over file-view.ts's mdBlock after the adoption line and over the
 // modules named below.
 const RE_PARSE = /\b(?:innerHTML|outerHTML)\b|insertAdjacentHTML|createContextualFragment|DOMParser|document\.write\b|insertAdjacentElement|\bsetHTML\w*\s*\(|parseHTMLUnsafe|createElement\(\s*['"`]template|\bel\(\s*['"`]template/;
-test("no re-parse after the adoption: mdBlock's post-adoption region and every module a pass there reaches, derived from the code, hold no use of innerHTML or outerHTML (a write under any spelling, or a read) and no insertAdjacentHTML, insertAdjacentElement, createContextualFragment, DOMParser, document.write, setHTML, setHTMLUnsafe, parseHTMLUnsafe or template element; the two judged sites sit before the adoption; the whole file holds twelve sites, eleven outside mdBlock", () => {
+/** The local functions of file-view.ts a post-adoption pass reaches, transitively over bare calls (derived below; a new one
+ *  widens this list first and is judged against RE_PARSE with the rest). */
+const REACHED_LOCALS = ["keepVideoShape", "addFigureControls", "pxDimension", "decideFigureControl", "figureAnchor", "figureControlAfter", "figureWantsControl", "removeFigureControl", "el", "figureControlGlyph", "oneImg", "linkAround", "figureState", "figureHasPicture", "figureTooSmall", "figureTarget", "linkAbove", "ringOf", "figureBox", "chosenSource", "absUrl"];
+test("no re-parse after the adoption: mdBlock's post-adoption region and every module a pass there reaches, derived from the code, hold no use of innerHTML or outerHTML (a write under any spelling, or a read) and no insertAdjacentHTML, insertAdjacentElement, createContextualFragment, DOMParser, document.write, setHTML, setHTMLUnsafe, parseHTMLUnsafe or template element; the two judged sites sit before the adoption; the whole file holds fourteen sites, thirteen outside mdBlock", () => {
   const mdCode = codeOnly(VIEW.split("function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {")[1].split("\n}\n")[0]);
   const adopt = "box.replaceChildren(...Array.from(clean.childNodes));";
   const adoptAt = mdCode.indexOf(adopt);
@@ -1425,14 +1428,20 @@ test("no re-parse after the adoption: mdBlock's post-adoption region and every m
   assert.deepEqual(before.split("\n").filter((l) => RE_PARSE.test(l)).map((l) => l.trim()), ["codeEl.innerHTML = hljs.highlight(raw, { language: lang }).value;"],
     "the one such write in mdBlock is the highlight's, before the adoption (hljs escapes the text: it creates spans and nothing that fetches)");
   assert.ok(before.indexOf('clean.querySelectorAll("pre code")') < before.indexOf("codeEl.innerHTML = hljs.highlight"), "inside the fence pass over `clean`");
-  // the whole file: twelve sites, the highlight's the one inside mdBlock, the other eleven the viewer's own constant markup outside
-  // it (the tray's icon constants, the loading glyph, codeBlock's numbered rows); the plan's re-parse paragraph states this count
+  // the whole file: fourteen sites, the highlight's the one inside mdBlock, the other thirteen the viewer's own constant markup
+  // outside it (the tray's icon constants, the loading glyph, codeBlock's numbered rows, and two judged at the merge of the trail
+  // and figure-control branch, 2026-09-20: the bar's two trail arrows, written at the bar's build outside the box like the other
+  // icon buttons, and the figure control's glyph, parsed once onto a holder that enters no document and cloned into each control,
+  // since the control itself stands under the box during the render and a live write there is what the node scene refuses; the
+  // control had written its glyph through innerHTML, two live re-parses under the box in that scene, red at the merge); the
+  // plan's re-parse paragraph states this count
   const whole = codeOnly(VIEW).split("\n").filter((l) => RE_PARSE.test(l));
-  assert.equal(whole.length, 12, "twelve sites in comment-stripped file-view.ts (a new one is judged here and in the plan's count before this number moves)");
-  assert.equal(whole.filter((l) => l.trim() === "codeEl.innerHTML = hljs.highlight(raw, { language: lang }).value;").length, 1, "the highlight's write among them, so eleven sit outside mdBlock");
+  assert.equal(whole.length, 14, "fourteen sites in comment-stripped file-view.ts (a new one is judged here and in the plan's count before this number moves)");
+  assert.equal(whole.filter((l) => l.trim() === "codeEl.innerHTML = hljs.highlight(raw, { language: lang }).value;").length, 1, "the highlight's write among them, so thirteen sit outside mdBlock");
+  assert.equal(whole.filter((l) => /holder\.innerHTML = ICON_EXPAND/.test(l)).length, 1, "the figure control's glyph is parsed onto its holder, never onto the control (the control is placed under the box)");
   // the callees of the post-adoption region: every identifier called there that is not a method, resolved through the imports
   const called = [...new Set([...after.matchAll(/(?<![.\w])([A-Za-z_]\w*)\(/g)].map((m) => m[1]))].filter((n) => !["if", "for", "while", "return", "switch", "catch"].includes(n));
-  assert.deepEqual(called, ["keepVideoShape", "linkHref", "resolveDocRelative", "linkMarkdownAnchors", "linkifyFileText"], "the passes after the adoption call these and nothing else (a new call widens this list first)");
+  assert.deepEqual(called, ["keepVideoShape", "linkHref", "resolveDocRelative", "linkMarkdownAnchors", "addFigureControls", "linkifyFileText"], "the passes after the adoption call these and nothing else (a new call widens this list first)");
   // a pass written as a method call on an imported binding (`ns.pass(box)`, `hljs.highlight(...)`) is no bare call, so the list
   // above would not see it: every binding file-view.ts imports, under any form and from any source, is asserted absent as the
   // object of a method call in the region (the round-2 verification named this blind spot, 2026-09-20)
@@ -1458,8 +1467,20 @@ test("no re-parse after the adoption: mdBlock's post-adoption region and every m
   const localFns = new Set([...codeOnly(VIEW).matchAll(/^(?:export )?function (\w+)\(/gm)].map((m) => m[1]));
   const modules = new Set<string>(); const locals: string[] = [];
   for (const c of called) { if (viewImports[c]) modules.add(viewImports[c]); else if (localFns.has(c)) locals.push(c); else assert.fail("a callee neither imported nor local: " + c); }
-  assert.deepEqual(locals, ["keepVideoShape"], "one local callee");
-  for (const l of locals) assert.deepEqual(codeOnly(VIEW.split("function " + l + "(")[1].split("\n}\n")[0]).split("\n").filter((x) => RE_PARSE.test(x)), [], l + " re-parses nothing (a style write)");
+  assert.deepEqual(locals, ["keepVideoShape", "addFigureControls"], "two local callees: the video's shape and the figure controls (the trail and figure-control branch's pass, judged at its merge, 2026-09-20)");
+  // a local callee's own bare calls to other local functions are followed too, transitively, so a write two levels down is read
+  // (the figure control's decision sat one call below addFigureControls and wrote its glyph through innerHTML onto a button placed
+  // under the box; the node scene caught it at the merge, and this walk reads it now): every reached local holds no re-parse verb,
+  // except the one judged site, the glyph's holder, an element parsed once and never inserted, whose clone the control takes
+  const localBody = (l: string): string => codeOnly(VIEW.split("function " + l + "(")[1].split("\n}\n")[0]);
+  const reached = [...locals];
+  for (let i = 0; i < reached.length; i++) for (const m of localBody(reached[i]).matchAll(/(?<![.\w])([A-Za-z_]\w*)\(/g)) if (localFns.has(m[1]) && !reached.includes(m[1])) reached.push(m[1]);
+  assert.deepEqual(reached, REACHED_LOCALS, "the local functions a post-adoption pass reaches, transitively over bare calls (a new one widens this list first)");
+  const GLYPH_HOLDER = 'if (!figureGlyph) { const holder = el("span"); holder.innerHTML = ICON_EXPAND; figureGlyph = holder.firstElementChild ?? null; }';
+  assert.deepEqual(reached.flatMap((l) => localBody(l).split("\n").filter((x) => RE_PARSE.test(x)).map((x) => l + ": " + x.trim())), ["figureControlGlyph: " + GLYPH_HOLDER], "the one re-parse a reached local holds is the glyph's holder (figureControlGlyph), judged: parsed once, cloned into each control");
+  const glyphBody = localBody("figureControlGlyph");
+  assert.equal(glyphBody.split("\n").filter((x) => /\bholder\b/.test(x)).length, 1, "the holder lives on that one line: it is inserted nowhere, so it enters no document");
+  assert.match(glyphBody, /return figureGlyph \? figureGlyph\.cloneNode\(true\) : null;/, "and the control takes a clone");
   const queue = [...modules];
   while (queue.length) { const m = queue.shift() as string; for (const dep of new Set(Object.values(importsOf(web(m))))) if (!modules.has(dep)) { modules.add(dep); queue.push(dep); } }
   assert.deepEqual([...modules].sort(), ["file-view-links.ts", "link-opener.ts", "math.ts", "md-block-start.ts", "md-config.ts", "md-links.ts", "md-sanitize.ts", "path-links.ts", "url-links.ts"],

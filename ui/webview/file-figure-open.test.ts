@@ -32,7 +32,11 @@ test("the control: one decision (decideFigureControl) puts a button of the bar's
   assert.match(want, /if \(figureTarget\(img, filePath\) === null\) return false;/, "none for a figure with nothing to open");
   assert.match(fn, /const anchor = figureAnchor\(img\);\n\s*const standing = figureControlAfter\(anchor\);\n\s*const want = figureWantsControl\(img, anchor, filePath\);\n\s*if \(standing\) \{ if \(!want\) removeFigureControl\(standing\); return; \}\n\s*if \(!want\) return;/, "one control per figure: the verdict against the one standing, added when missing and wanted, removed when standing and unwanted (the removal hands the keyboard on first, removeFigureControl)");
   assert.match(fn, /el\("button", "fileview-btn fileview-icon " \+ FIGOPEN_CLASS\)/, "the bar's glyph dress and the control's own class");
-  assert.match(fn, /b\.type = "button"; b\.innerHTML = ICON_EXPAND; b\.dataset\.icon = "1";/, "the icon family's drawing");
+  assert.match(fn, /b\.type = "button"; const glyph = figureControlGlyph\(\); if \(glyph\) b\.appendChild\(glyph\); b\.dataset\.icon = "1";/, "the icon family's drawing, cloned into the control (never an innerHTML write on the control: it stands under the Rendered box during the render, and file-view-figures-gate-adopt.test.ts records a live re-parse there as a red; the author's closing pass after the file review's round 5, records-1)");
+  const glyphFn = between(VIEW, "function figureControlGlyph(): Node | null {", "/**");
+  assert.match(glyphFn, /const holder = el\("span"\); holder\.innerHTML = ICON_EXPAND; figureGlyph = holder\.firstElementChild \?\? null;/, "the glyph parsed once onto a holder that enters no document");
+  assert.match(glyphFn, /return figureGlyph \? figureGlyph\.cloneNode\(true\) : null;/, "and cloned per control");
+  assert.doesNotMatch(fn.slice(0, fn.indexOf("/** The control's glyph")), /innerHTML|outerHTML|insertAdjacentHTML/, "no markup write in the decision itself");
   assert.match(fn, /b\.setAttribute\(FIGOPEN_MARK, ""\);/, "the mark it is found by");
   assert.match(fn, /b\.title = FIGURE_OPEN_TITLE; b\.setAttribute\("aria-label", FIGURE_OPEN_TITLE\);/, "the words in the title and the aria-label");
   assert.match(fn, /parent\.insertBefore\(b, anchor\.nextSibling\);/, "the anchor's next sibling: a sibling, never a wrapper");

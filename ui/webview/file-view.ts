@@ -5081,13 +5081,25 @@ function decideFigureControl(img: Element, filePath: string): void {
   if (standing) { if (!want) removeFigureControl(standing); return; }
   if (!want) return;
   const b = el("button", "fileview-btn fileview-icon " + FIGOPEN_CLASS) as HTMLButtonElement;
-  b.type = "button"; b.innerHTML = ICON_EXPAND; b.dataset.icon = "1";
+  b.type = "button"; const glyph = figureControlGlyph(); if (glyph) b.appendChild(glyph); b.dataset.icon = "1";
   b.setAttribute(FIGOPEN_MARK, "");
   b.title = FIGURE_OPEN_TITLE; b.setAttribute("aria-label", FIGURE_OPEN_TITLE);
   const align = (img.getAttribute("align") || "").toLowerCase();
   if (align === "left" || align === "right") b.classList.add(FIGOPEN_CLASS + "-" + align);   // the figure floats that way (the sanitizer keeps `align`); the control floats with it
   const parent = anchor.parentNode;
   if (parent) parent.insertBefore(b, anchor.nextSibling);
+}
+/** The control's glyph (ICON_EXPAND, the bar's family), parsed ONCE onto a holder that enters no document and cloned into each
+ *  control. The control is placed under the Rendered box during the render, and a write of innerHTML on a live-document
+ *  element that ends up under the box is a re-parse the gate-before-adoption scene records and refuses
+ *  (file-view-figures-gate-adopt.test.ts, its Reparse record; the author's closing pass after the file review's round 5,
+ *  records-1: the control had written its glyph through innerHTML, two live re-parses under the box per render of that
+ *  scene's file, red at the merge of the fork's main). The bar's glyphs keep the write: the bar stands outside the box. A
+ *  stand-in document that parses no markup yields no glyph, and the control stands bare there, as it did. */
+let figureGlyph: Element | null = null;
+function figureControlGlyph(): Node | null {
+  if (!figureGlyph) { const holder = el("span"); holder.innerHTML = ICON_EXPAND; figureGlyph = holder.firstElementChild ?? null; }
+  return figureGlyph ? figureGlyph.cloneNode(true) : null;
 }
 /** Per open, the viewer body's takeKeyboard (openFileView), for a control removed while it holds the keyboard: the decision is
  *  module-level and the hand-over is the open's, so the open registers it against its body and removeFigureControl finds it
