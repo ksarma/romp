@@ -98,7 +98,26 @@ test('the section records the hole, the fix, the instrument, the measurement, th
     'Chromium: no svg figure requested in any run by any instrument. After the fix, no request in any engine in any run: the leg once per engine at the fix and once per engine in each later run of it (the review\'s sweep and the head runs); the refuters 18 of 18, then 4, 4 and 2 runs, then 3 per engine.',
     // the fix
     'The whole figure chain now runs over that body and the adoption comes after: `const clean = sanitizeMd(dirty, mintHeadingIds)`, then resolveFigureRefs, rewriteFigureSrcs and gateRemoteFigures over `clean`, then `box.replaceChildren(...Array.from(clean.childNodes))`.',
-    'no pass after the adoption sets, repoints or moves a fetching attribute.',
+    'The rule: every pass that sets, repoints, moves or creates a fetching element runs before the adoption.',
+    'the fence pass, the one pass that re-parses markup (code-block.ts wrapCodeLines serializes each code element through innerHTML and parses it back), runs on `clean` before the chain since round 2 of this fix\'s review, so the chain judges the elements the re-parse creates (the fence hole, below).',
+    'no pass after the adoption sets, repoints or moves a fetching attribute, and none re-parses markup.',
+    // the fence hole: three engines, a plain multi-line fence, an svg image with src or srcset, a defect on main this fix as filed did not close, closed by the move
+    '**The fence hole.** Found by round 2 of this fix\'s review, on main and open at this fix as filed: mdBlock\'s fence pass ran after the adoption, over the live box, and re-parsed every `pre code` subtree',
+    'Measured 2026-09-20 with the fence pass after the adoption, over three such fences (an image with `src`; a gated svg\'s image with `src` beside its `href`; an image with `srcset`), in Playwright\'s Chromium, Firefox and WebKit: the figure server logged `GET /a-src.png`, `GET /b-src.png` and `GET /c-set.png` under Host `remote.test` in every engine,',
+    'so one gated svg image yielded three placeholders. Closed by the move: the fence pass runs on `clean` directly after the sanitize and before the chain, so the chain judges the img the re-parse created and gates it like any other;',
+    'The three-placeholder effect is closed by the same move (one placeholder per fence in the scene\'s assertion).',
+    // the re-parse population, with its derivation command
+    '**The re-parse population.** The rule needs every write that re-parses or re-serializes markup after the adoption enumerated, a different grep from the walk of attribute writes.',
+    'over mdBlock\'s region after the adoption line and over every module a pass in that region reaches (the identifiers called there, `keepVideoShape`, `linkHref`, `resolveDocRelative`, `linkMarkdownAnchors` and `linkifyFileText`, resolved through file-view.ts\'s imports to md-links.ts and file-view-links.ts, then each module\'s `./` imports transitively: file-view-links.ts, link-opener.ts, math.ts, md-block-start.ts, md-config.ts, md-links.ts, md-sanitize.ts, path-links.ts, url-links.ts): no site.',
+    'file-view-seam.test.ts derives the callee list, the module set and the two judged sites from the code and pins them (its test "no re-parse after the adoption"),',
+    // the namespace table and the class statement
+    '**The namespace table.** One probe in the three engines, 2026-09-20',
+    '| `image` | an HTML `img` (the parser\'s one tag rename) | its `srcset` (chosen over `src` when both stand): Chromium, Firefox, WebKit | `img`: `src`, `srcset` (FETCH_ATTRS) |',
+    '| `svg` (nested) | an svg element | its `fill="url(...)"`: Chromium; not Firefox, not WebKit | paintRefs (fill, stroke, filter, clip-path, mask, marker-start, marker-mid, marker-end) |',
+    'The class is closed by construction by the move, not by the one instance found: every element the re-parse creates is judged by the chain over `clean`, because the re-parse runs before it and the created elements are the sanitizer\'s own allowed tags under the HTML parser, whose one rename is `image` to `img`;',
+    // the Copy click per engine
+    '**The Copy button after the move.**',
+    'the handler handed the clipboard write the fence\'s text and the label read Copied with the `copied` class, then Copy again after the window, 3 of 3 engines, 2026-09-20.',
     // the instrument
     'The claim is about bytes leaving, so the test reads real servers\' request logs, never page.route or context.route,',
     LEG + ' runs three servers on 127.0.0.1:',
@@ -110,6 +129,8 @@ test('the section records the hole, the fix, the instrument, the measurement, th
     '**Scope.** Unreachable through the VS Code panes, whose CSP blocks remote figures (`img-src ${webview.cspSource} data:`, extension.ts). Reachable through the kernel-served dashboard and the iOS web app. What leaks is the IP address, the time, the user agent and the path; the kernel sends Referrer-Policy same-origin, so no referer. The engine measured is Playwright\'s WebKit build, not literal iOS Safari, so the iOS statement rests on shared engine behaviour and not on a device test.',
     // the tests
     '**Tests.** ' + LEG + ', above: red in WebKit at 2d41e5c9b in all three scenes, green in Chromium and Firefox there, green in all three engines after the fix.',
+    'Its fourth scene, the fence hole (three raw multi-line fences, an svg image with `src`, with `src` beside a gating `href`, and with `srcset`, and the `language-js` control): red in all three engines with the fence pass after the adoption (the figure server\'s three GET lines) and green in all three with the pass before the chain, one placeholder per fence. Its fifth case, the Copy button under the moved pass, clicked for real on two fences: green in all three engines.',
+    'since round 2 it also pins the fence pass\'s place (on `clean`, between the sanitize and the chain\'s first call) and, in its test "no re-parse after the adoption", the re-parse population above, derived from the code.',
     SVG_LEG + ', the second leg: red in Firefox and in WebKit at 2d41e5c9b, green in Chromium there, green in all three after the fix.',
     'Both legs skip where Playwright\'s engines are absent, and CI\'s npm test runs before its one browser install, so in CI the legs skip and the node scene runs: ' + NODE_SCENE + ' drives the real openFileView and openUrlView under plain node over a stand-in with two documents, the sanitizer\'s body inert and the viewer\'s document live, and pins by execution that no node entering the live document carries a fetching attribute on an unlisted host or a page-relative path',
     'that no write of such an attribute lands on a live-document element across the render, that nothing under the box carries one once the render is done, that the gated figures stand as placeholders holding their sources in data-fv-gated-* and a click on the host restores exactly them, and that the folder figure is requested through /file.',
@@ -140,8 +161,8 @@ test('mdBlock runs the chain on the sanitized body and adopts after, and the ado
   const aboveLines = mdFn.slice(braceAt + '\n  }\n'.length, adoptAt).split('\n');
   assert.ok(aboveLines.length >= 1 && aboveLines.every((l) => l.startsWith('  // ')), 'only comment lines sit between the chain and the adoption line');
   const above = prose('\n' + aboveLines.join('\n'));
-  assert.ok(above.includes('Adopted as they are, no re-parse, every fetching attribute gated or repointed above, so the adoption starts no fetch to an unlisted host and none at a pre-rewrite URL, in any engine; what it does start is the fetch of every figure left with a live attribute, the folder\'s through /file and an allowed host\'s as written (the legs\' logs: no line for a gated host, one line through /file for the folder\'s figure).'),
-    'the adoption line\'s comment says what the adoption starts and what it does not');
+  assert.ok(above.includes('Adopted as they are, no re-parse here or after (the fence pass\'s re-parse ran above, before the chain), every fetching attribute gated or repointed above, so the adoption starts no fetch to an unlisted host and none at a pre-rewrite URL, in any engine; what it does start is the fetch of every figure left with a live attribute, the folder\'s through /file and an allowed host\'s as written (the legs\' logs: no line for a gated host, one line through /file for the folder\'s figure).'),
+    'the adoption line\'s comment says what the adoption starts and what it does not, and where the one re-parse ran');
   const block = prose(mdFn.slice(cleanAt, adoptAt));
   assert.ok(block.includes('The figure chain runs HERE, on the sanitizer\'s body, BEFORE its nodes are adopted into `box` (2026-09-20).'), 'the block\'s opening comment');
   // The observation per vector, as the legs measured it: the two <img> figures, then the inline svg image.
@@ -157,6 +178,17 @@ test('mdBlock runs the chain on the sanitized body and adopts after, and the ado
   assert.ok(block.includes('the second leg\'s 3000-paragraph note, both figures, 3 of 3 runs; 400 plain paragraphs, 1 of 3; every count is under "Run counts, the svg vectors" in the plan section named below'), 'the Firefox svg sentence carries its two counts and points at the plan\'s Run counts paragraph');
   assert.ok(fs.existsSync(path.join(REPO, 'ui', 'webview', SVG_LEG)), SVG_LEG + ' exists under ui/webview');
   assert.ok(block.includes('the section ' + TITLE + ' of plans/markdown-viewer.md records the hole, the instrument and the scope'), 'the comment names the plan section');
+  // the rule, stated in the chain block, and the fence pass's own comment above it: its road, its measurement and its place
+  assert.ok(block.includes('The rule this block keeps: every pass that sets, repoints, moves or creates a fetching element runs before the adoption.'), 'the chain block states the rule');
+  assert.ok(block.includes('The fence pass (above) is the one pass that re-parses markup, so it runs before this block and this block judges what its re-parse creates'), 'and names the fence pass as the one re-parsing pass, before it');
+  assert.ok(block.includes('and none re-parses: after the adoption line this function, and every module a pass after it reaches (the callees\' modules and their imports, derived from the code), holds no write of innerHTML or outerHTML and no insertAdjacentHTML, insertAdjacentElement, createContextualFragment, DOMParser or document.write; file-view-seam.test.ts derives that population from the comment-stripped code (its RE_PARSE pattern) and pins it'), 'the post-adoption population and its pin');
+  assert.ok(block.includes('The pass runs HERE, on the sanitizer\'s body, before the figure chain below (2026-09-20), because it is the one pass that re-parses markup: wrapCodeLines (code-block.ts) serializes each code element through innerHTML and parses it back'), 'the fence pass\'s comment says where it runs and why');
+  assert.ok(block.includes('fetched from the unlisted host in Chromium, Firefox and WebKit with no click (the fourth scene of file-view-figures-gate-adopt-browser.test.ts: red with this pass over `box` after the adoption, green here, measured 2026-09-20)'), 'and its measurement');
+  assert.ok(block.includes('a placeholder placed before this pass was repeated by the line splitter, three for one gated svg'), 'and the repeated-placeholder effect the move closes');
+  const fenceAt = block.indexOf('The pass runs HERE, on the sanitizer\'s body, before the figure chain below'), chainAt = block.indexOf('The figure chain runs HERE, on the sanitizer\'s body, BEFORE its nodes are adopted');
+  assert.ok(fenceAt >= 0 && chainAt > fenceAt, 'the fence pass\'s comment sits above the chain block\'s');
+  const codeOnlyBlock = mdFn.slice(cleanAt, adoptAt).split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
+  assert.ok(codeOnlyBlock.indexOf('clean.querySelectorAll("pre code")') < codeOnlyBlock.indexOf('resolveFigureRefs(clean, doc.href);'), 'the fence pass over `clean` sits before the chain\'s first call, in the code');
 });
 
 test('the leg exists, the section names it, and it is what the section says: real servers, a proxy, three engines, no route', () => {
