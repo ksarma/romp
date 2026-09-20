@@ -593,13 +593,21 @@ def restore_env(name, prior):
 #     verdict the live one, two paths for one object, and the clause is still there, keyed on the object. The refusal
 #     marks nothing on _SDK_REPORTED: no later window takes the kept-root report, and a mark would silence that later
 #     gone report; the fixture records the refused object on _SDK_REFUSED instead, the list both links read. The
-#     fixture's tests pin it (S7, beside S6, the same leak with no swapping class, reported as inherited; S7B, the
-#     refusal as the first window's and no later one's; S8, the run-root shape, no refusal; S9 and S10, the gone
-#     shape, the object put back and not, each pair linked at the object; S11, the refusal's roots from the start
-#     read's recorded fields; S12, a real object in the slot at the window; S13, the named-object guard; S9B and
-#     S10B, each pair with the object repointed between its two lines, linked at the object; S14, a second gone
-#     object after the refusal, its report without the link clause; S10C, the refused object found by a class whose
-#     verdicts render other objects, and M, verdicts with no refusal in the run, each without the boundary's clause).
+#     fixture's tests pin it, every case whose outer class reads the refusal's lines or the link clause, present or
+#     absent, a roster derived from the classes and held equal to them both ways by TheCaseRostersNameEveryCase in
+#     tests/test_sdk_singleton_ratchet.py, whose failure names the ids missing here and the ids here with no class
+#     (S7, beside S6, the same leak with no swapping class, reported as inherited; S7B, the refusal as the first
+#     window's and no later one's; S8, the run-root shape, no refusal; S9 and S10, the gone shape, the object put back
+#     and not, each pair linked at the object; S11, the refusal's roots from the start read's recorded fields; S12, a
+#     real object in the slot at the window; S13, the named-object guard; S9B and S10B, each pair with the object
+#     repointed between its two lines, linked at the object; S14, a second gone object after the refusal, its report
+#     without the link clause; S10C, the refused object found by a class whose verdicts render other objects, its
+#     verdicts without the boundary's clause; M, verdicts with no refusal in the run, none with the clause; E, a gone
+#     report on an import-time leak with no refusal before it, its link clause absent; U and V, the same read on a
+#     leak a setUpClass or a setUpModule completed; T, a first window whose start read saw None over a setUpClass
+#     build, no refusal; S15, a test's own verdict on the refused object without the clause and the module end's
+#     start-to-end verdict with it; and S16, the scope that found the refused object ending on the reload road, its
+#     verdict without the clause).
 # Three module-level lists of STRONG references (identity membership; strong so an id is never reused by a
 # later object) keep the kinds of naming apart. Every object a VERDICT names (a test's own, a boundary's)
 # goes on _SDK_NAMED, the list the boundary's quiet-on-a-named-object rule consults. Every object the

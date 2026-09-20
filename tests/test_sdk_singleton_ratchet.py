@@ -134,7 +134,8 @@ stub package importable by the child alone (nested_run's sdk_stub), asserts insi
 imported and that _sdk_missing is False, and the same lazy first build passes there with neither notice in the output.
 
 The scratch modules, one nested run each, the cases in method order (unittest runs a class's methods
-alphabetically, and each case's `before` is what the previous case left):
+alphabetically, and each case's `before` is what the previous case left); each entry opens on the id its
+class binds as SCRATCH, and TheCaseRostersNameEveryCase holds the list and the classes equal both ways:
   A, the singleton built under the run root first:
     a. the worker's lazy first build (None before; after, a backend over jd.STATE, present) passes;
     b. ViewBuilder's fixed shape (save km._sdk_backend, sandbox jd.STATE, build, put both back, remove the
@@ -159,10 +160,10 @@ alphabetically, and each case's `before` is what the previous case left):
     d. XDG_STATE_HOME moved to a fresh root (hosts off), a re-execution so the judge re-binds jd.STATE there, then
        the lazy build over that root passes: the reference on this road is jd.STATE after the test (last in B,
        since it moves the child's environment).
-  C, the first build over a sandbox that stands:
+  C and C_WARNED, the first build over a sandbox that stands, C_WARNED the same text with a warning planted:
     a. None before and, after, a backend over a kept sandbox, jd.STATE elsewhere: the allowance does not
        cover it either (it asks for jd.STATE, not for any directory that exists).
-    C is run a second time with a module-level DeprecationWarning planted in the scratch, so the child's summary
+    C_WARNED is C with a module-level DeprecationWarning planted in the scratch, so the child's summary
     line carries a warnings segment between passed and errors ("1 passed, 1 warning, 1 error in" today): the outer
     tests read the error count past that segment (summary_mismatch, which tolerates any other count between passed
     and errors and refuses a wrong count by name) and pin the segment's presence and position, not its count.
@@ -290,6 +291,22 @@ alphabetically, and each case's `before` is what the previous case left):
     setUpClass builds over a sandbox of its own and removes it, leaving that second gone object in the slot for its one
     test and putting the first back after it; Two.a carries the gone report on the second object with no link clause (no
     refusal named that object; the two lines render two roots), every boundary is quiet, two errors.
+  S15, the boundary link clause's placement: a test window whose before value is the refused object carries no clause,
+    and the module end's start-to-end verdict on the same change does. S9's import-time gone leak and swapping class
+    (One.a's first window refuses under the gone head; One's tearDownClass puts the object back), then Two.a, which
+    starts under the gone object (the inherited gone report with its link to the refusal) and resets the slot to None
+    itself: its own verdict renders the refused object as before and None as after, with the object remedy, and says
+    nothing about the refusal; the module end finds the slot changed from the object it found to None, which no window
+    chain accounts for, so its start-to-end verdict renders the two values and carries the clause; both class ends are
+    quiet; two errors, One.a's refusal and Two.a's teardown report (the gone report, its own verdict and the module
+    end's verdict, one exception group).
+  S16, the boundary link's changed-marker term: E's import-time gone leak, then a class whose setUpClass resets the slot
+    (S10's swap; One.a lazy-builds over the run root, allowed, and its first window refuses under the gone head) and
+    whose tearDownClass re-executes the kernel and builds the new kernel's singleton over a sandbox, jd.STATE restored;
+    the class end's marker differs from its start's, so the start-to-end judgment takes the reload road, rendering the
+    after value alone against jd.STATE as the reload re-bound it (the sandbox remedy) and no before value, and carries
+    no clause; the refusal and the verdict are One.a's one teardown report, one error; the module end is quiet on the
+    object the class end named.
   W, a session-scoped autouse fixture in the case directory's own conftest.py (nested_run's conftest) that builds over
     a kept root and restores jd.STATE before the module boundary's start read: a is the first test to meet it and
     carries the kept-root inherited report, its cause clause naming import-time code or a session- or package-scoped
@@ -2686,6 +2703,177 @@ def reader_population(source=None):
             if name in bindings:
                 readers.add(node.func.id)
     return readers, region - readers, bindings
+
+
+# The refusal's rendered texts, the module's one copy of each: the two heads and the link clause's two texts. A case
+# class that references one of these names reads the refusal's lines or the link clause, present or absent, and is on
+# the conftest roster's population (case_population).
+REFUSAL_TEXT_NAMES = ("SWAPPED", "SWAPPED_GONE", "REFUSED_OBJECT", "REFUSED_FOUND")
+CASE_LIST_OPENS = "The scratch modules, one nested run each"
+CASE_LIST_CLOSES = "The outer tests read a nested run's output by structure"
+CASE_OPENER = re.compile(r"^  ([A-Z][A-Z0-9_]*(?: and [A-Z][A-Z0-9_]*)*), ")
+CONFTEST_ROSTER_OPENS = "The fixture's tests pin it"
+
+
+def case_population(source=None):
+    """The scratch cases a module defines, derived from its source by AST: every class that derives from _NestedRun
+    (by name, through bases defined in the module) other than _NestedRun itself is a case, and its id is the tail of
+    the SCRATCH_<id> name its class-level `SCRATCH = SCRATCH_<id>` binds, a base's when the class binds none (the
+    mapping derive() prints beside a red class). A case class whose SCRATCH resolves to no such name (a literal, an
+    expression, no binding on the class or any base) is a shape this does not read and raises, so the population
+    cannot come back silently short of a case. Returns (ids, refusal_readers, cases): every case id; the ids of the
+    cases whose class body, or a module-defined base's, references one of REFUSAL_TEXT_NAMES, the module's one copy
+    each of the refusal's two heads and the link clause's two texts, so a class reading those lines through a literal
+    copy of the text is outside this set, which is why the roster pin says it keys on the names; and the class-name to
+    id map. `source` is this module's when None; a synthetic text pins the derivation itself
+    (TheCaseRostersNameEveryCase)."""
+    tree = ast.parse(inspect.getsource(sys.modules[__name__]) if source is None else source)
+    classes = {n.name: n for n in tree.body if isinstance(n, ast.ClassDef)}
+    if "_NestedRun" not in classes:
+        raise AssertionError("no _NestedRun class in the source: the derivation would read an empty population")
+
+    def bases(name):                                    # the module-defined bases, transitively, nearest first
+        found = []
+        for base in classes[name].bases:
+            bname = base.id if isinstance(base, ast.Name) else None
+            if bname in classes and bname not in found:
+                found.append(bname)
+                found.extend(b for b in bases(bname) if b not in found)
+        return found
+
+    def scratch(name):
+        for node in classes[name].body:
+            if (isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)
+                    and node.targets[0].id == "SCRATCH"):
+                return node.value
+        return None
+
+    ids, readers, cases = set(), set(), {}
+    for name in classes:
+        if name == "_NestedRun" or "_NestedRun" not in bases(name):
+            continue
+        chain = [c for c in [name] + bases(name) if c != "_NestedRun"]
+        value = next((v for v in (scratch(c) for c in chain) if v is not None), None)
+        if not (isinstance(value, ast.Name) and value.id.startswith("SCRATCH_")):
+            raise AssertionError("%s binds its SCRATCH in a shape case_population does not read (SCRATCH = "
+                                 "SCRATCH_<id> on the class or a base), so the case would be missed: %s"
+                                 % (name, ast.unparse(value) if value is not None else "no binding"))
+        cases[name] = value.id[len("SCRATCH_"):]
+        ids.add(cases[name])
+        names = {n.id for c in chain for n in ast.walk(classes[c]) if isinstance(n, ast.Name)}
+        if names & set(REFUSAL_TEXT_NAMES):
+            readers.add(cases[name])
+    if not ids:
+        raise AssertionError("no class derives from _NestedRun: the derivation would read an empty population")
+    return ids, readers, cases
+
+
+def case_list_ids(doc):
+    """The ids the module docstring's case list names, read from the raw docstring: the list runs from CASE_LIST_OPENS
+    to CASE_LIST_CLOSES, and every line at the list's own indent (two spaces) opens an entry with its id, or its ids
+    joined by "and", followed by a comma (CASE_OPENER). A line at that indent in any other shape raises, so an entry
+    the pin cannot read is never passed over as prose. Ids in list order, duplicates kept for the pin to name."""
+    region = doc[doc.index(CASE_LIST_OPENS):doc.index(CASE_LIST_CLOSES)]
+    ids = []
+    for line in region.splitlines():
+        if line.startswith("  ") and not line.startswith("   "):
+            m = CASE_OPENER.match(line)
+            if not m:
+                raise AssertionError("a line at the case list's indent opens no entry: %r" % line)
+            ids.extend(m.group(1).split(" and "))
+    return ids
+
+
+def conftest_roster_ids(text):
+    """The ids the conftest's roster of the refusal's cases names, read from conftest_comment_text(): the parenthesis
+    that follows CONFTEST_ROSTER_OPENS, its entries split on semicolons, each opening with its id, or its ids joined
+    by "and", before the entry's first comma; the last entry may open with "and". An entry in any other shape raises.
+    Ids in roster order, duplicates kept for the pin to name."""
+    m = re.search(re.escape(CONFTEST_ROSTER_OPENS) + r"[^()]*\(([^()]*)\)\.", text)
+    if not m:
+        raise AssertionError("no roster in one parenthesis follows %r in the conftest's comments"
+                             % CONFTEST_ROSTER_OPENS)
+    ids = []
+    for entry in m.group(1).split("; "):
+        entry = entry[len("and "):] if entry.startswith("and ") else entry
+        opener = entry.split(", ", 1)[0]
+        if not re.fullmatch(r"[A-Z][A-Z0-9_]*(?: and [A-Z][A-Z0-9_]*)*", opener):
+            raise AssertionError("a roster entry opens on no id: %r" % entry)
+        ids.extend(opener.split(" and "))
+    return ids
+
+
+class TheCaseRostersNameEveryCase(unittest.TestCase):
+    """The two rosters of cases are derived from the classes, never kept by hand beside them. The module docstring's
+    case list names every case id a class binds as its SCRATCH and no other (case_population, by AST; the id is the
+    SCRATCH_<id> name's tail, the mapping derive() prints), and the conftest's roster of the refusal's cases names
+    every case whose class references one of the refusal's rendered texts (REFUSAL_TEXT_NAMES) and no other; each
+    pair is held equal both ways and the failure names the missing and the extra ids, so a derivation that comes back
+    short reds on the roster's extras and no floor is kept. Until round 7 both rosters were hand-kept: the delta that
+    extended them for two cases left the two it added after them off, with the module green (the round-6 review's C).
+    What the conftest half keys on: a reference, in the case class or a module-defined base, to one of four names,
+    the module's one copy each of the refusal's two heads and the link clause's two texts; a class reading those
+    lines through a literal copy of the text is outside the population, and the pin reads no literal. The third test
+    runs the derivation and both readers over synthetic texts."""
+
+    def _assert_same(self, what, derived, named):
+        self.assertEqual(len(named), len(set(named)), "%s names an id twice: %r" % (what, sorted(named)))
+        self.assertEqual(set(named), derived, "%s and the classes differ: missing from it %r, in it with no class %r"
+                         % (what, sorted(derived - set(named)), sorted(set(named) - derived)))
+
+    def test_the_docstrings_case_list_names_every_case_and_no_other(self):
+        ids, _, _ = case_population()
+        self._assert_same("the module docstring's case list", ids, case_list_ids(__doc__))
+
+    def test_the_conftests_roster_names_every_case_that_reads_the_refusal_and_no_other(self):
+        _, readers, _ = case_population()
+        self._assert_same("the conftest's roster of the refusal's cases (keyed on a reference to one of %s)"
+                          % ", ".join(REFUSAL_TEXT_NAMES), readers, conftest_roster_ids(conftest_comment_text()))
+
+    def test_the_derivation_reads_the_classes_by_shape_and_the_rosters_by_their_openers(self):
+        """A case inherits its id from a base that binds SCRATCH; a subclass binding its own has its own; a reference
+        to a refusal text in a base puts the subclass on the readers' side; a class outside _NestedRun's tree is no
+        case; a SCRATCH bound in another shape raises; both roster readers accept joined openers and refuse a
+        mis-shaped entry."""
+        synthetic = textwrap.dedent("""\
+            class _NestedRun:
+                SCRATCH = ''
+
+            class One(_NestedRun, unittest.TestCase):
+                SCRATCH = SCRATCH_S98
+
+                def test(self):
+                    carriers(self.out, SWAPPED)
+
+            class Two(One):
+                SCRATCH = SCRATCH_S99
+
+            class Three(One):
+                pass
+
+            class Four(_NestedRun, unittest.TestCase):
+                SCRATCH = SCRATCH_Z
+
+            class Pin(unittest.TestCase):
+                SCRATCH = SCRATCH_A
+            """)
+        ids, readers, cases = case_population(synthetic)
+        self.assertEqual((ids, readers), ({"S98", "S99", "Z"}, {"S98", "S99"}))
+        self.assertEqual(cases, {"One": "S98", "Two": "S99", "Three": "S98", "Four": "Z"})
+        with self.assertRaisesRegex(AssertionError, "Four binds its SCRATCH in a shape case_population does not read"):
+            case_population(synthetic.replace("SCRATCH = SCRATCH_Z", "SCRATCH = SCRATCH_HEAD + 'x'"))
+        with self.assertRaisesRegex(AssertionError, "no _NestedRun class"):
+            case_population("class Pin(unittest.TestCase):\n    pass\n")
+        doc = "%s:\n  A, one:\n    a. sub\n  H and H2, two:\n  S99, three\n%s" % (CASE_LIST_OPENS, CASE_LIST_CLOSES)
+        self.assertEqual(case_list_ids(doc), ["A", "H", "H2", "S99"])
+        with self.assertRaisesRegex(AssertionError, "opens no entry"):
+            case_list_ids(doc.replace("  S99, three", "  a stray line"))
+        text = "x. %s, every case (S7, one; S9 and S10, two; and M, three). y" % CONFTEST_ROSTER_OPENS
+        self.assertEqual(conftest_roster_ids(text), ["S7", "S9", "S10", "M"])
+        with self.assertRaisesRegex(AssertionError, "opens on no id"):
+            conftest_roster_ids(text.replace("S9 and S10, two", "the pair, two"))
+        with self.assertRaisesRegex(AssertionError, "no roster in one parenthesis"):
+            conftest_roster_ids("x. %s. y" % CONFTEST_ROSTER_OPENS)
 
 
 class TheReadersRosterNamesEveryReader(unittest.TestCase):
