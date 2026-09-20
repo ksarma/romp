@@ -730,7 +730,7 @@ def _traversal_references(tree):
     node._fields or ast.dump, a whole walk this finder never sees (review round 5, correctness-2, tests-1, extra5-2 and regression-2:
     the ruling stops the name list at four, so the finder refuses the forms it names and is silent on the rest, an early warning;
     the contract, a stranger node refused and never passed over, is carried by execution in TheWalkersRefuseAStrangerByExecution
-    over every census entry point of this module). The interpreter check beside the walker case scans vars(ast) for every node
+    over every roster census entry point of this module). The interpreter check beside the walker case scans vars(ast) for every node
     class and reds by name on a new one with no walker involved, so the version demand does not rest on this finder."""
     owners = {}
     for stmt in tree.body:
@@ -1081,9 +1081,13 @@ def _census_floor(tree):
     calls it makes, so every such def must be a row of the roster; `methods` maps every method whose subtree calls _walk by
     name to its calls, the inline readers the witness pins by name with the reason each is outside the roster. Itself a census
     over a tree (a reader that passed over a node it does not classify would report a def absent), so it is a row of the
-    roster and drives like the rest. Its limit, stated rather than closed by another list: a census handed a pre-parsed tree
-    under any parameter name that walks it by hand calls none of these four and is outside this floor; it joins the roster by
-    the rule in the roster's comment, and the roster's count pin is what notices the edit."""
+    roster and drives like the rest. Its boundary, stated as the code has it rather than closed by another list: a def is in the
+    floor only when it calls _walk by that Name or spells one of _TREE_READERS exactly, the base Name and the attribute (`ast.parse`,
+    not `_a.parse` after `import ast as _a`, not `compile(source, ..., ast.PyCF_ONLY_AST)`, not an importlib road), so a census that
+    parses under any other road, or is handed a pre-parsed tree under any parameter name, and walks by hand calls none of these
+    and is outside this floor (a verifier of the round-5 fixes planted the compile road and the alias road unregistered with the
+    module green, and the same def through ast.parse red this floor naming it); it joins the roster by the rule in the roster's
+    comment, and the roster's count pin is what notices the edit."""
     owners = {}
     for stmt in tree.body:
         if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -1113,28 +1117,51 @@ def _census_floor(tree):
 _STRANGER = type("Frobnicate", (ast.stmt,), {"_fields": ()})   # a statement class the ast module does not define: _walk refuses it by identity
 
 
-def _plant_stranger(tree):
-    """`tree` with a _STRANGER statement appended to its module body and to the body of the first module-level def (a census that
-    walks defs first meets one, a census that walks the module meets the other), for TheWalkersRefuseAStrangerByExecution: a
-    census that walks through _walk refuses the tree naming Frobnicate; one that walks by hand passes both plants over. Reads
-    the module body as a list and traverses nothing."""
-    first = next((s for s in tree.body if isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef))), None)
-    if first is None:
-        raise AssertionError("the plant needs a module-level def to land in and the tree holds none")
-    tree.body.append(_STRANGER())
-    first.body.append(_STRANGER())
-    return tree
+_SITES = ("module", "def", "class")   # where _plant_stranger lands: the module body's end, the first module-level def's body, the first module-level class's body
+
+
+def _plant_stranger(tree, sites=_SITES):
+    """(`tree`, landed): `tree` with a _STRANGER statement appended at each of `sites` the tree offers, and the tuple of the sites
+    that took one, for TheWalkersRefuseAStrangerByExecution. "module": the end of the module body; "def": the body of the first
+    module-level def (raises when the tree holds none; every tree the roster reads holds one); "class": the body of the first
+    module-level class, landing only where the tree holds one (the door's source and a single helper's source hold none, and the
+    witness checks the site is absent for exactly those trees). The witness drives each site alone and then all together: a census
+    that walks one region through _walk and reads another by hand refuses the plants _walk meets and passes over the one in the
+    region it hand-reads, and a plant at two sites with one refusal accepted let that shape through (a verifier of the round-5
+    fixes: _census_floor with its module level read by hand refused the def plant, passed the module-level and the class-body
+    plants over, and was green under the two-site plant). A census that walks the whole tree through _walk refuses every site
+    naming Frobnicate. Reads the module body and the class body as lists and traverses nothing."""
+    landed = []
+    if "module" in sites:
+        tree.body.append(_STRANGER())
+        landed.append("module")
+    if "def" in sites:
+        first = next((s for s in tree.body if isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef))), None)
+        if first is None:
+            raise AssertionError("the def site needs a module-level def to land in and the tree holds none")
+        first.body.append(_STRANGER())
+        landed.append("def")
+    if "class" in sites:
+        cls = next((s for s in tree.body if isinstance(s, ast.ClassDef)), None)
+        if cls is not None:
+            cls.body.append(_STRANGER())
+            landed.append("class")
+    return tree, tuple(landed)
 
 
 # The census entry points of this module: every reader that walks a tree and answers a census, as (name, shape, drive) rows, the
-# roster TheWalkersRefuseAStrangerByExecution drives over a tree with a stranger statement planted (_plant_stranger) and asserts
-# each refuses by name (the grammar refusal in _walk), so a census that walked around _walk would pass the stranger over and red
-# the witness naming it. `shape` says where the entry point gets its tree: "tree", it is handed one (the drive takes a parser and
+# roster TheWalkersRefuseAStrangerByExecution drives over a tree with a stranger statement planted (_plant_stranger, at each of
+# three sites alone and then all together) and asserts each refuses every plant by name (the grammar refusal in _walk), so a census
+# that walked around _walk in a region a plant reaches would pass that plant over and red the witness naming it and the site; a
+# region none of the three plants reaches, read by hand, is the residue the witness does not see. `shape` says where the entry point gets its tree: "tree", it is handed one (the drive takes a parser and
 # parses the source the entry point reads with it); "parses", it parses inside (inspect.getsource, then ast.parse by attribute,
 # which the witness patches so the plant lands exactly where that entry point parses). The rule: a new census joins this roster
 # with its row. The witness pins the roster's count and its floor, _census_floor's derivation over this module's own AST (a
-# module-level def that calls _walk by name or parses a source by attribute must be a row here); a def handed a pre-parsed tree
-# that walks it by hand is outside that floor and joins by this rule alone, the count pin noticing the edit. Not entry points,
+# module-level def that calls _walk by name or parses a source by attribute must be a row here). The floor's boundary is the
+# spelling of the reader: a def is in it only when it calls _walk by that name or spells ast.parse, inspect.getsource or
+# inspect.getsourcelines exactly, base name and attribute; a def that parses under any other road (compile with ast.PyCF_ONLY_AST,
+# the module under an alias, importlib) or is handed a pre-parsed tree under any parameter name, and walks by hand, is outside
+# the floor and joins by this rule alone, the count pin noticing the edit. Not entry points,
 # and outside the roster on purpose: TheCountersOneSite._the_named_def (parses a helper and reads .body[0], walking nothing),
 # the enumeration's inspect.getsourcelines for a line number, and the refusal case's _walk over a synthetic grammar tree (the
 # control the _WALK_EXEMPT row names).
@@ -2903,8 +2930,8 @@ class TheGrammarIsTheOneTheWalkersClassify(unittest.TestCase):
     the finder reads (review round 4, regression-3 and extra7-1: a count of one spelling held it before). It is keyed on names and
     so wrong in both directions, an innocent use of a listed name costing an exemption row and a whole walk under an unlisted name
     (a recursion over ast.iter_fields, node._fields or ast.dump) invisible to it, so it refuses the forms it names and is silent on
-    the rest; the contract itself, a stranger node refused by every census and never passed over, is carried by execution in
-    TheWalkersRefuseAStrangerByExecution (review round 5, correctness-2, tests-1, extra5-2 and regression-2)."""
+    the rest; the contract itself, a stranger node refused by every roster census and never passed over, is carried by execution in
+    TheWalkersRefuseAStrangerByExecution over the roster _CENSUSES (review round 5, correctness-2, tests-1, extra5-2 and regression-2)."""
 
     def test_the_interpreter_defines_no_node_class_outside_the_table(self):
         here, version = sys.version_info[:2], sys.version.split()[0]
@@ -2953,7 +2980,7 @@ class TheGrammarIsTheOneTheWalkersClassify(unittest.TestCase):
             list(_walk(tree))
         self.assertIn("Store", str(cm.exception), "a stranger of a known name is refused as well, by identity: %s" % cm.exception)
         # the next case is the early warning over this module's AST (references to four traversal names outside _walk; a count of one
-        # spelling before round 4); that every census reads through _walk is held by execution in TheWalkersRefuseAStrangerByExecution
+        # spelling before round 4); that every roster census reads through _walk is held by execution in TheWalkersRefuseAStrangerByExecution
 
     def test_no_reference_to_a_traversal_name_sits_outside_walk(self):
         """The early warning: no reference to one of four traversal names sits outside _walk in the three forms the finder reads,
@@ -2966,7 +2993,7 @@ class TheGrammarIsTheOneTheWalkersClassify(unittest.TestCase):
         references to four names in three forms and is wrong in both directions, a row bought for the innocent parent-map listing
         in _loader_births and nothing to say about a recursion over ast.iter_fields, node._fields or ast.dump, a whole walk under
         no listed name. It refuses the forms it names and is silent on the rest; the walk contract, a stranger node refused by
-        every census and never passed over, is carried by execution in TheWalkersRefuseAStrangerByExecution, and a fifth name is
+        every roster census and never passed over, is carried by execution in TheWalkersRefuseAStrangerByExecution, and a fifth name is
         deliberately not added here (the ruling on approach: a list of syntax does not converge). _traversal_references reads every reference to the four
         traversal names in three forms keyed on the name and not on the road to the module: an attribute named like one on any base
         (the ast module, a name it is imported under or rebound to, importlib.import_module("ast"), __import__("ast"),
@@ -3055,45 +3082,55 @@ class TheGrammarIsTheOneTheWalkersClassify(unittest.TestCase):
 
 class TheWalkersRefuseAStrangerByExecution(unittest.TestCase):
     """The walker contract by execution (review round 5, correctness-2, tests-1, extra5-2 and regression-2, and the reviewer's
-    ruling on approach). The contract: a node class the grammar table does not classify is REFUSED by every census of this
-    module, never passed over as no site. The finder beside this class (_traversal_references, the case in
+    ruling on approach). The contract: a node class the grammar table does not classify is REFUSED by every roster census of
+    this module, never passed over as no site ("every" bounded by the roster _CENSUSES, its floor and the floor's stated boundary,
+    below). The finder beside this class (_traversal_references, the case in
     TheGrammarIsTheOneTheWalkersClassify) keys on four traversal NAMES and so is wrong in both directions: an innocent use of a
     listed name costs a _WALK_EXEMPT row (the parent map in _loader_births), and a real walk under an unlisted name, a
     recursion over ast.iter_fields, node._fields or ast.dump, is invisible to it with no row at all; the ruling stops the list
     widening, keeps the finder as an early warning that refuses the forms it names and is silent on the rest, and carries the
     contract here, on something that enumerates no syntax. Every census entry point in _CENSUSES is driven over a real tree
-    with a stranger statement spliced in (_plant_stranger: a class of ast.stmt the ast module does not define, planted at
-    module level and inside the first def, so a census that walks defs first meets one and a census that walks the module
-    meets the other), and each must raise _walk's refusal naming the class; unplanted, each returns. An entry point that takes
-    a tree is handed the planting parse; one that parses inside runs under a patch of ast.parse that plants what the real parse
-    returns, so the splice lands exactly where that entry point parses (the module reads ast.parse by attribute at call time;
-    _walk calls ast.walk, which the patch does not touch; the patch is lifted on exit, and no thread parses during the case).
-    A census rewritten as a hand-rolled recursion passes the stranger over, answers a census and reds the first case naming it,
-    whatever name it walks under. The second case holds the roster: its count, its floor by derivation (_census_floor over this
-    module's own AST: every module-level def calling _walk by name or parsing a source by attribute is a row, and the floor is
-    alive, since every row that parses inside is in it), that every row names a module-level def, and that the methods reading
-    through _walk inline are exactly the roster pin (its inline reads are over subtrees _door_regions, a row, holds after a
-    whole-tree walk that refuses first) and the refusal case (the control over a synthetic grammar tree, the _WALK_EXEMPT row).
+    with a stranger statement spliced in (_plant_stranger: a class of ast.stmt the ast module does not define, planted at three
+    sites, the end of the module body, the body of the first def and the body of the first class where the tree holds one), each
+    site alone and then all together, and each drive must raise _walk's refusal naming the class; unplanted, each returns. An
+    entry point that takes a tree is handed the planting parse; one that parses inside runs under a patch of ast.parse that
+    plants what the real parse returns, so the splice lands exactly where that entry point parses (the module reads ast.parse by
+    attribute at call time; _walk calls ast.walk, which the patch does not touch; the patch is lifted on exit, and no thread
+    parses during the case). A census that walks around _walk in a region a plant reaches passes that plant over, answers a
+    census and reds the first case naming it and the site, whatever name it walks under; a census that walks the defs through
+    _walk and reads the module level by hand reds at the module site and the class site alone (a verifier of the round-5 fixes:
+    with one plant at two sites and one refusal accepted, that shape was green); a region none of the three plants reaches, read
+    by hand, is the residue this witness does not see, stated here rather than closed by a fourth site. The second case holds the
+    roster: its count, its floor by derivation (_census_floor over this module's own AST: every module-level def calling _walk by
+    name or parsing a source by attribute is a row, and the floor is alive, since every row that parses inside is in it), that
+    every row names a module-level def, and that the methods reading through _walk inline are exactly the roster pin (its inline
+    reads are over subtrees _door_regions, a row, holds after a whole-tree walk that refuses first) and the refusal case (the
+    control over a synthetic grammar tree, the _WALK_EXEMPT row). The floor's boundary is the spelling of the reader: a def is in
+    it only when it calls _walk by that name or spells ast.parse, inspect.getsource or inspect.getsourcelines exactly, so a census
+    that parses under another road (compile with ast.PyCF_ONLY_AST, an alias of the module, importlib) or is handed a pre-parsed
+    tree under any parameter name and walks by hand calls none of those and joins the roster by the rule in its comment alone,
+    the count pin noticing the edit.
     The third case is the negative control and the reason the contract rides on execution: two hand-rolled recursions, one
     over ast.iter_fields and one over node._fields, walk the same planted tree, return a census listing the stranger twice with
     no refusal, and the finder answers no reference over either; ast.iter_fields is deliberately NOT added to _TRAVERSAL."""
 
-    def _planting_parse(self):
-        """(the real ast.parse, a parse that plants the stranger in what the real one returns, the list of trees it planted)."""
+    def _planting_parse(self, sites=_SITES):
+        """(the real ast.parse, a parse that plants the stranger at `sites` in what the real one returns, the list of (tree, landed)
+        pairs it planted)."""
         real, planted = ast.parse, []
 
         def planted_parse(source, *a, **k):
-            tree = real(source, *a, **k)
-            planted.append(tree)
-            return _plant_stranger(tree)
+            tree, landed = _plant_stranger(real(source, *a, **k), sites)
+            planted.append((tree, landed))
+            return tree
         return real, planted_parse, planted
 
     def test_every_census_entry_point_refuses_a_planted_stranger_and_returns_unplanted(self):
         door = jd.load_goals_shared
         self.assertEqual((door.__code__.co_name, os.path.basename(os.path.realpath(door.__code__.co_filename))), ("load_goals_shared", JUDGE_FILE),
                          "the door the _door_regions row reads is the judge's own (a harness case's recorder is gone by its cleanup)")
-        real, planted_parse, planted = self._planting_parse()
-        accept, refuse = [], []
+        real = ast.parse
+        accept, refuse, no_class = [], [], []
         for i, (name, shape, drive) in enumerate(_CENSUSES):
             label = "%s (row %d, shape %s)" % (name, i, shape)
             try:
@@ -3103,28 +3140,50 @@ class TheWalkersRefuseAStrangerByExecution(unittest.TestCase):
                 continue
             if got is None:
                 accept.append("%s answered None" % label)
-            del planted[:]
-            try:
-                if shape == "parses":
-                    with unittest.mock.patch.object(ast, "parse", planted_parse):
+            # the refuse side, per site alone and then all together: a census that walks one region through _walk and reads another
+            # by hand refuses the plant _walk meets and passes over the one in the hand-read region, so one refusal over a plant at
+            # several sites is not the contract (a verifier of the round-5 fixes)
+            for sites in (("module",), ("def",), ("class",), _SITES):
+                _real, planted_parse, planted = self._planting_parse(sites)
+                where = "the %s site%s" % (", ".join(sites), "s together" if len(sites) > 1 else "")
+                try:
+                    if shape == "parses":
+                        with unittest.mock.patch.object(ast, "parse", planted_parse):
+                            drive(planted_parse)
+                    else:
                         drive(planted_parse)
+                except AssertionError as e:
+                    if "Frobnicate" not in str(e) or "do not classify" not in str(e):
+                        refuse.append("%s at %s raised an AssertionError that is not the grammar refusal: %s" % (label, where, str(e)[:200]))
+                    elif not any(landed for _t, landed in planted):
+                        refuse.append("%s at %s refused, but nothing landed through the planting parse, so the refusal is not the plant's"
+                                      % (label, where))
+                except Exception as e:                  # noqa: BLE001  any other raise is not the refusal either
+                    refuse.append("%s at %s raised %s instead of the grammar refusal: %s" % (label, where, type(e).__name__, str(e)[:160]))
                 else:
-                    drive(planted_parse)
-            except AssertionError as e:
-                if "Frobnicate" not in str(e) or "do not classify" not in str(e):
-                    refuse.append("%s raised an AssertionError that is not the grammar refusal: %s" % (label, str(e)[:200]))
-                elif not planted:
-                    refuse.append("%s refused, but parsed nothing through the planting parse, so the refusal is not the plant's" % label)
-            except Exception as e:                      # noqa: BLE001  any other raise is not the refusal either
-                refuse.append("%s raised %s instead of the grammar refusal: %s" % (label, type(e).__name__, str(e)[:160]))
-            else:
-                refuse.append("%s PASSED THE STRANGER OVER and answered a census (%d tree(s) planted)" % (label, len(planted)))
+                    landed = sorted({s for _t, l in planted for s in l})
+                    if not planted:
+                        refuse.append("%s at %s parsed nothing through the planting parse and returned" % (label, where))
+                    elif landed:
+                        refuse.append("%s PASSED THE STRANGER OVER at %s and answered a census (%d tree(s) planted, the plant landed at %s)"
+                                      % (label, where, len(planted), ", ".join(landed)))
+                    elif sites == ("class",) and not any(isinstance(s, ast.ClassDef) for t, _l in planted for s in t.body):
+                        no_class.append(name)           # the one site a tree may not offer: no module-level class in it
+                    else:
+                        refuse.append("%s at %s: the plant landed nowhere and the drive returned (%s)"
+                                      % (label, where, "the tree holds a class body" if sites == ("class",) else "the site was offered"))
         self.assertEqual(accept, [], "the accept side: every census entry point, driven unplanted over the tree it really reads, returns an "
                                      "answer: %s" % "; ".join(accept))
         self.assertEqual(refuse, [], "the refuse side: every census entry point, driven over the same tree with a stranger statement planted at "
-                                     "module level and inside the first def, raises _walk's grammar refusal naming Frobnicate. One that did not "
-                                     "walks around _walk (a hand-rolled recursion over ast.iter_fields, node._fields, ast.dump or any other name) "
+                                     "each of three sites alone (the end of the module body, the first def's body, the first class's body) and "
+                                     "then at all of them, raises _walk's grammar refusal naming Frobnicate on each drive. One that did not "
+                                     "walks around _walk in the region the plant sits in (a hand-rolled recursion over ast.iter_fields, "
+                                     "node._fields, ast.dump or any other name, or a hand read of one region beside a _walk over the others) "
                                      "and would report a site absent where it could not read; route it through _walk: %s" % "; ".join(refuse))
+        self.assertEqual(sorted(no_class), ["_bump_sites", "_door_regions", "_loader_sites", "_pass_through_lines"],
+                         "the class site is absent for exactly the rows whose tree is one helper's source (the door's, the walk's look's, the "
+                         "hand-off wrapper's: a def and no class), and was driven on every other row, this module's text, the judge and the "
+                         "kernel; the rows the plant found no class body in: %r" % sorted(no_class))
 
     def test_the_roster_holds_its_count_and_its_floor(self):
         tree = ast.parse(Path(os.path.realpath(__file__)).read_text(encoding="utf-8"))
@@ -3185,10 +3244,10 @@ class TheWalkersRefuseAStrangerByExecution(unittest.TestCase):
 
         source = "def f(sid):\n    return jd.load_goals_shared(sid)\n"
         with self.assertRaises(AssertionError) as cm:      # the control: a roster census refuses the same planted tree
-            _traversal_references(_plant_stranger(ast.parse(source)))
+            _traversal_references(_plant_stranger(ast.parse(source))[0])
         self.assertIn("Frobnicate", str(cm.exception), "a census that reads through _walk refuses the planted tree naming the class: %s" % cm.exception)
         for census in (over_iter_fields, over_node_fields):
-            seen = census(_plant_stranger(ast.parse(source)))
+            seen = census(_plant_stranger(ast.parse(source))[0])
             self.assertEqual(seen.count("Frobnicate"), 2,
                              "%s walks the whole planted tree, meets the stranger at module level and inside the def, and passes both over with "
                              "no refusal, answering a census of %d nodes: %r. This is the class the walker contract must be held against by "
