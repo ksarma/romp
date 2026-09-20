@@ -1,6 +1,6 @@
 {
-"rows": 2912,
-"note": "The brace matrix's pin (round 5's third addendum, 2026-09-20): pin[kind][placement][face] = verdict:writers:parsed, verdict r (refused) or a (allowed), the masks over bash, zsh and dash in that order (- for a shell that does not write the tracked subset, or that reports a parse or syntax error); written from tools/romp-track-bash-guard.test.mjs's generator run through the hook as a process and the three shells unguarded on one box (bash 5.2, zsh 5.9, dash 0.5.12), and re-measured by the test on every run.",
+"rows": 3152,
+"note": "The brace matrix's pin (round 5's third addendum, 2026-09-20): pin[kind][placement][face] = verdict:writers:parsed, verdict r (refused) or a (allowed), the masks over bash, zsh and dash in that order (- for a shell that does not write the tracked subset, or that reports a parse or syntax error); written from tools/romp-track-bash-guard.test.mjs's generator run through the hook as a process and the three shells unguarded on one box (bash 5.2, zsh 5.9, dash 0.5.12), and re-measured by the test on every run. The fourth addendum (2026-09-20) added five kinds (a function body holding a quoted brace word, defined and called, one holding a quoted opening brace, and two twins with a brace inside a word in a body before the construct); the fixture was regenerated the same way.",
 "pin": {
   "if-arith-run": {
     "shared": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
@@ -462,6 +462,46 @@
     "shared": {"cd": "a:---:-z-", "name": "a:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
     "own": {"cd": "a:---:-z-", "name": "a:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
     "newline": {"cd": "a:---:-z-", "name": "a:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "and": {"cd": "a:---:-z-", "name": "a:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "redirect": {"cd": "a:---:-z-", "name": "a:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "pipe": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"}
+  },
+  "fn-quoted-brace": {
+    "shared": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "own": {"cd": "r:bzd:bzd", "name": "r:bzd:bzd", "cp": "r:---:bzd", "mv": "r:---:bzd", "install": "r:---:bzd", "ln": "r:---:bzd", "tee": "r:---:bzd", "redir": "r:---:bzd"},
+    "newline": {"cd": "r:bzd:bzd", "name": "r:bzd:bzd", "cp": "r:---:bzd", "mv": "r:---:bzd", "install": "r:---:bzd", "ln": "r:---:bzd", "tee": "r:---:bzd", "redir": "r:---:bzd"},
+    "and": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "redirect": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "pipe": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"}
+  },
+  "fn-quoted-brace-called": {
+    "shared": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "own": {"cd": "r:---:bzd", "name": "r:---:bzd", "cp": "r:bzd:bzd", "mv": "r:bzd:bzd", "install": "r:bzd:bzd", "ln": "r:bzd:bzd", "tee": "r:bzd:bzd", "redir": "r:bzd:bzd"},
+    "newline": {"cd": "r:---:bzd", "name": "r:---:bzd", "cp": "r:bzd:bzd", "mv": "r:bzd:bzd", "install": "r:bzd:bzd", "ln": "r:bzd:bzd", "tee": "r:bzd:bzd", "redir": "r:bzd:bzd"},
+    "and": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "redirect": {"cd": "r:---:-z-", "name": "r:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "pipe": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"}
+  },
+  "fn-quoted-open": {
+    "shared": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "own": {"cd": "r:bzd:bzd", "name": "r:bzd:bzd", "cp": "r:---:bzd", "mv": "r:---:bzd", "install": "r:---:bzd", "ln": "r:---:bzd", "tee": "r:---:bzd", "redir": "r:---:bzd"},
+    "newline": {"cd": "r:bzd:bzd", "name": "r:bzd:bzd", "cp": "r:---:bzd", "mv": "r:---:bzd", "install": "r:---:bzd", "ln": "r:---:bzd", "tee": "r:---:bzd", "redir": "r:---:bzd"},
+    "and": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "redirect": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"},
+    "pipe": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:---:-z-", "mv": "r:---:-z-", "install": "r:---:-z-", "ln": "r:---:-z-", "tee": "r:---:-z-", "redir": "r:---:-z-"}
+  },
+  "after-fn-brace-text": {
+    "shared": {"cd": "a:---:-z-", "name": "a:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "own": {"cd": "a:---:bzd", "name": "a:---:bzd", "cp": "r:bzd:bzd", "mv": "r:bzd:bzd", "install": "r:bzd:bzd", "ln": "r:bzd:bzd", "tee": "r:bzd:bzd", "redir": "r:bzd:bzd"},
+    "newline": {"cd": "a:---:bzd", "name": "a:---:bzd", "cp": "r:bzd:bzd", "mv": "r:bzd:bzd", "install": "r:bzd:bzd", "ln": "r:bzd:bzd", "tee": "r:bzd:bzd", "redir": "r:bzd:bzd"},
+    "and": {"cd": "a:---:-z-", "name": "a:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "redirect": {"cd": "a:---:-z-", "name": "a:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "pipe": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"}
+  },
+  "after-fn-home": {
+    "shared": {"cd": "a:---:-z-", "name": "a:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
+    "own": {"cd": "a:---:bzd", "name": "a:---:bzd", "cp": "r:bzd:bzd", "mv": "r:bzd:bzd", "install": "r:bzd:bzd", "ln": "r:bzd:bzd", "tee": "r:bzd:bzd", "redir": "r:bzd:bzd"},
+    "newline": {"cd": "a:---:bzd", "name": "a:---:bzd", "cp": "r:bzd:bzd", "mv": "r:bzd:bzd", "install": "r:bzd:bzd", "ln": "r:bzd:bzd", "tee": "r:bzd:bzd", "redir": "r:bzd:bzd"},
     "and": {"cd": "a:---:-z-", "name": "a:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
     "redirect": {"cd": "a:---:-z-", "name": "a:---:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"},
     "pipe": {"cd": "r:-z-:-z-", "name": "r:-z-:-z-", "cp": "r:-z-:-z-", "mv": "r:-z-:-z-", "install": "r:-z-:-z-", "ln": "r:-z-:-z-", "tee": "r:-z-:-z-", "redir": "r:-z-:-z-"}

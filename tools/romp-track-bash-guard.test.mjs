@@ -5194,10 +5194,118 @@ test("round 5's third addendum: an unquoted `}` after other words ends its const
   } finally { process.env.HOME = savedHome; w.rm(); }
 });
 
+// Round 5's fourth addendum (2026-09-20; the round's verifier, on the third addendum's head): the function body's count
+// (`braces`) read a QUOTED brace word as a brace of the body, against the rule's own text (a quoted brace is an operand and is
+// not read), so `f() { echo "}"; cd ../scratch; }; cp ../base/report.md report.md` from docs/ popped the frame at the quoted
+// word, followed the cd as plain sequence and was allowed while bash, zsh and dash wrote docs/report.md (the `'}'`, `\}`,
+// `printf %s "}"`, pushd, `"{"`, newline, piped, coproc and name forms alike; present at round 4's head, since a compound
+// brace body and the group scan had the check and the function count did not). The census of the hook's other brace reads
+// found the same gap in the reserved-word reads (RESERVED holds `{` and `}`): the lexer took `[[` after ANY word spelled as a
+// reserved word for the test keyword (`echo "{" [[ x > report.md ]]`, and `echo { [[ .. ]]` out of command position: echo's
+// operands and a redirection, which bash and dash perform; zsh stops at `[[` as a bad pattern), and commandOf and
+// rawHeadIndexOf skipped a quoted reserved word as if it were one (`"{" cd ../scratch; cp ..`: a command named `{`, the cd its
+// operand, so every shell stays in docs/). Every brace read checks plainWord now. The twins that carry a brace inside a word
+// (`"a } b"`, `"${HOME}"`) were never bare brace words and stay allowed; a quoted `{` heading the body's segment is the command
+// of zsh's and dash's one-command body. Each row runs the hook as a process from its cwd and then unguarded in every shell
+// over a fresh world, asserting EXACTLY which shells write the tracked subset. Measured against the third addendum's hook: every
+// refused row was allowed there with the shells named writing (23 rows), except QB-operand and QB-operand-called (refused there
+// too) and QB-called (allowed there, no shell writing the tracked file: the function-call cost this fix adds); QT-qcmd-writer
+// was refused there by the accidental skip; the other twins are unchanged.
+test("round 5's fourth addendum: a quoted brace word is an operand in a function body too (the frame keeps its depth), a quoted `{` heading the body's segment is a one-command body's command, `[[` is the test keyword after unquoted reserved words alone, a quoted reserved word is the command and the words after it its operands; the twins with a brace inside a word stay allowed; exactly the shells named write the tracked subset unguarded", () => {
+  const w = sixthPassWorld();
+  const savedHome = process.env.HOME;
+  process.env.HOME = w.HOME;
+  try {
+    const A = ['bash', 'zsh', 'dash'];
+    const Z = ['zsh'];
+    const BZ = ['bash', 'zsh'];
+    const BD = ['bash', 'dash'];
+    const CALLED_CD = ['dir', 'an earlier call of the function `f` may change the directory'];
+    // [id, cwd, command, the shells that write the tracked subset unguarded, the verdict]
+    const rows = [
+      // (1) the function body's count, the cd face: the quoted word is an operand and the frame keeps its depth to the real brace
+      ['QB-dq', 'nad', 'f() { echo "}"; cd ../scratch; }; cp ../base/report.md report.md', A, 'name'],
+      ['QB-sq', 'nad', "f() { echo '}'; cd ../scratch; }; cp ../base/report.md report.md", A, 'name'],
+      ['QB-escaped', 'nad', 'f() { echo \\}; cd ../scratch; }; cp ../base/report.md report.md', A, 'name'],
+      ['QB-printf', 'nad', 'f() { printf %s "}"; cd ../scratch; }; cp ../base/report.md report.md', A, 'name'],
+      ['QB-pushd', 'nad', 'f() { echo "}"; pushd ../scratch; }; cp ../base/report.md report.md', A, 'name'],
+      ['QB-open', 'nad', 'f() { echo "{"; cd ../scratch; }; cp ../base/report.md report.md', A, 'name'],
+      ['QB-newline', 'nad', 'f() {\necho "}"\ncd ../scratch\n}\ncp ../base/report.md report.md', A, 'name'],
+      ['QB-oneline', 'nad', 'f() { echo "}"; cd ../scratch }; cp ../base/report.md report.md', Z, 'name'],   // the unquoted brace after the cd closes the body in zsh alone; bash and dash reject the spelling
+      ['QB-pipe', 'nad', 'f() { echo "}"; cd ../scratch; } | cat; cp ../base/report.md report.md', A, 'name'],
+      ['QB-function', 'nad', 'function f { :; echo "}"; cd ../scratch; }; cp ../base/report.md report.md', BZ, 'name'],   // dash has no `function` word and rejects the line at its `}`
+      ['QB-coproc', 'nad', 'coproc { echo "}"; cd ../scratch; }; cp ../base/report.md report.md', BZ, 'name'],   // dash has no coproc: a syntax error
+      ['QB-called', 'nad', 'f() { echo "}"; cd ../scratch; }; f; cp ../base/report.md report.md', [], CALLED_CD],   // the call moves every shell to scratch/: the function-call cost, as `f() { cd ../scratch; }; f; cp ..` prices it
+      // the name face and the operand face
+      ['QB-name', 'na', 'x=docs/report.md; f() { echo "}"; x=scratch/keep.md; }; cp base/report.md $x', A, BODY],
+      ['QB-operand', 'nad', 'f() { echo "}"; cp ../base/report.md report.md; }; :', [], 'name'],   // refused before too, the writer read as plain sequence; the body's writer now, the standing rule
+      ['QB-operand-called', 'nad', 'f() { echo "}"; cp ../base/report.md report.md; }; f', A, 'name'],
+      // (2) the lexer's `[[`: the test keyword after unquoted reserved words alone, else a word, and its `>` a redirection
+      ['QL-qopen', 'nad', 'echo "{" [[ x > report.md ]]', BD, 'name'],   // bash and dash truncate the tracked file; zsh stops at `[[`, a bad pattern
+      ['QL-open', 'nad', 'echo { [[ x > report.md ]]', BD, 'name'],   // an unquoted brace out of command position is echo's operand too
+      ['QL-qclose', 'nad', 'echo "}" [[ x > report.md ]]', BD, 'name'],
+      ['QL-qif', 'nad', 'echo "if" [[ x > report.md ]]', BD, 'name'],
+      ['QL-qcmd', 'nad', '"{" [[ x > report.md ]]', BD, 'name'],
+      // (3) commandOf: a quoted reserved word is the command and the words after it its operands (no shell finds a command named so)
+      ['QC-qopen', 'nad', '"{" cd ../scratch; cp ../base/report.md report.md', A, 'name'],
+      ['QC-qclose', 'nad', '"}" cd ../scratch; cp ../base/report.md report.md', A, 'name'],
+      ['QC-qif', 'nad', '"if" cd ../scratch; cp ../base/report.md report.md', A, 'name'],
+      ['QC-qbang', 'nad', '"!" cd ../scratch; cp ../base/report.md report.md', A, 'name'],
+      ['QC-escaped', 'nad', '\\{ cd ../scratch; cp ../base/report.md report.md', A, 'name'],
+      ['QC-name', 'na', 'x=docs/report.md; "{" x=scratch/keep.md; cp base/report.md $x', A, ['literal', 'an assignment-shaped word of `{`']],
+      // the twins: a brace inside a word is not a brace word; a quoted `{` heading the body is the one-command body's command
+      ['QT-text', 'nad', 'f() { echo "a } b"; }; cd ../scratch; cp ../base/report.md report.md', [], 'allow'],
+      ['QT-text-sq', 'nad', "f() { echo 'a } b'; }; cd ../scratch; cp ../base/report.md report.md", [], 'allow'],
+      ['QT-home', 'nad', 'f() { echo "${HOME}"; }; cd ../scratch; cp ../base/report.md report.md', [], 'allow'],
+      ['QT-shared', 'nad', 'f() { echo "}" }; cd ../scratch; cp ../base/report.md report.md', [], 'allow'],   // the unquoted brace closes the body in zsh, which then moves and writes scratch/report.md; bash and dash reject the spelling
+      ['QT-open-first', 'nad', 'f() "{" echo; cd ../scratch; cp ../base/report.md report.md', [], 'allow'],   // zsh's and dash's one-command body, a command named `{`; they move and write scratch/report.md; bash rejects the spelling
+      ['QT-qcmd-writer', 'nad', '"{" cp ../base/report.md report.md', [], 'allow'],   // a command named `{` with cp as its operand, as any command the guard does not know (refused at the third addendum's head by accident, the quoted word skipped as reserved)
+      ['QT-quoted', 'nad', "cp ../base/report.md ../scratch/keep.md '}'", [], 'allow'],
+    ];
+    let n = 0;
+    for (const [id, cwd, raw, writers, expect] of rows) {
+      const cmd = w.fill(raw);
+      const at = w.cwds[cwd];
+      const h = w.hook(cmd, at);
+      n++;
+      if (expect === 'allow') assert.equal(h.status, 0, `${id}: allowed: ${cmd}: ${h.reason}`);
+      else {
+        assert.equal(h.status, 2, `${id}: refused: ${cmd}: ${h.reason}`);
+        assert.ok(!/\u2014/.test(h.reason) && !ROMP_NOUNS.test(h.reason.split(w.W).join('<w>')), `${id}: no em dash, no romp noun`);
+        if (expect === 'name') assert.match(h.reason, BY_NAME_RE, `${id}: by name: ${h.reason.split('\n')[0]}`);
+        else if (expect[0] === 'dir') assert.ok(/the directory it is relative to is not known/.test(h.reason) && h.reason.includes(expect[1]), `${id}: the directory is unknown, the reason naming the construct: ${h.reason.split('\n')[0]}`);
+        else assert.ok(NOT_LITERAL.test(h.reason) && h.reason.includes(expect[1]), `${id}: refused as not literal, the reason naming the construct (${expect[1]}): ${h.reason.split('\n')[0]}`);
+      }
+      for (const shell of shellsFor(A, id)) {
+        const r = w.run(cmd, at, shell);
+        assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
+      }
+    }
+    assert.equal(n, 33);
+    // rawHeadIndexOf: a quoted reserved word is the command, so a `HOME=<path>` after it is an operand, a bare mention (the shells leave HOME
+    // alone and the write lands under the real home), not a prefix assignment on the command after it (the reason the skip gave)
+    const home = w.hook(`"{" HOME=${w.OUT}/scratch :; cp ../base/report.md ~/x.md`, w.cwds.nad);
+    assert.equal(home.status, 2, `a HOME operand of a command named \`{\` keeps HOME unreadable: ${home.reason}`);
+    assert.match(home.reason, /names HOME outside an expansion/, `the reason is the bare mention's: ${home.reason.split('\n')[0]}`);
+    assert.doesNotMatch(home.reason, /sets HOME as a prefix/, `not the prefix assignment's: ${home.reason.split('\n')[0]}`);
+    // the lexer: `[[` after echo's quoted brace is a word, and the `>` after it a redirection; after `{` alone it is the test
+    assert.equal(lex('echo "{" [[ x > report.md ]]').segments[0].redirects.length, 1, 'after `echo "{"` the `>` is a redirection');
+    assert.equal(lex('echo { [[ x > report.md ]]').segments[0].redirects.length, 1, 'after `echo {` the `>` is a redirection');
+    assert.equal(lex('{ [[ x > report.md ]]; }').segments[0].redirects.length, 0, 'after `{` alone the `>` compares');
+    assert.equal(lex('if ! [[ x > report.md ]]; then :; fi').segments[0].redirects.length, 0, 'after `if !` the `>` compares');
+    // the grammar through extractWriteTargets
+    assert.deepEqual(extractWriteTargets('f() { echo "}"; cd scratch; }; cp base/report.md notes/n1.md', w.NA).targets.map((t) => t.path), [path.join(w.NA, 'notes', 'n1.md')], 'the function body keeps its frame across the quoted brace and the cd is restored at the real one');
+    assert.deepEqual(extractWriteTargets('f() { echo "a } b"; }; cd scratch; cp base/report.md notes/n1.md', w.NA).targets.map((t) => t.path), [path.join(w.NA, 'scratch', 'notes', 'n1.md')], 'a brace inside a word closes nothing, and the cd after the body is followed');
+    assert.deepEqual(extractWriteTargets('"{" cd scratch; cp base/report.md notes/n1.md', w.NA).targets.map((t) => t.path), [path.join(w.NA, 'notes', 'n1.md')], 'a quoted `{` is a command and the cd its operand');
+  } finally { process.env.HOME = savedHome; w.rm(); }
+});
+
 // THE BRACE MATRIX (round 5's third addendum, 2026-09-20): the attack on the closing-brace rule, kept as a pin. Every
 // combination of frame kind (if, while and until with `(( ))`, `( )`, `[[ ]]` and `{ }` conditions, for with `( )` and `in`,
 // select, case, repeat; the four function spellings, a called function and one behind `!`; a plain group; the else, elif and
-// always continuations; a while's condition group; one level of nesting; a group after the body) x brace placement (the brace
+// always continuations; a while's condition group; one level of nesting; a group after the body; since the fourth addendum a
+// function body holding a quoted brace word, defined and called, and a body holding a brace inside a word before the
+// construct) x brace placement (the brace
 // sharing the last command's segment, on its own after `;`, after a newline, followed by `&&`, followed by a redirection, piped)
 // x face (a cd, a name, and a writer: cp, mv, install, ln -f, tee, a `>` redirection) x position (the body, the continuation
 // block, a condition group, a group after the body), plus zsh's one-command bodies. Each row is judged in-process (evaluate over
@@ -5289,6 +5397,13 @@ const BRACE_MATRIX = {
     ['after-if-run', true, 'after', (b) => `if (( 1 )) { : }; ${b}`],
     ['after-fn', true, 'after', (b) => `f() { : }; ${b}`],
     ['after-group', true, 'after', (b) => `{ : }; ${b}`],
+    // round 5's fourth addendum: a quoted brace word inside a function body (the count popped the frame there), and the twins
+    // with a brace inside a word in a body before the construct
+    ['fn-quoted-brace', false, 'body', (b) => `f() ${b.replace('{', '{ echo "}";')}`],
+    ['fn-quoted-brace-called', true, 'body', (b) => `f() ${b.replace('{', '{ echo "}";')}; f`],
+    ['fn-quoted-open', false, 'body', (b) => `f() ${b.replace('{', '{ echo "{";')}`],
+    ['after-fn-brace-text', true, 'after', (b) => `f() { echo "a } b"; }; ${b}`],
+    ['after-fn-home', true, 'after', (b) => `f() { echo "\${HOME}"; }; ${b}`],
   ],
   // zsh's one-command bodies, no brace: [kind, runs, template over the command]
   ONE_COMMAND: [

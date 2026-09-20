@@ -4084,6 +4084,16 @@ document stands on its own, each with the reasoning it was given.
     shell parses, 955 refusals of a face in a body no shell runs (the standing rules), 182 of the priced classes (88 a cd in a
     construct that runs, 88 an assignment there, 6 a writer in a piped definition whose call finds no function), the fixture
     `tools/romp-track-bash-guard-brace-matrix.json` beside the test.
+    Round 5's fourth addendum (2026-09-20; the round's verifier, on the third addendum's head): the function body's count
+    (`braces`) read a quoted brace word as a brace of the body, against the rule's own text, so `f() { echo "}"; cd
+    ../scratch; }; cp ../base/report.md report.md` from docs/ popped the frame at the quoted word, followed the cd as plain
+    sequence and was allowed while bash, zsh and dash wrote docs/report.md (present at round 4's head), and the census of
+    the hook's brace reads found the same gap in the reserved-word reads that hold `{` and `}` (the lexer took `[[` after
+    any word spelled as a reserved word for the test keyword, so `echo "{" [[ x > report.md ]]` was allowed while bash and
+    dash redirected; `commandOf` and `rawHeadIndexOf` skipped a quoted reserved word, so `"{" cd ../scratch; cp ..` followed
+    a cd that was the operand of a command named `{`), so every brace read checks `plainWord` now, pinned with the
+    verifier's rows in bash, zsh and dash by execution and five matrix kinds (3152 rows, 3065 refused, 87 allowed, 0 a shell
+    writes while the hook allows, the 2912 rows before unchanged).
 48. **Sessions commit the comments folder** (2026-09-10). The user found that their sessions never added
     `.trackchanges/` to git, so the user's comments on the sessions' files and the record of the tracked changes
     were not archived with the work. Decision 25 is unchanged: romp does no git operation, and a `.gitignore` line is the

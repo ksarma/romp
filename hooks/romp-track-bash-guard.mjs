@@ -428,6 +428,21 @@
 // verifier's twenty rows, the rows found beside them, and a generated matrix (frame kind x brace placement x face x position,
 // every row run through the hook and unguarded in the three shells; the rows the matrix produces are the pin).
 //
+// ROUND 5'S FOURTH ADDENDUM (2026-09-20; the round's verifier, on the third addendum's head): the function body's count read
+// a QUOTED brace word as a brace of the body, against the rule's own text (a quoted brace is an operand): `f() { echo "}"; cd
+// ../scratch; }; cp ../base/report.md report.md` from docs/ popped the frame at the quoted word, followed the cd as plain
+// sequence and was allowed while bash, zsh and dash wrote docs/report.md (present at round 4's head; `'}'`, `\}`, `printf %s
+// "}"`, pushd, `"{"`, a newline, a piped body, coproc and the name face alike). The census of the hook's brace reads found the
+// same gap in the reserved-word reads (RESERVED holds `{` and `}`): the lexer took `[[` after ANY word spelled as a reserved
+// word for the test keyword (`echo "{" [[ x > report.md ]]` and `echo { [[ .. ]]`: echo's operands and a redirection, which
+// bash and dash perform), and commandOf and rawHeadIndexOf skipped a quoted reserved word as if it were one (`"{" cd
+// ../scratch; cp ..`: a command named `{`, the cd its operand, every shell staying in docs/). Every brace read checks
+// plainWord now: the body count and its one-segment check (a quoted `{` heading the body's segment is the command of zsh's
+// and dash's one-command body), the lexer's `[[` (the test keyword after unquoted reserved words alone) and the two skips (a
+// quoted reserved word is the command and the words after it its operands, so `"{" cp a b` is judged as any command the guard
+// does not know). Pinned with the verifier's rows, bash, zsh and dash by execution, and five matrix kinds (a quoted brace word
+// in a function body, defined and called, a quoted opening brace, and two twins with a brace inside a word).
+//
 // THE LISTS THAT REMAIN are not written here (round 5 of the review, 2026-09-20). The hand-written census that stood here
 // omitted the two lists whose gap falls on the WRITE side, the compound-head frame push and CLOSERS, and that omission is
 // how a `select` missing from both slipped through round 3: an instrument built to bound the hand-maintained lists that
@@ -765,8 +780,11 @@ export function lex(command, shell = null) {
       else if (expect.kind === 'herestring') seg.heredocs.push(buf);
       expect = null;
     } else {
-      // the keyword: unquoted, in command position (first in its segment, or after a reserved word)
-      if (raw === '[[' && (!seg.words.length || RESERVED.has(seg.words[seg.words.length - 1].text))) inTest = true;
+      // the keyword: unquoted, in command position (first in its segment, or after unquoted reserved words alone; round 5's
+      // fourth addendum: after `echo "{"`, `echo {` or `echo "if"` the `[[` and its `>` are echo's operands and a redirection,
+      // which bash and dash perform, so `echo "{" [[ x > report.md ]]` from docs/ truncated the tracked file while the guard
+      // read a comparison)
+      if (raw === '[[' && seg.words.every((w) => plainWord(w) && RESERVED.has(w.text))) inTest = true;
       else if (raw === ']]') inTest = false;
       const alts = braceExpand(buf, marks);
       if (!alts) seg.words.push(word(buf, false, raw, { marks }));
@@ -1065,7 +1083,9 @@ export function lex(command, shell = null) {
 // `alwaysHead`, and extract reads a cd there as a move it cannot know and an assignment there as unreadable. When the
 // try-list's `}` has its own segment (`{ :; } always { cd ../docs; }`), bash and dash reject the line at `always` and run
 // nothing (measured), so zsh's reading alone stands and the piece is not marked. A quoted brace is an operand and is not read
-// here (`cp a '}'`).
+// here (`cp a '}'`), nor by any frame's brace count or reserved-word read (`braces`, `compoundBody`, the group scan,
+// `closedConstruct`, `peelIndex`, `commandOf`, `rawHeadIndexOf`, the lexer's `[[`): round 5's fourth addendum found `braces`
+// popping a function frame at `echo "}"` and `commandOf` skipping a quoted `{` as if reserved, each a live false allow.
 function splitAtClosers(segments) {
   const brace = (w) => (plainWord(w) && (w.text === '{' || w.text === '}') ? w.text : null);
   const out = [];
@@ -1468,7 +1488,7 @@ function commandOf(words) {
   const wrappers = [];   // the wrappers peeled, in order (the seventh pass: the cd text names the innermost one and what it does with a cd)
   let wrapped = false;   // the walk-around lens second pass (family 6): a wrapper prefix was peeled before the command
   for (;;) {
-    while (k < words.length && RESERVED.has(words[k].text)) k++;
+    while (k < words.length && plainWord(words[k]) && RESERVED.has(words[k].text)) k++;   // unquoted: `"{" cd ../scratch` runs a command named `{`, and the cd is its operand (round 5's fourth addendum)
     const first = k;
     while (k < words.length && /^[A-Za-z_][A-Za-z0-9_]*\+?=/.test(words[k].raw)) k++;
     // The readability rule (the sixth pass's attacker, C5c, 2026-09-19): after a wrapper an assignment-shaped word is the
@@ -2455,7 +2475,7 @@ const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
 // before any wrapper is peeled (-1 for assignments alone). A `NAME=value` before it is a prefix assignment on the command.
 function rawHeadIndexOf(words) {
   let k = 0;
-  while (k < words.length && (RESERVED.has(words[k].text) || /^[A-Za-z_][A-Za-z0-9_]*\+?=/.test(words[k].raw))) k++;
+  while (k < words.length && ((plainWord(words[k]) && RESERVED.has(words[k].text)) || /^[A-Za-z_][A-Za-z0-9_]*\+?=/.test(words[k].raw))) k++;   // a quoted reserved word is the command (round 5's fourth addendum)
   return k < words.length ? k : -1;
 }
 // The tokens of a word's text that are identifiers and came from the command's own text (not from an expansion, mark 'x',
@@ -3400,7 +3420,10 @@ function extract(command, ctx) {
   // on. Read from `from` (round 5's third addendum): on a `} }` segment the first brace closes the compound body inside the
   // function and this reads the second, and a compound head inside the body (`f() { if (( 0 )) { cd x } }`) ends the count,
   // since its brace body is counted by its own frame (compoundBody) and was counted here too, which left the function frame
-  // open to the end of the command.
+  // open to the end of the command. Only an unquoted brace counts (round 5's fourth addendum): `f() { echo "}"; cd ../scratch;
+  // }; cp ../base/report.md report.md` from docs/ popped the frame at the quoted word, followed the cd as plain sequence and
+  // was allowed while bash, zsh and dash wrote the tracked file (the `'}'`, `\}`, `printf %s "}"`, pushd, name and newline
+  // forms alike); a quoted `{` heading the body's segment is the command of zsh's and dash's one-command body, not its opener.
   const braces = (seg, from = 0) => {
     const f = frames[frames.length - 1];
     if (!f || f.kind !== 'function') return from;
@@ -3408,12 +3431,12 @@ function extract(command, ctx) {
     // body, defined and not run, and the frame closes before the next segment (round 5's addendum, F3: the frame was popped
     // here and the body read as the enclosing scope's, its assignment adopted and its cd followed, in zsh, dash and through
     // `sh -c` from every shell)
-    if (f.depth === 0 && from === 0 && !(seg.words.length && seg.words[0].text === '{')) { f.oneSegment = true; return 0; }
+    if (f.depth === 0 && from === 0 && !(seg.words.length && plainWord(seg.words[0]) && seg.words[0].text === '{')) { f.oneSegment = true; return 0; }
     for (let i = from; i < seg.words.length; i++) {
       const w = seg.words[i];
       if (plainWord(w) && Object.hasOwn(BODY_CLOSER, w.text)) break;   // a compound inside the body: its own frame counts its braces
-      if (w.text === '{') f.depth++;
-      else if (w.text === '}' && --f.depth <= 0) { popFunction(f); return i + 1; }
+      if (plainWord(w) && w.text === '{') f.depth++;
+      else if (plainWord(w) && w.text === '}' && --f.depth <= 0) { popFunction(f); return i + 1; }
     }
     return seg.words.length;
   };
