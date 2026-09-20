@@ -6,6 +6,7 @@ landing, the settings frame opened through the rail's gear, every label's comput
 LOUDLY without the extension deps or a Playwright browser (CI sets ROMP_SERVED_TESTS_REQUIRE=1 and installs both, so a skip
 there is a failure). No real prompt or transcript text: every string here is invented."""
 import json
+import lab_dist
 import os
 import re
 import shutil
@@ -18,8 +19,6 @@ import unittest
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
-
-from tests.dist_copy import copy_dist
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -117,15 +116,11 @@ class ServedSectionLabels(unittest.TestCase):
             raise unittest.SkipTest("no playwright browser on this box: the served guard needs one (CI installs none)")
         cls.lab = tempfile.mkdtemp(prefix="settings-labels-")
         before = os.environ.get("SETTINGS_LABELS_DIST", "")
-        if before:
-            src = before
-        else:
-            b = subprocess.run(["node", "esbuild.js"], cwd=EXT, capture_output=True, text=True)
-            if b.returncode != 0:
-                raise unittest.SkipTest("esbuild failed here: " + (b.stderr or b.stdout)[-200:])
-            src = os.path.join(EXT, "dist")
         dist = os.path.join(cls.lab, "dist")
-        copy_dist(src, dist)
+        if before:
+            lab_dist.copy_prebuilt(before, dist)   # a dist built from another tree, served as it is (tests/lab_dist.py)
+        else:
+            lab_dist.copy_dist(dist)   # the checkout's ONE build of the bundles, copied under its lock (tests/lab_dist.py)
         state = os.path.join(cls.lab, "xdg", "romp")
         claude = os.path.join(cls.lab, "claude")
         cwd = os.path.join(cls.lab, "notes-api")

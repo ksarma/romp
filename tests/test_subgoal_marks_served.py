@@ -19,6 +19,7 @@ demo world, placeholder ids) and delivered straight to the page the way the feed
 Skips LOUDLY without the extension deps or a Playwright browser, and for nothing else (ROMP_SERVED_TESTS_REQUIRE=1 turns
 the skips red where the browser is installed); a build or kernel failure is a failure."""
 import json
+import lab_dist
 import os
 import shutil
 import socket
@@ -27,8 +28,6 @@ import sys
 import tempfile
 import time
 import unittest
-
-from tests.dist_copy import copy_dist
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -148,11 +147,8 @@ class ServedSubgoalMarks(unittest.TestCase):
         if not os.path.isdir(os.path.join(EXT, "node_modules", "playwright")):
             raise unittest.SkipTest("extension deps absent (npm ci not run here): the served guard needs them")
         cls.lab = tempfile.mkdtemp(prefix="subgoalmarks-")
-        b = subprocess.run(["node", "esbuild.js"], cwd=EXT, capture_output=True, text=True)
-        if b.returncode != 0:
-            raise unittest.SkipTest("esbuild failed here: " + (b.stderr or b.stdout)[-200:])
         dist = os.path.join(cls.lab, "dist")
-        copy_dist(os.path.join(EXT, "dist"), dist)
+        lab_dist.copy_dist(dist)   # the checkout's ONE build of the bundles, copied under its lock (tests/lab_dist.py)
         state = os.path.join(cls.lab, "xdg", "romp")
         os.makedirs(state, exist_ok=True)
         with open(os.path.join(state, "session-hosts"), "w") as fh:   # a lab root of its own pins the hosts OFF (CLAUDE.md 2026-09-11)

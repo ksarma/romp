@@ -8,6 +8,7 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { hideEdges } from "../test-dom-shim";
 
 const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "render.ts"), "utf8");
 const CSS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "styles.css"), "utf8");
@@ -15,7 +16,7 @@ const CSS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "
 // a minimal element: className, textContent, children, append/appendChild; enough to run diffTotals and read the DOM it builds
 class FakeEl {
   tag: string; className = ""; textContent = ""; children: (FakeEl | string)[] = [];
-  constructor(tag: string) { this.tag = tag; }
+  constructor(tag: string) { this.tag = tag; hideEdges(this); }   // children is an edge: non-enumerable (ui/test-dom-shim.ts), so a failing dump names the element's primitives, never the tree
   appendChild(c: FakeEl | string) { this.children.push(c); return c; }
   append(...cs: (FakeEl | string)[]) { for (const c of cs) this.children.push(c); }
   get text(): string { return this.children.length ? this.children.map((c) => (typeof c === "string" ? c : c.text)).join("") : this.textContent; }
@@ -31,6 +32,7 @@ function runDiffTotals(add: number, del: number): FakeEl {
 
 test("a row's edit totals are two spans, tool-plus and tool-minus, inside tool-totals, reading +A -R (executed over the helper's source)", () => {
   const tot = runDiffTotals(12, 3);
+  assert.deepEqual(Object.keys(tot).sort(), ["_nid", "className", "tag", "textContent"], "the stand-in inspects as a projection: children is a non-enumerable edge, and the serial hideEdges stamps sits beside its primitives");
   assert.equal(tot.className, "tool-totals");
   const spans = tot.children.filter((c) => typeof c !== "string") as FakeEl[];
   assert.deepEqual(spans.map((s) => [s.className, s.textContent]), [["tool-plus", "+12"], ["tool-minus", "-3"]],

@@ -291,7 +291,7 @@ class OnePass(Harness):
         gauges = {"recordCache": ("entries", "bytes", "budgetBytes", "countCap"), "asmCheckpoint": ("asmDocMemo",), "tierGate": ("stamps",)}
         # the tiers' gate counters ride the line too (2026-09-18: a flip's call count per pass had no gate figure to explain it): per tier,
         # ran/skipped/stamped/bypassed/incomplete/due_clock as deltas, the working first pass with runs, the idle second with none
-        STAGES = ["close", "consolidate", "distill", "group", "plan", "unblock"]
+        STAGES = ["close", "consolidate", "distill", "group", "index", "plan", "unblock"]   # index: this fork's tier (run_index, in its GATED_TIERS)
         self.assertEqual(sorted(first.get("tierGate") or {}), sorted(STAGES + ["stamps"]), "the gate block, per stage, plus the stamps gauge (the base carried no tierGate)")
         for stage in STAGES:
             self.assertEqual(sorted(first["tierGate"][stage]), ["bypassed", "due_clock", "incomplete", "ran", "skipped", "stamped"], stage)

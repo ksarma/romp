@@ -24,6 +24,7 @@ Synthetic only: placeholder uuids, hostname TESTHOST, the notes-api world. Skips
 Playwright browser, and for nothing else (ROMP_SERVED_TESTS_REQUIRE=1 turns the skips red where the browser is installed).
 """
 import json
+import lab_dist
 import os
 import re
 import shutil
@@ -36,8 +37,6 @@ import unittest
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
-
-from tests.dist_copy import copy_dist
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -220,10 +219,7 @@ class ServedTimelineSameName(unittest.TestCase):
         if probe.returncode != 0 or not os.path.exists(probe.stdout.strip()):
             raise unittest.SkipTest("no playwright browser on this box: the served lab needs one (CI installs none)")
         cls.lab = tempfile.mkdtemp(prefix="tl-same-name-")
-        b = subprocess.run(["node", "esbuild.js"], cwd=EXT, capture_output=True, text=True)
-        if b.returncode != 0:
-            raise unittest.SkipTest("esbuild failed here: " + (b.stderr or b.stdout)[-200:])
-        copy_dist(os.path.join(EXT, "dist"), os.path.join(cls.lab, "dist"))
+        lab_dist.copy_dist(os.path.join(cls.lab, "dist"))   # the checkout's ONE build of the bundles, copied under its lock (tests/lab_dist.py)
         cls.rport, cls.rtoken = _free_port(), "testtok-remote-tl"
         cls.hport, cls.htoken = _free_port(), "testtok-hub-tl"
         now = int(time.time())
