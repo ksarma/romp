@@ -55355,9 +55355,17 @@ def _resolve_reconnect(c, chat_list):
             _col = str(c.get("col") or "")
             _cols = {str(x.get("col") or "") for x in list(_clients) if x.get("app") == "chat" and str(x.get("wid") or "") == _pk}
             _cols.add(_col)
+            c.pop("preferred", None)   # [fork] pass 7 (the author's label, 2026-09-20, taking the reviewer's round-5 finding kernel-1): a record from an earlier resolve of this socket stands only while it is this resolve's
             if _ps and (_pc is None or _pc == 1) and len(_cols) <= 1 and _ps != str(act) and any(s.get("sid") == _ps for s in chat_list):
                 _hint = str(act)   # the page's own hint, for the record below (pass 5, the reviewer's round-4 kernel-2)
                 act = _ps
+                # [fork] pass 7 (the author's label, 2026-09-20, taking the reviewer's round-5 finding kernel-1): the session served whole is RECORDED on the client, under this slot lock, where _push's readers
+                # look (_watched_tab: the active-first set, build_order, _all_active and the cold-tab gate). Before this the preference reassigned
+                # the local `act` alone, so those readers still named the page's stale hint: on the boot road the hint, a skeleton on every
+                # connected page, was ranked first and handed a cold full build the gate would otherwise have skipped, and the notified session's
+                # full was built after it. `active` is left as the page's own declaration (the client-diag skeleton row, _watched_sids and the
+                # live-wake exemption read it); the page's next activeTab drops this record (Handler._dispatch_ws).
+                c["preferred"] = _ps
         held = c.get("echat") or {}
         if not act:
             # No active hint. A RELAY client that DIETED (skeleton=1 at the handshake: `dietSkeleton`, kind `relay`)
@@ -55388,6 +55396,18 @@ def _resolve_reconnect(c, chat_list):
             print("[reveal] sid=%s wid=%s: preferred at the set's resolve, the one full in place of the page's hint %s (%s)"
                   % (str(act)[:8], _pk[:8], _hint[:8], "a skeleton" if _hint in c["skeleton"] else "whole"), file=sys.stderr)
     return not fresh
+
+
+def _watched_tab(c):
+    """The chat tab a client will show once its set resolves, for _push's active-first order and the cold-tab gate: the
+    session the parked-reveal preference served whole in place of the page's hint (`preferred`, written by
+    _resolve_reconnect under the slot lock when the preference applies and dropped by the page's next activeTab, which is
+    the page's own word), else the page's own declaration (`active`). `active` itself is never overwritten: the client-diag
+    skeleton row, _watched_sids and the live-wake exemption read it as the page's declaration. [fork] pass 7 (the author's label, 2026-09-20, taking the reviewer's round-5 finding kernel-1): before this the
+    preference reassigned only the local `act`, so on the boot road the stale hint stayed in _push's active set, was ranked first
+    and handed a cold full build the gate would have skipped (every connected page holds it as a skeleton, and its live row
+    states its status), and the notified session's full was built after it (tests/test_chat_skeleton_reconnect.py test_12f)."""
+    return c.get("preferred") or c.get("active")
 
 
 def _send_tab_order(c, tab_order, tab_meta, live):
@@ -61235,6 +61255,7 @@ def _push(targets, connect=False, live_map=None):
                 if redialed:                             # the redial's first strip stands in for the ready it never posts:
                     _consume_pending_reveal(c, why="the pane's redial")   # a reveal parked for its window lands behind the strip
             active = {c.get("active") for c in chat_clients if c.get("active")}
+            active = {_watched_tab(c) for c in chat_clients if _watched_tab(c)}   # [fork] pass 7 (kernel-1): the parked-reveal preference's served session in the hint's place (_watched_tab); build_order and the gate read this set, the project's line above stands
             # Stable: active tabs first — and TRANSCRIPT-LESS sessions with them. A just-created session
             # has no transcript, so its build is near-free, and its creator is guaranteed to be staring
             # at its placeholder — yet the active-first hint can never name it: a client cannot declare
@@ -61263,6 +61284,7 @@ def _push(targets, connect=False, live_map=None):
             _live_scope.chat_floor0 = _chat_floor0_of(_all_chat)
             _all_active = {c.get("active") for c in _all_chat if c.get("active")}   # every connected column's watched tab,
             #                                                                          not this push's targets alone (round two, low 2)
+            _all_active = {_watched_tab(c) for c in _all_chat if _watched_tab(c)}   # [fork] pass 7 (kernel-1): the same read over every connected column, the preference's served session in the hint's place
             _chat_sig_bump(pushes=1)                     # memos.chatSig.pushes: a push that runs the chat tab loop, the table's per-push denominator
             _sig_tabs = []                               # memos.chatSig: the per-tab rows the warm-tab census folds after the loop (_chat_sig_note_census)
             for s in build_order:
@@ -76647,6 +76669,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         if msg and msg.get("type") == "activeTab":
             client["active"] = msg.get("id")   # tab switch → next push builds the now-active tab first
+            client.pop("preferred", None)      # [fork] pass 7 (kernel-1): the page's own word supersedes the parked-reveal preference's record (_watched_tab)
             if msg.get("id"):
                 _release_skeleton(client, str(msg["id"]))   # a skeleton tab clicked: its full rides that push (2026-09-07)
             _pusher_wake.set()                 # …and the pusher wakes now (the tab switch IS the event): that

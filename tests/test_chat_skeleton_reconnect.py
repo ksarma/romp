@@ -1113,6 +1113,53 @@ class SkeletonReconnect(unittest.TestCase):
         finally:
             km._PENDING_REVEAL.clear()
 
+    def test_12f_the_preference_records_the_served_session_where_the_push_reads_the_watched_tab(self):
+        # pass 7 (the author's label, 2026-09-20, taking the reviewer's round-5 finding kernel-1). The preference reassigned only the
+        # local `act`: _push's active set, build_order, _all_active and the cold-tab gate still named the page's stale hint, so on
+        # the boot road the hint was ranked first and handed a cold full build the gate would otherwise have skipped (every connected
+        # page holds it as a skeleton and its live row can state a status), and the notified session's full was built after it. The
+        # served session is recorded on the client (`preferred`, under the slot lock the resolve holds) and _watched_tab reads it in
+        # the hint's place for those four readers; `active` stays the page's own declaration (the client-diag skeleton row,
+        # _watched_sids and the live-wake exemption read it), and the page's next activeTab, its own word, drops the record.
+        km._PENDING_REVEAL.clear()
+        row = {"state": "working", "since": 1781100000, "model": "", "effort": "", "mode": "", "backend": "sdk"}
+        km._live_map = lambda: {S2: dict(row), S1: dict(row)}   # the tapped session live (a focus, not a revive); the hint's row states its status
+        skip0 = km._VIEW_STATS.get("chatSkipCold", 0)
+        try:
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertFalse(km._reveal_request(S2, "W1", via="ack", cols=1), "no socket for the window: parked, one column declared")
+                c = self._client(active=S1, reconnect=True, wid="W1", col="")   # the dial's hint is the last-shown tab, web
+                km._clients.append(c)                                          # the gate asks every CONNECTED chat client
+                km._push([c])
+            self.assertEqual(sorted(self._names(self._sessions(c))), ["api", "docs"], "the one full is the parked session's (test_12e's leg)")
+            self.assertEqual(self._names(self.built), ["api", "docs", "tests"],
+                             "the served session is built FIRST (it is the watched tab now), the transcript-less docs with it, then the skeleton "
+                             "tests (no live row: the gate builds it as before); the hint web is not built at all: %r" % (self._names(self.built),))
+            self.assertNotIn(S1, self.built, "the hint, a skeleton on every connected page with a live row to state its status, gets no cold build")
+            self.assertEqual(km._VIEW_STATS["chatSkipCold"] - skip0, 1, "the gate skipped the hint's cold build, once")
+            self.assertIn(S1, {f["id"] for f in self._frames(c, "status")}, "the skipped tab's status still goes, from its live row")
+            self.assertEqual(c["active"], S1, "the page's own declaration is never overwritten")
+            self.assertEqual(c.get("preferred"), S2, "the served session is recorded on the client")
+            self.assertEqual(km._watched_tab(c), S2, "the readers' view: the served session in the hint's place")
+            self.assertEqual(km._PENDING_REVEAL, {}, "the park was consumed")
+            # the page's own tab switch supersedes the record: from here `active` is the page's word again
+            c["_frames"].clear()
+            with contextlib.redirect_stderr(io.StringIO()):
+                km.Handler._dispatch_ws(_Self(), {"type": "activeTab", "id": S1}, c)
+            self.assertNotIn("preferred", c, "the page's activeTab drops the record")
+            self.assertEqual((c["active"], km._watched_tab(c)), (S1, S1))
+            # a redial whose park the preference declines (two columns declared) records nothing
+            del km._clients[:]
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertFalse(km._reveal_request(S2, "W1", via="ack", cols=2))
+                c2 = self._client(active=S1, reconnect=True, wid="W1", col="")
+                km._clients.append(c2)
+                km._push([c2])
+            self.assertEqual(sorted(self._names(self._sessions(c2))), ["docs", "web"], "declined: the hint's full")
+            self.assertNotIn("preferred", c2, "no preference applied, no record")
+            self.assertEqual(km._watched_tab(c2), S1)
+        finally:
+            km._PENDING_REVEAL.clear()
 
 
 
