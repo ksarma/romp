@@ -8009,14 +8009,19 @@ the held-whole paragraph pin red, as the same-commit rule intends (9 of 10); aft
 pins-3), a `#` comment in the job's header naming the browser cache green (10 of 10, where the pin before it read the
 raw block and was red, 9 of 10), and a restore step for that cache before the Test step red on the property (9 of 10);
 after that ruling, the job key renamed alone green (10 of 10) and a Chromium install moved before the Test step red on
-the property (9 of 10). Outside the three modules
-that read comment-stripped code (file-view-seam.test.ts, md-url-view.test.ts and md-sanitize-viewer-links.test.ts), no
-test of this branch compares where the chain or the fence pass sits relative to the adoption: file-view.test.ts,
-tools/file-review-viewer-recipe.test.mjs, tools/upstream-ledger-figure-gate-before-adoption.test.mjs and
-tools/markdown-viewer-plan-gate-adopt.test.mjs hold presence pins that name the seam test for it (the round-2 review
-found a raw-text compare in each of the last two, and a `//`-line filter standing in for a stripper in the plan pin),
-and the tools modules, which run in CI's shell job with no node_modules, cannot reach the compiler; the ledger entry's
-file count is derived by `git diff --name-only origin/main...HEAD`, the merge-base form, at the head.
+the property (9 of 10). Five modules read comment-stripped code (`grep -l 'from "../test-code-only"'
+ui/webview/*.test.ts`: file-view-seam.test.ts, md-url-view.test.ts, md-sanitize-viewer-links.test.ts,
+code-block.test.ts and file-view-links.test.ts, the last two since the fence-pass pins were re-aimed at the pass's
+place; the round-2 review's regression-2 found this record and the stripper's header naming three, and the plan pin
+now derives the list from the tree and holds both to it), and outside the first three no test of this branch compares
+where the chain or the fence pass sits relative to the adoption: code-block.test.ts reads the fence pass's own shape
+on the stripped code, file-view-links.test.ts holds an index compare of the fence pass against the two link passes
+over the adopted box and not against the adoption, and file-view.test.ts, tools/file-review-viewer-recipe.test.mjs,
+tools/upstream-ledger-figure-gate-before-adoption.test.mjs and tools/markdown-viewer-plan-gate-adopt.test.mjs hold
+presence pins that name the seam test for it (the round-2 review found a raw-text compare in each of the last two, and
+a `//`-line filter standing in for a stripper in the plan pin), and the tools modules, which run in CI's shell job
+with no node_modules, cannot reach the compiler; the ledger entry's file count is derived by `git diff --name-only
+origin/main...HEAD`, the merge-base form, at the head.
 
 **Scope.** Unreachable through the VS Code panes, whose CSP blocks remote figures (`img-src ${webview.cspSource} data:`,
 extension.ts). Reachable through the kernel-served dashboard and the iOS web app. What leaks is the IP address, the
@@ -8072,16 +8077,18 @@ into the live document with every CI-run module green and WebKit fetching the ga
 round-2 push it also pins the fence pass's place (on `clean`, between the sanitize and the chain's first call) and its
 one read of `clean` beside the four chain calls, and, in its test "no re-parse after the adoption", the re-parse
 population above, derived from the code, with the whole file's count, the two property names matched bare since the
-round-2 review. The order pins in file-view-seam.test.ts, md-url-view.test.ts and md-sanitize-viewer-links.test.ts
-read comment-stripped code since that push (ui/test-code-only.ts, the TypeScript compiler's comment ranges, since the
-review's first-round ruling; a comment quoting the pinned lines above an adopt-first body satisfied the raw-text pins
-in the round's reversion runs), and the assertion messages in file-view-text-size.test.ts, file-view.test.ts and the
-recipe pin, and the comments in render-sanitize.test.ts and md-sanitize-viewer-links.test.ts, that stated an order the
-assertion did not check now claim presence, the order being the seam test's (file-view-text-size.test.ts's sits in a
-browser-gated test that skips where no engine is installed, so in CI it does not run). md-url-view.test.ts pins the
-URL kind's resolution before the adoption; tools/file-review-viewer-recipe.test.mjs pins the sanitize and adoption
-statements as presence pins; tools/upstream-ledger-figure-gate-before-adoption.test.mjs holds the ledger entry's file
-list, its count and its engine statements to the tree and the legs, with a presence pin for the fence pass's read;
+round-2 review. The order pins in file-view-seam.test.ts, md-url-view.test.ts and md-sanitize-viewer-links.test.ts,
+and since the fence-pass pins were re-aimed code-block.test.ts's slice of that pass and file-view-links.test.ts's
+compare of it against the two link passes over the adopted box, five readers of the stripper, read comment-stripped
+code since that push (ui/test-code-only.ts, the TypeScript compiler's comment ranges, since the review's first-round
+ruling; a comment quoting the pinned lines above an adopt-first body satisfied the raw-text pins in the round's
+reversion runs), and the assertion messages in file-view-text-size.test.ts, file-view.test.ts and the recipe pin, and
+the comments in render-sanitize.test.ts and md-sanitize-viewer-links.test.ts, that stated an order the assertion did
+not check now claim presence, the order being the seam test's (file-view-text-size.test.ts's sits in a browser-gated
+test that skips where no engine is installed, so in CI it does not run). md-url-view.test.ts pins the URL kind's
+resolution before the adoption; tools/file-review-viewer-recipe.test.mjs pins the sanitize and adoption statements as
+presence pins; tools/upstream-ledger-figure-gate-before-adoption.test.mjs holds the ledger entry's file list, its
+count and its engine statements to the tree and the legs, with a presence pin for the fence pass's read;
 tools/markdown-viewer-plan-gate-adopt.test.mjs holds this section's sentences to the code, its comment and the leg,
 with presence pins for the chain's calls and the fence pass's read, the order being the seam test's. The remedy for
 the legs' skip in CI is a step in that job installing Playwright's engines (Firefox and WebKit, or all three) before
