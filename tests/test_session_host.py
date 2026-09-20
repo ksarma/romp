@@ -10,7 +10,8 @@ interpreter imports the SDK (CI, which installs the pinned SDK in every Python c
 built-in pipe transport otherwise (the plain test venv); two tests ask for the SDK transport by name, over the
 machine's SDK venv when there is one and over the host interpreter's own SDK otherwise, and skip only when
 neither exists (HOST_SDK below); one control hides the SDK from its host and asserts the pipe transport, so
-that road stays tested where the interpreter has the SDK.
+that road stays tested where the interpreter has the SDK. One road reds this module run ALONE, an interpreter
+with the SDK on 3.10 to 3.13: SpawnSecrets' docstring records it.
 """
 import asyncio
 import json
@@ -79,7 +80,16 @@ class SpawnSecrets(unittest.TestCase):
     """A key or login token lives in the process environment only, never in a file (the fork's rule, 2026-09-05):
     a stored login's CLAUDE_CODE_OAUTH_TOKEN leaves the spawn spec before hosts/<sid>/spawn.json is written and
     rides bin/romp-session-host's process environment instead (the pull-in review's item 1, 2026-09-16). Every
-    assertion here is a presence check: no test output ever carries a token's value."""
+    assertion here is a presence check: no test output ever carries a token's value.
+
+    Residual (2026-09-20, recorded with the workflow's SDK step comment and the ledger entry): run ALONE on an
+    interpreter that imports claude_agent_sdk and evaluates annotations at class definition, 3.10 to 3.13 (since
+    CI installs the SDK, the four Linux cells 3.10 through 3.13 and the two macOS cells; not the 3.14t cell, which
+    defers annotations and is green alone), 8 of these 11 tests fail: _spawn's Popen patch is live when _ht()
+    first imports the SDK through kernel/host_transport.py, and mcp's win32 utilities evaluate
+    subprocess.Popen[bytes] at class definition, which the patched-in function does not support. Green whenever
+    a module that imports the SDK is collected first, as the suite and CI's one pytest invocation do; it predates
+    the install step (the same 8 fail at the base on such an interpreter) and is a follow-up, not fixed here."""
 
     def setUp(self):
         self.state = tempfile.mkdtemp()
