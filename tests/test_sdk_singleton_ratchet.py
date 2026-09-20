@@ -526,7 +526,9 @@ scope found passes, so the module end is looking at its own start value); the wi
 end (the read-count filter never selects a stale entry; the clearing bounds memory); the refusal's _sdk_reported term (a
 belt: the one site that fills _SDK_REPORTED, the function fixture's report line, runs after the refusal is computed in
 the same first window, and no earlier window exists in the worker, so the list is empty whenever the refusal is
-consulted; dropped, the module stays green; the _sdk_named term beside it is reachable and pinned, S13); and no others.
+consulted; dropped, no case reds, and TheMutationCellsApply does, since the guard line carrying the term is the old
+text of the cells refusal-named-guard and refusal-class-guard; the _sdk_named term beside it is reachable and pinned,
+S13); and no others.
 """
 import ast
 import inspect
