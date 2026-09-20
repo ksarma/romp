@@ -2058,8 +2058,14 @@ function initGear(post, opts) {
     // the focus road (2026-09-20): the sheet shows a description while its row holds the focus (:focus-within, gear.css), and
     // the selector alone does not place it, so the same measurement runs on focusin (a Tab, a screen reader's move, a touch
     // browser's focus on tap) and the class goes with the focus as it goes with the pointer
-    pcard.addEventListener('focusin', function (e) { var host = hostOf(e.target); if (host) placeSub(host); });
-    pcard.addEventListener('focusout', function (e) { var host = hostOf(e.target); if (host && !(e.relatedTarget && host.contains(e.relatedTarget))) host.classList.remove('rs-up'); });
+    // A focus inside a Fast mode box is placed as its ROW's (review round 4 of the share field, the fixer pass): while the row
+    // holds the focus the sheet shows the row's description and hides the box's nested one (gear.css), so the box's own
+    // popover has no height to place, and placing the box returned on that zero height and left the row's popover unplaced,
+    // to clip past the card's bottom on the three Fast mode rows. The pointer road keeps the box as its host: a hover on the
+    // box shows the box's popover and hides the row's, so there the box is the element whose popover is shown.
+    function focusHostOf(t) { var host = hostOf(t); return host && host.classList.contains('rs-fastin') ? (host.closest('#rsettings .rs-row') || host) : host; }
+    pcard.addEventListener('focusin', function (e) { var host = focusHostOf(e.target); if (host) placeSub(host); });
+    pcard.addEventListener('focusout', function (e) { var host = focusHostOf(e.target); if (host && !(e.relatedTarget && host.contains(e.relatedTarget))) host.classList.remove('rs-up'); });
   }
   function closeSettings() { endDrags(); if (raBack && !raBack.hidden) raHide(); clearSectionScroll(); p.hidden = true; setModalCls(false); feedFull(false); }   // the reset FIRST, while the card still has a layout: a hidden card ignores a scroll write and keeps its old offset for the next open (measured); a pending section ask dies with the panel (round two, LOW 2 and 7)
   function openSettings(tab, section) {
