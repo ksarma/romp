@@ -2459,6 +2459,46 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
                 self.assertEqual((fast.content_identities(), fast.failures, [(dc.lineno, why) for dc, why in fast.explicit_violations]),
                                  (slow.content_identities(), slow.failures, [(dc.lineno, why) for dc, why in slow.explicit_violations]))
 
+    def test_a_reader_inside_a_class_keyword_is_in_the_readers_index_and_its_variable_takes_the_grown_names_taint(self):
+        """The index pass reaches a class statement's keywords and a def's or class's type parameters through
+        stray_loops alone, which fed their loop nodes to Fn.loops without their reads: a comprehension in a class
+        keyword reading a module list a LATER method extends was in no readers index, so the readers-only enqueue on
+        the grown name (the pin above) never re-visited its function, and the comprehension's variable stayed clean
+        where the module-wide sweep had tainted it. Found by fork PR 781's independent verifier on this copy: the
+        index held the store alone and the variable no taint. The reads under those fields are indexed now: both
+        methods are readers of the list, and the variable carries the env after the store's growth. The copy is
+        parsed, never run, like every copy here. Class keywords alone: a type parameter is a syntax error before
+        Python 3.12, and CI's matrix starts at 3.10."""
+        c = self._census(self._copy(lambda s: s.replace(self.FMT_ANCHOR, "_TENTH_SEEN = []\n" + self.FMT_ANCHOR).replace(
+            self.METHOD_ANCHOR,
+            '    def _tenth(self, sess):\n        class _K(metaclass=type, names=[n for n in _TENTH_SEEN]):\n            pass\n\n'
+            '    def _tenth_store(self, sess):\n        _TENTH_SEEN.extend(sorted(sess.env_vars))\n\n' + self.METHOD_ANCHOR)))
+        self.assertEqual([f[:3] for f in c.failures], [])
+        self.assertEqual(len(c.content_rows), self.BASE, "the plant adds no row: its reader feeds no door")
+        key = (c.mods["sdk_backend.py"].path, "_TENTH_SEEN")
+        self.assertIn(key, c.global_taint, "the module list gains the env: a growth event for the index to answer")
+        self.assertEqual(sorted(f.qual for f in c.global_readers.get(key, ())), ["SdkBackend._tenth", "SdkBackend._tenth_store"],
+                         "the comprehension in the class keyword indexes its method as the list's reader, beside the store")
+        tenth = [f for f in c.all_fns if f.qual == "SdkBackend._tenth"][0]
+        self.assertEqual({k: sorted(v) for k, v in c.tainted_names[tenth].items()}, {"n": ["env"]},
+                         "the re-visit on the grown name carries the env to the comprehension's variable")
+
+    def test_a_with_targets_taint_reaches_the_door(self):
+        """The taint fold stores a with item's target from its context expression: in flag_settings_path,
+        `with os.fdopen(fd, "w") as f:` with fd carrying the env gives f the env, in tainted_names and carried_names.
+        No test held that road: with the fold's With arm skipped the module stayed green while the real pair's dump
+        lost f's taint (fork PR 781's independent verifier). The plant copies the shape, a call on an env-carrying
+        local as the context expression and its target joined into the tenth row's message, so the row is found
+        through the with-target alone and the target's taint is in both of the function's stores."""
+        c = self._census(self._method('        held = sorted(sess.env_vars)\n'
+                                      '        with contextlib.nullcontext(held) as names:\n'
+                                      '            self._log("env (%s): tenth %s" % (sess.name, ", ".join(names)), problem=True, '
+                                      'ring_text=TENTH_RING % (sess.name[:20], len(names)))'))
+        self._assert_tenth_found(c, "self")
+        tenth = [f for f in c.all_fns if f.qual == "SdkBackend._tenth"][0]
+        self.assertEqual(sorted(c.tainted_names[tenth].get("names", ())), ["env"], "the with-target carries the env")
+        self.assertEqual(sorted(c.carried_names[tenth].get("names", ())), ["env"], "and carries it whole")
+
 
 class LogQuietlyAtRuntime(_Backend):
     """The runtime half of _log_quietly's problem=False (round 6; its lexical half is the census's rule (2)): a line

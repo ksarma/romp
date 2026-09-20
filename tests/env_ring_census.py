@@ -476,12 +476,26 @@ class Census:
 
         def stray_loops(nodes, owner):
             """The loop nodes under fields this pass does not otherwise visit (a class statement's keywords, a def's or
-            class's type parameters), for Fn.loops of `owner`, by the walk that defines the set."""
+            class's type parameters), for Fn.loops of `owner`, by the walk that defines the set; and the reads under
+            those fields, for the readers indexes (name_reads, so global_readers; attr_readers, the reflected forms
+            too), the way `handle` records a read it visits. Fork PR 781's independent verifier found the loop nodes
+            fed without their reads: a comprehension in a class keyword read a module list a later method extends,
+            the readers-only enqueue on the grown name did not know its function, and the comprehension's variable
+            stayed clean where the module-wide sweep had tainted it (pinned in tests/test_session_env.py). The nodes
+            go to no other record (`handle` would file their calls in fn.calls, which changes a result)."""
             if owner is None:
                 return
             stack = list(nodes)
             while stack:
                 n = stack.pop()
+                if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load):
+                    owner.name_reads.add(n.id)
+                elif isinstance(n, ast.Attribute) and isinstance(n.ctx, ast.Load):
+                    self.attr_readers[n.attr].add(owner)
+                elif isinstance(n, (ast.Call, ast.Subscript)):
+                    ra = self._reflected_attr(n)
+                    if ra is not None:
+                        self.attr_readers[ra[1]].add(owner)
                 for ch in ast.iter_child_nodes(n):
                     if isinstance(ch, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
                         continue
