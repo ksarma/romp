@@ -2801,12 +2801,15 @@ CONFTEST_ROSTER_OPENS = "The fixture's tests pin it"
 
 
 def case_population(source=None, names=None):
-    """The scratch cases a module defines, derived from its source by AST: every class that derives from _NestedRun
-    (by name, through bases defined in the module) other than _NestedRun itself is a case, and its id is the tail of
-    the SCRATCH_<id> name its class-level `SCRATCH = SCRATCH_<id>` binds, a base's when the class binds none (the
-    mapping derive() prints beside a red class). A case class whose SCRATCH resolves to no such name (a literal, an
-    expression, no binding on the class or any base) is a shape this does not read and raises, so the population
-    cannot come back silently short of a case. Returns (ids, refusal_readers, cases): every case id; the ids of the
+    """The scratch cases a module defines, derived from its source by AST: every class defined anywhere in the module
+    (ast.walk, so a class under a module-level conditional is read too: the round-7 review found the first form
+    reading the module's top-level statements alone, so a case class under a version gate was collected by pytest and
+    in no roster with the module green) that derives from _NestedRun (by name, through bases defined in the module)
+    other than _NestedRun itself is a case, and its id is the tail of the SCRATCH_<id> name its class-level
+    `SCRATCH = SCRATCH_<id>` binds, a base's when the class binds none (the mapping derive() prints beside a red
+    class). A case class whose SCRATCH resolves to no such name (a literal, an expression, no binding on the class or
+    any base) is a shape this does not read and raises, and so do two classes of one name, whose map entry would
+    hold one of them, so the population cannot come back silently short of a case. Returns (ids, refusal_readers, cases): every case id; the ids of the
     cases whose class body, or a module-defined base's, references one of `names`, this module's copies of the
     refusal's texts as refusal_text_names derives them from the conftest's texts when None is given, so a class
     reading those lines through a literal copy of the text is outside this set, which is why the roster pin says it
@@ -2814,7 +2817,11 @@ def case_population(source=None, names=None):
     derivation itself (TheCaseRostersNameEveryCase)."""
     tree = ast.parse(inspect.getsource(sys.modules[__name__]) if source is None else source)
     names = set(refusal_text_names() if names is None else names)
-    classes = {n.name: n for n in tree.body if isinstance(n, ast.ClassDef)}
+    defined = [n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)]
+    classes = {n.name: n for n in defined}
+    if len(classes) != len(defined):
+        raise AssertionError("two classes share a name, so one would be read for the other: %r"
+                             % sorted(n.name for n in defined if [d.name for d in defined].count(n.name) > 1))
     if "_NestedRun" not in classes:
         raise AssertionError("no _NestedRun class in the source: the derivation would read an empty population")
 
@@ -2922,8 +2929,9 @@ class TheCaseRostersNameEveryCase(unittest.TestCase):
 
     def test_the_derivation_reads_the_classes_by_shape_and_the_rosters_by_their_openers(self):
         """A case inherits its id from a base that binds SCRATCH; a subclass binding its own has its own; a reference
-        to a refusal text in a base puts the subclass on the readers' side; a class outside _NestedRun's tree is no
-        case; a SCRATCH bound in another shape raises; both roster readers accept joined openers and refuse a
+        to a refusal text in a base puts the subclass on the readers' side; a class under a module-level conditional
+        is a case; a class outside _NestedRun's tree is no case; a SCRATCH bound in another shape raises, and so do
+        two classes of one name; both roster readers accept joined openers and refuse a
         mis-shaped entry. The names are derived from the texts: a constant equal to a head the refusal renders, one
         that is a piece of the boundary's clause through a name the renderer uses, and one folded from a literal and
         a name into a piece of the gone report's link are the copies; a piece of the gone report's own head, of a
@@ -2947,12 +2955,18 @@ class TheCaseRostersNameEveryCase(unittest.TestCase):
             class Four(_NestedRun, unittest.TestCase):
                 SCRATCH = SCRATCH_Z
 
+            if sys.version_info >= (3, 12):
+                class Gated(_NestedRun, unittest.TestCase):
+                    SCRATCH = SCRATCH_G
+
             class Pin(unittest.TestCase):
                 SCRATCH = SCRATCH_A
             """)
         ids, readers, cases = case_population(synthetic, names=("SWAPPED",))
-        self.assertEqual((ids, readers), ({"S98", "S99", "Z"}, {"S98", "S99"}))
-        self.assertEqual(cases, {"One": "S98", "Two": "S99", "Three": "S98", "Four": "Z"})
+        self.assertEqual((ids, readers), ({"S98", "S99", "Z", "G"}, {"S98", "S99"}))
+        self.assertEqual(cases, {"One": "S98", "Two": "S99", "Three": "S98", "Four": "Z", "Gated": "G"})
+        with self.assertRaisesRegex(AssertionError, "two classes share a name.*'Four'"):
+            case_population(synthetic + "\nclass Four(_NestedRun):\n    SCRATCH = SCRATCH_Z\n", names=())
         with self.assertRaisesRegex(AssertionError, "Four binds its SCRATCH in a shape case_population does not read"):
             case_population(synthetic.replace("SCRATCH = SCRATCH_Z", "SCRATCH = SCRATCH_HEAD + 'x'"))
         with self.assertRaisesRegex(AssertionError, "no _NestedRun class"):
