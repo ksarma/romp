@@ -3378,6 +3378,11 @@ def _version_info():
             # the API added beyond the shipped seed, and the last refresh failure — so a stale list
             # is a visible fact in `romp version`, never a guess
             "modelCatalog": _catalog_public_status(),
+            # where the cost view's per-model price table came from: the live feed (when, how old) or the
+            # baked-in defaults and why (ROMP_PRICE_FEED=off, a failed fetch by reason class, none yet); the
+            # same block the /analytics payload carries, so a table served from the defaults is a visible
+            # fact in `romp version` and a curl too, never a guess
+            "priceFeed": _price_feed_status(),
             "autoNudge": _mv["autoNudge"],   # server-side toggle state → the gear checkbox reflects the kernel
             "compactSuggest": _mv["compactSuggest"],   # T208+: its gear checkbox rides the same read
             "conserveMemory": _conserve_on(),   # the T148 toggle: close idle tab-less claude processes
@@ -52395,6 +52400,71 @@ DEFAULT_MODEL_PRICES = {   # $/token: input, output, cache write (5m), cache rea
 }   # Sonnet 5 is listed at its STANDARD rate, not the introductory one, so the table stays right
     # once the intro period ends; the feed refresh corrects it either way while the intro is live.
 _price_cache = {"t": 0, "remote": {}}   # remote feed prices, refreshed on a TTL in the background
+# The feed's STATUS beside its cache (the _catalog_status idiom: single-key writes, no compound invariant, so no
+# lock): when a fetch was last attempted and last landed (the attempt's clock, the one the TTL stamp uses, so
+# the age and the TTL agree), how many baked-in ids the feed matched, why the last fetch failed (a reason CLASS,
+# never the response body: /version is auth-exempt), whether one is in flight, and whether the off line has
+# been written this kernel life. The cost view (/analytics `priceFeed`) and /version read it through
+# _price_feed_status, so a table served from the baked-in defaults is a visible fact where the user looks,
+# never a figure that reads as live. There is no cache FILE: this is process memory and dies with the kernel.
+_price_feed = {"fetchedAt": None, "attemptedAt": None, "lastError": None, "rows": 0, "inflight": False, "offSaid": False}
+
+
+def _price_feed_off():
+    """ROMP_PRICE_FEED=off: the price feed's off switch, read per call. The model catalog's spelling (stripped
+    and case-folded, `_refresh_model_catalog`), NOT the update check's exact match (`_update_check_off`): the
+    two precedents disagree and the catalog is the one this switch copies. The user sets it in the service's
+    env and restarts the manager; with it off the kernel makes no request to the feed's host at all."""
+    return (os.environ.get("ROMP_PRICE_FEED") or "").strip().lower() == "off"
+
+
+def _price_feed_error_class(e):
+    """The reason CLASS of a failed feed fetch, for `lastError` and the stderr line: the exception's type, the
+    HTTP status when it carries one (urllib's HTTPError), the wrapped socket error's type and errno when it
+    carries one (a URLError holds the OSError as `reason`). Never str(e), the response body or the URL: the
+    status rides the auth-exempt /version route, and a third party's error page is not ours to relay."""
+    parts = [type(e).__name__]
+    code = getattr(e, "code", None)                  # HTTPError: the status line's code, never its body
+    if isinstance(code, int):
+        parts.append("HTTP %d" % code)
+    inner = getattr(e, "reason", None)               # URLError: the socket's OSError (HTTPError's is a string, skipped)
+    if isinstance(inner, BaseException) and inner is not e:
+        parts.append(type(inner).__name__)
+        e = inner
+    eno = getattr(e, "errno", None)
+    if isinstance(eno, int):
+        try:
+            parts.append("errno %d (%s)" % (eno, os.strerror(eno)))
+        except (ValueError, OverflowError):
+            parts.append("errno %d" % eno)
+    return ": ".join(parts)
+
+
+def _price_feed_status(now=None):
+    """Where the cost view's per-model price table comes from, for the /analytics payload (`priceFeed`) and
+    /version (beside modelCatalog): a dollar figure priced from the baked-in defaults SAYS so where the user
+    looks, never as though it were the live feed. `off` is the switch's current value (_price_feed_off).
+    `source` is "feed" while the in-memory cache holds rows (served under off too: the switch stops traffic,
+    not data, and `ageS` says how old they are), else "defaults" with `reason` naming why: "off"
+    (ROMP_PRICE_FEED=off), "inflight" (a fetch started and has not landed: the view's first open, whose
+    payload is built before the worker returns), "failed" (the last fetch failed; `lastError` is its reason
+    class, _price_feed_error_class), "empty" (a fetch landed and matched no baked-in id, so a renamed feed id
+    never masquerades as live), "unfetched" (no attempt this kernel life). `fetchedAt` and `attemptedAt` are
+    epochs on the caller's clock; `rows` counts the matched ids. No paths, no body text: /version is auth-exempt.
+    Computed here and nowhere else, so the view, /version and `romp version` cannot disagree."""
+    if now is None:
+        now = int(time.time())
+    off = _price_feed_off()
+    fetched, err = _price_feed["fetchedAt"], _price_feed["lastError"]
+    if _price_cache["remote"]:
+        source, reason = "feed", None
+    else:
+        source = "defaults"
+        reason = ("off" if off else "inflight" if _price_feed["inflight"] else "failed" if err is not None
+                  else "empty" if fetched is not None else "unfetched")
+    return {"off": off, "source": source, "reason": reason, "fetchedAt": fetched,
+            "ageS": (int(now) - int(fetched)) if fetched is not None else None,
+            "attemptedAt": _price_feed["attemptedAt"], "lastError": err, "rows": _price_feed["rows"]}
 
 
 def _price_sig(name):
@@ -52412,34 +52482,58 @@ def _refresh_remote_prices(now):
     """Best-effort, stale-while-revalidate: if the cached feed is older than PRICE_TTL, kick a background
     fetch and return immediately (the caller uses defaults/config + whatever's cached). The match is
     CONSERVATIVE — by exact (family, major, minor) — so a near-miss (our opus-4-8 vs a feed opus-4-1) is
-    never silently mispriced; an unmatched model just keeps its baked-in default. Never raises."""
+    never silently mispriced; an unmatched model just keeps its baked-in default. Never raises.
+    This is the ONE place a fetch can start (the spend guard's `_model_prices(refresh=False)` never enters
+    it, T350), so the off switch lives here as the FIRST statement, before the TTL check and the stamp:
+    under ROMP_PRICE_FEED=off (_price_feed_off) nothing is attempted and nothing is stamped, the cache in
+    memory keeps serving and the defaults stand in for what it lacks, and the state is SAID rather than
+    swallowed: one stderr line per kernel life at the first refused attempt (the attempt is the event, not
+    boot: a kernel where nobody opens the cost view says nothing), and _price_feed_status reports it to the
+    view and /version. A fetch that fails is said the same way, once per failed fetch (the TTL bounds that
+    to one line per six hours), naming the reason class and never the response body."""
+    if _price_feed_off():
+        if not _price_feed["offSaid"]:
+            _price_feed["offSaid"] = True
+            sys.stderr.write("price feed: off (ROMP_PRICE_FEED=off); the cost view prices tokens from the baked-in table\n")
+        return
     if now - _price_cache["t"] < PRICE_TTL:
         return
     _price_cache["t"] = now                          # stamp first so a slow/failing fetch isn't hammered
+    _price_feed["attemptedAt"] = now
+    _price_feed["inflight"] = True                   # before the thread starts: a payload built while it runs reads "inflight"
     want = {_price_sig(k): k for k in DEFAULT_MODEL_PRICES if _price_sig(k)}
 
     def work():
         try:
-            import urllib.request
-            with urllib.request.urlopen(PRICE_FEED_URL, timeout=4) as r:
-                feed = json.loads(r.read().decode("utf-8", "replace"))
-        except Exception:
-            return
-        out = {}
-        for k, v in (feed.items() if isinstance(feed, dict) else []):
-            if not str(k).lower().startswith("claude") or not isinstance(v, dict):
-                continue
-            sig = _price_sig(k)
-            if sig not in want or want[sig] in out:
-                continue
             try:
-                inp = float(v["input_cost_per_token"])
-                out[want[sig]] = {"in": inp, "out": float(v["output_cost_per_token"]),
-                                  "cache_w": float(v.get("cache_creation_input_token_cost") or inp),
-                                  "cache_r": float(v.get("cache_read_input_token_cost") or inp)}
-            except Exception:
-                continue
-        _price_cache["remote"] = out
+                import urllib.request
+                with urllib.request.urlopen(PRICE_FEED_URL, timeout=4) as r:
+                    feed = json.loads(r.read().decode("utf-8", "replace"))
+            except Exception as e:
+                _price_feed["lastError"] = _price_feed_error_class(e)
+                sys.stderr.write("price feed: fetch failed (%s); the cost view prices tokens from the baked-in table\n"
+                                 % _price_feed["lastError"])
+                return
+            out = {}
+            for k, v in (feed.items() if isinstance(feed, dict) else []):
+                if not str(k).lower().startswith("claude") or not isinstance(v, dict):
+                    continue
+                sig = _price_sig(k)
+                if sig not in want or want[sig] in out:
+                    continue
+                try:
+                    inp = float(v["input_cost_per_token"])
+                    out[want[sig]] = {"in": inp, "out": float(v["output_cost_per_token"]),
+                                      "cache_w": float(v.get("cache_creation_input_token_cost") or inp),
+                                      "cache_r": float(v.get("cache_read_input_token_cost") or inp)}
+                except Exception:
+                    continue
+            _price_cache["remote"] = out
+            _price_feed["fetchedAt"] = now           # the attempt's clock, the TTL stamp's, so age and TTL agree
+            _price_feed["rows"] = len(out)
+            _price_feed["lastError"] = None
+        finally:
+            _price_feed["inflight"] = False
 
     threading.Thread(target=work, name="price-refresh", daemon=True).start()
 
@@ -52987,14 +53081,17 @@ def _token_analytics(now, window):
     a key turn) — and the modal adds it to the ledger's dollars, each labelled. Cheap: _session_usage
     makes ONE pass per session over _session_tok_rows' cached rows (per-file stamps: one walk + stats per
     session per build, parse only for a file that moved) and _judge_usage reads the shared incremental
-    row cache, so this re-sums memory."""
+    row cache, so this re-sums memory. `priceFeed` (_price_feed_status) says where the session-dollar table
+    came from, the live feed or the baked-in defaults and why, and rides OUTSIDE the memo on both roads (a
+    shallow copy, the memoized dict never mutated): the first open's payload is built before the fetch it
+    started has landed, and the next click within the memo's 15 s must show the feed, not lag it."""
     # a tiny TTL memo: the modal refetches on every period click and every reopen, and the recompute is
     # honest-but-pointless within seconds of itself (the user 2026-08-13's fast-and-visible rule); a new
     # judge row (cache size moved) invalidates early so the numbers never sit stale behind live judging
     memo = _ANALYTICS_MEMO.get(window)
     jkey = _JUDGE_USAGE_CACHE["size"]
     if memo and memo["jkey"] == jkey and now - memo["t"] < 15:
-        return memo["resp"]
+        return dict(memo["resp"], priceFeed=_price_feed_status(now))
     kind, _keys, t0 = _analytics_edges(now, window)
     # the rail's arm for the session dollars: a key beside a login → the keyed split (login turns'
     # computed cost is billed to no one) — but, as on the rail, only once the key has RECORDED turns in
@@ -53028,7 +53125,7 @@ def _token_analytics(now, window):
         #                                not `from` through the browser's zone (a browser west of the kernel
         #                                showed the day before the period's first date, 2026-09-06)
     _ANALYTICS_MEMO[window] = {"t": now, "jkey": _JUDGE_USAGE_CACHE["size"], "resp": resp}
-    return resp
+    return dict(resp, priceFeed=_price_feed_status(now))
 
 
 # Usage/error logs carry one name per distinct prompt (the user 2026-07-08): gister, opener, placer,
