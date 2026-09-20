@@ -151,7 +151,9 @@ export const delDoubleTilde = {
 // extension (`__init__.py`, `_final_.pdf`), which the walk links only inside a code span but which reads as its name
 // here, so `__init__.py` in prose stays literal, at the cost of `the _final_.pdf file` losing its emphasis. Both are
 // shape rules over the masked paragraph with no view of the rendered DOM: a path in a link's label is protected too,
-// though the walk never links under an <a> (the label shows the path as written), and the kernel's map is not consulted.
+// though the walk never links under an <a> (the label shows the path as written: `[see /a-_b/c_/d.md](u)` renders its
+// label `see /a-_b/c_/d.md` where main rendered `see /a-<em>b/c</em>/d.md`, a boundary that DIFFERS from main, marked as
+// the list below marks its items), and the kernel's map is not consulted.
 // The rule, in the spec's own terms. A `_` run lying STRICTLY inside a linkable token neither opens, nor closes, nor
 // counts as a nested delimiter: an opener there is refused, and the run is hidden from the built-in's closer scan (a
 // letter in its place in the masked string the built-in scans, as marked itself hides a link or a code span), so a
@@ -179,53 +181,94 @@ export const delDoubleTilde = {
 // no other extension the chat's instances take overrides emStrong: none in mdExtensions does, and
 // md-emphasis-override.test.ts pins it by execution, with the stand-in's contract (see DRY_LEXER).
 // Cost. The paragraph is scanned for tokens once per masked string (marked hands every delimiter of a paragraph the
-// same string), and the runs and the hidden string are remembered in a short most-recently-used list, so the nested
-// lexes marked runs on strings of their own (a link's label, a `*` pair's or a `~~` pair's body, and the standing pair's
-// body lexed here) never evict the paragraph's entry (a one-slot memo did: a paragraph of links with an underscore in
-// their labels rescanned itself once per link, eight to twelve times the base grammar at 20 KB, round 2). A run inside a
-// token is refused before the built-in scans, so a delimiter costs a lookup and a binary search, and the built-in's own
-// scan for a closer runs for the prose's delimiters as it does on the base grammar. Measured as a ratio to the base
-// grammar on the same string in the same process, and as a count of scans: md-emphasis-atomic.test.ts.
+// same string), and the runs and the hidden string are remembered in a short most-recently-used list of MEMO_SLOTS
+// entries keyed by masked string, so the nested lexes marked runs on strings of their own (a link's label, a `*` pair's
+// or a `~~` pair's body, and the standing pair's body lexed here) leave the paragraph's entry in place while fewer than
+// MEMO_SLOTS DISTINCT such strings holding a `_` run are lexed between two of the paragraph's delimiters (a one-slot memo
+// held none: a paragraph of links with an underscore in their labels rescanned itself once per link, eight to twelve
+// times the base grammar at 20 KB, round 2). Past that bound the paragraph is rescanned once per such gap, whatever the
+// nesting depth: eight distinct snake_case link labels between every two prose underscores, a contrived shape, scan a
+// 20 KB paragraph 270 times at 2.5 times the base grammar, the rendering byte-equal, and a 1 KB reply paragraph with
+// nine distinct labels per sentence costs half a millisecond against a third (the review's closing pass; seven distinct
+// labels scan the 20 KB paragraph once, at 1.03 times). A run inside a token is refused before the built-in scans, so a
+// delimiter costs a lookup and a binary search, plus, in a paragraph holding masked escapes, a few loads per masked
+// escape in the tail (shiftedEscapes), and the built-in's own scan for a closer runs for the prose's delimiters as it
+// does on the base grammar. Measured as a ratio to the base grammar on the same string in the same process, and as a
+// count of scans and of escape-rule passes: md-emphasis-atomic.test.ts.
 // Registered on the chat's two instances (chat-md.ts chatMarked and userMarked) and NOT on the singleton, on purpose:
 // the viewer's aim is GitHub's rendering of a note, which makes `foo/__pycache__/bar.pyc` strong, and the anchor
 // map's static lexer pairs the viewer's tokens; whether the viewer should follow is a separate decision (its own
 // walk, file-view-links.ts, has the same gap over a note's prose). md-emphasis-paths.test.ts runs both tables.
-// Boundaries, measured in the 2026-09-20 review and recorded. The first four render differently from the base grammar,
-// by this rule; in the fifth the run in question pairs as it does on the base grammar; the rest render as the base
-// renders them:
-//   - the accepted loss, A08: `_foo_-bar/baz.md`, emphasis glued to a path with no space between, renders literal,
-//     since the closer lies inside the token the walk then links whole. The same when the glue is a strikethrough,
-//     `__note/a.md__~~x.py~~`: `~` IS a path character, so the scanner's token runs on into the struck text and the
-//     strong is lost (the walk links nothing there on either grammar); a space between restores the base's rendering;
-//   - its face at a plain token's end edge: a closer run there longer than the pair spends (`_see /tmp/x__`, one `_` of
-//     the two) leaves the spent `_` inside the token, so the pair is refused and the text is literal, the token
-//     (`/tmp/x__`, the kernel's key) linked whole, where the base emphasised `see /tmp/x` and left a stray `_`;
-//   - the URI arm's class (path-links.ts CLICKABLE_PATH_RE, the walk's and the kernel's parity contract) admits `[`,
-//     `]`, `+`, sentence punctuation and `*`, so a file URI glued to a masked link, code span or tag
-//     (`file:///x/y.md[link](u)_bar_`) or to punctuation and a pair (`file:///x/y.md._draft_`) is one token to the
-//     scanner, the `_bar_` after it is refused where the base emphasised it, and the walk's target is the whole glued
-//     token, ungated (a URI is never in the kernel's map); a space between restores the base's rendering. A `*` inside a
-//     URI (`file:///tmp/*.log`) is the built-in's as it stands, so two globbed URIs in one sentence pair their stars as on
-//     the base;
-//   - a linkable token that is also a GFM autolink (`www.x.co/a_/b.md`: the file gate passes on its extension) is
-//     protected though the walk never links under an <a>: `_see www.x.co/a_/b.md now_` keeps its emphasis around the
-//     whole URL where the base cut the URL at its underscore;
-//   - a run at a plain token's edge (above) closes or opens a prose pair also when another, protected token stands in
-//     the same pair (`_see /tmp/_x/y.md and /tmp/z_ now_` ends its emphasis at `z`, where the base nests a second
-//     emphasis inside the first path), and when the walk's ASCII word class (path-links.ts isWordCh, the third parity
-//     follow-up) splits an accented path in two the second piece begins with a run at its edge (`_see /a-_b/cé_/d.md
-//     now_` ends its emphasis at `cé`): the edge rule;
-//   - an underscore-wrapped path with a run beside punctuation inside it (`_docs/x_/notes.md_`) fails the file gate on
-//     its trailing `_`, is no token, and pairs its wrapping opener with the run inside, as the base does;
-//   - the scan reads marked's masked string, where an escaped character is `++` and a link, a code span or a tag is
-//     `[aaa]`. An escape inside a path (`/a\-_b/c.md`) splits the scanner's token there, as the kernel's tokeniser
-//     splits it at the backslash (the C41 follow-up), and a relative path escaped in its last segment (`a-_b/c_/d\.md`)
-//     loses the extension its gate needs;
-//   - the mask keeps the length for every BMP character; a backslash before an astral symbol (an emoji) masks three
-//     UTF-16 units as two. A run's position is measured here on the unmasked tail with those escapes counted, so a run
-//     inside a token is refused whatever follows it (`see /_build/out_ \😀 \👉` is literal, as on the base); the
-//     built-in clips the masked string by the unmasked length, marked's own arithmetic, so a pair whose body holds two
-//     such escapes ends its emphasis a character early (`_see \😀 \👉 now_`), on this grammar as on the base.
+// Boundaries, measured in the 2026-09-20 review and recorded, each marked DIFFERS or IDENTICAL against main (the base
+// grammar: the chat's road before this override, which agrees with main's chat renderer on every row here). The first
+// four differ, by this rule; in the fifth the run in question pairs as it does on main while the protected token beside
+// it renders differently; the rest render as main renders them. A path in a link's label differs too (rule (2) above,
+// with its row). A reader of the branch's history finds here which boundaries differ from main and which are identical,
+// each with its measured row:
+//   - DIFFERS from main, the accepted loss, A08: `_foo_-bar/baz.md`, emphasis glued to a path with no space between,
+//     renders literal (main `<em>foo</em>-bar/baz.md`), since the closer lies inside the token the walk then links
+//     whole. The same when the glue is a strikethrough, `__note/a.md__~~x.py~~`: `~` IS a path character, so the
+//     scanner's token runs on into the struck text and the strong is lost (`__note/a.md__<del>x.py</del>`, main
+//     `<strong>note/a.md</strong><del>x.py</del>`; the walk links nothing there on either grammar); a space between
+//     restores main's rendering;
+//   - DIFFERS from main, its face at a plain token's end edge: a closer run there longer than the pair spends (`_see
+//     /tmp/x__`, one `_` of the two) leaves the spent `_` inside the token, so the pair is refused and the text is
+//     literal, the token (`/tmp/x__`, the kernel's key) linked whole, where main emphasised `see /tmp/x` and left a stray
+//     `_` (`<em>see /tmp/x</em>_`);
+//   - DIFFERS from main in rendering, the class itself identical: the URI arm's class (path-links.ts CLICKABLE_PATH_RE,
+//     the walk's and the kernel's parity contract, the same on main) admits `[`, `]`, `+`, sentence punctuation and `*`,
+//     so a file URI glued to a masked link, code span or tag (`file:///x/y.md[link](u)_bar_`) or to punctuation and a
+//     pair (`see file:///x/y.md._draft_ now`) is one token to the scanner and the pair after it is refused where main
+//     emphasised it: the first renders `_bar_` literal where main rendered `<em>bar</em>`, the walk linking `/x/y.md` on
+//     both; the second renders the URI literal and the walk links `/x/y.md._draft_`, the glued token whole and ungated
+//     (a URI is never in the kernel's map), where main rendered `file:///x/y.md.<em>draft</em>` and linked `/x/y.md`; a
+//     space between restores main's rendering. A `*` inside a URI (`file:///tmp/*.log`) is the built-in's as it stands,
+//     so two globbed URIs in one sentence pair their stars as on main;
+//   - DIFFERS from main: a linkable token that is also a GFM autolink (`www.x.co/a_/b.md`: the file gate passes on its
+//     extension) is protected though the walk never links under an <a>: `_see www.x.co/a_/b.md now_` keeps its emphasis
+//     around the whole URL where main cut the URL at its underscore (`<em>see <a>www.x.co/a</a></em>/b.md now_`), and
+//     `_see www.x.co/_a/b.md now_` keeps it where main lost it (`_see <a>www.x.co/_a/b.md</a> now_`, both underscores
+//     literal). The whole-token rule's face on such a URL (the closing pass): a prose opener GLUED to it,
+//     `_www.x.co/a_/b.md now_`, is the start-edge run of the scanner's token `_www.x.co/a_/b.md` (`_` is a word
+//     character to the scanner, and the interior `a_/` makes the token whole), so it is hidden and refused and the row
+//     renders `_<a>www.x.co/a_/b.md</a> now_`, the emphasis lost and a literal `_` at both ends, where main cut the URL
+//     (`<em><a>www.x.co/a</a></em>/b.md now_`) and round 1's head emphasised the whole autolink; the same for
+//     `see _www.x.co/a_/b.md now_ ok` and `__www.x.co/a_/b.md now__`. Its path analog `_drafts/a_.md is here_` renders
+//     literal with `_drafts/a_.md` linked whole under the kernel's key, the rule's design (main `<em>drafts/a</em>.md is
+//     here_`); the autolink has no such payoff (text under an <a> is dead to the walk, and `_www.x.co/a_/b.md` is no
+//     file), so on this face the rule costs the writer's emphasis. A plain www token with a glued opener
+//     (`_www.x.co/a/b.md now_`) keeps its emphasis as on main. Pinned as they render in md-emphasis-atomic.test.ts
+//     test 2;
+//   - the run in question pairs as on main, the protected token beside it DIFFERS: a run at a plain token's edge (above)
+//     closes or opens a prose pair also when another, protected token stands in the same pair. At the end edge, `_see
+//     /tmp/_x/y.md and /tmp/z_ now_` ends its emphasis at `z` (`<em>see /tmp/_x/y.md and /tmp/z</em> now_`, the walk
+//     linking `/tmp/_x/y.md`), where main nests a second emphasis inside the first path (`<em>see /tmp/<em>x/y.md and
+//     /tmp/z</em> now</em>`, nothing linked); at the START edge, `_see _posts/x.md and /tmp/_y/z.md now_` opens its
+//     emphasis after the plain token's `_` (`_see <em>posts/x.md and /tmp/_y/z.md now</em>`) and the walk under the
+//     kernel's keys links `/tmp/_y/z.md` alone, where main rendered `_see _posts/x.md and /tmp/<em>y/z.md now</em>` and
+//     linked `_posts/x.md`, and the build's head, before interior runs were hidden, rendered the row literal and linked
+//     both (the closing pass's record; the reverse order, `_see /tmp/_y/z.md and _posts/x.md now_`, is identical on
+//     every tree). And when the walk's ASCII word class (path-links.ts isWordCh, the third parity follow-up) splits an
+//     accented path in two, the second piece begins with a run at its edge (`_see /a-_b/cé_/d.md now_` ends its emphasis
+//     at `cé`, where main nested a second emphasis inside the path): the edge rule;
+//   - IDENTICAL on main: an underscore-wrapped path with a run beside punctuation inside it (`_docs/x_/notes.md_`) fails
+//     the file gate on its trailing `_`, is no token, and pairs its wrapping opener with the run inside, as main does
+//     (`<em>docs/x</em>/notes.md_`);
+//   - IDENTICAL on main: the scan reads marked's masked string, where an escaped character is `++` and a link, a code
+//     span or a tag is `[aaa]`. An escape inside a path (`/a\-_b/c.md`) splits the scanner's token there, as the
+//     kernel's tokeniser splits it at the backslash (the C41 follow-up), and a relative path escaped in its last segment
+//     (`a-_b/c_/d\.md`) loses the extension its gate needs (`/a\-_b/c.md and x_ ok` renders `/a-<em>b/c.md and x</em>
+//     ok` on both);
+//   - IDENTICAL on main in its arithmetic: the mask keeps the length for every BMP character; a backslash before an
+//     astral symbol (an emoji) masks three UTF-16 units as two. A run's position is measured here on the unmasked tail
+//     with those escapes counted (shiftedEscapes: the escapes marked masked, read at the masked string's `++` positions;
+//     one inside a link, a reflink, a code span or a tag is letters in the mask and counts for nothing, so `see
+//     _posts/x.md now_ \! [\😀](u)` keeps its emphasis as on main, where round 2's count of every escape in the tail
+//     refused the token's edge run: the closing pass), so a run inside a token is refused whatever follows it (`see
+//     /_build/out_ \😀 \👉` is literal, as on main; with one escape, `see /_build/out_ \😀`, main cut the path and here it
+//     is literal and linked, a member row of the fix, not a boundary); the built-in clips the masked string by the
+//     unmasked length, marked's own arithmetic, so a pair whose body holds two such escapes ends its emphasis a
+//     character early (`_see \😀 \👉 now_`), on this grammar as on main.
 /** The built-in emStrong's lexer for the dry run: lexes nothing, so a refused pair's body is never lexed. The stand-in
  *  the built-in runs on is `{ rules, lexer }` and nothing else, the contract with the installed marked (12.0.2 reads
  *  this.rules.inline and this.lexer.inlineTokens in emStrong, measured by a recording proxy); md-emphasis-override.test.ts
@@ -235,17 +278,21 @@ const DRY_LEXER = { inlineTokens: (): Token[] => [] };
 /** marked's own mask letter (a link, a code span or a tag is `[aaa]` in maskedSrc): a word character, so a run hidden
  *  behind it is no delimiter run to the built-in's closer scan, and the flanking of its neighbours reads as intraword. */
 const HIDDEN = "a";
-/** How many masked strings stay remembered (linkableRuns): the nested lexes marked runs between two delimiters of one
- *  paragraph nest a few levels at most (a `*` pair's body holding a link whose label holds a pair), so the paragraph's
- *  entry is found again after them and moved to the front, whatever the number of such constructs in the paragraph. */
+/** How many masked strings stay remembered (linkableRuns), most recently used first: the paragraph's entry is found
+ *  again and moved to the front after the nested lexes marked runs between two of its delimiters while those lexes bring
+ *  fewer than this many DISTINCT strings holding a `_` run (a link's label, a `*` pair's body, each a masked string of
+ *  its own; the same label twice is one entry, a hit), whatever their nesting depth. Eight distinct such strings between
+ *  two delimiters evict it, and the paragraph is scanned again at the next delimiter: the bound the cost comment above
+ *  states and md-emphasis-atomic.test.ts test 5 pins by count (seven bodies one scan, nine bodies two). */
 const MEMO_SLOTS = 8;
 /** One masked string's linkable tokens, scanned once. `masked` is the string marked handed emStrong; `runs` the tokens the
  *  path walk would link in it, as [start, end) in `masked`, in order (the walk's scanner, its trailing-punctuation trim
  *  and its shape gates, path-links.ts linkifyPathTokens); `whole`, per run, whether the token is one word whole (a `_`
  *  run beside punctuation lies strictly inside it, so its edge runs are hidden and refused with the rest) or keeps the
  *  edge rule; `hidden` is `masked` with every hidden `_` run replaced by HIDDEN, the string the built-in scans for a
- *  closer; `escaped` whether the string holds a masked escape (`++`), when a run's position must count the escapes. */
-type LinkableRuns = { masked: string; runs: Array<[number, number]>; whole: boolean[]; hidden: string; escaped: boolean };
+ *  closer; `plus` every position of a `++` in `masked` (marked's mask of an escape; a literal `++` too), ascending and
+ *  overlapping (`+++` gives two), where a run's position must count the escapes that shortened the mask (shiftedEscapes). */
+type LinkableRuns = { masked: string; runs: Array<[number, number]>; whole: boolean[]; hidden: string; plus: number[] };
 const linkableMemo: LinkableRuns[] = [];   // most recent first, at most MEMO_SLOTS
 function linkableRuns(masked: string, punctuation: RegExp): LinkableRuns {
   for (let k = 0; k < linkableMemo.length; k++) {
@@ -284,7 +331,9 @@ function linkableRuns(masked: string, punctuation: RegExp): LinkableRuns {
       if (atomic || (i > start && j < e)) { hidden += masked.slice(copied, i) + HIDDEN.repeat(j - i); copied = j; }
     }
   }
-  const entry: LinkableRuns = { masked, runs, whole, hidden: copied ? hidden + masked.slice(copied) : masked, escaped: masked.includes("++") };
+  const plus: number[] = [];
+  for (let i = masked.indexOf("++"); i >= 0; i = masked.indexOf("++", i + 1)) plus.push(i);
+  const entry: LinkableRuns = { masked, runs, whole, hidden: copied ? hidden + masked.slice(copied) : masked, plus };
   linkableMemo.unshift(entry);
   if (linkableMemo.length > MEMO_SLOTS) linkableMemo.length = MEMO_SLOTS;
   return entry;
@@ -304,20 +353,46 @@ function proseRun(tokens: LinkableRuns, d0: number, d1: number): boolean {
   const [s, e] = tokens.runs[k];
   return !tokens.whole[k] && (d0 === s || d1 === e);
 }
+/** The offsets in `src` of the escapes that shortened the mask, a backslash before an astral symbol (three UTF-16 units
+ *  masked as two), or null when there is none; `base` is where `src` would begin in `entry.masked` had no escape
+ *  shortened it (the masked string's length less `src`'s). Read off the masked string's `++` positions (entry.plus,
+ *  computed once per masked string) and the tail: the two strings align at their ends, so walking the positions from the
+ *  last back with the count found after each in hand puts each `++` at a definite offset in `src`, where the three-unit
+ *  form shows a backslash and then a high surrogate and the two-unit forms (`\!`, a literal `++`) show a backslash or a
+ *  plus; the walk stops at the first `++` lying before `src` (`src` begins at a delimiter, so an escape in it is never at
+ *  offset zero). Only the escapes marked masked are `++`: marked masks a link, a reflink, a code span and a tag to letters
+ *  BEFORE its escape rule runs (Lexer.inlineTokens), so an escape inside one never shortened the mask and stands as
+ *  letters here, counted for nothing. The first cut ran marked's escape rule over the tail once per delimiter and counted
+ *  every match, one inside a construct too: it read a run one position too far when the tail held a link whose label held
+ *  an escaped emoji, refusing a plain token's start-edge opener (`see _posts/x.md now_ \! [\😀](u)` lost its emphasis)
+ *  and letting a whole token's end-edge run pair, and cost 2.3 times the base grammar on 20 KB of `\! _a_ ` (the
+ *  2026-09-20 review's closing pass). Nothing read from one tail is kept for the next: a table of forms keyed by the
+ *  masked string would serve a second paragraph whose masked string is the same and whose escapes differ (`\😀` and `\!`
+ *  are both `++`), and a check that the tail is a suffix of the remembered one costs a compare of the whole tail per
+ *  delimiter, measured at three times the base grammar on 20 KB of `_a_ ` with one escape at its end; the walk costs a
+ *  few loads per masked escape in the tail. A spurious position (a `+` beside an escape's `++`, or two escapes' `++`
+ *  adjoining) never passes the three-unit test: read one unit early, the unit taken for the high surrogate is the one
+ *  before the escape's backslash (a plus, a punctuation mark or a low surrogate); read one unit late, the pair taken is
+ *  the backslash and its escaped BMP character, or the astral symbol's own two surrogates, neither a backslash before a
+ *  high surrogate. */
+function shiftedEscapes(entry: LinkableRuns, src: string, base: number): number[] | null {
+  let found: number[] | null = null;
+  const plus = entry.plus;
+  for (let k = plus.length - 1, after = 0; k >= 0; k--) {
+    const i = plus[k] - base - after;                                  // where a two-unit form at this `++` begins in `src`; a three-unit form one earlier
+    if (i <= 0) break;                                                 // before `src`
+    if (src.charCodeAt(i - 1) === 92 && (src.charCodeAt(i) & 0xfc00) === 0xd800) { (found ??= []).push(i - 1); after++; }
+  }
+  return found;
+}
 export const pathAwareEmphasis = {
   tokenizer: {
     emStrong(this: Tokenizer, src: string, maskedSrc: string, prevChar = "") {
       if (src.charCodeAt(0) !== 95) return false;                       // a `*` run: not a path character, the built-in's as it stands
       const tokens = linkableRuns(maskedSrc, this.rules.inline.punctuation);
       let at = maskedSrc.length - src.length;                            // where `src` starts in the paragraph: the mask keeps the length ...
-      let shifts: number[] | null = null;                                // ... save for an escaped astral symbol, three units masked as two: their offsets in `src`
-      if (tokens.escaped && src.includes("\\")) {
-        shifts = [];
-        const escapes = this.rules.inline.anyPunctuation;               // marked's own escape rule, the one that built the mask
-        escapes.lastIndex = 0;
-        for (let esc: RegExpExecArray | null; (esc = escapes.exec(src));) if (esc[0].length === 3) shifts.push(esc.index);
-        at += shifts.length;
-      }
+      const shifts = tokens.plus.length ? shiftedEscapes(tokens, src, at) : null;   // ... save for an escaped astral symbol, three units masked as two: their offsets in `src`
+      if (shifts) at += shifts.length;
       let run = 1;
       while (src.charCodeAt(run) === 95) run++;
       if (!proseRun(tokens, at, at + run)) return undefined;             // the run is a path's: text, before any scan
@@ -326,7 +401,7 @@ export const pathAwareEmphasis = {
       if (!pair) return undefined;
       const width = pair.type === "strong" ? 2 : 1;                      // the delimiters the pair spends at each end; a longer run's rest is body
       let end = at + pair.raw.length;
-      if (shifts) for (const i of shifts) if (i < pair.raw.length) end--;
+      if (shifts) for (const i of shifts) if (i < pair.raw.length) end--;   // the escapes inside the pair
       if (!proseRun(tokens, end - width, end)) return undefined;         // the spent closer run is a path's: inside a token longer than the pair spends, or at a whole token's edge
       pair.tokens = this.lexer.inlineTokens(pair.text);                 // the body: its own masked string, its own entry in the memo
       return pair;

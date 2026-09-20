@@ -13,19 +13,26 @@
 //     token stands in the same pair, and when the walk's ASCII word class splits an accented path into two tokens the
 //     second of which begins with a run at its edge: recorded faces of the rule, pinned as they render;
 //   - a backslash before an astral symbol masks three UTF-16 units as two; the override measures a run's position on the
-//     unmasked tail with those escapes counted, so a run inside a token is refused whatever follows it;
-//   - cost: one scan of the paragraph per masked string whatever the paragraph holds, the memo a short most-recently-used
-//     list that the nested lexes marked runs on strings of their own (a link's label, a `*` pair's or a `~~` pair's body)
-//     never evict (a one-slot memo rescanned the paragraph once per link, eight to twelve times the base grammar at
-//     20 KB); a run inside a token refused before the built-in scans. Counted by execution, and measured as a ratio to
-//     the base grammar on the same string in the same process, the best of interleaved passes, as
-//     md-emphasis-override.test.ts measures.
+//     unmasked tail with those escapes counted, so a run inside a token is refused whatever follows it. Only the escapes
+//     marked masked count: one inside a link, a reflink, a code span or a tag is letters in the mask (marked masks those
+//     before its escape rule runs), so it shortened nothing. Round 2 counted every escape in the tail and read a run one
+//     position too far when a construct after it held an escaped emoji, refusing a plain token's start-edge opener and
+//     letting a whole token's end-edge run pair (the review's closing pass); and it ran marked's escape rule over the
+//     tail once per delimiter, where the override now reads the forms at the masked string's `++` positions and runs
+//     the rule not at all;
+//   - cost: one scan of the paragraph per masked string while the nested lexes marked runs on strings of their own (a
+//     link's label, a `*` pair's or a `~~` pair's body) bring fewer than eight DISTINCT strings holding a `_` run
+//     between two of the paragraph's delimiters, the memo a most-recently-used list of eight keyed by masked string (a
+//     one-slot memo rescanned the paragraph once per link, eight to twelve times the base grammar at 20 KB); past that
+//     bound one rescan per such gap, pinned as it is; a run inside a token refused before the built-in scans. Counted by
+//     execution, and measured as a ratio to the base grammar on the same string in the same process, the best of
+//     interleaved passes, as md-emphasis-override.test.ts measures.
 // The walk runs over a small DOM stand-in fed marked's HTML (no jsdom), the chat's own options minus the fenced gate, with
 // a map holding the kernel-shaped keys (the tokens the kernel's tokeniser reads over the raw markdown), as the kernel's
 // verdict would. Synthetic fixtures only: invented paths, a placeholder session id.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
-import { Marked } from "marked";
+import { Lexer, Marked } from "marked";
 import { hideEdges } from "../test-dom-shim";
 import * as chatMd from "./chat-md";
 import { mdExtensions } from "./md-config";
@@ -212,11 +219,15 @@ test("a plain token, one with no run beside punctuation inside it, keeps the edg
     assert.equal(baseHtml(text), want, "the base grammar: " + JSON.stringify(text));
     for (const [who, render] of RENDERERS) assert.equal(render(text), want, who + ": as on the base: " + JSON.stringify(text));
   }
-  // the rule's two composed faces, recorded: a protected token in the same pair does not change how the plain token's
-  // edge run pairs, and the walk's ASCII word class (path-links.ts isWordCh, the third parity follow-up) splits an accented
-  // path into two tokens whose second begins with a run at its edge
+  // the rule's composed faces, recorded: a protected token in the same pair does not change how the plain token's edge
+  // run pairs, at the end edge (the pair ends at the plain token) and at the start edge (the pair opens after the plain
+  // token's `_`, so the walk under the kernel's keys links the protected token alone; main linked the plain one, and the
+  // build's head, before interior runs were hidden, rendered the row literal and linked both), and the walk's ASCII word
+  // class (path-links.ts isWordCh, the third parity follow-up) splits an accented path into two tokens whose second
+  // begins with a run at its edge
   const FACES: Array<[string, string, string[], string[]]> = [
     ["_see /tmp/_x/y.md and /tmp/z_ now_", "<p><em>see /tmp/_x/y.md and /tmp/z</em> now_</p>\n", ["/tmp/_x/y.md", "/tmp/z_"], ["/tmp/_x/y.md"]],
+    ["_see _posts/x.md and /tmp/_y/z.md now_", "<p>_see <em>posts/x.md and /tmp/_y/z.md now</em></p>\n", ["_posts/x.md", "/tmp/_y/z.md"], ["/tmp/_y/z.md"]],
     ["_see /a-_b/cé_/d.md now_", "<p><em>see /a-_b/cé</em>/d.md now_</p>\n", ["/a-_b/cé_/d.md"], []],
   ];
   for (const [text, want, keys, links] of FACES) for (const [who, render] of RENDERERS) {
@@ -224,6 +235,24 @@ test("a plain token, one with no run beside punctuation inside it, keeps the edg
     assert.equal(html, want, who + ": recorded, not changed: " + JSON.stringify(text));
     assert.deepEqual(walkLinks(html, keys), links, who + ": the walk over " + html);
   }
+  // the whole-token rule's face on a prose opener GLUED to the token (the closing pass): the opener is the token's own
+  // start-edge run, hidden and refused with the rest, so the text is literal. For a path the token is linked whole under
+  // the kernel's key, the rule's design; for a GFM www autolink whose path tail holds a run beside punctuation the walk
+  // links nothing (text under an <a> is dead to it), so the rule costs the writer's emphasis there: recorded as it renders,
+  // the base grammar cutting the URL or the path at its underscore instead
+  const GLUED: Array<[string, string, string[], string[]]> = [
+    ["_www.x.co/a_/b.md now_", "<p>_<a href=\"http://www.x.co/a_/b.md\">www.x.co/a_/b.md</a> now_</p>\n", ["_www.x.co/a_/b.md", "www.x.co/a_/b.md"], []],
+    ["_drafts/a_.md is here_", "<p>_drafts/a_.md is here_</p>\n", ["_drafts/a_.md"], ["_drafts/a_.md"]],
+  ];
+  for (const [text, want, keys, links] of GLUED) {
+    for (const [who, render] of RENDERERS) {
+      const html = render(text);
+      assert.equal(html, want, who + ": recorded as it renders: " + JSON.stringify(text));
+      assert.deepEqual(walkLinks(html, keys), links, who + ": the walk over " + html);
+    }
+    assert.match(baseHtml(text), /<em>/, "the base grammar pairs the glued opener with the run inside the token: " + baseHtml(text));
+  }
+  assert.equal(baseHtml("_www.x.co/a/b.md now_"), chatMd.chatMdHtml("_www.x.co/a/b.md now_"), "a plain www token with a glued opener keeps its emphasis as on the base");
 });
 
 // ── an escaped astral symbol ─────────────────────────────────────────────────────────────────────────────────────────
@@ -246,6 +275,75 @@ test("a backslash before an astral symbol masks three UTF-16 units as two, and a
   assert.equal(baseHtml(ROWS[1][0]), ROWS[1][1], "and left it literal after two, by accident of its shifted count");
   assert.equal(baseHtml("see /_build/out.md now_ x y"), "<p>see /<em>build/out.md now</em> x y</p>\n", "the control: no escape, the base grammar cuts");
   for (const [, render] of RENDERERS) assert.equal(render("see /_build/out.md now_ x y"), "<p>see /_build/out.md now_ x y</p>\n");
+});
+
+/** The passes marked's escape rule (rules.inline.anyPunctuation, one RegExp shared by every grammar in the process) made over
+ *  a string starting at a `_` run while `fn` ran: the override's own, since marked's mask runs it over the paragraph, which
+ *  starts elsewhere here. A pass begins with lastIndex at zero; the count of exec calls is reported beside it. */
+function escapePasses(fn: () => void): { passes: number; execs: number } {
+  const re: RegExp = (Lexer as unknown as { rules: { inline: { gfm: { anyPunctuation: RegExp } } } }).rules.inline.gfm.anyPunctuation;
+  const orig = RegExp.prototype.exec;
+  let passes = 0, execs = 0;
+  (re as unknown as { exec: (s: string) => RegExpExecArray | null }).exec = function (this: RegExp, s: string) {
+    if (s.charCodeAt(0) === 95) { execs++; if (this.lastIndex === 0) passes++; }
+    return orig.call(this, s);
+  };
+  try { fn(); } finally { delete (re as unknown as { exec?: unknown }).exec; }
+  return { passes, execs };
+}
+
+test("an escaped astral symbol inside a link, a reflink, a code span or a tag is letters in the mask and counts for nothing: a plain token's start-edge opener before it keeps its emphasis as on the base grammar, a whole token's end-edge run after it stays refused, and the override runs marked's escape rule over no tail at all", () => {
+  // face (1): the emphasis around or after a plain token, an escaped BMP character in prose (the `++` in the mask) and
+  // then a construct holding an escaped emoji; round 2 counted the construct's escape, read the token's start-edge run one
+  // position in, and refused it, so both underscores showed literal where main showed the emphasis
+  const IN_CONSTRUCT: string[] = [
+    "_see _posts/x.md now_ \\. [\\\u{1F600}](u)",
+    "see _posts/x.md now_ \\! [\\\u{1F600}](u)",
+    "see _posts/x.md now_ \\! [\\\u{1F600}][r]\n\n[r]: u",
+    "see _posts/x.md now_ \\! `\\\u{1F600}`",
+    "see _posts/x.md now_ \\! <b title=\"\\\u{1F600}\">t</b>",
+    "see _posts/x.md now_ \\! [\\\u{1F600}\\\u{1F449}](u)",
+    "_posts/x.md is [\\\u{1F600}](u) here_ \\.",
+  ];
+  for (const text of IN_CONSTRUCT) {
+    const want = baseHtml(text);
+    assert.match(want, /<em>/, "the base grammar keeps the emphasis: " + want);
+    for (const [who, render] of RENDERERS) {
+      const html = render(text);
+      assert.equal(html, want, who + ": as on the base: " + JSON.stringify(text));
+      assert.deepEqual(walkLinks(html, ["_posts/x.md"]), [], who + ": nothing to link, the token's `_` spent on the emphasis, as on the base");
+    }
+  }
+  // face (2): a whole token's end-edge run, or a closer spent inside a plain token, with the same construct after it; round
+  // 2 read the run one position past the token and let the built-in pair it, cutting the token the walk links whole
+  const WHOLE_EDGE: Array<[string, string, string]> = [
+    ["see /a/_b/c-_(and stop_) \\! [\\\u{1F600}](u)", "<p>see /a/_b/c-_(and stop_) ! <a href=\"u\">\\\u{1F600}</a></p>\n", "/a/_b/c-_"],
+    ["see /a/_b/c-_(and stop_) \\! [x](u)", "<p>see /a/_b/c-_(and stop_) ! <a href=\"u\">x</a></p>\n", "/a/_b/c-_"],
+    ["see /a/_b/c-_(and stop_) . [\\\u{1F600}](u)", "<p>see /a/_b/c-_(and stop_) . <a href=\"u\">\\\u{1F600}</a></p>\n", "/a/_b/c-_"],
+    ["_see /tmp/x__ [\\\u{1F600}](u) \\.", "<p>_see /tmp/x__ <a href=\"u\">\\\u{1F600}</a> .</p>\n", "/tmp/x__"],
+    ["_see /tmp/x__ [x](u) \\.", "<p>_see /tmp/x__ <a href=\"u\">x</a> .</p>\n", "/tmp/x__"],
+  ];
+  for (const [text, want, key] of WHOLE_EDGE) {
+    for (const [who, render] of RENDERERS) {
+      const html = render(text);
+      assert.equal(html, want, who + ": " + JSON.stringify(text));
+      assert.deepEqual(walkLinks(html, [key]), [key], who + ": the token links whole: " + html);
+    }
+    assert.match(baseHtml(text), /<em>/, "the base grammar cuts the token: " + baseHtml(text));
+  }
+  // the controls render as the base: no BMP escape in the paragraph (nothing masked to `++`), the astral escape in prose
+  // (masked, counted), the escapes before the delimiter, an escaped astral LETTER (no escape to marked's rule)
+  for (const text of ["_see _posts/x.md now_ . [\\\u{1F600}](u)", "_see _posts/x.md now_ \\. \\\u{1F600}", "\\\u{1F600} \\. _see _posts/x.md now_", "_see _posts/x.md now_ \\. [\\\u{10400}](u)"]) {
+    for (const [who, render] of RENDERERS) assert.equal(render(text), baseHtml(text), who + ": the control renders as the base: " + JSON.stringify(text));
+  }
+  // the rule is run over no tail: round 2 ran it over the whole tail once per `_` delimiter while the tail held a backslash
+  // (2859 passes on this paragraph), a quadratic term the shape below measures as a ratio
+  const shape = "E0 " + "\\! _a_ ".repeat(2860);
+  const first = escapePasses(() => { chatMd.chatMdHtml(shape); });
+  assert.equal(first.passes, 0, "the override ran marked's escape rule over a tail " + first.passes + " times (" + first.execs + " exec calls) on a 20 KB paragraph of escaped bangs and pairs");
+  const again = escapePasses(() => { chatMd.userMdHtml(shape); });
+  assert.equal(again.passes, 0, "and " + again.passes + " times on the other renderer");
+  assert.equal(chatMd.chatMdHtml(shape), baseHtml(shape), "no path: the rendering is the base's");
 });
 
 // ── cost ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -272,7 +370,7 @@ const SHAPES: Array<[string, string]> = [
   ["prose naming a member path per sentence", "The build wrote /a-_b/c_/d.md and then ~/code/my_proj/_drafts/a.md, then foo/__pycache__/bar.pyc. ".repeat(40)],
 ];
 
-test("one scan of the paragraph per masked string whatever the paragraph holds: a link's label, a `*` pair's or a `~~` pair's body lexed between two prose delimiters leaves the paragraph's entry in the memo (a one-slot memo rescanned the paragraph once per such body)", () => {
+test("one scan of the paragraph per masked string while fewer than eight distinct nested strings holding a `_` run are lexed between two of its delimiters: a link's label, a `*` pair's or a `~~` pair's body leaves the paragraph's entry in the memo (a one-slot memo rescanned the paragraph once per such body); at eight distinct such strings the entry is evicted and the paragraph scanned once more, pinned as it is", () => {
   // the memo is keyed by the masked string's text and shared by the chat's two instances, so each render below gets a
   // paragraph no earlier render in this process has seen (a distinct first word), and the count it pins is the first parse's
   let seq = 0;
@@ -289,6 +387,20 @@ test("one scan of the paragraph per masked string whatever the paragraph holds: 
   const again = "P" + (seq++) + " " + SHAPES[4][1];
   const twice = paragraphScans(again, () => { chatMd.chatMdHtml(again); chatMd.userMdHtml(again); chatMd.chatMdHtml(again); });
   assert.equal(twice.paragraph, 1, "the same paragraph parsed three times is scanned once");
+  // the bound, as it is (MEMO_SLOTS = 8, most recently used first, keyed by masked string): k distinct nested strings
+  // holding a `_` run between two prose pairs leave the paragraph's entry in place for k up to seven and evict it at eight,
+  // so the second prose pair scans the paragraph again, once; twelve IDENTICAL labels are one entry, a hit
+  const distinct = (k: number, shape: (i: number) => string): string => Array.from({ length: k }, (_, i) => shape(i)).join("");
+  for (const [what, k, want] of [["seven distinct link labels", 7, 1], ["nine distinct link labels", 9, 2], ["eight distinct link labels", 8, 2]] as Array<[string, number, number]>) {
+    const p = "P" + (seq++) + " _x_ " + distinct(k, (i) => "[_a" + i + "_](u) ") + "_y_";
+    assert.equal(paragraphScans(p, () => { chatMd.chatMdHtml(p); }).paragraph, want, what + " between two prose pairs: the paragraph was scanned " + want + " time(s) by the bound");
+  }
+  for (const [what, k, want] of [["seven distinct `*` bodies", 7, 1], ["nine distinct `*` bodies", 9, 2]] as Array<[string, number, number]>) {
+    const p = "P" + (seq++) + " _x_ " + distinct(k, (i) => "*_a" + i + "_* ") + "_y_";
+    assert.equal(paragraphScans(p, () => { chatMd.chatMdHtml(p); }).paragraph, want, what + " between two prose pairs: the paragraph was scanned " + want + " time(s) by the bound");
+  }
+  const same = "P" + (seq++) + " _x_ " + "[_a_](u) ".repeat(12) + "_y_";
+  assert.equal(paragraphScans(same, () => { chatMd.chatMdHtml(same); }).paragraph, 1, "twelve identical labels are one entry: one scan");
 });
 
 /** The chat grammar's time over the base grammar's on the same string, the best of `passes` interleaved passes: the
@@ -302,7 +414,7 @@ function ratio(src: string, passes = 4): number {
   return best;
 }
 
-test("the override costs at most a few times the base grammar on a 20 KB paragraph of each shape: links, `*` pairs or `~~` pairs with a `_` pair inside beside prose pairs (eight to twelve times before the memo survived them), a whitespace-free path run, and prose naming a path per sentence", () => {
+test("the override costs at most a few times the base grammar on a 20 KB paragraph of each shape: links, `*` pairs or `~~` pairs with a `_` pair inside beside prose pairs (eight to twelve times before the memo survived them), a whitespace-free path run, prose naming a path per sentence, and escaped bangs beside pairs (2.3 times when the escape rule ran once per delimiter)", () => {
   const BOUND = 4;   // about one; loose for a loaded box
   const LONG: Array<[string, string]> = [
     ["links with a pair in the label", "[_a_](u) _b_ ".repeat(1600)],
@@ -311,10 +423,12 @@ test("the override costs at most a few times the base grammar on a 20 KB paragra
     ["a whitespace-free path run", "/abcdefgh-_".repeat(1819)],
     ["prose with a member path per sentence", "The build wrote /a-_b/c_/d.md and then ~/code/my_proj/_drafts/a.md, then foo/__pycache__/bar.pyc. ".repeat(200)],
     ["pairs whose bodies hold pairs, no whitespace", "_(_a_)_.".repeat(3125)],
+    ["an escaped bang before every pair", "\\! _a_ ".repeat(2860)],
+    ["pairs, then as many escaped bangs", "_a_ ".repeat(2500) + "\\! ".repeat(2500)],
   ];
   for (const [what, src] of LONG) {
     const r = ratio(src);
     assert.ok(r <= BOUND, what + ": the chat grammar took " + r.toFixed(1) + "x the base grammar on " + src.length + " characters");
   }
-  for (const [, src] of LONG.slice(0, 3)) assert.equal(chatMd.chatMdHtml(src), baseHtml(src), "no path: the rendering is the base's");
+  for (const [, src] of [...LONG.slice(0, 3), ...LONG.slice(6)]) assert.equal(chatMd.chatMdHtml(src), baseHtml(src), "no path: the rendering is the base's");
 });
