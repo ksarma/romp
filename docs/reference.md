@@ -4788,9 +4788,9 @@ frames it received is measured in the panes themselves, by
   the row had one) with `t`, `wid`, `surface`, `what` and `reconnect` kept.
   `romp perf client` skips the whole-row markers and counts all three loss
   shapes in its header line and its `--json`: the minute rows that shed keys
-  (by the key shed), the rows capped whole, and the rows carrying `cut` (by the
-  key the cut fell under), so a stored value can be told from a whole one at
-  the reader as at the writer.
+  (by the key shed, every key named), the rows capped whole, and, when any row
+  carried it, the rows carrying `cut` (by the key the cut fell under), so a
+  stored value can be told from a whole one at the reader as at the writer.
 
 Rows carry numbers and code identifiers only, never card text, session names,
 file paths or transcript content: an element id inside an invoker name is
@@ -4974,8 +4974,9 @@ plus how many more there were. The shell's row shows as one more pane of its
 dashboard: no frame types, the long frames it observed and the pane scripts
 they name. The header's closing clause, present only when the file lost
 something, counts the rows the kernel stored short in each of its three shapes:
-minute rows that shed keys (by key), rows capped whole, and rows carrying `cut`
-(by the key the cut fell under); `--json` carries the same as
+minute rows that shed keys (by key, every key shed named), rows capped whole,
+and, when any row carried it, rows carrying `cut` (by the key the cut fell
+under); `--json` carries the same as
 `shed_minute_rows`, `shed_keys`, `capped_rows`, `cut_rows` and `cut_keys`. An
 absent file or one without perf rows is
 reported as no browser telemetry yet (the bundles predate it or no dashboard

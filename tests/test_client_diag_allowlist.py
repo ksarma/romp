@@ -343,7 +343,10 @@ def _js_literal(src, i):
                 if src.startswith("{", j + 2):
                     k = src.find("}", j + 3)
                     h = src[j + 3:k] if k > 0 else ""
-                    if not re.fullmatch(r"[0-9a-fA-F]{1,6}", h):
+                    # the language bounds the VALUE, never the digit count (leading zeros are allowed): a value above 0x10FFFF is the
+                    # malformed escape, and it raises the promised AssertionError here rather than a ValueError out of chr() (the
+                    # maintainer's round 5, correctness-6)
+                    if not re.fullmatch(r"[0-9a-fA-F]+", h) or int(h, 16) > 0x10FFFF:
                         raise AssertionError("stale_why_words(): a malformed \\u{} escape in a %s at offset %d: %r" % (form, i, src[i:i + 40]))
                     out.append(chr(int(h, 16)))
                     j = k + 1
@@ -1487,7 +1490,8 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         plant = lambda lit: expr[:expr.rstrip().rfind(': "disagree"')] + ": d.rev < 0 ? " + lit + ' : "disagree"'
         readable = [("double", '"negative"', "negative"), ("single", "'negative'", "negative"), ("template", "`negative`", "negative"),
                     ("double-with-dot", '"rev.negative"', "rev.negative"), ("unicode-escape", '"neg\\u0061tive"', "negative"),
-                    ("unicode-brace-escape", '"neg\\u{61}tive"', "negative"), ("hex-escape", '"neg\\x61tive"', "negative"),
+                    ("unicode-brace-escape", '"neg\\u{61}tive"', "negative"), ("unicode-brace-leading-zeros", '"neg\\u{0000061}tive"', "negative"),   # seven digits: the language bounds the value, not the count (round 5, correctness-6)
+                    ("hex-escape", '"neg\\x61tive"', "negative"),
                     ("quote-escape", "'neg\\'ative'", "neg'ative"), ("double-quote-escape", '"neg\\"ative"', 'neg"ative'),
                     ("line-continuation", '"nega\\\ntive"', "negative"), ("template-newline", "`nega\ntive`", "nega\ntive"),
                     ("non-escape", '"neg\\ative"', "negative"), ("simple-escape", '"neg\\tative"', "neg\tative")]
@@ -1500,16 +1504,17 @@ class ClientDiagAllowlistTest(unittest.TestCase):
                       ("member", "d.why", "an expression"), ("concatenation", '"neg" + "ative"', "a concatenation"),
                       ("call", 'word("negative")', "a call"), ("number", "42", "a number"), ("empty", "", "an empty value"),
                       ("unterminated", '"negative', "unterminated"), ("newline-in-string", '"nega\ntive"', "unterminated"),
-                      ("bad-hex-escape", '"neg\\xZZtive"', "malformed"), ("parenthesized-nested-ternary", '(d.x ? "a" : "b")', "a parenthesized expression")]
+                      ("bad-hex-escape", '"neg\\xZZtive"', "malformed"), ("unicode-brace-out-of-range", '"neg\\u{110000}ative"', "malformed"),   # above 0x10FFFF: the promised AssertionError, never chr()'s ValueError (round 5, correctness-6)
+                      ("parenthesized-nested-ternary", '(d.x ? "a" : "b")', "a parenthesized expression")]
         for name, lit, named in unreadable:
             with self.assertRaises(AssertionError, msg=name) as cm:
                 ladder_words(plant(lit))
             self.assertIn(named, str(cm.exception), "%s: the refusal names the form" % name)
         # the census form space: the literal forms the language permits, each read; the non-literal shapes, each refused
-        self.assertEqual({n for n, _, _ in readable}, {"double", "single", "template", "double-with-dot", "unicode-escape", "unicode-brace-escape", "hex-escape",
+        self.assertEqual({n for n, _, _ in readable}, {"double", "single", "template", "double-with-dot", "unicode-escape", "unicode-brace-escape", "unicode-brace-leading-zeros", "hex-escape",
                                                        "quote-escape", "double-quote-escape", "line-continuation", "template-newline", "non-escape", "simple-escape"})
         self.assertEqual({n for n, _, _ in unreadable}, {"template-expression", "identifier", "member", "concatenation", "call", "number", "empty",
-                                                         "unterminated", "newline-in-string", "bad-hex-escape", "parenthesized-nested-ternary"})
+                                                         "unterminated", "newline-in-string", "bad-hex-escape", "unicode-brace-out-of-range", "parenthesized-nested-ternary"})
         # a string literal inside a CONDITION is not a value and is no word (the conditions are free; only the values are read)
         self.assertEqual(tuple(ladder_words(expr.replace("!held ?", '(d.kind === "x" || !held) ?', 1))), STALE_WHY_WORDS)
         # a ladder that is not flat (a nested ternary in a value) is refused, named

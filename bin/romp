@@ -463,9 +463,10 @@ for key, r in sorted(rows.items(), key=order):
     # capped_rows, and cut_rows with cut_keys: the rows carrying `cut` and the keys it names, so a stored value can
     # be told from a whole one here as the two row-level shapes can), so the loss is visible and never silent; a
     # shed minute row still folds by its span, heap and DOM, and by its frames when the map alone was shed
-    # (capped.dropped names what went, and the header counts the shed rows by it: "shed keys (frames on %d,
-    # wsBytesByHost on %d)", shed_keys in --json, since the round-1 ladder put the map ahead of the frames a row
-    # shed alone before it). It folds the last <n>
+    # (capped.dropped names what went, and the header counts the shed rows by it, every key shed named from
+    # shed_keys itself: "shed keys (frames on %d, wsBytesByHost on %d)", shed_keys in --json, since the round-1
+    # ladder put the map ahead of the frames a row shed alone before it; the cut term is printed only when a
+    # row carried cut). It folds the last <n>
     # minutes per dashboard and pane (window percentiles from the summed histograms, the worst minute, the
     # slowest frames) and prints one screen. No kernel round trip: the files are read directly, so it works
     # with the kernel down. An absent file or one with no perf rows is said plainly: the bundles predate the
@@ -701,10 +702,18 @@ n_slow = sum(len(p["slow"]) for p in panes)
 n_dash = len({p["wid"] for p in panes})
 capped_note = ""                            # said only when the file lost something in any of the kernel's three shapes (shed keys, a whole-row marker, a cut value), so the loss is visible and never silent
 if shed_minute_rows or capped_rows or cut_rows:   # by what was dropped: a row that shed the wsBytesByHost map alone kept its frames, which folded above; a cut row names the keys the cut fell under
+    # the shed clause is worded from shed_keys itself, as the cut clause is from cut_keys (the maintainer's round 5, kernel-2: it named
+    # two of the ladder's five keys by hand, so a row that shed loaf, free or slow reported it in --json and not here), and each
+    # key list is rendered only when its count is above zero (round 5, regression-5: "0 rows with a value cut (no key named)" was
+    # printed whenever any other shape fired); the cut term appears only when a row carried cut, and its fallback names the case
+    # of a cut list naming no string key
+    shed_named = ", ".join("%s on %d" % kv for kv in sorted(shed_keys.items()))
     cut_named = ", ".join("%s on %d" % kv for kv in sorted(cut_keys.items())) or "no key named"
-    capped_note = "; %d minute row%s shed keys (frames on %d, wsBytesByHost on %d), %d row%s capped whole, %d row%s with a value cut (%s)" % (
-        shed_minute_rows, "" if shed_minute_rows == 1 else "s", shed_keys.get("frames", 0), shed_keys.get("wsBytesByHost", 0),
-        capped_rows, "" if capped_rows == 1 else "s", cut_rows, "" if cut_rows == 1 else "s", cut_named)
+    capped_note = "; %d minute row%s shed keys%s, %d row%s capped whole" % (
+        shed_minute_rows, "" if shed_minute_rows == 1 else "s", " (%s)" % shed_named if shed_minute_rows else "",
+        capped_rows, "" if capped_rows == 1 else "s")
+    if cut_rows:
+        capped_note += ", %d row%s with a value cut (%s)" % (cut_rows, "" if cut_rows == 1 else "s", cut_named)
 print("romp perf client: browser telemetry from the last %d min (%s): %d dashboard%s, %d pane%s, %d minute row%s, %d slow frame row%s%s"
       % (minutes, shown, n_dash, "" if n_dash == 1 else "s", len(panes), "" if len(panes) == 1 else "s",
          len(rows) - n_slow, "" if len(rows) - n_slow == 1 else "s", n_slow, "" if n_slow == 1 else "s", capped_note))

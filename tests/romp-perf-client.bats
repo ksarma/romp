@@ -337,27 +337,90 @@ c = panes[("11111111", "chat")]
 assert c["minutes"] == 2 and c["rows"] == 2 and c["frames"]["chatTail"]["n"] == 30 and c["heap_mb"] == 90.0 and c["dom"] == 3000, c
 assert [m["total_ms"] for m in c["minutes_detail"]] == [60, 0], c["minutes_detail"]
 '
-    # a window whose one loss is a cut value shows the clause too (the loss visible on its own, the other two shapes at zero)
-    python3 - "$DIAG" <<'PY'
+    # a window whose one loss is a cut value shows the clause too (the loss visible on its own, the other two shapes at zero, their
+    # key lists not rendered at zero). The two cut keys are BUILT FROM THE ALLOWLIST (the maintainer's round 5, correctness-5: the
+    # fixture had posted `why`, a key the perf surface does not admit, so the leg pinned the rendering of a row no writer can emit,
+    # since the kernel builds the cut list from the admitted keys alone): two admitted perf keys whose values a poster can fill
+    # (loaf, a nested object with strings; env, likewise), read off kernel.py's CLIENT_DIAG_KEYS['perf'] and asserted admitted; the
+    # header renders the keys in sorted order (bin/romp sorts cut_keys), so the assertion is built in that order too. The kernel
+    # admits by key and never checks the poster, so the second key stands in for any admitted key a poster fills.
+    CUTKEYS="$(python3 - "$ROMP_SCRIPT" <<'PY'
+import re, sys, os
+src = open(os.path.join(os.path.dirname(os.path.realpath(sys.argv[1])), "..", "kernel", "kernel.py"), encoding="utf-8").read()
+m = re.search(r'"perf": frozenset\(\((.*?)\)\),', src, re.S)
+assert m, "kernel.py: CLIENT_DIAG_KEYS['perf'] not found"
+admitted = set(re.findall(r'"([A-Za-z_]+)"', m.group(1)))
+for k in ("loaf", "env"):
+    assert k in admitted, ("not an admitted perf key", k)
+print(" ".join(sorted(["loaf", "env"])))
+PY
+)"
+    read -r CUT1 CUT2 <<< "$CUTKEYS"
+    [ -n "$CUT1" ] && [ -n "$CUT2" ]
+    python3 - "$DIAG" "$CUT1" "$CUT2" <<'PY'
 import json, sys, time
 now = int(time.time())
 W1 = "11111111-2222-3333-4444-555555555555"
 open(sys.argv[1], "w").write(json.dumps({"t": now - 10, "wid": W1, "surface": "perf", "what": "minute", "data": {
     "app": "shell", "since": (now - 70) * 1000, "span_ms": 60000, "free": {"n": 3, "p50": 8, "p90": 12, "max": 15},
     "loaf": {"n": 1, "blocking_ms": 80, "worst_ms": 120, "top": [{"k": "feed.js:render@1200", "ms": 100, "n": 1, "inv": "WebSocket.onmessage"}], "src": "loaf"},
+    "env": {"dv": 1, "entryTypes": ["longtask"]},
     "slow": {"sent": 0, "suppressed": 0, "suppressed_worst_ms": 0}, "heap_mb": 30.0, "dom": 200, "visible": True, "hidden_pane": False, "ua": "chrome-desktop",
-    "cut": ["loaf", "why"]}}) + "\n")
+    "cut": [sys.argv[2], sys.argv[3]]}}) + "\n")
 PY
     run "$ROMP_SCRIPT" perf client
     [ "$status" -eq 0 ]
-    [[ "$output" == *"1 dashboard, 1 pane, 1 minute row, 0 slow frame rows; 0 minute rows shed keys (frames on 0, wsBytesByHost on 0), 0 rows capped whole, 1 row with a value cut (loaf on 1, why on 1)"* ]]
+    [[ "$output" == *"1 dashboard, 1 pane, 1 minute row, 0 slow frame rows; 0 minute rows shed keys, 0 rows capped whole, 1 row with a value cut ($CUT1 on 1, $CUT2 on 1)"* ]]
     run "$ROMP_SCRIPT" perf client --json
     [ "$status" -eq 0 ]
     echo "$output" | python3 -c '
 import json, sys
 d = json.load(sys.stdin)
-assert d["cut_rows"] == 1 and d["cut_keys"] == {"loaf": 1, "why": 1} and d["shed_minute_rows"] == 0 and d["capped_rows"] == 0, d
+assert d["cut_rows"] == 1 and d["cut_keys"] == {sys.argv[1]: 1, sys.argv[2]: 1} and d["shed_minute_rows"] == 0 and d["capped_rows"] == 0, d
+' "$CUT1" "$CUT2"
+    # a loss and NO cut (the maintainer's round 5, regression-5, extra10-1, kernel-1): a window with a shed row and a cap marker and no
+    # cut value renders the shed and capped counts and no cut term at all (the clause had printed "0 rows with a value cut (no key
+    # named)" here); the shed row drops loaf, a key of the ladder the header used to leave unnamed (kernel-2: the shed clause is
+    # worded from shed_keys, so every key the ladder sheds is named)
+    python3 - "$DIAG" <<'PY'
+import json, sys, time
+now = int(time.time())
+W1 = "11111111-2222-3333-4444-555555555555"
+shed = {"app": "feed", "since": (now - 70) * 1000, "span_ms": 60000,
+        "frames": {"feed": {"n": 2, "ms_sum": 20, "ms_max": 12, "n16": 0, "n100": 0, "hist": [0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]}},
+        "free": {"n": 3, "p50": 8, "p90": 12, "max": 15}, "slow": {"sent": 0, "suppressed": 0, "suppressed_worst_ms": 0},
+        "heap_mb": 30.0, "dom": 200, "visible": True, "hidden_pane": False, "ua": "chrome-desktop",
+        "capped": {"bytes": 26000, "dropped": ["wsBytesByHost", "loaf"]}}
+open(sys.argv[1], "w").write(json.dumps({"t": now - 10, "wid": W1, "surface": "perf", "what": "minute", "data": shed}) + "\n"
+                              + json.dumps({"t": now - 8, "wid": W1, "surface": "perf", "what": "minute", "data": {"capped": True, "bytes": 40000, "app": "chat"}}) + "\n")
+PY
+    run "$ROMP_SCRIPT" perf client
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"1 dashboard, 1 pane, 1 minute row, 0 slow frame rows; 1 minute row shed keys (loaf on 1, wsBytesByHost on 1), 1 row capped whole"* ]]
+    [[ "$output" != *"with a value cut"* ]]
+    [[ "$output" != *"no key named"* ]]
+    run "$ROMP_SCRIPT" perf client --json
+    [ "$status" -eq 0 ]
+    echo "$output" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+assert d["shed_minute_rows"] == 1 and d["shed_keys"] == {"loaf": 1, "wsBytesByHost": 1} and d["capped_rows"] == 1 and d["cut_rows"] == 0 and d["cut_keys"] == {}, d
 '
+    # the fallback covered (round 5, kernel-1): a row whose cut list names no string key (an empty list) counts as a cut row and the
+    # parenthetical says so, since the count is above zero and the key map is empty
+    python3 - "$DIAG" <<'PY'
+import json, sys, time
+now = int(time.time())
+W1 = "11111111-2222-3333-4444-555555555555"
+open(sys.argv[1], "w").write(json.dumps({"t": now - 10, "wid": W1, "surface": "perf", "what": "minute", "data": {
+    "app": "shell", "since": (now - 70) * 1000, "span_ms": 60000, "free": {"n": 3, "p50": 8, "p90": 12, "max": 15},
+    "loaf": {"n": 0, "blocking_ms": 0, "worst_ms": 0, "top": [], "src": "none"},
+    "slow": {"sent": 0, "suppressed": 0, "suppressed_worst_ms": 0}, "heap_mb": 30.0, "dom": 200, "visible": True, "hidden_pane": False, "ua": "chrome-desktop",
+    "cut": []}}) + "\n")
+PY
+    run "$ROMP_SCRIPT" perf client
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"0 minute rows shed keys, 0 rows capped whole, 1 row with a value cut (no key named)"* ]]
     # a window holding cap markers alone is a loss to report, not an idle dashboard: the refusal names them
     python3 - "$DIAG" <<'PY'
 import json, sys, time
