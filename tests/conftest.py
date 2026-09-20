@@ -90,9 +90,10 @@ def pytest_configure(config):
     collection, each test), and an entry naming a class it cannot import is dropped with a
     PytestConfigWarning, which is: every xdist worker until the emitting module inserts the venv path; a
     controller whose interpreter has no SDK, which on a box is every controller; and the CI steps that install
-    no SDK, today the vscode-extension job's served-page pytest step, which loads this conftest (the five Python
-    matrix cells' interpreter imports the class since the SDK install step, and CI runs no xdist, so it has no
-    controller). A module-level warnings.filterwarnings in the emitting module does not
+    no SDK, today the vscode-extension job's served-page pytest step, which loads this conftest (the Python matrix
+    cells' interpreter, the five Linux cells and the two macOS cells on a weekly or dispatch run, imports the class
+    since the SDK install step, and CI runs no xdist, so it has no controller). A module-level
+    warnings.filterwarnings in the emitting module does not
     hold either: pytest wraps collection and each test in catch_warnings, which restores the filter list on
     exit. addinivalue_line appends to the ini list, so an ini file added later merges with this line. Both
     of the SDK's message forms ("...: permission_mode ..." and "... for: <tools>") start with the prefix."""

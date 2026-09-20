@@ -94,8 +94,9 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   with a PytestConfigWarning (every xdist worker until the venv path is inserted; a
   controller whose interpreter has no SDK, which on a box is every controller; and
   the CI steps that install no SDK, today the vscode-extension job's served-page
-  pytest step, which loads this conftest; the five Python matrix cells' interpreter
-  imports the class since the SDK install step, and CI runs no xdist, so it has no
+  pytest step, which loads this conftest; the Python matrix cells' interpreter (the
+  five Linux cells, and the two macOS cells on a weekly or dispatch run) imports the
+  class since the SDK install step, and CI runs no xdist, so it has no
   controller); a module-level `warnings.filterwarnings` does not
   survive pytest's per-test `catch_warnings`. So `-p no:warnings` is no longer part of an
   `-n` run. One more import-time leak reached the postal suite the same way until
