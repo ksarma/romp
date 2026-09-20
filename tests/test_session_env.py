@@ -127,6 +127,13 @@ def _temps(d):
 
 
 SDK_BACKEND = os.path.join(os.path.dirname(HERE), "kernel", "sdk_backend.py")
+# The fourth existence row's declaration (SdkSession._log_quietly's problem road) states that its callers' bound is
+# currently unmet and names the tracked item; the same clause stands at the road's comment, in the census docstring and in
+# the ENV ROWS paragraph, and test_each_existence_row_filed_as_a_problem_says_why_it_is_declared_and_not_bounded pins it
+# on each (the post-merge census of the env-pick door, 2026-09-20, ruling 2's sharpening).
+UNMET_CLAUSE = ("That responsibility is CURRENTLY UNMET: both callers format self.name uncut (kernel.NAME_RE caps no length), "
+                "and the second joins up to twelve CLI key names uncut into its text and its key; tracked as ")
+UNMET_ITEM = "ITEM: _log_quietly True callers unbounded (2026-09-20)"
 KERNEL_PY = os.path.join(os.path.dirname(HERE), "kernel", "kernel.py")
 CREDENTIALS_PY = os.path.join(os.path.dirname(HERE), "kernel", "credentials.py")
 def _parsed(path):
@@ -1257,7 +1264,13 @@ class EnvRowsPopulation(unittest.TestCase):
         and forwards ring_text as given, so the bound is each CALLER's responsibility; the callers passing problem=True
         (read off the module's AST here: every _log_quietly call with problem=True, two at this head) are named in the
         comment and pass no ring_text, so each rings its whole line. Owners by line: ['_log_quietly', '_do_set_mode',
-        '_do_set_mode', '_do_set_mode']; the conduit's road forwards ring_text (a Name) where the three carry none."""
+        '_do_set_mode', '_do_set_mode']; the conduit's road forwards ring_text (a Name) where the three carry none.
+        The sharpening of that ruling (2026-09-20): the declaration states that the callers' responsibility is CURRENTLY
+        UNMET (both format self.name uncut, the second joins up to twelve CLI key names uncut into text and key) and names
+        the tracked item, so a reader of the census sees a known unbounded row, tracked, never a false clean one. The
+        clause and the item title are pinned on all three surfaces, the road's comment block, the census docstring and
+        the ENV ROWS paragraph read as its own comment block (the module-wide read would be satisfied by the road's
+        comment alone), so a drop from any one of them is red."""
         c = self.c
         lines = Path(SDK_BACKEND).read_text(encoding="utf-8").splitlines()
         filed = sorted((dc for dc in c.existence_rows if dc.problem_decl == ("const", True)), key=lambda d: d.lineno)
@@ -1279,7 +1292,8 @@ class EnvRowsPopulation(unittest.TestCase):
                 self.assertIsInstance(dc.ring_text, ast.Name, "line %d: the conduit forwards its callers' ring_text" % dc.lineno)
                 self.assertEqual(dc.ring_text.id, "ring_text")
                 parts = ("an EXISTENCE row", "the union of every caller's text", "formatted inline by its caller",
-                         "CALLER's responsibility", "unbounded by a module-level format", "outside what the env-pick door bounds")
+                         "CALLER's responsibility", "unbounded by a module-level format", "outside what the env-pick door bounds",
+                         UNMET_CLAUSE + UNMET_ITEM)
                 for name, _rt in true_callers:
                     self.assertIn(name, text, "line %d's comment does not name the problem=True caller %s" % (dc.lineno, name))
             else:
@@ -1295,6 +1309,16 @@ class EnvRowsPopulation(unittest.TestCase):
         self.assertIn("the bound of a row through it is its CALLER's responsibility", census_doc, "the fourth row's reason class, in the census docstring")
         self.assertIn("each declared and not bounded for a stated reason", module)
         self.assertIn("the bound is each caller's responsibility", module, "the fourth row's reason class, in the ENV ROWS paragraph")
+        self.assertIn(UNMET_CLAUSE + UNMET_ITEM, census_doc, "the fourth row's bound is stated unmet and tracked, in the census docstring")
+        starts = [i for i, ln in enumerate(lines) if ln.startswith("# ENV ROWS: ")]
+        self.assertEqual(len(starts), 1, "one ENV ROWS line to read the paragraph under")
+        para, j = [], starts[0] + 1
+        while j < len(lines) and lines[j].startswith("#"):
+            para.append(lines[j].lstrip("#").strip())
+            j += 1
+        self.assertIn("^ the CONTENT rows", para[0], "the paragraph under the ENV ROWS line")
+        self.assertIn(UNMET_CLAUSE + UNMET_ITEM, " ".join(para),
+                      "the fourth row's bound is stated unmet and tracked, in the ENV ROWS paragraph itself")
 
     def test_the_pick_tags_dict_bound_is_stated_as_the_censuss_reach_and_not_as_the_kernels(self):
         """Ruling 3 of review round 6 (2026-09-19): that the pick tag does not cross a dict return is a bound on the

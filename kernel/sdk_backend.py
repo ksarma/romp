@@ -5444,7 +5444,10 @@ FORK_RESERVED_RING = ("env (%s): dropping reserved %s from the inherited env: ro
 #   problem=True today,
 #   the live-work reconcile's unknown label and unreadable list), each formatted inline by its caller and bounded by no
 #   format: the conduit shapes nothing, so the bound is each caller's responsibility, and the subject is again a
-#   mechanism outside what this door bounds (the comment at the road says so; the post-merge census, ruling 2). A pick that
+#   mechanism outside what this door bounds (the comment at the road says so; the post-merge census, ruling 2). That
+#   responsibility is CURRENTLY UNMET: both callers format self.name uncut (kernel.NAME_RE caps no length), and the
+#   second joins up to twelve CLI key names uncut into its text and its key; tracked as ITEM: _log_quietly True callers
+#   unbounded (2026-09-20) in ~/romp-handoffs/romp-general-notes/small-asks.md, outside the repo. A pick that
 #   crosses a dict return is outside the census (a bound on its reach, stated above), so this population is the direct
 #   readers of the surface set by construction. kernel.py and credentials.py write no such row: the kernel's problem rows are this
 #   module's ring and its two feeders (_sdk_problem, _note_ws_drop), and the census finds those doors before it asserts
@@ -7737,8 +7740,11 @@ class SdkSession:
                 # pass problem=True today, _note_unknown_bg_type (a task label cut to 60 characters) and
                 # _note_unreadable_bg_list (a list's shape), pass no ring_text, so the ring shows each one's whole
                 # line, unbounded by a module-level format; and their subject, the live-work reconcile, is a
-                # mechanism outside what the env-pick door bounds. Both callers' lines carry self.name uncut, which is
-                # a defect of theirs (filed as its own item; kernel.NAME_RE caps no length), not of this road.
+                # mechanism outside what the env-pick door bounds. That responsibility is CURRENTLY UNMET: both callers
+                # format self.name uncut (kernel.NAME_RE caps no length), and the second joins up to twelve CLI key names
+                # uncut into its text and its key; tracked as ITEM: _log_quietly True callers unbounded (2026-09-20) in
+                # ~/romp-handoffs/romp-general-notes/small-asks.md, outside the repo. A defect of the callers, not of
+                # this road.
                 self.backend._log(line, problem=True, key=key, ring_text=ring_text)
         except Exception:
             pass

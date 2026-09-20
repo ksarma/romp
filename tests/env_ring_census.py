@@ -152,7 +152,10 @@ caller's line, each formatted inline by its caller over the session name and the
 shapes nothing of it and forwards ring_text as given, so the bound of a row through it is its CALLER's
 responsibility; the two callers passing problem=True at this head, the live-work reconcile's unknown label and
 unreadable list, pass no ring_text, so each rings its whole line, again about a mechanism outside what the door
-bounds. The comment at the road names them.
+bounds. That responsibility is CURRENTLY UNMET: both callers format self.name uncut (kernel.NAME_RE caps no length),
+and the second joins up to twelve CLI key names uncut into its text and its key; tracked as ITEM: _log_quietly True
+callers unbounded (2026-09-20) in ~/romp-handoffs/romp-general-notes/small-asks.md, outside the repo. The comment at
+the road names them.
 
 Pure AST: imports nothing of romp, executes nothing of it, and parses each file once per process (ASTS below). The
 public entry is `census(files=None, sources=None)`, returning a Census with the counts, the door calls and the
