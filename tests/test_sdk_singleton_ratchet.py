@@ -358,12 +358,15 @@ boundary: the verdict by the test or scope each names, the first match, the ERRO
 tests whose report opens with a head; boundary_scopes: the set of scopes named; summary_mismatch: the final summary
 line parsed, the warned run's read of its warnings segment beside it), and through the presence or absence of a text
 (the judge fixture's, the exception group's header, the SDK notices), which the short summary cannot change since it
-only repeats what the ERRORS section already printed; the readers are the top-level functions of this module to which
-some call passes the child's output as the first argument, the output being the second value nested_run returns, read
-through the names its unpacking binds where a run is made (setUpClass's cls.out); TheReadersRosterNamesEveryReader
-derives that population from the source by AST (reader_population), from the call sites and never from a parameter's
-spelling or from where in the file a function is defined, and holds the list above and the population equal both
-ways, the list read by shape (readers_roster_names: the parenthesis that follows the list's opening words, one entry
+only repeats what the ERRORS section already printed; the readers are the functions this module defines as statements
+(module_statements: the top level and the bodies of module-level if and try) to which some call passes the child's
+output as the first positional argument or as a keyword argument, the output being the second value nested_run
+returns, read through the names its unpacking binds where a run is made (setUpClass's cls.out);
+TheReadersRosterNamesEveryReader derives that population from the source by AST (reader_population), from the call
+sites, the output recognised by the names its unpacking binds (a call passing it under another name is outside),
+never from a parameter's spelling, and wherever the function is defined as a statement of the module or under a
+module-level if or try, and holds the list above and the population equal both ways, the list read by shape
+(readers_roster_names: the parenthesis that follows the list's opening words, one entry
 per semicolon, the names before the entry's colon). CI's pytest is
 unpinned (the workflow installs the latest, 9.1.1
 today, the test venv's version here too), and pytest's short summary prints each error's message whole when CI is set
@@ -2768,21 +2771,46 @@ class TheProtectionIsWorded(unittest.TestCase):
         self._assert_worded(re.sub(r"\s+", " ", nested_run.__doc__), "nested_run's docstring", RUN_PROTECT_READS, RUN_PROTECT_VV)
 
 
+# the compound statements module_statements enters: an if, a try and, where the interpreter has it, a try with except*
+MODULE_GATES = (ast.If, ast.Try) + ((ast.TryStar,) if hasattr(ast, "TryStar") else ())
+
+
+def module_statements(tree):
+    """The statements a module defines at its own level: every statement of tree.body and, for an if or a try met among
+    them (MODULE_GATES: If, Try and, where the interpreter has it, TryStar), the statements of its body, its handlers'
+    bodies, its else and its finally, recursively and in source order, so a function or a constant bound under a
+    version gate or a guarded import is read as the module's. A def or a class met on the way is yielded and never
+    entered, so a method or a nested function is no candidate for the populations built on this (ast.walk would make
+    every one a candidate, and a nested helper passed the output a reader with no roster entry); a statement under
+    any other compound statement (with, for, while, match) is outside what this reads, and so is a binding under one,
+    which the derivations' docstrings state. `tree` is the module (a list of statements while recursing)."""
+    for node in tree.body if isinstance(tree, ast.AST) else tree:
+        yield node
+        if isinstance(node, MODULE_GATES):
+            yield from module_statements(list(node.body) + [s for h in getattr(node, "handlers", ()) for s in h.body]
+                                         + list(node.orelse) + list(getattr(node, "finalbody", ())))
+
+
 def reader_population(source=None):
     """The structured output readers a module defines, derived from its source by AST and keyed on a property of the
-    call sites, never on a parameter's spelling or on where in the file a function is defined: the top-level functions
-    to which some call in the module passes the nested run's output as the first positional argument. The output is
-    decided mechanically: nested_run returns (returncode, output), and the module binds that pair by tuple unpacking
+    call sites, never on a parameter's spelling: the functions defined as statements of the module (module_statements:
+    the top level and the bodies of module-level if and try, so a reader under a version gate or a try is read and a
+    method or a nested function is not) to which some call in the module passes the nested run's output as the first
+    positional argument or as a keyword argument. The output is decided mechanically: nested_run returns (returncode,
+    output), and the module binds that pair by tuple unpacking
     where a run is made (setUpClass: cls.rc, cls.out = nested_run(...)), so the output is whatever the unpacking's
     second target names, an attribute or a bare name, and a read of a name so bound (self.out, cls.out) is a read of
     the output. The AST does not resolve self to its class, so an attribute of the same name bound anywhere else would
     count as the output too, which can only put a helper ON the roster's demanded side, never off it. A nested_run
     result bound in any other shape (a bare name, an index) is a shape this does not read and raises, and so does a
-    module with no binding at all, so the population cannot come back silently short of a reader. Returns (readers,
-    bindings): the readers and the names the unpacking bound. `source` is this module's when None; a synthetic text
-    pins the derivation itself (TheReadersRosterNamesEveryReader)."""
+    module with no binding at all, so the population cannot come back silently short of a reader reached through
+    those names; the output is recognised by the names the unpacking binds, at the call site, and a call that passes
+    it under another name (a local it was copied to, a forwarding parameter spelled otherwise) is outside the
+    population, since no name is resolved. Returns (readers, bindings): the readers and the names the unpacking bound.
+    `source` is this module's when None; a synthetic text pins the derivation itself
+    (TheReadersRosterNamesEveryReader)."""
     tree = ast.parse(inspect.getsource(sys.modules[__name__]) if source is None else source)
-    functions = {n.name for n in tree.body if isinstance(n, ast.FunctionDef)}
+    functions = {n.name for n in module_statements(tree) if isinstance(n, ast.FunctionDef)}
     bindings = set()
     for node in ast.walk(tree):
         if not (isinstance(node, ast.Assign) and isinstance(node.value, ast.Call)
@@ -2801,9 +2829,10 @@ def reader_population(source=None):
         raise AssertionError("no unpacking of a nested_run result found: the derivation would read an empty output")
     readers = set()
     for node in ast.walk(tree):
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in functions and node.args:
-            first = node.args[0]
-            name = first.attr if isinstance(first, ast.Attribute) else first.id if isinstance(first, ast.Name) else None
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in functions):
+            continue
+        for arg in node.args[:1] + [kw.value for kw in node.keywords]:    # the first positional and every keyword value
+            name = arg.attr if isinstance(arg, ast.Attribute) else arg.id if isinstance(arg, ast.Name) else None
             if name in bindings:
                 readers.add(node.func.id)
     return readers, bindings
@@ -2835,10 +2864,12 @@ REFUSAL_RENDERERS = ("_sdk_swapped", "_sdk_found_refused")   # the conftest func
 
 def refusal_text_names(conftest_source=None, module_source=None):
     """The names of this module's copies of the refusal's texts, derived from both sources by AST and keyed on the texts
-    and not on a list of names: every top-level str constant of this module whose value is a piece of a text the
-    conftest renders for the refusal or for a link to it. Those texts are the string constants in the bodies of the two
-    functions that render the refusal and the boundary verdict's clause (REFUSAL_RENDERERS, the module-level constants
-    they name included, their docstrings not) and, wherever in the conftest it sits, the text of a conditional
+    and not on a list of names: every str constant of this module bound by a statement of the module or under a
+    module-level if or try (module_statements; a binding under another compound statement is outside) whose value is
+    a piece of a text the conftest renders for the refusal or for a link to it. Those texts are the string constants
+    in the bodies of the two functions that render the refusal and the boundary verdict's clause (REFUSAL_RENDERERS,
+    read from the conftest's statements the same way, the constants they name bound the same way included, their
+    docstrings not) and, wherever in the conftest it sits, the text of a conditional
     expression gated by a call to _sdk_refused, the gone report's link. A module constant is folded from literals and
     the names it concatenates (REFUSED_FOUND is one text and REFUSED_OBJECT); a constant bound in another shape is no
     text. A conftest in which no such text is found raises, and so does a module with no copy, so the population cannot
@@ -2849,7 +2880,7 @@ def refusal_text_names(conftest_source=None, module_source=None):
         with open(os.path.join(HERE, "conftest.py")) as f:
             conftest_source = f.read()
     conftest = ast.parse(conftest_source)
-    constants = {n.targets[0].id: n.value.value for n in conftest.body
+    constants = {n.targets[0].id: n.value.value for n in module_statements(conftest)
                  if isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name)
                  and isinstance(n.value, ast.Constant) and isinstance(n.value.value, str)}
 
@@ -2861,7 +2892,7 @@ def refusal_text_names(conftest_source=None, module_source=None):
                 yield constants[n.id]
 
     texts = set()
-    for node in conftest.body:
+    for node in module_statements(conftest):
         if isinstance(node, ast.FunctionDef) and node.name in REFUSAL_RENDERERS:
             body = node.body[1:] if ast.get_docstring(node) is not None else node.body
             texts.update(s for n in body for s in strings(n))
@@ -2887,7 +2918,7 @@ def refusal_text_names(conftest_source=None, module_source=None):
             return None if left is None or right is None else left + right
         return None
 
-    for node in module.body:
+    for node in module_statements(module):
         if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
             value = fold(node.value)
             if value:
@@ -3008,9 +3039,11 @@ class TheCaseRostersNameEveryCase(unittest.TestCase):
     held equal both ways and the failure names the missing and the extra ids, so a derivation that comes back short
     reds on the roster's extras and no floor is kept. Until round 7 both rosters were hand-kept: the delta that
     extended them for two cases left the two it added after them off, with the module green (the round-6 review's C).
-    What the conftest half keys on: a reference, in the case class or a module-defined base, to a top-level str
-    constant of this module whose value is a piece of a text the conftest renders for the refusal or for a link to it
-    (refusal_text_names, derived from the conftest's texts: the round-7 review found the first form a hand-kept list
+    What the conftest half keys on: a reference, in the case class or a module-defined base, to a str constant of
+    this module, bound by a statement of the module or under a module-level if or try (module_statements), whose value
+    is a piece of a text the conftest renders for the refusal or for a link to it (refusal_text_names, derived from
+    the conftest's texts, the renderers and the constants they name read from its statements the same way: the round-7
+    review found the first form a hand-kept list
     of four names that omitted REFUSED_FOUND_TAIL, the clause's last words, so a case reading the clause through its
     tail alone was off the population with the module green); a class reading those lines through a literal copy of
     the text is outside the population, and the pin reads no literal. The third test runs the derivations and both
@@ -3040,16 +3073,22 @@ class TheCaseRostersNameEveryCase(unittest.TestCase):
 
     def test_the_derivation_reads_the_classes_by_shape_and_the_rosters_by_their_openers(self):
         """A case inherits its id from a base that binds SCRATCH; a subclass binding its own has its own; a reference
-        to a refusal text in a base puts the subclass on the readers' side; a class under a module-level conditional
+        to a refusal text in a base puts the subclass on the readers' side, and one in _NestedRun, the base every
+        case shares, puts no case there; a class under a module-level conditional
         is a case; a class outside _NestedRun's tree is no case; a SCRATCH bound in another shape raises, and so do
         two classes of one name; both roster readers accept joined openers and refuse a
         mis-shaped entry. The names are derived from the texts: a constant equal to a head the refusal renders, one
         that is a piece of the boundary's clause through a name the renderer uses, and one folded from a literal and
-        a name into a piece of the gone report's link are the copies; a piece of the gone report's own head, of a
-        renderer's docstring, or of a text outside those sites is not; a conftest with no such text raises."""
+        a name into a piece of the gone report's link are the copies, and so is a constant bound under a module-level
+        if whose value is a piece a renderer reaches through a constant bound under a try; a piece of the gone report's
+        own head, of a renderer's docstring, or of a text outside those sites is not; a conftest with no such text
+        raises."""
         synthetic = textwrap.dedent("""\
             class _NestedRun:
                 SCRATCH = ''
+
+                def helper(self):
+                    carriers(self.out, SWAPPED)
 
             class One(_NestedRun, unittest.TestCase):
                 SCRATCH = SCRATCH_S98
@@ -3086,13 +3125,17 @@ class TheCaseRostersNameEveryCase(unittest.TestCase):
             _HEAD = "the start read had found the singleton over a root that is not the run's"
             _CLAUSE = "The object this scope found is the refused one: at whose end the slot no longer held it"
             _ELSEWHERE = "a text no renderer uses"
+            try:
+                _TRIED = "and the value it held"
+            except Exception:
+                pass
 
             def _sdk_swapped(start, before):
                 """Refuses the object the start read found, a docstring phrase."""
                 return "%s, because of a build over a directory since removed" % _HEAD
 
             def _sdk_found_refused(verdict, start, end):
-                return "%s. %s" % (verdict, _CLAUSE)
+                return "%s. %s, %s" % (verdict, _CLAUSE, _TRIED)
 
             def _sdk_inherited(start, before):
                 link = ("It is the object the first window refused. " if _sdk_refused(before.be) else "")
@@ -3107,8 +3150,10 @@ class TheCaseRostersNameEveryCase(unittest.TestCase):
             DOCSTRING = "a docstring phrase"
             ELSEWHERE = "a text no renderer uses"
             SPLIT = "since removed", "a tuple"
+            if sys.version_info >= (3, 0):
+                TRIED = "the value it held"
             ''')
-        self.assertEqual(refusal_text_names(conftest, module), ("HEAD", "LINK", "REFUSED", "TAIL"))
+        self.assertEqual(refusal_text_names(conftest, module), ("HEAD", "LINK", "REFUSED", "TAIL", "TRIED"))
         with self.assertRaisesRegex(AssertionError, "no refusal or link text found in the conftest"):
             refusal_text_names("def _sdk_other():\n    return 'x'\n", module)
         with self.assertRaisesRegex(AssertionError, "no constant of this module is a piece"):
@@ -3128,11 +3173,17 @@ class TheCaseRostersNameEveryCase(unittest.TestCase):
 class TheReadersRosterNamesEveryReader(unittest.TestCase):
     """The module docstring's roster of structured output readers names every reader this module defines and no
     other. The population is derived from the source, never listed here: reader_population reads the call sites by
-    AST, and a top-level function is a reader when some call passes the nested run's output (the value the unpacking
-    binds where a run is made) as its first argument, whatever its parameter is called and wherever in the file it is
-    defined; the roster is read by shape (readers_roster_names), and the two are held equal both ways, the failure
-    naming the missing and the extra names, so a reader added without its entry reds here and so does an entry whose
-    helper is gone. Until round 7 the derivation matched the spelling `out` in the parameter list, so a reader with
+    AST, and a function defined as a statement of the module or under a module-level if or try (module_statements) is
+    a reader when some call passes the nested run's output, recognised by the names the unpacking binds where a run is
+    made, as its first positional argument or as a keyword argument, whatever its parameter is called and wherever in
+    the file that statement sits (a call passing the output under another name, a renamed local or a forwarding
+    parameter, is outside: no name is resolved); the roster is read by shape (readers_roster_names), and the two are
+    held equal both ways, the failure naming the missing and the extra names, so a reader added without its entry reds
+    here and so does an entry whose helper is gone. The round-8 review found the candidates read from the module's
+    top-level statements alone and the output read from the first positional argument alone, so a reader under a
+    version gate or a try, or one passed the output by keyword, was outside the population with the module green: the
+    second test plants all three and reads them found. Until round 7 the derivation matched the spelling `out` in the
+    parameter list, so a reader with
     any other first-parameter name was outside the population with the module green (the round-6 review's B): the
     second test plants that reader in a synthetic source and reads it found. The round-7 review found the first form
     of this pin matching each derived name as a word anywhere in the roster paragraph's prose, one way only, so a
@@ -3148,13 +3199,16 @@ class TheReadersRosterNamesEveryReader(unittest.TestCase):
                                 "readers %r; the output's bound names %r" % (sorted(readers), sorted(bindings)))
         named = readers_roster_names(__doc__)
         self.assertEqual(len(named), len(set(named)), "the roster names a reader twice: %r" % sorted(named))
-        self.assertEqual(set(named), readers, "the module docstring's roster of readers and the call sites differ: "
+        self.assertEqual(set(named), readers, "the module docstring's roster of readers and the call sites differ "
+                         "(a reader: a function defined as a statement of the module or under a module-level if or "
+                         "try, passed a name the nested_run unpacking binds, %r, as a positional or keyword argument): "
                          "missing from it %r, in it with no reader %r"
-                         % (sorted(readers - set(named)), sorted(set(named) - readers)))
+                         % (sorted(bindings), sorted(readers - set(named)), sorted(set(named) - readers)))
 
     def test_the_population_is_keyed_on_the_call_sites_and_not_on_a_parameters_spelling(self):
         """A reader whose first parameter is not spelled `out` is found, and so is one defined after the class that
-        makes the run; a function spelled `out` that no call passes the output to is not, a helper called on a literal
+        makes the run, one under a module-level if, one under a try, and one passed the output by keyword; a function
+        spelled `out` that no call passes the output to is not, a helper called on a literal
         is not, and the binding's name comes from the unpacking. The roster reader accepts joined openers and refuses a
         mis-shaped entry and a missing parenthesis."""
         synthetic = textwrap.dedent("""\
@@ -3170,6 +3224,19 @@ class TheReadersRosterNamesEveryReader(unittest.TestCase):
             def _split(m):
                 return m
 
+            if sys.version_info >= (3, 12):
+                def gated(text):
+                    return text
+
+            try:
+                def tried(text):
+                    return text
+            except Exception:
+                pass
+
+            def keyed(text):
+                return text
+
             class _NestedRun:
                 @classmethod
                 def setUpClass(cls):
@@ -3180,11 +3247,14 @@ class TheReadersRosterNamesEveryReader(unittest.TestCase):
                     spelled("a literal")
                     _split(probe(self.result))
                     later(self.result)
+                    gated(self.result)
+                    tried(self.result)
+                    keyed(text=self.result)
 
             def later(text):
                 return text
             """)
-        self.assertEqual(reader_population(synthetic), ({"probe", "later"}, {"result"}))
+        self.assertEqual(reader_population(synthetic), ({"probe", "later", "gated", "tried", "keyed"}, {"result"}))
         with self.assertRaisesRegex(AssertionError, "no unpacking of a nested_run result"):
             reader_population(synthetic.replace("cls.rc, cls.result = nested_run(\"\")", "pass"))
         with self.assertRaisesRegex(AssertionError, "a shape reader_population does not read"):
