@@ -591,14 +591,16 @@ def restore_env(name, prior):
 #     swapping class, reported as inherited; S7B, the refusal as the first window's and no later one's; S8, the
 #     run-root shape, no refusal; S9 and S10, the gone shape, the object put back and not; S11, the refusal's roots
 #     from the start read's recorded fields; S12, a real object in the slot at the window; S13, the named-object
-#     guard; S9B, the gone pair linked at the object).
+#     guard; S9B, the gone pair linked at the object; S14, a second gone object after the refusal, its report without
+#     the link clause).
 # Three module-level lists of STRONG references (identity membership; strong so an id is never reused by a
 # later object) keep the kinds of naming apart. Every object a VERDICT names (a test's own, a boundary's)
 # goes on _SDK_NAMED, the list the boundary's quiet-on-a-named-object rule consults. Every object the
 # INHERITED report named goes on _SDK_REPORTED, and the report is silent on an object in either list, which
 # is what makes "once" work (under xdist, once per worker process). Every object the first window's REFUSAL
 # named goes on _SDK_REFUSED, which silences nothing: the gone report on an object it holds says it is the
-# object the refusal named, so the two lines are linked at the object. The boundary never consults
+# object the refusal named, so the two lines are linked at the object, by identity: a gone object of another
+# scope's making after the refusal carries no such clause (S14). The boundary never consults
 # _SDK_REPORTED: an inherited report says what a test did NOT do, not what its scope did, so a class or
 # module setup that completes a leak (builds, restores jd.STATE and removes the root before any test) yields
 # two error lines for one leak, the inherited gone report on the scope's first test and the boundary
@@ -855,7 +857,8 @@ def _sdk_inherited(before, start):
     boundary judges. Silent on an object either list has named (_sdk_named, _sdk_reported). A gone report on an object
     the worker's first window REFUSED (_sdk_refused: _sdk_swapped's object, recorded by the fixture when the refusal is
     taken) opens its tail by saying it is that object, so the two lines are linked at the object and not at the rendered
-    path, which is no identity and which a repoint between the two reads changes (S9, S9B)."""
+    path, which is no identity and which a repoint between the two reads changes (S9, S9B); membership is by identity, so a
+    gone report on an object no refusal named carries no clause whatever refusal the worker took before it (S14)."""
     be = before.be
     if not _sdk_is_real(be) or _sdk_named(be) or _sdk_reported(be):
         return None
