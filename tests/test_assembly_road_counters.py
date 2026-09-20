@@ -1033,8 +1033,7 @@ class AssemblyRoadCounters(Harness):
         assertions below go (round 4: with the removal on the pass path only, a red at the slot assertions, the case this test
         exists for, left that directory in the run's private temp root until the tests package removed the root at run end;
         measured 2026-09-20 in fresh copies with setUp in the old order: one empty directory left before exit without the
-        cleanup, none with it), and on the pass path removes it itself and asserts it is gone, then points em's checkpoint
-        directory back at its own (the inner Harness.setUp had moved it; on a red, Harness.tearDown resets that pointer). Named
+        cleanup, none with it), and on the pass path removes it itself and asserts it is gone. Named
         test_z_ deliberately: unittest orders methods by name, no test_the_ name sorts after
         test_whole_reads_and_hydrations_are_counted_under_the_calling_threads_stage, and a name sorting before the pair would move
         the pair's collection indices in the module docstring (514 and 519 on this tree); this name sorts last in the class and
@@ -1078,7 +1077,6 @@ class AssemblyRoadCounters(Harness):
         self.assertTrue(inner.td.is_dir(), "Harness.setUp made the inner temp directory and no tearDown ran after the raise")
         shutil.rmtree(inner.td)
         self.assertFalse(inner.td.exists())
-        em.set_checkpoint_dir(lambda: self.ck)                               # Harness.setUp pointed it at the inner directory
 
 if __name__ == "__main__":
     unittest.main()
