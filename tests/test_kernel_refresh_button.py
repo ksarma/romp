@@ -89,8 +89,9 @@ class RestartReloadRaceTest(unittest.TestCase):
                       "the flip drops the splash and asks the core to read /version; only a page without the core reloads as before")
         self.assertNotIn("if(b&&b!==%s)location.reload()" % json.dumps(km._BOOT_ID), fn, "the flip's own reload is gone (2026-09-14)")
         self.assertEqual(fn.count("location.reload()"), 3, "the no-core fallback and the two-minute backstop's two arms: nothing else reloads here")
-        # the ruling's words stand beside the code
-        self.assertIn("A changed build: the core OFFERS the reload", fn)
+        # the ruling's words stand beside the code, in the SOURCE (the sentence is a served comment, so a pin over the page
+        # was satisfiable by prose alone; tests/test_served_pins_read_elements.py names that class, round 6, 2026-09-20)
+        self.assertIn("A changed build: the core OFFERS the reload", _kernel_src())
         # and the gear's own ↻ handler, dead since the control moved to the rail, is gone with its first-200 reload
         self.assertNotIn("rrefresh", _gear_src())
 
@@ -226,6 +227,10 @@ if __name__ == "__main__":
 def _gear_src():
     import pathlib
     return (pathlib.Path(__file__).resolve().parent.parent / "ui" / "webview" / "gear.js").read_text()
+
+
+def _kernel_src():
+    return open(os.path.join(BIN, "romp-kernel"), encoding="utf-8").read()
 
 
 def _gear_css_src():

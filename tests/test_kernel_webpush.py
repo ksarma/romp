@@ -1913,10 +1913,14 @@ class LandingRevealPins(unittest.TestCase):
         # comment at the landing site names the conflation, its cause and the decision, so nobody reads the road as an
         # oversight and takes it out
         js = km._LANDING_REVEAL_JS
-        self.assertIn("'vanish'", js)
-        self.assertIn("function displayed()", js)
+        code = served_css.js_code(js)   # the code, comments blanked (a comment spells 'vanish' too)
+        self.assertIn("'vanish'", code)
+        self.assertIn("function displayed()", code)
+        # the words are the COMMENT's, so they are read from the comment spans on purpose (the pins census reads a bare
+        # membership over the constant as a pin a comment can satisfy; this one means the comment)
+        comment = "".join(js[s:e] for s, e in served_css.js_comment_spans(js))
         for word in ("notificationclick", "notificationclose", "swipe", "2026-09-10", "accepted"):
-            self.assertIn(word, js, "the landing site's comment names it: " + word)
+            self.assertIn(word, comment, "the landing site's comment names it: " + word)
         self.assertIn("vanish", km._push_pending.__doc__)
 
     def test_the_boot_flag_follows_the_chat_panes_own_socket(self):

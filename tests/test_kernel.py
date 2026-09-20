@@ -7689,7 +7689,8 @@ class ServeSecurity(unittest.TestCase):
         html = km._landing()
         self.assertIn("<script src=/dist/shell-perf.js?v=", html)
         self.assertLess(html.index("/dist/age-color-global.js"), html.index("/dist/shell-perf.js"))
-        self.assertLess(html.index("/dist/shell-perf.js"), html.index("window.__rompAgeColor"))   # before the errs script
+        code = served_css.code(html)   # offsets preserved, comments blanked: a script comment spells __rompAgeColor before the code does
+        self.assertLess(code.index("/dist/shell-perf.js"), code.index("window.__rompAgeColor"))   # before the errs script
         self.assertLess(html.index("/dist/shell-perf.js"), html.index("/dist/palette-main.js"))
         # the socket it posts through is the shell's own, defined by the mobile-shell script, which runs
         # later: the bundle reads window.__rompShellSend at call time, so the order is fine

@@ -37,7 +37,8 @@ over string, template and regular-expression literals and both comment forms; `c
 page that is comment text (an HTML comment outside a script or style element, a /* */ inside a style element, a /* */
 or // inside a script element), which tests/test_served_pins_read_elements.py reads to find a pin a comment could
 satisfy; `code(html)` is the page with every such span blanked, for a token that has no parsed form (a markup attribute,
-a string inside a script).
+a string inside a script); `js_code(js)` and `css_code(css)` blank the comments of one script or style fragment, for a pin
+over one of the kernel's served constants (a `_*_JS` or `_*_CSS` string spliced into a page), which the same census reads.
 
 Loads no romp code, so it needs no state preamble.
 """
@@ -447,3 +448,15 @@ def scripts(html):
         js = m.group(1)
         out.append(_blank(js, js_comment_spans(js)))
     return out
+
+
+def js_code(js):
+    """A script fragment with its comments blanked (offsets preserved): the text a pin over one of the kernel's served script
+    CONSTANTS reads (round 6, 2026-09-20: a bare token asserted over such a constant was satisfiable by the constant's own
+    comment, and the pins census reads the constants now)."""
+    return _blank(js, js_comment_spans(js))
+
+
+def css_code(css):
+    """A stylesheet fragment with its /* */ comments blanked (offsets preserved), for a pin over a served CSS constant."""
+    return _blank(css, css_comment_spans(css))

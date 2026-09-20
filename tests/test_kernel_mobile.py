@@ -128,7 +128,7 @@ class LandingShell(unittest.TestCase):
         # modal never closed. Fix: a real full-screen backdrop in the SHELL document (like the net panel's
         # #rnet-back) catches the tap, so any tap over it dismisses. The #ru-tip is pointer-events:none, so
         # a tap that visually lands on the panel still reaches the backdrop underneath and closes it.
-        html, js = km._landing(), km._LANDING_USAGE_JS
+        html, js = km._landing(), served_css.js_code(km._LANDING_USAGE_JS)   # the code, comments blanked (a comment names the backdrop too)
         self.assertIn("ru-back", js)                              # the backdrop element is created
         self.assertIn("back.onclick=off", js)                    # a tap on the backdrop closes the modal
         self.assertIn("back.classList.add('on')", js)            # ...shown when the panel opens
@@ -183,7 +183,7 @@ class LandingShell(unittest.TestCase):
         # ABOVE the bar and it can't cover the composer. One pane shows at a time, keyed off body[data-tab].
         html = km._landing()
         self.assertIn("padding-bottom:var(--mtabs-h", html)    # .col reserves the bar's height
-        self.assertIn("--mtabs-h", km._LANDING_MOBILE_JS)      # ...measured from the live bar (offsetHeight)
+        self.assertIn("--mtabs-h", served_css.js_code(km._LANDING_MOBILE_JS))      # ...measured from the live bar (offsetHeight); the code, comments blanked
         self.assertIn("#f-timeline.m-on{display:block}", html) # timeline is a mobile tab pane (it lives in the row now)
         self.assertIn("data-tab", km._LANDING_MOBILE_JS)       # show() marks the active pane on <body>
 
@@ -237,8 +237,9 @@ class LandingShell(unittest.TestCase):
         self.assertIn("padding-bottom:var(--mtabs-h", html)
         self.assertNotIn("#mtabs{flex:", html)                   # the bar is NOT itself a flex child anymore
         # the reservation is measured from the live bar, so it tracks the gesture-area inset exactly
-        self.assertIn("setProperty('--mtabs-h'", km._LANDING_MOBILE_JS)
-        self.assertIn("offsetHeight", km._LANDING_MOBILE_JS)
+        code = served_css.js_code(km._LANDING_MOBILE_JS)   # the code, comments blanked: the barfit comment spells offsetHeight too (round 6, 2026-09-20)
+        self.assertIn("setProperty('--mtabs-h'", code)
+        self.assertIn("bar.offsetHeight", code)
 
     def test_landing_disables_browser_pinch_zoom(self):
         # the top document governs pinch-zoom for the whole visual viewport (incl. the timeline iframe), so
