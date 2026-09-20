@@ -2683,15 +2683,19 @@ class TheCountLimitIsStatedBesideTheCount(unittest.TestCase):
 
 class TheStatedLimitIsWorded(unittest.TestCase):
     """The stated limit (a private kernel's own dangling singleton is outside the fixture) is worded, in the ratchet's
-    design comment in the conftest and in this module's docstring, with what it leaves unprotected, the two files that
-    read the dangling object (a measurement of 2026-09-19, dated in both texts), and the blocker in its order (the
-    harness fixes first, then the private-kernel arm); an edit that drops any of them reds here. The count of files
-    that load the private name is derived from the tree (private_kernel_loaders, which reads the load_source call by
-    AST, not a quote spelling), never pinned as a word: the conftest names the loaders in one parenthesis, held equal
-    to the derived set, and both texts state the count as the number word of the derived length. The round-7 review
-    found the first form reading every comment line in the conftest and pinning "two of the three" by its spelling,
-    so a fourth loader left the sentence false with the pin green; the round-8 review found the census a regex over
-    the double-quoted spelling, so a fourth loader written single-quoted was outside it with the count word green."""
+    design comment in the conftest and in this module's docstring, with what it leaves unprotected, the files that
+    read the dangling object (LIMIT_READING, named in both texts; a measurement of 2026-09-19, dated in both), and
+    the blocker in its order (the harness fixes first, then the private-kernel arm); an edit that drops any of them
+    reds here. Neither count is pinned as a word: the count of files that load the private name is derived from the
+    tree (private_kernel_loaders, which reads the load_source call by AST, not a quote spelling), the conftest names
+    the loaders in one parenthesis held equal to the derived set, and both texts state the reading count as the
+    number word of LIMIT_READING's length beside the loader count as the number word of the derived set's length,
+    each count sentence held as one needle so a failure names the sentence and not the text it was sought in. The
+    round-7 review found the first form reading every comment line in the conftest and pinning "two of the three"
+    by its spelling, so a fourth loader left the sentence false with the pin green; the round-8 review found the
+    census a regex over the double-quoted spelling, so a fourth loader written single-quoted was outside it with the
+    count word green, and the reading count still pinned as the word two, so a third reader left it false with the
+    pin green."""
 
     def _assert_worded(self, text, where):
         for needle in (LIMIT_UNPROTECTED, LIMIT_BLOCKER, LIMIT_ORDER) + LIMIT_READING:
@@ -2720,10 +2724,15 @@ class TheStatedLimitIsWorded(unittest.TestCase):
                          % (m.group(1), len(loaders), loaders))
         self.assertEqual(set(re.split(r", | and ", m.group(2))), set(loaders),
                          "the design comment's loaders and the tree's differ: %r against %r" % (m.group(2), loaders))
-        self.assertIn("two of the %s read" % word, text, "the design comment's reading count is stated over the derived "
-                      "loader count (%s)" % word)
-        self.assertIn("two of the %s files that load it read" % word, re.sub(r"\s+", " ", __doc__),
-                      "the module docstring's reading count is stated over the derived loader count (%s)" % word)
+        word_read = NUMBER_WORDS[len(LIMIT_READING)]
+        key = ("the reading count is the number word of len(LIMIT_READING), the loader count the number word of the "
+               "derived set's length")
+        needle = "%s of the %s read" % (word_read, word)
+        self.assertTrue(needle in text, "the ratchet's design comment in tests/conftest.py does not say: %s (%s)"
+                        % (needle, key))                     # not assertIn: the failure would quote the whole comment
+        needle = "%s of the %s files that load it read" % (word_read, word)
+        self.assertTrue(needle in re.sub(r"\s+", " ", __doc__),
+                        "the module docstring does not say: %s (%s)" % (needle, key))
         self.assertTrue(set(LIMIT_READING) <= set(loaders), "a reader that does not load the name: %r" % loaders)
 
     def test_the_loader_census_reads_the_call_and_not_a_quote_spelling(self):
