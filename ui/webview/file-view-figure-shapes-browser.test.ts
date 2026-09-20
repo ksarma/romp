@@ -131,7 +131,7 @@ test("in a browser: no control stands inside a link; a figure with a caption ins
     const c = await controls(page);
     assert.deepEqual(c.map((x) => x.alt), ALTS, "the twelve figures in order");
     // FAILS BEFORE: the captioned links' controls stood inside the <a>, the badge, the icon and the small figure wore one; and at the
-    // round-2 head the captioned picture inside the DEAD link wore its control inside the dead anchor (linkAbove read `a[href]` alone)
+    // review's round-2 head the captioned picture inside the DEAD link wore its control inside the dead anchor (linkAbove read `a[href]` alone)
     assert.deepEqual(c.map((x) => [x.alt, x.control]), [["the plot", true], ["linked", false], ["html", false], ["weblinked", false], ["alone", true], ["frag", false], ["ci", false], ["icon", false], ["mid", true], ["small", false], ["proto", false], ["dead", false]],
       "a control on the bare plot, on the figure alone in a web link, and on the figure at the floor; none inside a captioned link (a dead one too), on a badge, an icon, a figure under the floor, a gated placeholder");
     assert.equal(await page.evaluate(() => document.querySelectorAll(".fileview-md a [data-fv-figopen]").length), 0, "no control anywhere inside a link (nested interactive content, and the links listener's click)");

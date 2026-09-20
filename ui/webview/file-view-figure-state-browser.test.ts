@@ -203,7 +203,7 @@ test("in a browser: a FAILED local figure with a box (a non-empty alt, laid out 
     await gotFiles(page);   // anything since the open: not the click's
     const at = await figures(page);
     t.diagnostic("the failed figure: " + JSON.stringify(at));
-    assert.deepEqual([at[0].alt, at[0].state, at[0].control], ["gone", "failed", false], "failed, and no control (the round-1 state)");
+    assert.deepEqual([at[0].alt, at[0].state, at[0].control], ["gone", "failed", false], "failed, and no control (the file review's round-1 state)");
     // Chromium lays a failed img with a non-empty alt out as its alt text (53 by 22 here, measured), not as its width and height
     // attributes: a box all the same, and the click lands on the img
     assert.ok(at[0].box[0] > 0 && at[0].box[1] > 0, "the alt gives it a box to click on: " + JSON.stringify(at[0].box));

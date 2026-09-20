@@ -89,7 +89,7 @@ test('L3 opens on the exceptions it names, and names the floor by the source\'s 
   assert.ok(read('ui', 'webview', 'file-view-figure-floor-browser.test.ts').includes('the browser already holds'), 'and drives the held picture\'s re-open');
   for (const gone of ['every figure is fetching', 'every figure is still fetching', 'the paint adds nothing: every figure']) assert.ok(!viewer.includes(gone), 'the source no longer says ' + JSON.stringify(gone));
   assert.ok(viewer.includes('A picture the browser already holds'), 'the source\'s figure-control section states the held picture\'s case');
-  assert.ok(!L3.includes('adds the control and the load (armFigureControls, the same builder) removes'), 'the round-1 wording, the paint adding and the load dropping, is gone');
+  assert.ok(!L3.includes('adds the control and the load (armFigureControls, the same builder) removes'), 'the review\'s round-1 wording, the paint adding and the load dropping, is gone');
   assert.ok(!L3.includes('keeps its control, and a figure at the floor'), 'a failed figure no longer keeps a control');
   assert.ok(L3.includes('a picture that failed to load gets none and opens nothing on any gesture (`figureTarget` refuses the failed state as it refuses the fetching one, the verdict the control is withheld on'), 'L3: a failed figure gets none and opens nothing, on the one verdict');
   assert.ok(L3.includes('a figure inside a link that holds more than it (`[![alt](fig.png) caption](other.md)`'));
@@ -112,7 +112,7 @@ test('L3 opens on the exceptions it names, and names the floor by the source\'s 
   const watch = between(viewer, 'function watchFigureBoxes(body: HTMLElement, filePath: string, onRendered: (cb: (why?: FileViewRenderWhy) => void) => void): (() => void) | null {', '\n}\n');
   inOrder(watch, ['if (typeof ResizeObserver !== "function") return null;', 'if (e.contentRect.width === 0 || e.contentRect.height === 0) continue;', 'if (img.isConnected && figureState(img) !== "standin") decideFigureControl(img, filePath);', 'body.querySelectorAll(".fileview-md img").forEach((img) => { ro.observe(img); });', 'onRendered((why) => { if (why !== "reflow") rearm(); });'], 'watchFigureBoxes: the guard, the 0 by 0 report skipped, the one decision per reported figure, every figure observed, re-armed at each text paint');
   // a 0 by 0 report runs no decision (found before the file review's round 3: decided over it, a hidden figure gained a control
-  // while hidden and lost it at the show); L3 states the skip as a rule with its residual (the file review's round 4, behaviour-4):
+  // while hidden and lost it at the show); L3 states the skip as a rule with its residual (the author's closing pass after the file review's round 3, behaviour-4):
   // the roads the product has to the report, what the skip is no guard for, and the figure hidden after its load by another road
   assert.ok(L3.includes('a report of 0 by 0 runs no decision; the roads the product has to such a report are the viewer\'s hide and a gated placeholder\'s img until its click, and on both the show or the restore reports the real box, which is decided'), 'L3 records the 0 by 0 report and the roads to it');
   assert.ok(L3.includes('the residual the skip leaves, a figure hidden after its load by any road but the viewer\'s own keeping a standing control over the prose before it until its next report with a box, has no road in the product'), 'L3 records the residual and that no road reaches it');
@@ -183,7 +183,7 @@ test('L3 names the candidate the browser chose by its function, which figureTarg
   assert.ok(viewer.includes('function failedSource(img: Element): string | null {\n  return chosenSource(img);\n}'), 'the failed label delegates');
   assert.ok(L3.includes('else the file named by the candidate the browser chose for the figure, as the author wrote it (`chosenSource`'), 'L3 names chosenSource where the join was the authored source');
   assert.ok(L3.includes('the failed figure\'s label, `failedSource`, delegates to it'), 'and the delegation');
-  assert.ok(!L3.includes('the file the authored source names'), 'the round-2 wording, the authored source, is gone');
+  assert.ok(!L3.includes('the file the authored source names'), 'the review\'s round-2 wording, the authored source, is gone');
   for (const f of CHOSEN) {
     assert.ok(exists('ui', 'webview', f), f + ' exists');
     assert.match(read('ui', 'webview', f), /Follow-on: Link navigation/, f + ' names the follow-on');
@@ -240,7 +240,7 @@ test('the file review: L3 names the one decision, its verdict and the state it r
   assert.ok(allowed.length >= 1 && refused.length >= 1, 'a derived refused set: ' + JSON.stringify({ members, allowed, refused }));
   const elsewhere = viewer.replace(domain[0], '\n').replace(state, '');
   for (const m of refused) assert.equal((elsewhere.match(new RegExp('"' + m + '"', 'g')) || []).length, 0, 'no reader names the refused state "' + m + '" (its literal stands only on the type line and in figureState; the pin is file-wide on purpose, so a literal "' + m + '" for anything else in file-view.ts must be spelled another way)');
-  assert.ok(L3.includes('the three pins are file-wide on purpose'), 'L3 says the pins are file-wide (the file review\'s round 4, records-3)');
+  assert.ok(L3.includes('the three pins are file-wide on purpose'), 'L3 says the pins are file-wide (the author\'s closing pass after the file review\'s round 3, records-3)');
   assert.ok(L3.includes('the two are the refused states of ONE rule, a target only for a state with a picture to name (`figureHasPicture`: `loaded`, the browser having answered with a picture, or a stand-in outside a browser'), 'L3 states the rule');
   assert.ok(L3.includes('so a state `figureState` gains later is refused by both readers with no edit to either'), 'L3: why the rule and not the list');
   assert.ok(read('ui', 'webview', 'file-view-figure-state-browser.test.ts').includes('a FAILED local figure with a box (a non-empty alt, laid out as text) wears no control, and its plain click opens nothing'), 'the state leg drives a failed figure with a box');
@@ -314,14 +314,14 @@ test('the file review: L3 and L6 record the remote picture\'s tab as the one new
 
 test('the file review: L2 hides the pair when neither direction has a target, on T367\'s rule with the greyed GitHub link as its precedent and the dimmed dress as the bar\'s other, the round-1 denial named false and the hide\'s measured gain kept; L3, open point 5 and the guide record the drag that starts on the control; the state and Recent legs are named in L3\'s Held-by sentence and the Tests paragraph; open point 12 states the Forward exception; open points 11 to 13 stand', () => {
   assert.ok(L2.includes('The GROUP is HIDDEN when neither direction has a target (`nav.hidden`'), 'L2 states the hidden group');
-  assert.ok(!L2.includes('The pair stands DIMMED, never hidden'), 'the round-1 wording is gone');
+  assert.ok(!L2.includes('The pair stands DIMMED, never hidden'), 'the file review\'s round-1 wording is gone');
   assert.ok(viewer.includes('nav.hidden = !trailBackTarget(trailNow) && !trailForwardTarget(trailNow);'), 'which the source does');
   assert.ok(viewer.indexOf('nav.hidden = !trailBackTarget(trailNow)') < viewer.indexOf('bar.appendChild(nav);'), 'set before the group is appended, as L2 says');
   assert.ok(viewer.includes('if (!target) b.setAttribute("aria-disabled", "true");'), 'the one without a target still wears aria-disabled');
   assert.ok(L2.includes('the button without a target wears `aria-disabled` alone'), 'L2 says so');
   assert.ok(L2.includes('styles.css `.fileview-group[hidden]`') && /^\.fileview-btn\[hidden\], \.fileview-group\[hidden\]/m.test(styles), 'the sheet rule L2 cites exists');
-  // the rule and its precedent, cited two-sided (extra8-2: the round-1 record had said no such rule existed, and T367 is that rule)
-  assert.ok(L2.includes('that claim was false'), 'L2 names the round-1 denial as false');
+  // the rule and its precedent, cited two-sided (extra8-2: the file review's round-1 record had said no such rule existed, and T367 is that rule)
+  assert.ok(L2.includes('that claim was false'), 'L2 names the file review\'s round-1 denial as false');
   assert.ok(L2.includes('the greyed GitHub link and its caption were removed rather than dimmed from a file outside a repository'), 'L2 cites the precedent');
   assert.ok(viewer.includes('and NOTHING otherwise (T367, the user 2026-09-12, who wanted the greyed link and its explanation gone'), 'the source\'s GitHub-link section carries T367');
   assert.ok(styles.includes('(T367: no greyed button, no caption; the [hidden] rule below takes it out of the row\'s flow)'), 'and the sheet\'s .fileview-gh comment');
@@ -352,7 +352,7 @@ test('the file review: L2 hides the pair when neither direction has a target, on
 });
 
 // ── the attributions: the branch's review ran two rounds, the file review is named as such (the file review's round 3, tests-2) ──
-// Two roads, so the pin checks something in every checkout (the file review's round 4, behaviour-6 with records-2 and
+// Two roads, so the pin checks something in every checkout (the author's closing pass after the file review's round 3, behaviour-6 with records-2 and
 // coverage-2: the first form returned green after a diagnostic wherever origin/main was unknown, which is CI's default-depth
 // checkout of the tools job, and on main after the merge). (1) Always: the files the branch created, read as they stand, and
 // the plan's follow-on section. (2) Where origin/main is known and is not HEAD (a local checkout of the branch): every line the

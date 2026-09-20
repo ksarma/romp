@@ -7740,7 +7740,11 @@ credentialed request (L3, L6), on the owner's word as a privacy surface whatever
 review before the PR ran two rounds, named below as the review's round 1 and round 2; the maintainer session's review
 of the PR (2026-09-20) is named the file review. Its contract is kept outside the repo; this section records what was built,
 with the build's deliberate departures from that contract recorded as the decisions, and what is left for the owner to
-rule on.
+rule on. The file review's rounds are named the file review's round 1 to round 4, the rounds it has ruled (its fixlists and
+rulings are kept beside the contract, one pair per round); the author's own verification after each round's fixes, by a
+verifier of the author's, is named the author's closing pass after that round, never a round of either review, and its
+findings carry the ids behaviour-N, records-N and coverage-N, which no fixlist of the file review holds. A record naming a
+round names the review it belongs to first.
 
 **What existed.** A link in a rendered file to another file (`[x](other.md)`, `other.md:7`, `other.md#section`, a
 picture or PDF path, a wikilink, an embed chip) opened that file in the SAME viewer card: re-opening replaced whatever
@@ -7903,7 +7907,7 @@ node suites' DOM, decided from its source), the rule `figureWantsControl` withho
 reader named the two states it refused, a list a new value passes; a guard refuses on its safe side for any value it
 does not know; the three pins that hold the refused states' literals absent read every line of file-view.ts but the type
 line and `figureState`, and the three pins are file-wide on purpose, so a literal `"failed"` or `"fetching"` for
-anything else in the module must be spelled another way, which the file review's round 4 recorded); the target is read
+anything else in the module must be spelled another way, which the author's closing pass after the file review's round 3 recorded, records-3); the target is read
 again at the click; the failed figure's label, `failedSource`,
 delegates to it; read from the src alone, the control opened the fallback src a `<picture>` or a srcset figure had
 skipped), joined by the model's `figurePath` (file-comments-model.ts, the join rewriteFigureSrcs fetched through, so the
@@ -7954,7 +7958,7 @@ address, which the file review's round 3 found the record could not show; Chromi
 (`sec-fetch-dest: document`, `sec-fetch-mode: navigate`) came with the Lax cookie, without the Strict one, and with no
 referer, in both probes (the tab is opened by `window.open(href, "_blank", "noopener,noreferrer")`, `openUrlTab` in
 file-view.ts, and `noreferrer` sends none; the policy alone would have sent the origin on the cross-origin navigation as
-it did on the image request, so the record rules the policy out as the cause, which the file review's round 4 found the
+it did on the image request, so the record rules the policy out as the cause, which the author's closing pass after the file review's round 3 (behaviour-1) found the
 earlier sentence had named). So the follow-on is a privacy surface and lands on the owner's word whatever its tier, with the two roads
 priced in open point 11. A gated
 placeholder (figure-gate.ts) gets none until its figure is loaded: `armFigureControls`, one capture-phase pair of `load`
@@ -7993,7 +7997,7 @@ load; the floor leg drives both authored shapes beside prose, the click on the w
 residual the skip leaves, a figure hidden after its load by any road but the viewer's own keeping a standing control
 over the prose before it until its next report with a box, has no road in the product (the sanitizer keeps an author's
 colour declarations alone, no sheet rule hides an author's figure by a class the author can write, and no viewer feature
-toggles an img after its load) and was reached in the file review's round 4 only by a stylesheet its probe injected, the
+toggles an img after its load) and was reached by the author's closing pass after the file review's round 3 only by a stylesheet its probe injected, the
 control kept at the hide and a click on it opening the picture, so a road added later decides the figure itself or lifts
 the skip for it (recorded, not built against); the watch
 is armed at each text paint and not before the first, since the body is empty when the open arms it (the file review's

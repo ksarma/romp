@@ -98,7 +98,7 @@ test("the one decision: figureWantsControl reads the figure's state by one rule 
   // domain's members less the ones the allowance names, and each refused member's string literal stands nowhere in the file but
   // the type line and figureState's body (the two places that must name every member), comments included, so a reader that
   // names one in any form (a comparison in either order, a `case`, an array or a Set) fails here; the pin is file-wide on
-  // purpose (the file review's round 4, records-3), so a literal "failed" or "fetching" for anything else in the module must be
+  // purpose (the author's closing pass after the file review's round 3, records-3), so a literal "failed" or "fetching" for anything else in the module must be
   // spelled another way
   const domain = VIEW.match(/\ntype FigureState = ((?:"[a-z]+"(?: \| )?)+);\n/);
   assert.ok(domain, "the FigureState type line");
@@ -148,7 +148,7 @@ test("the one decision: figureWantsControl reads the figure's state by one rule 
   assert.doesNotMatch(watch, /^\s*rearm\(\);\s*$/m, "no standalone arm: the paint's arm is the only one, and a line that observes nothing carries no pin");
   assert.equal((watch.match(/rearm\(\)/g) || []).length, 1, "rearm is called from the onRendered hook alone (its definition aside)");
   // a 0 by 0 report is skipped, and the comment states the skip as a rule with its residual, not as a list of what a 0 by 0
-  // report is (the file review's round 4, behaviour-4): the roads the product has to such a report (the viewer's hide, a gated
+  // report is (the author's closing pass after the file review's round 3, behaviour-4): the roads the product has to such a report (the viewer's hide, a gated
   // placeholder's img), whose show or restore reports the real box; what the skip is no guard for (a figure whose REAL box is
   // 0 by 0, which the floor refuses at its load; the file review's round 3, correctness-1); and the residual, a figure hidden
   // after its load by any other road keeping its control, which no road in the product reaches; the comment's prose is read with

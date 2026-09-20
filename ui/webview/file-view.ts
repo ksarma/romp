@@ -4952,7 +4952,7 @@ const FIGOPEN_MIN_PX = 48;
 /** A LOADED figure's box (figureState): its laid-out box while it is in the document, whatever that box is (the width the
  *  author or the column gave it; 0 by 0 for a figure with no box, an author's `hidden` or `width="0"`, or with the viewer
  *  hidden; a figure inside a closed `<details>` keeps its laid-out size on this read, so it is decided over that size and wears
- *  a control the closed details keeps from the pointer with the figure, measured in Chromium by the file review's round 4: the
+ *  a control the closed details keeps from the pointer with the figure, measured in Chromium by the author's closing pass after the file review's round 3, behaviour-5: the
  *  img 300 by 200 with `checkVisibility()` false, and the point over its control hit-testing to the figure laid out beneath),
  *  else the picture's own size (mdBlock's box at the paint, not in the document yet); null for
  *  any other state (nothing to measure on a fetching or a failed figure, and a stand-in has no picture to ask), so the floor
@@ -5068,7 +5068,7 @@ function armFigureControls(body: HTMLElement, filePath: string): () => void {
  *  a figure hidden AFTER its load by any other road keeps a standing control, laid 28 px into the prose before it, until its
  *  next report with a box; the product has no such road (an author's style keeps its colour declarations alone, md-sanitize.ts;
  *  no sheet rule hides an author's figure by a class the author can write; no viewer feature toggles an img after its load),
- *  and the file review's round 4 reached it only with a stylesheet its probe injected (the control kept, a click on it opening
+ *  and the author's closing pass after the file review's round 3 reached it only with a stylesheet its probe injected (the control kept, a click on it opening
  *  the picture), so a road added later decides the figure itself or lifts this skip for it. Armed at
  *  each text paint (`onRendered` with any `why` but "reflow": a reflow keeps the figure nodes, a paint replaces them) over the
  *  figures the box holds then, and dropped by the function returned; the body is empty when the open arms this, before its
@@ -5087,7 +5087,7 @@ function watchFigureBoxes(body: HTMLElement, filePath: string, onRendered: (cb: 
       // (an author's `hidden` or `width="0"`): that figure gets no control by the floor, at its load, since figureBox reads the
       // laid-out box of a figure in the document as it is (the file review's round 3, correctness-1). The residual the skip
       // leaves: a figure hidden after its load by any other road keeps a standing control over the prose before it until its
-      // next report with a box; no road in the product reaches it (the docstring above), and the file review's round 4 reached it
+      // next report with a box; no road in the product reaches it (the docstring above), and the author's closing pass after the file review's round 3 reached it
       // only with an injected stylesheet. The load, the error (armFigureControls) and the gate's restore decide their figures
       // themselves.
       if (e.contentRect.width === 0 || e.contentRect.height === 0) continue;

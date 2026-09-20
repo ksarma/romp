@@ -480,7 +480,7 @@ type Boxless = { loaded: boolean[]; boxes: [number, number][]; controls: number[
  *  Range), where the sheets' -28 px margin laid the control's 22 px box before the fix: the control sits after the figure in
  *  the line, and a figure with no box takes no room, so the box ran from 28 px to 6 px before the end of those words. The
  *  point is derived from the words, never from the img: a display:none img has an all-zero rect, so a point offset from it
- *  lies outside the page and clicks nothing at any head (the file review's round 4, behaviour-3: the leg's first form clicked
+ *  lies outside the page and clicks nothing at any head (the author's closing pass after the file review's round 3, behaviour-3: the leg's first form clicked
  *  at [-14, 8] for the hidden picture). `text` is the characters the point lies in, for the diagnostic. */
 const boxless = (page: any): Promise<Boxless> => page.evaluate(() => {
   const imgs = Array.from(document.querySelectorAll(".fileview-md img")) as HTMLImageElement[];

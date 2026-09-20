@@ -295,15 +295,15 @@ test('the guide\'s Links in a file paragraph ends with the two sentences, whole,
   assert.ok(!flat(guide).includes('from the **Recent** list starts the trail over'), 'the Recent list is the Files pane\'s');
   // the review's round 1 wording, found false by execution in round 2 (the arrow chords with no dashboard exception; the button
   // on every picture from a file or the web): its chord clause and its figure sentence's opening
-  assert.ok(!flat(guide).includes('(Alt+Left and Alt+Right, or Cmd+[ and Cmd+] on a Mac, do the same while no text box holds the keyboard)'), 'the round-1 chord clause is gone');
-  assert.ok(!flat(guide).includes('Every picture in a rendered file that comes from a file or a web address has an'), 'and the round-1 figure sentence with it');
+  assert.ok(!flat(guide).includes('(Alt+Left and Alt+Right, or Cmd+[ and Cmd+] on a Mac, do the same while no text box holds the keyboard)'), 'the review\'s round-1 chord clause is gone');
+  assert.ok(!flat(guide).includes('Every picture in a rendered file that comes from a file or a web address has an'), 'and the review\'s round-1 figure sentence with it');
   // the file review's round 3 (regression-1 with ui-1): the trail sentence promised the two arrow buttons with no condition, while
-  // the pair is hidden until a step exists either way (every open from outside the viewer), so it says when they appear; its
-  // round 4 (behaviour-2, records-1, coverage-1): the round-3 condition, a link followed, was false on the picture road (a
+  // the pair is hidden until a step exists either way (every open from outside the viewer), so it says when they appear; the
+  // author's closing pass after the file review's round 3 (behaviour-2, records-1, coverage-1): the round-3 condition, a link followed, was false on the picture road (a
   // picture opened from a figure's control pushes the report onto the trail with no link followed, and the pair appears; the
   // figure-open leg executes it), so the condition is the trail's own, a file to step to, with both roads named
   assert.ok(!flat(guide).includes('with two arrow buttons at the left of its title bar'), 'the unconditioned arrow clause is gone');
-  assert.ok(!flat(guide).includes('once you have followed a link (there are none before that)'), 'the round-3 condition, false on the picture road, is gone');
+  assert.ok(!flat(guide).includes('once you have followed a link (there are none before that)'), 'the file review\'s round-3 condition, false on the picture road, is gone');
   assert.equal((flat(guide).match(/once there is a file to step back or forward to \(after you follow a link or open a picture; there are none before that\)/g) || []).length, 1, 'the condition is stated once');
   assert.equal((flat(guide).match(/keeps a trail of the files you reach/g) || []).length, 1, 'the trail is described once in the guide');
   assert.ok(para.includes('A file path opens that file in the viewer, in place of the one you were reading'), 'the replace sentence stands: a link still opens in place, and now there is a way back');
