@@ -75,11 +75,14 @@
 // WHOLE, its folded picture's URL asked too (the click's road: by host), and the recount narrows the line and the title to
 // the second host; "Print with them" then asks the second host once, for its open placeholder alone, its hidden one
 // standing; a second note naming both hosts shows the clicked host's figure as a PICTURE, asked once (the click's page-life
-// grant), and the printed host's as a placeholder, asked nothing. (12) a placeholder whose figure the browser paints nothing
-// of once restored, beside a plain one, each on a host of its own: a gated svg at `opacity="0e0"` (a spelling of zero the
-// round-3 review found the flow's pattern missed, so its host was named and fetched) and a <picture> whose <img> carries
-// `hidden` (read at the picture alone before that review): the render; a press counts the plain placeholder alone and the
-// title names its host alone, then Escape; "Print with them" asks the plain host once and the two others never. (13) a
+// grant), and the printed host's as a placeholder, asked nothing. (12) three placeholders whose figures the browser paints
+// nothing of once restored, beside a plain one: a gated svg at `opacity="0e0"` (a spelling of zero the round-3 review found
+// the flow's pattern missed, so its host was named and fetched) and a <picture> whose <img> carries `hidden` (read at the
+// picture alone before that review), each on a host of its own, and a gated svg at `opacity="0"` on the PLAIN one's host
+// (the round-4 review's tests-4, 2026-09-20: before this no figure-off placeholder shared a host with a printable one, so
+// the per-URL claim on a shared host was never driven): the render; a press counts the plain placeholder alone and the
+// title names its host alone, then Escape; "Print with them" asks the plain host once, for the plain placeholder's URL
+// alone, and the two other hosts never. (13) a
 // gated host that answers 302 to a second host, on two pages: "Print with them" over its placeholder fetches BOTH hosts,
 // one request each, the title naming the first alone and the page's markup naming the second nowhere, and a second note
 // naming both hosts landed after the print shows two placeholders, neither granted; on the second page the placeholder's
@@ -155,11 +158,14 @@ const HAND_OPEN = "/open.svg", HAND_FOLD = "/fold.svg", REST_OPEN = "/open.svg",
 const HAND_NOTE = "# Two hosts, a click\n\nOpen ![](https://" + HOST_HAND + HAND_OPEN + ") and open ![](https://" + HOST_REST + REST_OPEN + ")\n\n"
   + "<details><summary>Fold</summary><img src=\"https://" + HOST_HAND + HAND_FOLD + "\" alt=\"\"></details>\n\n"
   + "<div hidden><img src=\"https://" + HOST_REST + REST_HIDDEN + "\" alt=\"\"></div>\n\nLast line.\n";
-// (12) a zero-opacity svg and a picture whose img is hidden, beside a plain picture, three hosts
+// (12) a zero-opacity svg and a picture whose img is hidden, beside a plain picture, three hosts, and a second zero-opacity
+// svg on the plain picture's host (the round-4 review's tests-4: the figure-off class on a host shared with a printable one)
 const HOST_ZERO = "zero.test", HOST_PICHIDDEN = "pichidden.test", HOST_PLAIN = "plain.test";
+const PLAIN_OFF = "/off.svg";
 const OFF_NOTE = "# Off the paper\n\nA plain one ![](https://" + HOST_PLAIN + "/o.svg)\n\n"
   + "<svg xmlns=\"http://www.w3.org/2000/svg\" opacity=\"0e0\" width=\"8\" height=\"8\"><image href=\"https://" + HOST_ZERO + "/z.svg\" width=\"8\" height=\"8\"/></svg>\n\n"
-  + "<picture><img hidden src=\"https://" + HOST_PICHIDDEN + "/p.svg\" alt=\"\"></picture>\n\nLast line.\n";
+  + "<picture><img hidden src=\"https://" + HOST_PICHIDDEN + "/p.svg\" alt=\"\"></picture>\n\n"
+  + "<svg xmlns=\"http://www.w3.org/2000/svg\" opacity=\"0\" width=\"8\" height=\"8\"><image href=\"https://" + HOST_PLAIN + PLAIN_OFF + "\" width=\"8\" height=\"8\"/></svg>\n\nLast line.\n";
 // (13) a host that answers 302 to a second host, at the same path under /from
 const HOST_REDIR = "redirecting.test", HOST_ELSEWHERE = "elsewhere.test";
 const REDIR_PATH = "/r.svg";
@@ -1074,13 +1080,13 @@ test("(11) two hosts, each with a printable placeholder and one that never reach
   });
 });
 
-// ── (12) a figure the browser paints nothing of: a zero-opacity svg in a spelling the pattern missed, a hidden img inside a picture ──
+// ── (12) a figure the browser paints nothing of: a zero-opacity svg in a spelling the pattern missed, a hidden img inside a picture, and a zero-opacity svg on the plain picture's host ──
 
-test("(12) a gated svg at opacity 0e0 and a <picture> whose <img> is hidden, beside a plain placeholder, on three hosts: the render asks the origin alone; a press counts the plain placeholder alone and the title names its host alone (FAILS BEFORE: the line read three and the title named all three, the pattern reading 0e0 as not zero and the picture at its root alone), then Escape; Print with them asks the plain host once and the zero host and the hidden picture's host never", { timeout: 120000 }, async (t) => {
+test("(12) a gated svg at opacity 0e0 and a <picture> whose <img> is hidden, beside a plain placeholder, on three hosts, and a gated svg at opacity 0 on the plain placeholder's host: the render asks the origin alone; a press counts the plain placeholder alone and the title names its host alone (FAILS BEFORE: the line read three and the title named all three, the pattern reading 0e0 as not zero and the picture at its root alone), then Escape; Print with them asks the plain host once, for the plain placeholder's URL alone (the zero-opacity svg on the same host is not restored and its URL never asked: the round-4 review's tests-4), and the zero host and the hidden picture's host never", { timeout: 120000 }, async (t) => {
   await inBrowser(t, async (browser) => {
     const s = await scene(t, browser, "pane", OFF_NOTE, { open: { local: { ...PAGE_LOCAL } } });
     const { page } = s;
-    await readPlacements(s, [ph(HOST_PLAIN, "/o.svg", "body"), ph(HOST_ZERO, "/z.svg", "figure-off"), ph(HOST_PICHIDDEN, "/p.svg", "figure-off")]);
+    await readPlacements(s, [ph(HOST_PLAIN, "/o.svg", "body"), ph(HOST_ZERO, "/z.svg", "figure-off"), ph(HOST_PICHIDDEN, "/p.svg", "figure-off"), ph(HOST_PLAIN, PLAIN_OFF, "figure-off")]);
     await road(s, "press: the bar arms over the plain placeholder alone, then Escape", { printed: "none" }, async () => {
       await page.click(PRINT_BTN);
       const b = await bar(page);
@@ -1096,10 +1102,12 @@ test("(12) a gated svg at opacity 0e0 and a <picture> whose <img> is hidden, bes
       await page.click(WITH_BTN);
       await printsReach(page, 1);
       const p = await prints(page);
-      assert.equal(p[0].gates, 2, "the two placeholders whose figures paint nothing still stand"); assert.deepEqual(p[0].incomplete, [], "every <img> complete at the print");
-      assert.deepEqual(await gatesNow(page), [HOST_ZERO + ":body", HOST_PICHIDDEN + ":body"], "per placeholder: the plain one restored, the two others standing in the open body");
+      assert.equal(p[0].gates, 3, "the three placeholders whose figures paint nothing still stand"); assert.deepEqual(p[0].incomplete, [], "every <img> complete at the print");
+      assert.deepEqual(await gatesNow(page), [HOST_ZERO + ":body", HOST_PICHIDDEN + ":body", HOST_PLAIN + ":body"], "per placeholder: the plain one restored, the three others standing in the open body, the plain host's zero-opacity svg among them");
     });
     assert.deepEqual(hostsAsked(s), [HOST_PLAIN], "FAILS BEFORE: over the page's life the plain host alone was asked (zero.test and pichidden.test were fetched for figures the print shows nothing of)");
+    assert.equal(asksFor(s, "https://" + HOST_PLAIN + "/o.svg"), 1, "the plain host was asked once, for the plain placeholder's URL");
+    assert.equal(asksFor(s, "https://" + HOST_PLAIN + PLAIN_OFF), 0, "…and never for the zero-opacity svg's URL on the same host: the restore is per placeholder, and a host shared with one that prints grants the figure-off one nothing");
     assert.equal(asksFor(s, "https://" + HOST_ZERO + "/z.svg"), 0, "the zero-opacity svg's host was never asked");
     assert.equal(asksFor(s, "https://" + HOST_PICHIDDEN + "/p.svg"), 0, "the hidden picture's host was never asked");
     await tail(s, "(12)");
