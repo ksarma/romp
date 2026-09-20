@@ -89,10 +89,14 @@ green with no file changed across a run, so they stay outside every witness here
 pass by the kernel-wide birth pin, whose called population names `_PJ.load_goals_shared` as a fifth loader spelling, so a second judge
 module is outside both execution witnesses and inside the static pin, which reds alone while every execution case stays green; and
 the alias control beside them reds the shared reconciliation on each of the five harness cases that drive a pass, and the birth pin
-(6 failed, 32 passed at the head of the round-6 fixes; the door witness's thirteen cases run outside any pass, twelve calling
-the door once and one reading the table, and stay green, so the control reds five of the eighteen harness cases; review
-round 5, extra7-1: this sentence said every harness case, and one of the six at the head the round-5 ruling read drove no pass; a verifier
-of the round-5 fixes: it then said the door witness's cases call the door, one of them reading the table). Review round 3, correctness-2 and
+(6 failed, 32 passed at the head of the round-6 fixes; the door witness's fourteen cases run outside any pass, thirteen each driving
+one call of the door under _drive (three of them, hit, compare_miss and dup, priming the cache with a call of their own before the
+drive's window, and the refuse case calling again after it) and one reading the table, seventeen calls over the fourteen, counted by a
+profile of the door's frames on the tree of round 7's fourth fix, and stay green under the control, so it reds five of the nineteen
+harness cases; review round 5, extra7-1: this sentence said every harness case, and one of the six at the head the round-5 ruling read
+drove no pass; a verifier of the round-5 fixes: it then said the door witness's cases call the door, one of them reading the table;
+review round 6, regression-2: it then said thirteen cases, twelve calling the door once, against sixteen calls the same profile
+counted at the head of the round-6 fixes, the three primes and the refuse case's second call among them). Review round 3, correctness-2 and
 regression-2: this sentence had been written at the head of the build's verifier pass after the round-2 fixes, over that
 head's cases, said every case green of all three plants, and went stale as cases and the pin were added, so the count here is pinned by
 a Docs case against the loader's count of this module's cases, and the plants are re-taken whenever it moves). The two
@@ -249,8 +253,8 @@ mechanism and are in the commit messages.
 
 The consolidation pass (2026-09-19, between the round-2 fixes and the reviewer's round 3). The record above is the battery of
 the build's verifier pass after the round-2 fixes, over the twelve cases of that head; the consolidation pass's head has
-seventeen (the second-bump roster pin, the kernel-and-judge birth pin and the three enumeration cases are new), so a figure
-in this paragraph reads against 17. Three lenses read the head, the reviewer ruled on what they found (the reviewer's rulings
+seventeen (the second-bump roster pin, the kernel-and-judge birth pin and the three enumeration cases are new). Three lenses
+read the head, the reviewer ruled on what they found (the reviewer's rulings
 on the pre-emption, three rulings, not a round), three verifiers read the rulings' fixes, and the consolidation closed what
 the verifiers found (the state-gate case's third-pass tuple carries the writer door's
 and the store's counters; the birth pin reads a subscript's slice and a dict read's arguments, with the string limit split into
@@ -351,8 +355,8 @@ as lists, each falsified by the first construct nobody listed, fixed as one inve
 list). Two fixers landed the round's fixes, three verifiers read them and left nine findings, all low, and a consolidator closed the
 nine; every state below was re-taken by the consolidator at the head of the round-4 fixes, over its 22 cases (the round's
 fixes add two, the walker pin and the fill-road case), each landed on kernel/kernel.py, kernel/judge.py or this module and reverted
-with the file checked clean, the module run single-process on 3.12 through the clean runner, so a figure here reads against 22 and
-names no other head; a figure from an earlier head names that head by role. The loader-naming string constant (correctness-1, tests-1,
+with the file checked clean, the module run single-process on 3.12 through the clean runner; a figure from an earlier head names
+that head by role. The loader-naming string constant (correctness-1, tests-1,
 extra6-1): the kernel-wide pin refuses a constant whose whole text is one of the four door spellings wherever it appears and whatever
 receives it, and a constant that merely contains the name where it reaches a listed lookup, a dict read or a subscript key; by
 whole-text equality the kernel and the judge carry zero such constants (the substring rule with docstrings excluded would cost the
@@ -461,8 +465,8 @@ the head of the round-5 fixes, over its 37 cases (the round adds fifteen: the wa
 eleven beyond the corrupt case, and the consolidation's drive of the fill's own raise road), each landed on kernel/kernel.py,
 kernel/judge.py or this module at the head of the round's last code change, one docstring-only commit before this one, which adds no
 case, and reverted with the planted file and the kernel, judge and module triple hashed before the plant and after the revert and
-found equal, the module run single-process on 3.12 through the clean runner, so a figure here reads against 37 and names no other
-head. The walker contract by execution (correctness-2, tests-1, extra5-2, regression-2): every census entry point of this module,
+found equal, the module run single-process on 3.12 through the clean runner. The walker contract by execution (correctness-2,
+tests-1, extra5-2, regression-2): every census entry point of this module,
 the roster of eight rows in _CENSUSES read against a derivation over its own AST (_census_floor), refuses a stranger statement
 planted at each of three sites alone and at all together, naming its class, and unplanted returns; _loader_sites rewritten as an
 ast.iter_fields recursion around _walk reds the witness naming it at the module site, the def site and the sites together (its tree,
@@ -553,9 +557,8 @@ fixes, over its 38 cases (the round adds one, the walker witness's instrument ca
 the round's first fix, the point-2 states on the tree of its second, and the first paragraph's bypass plants and alias control on the
 tree of its third, the round's last change but this paragraph, which adds no case; each landed on kernel/kernel.py, kernel/judge.py or
 this module and reverted, the kernel, the judge and this module hashed before the plant and after the revert and found equal, the
-module run single-process on 3.12 through the clean runner, so a figure here reads against 38 and names no other head. Lens one, the
-splice-site population: the walker witness planted its stranger at three hand sites, the module body's end, the first def's body and
-the first class's body, three of the 147 node positions an exec-mode Module offers on 3.12 and all of them statement lists, so a
+module run single-process on 3.12 through the clean runner. Lens one, the splice-site population: the walker witness planted its
+stranger at three hand sites, the module body's end, the first def's body and the first class's body, three of the 147 node positions an exec-mode Module offers on 3.12 and all of them statement lists, so a
 hand-rolled walk substituted for _walk that read any other position class by hand (a decorator list, a call's arguments, a
 comprehension's generators, an f-string's values, a match statement's cases, annotations and type parameters, the nested statement
 lists, AsyncFunctionDef.body) kept the witness's three cases green, and one plant per position class was green under a walk reading
@@ -606,9 +609,9 @@ round-6 fixes: 38 passed single-process on 3.10, 3.11, 3.12, 3.13 and 3.14t.
 Review round 7 (2026-09-20; the reviewer's standard after round 6: no instrument in this module carries a hand-written population
 on any axis where the module can compute one, and every instrument states which axes it derives and which it bounds). Every state
 below was taken at this head, the head of the round-7 fixes, over its 39 cases (the round adds one, the door witness's unread road,
-in its third fix): the unread-road states on the tree of the round's third fix; each landed on kernel/judge.py or this module and
-reverted, the kernel, the judge and this module hashed before the plant and after the revert and found equal, the module run
-single-process on 3.12 through the clean runner. The unread road (extra5-1, extra6-2 and tests-5): the door's `if
+in its third fix): the unread-road states on the tree of the round's third fix, the false-sentence states on the tree of its
+fourth; each landed on kernel/kernel.py, kernel/judge.py or this module and reverted, the kernel, the judge and this module hashed
+before the plant and after the revert and found equal, the module run single-process on 3.12 through the clean runner. The unread road (extra5-1, extra6-2 and tests-5): the door's `if
 store.get("_unread")` arm, the second unreadable_journal site, was the one row of UNDRIVEN_SITES, on the ground of the door's own
 comment, which calls the arm unreachable while the journal's rows arrive as lines; the comment is right about the replay's mark,
 which a replay handed lines never sets, and the arm is reachable with no code change through the store file's own content, a
@@ -620,7 +623,17 @@ against the 38 cases left (2 failed, 36 passed); a helper defined inside the doo
 reads, left the module green on the tree of the round's second fix (38 passed) and reds the unread drive since, at the line where
 the sites the trace saw and the keys the counters moved must agree (1 failed, 38 passed); the same helper bumping through the
 spelling the clauses read was already red on that tree, the added site shifting the dup site's ordinal (3 failed, 35 passed: the dup
-drive's sites, the coverage case and the roster pin's deep count), and reds the unread drive too since (4 failed, 35 passed). The
+drive's sites, the coverage case and the roster pin's deep count), and reds the unread drive too since (4 failed, 35 passed). The two
+false sentences (regression-2; tests-2 with regression-3), on the tree of the round's fourth fix: the first paragraph's alias-control
+sentence said the door witness's thirteen cases run outside any pass, twelve calling the door once, where a profile of the door's
+frames counted seventeen calls over fourteen cases, thirteen under _drive and one each before the window in the three priming cases
+and after it in the refuse case, so the sentence carries the measured figures (no assertion reads it; the profile is the state), and
+the alias control re-taken on the tree of the round's third fix left all fourteen green (6 failed, 33 passed: the five harness cases
+that drive a pass and the birth pin); the case count's 'reads against N' copies, one each in the paragraphs of the consolidation
+pass and rounds 4, 5 and 6, sat in fragments the split at '3.12' left with no head label, so the round-5 copy set one below its
+count left the module green (39 passed) and so did a stale copy written into this paragraph (39 passed); the copies are removed and
+the Docs case reads this paragraph whole by a census of its figures, so the stale copy written into this paragraph reds it since,
+naming the clause (1 failed, 38 passed), while the same copy in a historical paragraph stays unread by design. The
 clean module at this head, the head of the round-7 fixes: 39 passed single-process on 3.10, 3.11, 3.12, 3.13 and 3.14t.
 
 Drives the real pass (_auto_nudge_tick) over two alive sessions with real transcript files and real goal stores, on the
@@ -4162,7 +4175,22 @@ class Docs(unittest.TestCase):
         fixes: the first sentence here said every sentence stating a figure): a count spelled as a word (the battery paragraph's
         'twelve cases', whose head is the build's verifier pass after the round-2 fixes, a role the label regex does not know), the
         historical clean lines (labelled by role, not summed), and a paragraph's per-state figures, 'F failed, P passed', which ride on
-        the paragraph's framing count and are re-taken with it; a count in another form is unread here, not pinned."""
+        the paragraph's framing count and are re-taken with it. The current head's paragraph is then read whole by a census (review
+        round 6, tests-2 and regression-3: the round-5 paragraph restated the head's count in a second form, 'so a figure here reads
+        against 37', which the sweep does not read and which sat, as every per-state figure does, in a fragment the split at '3.12'
+        leaves with no head label, so the copy set one below left the module green; the four copies, one each in the paragraphs of
+        the consolidation pass and rounds 4, 5 and 6, are removed rather than read, and this census reds the next): the paragraph
+        naming 'this head, the head of the round-N fixes' is found (exactly one, or red), and every digit run in it must sit inside
+        one of the figure forms the census names: the swept count, 'P passed', 'F failed', a comparison 'N against N' or 'N against
+        the N cases left', a round ('round N', 'rounds N, N and N'), a finding label ('tests-2'), a date, and an interpreter version; a
+        digit run in no form, a 'reads against N' copy among them, reds naming its clause, and a form that matches nothing in the
+        paragraph reds as a stale row. Derives: the framing counts and their head labels from every 'over its N cases' fragment, the
+        one-head rule and the clean line's sum from the docstring's text, and every figure of the current head's paragraph, each
+        checked against the forms. Bounds: the template forms read (the framing sentence, the head labels, the clean line) are the
+        docstring's conventions, a policy; the figure forms are an enumeration of the prose's shapes and not a population, each row a
+        tripwire that makes a new shape carry a reason; a per-state figure's value rides on its re-take (a state that removes a case
+        sums below the count, so no sum pins it); and a historical paragraph's figures are unpinned by design, read for the head
+        label alone."""
         doc = " ".join(sys.modules[__name__].__doc__.split())
         n = unittest.defaultTestLoader.loadTestsFromModule(sys.modules[__name__]).countTestCases()
         # every count per fragment, a fragment running between two full stops or semicolons (a verifier of the round-5 fixes: a greedy
@@ -4202,6 +4230,31 @@ class Docs(unittest.TestCase):
         self.assertEqual(passed + failed, n, "the clean line's figures, %d passed and %d failed, sum to %d and this module has %d cases: the "
                                              "line was written at another head; re-take the five-interpreter run at this head and write its "
                                              "figures" % (passed, failed, passed + failed, n))
+        # the current head's paragraph whole, every figure in it in a named form (review round 6, tests-2 and regression-3: the
+        # 'reads against 37' copy sat in a fragment the split at '3.12' left unlabelled, as every per-state figure does, so a
+        # fragment-keyed read cannot see the form; the paragraph, blank line to blank line, is the unit that carries the label)
+        paragraphs = [" ".join(p.split()) for p in re.split(r"\n[ \t]*\n", sys.modules[__name__].__doc__) if p.strip()]
+        head_paragraphs = [p for p in paragraphs if re.search(r"this head, the head of the round-\d+ fixes", p)]
+        self.assertEqual(len(head_paragraphs), 1, "exactly one paragraph of the docstring names the current head by role, 'this head, the "
+                                                  "head of the round-N fixes': %d do" % len(head_paragraphs))
+        paragraph = head_paragraphs[0]
+        forms = (r"over its \d+ cases", r"\d+ passed", r"\d+ failed", r"\d+ against (?:the )?\d+(?: cases left)?",
+                 r"rounds? \d+(?:, \d+)*(?: and \d+)?", r"[a-z]+\d*-\d+", r"\d{4}-\d{2}-\d{2}", r"3\.1\d+t?")
+        covered, unmatched = set(), []
+        for form in forms:
+            hits = list(re.finditer(form, paragraph))
+            if not hits:
+                unmatched.append(form)
+            for h in hits:
+                covered.update(range(h.start(), h.end()))
+        self.assertEqual(unmatched, [], "every figure form the census names matches at least once in the current head's paragraph; a row "
+                                        "nothing matches is stale, so drop it: %r" % unmatched)
+        figures = list(re.finditer(r"\d+", paragraph))
+        self.assertTrue(figures, "the current head's paragraph carries at least one figure, its framing count")
+        stray = [paragraph[max(0, m.start() - 40):m.end() + 40] for m in figures if m.start() not in covered]
+        self.assertEqual(stray, [], "a figure in the current head's paragraph in a form the census does not name, so nothing reads it and "
+                                    "it can go stale unseen (a 'reads against N' copy of the framing count is the form review round 6 "
+                                    "found): write it in a named form, or add the form here with its reason: %r" % stray)
 
 
 if __name__ == "__main__":
