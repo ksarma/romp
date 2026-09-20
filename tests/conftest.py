@@ -731,8 +731,11 @@ _SDK_FIRST_WINDOW = True                               # no test window has run 
                                                        # at this window only, and only for the module start read's object, against
                                                        # the jd.STATE that read recorded (at that read only import-time code and
                                                        # any fixture of a scope wider than the function has run); when the slot
-                                                       # does not hold that object here, the refusal (_sdk_swapped) is taken in
-                                                       # its place, and the flag is spent either way, never deferred
+                                                       # does not hold that object here, the refusal (_sdk_swapped) is consulted
+                                                       # in its place and taken under its own guards (a real backend neither list
+                                                       # has named, over a directory that is gone or that stands and is not the
+                                                       # jd.STATE that read recorded), and the flag is spent either way, never
+                                                       # deferred
 _SDK_MODULE_START = None                               # the current module boundary's start read (_SdkRead): the first-window
                                                        # kept-root report's object and reference root
 _SDK_NAMED = []                                        # strong references to every object a verdict named (a test's own, a boundary's)
