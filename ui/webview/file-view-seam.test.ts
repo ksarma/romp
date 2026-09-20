@@ -1087,7 +1087,9 @@ test("source: the Slice 3 seam members exist with their doc comments; the media 
   // plans/markdown-viewer.md (item 1): a throw propagates to renderBody's try, whose catch paints the failure line over Raw rows
   assert.match(VIEW, /body\.replaceChildren\(rendered \? mdBlock\(text, \{ kind: "file", path, sid: sid \|\| null \}\) : codeBlock\(text, path, true\)\);/,
     "mdBlock knows the open file's path and sid (as a MdDocLoc since the 2026-09-07 fold: the URL viewer shares the renderer)");
-  const mdFn = VIEW.split("function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {")[1].split("\n}\n")[0];
+  // code only (codeOnly, below): the order is read off the statements, so a comment quoting the pinned lines above an adopt-first
+  // body cannot satisfy it (the review's round-2 pre-answers built that reversion and every raw-text pin passed on the comment)
+  const mdFn = codeOnly(VIEW.split("function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {")[1].split("\n}\n")[0]);
   const sanitizeAt = mdFn.indexOf("const clean = sanitizeMd(dirty, mintHeadingIds);");   // the shared sanitizer, md-sanitize.ts, with the heading ids as its caller pass (before the fill)
   const rewriteAt = mdFn.indexOf('rewriteFigureSrcs(clean, doc.path.slice(0, doc.path.lastIndexOf("/") + 1), doc.sid);');
   const gateAt = mdFn.indexOf("gateRemoteFigures(clean, document.baseURI);");
@@ -1100,6 +1102,14 @@ test("source: the Slice 3 seam members exist with their doc comments; the media 
   assert.doesNotMatch(mdFn, /(resolveFigureRefs|rewriteFigureSrcs|gateRemoteFigures)\(box,/, "no figure pass runs on the live document's box");
   assert.ok(mdFn.indexOf("resolveFigureRefs(clean, doc.href);") >= 0 && mdFn.indexOf("resolveFigureRefs(clean, doc.href);") < adoptAt, "the URL kind's resolution runs on `clean` too, before the adoption");
   assert.ok(mdFn.indexOf("return box;") > adoptAt);
+  // the fence pass, the one pass that re-parses markup (code-block.ts wrapCodeLines through innerHTML), runs on `clean` between the
+  // sanitize and the chain's first call, so the chain judges the elements its re-parse creates (an svg <image> split from its svg
+  // comes back an HTML <img>; the fourth scene of file-view-figures-gate-adopt-browser.test.ts, 2026-09-20)
+  const fenceAt = mdFn.indexOf('clean.querySelectorAll("pre code").forEach((node) => {');
+  const firstChainAt = mdFn.indexOf("resolveFigureRefs(clean, doc.href);");
+  assert.ok(fenceAt > sanitizeAt && firstChainAt > fenceAt, "the fence pass runs on `clean`, after the sanitize and before the chain's first call");
+  assert.ok(mdFn.indexOf("wrapCodeLines(codeEl);") > fenceAt && mdFn.indexOf("wrapCodeLines(codeEl);") < firstChainAt, "and its re-parse (wrapCodeLines) is inside that pass");
+  assert.equal(mdFn.indexOf('box.querySelectorAll("pre code")'), -1, "no fence pass over the live document's box");
   const rw = VIEW.split("export function rewriteFigureSrcs(root: ParentNode, dir: string, sid: string | null | undefined): void {")[1].split("\n}\n")[0];
   // Slice 4 of plans/markdown-viewer.md widened the walk from `img[src]` to every attribute a figure fetches through
   // (figure-gate.ts figureRefs: img src and srcset, source, video src and poster, audio, track, an svg image's href); the
@@ -1213,8 +1223,8 @@ test("the inertness premise, held where CI runs: MD_PURIFY is its six-key litera
   const UI_DIR = path.resolve(process.cwd(), "..", "ui", "webview");
   const others = fs.readdirSync(UI_DIR).filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts") && !f.endsWith(".d.ts") && f !== "md-sanitize.ts");
   assert.ok(others.includes("file-view.ts") && others.includes("render.ts"), "the sweep reads the dashboard's modules");
-  const namers = others.filter((f) => { const code = codeOnly(web(f)); return /\b(?:MD_PURIFY|setConfig|clearConfig|addHook|RETURN_DOM)\b/.test(code) || /shadowroot/i.test(code); });
-  assert.deepEqual(namers, [], "the profile, DOMPurify's config verbs, its hook registry and RETURN_DOM are md-sanitize.ts's alone (md-sanitize.test.ts sweeps the sanitize call and the seam the same way)");
+  const namers = others.filter((f) => { const code = codeOnly(web(f)); return /\b(?:MD_PURIFY|setConfig|clearConfig|addHook|RETURN_DOM|adoptNode|importNode)\b/.test(code) || /shadowroot/i.test(code); });
+  assert.deepEqual(namers, [], "the profile, DOMPurify's config verbs, its hook registry and RETURN_DOM are md-sanitize.ts's alone (md-sanitize.test.ts sweeps the sanitize call and the seam the same way), and no dashboard module adopts or imports a node between documents (a guarded document.adoptNode inside the gate's own helper left every CI-run module green in the review's round-2 mutation table, 2026-09-20)");
   // ── the installed library: the sites that pick the body's document, in every dist a bundler can take ──
   const DP = path.resolve(process.cwd(), "node_modules", "dompurify");
   const version = (JSON.parse(fs.readFileSync(path.join(DP, "package.json"), "utf8")) as { version: string }).version;
@@ -1260,6 +1270,58 @@ test("the inertness premise, held where CI runs: MD_PURIFY is its six-key litera
   assert.doesNotMatch(between, /\bbox\b|adoptNode|importNode|appendChild|\bappend\(|prepend\(|insertBefore|replaceChildren|replaceWith|\bafter\(|\bbefore\(/, "nothing moves a node into the live document before the chain is done");
   assert.doesNotMatch(mdCode.slice(adoptAt + adopt.length), /\bclean\b/, "after the adoption every pass reads `box`; the body is not touched again");
   assert.doesNotMatch(mdCode.slice(0, bindAt), /\bclean\b/, "and nothing is called `clean` before the sanitize binds it");
+});
+
+// ── no re-parse after the adoption: the population of re-parsing writes, derived from the code ──────────────────────────────
+// The rule mdBlock's chain block states (file-view.ts): every pass that sets, repoints, moves or CREATES a fetching element runs
+// before the adoption. A pass creates one by re-parsing or re-serializing markup in the live document: the fence pass's
+// wrapCodeLines (code-block.ts) does that through innerHTML, and with the pass after the adoption an svg <image> split from its
+// <svg> by the line splitter came back an HTML <img> the chain had never judged, which fetched from an unlisted host in all three
+// engines (the review's round-2 pre-answers, 2026-09-20; the fourth scene of file-view-figures-gate-adopt-browser.test.ts). The
+// walk of attribute writes above cannot see that road (it writes no fetching attribute), so this test greps for the verbs that
+// re-parse or re-serialize: RE_PARSE, over comment-stripped code, in the region of mdBlock after the adoption line and in every
+// module a pass in that region reaches (the identifiers called there, resolved through file-view.ts's imports, then each module's
+// `./` imports, transitively). The derivation itself is pinned (the callee list and the module set), so a new pass or import
+// widens it here first, and a new such site after the adoption is red until it is judged in this list. The judged sites: mdBlock
+// holds one write, the hljs highlight's, inside the fence pass BEFORE the adoption (escaped text: hljs creates spans alone), and
+// code-block.ts holds one, wrapCodeLines's, reached from that pass and so before the adoption too. Derivation command, for a
+// reader by hand (the test runs the same over codeOnly): grep -nE 'innerHTML\s*[+]?=|outerHTML\s*=|insertAdjacentHTML|
+// createContextualFragment|DOMParser|document\.write\b|insertAdjacentElement|createElement\("template"\)' over file-view.ts's
+// mdBlock after the adoption line and over the modules named below.
+const RE_PARSE = /innerHTML\s*[+]?=|outerHTML\s*=|insertAdjacentHTML|createContextualFragment|DOMParser|document\.write\b|insertAdjacentElement|createElement\("template"\)/;
+test("no re-parse after the adoption: mdBlock's post-adoption region and every module a pass there reaches, derived from the code, hold no write of innerHTML or outerHTML and no insertAdjacentHTML, insertAdjacentElement, createContextualFragment, DOMParser, document.write or template; the two judged sites sit before the adoption", () => {
+  const mdCode = codeOnly(VIEW.split("function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {")[1].split("\n}\n")[0]);
+  const adopt = "box.replaceChildren(...Array.from(clean.childNodes));";
+  const adoptAt = mdCode.indexOf(adopt);
+  assert.ok(adoptAt > 0, "the adoption line");
+  const after = mdCode.slice(adoptAt + adopt.length), before = mdCode.slice(0, adoptAt);
+  // the region: no verb after the adoption; the one site before it is the highlight's escaped text, inside the fence pass
+  assert.deepEqual(after.split("\n").filter((l) => RE_PARSE.test(l)), [], "no re-parsing or re-serializing write after the adoption line in mdBlock");
+  assert.deepEqual(before.split("\n").filter((l) => RE_PARSE.test(l)).map((l) => l.trim()), ["codeEl.innerHTML = hljs.highlight(raw, { language: lang }).value;"],
+    "the one such write in mdBlock is the highlight's, before the adoption (hljs escapes the text: it creates spans and nothing that fetches)");
+  assert.ok(before.indexOf('clean.querySelectorAll("pre code")') < before.indexOf("codeEl.innerHTML = hljs.highlight"), "inside the fence pass over `clean`");
+  // the callees of the post-adoption region: every identifier called there that is not a method, resolved through the imports
+  const called = [...new Set([...after.matchAll(/(?<![.\w])([A-Za-z_]\w*)\(/g)].map((m) => m[1]))].filter((n) => !["if", "for", "while", "return", "switch", "catch"].includes(n));
+  assert.deepEqual(called, ["keepVideoShape", "linkHref", "resolveDocRelative", "linkMarkdownAnchors", "linkifyFileText"], "the passes after the adoption call these and nothing else (a new call widens this list first)");
+  const importsOf = (src: string): Record<string, string> => {
+    const map: Record<string, string> = {};
+    for (const m of codeOnly(src).matchAll(/import (?:type )?\{([^}]*)\} from "\.\/([^"]+)"/g)) for (const raw of m[1].split(",")) { const name = raw.replace(/\btype\s+/, "").trim().split(/\s+as\s+/).pop(); if (name) map[name] = m[2] + ".ts"; }
+    return map;
+  };
+  const viewImports = importsOf(VIEW);
+  const localFns = new Set([...codeOnly(VIEW).matchAll(/^(?:export )?function (\w+)\(/gm)].map((m) => m[1]));
+  const modules = new Set<string>(); const locals: string[] = [];
+  for (const c of called) { if (viewImports[c]) modules.add(viewImports[c]); else if (localFns.has(c)) locals.push(c); else assert.fail("a callee neither imported nor local: " + c); }
+  assert.deepEqual(locals, ["keepVideoShape"], "one local callee");
+  for (const l of locals) assert.deepEqual(codeOnly(VIEW.split("function " + l + "(")[1].split("\n}\n")[0]).split("\n").filter((x) => RE_PARSE.test(x)), [], l + " re-parses nothing (a style write)");
+  const queue = [...modules];
+  while (queue.length) { const m = queue.shift() as string; for (const dep of new Set(Object.values(importsOf(web(m))))) if (!modules.has(dep)) { modules.add(dep); queue.push(dep); } }
+  assert.deepEqual([...modules].sort(), ["file-view-links.ts", "link-opener.ts", "math.ts", "md-block-start.ts", "md-config.ts", "md-links.ts", "md-sanitize.ts", "path-links.ts", "url-links.ts"],
+    "the modules a post-adoption pass reaches, transitively over `./` imports (a new import widens this list first)");
+  for (const m of modules) assert.deepEqual(codeOnly(web(m)).split("\n").filter((l) => RE_PARSE.test(l)), [], m + ": no re-parsing or re-serializing write in a module a post-adoption pass reaches");
+  // code-block.ts, the fence pass's module: its one such write is wrapCodeLines's, and the pass that calls it runs before the chain (pinned above)
+  assert.deepEqual(codeOnly(web("code-block.ts")).split("\n").filter((l) => RE_PARSE.test(l)).map((l) => l.trim()), ["code.innerHTML = wrapLinesHtml(code.innerHTML);"], "code-block.ts's one re-parse is wrapCodeLines's");
+  assert.equal(after.includes("wrapCodeLines("), false, "and nothing after the adoption calls it");
 });
 
 // ── editing over pending changes (plans/file-review.md Slice 5) ────────────────────────────────────
