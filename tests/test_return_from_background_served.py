@@ -352,12 +352,12 @@ class ReturnFromBackground(unittest.TestCase):
             shutil.rmtree(cls.lab, ignore_errors=True)
 
     # ---- the driver ----
-    def _drive(self, shell, regime, outage_s, engine="chromium", tap=None, boot_tab=None, abort=False, denied=False, hold_active_full_ms=0, active_sid=None, retry_enter=False):
+    def _drive(self, shell, regime, outage_s, engine="chromium", tap=None, boot_tab=None, abort=False, denied=False, hold_active_full_ms=0, active_sid=None, retry_enter=False, unmarked=False):
         declared = os.environ.get("ROMP_SERVED_TESTS_ENGINES", "")
         if engine != "chromium" and declared and engine not in [e.strip() for e in declared.split(",")]:
             self.skipTest("optional: this runner declares no %s (ROMP_SERVED_TESTS_ENGINES=%s)" % (engine, declared))
-        name = "%s-%s-%s-%ds%s%s%s%s%s" % (engine, shell, regime, outage_s, "-tap-" + tap if tap else "", "-abort" if abort else "", "-denied" if denied else "", "-boot-" + boot_tab if boot_tab else "", "-heldfull" if hold_active_full_ms else "")
-        eager = _eager(shell, tap)   # a tapped pane's document is loaded before the suspend (on the re-tap, under abort or denied)
+        name = "%s-%s-%s-%ds%s%s%s%s%s%s" % (engine, shell, regime, outage_s, "-tap-" + tap if tap else "", "-abort" if abort else "", "-denied" if denied else "", "-unmarked" if unmarked else "", "-boot-" + boot_tab if boot_tab else "", "-heldfull" if hold_active_full_ms else "")
+        eager = _eager(shell, None if unmarked else tap)   # a tapped pane's document is loaded before the suspend (on the re-tap, under abort or denied); an unmarked document runs no shim, so the tapped pane never joins the eager set (review round 5, tests-1)
         # a derived set that came out empty would hand the driver a boot wait and a fresh wait that end at once with nothing witnessed
         # (review round 2, 2026-09-19: every derived expectation must fail when the derivation yields nothing)
         self.assertTrue(_eager(shell), "the eager set for the %s shell is not empty" % shell)
@@ -368,7 +368,7 @@ class ReturnFromBackground(unittest.TestCase):
                "eagerApps": list(_eager(shell)), "freshApps": [a for a in eager if a in FRESH_APPS], "tapPane": tap,   # the boot wait is the eager panes' (a lazy pane has no shim to say up); the fresh wait includes a tapped pane
                "abortPane": tap if (abort or denied) else "",   # HIGH 2 (review round 1): the tapped pane's first document fetch fails; the shell must say so and the re-tap must load it
                "retryEnter": bool(retry_enter),   # ui-1 (review round 4): after the failed state, Enter on the focused Try again button; the route still fails the fetch, and the driver reads the active element at the re-failure
-               "abortMode": "denied" if denied else "abort",   # the failure's input: abort (the route aborts the navigation) or denied (review round 4, kernel-1 and tests-1: the route re-issues the pane's one request credential-less and hands the frame the REAL kernel's 403; not shown as served, the retry road stands)
+               "abortMode": "unmarked" if unmarked else ("denied" if denied else "abort"),   # unmarked (review round 5, tests-1): the route hands the frame the kernel's real 200 with the shim's marker statement stripped, a stamped document with no shim: shown as served, never a failure. Else the failure's input: abort (the route aborts the navigation) or denied (review round 4, kernel-1 and tests-1: the route re-issues the pane's one request credential-less and hands the frame the REAL kernel's 403; not shown as served, the retry road stands)
                "perfShare": True, "bootTimeoutMs": 30000, "freshTimeoutMs": 25000, "settleMs": 1500,
                "bootTab": boot_tab or "", "expectPrefetchAfterChatTap": bool(boot_tab and tap == "chat"),   # stage 0, review round 1: a phone left on another tab, then the Chat tab shown, arms the idle chain
                # the chat blob's active tab (the dial's hint): with none the kernel serves the whole board and there is no skeleton set to prefetch.
@@ -400,8 +400,8 @@ class ReturnFromBackground(unittest.TestCase):
         self.assertEqual(len(full.get("dials") or []), r.get("dialsN"), "the full result carries every dial the compact line counted")
         return name, full
 
-    def _leg(self, shell, regime, outage_s, engine="chromium", tap=None, boot_tab=None, abort=False, denied=False, hold_active_full_ms=0, active_sid=None, retry_enter=False):
-        name, r = self._drive(shell, regime, outage_s, engine, tap, boot_tab, abort, denied, hold_active_full_ms, active_sid, retry_enter)
+    def _leg(self, shell, regime, outage_s, engine="chromium", tap=None, boot_tab=None, abort=False, denied=False, hold_active_full_ms=0, active_sid=None, retry_enter=False, unmarked=False):
+        name, r = self._drive(shell, regime, outage_s, engine, tap, boot_tab, abort, denied, hold_active_full_ms, active_sid, retry_enter, unmarked)
         rows = _rows(self.diag)
         m = measure(rows, r)
         art = os.path.join(self.lab, "return-harness-%s.json" % name)
@@ -411,9 +411,11 @@ class ReturnFromBackground(unittest.TestCase):
             self._abort(name, r, rows, tap, engine, "denied" if denied else "abort", retry_enter)   # first on a failure leg: a detector that takes the failed fetch for a load leaves no shim to park or dial, so every later check fails after it, and the red should name the refused input (review round 2 closeout)
         if denied:
             self._denied(name, r, rows, tap)   # the denied leg's own checks: the real 403's status, and the page's state over the document it must not show
+        if unmarked:
+            self._unmarked(name, r, rows, tap)   # first on the unmarked leg: a detector that calls the served document a failure re-parks it, and every later read is of a re-parked pane
         self._shapes(name, r, m, regime)
         self._parked(name, r, m)
-        self._lazy(name, r, m, tap)
+        self._lazy(name, r, m, None if unmarked else tap)   # the unmarked document has no shim: the lazy counts are a no-tap boot's
         self._dial(name, r, boot_tab, tap)
         if hold_active_full_ms:
             self._gate(name, r)
@@ -464,6 +466,42 @@ class ReturnFromBackground(unittest.TestCase):
             self.assertGreaterEqual(a.get("ms", -1), 0, where + "within the wait: %r" % (a,))
         else:
             self.assertGreater(b.get("cards", 0), 0, where + "the feed painted its first frame on its own (the desktop grid, or the phone's shown Feed tab): %r" % (b,))
+
+    # ---- review round 5 (2026-09-20, tests-1): docState's `doc` answer witnessed in a real engine: the kernel's own stamped 200 with no shim, shown as served ----
+    def _unmarked(self, name, r, rows, tap):
+        """The tapped pane's document request was re-issued to the lab kernel by the driver's route and the frame fulfilled with the kernel's
+        own 200, status and headers, its body with the inline shim's one marker statement (`window.__rompApp=APP;`) removed: a document the
+        kernel stamped (data-romp-served=200 on its <html> tag, Handler._send's rule over every text/html 200 with a root tag) with no pane
+        shim in its window, the shape of the kernel's "needs the ui/ modules" fallback page, through Chromium's own HTML parser. Round 3's
+        leg for this road was deleted with round 4's narrowing, which left the `doc` answer with a hand-built stand-in as its only driver.
+        Asserted: the route saw one marker statement and a stamped root tag in what it handed over (counts, never the text); in the engine the
+        frame's document is at the pane's url, its documentElement carries data-romp-served=200 and its window has no __rompApp; the loader
+        retired on the document's load (not the 30 s backstop), the src stands, no failed or loading state on the body or the pane div, one
+        pane-load-unmarked row via load and no pane-load-failed row. The document runs no shim, so the leg's parked and lazy checks read a
+        no-tap boot (out.tapped null)."""
+        where = name + ": "
+        u = r.get("unmarked") or {}
+        self.assertEqual((u.get("stamp"), u.get("shim")), ("200", "undefined"), where + "read in the engine: the frame's root tag carries the kernel's stamp and its window has no pane shim (docState's `doc`; a re-parked pane reads no stamp, its frame back at about:blank): %r" % (u,))
+        self.assertTrue(str(u.get("url") or "").endswith("/" + tap), where + "the frame's document is at the pane's url: %r" % (u,))
+        wid = r.get("wid") or ""
+        mine = [x for x in rows if x.get("wid") == wid and x.get("surface") == "shell" and x.get("what") == "pane-load-unmarked"]
+        self.assertEqual([x.get("data") for x in mine], [{"pane": tap, "via": "load"}], where + "one pane-load-unmarked row via load (the reader said what it saw): %r" % (mine,))
+        failed = [x for x in rows if x.get("wid") == wid and x.get("surface") == "shell" and x.get("what") == "pane-load-failed"]
+        self.assertEqual(failed, [], where + "no pane-load-failed row: a 200 the kernel served is not a failure: %r" % (failed,))
+        self.assertEqual((u.get("src"), u.get("lazy")), ("/" + tap, None), where + "the src stands, nothing re-parked: %r" % (u,))
+        self.assertEqual((u.get("bodyFailed"), u.get("divFailed"), u.get("bodyLoading"), u.get("divLoading"), u.get("msg")), (False, False, False, False, ""), where + "no failed state, no loading state, no message: the document shows as served: %r" % (u,))
+        self.assertGreaterEqual(r.get("loadingClearedMs", -1), 0, where + "the loading state retired within the wait: %r" % (r.get("loadingClearedMs"),))
+        self.assertLess(r.get("loadingClearedMs"), 20000, where + "…on the document's load, not the 30 s backstop: %r ms" % (r.get("loadingClearedMs"),))
+        ls = r.get("loaderSeen") or {}
+        self.assertEqual(ls.get("display"), "flex", where + "the loader painted at the tap, before the document answered: %r" % (ls,))
+        self.assertIn("/" + tap, r.get("frames") or [], where + "the frame is at the pane's url at the suspend: %r" % (r.get("frames"),))
+        # the input's derivation, read off the route (counts of what it handed over, never the text): the kernel's 200, one marker statement
+        # removed (zero would have handed over the pane's own document, `app`), the stamp on the root tag intact
+        rt = r.get("unmarkedRoute") or {}
+        self.assertEqual(rt.get("status"), 200, where + "the kernel answered the pane's request 200 (the stored cookie rode as ever): %r" % (rt,))
+        self.assertTrue(str(rt.get("contentType") or "").startswith("text/html"), where + "…text/html: %r" % (rt,))
+        self.assertEqual(rt.get("stripped"), 1, where + "the route removed exactly one marker statement from the body: %r" % (rt,))
+        self.assertEqual(rt.get("stampedTags"), 1, where + "…and the kernel's stamp on the <html> tag survived the strip, once: %r" % (rt,))
 
     # ---- review round 4 (2026-09-19, kernel-1 and tests-1): the kernel's OWN denial at a pane url is a failure with the retry road, never shown as served ----
     def _denied(self, name, r, rows, tap):
@@ -827,6 +865,13 @@ class ReturnFromBackground(unittest.TestCase):
     # a stand-in body here. The load listener is the detector in every engine (a 403 commits a document), so the twins pin the same via
     def test_phone_hung_12s_tab_tap_denied_document(self):
         self._leg("phone", "hung", 12, tap="fleet", denied=True, retry_enter=True)   # + ui-1 (review round 4): the keyboard's retry keeps its focus across the re-failure, on every engine (the 403 fires load everywhere)
+
+    def test_phone_hung_12s_tab_tap_unmarked_document(self):
+        # review round 5 (2026-09-20, tests-1): docState's `doc` answer in a real engine. The tapped pane's fetch is answered by the REAL kernel's 200
+        # with the shim's marker statement stripped by the route (a stamped document with no shim, the fallback page's shape): shown as served
+        # (the loader retired on its load, the src kept, no failed state), the stamp read off documentElement in the engine, one pane-load-unmarked
+        # row via load and no pane-load-failed row. Chromium alone: the composition proved engine-invariant in the round-5 refuters' probes
+        self._leg("phone", "hung", 12, tap="fleet", unmarked=True)
 
     def test_the_kernel_stamps_every_200_html_document_at_a_pane_url_and_its_denial_carries_no_stamp(self):
         # review round 4 (kernel-1): the writer's rule, read off the real kernel: every text/html 200 at a pane url (the seven pane routes and the

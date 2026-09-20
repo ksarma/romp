@@ -347,7 +347,58 @@ try {
   });
   // the TAB-TAP leg (stage 0): tap a lazy pane's tab, wait for its socket (its document loads on the tap), then go back to the chat,
   // so the return below finds a tapped pane off screen: the parked-pane contract (D2) exercised on a pane that did not exist at boot
-  if (cfg.tapPane) {
+  if (cfg.tapPane && cfg.abortMode === "unmarked") {
+    // docState's `doc` answer in a REAL engine (review round 5, 2026-09-20, tests-1: round 3's served leg for the shown-as-served road was
+    // deleted with the narrowing, and the node harness's hand-built documentElement was the answer's only driver). The tapped pane's document
+    // request is re-issued to the lab kernel (route.fetch, the stored cookie riding as ever) and the frame is fulfilled with the kernel's own
+    // 200, status and headers, its body with ONE statement removed: the inline shim's `window.__rompApp=APP;`, the marker the shell reads
+    // for `app`. So the frame holds a document the kernel stamped (data-romp-served=200 on its <html> tag, written by Handler._send) with no
+    // pane shim in its window, the shape of the kernel's "needs the ui/ modules" page, through a real HTML parser. The shell must show it as
+    // served: the loader retires on the document's load (not the 30 s backstop), the src stays, no failed state on the body or the pane, one
+    // pane-load-unmarked row via load and no pane-load-failed row. The stamp is read in the engine off documentElement (a byte count cannot
+    // tell a stamped root tag from a stamped `<html` elsewhere in the body). No shim runs in the document, so the pane says nothing on the
+    // shell's wire (no wsState, no socket): the tapUp wait is skipped and out.tapped stays null, so _parked expects nothing parked at the
+    // return and _lazy counts a no-tap boot.
+    const path = "/" + cfg.tapPane, isPath = (u) => u.pathname === path;
+    const MARK = "window.__rompApp=APP;";
+    const unmarked = { status: null, contentType: null, stripped: 0, stampedTags: null };
+    const stripper = async (route) => {
+      const resp = await route.fetch();
+      unmarked.status = resp.status(); unmarked.contentType = (resp.headers() || {})["content-type"] || null;
+      const text = await resp.text();
+      const parts = text.split(MARK);
+      unmarked.stripped += parts.length - 1;
+      const body = parts.join("");
+      unmarked.stampedTags = (body.match(/<html data-romp-served=200[\s>]/g) || []).length;   // the kernel's stamp survives the strip (counted, not read)
+      return route.fulfill({ response: resp, body });
+    };
+    await page.route(isPath, stripper);
+    out.t.tap = now();
+    await page.click("#mtabs button[data-pane=" + cfg.tapPane + "]");
+    const clearDeadline = now() + 20000;
+    let cleared = false;
+    while (now() < clearDeadline) {
+      cleared = await page.evaluate((p) => { const f = document.getElementById("f-" + p), d = f && f.parentElement; return !document.body.classList.contains("pane-loading") && !!d && !d.classList.contains("loading"); }, cfg.tapPane);
+      if (cleared) break;
+      await sleep(50);
+    }
+    out.loadingClearedMs = cleared ? now() - out.t.tap : -1;
+    out.loaderSeen = await page.evaluate(() => window.__labLoaderSeen || null);
+    out.unmarked = await page.evaluate((p) => {
+      const f = document.getElementById("f-" + p), d = f.parentElement;
+      let url = null, stamp = null, shim = null;
+      try { url = f.contentDocument ? f.contentDocument.URL : null; stamp = f.contentDocument && f.contentDocument.documentElement ? f.contentDocument.documentElement.getAttribute("data-romp-served") : null; shim = f.contentWindow ? typeof f.contentWindow.__rompApp : null; } catch (e) { url = "ERR:" + String(e).slice(0, 60); }
+      return { src: f.getAttribute("src"), lazy: f.getAttribute("data-lazy-src"), bodyFailed: document.body.classList.contains("pane-failed"), bodyLoading: document.body.classList.contains("pane-loading"),
+               divFailed: d.classList.contains("failed"), divLoading: d.classList.contains("loading"), url, stamp, shim, msg: (document.getElementById("pane-load-msg") || {}).textContent || "" };
+    }, cfg.tapPane);
+    out.unmarkedRoute = unmarked;
+    await page.unroute(isPath, stripper);
+    await page.click("#mtabs button[data-pane=chat]");
+    await sleep(Math.max(300, (cfg.settleMs || 1500) / 2));
+    out.tapped = null;   // no shim in the served document: nothing to park, nothing to dial (the reason above)
+    out.framesAtBoot = out.frames;
+    out.frames = page.frames().map((f) => { try { return new URL(f.url()).pathname; } catch (e) { return f.url(); } });
+  } else if (cfg.tapPane) {
     const prefetchBeforeTap = out.dials.filter((d) => d.app === "chat").reduce((n, d) => n + (d.needFull || []).filter((w) => w === "prefetch").length, 0);
     // THE FIRST TAP'S WITNESS (review round 3, tests-1): the pane DOCUMENT's own load, stamped by a listener armed on the frame element BEFORE
     // the tap (a listener armed after the click can miss a fast origin's load), once the document is not the initial about:blank; re-armed
