@@ -165,6 +165,27 @@ test("the phone's shape: a collapsed run across a minute boundary, then the repl
   assert.equal(L.railSeed(s, items, 1), at(10, 0, 0));
 });
 
+test("appendItem mints an open run as its head, then one row per member, every node a direct child of the view carrying the run's unit, in member order: the position key patchWorkedFooters reads (member k's row is the (k+1)th node of the unit) is tied to its minter, for a tool run and for a notice run", () => {
+  const events: Ev[] = [E("user", "u0", 100), E("tool", "t1", 110), E("thinking", "th2", 120), E("tool", "t3", 130), E("assistant", "a4", 140), E("retried", "n5", 150), E("retried", "n6", 160)];
+  const s = { events, regions: undefined };
+  const nodes = (v: { el: FakeEl }) => v.el.children.map((c) => [c.cls.join(" "), c.dataset.unit]);
+  const open = lift(new Set(["tg:t1", "ng:n5"]), []);
+  const v = { el: new FakeEl("div") };
+  open.appendItem(v, s, [tg(1, 3)], 0, null, new DayWalk(), false);
+  assert.deepEqual(nodes(v), [["turn turn-toolgroup", "0"], ["turn turn-tool tg-child", "0"], ["turn turn-tool tg-child tg-last", "0"]], "the head, then a row per member (the thinking block between them has none), every node the run's unit and a direct child");
+  const v2 = { el: new FakeEl("div") };
+  open.appendItem(v2, s, [ng(5, 6)], 0, null, new DayWalk(), false);
+  assert.deepEqual(nodes(v2), [["turn turn-noticegroup", "0"], ["turn turn-retried tg-child", "0"], ["turn turn-retried tg-child tg-last", "0"]], "the notice run the same way (the PR's folded-reply case is a noticegroup)");
+  const closed = lift(new Set(), []);
+  const v3 = { el: new FakeEl("div") };
+  closed.appendItem(v3, s, [tg(1, 3)], 0, null, new DayWalk(), false);
+  assert.deepEqual(nodes(v3), [["turn turn-toolgroup", "0"]], "collapsed: the head alone, so a member has no row");
+  // and a unit past the first carries its own number on every node
+  const v4 = { el: new FakeEl("div") };
+  open.appendItem(v4, s, [ev(0), tg(1, 3)], 1, null, new DayWalk(), false);
+  assert.deepEqual(nodes(v4).map((n) => n[1]), ["1", "1", "1"]);
+});
+
 test("render.ts: the compact tail's seam seeds from railChainBefore over the view's window start, and the window build from railSeed", () => {
   assert.match(RENDER, /let prevEpoch = railChainBefore\(s, items, v\.winStart \?\? 0, u0\);/, "the seam");
   assert.match(RENDER, /function renderWindowItems\([\s\S]*?let prevEpoch = railSeed\(s, items, unitStart\);/, "the build");

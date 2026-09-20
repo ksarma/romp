@@ -50,7 +50,7 @@ export function itemLastEvent(it: DisplayItem): number {
 }
 
 /** The first unit whose events reach event `from` (its last event at or past `from`); items.length when none does (every event at or
- *  past `from` is hidden — a thinking block compact mode never shows — or `from` is the length). */
+ *  past `from` is hidden, a thinking block compact mode never shows, or `from` is the length). */
 export function firstUnitReaching(items: readonly DisplayItem[], from: number): number {
   for (let u = 0; u < items.length; u++) if (itemLastEvent(items[u]) >= from) return u;
   return items.length;

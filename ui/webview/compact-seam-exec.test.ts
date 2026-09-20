@@ -130,3 +130,28 @@ test("an append at the bottom that evicts the top re-seeds the promoted head uni
   w2.sync("A", true);
   assert.deepEqual(w2.calls.filter((c) => c[0] === "evict" || c[0] === "reseed"), [["evict", 0]], "the eviction asked and declined: no re-seed");
 });
+
+test("a scrolled-up reader's append (atBottom false) keeps the window's top (keepTop): no eviction is asked, no re-seed, and v.winStart holds", () => {
+  // the same world as the evicting append above, the reader scrolled up: the content above the viewport must stay where it is
+  const kinds = Array.from({ length: 82 }, () => "user");
+  const prev = Array.from({ length: 81 }, (_, i) => ev(i)), now = prev.concat([ev(81)]);
+  const w = world(kinds, prev, now, 81, 0);
+  w.sync("A", false);
+  assert.deepEqual(w.calls.filter((c) => c[0] === "evict" || c[0] === "reseed"), [], "no eviction asked, no re-seed");
+  assert.equal(w.v.winStart, 0, "the window's start held");
+  assert.deepEqual(w.calls.filter((c) => c[0] === "appendItem"), [["appendItem", 81, SENTINEL]], "the unit was appended all the same");
+  assert.equal(w.v.winEnd, 82);
+});
+
+test("a change below a browsed window grows the bottom spacer and touches no node: exactly sizeSpacers, no trim, no appendItem, no rebuild", () => {
+  // six units built, a reply landed as the seventh; the window browsed away from the tail (winEnd lowered to 4 by hand, as a landing leaves it)
+  const kinds = ["user", "assistant", "user", "assistant", "user", "assistant", "assistant"];
+  const prev = Array.from({ length: 6 }, (_, i) => ev(i)), now = prev.concat([ev(6)]);
+  const w = world(kinds, prev, now, 6, 0);
+  w.v.winEnd = 4;
+  w.sync("A");
+  assert.deepEqual(w.calls, [["sizeSpacers"]], "the spacer re-size alone");
+  assert.equal(w.v.spacerCountBot, 3, "total less winEnd: the units the bottom spacer stands for");
+  assert.equal(w.v.rendered, 7); assert.equal(w.v.unitTotal, 7); assert.deepEqual(w.v.units, now);
+  assert.equal(w.v.el.children.length, 6, "no node touched");
+});

@@ -13450,8 +13450,10 @@ function ensureView(id: string): View {
         const w = view3.el.clientWidth;
         if (view3.el.style.display === "none" || w === 0) { for (const e of entries) unitHeights.delete(e.target); return; }
         // …and a width change reflows every unit at once (a resize, a scrollbar appearing): the new heights become
-        // the baselines and nothing is filed — a hundred honest rows would say nothing about any one unit. The window's
-        // figures are re-read (every row's height moved).
+        // the baselines and nothing is filed (a hundred honest rows would say nothing about any one unit). The per-turn
+        // figure is re-read (every row's height moved); the rows' average is measured once per view and stands, so a
+        // resize or a rotation leaves the spacers and the scroll-to-unit map on the pre-resize average, a residual the
+        // PR body names (clearing it here would leave a spacer-only sync reading the default before a re-measurement lands).
         // The heights recorded are BORDER-BOX (entryBoxHeight), and the window's figures are measured HERE, where the
         // heights arrive at frame end after layout, never in the render task (measureUnits; PR E).
         if (w !== unitW) { unitW = w; for (const e of entries) unitHeights.set(e.target, entryBoxHeight(e)); view3.measureDue = true; measureUnits(view3); takeMeasureAtBottom(view3); return; }
@@ -13562,8 +13564,10 @@ function syncViewInner(id: string, atBottom?: boolean): View {
   // switch lag (the user 2026-06-25). A REAL change lowers v.rendered (delta-send sets it to the change index;
   // an append grows len past it) or sets v.stale, so this never skips an actual update.
   // …except the "worked …" footer on a status-only tail: nothing re-rendered, and the footer follows the flip.
-  // (The patch marks the view stale when the reply's unit is not addressable — a folded run — so the fast
-  // path stands down and the window path below re-renders it.)
+  // (The patch addresses a reply folded into a run by its row's position and skips a member with no row, a
+  // collapsed run's; an event with no unit at all, a thinking block compact mode never shows, is skipped the same
+  // way. Nothing marks the view stale from here: until PR E the folded case did, and every second paint became a
+  // rebuild whenever a tool run preceded the streaming reply.)
   if (workFlip && v.rendered === len && !v.stale && v.el.childNodes.length > 0) {
     patchWorkedFooters(v, s, len, working, settings.compact ? items : null);
   }
@@ -14051,7 +14055,7 @@ function sizeSpacers(v: View): void {
   if (top) top.style.height = topAfter + "px";
   if (bot) bot.style.height = botAfter + "px";
   // a spacer re-size is a layout change above or below the reader that no pane write accompanies; the browser's
-  // anchoring answers it on its own, so the journal names it (T262j) — for the ACTIVE view only. The row's scroll and
+  // anchoring answers it on its own, so the journal names it (T262j), for the ACTIVE view only. The row's scroll and
   // client heights are read a frame later (queueSpacerRow): reading them here forced a layout inside the render task.
   if ((topAfter !== topBefore || botAfter !== botBefore) && activeId && views.get(activeId) === v) queueSpacerRow(activeId, topBefore, topAfter, botBefore, botAfter);
 }
@@ -14087,7 +14091,7 @@ function takeMeasureAtBottom(v: View): void {
 }
 
 // The window's two figures, measured where the heights arrive (PR E, 2026-09-19): the unit ResizeObserver's callback
-// (ensureView), at frame end after layout, off the border-box heights it recorded (v.uh) — never a layout property, so the
+// (ensureView), at frame end after layout, off the border-box heights it recorded (v.uh), never a layout property, so the
 // render task forces no layout for them. Due after every window build (renderWindowItems, the compact tail append and its
 // eviction) and after a reflow; a hidden view's observer records nothing, so a view built while hidden measures on its re-show.
 // The figures WAIT in v.measured for the next paint (applyMeasure: appendActive's sync in syncViewInner, or a window build in

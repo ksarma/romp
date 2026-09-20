@@ -17,8 +17,8 @@
 // contentRect is the content box and under-reads a row by its 14 to 22 px of padding. A row the observer has not reported yet has no
 // height: a turn holding one is not counted (never a 0), and the average skips it.
 
-/** One rendered row of a view as the estimator sees it: its class list, whether it is hidden inline (display:none — a stripped user
- *  record, the echo of a send: no box, and the observer never reports one), and its border-box height when the observer has reported it. */
+/** One rendered row of a view as the estimator sees it: its class list, whether it is hidden inline (display:none, a stripped user
+ *  record or the echo of a send: no box, and the observer never reports one), and its border-box height when the observer has reported it. */
 export interface EstRow { cls: string; hidden: boolean; h: number | undefined }
 
 /** The rows of a view's children, in order, through three readers (the class list, the inline hidden state, the reported height). */
