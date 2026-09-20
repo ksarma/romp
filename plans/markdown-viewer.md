@@ -8294,7 +8294,8 @@ text (ui/webview/source-units.ts, the reader ui/webview/linknav-records-attribut
 round 4, regression-2 with extra6-1, three copies of the pin matched the double-quoted spelling alone and a single-quoted
 comparison passed them all while their messages claimed no member's literal stood anywhere), but the type line's and
 `figureState`'s; the pin reads whole values equal to a member, so a reader that uses the word as an identifier key (a
-lookup table `{ failed: true }`), assembles it from parts, tests a prefix or a substring of it or compares case-folded
+lookup table `{ failed: true }`), assembles it at run time (a join, a substitution template; a chain of literals joined by
+`+` is read as the value it computes), tests a prefix or a substring of it or compares case-folded
 stands outside the pin, which its message says and its boundary test pins by execution (the author's closing pass after
 the file review's round 4, guards-1 with records-11: the pin's comment had claimed any spelling; the identifier form is
 left unread on purpose, since file-view.ts names a save hook `failed`, which a key reader would red at rest or force a
@@ -8653,13 +8654,21 @@ merge-base behind the same two-part gate (the merge-base not `origin/main` itsel
 file review's round 4, extra8-1: before the gate the roster equality would have failed every later branch in the repo
 once the follow-on landed, and a gate on the module's presence alone would have passed a batch head), with the roster
 of created files checked against the diff's added files there. It and ui/webview/file-view-figure-shapes.test.ts read TS and JS through
-ui/webview/source-units.ts, the compiler's parser (comments as text with wrapped lines joined, string literals by value
-in either quote, template spans, escapes resolved), Markdown as paragraphs and Python as paragraphs with backslash
-escapes folded: the one reader for both pins, since the file review's round 4 ruled that a guard against a form is
+ui/webview/source-units.ts, the compiler's parser (comments as text with wrapped lines joined; each string the program
+sees as one value as one unit with that value, in either quote, escapes resolved, a `+` chain of literals folded into the
+value it computes and a template's spans joined with each hole kept as its source text, so a phrase split across tokens
+is judged whole; a join, a concat and a hole's run-time value outside the read, which the reader's header lists), Markdown
+as paragraphs and Python as paragraphs with its string literals cooked as Python cooks them and adjacent literals glued,
+every unit charging a phrase to its source line through a starts map built from source positions (the file review's
+round 5, correctness-2 with extra6-1 and tests-2, extra6-3, and correctness-1 with tests-3 and extra7-1: the reader had
+emitted one unit per literal token, so a phrase split across a `+`, a hole, Python's adjacent literals or an f-string
+field sat in no unit; had built the starts map from the cooked text's newlines, charging an escaped-newline literal's
+fault to lines past it, which an added-line filter then dropped; and had dropped every backslash of a Python escape, so
+`\n` read as the letter n): the one reader for both pins, since the file review's round 4 ruled that a guard against a form is
 keyed on the property or parses, and that three guards keyed on three spellings are fixed as one mechanism. The author's
 closing pass after the file review's round 4 stated each pin's boundary in its message and pinned it by execution (guards-1
-with records-11: the refused-state pin reads whole literal values and regular expressions, not an identifier key, an
-assembled word, a prefix or a case-folded test; guards-2 with attribution-and-gates-3: the attribution pin reads a round as
+with records-11: the refused-state pin reads whole literal values and regular expressions, not an identifier key, a word
+assembled at run time, a prefix or a case-folded test; guards-2 with attribution-and-gates-3: the attribution pin reads a round as
 `round` or `rounds` followed by digits, a comma list or a `to` range after `rounds` as the set, and no ordinal, spelled-out
 or abbreviated form, and an id as the family word, a hyphen and digits), had the attribution pin's second road diff the
 working tree against the merge-base so an uncommitted planted phrase is charged like a committed one (guards-3), charged a

@@ -19,16 +19,24 @@
 // review outside the section's convention (a "Slice 7 review") is not the section's to enumerate and is left alone.
 // What the reader takes as a round, stated so a green here is read for what it covers (the author's closing pass after the
 // file review's round 4, guards-2 with attribution-and-gates-3: the plural form passed silently while the message claimed
-// every round): the word round or rounds followed by digits, spaced or hyphenated, and after rounds a comma list or a
-// to-range ("rounds N, M and K", "rounds N to M", the range expanded) as the set of those rounds, each judged against the
-// same nearest review; an ordinal ("the fourth round"), a spelled-out number ("round four") and an abbreviation ("R4") are
-// not read. An id is the family word, a hyphen and digits ("behaviour-N"); the spaced form ("behaviour N") is not read.
+// every round): the word round or rounds, a hyphen or whitespace (a line break inside a literal or a wrapped comment
+// included), and digits, bare or wrapped in Markdown emphasis or code markers ("round **N**", "round `N`"; the file review's
+// round 5, extra6-2: one space or hyphen alone was read, so an escaped newline in a literal and a plan's marked-up digits
+// went unread), and after rounds a comma list or a to-range ("rounds N, M and K", "rounds N to M", the range expanded) as
+// the set of those rounds, each judged against the same nearest review; an ordinal ("the fourth round"), a spelled-out
+// number ("round four") and an abbreviation ("R4") are not read. An id is the family word, a hyphen and digits
+// ("behaviour-N"); the spaced form ("behaviour N") is not read.
 // Read as the language reads it (source-units.ts, the one reader the refused-state pin in file-view-figure-shapes.test.ts
-// shares): a TS or JS module's comments as text with wrapped lines joined and its string literals by value, so a phrase
-// naming a round is one phrase whether its apostrophe is bare, escaped inside a JS string or typographic (the file review's
-// round 4, tests-2: the earlier pin was keyed on one spelling of the apostrophe and passed the escaped form its two scanned
-// modules used); a Markdown or Python file as paragraphs, Python with backslash escapes folded (the compiler does not read
-// Python), which the message says. Two roads, as the author's closing pass after the file review's round 3 (behaviour-6) set
+// shares): a TS or JS module's comments as text with wrapped lines joined and each string the program sees as one value as
+// one unit with that value (either quote, every escape resolved, a + chain of literals as the value it computes, a template's
+// spans joined with each hole kept as its source text), so a phrase naming a round is one phrase whether its apostrophe is
+// bare, escaped inside a JS string or typographic (the file review's round 4, tests-2: the earlier pin was keyed on one
+// spelling of the apostrophe and passed the escaped form its two scanned modules used) and whether it is one literal or
+// several joined by + or split by a hole (the file review's round 5, correctness-2 with extra6-1: a phrase split across
+// tokens had sat in no unit); what stays outside the read, a value assembled at run time (a join, a concat, a hole's value,
+// the part of a chain after a non-literal operand), the reader's header lists and the messages say; a Markdown file as
+// paragraphs, a Python file as paragraphs with its literals cooked as Python cooks them and adjacent literals glued (the
+// compiler does not read Python), which the message says. Two roads, as the author's closing pass after the file review's round 3 (behaviour-6) set
 // them: (1) in every checkout the files the branch created (a roster), the plan's section, the guide's Links paragraph, the
 // browser plan's pointer paragraph and the units of file-view.ts that name the file review or carry an id of the author's
 // family (the author's closing pass after the file review's round 4, records-1: a pass misnamed as a round beside its id, in
@@ -61,7 +69,7 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { execFileSync } from "node:child_process";
-import { comments, lineAt, literals, proseUnits, unitsOf, type Unit } from "./source-units";
+import { comments, lineAt, literals, proseUnits, scriptUnits, unitsOf, type Unit } from "./source-units";
 
 const REPO = path.resolve(process.cwd(), "..");
 const read = (rel: string): string => fs.readFileSync(path.join(REPO, rel), "utf8");
@@ -136,14 +144,16 @@ const ANCHORS: [RegExp, Who][] = [
  *  an anchor for the id road alone: the round inside the name, and a round named after it (a record's "the round-N
  *  condition" after the pass's name), are judged against the review the name says, whose anchor stands inside the name. */
 const PASS_NAME_RE = /\b(?:closing|verification|verifier's|author's|own) pass(?:es)?\b after (?:the |its |that )?(?:file review's |review's )?rounds?[- ]\d+(?:(?:,\s*|\s+(?:and|or|to)\s+)\d+)*/g;
-/** A round phrase as the set of rounds it names: `round N` or `round-N`; after the plural, a comma list or a `to` range
- *  (`rounds N, M and K`, `rounds N to M`, the range expanded). Digits only: an ordinal, a spelled-out number and an
- *  abbreviation are outside the reader, which the messages say. */
-const ROUND_RE = /\bround[- ](\d+)\b|\brounds[- ](\d+)((?:(?:,\s*|\s+(?:and|or|to)\s+)\d+)*)\b/gi;
+/** A round phrase as the set of rounds it names: `round N` or `round-N`, the digits after a hyphen or any whitespace (a
+ *  line break inside a literal too) and bare or wrapped in Markdown emphasis or code markers; after the plural, a comma list
+ *  or a `to` range (`rounds N, M and K`, `rounds N to M`, the range expanded). Digits only: an ordinal, a spelled-out number
+ *  and an abbreviation are outside the reader, which the messages say. */
+const MARK = "(?:\\*\\*|__|[*_`])?";   // Markdown emphasis or code markers around the digits
+const ROUND_RE = new RegExp("\\bround(?:-|\\s+)" + MARK + "(\\d+)" + MARK + "(?!\\w)|\\brounds(?:-|\\s+)" + MARK + "(\\d+)" + MARK + "((?:(?:,\\s*|\\s+(?:and|or|to)\\s+)" + MARK + "\\d+" + MARK + ")*)(?!\\w)", "gi");
 const roundsOf = (m: RegExpMatchArray): number[] => {
   if (m[1] !== undefined) return [Number(m[1])];
   const out = [Number(m[2])];
-  for (const p of m[3].matchAll(/(?:,\s*|\s+(and|or|to)\s+)(\d+)/g)) {
+  for (const p of m[3].matchAll(/(?:,\s*|\s+(and|or|to)\s+)(?:\*\*|__|[*_`])?(\d+)/g)) {
     const n = Number(p[2]);
     if (p[1] === "to") { for (let k = out[out.length - 1] + 1; k <= n; k++) out.push(k); } else out.push(n);
   }
@@ -216,17 +226,71 @@ const convention = (): Reviews => {
   return conventionOf(para!.text);
 };
 
-test("the reader (source-units.ts): a literal's value is the program's whatever the quoting or the escape, a run of line comments and a block comment are one unit each with wrapped lines joined, an offset maps back to the source line that carries it, and a Python paragraph has its escapes folded", () => {
+test("the reader (source-units.ts): a string the program sees as one value is one unit with that value whatever the quoting, the escape, a + between literals or a hole in a template; a run of line comments and a block comment are one unit each with wrapped lines joined; an offset maps back to the source line that carries it through a starts map built from source positions; a Python paragraph has its literals cooked as Python cooks them", () => {
   const src = "const a = 'x\\'y';\nconst b = \"x'y\";\nconst c = `x'y`;\nconst d = `${a}x'y`;\nconst e = 'fai\\x6ced';\nconst f = /x'y/g;\n// one\n// two 'q'\nlet g;\n/** three\n *  four\n */\n// five\n\n// six\n";
   const lits = literals(src, "probe.ts");
-  assert.deepEqual(lits.map((l) => [l.kind, l.text, l.line]), [["string", "x'y", 1], ["string", "x'y", 2], ["template", "x'y", 3], ["template", "", 4], ["template", "x'y", 4], ["string", "failed", 5], ["regex", "/x'y/g", 6]], "values, not spellings");
+  assert.deepEqual(lits.map((l) => [l.kind, l.text, l.line]), [["string", "x'y", 1], ["string", "x'y", 2], ["template", "x'y", 3], ["template", "${a}x'y", 4], ["string", "failed", 5], ["regex", "/x'y/g", 6]], "values, not spellings; a substitution template is one unit with its hole kept as the source text between ${ and }");
   const cs = comments(src, "probe.ts");
   assert.deepEqual(cs.map((c) => [c.text, c.line, c.endLine]), [["one two 'q'", 7, 8], ["three four", 10, 12], ["five", 13, 13], ["six", 15, 15]], "a run and a block, each one unit; a blank line ends a run; a quote inside a literal opened no comment");
   assert.equal(lineAt(cs[0], cs[0].text.indexOf("two")), 8, "the second line's words map to line 8");
   assert.equal(lineAt(cs[1], cs[1].text.indexOf("four")), 11);
+  // a + chain of literals alone is one unit with the value the program computes, folded across lines and parentheses, each
+  // operand's characters charged to the operand's line (the file review's round 5, correctness-2 with tests-2 and extra6-1:
+  // each token had been a unit, so a phrase split across a + sat in no unit); the probes say "step N", never round, so this
+  // module's own literals name no round at rest. The fold is the maximal all-literal subtree: an identifier LAST leaves the
+  // literal prefix before it one unit (+ is left-associative), an identifier SECOND leaves every operand its own unit
+  const chain = literals("const s = 'the file ' +\n  (\"review's \" + `step ` + 9) +\n  ' found it';\nconst t = 'the file ' + who + ' step ' + 9;\nconst u = 'step ' + n(9);\nconst v = 'the file ' + 'step ' + 9 + who;\nconst w = 1 + 2 + 'a' + (1 + ('b' + 2));\n", "probe.ts");
+  assert.deepEqual(chain.map((l) => [l.kind, l.text, l.line, l.endLine]), [["string", "the file review's step 9 found it", 1, 3], ["string", "the file ", 4, 4], ["string", " step ", 4, 4], ["string", "step ", 5, 5], ["string", "the file step 9", 6, 6], ["string", "3a1b2", 7, 7]], "the all-literal chain folded across its lines and its parentheses, a number by the text JS gives it (numbers add until a string joins); an identifier second leaves the operands apart, an identifier last folds the prefix before it");
+  assert.deepEqual(chain[0].starts, [{ line: 1, at: 0 }, { line: 2, at: 9 }, { line: 3, at: 24 }], "a start where each operand's line begins");
+  assert.equal(lineAt(chain[0], chain[0].text.indexOf("step 9")), 2, "the step is charged to the operand's line");
+  assert.equal(lineAt(chain[0], chain[0].text.indexOf("found")), 3);
+  // a substitution template is one unit, its spans joined with each hole kept as the source between ${ and } (so a phrase
+  // split by a hole is judged whole with the hole named, and a hole in place of the digits is visibly no number); a literal
+  // inside a hole is a unit of its own; a tagged template is read as its cooked spans whatever the tag returns
+  const tmpl = literals("const a = `the file review's ${x} step 9`;\nconst b = `step ${n}`;\nconst c = `q${'inner step 3'}r`;\nconst d = tag`raw\\n${z}`;\n", "probe.ts");
+  assert.deepEqual(tmpl.map((l) => [l.kind, l.text, l.line]), [["template", "the file review's ${x} step 9", 1], ["template", "step ${n}", 2], ["template", "q${'inner step 3'}r", 3], ["string", "inner step 3", 3], ["template", "raw\n${z}", 4]], "the template whole with its holes named, the hole's own literal a unit too, the tagged template cooked");
+  // a comment between two operands is blanked with neither token and stands as its own unit
+  assert.deepEqual(scriptUnits("const a = 'a' + // between\n 'b';\n", "probe.ts").map((u) => [u.kind, u.text, u.line, u.endLine]), [["string", "ab", 1, 2], ["comment", "between", 1, 1]], "the chain folded around the comment, the comment kept");
+  // the starts map is built from SOURCE positions (the file review's round 5, correctness-1 with tests-3: it had counted the
+  // newlines of the cooked text, so a one-line literal with escaped newlines was charged to lines past it, past the end of the
+  // file in one probe): an escaped newline is a character of the value and no line; a template's real newline, a CRLF and a
+  // backslash continuation are source lines, charged where they begin; an escape of any width charges its own line; a raw
+  // line separator (U+2028) in a template is a line break to the compiler and gets a start
+  const nl = literals("const a = 'x\\nstep 9';\nconst b = `x\nstep 9`;\nconst c = `x\r\nstep 9`;\nconst d = 'x\\\n step 9';\nconst e = '\\u{1F600}\\x41\\101 step 9';\nconst f = `x step 9`;\n", "probe.ts");
+  assert.deepEqual(nl.map((l) => [l.text, l.line, l.endLine, lineAt(l, l.text.indexOf("step")), l.starts]), [
+    ["x\nstep 9", 1, 1, 1, [{ line: 1, at: 0 }]],
+    ["x\nstep 9", 2, 3, 3, [{ line: 2, at: 0 }, { line: 3, at: 2 }]],
+    ["x\nstep 9", 4, 5, 5, [{ line: 4, at: 0 }, { line: 5, at: 2 }]],
+    ["x step 9", 6, 7, 7, [{ line: 6, at: 0 }, { line: 7, at: 1 }]],
+    ["\u{1F600}AA step 9", 8, 8, 8, [{ line: 8, at: 0 }]],
+    ["x step 9", 9, 10, 10, [{ line: 9, at: 0 }, { line: 10, at: 2 }]],
+  ], "the one-line literal's step is on line 1 and it has one start; the template's, the CRLF's and the continuation's on the line they stand on");
+  // an erroneous literal (unterminated, an invalid escape) makes the walk and the compiler disagree, and the read throws
+  // naming the file rather than charge lines it cannot vouch for
+  assert.throws(() => literals("const a = \"step 9\nconst b = 1;\n", "some/module.ts"), /source-units: some\/module\.ts:1 string literal .* cooks to .* where the compiler read/, "an unterminated literal aborts the read with the file named");
+  assert.throws(() => literals("const a = \"\\x4g step 9\";\n", "some/module.ts"), /some\/module\.ts:1 string literal/, "an invalid escape aborts the read with the file named");
+  // Python: the literals cooked as Python cooks them (the file review's round 5, extra6-3: every backslash had been dropped,
+  // so \n read as the letter n, glued the words the escape separated and could manufacture a phrase the source does not
+  // carry); adjacent literals glued with nothing between them, an f-string's field kept as written, a raw literal and a
+  // comment as written
   const py = proseUnits("a = 'it\\'s round'\nb = 2\n\nc = 3\n", true);
   assert.deepEqual(py.map((u) => [u.text, u.line, u.endLine]), [["a = 'it's round' b = 2", 1, 2], ["c = 3", 4, 4]], "paragraphs, the escape folded");
   assert.equal(lineAt(py[0], py[0].text.indexOf("b = 2")), 2, "the fold moves the offsets and the starts follow");
+  const pyText = (s: string): string => proseUnits(s, true).map((u) => u.text).join(" | ");
+  assert.equal(pyText("x = 'the file review\\x27s step 9'\n"), "x = 'the file review's step 9'", "\\x27 is the apostrophe (it had read x27, which broke the phrase: a miss)");
+  assert.equal(pyText("x = 'a\\nstep 9'\n"), "x = 'a step 9'", "\\n is a space for matching (it had read the letter n, gluing the words: a miss)");
+  assert.equal(pyText("x = 'step \\9 of it'\n"), "x = 'step \\9 of it'", "an unknown escape keeps its backslash as Python keeps it (dropping it had manufactured the digits the source does not carry)");
+  assert.equal(pyText("x = ('the file review\\'s ' 'step 9')\n"), "x = ('the file review's step 9')", "adjacent literals are one value");
+  assert.equal(pyText("x = ('the file review\\'s '\n     'step 9')\n"), "x = ('the file review's step 9')", "adjacent literals across a wrapped line");
+  assert.equal(pyText("x = 'the file review\\'s' \\\n    'step 9'\n"), "x = 'the file review'sstep 9'", "adjacent literals across a continuation glue with nothing between them, as the program glues them: no word step here (it had read a space in, a phrase the source does not carry)");
+  assert.equal(pyText("x = 'abc \\\n def'\ny = 'abc\\\ndef'\n"), "x = 'abc def' y = 'abcdef'", "a continuation inside a literal is no character");
+  assert.equal(pyText("x = f'the file review\\'s step {n}'\n"), "x = f'the file review's step {n}'", "an f-string's field is kept as written, the hole named");
+  assert.equal(pyText("x = r'the file review\\'s step 9'\n"), "x = r'the file review\\'s step 9'", "a raw literal as written");
+  assert.equal(pyText("# it's step 4 here\ny = 1  # don't 'quote'\n"), "# it's step 4 here y = 1 # don't 'quote'", "a comment as written: its apostrophes open no literal");
+  assert.equal(pyText("x = 'a'\ny = 2\n"), "x = 'a' y = 2", "a literal closing a line and a statement on the next are not glued");
+  const doc = proseUnits("def f():\n    \"\"\"The file review's\n    step 9 ruled it.\n\n    Second para 'a' 'b'.\n    \"\"\"\n    return 1\n", true);
+  assert.deepEqual(doc.map((u) => [u.text, u.line, u.endLine]), [["def f(): \"\"\"The file review's step 9 ruled it.", 1, 3], ["Second para 'a' 'b'. \"\"\" return 1", 5, 7]], "a docstring's lines join with a space and its blank line ends a paragraph; quotes inside it are its text");
+  assert.equal(lineAt(doc[0], doc[0].text.indexOf("step 9")), 3, "charged to the docstring line that carries it");
 });
 
 test("the convention: the branch's review has rounds 1 and 2, the file review's rounds are enumerated, the author's passes are never rounds and own an id family; the rule reads a unit's nearest review and refuses a round the convention does not give it, a pass with a round, an id of the pass's family with no pass named, and a round with no review named", () => {
@@ -242,18 +306,21 @@ test("the convention: the branch's review has rounds 1 and 2, the file review's 
   const last = units[units.length - 1];
   const w = last.text.slice(last.text.lastIndexOf(" ") + 1);
   assert.ok(plan.split("\n")[lineAt(last, last.text.length - 1) - 1].trimEnd().endsWith(w), "the section's last word " + JSON.stringify(w) + " is charged to the plan line that ends with it");
-  // the probes are assembled, so this module's own literals name no round and no id at rest
+  // the probes are assembled, so this module's own literals name no round and no id at rest: an identifier first leaves the
+  // chain unfolded, and a probe that would otherwise be all literals routes its digits through a call (n), since the reader
+  // folds a chain of literals alone into the value the program computes and this module reads itself on road 1
+  const n = (k: number): number => k;
   const F = "the file review's round ", B = "the review's round ", P = "the author's closing pass ";
   assert.deepEqual(roundFaults(F + 2 + " re-decided this on the rule the record of its round " + 1 + " had said did not exist", two), []);
   assert.deepEqual(roundFaults(B + 1 + " found it; " + F + 3 + " (tests-2) pinned it", two), []);
   assert.deepEqual(roundFaults(P + "after " + F + 3 + " (records-" + 3 + ") said so", two), []);
-  assert.deepEqual(roundFaults("measured in the Slice 7 review's round " + 9, two), [], "another review's rounds are not this section's");
+  assert.deepEqual(roundFaults("measured in the Slice 7 review's round " + n(9), two), [], "another review's rounds are not this section's");
   assert.equal(roundFaults(F + 5 + " found it", two).length, 1, "a file-review round past the enumeration");
-  assert.equal(roundFaults("the file review\\'s round " + 9 + " found it", two).length, 1, "the escaped apostrophe is the same phrase");
+  assert.equal(roundFaults("the file review\\'s round " + n(9) + " found it", two).length, 1, "the escaped apostrophe is the same phrase");
   assert.equal(roundFaults(B + 3 + " found it", two).length, 1, "a branch-review round it never had");
   assert.equal(roundFaults(P + "(round " + 4 + ", behaviour-" + 2 + ") found it", two).length, 1, "a pass named as a round (the id after the pass is fine)");
-  assert.equal(roundFaults("the verifier's round-" + 6 + " probe", two).length, 1, "a verifier's pass named as a round");
-  assert.equal(roundFaults("since round " + 2 + " a failed figure opens nothing", two).length, 1, "a round with no review named");
+  assert.equal(roundFaults("the verifier's round-" + n(6) + " probe", two).length, 1, "a verifier's pass named as a round");
+  assert.equal(roundFaults("since round " + n(2) + " a failed figure opens nothing", two).length, 1, "a round with no review named");
   assert.equal(roundFaults("(" + F + 4 + ", records-" + 3 + ")", two).length, 1, "the pass's finding credited to a round of the file review: the id has no pass before it");
   // the review named NEAREST before the id decides, not any pass named earlier in the unit (the file review's round 5,
   // correctness-3 with regression-1: the shape below passed with 0 faults, the round-4 HIGH's misattribution beside a pass)
@@ -265,6 +332,18 @@ test("the convention: the branch's review has rounds 1 and 2, the file review's 
   assert.equal(roundFaults(P + "after " + F + 7 + " (records-" + 1 + ") measured it", two).length, 1, "the round inside the pass's name is judged against the file review's enumeration");
   assert.equal(roundFaults("recorded by " + F + 4 + " (rules-" + 1 + ")", two).length, 0, "the maintainer's own ids are not the family's");
   assert.deepEqual(roundFaults("the review ran two rounds; the pin holds a round-trip", two), [], "no round number, no claim");
+  // the digits after any whitespace (a literal's escaped newline, now a character of its value) or Markdown markers (the file
+  // review's round 5, extra6-2: one space or hyphen alone was read)
+  assert.equal(roundFaults(F.trimEnd() + "\n" + n(9) + " found it", two).length, 1, "a line break between the word and its digits");
+  assert.equal(roundFaults(F + "**" + n(9) + "** found it", two).length, 1, "the digits in Markdown emphasis");
+  assert.equal(roundFaults(F + "`" + n(9) + "` found it", two).length, 1, "the digits in Markdown code markers");
+  assert.equal(roundFaults(F + "_" + n(9) + "_ found it", two).length, 1, "the digits in Markdown underscores");
+  assert.deepEqual(roundFaults(F + "**" + n(4) + "** and " + B + "`" + n(2) + "` found it", two), [], "marked-up digits of rounds the reviews had");
+  // a fault is charged to the source line of the phrase, so a line filter (road 2's added lines) keeps it (the file review's
+  // round 5, extra7-1: with the starts map counting the cooked text's newlines, a one-line literal's fault was charged past
+  // the literal and the filter dropped it, a real violation on an added line passing as a green)
+  const kept = faultsOf("probe", unitsOf("probe.ts", "const a = \"a\\nb\\nc\\nthe review's round " + n(9) + "\";\nconst b = 1;\n"), two, (l) => l === 1);
+  assert.ok(kept.length === 1 && /^probe:1 /.test(kept[0]), "the escaped-newline literal's fault is charged to line 1 and survives a filter keeping line 1: " + JSON.stringify(kept));
   // the plural and the range (the author's closing pass after the file review's round 4, guards-2: the plural form passed the
   // singular reader), and the forms the reader leaves outside, held there so the message's own words stay true
   const FS = "the file review's rounds ", BS = "the review's rounds ";
@@ -277,12 +356,12 @@ test("the convention: the branch's review has rounds 1 and 2, the file review's 
   // road 1's selection of file-view.ts units (the author's closing pass after the file review's round 4, records-1): a unit
   // carrying an id of the family is read even
   // where it names no review, and a pass named as a round there reds; a unit naming only the review is road 2's
-  const misnamed = "decided in the author's closing pass (round " + 5 + ", behaviour-" + 2 + ") over the measured box";
+  const misnamed = "decided in the author's closing pass (round " + n(5) + ", behaviour-" + n(2) + ") over the measured box";
   assert.ok(roadOneViewerUnit(misnamed, two) && roundFaults(misnamed, two).length === 1, "a pass named as a round beside its id, in a unit naming no review, is selected and reds");
-  const pronoun = "its round " + 4 + " (behaviour-" + 2 + ", records-" + 1 + ") measured this";
+  const pronoun = "its round " + n(4) + " (behaviour-" + n(2) + ", records-" + n(1) + ") measured this";
   const pf = roundFaults(pronoun, two);
   assert.ok(roadOneViewerUnit(pronoun, two) && pf.length === 3 && /of no review/.test(pf[0].fault), "the pronoun form: a round of no review and two ids with no pass");
-  assert.ok(!roadOneViewerUnit("the review's round " + 3 + " found it", two), "a unit naming only the review is road 2's");
+  assert.ok(!roadOneViewerUnit("the review's round " + n(3) + " found it", two), "a unit naming only the review is road 2's");
 });
 
 test("road 1, every checkout: the files the branch created, the plan's section, the guide's Links paragraph, the browser plan's pointer and file-view.ts's units naming the file review or carrying an id of the author's family name no round outside the convention and no finding of the author's outside a pass; road 2, on the open PR branch where main has moved past its last merge (the merge-base off origin/main and the diff adding this module): every unit the branch added or touched, the working tree against the merge-base, and the roster is the diff's added files", (t) => {
@@ -305,7 +384,7 @@ test("road 1, every checkout: the files the branch created, the plan's section, 
   const viewerUnits = unitsOf("ui/webview/file-view.ts", viewer).filter((u) => roadOneViewerUnit(u.text, reviews));
   assert.ok(viewerUnits.length >= 10, "file-view.ts names the file review or carries an id of the author's family in its figure and trail comments: " + viewerUnits.length);
   faults.push(...faultsOf("ui/webview/file-view.ts (units naming the file review or carrying an id of the author's family)", viewerUnits, reviews));
-  assert.deepEqual(faults, [], "every round a record names is a round the convention gives the review it names, and every finding of the author's family follows a pass (TS and JS read by the compiler, comments joined and literals by value; Markdown as paragraphs; Python as paragraphs with backslash escapes folded; a round is read as the word round or rounds followed by digits, spaced or hyphenated, with a comma list or a to-range after rounds as the set, and not as an ordinal, a spelled-out number or an abbreviation; an id as the family word, a hyphen and digits, never spaced)");
+  assert.deepEqual(faults, [], "every round a record names is a round the convention gives the review it names, and every finding of the author's family follows a pass (TS and JS read by the compiler, comments joined and each string the program sees as one value one unit, a + chain of literals and a template's spans folded, a join, a concat and a hole's run-time value outside the read; Markdown as paragraphs; Python as paragraphs with its literals cooked as Python cooks them; a round is read as the word round or rounds, a hyphen or whitespace and digits, bare or in Markdown emphasis or code markers, with a comma list or a to-range after rounds as the set, and not as an ordinal, a spelled-out number or an abbreviation; an id as the family word, a hyphen and digits, never spaced)");
   // road 2
   const git = (...args: string[]): string => execFileSync("git", args, { cwd: REPO, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
   let base: string | null = null;

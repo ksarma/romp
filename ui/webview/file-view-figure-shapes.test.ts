@@ -36,7 +36,7 @@ const VIEW = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", 
 const readersOf = (units: Unit[], refused: string[]): string[] =>
   refused.flatMap((m) => units.filter((l) => (l.kind === "regex" ? new RegExp("\\b" + m + "\\b").test(l.text.replace(/\\[A-Za-z]/g, " ")) : l.text === m)).map((l) => JSON.stringify(m) + " at line " + l.line + " (" + l.kind + ")"));
 /** What the refused-state pin reads and what stands outside it, in the pin's message and pinned by execution below. */
-const BOUNDARY_NOTE = "the pin reads WHOLE literal values, so an identifier used as a key, a word assembled from parts, a prefix or substring test and a case-folded comparison stand outside it, which the boundary test pins by execution";
+const BOUNDARY_NOTE = "the pin reads WHOLE literal values, a chain of literals joined by + as the value it computes, so an identifier used as a key, a word assembled at run time (a join, a substitution template), a prefix or substring test and a case-folded comparison stand outside it, which the boundary test pins by execution";
 /** The text from one anchor to the next, both present. */
 const between = (src: string, from: string, to: string): string => {
   const a = src.indexOf(from); assert.ok(a >= 0, from + " present");
@@ -113,7 +113,9 @@ test("the one decision: figureWantsControl reads the figure's state by one rule 
   // a regular expression over the word fails here; comments are not literals, so prose may quote the word. The pin's boundary,
   // stated because the comment here had claimed any spelling (the author's closing pass after the file review's round 4,
   // guards-1 with records-11): it reads whole values equal to a member, so a reader that uses the word as an identifier key
-  // (`{ failed: true }`, a lookup table), assembles it from parts (`'fai' + 'led'`), tests a prefix or a substring of it
+  // (`{ failed: true }`, a lookup table), assembles it at run time (`['fai', 'led'].join('')`, `` `fai${''}led` ``; a chain of
+  // literals alone, `'fai' + 'led'`, is read as the value it computes since the file review's round 5, correctness-2 with
+  // extra6-1), tests a prefix or a substring of it
   // (`startsWith('fail')`, `/^fetch/`) or compares case-folded (`toUpperCase() === 'FAILED'`) stands outside it; the identifier
   // form is left unread on purpose, since file-view.ts names a save hook `failed` (editHooks), which a key reader would red at
   // rest or force a rename of product code for a pin. The boundary test below plants every form and pins which side each
@@ -202,7 +204,7 @@ test("the one decision: figureWantsControl reads the figure's state by one rule 
   inOrder(target, ["const state = figureState(img);", "if (!figureHasPicture(state)) return null;", "const dest = chosenSource(img);"], "figureTarget: a target only for a state with a picture to name, read before the candidate (no candidate before the browser has picked, nothing to open after a failure, nothing for a state the type gains later)");
 });
 
-test("the refused-state pin's boundary, by execution over an assembled probe: a whole literal in either quote, a template, a `case`, a Set member with an escaped spelling and a regular expression over the word are read; an identifier key, a word assembled from parts, a prefix or substring test and a case-folded comparison are not, as the pin's message says", () => {
+test("the refused-state pin's boundary, by execution over an assembled probe: a whole literal in either quote, a template, a `case`, a Set member with an escaped spelling, a regular expression over the word and a chain of literals joined by + are read; an identifier key, a word assembled at run time (a join, a substitution template), a prefix or substring test and a case-folded comparison are not, as the pin's message says", () => {
   // the author's closing pass after the file review's round 4 (guards-1 with records-11): four planted readers of a refused
   // state passed the pin silently while its comment claimed any spelling; the boundary is stated in the message and held here
   const src = [
@@ -216,11 +218,13 @@ test("the refused-state pin's boundary, by execution over an assembled probe: a 
     "const f = s === 'fai' + 'led';",
     "const g = s.startsWith('fail') || /^fetch/.test(s);",
     "const h = s.toUpperCase() === 'FAILED';",
+    "const i = s === ['fai', 'led'].join('');",
+    "const j = s === `fai${''}led`;",
   ].join("\n");
   const found = readersOf(literals(src, "probe.ts"), ["failed", "fetching"]);
-  assert.deepEqual(found.map((r) => Number(/ at line (\d+) /.exec(r)![1])).sort((x, y) => x - y), [2, 2, 3, 4, 5, 6], "read: the two comparisons, the template, the case, the escaped Set member and the regular expression: " + JSON.stringify(found));
-  assert.ok(found.every((r) => !/ at line (?:7|8|9|10) /.test(r)), "not read, the boundary the message states: the identifier keys, the assembled word, the prefix tests and the case-folded comparison: " + JSON.stringify(found));
-  assert.match(BOUNDARY_NOTE, /identifier used as a key, a word assembled from parts, a prefix or substring test and a case-folded comparison stand outside it/, "the message names the four forms outside the pin");
+  assert.deepEqual(found.map((r) => Number(/ at line (\d+) /.exec(r)![1])).sort((x, y) => x - y), [2, 2, 3, 4, 5, 6, 8], "read: the two comparisons, the template, the case, the escaped Set member, the regular expression and the chain of literals (the file review's round 5, correctness-2 with extra6-1: the chain had stood outside the read, each literal a unit of its own): " + JSON.stringify(found));
+  assert.ok(found.every((r) => !/ at line (?:7|9|10|11|12) /.test(r)), "not read, the boundary the message states: the identifier keys, the prefix tests, the case-folded comparison and the words assembled at run time (a join, a substitution template): " + JSON.stringify(found));
+  assert.match(BOUNDARY_NOTE, /identifier used as a key, a word assembled at run time \(a join, a substitution template\), a prefix or substring test and a case-folded comparison stand outside it/, "the message names the four forms outside the pin");
 });
 
 test("the sheets' figure-control comment names the builder that exists (decideFigureControl), not the one the one decision replaced", () => {
