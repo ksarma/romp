@@ -25,7 +25,14 @@
 //      disarms (the update banner's two-click shape: the gate is a privacy choice, so a print never fetches from an
 //      unlisted host unless the person chose it). "With them" restores exactly the placeholders it counted, each through
 //      the gate's restore of ONE placeholder (figure-gate.ts loadGatedFigure: the moved attributes back, the figure back in
-//      its place), so the requests are the ones those figures make and no other: a placeholder inside a closed fold or
+//      its place), so the requests are the ones those figures make and no other. The restore is the WHOLE figure's: every
+//      URL the figure names is fetched, a remote URL inside a non-painting element of a figure that paints among them (an
+//      svg <image> under <defs> beside one that paints; a hidden <img> inside a <video> that paints its poster), for
+//      something never on the paper; the title names that URL's host, since data-fv-hosts is read over every ref of the
+//      figure (the round-4 review's HIGH 2, 2026-09-20, a consent-text correction: the sentence read before the grant
+//      promised the pictures that reach the paper alone; restoring only the refs whose element shows is recorded as the
+//      better shape needing an owner, plans/markdown-viewer.md open point 8; file-print-figure-browser.test.ts holds the
+//      fetched URLs per shape). A placeholder inside a closed fold or
 //      under hidden that names the same host stands as it is (the round-2 review, 2026-09-19: before this "with them"
 //      loaded by HOST through loadGatedHost, the click's road, so a host one printable and one folded placeholder shared
 //      had both restored and the folded picture fetched for a print that never shows it). A print is a one-time act: the
@@ -413,7 +420,9 @@ export function rendered(el: PrintableNode): boolean | null {
  *  to NOT printable: printable is true only when both agree (the round-2 review, 2026-09-19: before this the walk alone
  *  answered, and every hiding it did not know read as printable, the permissive side for a fetch). A placeholder the flow
  *  counts, names in the with-button's title or restores must pass this and figurePrintable below (gates, in the driver): a
- *  host is a privacy choice, and a print fetches from one only for a picture that is on the paper. */
+ *  host is a privacy choice, and a print restores a placeholder only for a figure that puts paint on the paper. The restore
+ *  is the whole figure's (figure-gate.ts loadGatedFigure), so every URL the figure names is fetched, a remote URL inside a
+ *  non-painting element of a painting figure among them (the round-4 review, 2026-09-20; the header). */
 export function printable(el: PrintableNode): boolean {
   for (let n: PrintableNode | null = el; n; n = n.parentElement) {
     if (n.hasAttribute("hidden")) return false;
@@ -434,7 +443,7 @@ export type FigureNode = {
   localName: string; namespaceURI?: string | null; parentElement?: FigureNode | null;
   hasAttribute(name: string): boolean; getAttribute(name: string): string | null;
   style?: { display: string };
-  ownerDocument?: { defaultView?: { getComputedStyle?(el: unknown): { visibility: string; opacity: string } } | null; createElement?(tag: string): { style: { display: string } } } | null;
+  ownerDocument?: { defaultView?: { getComputedStyle?(el: unknown): { visibility: string; opacity: string; display: string } } | null; createElement?(tag: string): { style: { display: string } } } | null;
   querySelectorAll?(selectors: string): { forEach(cb: (el: FigureNode) => void): void };
 };
 /** `el` is an HTML element, by its namespace (a stand-in without one is HTML). `hidden` and `popover` are HTML's attributes
@@ -444,8 +453,9 @@ const isHtml = (el: FigureNode): boolean => el.namespaceURI === undefined || el.
 /** The style the browser computes for `el`, or null where nothing computes it: a stand-in under node, or an element outside
  *  a document (a disconnected element computes empty strings). visibility and opacity compute on a gated figure as they do
  *  on the restored one: the gate's sheet sets display none on the placeholder's child (feed.css and styles.css,
- *  `.fv-gate[data-act="fv-load"] > :not([data-fv-label])`) and neither of these. */
-function computedOf(el: FigureNode): { visibility: string; opacity: string } | null {
+ *  `.fv-gate[data-act="fv-load"] > :not([data-fv-label])`) and neither of these; display too, on every element BELOW that
+ *  child (display does not inherit, so the sheet's none on the root leaves each descendant's computed display its own). */
+function computedOf(el: FigureNode): { visibility: string; opacity: string; display: string } | null {
   const view = el.ownerDocument ? el.ownerDocument.defaultView : null;
   if (!view || typeof view.getComputedStyle !== "function") return null;
   const cs = view.getComputedStyle(el);
@@ -456,8 +466,11 @@ function computedOf(el: FigureNode): { visibility: string; opacity: string } | n
  *  keeps colour declarations alone, md-sanitize.ts colorOnlyStyle, so in the product it is empty), then, on an SVG element,
  *  the `display` presentation attribute, whose value is CSS, parsed by a scratch declaration of the same document: `NONE`,
  *  ` none `, `none` with a CSS comment beside it and the escaped `n\6fne` each read `none` and `bogus` reads empty, as the
- *  computed value would (measured in the three engines). The computed display itself is not read: the gate's sheet sets it to none on the placeholder's child
- *  while it is gated, and a presentation attribute never reaches `el.style`. */
+ *  computed value would (measured in the three engines). This is the FIGURE ROOT's road alone: the gate's sheet sets the
+ *  root's computed display to none while it is gated, so its computed value cannot be read, and a presentation attribute
+ *  never reaches `el.style`. Every element below the root reads its computed display instead (offPaper), the browser's own
+ *  answer, which a sheet rule on an author's class reaches and this parse does not (the round-4 review's extra8-3,
+ *  2026-09-20). */
 function authorDisplay(el: FigureNode): string | null {
   const doc = el.ownerDocument;
   if (!doc || typeof doc.createElement !== "function") return null;
@@ -474,26 +487,33 @@ function authorDisplay(el: FigureNode): string | null {
  *  counted for it. */
 const SVG_RENDERS: readonly string[] = ["svg", "g", "a", "switch"];
 /** Whether the author's `display: contents` on the SVG element `el` lets its content render: on a group, and on an svg
- *  nested inside SVG content, it does (measured in Chromium, file-print-figure-browser.test.ts: the image inside paints);
- *  on every other SVG element, an outermost svg, a link, a switch and an image among them, `contents` computes to none
- *  (measured the same way; the outermost svg and the image in the three engines), so it hides as `none` does. */
+ *  nested inside SVG content, it does (measured in Chromium ALONE, file-print-figure-browser.test.ts: the image inside
+ *  paints; Firefox and WebKit are not measured for the group or the nested svg); on every other SVG element, an outermost
+ *  svg, a link, a switch and an image among them, `contents` computes to none (measured the same way; the outermost svg and
+ *  the image in the three engines), so it hides as `none` does. Since the round-4 review (2026-09-20) an element below the
+ *  root reads its computed display, so in a browser this rule decides for the root alone (an outermost svg, which never
+ *  renders `contents`) and for an element the engine keeps `contents` on; an engine that keeps `contents` on a group it does
+ *  not render would be read wrong here, and none of the three is measured to. */
 const contentsRenders = (el: FigureNode): boolean => el.localName === "g" || (el.localName === "svg" && !!el.parentElement && el.parentElement.namespaceURI === SVG_NS);
 /** Whether `el`, an element of a placeholder's figure, takes itself off the paper once the placeholder is restored (`self`)
  *  or takes everything inside it off (`self` false: an ancestor of the element that paints). On an HTML element the
  *  `hidden` attribute, whatever its value (`until-found` included), and `popover` (shown by a call alone, which a note cannot
- *  make); on any element the author's own display none (authorDisplay; on an SVG element whose content `contents` does not
- *  render, contentsRenders, `contents` as well) and, where the browser computes it, opacity zero (the computed value: `-0`, `+0`, `0e0`, `0%`, `.0`,
+ *  make); on any element display none, read as the browser computes it for any element below the figure's `root` (the
+ *  sheet's none stops at the root: a sheet rule on an author's class is read this way, where the author's declaration alone
+ *  missed it; the round-4 review's extra8-3, 2026-09-20) and from the author's own declaration for the root and where nothing
+ *  computes (authorDisplay; on an SVG element whose content `contents` does not render, contentsRenders, `contents` as well)
+ *  and, where the browser computes it, opacity zero (the computed value: `-0`, `+0`, `0e0`, `0%`, `.0`,
  *  ` 0 `, `calc(0)`, a negative value and one the engine rounds to nothing, `1e-100`, each compute to 0, while `0.0.0` and
  *  `0.`, which the browser refuses and paints at 1, and `1e-9`, which it keeps, do not); and, for the painting element
  *  alone, the visibility the browser computes, hidden or collapse: visibility inherits unless the element sets its own, so
  *  it is read where the paint is, and a visible child inside a hidden group paints (measured in the three engines), where an
  *  ancestor's opacity zero takes its children with it. Without a browser (a stand-in under node) the attributes alone are
  *  read, as printable's walk stands alone without rendered; nothing fetches there. */
-function offPaper(el: FigureNode, self: boolean): boolean {
+function offPaper(el: FigureNode, self: boolean, root: FigureNode = el): boolean {
   if (isHtml(el) && (el.hasAttribute("hidden") || el.hasAttribute("popover"))) return true;
-  const display = authorDisplay(el);
-  if (display === "none" || (display === "contents" && el.namespaceURI === SVG_NS && !contentsRenders(el))) return true;
   const cs = computedOf(el);
+  const display = el !== root && cs !== null ? cs.display : authorDisplay(el);
+  if (display === "none" || (display === "contents" && el.namespaceURI === SVG_NS && !contentsRenders(el))) return true;
   if (cs === null) return false;
   if (Number(cs.opacity) === 0) return true;
   return self && (cs.visibility === "hidden" || cs.visibility === "collapse");
@@ -534,9 +554,9 @@ function paintsOf(root: FigureNode): FigureNode[] {
  *  (offPaper: an ancestor's hidden, popover, display none or opacity zero; its visibility is read on `paint`, which
  *  inherits it unless it sets its own), and every SVG ancestor below the root renders its content (SVG_RENDERS). */
 function shows(paint: FigureNode, root: FigureNode): boolean {
-  if (offPaper(paint, true)) return false;
+  if (offPaper(paint, true, root)) return false;
   for (let a = paint === root ? null : paint.parentElement; a; a = a === root ? null : a.parentElement) {
-    if (offPaper(a, false)) return false;
+    if (offPaper(a, false, root)) return false;
     if (a.namespaceURI === SVG_NS && !SVG_RENDERS.includes(a.localName)) return false;
   }
   return true;

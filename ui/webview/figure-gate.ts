@@ -463,7 +463,13 @@ export function loadGatedHost(host: string, doc: ParentNode = document): void {
  *  nothing touched, for any other element. Before the round-2 review (2026-09-19) the print restored by host through
  *  loadGatedHost, so a host one printable and one folded placeholder shared had both restored and the folded picture
  *  fetched for a print that never shows it. The figure's requests go where its URLs point, a redirect followed to a host the
- *  print's title never names and this never grants (the header). */
+ *  print's title never names and this never grants (the header). The restore is the FIGURE's, not a painting element's:
+ *  every moved attribute of the root and of every descendant comes back whether or not the element that carries it paints,
+ *  so a remote URL inside a non-painting element of a figure that paints (an svg <image> under <defs> beside one that
+ *  paints; a hidden <img> inside a <video> that paints its poster) is fetched for something that is never on the paper. The
+ *  print counts, names and restores a placeholder only when its figure paints (file-print.ts figurePrintable), and this
+ *  sentence is what that grant covers (the round-4 review's HIGH 2, 2026-09-20, a consent-text correction; restoring only
+ *  the refs whose element shows is the better shape and needs an owner, plans/markdown-viewer.md open point 8). */
 export function loadGatedFigure(wrap: Element): boolean {
   if (wrap.getAttribute("data-act") !== GATE_ACT) return false;
   restore(wrap);

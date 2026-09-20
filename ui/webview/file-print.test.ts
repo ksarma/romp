@@ -435,6 +435,31 @@ test("figurePrintable under node: a placeholder reaches the paper when it does (
   assert.equal(figurePrintable(wrap(true, 1, holding(popPic, inside({}, popPic)))), false, "a popover ancestor the same");
 });
 
+test("offPaper below the figure's root reads the display the browser COMPUTES, the root the author's declaration: a group hidden by a sheet rule on its class (no attribute, no style) takes the image inside it off the paper, so the figure is not printable (FAILS BEFORE: the author's declaration read empty and the figure counted, its host named and fetched); the same group with a computed display of inline leaves it on the paper; and the root's own computed display none, the gate's sheet on every gated figure, is not read (the author road), so a plain figure stays printable (the round-4 review's extra8-3, 2026-09-20)", () => {
+  const computed = new Map<object, string>();
+  const doc = { defaultView: { getComputedStyle: (el: unknown) => ({ visibility: "visible", opacity: "1", display: computed.get(el as object) || "inline" }) }, createElement: () => ({ style: { display: "" } }) };
+  const svgEl = (localName: string, parentElement: FigureNode | null, descendants: FigureNode[] = []): FigureNode =>
+    hideEdges({ localName, namespaceURI: SVG_NS, parentElement, hasAttribute: () => false, getAttribute: () => null, ownerDocument: doc,
+      querySelectorAll: (sel: string) => ({ forEach: (cb: (el: FigureNode) => void) => { assert.equal(sel, PAINTS_SEL); descendants.filter((d) => d.localName === "image").forEach(cb); } }) });
+  const build = (): { root: FigureNode; group: FigureNode } => {
+    const root = svgEl("svg", null, []);
+    const group = svgEl("g", root);
+    const image = svgEl("image", group);
+    (root as unknown as { querySelectorAll: unknown }).querySelectorAll = (sel: string) => ({ forEach: (cb: (el: FigureNode) => void) => { assert.equal(sel, PAINTS_SEL); [image].forEach(cb); } });
+    return { root, group };
+  };
+  const around = (figure: FigureNode): PrintableNode & { firstElementChild: FigureNode | null } => hideEdges({ localName: "span", parentElement: null, hasAttribute: () => false, checkVisibility: () => true, getClientRects: () => ({ length: 1 }), firstElementChild: figure });
+  const hiddenGroup = build();
+  computed.set(hiddenGroup.root as object, "none");    // the gate's sheet on the root
+  computed.set(hiddenGroup.group as object, "none");   // a sheet rule on the group's class
+  assert.equal(figurePrintable(around(hiddenGroup.root)), false, "FAILS BEFORE: the group's computed display none is read below the root, so the image inside it is off the paper and the figure paints nothing");
+  assert.equal(figureHidden(hiddenGroup.root), false, "the root itself reads the author's declaration, not the sheet's none: the figure is not hidden as a whole");
+  const plain = build();
+  computed.set(plain.root as object, "none");
+  assert.equal(figurePrintable(around(plain.root)), true, "the root's computed none (the gate's sheet) is not read, and the group computes inline: the figure is printable");
+  assert.equal(figureHidden(plain.root), false);
+});
+
 test("collectPictures reads the browser's answer through printable too: a picture with no box (a ruby's rp, a canvas's fallback content, a popover not shown) or without a rect (an svg image inside defs) is not collected, not set eager and not probed", () => {
   const probed: string[] = [];
   const probe = (url: string): Picture => { probed.push(url); return new FakePic(); };

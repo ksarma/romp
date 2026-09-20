@@ -7,6 +7,8 @@
 // file-view-figures-gate-browser.test.ts, and the print's restore over the real viewer in file-print-egress-browser.test.ts.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { hideEdges } from "../test-dom-shim";
 
 // localStorage before the settings module is read (settings.ts reads it at call time)
@@ -163,6 +165,33 @@ test("loadGatedFigure restores ONE placeholder and grants nothing for the page: 
   // the click's road, for contrast: the host joins the set
   loadGatedHost("remote.test", { querySelectorAll: () => [] as Element[] } as unknown as ParentNode);
   assert.equal(allowedFigureHosts().has("remote.test"), true, "a click grants the host for the page");
+  forgetLoadedHosts();
+});
+
+test("loadGatedFigure restores the FIGURE, painting or not: an svg <image> under <defs> beside one that paints gets its href back too, and a hidden <img> inside a <video> its src beside the poster, so a remote URL inside a non-painting element of a figure that paints is fetched (the round-4 review's HIGH 2, 2026-09-20: a consent-text correction, the grant being figure-level by design); the sentence that says so stands in figure-gate.ts, in file-print.ts's header and in printable's docstring, and the sentence it replaced is gone", () => {
+  forgetLoadedHosts();
+  const shown = new Fake("image", { "data-fv-gated-href": "https://remote.test/shown.svg", width: "8", height: "8" });
+  const unshown = new Fake("image", { "data-fv-gated-href": "https://remote.test/defs.svg" });
+  const svg = new Fake("svg").append(shown, new Fake("defs").append(unshown));
+  const one = placeholder("remote.test", svg);
+  const fallback = new Fake("img", { hidden: "", "data-fv-gated-src": "https://remote.test/fallback.svg" });
+  const video = new Fake("video", { "data-fv-gated-poster": "https://remote.test/poster.svg" }).append(fallback);
+  const two = placeholder("remote.test", video);
+  new Fake("div").append(one, two);
+  assert.equal(loadGatedFigure(asEl(one)), true);
+  assert.equal(shown.line(), "height=8 href=https://remote.test/shown.svg width=8", "the painting image's href is back");
+  assert.equal(unshown.line(), "href=https://remote.test/defs.svg", "the image under <defs>, which paints nothing, has its href back as well: the browser is free to fetch it for something never on the paper");
+  assert.equal(loadGatedFigure(asEl(two)), true);
+  assert.equal(video.line(), "poster=https://remote.test/poster.svg", "the poster is back");
+  assert.equal(fallback.line(), "hidden= src=https://remote.test/fallback.svg", "the hidden fallback img's src is back too, hidden or not");
+  assert.equal(allowedFigureHosts().has("remote.test"), false, "nothing granted for the page on either restore");
+  // the sentence the person and the owner read, in the code and pinned here: the grant covers every URL the figure names
+  const read = (f: string): string => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
+  const gate = read("figure-gate.ts"), flow = read("file-print.ts");
+  assert.ok(gate.includes("The restore is the FIGURE's, not a painting element's:") && gate.includes("is fetched for something that is never on the paper"), "loadGatedFigure's docstring states the figure-level rule");
+  assert.ok(flow.includes("The restore is the WHOLE figure's: every") && flow.includes("URL the figure names is fetched, a remote URL inside a non-painting element of a figure that paints among them"), "file-print.ts's header states it where \"with them\" is described");
+  assert.ok(flow.includes("so every URL the figure names is fetched, a remote URL inside a") && flow.includes("non-painting element of a painting figure among them (the round-4 review"), "printable's docstring states it where the privacy rule is stated");
+  assert.ok(!flow.includes("a print fetches from one only for a picture that is on the paper"), "the sentence that promised less than the code performs is gone");
   forgetLoadedHosts();
 });
 

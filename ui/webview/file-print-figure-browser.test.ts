@@ -16,8 +16,19 @@
 // answers the round named, and holds that no request reached a remote host. Two shapes the census of
 // file-print-armed-browser.test.ts (D) turned up on the way (2026-09-20) are here too: an <audio> without `controls`, which the
 // browser's own sheet hides, and a picture inside an <audio> or a <video>, fallback content a browser with the element never
-// renders; before this both were counted, and the picture inside the audio fetched for a print that shows nothing of it. Skips loudly without a browser. Synthetic values
-// only: invented hosts under .test, a local /twin.svg.
+// renders; before this both were counted, and the picture inside the audio fetched for a print that shows nothing of it.
+// The round-4 review (2026-09-20) added two reads. (a) A second oracle keyed on the URL rather than the figure (extra8-2):
+// after the reads above, every placeholder whose figure paints is restored the way "Print with them" restores it
+// (loadGatedFigure, one placeholder at a time) and the remote URLs the page then asks for are held, per shape, equal to the
+// table's `fetches`. The restore is the FIGURE's (figure-gate.ts), so a URL inside a non-painting element of a figure that
+// paints is asked for too: the shapes with two painting elements on two hosts below measure that (an image at opacity zero
+// beside one that paints, an image under <defs> beside one that paints, a group a sheet rule hides beside a painting
+// image), and a figure that paints nothing has no URL asked for. What the browser fetches of a restored figure is its own
+// (a <picture> fetches the <source> it picks and not the <img>'s src), so the column is measured, not derived. (b) Below the
+// figure's root the flow reads the display the browser COMPUTES (extra8-3): a group hidden by a sheet rule on its class,
+// which no attribute and no style declaration names, takes its image off the paper (FAILS BEFORE: the author's declaration
+// read empty, and the figure was counted, its host named and fetched). Skips loudly without a browser. Synthetic values
+// only: invented hosts under .test, a local /twin.svg and /twin2.svg.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -33,19 +44,25 @@ const GATE_RULE = '.fileview-md .fv-gate[data-act="fv-load"] > :not([data-fv-lab
 function bundle(): string {
   const esbuild = requireCjs("esbuild");
   const r = esbuild.buildSync({
-    stdin: { contents: 'export { figureHidden, figurePrintable, PAINTS_SEL } from "./file-print"; export { gateRemoteFigures, GATE_ACT } from "./figure-gate";', resolveDir: UI, loader: "ts", sourcefile: "figure-leg.ts" },
+    stdin: { contents: 'export { figureHidden, figurePrintable, PAINTS_SEL } from "./file-print"; export { gateRemoteFigures, loadGatedFigure, GATE_ACT } from "./figure-gate";', resolveDir: UI, loader: "ts", sourcefile: "figure-leg.ts" },
     bundle: true, write: false, format: "iife", globalName: "FVF", platform: "browser", target: "es2020",
     nodePaths: [path.join(process.cwd(), "node_modules")], external: ["*.png", "*.svg", "*.woff", "*.ttf", "../media/*.woff2"], logLevel: "silent",
   });
   return r.outputFiles[0].text as string;
 }
 
-type Shape = { name: string; html: (url: string) => string; hidden?: boolean; paints: boolean };
-const svgOf = (attrs: string, inner: (url: string) => string) => (url: string): string => '<svg xmlns="http://www.w3.org/2000/svg" ' + attrs + ' width="8" height="8">' + inner(url) + "</svg>";
+/** `fetches`: which of the shape's URLs the browser asks for once the placeholder is restored as "Print with them" restores
+ *  it ("a" the first, "b" the second), measured; absent, the first URL when the figure paints and none when it does not. */
+type Shape = { name: string; html: (url: string, url2: string) => string; hidden?: boolean; paints: boolean; fetches?: string[] };
+const svgOf = (attrs: string, inner: (url: string, url2: string) => string) => (url: string, url2: string): string => '<svg xmlns="http://www.w3.org/2000/svg" ' + attrs + ' width="8" height="8">' + inner(url, url2) + "</svg>";
 const image = (attrs = "") => (url: string): string => '<image href="' + url + '" ' + attrs + ' width="8" height="8"/>';
+/** The sheet rule of the leg's page that hides an author's class: what the computed display read below the root sees and
+ *  the author's declaration does not. */
+const HIDE_RULE = ".leg-hide { display: none; }";
 /** Every shape: the spellings of opacity, visibility and display on a gated svg (`hidden`: the answer figureHidden must give
  *  for the root; `paints`: whether the browser paints the twin, which figurePrintable must match), the HTML attributes on
- *  HTML and SVG elements, and the structures whose painting element is not the root. */
+ *  HTML and SVG elements, the structures whose painting element is not the root, and the shapes with two painting elements
+ *  on two hosts. */
 function shapes(): Shape[] {
   const out: Shape[] = [];
   for (const [v, hidden] of [["0", true], ["-0", true], ["+0", true], ["0e0", true], ["0%", true], [" 0 ", true], ["-1", true], ["1e-100", true], ["calc(0)", true], [".0", true],
@@ -91,37 +108,53 @@ function shapes(): Shape[] {
   out.push({ name: "svg[fill=url]>rect", html: (u) => '<svg xmlns="http://www.w3.org/2000/svg" fill="url(' + u + '#p)" width="8" height="8"><rect width="8" height="8"/></svg>', hidden: false, paints: true });
   out.push({ name: "svg[fill=url]>defs>rect", html: (u) => '<svg xmlns="http://www.w3.org/2000/svg" fill="url(' + u + '#p)" width="8" height="8"><defs><rect width="8" height="8"/></defs></svg>', hidden: false, paints: false });
   out.push({ name: "svg[fill=url] empty", html: (u) => '<svg xmlns="http://www.w3.org/2000/svg" fill="url(' + u + '#p)" width="8" height="8"></svg>', hidden: false, paints: false });
+  // the round-4 review's extra8-3: a group a sheet rule hides, which no attribute and no style names
+  out.push({ name: "svg>g.leg-hide>image", html: svgOf("", (u) => '<g class="leg-hide">' + image()(u) + "</g>"), hidden: false, paints: false });
+  // the round-4 review's extra8-2: two painting elements on two hosts; the restore is the figure's, so the URL of a
+  // non-painting element beside a painting one is asked for too (the column below is what the browser does, measured)
+  out.push({ name: "svg>image[a]+image[b]", html: svgOf("", (u, u2) => image()(u) + image()(u2)), hidden: false, paints: true, fetches: ["a", "b"] });
+  out.push({ name: "svg>image[a]+image[b][opacity=0]", html: svgOf("", (u, u2) => image()(u) + image('opacity="0"')(u2)), hidden: false, paints: true, fetches: ["a", "b"] });
+  out.push({ name: "svg>image[a]+defs>image[b]", html: svgOf("", (u, u2) => image()(u) + "<defs>" + image()(u2) + "</defs>"), hidden: false, paints: true, fetches: ["a", "b"] });
+  out.push({ name: "svg>image[a][display=none]+image[b]", html: svgOf("", (u, u2) => image('display="none"')(u) + image()(u2)), hidden: false, paints: true, fetches: ["a", "b"] });
+  out.push({ name: "svg>g.leg-hide>image[a]+image[b]", html: svgOf("", (u, u2) => '<g class="leg-hide">' + image()(u) + "</g>" + image()(u2)), hidden: false, paints: true, fetches: ["a", "b"] });
+  out.push({ name: "svg[opacity=0]>image[a]+image[b]", html: svgOf('opacity="0"', (u, u2) => image()(u) + image()(u2)), hidden: true, paints: false, fetches: [] });
+  out.push({ name: "picture>source[a]+img[b]", html: (u, u2) => '<picture><source srcset="' + u + '" type="image/svg+xml"><img src="' + u2 + '" width="8" height="8" alt=""></picture>', hidden: false, paints: true, fetches: ["a"] });
+  out.push({ name: "video[poster=a]>img[b] (fallback)", html: (u, u2) => '<video poster="' + u + '" width="8" height="8"><img src="' + u2 + '" width="8" height="8" alt=""></video>', hidden: false, paints: true, fetches: ["a", "b"] });
   return out;
 }
+/** The URLs the restore is expected to have asked for, as the table says. */
+const expectedFetches = (s: Shape): string[] => s.fetches ?? (s.paints ? ["a"] : []);
 
 type Row = { name: string; gated: boolean; rootDisplay: string; rootOpacity: string; hidden: boolean | null; printable: boolean | null; twinPaints: boolean | null; remote: string };
 type Read = { rows: Row[]; errors: string[] };
+type Restored = { restored: boolean | null; printableAtRestore: boolean | null };
 
-test("figureHidden and figurePrintable over real gated figures in Chromium: for every shape the flow's answer equals the browser's own answer for the shape's ungated twin (checkVisibility with visibility and opacity, and a client rect, over the twin's painting elements); the named spellings of opacity, visibility and display read as the round named (FAILS BEFORE: -0, +0, 0e0, -1 and calc(0) read on the paper, 0.0.0 off it; a hidden img inside a picture, an svg image inside defs, with display none or with opacity 0 counted; an <svg hidden> read as hidden where the browser paints it); the gate's sheet rule stands in both sheets and sets display none on the gated root alone; no remote host was asked", { timeout: 120000 }, async (t) => {
+test("figureHidden and figurePrintable over real gated figures in Chromium: for every shape the flow's answer equals the browser's own answer for the shape's ungated twin (checkVisibility with visibility and opacity, and a client rect, over the twin's painting elements), a group hidden by a sheet rule on its class among them (FAILS BEFORE the round-4 review: the author's declaration read empty); the named spellings of opacity, visibility and display read as the round named (FAILS BEFORE: -0, +0, 0e0, -1 and calc(0) read on the paper, 0.0.0 off it; a hidden img inside a picture, an svg image inside defs, with display none or with opacity 0 counted; an <svg hidden> read as hidden where the browser paints it); the gate's sheet rule stands in both sheets and sets display none on the gated root alone; no remote host was asked", { timeout: 120000 }, async (t) => {
   for (const sheet of ["feed.css", "styles.css"]) assert.ok(fs.readFileSync(path.join(UI, sheet), "utf8").includes(GATE_RULE), sheet + " carries the gate rule the flow's display read depends on");
   await inBrowser(t, async (browser) => {
     const all = shapes();
     const hostOf = (i: number): string => "s" + i + ".remote.test";
+    const hostOf2 = (i: number): string => "s" + i + "b.remote.test";
     const requests: string[] = [];
     const page = await browser.newPage({ viewport: { width: 900, height: 700 } });
     const errors: string[] = [];
     page.on("pageerror", (e: Error) => { errors.push(e.message); });
     page.on("request", (r: any) => { requests.push(r.url()); });
     const js = bundle();
-    const html = '<!DOCTYPE html><html><head><meta charset="utf-8"><style>.fileview-md .fv-gate { display: inline-flex; min-width: 4em; min-height: 1em; }\n' + GATE_RULE + '\n.twin { display: inline-block; margin-left: 1em; }</style></head><body><div class="fileview-md" id="root"></div><script src="/leg.js"></script></body></html>';
+    const html = '<!DOCTYPE html><html><head><meta charset="utf-8"><style>.fileview-md .fv-gate { display: inline-flex; min-width: 4em; min-height: 1em; }\n' + GATE_RULE + '\n' + HIDE_RULE + '\n.twin { display: inline-block; margin-left: 1em; }</style></head><body><div class="fileview-md" id="root"></div><script src="/leg.js"></script></body></html>';
     await page.route((u: URL) => u.href.startsWith(ORIGIN), (route: any) => {
       const u = new URL(route.request().url());
       if (u.pathname === "/leg.js") return route.fulfill({ status: 200, contentType: "text/javascript", body: js });
-      if (u.pathname === "/twin.svg") return route.fulfill({ status: 200, contentType: "image/svg+xml", body: SVG });
+      if (u.pathname === "/twin.svg" || u.pathname === "/twin2.svg") return route.fulfill({ status: 200, contentType: "image/svg+xml", body: SVG });
       return route.fulfill({ status: 200, contentType: "text/html", body: html });
     });
     await page.route((u: URL) => u.hostname.endsWith(".remote.test"), (route: any) => route.fulfill({ status: 404, contentType: "text/plain", body: "never" }));
     await page.goto(ORIGIN + "/");
-    const read: Read = await page.evaluate(async ([blocks, hosts, paintsSel]: [string[], string[], string]) => {
+    const read: Read = await page.evaluate(async ([blocks, hosts, hosts2, paintsSel]: [string[], string[], string[], string]) => {
       const w = window as any;
       const errors: string[] = [];
       // the shapes on a parser document, so no remote URL is ever live in this page; the gate runs there, then the tree is adopted
-      const src = new DOMParser().parseFromString("<!DOCTYPE html><html><body>" + blocks.map((b, i) => '<p data-shape="' + i + '">' + b.replace(/URL/g, "https://" + hosts[i] + "/p.svg") + '<span class="twin">' + b.replace(/URL/g, "/twin.svg") + "</span></p>").join("") + "</body></html>", "text/html");
+      const src = new DOMParser().parseFromString("<!DOCTYPE html><html><body>" + blocks.map((b, i) => '<p data-shape="' + i + '">' + b.replace(/URL2/g, "https://" + hosts2[i] + "/q.svg").replace(/URL/g, "https://" + hosts[i] + "/p.svg") + '<span class="twin">' + b.replace(/URL2/g, "/twin2.svg").replace(/URL/g, "/twin.svg") + "</span></p>").join("") + "</body></html>", "text/html");
       w.FVF.gateRemoteFigures(src.body, location.href);
       const root = document.getElementById("root")!;
       for (const p of Array.from(src.body.children)) root.appendChild(document.adoptNode(p));
@@ -142,7 +175,7 @@ test("figureHidden and figurePrintable over real gated figures in Chromium: for 
         return { name: "", gated: !!g, rootDisplay: cs ? cs.display : "-", rootOpacity: cs ? cs.opacity : "-", hidden, printable, twinPaints: paints.length ? paints.some(shows) : false, remote: p.querySelector('[src^="https:"], [href^="https:"], [srcset*="https:"], [poster^="https:"], [fill*="https:"]') ? "live" : "moved" };
       });
       return { rows, errors };
-    }, [all.map((s) => s.html("URL")), all.map((_, i) => hostOf(i)), PAINTS_SEL]);
+    }, [all.map((s) => s.html("URL", "URL2")), all.map((_, i) => hostOf(i)), all.map((_, i) => hostOf2(i)), PAINTS_SEL]);
     assert.deepEqual(read.errors, [], "the flow's reads threw nothing");
     const rows = read.rows.map((r, i) => ({ ...r, name: all[i].name }));
     for (const r of rows) t.diagnostic("figure | " + r.name + " | gated=" + r.gated + " | root display=" + r.rootDisplay + " opacity=" + r.rootOpacity + " | figureHidden=" + r.hidden + " | figurePrintable=" + r.printable + " | twin paints=" + r.twinPaints);
@@ -158,7 +191,33 @@ test("figureHidden and figurePrintable over real gated figures in Chromium: for 
     assert.deepEqual(wrong, [], "FAILS BEFORE: -0, +0, 0e0, -1 and calc(0) read as on the paper, 0.0.0 as off it, and <svg hidden> as hidden");
     const wrongPaper = rows.filter((r, i) => r.twinPaints !== all[i].paints).map((r, i) => r.name + ": the browser paints the twin " + r.twinPaints + ", the leg expected " + all[i].paints);
     assert.deepEqual(wrongPaper, [], "the browser's own answers are the ones this leg's table names (a change here is a change in the engine, and the flow follows it)");
-    assert.deepEqual(requests.filter((u) => !u.startsWith(ORIGIN)), [], "no request left the origin: the gate moved every remote URL aside on the parser document");
+    assert.deepEqual(requests.filter((u) => !u.startsWith(ORIGIN)), [], "no request left the origin before any restore: the gate moved every remote URL aside on the parser document");
+    // the second oracle, keyed on the URL: every placeholder whose figure paints is restored as "Print with them" restores it,
+    // and the remote URLs the page then asks for are read per shape against the table's `fetches`
+    const before = requests.length;
+    const restored: Restored[] = await page.evaluate((n: number) => {
+      const w = window as any;
+      const out: Restored[] = [];
+      for (let i = 0; i < n; i++) {
+        const g = document.querySelector('p[data-shape="' + i + '"] [data-act="' + w.FVF.GATE_ACT + '"]');
+        const printable = g ? w.FVF.figurePrintable(g) as boolean : null;
+        out.push({ printableAtRestore: printable, restored: printable === true && g ? w.FVF.loadGatedFigure(g) as boolean : null });
+      }
+      return out;
+    }, all.length);
+    for (let stable = 0; stable < 4; stable++) {   // the requests settle: four consecutive 250 ms windows with no new request (every .remote.test route answers at once)
+      const n = requests.length;
+      await new Promise((r) => setTimeout(r, 250));
+      if (requests.length !== n) stable = -1;
+    }
+    const asked = requests.slice(before).filter((u) => !u.startsWith(ORIGIN));
+    const fetchedOf = (i: number): string[] => { const a = asked.filter((u) => u === "https://" + hostOf(i) + "/p.svg").length, b = asked.filter((u) => u === "https://" + hostOf2(i) + "/q.svg").length; return [...(a ? ["a" + (a > 1 ? " x" + a : "")] : []), ...(b ? ["b" + (b > 1 ? " x" + b : "")] : [])]; };
+    for (let i = 0; i < all.length; i++) t.diagnostic("fetch | " + all[i].name + " | printable=" + restored[i].printableAtRestore + " | restored=" + restored[i].restored + " | fetched=" + (fetchedOf(i).join(",") || "none") + " | expected=" + (expectedFetches(all[i]).join(",") || "none"));
+    assert.deepEqual(restored.map((r, i) => [rows[i].name, r.printableAtRestore]).filter(([, p], i) => p !== rows[i].printable), [], "the restore read the same printable answer as the rows");
+    assert.deepEqual(restored.filter((r) => r.printableAtRestore === true && r.restored !== true).map((_, i) => rows[i].name), [], "every placeholder whose figure paints was restored");
+    const wrongFetch = all.map((s, i) => ({ name: s.name, got: fetchedOf(i), want: expectedFetches(s) })).filter((x) => x.got.join(",") !== x.want.join(",")).map((x) => x.name + ": asked for " + (x.got.join(",") || "none") + ", the table says " + (x.want.join(",") || "none"));
+    assert.deepEqual(wrongFetch, [], "per URL: the restore of a figure that paints asks for every URL the browser fetches of the whole figure, a non-painting element's among them (the figure-level grant, stated in figure-gate.ts and file-print.ts), and a figure that paints nothing has no URL asked for");
+    assert.deepEqual(asked.filter((u) => !/^https:\/\/s\d+b?\.remote\.test\/[pq]\.svg$/.test(u)), [], "no URL outside the shapes' own was asked for");
     assert.deepEqual(errors, [], "no script error");
     await page.close();
   });
