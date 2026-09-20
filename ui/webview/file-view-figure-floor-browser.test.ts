@@ -473,11 +473,15 @@ const BOXLESS_TEXT = "# Report\n\n"
   + 'Words before the zero-width picture <img width="0" src="figs/box.svg" alt=""> and words after it.\n\n'
   + "![wide](figs/wide.svg)\n\nA sentence under the figure.\n\n" + Array.from({ length: 30 }, (_, i) => PARA(i + 1)).join("\n\n") + "\n";
 const BOXLESS_DOCS: Record<string, string> = { [REPORT]: BOXLESS_TEXT, [BOX]: svg(300, 200, "#846"), [WIDE]: svg(761, 76, "#468") };
-type Boxless = { loaded: boolean[]; boxes: [number, number][]; controls: number[]; total: number; before: { x: number; y: number }[] };
+type Boxless = { loaded: boolean[]; boxes: [number, number][]; controls: number[]; total: number; before: { x: number; y: number; text: string }[] };
 /** The three figures of the report in document order (the hidden, the zero-width, the wide): loaded or not, the laid-out box,
  *  the count of controls after each anchor (0 or 1), the total of controls in the box, and for the two boxless figures a point
- *  inside the word before the img, 14 px left of the img's position and 8 px down, where the -28 px margin would have laid
- *  the control's box. */
+ *  at the centre of the last six characters of the words before the figure (the text node before its anchor, read through a
+ *  Range), where the sheets' -28 px margin laid the control's 22 px box before the fix: the control sits after the figure in
+ *  the line, and a figure with no box takes no room, so the box ran from 28 px to 6 px before the end of those words. The
+ *  point is derived from the words, never from the img: a display:none img has an all-zero rect, so a point offset from it
+ *  lies outside the page and clicks nothing at any head (the file review's round 4, behaviour-3: the leg's first form clicked
+ *  at [-14, 8] for the hidden picture). `text` is the characters the point lies in, for the diagnostic. */
 const boxless = (page: any): Promise<Boxless> => page.evaluate(() => {
   const imgs = Array.from(document.querySelectorAll(".fileview-md img")) as HTMLImageElement[];
   const control = (img: Element): number => {
@@ -491,7 +495,17 @@ const boxless = (page: any): Promise<Boxless> => page.evaluate(() => {
     boxes: imgs.map((i) => { const r = i.getBoundingClientRect(); return [r.width, r.height] as [number, number]; }),
     controls: imgs.map(control),
     total: document.querySelectorAll(".fileview-md [data-fv-figopen]").length,
-    before: imgs.slice(0, 2).map((i) => { const r = i.getBoundingClientRect(); return { x: r.left - 14, y: r.top + 8 }; }),
+    before: imgs.slice(0, 2).map((i) => {
+      let a: Element = i;
+      while (a.parentElement && (a.parentElement.classList.contains("fc-imgwrap") || a.parentElement.localName === "picture")) a = a.parentElement;
+      const t = a.previousSibling;
+      const s = t && t.nodeType === Node.TEXT_NODE ? t.textContent || "" : "";
+      if (!s.trim()) return { x: -1, y: -1, text: "" };                       // no words before the figure: refused below
+      const range = document.createRange();
+      range.setStart(t as Text, Math.max(0, s.length - 6)); range.setEnd(t as Text, s.length);
+      const r = range.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2, text: s.slice(-6) };
+    }),
   };
 });
 const fmtBoxless = (b: Boxless): string => "loaded " + JSON.stringify(b.loaded) + ", boxes " + JSON.stringify(b.boxes.map(([w, h]) => [Math.round(w), Math.round(h)])) + ", controls " + JSON.stringify(b.controls) + " (total " + b.total + ")";
@@ -526,8 +540,11 @@ test("in a browser: a loaded `<img hidden>` and a loaded `<img width=\"0\">` bes
     t.diagnostic("after the reflow at 800: " + fmtBoxless(reflowed));
     assert.deepEqual(reflowed.controls.slice(0, 2), [0, 0], "still none after the reflow: " + fmtBoxless(reflowed));
     assert.equal(reflowed.controls[2], 1, "the wide figure keeps its control at 800: " + fmtBoxless(reflowed));
-    // the click on the words before each boxless picture, where the control's box would have been: the words take it, nothing opens
+    // the click on the words before each boxless picture, where the control's box would have been: the words take it, nothing opens;
+    // each point is inside the words and the viewport, so a zero rect cannot pass as a click that opened nothing
+    t.diagnostic("the click points: " + JSON.stringify(reflowed.before));
     for (const [k, at] of reflowed.before.entries()) {
+      assert.ok(at.text.trim().length > 0 && at.x >= 0 && at.y >= 0 && at.x <= 800 && at.y <= 600, "figure " + k + ": the point lies in the words before it and inside the viewport: " + JSON.stringify(at));
       await page.mouse.click(at.x, at.y);
       await frames(page, 3);
       assert.deepEqual(await opened(page), [], "figure " + k + ": no tab from a click on the prose before it");
