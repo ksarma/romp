@@ -7936,11 +7936,16 @@ what is new is the request's kind and the Lax class it brings, and not credentia
 the None class rides in Chromium; the table is Chromium's alone (fresh-3's refuter saw Firefox carry the None cookie on
 the image request too and WebKit drop it there, a difference between engines the leg does not measure). The records
 pass's earlier measurement (2026-09-20, a real HTTP server's log, a scratch leg kept outside the repo beside the
-contract with its record, Lax and Strict seated): the image request came with no cookie and with the page's address as
-referer (`sec-fetch-dest: image`, `sec-fetch-site: cross-site`; the kernel-served dashboard sends `Referrer-Policy:
-same-origin`, kernel.py, so there the image request names no referer), and each tab's document request
+contract with its record, Lax and Strict seated): the image request came with no cookie and with the page's origin as
+referer, `http://notes-api.test/` and nothing of the page's path (`sec-fetch-dest: image`, `sec-fetch-site: cross-site`;
+the origin alone is established by a second real-server probe of 2026-09-20 from a page at `/some/dir/page.html?tab=chat`,
+its record beside the first's, since the first probe's page sat at the origin root, where the page's address and the
+origin are one string and the record could not tell them apart, and the sentence written from it had claimed the page's
+address, which the file review's round 3 found the record could not show; Chromium's default
+`strict-origin-when-cross-origin` sends the origin on a cross-origin request; the kernel-served dashboard sends
+`Referrer-Policy: same-origin`, kernel.py, so there the image request names no referer), and each tab's document request
 (`sec-fetch-dest: document`, `sec-fetch-mode: navigate`) came with the Lax cookie, without the Strict one, and with no
-referer. So the follow-on is a privacy surface and lands on the owner's word whatever its tier, with the two roads
+referer, in both probes. So the follow-on is a privacy surface and lands on the owner's word whatever its tier, with the two roads
 priced in open point 11. A gated
 placeholder (figure-gate.ts) gets none until its figure is loaded: `armFigureControls`, one capture-phase pair of `load`
 and `error` listeners on the body per open beside the labels', runs the decision at the load and at the error (the
