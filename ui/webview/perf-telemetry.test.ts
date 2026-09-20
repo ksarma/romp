@@ -1264,8 +1264,11 @@ test("share ON on a page without the APIs: nav and res are null, marks empty, ws
   assert.equal(d.nav, null); assert.equal(d.res, null); assert.deepEqual(d.marks, {}); assert.equal(d.env, null); assert.equal(d.wsBytes, null);
   assert.equal("wsBytesByHost" in d, false, "no federation (the shell, VS Code): the key is left off, not written null");
   assert.deepEqual(d.vis, { hiddenN: 0, visibleN: 0, hiddenMs: 0 }); assert.deepEqual(d.rafGap, { n: 0, worst: 0 });
-  // a throwing reader reads the same as an absent one
-  const g = harness({ switches: () => ({ share: true, mute: false }), raf: null, entries: () => { throw new Error("no"); }, marks: () => { throw new Error("no"); }, env: () => { throw new Error("no"); } });
+  // a throwing reader reads the same as an absent one: every reader throws here, the two federation readers included (the
+  // harness's defaults return null, an ABSENT reader, which the assertion on wsBytesByHost below did not exercise until
+  // review round 1 of the field, 2026-09-20; the safe() guards at the collector's two federation reads are what this pins)
+  const g = harness({ switches: () => ({ share: true, mute: false }), raf: null, entries: () => { throw new Error("no"); }, marks: () => { throw new Error("no"); }, env: () => { throw new Error("no"); },
+                      fedBytes: () => { throw new Error("no"); }, fedAttached: () => { throw new Error("no"); } });
   const q = createPerfTelemetry("shell", g.deps);
   g.frame(q, { type: "x" }, 1);
   g.clock.wall += 60_000;
