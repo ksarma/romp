@@ -212,8 +212,9 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
                                     "gate legs measure the dwell against, plus DOWN_READ_ROOM_MS (%d ms) for the reads after the wait (seen.waitedMs is stamped "
                                     "after visible()'s reads, so a wait that resolved at the cap's edge is stamped past it by their duration; a wait that ran "
                                     "to its cap is refused by the margin leg itself, seen.expired, never measured); with the room the per-drive margin pin "
-                                    "holds for every drive whose link-up waits all resolved and showed, and reds only for a window shorter than that"
-                                    % (cls.__name__, cls.down_dwell_ms, L.DOWN_WINDOW_MARGIN, cls.wait_ms, L.DOWN_READ_ROOM_MS))
+                                    "holds for every drive whose link-up waits all resolved and showed, the reads inside the room (DOWN_READ_ROOM_MS over "
+                                    "DOWN_WINDOW_MARGIN, %d ms), and reds only for a window shorter than that"
+                                    % (cls.__name__, cls.down_dwell_ms, L.DOWN_WINDOW_MARGIN, cls.wait_ms, L.DOWN_READ_ROOM_MS, int(L.DOWN_READ_ROOM_MS / L.DOWN_WINDOW_MARGIN)))
         self.assertGreaterEqual(L.DOWN_WINDOW_MARGIN, 2.0, "round 2's ruling: the while-down read comes at least twice this drive's slowest link-up delivery after phase D's "
                                                           "post; widen down_dwell_ms, never the margin. The floor is pinned here because the margin pin's cells are derived from "
                                                           "the constant and shrink with it (a lowered margin passes them all); the relation pin above ceilings it at 2.0 for the "
