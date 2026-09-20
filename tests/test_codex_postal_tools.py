@@ -13,6 +13,7 @@ is its own process). The bus's own half is here too: the push banner names the t
 `romp mail send` from a Codex shell points at it. Synthetic ids and the notes-api demo's session names only; the fakes
 carry no token."""
 import contextlib
+import errno
 import io
 import json
 import os
@@ -21,6 +22,7 @@ import tempfile
 import threading
 import time
 import unittest
+from pathlib import Path
 from unittest import mock
 from types import SimpleNamespace
 from romp_load import load_source
@@ -80,6 +82,21 @@ def bus(*steps):
 
 def call(tool, args, name="api"):
     return km._codex_postal_call(tool, SID, name, args)
+
+
+@contextlib.contextmanager
+def _store_stat_fails(err=errno.EIO):
+    """The request store's stat raises `err` (EIO: the disk, not the file's absence); every other path's stat runs as
+    before. test_user_todos._store_stat_fails, copied rather than imported so this module loads no second kernel."""
+    real = Path.stat
+
+    def fake(self, *a, **k):
+        if self.name == "user-todos.json":
+            raise OSError(err, os.strerror(err), str(self))
+        return real(self, *a, **k)
+
+    with mock.patch.object(Path, "stat", fake):
+        yield
 
 
 class SendMessage(unittest.TestCase):
@@ -445,6 +462,26 @@ class RequestTools(unittest.TestCase):
         self.assertIn("so ut-9f2c1a34 was not withdrawn", text, "the store could not be read: never 'not yours'")
         self.assertEqual(log, [])
         self.assertEqual(self.pushed, [], "nothing changed, nothing to push")
+
+    def test_a_store_that_cannot_be_read_is_not_saved_and_not_withdrawn_and_nothing_is_written(self):
+        # the project's reviewer executed the reader with a stat raising EIO: it read as the EMPTY store, so a register
+        # here would have replaced the store on disk with a one-row copy and a withdraw would have said "no request of
+        # yours". Could-not-read is the same flagged state as a file that is not a store: the add's Not saved with the
+        # route's cause, the withdraw's could-not-read sentence, the row standing, the file byte for byte as it was
+        tid = km._add_user_todo(SID, "Need the staging port")
+        store = jd.STATE / "user-todos.json"
+        before = store.read_bytes()
+        del self.pushed[:]
+        with _store_stat_fails(), contextlib.redirect_stderr(io.StringIO()), bus() as log:
+            ok, text = call("add_user_todo", {"text": "Need the port"})
+            self.assertEqual((ok, text), (False, "Not saved: %s." % km._USER_TODOS_UNREADABLE_ERR))
+            ok, text = call("withdraw_user_todo", {"id": tid})
+        self.assertFalse(ok)
+        self.assertIn("so %s was not withdrawn" % tid, text, "the store could not be read: never 'not yours'")
+        self.assertEqual(log, [])
+        self.assertEqual(self.pushed, [], "nothing changed, nothing to push")
+        self.assertEqual(store.read_bytes(), before, "the store is never replaced by a copy of the empty stand-in")
+        self.assertNotIn("resolved", self._rows()[0], "the row stands")
 
     def test_while_the_switch_is_off_both_refuse_in_the_bus_tools_words_and_nothing_is_written(self):
         # A write is DUE on both roads before the switch flips: the session holds an open row (a withdraw of a row

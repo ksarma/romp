@@ -173,7 +173,7 @@ CENSUS = {
     "_user_images": ("pure", "over a turn's blocks and text"),
     "_user_todo_session_ended": ("pure", "over the reg's alive bit (reg), the death marker (gone) and the states file's newest row (states)"),
     "_user_todos_on": ("sig", "usertodos", "the per-install switch file, the component's on/off prefix"),
-    "_user_todos_unreadable": ("sig", "usertodos", "whether the store on disk is the version its shape guard flagged, the component's 'unreadable' value"),
+    "_user_todos_unreadable": ("sig", "usertodos", "whether the store on disk is the version its shape guard flagged, or could not be read (a stat or read failure other than absence), the component's 'unreadable' value"),
     "iso": ("pure", "over a timestamp"),
 }
 

@@ -7,7 +7,8 @@ by inference may write the store (the authority tier).
 Covered here, kernel side:
 - the store (user-todos.json under STATE): round-trip, stamps-not-deletes, sid-keying, id stability, the
   optional `blocking` flag, the loud unknown-id refusal, the mtime cache, the caps, the resolved-history
-  bound, the shape guard;
+  bound, the shape guard, and the could-not-read flag (a stat or read failure other than absence is the SAME
+  flagged state as a file that is not a store, said once per errno; a missing file stays the empty store);
 - the store lock: every read-modify-write holds it, concurrent registrations lose nothing, and a racing
   answer and withdraw cannot both succeed;
 - the ended gate (_user_todo_session_ended) for both backends: the SDK registry's alive bit, or a reg-less
@@ -42,6 +43,7 @@ Synthetic fixtures only: private placeholder uuids, the notes-api demo world.
 """
 import ast
 import contextlib
+import errno
 import inspect
 import io
 import json
@@ -82,6 +84,36 @@ NOW = 1781200000
 def _hosts_off(root):
     """Per-session hosts are on by default: a fixture that mints its own state root writes `off` into it."""
     Path(root, "session-hosts").write_text("off")
+
+
+@contextlib.contextmanager
+def _store_stat_fails(err=errno.EIO):
+    """The store's stat raises `err` (EIO by default: the disk, not the file's absence); every other path's stat runs as
+    before. The failure the project's reviewer executed against the reader (a stat raising EIO read as the EMPTY store),
+    as a context manager for every surface's test. By NAME, so the same fault reaches the store under any state root."""
+    real = Path.stat
+
+    def fake(self, *a, **k):
+        if self.name == "user-todos.json":
+            raise OSError(err, os.strerror(err), str(self))
+        return real(self, *a, **k)
+
+    with mock.patch.object(Path, "stat", fake):
+        yield
+
+
+@contextlib.contextmanager
+def _store_read_fails(err=errno.EIO):
+    """The store's stat succeeds but its bytes cannot be read (read_text raises `err`): the second face of could-not-read."""
+    real = Path.read_text
+
+    def fake(self, *a, **k):
+        if self.name == "user-todos.json":
+            raise OSError(err, os.strerror(err), str(self))
+        return real(self, *a, **k)
+
+    with mock.patch.object(Path, "read_text", fake):
+        yield
 
 
 class _StoreSandbox(unittest.TestCase):
@@ -184,6 +216,95 @@ class StoreRoundTrip(_StoreSandbox):
                 with self.assertRaises(RuntimeError):
                     km._add_user_todo(SID, "Need the staging port")
             self.assertEqual(p.read_text(), junk, "the unreadable store is never replaced")
+
+
+class UnreadableStore(_StoreSandbox):
+    """A stat or read failure other than absence is could-not-read, never the empty store (the project's reviewer executed a
+    stat raising EIO: the reader answered {} with no line and no flag, the prune then spent every arm record on that
+    read, and no writer had a flag to refuse on). The reader answers the same FLAGGED state the shape guard answers for
+    a file that is not a store: the empty stand-in, _user_todos_unreadable True, one stderr line per errno, every write
+    refused until a read succeeds. A missing file stays the empty store, silent by design."""
+
+    def _one_line(self, err):
+        lines = err.getvalue().splitlines()
+        self.assertEqual(len(lines), 1, lines)
+        self.assertIn("could not be read", lines[0])
+        self.assertIn("user-todos.json", lines[0])
+        return lines[0]
+
+    def test_a_stat_failure_is_the_flagged_store_said_once_per_errno(self):
+        tid = km._add_user_todo(SID, "Need the staging port")
+        err = io.StringIO()
+        with _store_stat_fails(errno.EIO), contextlib.redirect_stderr(err):
+            for _ in range(3):
+                self.assertEqual(km._user_todos(), {}, "the empty stand-in, never a partial store")
+                self.assertTrue(km._user_todos_unreadable(), "could-not-read, not no-store")
+        self.assertIn("[Errno %d]" % errno.EIO, self._one_line(err))
+        with _store_stat_fails(errno.EACCES), contextlib.redirect_stderr(err):
+            km._user_todos(); km._user_todos()
+        self.assertEqual(len(err.getvalue().splitlines()), 2, "a second errno is news")
+        self.assertIn("[Errno %d]" % errno.EACCES, err.getvalue().splitlines()[1])
+        with _store_stat_fails(errno.EACCES), contextlib.redirect_stderr(err):
+            km._user_todos()
+        self.assertEqual(len(err.getvalue().splitlines()), 2, "the same errno again is not")
+        # the disk back: the rows read again, the flag lifts, and the outage wrote nothing
+        with contextlib.redirect_stderr(err):
+            self.assertEqual([t["id"] for t in km._user_todos()[SID]], [tid])
+            self.assertFalse(km._user_todos_unreadable())
+        self.assertEqual(len(err.getvalue().splitlines()), 2, "recovery says nothing")
+
+    def test_a_read_failure_is_the_same_flagged_state(self):
+        tid = km._add_user_todo(SID, "Need the staging port")
+        km._user_todos_cache.clear()                     # the version's cache would answer the rows without a read
+        err = io.StringIO()
+        with _store_read_fails(errno.EIO), contextlib.redirect_stderr(err):
+            for _ in range(3):
+                self.assertEqual(km._user_todos(), {})
+                self.assertTrue(km._user_todos_unreadable())
+        self.assertIn("[Errno %d]" % errno.EIO, self._one_line(err))
+        refused = io.StringIO()
+        with _store_read_fails(errno.EIO), contextlib.redirect_stderr(refused):
+            with self.assertRaises(RuntimeError):
+                km._add_user_todo(SID, "Need the auth-scheme decision")
+        self.assertEqual(len(refused.getvalue().splitlines()), 1, refused.getvalue())
+        self.assertIn("refusing to overwrite", refused.getvalue(), "the writer's own line, the reader's said once already")
+        self.assertEqual([t["id"] for t in km._user_todos()[SID]], [tid], "readable again: the rows, and the flag lifts")
+        self.assertFalse(km._user_todos_unreadable())
+
+    def test_a_missing_file_is_the_empty_store_and_silent(self):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(km._user_todos(), {})
+            self.assertFalse(km._user_todos_unreadable())
+            tid = km._add_user_todo(SID, "Need the staging port")   # nothing to protect: the writer writes through
+        self.assertEqual(err.getvalue(), "")
+        self.assertEqual([t["id"] for t in km._user_todos()[SID]], [tid])
+
+    def test_every_writer_refuses_while_the_store_cannot_be_read(self):
+        tid = km._add_user_todo(SID, "Need the staging port")
+        t2 = km._add_user_todo(SID, "Need the auth-scheme decision")
+        km._resolve_user_todo(SID, t2, "answered")
+        p = jd.STATE / "user-todos.json"
+        before = p.read_bytes()
+        with _store_stat_fails(), contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(RuntimeError):
+                km._add_user_todo(SID, "Need a staging API key")   # the one writer that reaches the file off an empty read
+            self.assertFalse(km._resolve_user_todo(SID, tid, "dismissed"), "no row in the stand-in to stamp")
+            self.assertFalse(km._reopen_user_todo(SID, t2), "none to lift")
+            with self.assertRaises(RuntimeError):
+                km._write_user_todos({})
+        self.assertEqual(p.read_bytes(), before, "the store is never replaced by a copy of the empty stand-in")
+        self.assertEqual(len(km._user_todos()[SID]), 2)
+
+    def test_the_withdraw_account_and_the_signature_read_the_flag(self):
+        tid = km._add_user_todo(SID, "Need the staging port")
+        with _store_stat_fails(), contextlib.redirect_stderr(io.StringIO()):
+            acct = km._withdraw_user_todo(SID, tid)
+            self.assertEqual(acct, {"ok": False, "state": "unknown", "at": None, "owner": None,
+                                    "error": km._USER_TODOS_UNREADABLE_ERR}, "could not look: never 'not yours'")
+            self.assertEqual(km._user_todo_fp(SID), "unreadable", "the card rebuilds to show the error")
+            self.assertEqual(km._user_todo_fp(SID2), "unreadable")
+        self.assertNotIn("resolved", km._user_todos()[SID][0])
 
 
 class RegistrationCaps(_StoreSandbox):
@@ -518,6 +639,40 @@ class PruneSweep(_StoreSandbox):
         before = p.stat().st_mtime_ns
         km._prune_user_todos()
         self.assertEqual(p.stat().st_mtime_ns, before, "nothing gone: no write")
+
+    def test_a_store_that_cannot_be_read_leaves_every_row_and_arm_record_alone(self):
+        # the project's reviewer executed this: a stat raising EIO read as the EMPTY store, and the empty-store arm spent
+        # every arm record on it (a record no row backs is stale, on a store that HAS rows). Could-not-read is refused,
+        # never treated as no records: no row leaves, no record is spent, nothing is written. The not-a-store version
+        # is the same flagged state and is refused the same way; a readable store runs the sweep as before, and a
+        # genuinely empty one still spends the stale records
+        tid = km._add_user_todo(SID, "answered, then the session died")
+        km._resolve_user_todo(SID, tid, "answered")
+        self._mark_dead(SID)                             # on a readable store the sweep drops this sid
+        self.addCleanup(km._UT_FLOOR_ARM.clear)
+        with km._UT_FLOOR_ARM_LOCK:
+            km._UT_FLOOR_ARM[SID2] = (frozenset({"ut-22222222"}), NOW - 30)
+        p = jd.STATE / "user-todos.json"
+        before = p.read_bytes()
+        for fault in (_store_stat_fails, _store_read_fails):
+            with self.subTest(fault=fault.__name__):
+                km._user_todos_cache.clear()
+                with fault(), contextlib.redirect_stderr(io.StringIO()):
+                    km._prune_user_todos()
+                self.assertEqual(p.read_bytes(), before, "nothing written")
+                self.assertEqual(km._UT_FLOOR_ARM.get(SID2), (frozenset({"ut-22222222"}), NOW - 30), "the record stands")
+        km._user_todos_cache.clear(); km._user_todos_bad.clear()
+        p.write_text(json.dumps({"enabled": True, "gt": 1}))   # not a store: the same flagged state
+        with contextlib.redirect_stderr(io.StringIO()):
+            km._prune_user_todos()
+        self.assertEqual(km._UT_FLOOR_ARM.get(SID2), (frozenset({"ut-22222222"}), NOW - 30))
+        p.write_bytes(before)
+        km._user_todos_cache.clear(); km._user_todos_bad.clear()
+        km._prune_user_todos()
+        self.assertNotIn(SID, km._user_todos(), "readable again: the dead session's resolved row leaves")
+        self.assertIn(SID2, km._UT_FLOOR_ARM, "spent only on a death record, and there is none")
+        km._prune_user_todos()
+        self.assertNotIn(SID2, km._UT_FLOOR_ARM, "an EMPTY store (read, not failed) still spends a record no row backs")
 
     def test_the_sweep_runs_once_per_housekeeping_pass_and_never_from_a_build(self):
         # one call per pass of the housekeeping jobs, as its own stage; never from a per-session or tab
@@ -1146,6 +1301,22 @@ class BuildSessionSeam(unittest.TestCase):
             evs = self._todo_events(self.build())
         self.assertNotIn("userTodosError", evs[0], "off: the surfaces are quiet")
 
+    def test_a_store_whose_stat_fails_rides_the_same_error_key(self):
+        # could-not-read is the flagged state, so the card shows the store's error where the rows were, never an empty
+        # section that reads as "nothing open"
+        km._add_user_todo(SID, "Need the staging port")
+        with _store_stat_fails(), contextlib.redirect_stderr(io.StringIO()):
+            payload = self.build()
+        evs = self._todo_events(payload)
+        self.assertEqual(payload["userTodos"], [])
+        self.assertEqual(len(evs), 1)
+        self.assertIn("Can't read romp's request store", evs[0]["userTodosError"])
+        self.assertIn("user-todos.json", evs[0]["userTodosError"])
+        km._parse_cache.clear()
+        evs = self._todo_events(self.build())
+        self.assertNotIn("userTodosError", evs[0], "readable again: the rows are back")
+        self.assertEqual(len(evs[0]["userTodos"]), 1)
+
     def test_resolved_requests_ship_nowhere(self):
         tid = km._add_user_todo(SID, "Need the staging port")
         km._resolve_user_todo(SID, tid, "dismissed")
@@ -1330,6 +1501,18 @@ class DriveOps(_StoreSandbox):
         self.assertTrue(handled)
         self.assertEqual(self._warns(), [km._USER_TODOS_UNREADABLE_WARN])
         self.assertNotIn("resolved", km._user_todos()[SID][0], "nothing changed")
+
+    def test_both_ops_refuse_on_a_store_that_cannot_be_read_never_with_the_settled_story(self):
+        # the flagged store comes before the settled-row read on both ops: off an unflagged empty stand-in the answer
+        # told the person the request was "already settled" and the dismiss the same, when the kernel could not read
+        tid = km._add_user_todo(SID, "Need the staging port")
+        with _store_stat_fails(), contextlib.redirect_stderr(io.StringIO()):
+            km._drive({"type": "userTodoAnswer", "id": SID, "todoId": tid, "text": "8443."}, self.client)
+            km._drive({"type": "userTodoDismiss", "id": SID, "todoId": tid}, self.client)
+        self.assertEqual(self._warns(), [km._USER_TODOS_UNREADABLE_WARN] * 2)
+        self.assertEqual([m.get("sid") for m in self.sent], [SID] * 2)
+        self.assertEqual(self.calls, [], "nothing sent to the session")
+        self.assertNotIn("resolved", km._user_todos()[SID][0], "nothing stamped")
 
     def test_dismiss_stamps_dismissed_and_sends_nothing(self):
         tid = km._add_user_todo(SID, "Need the staging port")
@@ -1678,6 +1861,26 @@ class RecallRidesTheEntry(_StoreSandbox):
         self.assertEqual(be.queue, [], "the recall itself succeeded")
         self.assertIn("refused the reopen", err.getvalue())
         self.assertIn(tid, err.getvalue())
+        self.assertEqual(km._user_todos()[SID][0]["resolved"]["kind"], "answered", "the row is as it was")
+
+    def test_a_reopen_whose_write_fails_is_said_and_the_recall_still_answers(self):
+        # what the writer actually raises: _atomic_write re-raises an OSError (a disk error, a permission). The recall
+        # itself succeeded, so the fault is said, with the fact that the recall's result still goes to the client, and
+        # never raised: before this arm only RuntimeError was caught, against the function's own comment that the
+        # cancelResult must reach the client, and an OSError left it for _dispatch_ws's per-message except
+        be = _FakeBackend()
+        tid, body = self._answered(be)
+        qid = be.meta[0]["qid"]
+        err = io.StringIO()
+        with mock.patch.object(km, "_atomic_write", side_effect=OSError(errno.EIO, "Input/output error")), \
+                contextlib.redirect_stderr(err):
+            self.assertIsNone(km._cancel_backend_queued(be, SID, -1, None, qid=qid))
+        self.assertEqual(be.queue, [], "the recall itself succeeded")
+        lines = err.getvalue().splitlines()
+        self.assertEqual(len(lines), 1, lines)
+        self.assertIn(tid, lines[0])
+        self.assertIn("Input/output error", lines[0], "the fault is named")
+        self.assertIn("still", lines[0], "and so is the fact that the recall's result is still sent")
         self.assertEqual(km._user_todos()[SID][0]["resolved"]["kind"], "answered", "the row is as it was")
 
     def test_a_recall_by_index_and_body_reopens_too(self):

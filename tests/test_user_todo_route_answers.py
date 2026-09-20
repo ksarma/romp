@@ -20,6 +20,7 @@ fresh state root per row, with the remote forward's boundary (_host_for_sid, _re
 that module mocks it. Synthetic fixtures only: this module's private placeholder sids, the notes-api demo world.
 """
 import contextlib
+import errno
 import inspect
 import io
 import json
@@ -121,13 +122,14 @@ def by_tid(c):
 
 # --------------------------------------------------------------------------------------------------- the table
 def case(name, path, body, status, answer, *, token=True, switch=True, seed=None, remote=None, row=None,
-         patch=None, pushed=0, fwd=None, written=False, store=None):
+         patch=None, pushed=0, fwd=None, written=False, store=None, broken=None):
     """One row: the request (a dict, raw bytes, or a callable of the seed's ctx), the expected status and body text,
     and the side effects expected of it. `remote` is the (status, parsed body) the mocked forward answers, `row`
     the remote row _host_for_sid names (the standard one unless given), `fwd` the exact forwarded calls expected
-    (None: no forward may happen), `patch` a (name, replacement) on the kernel module."""
+    (None: no forward may happen), `patch` a (name, replacement) on the kernel module, `broken` an errno the store's
+    stat raises for the request's duration (test_user_todos._store_stat_fails: could-not-read, not a missing file)."""
     return dict(name=name, path=path, body=body, status=status, answer=answer, token=token, switch=switch, seed=seed,
-                remote=remote, row=row, patch=patch, pushed=pushed, fwd=fwd, written=written, store=store)
+                remote=remote, row=row, patch=patch, pushed=pushed, fwd=fwd, written=written, store=store, broken=broken)
 
 
 def _reg(name, body, status, answer, **kw):
@@ -245,6 +247,12 @@ REGISTER = [
          patch=("_add_user_todo", mock.Mock(side_effect=ValueError("the writer's own refusal")))),
     _reg("the store goes bad under the check", {"id": SID, "text": LINE}, 503, _err(UNREADABLE),
          patch=("_write_user_todos", mock.Mock(side_effect=RuntimeError("write refused")))),
+    # could-not-read (a stat failing for a reason other than absence) is the same flagged state: the guard's 503, and
+    # the store on disk is not replaced by a one-row copy of the empty stand-in
+    _reg("the store cannot be read: a stat raising EIO", {"id": SID, "text": LINE}, 503, _err(UNREADABLE),
+         seed=seed_own_open, broken=errno.EIO),
+    _reg("the store cannot be read: a stat raising EACCES", {"id": SID, "text": LINE}, 503, _err(UNREADABLE),
+         seed=seed_own_open, broken=errno.EACCES),
 ]
 
 REGISTER_ORDER = [
@@ -303,6 +311,10 @@ WITHDRAW = [
     _wd("flagged store after an own row", by_tid, 200, _acct("unknown", "null", None, UNREADABLE), seed=seed_flagged_after_row),
     _wd("the store goes bad under the account", by_tid, 503, _err(UNREADABLE), seed=seed_own_open,
         patch=("_write_user_todos", mock.Mock(side_effect=RuntimeError("write refused")))),
+    # could-not-read is the flagged store's account: owner null with the cause, never "unknown, not yours", and the
+    # row stands unstamped
+    _wd("the store cannot be read: a stat raising EIO", by_tid, 200, _acct("unknown", "null", None, UNREADABLE),
+        seed=seed_own_open, broken=errno.EIO),
     _wd("a malformed sid has no shape check here: unknown", {"id": "web/" + SID, "todoId": UNKNOWN}, 200,
         _acct("unknown", "null", False)),
     _wd("extra keys are ignored", lambda c: dict(by_tid(c), text="x", blocking="true"), 200, WITHDREW, seed=seed_own_open,
@@ -407,6 +419,8 @@ class RouteAnswers(unittest.TestCase):
                         km, "_remote_forward_status", lambda r, path, b: calls.append([path, b]) or c["remote"]))
                 if c["patch"] is not None:
                     stack.enter_context(mock.patch.object(km, *c["patch"]))
+                if c["broken"] is not None:
+                    stack.enter_context(tut._store_stat_fails(c["broken"]))
                 with contextlib.redirect_stderr(io.StringIO()):
                     status, out = tut._serve_post(c["path"], body, {"X-Romp-Token": km.TOKEN} if c["token"] else {})
             answer = norm(out.decode("utf-8"))
