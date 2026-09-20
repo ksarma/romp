@@ -662,10 +662,16 @@ def _traversal_references(tree):
     shape the round's ruling names, one more time); the four names are the closed set, so the forms key on them alone, which is
     clean today: the module spells a traversal attribute at three sites, each inside _walk or exempt. `owner` is the enclosing
     top-level def, `Class.method` for a method, `Class` for a class body, `<module>` otherwise, found by walking each module-body
-    def's subtree (through _walk, as every reader here walks). Outside these forms: a traversal name read from the module's
+    def's subtree (through _walk, as every reader here walks). Keyed on four names, the finder is wrong in both directions: an
+    innocent use of a listed name needs a _WALK_EXEMPT row (the parent map in _loader_births lists a walked node's children and
+    traverses nothing), and a walk under an unlisted name is not seen. Outside these forms: a traversal name read from the module's
     namespace by string (`vars(ast)[...]`, `ast.__dict__[...]`, `operator.attrgetter(...)`) or assembled at run time, the limit the
-    walker case holds on its side with samples; the interpreter check beside that case scans vars(ast) for every node class and reds
-    by name on a new one with no walker involved, so the version demand does not rest on this finder."""
+    walker case holds on its side with samples, and any traversal under an unlisted name, a recursion over ast.iter_fields,
+    node._fields or ast.dump, a whole walk this finder never sees (review round 5, correctness-2, tests-1, extra5-2 and regression-2:
+    the ruling stops the name list at four, so the finder refuses the forms it names and is silent on the rest, an early warning;
+    the contract, a stranger node refused and never passed over, is carried by execution in TheWalkersRefuseAStrangerByExecution
+    over every census entry point of this module). The interpreter check beside the walker case scans vars(ast) for every node
+    class and reds by name on a new one with no walker involved, so the version demand does not rest on this finder."""
     owners = {}
     for stmt in tree.body:
         if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -2805,10 +2811,14 @@ class TheGrammarIsTheOneTheWalkersClassify(unittest.TestCase):
     classify must fail naming the class, since a reader that cannot parse must not report absent. Two halves. At test time the
     running interpreter's ast module is read whole and every node class it defines must be in _AST_CONCRETE (the grammar the
     walkers classify), _AST_ABSTRACT (the sum types the parser never instantiates) or _AST_COMPAT (the classes kept for
-    compatibility that no parse produces), so a grammar that gains a node form reds here naming the new class; and _walk, the one
-    walk every census in this module reads through, refuses a node of a class outside _AST_CONCRETE by name. A third case holds the
-    "one walk" itself: no reference to an ast traversal name sits outside _walk, read from this module's own AST in every form
-    (review round 4, regression-3 and extra7-1: a count of one spelling held it before)."""
+    compatibility that no parse produces), so a grammar that gains a node form reds here naming the new class; and _walk, the walk
+    every census in this module is meant to read through, refuses a node of a class outside _AST_CONCRETE by name. A third case is
+    the early warning over this module's own AST: no reference to one of four traversal names sits outside _walk in the three forms
+    the finder reads (review round 4, regression-3 and extra7-1: a count of one spelling held it before). It is keyed on names and
+    so wrong in both directions, an innocent use of a listed name costing an exemption row and a whole walk under an unlisted name
+    (a recursion over ast.iter_fields, node._fields or ast.dump) invisible to it, so it refuses the forms it names and is silent on
+    the rest; the contract itself, a stranger node refused by every census and never passed over, is carried by execution in
+    TheWalkersRefuseAStrangerByExecution (review round 5, correctness-2, tests-1, extra5-2 and regression-2)."""
 
     def test_the_interpreter_defines_no_node_class_outside_the_table(self):
         here, version = sys.version_info[:2], sys.version.split()[0]
@@ -2856,14 +2866,22 @@ class TheGrammarIsTheOneTheWalkersClassify(unittest.TestCase):
         with self.assertRaises(AssertionError) as cm:
             list(_walk(tree))
         self.assertIn("Store", str(cm.exception), "a stranger of a known name is refused as well, by identity: %s" % cm.exception)
-        # that every walker reads through _walk is the next case's, over this module's AST (a count of one spelling before round 4)
+        # the next case is the early warning over this module's AST (references to four traversal names outside _walk; a count of one
+        # spelling before round 4); that every census reads through _walk is held by execution in TheWalkersRefuseAStrangerByExecution
 
-    def test_no_tree_walk_happens_except_through_walk(self):
-        """Every walker reads through _walk, asserted over this module's own AST and not by counting one spelling (review round 4,
-        regression-3 and extra7-1: the round-3 guard counted the text of one call spelling once, so a census written as a
-        NodeVisitor subclass, an iter_child_nodes recursion, a from-import of the walk, a module alias walking or a getattr with
-        the name in a string walked a tree without _walk, met a node the table does not classify, reported no site and left the
-        guard green; a one-spelling contract is a list of length one). _traversal_references reads every reference to the four
+    def test_no_reference_to_a_traversal_name_sits_outside_walk(self):
+        """The early warning: no reference to one of four traversal names sits outside _walk in the three forms the finder reads,
+        asserted over this module's own AST and not by counting one spelling (review round 4, regression-3 and extra7-1: the
+        round-3 guard counted the text of one call spelling once, so a census written as a NodeVisitor subclass, an
+        iter_child_nodes recursion, a from-import of the walk, a module alias walking or a getattr with the name in a string walked
+        a tree without _walk, met a node the table does not classify, reported no site and left the guard green; a one-spelling
+        contract is a list of length one). This case was named for the contract, no tree walk except through _walk, until the
+        round-5 fixes; it holds less than that (review round 5, correctness-2, tests-1, extra5-2 and regression-2): the finder pins
+        references to four names in three forms and is wrong in both directions, a row bought for the innocent parent-map listing
+        in _loader_births and nothing to say about a recursion over ast.iter_fields, node._fields or ast.dump, a whole walk under
+        no listed name. It refuses the forms it names and is silent on the rest; the walk contract, a stranger node refused by
+        every census and never passed over, is carried by execution in TheWalkersRefuseAStrangerByExecution, and a fifth name is
+        deliberately not added here (the ruling on approach: a list of syntax does not converge). _traversal_references reads every reference to the four
         traversal names in three forms keyed on the name and not on the road to the module: an attribute named like one on any base
         (the ast module, a name it is imported under or rebound to, importlib.import_module("ast"), __import__("ast"),
         sys.modules["ast"]; a NodeVisitor base is spelled this way too), a from-import of the name from any module at all, with or
@@ -2882,9 +2900,11 @@ class TheGrammarIsTheOneTheWalkersClassify(unittest.TestCase):
         history paragraphs record, and the stated limit is run the same way and answers no reference, so it is held on its side
         (the finder reads a string constant only as getattr's second argument, so a sample spelling a name is no reference of this
         module's). Outside these forms: a traversal name read
-        from the module's namespace by string (vars(ast), ast.__dict__, operator.attrgetter) or assembled at run time; the
-        interpreter check beside this case scans vars(ast) for every node class and reds by name on a new one with no walker
-        involved, so the version demand does not rest on this pin alone."""
+        from the module's namespace by string (vars(ast), ast.__dict__, operator.attrgetter) or assembled at run time, and any
+        traversal under an unlisted name, a recursion over ast.iter_fields, node._fields or ast.dump, a whole walk this finder never
+        sees (the witness's negative control runs two such recursions over a planted tree and asserts this finder answers no
+        reference over either); the interpreter check beside this case scans vars(ast) for every node class and reds by name on a
+        new one with no walker involved, so the version demand does not rest on this pin alone."""
         refs = _traversal_references(ast.parse(Path(os.path.realpath(__file__)).read_text(encoding="utf-8")))
         outside = [r for r in refs if r[4] != "_walk"]
         stray = [r for r in outside if (r[4], r[1]) not in _WALK_EXEMPT]
