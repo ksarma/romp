@@ -7872,20 +7872,24 @@ or a `name`. The mark is keyed on that attribute (the fork PR review's round 2, 
 tests-4, 2026-09-20): the module exempts an href-less anchor target (an author's `name` or `id`, never a link) from
 the dead dressing, and the split anchor with an author's id sat in that exemption, unclassed and untitled, painted in
 the link ink by the sheet's bare `.fileview-md a` rule and doing nothing on a click, a silent dead link in all three
-engines where this record had said a visible one; the exemption itself is unchanged, since narrowing it would re-mark
-every author-written anchor target in every document. Pinned in file-view-links.test.ts (the split anchor with an id,
-with a name and with neither marked, the exempt target unmarked) and in the sixth case of
-file-view-figures-gate-adopt-browser.test.ts (the id-bearing and the bare split anchor fv-dead with the title and the
-sheet's help cursor, the prose's anchor target unmarked, in the three engines; red for the id-bearing one at the head
-before the mark, no class and no title, green with it). Closing the leak and making that anchor inert are one effect,
-a correction and not a cost: a link inside a code fence stopped being live and says so, which is what every other link
-inside a fenced code block already does, since the fence shows its markup as text. Behaviour, not privacy: an HTML `a`
-with no `href` follows and fetches nothing. An svg anchor on one line keeps its namespace and folds as before, and an
-HTML anchor written as raw markup in such a `<pre><code>` block is an element the passes read, not text, and is
-stamped the same under both orders (the same probe: a path link, live at both heads). Predating this fix and outside
-it: an anchor whose `href` the sanitizer stripped and that carries an author's `id` with no residue of the link stays
-exempt and silent, and the sheet's bare `a` rule painting every href-less anchor in the link ink is general and
-untouched here.
+engines where this record had said a visible one; the exemption for a target carrying no `xlink:href` is unchanged,
+since narrowing it generally would re-mark every author-written anchor target in every document. The key is the
+attribute and not the fence, so one more anchor population is marked with it: an author's HTML `a` spelled with
+`xlink:href` in the prose, which the sanitizer keeps with that attribute as a plain one and no `href`, never followed
+and read as live in the same way, and is dressed dead too (the fork PR review's pre-landing verification measured it
+in the three engines, and the two pins below hold it). Pinned in file-view-links.test.ts (the split anchor with an id,
+with a name and with neither marked, the prose anchor spelled with `xlink:href` marked, the exempt target unmarked)
+and in the sixth case of file-view-figures-gate-adopt-browser.test.ts (the id-bearing and the bare split anchor and
+the prose anchor spelled with `xlink:href` fv-dead with the title and the sheet's help cursor, the prose's anchor
+target unmarked, in the three engines; red for the id-bearing one at the head before the mark, no class and no title,
+green with it). Closing the leak and making that anchor inert are one effect, a correction and not a cost: a link
+inside a code fence stopped being live and says so, which is what every other link inside a fenced code block already
+does, since the fence shows its markup as text. Behaviour, not privacy: an HTML `a` with no `href` follows and fetches
+nothing. An svg anchor on one line keeps its namespace and folds as before, and an HTML anchor written as raw markup
+in such a `<pre><code>` block is an element the passes read, not text, and is stamped the same under both orders (the
+same probe: a path link, live at both heads). Predating this fix and outside it: an anchor whose `href` the sanitizer
+stripped and that carries an author's `id` with no residue of the link stays exempt and silent, and the sheet's bare
+`a` rule painting every href-less anchor in the link ink is general and untouched here.
 
 **The re-parse population.** The rule needs every write that re-parses or re-serializes markup after the adoption
 enumerated, a different grep from the walk of attribute writes. The verbs are the HTML-parsing entry points an element
@@ -8045,22 +8049,23 @@ multi-line fences, an svg image with `src`, with `src` beside a gating `href`, a
 `language-js` control): red in all three engines with the fence pass after the adoption (the figure server's three GET
 lines) and green in all three with the pass before the chain, one placeholder per fence. Its fifth case, the Copy
 button under the moved pass, clicked for real on two fences: green in all three engines. Its sixth case, the svg
-anchor split across lines in a raw fence, with an author's id and without one, both marked dead with the title in the
-rendered page and the prose's anchor target unmarked: red in all three engines at the head before the mark for the
-id-bearing anchor (no class, no title), green in all three with it. file-view-figures-gate-adopt-svg-browser.test.ts,
-the second leg: red in Firefox and in WebKit at 2d41e5c9b, green in Chromium there, green in all three after the fix.
-Both legs skip where Playwright's engines are absent. In CI, the job whose step runs npm test has no Playwright
-browser install and no restore of Playwright's browser cache before that step (the job's own steps, the job found by
-that step and not by its key, read off .github/workflows/ci.yml by tools/markdown-viewer-plan-gate-adopt.test.mjs;
-what another job installs, or this job installs after that step, does not bear on it), so in CI the legs skip and the
-node scene runs: file-view-figures-gate-adopt.test.ts drives the real openFileView and openUrlView under plain node
-over a stand-in with two documents, the sanitizer's body inert and the viewer's document live, and pins by execution
-that no node entering the live document carries a fetching attribute on an unlisted host or a page-relative path (an
-img's src and srcset, a source's, a video's src and poster, an audio's src, an svg image's href or xlink:href, an svg
-paint reference, a figure inside details, a folder figure, and for a URL document a relative figure resolved against
-the document's directory; read at every move into the live document whose parent is the viewer's box or stands under
-it, so a node a later pass brings in at any depth is read at its own moment), that no write of such an attribute lands
-on a live-document element across the render, that nothing under the box carries one once the render is done, that the
+anchor split across lines in a raw fence, with an author's id and without one, and an author's prose anchor spelled
+with `xlink:href`, all three marked dead with the title in the rendered page and the prose's anchor target unmarked:
+red in all three engines at the head before the mark for the id-bearing anchor (no class, no title), green in all
+three with it. file-view-figures-gate-adopt-svg-browser.test.ts, the second leg: red in Firefox and in WebKit at
+2d41e5c9b, green in Chromium there, green in all three after the fix. Both legs skip where Playwright's engines are
+absent. In CI, the job whose step runs npm test has no Playwright browser install and no restore of Playwright's
+browser cache before that step (the job's own steps, the job found by that step and not by its key, read off
+.github/workflows/ci.yml by tools/markdown-viewer-plan-gate-adopt.test.mjs; what another job installs, or this job
+installs after that step, does not bear on it), so in CI the legs skip and the node scene runs:
+file-view-figures-gate-adopt.test.ts drives the real openFileView and openUrlView under plain node over a stand-in
+with two documents, the sanitizer's body inert and the viewer's document live, and pins by execution that no node
+entering the live document carries a fetching attribute on an unlisted host or a page-relative path (an img's src and
+srcset, a source's, a video's src and poster, an audio's src, an svg image's href or xlink:href, an svg paint
+reference, a figure inside details, a folder figure, and for a URL document a relative figure resolved against the
+document's directory; read at every move into the live document whose parent is the viewer's box or stands under it,
+so a node a later pass brings in at any depth is read at its own moment), that no write of such an attribute lands on
+a live-document element across the render, that nothing under the box carries one once the render is done, that the
 gated figures stand as placeholders holding their sources in data-fv-gated-* and a click on the host restores exactly
 them, and that the folder figure is requested through /file. Red on four mutations of file-view.ts in scratch copies
 of the head (2026-09-20): the base's order (the adoption first: 16 leaks at the adoption in the file kind and 4 in the

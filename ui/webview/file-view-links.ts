@@ -342,8 +342,10 @@ export function linkMarkdownAnchors(root: HTMLElement, filePath: string): void {
       // Chromium, Firefox and WebKit, findings correctness-2, extra7-1 and tests-4, 2026-09-20). That anchor WAS a followable
       // section link before the fence pass moved ahead of the link passes, and the sheet paints every href-less anchor in the
       // link ink (`.fileview-md a`, no [href] guard), so exempted as an anchor target it read as live and did nothing on a click.
-      // It is marked dead with the reason whether or not the author gave it an id or a name. A one-line svg anchor keeps its
-      // namespace and the fold has moved its xlink:href to `href` before this pass, so it never reaches this arm.
+      // It is marked dead with the reason whether or not the author gave it an id or a name. The key is the attribute, not the
+      // fence: an author's HTML <a xlink:href> written in prose, which the sanitizer keeps with the attribute plain and no href,
+      // is marked too (it never followed and read as live the same way). A one-line svg anchor keeps its namespace and the fold
+      // has moved its xlink:href to `href` before this pass, so it never reaches this arm.
       if ((a.hasAttribute("name") || a.hasAttribute("id")) && !a.hasAttribute("xlink:href")) return;
       withClass(a, DEAD_LINK_CLASS);
       a.setAttribute("title", DEAD_LINK_TITLE);

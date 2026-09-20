@@ -4196,33 +4196,34 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
   // carries no KaTeX) is not code: it keeps the Copy button and nothing else, as in the chat's highlight().
   // The pass runs HERE, on the sanitizer's body, before the figure chain below (2026-09-20), because it is the one pass that
   // re-parses markup: wrapCodeLines (code-block.ts) serializes each code element through innerHTML and parses it back, and its
-  // line splitter carries only <span> tags across a newline, so an author's raw multi-line fence `<pre><code><svg>` /
-  // `<image src="...">` / `</svg></code></pre>` comes back with the image outside its svg, where the HTML parser makes it an HTML
-  // <img>. The chain reads src and srcset on an img and never on an svg image (figure-gate.ts FETCH_ATTRS.image is href and
-  // xlink:href), so with this pass after the adoption the img was created in the live document after the chain had judged the
-  // svg, and its src or srcset fetched from the unlisted host in Chromium, Firefox and WebKit with no click (the fourth scene of
+  // line splitter carries only <span> tags across a newline, so an author's raw multi-line fence `<pre><code><svg>` / `<image
+  // src="...">` / `</svg></code></pre>` comes back with the image outside its svg, where the HTML parser makes it an HTML <img>.
+  // The chain reads src and srcset on an img and never on an svg image (figure-gate.ts FETCH_ATTRS.image is href and xlink:href),
+  // so with this pass after the adoption the img was created in the live document after the chain had judged the svg, and its src
+  // or srcset fetched from the unlisted host in Chromium, Firefox and WebKit with no click (the fourth scene of
   // file-view-figures-gate-adopt-browser.test.ts: red with this pass over `box` after the adoption, green here, measured
   // 2026-09-20). Before the chain, the chain judges what the re-parse created, once; a placeholder placed before this pass was
   // repeated by the line splitter, three for one gated svg. What the re-parse in body makes of every element the sanitizer keeps
   // inside an svg, and which of those fetch, is the namespace table under "The fence hole" in the plan section the chain block
   // names: `image` alone becomes a fetching element the chain judges through other attributes (an HTML img, src and srcset); a
-  // nested `svg` stays an svg, its paint references judged by paintRefs. The same move corrected a second product of the
-  // re-parse: an svg <a xlink:href> split across lines in such a fence comes back an HTML <a> whose xlink:href is a plain
-  // attribute, and under the old order that anchor was followable for the reason the image leaked, the fold below (`a[*|href]`)
-  // and linkMarkdownAnchors having stamped href and class on the svg anchor before the re-parse copied them into the HTML <a> it
-  // made; judged after the re-parse it has no href and still carries the plain xlink:href, which the fold below (`a[*|href]`, a
+  // nested `svg` stays an svg, its paint references judged by paintRefs. The same move corrected a second product of the re-parse:
+  // an svg <a xlink:href> split across lines in such a fence comes back an HTML <a> whose xlink:href is a plain attribute, and
+  // under the old order that anchor was followable for the reason the image leaked, the fold below (`a[*|href]`) and
+  // linkMarkdownAnchors having stamped href and class on the svg anchor before the re-parse copied them into the HTML <a> it made;
+  // judged after the re-parse it has no href and still carries the plain xlink:href, which the fold below (`a[*|href]`, a
   // namespaced match) does not select, and linkMarkdownAnchors (file-view-links.ts) marks it dead (fv-dead, the title saying why)
   // whether or not the author gave it an id or a name: the module exempts an href-less anchor target (an author's name or id,
   // never a link) from the dead dressing, and the split anchor with an author's id sat in that exemption unclassed and untitled,
   // painted in the link ink by the sheet's bare `.fileview-md a` rule and doing nothing on a click, a silent dead link in the
   // three engines (the fork PR review's round 2, findings correctness-2, extra7-1 and tests-4, 2026-09-20; the mark is keyed on
-  // that attribute and the exemption is otherwise unchanged; the sixth case of the same leg holds both shapes, red for the
-  // id-bearing one at the head before the mark), so a link inside a code fence stopped being live and says so, which is what every
-  // other link inside a fenced code block already does, its markup shown as text; an svg anchor on one line keeps its namespace
-  // and folds as before (measured 2026-09-20 in the three engines by the fork PR review's verification, at the moved head and at
-  // a copy with the pass moved back). The Copy button (code-block.ts addCopyBtn) is created in the live
-  // document, appended into this body's <pre> and adopted with it below; its listeners ride both adoptions, and the same leg
-  // clicks each fence's button for real in the three engines.
+  // that attribute and not on the fence, so an author's HTML anchor spelled with xlink:href in prose, which the sanitizer keeps
+  // with the attribute plain and no href, is marked too, and the exemption for a target carrying no xlink:href is unchanged; the
+  // sixth case of the same leg holds the three shapes, red for the id-bearing one at the head before the mark), so a link inside a
+  // code fence stopped being live and says so, which is what every other link inside a fenced code block already does, its markup
+  // shown as text; an svg anchor on one line keeps its namespace and folds as before (measured 2026-09-20 in the three engines by
+  // the fork PR review's verification, at the moved head and at a copy with the pass moved back). The Copy button (code-block.ts
+  // addCopyBtn) is created in the live document, appended into this body's <pre> and adopted with it below; its listeners ride
+  // both adoptions, and the same leg clicks each fence's button for real in the three engines.
   const copySources = fenceCopyQueue(text, fences);
   clean.querySelectorAll("pre code").forEach((node) => {
     const codeEl = node as HTMLElement;

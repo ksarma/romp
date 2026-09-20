@@ -613,7 +613,7 @@ test("linkMarkdownAnchors: a URL target opens a tab, a file target becomes a pat
   assert.equal(named.getAttribute("class"), null); assert.equal(named.getAttribute("title"), null);
 });
 
-test("linkMarkdownAnchors: the fence pass's re-parse product, an HTML anchor with no href carrying a plain `xlink:href` attribute (an svg anchor split across lines in a raw fence, re-parsed in body), is marked dead with the reason whether or not the author gave it an id or a name: it was a followable section link before the pass moved ahead of the link passes, and the sheet's bare `.fileview-md a` rule paints an href-less anchor in the link ink; an author's anchor target (an id or a name, no xlink attribute) stays unmarked", async () => {
+test("linkMarkdownAnchors: the fence pass's re-parse product, an HTML anchor with no href carrying a plain `xlink:href` attribute (an svg anchor split across lines in a raw fence, re-parsed in body), is marked dead with the reason whether or not the author gave it an id or a name: it was a followable section link before the pass moved ahead of the link passes, and the sheet's bare `.fileview-md a` rule paints an href-less anchor in the link ink; the key is the attribute, so an author's HTML anchor spelled with xlink:href in the prose is marked too; an author's anchor target (an id or a name, no xlink attribute) stays unmarked", async () => {
   // The shape is the POST-RE-PARSE one (the fork PR review's round 2, findings correctness-2, extra7-1 and tests-4, measured in
   // Chromium, Firefox and WebKit, 2026-09-20): the HTML parser keeps `xlink:href` on an HTML <a> as an attribute of that name in
   // no namespace, which mdBlock's fold (`a[*|href]`, a namespaced match) does not select, so no `href` is ever written on it and
@@ -627,13 +627,14 @@ test("linkMarkdownAnchors: the fence pass's re-parse product, an HTML anchor wit
     return a;
   };
   const withId = split("user-content-split-id", null), withName = split(null, "user-content-split-name"), bare = split(null, null);
+  const inProse = split("user-content-prose-x", null);   // the same shape an author writes in prose, no fence and no re-parse: the key is the attribute
   const target = el("a", "", ""); target.setAttribute("id", "user-content-results");            // an author's anchor target: exempt
   const namedTarget = el("a", "", ""); namedTarget.setAttribute("name", "user-content-install");
   const top = el("h2", "", "Top"); top.setAttribute("id", "top");                                // the split anchors' target exists, and still they are dead: they have no href to follow
-  const box = el("div", "fileview-md", top, el("pre", "", el("code", "", withId, withName, bare)), el("p", "", target, namedTarget));
+  const box = el("div", "fileview-md", top, el("pre", "", el("code", "", withId, withName, bare)), el("p", "", target, namedTarget, inProse));
   linkMarkdownAnchors(box as unknown as HTMLElement, "/tmp/TESTHOST/notes-api/docs/guide.md");
-  for (const a of [withId, withName, bare]) {
-    assert.ok(a.classes.includes("fv-dead"), "marked dead, id or name notwithstanding: " + a.className + " id=" + a.getAttribute("id") + " name=" + a.getAttribute("name"));
+  for (const a of [withId, withName, bare, inProse]) {
+    assert.ok(a.classes.includes("fv-dead"), "marked dead, id or name notwithstanding, in a fence or in the prose: " + a.className + " id=" + a.getAttribute("id") + " name=" + a.getAttribute("name"));
     assert.equal(a.getAttribute("title"), DEAD_LINK_TITLE, "and the title says why");
     assert.equal(a.getAttribute("href"), null, "no href is minted: the anchor follows nothing"); assert.equal(a.dataset.act, undefined);
     assert.ok(!a.classes.includes("fv-frag"), "not a section link: the fragment arm reads `href` alone");

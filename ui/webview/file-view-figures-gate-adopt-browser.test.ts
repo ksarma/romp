@@ -123,6 +123,7 @@ const ANCHOR_NOTE = [
   "<pre><code><svg>", '<a xlink:href="#top" id="split-id">with an id</a>', "</svg></code></pre>", "",
   "<pre><code><svg>", '<a xlink:href="#top">without one</a>', "</svg></code></pre>", "",
   '<a id="results"></a>', "", "Results here.", "",
+  '<a xlink:href="#top" id="prose-x">an author\'s prose anchor spelled xlink</a>', "",
 ].join("\n");
 /** file-view-links.ts DEAD_LINK_TITLE, the reason the dead dressing carries (the module is not imported here: the leg reads the
  *  page's DOM alone, and the node pins in file-view-links.test.ts hold the constant itself). */
@@ -444,10 +445,12 @@ for (const engine of ["chromium", "firefox", "webkit"] as const) {
     });
   });
 
-  test(engine + ": an svg anchor split across lines inside a raw fence, re-parsed by the fence pass into an HTML anchor with no href and a plain xlink:href attribute, is marked dead with the reason in the rendered page, with an author's id and without one (the id-bearing one was exempt as an anchor target and painted in the link ink, doing nothing: silent); an author's anchor target in the prose stays unmarked", { timeout: 120000 }, async (t) => {
-    // Measured red at the head before the mark (fa5f761c8, this case copied in): the id-bearing anchor had no class and no title in
+  test(engine + ": an svg anchor split across lines inside a raw fence, re-parsed by the fence pass into an HTML anchor with no href and a plain xlink:href attribute, is marked dead with the reason in the rendered page, with an author's id and without one (the id-bearing one was exempt as an anchor target and painted in the link ink, doing nothing: silent), and so is an author's HTML anchor spelled with xlink:href in the prose, the same shape with no fence (the key is the attribute); an author's anchor target in the prose stays unmarked", { timeout: 120000 }, async (t) => {
+    // Measured red at the merge commit before the mark, with this case copied in: the id-bearing anchor had no class and no title in
     // Chromium, Firefox and WebKit, its cursor the sheet's default, while the one without an id was fv-dead in all three (the fork
     // PR review's round 2, findings correctness-2, extra7-1 and tests-4, 2026-09-20). Green in all three at the head that marks it.
+    // The prose anchor spelled with xlink:href read fv-dead in the three engines at that head too (the pre-landing verification's
+    // probe, l-3): the mark is keyed on the attribute, so the shape is marked with or without a fence, and this case holds it.
     await inEngine(t, engine, async (s) => {
       const { page } = s;
       await s.open(ANCHOR_NOTE_PATH);
@@ -463,8 +466,8 @@ for (const engine of ["chromium", "firefox", "webkit"] as const) {
       const deadAnchor = (id: string | null, text: string): Anchor => ({ ns: HTML_NS, href: null, xlink: "#top", id, cls: "fv-dead", title: DEAD_TITLE, cursor: "help", text });
       assert.deepEqual(seen.inFences, [deadAnchor("user-content-split-id", "with an id"), deadAnchor(null, "without one")],
         engine + ": both split anchors are HTML anchors with no href, the plain xlink:href left as the re-parse made it, classed fv-dead with the dead-link title and the sheet's help cursor, the author's id kept under the sanitizer's prefix; seen: " + JSON.stringify(seen.inFences));
-      assert.deepEqual(seen.inProse, [{ ns: HTML_NS, href: null, xlink: null, id: "user-content-results", cls: null, title: null, cursor: "auto", text: "" }],
-        engine + ": the author's anchor target in the prose is left alone, no class and no title; seen: " + JSON.stringify(seen.inProse));
+      assert.deepEqual(seen.inProse, [{ ns: HTML_NS, href: null, xlink: null, id: "user-content-results", cls: null, title: null, cursor: "auto", text: "" }, deadAnchor("user-content-prose-x", "an author's prose anchor spelled xlink")],
+        engine + ": the author's anchor target in the prose is left alone, no class and no title, and the prose anchor spelled with xlink:href is marked like the split ones; seen: " + JSON.stringify(seen.inProse));
       // a click on the marked anchor goes nowhere: the pane's document stays, no navigation, no tab (the page's URL is read after)
       const before = page.url();
       await page.click("#romp-fileview .fileview-md pre:nth-of-type(1) a");
