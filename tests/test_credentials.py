@@ -263,6 +263,9 @@ class SettingsReadCache(_Settings):
         self.assertEqual(cred.helper_source(), "user", "readable again: read again")
 
     def test_a_file_whose_bytes_are_not_utf8_is_loud_on_every_call(self):
+        # ERROR BEFORE ITS ASSERTION at the round-3 base, at the call under test: UnicodeDecodeError out of cred.helper_source()
+        # inside the assertRaises, the raise this test exists to convert to CredentialError (measured at the helper_source call
+        # below; recorded in round 4 of fork PR #813's review, 2026-09-20, its extra8-2, in the refuter's wording).
         # a torn rewrite, or a settings file that holds a non-UTF-8 byte: the decode is CredentialError, the same loud
         # path an unreadable file takes, so every cannot-tell caller handles it rather than the decode escaping to its
         # reader (fork PR #813, round 3 of the review, 2026-09-20; its extra7-1, ruled high). Bytes assembled here, so

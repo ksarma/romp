@@ -41245,10 +41245,13 @@ def _billing_request(b):
         failed = out.get("failed") or []          # the followers whose step raised: left following the default, no ask (the
         #                                           walk's per-session try, the rebase follow-up of 2026-09-18); the Log names the fault
         parked = out.get("parked") or []          # the followers whose queue a move holds: the pick parked behind the move
+        diverged = out.get("diverged") or []      # the failed followers whose record could not be put back after the step's own write
+        #                                           landed (round 4 of the review, 2026-09-20; its regression-1): a subset of `failed`,
+        #                                           said apart since such a record may still name the pick with an ask standing
         outlooks = {n: _BILLING_WORDS.get(w, w) for n, w in (out.get("outlook") or {}).items()}
         return {"ok": True, "pick": pick, "moved": len(out["moved"]), "skipped": len(out["skipped"]), "unwritten": len(unwritten),
                 "failed": len(failed), "parked": len(parked), "sessions": out["moved"], "skippedSessions": out["skipped"],
-                "unwrittenSessions": unwritten, "failedSessions": failed, "parkedSessions": parked,
+                "unwrittenSessions": unwritten, "failedSessions": failed, "parkedSessions": parked, "divergedSessions": diverged,
                 "parkedReconnect": _BILLING_PARK_WORDS["move"], "outlooks": outlooks, "superseded": superseded}
     who = str(b.get("target") or "")
     if not who or not pick:

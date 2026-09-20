@@ -1366,11 +1366,31 @@ class Availability(unittest.TestCase):
         self.assertIn('"authAvail": _auth_avail()', src)
 
     def test_the_refusal_toast_names_the_backend_reason(self):
-        # a refused setAuth tells the user WHY (no login signed in / no apiKeyHelper / a managed helper)
-        # from the backend's own sentence, and keeps the generic text for the cases without one
+        # a refused setAuth tells the user WHY (no login signed in / no apiKeyHelper / a managed helper) from the backend's
+        # own sentence, and keeps the generic text for the cases without one. PINNED PER ARM (round 4 of fork PR #813's
+        # review, 2026-09-20; its regression-2): the WS handler has a machine-scope setAuth arm and a per-session one, and
+        # the one-argument spelling this test asserted over the whole source exists only on the machine-scope arm at this
+        # head, while the per-session arm (fork PR #813, round 3 of its review) reads two sources for `why`, the box's reason
+        # for the PARSED pick and the guarded door's own sentence; asserted over the whole source, no change to the arm the
+        # comment described could red it. Each arm is sliced from its `elif` to the next same-indentation `elif`, so a
+        # spelling is looked for on the arm that carries it and nowhere else.
         src = open(os.path.join(BIN, "romp-kernel")).read()
-        self.assertIn('why = str(getattr(be, "auth_unavailable_why", lambda v: "")(str(msg["value"])) or "")', src)
-        self.assertIn('("Couldn\'t switch the account this session bills: %s." % why) if why', src)
+
+        def arm(anchor):
+            i = src.index(anchor)
+            return src[i:src.index("\n    elif t == ", i + len(anchor))]
+        machine = arm('elif t == "setAuth" and msg.get("scope") == "machine" and (msg.get("value") == "auto" or lg.parse_pick(msg.get("value"))[0]):')
+        session = arm('elif t == "setAuth" and lg.parse_pick(msg.get("value"))[0]:')
+        self.assertIn('why = str(getattr(be, "auth_unavailable_why", lambda v: "")(str(msg["value"])) or "")', machine,
+                      "the machine-scope arm: the box's reason on the raw value, one reader")
+        self.assertIn('("Couldn\'t set this machine\'s default billing: %s." % why) if why', machine)
+        self.assertIn('why = (str(getattr(be, "auth_unavailable_why", lambda *a: "")(*lg.parse_pick(str(msg["value"]))) or "")', session,
+                      "the per-session arm: the box's reason for the PARSED pick first")
+        self.assertIn('or str(getattr(be, "pop_auth_refusal", lambda s: "")(sid) or ""))', session,
+                      "then the guarded door's own sentence for this refusal")
+        self.assertIn('("Couldn\'t switch the account this session bills: %s." % why) if why', session)
+        self.assertNotIn('("Couldn\'t switch the account this session bills: %s." % why) if why', machine,
+                         "the per-session toast is not on the machine-scope arm")
 
 
 class SwitchCycleTruthTable(_Keyed):

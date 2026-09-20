@@ -2299,6 +2299,8 @@ def words(p):
 moved, skipped = r.get("sessions") or [], r.get("skippedSessions") or []
 unwritten = r.get("unwrittenSessions") or []   # absent from an older kernel's answer: nothing to say
 failed = r.get("failedSessions") or []         # the walk's per-session try (2026-09-18): a step that raised, the session left a follower
+diverged = set(r.get("divergedSessions") or [])  # the failed whose record could not be put back after the step's own write landed (round 4
+#                                                of the review, 2026-09-20; its regression-1); absent from an older kernel's answer
 parked = r.get("parkedSessions") or []         # a follower whose queue a move holds (round 1 of the review, 2026-09-19): the pick is
 #                                                parked behind the move, in the plain road's words (parkedReconnect)
 outlooks = r.get("outlooks")                   # per moved name, the kernel's reconnect word; absent from an older kernel's answer
@@ -2364,9 +2366,20 @@ if unwritten:
                                            "its record would not read" if len(unwritten) == 1 else "their records would not read")
 if failed:
     # one follower's step raised and the walk went on (the rebase follow-up, 2026-09-18): that session keeps following the
-    # default with no change and no ask, and the kernel's Log names the fault
-    tail += "; %d failed (%s): %s the default unchanged, the kernel's Log names the fault" % (
-        len(failed), ", ".join(failed), "it keeps following" if len(failed) == 1 else "they keep following")
+    # default with no change and no ask, and the kernel's Log names the fault. A failed follower whose record could not be
+    # put back is said apart (round 4 of the review, 2026-09-20; its regression-1): "unchanged" is false of a record that may
+    # still name the pick with an ask standing, which its next connect or a kernel restart would apply
+    plain = [n for n in failed if n not in diverged]
+    torn = [n for n in failed if n in diverged]
+    if plain:
+        tail += "; %d failed (%s): %s the default unchanged, the kernel's Log names the fault" % (
+            len(plain), ", ".join(plain), "it keeps following" if len(plain) == 1 else "they keep following")
+    if torn:
+        tail += ("; %d failed with %s not put back (%s): %s following the default while %s may still name the pick with an ask "
+                 "standing, which %s next connect or a kernel restart would apply; pick again once %s" % (
+                     len(torn), "its record" if len(torn) == 1 else "their records", ", ".join(torn),
+                     "it keeps" if len(torn) == 1 else "they keep", "its record" if len(torn) == 1 else "their records",
+                     "its" if len(torn) == 1 else "their", "its record writes" if len(torn) == 1 else "their records write"))
 if parked:
     # a follower whose drive queue a move in flight holds (round 1 of the review, 2026-09-19): the walk wrote nothing for it
     # and the kernel parked the pick behind the move, so it applies when the move finishes, in the plain road's words

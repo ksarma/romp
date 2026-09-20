@@ -18,8 +18,10 @@ Real Handler on loopback (tests/test_kernel_headless_ops.py's pattern); the back
 SYNTHETIC fixtures only: the notes-api demo world (web, api, tests), host TESTHOST, placeholder sids.
 """
 import ast
+import io
 import json
 import os
+import sys
 import tempfile
 import threading
 import time
@@ -88,7 +90,7 @@ class _FakeBackend:
 
     def __init__(self, busy=False, why="", outlook="now", view=None, default="key", explicit=False, default_login="",
                  labels=None, inflight=None, unwritten=None, explicit_pick=None, outlooks=None, failed=None, staggered=False,
-                 reads=True, follow_ok=True, set_ok=None):
+                 reads=True, follow_ok=True, set_ok=None, diverged=None):
         self.calls = []
         self._busy = busy
         self.reads = reads                     # record_reads: the record reads as an object (round 1 of the review, 2026-09-19)
@@ -97,6 +99,7 @@ class _FakeBackend:
         self.parked = []                       # the sids the walk's park hook took (a move in flight)
         self.dropped = []                      # the sids the walk's after_write hook ran for, in order
         self.failed = list(failed or [])       # the walk's followers whose step raised (the per-session try, 2026-09-18)
+        self.diverged = list(diverged or [])   # the failed whose record could not be put back (round 4 of the review, 2026-09-20)
         self.staggered = staggered             # whether an asked relaunch waits for its spawn slot (auth_relaunch_staggered)
         # a turn in flight is NOT the same as busy: busy is also true for a queued or an untaken text with no turn open
         # (SdkBackend.busy's three readings), and only an open turn is something --now can cut (round 1 of the review, 2026-09-18).
@@ -181,8 +184,8 @@ class _FakeBackend:
                 superseded += int(after_write(sid) or 0)
         parked = [n for n, s in (("web", SID), ("tests", FAR_SID)) if s in self.parked]
         return {"moved": moved, "skipped": ["api"], "unwritten": list(self.unwritten), "failed": list(self.failed),
-                "parked": parked, "movedSids": sids, "outlook": {n: w for n, w in self.outlooks.items() if n in moved},
-                "superseded": superseded}
+                "parked": parked, "diverged": list(self.diverged), "movedSids": sids,
+                "outlook": {n: w for n, w in self.outlooks.items() if n in moved}, "superseded": superseded}
 
     def billing_view(self, sid):
         self.calls.append(("billing_view", sid))
@@ -1144,8 +1147,11 @@ class RefusedRecordWrites(_RouteServer):
         # cluster B (round 3 of the review, 2026-09-20; its correctness-1 and extra6-1, both refuters, one defect): the
         # /auth chip is post-commit, fired by set_auth_guarded OUTSIDE the guard with the step at chip=False, so a chat
         # write that cannot land answers 200 with the pick applied and a problem row naming the chip, never 409 blaming a
-        # record that wrote. Red on the round-2 head 676054c2f, where the chip ran inside the guarded step: the append
-        # raised, the guard rolled the pick back and _refuse_pick_write answered 409 "its record would not write".
+        # record that wrote. Red at the round-3 base at this test's assertion, both roads: (409, False) != (200, True), the
+        # body "web's pick key was not applied: its record would not write (PermissionError), so the session bills as it
+        # did" (the chip ran inside the guarded step there: the append raised, the guard rolled the pick back and
+        # _refuse_pick_write answered 409). Round 3's commit cited the round-2 head for this red; corrected in round 4 of
+        # the review (2026-09-20; its extra8-1), which measured it at the round-3 base.
         real = sb.append_cmd_gesture
 
         def boom(state_dir, sid, text, t=None):
@@ -1172,8 +1178,11 @@ class RefusedRecordWrites(_RouteServer):
         # takes the guarded door, so a refused record write returns False where it used to raise; the arm builds `why` as
         # _auth_refusal does (auth_unavailable_why on the parsed pick, then the door's own sentence at pop_auth_refusal),
         # so the toast names the write, never the generic three-cause text. A BEHAVIOURAL pin: the source pin cannot tell
-        # this arm from the machine-scope arm, which keeps the identical line. Red on the round-2 head, where the arm read
-        # auth_unavailable_why on the raw value alone and showed the generic text over the door's unread sentence.
+        # this arm from the machine-scope arm, which keeps the identical line. Red at the round-3 base at this test's
+        # assertion: 'its record would not write' not found in the generic three-cause toast (the fragment "it isn't a
+        # Claude Code session"), since the arm read auth_unavailable_why on the raw value alone and showed that text over
+        # the door's unread sentence. Round 3's commit cited the round-2 head for this red; corrected in round 4 of the
+        # review (2026-09-20; its extra8-1), which measured it at the round-3 base.
         be, s, d = self._picked()
         sent = []
         client = {"send": lambda m: sent.append(json.loads(m))}
@@ -1362,6 +1371,9 @@ class SettingsUnreadableRoutes(_RouteServer):
         self.addCleanup(undo)
 
     def test_the_reader_and_the_four_non_route_callers_answer_cannot_tell_never_a_raise(self):
+        # ERROR BEFORE ITS ASSERTION at the round-3 base, at the call under test: UnicodeDecodeError out of be.key_state(),
+        # the raise this test exists to see closed (measured at the key_state line below, raised from kernel/credentials.py's
+        # _read_settings; recorded in round 4 of the review, 2026-09-20, its extra8-2, in the refuter's wording).
         d = tempfile.mkdtemp()
         Path(d, "session-hosts").write_text("off")   # a test that mints its own state root pins hosts off (2026-09-11)
         be = sb.SdkBackend(d, "/bin/true", lambda *a, **k: None, log=lambda m: None)
@@ -1422,7 +1434,7 @@ class AllFollowing(_RouteServer):
         self.assertEqual(code, 200, resp)
         self.assertEqual(resp, {"ok": True, "pick": "key", "moved": 2, "skipped": 1, "unwritten": 0, "failed": 0, "parked": 0,
                                 "sessions": ["web", "tests"], "skippedSessions": ["api"], "unwrittenSessions": [], "failedSessions": [],
-                                "parkedSessions": [], "parkedReconnect": "after the move finishes",
+                                "parkedSessions": [], "divergedSessions": [], "parkedReconnect": "after the move finishes",
                                 "outlooks": {"web": "now", "tests": "none needed"}, "superseded": 0},
                          "each moved session's outlook rides the answer in the reconnect words (round 2 of the review, 2026-09-18); the "
                          "parked bucket and its word since round 1 of the review, 2026-09-19")
@@ -1436,6 +1448,14 @@ class AllFollowing(_RouteServer):
             code, resp = self._post({"pick": "key", "allFollowing": True})
         self.assertEqual(code, 200, resp)
         self.assertEqual((resp["failed"], resp["failedSessions"], resp["sessions"]), (1, ["notes"], ["web", "tests"]))
+        # a failed follower whose record could not be put back after its step's own write landed rides the answer apart
+        # (round 4 of the review, 2026-09-20; its regression-1: the walk's `diverged`, a subset of `failed`). Red at round 4's
+        # base at the first assertion below: None != [].
+        self.assertEqual(resp.get("divergedSessions"), [], "no failed follower's record was left unrestored")
+        fake = _FakeBackend(failed=["api", "notes"], diverged=["notes"])
+        with mock.patch.object(km, "_sdk", lambda: fake):
+            code, resp = self._post({"pick": "key", "allFollowing": True})
+        self.assertEqual((code, resp["failed"], resp["failedSessions"], resp.get("divergedSessions")), (200, 2, ["api", "notes"], ["notes"]))
 
     def test_a_follower_whose_record_would_not_read_is_answered_apart_from_the_skipped(self):
         # round 1 of the review (2026-09-18; findings 8 and 12): the walk filed an unreadable record under skipped, and the verb told
@@ -1754,9 +1774,12 @@ class BackendHelpers(unittest.TestCase):
         # at the round-3 base; the machine seed's write, moved after the mirror by that round, is the other, best-effort
         # inside set_auth since the owner's lenses over round 3's commit, 2026-09-20) is post-commit, fired outside the guard. A chat write that cannot land leaves the pick's
         # record written, the reconnect it legitimately asked STANDING (not orphaned by a rollback), one problem row
-        # naming the chip, and set_auth_guarded returns True. Red on the round-2 head 676054c2f: the chip ran inside the
-        # guarded step, the append raised, the guard rolled the pending back and returned False, and the reconnect
-        # callback the request branch had already queued survived over a pending it had just cleared.
+        # naming the chip, and set_auth_guarded returns True. Red at the round-3 base at this test's first assertion:
+        # False is not true : the pick applied: the record wrote and the chip is post-commit (the chip ran inside the
+        # guarded step there, the append raised, the guard rolled the pending back and returned False, and the reconnect
+        # callback the request branch had already queued survived over a pending it had just cleared). Round 3's commit
+        # cited the round-2 head, where set_auth_guarded does not exist and this test errors before its assertion;
+        # corrected in round 4 of the review (2026-09-20; its extra8-1), which measured the red at the round-3 base.
         s = self._sess("web", auth="login", launched="login")
         s.auth_live = "login"
         q = self._queue_loop(s)
@@ -1783,7 +1806,10 @@ class BackendHelpers(unittest.TestCase):
         # cluster C (round 3 of the review, 2026-09-20; its regression-2 with kernel-1, both refuters): the machine seed
         # (write_sdk_default) is written at set_auth's single `return True`, after the per-session record write, so a
         # refused write never moves the remembered account and the next session born inherits nothing from a refused
-        # pick. NOT snapshot-and-restore. Red on the round-2 head 676054c2f, where the seed moved before the record write.
+        # pick. NOT snapshot-and-restore. Red at the round-3 base at this test's assertion on the seed after the first
+        # refused pick: {'auth': 'key', 'authLogin': ''} != {}, the seed moved before the record write. Round 3's commit
+        # cited the round-2 head for this red; corrected in round 4 of the review (2026-09-20; its extra8-1), which
+        # measured it at the round-3 base.
         real_write = sb.write_reg
 
         def refused_for(sid_):
@@ -1924,6 +1950,134 @@ class BackendHelpers(unittest.TestCase):
         u = self.be.spawn("u", "/tmp")
         self.assertEqual(sb.read_reg(self.be.state_dir, u).get("auth", ""), "login", "a session spawned after inherits the walk's pick")
 
+    def test_the_best_effort_rows_say_the_record_untouched_on_the_roads_that_write_none(self):
+        # round 4 of the review (2026-09-20; its correctness-3 and kernel-4): the seed row and the two chip rows said "its record
+        # wrote" unconditionally, and set_auth reaches its single return True on roads that write no record: the unchanged
+        # branch with nothing to change and no ask to clear, and the already-applying branch whose pending is already the
+        # pick. The clause follows the session's record-write count (the dormant road's one write's own return): "and its
+        # record wrote" where it advanced, ", its record untouched" where it did not; the builder's row (_ack_cmd_chip), which
+        # cannot see its caller's write, makes no claim. Red at round 4's base at the first row assertion: the row said
+        # "the pick key applied and its record wrote" on the unchanged road with write_reg never called.
+        Path(self.d, "sdk-defaults.tmp").mkdir()          # the seed's temp file cannot be written: IsADirectoryError
+        real_write = sb.write_reg
+        writes = []
+
+        def counting(state_dir, sid, reg):
+            writes.append(sid)
+            return real_write(state_dir, sid, reg)
+        # (a) the UNCHANGED road: the pick is the side the CLI launched on, the record names it, no ask stands
+        web = self._sess("web", auth="key", launched="key")
+        web.auth_live = "key"
+        self._queue_loop(web)
+        seq0 = self.be._problem_seq
+        with mock.patch.object(sb, "write_reg", counting):
+            self.assertTrue(self.be.set_auth_guarded(web.sid, "key"))
+        self.assertEqual(writes, [], "nothing to change: no record write")
+        rows = [p["text"] for p in self.be.problems(10) if p["seq"] > seq0]
+        self.assertEqual(len(rows), 1, rows)
+        self.assertTrue(rows[0].startswith("auth (web): the pick key applied, its record untouched, but the machine's remembered default "
+                                           "could not be written (IsADirectoryError: "), rows[0])
+        # (b) the ALREADY-APPLYING road: a re-pick of the side pending on a reconnect that has not landed
+        api = self._sess("api", auth="login", launched="login")
+        api.auth_live = "login"
+        self._queue_loop(api)
+        self.assertTrue(self.be.set_auth(api.sid, "key", chip=False))       # the request: written and asked (its seed row rings)
+        seq0 = self.be._problem_seq
+        with mock.patch.object(sb, "write_reg", counting):
+            self.assertTrue(self.be.set_auth(api.sid, "key", chip=False))   # the same pick again: the pending is the pick
+        self.assertEqual(writes, [], "already applying: no record write")
+        rows = [p["text"] for p in self.be.problems(10) if p["seq"] > seq0]
+        self.assertEqual(len(rows), 1, rows)
+        self.assertTrue(rows[0].startswith("auth (api): the pick key applied, its record untouched, but the machine's remembered default "), rows[0])
+        # (c) the REQUEST road writes, and the clause says so (the pins on the write roads keep this spelling)
+        tests = self._sess("tests", auth="login", launched="login")
+        tests.auth_live = "login"
+        self._queue_loop(tests)
+        seq0 = self.be._problem_seq
+        with mock.patch.object(sb, "write_reg", counting):
+            self.assertTrue(self.be.set_auth(tests.sid, "key", chip=False))
+        self.assertEqual(writes, [tests.sid], "the request wrote once")
+        rows = [p["text"] for p in self.be.problems(10) if p["seq"] > seq0]
+        self.assertTrue(rows[0].startswith("auth (tests): the pick key applied and its record wrote, but the machine's remembered default "), rows[0])
+        # (d) the DORMANT road: the one write's own return
+        self.n += 1
+        dsid = "11111111-2222-3333-4444-%012d" % self.n
+        sb.write_reg(Path(self.d), dsid, {"sid": dsid, "name": "docs", "cwd": self.d, "alive": False, "lastSid": dsid, "auth": "login"})
+        seq0 = self.be._problem_seq
+        self.assertTrue(self.be.set_auth_guarded(dsid, "key"))
+        rows = [p["text"] for p in self.be.problems(10) if p["seq"] > seq0]
+        self.assertTrue(rows[0].startswith("auth (docs): the pick key applied and its record wrote, but the machine's remembered default "), rows[0])
+        # (e) the two chip rows on the unchanged road: the builder's row makes no record claim, and the door's own row (for a
+        # fault the in-memory stash raises, SYNTHETIC: nothing in the stash raises in production) follows the count
+        os.rmdir(os.path.join(self.d, "sdk-defaults.tmp"))
+        real_append = sb.append_cmd_gesture
+
+        def boom(state_dir, sid, text, t=None):
+            if sid == web.sid:
+                raise PermissionError(13, "Permission denied", str(Path(state_dir, "states", sid + ".jsonl")))
+            return real_append(state_dir, sid, text, t=t)
+        seq0 = self.be._problem_seq
+        with mock.patch.object(sb, "append_cmd_gesture", boom):
+            self.assertTrue(self.be.set_auth(web.sid, "key"))
+        rows = [p["text"] for p in self.be.problems(10) if p["seq"] > seq0]
+        self.assertEqual(len(rows), 1, rows)
+        self.assertTrue(rows[0].startswith("auth (web): the pick applied, but the chat acknowledgement could not be recorded (PermissionError: "), rows[0])
+        seq0 = self.be._problem_seq
+        with mock.patch.object(self.be, "_stash_live", side_effect=RuntimeError("a synthetic fault in the live stash")):
+            self.assertTrue(self.be.set_auth_guarded(web.sid, "key"))
+        rows = [p["text"] for p in self.be.problems(10) if p["seq"] > seq0]
+        self.assertEqual(len(rows), 1, rows)
+        self.assertTrue(rows[0].startswith("auth (web): the pick key applied, its record untouched, but the chat acknowledgement could not be "
+                                           "posted (RuntimeError: "), rows[0])
+
+    def test_a_record_that_exists_and_will_not_read_is_skipped_and_never_counted_as_a_landed_write(self):
+        # round 4 of the review (2026-09-20; its kernel-2): _record_writes advanced whenever _mirror_auth returned, but
+        # _update_reg returns WITHOUT writing when the record exists and will not read (a torn file: its skip rather than
+        # gutting the reg), so the guard could conclude a step's record write landed when none did, the input to the
+        # divergence verdict extra6-2 made truthful. _update_reg says whether it wrote now, and the count moves only on True.
+        # A REAL torn record, no patched reader. Red at round 4's base at the first assertion: (2, None, None) != (0, False, False).
+        web = self._sess("web", auth="login", launched="login")
+        p = sb._reg_path(Path(self.d), web.sid)
+        p.write_text("{torn")
+        n0 = web._record_writes
+        with mock.patch.object(sys, "stderr", io.StringIO()):   # _update_reg's own skip line, kept out of the runner's output
+            wrote, wrote_pending = web._mirror_auth(), web._mirror_auth_pending()
+        self.assertEqual((web._record_writes - n0, wrote, wrote_pending), (0, False, False), "skipped twice, counted never")
+        self.assertEqual(p.read_text(), "{torn", "nothing was written over the torn record")
+        sb.write_reg(Path(self.d), web.sid, {"sid": web.sid, "name": "web", "cwd": self.d, "alive": True, "lastSid": web.sid, "auth": "login"})
+        self.assertIs(web._mirror_auth(), True, "the record reads again: the write lands")
+        self.assertEqual((web._record_writes - n0, self._reg(web.sid)["auth"]), (1, "login"), "counted once the write landed")
+
+    def test_a_retry_that_skips_over_a_record_torn_after_the_steps_write_landed_is_carried_as_the_divergence_it_is(self):
+        # kernel-2's inverse hole (round 4 of the review, 2026-09-20; the refuter): a retry mirror that SKIPS (the record torn
+        # between the step's landed write and the retry, _update_reg's skip) raised nothing, so `unrestored` stayed empty and
+        # the door said "its record would not write ... so the session bills as it did" while the record no longer carries what
+        # the running session runs. The skip is carried as a RegUnreadable, the way a raising retry is carried. The fault
+        # after the mirror is SYNTHETIC (_note_reconnect_ask tearing the record, then raising): no statement after the
+        # mirror raises in production at this head. Red at round 4's base at the assertion on the door's sentence.
+        web = self._sess("web", auth="login", launched="login")
+        web.auth_live = "login"
+        q = self._queue_loop(web)
+        p = sb._reg_path(Path(self.d), web.sid)
+
+        def tear_then_raise(*a, **k):
+            p.write_text("{torn")
+            raise RuntimeError("a synthetic fault after the mirror")
+        seq0 = self.be._problem_seq
+        with mock.patch.object(web, "_note_reconnect_ask", side_effect=tear_then_raise), \
+                mock.patch.object(sys, "stderr", io.StringIO()):
+            self.assertFalse(self.be.set_auth_guarded(web.sid, "key"))
+        self.assertEqual(p.read_text(), "{torn", "the retry skipped: nothing was written over the torn record")
+        self.assertEqual((web.auth, web._auth_pending, len(q)), ("login", "", 0), "the running session is back on the login, nothing queued")
+        self.assertEqual(self.be.pop_auth_refusal(web.sid),
+                         "web's pick key was not applied to the running session: its step failed (RuntimeError) and its record could not be "
+                         "put back (RegUnreadable), so the session keeps billing the side it runs while its record may already name key with "
+                         "an ask standing, which its next connect or a kernel restart would apply; pick again once its record writes")
+        rows = [p_["text"] for p_ in self.be.problems(10) if p_["seq"] > seq0]
+        self.assertEqual(len(rows), 1, rows)
+        self.assertIn("; its record could not be put back (RegUnreadable: the record exists and would not read, so the retry wrote nothing), "
+                      "so it may still carry what the step wrote while the running session does not", rows[0])
+
     def test_a_retry_mirror_that_fails_after_the_records_first_write_landed_files_the_divergence_on_the_door_and_the_walk(self):
         # extra6-2 (round 3 of the review, 2026-09-20; its own item, both refuters; not implemented by round 3's commit, the
         # owner's lenses over it found: the tail lens's finding 2, the mutation lens's B6). The injector the ruling asked for:
@@ -1986,10 +2140,22 @@ class BackendHelpers(unittest.TestCase):
         self.assertEqual(len(rows), 1, rows)
         self.assertIn("with no ask standing; its record could not be put back (OSError: ", rows[0])
         self.assertTrue(rows[0].endswith("the two disagree until the next default write writes it again"), rows[0])
+        # the walk's ANSWER and its line say the divergence too (round 4 of the review, 2026-09-20; its regression-1: this was the
+        # one guarded-step caller that passed no `unrestored`, so the row said it and the answer said "left following the
+        # default", false of a record that names the pick with an ask standing). Red at round 4's base at the first assertion
+        # below: None != ['tests'].
+        self.assertEqual(out.get("diverged"), ["tests"], "the failed follower whose record could not be put back, said apart")
+        self.assertEqual(out["failed"], ["tests"], "still a failed follower: diverged is a subset of failed")
+        line = [str(m) for m in self.logs if "following the default now carr" in str(m)][-1]
+        self.assertIn("; 1 step failed (tests), left following the default as the step found it; the record of tests could not be put "
+                      "back and may still name the pick with an ask standing, which the next connect or a kernel restart would apply", line)
 
     def test_a_rollback_restores_apikeyauth_with_the_pair_so_the_record_keeps_the_running_clis_report(self):
-        # round 3's extra6-1 addition (2026-09-20): apiKeyAuth rides the guard's snapshot (derived from the CLI's report with no
-        # I/O) and the step's retry mirror, since set_auth's request branch clears it to None for the reconnect it asks. GREEN
+        # round 3's extra6-1 addition (2026-09-20): apiKeyAuth rides the guard's snapshot and the step's retry mirror, since
+        # set_auth's request branch clears it to None for the reconnect it asks. The snapshot is READ FROM THE RECORD since
+        # round 4 of the review (2026-09-20; its correctness-1, tests-1 and kernel-1): round 3 derived it from the live report,
+        # and this test's two cells are the AGREEING arms (the live report and the record the same), where the derivation
+        # and the read answer alike; the disagreeing arms, the only ones that tell the two apart, are the next test's. GREEN
         # at round 3's commit, which shipped the mechanism without a pin (the owner's lenses over it, 2026-09-20; the mutation
         # lens's B4 and B4b: no shipped test raised AFTER a successful mirror inside the step, so the snapshot dropped or its
         # mapping inverted stayed green across the recipe). The fault is SYNTHETIC (_note_reconnect_ask raising) with the
@@ -2017,6 +2183,68 @@ class BackendHelpers(unittest.TestCase):
             self.assertFalse(self.be.set_auth_guarded(api.sid, "login"))
         self.assertEqual((self._reg(api.sid)["auth"], self._reg(api.sid).get("apiKeyAuth")), ("key", True), "a key report goes back as True")
 
+    def test_a_rollback_puts_back_the_records_own_report_where_the_live_report_disagrees_with_it(self):
+        # round 4 of the review (2026-09-20; its correctness-1, tests-1 and kernel-1, both refuters): the guard's apiKeyAuth
+        # snapshot was DERIVED from the live report (auth_live), and the two disagree by design on two roads, both driven
+        # here through production calls. (a) THE ARMED WINDOW: a follower's ask (the machine default's walk) writes its
+        # pending and keeps the record's report, and the arm (_arm_reconnect, run here as the queued reconnect callback)
+        # clears the live report while the record keeps it (the rule _follow_default states); a guarded pick whose first
+        # record write is refused and whose retry lands then wrote apiKeyAuth=None over the kept report, and a rebuilt
+        # session (a kernel restart) read no report for a CLI that still bills the key. (b) THE RETIRED REPORT: an accepted
+        # pick's request clears the record's report (set_auth's apiKeyAuth=None) while the live report stands until the
+        # reconnect; a second guarded pick whose first write is refused then wrote the live report back, resurrecting a
+        # report the accepted pick retired. Read from the record, the retry puts back what the record held (a) and passes
+        # no apiKeyAuth where it held none (b).
+        # Red at round 4's base (the head before this commit) at this test's assertions: (a) ('', 'login', None) !=
+        # ('', 'login', True); (b) ('key', 'key', False) != ('key', 'key', None).
+        real_write = sb.write_reg
+
+        def refused_once(sid_):
+            calls = []
+
+            def w(state_dir, sid, reg):
+                if sid == sid_:
+                    calls.append(1)
+                    if len(calls) == 1:
+                        raise OSError(28, "No space left on device", str(sb._reg_path(state_dir, sid)))
+                return real_write(state_dir, sid, reg)
+            return w, calls
+        # (a) the armed window
+        web = self._sess("web", launched="key")             # a follower, its CLI launched keyed
+        web.auth_live = "key"
+        self.be._update_reg(web.sid, apiKeyAuth=True)      # the init handler's persist of the CLI's report
+        q = self._queue_loop(web)
+        self.assertTrue(self.be.set_auth_default("login"), "the machine default moves: the keyed follower is asked")
+        self.assertEqual((web._auth_pending, len(q)), ("login", 1), "the follower's ask stands, its request queued on the loop")
+        cb, args = q.pop()
+        cb(*args)                                           # the queued request runs on the loop: the arm clears the live report
+        self.assertTrue(web._reconnect, "the arm")
+        self.assertEqual((web.auth_live, self._reg(web.sid).get("apiKeyAuth")), ("", True),
+                         "the disagreement by design: the live report cleared at the arm, the record keeping the CLI's last one")
+        w, calls = refused_once(web.sid)
+        with mock.patch.object(sb, "write_reg", w):
+            self.assertFalse(self.be.set_auth_guarded(web.sid, "key"), "the first record write was refused")
+        self.assertEqual(len(calls), 2, "the step's write was refused; the guard's retry landed")
+        reg = self._reg(web.sid)
+        self.assertEqual((reg.get("auth", ""), web._auth_pending, reg.get("apiKeyAuth")), ("", "login", True),
+                         "the rollback left the follower and its standing ask as the step found them, the record's report untouched")
+        self.assertEqual(sb.SdkSession(self.be, dict(reg)).auth_live, "key", "a restart restores the report the CLI still bills")
+        # (b) the retired report
+        api = self._sess("api", auth="login", launched="login")
+        api.auth_live = "login"
+        self.be._update_reg(api.sid, apiKeyAuth=False)
+        self._queue_loop(api)
+        self.assertTrue(self.be.set_auth(api.sid, "key", chip=False), "an accepted pick: its request retires the record's report")
+        self.assertEqual((self._reg(api.sid).get("apiKeyAuth"), api.auth_live), (None, "login"),
+                         "the disagreement by design: the record's report retired, the live one standing until the reconnect")
+        w, calls = refused_once(api.sid)
+        with mock.patch.object(sb, "write_reg", w):
+            self.assertFalse(self.be.set_auth_guarded(api.sid, "login"))
+        self.assertEqual(len(calls), 2)
+        reg = self._reg(api.sid)
+        self.assertEqual((reg["auth"], api.auth, reg.get("apiKeyAuth")), ("key", "key", None),
+                         "the rollback put the accepted pick back and resurrected no report: the record held none")
+
     def test_the_bare_set_auth_road_survives_a_chat_append_that_fails_and_files_its_row(self):
         # round 3's addition (2026-09-20; its correctness-1 with extra6-1: append_cmd_gesture best-effort inside _ack_cmd_chip,
         # an addition to the scope fix, not a substitute), pinned by the owner's lenses over that commit (the mutation lens's
@@ -2043,9 +2271,14 @@ class BackendHelpers(unittest.TestCase):
         self.assertEqual((s.auth, self._reg(s.sid)["auth"], len(q)), ("key", "key", 1), "the record and the reconnect it asked stand")
         rows = [p["text"] for p in self.be.problems(10) if p["seq"] > seq0]
         self.assertEqual(len(rows), 1, rows)
-        self.assertTrue(rows[0].startswith("auth (web): the pick applied and its record wrote, but the chat acknowledgement could not be "
-                                           "recorded (PermissionError: "), rows[0])
-        self.assertEqual(self._gestures(s.sid), [], "the durable twin was not written; the live chip stands")
+        self.assertTrue(rows[0].startswith("auth (web): the pick applied, but the chat acknowledgement could not be recorded (PermissionError: "), rows[0])
+        # the row's tail stops at the pick standing (round 4 of the review, 2026-09-20; its regression-3): "the chat shows it from
+        # the next message" was false, since the first chat build after a genuine human turn postdates the chip is what retires
+        # the live chip (prune_live's stale_cmd), and the durable twin that would have carried it past that is the write that
+        # failed. The builder makes no record claim either (its correctness-3 and kernel-4: set_auth's unchanged branch writes
+        # none, and the builder cannot see its caller's write). Red at round 4's base at the two assertions above and below.
+        self.assertTrue(rows[0].endswith("); the pick stands"), rows[0])
+        self.assertEqual(self._gestures(s.sid), [], "the durable twin was not written; the live chip stands until the human-floor prune retires it")
 
     def test_set_auth_followers_moves_the_followers_and_skips_the_picked(self):
         web = self._sess("web", launched="login")
@@ -2065,7 +2298,7 @@ class BackendHelpers(unittest.TestCase):
         out = self.be.set_auth_followers("key")
         self.assertEqual(out, {"moved": ["api2", "docs", "tests", "web"], "skipped": ["api"], "unwritten": [],
                                "movedSids": [mid.sid, docs.sid, tests.sid, web.sid],
-                               "failed": [], "parked": [], "superseded": 0,   # the kernel's two hooks, None here (round 1 of the review, 2026-09-19)
+                               "failed": [], "parked": [], "diverged": [], "superseded": 0,   # the kernel's two hooks, None here (round 1 of the review, 2026-09-19)
                                # each moved session's outlook (round 2 of the review, 2026-09-18): web's request stands and its bounded
                                # relaunch waits for a spawn slot with the CLI serving (staggered, since the reviewer's round 1
                                # drew the slot at the arm), tests already runs the side (none), docs has no loop (next-launch),
@@ -2097,8 +2330,8 @@ class BackendHelpers(unittest.TestCase):
         # hook returning 0 would leave `superseded` at 0 under the mutation that moves the hook above the `written` guard
         seen = []
         out = self.be.set_auth_followers("key", after_write=lambda sid: seen.append(sid) or 1)
-        self.assertEqual(out, {"moved": ["web"], "skipped": [], "unwritten": ["docs"], "failed": [], "parked": [], "movedSids": [web.sid],
-                               "outlook": {"web": "next-launch"}, "superseded": 1})
+        self.assertEqual(out, {"moved": ["web"], "skipped": [], "unwritten": ["docs"], "failed": [], "parked": [], "diverged": [],
+                               "movedSids": [web.sid], "outlook": {"web": "next-launch"}, "superseded": 1})
         self.assertEqual(seen, [web.sid], "the hook ran for the written follower alone: nothing landed for docs, so nothing is dropped")
         self.assertIs(docs._relaunch_bounded, False, "nothing written, nothing asked, no slot")
         self.assertTrue(any("1 record would not read (docs)" in m for m in self.logs), self.logs[-2:])
@@ -4253,6 +4486,35 @@ class VerbWords(unittest.TestCase):
                          "romp billing: 1 session following the default now carries its own pick, the API key (web); "
                          "it reconnects at its turn in the spawn stagger, its CLI serving until then; "
                          "0 skipped; 2 failed (api, notes): they keep following the default unchanged, the kernel's Log names the fault")
+
+    def test_the_walk_says_a_failed_follower_whose_record_could_not_be_put_back_apart(self):
+        # round 4 of the review (2026-09-20; its regression-1): "it keeps following the default unchanged" is false of a failed
+        # follower whose step's record write landed and whose record the guard's retry could not put back; the kernel's answer
+        # names those apart (divergedSessions, a subset of failedSessions) and the verb says what the record may still carry,
+        # in the door's own words. The three pins above and below on the plain failed clause stand unchanged: an answer with no
+        # divergedSessions (an older kernel's, or none diverged) prints as before. Red at round 4's base at the first
+        # assertion: the line ended "1 failed (notes): it keeps following the default unchanged, the kernel's Log names the fault".
+        reply = {"ok": True, "pick": "key", "moved": 1, "skipped": 0, "unwritten": 0, "failed": 1, "skippedSessions": [],
+                 "unwrittenSessions": [], "failedSessions": ["notes"], "divergedSessions": ["notes"], "sessions": ["web"],
+                 "outlooks": {"web": "now"}}
+        out = self._romp("--all-following", "key", reply=(200, reply))
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(out.stdout.strip(),
+                         "romp billing: 1 session following the default now carries its own pick, the API key (web); "
+                         "it reconnects at its next quiet moment; "
+                         "0 skipped; 1 failed with its record not put back (notes): it keeps following the default while its record may "
+                         "still name the pick with an ask standing, which its next connect or a kernel restart would apply; pick again "
+                         "once its record writes")
+        # mixed: the plain failed first, the diverged apart, each counted on its own
+        reply.update(failed=3, failedSessions=["api", "docs", "notes"], divergedSessions=["docs", "notes"])
+        out = self._romp("--all-following", "key", reply=(200, reply))
+        self.assertEqual(out.stdout.strip(),
+                         "romp billing: 1 session following the default now carries its own pick, the API key (web); "
+                         "it reconnects at its next quiet moment; "
+                         "0 skipped; 1 failed (api): it keeps following the default unchanged, the kernel's Log names the fault; "
+                         "2 failed with their records not put back (docs, notes): they keep following the default while their records "
+                         "may still name the pick with an ask standing, which their next connect or a kernel restart would apply; pick "
+                         "again once their records write")
 
     def test_the_walk_with_nothing_moved_denies_followers_only_when_none_was_reached(self):
         # round 2 of the review (2026-09-18; verb-5): with nothing moved and a record unwritten the head said "no running session follows

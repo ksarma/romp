@@ -3288,6 +3288,14 @@ def _reg_absent_for_write(path) -> bool:
         return False
 
 
+class RegUnreadable(RuntimeError):
+    """A record that EXISTS and would not read, so a writer skipped its write rather than gut it (_update_reg's rule, which
+    answers False for the skip). Raised by nothing in the reg layer itself: the guard's retry mirror mints it
+    (_follow_default_guarded) so a retry that skipped is carried to the row and the door's sentence the way a retry that
+    raised is, since after a step whose own record write landed the two leave the same divergence between the record and
+    the running session (round 4 of the review, 2026-09-20; its kernel-2, the refuter's inverse hole)."""
+
+
 def read_reg_for_rmw(state_dir: Path, sid: str) -> "dict | None":
     """read_reg for a READ-MODIFY-WRITE on one reg FIELD: {} when the reg genuinely does not
     exist (ENOENT, a fresh session: an empty base is correct), None when the reg EXISTS but would not
@@ -8159,9 +8167,14 @@ class SdkSession:
     def _mirror_auth(self, **fields) -> None:
         """_mirror_auth_pending for a writer that changed the session's PICK too (set_auth's branches, the verb's clear):
         auth, authLogin and authPending from the live fields, `fields` in the same RMW, the hold released (round 2 of the
-        billing verb's review, 2026-09-18; _auth_live_fields says why the pair is no longer a literal)."""
-        self.backend._update_reg(self.sid, live_fields=self._auth_live_fields, **fields)
-        self._record_writes = getattr(self, "_record_writes", 0) + 1   # counted only once the write landed (extra6-2)
+        billing verb's review, 2026-09-18; _auth_live_fields says why the pair is no longer a literal). Returns whether
+        the write landed, _update_reg's own word (round 4 of the review, 2026-09-20; its kernel-2)."""
+        wrote = self.backend._update_reg(self.sid, live_fields=self._auth_live_fields, **fields)
+        if wrote:
+            # counted only once the write LANDED (extra6-2): _update_reg skips a record that exists and will not read, and a
+            # skip counted as a write made the guard read a landed step write where none was (round 4's kernel-2)
+            self._record_writes = getattr(self, "_record_writes", 0) + 1
+        return wrote
 
     def _mirror_auth_pending(self, **fields) -> None:
         """The reg's authPending (the badge dots, and the ask the constructor carries across a restart), written from the
@@ -8172,9 +8185,12 @@ class SdkSession:
         landing, arm and served check on that session queued behind the reg file's read, temp file and replace, itself
         queued on _reg_lock behind every queue-mirror write). A literal flag written after the hold could land after
         the other thread's, and a landing's False over a walk's True left the dots on with the reg saying no ask; read
-        at the write, the last RMW records the truth whichever thread wrote last."""
-        self.backend._update_reg(self.sid, live_fields=self._auth_pending_flag, **fields)
-        self._record_writes = getattr(self, "_record_writes", 0) + 1   # counted only once the write landed (extra6-2)
+        at the write, the last RMW records the truth whichever thread wrote last. Returns whether the write landed
+        (round 4 of the review, 2026-09-20; its kernel-2)."""
+        wrote = self.backend._update_reg(self.sid, live_fields=self._auth_pending_flag, **fields)
+        if wrote:
+            self._record_writes = getattr(self, "_record_writes", 0) + 1   # counted only once the write landed (extra6-2; kernel-2)
+        return wrote
 
     def _auth_pending_target(self) -> tuple:
         """The pending billing ask as (side, stored login id): "" for the machine's own login and for the key. A bare
@@ -18769,9 +18785,14 @@ class SdkBackend:
         The DURABLE twin's write is BEST-EFFORT (round 3 of the review, 2026-09-20; its correctness-1 and extra6-1,
         as an addition to the guard-scope fix, not a substitute): the acknowledgment is not the pick, so a chat record
         that cannot be written (a full or read-only state directory) never fails a pick whose own record already wrote.
-        The live chip stands and one problem row names the miss (the authoritative-sources rule: loud, not silent), so
-        this never raises into a caller whose pick applied. set_auth_guarded's containment around this call is the
-        belt-and-suspenders for a fault the in-memory stash could raise."""
+        The live chip stands until the human-floor prune retires it and one problem row names the miss (the
+        authoritative-sources rule: loud, not silent), so this never raises into a caller whose pick applied. THE THREE
+        CALLERS SHARE IT (round 4 of the review, 2026-09-20; its regression-4 and extra7-1): set_model and set_effort
+        answer a failed chat append with the same row where they raised it out of their pick, a deliberate spillover of
+        round 3's at-source choice, and one the parked-op drain needed on those roads too (kernel.py's catch-all dropped
+        the session's whole parked queue on such a raise); pinned per caller in tests/test_kernel_cmd_gesture.py.
+        set_auth_guarded's containment around this call is the belt-and-suspenders for a fault the in-memory stash could
+        raise."""
         t = int(time.time())
         uid = "cmd:%d:%s" % (t, command.lstrip("/"))
         self._stash_live(sid, uid, {
@@ -18781,9 +18802,15 @@ class SdkBackend:
         try:
             append_cmd_gesture(self.state_dir, sid, disp, t=t)
         except Exception as e:
-            name = self.sessions[sid].name if sid in self.sessions else str(sid)[:8]
-            self._log("%s (%s): the pick applied and its record wrote, but the chat acknowledgement could not be recorded "
-                      "(%s: %s); it stands and the chat shows it from the next message"
+            # ONE read of the roster (round 4 of the review, 2026-09-20; its kernel-3): a membership test then a subscript is
+            # two, and another thread pops from self.sessions between them. The row claims nothing about the caller's record
+            # write, which this builder cannot see (its correctness-3 and kernel-4: set_auth's unchanged branch writes none),
+            # and stops at the pick standing (its regression-3): the live chip is retired at the first chat build after a
+            # genuine human turn postdates it (prune_live's stale_cmd), and the durable twin that would have carried the
+            # gesture past that retirement is the write that just failed, so nothing shows it from the next message
+            sess = self.sessions.get(sid)
+            name = sess.name if sess else str(sid)[:8]
+            self._log("%s (%s): the pick applied, but the chat acknowledgement could not be recorded (%s: %s); the pick stands"
                       % (command.lstrip("/"), name, type(e).__name__, _mask_ids(e)), problem=True)
         self._wake_push_live(sid)
 
@@ -19348,6 +19375,12 @@ class SdkBackend:
         if not reg:
             return False
         s = self.sessions.get(sid)
+        # whether THIS pick's record wrote, for the seed row at the end (round 4 of the review, 2026-09-20; its correctness-3
+        # and kernel-4): the session's record-write count against its value here, and the dormant road's one write's own
+        # return. The unchanged branch with nothing to change and the already-applying branch with the pending already
+        # the pick reach the seed having written no record, and the row said "its record wrote" on both
+        writes0 = getattr(s, "_record_writes", 0) if s else 0
+        dormant_wrote = False
         value = self.login_display(login_id) if login_id else side   # the stored login's display label (T346), else the side word; `value` is spent
         # The machine seed (write_sdk_default) is written at the END, at the single `return True` every accepted road
         # reaches, so a refused per-session record write never moves it (round 3 of the review, 2026-09-20; its
@@ -19529,7 +19562,7 @@ class SdkBackend:
                 s.request_reconnect(pick="auth")
                 self._log("auth (%s): set to %s; %s" % (s.name, value, outcome))
             else:
-                self._update_reg(sid, auth=side, authLogin=login_id, authPending=True, apiKeyAuth=None)
+                dormant_wrote = bool(self._update_reg(sid, auth=side, authLogin=login_id, authPending=True, apiKeyAuth=None))
         if s and chip:
             # Acknowledge the pick in the chat exactly as set_effort does: the reconnect writes no
             # transcript record, so without a synthesized chip an idle session's auth change shows
@@ -19558,9 +19591,11 @@ class SdkBackend:
             if not read_sdk_defaults(self.state_dir).get("authExplicit"):
                 write_sdk_default(self.state_dir, auth=side, authLogin=login_id)
         except Exception as e:
-            self._log("auth (%s): the pick %s applied and its record wrote, but the machine's remembered default could not be "
+            recorded = (getattr(s, "_record_writes", 0) > writes0) if s else dormant_wrote   # true on every road (kernel-4)
+            self._log("auth (%s): the pick %s applied%s, but the machine's remembered default could not be "
                       "written (%s: %s); the pick stands and the next new session inherits the default as it stood"
-                      % (s.name if s else (reg.get("name") or str(sid)[:8]), value, type(e).__name__, _mask_ids(e)), problem=True)
+                      % (s.name if s else (reg.get("name") or str(sid)[:8]), value,
+                         " and its record wrote" if recorded else ", its record untouched", type(e).__name__, _mask_ids(e)), problem=True)
         return True
 
     def set_auth_followers(self, value: str, park=None, after_write=None) -> "dict | None":
@@ -19607,7 +19642,13 @@ class SdkBackend:
         2026-09-20; its tests-1 and kernel-2, both refuters): a raise from `after_write` leaves the follower in "moved" (its
         write landed) with a problem row saying its parked picks may still fire; a raise from `park` files it under
         "parked" (the kernel's hook queues the op before its own raise road) with a row and writes nothing for it; neither
-        aborts the walk, skips the summary line or reaches "failed", the guard's rollback bucket."""
+        aborts the walk, skips the summary line or reaches "failed", the guard's rollback bucket.
+
+        "diverged": the failed followers whose step's own record write LANDED and whose record the guard's retry could not
+        put back (round 4 of the review, 2026-09-20; its regression-1: the guard's `unrestored`, extra6-2, passed from here
+        as set_auth_guarded passes it): a subset of "failed", said apart because such a record may still name the pick with
+        an ask standing, which the next connect or a kernel restart applies, so "left following the default" is false of
+        it; the summary line carries the same clause, and the route and bin/romp render the bucket for the user."""
         side, login_id = _logins.parse_pick(value)
         if not side:
             return None
@@ -19618,7 +19659,7 @@ class SdkBackend:
             return None
         with self._lock:                       # the roster moves under other threads: _reconnect_default_followers' idiom
             sessions = list(self.sessions.values())
-        moved, skipped, unwritten, failed, parked, outlook = [], [], [], [], [], {}
+        moved, skipped, unwritten, failed, parked, diverged, outlook = [], [], [], [], [], [], {}
         superseded = 0
         label = self.login_display(login_id) if login_id else side
         for s in sessions:
@@ -19656,12 +19697,20 @@ class SdkBackend:
             # restart) stands for its next deciding event as it did; the mirror is retried once from the live fields and
             # one problem row names the session, the side it stays on and whether an ask stands. Until then this walk kept
             # a hand-written copy of the round-1 handler, which wiped that standing ask along with the half-written pick
-            step_out = []
+            step_out, unrestored = [], []
             ok = self._follow_default_guarded(
                 s, label=None, step=lambda: step_out.append(self.set_auth(s.sid, value, chip=False, bounded=True)),
+                unrestored=unrestored,
                 head="auth (%s): the pick %s was asked of this session, but its step failed" % (s.name, value))
             if not ok:
                 failed.append(s.name)
+                if unrestored:
+                    # the step's own record write LANDED and the guard's retry could not put it back (round 4 of the review,
+                    # 2026-09-20; its regression-1: this was the one guarded-step caller that passed no `unrestored`, so the
+                    # divergence reached the follower's row and never the walk's answer): "left following the default" is
+                    # false of a record that names the pick with an ask standing, which the next connect or a kernel restart
+                    # applies, so the answer and the line say it apart (`diverged`, beside `failed`)
+                    diverged.append(s.name)
                 continue
             written = bool(step_out and step_out[0])
             word = self.auth_apply_outlook(s.sid) if written else ""   # what set_auth left: a request standing, none owed, no process
@@ -19687,7 +19736,7 @@ class SdkBackend:
         staggered = any(w == "staggered" for w in outlook.values())
         self._log("auth: %d session%s following the default now carr%s the pick %s (%s); %d asked to reconnect (%s)%s, the rest "
                   "already bill it, apply it at their next launch or leave it to their landing or their CLI's first report; %d "
-                  "skipped with a pick of their own (%s)%s%s%s"
+                  "skipped with a pick of their own (%s)%s%s%s%s"
                   % (n, "" if n == 1 else "s", "ies" if n == 1 else "y", label, ", ".join(name for name, _ in moved) or "none",
                      len(asked), ", ".join(asked) or "none",
                      ", staggered: each relaunch waits for a spawn slot and its CLI serves until its turn" if staggered else "",
@@ -19696,10 +19745,12 @@ class SdkBackend:
                                                              ", ".join(sorted(unwritten)))) if unwritten else "",
                      ("; %d step%s failed (%s), left following the default as the step found %s" % (len(failed), "" if len(failed) == 1 else "s",
                                                                                                   ", ".join(sorted(failed)), "it" if len(failed) == 1 else "them")) if failed else "",
+                     ("; the record%s of %s could not be put back and may still name the pick with an ask standing, which the next "
+                      "connect or a kernel restart would apply" % ("" if len(diverged) == 1 else "s", ", ".join(sorted(diverged)))) if diverged else "",
                      ("; %d parked behind a move in flight (%s), the pick applies when the move finishes" % (len(parked), ", ".join(sorted(parked)))) if parked else ""))
         return {"moved": [name for name, _ in moved], "skipped": sorted(skipped), "unwritten": sorted(unwritten),
-                "failed": sorted(failed), "parked": sorted(parked), "movedSids": [sid for _, sid in moved], "outlook": outlook,
-                "superseded": superseded}
+                "failed": sorted(failed), "parked": sorted(parked), "diverged": sorted(diverged), "movedSids": [sid for _, sid in moved],
+                "outlook": outlook, "superseded": superseded}
 
     def follow_default_auth(self, sid: str) -> bool:
         """`romp billing <session> default` (the user 2026-09-18): the session gives up its own pick and follows the machine
@@ -19866,6 +19917,7 @@ class SdkBackend:
                 reg = read_reg(self.state_dir, sid) or {}
                 return self._refuse_pick_write(sid, reg.get("name") or str(sid)[:8], label, e, row=True)
         out, err, unrestored = [], [], []
+        writes0 = getattr(s, "_record_writes", 0)   # the chip row below says whether the pick's record wrote (round 4, kernel-4)
 
         def step():
             try:
@@ -19887,8 +19939,12 @@ class SdkBackend:
             try:
                 self._ack_cmd_chip(sid, "/auth", "/auth " + label, s.resume_sid)
             except Exception as e:
-                self._log("auth (%s): the pick %s applied and its record wrote, but the chat acknowledgement could not be "
-                          "posted (%s: %s); the pick stands" % (s.name, label, type(e).__name__, _mask_ids(e)), problem=True)
+                # set_auth's unchanged branch writes no record (round 4 of the review, 2026-09-20; its kernel-4): the clause follows
+                # the session's record-write count, as the seed row's does
+                recorded = getattr(s, "_record_writes", 0) > writes0
+                self._log("auth (%s): the pick %s applied%s, but the chat acknowledgement could not be "
+                          "posted (%s: %s); the pick stands" % (s.name, label, " and its record wrote" if recorded else ", its record untouched",
+                                                                 type(e).__name__, _mask_ids(e)), problem=True)
         return applied
 
     def _refuse_pick_write(self, sid: str, name: str, label: str, e: BaseException, row: bool, unrestored=None) -> bool:
@@ -20294,32 +20350,47 @@ class SdkBackend:
         on the door, the walk and the dormant road); request_reconnect through _call_on_loop, _poke and the log line cannot
         raise. So a chat or seed write that cannot land never rolls a pick whose record wrote back, never answers 409 for a
         write that succeeded, and leaves no reconnect callback queued from a rolled-back state. apiKeyAuth rides the
-        snapshot (before_apikey, derived from the still-running CLI's report with no I/O) and the step's retry mirror, since
-        set_auth clears it to None for the reconnect it asks and a rollback must restore the report that still describes the
-        process (refuter 1: it was left out of the pair before). The rule is what keeps a statement someone adds after the
-        mirror out of the rollback, not any one statement's move.
+        snapshot too, READ FROM THE RECORD before the hold (apikey_back below; round 4 of the review, 2026-09-20, its
+        correctness-1, tests-1 and kernel-1: round 3's extra6-1 derived it from the live report, which disagrees with the
+        record by design after an arm), and the step's retry mirror, since set_auth clears it to None for the reconnect it
+        asks and a rollback must put back the report the record held (round 3's refuter 1: it was left out of the pair
+        before). The rule is what keeps a statement someone adds after the mirror out of the rollback, not any one
+        statement's move.
 
         THE RETRY'S FAILURE IS CARRIED, NOT DISCARDED (round 3 of the review, 2026-09-20; its extra6-2). The retry mirror
         below used to fail silently (`except Exception: pass`), and the row then described the RESTORED LIVE pair alone:
         when the step's own record write had landed before its raise and the retry failed too (a disk that fills between
         the two), the record kept the new pick with its ask standing while the row said the session keeps its own pick with
         no ask standing, and the door's sentence said its record would not write. Whether the step's write landed is read
-        from the session's record-write count (_record_writes, advanced by _mirror_auth and _mirror_auth_pending once their
-        write returns), snapshotted here with the pair: a step that raised AT its record write advanced nothing, the record
-        is as it was, and a failed retry changes nothing the row says. When it did land, the retry's exception rides
-        `unrestored` (a list the caller passes; set_auth_guarded hands it to _refuse_pick_write) and the row's own clause
-        below, which name the divergence in their own words and never re-read the record (a read on the disk that just
-        refused two writes can fail and would need a fallback of its own)."""
+        from the session's record-write count (_record_writes, advanced by _mirror_auth and _mirror_auth_pending only when
+        _update_reg reports their write landed: a record that exists and will not read is skipped, not counted, round 4's
+        kernel-2), snapshotted here with the pair: a step that raised AT its record write advanced nothing, the record
+        is as it was, and a failed retry changes nothing the row says. When it did land, the retry's exception, or a
+        RegUnreadable minted for a retry that SKIPPED over a record that would not read (the same divergence, round 4's
+        kernel-2), rides `unrestored` (a list the caller passes; set_auth_guarded and set_auth_followers hand it on) and the
+        row's own clause below, which name the divergence in their own words and never re-read the record (a read on the
+        disk that just refused two writes can fail and would need a fallback of its own)."""
+        # apiKeyAuth for the snapshot, READ FROM THE RECORD, before the hold (round 4 of the review, 2026-09-20; its
+        # correctness-1, tests-1 and kernel-1, both refuters). Round 3's extra6-1 derived it from the live report
+        # (auth_live), and the two disagree BY DESIGN: _arm_reconnect clears the live report while the record keeps the
+        # CLI's last one (the rule _follow_default states), and set_auth's request clears the record's while the live
+        # report stands until the reconnect. Derived, the retry mirror wrote the record a value it never held: None over
+        # a kept report in the armed window, a retired report back after an accepted pick. The record's own value is
+        # what the retry puts back, and only when the record reads and carries a report (a bool): a record that will not
+        # read, or one with no report (None, absent), passes NO apiKeyAuth, so the retry leaves the field as the step
+        # left it (a step whose write refused left it as it was; a step whose clear landed before its raise leaves None,
+        # the residual a read on a disk that just refused two writes cannot close). Only a pick's step clears the field
+        # (set_auth's request and already-applying branches); _follow_default writes none, so the read is made for a step
+        # alone. One read, outside the hold (the lock is never held across I/O); read_reg contains its own faults and
+        # answers None for them.
+        apikey_back = {}
+        if step is not None:
+            _reg0 = read_reg(self.state_dir, s.sid)
+            if isinstance(_reg0, dict) and isinstance(_reg0.get("apiKeyAuth"), bool):
+                apikey_back = {"apiKeyAuth": _reg0["apiKeyAuth"]}
         with s._hold_lock:
             before = (s._auth_pending_target(), bool(getattr(s, "_relaunch_bounded", False)),
                       (getattr(s, "auth", None), getattr(s, "auth_login", "") or ""), bool(getattr(s, "_landing_ask_bounded", False)))
-            # apiKeyAuth for the snapshot, derived from the still-running CLI's report with NO I/O: auth_live is the report
-            # ("login"/"key"/""), and "" is no report, which the reg carries as None (the live_sessions row's own mapping).
-            # set_auth's step clears apiKeyAuth to None for the reconnect it asked; a rollback restores the report that
-            # still describes the running process (round 3 of the review, 2026-09-20; its extra6-1: apiKeyAuth was cleared out
-            # of step with the pair).
-            _report = getattr(s, "auth_live", "") or ""
-            before_apikey = (_report == "key") if _report in ("login", "key") else None
             before_writes = getattr(s, "_record_writes", 0)   # the step's record write LANDED if this advances (extra6-2)
         try:
             if step is not None:
@@ -20339,21 +20410,27 @@ class SdkBackend:
                         s.auth, s.auth_login = before[2]
                         s._landing_ask_bounded = before[3]
                     standing = s._auth_pending
+                retry_exc = None
                 try:
                     if step is not None:
-                        s._mirror_auth(apiKeyAuth=before_apikey)   # the pair AND apiKeyAuth go back: the report the step's clear rolled off
+                        wrote = s._mirror_auth(**apikey_back)   # the pair goes back, and the record's own report where it held one
                     else:
-                        s._mirror_auth_pending()
+                        wrote = s._mirror_auth_pending()
+                    if not wrote:
+                        # the retry SKIPPED: _update_reg writes nothing over a record that exists and will not read, and says so
+                        # in its return (round 4 of the review, 2026-09-20; its kernel-2). Carried as a failed retry is
+                        retry_exc = RegUnreadable("the record exists and would not read, so the retry wrote nothing")
                 except Exception as e2:
-                    # the retry failed too. If the step's own record write had LANDED before its raise (the count advanced),
-                    # the record still carries what the step wrote while the live object is back on the old pick: the row
-                    # below and the caller's sentence say so (extra6-2, the docstring's last paragraph), and nothing here reads
-                    # the record again. If the step's write itself was the failure, the record is as it was and the retry's
-                    # failure changes nothing the row does not already say
-                    if getattr(s, "_record_writes", 0) > before_writes:
-                        retry_failed = e2
-                        if unrestored is not None:
-                            unrestored.append(e2)
+                    retry_exc = e2
+                # the retry failed too. If the step's own record write had LANDED before its raise (the count advanced), the
+                # record still carries what the step wrote while the live object is back on the old pick: the row below and
+                # the caller's sentence say so (extra6-2, the docstring's last paragraph), and nothing here reads the record
+                # again. If the step's write itself was the failure, the record is as it was and the retry's failure changes
+                # nothing the row does not already say
+                if retry_exc is not None and getattr(s, "_record_writes", 0) > before_writes:
+                    retry_failed = retry_exc
+                    if unrestored is not None:
+                        unrestored.append(retry_exc)
             except Exception:
                 pass
             stays = s.auth_live or getattr(s, "_launched_auth", None) or ""
@@ -21721,13 +21798,15 @@ class SdkBackend:
         self._update_reg(s.sid, renameNote=None)
         return True
 
-    def _update_reg(self, sid: str, live_fields=None, **fields):
+    def _update_reg(self, sid: str, live_fields=None, **fields) -> bool:
         """The reg row's read-modify-write, under _reg_lock. `live_fields` (round 3 of the review, 2026-09-18) is a
         callable run INSIDE the lock whose fields are written over `fields`: a flag that mirrors a live session field
         (authPending mirrors _auth_pending; SdkSession._mirror_auth_pending) is read at the write, so when two threads
         write the same flag the last RMW records the value as it stands, whichever wrote last. Written as a literal
         from each writer's own view, a landing's False landed over a walk's True and the reg forgot an ask whose dots
-        stood, or the reverse, a flag naming no ask, which the next construction carried as one."""
+        stood, or the reverse, a flag naming no ask, which the next construction carried as one. Returns whether it
+        WROTE (round 4 of the review, 2026-09-20; its kernel-2): False for the skip below, so a session's record-write
+        count (SdkSession._record_writes, what the guard reads to tell a landed step write from none) counts no skip."""
         with self._reg_lock:                       # kernel + loop threads both write (queue mirror);
             reg = read_reg(self.state_dir, sid)    # unserialized RMWs would drop fields
             if live_fields is not None:
@@ -21740,10 +21819,11 @@ class SdkBackend:
                     # smaller harm: the next update lands on the healed read.
                     sys.stderr.write("update_reg: %s unreadable — skipping a %s write rather than "
                                      "gutting the reg\n" % (sid[:8], "/".join(sorted(fields))))
-                    return
+                    return False
                 reg = {"sid": sid}
             reg.update(fields)
             write_reg(self.state_dir, sid, reg)
+            return True
 
     def _reg_for_flip(self, sid: str):
         """The RMW base for a VISIBILITY FLIP (kill/resume/promote) when the disk read fails but
