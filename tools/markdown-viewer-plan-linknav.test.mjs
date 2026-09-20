@@ -11,7 +11,8 @@
 // trail, the reload keeping it, the delegate's push, the buttons' open with no target, the capture-phase chord
 // listener); the words quoted in the section and the guide are the sources' literals; both sheets carry L3's rules
 // under `screen` and the print block names the control nowhere; no history API call stands in the trail or the viewer
-// (L5); the trail module imports nothing and fetches nothing (L6); the guide's two sentences are whole, the old wording
+// (L5); the trail module imports nothing and fetches nothing, and L6's two verifications are run from the merge-base with
+// origin/main wherever that ref is known (L6); the guide's two sentences are whole, the old wording
 // is gone, and the sentence that says a link opens the file in place still stands (it is still true); the browser
 // plan's pointer stands in its navigation-stack section; and the module list is two-way (every module the section's
 // `ls` produces is named in the section and the count the section gives is the listing's, read from its sentence rather
@@ -25,6 +26,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, '..');
@@ -69,7 +71,7 @@ function between(src, from, to) {
 }
 const DECISIONS = ['L1. **A trail.**', 'L2. **Back and Forward.**', 'L3. **A figure opens in detail.**',
   'L4. **The picture view reached from a report.**', 'L5. **Browser history: not integrated.**',
-  'L6. **Nothing leaves the machine that did not before.**'];
+  'L6. **No kernel change, no new route; one new kind of request leaves the machine.**'];
 
 // ── the section's shape ─────────────────────────────────────────────────────────────────────────────
 
@@ -161,10 +163,11 @@ test('L2: two glyph buttons of the icon family stand first in the bar before the
 
 // ── L3: the figure control ─────────────────────────────────────────────────────────────────────────
 
-test('L3: the control\'s words are the viewer\'s literal, quoted by the section and the guide; the builder puts a marked glyph button after the anchor and never a wrapper; the target is the model\'s join or a tab; the click listener yields as the section says; the walks skip it; both sheets carry the rules under screen and the print block names it nowhere', () => {
+test('L3: the control\'s words are the viewer\'s literal, quoted by the section and the guide; the one decision puts a marked glyph button after the anchor and never a wrapper; the target is the model\'s join or a tab; the click listener yields as the section says; the walks skip it; both sheets carry the rules under screen and the print block names it nowhere', () => {
   const words = literalAfter(viewer, 'export const FIGURE_OPEN_TITLE = ');
   assert.equal(words, 'Open the picture');
-  assert.ok(section.includes('wears an "' + words + '" control (file-view.ts `ensureFigureControl`)'));
+  assert.ok(section.includes('wears an "' + words + '" control (file-view.ts `decideFigureControl`, the one place a control is added or removed, over the verdict `figureWantsControl`)'), 'L3 names the one decision and its verdict');
+  assert.ok(viewer.includes('function decideFigureControl(img: Element, filePath: string): void {') && viewer.includes('function figureWantsControl(img: Element, anchor: Element, filePath: string): boolean {'), 'which the source defines');
   assert.ok(guide.includes('**' + words + '**'), 'the guide names the button by the same words');
   assert.equal(literalAfter(viewer, 'const FIGOPEN_MARK = '), 'data-fv-figopen');
   assert.ok(section.includes('found by its mark `data-fv-figopen` and never by its class'));
@@ -235,7 +238,7 @@ test('L4: the browser leg reads the bar\'s name and the Back title after Enter o
 
 // ── L5 and L6: no history API, nothing new leaves the machine ──────────────────────────────────────
 
-test('L5 and L6: no history API call in the trail or the viewer; the trail module imports nothing and fetches nothing; the section names the kernel diff command', () => {
+test('L5 and L6: no history API call in the trail or the viewer; the trail module imports nothing and fetches nothing; L6 names its two verifications from the merge-base with origin/main, and they hold here wherever that ref is known', (t) => {
   for (const [name, src] of [['file-trail.ts', trail], ['file-view.ts', viewer]]) {
     assert.ok(!/\b(?:pushState|replaceState|hashchange)\b/.test(src), name + ': no pushState, replaceState or hashchange');
     assert.ok(!/\bhistory\.(?:back|forward|go)\(/.test(src), name + ': no history step of its own');
@@ -244,15 +247,33 @@ test('L5 and L6: no history API call in the trail or the viewer; the trail modul
   assert.ok(section.includes('1. Browser history. The trail is the viewer\'s own (L5)'));
   assert.equal([...trail.matchAll(/^import /gm)].length, 0, 'file-trail.ts imports nothing');
   assert.ok(!/\bfetch\(/.test(trail), 'and fetches nothing');
-  assert.ok(section.includes('`git diff --stat 34142c262 HEAD -- kernel/` is empty at the records commit'));
-  assert.ok(section.includes('`git diff --name-only 34142c262 HEAD`, the list the ledger entry\'s where line carries'));
+  // L6's verifications are derived from the merge-base with main, never from a fixed sha: the build's record read the branch
+  // point (34142c262), which the merge of main into the branch made an ancestor of main, so the same command named four kernel
+  // files at the merged head (the file review, fresh-1). The prose names the command; here it is run, wherever origin/main is
+  // known (a clone with the ref; a shallow CI checkout of a pull request has none and holds the prose alone, said so below).
+  assert.ok(section.includes('`git diff --stat $(git merge-base origin/main HEAD) HEAD -- kernel/` is empty'), 'L6 names the kernel stat from the merge-base');
+  assert.ok(section.includes('`git diff --name-only $(git merge-base origin/main HEAD) HEAD` lists files under ui/webview, docs, plans, tools, upstream or tests alone'), 'and the listing from the merge-base');
+  assert.ok(!section.includes('git diff --stat 34142c262') && !section.includes('git diff --name-only 34142c262'), 'no verification against the branch point remains');
+  const count = /upstream or tests alone \((\d+) files, the ledger entry's where line/.exec(section);
+  assert.ok(count, 'L6 counts the listing beside the command');
   assert.ok(exists('upstream', '2026-09-19-linknav-trail-back-forward.md'), 'the ledger entry the section names');
+  const git = (...args) => execFileSync('git', args, { cwd: REPO, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+  let base = null;
+  try { base = git('merge-base', 'origin/main', 'HEAD'); } catch { base = null; }
+  if (!base) { t.diagnostic('origin/main is not known in this checkout: L6\'s verifications are held by their prose alone here'); return; }
+  const head = git('rev-parse', 'HEAD');
+  assert.equal(git('diff', '--stat', base, 'HEAD', '--', 'kernel/'), '', 'no kernel change since the merge-base ' + base);
+  const files = git('diff', '--name-only', base, 'HEAD').split('\n').filter(Boolean);
+  const DIRS = ['ui/webview/', 'docs/', 'plans/', 'tools/', 'upstream/', 'tests/'];
+  for (const f of files) assert.ok(DIRS.some((d) => f.startsWith(d)), f + ' lies under one of the six directories L6 names');
+  if (base === head) { t.diagnostic('HEAD is the merge-base (the branch is merged, or this is main): the count is not re-derived'); return; }
+  assert.equal(files.length, Number(count[1]), 'L6 says the listing since the merge-base has ' + count[1] + ' files; it has ' + files.length + ': ' + files.join(', '));
 });
 
 // ── the guide and the browser plan ─────────────────────────────────────────────────────────────────
 
 const FIRST = 'The viewer keeps a trail of the files you reach through the links inside a file, with two arrow buttons at the left of its title bar: **Back** returns you to the file you followed a link from, and **Forward** to the file you came back from, each at the place and in the view you left it (while you are not editing the file and no text box holds the keyboard, Cmd+[ and Cmd+] on a Mac do the same, and so do Alt+Left and Alt+Right on a Files or chat page open in a browser tab of its own; in the dashboard those two keys move the keyboard between the panes); a file opened from the chat, from a listing or from the Files pane\'s **Recent** list starts the trail over, and closing the viewer ends it.';
-const SECOND = 'A picture in a rendered file that comes from a file or a web address has an **Open the picture** button at its top-right corner (top-left for a picture floated to the right), shown while the pointer is over the picture or the button holds the keyboard focus, that opens the picture on its own in the viewer, with Back returning you to the file at that place; a plain click on the picture does the same while the Comments panel is closed (with the panel open, a click offers a comment as before), a Cmd-click (Ctrl on Windows and Linux) opens the picture in a browser tab, and a picture from the web opens in a tab; a figure waiting behind its host\'s box gets its button once it has loaded, and three kinds of picture have none: a `data:` picture, whose bytes are written into the file itself and which does not open; a picture smaller than 48 pixels on either side (a badge, an inline icon), which the button would cover, and which a plain click still opens when no link holds it; and a picture inside a link that holds more than the picture (a caption beside it), where a click follows the link, while a picture that is all its link holds keeps its button beside the link.';
+const SECOND = 'A picture in a rendered file that comes from a file or a web address has an **Open the picture** button at its top-right corner (top-left for a picture floated to the right), shown while the pointer is over the picture or the button holds the keyboard focus, that opens the picture on its own in the viewer, with Back returning you to the file at that place; a plain click on the picture does the same while the Comments panel is closed (with the panel open, a click offers a comment as before, and a drag draws a rectangle unless it starts on the button, which takes the press), a Cmd-click (Ctrl on Windows and Linux) opens the picture in a browser tab, and a picture from the web opens its address in a new tab, as a link to that site does; a figure waiting behind its host\'s box gets its button once it has loaded, and three kinds of picture have none: a `data:` picture, whose bytes are written into the file itself and which does not open; a picture smaller than 48 pixels on either side (a badge, an inline icon), which the button would cover, and which a plain click still opens when no link holds it; and a picture inside a link that holds more than the picture (a caption beside it), where a click follows the link (a link with no address left, or an anchor that only marks a place, leaves the click to the picture, which opens), while a picture that is all its link holds keeps its button beside the link.';
 const POINTER = 'Since 2026-09-19 the viewer keeps a trail of its own beneath this stack, the files reached through the links inside a shown file and the pictures opened from its figures, with Back and Forward glyphs at the left of its bar, and the two do not meet: a file picked from the listing starts the trail over, the "‹ Files" link keeps closing the viewer to the listing, and closing the viewer ends the trail (plans/markdown-viewer.md, "Follow-on: Link navigation", L1 to L4).';
 
 test('the guide\'s Links in a file paragraph ends with the two sentences, whole, after the drag sentence; the old wording is gone; the in-place sentence still stands; the browser plan\'s pointer is one sentence in its navigation-stack section', () => {

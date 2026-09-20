@@ -29,6 +29,7 @@ const flat = (s) => s.replace(/\s+/g, ' ');
 
 const plan = read('plans', 'markdown-viewer.md');
 const viewer = read('ui', 'webview', 'file-view.ts');
+const guide = read('docs', 'guide.md');
 
 const HEAD = '## Follow-on: Link navigation (2026-09-19)';
 const headAt = plan.indexOf('\n' + HEAD + '\n');
@@ -54,11 +55,11 @@ function inOrder(src, marks, what) {
   }
 }
 const L3 = between(section, 'L3. **A figure opens in detail.**', 'L4. **The picture view reached from a report.**');
-const L6 = between(section, 'L6. **Nothing leaves the machine that did not before.**', '**Tests.**');
+const L6 = between(section, 'L6. **No kernel change, no new route; one new kind of request leaves the machine.**', '**Tests.**');
 const tests = between(section, '**Tests.**', '**Open points for the owner.**');
 const SHAPES = ['file-view-figure-shapes.test.ts', 'file-view-figure-shapes-browser.test.ts'];
 
-test('L3 opens on the exceptions it names, and names the floor by the source\'s constant and number, the measure, the drop at the load, and the link exclusion by its function, in the order the builder runs them', () => {
+test('L3 opens on the exceptions it names, and names the floor by the source\'s constant and number, the measure, the decision at the load and the error, and the link exclusion by its function, in the order the verdict runs them', () => {
   assert.ok(L3.includes('with the exceptions this decision names (a picture with nothing to open, a gated placeholder until its load, a figure under the size floor, a figure inside a link holding more than it), wears an "Open the picture" control'),
     'the first sentence carries the exceptions rather than claiming every picture');
   const floor = /^const FIGOPEN_MIN_PX = (\d+);$/m.exec(viewer);
@@ -70,7 +71,10 @@ test('L3 opens on the exceptions it names, and names the floor by the source\'s 
     assert.ok(viewer.includes('function ' + fn + '('), 'the source defines ' + fn);
     assert.ok(L3.includes('`' + fn + '`'), 'L3 names ' + fn);
   }
-  assert.ok(L3.includes('the paint, which runs before the load, adds the control and the load (armFigureControls, the same builder) removes the one on a figure the measure finds under the floor'));
+  assert.ok(L3.includes('in a browser every figure is fetching at the paint (mdBlock, `addFigureControls`) and gets none then, its load or its error (`armFigureControls`) runs the decision with the picture\'s size known'), 'L3: the paint adds nothing in a browser; the load and the error decide');
+  assert.ok(!L3.includes('adds the control and the load (armFigureControls, the same builder) removes'), 'the round-1 wording, the paint adding and the load dropping, is gone');
+  assert.ok(!L3.includes('keeps its control, and a figure at the floor'), 'a failed figure no longer keeps a control');
+  assert.ok(L3.includes('a picture that failed to load gets none (nothing to open, and with an empty alt no box'), 'L3: a failed figure gets none');
   assert.ok(L3.includes('a figure inside a link that holds more than it (`[![alt](fig.png) caption](other.md)`'));
   assert.ok(L3.includes('a figure alone in a link keeps its control, after the link'));
   const want = between(viewer, 'function figureWantsControl(img: Element, anchor: Element, filePath: string): boolean {', 'function decideFigureControl(');
@@ -117,8 +121,9 @@ test('the two shapes modules the round added exist, name the follow-on, and are 
   assert.ok(tests.includes('tools/' + path.basename(fileURLToPath(import.meta.url))), 'the Tests paragraph names this pin');
 });
 
-test('L6 names tests among the directories the branch changes and the two files under it, which the Tests paragraph names too and which exist, and no longer calls the records commit the follow-on\'s last', () => {
-  assert.ok(L6.includes('every file the branch changes is under ui/webview, docs, plans, tools, upstream or tests (`git diff --name-only 34142c262 HEAD`'), 'the directory list carries tests beside the command');
+test('L6 names tests among the directories the branch changes, from the merge-base, and the two files under it, which the Tests paragraph names too and which exist, and no longer calls the records commit the follow-on\'s last', () => {
+  assert.ok(L6.includes('`git diff --name-only $(git merge-base origin/main HEAD) HEAD` lists files under ui/webview, docs, plans, tools, upstream or tests alone'), 'the directory list carries tests beside the command, derived from the merge-base');
+  assert.ok(L6.includes('a verification is derived from the merge-base with main, never from a fixed sha a merge can move behind'), 'and L6 states the rule fresh-1 taught');
   assert.ok(!L6.includes('the last commit of the follow-on'), 'the records commit is not the branch\'s last');
   for (const f of ['test_guide_files_failures.py', 'test_guide_trail_chords_and_figure_button.py']) {
     assert.ok(L6.includes('tests/' + f), 'L6 names tests/' + f);
@@ -162,4 +167,86 @@ test('L1\'s Held-by sentence names the conflict Reload driven in Chromium, which
   assert.ok(!op1.includes('a back-swipe and Alt+Left the trail\'s meaning'), 'the unconditional wording is gone');
   const op10 = between(section, '10. The chords inside the dashboard shell (L2).', 'is a ruling');
   assert.ok(op10.includes('takes Alt+Left and Alt+Right first on every pane document'), 'open point 10 is the one it points at');
+});
+
+// ── the file review's corrections (2026-09-20) ──────────────────────────────────────────────────────
+
+const L2 = between(section, 'L2. **Back and Forward.**', 'L3. **A figure opens in detail.**');
+const openPoints = section.slice(section.indexOf('**Open points for the owner.**'));
+const styles = read('ui', 'webview', 'styles.css');
+const chosenLeg = read('ui', 'webview', 'file-view-figure-chosen-browser.test.ts');
+
+test('the file review: L3 names the one decision, its verdict and the state it reads, the fetching figure without a target, the door that takes no Recent row, linkAbove as any anchor and the dead link\'s plain click, each carried by the source', () => {
+  assert.ok(L3.includes('Whether the control stands is decided from the figure AS IT IS NOW, by that one function'), 'L3 states the re-decision');
+  for (const fn of ['decideFigureControl', 'figureWantsControl', 'figureState', 'openFigureInViewer', 'refigureControls', 'addFigureControls', 'armFigureControls']) {
+    assert.ok(viewer.includes('function ' + fn + '('), 'the source defines ' + fn);
+    assert.ok(L3.includes('`' + fn + '`'), 'L3 names ' + fn);
+  }
+  assert.ok(!section.includes('ensureFigureControl') && !section.includes('dropFigureControl'), 'the removed functions are named nowhere in the section');
+  const state = between(viewer, 'function figureState(img: Element): FigureState {', '\n}\n');
+  inOrder(state, ['if (typeof i.complete !== "boolean") return "standin";', 'if (!i.complete) return "fetching";', 'return i.naturalWidth > 0 ? "loaded" : "failed";'], 'figureState: the browser\'s record on the element');
+  assert.ok(L3.includes('the browser\'s own record: fetching, loaded, failed, or a stand-in outside a browser'), 'L3 names the four states');
+  const target = between(viewer, 'function figureTarget(img: Element, filePath: string): FigureTarget | null {', '\n}\n');
+  inOrder(target, ['if (figureState(img) === "fetching") return null;', 'const dest = chosenSource(img);'], 'figureTarget: the fetching figure has no target, read first');
+  assert.ok(L3.includes('a figure still fetching has NO target (`figureState`, read first in `figureTarget`: `complete` false), so its control waits for the load and its plain click opens nothing'), 'L3 says so');
+  assert.ok(!L3.includes('which is also the paint-time read, before the browser has picked, that decides whether the control exists'), 'the false paint-time sentence is gone');
+  assert.ok(viewer.includes('function openFigureInViewer(path: string, sid: string | null): void {\n  trailNext = "push";\n  try { openFileView(path, sid, { at: null }); } finally { trailNext = null; }\n}'), 'the figure\'s own door');
+  const openFig = between(viewer, 'const openFigure = (img: Element, ev: MouseEvent): void => {', '\n  };\n');
+  assert.ok(openFig.includes('openFigureInViewer(target.path, sid || null);') && !openFig.includes('openFromViewer('), 'openFigure takes the door, not the host\'s opener');
+  assert.ok(L3.includes('through the figure\'s own door, `openFigureInViewer` (openFileView itself with the trail tag set to push and cleared in a `finally`'), 'L3 names the door and its shape');
+  assert.ok(!L3.includes('`openFromViewer("push", path, sid, null)`'), 'and no longer the host\'s opener for the figure');
+  assert.ok(L3.includes('the picture takes NO Recent row'), 'L3 records the Recent default');
+  assert.ok(L3.includes('whether a picture opened from a figure should take a row instead is the owner\'s (open point 12)'), 'as overturnable, with the open point');
+  const above = between(viewer, 'function linkAbove(anchor: Element): Element | null {', '\n}\n');
+  assert.ok(above.includes(`return p ? p.closest('a, [data-act="openpath"]') : null;`), 'linkAbove reads any anchor');
+  assert.ok(L3.includes('`linkAbove`: ANY anchor, or a path link, above `figureAnchor`\'s climb'), 'L3 says any anchor');
+  assert.ok(!L3.includes('`linkAbove`: an anchor with an href, or a path link'), 'the a[href] wording is gone');
+  assert.ok(L3.includes('a captioned picture inside a dead link or a named target, an anchor with no href, wears no control and its plain click opens the picture'), 'L3 records the dead link\'s plain click');
+  const shapesLeg = read('ui', 'webview', 'file-view-figure-shapes-browser.test.ts');
+  assert.ok(shapesLeg.includes('inside a dead link the plain click opens the picture'), 'which the shapes leg executes');
+  assert.ok(L3.includes('one capture-phase pair of `load` and `error` listeners on the body per open'), 'L3 names the error listener');
+});
+
+test('the file review: L3 and L6 record the remote picture\'s tab as the one new request, precisely (the gate not bypassed; a credentialed document request to a host the image was fetched from), carried by openUrlTab and observed by the chosen leg at a context-level route with the real window.open; the two roads are priced in open point 11 with the reviewer\'s reading', () => {
+  assert.ok(viewer.includes('if (canPreview()) window.open(href, "_blank", "noopener,noreferrer");'), 'openUrlTab: a top-level tab');
+  assert.ok(L3.includes('call `openUrlTab` (`window.open(href, "_blank", "noopener,noreferrer")` in the web dashboard, the host\'s openExternal in the VS Code webview), a top-level navigation to the picture\'s address that carries the cookies the host set which a cross-site navigation carries'), 'L3 states what the tab carries');
+  assert.ok(L3.includes('The gate is not bypassed: no request reaches a host the gate still holds'), 'L3: the gate holds');
+  assert.ok(L3.includes('So the follow-on is a privacy surface and lands on the owner\'s word whatever its tier'), 'L3: the landing');
+  assert.ok(L6.includes('One request is new (the file review\'s HIGH 1)'), 'L6 records the one new request');
+  assert.ok(L6.includes('The build\'s record here claimed that nothing leaves the machine that did not before') && L6.includes('the claim was false'), 'L6 names the corrected claim');
+  assert.ok(!section.includes('Nothing leaves the machine that did not before.**'), 'the false head is gone');
+  assert.ok(chosenLeg.includes('page.context().route(') && chosenLeg.includes('async function nextTab(') && chosenLeg.includes('window.open = w.__realOpen;'), 'the chosen leg observes the tab as a request with the real window.open');
+  assert.ok(chosenLeg.includes('"document " + REMOTE_A'), 'and counts the document request');
+  const op11 = between(openPoints, '11. The remote picture\'s tab (L3, L6; the file review\'s HIGH 1).', '12. A picture opened from a figure takes no Recent row (L3)');
+  assert.ok(op11.includes('(a) as built') && op11.includes('(b) the narrow road'), 'both roads priced');
+  assert.ok(op11.includes('The reviewer\'s reading (romp-manager, 2026-09-20), for the owner to take or leave: the explicit control is an unambiguous gesture and a plain click on a picture is not'), 'the reviewer\'s reading, attributed');
+  assert.ok(op11.includes('The landing is the owner\'s whatever the tier'));
+  for (const leg of ['file-view-figure-chosen-browser.test.ts', 'file-view-figure-shapes-browser.test.ts', 'file-figure-open-browser.test.ts']) {
+    assert.ok(op11.includes(leg), 'the narrow road prices ' + leg);
+    assert.match(read('ui', 'webview', leg), /plain click/, leg + ' drives a plain click');
+  }
+  assert.ok(section.includes('kernel-served dashboard sends `Referrer-Policy: same-origin`, kernel.py'), 'L3 names the referrer policy');
+  assert.ok(read('kernel', 'kernel.py').includes('self.send_header("Referrer-Policy", "same-origin")'), 'which the kernel sends');
+});
+
+test('the file review: L2 keeps the dimmed pair and cites the rule it departs from with the hide\'s measured cost; L3, open point 5 and the guide record the drag that starts on the control; the state and Recent legs are named in L3\'s Held-by sentence and the Tests paragraph; open points 11 to 13 stand', () => {
+  assert.ok(L2.includes('The pair stands DIMMED, never hidden'), 'L2 states the dimmed pair');
+  assert.ok(viewer.includes('if (!target) b.setAttribute("aria-disabled", "true");'), 'which the source does');
+  assert.ok(!viewer.includes('nav.hidden'), 'and the hide is not applied');
+  assert.ok(L2.includes('styles.css `.fileview-group[hidden]`') && /^\.fileview-btn\[hidden\], \.fileview-group\[hidden\]/m.test(styles), 'the sheet rule L2 cites exists');
+  assert.ok(L2.includes('hides a GROUP whose children are all hidden, and a dimmed button is not hidden'), 'L2 names the rule the pair departs from');
+  assert.ok(viewer.includes("(T367's all-hidden rule)"), 'the in-code rule L2 cites');
+  assert.ok(L2.includes('about 74 px of a 359 px bar at a 380 px viewport, and the file name moving 74 px on the first link follow of every trail'), 'the measured cost');
+  assert.ok(L3.includes('a drag that BEGINS inside the control\'s 22 px square at the figure\'s corner draws no region and offers nothing'), 'L3 records the loss');
+  const op5 = between(openPoints, '5. With the Comments panel open', '6. Not measured here.');
+  assert.ok(op5.includes('Recorded in L3 and in the guide\'s figure sentence (the file review\'s ui-2)') && op5.includes('was not built'), 'open point 5 says where it is recorded and that the stand-down is unbuilt');
+  assert.ok(!op5.includes('Not tested, not recorded in L3'), 'the old open point is gone');
+  assert.ok(flat(guide).includes('and a drag draws a rectangle unless it starts on the button, which takes the press'), 'the guide names the square');
+  for (const f of ['file-view-figure-state-browser.test.ts', 'file-view-figure-recent-browser.test.ts']) {
+    assert.ok(exists('ui', 'webview', f), f + ' exists');
+    assert.ok(L3.slice(L3.indexOf('Held by')).includes(f), 'L3\'s Held-by sentence names ' + f);
+    assert.ok(tests.includes('ui/webview/' + f), 'the Tests paragraph names ui/webview/' + f);
+  }
+  for (const n of [11, 12, 13]) assert.ok(openPoints.includes(' ' + n + '. '), 'open point ' + n + ' is numbered');
+  assert.ok(between(openPoints, '13. The dimmed Back and Forward pair', 'changes first if the pair is to hide').includes('74 px'), 'open point 13 prices the hide');
 });

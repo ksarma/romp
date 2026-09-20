@@ -22,7 +22,12 @@ at each change of the body's width), and one inside a link that holds more than 
 leaves such a link standing over the img, where `linkAround` climbs a link holding the picture alone so its button
 lands after the link). A small picture no link holds still opens on a plain click: the figure's click listener reads
 the link above the target and never the size. The guide names all three kinds of picture without the button (the
-`data:` picture among them) and the number it gives is read off the constant here.
+`data:` picture among them) and the number it gives is read off the constant here. The file review of the PR
+(2026-09-20) added two clauses, held here too: with the Comments panel open a drag that starts on the button draws no
+rectangle (the button takes the press; the loss is recorded, not built against), and inside a link with no address
+left, or an anchor that only marks a place, the plain click opens the picture (linkOf reads neither, and the button is
+withheld there all the same). The figure sentence is quoted whole here and in the tools pin, and the two copies are
+read against each other.
 
 Each guide sentence is pinned flattened, so a rewrap survives. Synthetic: only the repo's own text.
 """
@@ -70,16 +75,24 @@ TRAIL = ("each at the place and in the view you left it (while you are not editi
          "page open in a browser tab of its own; in the dashboard those two keys move the keyboard between the "
          "panes); a file opened from the chat, from a listing or from the Files pane's **Recent** list starts the "
          "trail over, and closing the viewer ends it.")
-PICTURE_HEAD = ("A picture in a rendered file that comes from a file or a web address has an **Open the picture** "
-                "button at its top-right corner (top-left for a picture floated to the right), shown while the pointer "
-                "is over the picture or the button holds the keyboard focus, that opens the picture on its own in the "
-                "viewer, with Back returning you to the file at that place;")
-PICTURE_NONE = ("a figure waiting behind its host's box gets its button once it has loaded, and three kinds of picture "
-                "have none: a `data:` picture, whose bytes are written into the file itself and which does not open; a "
-                "picture smaller than 48 pixels on either side (a badge, an inline icon), which the button would cover, "
-                "and which a plain click still opens when no link holds it; and a picture inside a link that holds more "
-                "than the picture (a caption beside it), where a click follows the link, while a picture that is all its "
-                "link holds keeps its button beside the link.")
+# the whole figure sentence, byte for byte the copy tools/markdown-viewer-plan-linknav.test.mjs holds as SECOND (checked below)
+PICTURE = ("A picture in a rendered file that comes from a file or a web address has an **Open the picture** but"
+                "ton at its top-right corner (top-left for a picture floated to the right), shown while the pointer i"
+                "s over the picture or the button holds the keyboard focus, that opens the picture on its own in the "
+                "viewer, with Back returning you to the file at that place; a plain click on the picture does the sam"
+                "e while the Comments panel is closed (with the panel open, a click offers a comment as before, and a"
+                " drag draws a rectangle unless it starts on the button, which takes the press), a Cmd-click (Ctrl on"
+                " Windows and Linux) opens the picture in a browser tab, and a picture from the web opens its address"
+                " in a new tab, as a link to that site does; a figure waiting behind its host's box gets its button o"
+                "nce it has loaded, and three kinds of picture have none: a `data:` picture, whose bytes are written "
+                "into the file itself and which does not open; a picture smaller than 48 pixels on either side (a bad"
+                "ge, an inline icon), which the button would cover, and which a plain click still opens when no link "
+                "holds it; and a picture inside a link that holds more than the picture (a caption beside it), where "
+                "a click follows the link (a link with no address left, or an anchor that only marks a place, leaves "
+                "the click to the picture, which opens), while a picture that is all its link holds keeps its button "
+                "beside the link.")
+PICTURE_HEAD = PICTURE[:PICTURE.index("; a plain click")]
+PICTURE_NONE = PICTURE[PICTURE.index("a figure waiting behind"):]
 # the wording the review found false by execution: the arrow chords with no dashboard exception, and every picture with the button
 OLD_TRAIL = "(Alt+Left and Alt+Right, or Cmd+[ and Cmd+] on a Mac, do the same while no text box holds the keyboard)"
 OLD_PICTURE = "Every picture in a rendered file"
@@ -105,6 +118,20 @@ class GuideSentences(unittest.TestCase):
         self.assertLess(self.links.index(TRAIL), self.links.index(PICTURE_HEAD), "the trail sentence first, then the picture's")
         self.assertLess(self.links.index(PICTURE_HEAD), self.links.index(PICTURE_NONE))
         self.assertTrue(self.links.endswith(PICTURE_NONE), "the picture sentence closes the paragraph")
+        self.assertIn(PICTURE, self.links, "the whole sentence, as the tools pin quotes it")
+
+    def test_the_picture_sentence_here_is_byte_for_byte_the_tools_pins_copy(self):
+        """Two pins quote the guide's figure sentence whole: SECOND in tools/markdown-viewer-plan-linknav.test.mjs and PICTURE
+        here. A correction that reaches one and not the other leaves a pin holding stale words, so the two are read against
+        each other: the JS literal, its escapes undone, is this module's constant."""
+        pin = _read("tools", "markdown-viewer-plan-linknav.test.mjs")
+        m = re.search(r"^const SECOND = '((?:[^'\\]|\\.)*)';$", pin, re.M)
+        assert m, "the tools pin's SECOND literal"
+        second = re.sub(r"\\(.)", r"\1", m.group(1))
+        self.assertEqual(second, PICTURE)
+        m = re.search(r"^const FIRST = '((?:[^'\\]|\\.)*)';$", pin, re.M)
+        assert m, "the tools pin's FIRST literal"
+        self.assertTrue(re.sub(r"\\(.)", r"\1", m.group(1)).endswith(TRAIL), "the trail sentence pinned here is the tail of the tools pin's FIRST")
         self.assertNotIn(OLD_PICTURE, _flat(self.guide))
         for word in ("—", "fleet"):
             self.assertNotIn(word, self.links)
@@ -200,6 +227,24 @@ class ThreeKindsOfPictureWithoutTheButton(GuideSentences):
         self.assertIn("openFigure(img, ev);", click)
         self.assertNotIn("figureTooSmall", click, "the click reads no size: a small picture no link holds opens")
         self.assertNotIn("FIGOPEN_MIN_PX", click)
+
+    def test_a_dead_link_or_a_named_target_leaves_the_plain_click_to_the_picture_which_opens(self):
+        """The guide's clause: a link with no address left, or an anchor that only marks a place, leaves the click to the
+        picture. The figure listener yields to linkOf's links (a path link, a web address the viewer dressed, a section link)
+        and to an anchor with an href; a dead anchor (file-view-links.ts DEAD_LINK_CLASS, its href taken off) and a named
+        target (`<a id>`, never dressed) are neither, so the plain click reaches openFigure. The control is withheld there
+        all the same (linkAbove reads any anchor), which the sentence's "three kinds" count relies on."""
+        link_of = _body(self.viewer, "const linkOf = (t: Element | null): HTMLElement | null => {", "  };")
+        self.assertIn("t.closest('[data-act=\"openpath\"], a.' + URL_LINK_CLASS + \", a.\" + FRAG_LINK_CLASS)", link_of, "linkOf's selector: the three dressed links")
+        self.assertNotIn("DEAD_LINK_CLASS", link_of, "a dead anchor is none of them")
+        self.assertNotIn("fv-dead", link_of)
+        links = _read("ui", "webview", "file-view-links.ts")
+        self.assertIn('export const DEAD_LINK_CLASS = "fv-dead";', links)
+        self.assertIn('if (a.hasAttribute("name") || a.hasAttribute("id")) return;', links, "a named target is never dressed, and keeps no href")
+        self.assertIn("a picture inside a link that holds more than the picture (a caption beside it), where a click follows the link (a link with no "
+                      "address left, or an anchor that only marks a place, leaves the click to the picture, which opens)", self.links)
+        above = _body(self.viewer, "function linkAbove(anchor: Element): Element | null {", "}")
+        self.assertIn("return p ? p.closest('a, [data-act=\"openpath\"]') : null;", above, "and no button stands inside such an anchor")
 
 
 if __name__ == "__main__":
