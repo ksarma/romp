@@ -26,7 +26,12 @@ kernel or a browser:
   value uncapped and the census green; a wait with no timeout key inherits playwright's 30 s default, which no budget
   caps: the driver never calls setDefaultTimeout) and each waitForTimeout to draw on the budget or be one of the two fixed
   dwells driver_worst_case_s counts; the navigations (goto, reload, goBack, goForward) are wait forms too; and an unlisted
-  wait form or an auto-waiting action fails by name.
+  wait form or an auto-waiting action fails by name. Round 4 added the other half of that premise as an ALLOW-list: every
+  method the driver calls on a playwright receiver (a page, a locator made from one, the context, the browser, chromium)
+  must be one ALLOWED_CALLS names for that receiver kind, because a deny-list's gap passes (the round-3 head listed the
+  auto-waiting ACTIONS and not the auto-waiting locator READS, so `locator(...).textContent()`, which inherits playwright's
+  30 s default that no budget caps, kept the census green while the pinned headroom under the subprocess timeout is 7.5 s
+  and 27.5 s); `evaluate` is allowed on a page receiver only, since a locator's evaluate auto-waits.
 
 Three more pins ride here because the module they pin has no kernel-free test of its own: LinkDropBothNew gates on no
 knob, wherever such a gate could sit (a class-level skip, setUpClass, _knobs), and LinkDropOldLocal skips as optional
@@ -75,6 +80,19 @@ FIXED_DWELLS = ("cfg.phaseSettleMs", "cfg.downDwellMs")
 # all begin with the call and none is bounded by the budget (round 3)
 CAPPED = re.compile(r"budget\.capped\(\s*[\w.]+\s*\)")
 AUTO_WAITING_ACTIONS = ("click", "dblclick", "fill", "press", "type", "check", "uncheck", "hover", "tap", "selectOption", "setInputFiles", "dragTo", "focus")
+# The calls the driver may make on a playwright receiver, by the receiver's kind (round 4, regression-2): an ALLOW-list, so a
+# call it does not name fails by name whatever it is, where a deny-list's gap passes. Measured at this head (the refuter's
+# probe against the lab's playwright): locator.textContent, innerText, ariaSnapshot and locator.evaluate auto-wait under the
+# 30 s default; count, first, isVisible, isHidden, allTextContents and allInnerTexts do not. Only what the driver calls today
+# is listed: `evaluate` on a PAGE receiver (snap, provText) and not on a locator; the wait forms here (goto, waitForFunction,
+# waitForTimeout, waitFor) are the census's above, which requires their timeouts capped. A new call is added here with its
+# receiver kind once it is known not to wait, or added to WAIT_FORMS as a wait the budget caps.
+ALLOWED_CALLS = {"page": ("locator", "evaluate", "goto", "waitForFunction", "waitForTimeout", "on", "addInitScript"),
+                 "locator": ("first", "count", "waitFor"),
+                 "context": ("newPage",), "browser": ("newContext", "close"), "chromium": ("launch",)}
+LOCATOR_MAKERS = ("locator", "first", "last", "nth", "filter", "and", "or", "getByText", "getByRole", "getByTestId", "getByLabel", "getByPlaceholder", "getByAltText", "getByTitle")
+RECEIVERS = re.compile(r"\b(?P<recv>pages\.\w+|pages\[(?:[^\[\]]|\[[^\[\]]*\])*\]|page|context|browser|chromium)(?=\s*\.)")
+MEMBER = re.compile(r"\s*\.\s*(?P<name>[\w$]+)\s*")
 
 
 def _strip_js_comments(text):
@@ -116,6 +134,28 @@ def _wait_sites(text):
         if name == "waitFor" and m.group("dot") and text[max(0, m.start() - 7):m.start()] != "budget.":
             name = ".waitFor"
         out.append((name, _call_args(text, m.end() - 1), text.count("\n", 0, m.start()) + 1))
+    return out
+
+
+def _receiver_calls(text):
+    """Every method call chained on a playwright receiver expression in the (comment-stripped) driver: (kind, method, line).
+    The receivers are the driver's names for them (`page`, `pages.<app>`, `pages[...]`: a page; `context`; `browser`;
+    `chromium`), the chain is walked call by call with _call_args skipping each call's arguments, and the kind becomes
+    `locator` after a locator-making call (LOCATOR_MAKERS), so `pages.feed.locator(sel).first().waitFor({...})` yields
+    (page, locator), (locator, first), (locator, waitFor). A member read without a call ends the chain."""
+    out = []
+    for m in RECEIVERS.finditer(text):
+        kind = "page" if m.group("recv").startswith("page") else m.group("recv")
+        j = m.end()
+        while True:
+            c = MEMBER.match(text, j)
+            if not c or text[c.end():c.end() + 1] != "(":
+                break
+            name = c.group("name")
+            out.append((kind, name, text.count("\n", 0, m.start()) + 1))
+            if name in LOCATOR_MAKERS:
+                kind = "locator"
+            j = c.end() + 1 + len(_call_args(text, c.end())) + 1   # past the call's closing parenthesis
     return out
 
 
@@ -206,8 +246,44 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
                              "the census is not vacuous: the forms the driver uses today are all seen: %r" % (sorted({name for name, _, _ in sites}),))
         actions = re.findall(r"\.(%s)\s*\(" % "|".join(AUTO_WAITING_ACTIONS), driver)
         self.assertEqual(actions, [], "an auto-waiting playwright action in the driver (it waits under playwright's 30 s default, which no budget caps; the driver reads pages, it does not act on them): %r" % (actions,))
+        # the allow-list (round 4): every call on a playwright receiver is one ALLOWED_CALLS names for that receiver's kind; the
+        # deny-list above is the backstop it was, and its gap (the auto-waiting locator READS: textContent, innerText, ariaSnapshot,
+        # a locator's evaluate, each under the 30 s default) is what this refuses
+        calls = _receiver_calls(driver)
+        self.assertTrue(calls, "the walk saw the driver's calls on its playwright receivers")
+        unlisted = sorted({(kind, name, ln) for kind, name, ln in calls if name not in ALLOWED_CALLS.get(kind, ())})
+        self.assertEqual(unlisted, [], "a call on a playwright receiver that ALLOWED_CALLS does not name for its kind (an auto-waiting read such as a locator's "
+                                       "textContent, innerText, ariaSnapshot or evaluate inherits playwright's 30 s default, which no budget caps, and one such read "
+                                       "outruns the headroom under the subprocess timeout; a call known not to wait is added there by receiver kind, a wait goes "
+                                       "to WAIT_FORMS): %r" % (unlisted,))
+        self.assertLessEqual({("page", "locator"), ("page", "evaluate"), ("page", "goto"), ("page", "waitForFunction"), ("page", "waitForTimeout"), ("page", "on"),
+                              ("page", "addInitScript"), ("locator", "first"), ("locator", "count"), ("locator", "waitFor"), ("context", "newPage"),
+                              ("browser", "newContext"), ("browser", "close"), ("chromium", "launch")}, {(kind, name) for kind, name, _ in calls},
+                             "the walk is not vacuous: every receiver call the driver makes today is seen, by kind: %r" % (sorted({(kind, name) for kind, name, _ in calls}),))
         self.assertEqual(len(re.findall(r"\bfetch\s*\(", driver)), 2, "the driver's two fetches (ctl and tunnelsStatus) carry no timeout: the acknowledged driver_error road, DRIVER_TIMEOUT_S, "
                                                                         "which the arithmetic does not count; a third fetch is a new uncounted wait")
+
+    def test_the_receiver_walk_classifies_a_call_by_the_receiver_it_is_chained_on(self):
+        """The allow-list's instrument (_receiver_calls), by cell: a page's locator chain yields the page call and the locator calls
+        after it; a bracketed page expression is a page; a member read without a call ends the chain; a locator's textContent,
+        innerText, ariaSnapshot and evaluate are locator calls the allow-list refuses while a page's evaluate is allowed (the
+        refuter measured a locator's evaluate auto-waiting and a page's returning at once); text that names no receiver yields
+        nothing. The failing-before is a driver mutation, not a cell: provText rewritten as a locator's `textContent()`
+        passed the round-3 head's census and reds this one by name."""
+        self.assertEqual(_receiver_calls('await pages.feed.locator(cardSel(ch, n)).first().waitFor({ state: "attached", timeout: budget.capped(ms) });'),
+                         [("page", "locator", 1), ("locator", "first", 1), ("locator", "waitFor", 1)])
+        self.assertEqual(_receiver_calls('x = (await pages.waiting.locator(".ut-text", { hasText: ch.todoText }).count()) > 0;'),
+                         [("page", "locator", 1), ("locator", "count", 1)])
+        self.assertEqual(_receiver_calls('await pages[APPS[0]].waitForTimeout(budget.capped(cfg.quietStepMs));'), [("page", "waitForTimeout", 1)])
+        self.assertEqual(_receiver_calls('await pages[app].waitForFunction(() => true, null, { timeout: budget.capped(x) });'), [("page", "waitForFunction", 1)])
+        self.assertEqual(_receiver_calls('const u = page.url; const c = await context.newPage();'), [("context", "newPage", 1)])
+        self.assertEqual(_receiver_calls('\nconst t = await pages.feed.locator(cfg.provSel).textContent();'), [("page", "locator", 2), ("locator", "textContent", 2)])
+        for read in ("textContent", "innerText", "ariaSnapshot", "evaluate"):
+            calls = _receiver_calls("await pages.feed.locator(sel).%s();" % read)
+            self.assertEqual([(k, n) for k, n, _ in calls if n not in ALLOWED_CALLS.get(k, ())], [("locator", read)], "a locator's %s is refused by the allow-list" % read)
+        calls = _receiver_calls("await pages.feed.evaluate((sel) => document.querySelector(sel), cfg.provSel);")
+        self.assertEqual([(k, n) for k, n, _ in calls if n not in ALLOWED_CALLS.get(k, ())], [], "a page's evaluate is allowed")
+        self.assertEqual(_receiver_calls("const webpage = 1; out.pages[app] = await snap(pages[app]); w.send(d);"), [], "no receiver, no call")
 
     def test_the_new_bundle_class_gates_on_no_knob_and_the_old_hub_class_skips_as_optional(self):
         """Round 1's high (this lab was the one served lab of 94 with no executing test in CI: its base class gated on a knob)
