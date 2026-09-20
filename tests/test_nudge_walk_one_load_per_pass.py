@@ -63,7 +63,8 @@ builder, a handler, the perf snapshot the test reads after its last pass) is out
 claim. By the store's own counters, a witness keyed on the store rather than on a list of doors, one per door. The shared
 door: every call that reaches the shared cache's branch and returns moves exactly one of hit, miss, compare_miss, absent
 and fallback in `jd.shared_store_stats()` (a call whose open or read raises moves none, and reds as a recorded call that
-took no read), so per pass the delta of those five must equal the walk's, the gate's and the sweep's recorded calls
+took no read; held by execution since the round-5 fixes by the door witness's two raise-road drives, a symlink loop and a directory at
+the store path, each propagating its OSError with no key moved), so per pass the delta of those five must equal the walk's, the gate's and the sweep's recorded calls
 together; and the door's second bumps, unreadable_journal, corrupt, dup and refuse (SHARED_SECOND_KEYS), each sit on the fill
 road below the miss or compare_miss bump and return, so per pass their sum never exceeds the fills, miss plus compare_miss
 (the second-bump bound, ruling 1 of the reviewer's rulings on the pre-emption: corrupt and unreadable_journal are hand-off keys
@@ -80,12 +81,15 @@ counters that the recorders do not wrap, or through a reference to a real door t
 even though it cannot be named. Outside both witnesses: a reader below the judge's loaders or beside its module, the
 kernel opening and parsing the store file itself, the kernel calling the judge's own file reader (`jd._read_store_json`,
 below the loaders) or a second judge module loaded under another name with a cache and counters of its own (three plants,
-each per session in the pass loop, re-taken at this head, the head of the round-4 fixes, over its 22 cases, one at a time with
-the kernel, the judge and this module hashed before and after each run: the first two leave every case green with no file changed
-across a run, so they stay outside every witness here; the third has been refused since the consolidation pass by the kernel-wide
-birth pin, whose called population names `_PJ.load_goals_shared` as a fifth loader spelling, so a second judge module is outside
-both execution witnesses and inside the static pin, which reds alone while every execution case stays green; and the alias
-control beside them reds the shared reconciliation on every harness case and the birth pin. Review round 3, correctness-2 and
+each per session in the pass loop, re-taken at this head, the head of the round-5 fixes, over its 36 cases, one at a time with
+the kernel, the judge and this module hashed before the plant, across the run and after the revert: the first two leave every case
+green with no file changed across a run, so they stay outside every witness here; the third has been refused since the consolidation
+pass by the kernel-wide birth pin, whose called population names `_PJ.load_goals_shared` as a fifth loader spelling, so a second judge
+module is outside both execution witnesses and inside the static pin, which reds alone while every execution case stays green; and
+the alias control beside them reds the shared reconciliation on each of the five harness cases that drive a pass, and the birth pin
+(6 failed, 30 passed at this head, the head of the round-5 fixes; the door witness's cases call the door outside any pass and stay
+green, so the control reds five of the seventeen harness cases; review round 5, extra7-1: this sentence said every harness case, and
+one of the six at the head the round-5 ruling read drove no pass). Review round 3, correctness-2 and
 regression-2: this sentence had been written at the head of the build's verifier pass after the round-2 fixes, over that
 head's cases, said every case green of all three plants, and went stale as cases and the pin were added, so the count here is pinned by
 a Docs case against the loader's count of this module's cases, and the plants are re-taken whenever it moves). The two
@@ -117,7 +121,7 @@ walk and the gate load nothing, the sweep loads once per pass and reaches the fa
 since its real body is a writer).
 
 Two provenances are named in this module, never by one word. The reviewer's rounds carry a number: review round 1 ruled
-twelve findings, round 2 fourteen, round 3 nine, round 4 seventeen, and "the round-N fixes" are the changes that answer round N's rulings. The
+twelve findings, round 2 fourteen, round 3 nine, round 4 seventeen, round 5 seventeen, and "the round-N fixes" are the changes that answer round N's rulings. The
 build's own passes carry a role and never a number: the build's verifier pass after the round-1 fixes, the build's verifier
 pass after the round-2 fixes, and the consolidation pass, the build's pass between the round-2 fixes and the reviewer's round
 3, in which three lenses read the head, the reviewer ruled on what they found (the reviewer's rulings on the pre-emption,
@@ -342,7 +346,7 @@ pin: the sentence's count set to a stale figure reds the Docs case naming both f
 Review round 4 (2026-09-19; seventeen findings, none refuted, three mediums, and the reviewer's synthesis: three contracts stated
 as lists, each falsified by the first construct nobody listed, fixed as one inversion keyed on the closed set rather than a longer
 list). Two fixers landed the round's fixes, three verifiers read them and left nine findings, all low, and a consolidator closed the
-nine; every state below was re-taken by the consolidator at this head, the head of the round-4 fixes, over its 22 cases (the round's
+nine; every state below was re-taken by the consolidator at the head of the round-4 fixes, over its 22 cases (the round's
 fixes add two, the walker pin and the fill-road case), each landed on kernel/kernel.py, kernel/judge.py or this module and reverted
 with the file checked clean, the module run single-process on 3.12 through the clean runner, so a figure here reads against 22 and
 names no other head; a figure from an earlier head names that head by role. The loader-naming string constant (correctness-1, tests-1,
@@ -405,8 +409,8 @@ set one below reds the Docs case at the clean line, 21 against 22 (1 failed, 21 
 the bypass line (1 failed, 21 passed), and the round-3 clean line set to 18 leaves the module green (22 passed), the historical lines
 being labelled and not pinned, the ruling's alternative.
 
-The verifiers of the round-4 fixes (nine findings, all low), each closed and re-taken at this head, the head of the round-4 fixes,
-over its 22 cases; a state's earlier figure reads at the head the verifiers read, where the Docs count pin was red at every case
+The verifiers of the round-4 fixes (nine findings, all low), each closed and re-taken at the head of the round-4 fixes, over its 22
+cases; a state's earlier figure reads at the head the verifiers read, where the Docs count pin was red at every case
 count, so "green" there means every case but that pin. The residue of the string pin (the inversion verifier's first): the prose
 named the residue as a name assembled from pieces that split the needle while four working doors that split no needle escaped every
 witness, a bytes literal decoded at getattr, an upper-cased constant lowered there, a padded constant stripped and bound first, and a
@@ -431,14 +435,28 @@ passed), and a corrupt list ending in a raise that an outer handler catches to b
 carried one fixer's states and no figure for the round's three mediums, the bypass sentence counted 20 cases against 22 with the
 Docs count pin red at every head of the fixes, the breakdown message counted five doors on no list where four were, seven figures
 carried no head label, the provenance paragraph stopped at round 3, and a clause of _loader_sites' docstring had no verb; each is
-closed in the module, this paragraph re-taking every state at one head. The bypass plants and the alias control, re-taken at this
-head over its 22 cases (the bypass sentence in the first paragraph names the same head and count), each landed on the kernel alone
-with the kernel, the judge and this module hashed before and after: the kernel opening and parsing the store file itself, and the
-kernel calling jd._read_store_json, each per session in the pass loop, 22 passed each and no file changed across a run; a second
-judge module loaded under another name reds the birth pin alone, naming `_PJ.load_goals_shared` (1 failed, 21 passed); the alias
-control, the shared door bound at kernel import and called per session, reds the shared reconciliation on every harness case,
-2 against 0, 7 against 5 twice, 6 against 4 and 3 against 1, and the birth pin (6 failed, 16 passed). The clean module at this head,
-the head of the round-4 fixes: 22 passed single-process on 3.10, 3.11, 3.12, 3.13 and 3.14t, and with two workers on 3.12.
+closed in the module, this paragraph re-taking every state at one head. The bypass plants and the alias control, re-taken at the head
+of the round-4 fixes over its 22 cases (the bypass sentence in the first paragraph named the same head and count until the round-5
+re-take), each landed on the kernel alone with the kernel, the judge and this module hashed before and after: the kernel opening and
+parsing the store file itself, and the kernel calling jd._read_store_json, each per session in the pass loop, 22 passed each and no
+file changed across a run; a second judge module loaded under another name reds the birth pin alone, naming `_PJ.load_goals_shared`
+(1 failed, 21 passed); the alias control, the shared door bound at kernel import and called per session, reds the shared
+reconciliation on each of the five harness cases that drive a pass, 2 against 0, 7 against 5 twice, 6 against 4 and 3 against 1, and
+the birth pin (6 failed, 16 passed; review round 5, extra7-1: this sentence said every harness case while the sixth, the corrupt-road
+case, called the door outside a pass and stayed green). The clean module at the head of the round-4 fixes: 22 passed single-process
+on 3.10, 3.11, 3.12, 3.13 and 3.14t, and with two workers on 3.12.
+
+Review round 5 (2026-09-20; seventeen findings, none refuted, one medium, sixteen lows, and the reviewer's ruling on approach: five
+rounds each closed what was asked and the same class returned one construct over, because pinning a shape property by AST is a
+list-of-syntax problem by construction, so each AST clause is kept as an early warning that refuses the forms it names and is silent on
+the rest, and the two contracts, the walker's and the at-most-one, are carried by execution). The reviewer's correction: four findings
+said the roster pin walks outside _walk at its iter_fields read; it does not (the traversal is _walk, and iter_fields lists a walked
+node's fields), and no exemption row was added there. Three fixers landed the round's fixes in sequence, the two execution witnesses,
+the finder and the Docs count pin, and the prose; every state below was taken at this head, the head of the round-5 fixes, over its 36
+cases (the round's fixes add fourteen: the walker witness's three and the door witness's eleven beyond the corrupt case), each landed
+on kernel/kernel.py, kernel/judge.py or this module and reverted with the file hashed before the plant and after the revert, the module
+run single-process on 3.12 through the clean runner, so a figure here reads against 36 and names no other head. The clean module at
+this head, the head of the round-5 fixes: 36 passed single-process on 3.10, 3.11, 3.12, 3.13 and 3.14t, and with four workers on 3.12.
 
 Drives the real pass (_auto_nudge_tick) over two alive sessions with real transcript files and real goal stores, on the
 suite's fake clock (the pass takes `now`). SYNTHETIC fixtures only; a PRIVATE synthetic sid pair (the goal-store fixture
