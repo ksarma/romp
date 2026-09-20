@@ -4,7 +4,8 @@
 // never touches). A subshell's cd ends at its `)`; a heredoc body belongs to the command that opened
 // it, so `python3 - <<EOF && echo done` is read; a shell fed its script by heredoc is read like `sh -c`;
 // `bash -lc` is `bash -l -c`; `python3 -u <<EOF` still reads stdin; `sudo -u USER cp` is a cp; `[[ a > b ]]`
-// compares; `Path('x').open('w')` and `open(mode='w', file='x')` are writes. The verdict builds the
+// compares in bash and zsh (and since round 5's fifth addendum, 2026-09-20, is read in dash's grammar too,
+// where it redirects, so a tracked target there refuses); `Path('x').open('w')` and `open(mode='w', file='x')` are writes. The verdict builds the
 // project's link closure once per call, not once per landing file, so a directory copy costs one
 // walk. And the branches no other test reached (the prefixes, pushd and popd, node -p and --print,
 // the NUL-byte rule) are pinned so removing one fails by name. The review's second round added:
@@ -271,24 +272,37 @@ test('pushd moves the cwd like cd; popd leaves it unknown', () => {
 
 // ── [[ ... ]] and (( ... )) compare ────────────────────────────────
 
-test('[[ a > b ]] and (( a > b )) compare and write nothing; [ a > b ] and test a > b redirect, as in the shell', () => {
+test('[[ a > b ]] and (( a > b )) compare in bash and zsh, and are a command named `[[` with a redirection, and a subshell running `a` with one, in dash (round 5\'s fifth addendum, 2026-09-20): a tracked target refuses by name with dash and the construct named, a read or an untracked target stays allowed, a for head gets no dash reading; [ a > b ] and test a > b redirect in every shell', () => {
+  // refused since the fifth addendum: dash 0.5.12 truncated docs/report.md through each (measured), bash 5.2 and zsh 5.9 compared
+  for (const [cmd, head] of [
+    ['[[ a > docs/report.md ]]', '[['],
+    ['[[ docs/other.md > docs/report.md ]] && echo hi', '[['],
+    ['if [[ "$name" > docs/report.md ]]; then echo newer; fi', '[['],
+    ['(( 3 > docs/report.md )) && echo yes', '(('],
+    ['if (( x > docs/report.md )); then :; fi', '(('],
+  ]) {
+    assert.deepEqual(targets(cmd), [report], cmd);
+    const reason = evaluate(payload(cmd));
+    assert.ok(reason && reason.includes(report) && reason.includes(`dash has no \`${head}\``), `refused, dash and the construct named: ${cmd}: ${reason}`);
+  }
+  // allowed still: a read, a dash target that is untracked (a file named `2` in the project root), a for head (a syntax error in dash: nothing runs)
   for (const cmd of [
-    '[[ a > docs/report.md ]]',
-    '[[ docs/other.md > docs/report.md ]] && echo hi',
-    'if [[ "$name" > docs/report.md ]]; then echo newer; fi',
     '[[ docs/report.md < b ]]',
     '(( 3 > 2 )) && echo yes',
     'for ((i=0; i<3; i++)); do echo $i; done',
+    'for ((i=3; i>0; i--)); do echo $i; done',
     '[[ -f docs/report.md ]] && cat docs/report.md',
+    '[[ a > docs/other.md ]]',
   ]) {
-    assert.deepEqual(targets(cmd), [], cmd);
     assert.equal(evaluate(payload(cmd)), null, `allowed: ${cmd}`);
   }
+  assert.deepEqual(targets('(( 3 > 2 )) && echo yes'), [path.join(proj, '2')], 'the dash reading names the file `2` in the cwd, untracked here');
+  assert.deepEqual(targets('for ((i=3; i>0; i--)); do echo $i; done'), [], 'a for head is a syntax error in dash and gets no dash reading');
   assert.deepEqual(targets('[[ x ]] > docs/report.md'), [report], 'after ]] a > redirects again');
   assert.deepEqual(targets('[ a > docs/report.md ]'), [report], 'single brackets are a command: the shell redirects');
   assert.deepEqual(targets('test a > docs/report.md'), [report]);
-  assert.deepEqual(targets('[[ a > b ]]; echo x > docs/report.md'), [report], 'the next command is not inside the test');
-  assert.deepEqual(targets('[[ a>docs/report.md ]] && echo x > docs/other.md'), [path.join(proj, 'docs', 'other.md')], 'glued, the shell still compares');
+  assert.deepEqual(targets('[[ a > b ]]; echo x > docs/report.md'), [path.join(proj, 'b'), report].sort(), 'the next command is not inside the test; the test\'s own dash target is the file b');
+  assert.deepEqual(targets('[[ a>docs/report.md ]] && echo x > docs/other.md'), [path.join(proj, 'docs', 'other.md'), report].sort(), 'glued, bash and zsh compare and dash redirects onto the tracked file');
   const { segments } = lex('[[ a>b ]]');
   assert.deepEqual(segments[0].words.map((w) => w.text), ['[[', 'a', '>', 'b', ']]'], 'the comparison is a word of its own');
 });
@@ -495,21 +509,27 @@ test('the per-call closure agrees with store-io\'s isTrackedFile on every kind o
 
 // ── the review's second round: [[ ]] with && and ||, a quoted [[ ──
 
-test('&& and || inside [[ ... ]] stay in the test: a > after them compares; after ]] they end it and a > redirects', () => {
-  // before the fix && and || ended the segment inside the test, so `[[ -n a && b > docs/report.md ]]` had
-  // its > read as a redirection onto the tracked file and the command was refused though bash writes nothing
+test('&& and || inside [[ ... ]] stay in the test for bash and zsh (a > after them compares there); dash reads the words after them as a further command, so a tracked target there refuses naming the construct (the `||` branch runs when `[[` is not found, measured; the `&&` branch is read as running too, the safe side); an unquoted parenthesis inside is a syntax error in dash, so those rows stay allowed; after ]] the operators end the test and a > redirects', () => {
+  // the second round (2026-09-18) made && and || words of the test, so `[[ -n a && b > docs/report.md ]]` was allowed, bash writing
+  // nothing; round 5's fifth addendum (2026-09-20) reads the same words as dash does too, a further command with a redirection
   for (const cmd of [
     '[[ -n "$x" && "$y" > docs/report.md ]] && echo newer',
     '[[ -z "$x" || "$y" > docs/report.md ]]',
     '[[ -n a && b > docs/report.md ]]',
-    '[[ ( a > docs/report.md ) ]]',
-    '[[ -n "$x" && ( "$y" > docs/report.md || -z "$z" ) ]]',
     'if [[ -f base/report.md && base/report.md > docs/report.md ]]; then echo newer; fi',
     'while [[ -n a || b > docs/report.md ]]; do break; done',
     '[[ "$x" == "]]" && a > docs/report.md ]]',
   ]) {
+    assert.deepEqual(targets(cmd), [report], cmd);
+    const reason = evaluate(payload(cmd));
+    assert.ok(reason && reason.includes(report) && /as a further command dash reads after the `(&&|\|\|)` inside a `\[\[ \.\.\. \]\]`/.test(reason), `refused, the further command named: ${cmd}: ${reason}`);
+  }
+  for (const cmd of [
+    '[[ ( a > docs/report.md ) ]]',
+    '[[ -n "$x" && ( "$y" > docs/report.md || -z "$z" ) ]]',
+  ]) {
     assert.deepEqual(targets(cmd), [], cmd);
-    assert.equal(evaluate(payload(cmd)), null, `allowed: ${cmd}`);
+    assert.equal(evaluate(payload(cmd)), null, `allowed, a syntax error in dash: ${cmd}`);
   }
   assert.deepEqual(targets('[[ -n a && b ]] && echo x > docs/report.md'), [report], 'after ]] the && ends the test and the > writes');
   assert.deepEqual(targets('[[ -n a ]] || echo x > docs/report.md'), [report]);
@@ -835,11 +855,11 @@ test('the hook process rules the same way on a subshell cd, a chained heredoc an
   assert.equal(run(`python3 - <<'EOF' && echo done\n${PY_WRITE}\nEOF`).status, 2);
   assert.equal(run("bash <<'EOF'\ncp base/report.md docs/report.md\nEOF").status, 2);
   assert.equal(run("bash -lc 'cp base/report.md docs/report.md'").status, 2);
-  assert.equal(run('[[ a > docs/report.md ]]').status, 0);
+  assert.equal(run('[[ a > docs/report.md ]]').status, 2, 'a comparison in bash and zsh, a redirection in dash (round 5\'s fifth addendum)');
   assert.equal(run('sudo -n cp base/report.md docs/report.md').status, 2);
   assert.equal(run("python3 -u <<'EOF'\n" + PY_WRITE + '\nEOF').status, 2);
   // the second round's shapes
-  assert.equal(run('[[ -n "$x" && "$y" > docs/report.md ]] && echo newer').status, 0, 'a comparison after && inside [[ ]]');
+  assert.equal(run('[[ -n "$x" && "$y" > docs/report.md ]] && echo newer').status, 2, 'a comparison after && inside [[ ]] in bash and zsh, a further command with a redirection in dash (round 5\'s fifth addendum)');
   assert.equal(run('echo "[[" > docs/report.md').status, 2, 'a quoted [[ is data');
   assert.equal(run(`python3 - <<< "${PY_WRITE}"`).status, 2, 'a here-string script');
   assert.equal(run('echo x | tee >(cat) docs/report.md').status, 2, 'an operand after a process substitution');

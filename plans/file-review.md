@@ -3026,7 +3026,8 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   by heredoc (`bash <<EOF`, `bash -s`, `sh -`) read like `sh -c`; `-c` in an option cluster (`bash -lc`,
   `sh -ec`); python and node options before a heredoc on stdin; a prefix with options (`sudo -u`, `env -u`,
   `timeout -s`, `exec -a`); pushd moving the cwd and popd leaving it unknown; `[[ a > b ]]` and `(( a > b ))`
-  comparing while `[ a > b ]` redirects; a function body moving nothing after it; `Path(x).open('w')`, `open()`
+  comparing in bash and zsh and, since round 5's fifth addendum (2026-09-20), read in dash's grammar too, a
+  tracked target there refusing, while `[ a > b ]` redirects in every shell; a function body moving nothing after it; `Path(x).open('w')`, `open()`
   with keyword arguments and `fs.openSync` with a write flag; node `-p` and `--print`; the refusal's word (a
   change, never a suggestion); the NUL-byte rule; the full walk of a directory source, past 500 entries and into
   a subfolder behind them, skipped for a landing folder that does not exist under any project that tracks
@@ -4094,6 +4095,48 @@ document stands on its own, each with the reasoning it was given.
     a cd that was the operand of a command named `{`), so every brace read checks `plainWord` now, pinned with the
     verifier's rows in bash, zsh and dash by execution and five matrix kinds (3152 rows, 3065 refused, 87 allowed, 0 a shell
     writes while the hook allows, the 2912 rows before unchanged).
+    Round 5's fifth addendum (2026-09-20; the fourth addendum's builder measured it, and the reviewer ruled it fixed before
+    the round): `[[ x > report.md ]]` from docs/, alone, in an if or in a group, was allowed while dash, which has no `[[`,
+    ran a command named so and performed the redirection (writers=[dash]); the hook read the test under bash and zsh
+    grammar, where a `>` between `[[` and `]]` compares. The reviewer's rule: a construct must be read on the safe side for
+    every shell the guard claims (bash, zsh and dash), not for the grammar it was written against. THE RULE, stated once at
+    the lexer's `closeTest` and read here in the same words: a construct the hook reads under bash and zsh grammar (`[[ ... ]]`, `(( ... ))`, a `$(( ... ))`) contributes, in addition, its dash reading to the write set: where dash reads the construct as a plain command (`[[`), the words after the head are its operands and every redirection operator among them a redirection dash performs before the command is looked up, and the words after a `&&` or `||` among them a further command; where dash reads it as a subshell (`((`, two nested `(`), its body is a command list dash runs; and each target so found is judged exactly as any redirection or writer the hook already judges. Beside it: a substitution inside an arithmetic body (`$(...)`, a backtick) runs in every shell and is read as a command, and a `$((` whose first `(` closes before the last is a command substitution in bash and zsh and is read as one. The derivation over the lexer's non-redirecting reads (every path where a `>`, `>>`, `&>`, `>|` or `<>` is read as
+    something other than a redirection, by execution in bash 5.2, zsh 5.9 and dash 0.5.12): the `[[ ]]` comparison (a
+    command in dash: `closeTest`, the dash pieces spliced into the walk by `withDashPieces`, a cd there an unknown
+    directory and an assignment there unreadable, as after any `||`); the `(( ))` arithmetic (a subshell in dash, its body
+    a command list, `skipArithmetic` and `viaSubs`; `(( cp a b ))` copies in dash); the `$(( ))` expansion (arithmetic in
+    dash, `$( (` in bash and zsh when its first `(` closes before the last, `parenCloseAt`; `echo $((x > report.md);(y))`
+    truncated the file in both); the substitutions inside any arithmetic body (never read before; `(( $(echo x >
+    report.md) ))` wrote in all three, `for (( i=$(..); .. ))` in bash and zsh, `expansionsOf`); and the reads that diverge
+    in no way that writes (a here-doc body is data in all three; a here-string and a process substitution are syntax
+    errors in dash; quotes read alike; a brace list dash writes as one literal name, `{a,b}.md`, a residual named below).
+    Where dash parses nothing, no dash reading is due, measured: a `for (( ))` head ("Bad for loop variable"), a `((`
+    after any word but a reserved one (`time ((`, `echo ((`, `x=1 ((`, `} ((`), an unquoted parenthesis between `[[` and
+    `]]`. The shell facts live in `TEST_ARITH_SHELLS` (bash, zsh and ksh read the test keyword and arithmetic; a script
+    handed to dash or `sh` takes the dash reading, one handed to bash the test alone: `dash -c '[[ x > report.md ]]'` was
+    allowed while every shell spawned dash and wrote) and `CONSTRUCT_HEADS` (each construct's closer, both readings and
+    the text the refusal appends to the write's `how`, so a refusal names dash and the construct). The reserved-word
+    derivation ran every word of `RESERVED`, `BODY_CLOSER`, its closers and openers, `function`, `coproc`, `always`,
+    `time`, `[[`, `]]`, `((` and `))`, quoted and unquoted, with a `>` operand and a writer operand, through the hook and
+    the three shells (112 rows): the two constructs, unquoted, were the only rows a shell wrote that the hook allowed; the
+    change turns those three rows to refusals and no other. THE COSTS, each measured with no shell writing: `[[ $a > $b ]]`
+    with `$b` unreadable from a tracked cwd is refused as not literal (the non-literal rule for a redirection target; the
+    refusal adds the comparison's remedy, `expr` or a directory outside the project; a `$b` the command set to a plain
+    string resolves and is judged by its value); the words after a `&&` inside the test (dash skips them when `[[` is not
+    found, and they are read as running since a command named `[[` on PATH would run them); `>>` and `<>` onto an
+    existing tracked file through a command that is not found (the operator opens the file and writes no byte; the same
+    spelling onto a name that does not exist yet under a tracked folder creates it, measured); and the dead spellings no
+    shell parses (`} (( x > report.md ))`). THE CONSTRUCT MATRIX (`tools/romp-track-bash-guard-construct-matrix.json`,
+    its population stated in the fixture: head, from `CONSTRUCT_HEADS`'s command-position entries, x twelve positions x
+    seven operator forms x three targets, 456 rows, run through the hook as a process and unguarded in the three shells):
+    456 rows, 299 refused, 157 allowed, dash the only writer (200 rows), 0 a shell writes while the hook allows; the
+    refusals where no shell writes by class: 13 dead, 26 a definition never called, 40 the append or read-write operator
+    onto the existing file, 20 the unset name, 0 other. The brace matrix's 3152 rows are unchanged by the change (its
+    fixture now states its population, which has no `>` inside a test or arithmetic). OUTSIDE BOTH POPULATIONS, named: a
+    construct nested in a construct, a target through `~`, a glob or a brace list inside a construct, a construct inside a
+    script beyond the three `-c` rows, every position the twelve do not spell (a case or select body, zsh's brace bodies, a
+    coproc), and dash's literal reading of a brace list (`> docs/{a,b}.md` writes `docs/{a,b}.md` in dash: judged only when
+    an alternative is tracked).
 48. **Sessions commit the comments folder** (2026-09-10). The user found that their sessions never added
     `.trackchanges/` to git, so the user's comments on the sessions' files and the record of the tracked changes
     were not archived with the work. Decision 25 is unchanged: romp does no git operation, and a `.gitignore` line is the

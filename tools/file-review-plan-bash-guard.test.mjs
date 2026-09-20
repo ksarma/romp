@@ -493,6 +493,44 @@ test("decision 47, the hook header and the ledger record round 5's addendum: the
   assert.ok(!/\u2014/.test(d47), 'no em dash in decision 47');
 });
 
+// Round 5's fifth addendum (2026-09-20): the two-grammar rule, stated once at the lexer's closeTest and on decision 47 in the same words,
+// the shell facts in their table, the four prose surfaces corrected, the census naming the two new tables, and the fixture stating its population.
+test("decision 47, the hook and the prose surfaces record round 5's fifth addendum: the two-grammar rule in the same words at the lexer and on the decision, the shell facts in TEST_ARITH_SHELLS and CONSTRUCT_HEADS, the functions that carry it, the construct matrix's fixture with its population, and the README, install and skill surfaces saying what dash makes of `[[` and `((`", () => {
+  const RULE = 'a construct the hook reads under bash and zsh grammar (`[[ ... ]]`, `(( ... ))`, a `$(( ... ))`) contributes, in addition, its dash reading to the write set: where dash reads the construct as a plain command (`[[`), the words after the head are its operands and every redirection operator among them a redirection dash performs before the command is looked up, and the words after a `&&` or `||` among them a further command; where dash reads it as a subshell (`((`, two nested `(`), its body is a command list dash runs; and each target so found is judged exactly as any redirection or writer the hook already judges';
+  const SUB = 'a substitution inside an arithmetic body (`$(...)`, a backtick) runs in every shell and is read as a command, and a `$((` whose first `(` closes before the last is a command substitution in bash and zsh and is read as one';
+  const hookFlat = hook.replace(/\n\s*\/\/ ?/g, ' ').replace(/\s+/g, ' ');   // the rule's home comment sits inside lex, indented, so the comment lines are joined whatever their indentation
+  const d47Flat = d47.replace(/\s+/g, ' ');
+  assert.ok(d47Flat.includes("Round 5's fifth addendum (2026-09-20;"), 'decision 47 records the fifth addendum');
+  assert.ok(hookFlat.includes(RULE) && d47Flat.includes(RULE), 'the rule is stated at the lexer and on decision 47 in the same words');
+  assert.ok(hookFlat.includes(SUB) && d47Flat.includes(SUB), 'the substitution and $(( sentence, on both');
+  for (const fn of ['closeTest', 'skipArithmetic', 'expansionsOf', 'parenCloseAt', 'withDashPieces', 'viaSubs', 'TEST_ARITH_SHELLS', 'CONSTRUCT_HEADS']) {
+    assert.ok(d47.includes(`\`${fn}\``), `decision 47 names ${fn}`);
+    assert.ok(hook.includes(fn), `the hook has ${fn}`);
+  }
+  assert.ok(hook.includes("const TEST_ARITH_SHELLS = new Set(['bash', 'zsh', 'ksh']);") && hook.includes("const testGrammar = shell == null || shell === 'sh' || TEST_ARITH_SHELLS.has(shell);") && hook.includes("const dashGrammar = shell == null || shell === 'sh' || !TEST_ARITH_SHELLS.has(shell);"), 'the shell table and the two grammars read from it');
+  assert.ok(hook.includes("export const CONSTRUCT_HEADS = {") && hook.includes("'[[': { closer: ']]',") && hook.includes("'((': { closer: '))',") && hook.includes("'$((': { closer: '))', expansion: true,"), 'the construct table carries the three constructs');
+  assert.ok(hook.includes("if (testGrammar && raw === '[[' && seg.words.every((w) => plainWord(w) && RESERVED.has(w.text))) { inTest = true; testStart = i; }") && hook.includes("else if (raw === ']]' && inTest) closeTest(i - 2, true);"), 'the test keyword opens and closes the dash reading');
+  assert.ok(hook.includes("if (dashGrammar && seg.words.every((w) => plainWord(w) && RESERVED.has(w.text))) seg.viaSubs.push({ text: body, via: CONSTRUCT_HEADS['(('].via });"), 'the (( )) body is a command list in the dash reading, in command position alone');
+  assert.ok(hook.includes("if (inner.startsWith('(') && parenCloseAt(inner) === inner.length - 1) { const body = inner.slice(1, -1); seg.arith.push(body); expansionsOf(body, CONSTRUCT_HEADS['$(('].expandVia); }"), 'a balanced $(( is arithmetic in every shell and its substitutions are read');
+  assert.ok(hook.includes("if (dash.opaque || dash.segments.some((s) => s.paren)) return;"), 'a parenthesis inside the test: a syntax error in dash, no dash reading');
+  assert.ok(hook.includes("add(r.target, r.how || `${r.op} redirection`)"), 'a dash-reading redirect carries its how');
+  assert.ok(hook.includes("const compare = u.how.includes(CONSTRUCT_HEADS['[['].via) ?"), 'the not-literal refusal carries the comparison remedy for a [[ target');
+  const censusSrc = fs.readFileSync(path.join(REPO, 'tools', 'romp-track-bash-guard-census.mjs'), 'utf8');
+  assert.ok(censusSrc.includes("TEST_ARITH_SHELLS: { side: 'REFUSE'") && censusSrc.includes("CONSTRUCT_HEADS: { side: 'WRITE'"), 'the census names the two tables with their sides');
+  const fixture = JSON.parse(fs.readFileSync(path.join(REPO, 'tools', 'romp-track-bash-guard-construct-matrix.json'), 'utf8'));
+  assert.ok(fixture.rows > 0 && typeof fixture.population === 'string' && fixture.population.includes('CONSTRUCT_HEADS') && fixture.note.includes('NOT exhaustive'), 'the construct fixture states its population and that it is not exhaustive');
+  const brace = JSON.parse(fs.readFileSync(path.join(REPO, 'tools', 'romp-track-bash-guard-brace-matrix.json'), 'utf8'));
+  assert.ok(brace.note.includes('POPULATION (stated since round 5\'s fifth addendum'), 'the brace fixture states its population');
+  const prose = { 'hooks/README.md': hooksReadme, 'docs/install.md': read('docs', 'install.md'), 'the vendored SKILL.md': read('vendor', 'track-changents', 'skill', 'SKILL.md') };
+  for (const [name, text] of Object.entries(prose)) {
+    const flat = text.replace(/\s+/g, ' ');
+    assert.ok(flat.includes("`[[ a > f ]]` and `(( a > f ))` compare in bash and zsh and are read in dash's grammar too since round 5's fifth addendum"), `${name} states the two-grammar reading`);
+    assert.ok(flat.includes("judged in bash's and zsh's readings (dash reads `>! f` as bash does") && !flat.includes("judged in both shells' readings"), `${name} names dash's reading of the clobber forms`);
+  }
+  assert.ok(!hook.includes("records BOTH shells' readings"), 'the header names the three shells for the clobber forms');
+  assert.ok(!/\u2014/.test(d47), 'no em dash in decision 47');
+});
+
 // The seventh pass's attacker (2026-09-19): decision 47 and the hook header record the two misses and the readonly sibling, each
 // tied to the hook function that closes it, and the wrapper list on the three prose surfaces names zsh's modifiers.
 test("decision 47 and the hook header record the seventh pass's attacker: nesting-aware group frames, zsh's precommand modifiers in the wrapper set and on every prose surface, the readonly value kept, and the shadowed poison gone", () => {

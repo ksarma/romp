@@ -128,7 +128,17 @@ local, readonly, read, mapfile, getopts, unset, `printf -v`, `let` or `(( ))`
 (`export ${h}${m}=...`, `declare -n r=${h}${m}`, `read -r "$(printf HOME)"`)
 makes `~` and `$HOME` unreadable, since a name the guard cannot read may be
 HOME; zsh's clobber-override redirections (`>!`, `>>!`, `&>!`, `>>|` and their
-kin, spaced or glued) are writes, judged in both shells' readings; a link the
+kin, spaced or glued) are writes, judged in bash's and zsh's readings (dash reads
+`>! f` as bash does, a file named `!`, rejects `>>| f` and `>&| f`, and writes f
+through `&>| f`, measured 2026-09-20); `[[ a > f ]]` and `(( a > f ))` compare in
+bash and zsh and are read in dash's grammar too since round 5's fifth addendum
+(2026-09-20: dash has neither word, so the first is a command named `[[` that
+performs the `>` and the second a subshell running its body as a command list;
+a `$((` whose first `(` closes before the last is `$( (` to bash and zsh, a
+command substitution they run; a `$(...)` inside any arithmetic body runs in
+every shell), so a tracked f there refuses naming dash and the construct, and
+`[[ $a > $b ]]` with `$b` the guard cannot read refuses from a tracked cwd, a
+stated cost (compare from a directory outside the project, or with `expr`); a link the
 command makes is followed into a numeric name's folder too, and one whose source
 is not literal refuses a numeric write through it; a python or node path that is
 a plain string is judged by its text whatever it holds (a `$` is text), while

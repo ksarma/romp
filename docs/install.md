@@ -199,7 +199,13 @@ the clone updates it:
   `printf -v`, `let` or `(( ))` (`export ${h}${m}=...`, `declare -n r=${h}${m}`, `read -r "$(printf
   HOME)"`) makes `~` and `$HOME` unreadable, since a name the guard cannot read may be HOME; zsh's
   clobber-override redirections (`>!`, `>>!`, `&>!`, `>>|` and their kin, spaced or glued) are
-  writes, judged in both shells' readings; a link the command makes is followed into a numeric
+  writes, judged in bash's and zsh's readings (dash reads `>! f` as bash does, a file named `!`,
+  rejects `>>| f` and `>&| f`, and writes f through `&>| f`, measured 2026-09-20); `[[ a > f ]]`
+  and `(( a > f ))` compare in bash and zsh and are read in dash's grammar too since round 5's fifth
+  addendum (2026-09-20: a command named `[[` performing the `>`, a subshell running the `(( ))` body
+  as a command list), so a tracked f there refuses naming dash and the construct, and `[[ $a > $b ]]`
+  with `$b` the guard cannot read refuses from a tracked cwd (the remedy: `expr`, or a cwd outside
+  the project); a link the command makes is followed into a numeric
   name's folder too, and one whose source is not literal refuses a numeric write through it; a
   python or node path that is a plain string is judged by its text whatever it holds (a `$` is
   text), while one built from an f-string, `.format(`, `%` or a template literal with `${}` is

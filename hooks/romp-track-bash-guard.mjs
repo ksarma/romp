@@ -443,6 +443,30 @@
 // does not know). Pinned with the verifier's rows, bash, zsh and dash by execution, and five matrix kinds (a quoted brace word
 // in a function body, defined and called, a quoted opening brace, and two twins with a brace inside a word).
 //
+// ROUND 5'S FIFTH ADDENDUM (2026-09-20; the fourth addendum's builder measured it and the reviewer ruled it fixed before the
+// round): `[[ x > report.md ]]` from docs/, alone, in an if or in a group, was allowed while dash, which has no `[[`, ran a
+// command named so and performed the redirection (writers=[dash]); the hook read the test under bash and zsh grammar, where a
+// `>` between `[[` and `]]` compares. The rule, stated once at the lexer's closeTest: a construct the hook reads under bash and
+// zsh grammar contributes its dash reading to the write set too, a command named `[[` performing every redirection among its
+// operands (the words after a `&&` or `||` a further command, spliced into the walk by withDashPieces), a subshell running the
+// `(( ))` body as a command list (viaSubs), each target judged as any redirection or writer and the refusal naming dash and the
+// construct (CONSTRUCT_HEADS's `via`). The derivation over the lexer's non-redirecting reads found two more with the same shape,
+// closed the same way: a `$((` whose first `(` closes before the last, which bash and zsh read as `$( (` and run (`echo $((x >
+// report.md);(y))` truncated the tracked file in both), and a `$(...)` or backtick inside any arithmetic body, which every
+// shell runs (`(( $(echo x > report.md) ))` wrote in all three, `for (( i=$(..); .. ))` in bash and zsh); and it found where
+// dash parses nothing, so no dash reading is due: a `for (( ))` head, a `((` after any word but a reserved one, an unquoted
+// parenthesis inside the test, a here-string, a process substitution. A script handed to dash or sh takes the dash reading
+// (`dash -c '[[ x > report.md ]]'` was allowed while every shell spawned dash and wrote), one handed to bash the test alone
+// (TEST_ARITH_SHELLS). The costs, each measured with no shell writing: `[[ $a > $b ]]` with `$b` unreadable from a tracked cwd
+// (the non-literal rule; the refusal offers `expr` or a cwd outside the project), the words after a `&&` inside the test (dash
+// skips them when `[[` is not found; read as running since a command named `[[` on PATH would run them), `>>` and `<>` onto an
+// existing tracked file through a command that is not found (the operator opens the file and writes no byte; the same spelling
+// onto a name that does not exist yet under a tracked folder creates it), and the dead spellings no shell parses (`} (( .. ))`).
+// Pinned with the rows test (each row through the hook as a process and unguarded in bash, zsh and dash), the reserved-word
+// derivation (every word of RESERVED, BODY_CLOSER, CLOSERS and the keyword reads, quoted and unquoted, with a `>` and a writer
+// operand: the two constructs were the only false allows) and the construct matrix (head x position x operator x target, the
+// heads from CONSTRUCT_HEADS, the fixture romp-track-bash-guard-construct-matrix.json).
+//
 // THE LISTS THAT REMAIN are not written here (round 5 of the review, 2026-09-20). The hand-written census that stood here
 // omitted the two lists whose gap falls on the WRITE side, the compound-head frame push and CLOSERS, and that omission is
 // how a `select` missing from both slipped through round 3: an instrument built to bound the hand-maintained lists that
@@ -531,8 +555,11 @@ import engine from '../vendor/track-changents/engine.js';
 // `python3 - <<EOF && echo done` is the echo) for the python, node and shell stdin scans, and
 // never lexed as shell. `>(cmd)` and `<(cmd)` are process substitutions: cmd is read like a
 // `$(...)`, and the word stands for a /dev/fd path the hook cannot resolve. Inside `[[ ... ]]`
-// (the unquoted keyword, in command position) a `>` or `<` compares and redirects nothing, and
-// `&&`, `||`, `(` and `)` are the test's own operators; `(( ... ))` is arithmetic. `opaque` is set
+// (the unquoted keyword, in command position) a `>` or `<` compares in bash and zsh, and `&&`, `||`, `(` and `)` are the
+// test's own operators there; `(( ... ))` is arithmetic in bash and zsh. dash has neither word, and since round 5's fifth
+// addendum (2026-09-20) each construct is read in BOTH grammars: its dash reading, a command named `[[` performing every
+// redirection among its operands, a subshell running the `(( ))` body as a command list, adds its writes to the segment (the
+// rule is stated once, at closeTest below; the shell facts at TEST_ARITH_SHELLS and CONSTRUCT_HEADS). `opaque` is set
 // when the command is more than the lexer can follow: an unterminated quote, or eval, xargs or a
 // shell -c with a script it cannot read.
 
@@ -540,9 +567,11 @@ import engine from '../vendor/track-changents/engine.js';
 // `|` after `>`, `>>`, `>&`, `>>&`, `&>` and `&>>` as "write even under NO_CLOBBER" (`>! f`, `>>! f`, `&>! f`, `>>| f`,
 // `>&| f`, `>>&` appends both streams), and the fourth attack wrote a tracked file through `>! docs/report.md` while the
 // lexer read the `!` as the target word and the file as an argument. The lexer consumes the suffix as it consumed `>|`,
-// and records BOTH shells' readings where they differ (bash reads `>! f` as a redirection onto a file named `!` with `f`
+// and records the readings of bash and zsh where they differ (bash reads `>! f` as a redirection onto a file named `!` with `f`
 // an argument, and `>!f` as a redirection onto `!f`; `>>&`, `>>|`, `>&|`, `&>|` are syntax errors in bash and write
-// nothing), so a command refuses when either shell would write the tracked file.
+// nothing; dash, measured 2026-09-20 for round 5's fifth addendum, reads `>! f`, `>>! f` and `&>! f` as bash does, rejects
+// `>>| f` and `>&| f` as syntax errors, and reads `&>| f` as `&` then `>| f`, a write of f the zsh reading names), so a
+// command refuses when any of the three shells would write the tracked file.
 const WRITE_REDIRECTS = new Set(['>', '>>', '>|', '&>', '&>>', '>&', '<>', '>!', '>>!', '>>|', '>&!', '>&|', '>>&', '>>&!', '>>&|', '&>!', '&>|', '&>>!', '&>>|']);
 const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh']);
 // Command wrappers the hook peels to reach the write inside: it reads them so a write behind one is judged as if
@@ -569,6 +598,33 @@ const RESERVED = new Set(['do', 'then', 'else', 'elif', 'if', 'while', 'until', 
 // literal dollar and a single-quoted string; ksh was not verified; `sh` may be either. A shell not in this set
 // gets the restricted reading (the header): the word is one the hook cannot read.
 const ANSI_C_SHELLS = new Set(['bash', 'zsh']);
+// The shells verified (round 5's fifth addendum, 2026-09-20, by execution) to read `[[ ... ]]` as the test keyword and
+// `(( ... ))` as arithmetic, where a `>` between them compares and redirects nothing: bash 5.2 and zsh 5.9, the shells the
+// Bash tool runs (ksh has both words by its manual and is entered unverified). dash 0.5.12, `/bin/sh` here, has neither
+// word: `[[ x > f ]]` is a command named `[[` whose operands are `x` and `]]` and whose `> f` is a redirection it performs
+// before the lookup fails (docs/report.md truncated, the fourth addendum's finding); the words after a `&&` or `||` among
+// those operands are a further command dash runs or skips by the status of `[[` (not found on this box: the `||` branch
+// runs, `[[ -z a || b > f ]]` and `[[ a || cd ../docs ]]` measured; the `&&` branch is read as running too, since a command
+// named `[[` on PATH would make it run); an unquoted `(` or `)` between `[[` and `]]` is a syntax error in dash, which then
+// runs nothing on the line; `(( x > f ))` is a subshell inside a subshell running the command `x` with that redirection
+// (`(( cp a b ))` copies), in command position alone: after `for`, `time`, a wrapper word, an assignment word, `}` or any
+// other word the `((` is a syntax error in dash and runs nothing (`for (( ... ))`: "Bad for loop variable"); `$(( ... ))`
+// is arithmetic in dash whatever its parentheses, while bash and zsh read a `$((` whose first `(` closes before the last as
+// `$( (`, a command substitution, and run its list (`echo $((x > f);(y))` wrote f in both); a `$(...)` or backtick inside
+// any arithmetic body runs in all three. `sh` may be dash or bash and takes both readings; a shell not in this set takes the
+// dash reading alone (the lexer's `testGrammar` and `dashGrammar`).
+const TEST_ARITH_SHELLS = new Set(['bash', 'zsh', 'ksh']);
+// The constructs read in both grammars, with each reading's text for the refusal (the lexer reads the two command-position
+// heads and the expansion at their characters; this table carries what each shell makes of them, and the matrix generator
+// in tools/romp-track-bash-guard.test.mjs derives its head population from the command-position entries, so a head added
+// here without a matrix kind changes the fixture's row count and reds the pin). `via` is appended to a write's `how`
+// (`> redirection`, `cp`) when the write was found through the construct's dash reading, so the refusal names dash and the
+// construct; `expandVia` when it was found through a substitution inside the body, which every shell runs.
+export const CONSTRUCT_HEADS = {
+  '[[': { closer: ']]', bash: 'the test keyword: a `>` or `<` between them compares', dash: 'a command named `[[`: its operands words, every redirection among them performed before the lookup fails, the words after a `&&` or `||` a further command', via: ' inside a `[[ ... ]]` (a comparison in bash and zsh; dash has no `[[`, runs a command named so and performs the redirection)' },
+  '((': { closer: '))', bash: 'arithmetic: a `>` compares', dash: 'in command position, a subshell inside a subshell running the body as a command list; after any other word a syntax error', via: ' inside a `(( ... ))` (arithmetic in bash and zsh; dash has no `((`, runs its body as a command list in a subshell)', expandVia: ' inside a `$(...)` in a `(( ... ))` body (an expansion every shell runs)' },
+  '$((': { closer: '))', expansion: true, bash: 'arithmetic when the `(` after `$(` closes at the very end, else `$( (`, a command substitution whose list runs', dash: 'arithmetic, whatever the parentheses inside', via: ' inside a `$(( ... ))` whose first `(` closes before the last (`$( (` to bash and zsh, a command substitution they run; arithmetic to dash)', expandVia: ' inside a `$(...)` in a `$(( ... ))` body (an expansion every shell runs)' },
+};
 // The one class of expansion the narrowing reads (the header): the shell's process id, in its two spellings. Every
 // other parameter can be unset or shadowed by the command and then hold a path (round 3, by execution in bash, zsh
 // and dash), so nothing else is ever numeric.
@@ -717,9 +773,28 @@ function braceExpand(text, marks, depth = 0) {
   return [[text, marks]];
 }
 
+// The index of the `)` that closes the `(` at `text[0]`, quotes and escapes honoured as skipNested honours them; -1 when
+// none does. Tells a `$(( ... ))` that is arithmetic in every shell (the `(` after `$(` closes at the very end) from a `$((`
+// bash and zsh read as `$( (` (round 5's fifth addendum).
+function parenCloseAt(text) {
+  let depth = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === '\\') { i++; continue; }
+    if (c === "'") { const e = text.indexOf("'", i + 1); if (e < 0) return -1; i = e; continue; }
+    if (c === '"') { i++; while (i < text.length && text[i] !== '"') { if (text[i] === '\\') i++; i++; } continue; }
+    if (c === '(') depth++;
+    else if (c === ')') { depth--; if (depth === 0) return i; }
+  }
+  return -1;
+}
 // `arith` holds the bodies of `(( ... ))` and `$(( ... ))`, which run in the current shell and can assign a name
 // (`(( HOME = 5 ))`), for the assignment scan (the walk-around lens second pass, 2026-09-19); they are never lexed as commands.
-const newSegment = () => ({ words: [], redirects: [], heredocs: [], subs: [], arith: [], arithAt: [], op: '' });   // arithAt: the number of words before each `(( ))` (round 5's third addendum: compoundBody tells `if (( 0 )) {` from `if { cond } {` by it)
+// `viaSubs` holds the command lists a construct's other reading runs, each with the text the refusal appends (round 5's fifth
+// addendum, 2026-09-20): a `(( ))` body under dash's reading, a `$((` bash and zsh read as `$( (`, and every `$(...)` or backtick
+// inside an arithmetic body; `dashPieces` the further commands dash reads after a `&&` or `||` inside a `[[ ... ]]`, spliced into
+// extract's walk after the test's segment (withDashPieces), and `dashFirstOp` the operator that joins the first of them.
+const newSegment = () => ({ words: [], redirects: [], heredocs: [], subs: [], arith: [], arithAt: [], viaSubs: [], dashPieces: null, dashFirstOp: '', op: '' });   // arithAt: the number of words before each `(( ))` (round 5's third addendum: compoundBody tells `if (( 0 )) {` from `if { cond } {` by it)
 
 // `shell` is the name of the shell the command is a script of, when the call is a recursion into `sh -c '...'`,
 // `bash <<EOF` or a `$(...)` inside one (null for the Bash tool's own command): it decides whether `$'...'` is
@@ -727,6 +802,12 @@ const newSegment = () => ({ words: [], redirects: [], heredocs: [], subs: [], ar
 export function lex(command, shell = null) {
   const src = String(command);
   const ansiCQuoting = shell == null || ANSI_C_SHELLS.has(shell);
+  // The two grammars (round 5's fifth addendum, 2026-09-20). Under testGrammar (the Bash tool's own command, `sh`, and the shells
+  // of TEST_ARITH_SHELLS) `[[` in command position is the test keyword and `((` opens arithmetic; under dashGrammar (the same
+  // command and `sh`, and every shell not in that set) the dash reading is added at closeTest and skipArithmetic, and for a script
+  // handed to dash itself it is the only reading: `[[` is a plain word there, `((` two `(`, read by the paren path as dash reads them.
+  const testGrammar = shell == null || shell === 'sh' || TEST_ARITH_SHELLS.has(shell);
+  const dashGrammar = shell == null || shell === 'sh' || !TEST_ARITH_SHELLS.has(shell);
   const segments = [];
   let seg = newSegment();
   let buf = '';
@@ -736,7 +817,9 @@ export function lex(command, shell = null) {
   let numericOnly = true;     // every expansion so far is `$$` or `${$}` (meaningful with sawExpansion)
   let inWord = false;
   let opaque = false;
-  let inTest = false;   // inside [[ ... ]], where > and < compare strings
+  let inTest = false;   // inside [[ ... ]], where > and < compare strings (bash and zsh; dash's reading is added when the test closes)
+  let testStart = -1;   // the source index after the `[[` that opened the test, for its dash reading (closeTest)
+  let opAt = -1;        // the source index of the operator ending the segment under way (the test's span ends there when no `]]` closed it)
   // what the next word is: a redirect target, a heredoc delimiter, a here-string, or data (<)
   let expect = null;
   const pendingHeredocs = [];
@@ -784,8 +867,8 @@ export function lex(command, shell = null) {
       // fourth addendum: after `echo "{"`, `echo {` or `echo "if"` the `[[` and its `>` are echo's operands and a redirection,
       // which bash and dash perform, so `echo "{" [[ x > report.md ]]` from docs/ truncated the tracked file while the guard
       // read a comparison)
-      if (raw === '[[' && seg.words.every((w) => plainWord(w) && RESERVED.has(w.text))) inTest = true;
-      else if (raw === ']]') inTest = false;
+      if (testGrammar && raw === '[[' && seg.words.every((w) => plainWord(w) && RESERVED.has(w.text))) { inTest = true; testStart = i; }
+      else if (raw === ']]' && inTest) closeTest(i - 2, true);
       const alts = braceExpand(buf, marks);
       if (!alts) seg.words.push(word(buf, false, raw, { marks }));
       else for (const [t, m] of alts) seg.words.push(mk(t, m));
@@ -797,9 +880,10 @@ export function lex(command, shell = null) {
   const endSegment = (op) => {
     endWord();
     if (expect) expect = null;   // a redirect with no target: leave it
+    if (inTest) closeTest(opAt);   // a test the operator ends before its `]]`: dash's command ends at the same operator
     inTest = false;
     seg.op = op;
-    if (seg.words.length || seg.redirects.length || seg.heredocs.length || seg.subs.length || seg.arith.length) segments.push(seg);
+    if (seg.words.length || seg.redirects.length || seg.heredocs.length || seg.subs.length || seg.arith.length || seg.viaSubs.length) segments.push(seg);
     else if (op && segments.length && segments[segments.length - 1].paren && !segments[segments.length - 1].op) {
       // the operator after a `)` (`(cd a) && cd b`): the segment it would end is empty, so it is kept on the paren
       // marker, and a later pass reading the operator before a `cd` sees it (the walk-around lens second pass, 2026-09-19; before, it was lost)
@@ -826,7 +910,31 @@ export function lex(command, shell = null) {
       owner.heredocs.push(lines.join('\n'));
     }
   };
-  // (( ... )): arithmetic, no command and no redirection in it; skip to the matching )).
+  // THE RULE (round 5's fifth addendum, 2026-09-20; the fourth addendum's builder measured `[[ x > report.md ]]` from docs/
+  // allowed while dash truncated the tracked file, and the reviewer ruled that a construct must be read on the safe side for
+  // every shell the guard claims, bash, zsh and dash, not for the grammar it was written against): a construct the hook reads
+  // under bash and zsh grammar (`[[ ... ]]`, `(( ... ))`, a `$(( ... ))`) contributes, in addition, its dash reading to the
+  // write set: where dash reads the construct as a plain command (`[[`), the words after the head are its operands and every
+  // redirection operator among them a redirection dash performs before the command is looked up, and the words after a `&&`
+  // or `||` among them a further command; where dash reads it as a subshell (`((`, two nested `(`), its body is a command list
+  // dash runs; and each target so found is judged exactly as any redirection or writer the hook already judges. Beside it:
+  // a substitution inside an arithmetic body (`$(...)`, a backtick) runs in every shell and is read as a command, and a `$((`
+  // whose first `(` closes before the last is a command substitution in bash and zsh and is read as one. The reading holds
+  // in every position (alone, after `!`, as an if, while or until condition, in a group, in a pipeline, in a function body,
+  // after `&&` or `||`) because it is made here, where the construct is lexed, and the walk judges what it records as it
+  // judges every other segment: a literal tracked target refuses by name with `how` naming dash and the construct
+  // (CONSTRUCT_HEADS's `via`); a non-literal target takes the hook's existing rule for a non-literal redirection target
+  // (refused as not literal while a tracked project is in play, dropped from a cwd in no project), so `[[ $a > $b ]]` with `$b`
+  // unreadable is refused from a tracked cwd, a priced cost stated in decision 47 (the remedy in the refusal: compare outside
+  // the project, or with `expr`); a `for (( ... ))` head, a `((` after any word but a reserved one, and a `[[` whose operands
+  // hold an unquoted parenthesis are syntax errors in dash and get no dash reading (TEST_ARITH_SHELLS states each fact).
+  // The rest of the grammar (a here-doc body, a here-string, a process substitution, a quoted string, a brace list) was
+  // checked the same way: dash reads a here-doc as data, rejects `<<<` and `>(`/`<(` as syntax errors, reads quotes alike,
+  // and writes a brace list's spelling as one literal name (`{a,b}.md`), a residual named in decision 47.
+  //
+  // (( ... )): arithmetic in bash and zsh, no command and no redirection in it; skip to the matching )). Its `$(...)` and
+  // backticks run in every shell and are read as commands (viaSubs); in command position dash reads it as a subshell running
+  // the body, which is read as a command list under the rule above.
   const skipArithmetic = () => {
     let depth = 2;
     const start = i;
@@ -837,7 +945,43 @@ export function lex(command, shell = null) {
     }
     if (depth > 0) opaque = true;
     seg.arithAt.push(seg.words.length);   // endWord ran before the `((`, so this is the index of the word that follows it
-    seg.arith.push(src.slice(start, Math.max(start, i - 2)));
+    const body = src.slice(start, Math.max(start, i - 2));
+    seg.arith.push(body);
+    expansionsOf(body, CONSTRUCT_HEADS['(('].expandVia);
+    if (dashGrammar && seg.words.every((w) => plainWord(w) && RESERVED.has(w.text))) seg.viaSubs.push({ text: body, via: CONSTRUCT_HEADS['(('].via });
+  };
+  // The substitutions inside an arithmetic body, each a command every shell runs: read with this lexer and kept with the text the
+  // refusal appends (a nested construct's own viaSubs come along).
+  const expansionsOf = (body, via) => {
+    for (const s of lex(body, shell).segments) {
+      for (const t of s.subs) seg.viaSubs.push({ text: t, via });
+      for (const v of s.viaSubs) seg.viaSubs.push(v);
+    }
+  };
+  // The dash reading of the test that just closed (the rule above), over the source between `[[` and `end` (the `]]`, or the
+  // operator that ended the segment): lexed under dash's grammar as `[[ <span>`, the first segment is the command named `[[`,
+  // whose write redirections join this segment's with `how` naming the construct, and every later segment (after a `&&` or
+  // `||` dash read) is a further command, kept as a piece for extract's walk. An unquoted parenthesis among the operands is a
+  // syntax error in dash, which then runs nothing on the line, so such a test gets no dash reading.
+  const closeTest = (end, closed = false) => {
+    inTest = false;
+    const from = testStart;
+    testStart = -1;
+    if (!dashGrammar || from < 0) return;
+    const span = src.slice(from, Math.max(from, end));
+    const dash = lex('[[ ' + span + (closed ? ' ]]' : ''), 'dash');   // the `]]` is the last command's operand in dash (`cp a b ]]` fails on it)
+    if (dash.opaque || dash.segments.some((s) => s.paren)) return;
+    const [first, ...rest] = dash.segments;
+    if (!first) return;
+    for (const r of first.redirects) {
+      if (!WRITE_REDIRECTS.has(r.op)) continue;
+      if (seg.redirects.some((q) => q.op === r.op && q.target.text === r.target.text)) continue;   // recorded by the bash reading too (`&>` inside the test)
+      seg.redirects.push({ op: r.op, target: r.target, how: `${r.op} redirection${CONSTRUCT_HEADS['[['].via}` });
+    }
+    if (!rest.length) return;
+    rest.forEach((s, k) => { s.dashPiece = { construct: '[[ ... ]]', op: k === 0 ? first.op : rest[k - 1].op }; });
+    seg.dashPieces = [...(seg.dashPieces || []), ...rest];
+    if (!seg.dashFirstOp) seg.dashFirstOp = first.op;
   };
   // Skip a $( ... ) or ${ ... } from just after its opener to its closer, quotes honoured;
   // returns the inner text. The word carrying it is not literal.
@@ -864,9 +1008,14 @@ export function lex(command, shell = null) {
   // A `$(...)` (or `$(` inside double quotes): the command inside runs, the word carries one NUL for it.
   const substitution = () => {
     opaqueExpansion(); raw += '$('; i += 2; const inner = skipNested('(', ')'); raw += inner + ')';
-    // `$(( ... ))` is arithmetic, run in the current shell (an assignment in it persists): kept for the assignment
-    // scan and not read as a command (the walk-around lens second pass, 2026-09-19); a `$( ... )` is a command in a subshell, as before
-    if (inner.startsWith('(') && inner.endsWith(')')) seg.arith.push(inner.slice(1, -1));
+    // `$(( ... ))` is arithmetic in bash, zsh and dash when the `(` after the `$(` closes at the very end, run in the current
+    // shell (an assignment in it persists): kept for the assignment scan and not read as a command (the walk-around lens second
+    // pass, 2026-09-19), its substitutions read as the commands every shell runs (round 5's fifth addendum); a `$((` whose first `(`
+    // closes BEFORE the end is `$( (` to bash and zsh, a command substitution whose list they run (`echo $((x > f);(y))` wrote f in
+    // both, measured 2026-09-20), and an arithmetic error to dash, so it is read as a command list too and kept for the assignment
+    // scan; a `$( ... )` is a command in a subshell, as before
+    if (inner.startsWith('(') && parenCloseAt(inner) === inner.length - 1) { const body = inner.slice(1, -1); seg.arith.push(body); expansionsOf(body, CONSTRUCT_HEADS['$(('].expandVia); }
+    else if (inner.startsWith('(') && inner.endsWith(')')) { seg.arith.push(inner.slice(1, -1)); seg.viaSubs.push({ text: inner, via: CONSTRUCT_HEADS['$(('].via }); }
     else seg.subs.push(inner);
   };
   // A `${...}` of unknown content: the spelling stays in the word, marked as an expansion.
@@ -885,6 +1034,7 @@ export function lex(command, shell = null) {
     if (c === ' ' || c === '\t') { endWord(); i++; continue; }
     if (c === '\n') {
       endWord();
+      opAt = i;
       i++;
       readHeredocBodies();   // the bodies belong to the line just ended
       endSegment('\n');
@@ -973,8 +1123,12 @@ export function lex(command, shell = null) {
     }
     // operators
     if (c === '<' || c === '>' || c === '&' || c === '|' || c === ';' || c === '(' || c === ')') {
+      opAt = i;
       // inside [[ ... ]] a > or < is a string comparison, not a redirection, and &&, ||, ( and ) are the
-      // test's own operators: each a word of its own, the segment going on
+      // test's own operators: each a word of its own, the segment going on (bash and zsh; dash's reading is added at closeTest,
+      // and dash's `>|` is kept in the test's span so that reading sees it where a `|` would have ended the segment: bash and
+      // zsh reject the line, dash writes through it, round 5's fifth addendum)
+      if (inTest && c === '>' && src[i + 1] === '|') { bareWord('>|'); i += 2; continue; }
       if (inTest && (c === '<' || c === '>')) { bareWord(c); i++; continue; }
       if (inTest && ((c === '&' && src[i + 1] === '&') || (c === '|' && src[i + 1] === '|'))) { bareWord(c + c); i += 2; continue; }
       if (inTest && (c === '(' || c === ')')) { bareWord(c); i++; continue; }
@@ -994,7 +1148,7 @@ export function lex(command, shell = null) {
       // a digits-only word glued to < or > is the descriptor (2>file still writes file): drop it
       if (inWord && /^[0-9]+$/.test(buf) && (c === '<' || c === '>')) { buf = ''; raw = ''; marks = ''; inWord = false; }
       else endWord();
-      if (c === '(' && src[i + 1] === '(') { i += 2; skipArithmetic(); continue; }   // (( ... )) compares or counts
+      if (testGrammar && c === '(' && src[i + 1] === '(') { i += 2; skipArithmetic(); continue; }   // (( ... )) compares or counts in bash and zsh; under dash's grammar alone it is two `(`, read below
       // A write redirection's operator, then zsh's optional clobber-override suffix (M2, the fifth commit): `!` or `|`
       // after `>`, `>>`, `>&`, `>>&`, `&>` or `&>>`. The recorded op is the operator as spelled, so the refusal names it;
       // with a `!` the bash reading is recorded too (a file named `!` when a space follows, `!word` when glued, see
@@ -1048,6 +1202,7 @@ export function lex(command, shell = null) {
     }
     inWord = true; buf += c; marks += 'u'; raw += c; i++;
   }
+  opAt = src.length;
   endSegment('');
   readHeredocBodies();
   if (pendingHeredocs.length) opaque = true;
@@ -2624,10 +2779,30 @@ function numericRunsOnly(text, marks) {
 export function extractWriteTargets(command, cwd, shell = null) {
   return extract(command, { dir: cwd || null, unknownDir: !cwd, unknownWhy: cwd ? null : 'no working directory is known for it', shell, depth: 0 });
 }
+// Round 5's fifth addendum (2026-09-20): the further commands dash reads after a `&&` or `||` inside a `[[ ... ]]` (closeTest)
+// take their place in the walk as segments of their own after the test's, joined by the operator dash read before each, so the
+// walk's rules for a command after `&&` or `||` apply to them (a cd there leaves the directory unknown, an assignment there is
+// unreadable, a writer or a redirection there is judged, each refusal naming the construct through `dashPiece`); lex's own output
+// stays the bash and zsh reading, one segment per test.
+function withDashPieces(segs) {
+  if (!segs.some((s) => s.dashPieces && s.dashPieces.length)) return segs;
+  const out = [];
+  for (const seg of segs) {
+    out.push(seg);
+    if (!seg.dashPieces || !seg.dashPieces.length) continue;
+    const pieces = seg.dashPieces;
+    pieces[pieces.length - 1].op = seg.op;
+    seg.op = seg.dashFirstOp;
+    out.push(...pieces);
+  }
+  return out;
+}
 function extract(command, ctx) {
   const { shell, depth } = ctx;
   const prevLinks = activeLinks;
-  const { segments, opaque } = lex(command, shell);
+  const lexed = lex(command, shell);
+  const segments = withDashPieces(lexed.segments);
+  const opaque = lexed.opaque;
   const targets = [];
   const unresolved = [];
   let dir = ctx.dir;
@@ -3159,19 +3334,26 @@ function extract(command, ctx) {
     if (parsed.operands.length === 2) record(parsed.operands[0], dstAbs);
     else markMutated(dstAbs, 'ln -s', { alias: true });   // several sources into a name that is not a directory: ln fails or the name is unknown
   };
+  // The text appended to every write's `how` while the walk stands in a construct's other reading (round 5's fifth addendum):
+  // the `via` a recursion was entered with (a `(( ))` body dash runs, a `$((` bash and zsh read as `$( (`, a substitution in
+  // an arithmetic body) and the piece text of a further command dash reads after a `&&` or `||` inside a `[[ ... ]]`, so the
+  // refusal names dash and the construct wherever the target was found.
+  let viaSeg = '';
+  const viaOf = () => (ctx.via || '') + viaSeg;
+  const pieceVia = (p) => ` as a further command dash reads after the \`${p.op}\` inside a \`${p.construct}\` (bash and zsh compare there and run nothing)`;
   // A write target the hook cannot read (the header). A process substitution (`>(cmd)`) is a pipe and
   // never a file, so it is dropped, not recorded.
   const cannotRead = (w, how, why = null) => {
     if (/^[<>]\(/.test(w.text)) return;
     const here = unknownDir ? null : dir;
     unresolved.push({
-      raw: w.raw, how, dir: here, at: w.at ? literalPath(w.at, here) : null, numeric: w.numeric ? w.text : null,
+      raw: w.raw, how: how + viaOf(), dir: here, at: w.at ? literalPath(w.at, here) : null, numeric: w.numeric ? w.text : null,
       text: w.text, marks: w.marks, why,
     });
   };
   const add = (w, how) => {
     try { addInner(w, how); }
-    catch (e) { if (isUnknownPath(e) && !(e.why && e.why.how)) e.why = { ...(e.why || {}), how, raw: w && w.raw ? w.raw : (w && w.text) || 'the path' }; throw e; }
+    catch (e) { if (isUnknownPath(e) && !(e.why && e.why.how)) e.why = { ...(e.why || {}), how: how + viaOf(), raw: w && w.raw ? w.raw : (w && w.text) || 'the path' }; throw e; }
   };
   const addInner = (w, how) => {
     if (!w) return;   // a word that is only an expansion (`"$(mktemp)"`) has no text after quote removal, and is still a target
@@ -3212,12 +3394,12 @@ function extract(command, ctx) {
     const p = resolveLiteral(w.text, dir);
     if (!p) return;
     if (p.unresolvable) { cannotRead(w, how, { kind: 'unresolvable', text: p.unresolvable }); return; }
-    targets.push({ path: p.path, how });
+    targets.push({ path: p.path, how: how + viaOf() });
   };
   let sawOpaqueCommand = false;
   // A script run by `sh` (a `$(...)`, a heredoc-fed shell, a `-c` operand) is read as that shell reads it; a
   // `$(...)` in this command runs in this command's shell, so it inherits `shell`, and the directory state.
-  const recurse = (text, sh = shell, fresh = sh !== shell) => {
+  const recurse = (text, sh = shell, fresh = sh !== shell, via = '') => {
     if (depth >= RECURSION_CAP) { sawOpaqueCommand = true; return; }
     // B2: a `$(...)` runs in a subshell of this shell and sees its names (a copy: its own assignments do not come back);
     // a script handed to a named shell sees the environment alone, so it inherits none of them (fail closed: a name
@@ -3229,6 +3411,7 @@ function extract(command, ctx) {
     const sub = extract(text, {
       dir, unknownDir, unknownWhy, shell: sh, depth: depth + 1, homeAssigned: homeUnreadableNow(), homeWhy: homeWhyNow(), unreadableNames, links, cdFunctions, mutated, keywordMode,
       vars: fresh ? new Map(homeValue) : new Map(vars), unreadableWhy: fresh ? new Map() : new Map(unreadableWhy), refTargets: fresh ? new Set() : new Set(refTargets), readonlyNames: fresh ? new Set() : new Set(readonlyNames), oldDir, varsPoisoned: fresh ? false : varsPoisoned, poisonWhy: fresh ? null : poisonWhy, definedFunctions,
+      via: viaOf() + via,
     });
     targets.push(...sub.targets);
     unresolved.push(...sub.unresolved);
@@ -3473,11 +3656,12 @@ function extract(command, ctx) {
   const addRedirects = (seg, construct) => {
     const saved = { dir, unknownDir, unknownWhy };
     if (construct) ({ dir, unknownDir, unknownWhy } = construct);
-    try { for (const r of seg.redirects) if (WRITE_REDIRECTS.has(r.op)) add(r.target, `${r.op} redirection`); }
+    try { for (const r of seg.redirects) if (WRITE_REDIRECTS.has(r.op)) add(r.target, r.how || `${r.op} redirection`); }   // a dash-reading redirect carries its own how, naming the construct (round 5's fifth addendum)
     finally { if (construct) ({ dir, unknownDir, unknownWhy } = saved); }
   };
   for (let idx = 0; idx < segments.length; idx++) {
     const seg = segments[idx];
+    viaSeg = seg.dashPiece ? pieceVia(seg.dashPiece) : '';
     closeOneSegment();   // a one-segment body read on the previous segment closes here (round 5's addendum)
     if (seg.paren === '(') {
       const next = segments[idx + 1];
@@ -3596,6 +3780,7 @@ function extract(command, ctx) {
       seg.words = seg.words.map((w) => { const r = resolveWord(w); recordPlainWord(r, seg, idx, seq); return r; });
       addRedirects(seg, construct);
       for (const inner of seg.subs) recurse(inner);
+      for (const v of seg.viaSubs) recurse(v.text, shell, false, v.via);   // the construct's other reading (round 5's fifth addendum)
       taintArith(seg);   // a bare `(( x = 5 ))` is a segment with no words: its body may assign any name in it
       continue;
     }
@@ -3603,6 +3788,7 @@ function extract(command, ctx) {
     seg.words = seg.words.map(resolveWord);
     addRedirects(seg, construct);   // a glob: every match (add); a closer's redirections in the construct's start directory
     for (const inner of seg.subs) recurse(inner);
+    for (const v of seg.viaSubs) recurse(v.text, shell, false, v.via);   // the construct's other reading (round 5's fifth addendum)
     // the compound head after the peel (round 5), read from the one table; Object.hasOwn, since `in` consulted the prototype
     // chain and a command word that is an Object.prototype key (`toString`, `constructor`, `__proto__`) inside a body threw
     // in the walk and evaluate's catch-all turned the throw into an allow (round 4's extra4-4; the catch-all refuses now)
@@ -3729,7 +3915,8 @@ function extract(command, ctx) {
         const physical = opts.some((w) => /P/.test(w.text));
         const unmodeled = opts.some((w) => !/^-[LPe@n]+$/.test(w.text)) && !rotate;
         let block = null;
-        if (prevOp === '&&' || prevOp === '||') block = `an earlier \`${name}\` after \`${prevOp}\` may not run, so where it lands is not known (its move depends on the previous status)`;
+        if (seg.dashPiece) block = `an earlier \`${name}\` is a further command dash reads after the \`${seg.dashPiece.op}\` inside a \`${seg.dashPiece.construct}\`, where bash and zsh compare and move nothing, so where the shell is after it depends on which shell runs the line`;   // round 5's fifth addendum
+        else if (prevOp === '&&' || prevOp === '||') block = `an earlier \`${name}\` after \`${prevOp}\` may not run, so where it lands is not known (its move depends on the previous status)`;
         else if (seg.alwaysHead) block = `an earlier \`${name}\` is the first command of an always-list on the line of its \`always\`, which zsh runs and bash and dash read as operands of the command before \`always\`, so where the shell is after it depends on which shell runs the line`;   // round 5's third addendum
         else if (seg.op === '|' || prevOp === '|') block = `an earlier \`${name}\` is part of a pipeline, so it runs in a subshell and moves nothing in this shell`;
         else if (seg.op === '&') block = `an earlier \`${name}\` is backgrounded, so it runs in a subshell and moves nothing in this shell`;
@@ -3801,7 +3988,7 @@ function extract(command, ctx) {
         catch (e) {
           if (isUnknownPath(e) && !(e.why && e.why.how)) {
             const ops = args.filter((a) => !(a.text.startsWith('-') && a.text.length > 1));
-            e.why = { ...(e.why || {}), how: name, raw: ops.length ? ops[ops.length - 1].raw : name };
+            e.why = { ...(e.why || {}), how: name + viaOf(), raw: ops.length ? ops[ops.length - 1].raw : name };
           }
           throw e;
         }
@@ -4725,10 +4912,13 @@ function judge(command, cwd) {
     // B2 as ruled: an expanded name the command names or may fill in (PWD, OLDPWD; HOME takes the homeAssigned text above)
     // is one the guard would otherwise read, so the refusal says why it did not
     const named = u.why && u.why.kind === 'namedExpansion' ? ` (${u.why.text}, so I do not read \`$${u.why.name}\` here)` : '';
+    // a `>` between `[[` and `]]` with a target the hook cannot read (`[[ $a > $b ]]`): a comparison in bash and zsh, a redirection
+    // in dash, refused by the rule above with the comparison's own remedy beside the path's (round 5's fifth addendum, a priced cost)
+    const compare = u.how.includes(CONSTRUCT_HEADS['[['].via) ? ' If this is a string comparison, run it from a directory outside that project, or write it with `expr`, which bash, zsh and dash run alike.' : '';
     return `Track-changes is ON in ${where}, so this command is blocked here: its ${u.how} names ${u.raw}, `
       + `which is not a literal path${entry}${named}. The shell fills that in when the command runs, so I cannot tell which `
       + `file it would write, and a tracked file written that way would carry no change for me to accept or `
-      + `reject. Spell the path out: outside that project the command then runs as usual, and a tracked file `
+      + `reject.${compare} Spell the path out: outside that project the command then runs as usual, and a tracked file `
       + `takes its change through track-edit instead:\n${TRACK_EDIT}`;
   }
   } finally { activeLinks = prevLinks; }
