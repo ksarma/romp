@@ -16,11 +16,14 @@ carries no shell script, the arrows step it too. The guide says so, in those ter
 sentence to the shell's lines, to `onNavKey`'s stand-downs (a prevented key, a typing target, the editor open) and to
 `navChord`'s two chord families (file-trail.ts).
 
-The picture sentence. Round 1 of the review left two pictures without the button: one under `FIGOPEN_MIN_PX` on
-either side (a badge, an inline icon; `figureTooSmall`, read by the one decision `decideFigureControl` at the load and
-at each change of the body's width), and one inside a link that holds more than the picture (`linkAbove`: the climb of `figureAnchor`
-leaves such a link standing over the img, where `linkAround` climbs a link holding the picture alone so its button
-lands after the link). A small picture no link holds still opens on a plain click: the figure's click listener reads
+The picture sentence. The guide names four kinds of picture without the button once the browser has answered for it: a
+picture that failed to load (the file review's round 2: `figureState`, refused by `figureWantsControl` and by
+`figureTarget` alike, so the button and the plain click agree and nothing opens), a `data:` picture (`figureTarget`
+null), one under `FIGOPEN_MIN_PX` on either side (a badge, an inline icon; `figureTooSmall`, read by the one decision
+`decideFigureControl` at the load and at each reflow of the figure's own box, `watchFigureBoxes`), and one inside a link
+that holds more than the picture (`linkAbove`: the climb of `figureAnchor` leaves such a link standing over the img,
+where `linkAround` climbs a link holding the picture alone so its button lands after the link); a picture still on its
+way has none until its load, and a click on it before then opens nothing (`figureTarget` null while fetching). A small picture no link holds still opens on a plain click: the figure's click listener reads
 the link above the target and never the size. The guide's list of pictures without the button is read against the
 refusal arms of `figureWantsControl` (a census pinned here, so an arm added or removed asks for the sentence again; the
 file review's round 2 added the failed picture to the code's refusals, and `figureTarget` refuses it too, so the button
@@ -86,13 +89,14 @@ PICTURE = ("A picture in a rendered file that comes from a file or a web address
                 " drag draws a rectangle unless it starts on the button, which takes the press), a Cmd-click (Ctrl on"
                 " Windows and Linux) opens the picture in a browser tab, and a picture from the web opens its address"
                 " in a new tab, as a link to that site does; a figure waiting behind its host's box gets its button o"
-                "nce it has loaded, and three kinds of picture have none: a `data:` picture, whose bytes are written "
-                "into the file itself and which does not open; a picture smaller than 48 pixels on either side (a bad"
-                "ge, an inline icon), which the button would cover, and which a plain click still opens when no link "
-                "holds it; and a picture inside a link that holds more than the picture (a caption beside it), where "
-                "a click follows the link (a link with no address left, or an anchor that only marks a place, leaves "
-                "the click to the picture, which opens), while a picture that is all its link holds keeps its button "
-                "beside the link.")
+                "nce it has loaded, as does one still on its way (a click on it before then opens nothing), and once "
+                "the browser has answered for a picture, four kinds have none: a picture that failed to load, which o"
+                "pens nothing either; a `data:` picture, whose bytes are written into the file itself and which does "
+                "not open; a picture smaller than 48 pixels on either side (a badge, an inline icon), which the butto"
+                "n would cover, and which a plain click still opens when no link holds it; and a picture inside a lin"
+                "k that holds more than the picture (a caption beside it), where a click follows the link (a link wit"
+                "h no address left, or an anchor that only marks a place, leaves the click to the picture, which open"
+                "s), while a picture that is all its link holds keeps its button beside the link.")
 PICTURE_HEAD = PICTURE[:PICTURE.index("; a plain click")]
 PICTURE_NONE = PICTURE[PICTURE.index("a figure waiting behind"):]
 # the wording the review found false by execution: the arrow chords with no dashboard exception, and every picture with the button
@@ -114,7 +118,7 @@ class GuideSentences(unittest.TestCase):
         self.assertNotIn(OLD_TRAIL, _flat(self.guide))
         self.assertEqual(self.links.count("Alt+Left"), 1, "the arrow chords are described once")
 
-    def test_the_picture_sentence_names_the_three_pictures_without_the_button_and_the_old_wording_is_gone(self):
+    def test_the_picture_sentence_names_the_four_pictures_without_the_button_and_the_old_wording_is_gone(self):
         self.assertIn(PICTURE_HEAD, self.links)
         self.assertIn(PICTURE_NONE, self.links)
         self.assertLess(self.links.index(TRAIL), self.links.index(PICTURE_HEAD), "the trail sentence first, then the picture's")
@@ -225,6 +229,15 @@ class PicturesWithoutTheButton(GuideSentences):
         ], "the refusal arms, as the guide's list of pictures without the button reads them")
         self.assertTrue(build.rstrip().endswith("return linkAbove(anchor) === null;"), "the last word: any link above the picture")
         self.assertEqual(build.count("return false;"), 4, "four refusals and the link's verdict; a change here is a change to the guide's sentence")
+        # the guide's count against the census: the state arm's failed half, the target arm (a `data:` picture), the floor arm and
+        # the link verdict are the four kinds the guide counts once the browser has answered; the gate arm and the fetching half are
+        # its "waiting" clause (the button once loaded; a click before then opens nothing), which figureTarget's refusal makes true
+        g = re.search(r"once the browser has answered for a picture, (\w+) kinds have none: a picture that failed to load, which opens nothing either;", self.links)
+        assert g, "the guide's count and its first kind"
+        self.assertEqual(g.group(1), "four", "failed, data:, under the floor, inside a link holding more: the four the census maps to")
+        self.assertIn("as does one still on its way (a click on it before then opens nothing)", self.links, "the waiting clause")
+        target = _body(self.viewer, "function figureTarget(img: Element, filePath: string): FigureTarget | null {", "}")
+        self.assertIn('if (state === "fetching" || state === "failed") return null;', target, "which figureTarget makes true: no target while fetching")
 
     def test_the_floor_the_guide_gives_is_the_constant_and_is_read_on_either_side(self):
         m = re.search(r"\nconst FIGOPEN_MIN_PX = (\d+);\n", self.viewer)
@@ -235,7 +248,7 @@ class PicturesWithoutTheButton(GuideSentences):
         small = _body(self.viewer, "function figureTooSmall(img: Element): boolean {", "}")
         self.assertIn("return b !== null && (b.w < FIGOPEN_MIN_PX || b.h < FIGOPEN_MIN_PX);", small, "either side under the floor")
 
-    def test_the_builder_refuses_the_three_and_puts_the_button_after_a_link_holding_the_picture_alone(self):
+    def test_the_builder_refuses_the_floor_the_empty_target_and_the_link_and_puts_the_button_after_a_link_holding_the_picture_alone(self):
         build = _body(self.viewer, "function figureWantsControl(img: Element, anchor: Element, filePath: string): boolean {", "}")
         self.assertIn("if (figureTooSmall(img)) return false;", build, "the floor, read from the loaded picture")
         self.assertIn("if (figureTarget(img, filePath) === null) return false;", build, "nothing to open: a data: picture, no source")
@@ -266,7 +279,7 @@ class PicturesWithoutTheButton(GuideSentences):
         picture. The figure listener yields to linkOf's links (a path link, a web address the viewer dressed, a section link)
         and to an anchor with an href; a dead anchor (file-view-links.ts DEAD_LINK_CLASS, its href taken off) and a named
         target (`<a id>`, never dressed) are neither, so the plain click reaches openFigure. The control is withheld there
-        all the same (linkAbove reads any anchor), which the sentence's "three kinds" count relies on."""
+        all the same (linkAbove reads any anchor), which the sentence's "four kinds" count relies on."""
         link_of = _body(self.viewer, "const linkOf = (t: Element | null): HTMLElement | null => {", "  };")
         self.assertIn("t.closest('[data-act=\"openpath\"], a.' + URL_LINK_CLASS + \", a.\" + FRAG_LINK_CLASS)", link_of, "linkOf's selector: the three dressed links")
         self.assertNotIn("DEAD_LINK_CLASS", link_of, "a dead anchor is none of them")

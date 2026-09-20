@@ -545,14 +545,15 @@ closed (with the panel open, a click offers a comment as before, and a drag draw
 rectangle unless it starts on the button, which takes the press), a Cmd-click (Ctrl on
 Windows and Linux) opens the picture in a browser tab, and a picture from the web opens
 its address in a new tab, as a link to that site does; a figure waiting behind its host's
-box gets its button once it has loaded, and three kinds of picture have none: a `data:`
-picture, whose bytes are written into the file itself and which does not open; a picture
-smaller than 48 pixels on either side (a badge, an inline icon), which the button would
-cover, and which a plain click still opens when no link holds it; and a picture inside a
-link that holds more than the picture (a caption beside it), where a click follows the
-link (a link with no address left, or an anchor that only marks a place, leaves the click
-to the picture, which opens), while a picture that is all its link holds keeps its button
-beside the link.
+box gets its button once it has loaded, as does one still on its way (a click on it before
+then opens nothing), and once the browser has answered for a picture, four kinds have none:
+a picture that failed to load, which opens nothing either; a `data:` picture, whose bytes
+are written into the file itself and which does not open; a picture smaller than 48 pixels
+on either side (a badge, an inline icon), which the button would cover, and which a plain
+click still opens when no link holds it; and a picture inside a link that holds more than
+the picture (a caption beside it), where a click follows the link (a link with no address
+left, or an anchor that only marks a place, leaves the click to the picture, which opens),
+while a picture that is all its link holds keeps its button beside the link.
 
 **Text size and width.** The **A−** and **A+** buttons in the viewer's title bar make
 the text of any text file smaller or larger in fixed steps from 70% to 200%: a markdown

@@ -7819,16 +7819,29 @@ prevented key and returns), so in a shell pane (the Files pane, a chat pane's mo
 focus and the trail's are Cmd+[ and Cmd+] on a Mac and the two buttons everywhere; on the standalone Files and chat
 pages, which the browser legs drive, all four chords step the trail. Read from the listeners' order, not driven (open
 point 10). The Recent list keeps its meaning: a Back or Forward open in the Files pane records the file as any open
-there does (openHere), moving its row up. The pair stands DIMMED, never hidden: on an open with no step either way, the
-ordinary open from outside, both buttons wear `aria-disabled` and the group keeps its place and its gap (the contract's
-L2; pinned at source by file-trail.test.ts and tools/markdown-viewer-plan-linknav.test.mjs and read off the bar by
-file-trail-browser.test.ts). The file review asked for the group hidden when neither direction has a target
-(`nav.hidden`, which the sheets take out of the flow with its gap, styles.css `.fileview-group[hidden]`), and its
-refuters found no rule in ui/CLAUDE.md or in the code that hides a control with nothing to do: the bar's rule (T367,
-the view group's sync in file-view.ts) hides a GROUP whose children are all hidden, and a dimmed button is not hidden.
-What the hide would buy and cost, measured by the refuters in Chromium: about 74 px of a 359 px bar at a 380 px
-viewport, and the file name moving 74 px on the first link follow of every trail, the shift a bar built once per open
-avoids. Whether to hide the pair is the owner's (open point 13). Held by file-trail.test.ts (the titles, the chord table, the bar and listener
+there does (openHere), moving its row up. The GROUP is HIDDEN when neither direction has a target (`nav.hidden`, set
+before the group is appended, which the sheets take out of the flow with its gap, styles.css `.fileview-group[hidden]`):
+on an open with no step either way, the ordinary open from outside, the bar rows no pair; once a step exists one way the
+group shows whole and the button without a target wears `aria-disabled` alone, so the two glyphs keep their places from
+one step of a trail to the next. The ground, re-decided in the file review's round 2 (extra8-2): the round-1 record kept
+the pair dimmed, the contract's shape, on the claim that the review's refuters had found no rule in ui/CLAUDE.md or in
+the code that hides a control with nothing to do, and that claim was false. T367 (the user 2026-09-12; file-view.ts's
+GitHub-link section, styles.css's `.fileview-gh` comment) is that rule for this bar, with a worked precedent: the greyed
+GitHub link and its caption were removed rather than dimmed from a file outside a repository, the unit hidden and out of
+the row's flow; the clause the round-1 record cited, that a GROUP whose children are all hidden hides (the view group's
+sync), is the same decision's second clause and not the whole rule. The dimmed dress is the bar's other precedent, older
+than T367 (the text-size ends and the Save in flight, styles.css's one disabled rule, `.fileview-btn:disabled,
+.fileview-btn[aria-disabled="true"]`, whose text entered the sheet on 2026-09-07, where T367 entered file-view.ts on
+2026-09-12, both by `git log -S`), and the two tell apart by whether the control can become live during this open: an
+end of the text-size table does at the next press the other way, a Save in flight can once the save has answered, while
+a Back with no target cannot until a link is followed, which builds a new bar, so a pair with nothing either way is not rowed.
+What the hide buys, measured by the round-1 refuters in Chromium: about 74 px of a 359 px bar at a 380 px viewport, at
+the cost of the file name moving 74 px on the first link follow of every trail, a shift the bar built once per open
+otherwise avoids. The contract's L2 clause (aria-disabled alone when empty) is corrected to this with the reason; the
+pins that held the dimmed pair (file-trail.test.ts, tools/markdown-viewer-plan-linknav-review.test.mjs) hold the hide,
+and file-trail-browser.test.ts and file-view-text-size.test.ts's bar case read the hidden group's attribute and its
+empty client rects off the bar on a fresh open, then the group showing after a link is followed, Back live and Forward
+dimmed. Whether the contract's dimmed pair should come back instead is the owner's (open point 13). Held by file-trail.test.ts (the titles, the chord table, the bar and listener
 pins) and file-trail-browser.test.ts (Back at the block, the scrollTop and the view; Forward; the chords with and
 without a text field and under a prevented key; the default taken with and without a target).
 
@@ -7841,7 +7854,9 @@ corners; `button.fileview-btn.fileview-icon.fv-figopen`, the words in its title 
 `data-fv-figopen` and never by its class), in the tab order as any button is. Whether the control stands is decided
 from the figure AS IT IS NOW, by that one function, and decided again at every event that changes what it reads: the
 paint (mdBlock, `addFigureControls`), the picture's load and its error (`armFigureControls`) and each change of the
-body's width (`refigureControls`); the verdict reads the figure's state off the element (`figureState`: `complete` and
+figure's own laid-out box (`watchFigureBoxes`: one ResizeObserver per open over the figures of the Rendered box,
+re-armed at each text paint, which hears every reflow of the figure whatever moved it, the body's width or a text-size
+step; the file review's round 2, below); the verdict reads the figure's state off the element (`figureState`: `complete` and
 `naturalWidth`, the browser's own record: fetching, loaded, failed, or a stand-in outside a browser, which carries no
 `complete` and is decided from its source alone), and a figure still fetching, or one that failed, gets none. The file
 review found five findings with that one cause, the control decided once at the paint from what was known then, and
@@ -7876,7 +7891,8 @@ candidate; a figure still fetching has NO target (`figureState`, read first in `
 control waits for the load and its plain click opens nothing, since currentSrc is empty while the source is on the wire
 and chosenSource read that as the src (the file review: the control the paint added, and the plain click, on a
 `<picture>` or a srcset figure still fetching opened the fallback the browser never asked for and put that file on the
-trail); the target is read again at the click; the failed figure's label, `failedSource`,
+trail), nor has a figure that FAILED (the same read: `complete` true and `naturalWidth` 0), so no gesture opens it (the
+file review's round 2, below); the target is read again at the click; the failed figure's label, `failedSource`,
 delegates to it; read from the src alone, the control opened the fallback src a `<picture>` or a srcset figure had
 skipped), joined by the model's `figurePath` (file-comments-model.ts, the join rewriteFigureSrcs fetched through, so the
 picture opened is the one shown and its request is the paint's), through the figure's own door,
@@ -7889,19 +7905,38 @@ from its report is a step inside that report's reading and no file the reader ch
 stands and Back reaches the report through the trail, while a Back or Forward open keeps taking its row (L2); whether a
 picture opened from a figure should take a row instead is the owner's (open point 12). Nothing for a `data:` URL
 (inline bytes a tab will not show) or a figure with no source, which get no control. The tab is the one request this
-follow-on adds (the file review's HIGH 1; L6): the plain click on a remote picture, and its control, call `openUrlTab`
-(`window.open(href, "_blank", "noopener,noreferrer")` in the web dashboard, the host's openExternal in the VS Code
-webview), a top-level navigation to the picture's address that carries the cookies the host set which a cross-site
-navigation carries, where the page's own fetch of the picture, a cross-site image request, carried none of them; before
-this follow-on only an author's link opened such a tab. The gate is not bypassed: no request reaches a host the gate
-still holds (file-view-figure-chosen-browser.test.ts, at a context-level route with the real window.open: none while
-gated, one image request at the load, one document request per tab, never the src's address). Measured by the records
-pass on 2026-09-20 at a real HTTP server's log (a scratch leg kept outside the repo beside the contract, with its
-record): the image request came with no cookie and with the page's address as referer (`sec-fetch-dest: image`,
-`sec-fetch-site: cross-site`; the kernel-served dashboard sends `Referrer-Policy: same-origin`, kernel.py, so there the
-image request names no referer), and each tab's document request (`sec-fetch-dest: document`, `sec-fetch-mode:
-navigate`) came with the SameSite=Lax cookie, without the Strict one, and with no referer. So the follow-on is a
-privacy surface and lands on the owner's word whatever its tier, with the two roads priced in open point 11. A gated
+follow-on adds (the file review's HIGH 1; L6): a plain click on a LOADED remote picture, its control, and a
+Cmd/Ctrl-click on it, three gestures through one arm, all call `openUrlTab` (`window.open(href, "_blank",
+"noopener,noreferrer")` in the web dashboard; the function's other arm, the host's openExternal, is the VS Code
+webview's, and the clause below holds in either arm), a top-level navigation to the picture's address: a second,
+differently kinded, credentialed request to a host the page had requested the image from, since a figure opens a tab
+only once LOADED, and the page's image request to that host preceded its load (answered by the host, or by the
+browser's cache from an earlier answer). "Requested", not "fetched": before the round-2 fix `figureTarget` refused the
+fetching state alone, so a FAILED remote figure kept its target and its plain click opened the tab with no image
+answered, a first contact where the image request never left the machine (a content blocker on the dashboard) or the
+host answered 404, and the file review's round 2 (extra5-4) found the clause false there; a failed figure now opens
+nothing on any gesture, so the clause holds for every figure that can open a tab. The modified click opens the
+picture's own address and never the kernel's /file URL, since openFigure's web arm runs before its /file-tab branch
+(extra5-3: the record had named two gestures and given the modified click the /file URL). Before this follow-on only
+an author's link opened such a tab. The gate is not bypassed: no request reaches a host the gate still holds
+(file-view-figure-chosen-browser.test.ts, at a context-level route with the real window.open, the route and the page's
+fetch wrapper installed BEFORE the report opens so the open's own window is watched, extra7-1: none while gated and
+none at the open, one image request per remote figure at the gate's lift (the `<picture>`'s source, and the failed
+img's src, answered 404), one document request per tab from each of the three gestures, none from the failed figure's
+clicks, never the src's address, and nothing to any other host through window.fetch, read off a never-drained list the
+wrapper keeps, tests-2). What rides, measured in the tree by that leg in Chromium (tests-3, fresh-3) with three cookies
+seated on the host before the open, SameSite=Lax, SameSite=Strict and SameSite=None with Secure: each image request
+carried the None cookie alone, and each tab's document request the Lax and the None cookie, never the Strict one. So
+what is new is the request's kind and the Lax class it brings, and not credentials on an image request as such, which
+the None class rides in Chromium; the table is Chromium's alone (fresh-3's refuter saw Firefox carry the None cookie on
+the image request too and WebKit drop it there, a difference between engines the leg does not measure). The records
+pass's earlier measurement (2026-09-20, a real HTTP server's log, a scratch leg kept outside the repo beside the
+contract with its record, Lax and Strict seated): the image request came with no cookie and with the page's address as
+referer (`sec-fetch-dest: image`, `sec-fetch-site: cross-site`; the kernel-served dashboard sends `Referrer-Policy:
+same-origin`, kernel.py, so there the image request names no referer), and each tab's document request
+(`sec-fetch-dest: document`, `sec-fetch-mode: navigate`) came with the Lax cookie, without the Strict one, and with no
+referer. So the follow-on is a privacy surface and lands on the owner's word whatever its tier, with the two roads
+priced in open point 11. A gated
 placeholder (figure-gate.ts) gets none until its figure is loaded: `armFigureControls`, one capture-phase pair of `load`
 and `error` listeners on the body per open beside the labels', runs the decision at the load and at the error (the
 placeholder's click, a settings change restoring it, the chat page's heal landing a retry). A URL document (openUrlView) gets none: its
@@ -7917,15 +7952,30 @@ complete at the paint and is decided then, from its natural size, since mdBlock'
 load event, which fires all the same, decides it again over the laid-out box (the file review's closing check: at a 381 px
 re-open the 761 by 76 picture's paint-time control left at its load, the picture laid out 324 by 32; at 900 it stood;
 file-view-figure-floor-browser.test.ts); and the floor is read
-again at each change of the body's width (`refigureControls`, run from the
-width watch's repaint over every figure of the box through the same decision: the pane dragged, the Comments aside
-opened or closed), so a figure the column narrows under the floor loses its control and one it widens past gets it
-back (the file review's measurement at an earlier head: read once at the load, a 761 by 76 figure narrowed to 323 by 32
-kept its control, which hung over the figure and took the click meant for the prose, where the note reopened at that
-width had none; a value measured once against a condition that can change is re-read on the event that changes it);
-a picture that failed to load gets none (nothing to open, and with an empty alt no box: at the head before the one
-decision a 0 by 0 failed figure wore a control laid 28 px to its left, over the link before it, which took the click
-meant for that link, the file review), and a figure at the
+again at each change of the figure's own laid-out box (`watchFigureBoxes`: one ResizeObserver per open over the
+figures of the Rendered box, armed beside the load and error pair, re-armed at each text paint through the seam's
+onRendered and dropped with the viewer, running the same decision for the figure whose box changed), which is the
+reflow itself whatever caused it: the pane dragged, the Comments aside opened or closed, the window resized, or a
+text-size step (A-, A+, Ctrl/Cmd + wheel), which re-measures the 80ch column at a constant body width and so reflows
+every column-capped figure with no width report; so a figure the column narrows under the floor loses its control and
+one it widens past gets it back (the file review's measurement at an earlier head: read once at the load, a 761 by 76
+figure narrowed to 323 by 32 kept its control, which hung over the figure and took the click meant for the prose,
+where the note reopened at that width had none; and its round 2, correctness-1 with four findings of the same cause:
+decided again from the width watch's repaint alone, the one road the round-1 fix wired, a band a text-size step had
+narrowed under the floor kept its control and one the step widened past never gained it, so the event is the figure's
+reflow and not one of its causes; a value measured once against a condition that can change is re-read on the event
+that changes it); a control removed while it holds the keyboard hands it to the viewer's body first
+(`removeFigureControl`, through a per-open register of the body's takeKeyboard, since the decision is module-level and
+the hand-over is the open's: the file review's round 2, ui-4, where the removal dropped the focus to the document's
+body and PageDown, the arrows and End scrolled nothing until a click); a picture that failed to load gets none and
+opens nothing on any gesture (`figureTarget` refuses the failed state as it refuses the fetching one, the verdict the
+control is withheld on, so the two readers of "is there something to open" agree: the file review's round 2,
+regression-3 with extra5-4, where the target refused the fetching state alone, so a plain click on a failed local
+figure opened the missing path in the viewer and pushed it onto the trail, and one on a failed remote figure opened a
+tab at a host whose image request had answered 404; and with an empty alt no box: at the head before the one decision
+a 0 by 0 failed figure wore a control laid 28 px to its left, over the link before it, which took the click meant for
+that link, the file review; a failed figure with a non-empty alt has the alt text's box, which the state leg clicks),
+and a figure at the
 floor (48 by 48) keeps its control inside its own box; and a figure inside a link that holds more than it
 (`[![alt](fig.png) caption](other.md)`, an author's `<a>` with a caption beside the img; `linkAbove`: ANY anchor, or
 a path link, above `figureAnchor`'s climb, which stops under a link holding text beside the figure; a dead link too,
@@ -7965,27 +8015,36 @@ with the panel open the comment offer, the region drag and the control's own cli
 one the tap standing down to the offer, the modified click's tab and the control's open), and, for the round-1 rules,
 file-view-figure-shapes.test.ts (the source pins: the web test before the join; the one decision: the state, the
 floor, the target and any link above in figureWantsControl's order, decideFigureControl's add or remove against the
-control standing, the measure's reads, linkAbove as any anchor, and the load, the error and the repaint running it;
-the click's yield to an anchor with an href) and
+control standing, the measure's reads, linkAbove as any anchor, the load, the error and the figures' own ResizeObserver
+running it and the width watch's repaint running none, removeFigureControl's order, figureTarget's refusal of both
+states, and both sheets' comment naming decideFigureControl; the click's yield to an anchor with an href) and
 file-view-figure-shapes-browser.test.ts (Chromium: twelve shapes on one report, a captioned picture inside a dead link
 among them, which wear a control and where it
 stands, the badge's face and the prose before the icon under the pointer, the plain click on the captioned links, on
 the badge and on the two web links, the control of the figure alone in a web link, the protocol-relative figure's
 tab from its control and from its click, and the dead link's plain click opening the picture), file-view-figure-floor-browser.test.ts (Chromium: the 761 by 76 figure's
 control leaving as the viewport or the Comments aside narrows the column under the floor and returning as it widens,
-a page opened at the narrow width with none, and a click dispatched on a gated placeholder's img opening nothing
-while a real click on the restored figure's control opens its tab), and, for the chosen candidate,
+a page opened at the narrow width with none, a click dispatched on a gated placeholder's img opening nothing
+while a real click on the restored figure's control opens its tab, the held picture's re-open, and, since the file
+review's round 2, a 1300 by 110 band at a 1200 px modal losing its control at three A- presses (70%, the band's height
+under 48 px with the body's width unmoved) and getting it back at three A+, the same by Ctrl + wheel, and a control
+removed while it holds the keyboard handing it to the viewer's body, PageDown then scrolling the report), and, for the chosen candidate,
 file-view-figure-chosen.test.ts (the source
 pins: chosenSource's body, figureTarget's read of it first, failedSource's delegation and the two callers) and
 file-view-figure-chosen-browser.test.ts (Chromium: a `<picture>`, a srcset img and a gated remote `<picture>` open the
-candidate shown, through the paint's URL, and the remote `<picture>`'s requests at a context-level route with the real
-window.open: none while gated, one image request at its load, one document request per tab from its control and from
-its plain click), and, for the one decision, file-view-figure-state-browser.test.ts (Chromium: a failed figure, a
+candidate shown, through the paint's URL, and the remote figures' requests at a context-level route with the real
+window.open, installed with the page's fetch wrapper before the open: none while gated and none at the open, one image
+request per remote figure at the gate's lift, one document request per tab from the loaded picture's control, its
+plain click and its Ctrl-click, none from the failed remote figure's plain click or Ctrl-click, nothing to any other
+host through window.fetch, and the Cookie header of each request with Lax, Strict and None seated), and, for the one
+decision, file-view-figure-state-browser.test.ts (Chromium: a failed figure, a
 fetching `<picture>` and a srcset figure whose chosen candidate is a `data:` URI, each without a control, the link
 beside the failed figure taking the click, the fetching figure's plain click opening nothing and its load bringing the
-control that opens the source's file) and, for the door, file-view-figure-recent-browser.test.ts (Chromium over the
+control that opens the source's file, and a failed local figure with a box, a non-empty alt laid out as text, whose
+plain click and Ctrl-click open nothing with the trail unmoved) and, for the door, file-view-figure-recent-browser.test.ts (Chromium over the
 real Files page: no Recent row for the picture opened from the control or from the plain click, Back to the report at
-the reader's block, and a link's open still taking its row).
+the reader's block, a Forward step onto the picture minting its row and Back moving the report's over it, and a
+link's open still taking its row).
 
 L4. **The picture view reached from a report.** The control's open is the ordinary open of the picture's path
 (openFileView through openFromViewer), so the card shows the picture as `imgBlock` shows any picture, the bar names it
@@ -8004,11 +8063,15 @@ stand-downs (L2).
 L6. **No kernel change, no new route; one new kind of request leaves the machine.** No kernel change and no new
 route: a Back or Forward open fetches the file through the same `/file` route the link's open used, a figure's open in
 the viewer fetches the picture through it as the report's paint did, and the trail lives in the page. One request is
-new (the file review's HIGH 1): a plain click on a remote picture, and its Open the picture control, open a top-level
-tab at the picture's address (L3, `openUrlTab`), a request of type document to a host the page had already fetched the
-image from, carrying the cookies a cross-site navigation carries where the image request carried none of them; before
-this follow-on only an author's link opened such a tab. The gate is not bypassed: no request reaches a host the gate
-still holds. The build's record here claimed that nothing leaves the machine that did not before, and the PR body and
+new (the file review's HIGH 1): a plain click on a loaded remote picture, its Open the picture control, and a
+Cmd/Ctrl-click on it open a top-level tab at the picture's address (L3, `openUrlTab`), a second, differently kinded,
+credentialed request: a request of type document to a host the page had requested the image from, carrying cookie
+classes the image request did not (measured in Chromium by file-view-figure-chosen-browser.test.ts: the Lax and the
+None cookie on the tab's document request, the None cookie alone on the image request, the Strict one on neither);
+before this follow-on only an author's link opened such a tab. A failed figure opens nothing on any gesture (L3, the
+file review's round 2), so the image request has always been made before the tab is asked for; the round-1 wording,
+a host the page had already fetched the image from, was false for a failed remote figure (extra5-4). The gate is not
+bypassed: no request reaches a host the gate still holds. The build's record here claimed that nothing leaves the machine that did not before, and the PR body and
 the contract said the same; the claim was false, and the follow-on is a privacy surface, landing on the owner's word
 (open point 11). The verifications: `git diff --stat $(git merge-base origin/main HEAD) HEAD -- kernel/` is empty and
 `git diff --name-only $(git merge-base origin/main HEAD) HEAD` lists files under ui/webview, docs, plans, tools,
@@ -8037,29 +8100,40 @@ the prose before the icon under the pointer, the plain click on the captioned li
 the protocol-relative figure's tab, and the dead link's plain click opening the picture); its round 2 added tests/test_guide_trail_chords_and_figure_button.py (the
 guide's two sentences, pinned flattened, held to the lines that make them true: the dashboard shell's ownership of
 Alt+Left and Alt+Right to the shell script's listener, onNavKey's stand-downs and navChord's two chord families; the
-three kinds of picture without the button to the floor's constant, figureWantsControl's refusals and the click
-listener, and the guide's figure sentence to the tools pin's copy of it, byte for byte), and,
+pictures without the button to the floor's constant, a census of figureWantsControl's refusal arms (an arm added or
+removed fails there until the guide's sentence is read again; re-aimed in the file review's round 2 for the failed
+picture, which the button and the click refuse on one verdict) and the click listener, and the guide's figure sentence
+to the tools pin's copy of it, byte for byte), and,
 for figureTarget's read of the candidate the browser chose, ui/webview/file-view-figure-chosen.test.ts (the source pins:
 chosenSource's body, figureTarget's order, failedSource's delegation and the two callers) and
 ui/webview/file-view-figure-chosen-browser.test.ts (Chromium over the real chat modal: a `<picture>`, a srcset img and a
-gated remote `<picture>` open the candidate shown through the paint's URL). The floor's re-read at each change of the
-body's width and the click listener's stand-down on an answered click added
+gated remote `<picture>` open the candidate shown through the paint's URL; since the file review, the remote figures'
+request census at a context-level route with the real window.open, and since its round 2 the route and the fetch
+wrapper installed before the open, the never-drained list of foreign fetch calls, the Cookie header of each request
+with three classes seated, the loaded picture's Ctrl-click and the failed remote figure's clicks). The floor's re-read
+at each reflow of the figure and the click listener's stand-down on an answered click added
 ui/webview/file-view-figure-floor-browser.test.ts (Chromium over the real chat modal: the 761 by 76 figure's control
 leaving as the viewport narrows the column under the floor and returning as it widens, the same across the Comments
-aside opening and closing, a page opened at the narrow width with none, and a click dispatched on a gated
-placeholder's img opening nothing while a real click on the restored figure's control opens its tab) and re-aimed
-ui/webview/file-view-figure-shapes.test.ts (the re-read's pins: refigureControls's body and its place in the repaint)
+aside opening and closing, a page opened at the narrow width with none, a click dispatched on a gated
+placeholder's img opening nothing while a real click on the restored figure's control opens its tab, and, since the
+file review's round 2, the text-size step by the buttons and by Ctrl + wheel taking a band's control away under the
+floor and giving it back at a constant body width, and the keyboard handed to the viewer's body when the control
+holding it is removed) and re-aimed
+ui/webview/file-view-figure-shapes.test.ts (the re-read's pins: watchFigureBoxes's body and its arming, the repaint
+deciding no figure and the width-only re-read gone from the source, removeFigureControl's order, figureTarget's refusal of
+both states, and both sheets' comment naming decideFigureControl)
 and ui/webview/file-figure-open.test.ts (the stand-down as the listener's first line).
 The file review (2026-09-20; the control decided from the figure's current state by one function, and the figure's own
 door into the viewer) added ui/webview/file-view-figure-state-browser.test.ts (Chromium over the real chat modal: a failed figure, a
 fetching `<picture>` and a srcset figure whose chosen candidate is a `data:` URI, each without a control, the link beside the
 failed figure taking the click, the fetching figure's plain click opening nothing and its load bringing the control that
-opens the source's file) and ui/webview/file-view-figure-recent-browser.test.ts (Chromium over the real Files page: a picture
+opens the source's file, and since its round 2 a failed local figure with a box whose plain click and Ctrl-click open
+nothing) and ui/webview/file-view-figure-recent-browser.test.ts (Chromium over the real Files page: a picture
 opened from a figure, by the control and by the plain click, takes no Recent row while Back returns to the report at the
-reader's block, and a link's open still takes its row).
+reader's block, a Forward step onto the picture mints its row, and a link's open still takes its row).
 Eleven standing suites were re-aimed, not undone:
 ui/webview/file-view-text-size.test.ts (its real-module bar leg at 380, 420, 480 and 600 px in the chat and feed modals
-measures the two glyphs among the actions, case 8), ui/webview/file-view.test.ts and ui/webview/file-view-links.test.ts
+reads the group hidden on a fresh open and, once a link is followed, measures the two glyphs among the actions, case 8), ui/webview/file-view.test.ts and ui/webview/file-view-links.test.ts
 (the delegate's open through openFromViewer; the model import), ui/webview/file-view-figure-error.test.ts and
 ui/webview/file-view-figure-error-browser.test.ts (the label readers step past the control),
 ui/webview/fileview-parity.test.ts (the control's rules byte-equal in both sheets),
@@ -8088,10 +8162,11 @@ sentence; every test module under ui/webview, tools or tests whose own text name
 module named here exists, this one included). tools/markdown-viewer-plan-linknav-review.test.mjs holds the review's
 corrections to this record: L3 names the floor by the source's constant and the number the source gives it, its two
 exclusions with their functions, the web test's place before the join and the click's yield to an anchor with an href,
-the floor's re-read at each change of the body's width by its function and the click's stand-down on an answered
+the floor's re-read at each reflow of the figure by its function and the click's stand-down on an answered
 click, both carried by the source, the decision at the load and the error in place of the paint's add and the load's
-drop, linkAbove as any anchor, the tab's document request and the drag that starts on the control, each carried by the
-source or by a leg; L3 and this paragraph name the two shapes modules and the floor module, which
+drop, linkAbove as any anchor, the tab's document request from the three gestures with the claim's three clauses in
+L3 and in L6, the cookie classes the leg measures, the failed figure opening nothing, the hidden group and the drag
+that starts on the control, each carried by the source or by a leg; L3 and this paragraph name the two shapes modules and the floor module, which
 exist; L6 names tests among the directories and the two files
 under it, which this paragraph names too, and derives its verifications from the merge-base. tests/test_file_view_bar_browser.py, the served bar pins, read the groups
 inside `.fileview-acts`, and the nav group stands outside it, in the bar itself, before the path; run as a single module
@@ -8141,24 +8216,40 @@ Playwright browser).
     should be other keys, is a ruling; the guide's trail sentence states the exception (the review's round 2, held by
     tests/test_guide_trail_chords_and_figure_button.py to the shell script's lines).
 11. The remote picture's tab (L3, L6; the file review's HIGH 1). Two roads, both priced here and neither chosen: (a) as
-    built: a plain click on a remote picture, and its control, open a top-level tab at the picture's address, a
-    request that carries the cookies a cross-site navigation carries, where before the follow-on only an author's link
-    did; one gesture opens every picture, remote or local, and the tab is observed as a request by
-    file-view-figure-chosen-browser.test.ts; (b) the narrow road: the tab for the explicit control and for a
-    Cmd/Ctrl-click alone, a bare plain click on a remote picture doing nothing, as before the follow-on; the cost is one
-    gesture meaning two things by where the picture comes from, and the change is a flag on openFigure's call from
-    the control's branch that the web arm reads beside `wantsOwnTab`, with the plain-click case of three browser legs
-    re-aimed (file-view-figure-chosen-browser.test.ts's second tab, file-view-figure-shapes-browser.test.ts's
-    protocol-relative figure, file-figure-open-browser.test.ts's remote picture) and the guide's "a picture from the
-    web opens its address in a new tab" narrowed to the button and the modified click. The reviewer's reading
+    built: a plain click on a loaded remote picture, its control, and a Cmd/Ctrl-click on it open a top-level tab at
+    the picture's address, a document request to a host the page had requested the image from that carries cookie
+    classes the image request did not (L3's table), where before the follow-on only an author's link did; one gesture
+    opens every picture, remote or local, and the tab is observed as a request by
+    file-view-figure-chosen-browser.test.ts from each of the three gestures; (b) the narrow road: the tab for the
+    explicit control and for a Cmd/Ctrl-click alone, a bare plain click on a remote picture doing nothing, as before
+    the follow-on. The narrow road keeps the request: the control and the modified click still open the same
+    credentialed tab (the file review's round 2, extra5-3), so it changes which gesture makes it and not what leaves;
+    the cost is one gesture meaning two things by where the picture comes from, and the change is a flag on
+    openFigure's call from the control's branch that the web arm reads beside `wantsOwnTab`, with the plain-click case
+    of three browser legs re-aimed (file-view-figure-chosen-browser.test.ts's plain-click tab,
+    file-view-figure-shapes-browser.test.ts's protocol-relative figure, file-figure-open-browser.test.ts's remote
+    picture) and the guide's "a picture from the web opens its address in a new tab" narrowed to the button and the
+    modified click. A failed remote figure opens no tab on either road (L3). The reviewer's reading
     (romp-manager, 2026-09-20), for the owner to take or leave: the explicit control is an unambiguous gesture and a
     plain click on a picture is not, so a plain click opening a credentialed third-party tab is the surprising one. The
     landing is the owner's whatever the tier.
 12. A picture opened from a figure takes no Recent row (L3): the default taken, so the report's row stands and Back
-    reaches the report through the trail. The alternative, a row for the picture as for any file the pane's opener
-    opens, is the host's opener in place of the figure's door (openFromViewer's push in openFigure, the trail kept, the
-    row minted by files.ts openHere); a ruling, and file-view-figure-recent-browser.test.ts inverts with it.
-13. The dimmed Back and Forward pair on an open with no step either way (L2): the contract's shape, kept. Hiding the
-    group when neither direction has a target reclaims about 74 px of a 359 px bar at a 380 px viewport and moves the
-    file name 74 px on the first link follow of every trail (the file review's measurement); the contract's L2 clause
-    changes first if the pair is to hide, and the three pins L2 names with it.
+    reaches the report through the trail. With one exception, L2's rule, stated here because the default is ruled on
+    here (the file review's round 2, extra8-1): a Back or Forward open is the pane's own (openFromViewer through the
+    host's opener, files.ts openHere), so a Forward step onto the picture puts its row at the head of Recent, and the
+    next Back moves the report's row back over it; file-view-figure-recent-browser.test.ts drives
+    the composition (the figure's open, Back, Forward, Back). The eviction the default guards against cannot return
+    through it: a picture opened from a figure is a leaf of the trail (the picture view has no link to follow), so it
+    stands ahead only until the next push, which clears the list ahead. The alternative, a row for the picture as for
+    any file the pane's opener opens, is the host's opener in place of the figure's door (openFromViewer's push in
+    openFigure, the trail kept, the row minted by files.ts openHere); a ruling, and
+    file-view-figure-recent-browser.test.ts inverts with it. Closing the exception instead, no row on a Forward step
+    to a figure-reached picture, is not a one-line change: TrailEntry carries no field that tells a figure-opened entry
+    from a link-opened one, and routing the step through openFigureInViewer would push, clearing the list ahead.
+13. The Back and Forward pair hidden on an open with no step either way (L2): the file review's ruling (round 1,
+    ui-1; re-decided in round 2 on T367, extra8-2), built in the round-2 fixes against the contract's L2 clause, which
+    had the pair dimmed, and the contract corrected with it. The hide reclaims about 74 px of a 359 px bar at a 380 px
+    viewport and moves the file name 74 px on the first link follow of every trail (the file review's measurement).
+    If the contract's dimmed pair is wanted back: the one `nav.hidden` line in openFileView goes, and the pins and legs
+    L2 names invert (file-trail.test.ts, tools/markdown-viewer-plan-linknav-review.test.mjs,
+    file-trail-browser.test.ts, file-view-text-size.test.ts's bar case).
