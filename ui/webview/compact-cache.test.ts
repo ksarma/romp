@@ -20,11 +20,11 @@ test("compact mode paints its tail by unit first (PR E), and a stale view or a p
   const seam = sync.indexOf("if (settings.compact) {\n    const plan = compactTailPlan(");
   const rebuild = sync.indexOf("if (settings.compact || v.stale) {");
   assert.ok(seam > 0 && rebuild > seam, "the plan runs before the rebuild");
-  assert.match(sync, /if \(settings\.compact \|\| v\.stale\) \{[\s\S]*?renderWindowItems\(v, s, items, ws, we, working\); v\.stale = false; return v;/);
+  assert.match(sync, /if \(settings\.compact \|\| v\.stale\) \{[\s\S]*?renderWindowItems\(v, s, items, ws, we, working, anchored\); v\.stale = false; return v;/);
   assert.match(sync, /if \(plan\.kind === "append"\) \{[\s\S]*?trimUnitsFrom\(v\.el, u0\);/, "an append trims by unit instead of clearing the window");
 });
 
 test("toggling a tool group forces a re-render past the cache (sets stale) — an expand still repaints", () => {
   // the view is read before the sync since review round 1 (the toggle captures the reader's anchor on it first: toolgroup-toggle-keep.test.ts)
-  assert.match(RENDER, /const v = activeId \? views\.get\(activeId\) : undefined;[\s\S]*?if \(activeId\) \{ if \(v\) v\.stale = true; syncView\(activeId\); \}/);
+  assert.match(RENDER, /const v = activeId \? views\.get\(activeId\) : undefined;[\s\S]*?if \(activeId\) \{ if \(v\) v\.stale = true; syncView\(activeId, undefined, true\); \}/);   // anchored: the toggle's keep restores the anchor row after the build (review round 1b)
 });

@@ -12894,7 +12894,7 @@ function scrollToAnchor(uuid: string): boolean {
       if (hit && hit.kind === "noticegroup" && hit.indices.includes(idx))
         openFolds.add(noticeGroupKey(s.events[hit.indices[0]]));
       const working = s.status.state === "working" || s.status.state === "compacting";
-      renderWindowItems(v, s, items, Math.max(0, u - WINDOW_RADIUS), Math.min(items.length, u + WINDOW_RADIUS), working);
+      renderWindowItems(v, s, items, Math.max(0, u - WINDOW_RADIUS), Math.min(items.length, u + WINDOW_RADIUS), working, true);   // anchored: landOn puts the target under the reader
       // Re-query with the SAME three selectors the first lookup used. data-mids was missing here, so an
       // unhydrated postal turn (whose message ids live only in data-mids) could be found in the events,
       // have its window rendered — and then still honest-fail "pointer-not-rendered" on the re-query.
@@ -13035,7 +13035,7 @@ function landNearestMoment(t: number): boolean {
   let u = items.findIndex((it) => it.kind === "toolgroup" || it.kind === "noticegroup" ? it.indices.includes(best) : it.kind === "event" && it.index === best);
   if (u < 0) u = Math.max(0, items.findIndex((it) => itemFirstEvent(it) >= best));
   const working = s.status.state === "working" || s.status.state === "compacting";
-  renderWindowItems(v, s, items, Math.max(0, u - WINDOW_RADIUS), Math.min(items.length, u + WINDOW_RADIUS), working);
+  renderWindowItems(v, s, items, Math.max(0, u - WINDOW_RADIUS), Math.min(items.length, u + WINDOW_RADIUS), working, true);   // anchored: the moment's row is landed below
   const target = (uuid ? v.el.querySelector(`.turn[data-uuid="${cssEscape(uuid)}"]`) : null)
     || (v.el.querySelector(`[data-unit="${u}"]`) as HTMLElement | null);
   if (!target) { landTrail.push("time-nearest-miss"); return false; }
@@ -13490,13 +13490,17 @@ function ensureView(id: string): View {
 // The wrapper re-anchors comment highlights after EVERY sync (the user 2026-08-13): marks live in
 // the rebuilt DOM, and hanging the re-apply only on inbound messages missed the renders that run
 // off them (a tab switch, a prebuild) — idempotent and ~free for sessions with no threads.
-function syncView(id: string, atBottom?: boolean): View {
-  const v = syncViewInner(id, atBottom);
+function syncView(id: string, atBottom?: boolean, anchored: boolean = atBottom !== undefined): View {
+  const v = syncViewInner(id, atBottom, anchored);
   applyCommentMarks(id);
   return v;
 }
 
-function syncViewInner(id: string, atBottom?: boolean): View {
+function syncViewInner(id: string, atBottom?: boolean, anchored: boolean = atBottom !== undefined): View {
+  // anchored: this paint lands the reader over its result (appendActive's follow or anchor restore, the toggle's keep), so it may
+  // take the figures the unit observer parked (applyMeasure, below and in renderWindowItems). A paint that passes atBottom anchors
+  // by definition; a caller with a keep of its own passes true; a switch's, a landing's or a hidden prebuild's sync passes nothing
+  // and takes nothing, leaving the figures for the land that anchors (landActive, keepPlaceAcrossWindow) or the next tail paint.
   // atBottom (passed by appendActive): false ⇒ the user is scrolled UP reading. A compact append must then
   // NOT evict the window top — evicting shifts the content above the viewport, and since the compact path
   // FULL-REBUILDS (clears the DOM, resetting scrollTop), the caller can only restore the position if the
@@ -13550,15 +13554,17 @@ function syncViewInner(id: string, atBottom?: boolean): View {
   // scroll-back. When post-compaction work already exceeds the tail window, the tail wins (compaction is above).
   if (firstBuild || rewind) {
     const start = Math.max(0, total - WINDOW_TAIL, lastCompactUnit(s, items));
-    renderWindowItems(v, s, items, start, total, working); v.stale = false; return v;
+    renderWindowItems(v, s, items, start, total, working, anchored); v.stale = false; return v;
   }
-  // The figures the unit observer measured since the last paint reach the spacers and the gap units HERE, inside
-  // appendActive's paint (PR E), the one caller that passes `atBottom`: it reads the scroller after this sync and follows
-  // the tail or restores the reader's anchor over whatever moved, so a spacer written here is accounted for. (A
-  // follow-mode reader at the bottom has THIS paint asked for at frame end, so the figures reach them within a frame: takeMeasureAtBottom.)
-  // A spacer written anywhere else moves the reader: a switch's or a landing's sync passes no `atBottom`, so those leave
-  // the figures parked for the next tail paint or window build. Every later branch, the fast path included, sees the write.
-  if (atBottom !== undefined && applyMeasure(v)) { redrawGapUnits(v); sizeSpacers(v); }
+  // The figures the unit observer measured since the last paint reach the spacers and the gap units HERE, inside a paint
+  // that anchors the reader (PR E): appendActive's, which reads the scroller after this sync and follows the tail or restores
+  // the reader's anchor over whatever moved, and the tool-run toggle's, whose keep does the same (review round 1). The one rule
+  // over every taker: a figure is taken ONLY by a paint that anchors the reader, and EVERY anchoring paint takes one. (A
+  // follow-mode reader at the bottom has appendActive's paint asked for at frame end, so the figures reach them within a frame:
+  // takeMeasureAtBottom.) A spacer written anywhere else moves the reader: a switch's or a landing's sync passes no flag, so
+  // those leave the figures parked for the land that anchors them (landActive, keepPlaceAcrossWindow) or the next tail paint.
+  // Every later branch, the fast path included, sees the write.
+  if (anchored && applyMeasure(v)) { redrawGapUnits(v); sizeSpacers(v); }
   // No-op fast path — a tab SWITCH / repaint with no event change: reveal the cached DOM, re-render nothing.
   // WITHOUT this, every showActive() re-built the trailing window (markdown + highlight.js) — the big-session
   // switch lag (the user 2026-06-25). A REAL change lowers v.rendered (delta-send sets it to the change index;
@@ -13620,7 +13626,7 @@ function syncViewInner(id: string, atBottom?: boolean): View {
     const ws = keepTop ? (v.winStart ?? 0)
                        : wasAtTail ? Math.max(0, total - span) : Math.min(v.winStart ?? 0, Math.max(0, total - 1));
     const we = (wasAtTail || keepTop) ? total : Math.min(v.winEnd ?? total, total);
-    renderWindowItems(v, s, items, ws, we, working); v.stale = false; return v;
+    renderWindowItems(v, s, items, ws, we, working, anchored); v.stale = false; return v;
   }
   // Normal mode, pure append. While BROWSING history (window not at the tail), the new events land below the
   // rendered window → just grow the bottom spacer (no DOM churn); the user sees them on scroll-down.
@@ -13940,8 +13946,12 @@ function appendItem(v: View, s: Session, items: DisplayItem[], u: number, prevEp
 
 // Full (re)build of the window [unitStart, unitEnd) with head/tail spacers. Does NOT touch scroll (callers
 // anchor). prevEpoch for the first rendered unit chains off the real prior event so its time-marker is right.
-function renderWindowItems(v: View, s: Session, items: DisplayItem[], unitStart: number, unitEnd: number, working: boolean): void {
-  applyMeasure(v);   // a build takes the figures the observer measured since the last paint (PR E); its spacers and gap units read them below
+function renderWindowItems(v: View, s: Session, items: DisplayItem[], unitStart: number, unitEnd: number, working: boolean, anchored = false): void {
+  // a build takes the figures the observer measured since the last paint (PR E) only when its caller lands the reader over the result
+  // (a deep link's or a moment's land, the re-window around the viewport, a gap fill with a row or a point to put back, appendActive's
+  // and the toggle's kept place); a hidden prebuild's build and a fill that can only restore its raw top take nothing, so the figure waits
+  // for a paint that anchors (review round 1b: the same rule as syncViewInner's take). The spacers and gap units below read what was taken.
+  if (anchored) applyMeasure(v);
   const total = items.length;
   unitStart = Math.max(0, Math.min(unitStart, total));
   unitEnd = Math.max(unitStart, Math.min(unitEnd, total));
@@ -14303,7 +14313,7 @@ function toggleToolGroup(key: string): void {
   const anchor = content && v && !stick ? captureScrollAnchor(content, v) : null;
   // the expand/collapse changes the DOM without changing the event set, so mark the view stale to force
   // the compact rebuild past the cache guard (a plain tab switch leaves stale false → reuses the cache).
-  if (activeId) { if (v) v.stale = true; syncView(activeId); }
+  if (activeId) { if (v) v.stale = true; syncView(activeId, undefined, true); }   // anchored: the keep below puts the anchor row back over the re-sized spacer
   if (content && !(anchor && v && restoreScrollAnchor(content, v, anchor, top))) writeScroll(content, top, "toolgroup-toggle", false, top);
   refillOpenCommentPop();   // the popover renders the same units — its copy of this run must flip too
   scheduleRailSticky();
@@ -15242,6 +15252,10 @@ function showActive(keep?: { uuid: string; y: number } | null) {
 // their place)
 let relandAsk = false;
 function keepPlaceAcrossWindow(content: HTMLElement, v: View, keep: { uuid: string; y: number }): boolean {
+  // the reader's own row is put back over whatever moved, so this land takes the figures parked since the last paint (the spacers and
+  // gap units re-sized before the restore, which covers them); a same-task re-show has nothing parked yet and takes nothing (PR E, review
+  // round 1b: every anchoring paint takes, and the switch's land before this one left the figures for it when its own road was land-saved)
+  if (applyMeasure(v)) { redrawGapUnits(v); sizeSpacers(v); }
   if (restoreScrollAnchor(content, v, keep)) return true;
   pendingAnchor = keep.uuid; pendingAnchorKeepY = keep.y;
   relandAsk = true;
@@ -15287,9 +15301,15 @@ function landActive(content: HTMLElement | null, v: View): void {
     whenChatVisible(() => { const c = document.getElementById("content"); const vv = activeId ? views.get(activeId) : null; if (c && vv) landActive(c, vv); });
     return;
   }
-  sizeSpacers(v);  // the view is now VISIBLE (display set in showActive): the spacers take the figures the view holds. A figure the
-                   // observer measured since (a tab built while display:none measures on its re-show) waits for the next tail paint,
-                   // whose scroll maths accounts for the spacer change; a write here would move the reader (PR E, syncViewInner)
+  // the view is now VISIBLE (display set in showActive): the spacers take the figures the view holds, and the land takes the figures the
+  // observer parked since the last paint when it anchors the reader, which is every road below but one: an anchor's or a moment's land, a
+  // seek, the reload restore and the bottom land all put the reader over the result. The one raw road is land-saved (a re-show of a scrolled-up
+  // view with nothing armed: the saved scrollTop was measured in the pre-move layout), where a spacer written here would move the reader;
+  // that road takes nothing and leaves the figures for keepPlaceAcrossWindow, which showActive runs after this land with the reader's own row,
+  // or for the next tail paint (PR E, review round 1b: a figure is taken only by a paint that anchors, and every anchoring paint takes one)
+  const saved = !pendingAnchor && pendingAnchorT == null && !(seek && seek.sid === activeId) && v.shown && !v.stick && takeReloadScroll(pendingReloadScroll, activeId) == null;
+  if (!saved && applyMeasure(v)) redrawGapUnits(v);
+  sizeSpacers(v);
   // The durable seek re-arms the per-pass attempt: every render pass retries until it lands, the
   // user cancels, or the backstop fires — never hijacking a scroll-back keep-offset restore.
   if (!pendingAnchor && pendingAnchorT == null && pendingAnchorKeepY == null && seek && seek.sid === activeId) {
@@ -16006,7 +16026,7 @@ function virtualizeToViewport(): void {
       // (a jump) → land it at the viewport top.
       const before = v.el.querySelector(`[data-unit="${c}"]`) as HTMLElement | null;
       const beforeY = before ? before.getBoundingClientRect().top - content.getBoundingClientRect().top : 0;
-      renderWindowItems(v, s, items, Math.max(0, c - WINDOW_RADIUS), Math.min(items.length, c + WINDOW_RADIUS), working);
+      renderWindowItems(v, s, items, Math.max(0, c - WINDOW_RADIUS), Math.min(items.length, c + WINDOW_RADIUS), working, true);   // anchored: the focus unit's offset or the bottom is written below
       const anchor = v.el.querySelector(`[data-unit="${c}"]`) as HTMLElement | null;
       // A follow-mode reader whose re-window reaches the tail (a jump to the live bottom: focus-live) lands at the BOTTOM (PR E).
       // Placing the focus unit's top under the viewport left them above the bottom by the spacer estimate's error, and only a
@@ -19872,7 +19892,9 @@ function fillInPlace(sid: string, v: View | undefined): void {
     if (u < 0) u = unitAtScroll(v, content);
   }
   v.stick = false;   // a fill never follows the tail: the reader is where they are
-  if (u >= 0) renderWindowItems(v, s, items, Math.max(0, u - WINDOW_RADIUS), Math.min(items.length, u + WINDOW_RADIUS), s.status.state === "working" || s.status.state === "compacting");
+  // the build takes a parked figure only when the land below has a row or a point to put back (anchored); a fill that can only restore
+  // its raw pre-fill top (no row on screen and no turn under the viewport top) takes nothing, so the figure waits for a paint that anchors
+  if (u >= 0) renderWindowItems(v, s, items, Math.max(0, u - WINDOW_RADIUS), Math.min(items.length, u + WINDOW_RADIUS), s.status.state === "working" || s.status.state === "compacting", keepVisible || pointBefore != null);
   else syncView(sid);
   // a visible row that survived the rebuild goes back to its exact offset; otherwise (no row on screen, or the anchor row gone: a turn
   // anchored on a resultUuid or a word key no event carries, round five medium A) the point under the viewport top is put back by its
@@ -19890,7 +19912,7 @@ function fillInPlace(sid: string, v: View | undefined): void {
   if (pointBefore != null && !rowOnScreen(v, content)) {
     const u2 = unitOfTurn(items, turnsNow, Math.floor(pointBefore));
     if (u2 >= 0) {
-      renderWindowItems(v, s, items, Math.max(0, u2 - WINDOW_RADIUS), Math.min(items.length, u2 + WINDOW_RADIUS), s.status.state === "working" || s.status.state === "compacting");
+      renderWindowItems(v, s, items, Math.max(0, u2 - WINDOW_RADIUS), Math.min(items.length, u2 + WINDOW_RADIUS), s.status.state === "working" || s.status.state === "compacting", true);   // anchored: the point is put back by its turn
       const y2 = yOfTurn(v, s, items, turnsNow, content, pointBefore);
       writeScroll(content, y2 != null ? y2 : topBefore, "gap-fill", false, topBefore);
     }

@@ -49,7 +49,7 @@ class Host {
   querySelector(sel: string): Node | null { const m = /^\[data-uuid="([^"]*)"\]$/.exec(sel); assert.ok(m, "restoreScrollAnchor's selector: " + sel); return this.children.find((c) => c.dataset.uuid === m![1]) ?? null; }
 }
 
-type World = { content: Content; host: Host; v: any; writes: Write[]; open: Set<string>; toggle: (key: string) => void; spacer: Node; rows: Node[]; onSync: () => void };
+type World = { content: Content; host: Host; v: any; writes: Write[]; open: Set<string>; toggle: (key: string) => void; spacer: Node; rows: Node[]; onSync: () => void; syncs: Array<[boolean | undefined, boolean | undefined]> };
 /** A view with a head spacer of `spacerH`, `n` rows of `rowH` each (uuids r0..), in a scroller of `clientHeight`, the reader at
  *  `scrollTop`; `onSync` is what the stubbed window build does to the DOM (the take grows the spacer, a collapse drops rows). */
 function world(spacerH: number, n: number, rowH: number, clientHeight: number, scrollTop: number, bottomSpacerH = 0): World {
@@ -60,20 +60,21 @@ function world(spacerH: number, n: number, rowH: number, clientHeight: number, s
   content.scrollTop = scrollTop;
   const writes: Write[] = []; const open = new Set<string>();
   const v: any = { el: host, stale: false };
-  const w: any = { content, host, v, writes, open, spacer, rows, onSync: () => {} };
+  const syncs: Array<[boolean | undefined, boolean | undefined]> = [];   // what the toggle hands syncView: (atBottom, anchored)
+  const w: any = { content, host, v, writes, open, spacer, rows, onSync: () => {}, syncs };
   const js = liftBetween("function toggleToolGroup(", "// Re-render every view from scratch") + liftBetween("function captureScrollAnchor(", "// Live tail-append to the ACTIVE view") + liftBetween("function atBottom(", "function nearBottomForSend(");
   const prelude = `
     const H = HOOKS;
     const openFolds = H.open;
     const document = { getElementById: (id) => (id === "content" ? H.content : null) };
     const activeId = "A"; const views = new Map([["A", H.v]]);
-    const syncView = (id) => { H.synced = (H.synced || 0) + 1; H.onSync(); };
+    const syncView = (id, atBottom, anchored) => { H.synced = (H.synced || 0) + 1; H.syncs.push([atBottom, anchored]); H.onSync(); };
     const writeScroll = (c, top, writer, stick = false, from) => { H.writes.push({ writer, top, stick, from }); c.scrollTop = Math.max(0, Math.min(top, c.scrollHeight - c.clientHeight)); };
     const cssEscape = (s) => s;
     const refillOpenCommentPop = () => {}; const scheduleRailSticky = () => {};
     const atBottomDist = H.atBottomDist;
   `;
-  const hooks: any = { open, content, v, writes, atBottomDist, onSync: () => w.onSync() };
+  const hooks: any = { open, content, v, writes, atBottomDist, syncs, onSync: () => w.onSync() };
   w.toggle = new Function("HOOKS", prelude + js + "\nreturn toggleToolGroup;")(hooks) as (key: string) => void;
   return w as World;
 }
@@ -86,6 +87,7 @@ test("a scrolled-up reader in a session with a head gap: the toggle's build re-s
   w.toggle("tg:k");
   assert.ok(w.open.has("tg:k"), "the fold opened");
   assert.equal(w.v.stale, true, "the view was marked stale for the build");
+  assert.deepEqual(w.syncs, [[undefined, true]], "the build's sync is told it anchors (no atBottom, the flag true): the keep below covers a figure taken there (review round 1b)");
   assert.deepEqual(w.writes, [{ writer: "anchor-restore", top: 2350 + D, stick: false, from: 2350 }], "one write: the anchor row (r3) put back at its offset, 300 px further down the document, from the pre-toggle top");
   assert.equal(w.content.scrollTop, 2350 + D);
   assert.equal(w.rows[3].getBoundingClientRect().top, -50, "r3 is where it was on screen");
@@ -128,7 +130,7 @@ test("render.ts: the toggle's keep is appendActive's: the stick check, the ancho
   const t = RENDER.slice(RENDER.indexOf("function toggleToolGroup("), RENDER.indexOf("// Re-render every view from scratch"));
   assert.match(t, /const stick = !!content && content\.scrollHeight > content\.clientHeight \+ 2 && atBottom\(content\);/, "the stick check (appendActive's)");
   assert.match(t, /const anchor = content && v && !stick \? captureScrollAnchor\(content, v\) : null;/, "the anchor captured before the sync, not for a bottom reader");
-  assert.ok(t.indexOf("captureScrollAnchor(") < t.indexOf("syncView(activeId)"), "…before the build");
+  assert.ok(t.indexOf("captureScrollAnchor(") < t.indexOf("syncView(activeId, undefined, true)"), "…before the build, whose sync is told it anchors (review round 1b: the keep below puts the row back, so the paint may take a parked figure)");
   assert.match(t, /if \(content && !\(anchor && v && restoreScrollAnchor\(content, v, anchor, top\)\)\) writeScroll\(content, top, "toolgroup-toggle", false, top\);/, "the restore after it, the raw write its fallback, `top` the origin of both");
   assert.doesNotMatch(t, /scroll preserved/, "the old comment's claim is gone");
 });

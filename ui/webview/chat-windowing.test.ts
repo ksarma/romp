@@ -37,7 +37,7 @@ test("every rendered row is tagged data-unit, so the scroll↔unit map can locat
 });
 
 test("renderWindowItems renders [unitStart, unitEnd) with a TOP and a BOTTOM spacer", () => {
-  assert.match(RENDER, /function renderWindowItems\(v: View, s: Session, items: DisplayItem\[\], unitStart: number, unitEnd: number, working: boolean\): void/);
+  assert.match(RENDER, /function renderWindowItems\(v: View, s: Session, items: DisplayItem\[\], unitStart: number, unitEnd: number, working: boolean, anchored = false\): void/);   // anchored: the caller lands the reader over the result, so the build may take a parked figure (PR E review round 1b; spacer-measure.test.ts)
   assert.match(RENDER, /if \(unitStart > 0\) v\.el\.appendChild\(el\("div", "tx-spacer tx-spacer-top"\)\);/);
   assert.match(RENDER, /if \(unitEnd < total\) v\.el\.appendChild\(el\("div", "tx-spacer tx-spacer-bot"\)\);/);
   assert.match(RENDER, /v\.winStart = unitStart; v\.winEnd = unitEnd;/);
@@ -71,7 +71,7 @@ test("scroll re-windows around the viewport (steady scroll OR jump) when near a 
   assert.match(RENDER, /const nearBotEdge = \(v\.winEnd \?\? total\) < total && st \+ vh > renderedBottom - edgePx;/);
   assert.match(RENDER, /if \(!nearTopEdge && !nearBotEdge\) return;/);
   assert.match(RENDER, /const idx = unitAtScroll\(v, content\);/);
-  assert.match(RENDER, /renderWindowItems\(v, s, items, Math\.max\(0, c - WINDOW_RADIUS\), Math\.min\(items\.length, c \+ WINDOW_RADIUS\), working\);/);
+  assert.match(RENDER, /renderWindowItems\(v, s, items, Math\.max\(0, c - WINDOW_RADIUS\), Math\.min\(items\.length, c \+ WINDOW_RADIUS\), working, true\);/);   // anchored: the focus unit's offset or the bottom is written after it
   // it re-anchors the focus unit so it doesn't jump, coalesced to one frame; a re-window of resident content shows no cue (T402, T386 stage 2)
   assert.match(RENDER, /writeScroll\(content, yNow - beforeY, "rewindow"\);/);   // (T262: every #content write rides writeScroll)
   // a follow-mode reader whose re-window reaches the tail lands at the bottom (PR E): placing the focus unit's top under the viewport left
@@ -109,7 +109,7 @@ test("the ONE landing notice shows while a navigation's window is on the wire, p
 test("syncView: a fresh build / rewind renders the TAIL window, clamped to the last compaction boundary", () => {
   // the default window opens AT (never below) the newest compaction — pre-compaction history is scrubbed
   // from the default view (the user 2026-07-07); lastCompactUnit floors the window start.
-  assert.match(RENDER, /if \(firstBuild \|\| rewind\) \{\s*\n\s*const start = Math\.max\(0, total - WINDOW_TAIL, lastCompactUnit\(s, items\)\);\s*\n\s*renderWindowItems\(v, s, items, start, total, working\);/);
+  assert.match(RENDER, /if \(firstBuild \|\| rewind\) \{\s*\n\s*const start = Math\.max\(0, total - WINDOW_TAIL, lastCompactUnit\(s, items\)\);\s*\n\s*renderWindowItems\(v, s, items, start, total, working, anchored\);/);
 });
 
 test("syncView: a pure tab switch is a NO-OP render (reveal the cached DOM)", () => {
@@ -121,7 +121,7 @@ test("syncView: compact paints its tail by unit, else compact / an in-place chan
   assert.match(RENDER, /if \(settings\.compact\) \{\s*\n\s*const plan = compactTailPlan\(\{ prev: v\.units, items, from: v\.rendered,/);
   assert.match(RENDER, /if \(plan\.kind === "append"\) \{[\s\S]*?trimUnitsFrom\(v\.el, u0\);[\s\S]*?&& evictCompactTop\(v, Math\.max\(0, total - span\)\)\) reseedWindowHead\(v, s, items\);/);   // …and an eviction re-seeds the promoted head unit (review round 1)
   // …and any stale (tool-group toggle, off-screen update) or a plan the trim cannot serve re-renders where the user is
-  assert.match(RENDER, /if \(settings\.compact \|\| v\.stale\) \{[\s\S]*?renderWindowItems\(v, s, items, ws, we, working\);/);
+  assert.match(RENDER, /if \(settings\.compact \|\| v\.stale\) \{[\s\S]*?renderWindowItems\(v, s, items, ws, we, working, anchored\);/);
   // browsing history away from the tail: appended events land below the window → grow the bottom spacer only
   assert.match(RENDER, /if \(!wasAtTail\) \{\s*\n\s*v\.spacerCountBot = total - \(v\.winEnd \?\? total\);/);
 });
@@ -149,7 +149,7 @@ test("an oversized view (window grew past the cap) re-collapses to the tail on s
 
 test("a deep-link off the current window renders a fresh window AROUND the target unit, then lands", () => {
   assert.match(RENDER, /let u = items\.findIndex\(\(it\) => it\.kind === "toolgroup" \|\| it\.kind === "noticegroup" \? it\.indices\.includes\(idx\) : it\.kind === "event" && it\.index === idx\);/, "a gap item indexes no event (T386 stage 2)");
-  assert.match(RENDER, /renderWindowItems\(v, s, items, Math\.max\(0, u - WINDOW_RADIUS\), Math\.min\(items\.length, u \+ WINDOW_RADIUS\), working\);/);
+  assert.match(RENDER, /renderWindowItems\(v, s, items, Math\.max\(0, u - WINDOW_RADIUS\), Math\.min\(items\.length, u \+ WINDOW_RADIUS\), working, true\);/);   // anchored: the land puts the target under the reader
 });
 
 test("round two/three code fixes each carry a pin (T386 stage 2, low 1)", () => {

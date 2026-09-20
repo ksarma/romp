@@ -3,7 +3,9 @@
 // and pins the seam's text; this file drives the seam's two arguments the text pins could not execute: the rail reference the first
 // re-rendered unit is seeded with (railChainBefore over the view's window start, never a scan of s.events: rail-chain.test.ts) and the
 // footer patch's `from` (the first CHANGED event when no unit reaches it, a hidden thinking block, else the first re-rendered event,
-// whichever is earlier). Synthetic events.
+// whichever is earlier). Review round 1b added the measured figure's rule over takers, executed: a figure is taken ONLY by a paint that
+// anchors the reader (the `anchored` flag: atBottom passed, or true) and EVERY anchoring paint takes one; the stubs record the take and the
+// flag the build is handed, and renderWindowItems is lifted alone for its own gate. Synthetic events.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -49,8 +51,8 @@ function liftSeam(sessions: Map<string, any>, views: Map<string, any>, itemsOf: 
     const displayItems = (s) => H.itemsOf(s);
     const WINDOW_TAIL = 80;
     const lastCompactUnit = () => 0;
-    const renderWindowItems = (v, s, items, ws, we) => { H.calls.push(["renderWindowItems", ws, we]); };
-    const applyMeasure = () => false; const redrawGapUnits = () => {};
+    const renderWindowItems = (v, s, items, ws, we, working, anchored) => { H.calls.push(["renderWindowItems", ws, we, anchored]); };
+    const applyMeasure = (v) => { H.calls.push(["applyMeasure"]); return false; }; const redrawGapUnits = () => {};
     const sizeSpacers = () => { H.calls.push(["sizeSpacers"]); };
     const patchWorkedFooters = (v, s, from, working, items) => { H.calls.push(["patchWorkedFooters", from, working, items ? items.length : null]); };
     const compactTailPlan = H.compactTailPlan;
@@ -67,7 +69,20 @@ function liftSeam(sessions: Map<string, any>, views: Map<string, any>, itemsOf: 
     const renderEvent = () => new H.FakeEl("div"); const turnWorkedSecs = () => null; const stampWalkDay = () => {};
     const HTMLElement = H.FakeEl; const el = (t, c) => new H.FakeEl(t, c || "");
   `;
-  return new Function("HOOKS", prelude + js + "\nreturn syncViewInner;")({ sessions, views, itemsOf, calls, compactTailPlan, DayWalk, FakeEl, SENTINEL }) as (id: string, atBottom?: boolean) => any;
+  return new Function("HOOKS", prelude + js + "\nreturn syncViewInner;")({ sessions, views, itemsOf, calls, compactTailPlan, DayWalk, FakeEl, SENTINEL }) as (id: string, atBottom?: boolean, anchored?: boolean) => any;
+}
+/** renderWindowItems lifted alone (its own gate on the flag) over a recording applyMeasure and stubs for what it appends. */
+function liftBuild(calls: Call[]) {
+  const js = liftBetween("function renderWindowItems(", "/** The spacer map's gap entries");
+  const prelude = `
+    const H = HOOKS;
+    const applyMeasure = (v) => { H.calls.push(["applyMeasure"]); return false; };
+    const el = (t, c) => new H.FakeEl(t, c || "");
+    const railSeed = () => null; const dayWalkBefore = () => new H.DayWalk(); const turnOfEvents = () => null;
+    const appendItem = (v, s, items, u, prevEpoch) => { H.calls.push(["appendItem", u]); return prevEpoch; };
+    const gapUnitsOf = () => undefined; const sizeSpacers = () => { H.calls.push(["sizeSpacers"]); };
+  `;
+  return new Function("HOOKS", prelude + js + "\nreturn renderWindowItems;")({ calls, FakeEl, DayWalk }) as (...a: any[]) => void;
 }
 const ev = (index: number): DisplayItem => ({ kind: "event", index });
 const tg = (...indices: number[]): DisplayItem => ({ kind: "toolgroup", indices });
@@ -154,4 +169,40 @@ test("a change below a browsed window grows the bottom spacer and touches no nod
   assert.equal(w.v.spacerCountBot, 3, "total less winEnd: the units the bottom spacer stands for");
   assert.equal(w.v.rendered, 7); assert.equal(w.v.unitTotal, 7); assert.deepEqual(w.v.units, now);
   assert.equal(w.v.el.children.length, 6, "no node touched");
+});
+
+// ── the measured figure: taken only by a paint that anchors the reader, and by every one of them (review round 1b) ──────────────────
+
+test("a sync with no flag (a switch's, a landing's, a hidden prebuild's) takes no measured figure and tells its build so: applyMeasure is never called and renderWindowItems is handed anchored false", () => {
+  // a stale view, so the paint takes the rebuild road: the flag reaches the build
+  const w = world(["user", "assistant"], [ev(0), ev(1)], [ev(0), ev(1)], 2, 0);
+  w.v.stale = true;
+  w.sync("A");
+  assert.deepEqual(w.calls.filter((c) => c[0] === "applyMeasure"), [], "no take in a paint that does not anchor the reader");
+  assert.deepEqual(w.calls.filter((c) => c[0] === "renderWindowItems"), [["renderWindowItems", 0, 2, false]], "…and the build is told it may not take either");
+});
+
+test("every anchoring paint takes: atBottom passed (appendActive's follow or anchor restore, either value) and the flag passed true (the toggle's keep) each call applyMeasure once and hand the build anchored true", () => {
+  for (const args of [["A", true], ["A", false], ["A", undefined, true]] as Array<[string, boolean | undefined, boolean?]>) {
+    const w = world(["user", "assistant"], [ev(0), ev(1)], [ev(0), ev(1)], 2, 0);
+    w.v.stale = true;
+    w.sync(...args);
+    assert.deepEqual(w.calls.filter((c) => c[0] === "applyMeasure"), [["applyMeasure"]], "one take for " + JSON.stringify(args));
+    assert.deepEqual(w.calls.filter((c) => c[0] === "renderWindowItems"), [["renderWindowItems", 0, 2, true]], "…and the build is told it anchors: " + JSON.stringify(args));
+    assert.ok(w.calls.findIndex((c) => c[0] === "applyMeasure") < w.calls.findIndex((c) => c[0] === "renderWindowItems"), "the take comes first, so the build's spacers read it");
+  }
+});
+
+test("renderWindowItems takes a parked figure only when its caller says it anchors: the flag absent or false calls applyMeasure never, true calls it once before the build", () => {
+  const s = { events: [{ kind: "user" }, { kind: "assistant" }], status: { state: "ready" } };
+  for (const [flag, expect] of [[undefined, []], [false, []], [true, [["applyMeasure"]]]] as Array<[boolean | undefined, Call[]]>) {
+    const calls: Call[] = []; const build = liftBuild(calls);
+    const v: any = { el: new FakeEl("div") };
+    if (flag === undefined) build(v, s, [ev(0), ev(1)], 0, 2, false); else build(v, s, [ev(0), ev(1)], 0, 2, false, flag);
+    assert.deepEqual(calls.filter((c) => c[0] === "applyMeasure"), expect, "the take under flag " + flag);
+    if (flag) assert.equal(calls[0][0], "applyMeasure", "…before the build, so the spacers below read what was taken");
+    assert.deepEqual(calls.filter((c) => c[0] === "appendItem"), [["appendItem", 0], ["appendItem", 1]], "the build ran whatever the flag");
+    assert.equal(v.winStart, 0); assert.equal(v.winEnd, 2); assert.equal(v.rendered, 2);
+    assert.deepEqual(calls[calls.length - 1], ["sizeSpacers"], "…and sized its spacers last");
+  }
 });
