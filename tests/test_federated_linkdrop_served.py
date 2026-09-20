@@ -1016,13 +1016,27 @@ class _LinkDrop(unittest.TestCase):
             frames = [f for f in frames if t0 <= f["at"] <= t1]
         return frames
 
+    def _outline_caught_up_whole(self, k0, k1, slack_s=1.5):
+        """The whole keyed feed frames that reached the Outline's relay sockets inside [k0, k1 + slack_s]: the old bundle's
+        socket churn (its relay socket closes every few seconds, the 2 s retry redials, the remote serves the new socket a
+        whole frame), whose whole frame absorbs the notices posted while the socket was down, so that phase's change
+        crosses as no patch and files no row. The distinguishing datum an empty window needs (round 2's ruling on
+        correctness-1: the allowance is keyed on this EVENT, read from the hook's frames, never a dropped requirement).
+        No left pad, on purpose: the ready-time whole frame before A0 must not excuse an empty phase A; the right pad is
+        _rows_in's, for a retry's frame landing just past the settle."""
+        m = self._marks()
+        t0, t1 = m[k0], m[k1] + slack_s * 1000
+        return [f for s in self._page("fleet")["socks"] if s["relay"] for f in s["frames"]
+                if f["t"] == "feed" and f.get("asks") is not None and t0 <= f["at"] <= t1]
+
     def _assert_one_row_per_outline_feed_patch(self, k0=None, k1=None, patches_due=True):
         """The old bundle's storm as an invariant, not a count: in the window (padded on both sides as _rows_in pads,
         the whole drive without marks) the outline/delta-unapplied rows correspond one to one, by rev, with the feed
         slot patches the Outline's own relay sockets received there, and every such row names the feed slot. With
-        patches_due the window must hold at least one patch (a churned socket absorbs notices into whole frames and
-        files no row, so a count is one drive's; an empty window is not the storm); without, both sides are empty.
-        Returns the row count, for the record."""
+        patches_due the window must hold at least one patch OR a whole keyed feed frame the Outline received inside it
+        (_outline_caught_up_whole: a churned socket's retry absorbs the notices into one whole frame and files no row, so
+        a count is one drive's, and a window with neither a patch nor such a frame is a change that reached the Outline as
+        nothing, not the storm); without, both sides are empty. Returns the row count, for the record."""
         rows = self._outline_unapplied(self._rows_in(k0, k1) if k0 and k1 else None)
         patches = self._outline_feed_patches(k0, k1)
         where = "[%s, %s)" % (k0, k1) if k0 and k1 else "the whole drive"
@@ -1034,7 +1048,10 @@ class _LinkDrop(unittest.TestCase):
                          "one outline/delta-unapplied row per feed slot patch the Outline received in %s, by rev (rows %r; patches %r)"
                          % (where, [(d.get("slot"), d.get("rev")) for d in rows], [(f.get("rev"), f["at"]) for f in patches]))
         if patches_due:
-            self.assertTrue(patches, "the Outline received a feed slot patch in %s (the storm has a patch to file a row for)" % where)
+            wholes = self._outline_caught_up_whole(k0, k1) if k0 and k1 else []
+            self.assertTrue(patches or wholes, "the Outline received a feed slot patch in %s (the storm has a patch to file a row for), or a whole keyed feed "
+                                               "frame caught it up there (the old bundle's socket churn: the retry's whole frame absorbs the notices posted while "
+                                               "the socket was down, so no patch and no row); neither happened" % where)
         else:
             self.assertEqual(patches, [], "no feed slot patch reached the Outline in %s: %r" % (where, patches))
         return len(rows)
@@ -1354,7 +1371,9 @@ class LinkDropOldLocal(_LinkDrop):
     filed no row until the return's whole frame carried it), and it RESUMES after each redial's whole frame (the whole
     frame catches the page up once; the next patch freezes again). The class pins the correspondence, not a count: per
     window and over the whole drive, the rows equal the Outline's own feed slot patches by rev, non-empty in every
-    phase and empty while the link was down. One drive's count on the bundle at 01d4fbe43 (2026-09-19, the round-2
+    phase unless a whole keyed feed frame caught the Outline up inside it (the old bundle's socket churn absorbing the
+    phase's notices: no patch, so no row; the allowance is keyed on that frame, _outline_caught_up_whole) and empty
+    while the link was down. One drive's count on the bundle at 01d4fbe43 (2026-09-19, the round-2
     head): 3 / 0 / 3 / 3 across phase A, the link down, phase B and phase C; a reviewer's drive at round 1's head gave
     3 / 0 / 1 / 3 when socket churn inside phase B absorbed two notices into whole frames (the module docstring gives
     the recorded population). A relay redial does not end the storm but restarts it, so with a link that comes and goes
@@ -1418,7 +1437,10 @@ class LinkDropOldLocal(_LinkDrop):
         self._control()
         A = self._rows_in("A0", "A1")
         ua = self._outline_unapplied(A)
-        self.assertGreaterEqual(len(ua), 1, "the old Outline filed a delta-unapplied row for the remote feed patches in phase A; rows by kind: %r" % (self._rows_by_kind(A),))
+        self.assertTrue(len(ua) >= 1 or self._outline_caught_up_whole("A0", "A1"),
+                        "the old Outline filed a delta-unapplied row for the remote feed patches in phase A, or a whole keyed feed frame caught it up "
+                        "there (the old bundle's socket churn absorbing the notices; no left pad, so the ready-time frame does not count); rows by kind: %r"
+                        % (self._rows_by_kind(A),))
         self.assertTrue(all((d or {}).get("slot") == "feed" for d in ua), "…each naming the feed slot: %r" % (ua,))
         self.assertTrue(self._sends("fleet", "local", "needSlot"), "…and posted its needSlot to the LOCAL kernel")
         # the remote served that page through the slot path (the corners lab's pin on its old-local class); the counter
