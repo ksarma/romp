@@ -163,11 +163,19 @@ def _lock_withs_above(node, parents):
 
 
 CENSUS_FILES = (SDK_BACKEND, KERNEL_PY, CREDENTIALS_PY)
-# The content rows at review round 6, by identity: the writing function, the module-level format the ring text
-# starts from, and whether the call passes key= (the rows the launch files at every connect are keyed)
-NINE = [
+# The content rows by identity: the writing function, the module-level format the ring text starts from, and whether
+# the call passes key= (the rows the launch files at every connect are keyed). Nine at review round 6; eleven since the
+# merge of main (the post-merge census, 2026-09-20): main's fork PR 777 added two refused-launch rows in
+# _host_transport_for, tainted through the host process, bounded by HOST_REFUSED_RING in the follow-up commit.
+# Re-derived: census content_identities() = [('flag_settings_path', 'FLAG_SID_RING', False), ('flag_settings_path',
+# 'FLAG_LINK_RING', False), ('flag_settings_path', 'FLAG_UNWRITABLE_RING', False), ('_host_transport_for',
+# 'HOST_REFUSED_RING', False), ('_host_transport_for', 'HOST_REFUSED_RING', False), ('_options', 'RESERVED_DROP_RING',
+# True), ('_options', 'STORED_OFFENDER_RING', True), ('fork', 'FORK_RESERVED_RING', False), ('fork', 'FORK_DROP_RING',
+# False), ('set_env', 'REFUSAL_RING_HEAD', False), ('set_env', 'REFUSAL_RING_HEAD', False)]
+ROWS = [
     ("flag_settings_path", "FLAG_SID_RING", False), ("flag_settings_path", "FLAG_LINK_RING", False),
     ("flag_settings_path", "FLAG_UNWRITABLE_RING", False),
+    ("_host_transport_for", "HOST_REFUSED_RING", False), ("_host_transport_for", "HOST_REFUSED_RING", False),
     ("_options", "RESERVED_DROP_RING", True), ("_options", "STORED_OFFENDER_RING", True),
     ("fork", "FORK_RESERVED_RING", False), ("fork", "FORK_DROP_RING", False),
     ("set_env", "REFUSAL_RING_HEAD", False), ("set_env", "REFUSAL_RING_HEAD", False),
@@ -913,11 +921,11 @@ class EnvRowsPopulation(unittest.TestCase):
 
     def _assert_pin(self, c):
         """The pin's first assertions, shared with the planted-module tests: a failure of the derivation itself refuses
-        before anything is compared, and the content rows are the nine."""
+        before anything is compared, and the content rows are the eleven (nine at round 6, see ROWS)."""
         self.assertEqual(c.failures, [], "the derivation failed (a door value the walk could not follow, or a writer it "
                          "could not resolve): %r" % (c.failures,))
         self.assertEqual((c.writer.qual, c.door, c.msg_param), ("SdkBackend._log", "_log", "m"), "the one appender to self._problems")
-        self.assertEqual(c.content_identities(), NINE,
+        self.assertEqual(c.content_identities(), ROWS,
                          "the content rows (env-tainted, problem=True) by identity; the census found %d at lines %s. A new row "
                          "needs a module-level format for its ring_text, a worst case in CredentialShapedNamesEndToEnd's table, "
                          "and the ENV ROWS line re-derived" % (len(c.content_rows), c.sites(c.content_rows)))
@@ -936,9 +944,14 @@ class EnvRowsPopulation(unittest.TestCase):
             self.assertEqual(len(dc.ring_formats), 1, "one format per row, resolved from its ring_text: line %d in %s: %r" % (dc.lineno, dc.owner, dc.ring_formats))
             fmt = getattr(sb, dc.ring_formats[0])
             self.assertIsInstance(fmt, str, "%s names a module-level string format" % dc.ring_formats[0])
-            self.assertTrue(fmt.startswith(("env (", "flag settings")), "the ring text opens with the row's head too: %r" % fmt)
             self.assertNotIn("\u2014", fmt)
-            self.assertTrue(dc.heads and all(h.startswith(("env (", "flag settings")) for h in dc.heads), (dc.lineno, dc.heads))
+            self.assertTrue(dc.heads and all(fmt.startswith(h.split("%")[0]) for h in dc.heads),
+                            "the ring text opens with the row's own head, the log line's literal text up to its first placeholder: "
+                            "line %d, %r vs %r" % (dc.lineno, fmt, dc.heads))
+        self.assertEqual(sorted({h.split(" (")[0].split(":")[0].split(" %")[0] for dc in c.content_rows for h in dc.heads}),
+                         ["env", "flag settings", "the session host for"],
+                         "the content rows' heads: the env pick's, the flag-settings file's, and since the merge of main the refused "
+                         "launch's (the post-merge census: content heads first words = ['env', 'flag settings', 'the session host for'])")
         self.assertIn("SdkBackend._log, problem=True", Path(KERNEL_PY).read_text(encoding="utf-8"),
                       "the kernel names the backend ring as where its problem rows come from")
 
@@ -953,7 +966,14 @@ class EnvRowsPopulation(unittest.TestCase):
         set_env's success line; closed by problem=False inside _log_quietly and on the five lines. The round-6 addendum
         widened the taint (in-place adds, augmented assignment, attribute stores, module names, a re-keyed dict) and
         found three more: the host-start notice (its pid derives from a process spawned with the launch's
-        credential-shaped names) and set_mode's two withdrawal lines, which name a pending pick; declared False."""
+        credential-shaped names) and set_mode's two withdrawal lines, which name a pending pick; declared False. The
+        post-merge census (2026-09-20): main's two refused-launch rows in _host_transport_for reached the ring through
+        problem_row's log= with the whole reason as the ring text, tainted through the host process, and were four
+        violations (each site through problem_row's plainer-callable fallback, which declares nothing, and problem_row's
+        two inner calls); closed by the sites taking problem_row's ledger row and returned line without log= and filing
+        their own row, problem=True with HOST_REFUSED_RING, and by the census judging a conduit's inner calls at their
+        sites (rule 3). The Counter is unchanged by that: the two rows are 'self' calls declared True, and the
+        re-derivation gives _host_transport_for: 2 (the host-start notice and the credential-names notice), as before."""
         c = self.c
         self.assertEqual([(dc.base, dc.lineno, dc.owner, why) for dc, why in c.explicit_violations], [],
                          "value-tainted door calls without an explicit constant problem= (or a content row with no single format)")
@@ -971,10 +991,16 @@ class EnvRowsPopulation(unittest.TestCase):
         """Rule (3): a door call whose message the walk cannot reduce to a literal head stays in the population (taint
         decides, not reduction) and is held here by identity, so a new one reds until it is reduced or named with its
         reason. One at this head: _lease_problem's problem_row call, whose prose is the host's own problem text, run-time
-        data with no head to read. The four the round named reduce: problem_row's two inner calls through its eleven
-        sites, _log_quietly's through its eight, and the crash line, an f-string."""
+        data with no head to read. The four the round named reduce: problem_row's two inner calls through its
+        door-passing sites (twelve since the merge of main: the two refused-launch sites pass no log= and are no sites of
+        it), _log_quietly's through its callers, and the crash line, an f-string. The refused-launch rows' message is
+        problem_row's RETURNED line, which the census reads as the caller's prose through the returned parameter (rule 7,
+        the post-merge census): both rows reduce to their head and neither joins this set."""
         c = self.c
         self.assertEqual(sorted((dc.base, dc.owner, dc.kind) for dc in c.unreduced), [("sdk_backend.py", "_lease_problem", "conduit:problem_row")])
+        host = [dc for dc in c.content_rows if dc.owner == "_host_transport_for"]
+        self.assertEqual([(dc.kind, dc.heads, dc.unreduced) for dc in host], [("self", ["the session host for %s %s"], False)] * 2,
+                         "the refused-launch rows' message is problem_row's returned line, read as the caller's prose")
         self.assertEqual([dc.lineno for dc in c.unreduced if dc.taint], [], "an unreduced call carries no env taint")
         inner = {(dc.owner, dc.kind): dc.heads for dc in c.door_calls if dc.owner in ("problem_row", "_log_quietly") and dc.kind in ("param", "typed")}
         self.assertEqual(sorted(inner), [("_log_quietly", "typed"), ("problem_row", "param")])
@@ -989,20 +1015,34 @@ class EnvRowsPopulation(unittest.TestCase):
         """The one sentence beside the nine, pinned: lines tainted through the pending-pick surface set alone (the
         reconnect heading's, the mode landing's) name a pick's existence in a fixed vocabulary plus the session name,
         never a value; every one declares a constant, none is a content row, and the ones filed problem=True are the
-        landing's three failure reports (the mode-truth tests own those). 18 at the round-6 addendum: round 6's 15,
-        set_mode's two withdrawal lines and the bypass-consult line, reached once the taint followed attribute stores
-        (the mode the landing stores is derived from the surface set)."""
+        landing's three failure reports (the mode-truth tests own those) and, since the merge of main, the conduit's
+        problem road. 18 at the round-6 addendum: round 6's 15, set_mode's two withdrawal lines and the bypass-consult
+        line, reached once the taint followed attribute stores (the mode the landing stores is derived from the surface
+        set); 20 at the merge (main's relaunch-slot line and the conduit's second call). The vocabulary gains "live work"
+        at the merge, and this is why: main's live-work reconcile (its PR 787) sends its lines through the conduit, and
+        the conduit's own two calls carry the UNION of every caller's heads (26 heads each at the merged head, first
+        words {'live work', 'permission consult', 'reconnect'}), so "live work" is a head of the conduit's two rows even
+        though no live-work site is itself pick-tainted (none is in the census's tainted set; the heads are read off the
+        conduit's rows). Re-derived at the follow-up commit: existence vocabulary = ['live work', 'mode', 'permission
+        consult', 'reconnect', 'set_permission_mode']; filed True = the three _do_set_mode reports and ('_log_quietly',
+        'live work (%s): %d background task%s'), the conduit's problem road (ruling 2 of the post-merge census)."""
         c = self.c
         ex = c.existence_rows
         self.assertGreaterEqual(len(ex), 18)
         for dc in ex:
             self.assertEqual(dc.taint, frozenset({"pick"}), (dc.lineno, dc.taint))
             self.assertEqual(dc.problem_decl[0], "const", (dc.lineno, dc.problem_decl))
-        self.assertEqual(sorted({h.split(" (")[0] for dc in ex for h in dc.heads}), ["mode", "permission consult", "reconnect", "set_permission_mode"])
+        self.assertEqual(sorted({h.split(" (")[0] for dc in ex for h in dc.heads}),
+                         ["live work", "mode", "permission consult", "reconnect", "set_permission_mode"])
+        conduit_rows = [dc for dc in ex if dc.owner == "_log_quietly"]
+        self.assertEqual(len(conduit_rows), 2, "the conduit's two calls, a road each")
+        self.assertTrue(all("live work" in {h.split(" (")[0] for h in dc.heads} for dc in conduit_rows), "the live-work head rides the conduit's rows")
+        self.assertEqual([dc.lineno for dc in ex if dc.owner not in ("_log_quietly",) and any(h.startswith("live work") for h in dc.heads)], [],
+                         "no live-work site is itself pick-tainted: the head is the union's")
         self.assertFalse(set(ex) & set(c.content_rows))
         filed = sorted((dc.owner, dc.heads[0][:36]) for dc in ex if dc.problem_decl == ("const", True))
         self.assertEqual(filed, [("_do_set_mode", "mode (%s): the landed process runs %"), ("_do_set_mode", "mode (%s): the landed process runs %"),
-                                 ("_do_set_mode", "set_permission_mode (%s -> %s) refus")])
+                                 ("_do_set_mode", "set_permission_mode (%s -> %s) refus"), ("_log_quietly", "live work (%s): %d background task%s")])
 
     def test_the_negative_half_finds_the_kernels_doors_before_asserting_none_carries_env_taint(self):
         """Round 5's regression-1: the earlier negative half passed because kernel.py contains no call named _log. The
@@ -1085,7 +1125,7 @@ class EnvRowsPopulation(unittest.TestCase):
         c = Census((SDK_BACKEND, CREDENTIALS_PY, self._plant("plant.py", self.PLANT.replace("@DECL@", declared))), DEFAULT_SOURCES)
         self.assertEqual(c.failures, [])
         self.assertIn(("planted", "FMT", False), c.content_identities())
-        self.assertEqual(len(c.content_rows), 10)
+        self.assertEqual(len(c.content_rows), len(ROWS) + 1)
         found = [dc for dc in c.door_calls if dc.base == "plant.py"]
         self.assertEqual([(dc.lineno, dc.kind, dc.owner, sorted(dc.taint), dc.heads) for dc in found],
                          [(3, "param", "planted", ["env"], ["env (%s): planted %s"])])
@@ -1100,6 +1140,62 @@ class EnvRowsPopulation(unittest.TestCase):
         c3 = Census((SDK_BACKEND, CREDENTIALS_PY, self._plant("plant.py", self.PLANT.replace("@DECL@", declared)
                                                               + "def noisy(be, e):\n    be._log(str(e))\n")), DEFAULT_SOURCES)
         self.assertIn(("plant.py", 7, "noisy", "typed"), [(dc.base, dc.lineno, dc.owner, dc.kind) for dc in c3.unreduced])
+
+    CONDUIT_PLANT = (
+        "FMT = 'env (%s): planted %s'\n"
+        "def relay(prose, log=None, ring=True):\n"
+        "    line = prose + ' ;; tail'\n"
+        "    if log is not None:\n"
+        "        try:\n"
+        "            log(line, problem=bool(ring), ring_text=str(prose))\n"
+        "        except TypeError:\n"
+        "            log(line)\n"
+        "    return line\n"
+        "def through(be, sess):\n"
+        "    relay('env (%s): planted %s' % (sess.name, ', '.join(sorted(sess.env_vars))), log=be._log)\n"
+        "def beside(be, sess):\n"
+        "    line = relay('env (%s): planted %s' % (sess.name, ', '.join(sorted(sess.env_vars))))\n"
+        "    be._log(line, problem=True, ring_text=FMT % (sess.name[:20], len(sess.env_vars)))\n"
+    )
+
+    def test_a_conduit_that_keeps_an_undeclared_fallback_carries_no_tainted_row_and_a_site_binding_no_door_files_beside_it(self):
+        """The post-merge census (2026-09-20), on a synthetic problem_row: `relay` is a conduit whose door is its log=
+        parameter, forwarding problem=bool(ring) (the site's own ring=, True by default, the way problem_row forwards it)
+        and keeping a plainer-callable fallback `log(line)` that declares nothing.
+        `through` passes a door and a tainted prose: the site is a rule-(2) violation ("no explicit problem="; the
+        fallback is one of the roads it files through) and its ring text is the prose, UNBOUNDED, whatever the site
+        says. `beside` binds no door (log= left at its None default): it is NO site of the conduit, takes the returned
+        line, and files its own row with a module-level format, which the census reads as a content row whose message
+        reduces to the prose through the RETURNED parameter (rule 7), so it is not unreduced. The conduit's own inner
+        calls are tainted (the prose reaches them from `through`) and are judged at that site, not on their own row
+        (rule 3): the plant's violations are `through`'s one. Both planted rows are content rows (declared True and
+        env-tainted; `through`'s identity names its UNBOUNDED format, the shape main's two rows had at the merged head),
+        so the identity pin reds, naming both."""
+        src = self.CONDUIT_PLANT
+        c = Census((SDK_BACKEND, CREDENTIALS_PY, self._plant("plant3.py", src)), DEFAULT_SOURCES)
+        self.assertEqual(c.failures, [])
+        line_of = lambda needle: next(i + 1 for i, ln in enumerate(src.splitlines()) if needle in ln)
+        planted = sorted(((dc.lineno, dc.owner, dc.kind) for dc in c.door_calls if dc.base == "plant3.py"))
+        self.assertEqual(planted, [(line_of("log(line, problem=bool(ring)"), "relay", "param"), (line_of("            log(line)"), "relay", "param"),
+                                   (line_of("log=be._log"), "through", "conduit:relay"), (line_of("be._log(line, problem=True"), "beside", "typed")],
+                         "the two inner calls, the door-passing site, and beside's own call; beside's relay call is no site")
+        self.assertEqual([(dc.lineno, why) for dc, why in c.explicit_violations if dc.base == "plant3.py"],
+                         [(line_of("log=be._log"), "no explicit problem=")], "the door-passing tainted site, through the fallback; the inner calls are judged there")
+        through = next(dc for dc in c.door_calls if dc.base == "plant3.py" and dc.owner == "through")
+        self.assertEqual((sorted(through.taint), through.problem_decl, through.ring_formats), (["env"], ("const", True), ["UNBOUNDED:env (%s): planted %s"]))
+        inner = [dc for dc in c.door_calls if dc.base == "plant3.py" and dc.owner == "relay"]
+        self.assertEqual([sorted(dc.taint) for dc in inner], [["env"], ["env"]], "the inner calls carry the site's taint")
+        beside = next(dc for dc in c.door_calls if dc.base == "plant3.py" and dc.owner == "beside")
+        self.assertEqual((sorted(beside.taint), beside.problem_decl, beside.ring_formats, beside.heads, beside.unreduced),
+                         (["env"], ("const", True), ["FMT"], ["env (%s): planted %s"], False))
+        self.assertIn(("beside", "FMT", False), c.content_identities())
+        self.assertIn(("through", "UNBOUNDED:env (%s): planted %s", False), c.content_identities(),
+                      "the unbounded site is a content row too (declared True, env-tainted), its identity naming the UNBOUNDED format, "
+                      "as main's two rows did at the merged head; the violation is what says it is not bounded")
+        self.assertEqual(len(c.content_rows), len(ROWS) + 2)
+        with self.assertRaises(AssertionError) as cm:
+            self._assert_pin(c)
+        self.assertIn("through", str(cm.exception), "the identity pin reds, naming the first differing row (unittest elides the rest)")
 
     def test_a_door_whose_binding_the_walk_cannot_follow_fails_loudly(self):
         """The second plant: the door reaches the planted function through a helper's RETURN (`log=pick(be)` with
@@ -1154,25 +1250,51 @@ class EnvRowsPopulation(unittest.TestCase):
         whole line, unbounded by a module-level format, and it reports on the mode landing, a mechanism outside what the
         env-pick door bounds. A declared residual with no reason reads later as an oversight, so the comment block above
         each call is read here for the reason's parts, and the census docstring and the ENV ROWS paragraph for the reason
-        class, stated once each. Red with any one comment removed, or the reason class dropped from either paragraph."""
+        class, stated once each. Red with any one comment removed, or the reason class dropped from either paragraph.
+        Ruling 2 of the post-merge census (2026-09-20): a FOURTH row, SdkSession._log_quietly's problem road (main's PR
+        787 made the conduit forward problem=True, key= and ring_text=), is accepted on the same terms with its own
+        reason: its text is the union of every caller's line, formatted inline by each caller, the conduit shapes nothing
+        and forwards ring_text as given, so the bound is each CALLER's responsibility; the callers passing problem=True
+        (read off the module's AST here: every _log_quietly call with problem=True, two at this head) are named in the
+        comment and pass no ring_text, so each rings its whole line. Owners by line: ['_log_quietly', '_do_set_mode',
+        '_do_set_mode', '_do_set_mode']; the conduit's road forwards ring_text (a Name) where the three carry none."""
         c = self.c
         lines = Path(SDK_BACKEND).read_text(encoding="utf-8").splitlines()
         filed = sorted((dc for dc in c.existence_rows if dc.problem_decl == ("const", True)), key=lambda d: d.lineno)
-        self.assertEqual([dc.owner for dc in filed], ["_do_set_mode"] * 3)
+        self.assertEqual([dc.owner for dc in filed], ["_log_quietly", "_do_set_mode", "_do_set_mode", "_do_set_mode"])
+        tree, parents = _parsed(SDK_BACKEND)
+        true_callers = sorted((_enclosing_def(n, parents).name, any(k.arg == "ring_text" for k in n.keywords)) for n in ast.walk(tree)
+                              if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == "_log_quietly"
+                              and any(k.arg == "problem" and isinstance(k.value, ast.Constant) and k.value is not None and k.value.value is True
+                                      for k in n.keywords))
+        self.assertEqual(true_callers, [("_note_unknown_bg_type", False), ("_note_unreadable_bg_list", False)],
+                         "the conduit's problem=True callers at this head, none passing ring_text (the reason's 'each rings its whole line')")
         for dc in filed:
-            self.assertIsNone(dc.ring_text, "line %d: the reason's first half is that the row carries no ring_text" % dc.lineno)
             i, block = dc.lineno - 2, []
             while i >= 0 and lines[i].strip().startswith("#"):
                 block.insert(0, lines[i].strip().lstrip("#").strip())
                 i -= 1
             text = " ".join(block)
-            for part in ("an EXISTENCE row", "carries no ring_text", "unbounded by a module-level format",
-                         "a failure report about the mode landing", "outside what the env-pick door bounds"):
+            if dc.owner == "_log_quietly":
+                self.assertIsInstance(dc.ring_text, ast.Name, "line %d: the conduit forwards its callers' ring_text" % dc.lineno)
+                self.assertEqual(dc.ring_text.id, "ring_text")
+                parts = ("an EXISTENCE row", "the union of every caller's text", "formatted inline by its caller",
+                         "CALLER's responsibility", "unbounded by a module-level format", "outside what the env-pick door bounds")
+                for name, _rt in true_callers:
+                    self.assertIn(name, text, "line %d's comment does not name the problem=True caller %s" % (dc.lineno, name))
+            else:
+                self.assertIsNone(dc.ring_text, "line %d: the reason's first half is that the row carries no ring_text" % dc.lineno)
+                parts = ("an EXISTENCE row", "carries no ring_text", "unbounded by a module-level format",
+                         "a failure report about the mode landing", "outside what the env-pick door bounds")
+            for part in parts:
                 self.assertIn(part, text, "line %d's comment lacks the reason's part %r: %r" % (dc.lineno, part, text[:120]))
         norm = lambda t: " ".join(t.split())
         census_doc = norm(Path(os.path.join(HERE, "env_ring_census.py")).read_text(encoding="utf-8"))
+        module = norm(Path(SDK_BACKEND).read_text(encoding="utf-8"))
         self.assertIn("a declared residual with no reason reads later as an oversight", census_doc)
-        self.assertIn("each declared and not bounded for a stated reason", norm(Path(SDK_BACKEND).read_text(encoding="utf-8")))
+        self.assertIn("the bound of a row through it is its CALLER's responsibility", census_doc, "the fourth row's reason class, in the census docstring")
+        self.assertIn("each declared and not bounded for a stated reason", module)
+        self.assertIn("the bound is each caller's responsibility", module, "the fourth row's reason class, in the ENV ROWS paragraph")
 
     def test_the_pick_tags_dict_bound_is_stated_as_the_censuss_reach_and_not_as_the_kernels(self):
         """Ruling 3 of review round 6 (2026-09-19): that the pick tag does not cross a dict return is a bound on the
@@ -1206,11 +1328,14 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
     copy or a synthetic module and must be LOUD: a tenth content row (the identity pin reds), a failure named by site,
     or a CensusError. The copies edit anchors asserted present once in the module. The rulings' lenses (the addendum of
     2026-09-19) added 45 dict-source variants and 60 alias receivers, 35 and 13 of them quiet; the five tests at the end
-    of this class replay every quiet one, loud now, beside the refusal-side pins the mutation pass found missing."""
+    of this class replay every quiet one, loud now, beside the refusal-side pins the mutation pass found missing.
+    The BASE count of content rows is derived from the census at setUpClass (nine when the class was written, eleven
+    since the merge of main; the post-merge census of 2026-09-20 replaced the literals): "tenth" names the planted row,
+    and every count here reads BASE for a copy that adds no row and BASE + 1 for one that adds the plant."""
 
     FMT_ANCHOR = "RESERVED_DROP_RING = ("
     METHOD_ANCHOR = "    def problem_seq(self) -> int:"
-    SESSION_ANCHOR = "    def _log_quietly(self, line: str) -> None:"
+    SESSION_ANCHOR = "    def _log_quietly(self, line: str, problem=None, key=None, ring_text=None) -> None:"
     CRASH_ANCHOR = '_log(f"sdk session {self.name} crashed: '
     API_ANCHOR = "    def _push(self, ev: AhEvent):"       # ApiHealth's method appending to its own self._ring deque
     TENTH = 'TENTH_RING = "env (%s): tenth %s"\n'
@@ -1223,6 +1348,8 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         cls.src = Path(SDK_BACKEND).read_text(encoding="utf-8")
         for needle in (cls.FMT_ANCHOR, cls.METHOD_ANCHOR, cls.SESSION_ANCHOR, cls.CRASH_ANCHOR, cls.API_ANCHOR):
             assert cls.src.count(needle) == 1, "the copies' anchors are in the module once each: %r" % needle
+        cls.BASE = len(census(CENSUS_FILES).content_rows)     # the head's content rows (ROWS holds them by identity)
+        assert cls.BASE == len(ROWS), (cls.BASE, len(ROWS))
 
     def _copy(self, edit, name="sdk_backend.py"):
         new = edit(self.src)
@@ -1252,7 +1379,7 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         refuses on it by name."""
         self.assertEqual([f[:3] for f in c.failures], list(expect_failures))
         self.assertIn(self.TENTH_ID, c.content_identities())
-        self.assertEqual(len(c.content_rows), 10)
+        self.assertEqual(len(c.content_rows), self.BASE + 1)
         found = [dc for dc in c.door_calls if dc.owner == "_tenth"]
         self.assertEqual([(dc.kind, sorted(dc.taint), dc.heads, dc.ring_formats) for dc in found],
                          [(kind, ["env"], ["env (%s): tenth %s"], ["TENTH_RING"])])
@@ -1274,7 +1401,7 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
                 self.assertIn("module alias _RING", [how for _b, _ln, how, _f in c.door_value_sites])
         c = self._census(self._copy(lambda s: s + "\n_RING4 = SdkBackend._log\n"))
         self.assertEqual([(k, b, t) for k, b, _ln, t in c.failures], [("door-escapes", "sdk_backend.py", "module alias _RING4 is never called")])
-        self.assertEqual(len(c.content_rows), 9)
+        self.assertEqual(len(c.content_rows), self.BASE)
 
     def test_a_door_aliased_in_the_writers_class_body_is_found_and_an_ambiguous_name_is_a_failure(self):
         """Family A, the class scope: a class-body `_ring_door = _log` (the writer's bare name resolves in its own class
@@ -1355,7 +1482,7 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
             'ring_text=TENTH_RING % (sess.name[:20], info["mode"]))\n\n' + self.METHOD_ANCHOR)
             + '\ndef _tenth_info(sess):\n    return {"env": sess.env_vars, "mode": sess.mode}\n'))
         self.assertEqual(c.failures, [])
-        self.assertEqual(len(c.content_rows), 9)
+        self.assertEqual(len(c.content_rows), self.BASE)
         self.assertEqual([sorted(dc.taint) for dc in c.door_calls if dc.owner == "_tenth"], [[]])
         head = census(CENSUS_FILES)
         shape = [f for f in head.all_fns if f.qual == "SdkBackend._launch_shape"][0]
@@ -1542,7 +1669,7 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
             self.assertEqual(head._declared_dict_source(f), "env", q)
             self.assertTrue(f.returns and all(head._locates_source_key(r, f) for r in f.returns), "%s is located at its env key" % q)
             self.assertFalse(any("env" in v for v in head.ret_taint.get(f, {}).values()), "%s's return carries no env whole" % q)
-        self.assertEqual(len(head.content_rows), 9)
+        self.assertEqual(len(head.content_rows), self.BASE)
         self.assertEqual(head.explicit_violations, [])
 
     def test_a_twice_bound_alias_name_is_resolved_by_the_receivers_scope_and_fails_only_untyped(self):
@@ -1593,7 +1720,7 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
                 self.assertEqual([(k, b, t) for k, b, _ln, t in c.failures], [uncalled], "the call is the other binding's, so the alias is called nowhere")
                 self.assertEqual([dc.lineno for dc in c.door_calls if dc.owner == "_tenth"], [])
                 self.assertEqual(api_doors(c), [])
-                self.assertEqual(len(c.content_rows), 9)
+                self.assertEqual(len(c.content_rows), self.BASE)
         for label, tail in (("an untyped receiver calling the name", "\ndef _tenth(x, sess):\n" + call("x", " " * 4)),
                             ("an untyped receiver using the deque", "\ndef _tenth(x, ev):\n    x._ring.append(ev)\n")):
             with self.subTest(arm=label):
@@ -1605,7 +1732,7 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
                 self.assertIn("ApiHealth._ring (an attribute bound in __init__)", text)
                 self.assertIn("type the receiver", text)
                 self.assertEqual([dc.lineno for dc in c.door_calls if dc.owner == "_tenth"], [], "not counted as a door: named as a failure instead")
-                self.assertEqual(len(c.content_rows), 9)
+                self.assertEqual(len(c.content_rows), self.BASE)
         with self.subTest(arm="an untyped receiver of a name bound once resolves to the alias, as before"):
             c = self._census(self._copy(lambda s: self._with_format(s).replace(self.METHOD_ANCHOR, "    _ring_door = _log\n\n" + self.METHOD_ANCHOR)
                                         + "\ndef _tenth(x, sess):\n    x._ring_door(%s, problem=True, %s)\n" % (self.MSG, self.RING)))
@@ -1635,9 +1762,9 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         return Census((path, CREDENTIALS_PY), self._declared() if form == "declared" else DEFAULT_SOURCES)
 
     def _assert_tenth_quiet(self, c):
-        """The refusal side of a rule: the plant is read, nothing fails, and the tenth row carries no env (nine rows)."""
+        """The refusal side of a rule: the plant is read, nothing fails, and the tenth row carries no env (BASE rows)."""
         self.assertEqual(c.failures, [])
-        self.assertEqual(len(c.content_rows), 9)
+        self.assertEqual(len(c.content_rows), self.BASE)
         self.assertEqual([sorted(dc.taint) for dc in c.door_calls if dc.owner == "_tenth"], [[]])
 
     def test_the_env_under_the_source_key_is_followed_to_its_roots_so_a_second_road_to_the_value_carries_it(self):
@@ -1784,7 +1911,7 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
             c = self._shape_census("helper", arg="getattr(sess, _TENTH_ATTR)", expr="shape", extra='\n_TENTH_ATTR = "env_vars"\n')
             self.assertEqual([(k, b) for k, b, _ln, _t in c.failures], [("source-name-string", "sdk_backend.py")])
             self.assertIn("'env_vars' is a string outside a reflected read or store", c.failures[0][3])
-            self.assertEqual(len(c.content_rows), 9, "the row is read but untainted: the string is what is loud")
+            self.assertEqual(len(c.content_rows), self.BASE, "the row is read but untainted: the string is what is loud")
         with self.subTest(case="a declared source function's name in a constant handed to getattr"):
             c = self._shape_census("declared", methods='    def _tenth_shape(self, raw):\n        e = raw["vars"]\n        return {"env": e, "opts": e}\n\n',
                                    arg="getattr(self, _TENTH_FN)(raw)", extra='\n_TENTH_FN = "_tenth_shape"\n')
@@ -1848,7 +1975,7 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
             c = self._census(plant(tail="\ndef _tenth_helper(sess, log):\n    log(%s, problem=True, %s)\n\n\ndef _tenth(be: SdkBackend, sess):\n    _tenth_helper(sess, log=getattr(be, '_ring', None))\n" % (self.MSG, self.RING)))
             self.assertEqual(c.failures, [])
             self.assertIn(("_tenth_helper", "TENTH_RING", False), c.content_identities())
-            self.assertEqual(len(c.content_rows), 10)
+            self.assertEqual(len(c.content_rows), self.BASE + 1)
             self.assertEqual([dc.kind for dc in c.door_calls if dc.owner == "_tenth_helper"], ["param"])
         uncalled = ("door-escapes", "sdk_backend.py", "class alias _ring of SdkBackend is never called")
         others = {
@@ -1861,7 +1988,7 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
                 c = self._census(plant(**kw))
                 self.assertEqual([(k, b, t) for k, b, _ln, t in c.failures], [uncalled], "the call is the other binding's, so the alias is called nowhere")
                 self.assertEqual(tenth(c), [])
-                self.assertEqual(len(c.content_rows), 9)
+                self.assertEqual(len(c.content_rows), self.BASE)
         ambiguous = {
             "03b: a mixin mixed into both classes": dict(tail="\nclass _TenthMixin:\n    def _tenth(self, sess):\n" + call("self", " " * 8) + "\nclass _TenthBackend(_TenthMixin, SdkBackend):\n    pass\n\nclass _TenthHealth(_TenthMixin, ApiHealth):\n    pass\n", why="admits both bindings"),
             "19: a __getattr__ proxy typed by its constructor": dict(tail="\nclass _TenthProxy:\n    def __init__(self, be: SdkBackend):\n        self._be = be\n\n    def __getattr__(self, n):\n        return getattr(self._be, n)\n\n\ndef _tenth(be: SdkBackend, sess):\n    p = _TenthProxy(be)\n" + call("p", " " * 4), why="is untyped"),
@@ -1888,7 +2015,7 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
                 self.assertIn("SdkBackend._ring (a class-body alias of the door, line", text)
                 self.assertIn("ApiHealth._ring (an attribute bound in __init__)", text)
                 self.assertEqual(tenth(c), [], "not counted as a door: named as a failure instead")
-                self.assertEqual(len(c.content_rows), 9)
+                self.assertEqual(len(c.content_rows), self.BASE)
         with self.subTest(arm="m4j: the collision record's other hows, a method and a class-body name"):
             c = self._census(plant(with_benign=True, tail="\nclass _TenthByMethod:\n    def _ring(self, line, **kw):\n        pass\n\n\nclass _TenthByName:\n    _ring = None\n"))
             self.assertEqual(c.failures, [])
@@ -2398,6 +2525,52 @@ class EnvSecretsStayPrivate(unittest.TestCase):
 
 
 
+class RefusedLaunchRowsRingBounded(unittest.TestCase):
+    """Ruling 1 (a) of the post-merge census (2026-09-20), by execution: main's two refused-launch rows in
+    _host_transport_for (fork PR 777) ring a text bounded by HOST_REFUSED_RING while the ledger row and the kernel log
+    line keep the reason whole. The driver is the host tests' (a fake _spawn_host that writes a host-crashed row and
+    returns an exited process), with a 300-character host reason: until this commit problem_row's log= rang the whole
+    prose, and the census read the row as an UNBOUNDED content row. Red before: the ring text held the whole reason and
+    no marker."""
+
+    SID = "11111111-2222-3333-4444-555555555555"
+
+    def test_a_refused_launch_rings_the_bounded_text_and_the_ledger_and_the_log_keep_the_reason_whole(self):
+        import asyncio
+        d = tempfile.mkdtemp()
+        logs = []
+        be = sb.SdkBackend(d, "/bin/true", lambda *a, **k: None, log=lambda m, *a, **k: logs.append(m))
+        Path(d, "session-hosts").write_text("on")
+        sb.write_reg(Path(d), self.SID, {"sid": self.SID, "name": "web", "alive": True, "lastSid": self.SID})
+        s = types.SimpleNamespace(sid=self.SID, name="web", _host_intent=True, _host=None, _host_is_attach=False,
+                                  _options_login="", _seed_for_dead_cli=lambda cli: None)
+        reason = "OSError: " + "B" * 291
+
+        def fake_spawn(sess, spec_path, secret_env=None):
+            with open(Path(spec_path).parent / "host.log", "a") as f:
+                f.write(json.dumps({"t": 1, "kind": "host-started"}) + "\n" + json.dumps({"t": 2, "kind": "host-crashed", "error": reason}) + "\n")
+            return types.SimpleNamespace(poll=lambda: 1, returncode=1, pid=4242, terminate=lambda: None)
+        with mock.patch.object(be, "_spawn_host", fake_spawn):
+            with self.assertRaises(sb.CLIConnectionErrorLike):
+                asyncio.run(be._host_transport_for(s, types.SimpleNamespace(), (None, None, None)))
+        rows = [json.loads(l) for l in (Path(d) / sb.SESSION_EVENTS_FILE).read_text().splitlines()]
+        self.assertEqual([r["kind"] for r in rows], ["host.exited-before-socket"])
+        self.assertIn(reason, rows[0]["text"], "the ledger row keeps the reason whole (the card reads it)")
+        line = [l for l in logs if sb.PROBLEM_ROW_MARK in l and "exited before serving its socket" in l]
+        self.assertEqual(len(line), 1, logs)
+        self.assertIn(reason, line[0], "the kernel log line keeps the reason whole, with its ;; problem-row tail")
+        self.assertEqual(sb.parse_problem_row(line[0])["kind"], "host.exited-before-socket")
+        ring = [p["text"] for p in be.problems() if p["text"].startswith("the session host for ")]
+        self.assertEqual(len(ring), 1, be.problems())
+        text = ring[0]
+        self.assertLessEqual(len(text), sb.ERROR_CENTER_TEXT_CAP)
+        self.assertEqual(text, sb.host_refused_ring_text("web", "exited before serving its socket (code 1); see hosts/%s/host.log: %s" % (self.SID, reason)))
+        self.assertTrue(text.endswith(sb._cred.CUT_MARK), "the cut is visible: the marker is the last character")
+        self.assertNotIn(reason, text, "the whole reason is not on the ring")
+        self.assertTrue(text.startswith("the session host for web exited before serving its socket (code 1); see hosts/%s/host.log: OSError: B" % self.SID))
+        self.assertEqual(len(rows[0]["text"]), len("the session host for web exited before serving its socket (code 1); see hosts/%s/host.log: " % self.SID) + len(reason))
+
+
 class CredentialShapedNamesAtTheDoor(unittest.TestCase):
     """The door refuses a pick naming a credential-shaped variable of ANY spelling (2026-09-18, found by the
     spawn.json fix's build; the box admin ruled the door the fix): until then env_request_error refused the
@@ -2869,6 +3042,7 @@ class CredentialShapedNamesEndToEnd(_OptionsBackend):
             "FLAG_SID_RING": [formats["FLAG_SID_RING"] % (max(sb.FLAG_SID_REASONS, key=len), D, keys)],
             "FLAG_LINK_RING": [formats["FLAG_LINK_RING"] % D],
             "FLAG_UNWRITABLE_RING": [formats["FLAG_UNWRITABLE_RING"] % (D, "x" * sb.RING_CLASS_BUDGET, keys)],
+            "HOST_REFUSED_RING": [formats["HOST_REFUSED_RING"] % (S, "x" * sb.RING_REASON_BUDGET)],
             "RESERVED_DROP_RING": [formats["RESERVED_DROP_RING"] % (S, N + count_worst)],
             "STORED_OFFENDER_RING": [formats["STORED_OFFENDER_RING"] % (S, N + count_worst)],
             "FORK_RESERVED_RING": [formats["FORK_RESERVED_RING"] % (S, N + count_worst)],
@@ -2920,6 +3094,40 @@ class CredentialShapedNamesEndToEnd(_OptionsBackend):
         self.assertEqual((len(sb.RESERVED_DROP_RING % ("", "")), lengths["RESERVED_DROP_RING"]), (117, 234), "117 fixed; 234 of 240 with the suffix")
         self.assertEqual(lengths["FORK_RESERVED_RING"], 187, "the fork's reserved drop, unkeyed: it fires once per fork (round 4's 187)")
         self.assertEqual(lengths["FORK_DROP_RING"], 160)
+        self.assertEqual((len(sb.HOST_REFUSED_RING % ("", "")), sb.RING_SESSION_BUDGET, sb.RING_REASON_BUDGET, lengths["HOST_REFUSED_RING"]), (22, 20, 198, cap),
+                         "the refused-launch row (the post-merge census): 22 fixed + the session's 20 + the reason's 198, what the cap leaves, "
+                         "so its worst case is the cap exactly, the refusal ring's arithmetic (HOST worst len = 240)")
+
+    def test_the_refused_launch_rows_ring_text_is_cut_visibly_and_the_ledger_prose_is_not(self):
+        """Ruling 1 (a) of the post-merge census (2026-09-20) with its condition (3): the two refused-launch rows'
+        ring text is HOST_REFUSED_RING over the session name and the road's reason, each cut to its budget, and a cut
+        is VISIBLE (credentials.CUT_MARK as the last character), never a cut that still reads as a whole sentence. The
+        helper the sites call is driven at a short reason (whole, 123 characters at a synthetic sid), a 300-character
+        reason (cut to the budget, the marker last; 223 with a three-letter name) and a long session name (cut to its
+        20 with the marker). The prose the sites hand problem_row is untouched by the helper: the ledger row and the
+        kernel log line keep the reason whole (the card reads the ledger), and the ring shows the bounded text."""
+        cap, mark = sb.ERROR_CENTER_TEXT_CAP, sb._cred.CUT_MARK
+        sid = "11111111-2222-3333-4444-555555555555"
+        short = "exited before serving its socket (code 1); see hosts/%s/host.log" % sid
+        whole = sb.host_refused_ring_text("web", short)
+        self.assertEqual(whole, "the session host for web " + short)
+        self.assertEqual(len(whole), 123)
+        self.assertNotIn(mark, whole, "a reason inside its budget is whole")
+        long_reason = short + ": " + "B" * 300
+        cut = sb.host_refused_ring_text("web", long_reason)
+        self.assertEqual(len(cut), 22 + 3 + sb.RING_REASON_BUDGET)
+        self.assertEqual(len(cut), 223)
+        self.assertLessEqual(len(cut), cap)
+        self.assertTrue(cut.endswith(mark), "a cut reason ends with the feed's marker, so it never reads as a whole sentence")
+        self.assertTrue(cut.startswith("the session host for web exited before serving its socket (code 1); see hosts/%s/host.log: BBB" % sid))
+        named = sb.host_refused_ring_text("n" * 40, short)
+        self.assertTrue(named.startswith("the session host for " + "n" * (sb.RING_SESSION_BUDGET - 1) + mark + " exited"), "the name is cut to its budget, marked")
+        worst = sb.host_refused_ring_text("n" * 400, "r" * 4000)
+        self.assertEqual(len(worst), cap, "both budgets spent: the cap exactly")
+        self.assertEqual(worst.count(mark), 2)
+        km = self._real_ring()
+        for text in (whole, cut, named, worst):
+            self.assertEqual(km._sdk_problem_text(text), text, "whole through the feed's own cut")
 
     SKIP_FORMAT = ('RESERVED_DROP_RING = ("env (%s): ignoring reserved %s from the stored session env: romp sets the identity env; a credential is "\n'
                    '                      "Claude Code\'s own")')

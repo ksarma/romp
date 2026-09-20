@@ -52,7 +52,14 @@ by resolution and not by name:
   3. CONDUITS. A function whose door call's message is one of its own parameters (SdkSession._log_quietly,
      problem_row) is a conduit: each of its call sites is a door call whose message is the argument it passes, whose
      problem= is the inner call's when that is a constant, or the site's own argument when the inner call forwards a
-     parameter (problem_row's `bool(ring)`), and whose ring text follows the same rule.
+     parameter (problem_row's `bool(ring)`), and whose ring text follows the same rule. A conduit whose door is its
+     own parameter (problem_row's log=) has a site only where that parameter is bound to something other than None:
+     a site binding it to None, the default or None written, files nothing through the conduit. A conduit's inner
+     calls are judged at their sites, each site carrying every inner road as an alternative, so a conduit that keeps
+     a fallback road with no problem= (problem_row's plainer-callable `log(line)`) can carry no value-tainted row:
+     a tainted site through it is a rule-(2) violation whatever it declares, and such a row takes the conduit's
+     other outputs and files its own ring row (the post-merge census of the env-pick door, 2026-09-20, on main's two
+     refused-launch rows).
   4. THE KERNEL'S FEEDERS. kernel.py has no call to the writer; its rows reach the same bell through the lists
      _sdk_problem_rows merges beside the backend's ring. The census reads _sdk_problem_rows, takes every module-level
      list it reads as a sibling of the ring, finds the functions that append to those lists (_sdk_problem,
@@ -121,7 +128,9 @@ by resolution and not by name:
      value taint (a mixed container of every parked op kind).
   7. REDUCTION. Every door call's message is reduced to its literal head(s): a string constant, an f-string's leading
      text, the left side of a `%` or `+`, a `str()` wrap, a local followed to every assignment (a tuple unpacking to
-     its position), a module-level string constant by name, a helper followed into its returns, and a conduit's
+     its position), a module-level string constant by name, a helper followed into its returns (a return that is a
+     wrap of the helper's own parameter read as the argument the call passed: problem_row's returned line opens with
+     the caller's prose), and a conduit's
      parameter followed to every call site. A door call with NO literal head is recorded in `unreduced` by site and
      the pin holds that set to the sites it names; an unreduced call stays in the population and is judged by taint
      like every other, so nothing falls out of an assertion by failing to reduce.
@@ -134,10 +143,16 @@ credentials.py only after asserting it FOUND their doors, and refuses to pass on
 entries than the floors the test states (a walk that sees less than the last one did is blind, not clean). An
 EXISTENCE row (tag "pick" alone, a fixed vocabulary plus names, never a value) filed problem=True owes the constant
 and no format, and the reason is stated where it is declared (ruling 1 of review round 6: a declared residual with no
-reason reads later as an oversight): the three at this head are _do_set_mode's failure reports about the mode
+reason reads later as an oversight): four at this head. Three are _do_set_mode's failure reports about the mode
 landing, each carrying no ring_text, so each row's text is its whole line, the session name, the two mode words and
 an exception's class and text, unbounded by a module-level format, and each is a report about a mechanism outside
-what the env-pick door bounds (the pick's values and file); the comment at each line says so.
+what the env-pick door bounds (the pick's values and file); the comment at each line says so. The fourth is
+SdkSession._log_quietly's problem road (the post-merge census, 2026-09-20, ruling 2): its text is the union of every
+caller's line, each formatted inline by its caller over the session name and the surface names, and the conduit
+shapes nothing of it and forwards ring_text as given, so the bound of a row through it is its CALLER's
+responsibility; the two callers passing problem=True at this head, the live-work reconcile's unknown label and
+unreadable list, pass no ring_text, so each rings its whole line, again about a mechanism outside what the door
+bounds. The comment at the road names them.
 
 Pure AST: imports nothing of romp, executes nothing of it, and parses each file once per process (ASTS below). The
 public entry is `census(files=None, sources=None)`, returning a Census with the counts, the door calls and the
@@ -1418,6 +1433,15 @@ class Census:
                     b = self.bind_args(call, inner.fn, via)
                     if pname not in b:
                         continue
+                    if inner.kind == "param" and isinstance(inner.node.func, ast.Name):
+                        # the conduit's door is its own parameter (problem_row's log=): a site that binds it to None, the
+                        # default or None written, files nothing through this conduit and is no site of it; any other
+                        # binding keeps the site (a door, or an expression the walk keeps on the safe side). The post-merge
+                        # census of the env-pick door (2026-09-20): the two refused-launch rows take problem_row's ledger
+                        # row and its returned line without log= and file their own bounded ring row.
+                        bound = b.get(inner.node.func.id)
+                        if isinstance(bound, ast.Constant) and bound.value is None:
+                            continue
                     problem = self._through(inner.problem, inner.fn, b)
                     ring_text = self._through(inner.ring_text, inner.fn, b)
                     key = self._through(inner.key, inner.fn, b)
@@ -2657,12 +2681,24 @@ class Census:
             if isinstance(f, ast.Attribute) and f.attr in ("strip", "rstrip", "lstrip", "upper", "lower", "replace", "removeprefix", "removesuffix"):
                 return self.reduce(f.value, fn, depth + 1, seen)
             out = set()
-            for callee, _via in self.callees.get(id(expr), []):
+            for callee, via in self.callees.get(id(expr), []):
                 k = ("call", callee.qual)
                 if k in seen:
                     continue
+                got = set()
                 for r in callee.returns:
-                    out |= self.reduce(r, callee, depth + 1, seen | {k})
+                    got |= self.reduce(r, callee, depth + 1, seen | {k})
+                # a return that is (a wrap of) the callee's OWN parameter is the argument this call passed, read in the
+                # caller (problem_row's returned line opens with its prose: the post-merge census of the env-pick door,
+                # 2026-09-20, where the refused-launch rows' message is that line)
+                bound = None
+                for r in list(got):
+                    if r[0] == "param" and r[2] == callee.qual:
+                        bound = self.bind_args(expr, callee, via) if bound is None else bound
+                        if r[1] in bound:
+                            got.discard(r)
+                            got |= self.reduce(bound[r[1]], fn, depth + 1, seen | {k})
+                out |= got
             return out or {("other", ast.unparse(expr)[:60])}
         if isinstance(expr, ast.Name):
             owner = self.is_param(expr.id, fn)
@@ -2754,7 +2790,15 @@ class Census:
         # through; a content row's ring text reduces to ONE module-level format (the worst-case table bounds it); an
         # existence row owes no format bound (a surface name adds a fixed word), only the explicit constant
         self.explicit_violations = []
+        # a conduit's inner call is judged at each of its SITES (rule 3): its own keyword is the forwarded parameter
+        # (problem_row's bool(ring)) or a fallback that passes none (problem_row's plainer-callable road), and each site
+        # carries every inner road as an alternative, so a tainted site through a conduit that keeps such a fallback is
+        # a violation whatever it declares, and the inner call's own row would say the same thing twice (the post-merge
+        # census of the env-pick door, 2026-09-20: the first tainted problem_row sites flagged the inner calls too)
+        inner_calls = {id(inner) for lst in self.conduits.values() for inner, _p in lst}
         for dc in self.tainted:
+            if id(dc) in inner_calls:
+                continue
             decls = dc.decls()
             bad = [d for d in decls if d[0] != "const"]
             if bad:

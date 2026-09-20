@@ -5368,7 +5368,8 @@ ERROR_CENTER_TEXT_CAP = 240
 # shape) and asserts each under ERROR_CENTER_TEXT_CAP. The pieces: fixed text; a session name or a sid cut to a budget
 # with the feed's marker (kernel.NAME_RE caps no length, so the bound must not rest on one); ONE variable named, the
 # first in sorted order, cut to a budget, with the rest counted through a bounded count text
-# (credentials.first_and_count); an OSError class name cut to a budget; and the flag-settings keys, a fixed set tied to
+# (credentials.first_and_count); an OSError class name cut to a budget; a refused launch's reason cut to what the cap
+# leaves (RING_REASON_BUDGET), the marker as its last character when cut; and the flag-settings keys, a fixed set tied to
 # what the writer writes (FLAG_SETTINGS_KEYS). Every other door call whose text carries such a value declares problem=
 # explicitly (False for a routine line: the census reds a line left to _log's live-exception default), so no such line
 # joins the ring by the accident of a handler's extent. The kernel log line of every row keeps each name, path and
@@ -5399,6 +5400,18 @@ FLAG_SID_RING = "flag settings: %s (%s); no per-session settings file is written
 FLAG_LINK_RING = ("flag settings (%s): the per-session settings file is a symbolic link and is not written through: nothing "
                   "of romp's makes one, and a write through it would carry the env block outside the directory")
 FLAG_UNWRITABLE_RING = "flag settings (%s): the per-session settings file could not be written (%s); launching WITHOUT %s"
+# The refused-launch rows' short form (_host_transport_for's two roads, fork PR 777's: a session host that exited before
+# serving its socket, and one that never served it and was ended). The census taints their text through the host
+# process, spawned with the launch's credential-shaped names in its environment (the same taint the host-start notice
+# declares False), so each is a content row and owes a ring text bounded by a module-level format (the post-merge
+# census of the env-pick door, 2026-09-20; until then the whole reason rang). The pieces: the session name cut to its
+# budget, and the road's reason (the exit code or the wait, the host.log path and the host's last word, a traceback
+# line of up to 200 characters or the SDK mismatch's prose) cut to what the cap leaves after the fixed text and the
+# session budget, the way set_env's refusal body is cut. A cut is VISIBLE: credentials.cut_to puts the feed's marker
+# as the last character, so a cut reason never reads as a whole sentence. The ledger row and the kernel log line keep
+# the reason whole; the card reads the ledger.
+HOST_REFUSED_RING = "the session host for %s %s"
+RING_REASON_BUDGET = ERROR_CENTER_TEXT_CAP - len(HOST_REFUSED_RING % ("", "")) - RING_SESSION_BUDGET   # what the cap leaves: 198
 # The two reserved-name rows' short forms (review round 4 of the env-pick door, 2026-09-19: both rows predate the door and
 # carried no ring_text, so the error centre showed the whole log line, 244 and 241 characters at ordinary names against
 # the 240 cap): the session name cut to its budget, the first reserved name in sorted order cut to the name budget and
@@ -5412,19 +5425,26 @@ RESERVED_DROP_RING = ("env (%s): ignoring reserved %s from the stored session en
                       "Claude Code's own")                                               # _options' skip at the launch
 FORK_RESERVED_RING = ("env (%s): dropping reserved %s from the inherited env: romp sets the identity env itself (the parent "
                       "reg predates the reserved names)")                                # fork's drop at the copy
-# ENV ROWS: flag_settings_path -> FLAG_SID_RING FLAG_LINK_RING FLAG_UNWRITABLE_RING | _options -> RESERVED_DROP_RING(keyed) STORED_OFFENDER_RING(keyed) | fork -> FORK_RESERVED_RING FORK_DROP_RING | set_env -> REFUSAL_RING_HEAD REFUSAL_RING_HEAD
+# ENV ROWS: flag_settings_path -> FLAG_SID_RING FLAG_LINK_RING FLAG_UNWRITABLE_RING | _host_transport_for -> HOST_REFUSED_RING HOST_REFUSED_RING | _options -> RESERVED_DROP_RING(keyed) STORED_OFFENDER_RING(keyed) | fork -> FORK_RESERVED_RING FORK_DROP_RING | set_env -> REFUSAL_RING_HEAD REFUSAL_RING_HEAD
 # ^ the CONTENT rows: every door to the problem ring whose message or ring text carries a value derived from the
 #   per-session env sources and that is filed problem=True, grouped by the writing function in source order, one name
-#   per row: the module-level FORMAT the row's ring_text starts from (a helper such as stored_offender_ring_text is
-#   followed into its return; set_env's two rows both open with the refusal head), and "(keyed)" where the call passes
+#   per row: the module-level FORMAT the row's ring_text starts from (a helper such as stored_offender_ring_text or
+#   host_refused_ring_text is followed into its return; set_env's two rows both open with the refusal head), and
+#   "(keyed)" where the call passes
 #   key= (the worst-case table adds _log's repeat suffix to those). Derived by tests/env_ring_census.py over the ring's
 #   writers (the paragraph above the ring budgets says how) and compared by tests/test_session_env.py, which reds when
-#   the two differ. Beside these, EXISTENCE-ONLY lines exist: the reconnect heading's lines (SdkSession._log_quietly's
-#   callers) and the mode landing's, whose text can name the env pick's existence through the pending-pick surface set,
-#   a fixed vocabulary plus the session name and never a value; they are not in this population, and the routine ones
-#   are closed by problem=False. The three filed problem=True are _do_set_mode's failure reports about the mode landing,
-#   each declared and not bounded for a stated reason: no ring_text, so the whole line rings, unbounded by a format, and
-#   a mechanism outside what this door bounds (the comment at each line says so; review round 6, ruling 1). A pick that
+#   the two differ. Beside these, EXISTENCE-ONLY lines exist: the reconnect heading's lines and the live-work
+#   reconcile's (SdkSession._log_quietly's callers; the conduit's own two calls carry the union of every caller's text,
+#   so "live work" is a head of its rows) and the mode landing's, whose text can name the env pick's existence through
+#   the pending-pick surface set, a fixed vocabulary plus the session name and never a value; they are not in this
+#   population, and the routine ones are closed by problem=False. Four are filed problem=True,
+#   each declared and not bounded for a stated reason: _do_set_mode's three failure reports about the mode landing (no
+#   ring_text, so the whole line rings, unbounded by a format, and a mechanism outside what this door bounds; the comment
+#   at each line says so; review round 6, ruling 1), and the conduit's problem road, whose text is its callers' (two pass
+#   problem=True today,
+#   the live-work reconcile's unknown label and unreadable list), each formatted inline by its caller and bounded by no
+#   format: the conduit shapes nothing, so the bound is each caller's responsibility, and the subject is again a
+#   mechanism outside what this door bounds (the comment at the road says so; the post-merge census, ruling 2). A pick that
 #   crosses a dict return is outside the census (a bound on its reach, stated above), so this population is the direct
 #   readers of the surface set by construction. kernel.py and credentials.py write no such row: the kernel's problem rows are this
 #   module's ring and its two feeders (_sdk_problem, _note_ws_drop), and the census finds those doors before it asserts
@@ -5437,6 +5457,14 @@ def stored_offender_ring_text(session_name, names) -> str:
     nothing when there are none): the first in sorted order is named, cut to RING_NAME_BUDGET, the rest are a bounded
     count, and the session name is cut to RING_SESSION_BUDGET. Values never reach here."""
     return STORED_OFFENDER_RING % (_cred.cut_to(session_name, RING_SESSION_BUDGET), _cred.first_and_count(names, RING_NAME_BUDGET))
+
+
+def host_refused_ring_text(session_name, said) -> str:
+    """The error-centre text of a refused-launch row (the comment above HOST_REFUSED_RING says why it is shaped so): the
+    session name cut to RING_SESSION_BUDGET and the road's reason cut to RING_REASON_BUDGET, each with the feed's marker
+    as its last character when cut. `said` is the host's exit code or the wait, the host.log path and the host's last
+    word; no value of the env pick reaches here."""
+    return HOST_REFUSED_RING % (_cred.cut_to(session_name, RING_SESSION_BUDGET), _cred.cut_to(said, RING_REASON_BUDGET))
 
 
 # The lock the one writer of a per-sid flag-settings file (flag_settings_path, called from _options at every connect)
@@ -7699,10 +7727,18 @@ class SdkSession:
                 self.backend._log(line, problem=False)
             else:
                 # The conduit's problem road (round 5 of the auth-default PR's review, 2026-09-19): the caller's own
-                # row, keyed. To the ring census this call is pick-tainted through `line`, the union of every caller's
-                # text, so it reads as an existence row filed problem=True with no module-level format; the callers
-                # that take this road (_note_unknown_label, _note_unreadable_bg_list) carry a task label cut to 60
-                # characters and a list's shape, never a pick's name or an env value.
+                # row, keyed, and an EXISTENCE row to tests/env_ring_census.py, declared and not bounded, and this is
+                # why (the post-merge census of the env-pick door, 2026-09-20, ruling 2): to the census this call is
+                # pick-tainted through `line`, the union of every caller's text (the reconnect heading's lines, the
+                # bypass consult, the live-work reconcile's), each formatted inline by its caller with % over self.name
+                # and the surface names, the pick's existence in a fixed vocabulary plus the session name, never a value
+                # of the env pick. This conduit shapes nothing of that text and forwards ring_text as given, so the
+                # bound of a row through here is its CALLER's responsibility, not this road's: the two callers that
+                # pass problem=True today, _note_unknown_bg_type (a task label cut to 60 characters) and
+                # _note_unreadable_bg_list (a list's shape), pass no ring_text, so the ring shows each one's whole
+                # line, unbounded by a module-level format; and their subject, the live-work reconcile, is a
+                # mechanism outside what the env-pick door bounds. Both callers' lines carry self.name uncut, which is
+                # a defect of theirs (filed as its own item; kernel.NAME_RE caps no length), not of this road.
                 self.backend._log(line, problem=True, key=key, ring_text=ring_text)
         except Exception:
             pass
@@ -14148,8 +14184,18 @@ class SdkBackend:
                     # skips a previous host's rows in the same file (the reach is stated at that function). A retry
                     # that is refused again is its own launch and its own row. This is the EXITED road; the deadline
                     # road below files its own kind.
-                    problem_row(self.state_dir, "the session host for %s %s" % (sess.name, said), "host.exited-before-socket",
-                                sid=sess.sid, name=sess.name, log=self._log, code=proc.returncode)
+                    prose = "the session host for %s %s" % (sess.name, said)
+                    line = problem_row(self.state_dir, prose, "host.exited-before-socket", sid=sess.sid, name=sess.name,
+                                       code=proc.returncode)
+                    # The ring row is filed HERE, not through problem_row's log= (the post-merge census of the env-pick door,
+                    # 2026-09-20): `said` derives from the host process, spawned with the launch's credential-shaped names,
+                    # so the census reads this row as env-tainted, and a value-tainted row filed problem=True owes a ring
+                    # text bounded by a module-level format (HOST_REFUSED_RING: the name and the reason cut to their budgets,
+                    # a cut marked). problem_row's own log road rings the whole prose and keeps a plainer-callable fallback
+                    # that can declare no problem=, an undeclared road to the census; without log= it files the ledger row
+                    # and returns the line, which this call writes to the kernel log whole (the ;; problem-row tail intact)
+                    # while the ring shows the bounded text. The deadline road below files its row the same way.
+                    self._log(line, problem=True, ring_text=host_refused_ring_text(sess.name, said))
                     self._record_refused_launch_position(sess)
                     raise CLIConnectionErrorLike("the session host " + said)
                 if time.time() > deadline:
@@ -14172,8 +14218,11 @@ class SdkBackend:
                     said = "did not serve its socket within %.0f s; it was ended; see hosts/%s/host.log%s" % (
                         ht.SOCKET_WAIT_S, sess.sid, (": " + reason) if reason else "")
                     self._file_refused_launch_context(sess, mark)
-                    problem_row(self.state_dir, "the session host for %s %s" % (sess.name, said), "host.never-served-socket",
-                                sid=sess.sid, name=sess.name, log=self._log, waitS=ht.SOCKET_WAIT_S)
+                    prose = "the session host for %s %s" % (sess.name, said)
+                    line = problem_row(self.state_dir, prose, "host.never-served-socket", sid=sess.sid, name=sess.name,
+                                       waitS=ht.SOCKET_WAIT_S)
+                    self._log(line, problem=True, ring_text=host_refused_ring_text(sess.name, said))   # bounded ring text, the
+                    #   ledger and the log line whole: the exited road above says why
                     self._record_refused_launch_position(sess)
                     raise CLIConnectionErrorLike("the session host " + said)
                 await asyncio.sleep(0.05)
