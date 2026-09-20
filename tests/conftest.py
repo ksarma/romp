@@ -891,7 +891,9 @@ def _require_served_test_ran(item, rep) -> None:
 # the one process serially, so nothing depends on which test ran last or on which spelling an edit used.
 # 2026-09-20: the guard before this was a five-name list of unittest spellings inside the module, which
 # pytest.mark.skipif and a module-level pytest.importorskip passed, and which a module-level skip removed from the run
-# entirely (the guard never ran). Proved by execution in tests/test_ci_sdk_pin.py's NeverSkips.
+# entirely (the guard never ran). Proved by execution in tests/test_ci_sdk_pin.py's NeverSkips. What a report cannot
+# show is a test that was never collected (renamed off the test_ prefix, deleted, fenced behind an if): it files
+# nothing to flip, so NeverSkips also pins by name, in process, that the one test the belt exists for is collected.
 _NEVER_SKIP_FILES = ("test_ci_sdk_pin.py",)
 
 

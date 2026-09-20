@@ -53,7 +53,12 @@ This module holds four things, and it never skips: a pin that skips reports gree
    unittest.skipIf, self.skipTest, SkipTest in setUpClass, an xfail) reds on each; one whose module level runs
    pytest.importorskip reds as a collection error; a plain-named twin of the first keeps skipping. Until 2026-09-20 the
    guard was a five-name list of unittest spellings read from this file's AST, which pytest.mark.skipif passed, and
-   which a module-level importorskip removed from the run along with the rest of the module.
+   which a module-level importorskip removed from the run along with the rest of the module. What a report cannot
+   show is a test that was never collected: renamed off the test_ prefix, deleted, or fenced behind an if, it reports
+   nothing to flip and the module reads green with the version equality never checked (20 passed, exit 0, in CI's
+   shape on a venv without the SDK, with InstalledVersion's method renamed). NeverSkips' census case closes that road
+   for the one test the belt exists for: unittest's loader, which is pytest's collection of a TestCase, must find
+   InstalledVersion's single test under its name.
 
 Hermetic: the run block executes in a scratch directory with its own copy of the constant's line, never at the repo
 root, and its `python` is a shim that records its arguments; no network, no pip.
@@ -355,7 +360,11 @@ class NeverSkips(unittest.TestCase):
     (two the old five-name list never covered, pytest.mark.skipif and an xfail; three it did) and every one is red,
     each naming the belt and quoting its reason; the same content under a plain name skips as pytest always let it;
     a scratch file of this name whose module level runs pytest.importorskip, which collects no items, is a collection
-    error and the run stops red. Synthetic files only; no SDK, no network."""
+    error and the run stops red. Synthetic files only; no SDK, no network. The census case is in-process: the belt
+    reads reports, and a test that is never collected files none, so the one test the belt exists for is pinned by
+    name against unittest's loader, the collection pytest performs on a TestCase."""
+    INSTALLED_VERSION_TEST = "test_the_installed_sdk_is_the_pin_where_it_imports_and_the_pin_is_well_formed_where_it_does_not"
+
     def setUp(self):
         self.d = tempfile.mkdtemp(prefix="never-skips-")
         self.addCleanup(shutil.rmtree, self.d, ignore_errors=True)
@@ -399,6 +408,14 @@ class NeverSkips(unittest.TestCase):
         self.assertEqual(rc, 5, "no tests collected, nothing red: the belt reaches only the listed file: " + out[-3000:])
         self.assertIn("1 skipped", out, out[-3000:])
         self.assertNotIn("never-skips:", out, "the belt did not fire: " + out[-3000:])   # the colon: the scratch dir is named never-skips-
+
+    def test_the_test_the_belt_exists_for_is_collected_under_its_name(self):
+        # the belt flips skipped REPORTS; a test that is never collected (renamed off the test_ prefix, deleted, fenced
+        # behind an if) reports nothing, and the module read 20 passed, exit 0, in CI's shape on a venv without the SDK
+        # with this method renamed (2026-09-20). unittest's loader over the class is the collection pytest performs on
+        # a TestCase: exactly one test, under this name.
+        self.assertEqual(unittest.defaultTestLoader.getTestCaseNames(InstalledVersion), [self.INSTALLED_VERSION_TEST],
+                         "InstalledVersion's test is not collected under its name: the pin the belt guards is not in the run")
 
 
 if __name__ == "__main__":
