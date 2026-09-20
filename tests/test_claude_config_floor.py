@@ -84,7 +84,7 @@ class ClaudeConfigFloor(unittest.TestCase):
         Claude at a custom root) runs only this module's behavioural checks, which pass only if
         conftest's floor replaced that value rather than defaulting to it."""
         env = dict(os.environ, CLAUDE_CONFIG_DIR=os.path.join(tempfile.gettempdir(), "synthetic-claude-root-not-a-floor"))
-        r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
+        r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "no:anyio",
                             os.path.join(HERE, "test_claude_config_floor.py") + "::ClaudeConfigFloor::test_the_floor_holds_inside_a_test",
                             os.path.join(HERE, "test_claude_config_floor.py") + "::ClaudeConfigFloor::test_a_module_loaded_under_the_floor_resolves_its_projects_root_inside_it"],
                            env=env, capture_output=True, text=True, timeout=180, cwd=ROOT)
@@ -125,7 +125,7 @@ class ClaudeConfigFloor(unittest.TestCase):
                 env.pop(var, None)
             else:
                 env[var] = value
-        r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "tests.conftest",
+        r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "no:anyio", "-p", "tests.conftest",
                             *extra, os.path.join(case, "test_saved_location.py")],
                            env=env, capture_output=True, text=True, timeout=180, cwd=ROOT)
         self.assertEqual(r.returncode, 0, r.stdout[-800:] + r.stderr[-400:])

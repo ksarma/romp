@@ -62,7 +62,7 @@ class ServedTestsRequire(unittest.TestCase):
         env = {k: v for k, v in os.environ.items() if k != "ROMP_SERVED_TESTS_REQUIRE"}
         if require:
             env["ROMP_SERVED_TESTS_REQUIRE"] = "1"
-        p = subprocess.run([sys.executable, "-m", "pytest", "-p", "tests.conftest", "-p", "no:cacheprovider", "-q", "-rs",
+        p = subprocess.run([sys.executable, "-m", "pytest", "-p", "tests.conftest", "-p", "no:cacheprovider", "-p", "no:anyio", "-q", "-rs",
                             os.path.join(self.d, "test_fake_served.py"), os.path.join(self.d, "test_fake_plain.py")],
                            cwd=REPO, env=env, capture_output=True, text=True, timeout=240)
         return p.returncode, p.stdout + p.stderr

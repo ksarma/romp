@@ -61,18 +61,23 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   install missed the interpreter on PATH. The step pins the SDK alone: its
   dependency closure resolves fresh on every run (26 packages on 2026-09-20, the
   3.12 cell of run 35518107329), so the pin does not catch a bad transitive
-  release, and one of those packages, anyio, ships a pytest plugin that every cell
-  would auto-load across the whole suite, which the "Run pytest" step blocks with
-  `-p no:anyio` so a cell's plugin set stays the box's default run's (the step's
-  comment in `ci.yml` has the reasons and the measurement). To execute the gated
+  release, and one of those packages, anyio, ships a pytest plugin that every
+  pytest process a cell runs would auto-load, which both pytest lines in `ci.yml`
+  (the "Run pytest" step and the extension job's served-page step) and every
+  pytest child the suite spawns from a test block with `-p no:anyio`, so no pytest
+  process a cell runs loads a plugin the box's default run does not (the step's
+  comment in `ci.yml` has the reasons and the measurement; `tests/test_ci_sdk_pin.py`
+  holds the flag on both populations, the workflow's lines and the launchers under
+  `tests/`). The two plugin sets are not equal: the box's default run loads
+  pytest-xdist's two plugins, which no cell installs. To execute the gated
   tests from a plain venv, put romp's SDK venv on the path:
   `PYTHONPATH=~/.local/state/romp/sdkvenv/lib/python3.12/site-packages python3 -m
   pytest tests/test_sdk_backend.py -q -p no:anyio` (the venv `bin/romp-sdk-setup`
   creates, at the version the same constant names; match the python version to
   it). The flag is there because this recipe is the one box road that WOULD load
   the plugin: `PYTHONPATH` is on `sys.path` before pytest discovers plugins, so
-  without it the header reads `anyio` beside `timeout` and the run's plugin set
-  is not CI's.
+  without it the header reads `anyio` beside `timeout` and the run loads a plugin
+  that neither the box's default run nor any pytest process a cell runs does.
   Under pytest-xdist (`python3 -m pytest tests/ -n 4`) two import-time effects of
   `tests/test_host_transport.py` decide what a red means. It puts that same SDK venv
   on `sys.path` at import (the kernel's own idiom), and every worker imports every

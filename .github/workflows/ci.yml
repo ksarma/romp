@@ -146,15 +146,23 @@ jobs:
         # the box's default pytest run never loads it (romp's SDK lives in the venv bin/romp-sdk-setup builds,
         # whose site joins sys.path at tests/test_host_transport.py's import, after plugin autoload, and the
         # box venvs carry no anyio; the one box road that would load it, tests/README.md's PYTHONPATH recipe,
-        # which puts that site on the path before pytest starts, passes the same flag), so the cells' plugin
-        # set equals the box's; nothing under tests/ is marked anyio or
-        # imports the one thing the plugin serves, the SDK's own pytest-marked conformance suite
-        # claude_agent_sdk.testing, so the plugin does no work here; and blocked, a bad anyio release cannot
-        # fail every cell at pytest startup before a test runs, it reds the SDK-importing tests with the
-        # import in the traceback. Measured before the block, the two gated modules on a 3.12 venv with the
-        # pinned SDK, single process: 653 passed, 1 skipped, 0 warnings with the plugin (header: timeout,
-        # anyio) and the same counts without it (header: timeout). A test that imports the conformance
-        # suite lifts the block, and says why.
+        # which puts that site on the path before pytest starts, passes the same flag), so no pytest process
+        # a cell runs loads a plugin the box's default run does not: the flag is on both of this file's pytest
+        # lines and on every pytest child the suite spawns in the cell's interpreter (tests/test_ci_sdk_pin.py
+        # holds both populations, this file's by its population check and the children's by its launcher
+        # census). The two plugin sets are not equal, and this comment does not say they are: the box's
+        # default run loads pytest-xdist's two plugins, which no cell installs. Nothing under tests/ is marked
+        # anyio or imports the one thing the plugin serves, the SDK's own pytest-marked conformance suite
+        # claude_agent_sdk.testing, so the plugin does no work here; and blocked in every pytest process a
+        # cell runs, a bad anyio pytest plugin cannot fail a run at pytest startup before a test runs.
+        # Unblocked in a child it did: a synthetic broken anyio/pytest_plugin.py in a CI-shaped venv red tests
+        # in each of the six modules whose pytest children lacked the flag, none of which imports the SDK
+        # (2026-09-20, before the children gained it). A bad anyio itself, not its plugin, still surfaces
+        # where anyio is imported: this step's own `python -c "import claude_agent_sdk"` below, with the
+        # import in the traceback, or the SDK-using tests at run time. Measured before the block, the two
+        # gated modules on a 3.12 venv with the pinned SDK, single process: 653 passed, 1 skipped, 0 warnings
+        # with the plugin (header: timeout, anyio) and the same counts without it (header: timeout). A test
+        # that imports the conformance suite lifts the block, and says why.
         # The step refuses an empty, malformed or duplicated constant rather than installing the unpinned
         # latest, and it carries no continue-on-error: the SDK requires cryptography (through mcp's
         # pyjwt[crypto]), so a cryptography wheel lagging an interpreter fails THIS step, and that must be the
@@ -225,9 +233,10 @@ jobs:
         # waits on an Event, so it can never itself consume a patched sleep. --durations names the
         # slowest tests on every run so a creeping one is visible before it stalls.
         # -p no:anyio: the SDK step's closure carries anyio, whose pytest plugin would otherwise
-        # auto-load here and nowhere else; the SDK step's comment states the decision and its
-        # measurement, and tests/test_ci_sdk_pin.py's population check holds the flag on every pytest
-        # invocation in this file.
+        # auto-load in this process and in every pytest child the suite spawns in this interpreter
+        # (the launchers under tests/ pass the same flag); the SDK step's comment states the decision
+        # and its measurement, and tests/test_ci_sdk_pin.py holds the flag on every pytest invocation
+        # in this file (its population check) and on every launcher under tests/ (its launcher census).
         run: python -m pytest -q -p no:anyio --durations=10 --timeout=600 --timeout-method=thread
 
   shell:

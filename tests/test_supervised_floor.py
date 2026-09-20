@@ -27,7 +27,7 @@ class SupervisedFloor(unittest.TestCase):
         variable set runs only this module's behavioural check, which passes only if conftest's floor did."""
         import subprocess, sys
         env = dict(os.environ, ROMP_SUPERVISED="1")
-        r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
+        r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "no:anyio",
                             os.path.join(HERE, "test_supervised_floor.py") + "::SupervisedFloor::test_the_floor_holds_inside_a_test"],
                            env=env, capture_output=True, text=True, timeout=120, cwd=os.path.dirname(HERE))
         self.assertEqual(r.returncode, 0, r.stdout[-800:] + r.stderr[-400:])

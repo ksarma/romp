@@ -8,7 +8,7 @@ the hosted sessions was the only place they ran. Now the Python job's "Install t
 repo's one declaration of the version the host's private imports were verified against (bin/romp-sdk-setup reads the
 same line with the same sed). The number appears nowhere in the workflow.
 
-This module holds four things, and it never skips: a pin that skips reports green having checked nothing.
+This module holds five things, and it never skips: a pin that skips reports green having checked nothing.
 1. Source pins on the step (no YAML library in the test deps, as tests/test_ci_bats_bound.py): it sits between
    "Install cryptography" and "Run pytest", carries no continue-on-error (the SDK requires cryptography through mcp's
    pyjwt[crypto]; a lagging cryptography wheel must red the cell, not skip 48 tests), carries no `if:` (the 3.14t cell
@@ -28,7 +28,8 @@ This module holds four things, and it never skips: a pin that skips reports gree
    step (the flag; listed for the switch, since its job installs no SDK), are asserted present, so an empty read is
    red. The flag has no list: the constant pins the SDK alone, its dependency closure resolves fresh on every run (26
    packages on 2026-09-20, the 3.12 cell of run 35518107329), and one of them, anyio, registers a pytest plugin that
-   every cell would otherwise auto-load across the whole suite, which the box's default run never does and
+   every pytest process a cell runs would otherwise auto-load, the step's own process and every pytest child the
+   suite spawns in the same interpreter (item 5 holds the flag on those), which the box's default run never does and
    tests/README.md's PYTHONPATH recipe would, so the recipe passes the same flag (the SDK step's comment states the
    decision, why, and the measurement behind it); pytest accepts the flag where anyio is absent, so an invocation
    whose interpreter has no anyio today (the served-page step: pip, pytest, pytest-timeout, cryptography) passes it
@@ -85,10 +86,33 @@ This module holds four things, and it never skips: a pin that skips reports gree
    shape on a venv without the SDK, with InstalledVersion's method renamed). NeverSkips' census case closes that road
    for the one test the belt exists for: unittest's loader, which is pytest's collection of a TestCase, must find
    InstalledVersion's single test under its name.
+5. The launcher census (ChildPytestLaunchers; round 3's ruling, 2026-09-20). The workflow's flag blocks the plugin in
+   the step's own process; a pytest child a test spawns is a new pytest process in the same interpreter, where the SDK
+   step installed anyio, and without the flag it auto-loads the plugin (at round 3's head one of nine launchers passed
+   it, while this docstring, ci.yml and tests/README.md said the cells' plugin set was the box's). The rule: every argv
+   under tests/ that runs pytest passes -p no:anyio or is in LAUNCHERS_LISTED with a reason (empty: pytest accepts the
+   flag where anyio is absent, so no launcher has had a reason to lack it), and the population is derived from the
+   modules' syntax by child_pytest_launchers, keyed on the argv PROPERTY and not a spelling: a list or tuple literal,
+   wherever it is built (in the call, in a helper that passes it on, in a variable extended later), whose command is
+   pytest (`-m pytest` after any interpreter expression or as the first two elements, `-mpytest` as one token, pytest
+   or py.test by name or path as argv[0]). The flag check keys on the argv's constant elements (`-p` then `no:anyio`,
+   or `-pno:anyio`), so a flag carried by a variable reads as absent, the safe side, and the message says so. The
+   modules known to spawn pytest are asserted present, so an empty read is red, and there is no count to keep; the
+   derivation case prints the listing (python -m pytest tests/test_ci_sdk_pin.py -q -p no:cacheprovider -p no:anyio
+   -k ChildPytestLaunchers -rP). The census reads argv literals, and that is its residual: a pytest command inside a
+   string handed to subprocess, os.system or shlex.split, or to a shell's -c, is `unparsed` and red until it is spelled
+   as an argv, and a module that does not parse under the running interpreter is red the same way; an argv assembled
+   one element at a time (append calls) is outside the read. What the flag buys, in every pytest process a cell runs:
+   anyio's plugin is absent from that process's plugin set as it is from the box's default run's. The sets are not
+   equal, and nothing here says they are: the box's default run loads pytest-xdist's two plugins, which no cell
+   installs. Verified by execution before this landed: a synthetic broken anyio/pytest_plugin.py in a CI-shaped venv
+   (the SDK pinned, the parent under the flag) red tests in each of the six modules that spawned unflagged children,
+   none of which imports the SDK, and the same six were green with the flag on every launcher (2026-09-20).
 
 Hermetic: the run block executes in a scratch directory with its own copy of the constant's line, never at the repo
 root, and its `python` is a shim that records its arguments; no network, no pip.
 """
+import ast
 import glob
 import importlib.metadata
 import importlib.util
@@ -372,9 +396,9 @@ class NeverSkips(unittest.TestCase):
     a scratch file of this name whose module level runs pytest.importorskip, which collects no items, is a collection
     error and the run stops red. Synthetic files only; no SDK, no network. The census case is in-process: the belt
     reads reports, and a test that is never collected files none, so the one test the belt exists for is pinned by
-    name against unittest's loader, the collection pytest performs on a TestCase. The children pass -p no:anyio as the
-    workflow's pytest step does, so in a cell they run with the step's plugin set rather than the interpreter's default
-    (pytest accepts the flag where anyio is absent, as on the box venvs)."""
+    name against unittest's loader, the collection pytest performs on a TestCase. The children pass -p no:anyio, as
+    every pytest the suite spawns does (ChildPytestLaunchers holds it on each launcher), so in a cell no child loads a
+    plugin the box's default run does not (pytest accepts the flag where anyio is absent, as on the box venvs)."""
     INSTALLED_VERSION_TEST = "test_the_installed_sdk_is_the_pin_where_it_imports_and_the_pin_is_well_formed_where_it_does_not"
 
     def setUp(self):
@@ -1038,6 +1062,339 @@ class PopulationCheckReds(unittest.TestCase):
         # a pip line that names the package is not a mention the parser owes: the live file has two
         pip = "      - name: Pip (pytest)\n        run: python -m pip install --upgrade pip pytest pytest-timeout\n"
         self.assertEqual(self._new_bad(self._with_step_in_shell_job(pip)[0]), [])
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# The launcher census (round 3's ruling, 2026-09-20; item 5 of the module docstring): every pytest the suite itself
+# spawns passes -p no:anyio. The workflow's flag blocks anyio's plugin in the step's own process; a pytest child a test
+# spawns is a new pytest process in the same interpreter, where the SDK step installed anyio, and without the flag it
+# auto-loads the plugin. At round 3's head one of nine launchers passed the flag, and this module, ci.yml and
+# tests/README.md said the cells' plugin set was the box's. The rule now: every argv under tests/ that runs pytest
+# passes the flag or is in LAUNCHERS_LISTED with a reason. The population is derived from the modules' syntax by
+# child_pytest_launchers (its docstring and _launchers_in's are the rule); the derivation case prints the listing:
+#   python -m pytest tests/test_ci_sdk_pin.py -q -p no:cacheprovider -p no:anyio -k ChildPytestLaunchers -rP
+# ---------------------------------------------------------------------------------------------------------------------
+PYTEST_TEXT_RE = re.compile(r"\bpytest\b|py\.test")           # a module whose text spells neither can name pytest in no argv
+# a pytest command inside ONE string: `python -m pytest` (any interpreter spelling), or pytest / py.test by name or path,
+# at command position (the start of the string, or after whitespace, `;`, `&`, `|` or `(`)
+PYTEST_IN_STRING_RE = re.compile(r"(?:^|[\s;&|(])(?:\S*python[0-9.]*\s+-m\s*pytest|(?:\S*/)?(?:pytest|py\.test))(?=\s|$)")
+SUBPROCESS_FUNCS = ("run", "Popen", "call", "check_call", "check_output")
+SHELL_NAMES = ("sh", "bash", "dash", "zsh", "ksh")                 # an argv headed by one of these runs its -c string
+FLAG_ARGV = ("-p", "no:anyio")
+FLAG_ONE_TOKEN = "-pno:anyio"
+
+# Launchers that lack the flag, each with the reason that makes that right, keyed (file relative to tests/, enclosing
+# function name). EMPTY: pytest accepts the flag where anyio is absent, so no launcher has had a reason to lack it. An
+# entry must name a live launcher that lacks the flag (ChildPytestLaunchers' stale-entry case), so the table cannot
+# outlive its subject.
+LAUNCHERS_LISTED = {}
+
+
+def _str(node):
+    return node.value if isinstance(node, ast.Constant) and isinstance(node.value, str) else None
+
+
+def _text(node):
+    """A str constant's text, or an f-string's literal parts joined with its expressions dropped; None for anything else."""
+    if isinstance(node, ast.Constant):
+        return _str(node)
+    if isinstance(node, ast.JoinedStr):
+        return "".join(_str(v) or "" for v in node.values)
+    return None
+
+
+def _argv_head(elts):
+    """How an argv literal names pytest, or None. The property, not a spelling: `-m pytest` after ANY interpreter
+    expression (sys.executable, a name, a call, a starred tail), `-m pytest` as the first two elements (the interpreter
+    joins the argv elsewhere, an extend), `-mpytest` as one token, or pytest / py.test by name or path as argv[0]."""
+    c = [_str(e) for e in elts]
+    if len(c) >= 3 and c[1] == "-m" and c[2] == "pytest":
+        return "<interpreter> -m pytest"
+    if len(c) >= 2 and c[1] == "-mpytest":
+        return "<interpreter> -mpytest"
+    if len(c) >= 2 and c[0] == "-m" and c[1] == "pytest":
+        return "-m pytest (the interpreter joins the argv elsewhere)"
+    if c and c[0] is not None and os.path.basename(c[0]) in ("pytest", "py.test"):
+        return "pytest by name or path"
+    return None
+
+
+def _passes_flag(elts):
+    """Keyed on the argv's CONSTANT elements: `-p` followed by `no:anyio`, or the one token `-pno:anyio`. A flag that
+    arrives through a variable or a starred tail is not read and reads as absent: the safe side, and the message says so."""
+    c = [_str(e) for e in elts]
+    return any((a, b) == FLAG_ARGV for a, b in zip(c, c[1:])) or FLAG_ONE_TOKEN in c
+
+
+def _launchers_in(src, filename):
+    """The launchers, and the pytest commands the census cannot read as an argv, in one module's source. Each is a dict:
+    file (the basename; child_pytest_launchers rewrites it relative to tests/), line, func (the enclosing function, else
+    '<module>'), kind (_argv_head's answer, or the call that got a string), argv (the constant elements in order, None
+    for an expression), flag (_passes_flag), unparsed (None, or why the command was not read as an argv).
+    Read: every list or tuple literal in the module whose head names pytest (_argv_head), wherever it is built: in the
+    subprocess call, in a helper that passes it on, in a variable extended later, so a helper-built argv is counted.
+    Unparsed, and red in ChildPytestLaunchers until spelled as an argv: a string handed to subprocess.run, Popen, call,
+    check_call or check_output (by the module's own names for them), to os.system or os.popen, or through shlex.split,
+    whose text spells a pytest command (PYTEST_IN_STRING_RE); and an argv handed to those calls whose head is not
+    pytest but carries a pytest command inside one element: any element when the head is a shell (SHELL_NAMES) run with
+    -c, else a multi-word element (a lone `pytest` element is a package name on a pip line, or an argument). A module
+    that does not parse is one unparsed row. A list or tuple on the right of an `in` test is a set of names, not an
+    argv, and is not read. Not read, stated as the residual: an argv assembled one element at a time (append calls); a
+    string that spells pytest anywhere else (the suite's synthetic tool-call fixtures spell `uv run pytest -q` by the
+    dozen) is data, not a command."""
+    base = os.path.basename(filename)
+    try:
+        tree = ast.parse(src, filename=filename)
+    except SyntaxError as e:
+        return [{"file": base, "line": e.lineno or 1, "func": "<module>", "kind": "module", "argv": [], "flag": False,
+                 "unparsed": "the module does not parse under this interpreter (%s), so nothing in it was read" % e.msg}]
+    parents = {}
+    membership = set()          # the right operands of `x in (...)` / `x not in [...]`: sets of names, never an argv
+    for parent in ast.walk(tree):
+        for child in ast.iter_child_nodes(parent):
+            parents[child] = parent
+        if isinstance(parent, ast.Compare):
+            membership.update(id(c) for c, op in zip(parent.comparators, parent.ops) if isinstance(op, (ast.In, ast.NotIn)))
+
+    def func_of(node):
+        while node in parents:
+            node = parents[node]
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                return node.name
+        return "<module>"
+
+    sp_mods, os_mods, shlex_mods, sp_names = {"subprocess"}, {"os"}, {"shlex"}, set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for a in node.names:
+                {"subprocess": sp_mods, "os": os_mods, "shlex": shlex_mods}.get(a.name, set()).add(a.asname or a.name)
+        elif isinstance(node, ast.ImportFrom) and node.module == "subprocess":
+            sp_names.update(a.asname or a.name for a in node.names if a.name in SUBPROCESS_FUNCS)
+
+    def call_kind(call):
+        f = call.func
+        if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name):
+            if f.value.id in sp_mods and f.attr in SUBPROCESS_FUNCS:
+                return "subprocess." + f.attr
+            if f.value.id in os_mods and f.attr in ("system", "popen"):
+                return "os." + f.attr
+        if isinstance(f, ast.Name) and f.id in sp_names:
+            return "subprocess." + f.id
+        return None
+
+    def is_shlex_split(node):
+        f = node.func if isinstance(node, ast.Call) else None
+        return isinstance(f, ast.Attribute) and f.attr == "split" and isinstance(f.value, ast.Name) and f.value.id in shlex_mods
+
+    out = []
+
+    def row(node, kind, elts, unparsed=None):
+        out.append({"file": base, "line": node.lineno, "func": func_of(node), "kind": kind, "argv": [_str(e) for e in elts],
+                    "flag": _passes_flag(elts), "unparsed": unparsed})
+
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.List, ast.Tuple)):
+            kind = _argv_head(node.elts) if id(node) not in membership else None
+            if kind:
+                row(node, kind, node.elts)
+        elif isinstance(node, ast.Call):
+            what = call_kind(node)
+            if what is None:
+                continue
+            arg = node.args[0] if node.args else next((k.value for k in node.keywords if k.arg == "args"), None)
+            if arg is None:
+                continue
+            if isinstance(arg, (ast.List, ast.Tuple)):
+                if _argv_head(arg.elts) is None:
+                    c = [_str(e) for e in arg.elts]
+                    shell = bool(c) and c[0] is not None and os.path.basename(c[0]) in SHELL_NAMES and "-c" in c
+                    hit = [t for t in c if t and PYTEST_IN_STRING_RE.search(t) and (shell or re.search(r"\s", t))]
+                    if hit:
+                        row(node, what, [], "a pytest command inside one element of the argv (%r), not read as the command" % hit[0])
+            elif is_shlex_split(arg):
+                text = _text(arg.args[0]) if arg.args else None
+                if text is not None and PYTEST_IN_STRING_RE.search(text):
+                    row(node, what, [], "a pytest command in a shlex.split string, not read as an argv")
+            else:
+                text = _text(arg)
+                if text is not None and PYTEST_IN_STRING_RE.search(text):
+                    row(node, what, [], "a pytest command in a shell string, not read as an argv")
+    return out
+
+
+def child_pytest_launchers(directory=None):
+    """Every launcher and unparsed pytest command under tests/ (every *.py below `directory`, subdirectories included,
+    __pycache__ skipped), by _launchers_in; `file` is the path relative to the directory. A module whose text spells
+    neither pytest nor py.test is skipped without a parse: it can name pytest in no argv and no string."""
+    directory = HERE if directory is None else directory
+    out = []
+    for dirpath, dirnames, filenames in os.walk(directory):
+        dirnames[:] = sorted(d for d in dirnames if d != "__pycache__")
+        for name in sorted(filenames):
+            if not name.endswith(".py"):
+                continue
+            path = os.path.join(dirpath, name)
+            with open(path, encoding="utf-8") as f:
+                src = f.read()
+            if not PYTEST_TEXT_RE.search(src):
+                continue
+            for r in _launchers_in(src, path):
+                r["file"] = os.path.relpath(path, directory)
+                out.append(r)
+    return out
+
+
+def _describe_launcher(r):
+    where = "tests/%s:%d (%s)" % (r["file"], r["line"], r["func"])
+    if r["unparsed"]:
+        return "%s: %s: %s" % (where, r["kind"], r["unparsed"])
+    return "%s: %s %r%s" % (where, r["kind"], r["argv"], "" if r["flag"] else
+                            "  lacks -p no:anyio (keyed on the argv's constant elements: `-p` then `no:anyio`, or `-pno:anyio`)")
+
+
+class ChildPytestLaunchers(unittest.TestCase):
+    """Every pytest the suite itself spawns passes -p no:anyio, held on the population of launchers under tests/ (item
+    5 of the module docstring). A child pytest is a new pytest process in the cell's interpreter, where the SDK step
+    installed anyio; the workflow's flag reaches the step's own process alone, so a launcher without the flag auto-loads
+    the plugin there (at round 3's head eight of nine did, and a synthetic broken anyio/pytest_plugin.py in a CI-shaped
+    venv red tests in each of the six modules that spawned them, none of which imports the SDK; the same six were green
+    with the flag on every launcher, 2026-09-20). The population is derived by child_pytest_launchers, keyed on the argv
+    property; the flag check keys on the argv's constant elements and its message says so; a launcher without the flag
+    is named with its file, line and enclosing function unless LAUNCHERS_LISTED carries it with a reason, and a listed
+    entry whose key names no launcher, or names one that passes the flag, is stale and red. The modules known to spawn
+    pytest are asserted present so an empty read is red; there is no count to keep. Red before the eight launchers
+    gained the flag: the flag case named them (2026-09-20)."""
+    KNOWN_MODULES = {"test_ci_sdk_pin.py", "test_claude_config_floor.py", "test_env_value_redaction.py",
+                     "test_key_source_floor.py", "test_served_tests_require.py", "test_session_host.py",
+                     "test_supervised_floor.py", "test_tempdir_hygiene.py"}
+    _found = None
+
+    @classmethod
+    def found(cls):
+        if cls._found is None:      # once per process: every module under tests/ that spells pytest is parsed
+            cls._found = child_pytest_launchers()
+        return cls._found
+
+    def test_the_population_is_derived_and_holds_every_module_known_to_spawn_pytest(self):
+        found = self.found()
+        self.assertTrue(found, "the census read no launcher under tests/: the walk or its prefilter broke")
+        modules = {r["file"] for r in found if not r["unparsed"]}
+        self.assertTrue(self.KNOWN_MODULES <= modules, "a module known to spawn pytest was not read by the census (keyed on the "
+                        "argv property: a list or tuple literal whose command is pytest): %r" % sorted(self.KNOWN_MODULES - modules))
+        print("child pytest launchers under tests/: %d in %d modules" % (len(found), len(modules)))
+        for r in found:
+            print("  " + _describe_launcher(r))
+
+    def test_every_launcher_passes_the_flag_or_is_listed_and_no_pytest_command_is_unparsed(self):
+        bad = [r for r in self.found() if r["unparsed"] or (not r["flag"] and (r["file"], r["func"]) not in LAUNCHERS_LISTED)]
+        self.assertEqual([_describe_launcher(r) for r in bad], [], "pytest children the suite spawns without -p no:anyio (in a "
+                         "cell each auto-loads anyio's pytest plugin), or pytest commands the census could not read as an argv:\n  "
+                         + "\n  ".join(_describe_launcher(r) for r in bad))
+
+    @staticmethod
+    def _stale(table, found):
+        live = {}
+        for r in found:
+            if not r["unparsed"]:
+                live.setdefault((r["file"], r["func"]), []).append(r["flag"])
+        return sorted("%s / %s: %s" % (f, fn, "names no launcher" if (f, fn) not in live else "every launcher there passes the flag; drop the entry")
+                      for f, fn in table if (f, fn) not in live or all(live[(f, fn)]))
+
+    def test_a_listed_launcher_must_be_live_and_lack_the_flag(self):
+        found = self.found()
+        self.assertEqual(self._stale(LAUNCHERS_LISTED, found), [], "LAUNCHERS_LISTED carries an entry whose key (file, function) "
+                         "names no launcher, or names launchers that all pass the flag")
+        # the check against what it refuses: an entry that names nothing, and one that names a flagged launcher
+        some = next(r for r in found if r["flag"] and not r["unparsed"])
+        table = {("test_nowhere_synthetic.py", "nothing"): "synthetic stale entry", (some["file"], some["func"]): "synthetic entry on a flagged launcher"}
+        self.assertEqual(self._stale(table, found), sorted([
+            "test_nowhere_synthetic.py / nothing: names no launcher",
+            "%s / %s: every launcher there passes the flag; drop the entry" % (some["file"], some["func"])]))
+
+    def test_a_launcher_is_read_by_the_argv_property_not_by_its_spelling(self):
+        cases = (
+            ("sys.executable, the flag as two elements", 'import subprocess, sys\nsubprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:anyio"])\n',
+             "<interpreter> -m pytest", True),
+            ("a name for the interpreter, the flag as one token", 'import subprocess\npy = "/opt/venv/bin/python3.12"\nsubprocess.run([py, "-m", "pytest", "-pno:anyio", "-q"])\n',
+             "<interpreter> -m pytest", True),
+            ("a call for the interpreter, no flag", 'import subprocess\nsubprocess.run([str(exe), "-m", "pytest", "-q"])\n', "<interpreter> -m pytest", False),
+            ("a tuple argv, a function imported by name", 'import sys\nfrom subprocess import check_output\ncheck_output((sys.executable, "-m", "pytest", "-q"))\n',
+             "<interpreter> -m pytest", False),
+            ("a starred head", 'import subprocess\nsubprocess.run([*BASE, "-m", "pytest", "-q", "-p", "no:anyio"])\n', "<interpreter> -m pytest", True),
+            ("-mpytest as one token", 'import subprocess, sys\nsubprocess.run([sys.executable, "-mpytest", "-q"])\n', "<interpreter> -mpytest", False),
+            ("the interpreter joins the argv elsewhere", 'import subprocess, sys\ncmd = [sys.executable]\ncmd.extend(["-m", "pytest", "-q"])\nsubprocess.run(cmd)\n',
+             "-m pytest (the interpreter joins the argv elsewhere)", False),
+            ("the console script by name", 'import subprocess\nsubprocess.Popen(["pytest", "-q", "-p", "no:anyio"])\n', "pytest by name or path", True),
+            ("the console script by path, py.test spelling", 'import subprocess\nsubprocess.call(["/opt/venv/bin/py.test", "-q"])\n', "pytest by name or path", False),
+            ("a helper-built argv passed on by a name", 'import subprocess, sys\ndef _run(*a):\n    argv = [sys.executable, "-m", "pytest", "-q", *a]\n    return subprocess.run(argv)\n',
+             "<interpreter> -m pytest", False),
+            ("the argv built where no subprocess call is in sight", 'import sys\nEXPECTED = [sys.executable, "-m", "pytest", "-q"]\n', "<interpreter> -m pytest", False),
+        )
+        for label, src, kind, flag in cases:
+            with self.subTest(form=label):
+                rows = _launchers_in(src, "test_synthetic_launcher.py")
+                self.assertEqual(len(rows), 1, "%s: one launcher expected, read %r" % (label, [_describe_launcher(r) for r in rows]))
+                self.assertIsNone(rows[0]["unparsed"], _describe_launcher(rows[0]))
+                self.assertEqual(rows[0]["kind"], kind, _describe_launcher(rows[0]))
+                self.assertEqual(rows[0]["flag"], flag, _describe_launcher(rows[0]))
+        rows = _launchers_in('import subprocess, sys\nclass T:\n    def _run(self, *a):\n        return subprocess.run([sys.executable, "-m", "pytest", "-q", *a])\n', "t.py")
+        self.assertEqual((rows[0]["func"], rows[0]["line"]), ("_run", 4), "the enclosing function and the argv's own line")
+        # a flag behind a variable reads as absent, the safe side, and the message says what the check keys on
+        rows = _launchers_in('import subprocess, sys\nFLAGS = ["-p", "no:anyio"]\nsubprocess.run([sys.executable, "-m", "pytest", *FLAGS])\n', "t.py")
+        self.assertEqual([r["flag"] for r in rows], [False])
+        self.assertIn("lacks -p no:anyio (keyed on the argv's constant elements", _describe_launcher(rows[0]))
+
+    def test_a_pytest_command_in_a_string_is_unparsed_and_a_string_elsewhere_is_data(self):
+        for label, src, reason in (
+                ("a shell string", 'import subprocess\nsubprocess.run("python -m pytest tests -q -p no:anyio", shell=True)\n', "a shell string"),
+                ("an f-string", 'import subprocess, sys\nsubprocess.check_call(f"{sys.executable} -m pytest tests -q", shell=True)\n', "a shell string"),
+                ("os.system", 'import os\nos.system("pytest tests/test_a.py -q")\n', "a shell string"),
+                ("os aliased, a path", 'import os as o\no.popen("/opt/venv/bin/pytest -q")\n', "a shell string"),
+                ("subprocess aliased, a shlex.split string", 'import shlex, subprocess as sp\nsp.run(shlex.split("py.test -q tests"))\n', "a shlex.split string"),
+                ("a shell -c argv", 'from subprocess import Popen\nPopen(["bash", "-c", "cd /tmp && python3 -m pytest -q"])\n', "inside one element of the argv"),
+                ("a shell -c argv, pytest alone", 'import subprocess\nsubprocess.run(["/bin/sh", "-c", "pytest"])\n', "inside one element of the argv"),
+                ("a multi-word element under another head", 'import subprocess\nsubprocess.run(["ssh", "host", "python -m pytest -q"])\n', "inside one element of the argv"),
+                ("the args keyword", 'import subprocess\nsubprocess.run(args="python3.12 -m pytest -q", shell=True)\n', "a shell string")):
+            with self.subTest(form=label):
+                rows = _launchers_in(src, "t.py")
+                self.assertEqual(len(rows), 1, "%s: one unparsed row expected, read %r" % (label, [_describe_launcher(r) for r in rows]))
+                self.assertIn(reason, rows[0]["unparsed"] or "", _describe_launcher(rows[0]))
+                self.assertIn("not read as", _describe_launcher(rows[0]))
+        # data, not commands: a string that spells pytest outside a subprocess or os call (the suite's synthetic tool-call
+        # fixtures spell `uv run pytest -q` by the dozen), a pip line, and a module that never spells pytest
+        self.assertEqual(_launchers_in('turn = {"name": "Bash", "input": {"command": "uv run pytest -q"}}\nbash("uv run pytest -q")\n'
+                                       'self._bash_turn(0, "pytest -q")\nnote = "run python -m pytest -q first"\n', "t.py"), [])
+        self.assertEqual(_launchers_in('import subprocess, sys\nsubprocess.run([sys.executable, "-m", "pip", "install", "pytest", "anyio"])\n', "t.py"), [])
+        self.assertEqual(_launchers_in('import subprocess\nsubprocess.run(["ssh", "host", "pytest"])\n', "t.py"), [], "a lone element under a non-shell head is an argument")
+        self.assertEqual(_launchers_in('import os\nname = "x"\nok = os.path.basename(name) in ("pytest", "py.test")\nbad = name not in ["pytest", "-q"]\n', "t.py"), [],
+                         "the right operand of an in test is a set of names, not an argv")
+        self.assertEqual(_launchers_in("def f():\n    return 1\n", "t.py"), [])
+        # a module the interpreter cannot parse is one unparsed row, never a silent skip
+        rows = _launchers_in("def f(:\n    pass\n", "t.py")
+        self.assertEqual([(r["kind"], r["flag"]) for r in rows], [("module", False)])
+        self.assertIn("does not parse under this interpreter", rows[0]["unparsed"])
+
+    def test_a_live_launcher_with_its_flag_removed_is_named_at_its_line(self):
+        # the census against what it refuses, on a copy of a live launcher module's text: the flag removed from one
+        # launcher's line, the copy names that launcher, at that line, as lacking the flag; the tree is untouched
+        found = [r for r in self.found() if r["flag"] and not r["unparsed"] and os.path.basename(r["file"]) in self.KNOWN_MODULES
+                 and r["file"] != os.path.basename(__file__)]
+        self.assertTrue(found, "no flagged launcher outside this module to strip")
+        target = found[0]
+        path = os.path.join(HERE, target["file"])
+        with open(path, encoding="utf-8") as f:
+            lines = f.read().splitlines(keepends=True)
+        line = lines[target["line"] - 1]
+        stripped = line.replace('"-p", "no:anyio", ', "", 1) if '"-p", "no:anyio", ' in line else line.replace(', "-p", "no:anyio"', "", 1)
+        self.assertNotEqual(stripped, line, "the flag is not spelled on the launcher's own line (%s:%d); re-anchor this case" % (target["file"], target["line"]))
+        lines[target["line"] - 1] = stripped
+        copy = _launchers_in("".join(lines), path)
+        hit = [r for r in copy if r["line"] == target["line"]]
+        self.assertEqual([(r["kind"], r["flag"], r["func"]) for r in hit], [(target["kind"], False, target["func"])], [_describe_launcher(r) for r in copy])
+        self.assertEqual(sum(1 for r in copy if not r["flag"]), 1 + sum(1 for r in self.found() if r["file"] == target["file"] and not r["flag"]))
+        self.assertIn("tests/%s:%d (%s)" % (target["file"], target["line"], target["func"]), _describe_launcher(hit[0]))
+        self.assertIn("lacks -p no:anyio", _describe_launcher(hit[0]))
+
 
 if __name__ == "__main__":
     unittest.main()

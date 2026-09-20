@@ -115,7 +115,7 @@ class Hygiene(unittest.TestCase):
 
     @unittest.skipIf(os.environ.get(MARKER_ENV), "child mode")
     def test_pytest_child_session_removes_its_dirs_and_state_root(self):
-        self._run_child([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
+        self._run_child([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "no:anyio",
                          "tests/test_tempdir_hygiene.py::Hygiene::test_mkdtemp_is_tracked_in_process"])
 
     @unittest.skipIf(os.environ.get(MARKER_ENV), "child mode")
@@ -573,7 +573,7 @@ class RunLeavesNothing(unittest.TestCase):
             "PYTEST_XDIST_WORKER", "PYTEST_XDIST_WORKER_COUNT",
             "ROMP_TESTS_SYSTEM_TMPDIR"):        # a fresh run records its own handed dir (the package setdefaults it)
             env.pop(var, None)
-        r = subprocess.run([sys.executable, "-m", "pytest", "-p", "tests.conftest", "-p", "no:cacheprovider",
+        r = subprocess.run([sys.executable, "-m", "pytest", "-p", "tests.conftest", "-p", "no:cacheprovider", "-p", "no:anyio",
                             "-q", *extra, os.path.join(case, "test_leak.py")],
                            cwd=ROOT, env=env, capture_output=True, text=True, timeout=180)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
