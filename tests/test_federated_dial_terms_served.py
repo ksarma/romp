@@ -70,15 +70,16 @@ def _free_port():
 REMOTE_DIAL_CAPS = "feedDelta"
 STAMP_FIELDS = ("gen", "newGen", "base", "rev", "through")   # what a hook copies off a frame beside its type: the gens as the kernel's strings, the revs as numbers, no content
 GEN_FIELDS = ("gen", "newGen")
+GEN_MAX = 64   # view-deltas.ts GEN_MAX: the longest gen the client reads as a stamp (the relay refuses a request line over 65,536 bytes)
 
 
 def _stamp_field(f, k):
-    """A stamp field as the client reads it: a gen (view-deltas.ts genOf) is a non-empty string holding neither '.' (the held
-    member's own separator) nor ',' (the caps term's), the kernel's boot token and counter joined by '-'; a rev (base, rev,
-    through) is a non-negative int. Anything else reads as absent, as the client reads it."""
+    """A stamp field as the client reads it: a gen (view-deltas.ts genOf) is a non-empty string of at most GEN_MAX characters
+    holding neither '.' (the held member's own separator) nor ',' (the caps term's), the kernel's boot token and counter
+    joined by '-'; a rev (base, rev, through) is a non-negative int. Anything else reads as absent, as the client reads it."""
     v = f.get(k)
     if k in GEN_FIELDS:
-        return v if isinstance(v, str) and v and "." not in v and "," not in v else None
+        return v if isinstance(v, str) and v and len(v) <= GEN_MAX and "." not in v and "," not in v else None
     return v if isinstance(v, int) and not isinstance(v, bool) and v >= 0 else None
 
 
@@ -117,7 +118,8 @@ def held_pair(frames, slot):
 def drive_pair(tc, frames, slot):
     """held_pair over a lab's recorded drive, telling "no gen key" from "a gen key the client reads as none". A hook records
     `genKey` (a bool: the frame carried a `gen` key, whatever its value; no content) beside the parsed stamp fields, and
-    _stamp_field drops a gen the client would refuse (view-deltas.ts genOf: a number, an empty string, a '.' or ','), so
+    _stamp_field drops a gen the client would refuse (view-deltas.ts genOf: a number, an empty string, a '.' or ',', one over
+    GEN_MAX characters), so
     held_pair alone reads a kernel stamping an unreadable gen exactly as one stamping none. None only when NO recorded frame
     carried the key (a kernel before the stamp: the leg's skip-and-branch case); a frame carried the key but no pair parsed
     is a failure on `tc`: the kernel stamped a gen the client reads as none, a stamped full was followed by a gen-less one
@@ -399,12 +401,17 @@ class HeldPairRule(unittest.TestCase):
         self.assertIsNone(held_pair([], "feed"))
 
     def test_the_gens_form_is_the_kernels_string_and_anything_else_reads_as_no_stamp(self):
-        # the client's genOf (view-deltas.ts): a non-empty string holding neither '.' nor ','; a number, an empty string, a bool
-        # or a string carrying either separator is no stamp, so the full leaves no pair (and the hook's record of it is dropped)
-        for bad in (7, 0, "", GEN_STAMP + ".7", GEN_STAMP + ",7", True, None):
+        # the client's genOf (view-deltas.ts): a non-empty string of at most GEN_MAX characters holding neither '.' nor ','; a
+        # number, an empty string, a bool, a string carrying either separator or one over the cap is no stamp, so the full leaves
+        # no pair (and the hook's record of it is dropped); a gen at the cap is a stamp (round 3, 2026-09-20)
+        over_cap = GEN_STAMP + "-" + "9" * (GEN_MAX - len(GEN_STAMP))
+        self.assertEqual(len(over_cap), GEN_MAX + 1)
+        for bad in (7, 0, "", GEN_STAMP + ".7", GEN_STAMP + ",7", True, None, over_cap):
             self.assertIsNone(held_pair([{"t": "feed", "gen": bad}], "feed"), repr(bad))
             self.assertIsNone(_stamp_field({"gen": bad}, "gen"), repr(bad))
         self.assertEqual(held_pair([{"t": "feed", "gen": GEN}], "feed"), (GEN, 0))
+        at_cap = over_cap[:-1]
+        self.assertEqual(held_pair([{"t": "feed", "gen": at_cap}], "feed"), (at_cap, 0), "at the cap: a stamp")
         self.assertEqual(_stamp_field({"rev": 3}, "rev"), 3)
         for bad in ("3", -1, True, None):
             self.assertIsNone(_stamp_field({"rev": bad}, "rev"), "a rev is a non-negative int: %r" % (bad,))

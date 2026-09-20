@@ -47,13 +47,24 @@ const KINDS = VIEW_DELTA_KINDS; // pinned to the kernel-produced fixture and the
 const SEP = "\u001f";
 const object = (v: any): v is Frame => !!v && typeof v === "object" && !Array.isArray(v);
 const slotOf = (s: any): Slot | null => s === "feed" || s === "bars" ? s : null;
+/** The longest gen this side reads as a stamp (2026-09-20). The kernel's form is sixteen lowercase hex characters, a
+ *  hyphen and one or more decimal digits (the design: token_hex(8) and a decimal counter), 18 characters at a one-digit
+ *  counter; the form bounds the character set and not the length, since the digits are unbounded, so a cap is needed
+ *  whatever the form check, and 64 leaves 47 digits of counter. Why a cap at all: a dial URL carries one gen per held
+ *  member (remoteDialUrl), the base holding it survives every redial (connect()'s gated reset keeps a gen-holding base),
+ *  and the kernel's HTTP server refuses a request line over 65,536 bytes with 414 (Python's http.server, which the relay
+ *  runs on), so a stamp long enough to take the request line over that would make every redial of the conn fail for
+ *  the conn's life. Over the cap a value reads as no stamp: the base holds no gen, is reset on the redial and re-served
+ *  whole, as a gen-less base is. */
+export const GEN_MAX = 64;
 /** A generation stamp as a frame carries it, or undefined for a frame that carries none. The kernel mints a gen as its
  *  boot's random token (16 hex characters) and a decimal counter joined by '-', a string that holds neither '.' (the held
  *  member's own separator: the kernel parses held:<slot>:<gen>.<rev> at its last '.') nor ',' (the caps term's), so a
- *  non-empty string free of both is a gen. Anything else (a number, an empty string, a string carrying either separator)
- *  reads as no stamp: the frame then applies as a gen-less one and the base declares nothing, never a member the kernel
- *  could not parse. Compared with === and never coerced. */
-export const genOf = (v: any): string | undefined => typeof v === "string" && v !== "" && v.indexOf(".") === -1 && v.indexOf(",") === -1 ? v : undefined;
+ *  non-empty string free of both, at most GEN_MAX characters, is a gen. Anything else (a number, an empty string, a
+ *  string carrying either separator, one over GEN_MAX) reads as no stamp: the frame then applies as a gen-less one and
+ *  the base declares nothing, never a member the kernel could not parse or a request line it would refuse. Compared
+ *  with === and never coerced. */
+export const genOf = (v: any): string | undefined => typeof v === "string" && v !== "" && v.length <= GEN_MAX && v.indexOf(".") === -1 && v.indexOf(",") === -1 ? v : undefined;
 class Unkeyable extends Error {}   // a present collection whose container the kind cannot key: the frame seeds nothing
 
 function split(value: any, kind: string): Collection {

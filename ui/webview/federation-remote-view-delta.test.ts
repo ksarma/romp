@@ -14,7 +14,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { FederationManager, REMOTE_STALE_MS, REMOTE_REDIAL_MS } from "./federation";
-import { ViewDeltas, VIEW_DELTA_KINDS } from "./view-deltas";
+import { ViewDeltas, VIEW_DELTA_KINDS, GEN_MAX } from "./view-deltas";
 
 const HOST = "TESTHOST";
 const SID_A = "11111111-2222-4333-8444-000000000701";   // "api" on TESTHOST
@@ -1108,8 +1108,10 @@ test("a bars full refused as unkeyable (judging a flat list, the pre-T278c shape
 
 // The gen's form on the bars road, the mirror of the feed file's leg: genOf is the one reader for both slots, so a value
 // off the kernel's form (a number, an empty string, a string carrying '.' or ',') seeds a base holding no gen here too.
-test("the gen's form on the bars road: a number, an empty string or a string carrying either separator reads as no stamp, so the bars full seeds a base holding no gen, its per-cycle patch applies on the base-plus-one test alone, and the redial declares nothing", async () => {
-  for (const bad of [7, 0, "", GEN_STAMP + ".7", GEN_STAMP + ",7", null, true]) {
+test("the gen's form on the bars road: a number, an empty string, a string carrying either separator or one over GEN_MAX characters reads as no stamp, so the bars full seeds a base holding no gen, its per-cycle patch applies on the base-plus-one test alone, and the redial declares nothing", async () => {
+  const overCap = GEN_STAMP + "-" + "9".repeat(GEN_MAX - GEN_STAMP.length);   // GEN_MAX + 1 characters, all in the kernel's alphabet
+  assert.equal(overCap.length, GEN_MAX + 1);
+  for (const bad of [7, 0, "", GEN_STAMP + ".7", GEN_STAMP + ",7", null, true, overCap]) {
     await withManager("timeline", ({ fm, emitted }) => {
       seedLocalTimeline(fm);
       fm.openRemote(HOST, true);
@@ -1230,6 +1232,26 @@ test("a stamped bars patch whose gen is not the base's recovers as a base-rev mi
     const again = armedRedials(() => ws2.onclose!({ code: 1006, wasClean: false }));
     again[0]();
     assert.equal(qOf(last(FakeWS.made).url).get("caps"), "feedDelta", "nothing declared for a base holding no gen");
+    fm.conns.get(HOST).closed = true;
+  });
+});
+
+// The length bound on the bars road (round 3, 2026-09-20), the mirror of the feed file's: genOf is the one reader for both
+// slots, so a gen at GEN_MAX is a stamp here too (the pair holds and the redial declares it) and one over reads as none
+// (the form test's list).
+test("a gen of exactly GEN_MAX characters is a stamp on the bars road: the pair holds and the redial declares it", async () => {
+  const atCap = GEN_STAMP + "-" + "9".repeat(GEN_MAX - GEN_STAMP.length - 1);
+  assert.equal(atCap.length, GEN_MAX);
+  await withManager("timeline", ({ fm }) => {
+    seedLocalTimeline(fm);
+    fm.openRemote(HOST, true);
+    const ws = last(FakeWS.made);
+    ws.open();
+    ws.frame(remoteBarsStamped(atCap));
+    assert.deepEqual(heldBars(fm), { gen: atCap, rev: 0 }, "at the cap: a stamp");
+    ws.readyState = 3;
+    armedRedials(() => ws.onclose!({ code: 1006, wasClean: false }))[0]();
+    assert.equal(qOf(last(FakeWS.made).url).get("caps"), "feedDelta,held:bars:" + atCap + ".0", "declared at the cap");
     fm.conns.get(HOST).closed = true;
   });
 });

@@ -16,6 +16,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { FederationManager, REMOTE_REDIAL_MS, REMOTE_STALE_MS } from "./federation";
 import * as fed from "./federation";
+import { GEN_MAX } from "./view-deltas";
 // the manager's announced capability, read off the module namespace so this file still bundles (and runs red) against a
 // federation.ts that predates the export: the wire word is asserted literally below, the export beside it
 const REMOTE_DIAL_CAPS: string | undefined = (fed as any).REMOTE_DIAL_CAPS;
@@ -848,8 +849,10 @@ test("a stamped delta whose rev and through disagree is refused with why rev and
   });
 });
 
-test("the gen's form: a non-empty string holding neither '.' nor ',' (the kernel's token and counter joined by '-'); a number, an empty string or a string carrying either separator reads as no stamp, so the full leaves no pair, its deltas apply on the base alone and the redial declares nothing", async () => {
-  for (const bad of [7, 0, "", GEN_STAMP + ".7", GEN_STAMP + ",7", null, true]) {
+test("the gen's form: a non-empty string holding neither '.' nor ',' (the kernel's token and counter joined by '-'), at most GEN_MAX characters; a number, an empty string, a string carrying either separator or one over the cap reads as no stamp, so the full leaves no pair, its deltas apply on the base alone and the redial declares nothing", async () => {
+  const overCap = GEN_STAMP + "-" + "9".repeat(GEN_MAX - GEN_STAMP.length);   // GEN_MAX + 1 characters, all in the kernel's alphabet
+  assert.equal(overCap.length, GEN_MAX + 1);
+  for (const bad of [7, 0, "", GEN_STAMP + ".7", GEN_STAMP + ",7", null, true, overCap]) {
     await withManager(({ fm, emitted }) => {
       fm.outbound({ type: "ready", proto: 2 });
       fm.openRemote(HOST, true);
@@ -887,4 +890,25 @@ test("federation.ts states once what the pair does today (no kernel in this repo
     assert.doesNotMatch(src, /kernel\.py reads (it|the (pair|member)) at the compose/, name + ": kernel.py is not said to read the pair");
     assert.doesNotMatch(src, /\bthe kernel reads the member at the compose\b/, name + ": no unqualified present-tense read");
   }
+});
+
+// The length bound (round 3, 2026-09-20): the form bounds the alphabet and not the digits, so genOf caps a stamp at GEN_MAX
+// characters (the form test's list holds the one-over case); a gen at the cap is a stamp, the pair holds and the redial
+// declares it, so the cap is exactly where it is stated.
+test("a gen of exactly GEN_MAX characters is a stamp: the pair holds and the redial declares it", async () => {
+  const atCap = GEN_STAMP + "-" + "9".repeat(GEN_MAX - GEN_STAMP.length - 1);
+  assert.equal(atCap.length, GEN_MAX);
+  await withManager(({ fm }) => {
+    fm.outbound({ type: "ready", proto: 2 });
+    fm.openRemote(HOST, true);
+    const ws = last(FakeWS.made);
+    ws.open();
+    ws.frame({ type: "caps" });
+    ws.frame(stamped({ gen: atCap }));
+    assert.deepEqual(heldOf(fm), { gen: atCap, rev: 0 }, "at the cap: a stamp");
+    ws.readyState = 3;
+    heldTimers(() => ws.onclose!({ code: 1006, wasClean: false }))[0]();
+    assert.equal(qOf(last(FakeWS.made).url).get("caps"), "feedDelta,held:feed:" + atCap + ".0", "declared at the cap");
+    fm.conns.get(HOST).closed = true;
+  });
 });
