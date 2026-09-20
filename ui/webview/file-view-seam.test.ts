@@ -1128,7 +1128,8 @@ test("source: the Slice 3 seam members exist with their doc comments; the media 
 // The chain-before-adoption order pinned above rests on one fact: the body sanitizeMd hands mdBlock belongs to a document
 // with no browsing context, so the chain's writes over it start no fetch. The browser legs execute that fact in each engine
 // (file-view-figures-gate-adopt-browser.test.ts, the premise probe) and skip wherever Playwright's engines are absent, and
-// CI's `npm test` runs before its one `npx playwright install` (.github/workflows/ci.yml), so under CI the fact stood on
+// in CI's vscode-extension job no browser install precedes the npm test step (.github/workflows/ci.yml; the plan pin
+// tools/markdown-viewer-plan-gate-adopt.test.mjs reads that property off the job's block), so under CI the fact stood on
 // nothing: the pins above and their siblings in the other re-aimed modules match names and call order, and a change that kept both
 // while handing back a live-document body left every CI-run test green. The review's refuters measured that in a scratch
 // copy of the head (2026-09-20): one key, `ADD_ATTR: ["shadowrootmode"]`, on MD_PURIFY, the sanitize line and the chain as
@@ -1136,13 +1137,19 @@ test("source: the Slice 3 seam members exist with their doc comments; the media 
 // pinned below), every CI-run module stayed green, and in WebKit the figure server logged the gated figure while the
 // placeholder stood; a `document.adoptNode(clean)` guarded by `typeof document` after the sanitize did the same. Under
 // node DOMPurify.isSupported is false (the record pin below), so the fact cannot be executed in this suite; this test pins
-// every door to it instead: the profile literal whole and its runtime key set (a writer elsewhere would show in the keys),
-// the config the sanitize is handed at run time, sanitizeMd's body whole, no live-document call and no config verb in
-// md-sanitize.ts's code, no module of the dashboard but md-sanitize.ts naming the profile or DOMPurify's config verbs, the
-// installed library's sites that pick the body's document (the factory's template document, _initDocument's two parsers,
-// the RETURN_DOM branch's one road into the live document and the guard on it), and, in mdBlock, `clean` reaching the four
-// chain calls and the fence pass's one read (`clean.querySelectorAll`) and nothing else before the adoption, and nothing after
-// it. Comments are stripped before any code is read
+// the doors to it instead, each one read off the code and derived where a written list would go stale: the profile literal
+// whole and its runtime key set (a writer elsewhere would show in the keys), the config the sanitize is handed at run time,
+// sanitizeMd's body whole, no live-document call and no config verb in md-sanitize.ts's code, no module of the dashboard but
+// md-sanitize.ts naming the profile or DOMPurify's config verbs, the installed library's sites that pick the body's document
+// (the factory's template document, _initDocument's two parsers, the RETURN_DOM branch's one road into the live document and
+// the guard on it, and the whole dist's count of importNode and adoptNode), the two passes that run over the body INSIDE
+// sanitizeMd before mdBlock's chain sees it (the caller's own pass, mintHeadingIds, and every registered post-pass, the
+// registrant list derived from the code by its registerMdPostPass calls and never written here: the round-1 ruling of the
+// fork PR's review, 2026-09-20, found neither swept while this header claimed every door), each opening no door to the live
+// document, and, in mdBlock, `clean` reaching the four chain calls and the fence pass's one read (`clean.querySelectorAll`)
+// and nothing else before the adoption, and nothing after it. What this test does not do is execute the order: the node scene
+// (below) asserts by execution that no node of the sanitizer's body enters the live document until the gate has run over it.
+// Comments are stripped before any code is read
 // (codeOnly), so a comment may name what the code may not. Red at the head with either of the two changes above (measured
 // in a scratch copy, the same day). A red here means the premise moved: re-run the two gate-adopt browser legs in all three
 // engines and read the servers' logs before re-aiming a pin. The ORDER itself (the chain's writes landing before the nodes
@@ -1181,7 +1188,7 @@ test("codeOnly reads the compiler's comment ranges: an affected module keeps the
 /** The profile's keys, in the literal's order: the whole of what sanitizeMd spreads RETURN_DOM onto. */
 const PROFILE_KEYS = ["USE_PROFILES", "ADD_DATA_URI_TAGS", "ALLOW_DATA_ATTR", "FORBID_TAGS", "FORBID_ATTR", "SANITIZE_NAMED_PROPS"];
 
-test("the inertness premise, held where CI runs: MD_PURIFY is its six-key literal at the source and at run time and reaches the sanitize with RETURN_DOM alone added; sanitizeMd's body is its five statements; md-sanitize.ts's code opens no door to the live document and no config verb, and no other dashboard module names the profile or those verbs; the installed DOMPurify parses into a template's document, returns that body itself, and clones into the live document only under a shadowroot attribute no profile here allows; in mdBlock `clean` reaches the four chain calls and the fence pass's one read (`clean.querySelectorAll`) and nothing else before the adoption, and nothing after it", () => {
+test("the inertness premise, held where CI runs: MD_PURIFY is its six-key literal at the source and at run time and reaches the sanitize with RETURN_DOM alone added; sanitizeMd's body is its five statements; md-sanitize.ts's code opens no door to the live document and no config verb, and no other dashboard module names the profile or those verbs; the installed DOMPurify parses into a template's document, returns that body itself, and clones into the live document only under a shadowroot attribute no profile here allows, and its whole dist holds importNode at four sites and adoptNode at none; the passes that run over the body inside sanitizeMd before the chain, mintHeadingIds and every registered post-pass (derived from the code), open no door to the live document; in mdBlock `clean` reaches the four chain calls and the fence pass's one read (`clean.querySelectorAll`) and nothing else before the adoption, and nothing after it", () => {
   const SAN = web("md-sanitize.ts");
   const SAN_CODE = codeOnly(SAN);
   // the reader's self-check, over an AFFECTED module too (the round-1 refuter's condition): settings.ts keeps the line the hand
@@ -1239,6 +1246,59 @@ test("the inertness premise, held where CI runs: MD_PURIFY is its six-key litera
   assert.ok(others.includes("file-view.ts") && others.includes("render.ts"), "the sweep reads the dashboard's modules");
   const namers = others.filter((f) => { const code = codeOnly(web(f)); return /\b(?:MD_PURIFY|setConfig|clearConfig|addHook|RETURN_DOM|adoptNode|importNode)\b/.test(code) || /shadowroot/i.test(code); });
   assert.deepEqual(namers, [], "the profile, DOMPurify's config verbs, its hook registry and RETURN_DOM are md-sanitize.ts's alone (md-sanitize.test.ts sweeps the sanitize call and the seam the same way), and no dashboard module adopts or imports a node between documents (a guarded document.adoptNode inside the gate's own helper left every CI-run module green in the fork PR review's pre-answer mutation table, 2026-09-20)");
+  // ── the passes that run over the body INSIDE sanitizeMd, before mdBlock's chain: the caller's own pass (mdBlock hands
+  // mintHeadingIds; the sanitize-line pin above) and every registered post-pass (md-sanitize.ts postPasses, run in sanitizeMd's
+  // fifth statement, above). Neither is in the chain block, so the mdBlock pins below never read them, and a live-document
+  // adoption in either puts the body in the page before the chain with every pin below green (the round-1 ruling of the fork
+  // PR's review, defect D, 2026-09-20). The registrant list is DERIVED here from the code and never written down: every
+  // `registerMdPostPass(<name>)` in a dashboard module's comment-stripped code, the name resolved to its defining module
+  // (the module itself, or a `./` module it imports the name from). A registration the resolver cannot follow (an inline
+  // function, a member expression, a renamed or namespace import) is red here, so it is widened before it is trusted. ──
+  assert.equal((SAN_CODE.match(/\bregisterMdPostPass\b/g) || []).length, 1, "md-sanitize.ts spells registerMdPostPass once, at its definition: the registry has no second writer there");
+  assert.equal((SAN_CODE.match(/\bpostPasses\b/g) || []).length, 4, "and postPasses four times: the declaration, the includes and the push inside registerMdPostPass, the loop inside sanitizeMd (a fifth is a new door into the registry)");
+  const REGISTER = /(?<!function )\bregisterMdPostPass\s*\(([^)]*)\)/g;
+  const named = (clause: string): string[] => clause.split(",").map((raw) => raw.replace(/\btype\s+/, "").trim().split(/\s+as\s+/).pop() || "").filter(Boolean);
+  const fnBody = (src: string, name: string, where: string): string => {
+    const at = src.search(new RegExp("^(?:export )?function " + name + "\\(", "m"));
+    assert.ok(at >= 0, where + " defines `function " + name + "(` at the top level (the sweep reads a top-level function's body; another form is widened here first)");
+    const end = src.indexOf("\n}\n", at);   // the next top-level close; the module's last function closes at the end of the stripped text
+    assert.ok(end >= 0 || src.endsWith("\n}"), where + ": " + name + "'s body closes at the top level");
+    return src.slice(at, end < 0 ? src.length : end + 2);
+  };
+  const registrants: Array<{ site: string; name: string; module: string; body: string }> = [];
+  for (const f of others) {
+    const code = codeOnly(web(f));
+    for (const m of code.matchAll(REGISTER)) {
+      const arg = m[1].trim();
+      assert.match(arg, /^[A-Za-z_]\w*$/, f + ": a registration the derivation cannot follow, `registerMdPostPass(" + arg + ")`: register a named function, and widen the resolver here first");
+      let module = f;
+      if (!new RegExp("^(?:export )?function " + arg + "\\(", "m").test(code)) {
+        module = "";
+        for (const im of code.matchAll(/import (?:type )?\{([^}]*)\} from "\.\/([^"]+)"/g)) if (named(im[1]).includes(arg)) module = im[2] + ".ts";
+        assert.ok(module, f + ": registrant `" + arg + "` is neither a function of the module nor a name it imports from a `./` module under `import { ... }` (a namespace, default or renamed import: widen the resolver here first)");
+      }
+      registrants.push({ site: f, name: arg, module, body: fnBody(codeOnly(web(module)), arg, module) });
+    }
+  }
+  assert.ok(registrants.length > 0, "the derivation found the registrations (an empty derivation is a broken reader, not a clean tree)");
+  assert.deepEqual(registrants.map((r) => r.site + ": registerMdPostPass(" + r.name + ") -> " + r.module), ["md-config.ts: registerMdPostPass(renderMathPlaceholders) -> math.ts"],
+    "the registered post-passes, derived from the code: one, the math fill, registered by md-config.ts and defined in math.ts (a new registrant widens this list here first, and its body is swept below)");
+  const preChain = [{ label: "mintHeadingIds (file-view.ts, the pass mdBlock hands sanitizeMd)", body: fnBody(codeOnly(VIEW), "mintHeadingIds", "file-view.ts") }, ...registrants.map((r) => ({ label: r.name + " (" + r.module + ", registered by " + r.site + ")", body: r.body }))];
+  // no door to the live document in any of them: no `document`, `window`, `globalThis` or `self` (the live document and its
+  // window), no cross-document verb, no element creation (a node created outside the body's document is a road out of it when
+  // the body is appended into it), no re-parse; and every insertion verb's receiver is a binding of the pass's own (a parameter
+  // or a local), never a module-level or imported element
+  const PRE_CHAIN_DOORS = [/\bdocument\b/, /\b(?:window|globalThis|self)\b/, /adoptNode/, /importNode/, /createElement(?:NS)?\(/, /createTextNode\(/, /createDocumentFragment\(/, /createContextualFragment/, /innerHTML|outerHTML|insertAdjacentHTML|insertAdjacentElement|DOMParser|\bsetHTML\w*\s*\(|parseHTMLUnsafe/];
+  const INSERT = /\b([A-Za-z_]\w*)\.(appendChild|append|prepend|insertBefore|replaceChildren|replaceWith|after|before)\(/g;
+  for (const { label, body } of preChain) {
+    assert.ok(body.split("\n").length > 2, label + ": the body was read");
+    for (const door of PRE_CHAIN_DOORS) assert.doesNotMatch(body, door, label + " spells " + String(door) + " in a pass that runs over the sanitizer's body BEFORE the chain: a live-document road there puts the body in the page before the gate has run (the node scene's order leg executes this; this pin reads the code)");
+    for (const m of body.matchAll(INSERT)) {
+      const recv = m[1];
+      const own = new RegExp("\\b(?:const|let|var)\\s+" + recv + "\\b|function \\w+\\([^)]*\\b" + recv + "\\b|\\(\\s*" + recv + "\\s*[,)]|[(,]\\s*" + recv + "\\s*[,)]|\\b" + recv + "\\s*=>");
+      assert.ok(own.test(body), label + ": `" + m[0] + "` inserts into `" + recv + "`, which is not a parameter or a local of the pass (an element from outside the body is a road out of it)");
+    }
+  }
   // ── the installed library: the sites that pick the body's document, in every dist a bundler can take ──
   const DP = path.resolve(process.cwd(), "node_modules", "dompurify");
   const version = (JSON.parse(fs.readFileSync(path.join(DP, "package.json"), "utf8")) as { version: string }).version;
@@ -1271,6 +1331,11 @@ test("the inertness premise, held where CI runs: MD_PURIFY is its six-key litera
     assert.match(branch, /if \(ALLOWED_ATTR\.shadowroot \|\| ALLOWED_ATTR\.shadowrootmode\) \{\n\s*returnNode = importNode\.call\(originalDocument, returnNode, true\);\n\s*\}\n?$/, tag + "the one road into the live document, a deep clone under importNode, taken only when shadowroot or shadowrootmode is allowed");
     assert.deepEqual(branch.match(/\b(?:originalDocument|document|adoptNode|importNode)\b/g), ["importNode", "originalDocument"], tag + "no other door in the branch");
     assert.doesNotMatch(lib, /['"]shadowroot(?:mode)?['"]/, tag + "no attribute list quotes shadowroot or shadowrootmode: neither the html nor the svg profile allows either, so the profile above cannot take that road by itself");
+    // the whole dist, not the two regions above: every cross-document verb in the library's code, counted (comments stripped:
+    // the raw text holds importNode seven times per dist, three of them in comments)
+    const code = codeOnly(lib, "js");
+    assert.equal((code.match(/\bimportNode\b/g) || []).length, 4, tag + "importNode at four sites in the whole dist's code: the factory's `const importNode = originalDocument.importNode` (the binding and the method), the RETURN_DOM branch's `importNode.call(originalDocument, returnNode, true)` (the one road into the live document, guarded above), and `body.ownerDocument.importNode(dirty, true)`, which clones a Node handed to sanitize into the PARSE document's body (sanitizeMd hands a string); a fifth site is a new cross-document road, judged here first");
+    assert.equal((code.match(/\badoptNode\b/g) || []).length, 0, tag + "adoptNode nowhere in the dist's code");
   }
   // ── mdBlock: `clean` reaches the chain's four calls and the fence pass's one read before the adoption, and nothing after it ──
   const mdCode = codeOnly(VIEW.split("function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {")[1].split("\n}\n")[0]);

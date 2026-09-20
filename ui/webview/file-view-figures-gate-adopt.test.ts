@@ -74,12 +74,21 @@ const FETCHING: Record<string, string[]> = {
 /** An inline svg's presentation attributes whose url() tokens fetch (figure-gate.ts PAINT_ATTRS; pinned equal below). */
 const PAINT = ["fill", "stroke", "filter", "clip-path", "mask", "marker-start", "marker-mid", "marker-end"];
 type Ref = { el: El; tag: string; attr: string; value: string; inSvg: boolean };
-type Write = Ref & { live: boolean };
-type Adoption = { root: El | Txt; parent: El; snapshot: Ref[] };
+/** One clock for every record below: a write, a move into the live document and a gate move-aside each take the next tick, so
+ *  the order leg compares them (the gate's last move-aside on the body against the first move of any node of the body). */
+let seq = 0;
+type Write = Ref & { live: boolean; seq: number };
+/** `body`: the moved subtree holds a node the sanitizer's stand-in minted (a node of the sanitizer's body), so the move is
+ *  the body, or part of it, entering the live document. */
+type Adoption = { root: El | Txt; parent: El; snapshot: Ref[]; seq: number; body: boolean };
+/** A move-aside the gate makes on an element: a `data-fv-gated-<attr>` write, with the element's document at that moment. */
+type GateMove = { el: El; attr: string; live: boolean; seq: number };
 /** Every write of a fetching attribute by anyone, in order, with the element's document at write time. */
 const writes: Write[] = [];
 /** Every move of a subtree INTO the live document, with the subtree's fetching attributes as they stood at that moment. */
 const adoptions: Adoption[] = [];
+/** Every move-aside the gate made (figure-gate.ts gate: the fetching attribute removed, its value under data-fv-gated-*). */
+const gateMoves: GateMove[] = [];
 const isFetching = (el: El, attr: string): boolean => (FETCHING[el.tagName] || []).includes(attr) || PAINT.includes(attr);
 const inSvg = (el: El): boolean => el.tagName === "SVG" || el.closest("svg") !== null;
 /** The fetching attributes under `root` (the root included) as they stand now. */
@@ -120,6 +129,7 @@ class Txt {
   nodeType = 3;
   parentNode!: El | null;
   _doc!: Doc;
+  _sanitized = false;   // minted by the sanitizer's stand-in: a node of the body mdBlock is handed
   constructor(public data: string, owner?: Doc) {
     Object.defineProperty(this, "parentNode", { value: null, writable: true, enumerable: false, configurable: true });
     this._doc = owner || doc;
@@ -164,6 +174,7 @@ class El {
   parentNode!: El | null;
   childNodes!: Array<El | Txt>;
   _doc!: Doc;
+  _sanitized = false;   // minted by the sanitizer's stand-in: a node of the body mdBlock is handed
   attrs = new Map<string, string>();
   listeners: Reg[] = [];
   hidden = false; disabled = false; title = ""; type = ""; value = ""; placeholder = ""; spellcheck = true; wrap = "";
@@ -228,9 +239,10 @@ class El {
     if (n._doc === this._doc) return;
     const into = this._doc;
     const snapshot = into === doc && n instanceof El ? fetchRefsOf(n) : [];
-    const walk = (x: El | Txt) => { x._doc = into; if (x instanceof El) for (const c of x.childNodes) walk(c); };
+    let body = false;
+    const walk = (x: El | Txt) => { x._doc = into; if (x._sanitized) body = true; if (x instanceof El) for (const c of x.childNodes) walk(c); };
     walk(n);
-    if (into === doc) adoptions.push({ root: n, parent: this, snapshot });
+    if (into === doc) adoptions.push({ root: n, parent: this, snapshot, seq: seq++, body });
   }
   appendChild<T extends El | Txt>(n: T): T { this.detach(n); this.adopt(n); this.childNodes.push(n); n.parentNode = this; return n; }
   append(...ns: Array<El | Txt>): void { for (const n of ns) this.appendChild(n); }
@@ -258,7 +270,8 @@ class El {
   /** Every write of a fetching attribute is recorded with this element's document at the moment of the write. */
   setAttribute(k: string, v: string): void {
     this.attrs.set(k, v);
-    if (isFetching(this, k)) writes.push({ el: this, tag: this.tagName, attr: k, value: v, inSvg: inSvg(this), live: this._doc === doc });
+    if (isFetching(this, k)) writes.push({ el: this, tag: this.tagName, attr: k, value: v, inSvg: inSvg(this), live: this._doc === doc, seq: seq++ });
+    else if (k.startsWith("data-fv-gated-")) gateMoves.push({ el: this, attr: k.slice("data-fv-gated-".length), live: this._doc === doc, seq: seq++ });
   }
   getAttribute(k: string): string | null { return this.attrs.has(k) ? (this.attrs.get(k) as string) : null; }
   hasAttribute(k: string): boolean { return this.attrs.has(k); }
@@ -391,7 +404,10 @@ const sanitized: string[] = [];
 let nextBody: (() => El) | null = null;
 const fakeSanitizer = { addHook: () => { /* the hooks are DOMPurify's; the stand-in has none */ }, sanitize: (dirty: string) => {
   sanitized.push(dirty);
-  return nextBody ? nextBody() : inert.createElement("body");
+  const body = nextBody ? nextBody() : inert.createElement("body");
+  const mark = (n: El | Txt) => { n._sanitized = true; if (n instanceof El) for (const c of n.childNodes) mark(c); };
+  mark(body);   // every node of the body the sanitizer hands back, so a move of any of them into the live document is read as the body's
+  return body;
 } };
 setMdSanitizer(fakeSanitizer as unknown as Parameters<typeof setMdSanitizer>[0]);
 /** An element of the inert document with the author's attributes written straight into the map (an author's markup is not a
@@ -548,7 +564,7 @@ async function mod(): Promise<typeof import("./file-view")> {
   return fvMod;
 }
 const settle = async () => { for (let i = 0; i < 8; i++) await new Promise<void>((r) => setImmediate(r)); };
-const reset = () => { writes.length = 0; adoptions.length = 0; sanitized.length = 0; posted.length = 0; seam = null; forgetLoadedHosts(); store.delete("romp:fileviewFmt"); };
+const reset = () => { writes.length = 0; adoptions.length = 0; gateMoves.length = 0; sanitized.length = 0; posted.length = 0; seam = null; forgetLoadedHosts(); store.delete("romp:fileviewFmt"); };
 /** The Rendered box the viewer built, and the body around it: the render stood (a `.fileview-md` and no `.fileview-err` line). */
 function rendered(): { body: El; md: El } {
   const wrap = doc.getElementById("romp-fileview")!;
@@ -565,6 +581,24 @@ const intoBox = (md: El): Adoption[] => adoptions.filter((a) => a.parent === md)
 /** Every move into the live document whose parent stands under the box (or is it) once the render is done: the batch above
  *  and any node a later pass brings in from another document, into any depth of the box. */
 const intoBoxTree = (md: El): Adoption[] => adoptions.filter((a) => a.parent === md || md.contains(a.parent));
+/** The order leg (road (e)): over EVERY move into the live document, not the box-filtered ones, the first move of any node of
+ *  the sanitizer's body comes after the gate's last move-aside on that body, every one of those move-asides landed while the
+ *  element was the sanitizer's, and no fetching attribute of a body element was written between the two; the body's fetching
+ *  attributes at that first move are therefore the ones the chain left. A pass that puts the body, or a node of it, in the
+ *  page before the gate (a caller pass inside sanitizeMd, a registered post-pass, a chain call over the live box) is red
+ *  here by the clock, whatever it is called and however it got there. */
+function assertGateBeforeFirstMove(): { firstMove: Adoption; lastGate: GateMove } {
+  const bodyMoves = adoptions.filter((a) => a.body);
+  assert.ok(bodyMoves.length > 0, "road (e): nodes of the sanitizer's body entered the live document during the render");
+  const firstMove = bodyMoves.reduce((a, b) => (b.seq < a.seq ? b : a));
+  const onBody = gateMoves.filter((g) => g.el._sanitized);
+  assert.ok(onBody.length > 0, "road (e): the gate moved fetching attributes of the body's elements aside (the fixture holds figures on unlisted hosts)");
+  assert.deepEqual(onBody.filter((g) => g.live).map((g) => g.el.tagName.toLowerCase() + "[" + g.attr + "]"), [], "road (e): every move-aside the gate made on the body landed while the element's document was the sanitizer's");
+  const lastGate = onBody.reduce((a, b) => (b.seq > a.seq ? b : a));
+  assert.ok(lastGate.seq < firstMove.seq, "road (e), the order: the first move of any node of the sanitizer's body into the live document (tick " + firstMove.seq + ", a " + (firstMove.root instanceof El ? firstMove.root.tagName.toLowerCase() : "text node") + " into a live " + firstMove.parent.tagName.toLowerCase() + ") comes after the gate's last move-aside on that body (tick " + lastGate.seq + ", " + lastGate.el.tagName.toLowerCase() + "[" + lastGate.attr + "])");
+  assert.deepEqual(writes.filter((w) => w.el._sanitized && w.seq > lastGate.seq && w.seq < firstMove.seq), [], "road (e): no fetching attribute of a body element was written between the gate's last move-aside and the first move, so the body's fetching attributes at that move are the chain's");
+  return { firstMove, lastGate };
+}
 /** The placeholders under `md` (by the delegated action, as regateFigures finds them). */
 const placeholders = (md: El): El[] => md.querySelectorAll('span[data-act="fv-load"]');
 /** The placeholder around `el`, or null when it stands unwrapped. */
@@ -628,6 +662,9 @@ test("the file kind: the chain runs before the adoption, so the nodes that enter
   for (const u of FIXTURE_URLS) assert.ok(sanitized[0].includes(u), "the dirty string carries " + u);
   // A3, road (a): one batch of adoptions into the box, the body's children, and the snapshot at that moment shows no leak
   assert.deepEqual(leaksIn(intoBoxTree(md).flatMap((a) => a.snapshot), FILE_KIND, allowedNow()), [], "road (a): no node that entered the live document anywhere under the Rendered box, at any depth, by any pass, carried a fetching attribute on an unlisted host or page-relative at that moment");
+  // road (e): the body stayed the sanitizer's until the gate had run over it, by the clock, over every move into the live document
+  const order = assertGateBeforeFirstMove();
+  assert.equal(order.firstMove.parent, md, "road (e): and that first move is the adoption into the Rendered box itself (no earlier move of a body node anywhere in the live document)");
   const batch = intoBox(md);
   assert.equal(batch.length, FILE_ROOTS, "every top-level child of the sanitizer's body entered the live document, once each, into the Rendered box, adopted as it is (no wrapper around the batch, no re-parse)");
   const snapshot = batch.flatMap((a) => a.snapshot);
@@ -715,6 +752,7 @@ test("the URL kind: resolveFigureRefs and the gate run on the sanitizer's body, 
   assert.equal(sanitized.length, 1, "one paint");
   for (const u of ["rel.png", REMOTE, PROTO, "d.png"]) assert.ok(sanitized[0].includes(u), "the dirty string carries " + u);
   assert.deepEqual(leaksIn(intoBoxTree(md).flatMap((a) => a.snapshot), URL_KIND, allowedNow()), [], "road (a): no node that entered the live document anywhere under the Rendered box carried a leaking fetching attribute at that moment");
+  assert.equal(assertGateBeforeFirstMove().firstMove.parent, md, "road (e): the first move of a body node into the live document is the adoption into the Rendered box, after the gate's last move-aside");
   const batch = intoBox(md);
   assert.equal(batch.length, URL_ROOTS, "every top-level child of the sanitizer's body entered the live document, once each, adopted as it is (no wrapper around the batch, no re-parse)");
   const snapshot = batch.flatMap((a) => a.snapshot);
