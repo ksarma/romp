@@ -62,6 +62,7 @@ function liftSeam(sessions: Map<string, any>, views: Map<string, any>, itemsOf: 
     const patchWorkedFooters = (v, s, from, working, items) => { H.calls.push(["patchWorkedFooters", from, working, items ? items.length : null]); };
     const compactTailPlan = H.compactTailPlan;
     const trimUnitsFrom = (host, u0) => { H.calls.push(["trim", u0]); return 0; };
+    const clearHoverMarks = (host) => { H.calls.push(["clearHoverMarks", host === H.views.get("A").el]); };   // the hover's rings and glow off the view (review round 2); records that it is the view's own host
     const railChainBefore = (s, items, winStart, u0) => { H.calls.push(["railChainBefore", winStart, u0]); return H.SENTINEL; };
     const dayWalkBefore = () => new H.DayWalk();
     const turnOfEvents = () => null;
@@ -109,6 +110,8 @@ test("the seam seeds the first re-rendered unit with railChainBefore over the vi
   assert.deepEqual(w.calls.filter((c) => c[0] === "railChainBefore"), [["railChainBefore", 1, 2]], "the chain from the window's start to u0");
   assert.deepEqual(w.calls.filter((c) => c[0] === "appendItem"), [["appendItem", 2, SENTINEL]], "the reply's unit re-rendered from that reference");
   assert.deepEqual(w.calls.filter((c) => c[0] === "trim"), [["trim", 2]]);
+  assert.deepEqual(w.calls.filter((c) => c[0] === "clearHoverMarks"), [["clearHoverMarks", true]], "the hover's marks come off the view's own host (review round 2)");
+  assert.ok(w.calls.findIndex((c) => c[0] === "clearHoverMarks") < w.calls.findIndex((c) => c[0] === "trim"), "…where the trim drops the band, before it");
   assert.equal(w.v.rendered, 4); assert.deepEqual(w.v.units, [ev(0), tg(1, 2), ev(3)]);
   // a run forming (a tool joins the lone tool at unit 1): the seam re-renders from unit 1, seeded with the chain before it
   const w2 = world(["user", "tool", "tool"], [ev(0), ev(1)], [ev(0), tg(1, 2)], 2, 0);
@@ -187,6 +190,8 @@ test("normal mode's exact tail trims through the shared walk (trimUnitsFrom from
   const w = world(["user", "assistant"], [ev(0), ev(1)], [ev(0), ev(1)], 1, 0, true, false);
   w.sync("A", true);
   assert.deepEqual(w.calls.filter((c) => c[0] === "trim"), [["trim", 1]], "one trim, from the first changed event (the shared walk drops a foreign child on its way: chat-compact-tail.test.ts)");
+  assert.deepEqual(w.calls.filter((c) => c[0] === "clearHoverMarks"), [["clearHoverMarks", true]], "the hover's marks come off the view's own host here too");
+  assert.ok(w.calls.findIndex((c) => c[0] === "clearHoverMarks") < w.calls.findIndex((c) => c[0] === "trim"), "…before the trim drops the band");
   assert.deepEqual(w.calls.filter((c) => c[0] === "renderEvent"), [["renderEvent", "e1"]], "the events from the change re-rendered");
   assert.deepEqual(w.calls.filter((c) => c[0] === "patchWorkedFooters"), [["patchWorkedFooters", 1, true, null]], "the footers patched from the change, no unit list");
   assert.deepEqual(w.calls.filter((c) => c[0] === "appendItem" || c[0] === "renderWindowItems" || c[0] === "evict" || c[0] === "reseed"), [], "no compact helper, no rebuild");

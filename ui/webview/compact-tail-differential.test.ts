@@ -14,8 +14,9 @@
 //   run and a run extending (a fold boundary, closed and open); a notice run forming on an anchor out of order, and one of the three
 //   notice shapes production folds (a retried, a user-shaped and an assistant-shaped member, minted through isFoldableNoticeShape); a
 //   reply landing while idle (the footer moves off the reply before it); a day crossing (the divider the seam appends); a hover's rail
-//   band present as the thread's last child; an eviction (the window's span kept, the promoted head unit's stamp; a gap promoted to
-//   the head, the stamp of the first marker after it).
+//   band present as the thread's last child, and the rings and glow it lit (dropped with it, as the rebuild's wipe dropped them); an
+//   eviction (the window's span kept, the promoted head unit's stamp; a gap promoted to the head, the stamp of the first marker after
+//   it).
 // - spacer, in both directions below a browsed window: the footer landing on the window's last reply when the completing prompt lands
 //   below it, and coming off when a later reply joins the turn below it (the one branch review round 1b changed).
 // - the fast path: a status-only tail while the turn is OPEN, over every state (idle puts the footer on the turn's last reply and on
@@ -28,7 +29,7 @@
 // are new, so a seam that silently fell back to the rebuild, with the plan asked or not, could not make the comparison vacuously green
 // (the plan assertion alone guarded the planner, not the executor: round 1's second pass); a spacer frame replaces no node. The rebuild
 // leg reads the working state the seam stored on the view (v.working), never a restatement of the state test. The renderers are
-// stubs that record their inputs; the rail and day rules, the trim and the footer patch are the real functions.
+// stubs that record their inputs; the rail and day rules, the trim, the hover clear and the footer patch are the real functions.
 // Silent on scroll-only properties: the spacers' heights, the measured figures, the keepTop guard and every scroll write are outside
 // what a DOM projection can see (spacer-measure.test.ts, chat-compact-tail.test.ts and the served labs carry those). Synthetic events.
 import { test } from "node:test";
@@ -218,6 +219,8 @@ function project(host: FakeEl): Projected[] {
   });
 }
 const units = (p: Projected[]): Row[] => p.filter((x): x is Row => "unit" in x);
+/** The hover's marks a view holds: the dots a rail band grew (.dot.rail-ring, drawRailBand) and the turns a glow lit (.turn.ext-glow, applyGlow). */
+const hoverMarks = (host: FakeEl) => ({ rings: host.querySelectorAll(".dot.rail-ring").length, glow: host.querySelectorAll(".turn.ext-glow").length });
 
 type World = { s: any; v: any; L: Lifted; plans: TailPlan[]; open: Set<string>; frames: string[] };
 /** A session over `events` in a view built by the real first build (renderWindowItems over the tail window), the seam lifted over it. */
@@ -439,6 +442,19 @@ for (const [fold, open] of FOLDS) {
     assert.deepEqual(last, { kind: "noticegroup", indices: [7, 8, 9] }, "the three fold into one notice run (production's predicate admits all three shapes)");
     const rows = units(project(w.v.el)).filter((r) => r.unit === itemsOf(w.s).length - 1);
     assert.equal(rows.length, fold === "open" ? 4 : 1, "the run's head, and a row per member when the fold is open");
+  });
+
+  test(`a hover's marks, run ${fold}: the rings a band grew on the dots and the glow on the turns come off with the band at the next streamed frame, on the kept units too, as the rebuild's wipe took them (the incremental and the rebuilt DOM hold the same ringed dots and glowed turns: none)`, () => {
+    const w = world(base(), new Set(open));
+    // a hover as drawRailBand and applyGlow leave it: a dot on every turn, the hovered segment's dots ringed and its turns glowed (the
+    // first three units, below the unit the frame re-renders, so they are KEPT nodes), the band as the thread's last child
+    const turns = (w.v.el as FakeEl).children.filter((c) => c.dataset.unit != null && !c.classList.contains("day-divider"));
+    for (const t of turns) t.appendChild(new FakeEl("span", "dot green"));
+    for (const t of turns.slice(0, 3)) { t.classList.add("ext-glow"); t.children.find((x) => x.classList.contains("dot"))!.classList.add("rail-ring"); }
+    assert.deepEqual(hoverMarks(w.v.el), { rings: 3, glow: 3 }, "the hover lit three units");
+    frame(w, "the reply grows under a hover", (ev) => { ev[ev.length - 1] = reply("a4", at(10, 4, 20), "second answer, hovered"); return ev; }, "append", { band: true });
+    assert.deepEqual(hoverMarks(w.v.el), hoverMarks(rebuild(w)), "the incremental DOM and the rebuild hold the same ringed dots and glowed turns (review round 2: the trim dropped the band and left the marks lit on the kept units until the pointer moved)");
+    assert.deepEqual(hoverMarks(w.v.el), { rings: 0, glow: 0 }, "none: the marks left with the band, and a hover redraws them on the next mouseenter");
   });
 
   test(`a hover's rail band as the thread's last child, run ${fold}: the next streamed frame still renders what a rebuild renders (the trim reaches the units behind it), and nothing foreign is left among the units`, () => {
