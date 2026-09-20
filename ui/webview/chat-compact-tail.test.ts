@@ -114,6 +114,7 @@ class FakeEl {
     hideEdges(this);
   }
   get classList() { const cls = this.className.split(/\s+/); return { contains: (c: string) => cls.includes(c) }; }
+  get parentElement(): FakeEl | null { return this.parent; }
   get firstChild(): FakeEl | null { return this.children[0] ?? null; }
   get lastChild(): FakeEl | null { return this.children[this.children.length - 1] ?? null; }
   get nextSibling(): FakeEl | null { const p = this.parent; if (!p) return null; const i = p.children.indexOf(this); return i >= 0 ? p.children[i + 1] ?? null : null; }
@@ -124,26 +125,27 @@ class FakeEl {
   querySelector(sel: string): FakeEl | null {
     const m = /^(?::scope > )?\.([\w-]+)$/.exec(sel);
     if (m) return this.children.find((c) => c.classList.contains(m[1])) ?? null;
-    const u = /^:scope > \[data-unit="(\d+)"\] > \.([\w-]+)$/.exec(sel);   // the re-seed's: the unit's first marker-bearing node
+    const u = /^:scope > \[data-unit(?:="(\d+)")?\] > \.([\w-]+)$/.exec(sel);   // the re-seed's: the window's first marker-bearing node (any unit, or one named)
     if (!u) throw new Error("unsupported selector " + sel);
-    for (const c of this.children) { if (c.dataset.unit !== u[1]) continue; const hit = c.children.find((x) => x.classList.contains(u[2])); if (hit) return hit; }
+    for (const c of this.children) { if (c.dataset.unit == null || (u[1] != null && c.dataset.unit !== u[1])) continue; const hit = c.children.find((x) => x.classList.contains(u[2])); if (hit) return hit; }
     return null;
   }
 }
 type Lifted = { unitOfNode: (n: FakeEl) => number; trimUnitsFrom: (host: FakeEl, u0: number) => number; evictCompactTop: (v: any, newWinStart: number) => boolean; reseedWindowHead: (v: any, s: any, items: any[]) => void };
-/** The trim, the eviction and its re-seed lifted; `seed` is what the stubbed railSeed answers, `painted` records paintMarker's calls. */
-function liftTrim(hooks: { sized: number[]; seed?: number | null; painted?: Array<[number, number | null]> }): Lifted {
+/** The trim, the eviction and its re-seed lifted; `seed` is what the stubbed railChainBefore answers, `seeds` records the (window start,
+ *  marker's unit) pairs it is asked for, `painted` records paintMarker's calls. */
+function liftTrim(hooks: { sized: number[]; seed?: number | null; seeds?: Array<[number, number]>; painted?: Array<[number, number | null]> }): Lifted {
   const js = liftBetween("function unitOfNode(", "/** The estimated height of the units [from, to)");
   const prelude = `
     const H = HOOKS;
     const HTMLElement = H.FakeEl;
     const el = (tag, cls) => new H.FakeEl(tag, cls || "");
     const sizeSpacers = (v) => { H.sized.push(v.winStart); };
-    const railSeed = (s, items, ws) => { H.seeds.push(ws); return H.seed === undefined ? null : H.seed; };
+    const railChainBefore = (s, items, ws, um) => { H.seeds.push([ws, um]); return H.seed === undefined ? null : H.seed; };
     const paintMarker = (m, epoch, prev, now) => { (H.painted || []).push([epoch, prev]); };
     const Date = { now: () => 0 };
   `;
-  return new Function("HOOKS", prelude + js + "\nreturn { unitOfNode, trimUnitsFrom, evictCompactTop, reseedWindowHead };")({ ...hooks, FakeEl, seeds: [] }) as Lifted;
+  return new Function("HOOKS", prelude + js + "\nreturn { unitOfNode, trimUnitsFrom, evictCompactTop, reseedWindowHead };")({ ...hooks, FakeEl, seeds: hooks.seeds ?? [] }) as Lifted;
 }
 /** A view host holding units [winStart, winEnd) with a top spacer when winStart > 0; a unit owns one node, or two when `dividerAt` names it. */
 function window(winStart: number, winEnd: number, dividerAt: number[] = []): FakeEl {
@@ -213,28 +215,44 @@ test("the eviction keeps the window's span after an append at the bottom: the le
   assert.deepEqual(unitsIn(whole)[0], 1);
 });
 
-test("the eviction's re-seed: the promoted head unit's first marker is repainted against the build's seed (railSeed at the new start), data-prev with it; nothing when it already carries it, or when the unit has no marker", () => {
-  // the promoted unit was drawn mid-window with the chain's reference (8000); a build of the window seeds it with railSeed (4242)
-  const painted: Array<[number, number | null]> = [];
-  const { evictCompactTop, reseedWindowHead } = liftTrim({ sized: [], seed: 4242, painted });
+test("the eviction's re-seed: the window's first marker is repainted against the reference a build hands its unit (railChainBefore from the new start), data-prev with it; the head unit's own marker when it has one, the first marker after a marker-less head (a gap) otherwise; nothing when it already carries it, or when no marker stands in the window", () => {
+  // the promoted unit was drawn mid-window with the chain's reference (8000); a build of the window seeds it with the seed at the new start (4242)
+  const painted: Array<[number, number | null]> = [], seeds: Array<[number, number]> = [];
+  const { evictCompactTop, reseedWindowHead } = liftTrim({ sized: [], seed: 4242, seeds, painted });
   const host = window(100, 181, [101]);   // unit 101 opens a day: its divider precedes its row (the divider carries no marker)
   const row = host.children.find((c) => c.dataset.unit === "101" && !c.classList.contains("day-divider"))!;
   const m = new FakeEl("div", "time-marker"); m.dataset.epoch = "9000"; m.dataset.prev = "8000"; row.appendChild(m);
+  const later = new FakeEl("div", "time-marker"); later.dataset.epoch = "9500"; later.dataset.prev = "9000"; host.children.find((c) => c.dataset.unit === "102")!.appendChild(later);
   const v: any = { el: host, winStart: 100, winEnd: 181, spacerCount: 100 };
   assert.ok(evictCompactTop(v, 101));
   reseedWindowHead(v, {}, []);
-  assert.equal(m.dataset.prev, "4242", "the reference is the seed's");
-  assert.deepEqual(painted, [[9000, 4242]], "the marker repainted against it (its epoch, the seed)");
+  assert.equal(m.dataset.prev, "4242", "the reference is the build's");
+  assert.deepEqual(seeds, [[101, 101]], "the chain asked from the new start to the marker's own unit: the seed itself");
+  assert.deepEqual(painted, [[9000, 4242]], "the marker repainted against it (its epoch, the reference)");
+  assert.equal(later.dataset.prev, "9000", "the marker of the unit after the head is not touched: it chains from the head on both paths");
   reseedWindowHead(v, {}, []);
-  assert.deepEqual(painted, [[9000, 4242]], "already the seed's: nothing painted");
+  assert.deepEqual(painted, [[9000, 4242]], "already the build's: nothing painted");
   // a seed of null (the transcript's start): the reference is empty, as timeMarker stamps it
   const { reseedWindowHead: reseedNull } = liftTrim({ sized: [], seed: null, painted });
   reseedNull(v, {}, []);
   assert.equal(m.dataset.prev, ""); assert.deepEqual(painted.slice(-1), [[9000, null]]);
-  // a head unit with no marker (a gap element, a row with no epoch): nothing to re-seed, nothing painted
-  const bare = window(100, 181); const v2: any = { el: bare, winStart: 100, winEnd: 181, spacerCount: 100 };
+  // the head unit carries no marker (a gap element: no epoch, no row of its own): the first marker after it is the one re-seeded, against
+  // the chain from the new start to ITS unit (the seed carried through the gap, railExit's identity there); re-seeding the head's own
+  // marker found none and left this one on the chain's reference (round 1's second pass)
+  const gapped = window(100, 181); const seeds2: Array<[number, number]> = [], painted2: Array<[number, number | null]> = [];
+  const { evictCompactTop: evict2, reseedWindowHead: reseed2 } = liftTrim({ sized: [], seed: 5151, seeds: seeds2, painted: painted2 });
+  const gapEl = gapped.children.find((c) => c.dataset.unit === "101")!; gapEl.className = "tx-gap";
+  const m2 = new FakeEl("div", "time-marker"); m2.dataset.epoch = "9100"; m2.dataset.prev = "8100"; gapped.children.find((c) => c.dataset.unit === "102")!.appendChild(m2);
+  const v2: any = { el: gapped, winStart: 100, winEnd: 181, spacerCount: 100 };
+  assert.ok(evict2(v2, 101));
+  reseed2(v2, {}, []);
+  assert.deepEqual(seeds2, [[101, 102]], "the chain asked from the gap (the new start) to the first marker's unit");
+  assert.equal(m2.dataset.prev, "5151", "the first marker after the gap carries the build's reference");
+  assert.deepEqual(painted2, [[9100, 5151]]);
+  // no marker anywhere in the window (every row untimed): nothing to re-seed, nothing painted
+  const bare = window(100, 181); const v3: any = { el: bare, winStart: 100, winEnd: 181, spacerCount: 100 };
   const before = painted.length;
-  evictCompactTop(v2, 101); reseedWindowHead(v2, {}, []);
+  evictCompactTop(v3, 101); reseedWindowHead(v3, {}, []);
   assert.equal(painted.length, before);
 });
 

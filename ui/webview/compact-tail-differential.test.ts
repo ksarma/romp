@@ -6,11 +6,17 @@
 // DOM whose rows record what a reader can see: the unit, the class list, the row's text, the rail marker's reference (data-prev) and the
 // stamp it yields (markerLabel), the walk's day (data-day) and the worked footer. Every kind of change the stream delivers is driven
 // through the incremental path frame by frame, and after each frame the same session and window are rebuilt from scratch and the two
-// DOMs compared unit by unit: an append (a prompt, a reply, a tool), an edit of the last block, a tool joining a run and a run extending
-// (a fold boundary, closed and open), a status-only tail (the footer flip), a shrink (the tail truncated), a hover's rail band present as
-// the thread's last child, and an eviction (the window's span kept, the promoted head unit's stamp). The plan's kind is asserted per
-// frame, so a seam that silently fell back to the rebuild could not make the comparison vacuously green. The renderers are stubs that
-// record their inputs; the rail and day rules, the trim and the footer patch are the real functions.
+// DOMs compared unit by unit: an append (a prompt, a reply, a tool, a notice), an edit of the last block and of a tool inside a run (a
+// result landing), a hidden thinking block landing at the tail (no unit reaches it: nothing re-rendered), a tool joining a run and a
+// run extending (a fold boundary, closed and open), a notice run forming on an anchor out of order, a status-only tail while the turn
+// is OPEN (idle puts the footer on the turn's last reply and on the last row of an open notice run by its position; work takes it off),
+// a reply landing while idle (the footer moves off the reply before it), a day crossing (the divider the seam appends), a shrink (the
+// tail truncated), a hover's rail band present as the thread's last child, and an eviction (the window's span kept, the promoted head
+// unit's stamp; a gap promoted to the head, the stamp of the first marker after it). The plan's kind is asserted per frame, and after
+// an append the units below the plan's u0 are the SAME nodes and the units from u0 are new, so a seam that silently fell back to the
+// rebuild, with the plan asked or not, could not make the comparison vacuously green (the plan assertion alone guarded the planner, not
+// the executor: round 1's second pass). The renderers are stubs that record their inputs; the rail and day rules, the trim and the
+// footer patch are the real functions.
 // Silent on scroll-only properties: the spacers' heights, the measured figures, the keepTop guard and every scroll write are outside
 // what a DOM projection can see (spacer-measure.test.ts, chat-compact-tail.test.ts and the served labs carry those). Synthetic events.
 import { test } from "node:test";
@@ -53,6 +59,7 @@ class FakeEl {
              toggle: (x: string, force?: boolean) => { const on = force ?? !c.includes(x); if (on && !c.includes(x)) c.push(x); if (!on) { const i = c.indexOf(x); if (i >= 0) c.splice(i, 1); } return on; } };
   }
   get childNodes(): FakeEl[] { return this.children; }
+  get parentElement(): FakeEl | null { return this.parent; }
   get firstChild(): FakeEl | null { return this.children[0] ?? null; }
   get lastChild(): FakeEl | null { return this.children[this.children.length - 1] ?? null; }
   get previousSibling(): FakeEl | null { const p = this.parent; if (!p) return null; const i = p.children.indexOf(this); return i > 0 ? p.children[i - 1] : null; }
@@ -96,8 +103,18 @@ type Lifted = {
 };
 const WINDOW_TAIL = 8;   // the harness's window: small, so an append evicts the top within a few frames (the real one is 80; the plan and the trim do not read it)
 
-/** The display units for a session: compactDisplay over the events' kinds, tool names and foldable notices (render.ts displayItems, no regions). */
-const itemsOf = (s: { events: Ev[] }): DisplayItem[] => compactDisplay(s.events.map((e) => e.kind), s.events.map((e) => (e.kind === "tool" ? e.name : undefined)), s.events.map((e) => e.kind === "retried"));
+/** The display units for a session: compactDisplay over the events' kinds, tool names and foldable notices (render.ts displayItems); a
+ *  session with `gapBefore` set holds a hidden-history gap (T386: turns the page does not hold) as the unit before the one opening at
+ *  that event, where the regions' itemization puts it. */
+const firstEventOf = (it: DisplayItem): number => (it.kind === "event" ? it.index : it.kind === "gap" ? it.before : it.indices[0]);
+const itemsOf = (s: { events: Ev[]; gapBefore?: number }): DisplayItem[] => {
+  const base = compactDisplay(s.events.map((e) => e.kind), s.events.map((e) => (e.kind === "tool" ? e.name : undefined)), s.events.map((e) => e.kind === "retried"));
+  if (s.gapBefore == null) return base;
+  const out: DisplayItem[] = [];
+  for (const it of base) { if (firstEventOf(it) === s.gapBefore) out.push({ kind: "gap", lo: 10, hi: 12, before: s.gapBefore }); out.push(it); }
+  assert.equal(out.length, base.length + 1, "the gap stands before the unit that opens at event " + s.gapBefore);
+  return out;
+};
 
 /** render.ts lifted over the stand-in DOM. `open` is the set of fold keys that stand open ("tg:<uuid>" / "ng:<uuid>"); `plans` records
  *  every plan the seam asks for. The renderers record the inputs a reader can see: the row's text as data-text, the rail reference on a
@@ -165,6 +182,8 @@ const user = (uuid: string, t: number, md: string): Ev => ({ kind: "user", uuid,
 const reply = (uuid: string, t: number, md: string): Ev => ({ kind: "assistant", uuid, t, md });
 const tool = (uuid: string, t: number, name: string): Ev => ({ kind: "tool", uuid, t, name });
 const thinking = (uuid: string, t: number): Ev => ({ kind: "thinking", uuid, t });
+const notice = (uuid: string, t: number): Ev => ({ kind: "retried", uuid, t });   // a foldable notice: two in a row fold into a notice run (itemsOf)
+const nextDay = (h: number, m: number, s: number) => Math.floor(new Date(2026, 0, 16, h, m, s).getTime() / 1000);   // the day after `at`'s
 
 /** What a reader can see of a view's DOM, unit by unit: the unit, the class list, the row's text, the rail marker (its reference and the
  *  stamp that reference yields, the walk's day) and the worked footer; a spacer as itself; a child that is neither as "foreign". */
@@ -186,8 +205,8 @@ const units = (p: Projected[]): Row[] => p.filter((x): x is Row => "unit" in x);
 
 type World = { s: any; v: any; L: Lifted; plans: TailPlan[]; open: Set<string>; frames: string[] };
 /** A session over `events` in a view built by the real first build (renderWindowItems over the tail window), the seam lifted over it. */
-function world(events: Ev[], open: Set<string>, working = true): World {
-  const s = { id: "A", events, status: { state: working ? "working" : "ready" }, regions: undefined };
+function world(events: Ev[], open: Set<string>, working = true, gapBefore?: number): World {
+  const s = { id: "A", events, status: { state: working ? "working" : "ready" }, regions: undefined, gapBefore };
   const v: any = { el: new FakeEl("div"), rendered: 0, scrollTop: 0, stick: true, shown: true, stale: false, winStart: 0 };
   const plans: TailPlan[] = [];
   const L = lift(new Map([["A", s]]), new Map([["A", v]]), open, plans);
@@ -211,8 +230,12 @@ function compare(w: World, label: string): void {
 }
 /** One streamed frame: the events after `mutate`, the first changed index (identity first, as the kernel's diff: an edited event is a new
  *  object) lowering v.rendered, a shrink marking the view stale (the chatTail handler's `shrank`), then appendActive's sync with the reader
- *  at the bottom. `expect` is the plan the frame must take ("fast": the status-only fast path asks no plan). */
-function frame(w: World, label: string, mutate: (events: Ev[]) => Ev[], expect: "append" | "rebuild" | "fast", opts: { working?: boolean; band?: boolean } = {}): void {
+ *  at the bottom. `expect` is the plan the frame must take ("fast": the status-only fast path asks no plan). After an append the EXECUTOR
+ *  is checked, not the planner alone: every unit node below the plan's u0 is the node that was there before the paint (the eviction takes
+ *  some away and the re-seed repaints the promoted head's marker in place; a spacer carries no unit), every unit node from u0 is new, and
+ *  when u0 is the unit count (`u0: "total"`: a hidden thinking block landed, no unit reaches it) nothing is new. A seam that asked the
+ *  plan and rebuilt the window anyway passes the plan assertion with every node new. */
+function frame(w: World, label: string, mutate: (events: Ev[]) => Ev[], expect: "append" | "rebuild" | "fast", opts: { working?: boolean; band?: boolean; u0?: "total" } = {}): void {
   const was: Ev[] = w.s.events;
   const now = mutate(was.slice());
   let from = 0;
@@ -222,43 +245,102 @@ function frame(w: World, label: string, mutate: (events: Ev[]) => Ev[], expect: 
   w.v.rendered = Math.min(w.v.rendered, from);
   if (now.length < was.length) w.v.stale = true;
   if (opts.band) w.v.el.appendChild(new FakeEl("div", "rail-band rail-band-local"));   // a hover's band: drawRailBand appends it to the thread as its last child
+  const before = new Set<FakeEl>((w.v.el as FakeEl).children);
   const n = w.plans.length;
   w.L.syncViewInner("A", true);
   w.frames.push(label);
   const asked = w.plans.slice(n);
   if (expect === "fast") assert.equal(asked.length, 0, label + ": a status-only tail takes the fast path, no plan asked: " + JSON.stringify(asked));
-  else { assert.equal(asked.length, 1, label + ": one plan asked: " + JSON.stringify(asked)); assert.equal(asked[0].kind, expect, label + ": the plan " + JSON.stringify(asked[0])); }
+  else {
+    assert.equal(asked.length, 1, label + ": one plan asked: " + JSON.stringify(asked));
+    const plan = asked[0];
+    assert.equal(plan.kind, expect, label + ": the plan " + JSON.stringify(plan));
+    if (plan.kind === "append") {
+      const total = itemsOf(w.s).length;
+      if (opts.u0 === "total") assert.equal(plan.u0, total, label + ": no unit reaches the change, so u0 is the unit count");
+      let kept = 0, fresh = 0;
+      for (const c of (w.v.el as FakeEl).children) {
+        const u = c.dataset.unit == null ? -1 : Number(c.dataset.unit);
+        if (u < 0) continue;
+        if (u < plan.u0) { assert.ok(before.has(c), `${label}: unit ${u} below u0=${plan.u0} is the node that was there before the paint`); kept++; }
+        else { assert.ok(!before.has(c), `${label}: unit ${u} at or past u0=${plan.u0} is a new node`); fresh++; }
+      }
+      if (plan.u0 > (w.v.winStart ?? 0)) assert.ok(kept > 0, label + ": the units below u0 inside the window stood (an append never renders the whole window)");
+      if (plan.u0 < total) assert.ok(fresh > 0, label + ": the units from u0 were re-rendered"); else assert.equal(fresh, 0, label + ": u0 is the unit count: nothing re-rendered");
+    }
+  }
   compare(w, label);
+}
+/** The footer text on the incremental view's node(s) for `uuid`: an event's row, or a run's head and the rows of its members (a run's head
+ *  carries its anchor's uuid). Null when the node stands with no footer; undefined when no node carries the uuid (a collapsed run's member). */
+function footerOn(w: World, uuid: string): string | null | undefined {
+  const rows = units(project(w.v.el)).filter((r) => r.uuid === uuid);
+  if (!rows.length) return undefined;
+  return rows.map((r) => r.footer).find((f) => f != null) ?? null;
 }
 
 // The transcript: a prompt, a reply, then the agentic turn (a prompt, a collapsed run of two tools across a minute boundary, a hidden
-// thinking block in a later minute, the reply in that minute). The run's key is "tg:t1"; the fold state is the sequence's parameter.
+// thinking block in a later minute, the reply in that minute). The run's key is "tg:t1"; the fold state is the sequence's parameter, and
+// the open fold also opens the run that forms during the stream ("tg:t6") and the notice run ("ng:n5").
 const base = (): Ev[] => [
   user("u0", at(9, 58, 0), "first question"), reply("a1", at(9, 58, 30), "first answer"),
   user("u2", at(10, 0, 0), "second question"), tool("t1", at(10, 0, 10), "Read"), tool("t2", at(10, 3, 0), "Grep"),
   thinking("th3", at(10, 4, 10)), reply("a4", at(10, 4, 20), "second answer"),
 ];
-const FOLDS = [["closed", new Set<string>()], ["open", new Set(["tg:t1", "ng:n5"])]] as const;
+const FOLDS = [["closed", new Set<string>()], ["open", new Set(["tg:t1", "tg:t6", "ng:n5"])]] as const;
 
 for (const [fold, open] of FOLDS) {
-  test(`the stream, run ${fold}: a growing reply, a tool landing and joining a run, the run extending, a prompt completing the turn, a status-only tail, a shrink: every frame's DOM equals a rebuild of the same state`, () => {
+  test(`the stream, run ${fold}: a growing reply, a thinking block at the tail, a tool result inside the run, a tool landing and joining a run, the run extending, the footer on and off the open turn's last reply, a reply landing while idle, a prompt completing the turn, a notice run forming on an anchor out of order and going idle, a shrink, a day crossing: every frame's DOM equals a rebuild of the same state`, () => {
     const w = world(base(), new Set(open));
     compare(w, "the first build");
     // the reply grows, three frames (an edit of the last block: the same uuid, a new object)
     for (let i = 1; i <= 3; i++) frame(w, "reply grows " + i, (ev) => { ev[ev.length - 1] = reply("a4", at(10, 4, 20), "second answer, more words " + i); return ev; }, "append");
-    // a lone tool lands after the reply, then a second joins it (the fold forms), then a third extends the run
-    frame(w, "a tool lands", (ev) => ev.concat([tool("t5", at(10, 5, 0), "Bash")]), "append");
-    frame(w, "a tool joins: the run forms", (ev) => ev.concat([tool("t6", at(10, 5, 30), "Read")]), "append");
-    frame(w, "the run extends", (ev) => ev.concat([tool("t7", at(10, 6, 5), "Edit")]), "append");
-    // the reply after the run streams, then a prompt lands: the previous turn completes and its reply gains the worked footer
-    frame(w, "a reply after the run", (ev) => ev.concat([reply("a8", at(10, 6, 40), "third answer")]), "append");
-    frame(w, "a prompt completes the turn", (ev) => ev.concat([user("u9", at(10, 8, 0), "third question")]), "append");
-    // a status-only tail: the session goes idle (the footer on the last reply comes on), then back to work (it comes off)
+    // a hidden thinking block lands at the tail: compact mode shows no unit for it, so the plan's u0 is the unit count and nothing is re-rendered
+    frame(w, "a thinking block lands", (ev) => ev.concat([thinking("th5", at(10, 4, 50))]), "append", { u0: "total" });
+    // a tool's result lands inside the base run (an edit of t1: the same uuid, a new object): the run's unit re-renders whole
+    frame(w, "a tool result lands inside the run", (ev) => { ev[3] = { ...ev[3], md: "12 lines" }; return ev; }, "append");
+    // a lone tool lands after the reply, then a second joins it (the fold forms: "tg:t6", expanded in the open fold, so the run gains a row
+    // per member), then a third extends the run
+    frame(w, "a tool lands", (ev) => ev.concat([tool("t6", at(10, 5, 0), "Bash")]), "append");
+    frame(w, "a tool joins: the run forms", (ev) => ev.concat([tool("t7", at(10, 5, 30), "Read")]), "append");
+    frame(w, "the run extends", (ev) => ev.concat([tool("t8", at(10, 6, 5), "Edit")]), "append");
+    // the reply after the run streams; the turn is OPEN, so a status-only tail flips its footer: idle puts it on (the fast path's patch,
+    // from = len), work takes it off again
+    frame(w, "a reply after the run", (ev) => ev.concat([reply("a9", at(10, 6, 40), "third answer")]), "append");
+    assert.equal(footerOn(w, "a9"), null, "the streaming reply carries no footer while the session works");
     frame(w, "idle", (ev) => ev, "fast", { working: false });
+    assert.equal(footerOn(w, "a9"), String(at(10, 6, 40) - at(10, 0, 0)), "idle: the footer is on the turn's last reply, the prompt to the reply");
     frame(w, "working again", (ev) => ev, "fast", { working: true });
-    // the tail shrinks: the kernel retires the last prompt (the handler's shrank flag marks the view stale: the rebuild)
+    assert.equal(footerOn(w, "a9"), null, "back at work: the footer comes off");
+    // idle again, then a reply lands in the same turn: the footer comes off the reply before it (the seam's patch, its off branch) and the
+    // new reply is rendered with its own
+    frame(w, "idle again", (ev) => ev, "fast", { working: false });
+    frame(w, "a reply lands while idle", (ev) => ev.concat([reply("a10", at(10, 7, 10), "third answer, continued")]), "append");
+    assert.equal(footerOn(w, "a9"), null, "no longer the turn's last reply");
+    assert.equal(footerOn(w, "a10"), String(at(10, 7, 10) - at(10, 0, 0)), "the new reply carries the footer");
+    // a prompt lands and the session works on it: the previous turn is complete and its footer stays
+    frame(w, "a prompt completes the turn", (ev) => ev.concat([user("u11", at(10, 8, 0), "third question")]), "append", { working: true });
+    assert.equal(footerOn(w, "a10"), String(at(10, 7, 10) - at(10, 0, 0)), "complete: the footer stays");
+    // two notices land in the new turn; the second is stamped EARLIER (a notice that kept the moment it was queued), so the run it forms
+    // anchors on its first member ("ng:n5": in the open fold the head, then a row per member)
+    frame(w, "a notice lands", (ev) => ev.concat([notice("n5", at(10, 9, 0))]), "append");
+    frame(w, "a second notice joins, stamped earlier: the run forms on the first", (ev) => ev.concat([notice("n6", at(10, 8, 40))]), "append");
+    // idle with the open notice run last: the footer goes on the last member's ROW, read by its position under the run's unit (the fast
+    // path's patch); a collapsed run has no row for it, so nothing is on screen and nothing patched; work takes it off again
+    frame(w, "idle with the notice run last", (ev) => ev, "fast", { working: false });
+    if (fold === "open") assert.equal(footerOn(w, "n6"), String(at(10, 8, 40) - at(10, 8, 0)), "the run's last row carries the footer");
+    else assert.equal(footerOn(w, "n6"), undefined, "a collapsed run shows no row for its member");
+    frame(w, "working with the notice run last", (ev) => ev, "fast", { working: true });
+    assert.notEqual(footerOn(w, "n6"), String(at(10, 8, 40) - at(10, 8, 0)), "back at work: no footer on the row");
+    // the tail shrinks: the kernel retires the last notice (the handler's shrank flag marks the view stale: the rebuild), then a prompt lands
     frame(w, "the tail shrinks", (ev) => ev.slice(0, -1), "rebuild");
-    frame(w, "a prompt lands again", (ev) => ev.concat([user("u10", at(10, 9, 0), "third question, again")]), "append");
+    frame(w, "a prompt lands again", (ev) => ev.concat([user("u12", at(10, 9, 30), "third question, again")]), "append");
+    // the next day: the prompt opens a day, so the seam appends the divider a rebuild draws above it (the walk's mark from dayWalkBefore);
+    // the reply after it opens none
+    frame(w, "a prompt the next day", (ev) => ev.concat([user("u13", nextDay(0, 1, 0), "next morning")]), "append");
+    assert.ok(units(project(w.v.el)).some((r) => r.uuid == null && r.cls.includes("day-divider")), "a day divider stands among the units");
+    frame(w, "a reply the next day", (ev) => ev.concat([reply("a14", nextDay(0, 1, 30), "next morning's answer")]), "append");
+    frame(w, "idle the next day", (ev) => ev, "fast", { working: false });
   });
 
   test(`a hover's rail band as the thread's last child, run ${fold}: the next streamed frame still renders what a rebuild renders (the trim reaches the units behind it), and nothing foreign is left among the units`, () => {
@@ -290,6 +372,39 @@ for (const [fold, open] of FOLDS) {
     const head = units(project(w.v.el))[0];
     assert.equal(head.unit, w.v.winStart, "the first unit under the spacer is the window's start");
     assert.ok(head.marker, "the head unit carries a time marker");
+  });
+
+  test(`an eviction that promotes a GAP to the window's first, run ${fold}: the first marker after the gap carries the reference a build of that window gives it (the seed at the gap, carried through the marker-less head)`, () => {
+    // a hidden-history gap (T386: a landing loaded a mid-transcript run, then the jump to the live tail) stands before the tail run's
+    // first prompt, under a collapsed run across a minute boundary, and the window spans it; the appends evict the units above the gap
+    // one by one, then the gap itself. The build's seed at the gap is the back-scan from the event below it (the run's LAST member),
+    // where the chain the prompt below was drawn with left the collapsed run on its FIRST: re-seeding the head unit's own marker alone
+    // found none on the gap and left the prompt's stamp on the chain's reference until the next eviction repaired it (round 1's second pass).
+    const events: Ev[] = [
+      user("u0", at(9, 50, 0), "first question"), reply("a1", at(9, 50, 30), "first answer"),
+      user("u2", at(9, 52, 0), "second question"), tool("t1", at(9, 52, 10), "Read"), tool("t2", at(9, 55, 0), "Grep"),
+      user("u5", at(9, 55, 30), "third question"), reply("a6", at(9, 56, 0), "third answer"), user("u7", at(9, 57, 0), "fourth question"), reply("a8", at(9, 57, 30), "fourth answer"),
+    ];
+    const w = world(events, new Set(open), true, 5);
+    const items0 = itemsOf(w.s);
+    assert.equal(items0.length, 9, "eight items and the gap");
+    assert.equal(items0[4].kind, "gap", "the gap is the unit before the tail run's prompt");
+    assert.equal(w.v.winStart, 1, "the first build opens one unit down: the window spans the gap");
+    compare(w, "the first build");
+    const pushes: Array<[string, Ev]> = [["a prompt", user("u9", at(9, 58, 0), "fifth question")], ["a reply", reply("a10", at(9, 58, 30), "fifth answer")],
+                                        ["a prompt", user("u11", at(9, 59, 0), "sixth question")], ["a reply", reply("a12", at(9, 59, 30), "sixth answer")]];
+    let gapHeaded = 0;
+    for (const [label, ev] of pushes) {
+      frame(w, label, (evs) => evs.concat([ev]), "append");
+      if (w.v.winStart === 4) {
+        gapHeaded++;
+        const rows = units(project(w.v.el));
+        assert.equal(rows[0].unit, 4, "the gap is the window's first unit"); assert.equal(rows[0].marker, null, "and carries no marker");
+        assert.equal(rows[1].unit, 5); assert.equal(rows[1].marker!.prev, String(at(9, 55, 0)), "the prompt below it is stamped against the run's last member, the seed's back-scan, not the chain's first member");
+      }
+    }
+    assert.equal(gapHeaded, 1, "one frame's eviction made the gap the window's first unit");
+    assert.equal(w.v.winStart, 5, "the next eviction promoted the prompt");
   });
 }
 

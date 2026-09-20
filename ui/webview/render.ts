@@ -14018,15 +14018,21 @@ function evictCompactTop(v: View, newWinStart: number): boolean {
  *  where the seed's back-scan finds its LAST; a hidden thinking row is seen by the scan alone), so the row's stamp depended on which path
  *  last painted it: present incrementally, blank after any later rebuild, with no new information (review round 1: the fifth full-rebuild
  *  case, which compactTailPlan cannot list because the plan is computed before the eviction). The rule is CONSISTENCY WITH THE REBUILD,
- *  in either direction (a notice run's anchor can make the chain suppress a stamp the seed shows): the head unit's first marker is
- *  repainted against the seed, data-prev with it (the minute tick's reference, refreshRelativeMarkers). The marker is the one node the
- *  seed reaches: the rows of an expanded run chain from the run's own members, the same on both paths, and appendItem appends at the end
- *  only, so a re-render of the unit in place is not available. A unit with no marker (a gap) has nothing to re-seed. */
+ *  in either direction (a notice run's anchor can make the chain suppress a stamp the seed shows): the window's FIRST marker is repainted
+ *  against the reference a build hands its unit, data-prev with it (the minute tick's reference, refreshRelativeMarkers). That reference
+ *  is the seed at the new start carried to the marker's unit by the chain's own rule (railChainBefore): the seed itself when the head
+ *  unit carries the marker, and the seed passed through a marker-less head otherwise (a gap, whose railExit is the identity; an untimed
+ *  row likewise; a timed row with no marker advances the chain on both paths alike). Re-seeding the head unit's own marker alone found
+ *  none on a gap and left the first marker after it on the chain's reference, where a rebuild of the same window seeded it through the
+ *  gap from the event below it (round 1's second pass). The marker is the one node the seed reaches: the rows of an expanded run chain
+ *  from the run's own members, the same on both paths, and appendItem appends at the end only, so a re-render of the unit in place is
+ *  not available. A window with no marker at all has nothing to re-seed. */
 function reseedWindowHead(v: View, s: Session, items: DisplayItem[]): void {
   const ws = v.winStart ?? 0;
-  const m = v.el.querySelector(`:scope > [data-unit="${ws}"] > .time-marker`) as HTMLElement | null;   // the unit's first marker-bearing node (a divider carries none)
+  const m = v.el.querySelector(":scope > [data-unit] > .time-marker") as HTMLElement | null;   // the window's first marker-bearing node (a divider, a gap, an untimed row carry none)
   if (!m) return;
-  const seed = railSeed(s, items, ws);
+  const um = Number((m.parentElement as HTMLElement).dataset.unit);
+  const seed = railChainBefore(s, items, ws, um);   // railSeed(s, items, ws) when um is ws
   const prev = seed == null ? "" : String(seed);
   if (m.dataset.prev === prev) return;
   m.dataset.prev = prev;
