@@ -873,7 +873,10 @@ began partway through its hour or day), so turns earlier in it are in
 neither amount, and the footnote states that too. The estimate stands alone
 only when the ledger has no bucket of the period's kind at all. The estimate
 misses fast mode's premium and any model the table lacks, and it prices
-every session's transcript, login sessions included.
+every session's transcript, login sessions included. A line under the
+footnote says where the table's prices came from: the live price feed, and
+how long ago it was fetched, or the baked-in defaults and why; how to stop
+the fetch is under [The price feed](#the-price-feed).
 
 The token count beside the dollars is every kind together: fresh input,
 output, cache writes, and cache reads. Cache reads are most of it: every API
@@ -1105,6 +1108,28 @@ yes. The gear reports a machine that is missing node or the comment tools.
   applies on the judges' next pass with no restart, wins over the variable,
   and follows to every connected machine like the other judge settings; its
   Default option clears the setting back to the variable, else 6.
+
+### The price feed
+
+- `ROMP_PRICE_FEED=off` stops the kernel from fetching model prices. The
+  gear's analytics modal (**Token usage**) prices transcript tokens with a
+  per-model table that ships with romp as baked-in defaults; when the modal
+  opens and the last fetch attempt is more than six hours old, or there has
+  been none, the kernel fetches the public LiteLLM price list from
+  `raw.githubusercontent.com`, a third-party host, with no credential, and
+  keeps the rows it matched in memory until the next restart. Set the
+  variable where the kernel's service sees it (`service.env`, then a manager
+  restart), and no request goes to that host at all. With the variable set,
+  the modal prices from the baked-in defaults and says so: the line under its
+  footnote reads `prices: baked-in defaults; live feed off (ROMP_PRICE_FEED=off)`,
+  `/version` carries a `priceFeed` block that says the same beside
+  `modelCatalog`, and the kernel logs one line, naming the variable, the
+  first time it would have fetched. The spend ceiling's check never fetches:
+  it prices with the rows the modal's last fetch left in memory, else the
+  defaults, with the switch or without it. A rate you want current with the
+  feed off goes in `~/.config/romp/model-prices.json`, a JSON object keyed
+  by model id whose rows carry `in`, `out`, `cache_w` and `cache_r` in
+  dollars per token; a row there wins over the feed and the defaults alike.
 
 ### Fast mode for the judges
 
