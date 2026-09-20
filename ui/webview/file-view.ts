@@ -4210,11 +4210,17 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
   // re-parse: an svg <a xlink:href> split across lines in such a fence comes back an HTML <a> whose xlink:href is a plain
   // attribute, and under the old order that anchor was followable for the reason the image leaked, the fold below (`a[*|href]`)
   // and linkMarkdownAnchors having stamped href and class on the svg anchor before the re-parse copied them into the HTML <a> it
-  // made; judged after the re-parse it has no href, and linkMarkdownAnchors (file-view-links.ts) marks it dead (fv-dead) as it
-  // does every HTML anchor with no href that is not an anchor target (no name or id), so a link inside a code fence stopped being
-  // live, which is what every other link inside a fenced code block already does, its markup shown as text; an svg anchor on one
-  // line keeps its namespace and folds as before (measured 2026-09-20 in the three engines by the fork PR review's verification,
-  // at the moved head and at a copy with the pass moved back). The Copy button (code-block.ts addCopyBtn) is created in the live
+  // made; judged after the re-parse it has no href and still carries the plain xlink:href, which the fold below (`a[*|href]`, a
+  // namespaced match) does not select, and linkMarkdownAnchors (file-view-links.ts) marks it dead (fv-dead, the title saying why)
+  // whether or not the author gave it an id or a name: the module exempts an href-less anchor target (an author's name or id,
+  // never a link) from the dead dressing, and the split anchor with an author's id sat in that exemption unclassed and untitled,
+  // painted in the link ink by the sheet's bare `.fileview-md a` rule and doing nothing on a click, a silent dead link in the
+  // three engines (the fork PR review's round 2, findings correctness-2, extra7-1 and tests-4, 2026-09-20; the mark is keyed on
+  // that attribute and the exemption is otherwise unchanged; the sixth case of the same leg holds both shapes, red for the
+  // id-bearing one at the head before the mark), so a link inside a code fence stopped being live and says so, which is what every
+  // other link inside a fenced code block already does, its markup shown as text; an svg anchor on one line keeps its namespace
+  // and folds as before (measured 2026-09-20 in the three engines by the fork PR review's verification, at the moved head and at
+  // a copy with the pass moved back). The Copy button (code-block.ts addCopyBtn) is created in the live
   // document, appended into this body's <pre> and adopted with it below; its listeners ride both adoptions, and the same leg
   // clicks each fence's button for real in the three engines.
   const copySources = fenceCopyQueue(text, fences);

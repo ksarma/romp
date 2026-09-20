@@ -51,7 +51,13 @@
 // with it; the case clicks each of two fences' buttons for real (page.click) and asserts the handler handed the clipboard write
 // the fence's text and the label read Copied, then Copy again (green in all three engines, 2026-09-20). The page is plain http
 // through the proxy, so navigator.clipboard is absent there and a recorder stands in for the write, as
-// file-view-copy-source-browser.test.ts does; the click and the listeners are the engine's own.
+// file-view-copy-source-browser.test.ts does; the click and the listeners are the engine's own. The sixth case is the other
+// product of that re-parse: an svg <a xlink:href> split across lines inside such a fence comes back an HTML <a> whose xlink:href
+// is a plain attribute in no namespace, which the fold's `a[*|href]` does not select, so it has no href and linkMarkdownAnchors
+// marks it dead (fv-dead, the dead-link title); the case holds one with an author's id and one without, asserts both marked and
+// an author's anchor target in the prose unmarked, in each engine. Red at the head before the mark for the id-bearing one, which
+// the anchor-target exemption left unclassed and untitled in the link ink (the fork PR review's round 2, correctness-2, extra7-1,
+// tests-4, 2026-09-20), green in all three after it.
 // Each engine is its own test and skips, saying so, when its binary is
 // absent. Where it skips (CI installs no engine before npm test), file-view-figures-gate-adopt.test.ts executes the
 // order under plain node, the attributes at the adoption and every write of one, with no bytes to see. Synthetic values
@@ -107,6 +113,20 @@ const FENCE_NOTE = [
 const COPY_NOTE_PATH = DIR + "copy.md";
 const COPY_FENCES = ["alpha one\nalpha two\n", "beta\n"];
 const COPY_NOTE = "# Two fences\n\n```\nalpha one\nalpha two\n```\n\nbetween\n\n```\nbeta\n```\n";
+/** The sixth case: an svg anchor split across lines inside a raw fence, once with an author's id and once without, and the
+ *  control, an author's anchor target in the prose. The fence pass's re-parse makes the split anchor an HTML <a> whose
+ *  `xlink:href` is a plain attribute in no namespace (the fold's `a[*|href]` does not select it, so it never gets an href), and
+ *  linkMarkdownAnchors marks it dead in both shapes; the control keeps neither class nor title. */
+const ANCHOR_NOTE_PATH = DIR + "anchor.md";
+const ANCHOR_NOTE = [
+  "# Split anchors", "",
+  "<pre><code><svg>", '<a xlink:href="#top" id="split-id">with an id</a>', "</svg></code></pre>", "",
+  "<pre><code><svg>", '<a xlink:href="#top">without one</a>', "</svg></code></pre>", "",
+  '<a id="results"></a>', "", "Results here.", "",
+].join("\n");
+/** file-view-links.ts DEAD_LINK_TITLE, the reason the dead dressing carries (the module is not imported here: the leg reads the
+ *  page's DOM alone, and the node pins in file-view-links.test.ts hold the constant itself). */
+const DEAD_TITLE = "Not a link the viewer can follow: its target is neither a web address nor a file on the session's machine";
 
 const BUILD = { bundle: true, write: false, format: "iife", platform: "browser", target: "es2020",
   nodePaths: [path.join(EXT, "node_modules")], external: ["*.png", "*.svg", "*.woff", "*.ttf", "../media/*.woff2"], logLevel: "silent" };
@@ -177,7 +197,7 @@ function harnessServer(js: string, log: Line[]): http.Server {
     if (u.pathname === "/dist/files.js") { head(200, "application/javascript"); res.end(js); return; }
     if (u.pathname === "/file") {
       const p = u.searchParams.get("path") || "";
-      const note = p === REMOTE_NOTE_PATH ? REMOTE_NOTE : p === LOCAL_NOTE_PATH ? LOCAL_NOTE : p === FENCE_NOTE_PATH ? FENCE_NOTE : p === COPY_NOTE_PATH ? COPY_NOTE : null;
+      const note = p === REMOTE_NOTE_PATH ? REMOTE_NOTE : p === LOCAL_NOTE_PATH ? LOCAL_NOTE : p === FENCE_NOTE_PATH ? FENCE_NOTE : p === COPY_NOTE_PATH ? COPY_NOTE : p === ANCHOR_NOTE_PATH ? ANCHOR_NOTE : null;
       if (note !== null) { head(200, "text/plain; charset=utf-8", { "X-Romp-Mtime-Ns": "1", "X-Romp-Text-Utf8": "1" }); res.end(note); return; }
       if (p === DIR + "fig.png") { head(200, "image/png"); res.end(PNG); return; }
     }
@@ -421,6 +441,35 @@ for (const engine of ["chromium", "firefox", "webkit"] as const) {
       await page.waitForTimeout(1400);   // the acknowledgement's window (code-block.ts acknowledge: about 1.2 s)
       const after: { labels: string[]; copied: boolean[] } = await page.evaluate(() => { const b = Array.from(document.querySelectorAll("#romp-fileview .fileview-md pre.has-copy > .code-copy")) as HTMLElement[]; return { labels: b.map((x) => x.textContent || ""), copied: b.map((x) => x.classList.contains("copied")) }; });
       assert.deepEqual(after, { labels: ["Copy", "Copy"], copied: [false, false] }, "both labels read Copy again after the window");
+    });
+  });
+
+  test(engine + ": an svg anchor split across lines inside a raw fence, re-parsed by the fence pass into an HTML anchor with no href and a plain xlink:href attribute, is marked dead with the reason in the rendered page, with an author's id and without one (the id-bearing one was exempt as an anchor target and painted in the link ink, doing nothing: silent); an author's anchor target in the prose stays unmarked", { timeout: 120000 }, async (t) => {
+    // Measured red at the head before the mark (fa5f761c8, this case copied in): the id-bearing anchor had no class and no title in
+    // Chromium, Firefox and WebKit, its cursor the sheet's default, while the one without an id was fv-dead in all three (the fork
+    // PR review's round 2, findings correctness-2, extra7-1 and tests-4, 2026-09-20). Green in all three at the head that marks it.
+    await inEngine(t, engine, async (s) => {
+      const { page } = s;
+      await s.open(ANCHOR_NOTE_PATH);
+      await page.waitForFunction(() => document.querySelectorAll("#romp-fileview .fileview-body .fileview-md pre").length === 2, null, { timeout: 15000 });
+      type Anchor = { ns: string | null; href: string | null; xlink: string | null; id: string | null; cls: string | null; title: string | null; cursor: string; text: string };
+      // read off the live page: the attributes as the passes left them and the cursor the sheet computes (fv-dead's rule gives `help`)
+      const seen: { inFences: Anchor[]; inProse: Anchor[] } = await page.evaluate(() => {
+        const read = (a: Element) => ({ ns: a.namespaceURI, href: a.getAttribute("href"), xlink: a.getAttribute("xlink:href"), id: a.getAttribute("id"), cls: a.getAttribute("class"), title: a.getAttribute("title"), cursor: getComputedStyle(a).cursor, text: a.textContent || "" });
+        const md = document.querySelector("#romp-fileview .fileview-md") as HTMLElement;
+        return { inFences: Array.from(md.querySelectorAll("pre a")).map(read), inProse: Array.from(md.querySelectorAll("p a")).map(read) };
+      });
+      const HTML_NS = "http://www.w3.org/1999/xhtml";
+      const deadAnchor = (id: string | null, text: string): Anchor => ({ ns: HTML_NS, href: null, xlink: "#top", id, cls: "fv-dead", title: DEAD_TITLE, cursor: "help", text });
+      assert.deepEqual(seen.inFences, [deadAnchor("user-content-split-id", "with an id"), deadAnchor(null, "without one")],
+        engine + ": both split anchors are HTML anchors with no href, the plain xlink:href left as the re-parse made it, classed fv-dead with the dead-link title and the sheet's help cursor, the author's id kept under the sanitizer's prefix; seen: " + JSON.stringify(seen.inFences));
+      assert.deepEqual(seen.inProse, [{ ns: HTML_NS, href: null, xlink: null, id: "user-content-results", cls: null, title: null, cursor: "auto", text: "" }],
+        engine + ": the author's anchor target in the prose is left alone, no class and no title; seen: " + JSON.stringify(seen.inProse));
+      // a click on the marked anchor goes nowhere: the pane's document stays, no navigation, no tab (the page's URL is read after)
+      const before = page.url();
+      await page.click("#romp-fileview .fileview-md pre:nth-of-type(1) a");
+      await page.waitForTimeout(200);
+      assert.equal(page.url(), before, "the dead anchor navigated nothing");
     });
   });
 }

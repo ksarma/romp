@@ -7835,43 +7835,57 @@ any run: the leg once per engine at the fix and once per engine in each later ru
 head runs); the refuters 18 of 18, then 4, 4 and 2 runs, then 3 per engine.
 
 **The fence hole.** Found by the fork PR's review and closed in its round-2 push (the branch's fourth round,
-2026-09-20), on main and open at this fix as filed: mdBlock's fence pass ran after the adoption, over the live box, and
-re-parsed every `pre code` subtree (code-block.ts wrapCodeLines, `code.innerHTML = wrapLinesHtml(code.innerHTML)`),
-whose line splitter carries only `<span>` tags across a newline. An author's raw multi-line fence in a plain (unnamed)
-code block, `<pre><code><svg>` / `<image src="http://<unlisted host>/x.png"/>` / `</svg></code></pre>`, survives the
-sanitizer (`image` is in DOMPurify's svg tag list; `src` and `srcset` are in its attribute list), and the chain never
-judges `src` or `srcset` on an svg image (figure-gate.ts FETCH_ATTRS.image is `href` and `xlink:href`), so at the
-adoption nothing loaded; the re-parse then closed the `<svg>` at the line's end and parsed the `<image>` in body, where
-the HTML parser makes it an HTML `<img>`, and its `src` or `srcset` fetched from the unlisted host with no click.
-Measured 2026-09-20 with the fence pass after the adoption, over three such fences (an image with `src`; a gated svg's
-image with `src` beside its `href`; an image with `srcset`), in Playwright's Chromium, Firefox and WebKit: the figure
-server logged `GET /a-src.png`, `GET /b-src.png` and `GET /c-set.png` under Host `remote.test` in every engine, by the
-review's probe first and then by the fourth scene of file-view-figures-gate-adopt-browser.test.ts copied into a scratch
-copy of that head. Controls, clean: the same svg outside a fence, on one line inside a fence, and a `<template><img>`
-(the review's probe, Chromium), and in a `language-js` fence, which hljs escapes to text (the scene's control, all three
-engines). A side effect of the same order: the line splitter counted the gate's own `<span class="fv-gate">` as an open
-span and repeated it as every following line's prefix, so one gated svg image yielded three placeholders. Closed by the
-move: the fence pass runs on `clean` directly after the sanitize and before the chain, so the chain judges the img the
-re-parse created and gates it like any other; the same scene at the moved head, in all three engines: no line for the
-unlisted host, each of the three fences holding one HTML img under exactly one placeholder with its `src` or `srcset`
-under `data-fv-gated-*` and no svg image left, the control holding no img, and one click on a placeholder loading the
-host, one request per img, no Referer. The three-placeholder effect is closed by the same move (one placeholder per
-fence in the scene's assertion). The same move corrected a second product of the re-parse, measured 2026-09-20 in
-Playwright's three engines by the fork PR review's verification (a note with an svg anchor on one line inside such a
-fence and one split across lines, at the moved head and at a copy with the fence pass moved back after the adoption):
-an svg anchor split across lines is re-parsed in body as an HTML `a` whose `xlink:href` is a plain attribute with no
-namespace. Under the old order that anchor was followable (a section link, fv-frag) for exactly the reason the image
-leaked: the re-parse ran after the passes, so its product carried what they had stamped on the element they judged
-(the post-adoption fold's `href="#top"` and the link pass's class, copied into the HTML `a` the re-parse made) and
-escaped their judgment, as the img it made carried a `src` the chain never read. With the re-parse before the passes,
-they judge its product: the img is gated, and the split anchor, an HTML `a` with no `href`, is dead (fv-dead), which
-is what linkMarkdownAnchors (file-view-links.ts) makes of every HTML anchor with no `href` that is not an anchor
-target (no `name` or `id`). Closing the leak and making that anchor inert are one effect, a correction and not a cost:
-a link inside a code fence stopped being live, which is what every other link inside a fenced code block already does,
-since the fence shows its markup as text. Behaviour, not privacy: an HTML `a` with no `href` follows and fetches
-nothing. An svg anchor on one line keeps its namespace and folds as before, and an HTML anchor written as raw markup
-in such a `<pre><code>` block is an element the passes read, not text, and is stamped the same under both orders (the
-same probe: a path link, live at both heads).
+2026-09-20), on main and open at this fix as filed: mdBlock's fence pass ran after the adoption, over the live box,
+and re-parsed every `pre code` subtree (code-block.ts wrapCodeLines, `code.innerHTML =
+wrapLinesHtml(code.innerHTML)`), whose line splitter carries only `<span>` tags across a newline. An author's raw
+multi-line fence in a plain (unnamed) code block, `<pre><code><svg>` / `<image src="http://<unlisted host>/x.png"/>` /
+`</svg></code></pre>`, survives the sanitizer (`image` is in DOMPurify's svg tag list; `src` and `srcset` are in its
+attribute list), and the chain never judges `src` or `srcset` on an svg image (figure-gate.ts FETCH_ATTRS.image is
+`href` and `xlink:href`), so at the adoption nothing loaded; the re-parse then closed the `<svg>` at the line's end
+and parsed the `<image>` in body, where the HTML parser makes it an HTML `<img>`, and its `src` or `srcset` fetched
+from the unlisted host with no click. Measured 2026-09-20 with the fence pass after the adoption, over three such
+fences (an image with `src`; a gated svg's image with `src` beside its `href`; an image with `srcset`), in
+Playwright's Chromium, Firefox and WebKit: the figure server logged `GET /a-src.png`, `GET /b-src.png` and `GET
+/c-set.png` under Host `remote.test` in every engine, by the review's probe first and then by the fourth scene of
+file-view-figures-gate-adopt-browser.test.ts copied into a scratch copy of that head. Controls, clean: the same svg
+outside a fence, on one line inside a fence, and a `<template><img>` (the review's probe, Chromium), and in a
+`language-js` fence, which hljs escapes to text (the scene's control, all three engines). A side effect of the same
+order: the line splitter counted the gate's own `<span class="fv-gate">` as an open span and repeated it as every
+following line's prefix, so one gated svg image yielded three placeholders. Closed by the move: the fence pass runs on
+`clean` directly after the sanitize and before the chain, so the chain judges the img the re-parse created and gates
+it like any other; the same scene at the moved head, in all three engines: no line for the unlisted host, each of the
+three fences holding one HTML img under exactly one placeholder with its `src` or `srcset` under `data-fv-gated-*` and
+no svg image left, the control holding no img, and one click on a placeholder loading the host, one request per img,
+no Referer. The three-placeholder effect is closed by the same move (one placeholder per fence in the scene's
+assertion). The same move corrected a second product of the re-parse, measured 2026-09-20 in Playwright's three
+engines by the fork PR review's verification (a note with an svg anchor on one line inside such a fence and one split
+across lines, at the moved head and at a copy with the fence pass moved back after the adoption): an svg anchor split
+across lines is re-parsed in body as an HTML `a` whose `xlink:href` is a plain attribute with no namespace. Under the
+old order that anchor was followable (a section link, fv-frag) for exactly the reason the image leaked: the re-parse
+ran after the passes, so its product carried what they had stamped on the element they judged (the post-adoption
+fold's `href="#top"` and the link pass's class, copied into the HTML `a` the re-parse made) and escaped their
+judgment, as the img it made carried a `src` the chain never read. With the re-parse before the passes, they judge its
+product: the img is gated, and the split anchor, an HTML `a` with no `href` that still carries the plain `xlink:href`
+(the fold's `a[*|href]` is a namespaced match and does not select it, so no `href` is written on it), is marked dead
+(fv-dead, the title saying why) by linkMarkdownAnchors (file-view-links.ts) whether or not the author gave it an `id`
+or a `name`. The mark is keyed on that attribute (the fork PR review's round 2, findings correctness-2, extra7-1 and
+tests-4, 2026-09-20): the module exempts an href-less anchor target (an author's `name` or `id`, never a link) from
+the dead dressing, and the split anchor with an author's id sat in that exemption, unclassed and untitled, painted in
+the link ink by the sheet's bare `.fileview-md a` rule and doing nothing on a click, a silent dead link in all three
+engines where this record had said a visible one; the exemption itself is unchanged, since narrowing it would re-mark
+every author-written anchor target in every document. Pinned in file-view-links.test.ts (the split anchor with an id,
+with a name and with neither marked, the exempt target unmarked) and in the sixth case of
+file-view-figures-gate-adopt-browser.test.ts (the id-bearing and the bare split anchor fv-dead with the title and the
+sheet's help cursor, the prose's anchor target unmarked, in the three engines; red for the id-bearing one at the head
+before the mark, no class and no title, green with it). Closing the leak and making that anchor inert are one effect,
+a correction and not a cost: a link inside a code fence stopped being live and says so, which is what every other link
+inside a fenced code block already does, since the fence shows its markup as text. Behaviour, not privacy: an HTML `a`
+with no `href` follows and fetches nothing. An svg anchor on one line keeps its namespace and folds as before, and an
+HTML anchor written as raw markup in such a `<pre><code>` block is an element the passes read, not text, and is
+stamped the same under both orders (the same probe: a path link, live at both heads). Predating this fix and outside
+it: an anchor whose `href` the sanitizer stripped and that carries an author's `id` with no residue of the link stays
+exempt and silent, and the sheet's bare `a` rule painting every href-less anchor in the link ink is general and
+untouched here.
 
 **The re-parse population.** The rule needs every write that re-parses or re-serializes markup after the adoption
 enumerated, a different grep from the walk of attribute writes. The verbs are the HTML-parsing entry points an element
@@ -8017,14 +8031,16 @@ in Chromium and Firefox there, green in all three engines after the fix. Its fou
 multi-line fences, an svg image with `src`, with `src` beside a gating `href`, and with `srcset`, and the
 `language-js` control): red in all three engines with the fence pass after the adoption (the figure server's three GET
 lines) and green in all three with the pass before the chain, one placeholder per fence. Its fifth case, the Copy
-button under the moved pass, clicked for real on two fences: green in all three engines.
-file-view-figures-gate-adopt-svg-browser.test.ts, the second leg: red in Firefox and in WebKit at 2d41e5c9b, green in
-Chromium there, green in all three after the fix. Both legs skip where Playwright's engines are absent. In CI, the job
-whose step runs npm test has no Playwright browser install and no restore of Playwright's browser cache before that
-step (the job's own steps, the job found by that step and not by its key, read off .github/workflows/ci.yml by
-tools/markdown-viewer-plan-gate-adopt.test.mjs; what another job installs, or this job installs after that step, does
-not bear on it), so in CI the legs skip and the node scene runs: file-view-figures-gate-adopt.test.ts drives the real
-openFileView and openUrlView under plain node
+button under the moved pass, clicked for real on two fences: green in all three engines. Its sixth case, the svg
+anchor split across lines in a raw fence, with an author's id and without one, both marked dead with the title in the
+rendered page and the prose's anchor target unmarked: red in all three engines at the head before the mark for the
+id-bearing anchor (no class, no title), green in all three with it. file-view-figures-gate-adopt-svg-browser.test.ts,
+the second leg: red in Firefox and in WebKit at 2d41e5c9b, green in Chromium there, green in all three after the fix.
+Both legs skip where Playwright's engines are absent. In CI, the job whose step runs npm test has no Playwright
+browser install and no restore of Playwright's browser cache before that step (the job's own steps, the job found by
+that step and not by its key, read off .github/workflows/ci.yml by tools/markdown-viewer-plan-gate-adopt.test.mjs;
+what another job installs, or this job installs after that step, does not bear on it), so in CI the legs skip and the
+node scene runs: file-view-figures-gate-adopt.test.ts drives the real openFileView and openUrlView under plain node
 over a stand-in with two documents, the sanitizer's body inert and the viewer's document live, and pins by execution
 that no node entering the live document carries a fetching attribute on an unlisted host or a page-relative path (an
 img's src and srcset, a source's, a video's src and poster, an audio's src, an svg image's href or xlink:href, an svg
