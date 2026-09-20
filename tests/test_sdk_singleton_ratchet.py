@@ -842,6 +842,20 @@ def derive_red_lines(stdout):
             for cls in sorted(failed, key=lambda c: (ids[c], c))]
 
 
+def main_block():
+    """The module's `if __name__ == "__main__":` block, compiled from this file's source to run in a namespace: the
+    dispatch of `--derive <id>`, `--derive all` and `--count`, with unittest.main as the fallthrough. No run of the
+    module as a test reaches it (the block runs when the file is the script), so TheDerivationIsRunnable executes it
+    with derive replaced by a recorder. Exactly one such block is read; two, or none, is a loud error."""
+    with open(__file__) as f:
+        tree = ast.parse(f.read(), filename=__file__)
+    blocks = [node for node in tree.body
+              if isinstance(node, ast.If) and ast.unparse(node.test) == "__name__ == '__main__'"]
+    if len(blocks) != 1:
+        raise AssertionError("the module carries %d `if __name__ == \"__main__\":` blocks, not one" % len(blocks))
+    return compile(ast.Module(body=blocks[0].body, type_ignores=[]), __file__, "exec")
+
+
 def derive(cell):
     """Plant the cell's mutation in a detached worktree at HEAD, run this module there, print the red cases by case id
     with the head, and remove the worktree: the runnable derivation of the cell's current red set, which no sentence in
@@ -3516,8 +3530,12 @@ class TheDerivationIsRunnable(unittest.TestCase):
     summary and the cell's text, runs derive_command()'s argv in the added tree under the recipe's environment, and
     removes the tree and the scratch directory. Before this class no test called derive: the round-7 review found the
     two behaviours last added to it (the second --deselect and the refusal) executed by no run of the suite, so
-    derive replaced by a raiser left the module green. Not read here: a real pytest run and a real
-    worktree; the plant's exact-once count is TheMutationCellsApply's."""
+    derive replaced by a raiser left the module green. The module's --derive arm (its __main__ block, compiled from
+    this file's source by main_block and run with derive replaced by a recorder over a synthetic table written out
+    of order) calls derive once per key in sorted order for `all` and once for a named cell, and an argv the arms
+    do not name falls through to unittest.main; before that test the dispatch ran only when the file was the
+    script. Not read here: a real pytest run and a real worktree; the plant's exact-once count and the --count arm,
+    run as a process, are TheMutationCellsApply's."""
 
     def test_every_deselected_node_names_a_test_of_this_module(self):
         module = sys.modules[__name__]
@@ -3637,6 +3655,32 @@ class TheDerivationIsRunnable(unittest.TestCase):
                           "# run: %s (in the worktree)" % " ".join(derive_command()[1:])] + reds
                          + ["summary: 4 failed, 191 passed in 60.00s (0:01:00)", "cell: %s" % mutation_cell_text(__doc__, cell)])
 
+    def test_the_derive_arm_calls_derive_once_per_sorted_key_for_all_and_once_for_a_named_cell(self):
+        """The __main__ block (main_block) run over this module's globals with derive replaced by a recorder, MUTATIONS
+        by a synthetic table written out of sorted order and unittest.main by a raiser: `--derive all` calls derive
+        once per key of the table in sorted order (the sort is read, since the table is not written sorted) and
+        prints a blank line after each; `--derive <id>` calls it once with the id; an argv the arms do not name
+        reaches unittest.main. The --count arm is run as a process by TheMutationCellsApply."""
+        module = sys.modules[__name__]
+        table = {"refusal-b": None, "boundary-a": None, "refusal-a": None}
+        code = main_block()
+
+        def run(*argv):
+            calls, out = [], io.StringIO()
+            namespace = dict(vars(module), __name__="__main__", MUTATIONS=table, derive=calls.append,
+                             unittest=mock.Mock(main=mock.Mock(side_effect=AssertionError("unittest.main ran"))))
+            with mock.patch.object(sys, "argv", [MODULE_PATH, *argv]), contextlib.redirect_stdout(out):
+                exec(code, namespace)
+            return calls, out.getvalue()
+
+        self.assertEqual(run("--derive", "all"), (sorted(table), "\n" * len(table)),
+                         "--derive all does not call derive once per key of the table in sorted order with a blank "
+                         "line after each (the calls and the output, over the table %r)" % (list(table),))
+        self.assertEqual(run("--derive", "refusal-a"), (["refusal-a"], "\n"),
+                         "--derive <id> does not call derive once with the id (the calls and the output)")
+        with self.assertRaisesRegex(AssertionError, "unittest.main ran"):
+            run("--derive")
+
 
 class TheMutationCellsApply(unittest.TestCase):
     """The mutation table (MUTATIONS) applies at this tree, and the module docstring's matrix and the table name the
@@ -3648,7 +3692,10 @@ class TheMutationCellsApply(unittest.TestCase):
     TABLE_FLOOR, the table's length when the pin was written, is a failure, not a pass (the roster pin's convention).
     derive() deselects this class, and under any plant it reds: a replacement that removes its old text fails the
     exact-once count, and one that appends beside the old text (the new text containing the old, so the count holds
-    after the plant) puts a new text into the file that this class holds absent. It is no cell's set."""
+    after the plant) puts a new text into the file that this class holds absent. It is no cell's set. The refusals
+    of cell_counts (a key opening on no block's prefix, or on the prefixes of two blocks) and of docstring_block_ids
+    (a block's head written twice or not at all) run here over synthetic tables, blocks and docstrings, since the
+    module's own table and docstring reach neither."""
 
     def test_each_cells_old_text_occurs_exactly_once_and_the_mutation_parses(self):
         for cell, (target, subs) in MUTATIONS.items():
@@ -3688,6 +3735,44 @@ class TheMutationCellsApply(unittest.TestCase):
                              % (block, prefixes, sorted(set(by_block[block]) - keys), sorted(keys - set(by_block[block]))))
         with self.assertRaisesRegex(AssertionError, "opens 3 block heads"):
             docstring_block_ids(__doc__ + " a third" + BLOCK_HEAD_TAIL)
+
+    def test_a_key_opening_on_no_block_prefix_or_on_two_is_refused(self):
+        """cell_counts over synthetic tables: keys each opening on one block's prefix are counted by block and in
+        total; a key opening on no block's prefix is a ValueError naming the key, and so is a key opening on the
+        prefixes of two blocks, run over synthetic blocks whose prefixes nest (CELL_BLOCKS' own prefixes are disjoint,
+        so no key of the module's table reaches the second refusal). Before this test cell_counts ran over the
+        module's table alone, whose every key opens on one block, so neither refusal was executed by the suite."""
+        module = sys.modules[__name__]
+        one_each = {prefixes[0] + "cell": None for _, _, prefixes in CELL_BLOCKS}
+        self.assertEqual(cell_counts(one_each),
+                         dict({block: 1 for block, _, _ in CELL_BLOCKS}, **{"in total": len(CELL_BLOCKS)}))
+        with self.assertRaisesRegex(ValueError, r"^stray-x opens on no block prefix \(CELL_BLOCKS\)$"):
+            cell_counts(dict(one_each, **{"stray-x": None}))
+        nested = (("the outer block", "outer", ("x-",)), ("the inner block", "inner", ("x-y-",)))
+        with mock.patch.object(module, "CELL_BLOCKS", nested):
+            self.assertEqual(cell_counts({"x-1": None}), {"the outer block": 1, "the inner block": 0, "in total": 1})
+            with self.assertRaisesRegex(ValueError, r"^x-y-2 opens on more than one block prefix \(CELL_BLOCKS\)$"):
+                cell_counts({"x-1": None, "x-y-2": None})
+
+    def test_a_block_head_written_twice_or_not_at_all_is_refused(self):
+        """docstring_block_ids over synthetic docstrings that carry BLOCK_HEAD_TAIL exactly as many times as CELL_BLOCKS
+        has blocks, so the tail count passes and the per-head count rules: every head once is read as its block's
+        paragraph; the first block's head written for every block (twice, the others' absent) is an AssertionError
+        naming that block and the count; the last block's head written for every block is one naming the first block
+        and 0. Before this test the tail count's refusal was run by the paragraph test and the per-head refusal by
+        no test."""
+        self.assertGreaterEqual(len(CELL_BLOCKS), 2, "the refusal needs two blocks to write one head for the other")
+        heads = [opening + BLOCK_HEAD_TAIL for _, opening, _ in CELL_BLOCKS]
+        cells = ["cell %d (red: rule %d; derive: c-%d)" % (i, i, i) for i in range(len(CELL_BLOCKS))]
+        self.assertEqual(docstring_block_ids(" ".join(head + " " + cell for head, cell in zip(heads, cells))),
+                         {block: ["c-%d" % i] for i, (block, _, _) in enumerate(CELL_BLOCKS)})
+        first = CELL_BLOCKS[0][0]
+        with self.assertRaisesRegex(AssertionError, r"^%s's head occurs %d times in the docstring, not once: "
+                                    % (re.escape(first), len(CELL_BLOCKS))):
+            docstring_block_ids(" ".join(heads[0] + " " + cell for cell in cells))
+        with self.assertRaisesRegex(AssertionError, r"^%s's head occurs 0 times in the docstring, not once: "
+                                    % re.escape(first)):
+            docstring_block_ids(" ".join(heads[-1] + " " + cell for cell in cells))
 
     def test_the_first_cell_of_each_block_opens_on_its_own_words(self):
         """The cell text derive() prints starts at the cell's own words for a block's first cell too, whose left
