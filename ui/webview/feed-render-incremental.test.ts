@@ -1310,3 +1310,78 @@ test("the Task tracking switch's off frame hides the footer's Clear all and keep
   assert.equal(clearAll().style.display, "", "a built frame: the switch is on, and the button is offered again where its own gate says");
   await dispatch(frame([g1, g2, g3], { working: ["web"] }));
 });
+
+// ui-2 (the held-mail readers PR's review round 3): the latch above cleared in applyFeedPayload, which the hover-freeze
+// flush also runs, over a payload QUEUED while a card or a header was held under the pointer. A payload queued before
+// the off frame is older than the switch's last word, so applying it late brought Clear all back under the notice with
+// the list still hidden, a button the kernel's off door answers with nothing. The latch clears at a built frame's
+// ARRIVAL now, above the freeze queue, so the flush of an earlier frame leaves it set on both of the flush's triggers,
+// the pointer leaving the held row and the window losing focus. The queued frame's cards still land in the hidden list
+// (the flush applies it; the next frame owns the list), which is the notice's contract, not this case's.
+const offFrame = () => ({ type: "feed", off: true, now: K0, nowAt: T0 * 1000, asks: [], items: [], working: [], awaiting: [], stateUnknown: [], order: [], sessions: [],
+                          clearNotices: [], sdkNotices: [], syncNotices: [], dismissedCount: 3, showDismissed: false, canUndoClear: true });
+const webHead = () => body.querySelectorAll(`.feed-sess-head[data-fsid="${WEB}"]`).filter((h) => !h.classList.contains("sess-exit"))[0];
+const g4 = cardOf("g4", WEB, "web", "#3366cc", "Draft the notes-api changelog", "working");
+
+test("the footer's Clear all latch clears only on a built frame that ARRIVES: the hover-freeze flush of a frame queued before the off frame leaves the button hidden under the notice", async () => {
+  const clearAll = () => body.byId("feed-clearall")!, undo = () => body.byId("feed-undoclear")!;
+  await dispatch(frame([g1, g2, g3], { working: ["web"], canUndoClear: true }));
+  assert.equal(clearAll().style.display, "", "clearable cards and an undoable clear: Clear all offered");
+  const hw = webHead();
+  assert.ok(hw, "web's header row in Working");
+  hw.dispatchEvent(new Event("mouseenter"));                     // the pointer rests on the row: the payload gate is held
+  try {
+    await dispatch(frame([g1, g2, g3, g4], { working: ["web"], canUndoClear: true }));   // a built frame while held: queued, not applied
+    assert.equal(card("g4"), null, "the frame is queued behind the held row");
+    await dispatch(offFrame());                                  // the switch goes off: the list hides, the button with it
+    assert.equal(list.hidden, true, "off: the list is hidden behind the notice");
+    assert.equal(clearAll().style.display, "none", "off: Clear all hidden");
+  } finally {
+    hw.dispatchEvent(new Event("mouseleave"));                   // release: the flush applies the frame queued BEFORE the off frame
+    await settle();
+  }
+  assert.equal(list.hidden, true, "the list stays hidden: the off frame is the switch's last word");
+  assert.equal(clearAll().style.display, "none", "the flush of a frame queued before the off frame does not offer Clear all under the notice: the latch clears on a built frame arriving, never on one applied late");
+  assert.equal(undo().style.display, "", "Undo stays, as under any off frame");
+  // the control: a built frame arriving now IS the evidence the switch is on
+  await dispatch(frame([g1, g2, g3], { working: ["web"], canUndoClear: true }));
+  assert.equal(list.hidden, false);
+  assert.equal(clearAll().style.display, "", "a built frame arriving: the button is offered again where its own gate says");
+  await dispatch(frame([g1, g2, g3], { working: ["web"] }));
+});
+
+test("...and the same through the window-blur flush, the other trigger of the same flush: the latch stays set", async () => {
+  const clearAll = () => body.byId("feed-clearall")!;
+  await dispatch(frame([g1, g2, g3], { working: ["web"], canUndoClear: true }));
+  const hw = webHead();
+  assert.ok(hw, "web's header row in Working");
+  hw.dispatchEvent(new Event("mouseenter"));
+  try {
+    await dispatch(frame([g1, g2, g3, g4], { working: ["web"], canUndoClear: true }));
+    assert.equal(card("g4"), null, "queued");
+    await dispatch(offFrame());
+    assert.equal(clearAll().style.display, "none", "off: Clear all hidden");
+  } finally {
+    win.dispatchEvent(new Event("blur"));                        // focus leaves the pane: both gate holders release and the queue flushes
+    await settle();
+  }
+  assert.equal(list.hidden, true, "the list stays hidden");
+  assert.equal(clearAll().style.display, "none", "the blur flush of a frame queued before the off frame does not offer Clear all under the notice");
+  await dispatch(frame([g1, g2, g3], { working: ["web"], canUndoClear: true }));
+  assert.equal(clearAll().style.display, "", "a built frame arriving offers it again");
+  await dispatch(frame([g1, g2, g3], { working: ["web"] }));
+});
+
+test("the control: with nothing queued, a built frame arriving after the off frame offers Clear all again where its gate says, and a later off frame hides it again", async () => {
+  const clearAll = () => body.byId("feed-clearall")!;
+  await dispatch(frame([g1, g2, g3], { working: ["web"], canUndoClear: true }));
+  await dispatch(offFrame());
+  assert.equal(clearAll().style.display, "none", "off: hidden");
+  await dispatch(frame([g1, g2, g3], { working: ["web"], canUndoClear: true }));
+  assert.equal(list.hidden, false);
+  assert.equal(clearAll().style.display, "", "a built frame arriving with nothing queued: offered again");
+  await dispatch(offFrame());
+  assert.equal(clearAll().style.display, "none", "off again: hidden again");
+  await dispatch(frame([g1, g2, g3], { working: ["web"] }));
+  assert.equal(clearAll().style.display, "", "and back on the built frame that ends the case");
+});

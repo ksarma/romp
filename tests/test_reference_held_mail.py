@@ -12,11 +12,21 @@ that link is moved aside by its own name, as the one labelled exception. These p
 it names the statement, carries no enumeration of the move-aside shapes, qualifies the read-fault state the way
 the statement does (a stat or read fault on bytes that exist), names the link as the exception, states the
 refusal of a store none of whose records could be served while one could not be read (one record alone
-included), and gives a type-wrong `at` the build's time instead of a move aside.
+included), and gives an `at` the reader cannot read as a whole number the build's time instead of a move aside.
+The third review round (2026-09-20) added three properties: the clause says how a record left unread beside
+records that were read is reported on every reader of the held wire (the route, the summary peers see and the
+viewing panel), so the never-reported-absent sentence is true of the mixed case and not only of the refused
+store; its `at` sentence says what the reader keys on (a value it cannot read as a whole number takes the
+build's time, one it can is read as its value by both readers) instead of the false predicate `not an integer`,
+which a string of digits or a decimal number falsified; and its rename-back advice is the error center's for
+the record it names, carrying the road for an id the bus cannot decide, instead of the unconditional rename
+back or delete that looped on such a file.
 
 Text only: this module reads docs/reference.md and kernel/kernel.py as text and loads no romp code, so it
 needs no hermetic-state preamble. Over a git archive of the reviewed head (085e08deb) it is red at the phrase
-pins the clause exists for (the citation absent, the enumeration present), never on a symbol or a signature.
+pins the clause exists for (the citation absent, the enumeration present), never on a symbol or a signature;
+the three round-3 pins are red over a git archive of f418f75e9 at their own assertions (the mixed-case sentence
+absent, the `not an integer` predicate present, the unconditional rename-back present).
 """
 import os
 import re
@@ -64,7 +74,9 @@ class _Pins(unittest.TestCase):
 
 
 class TheHeldMailClauseStatesTheRuleAndCitesIt(_Pins):
-    """The clause names the one statement and enumerates nothing the statement owns."""
+    """The clause names the one statement and enumerates nothing the statement owns; since the third round it also says
+    how the mixed store is reported, keys its `at` sentence on what the reader can read, and gives the rename-back
+    advice by the record's class (the module docstring says which archive each pin is red over)."""
 
     def test_the_clause_cites_the_statement_by_name(self):
         clause = _clause()
@@ -111,10 +123,51 @@ class TheHeldMailClauseStatesTheRuleAndCitesIt(_Pins):
         self.assertQuoted("sees a fault row", clause, DOC, "the viewing machine sees the holder's fault, not a vanished section")
 
     def test_a_type_wrong_at_keeps_its_card_at_the_builds_time(self):
+        # the predicate is what the reader keys on: a value it cannot read as a whole number, in doc voice, never
+        # `not an integer` (a string of digits and a decimal number are not integers and both readers read them as
+        # their value, so that predicate was false of them) and never the Python builtin's name
         clause = _clause()
-        self.assertQuoted("an `at` that is not an integer gives the card the build's time", clause, DOC,
+        self.assertNotQuoted("`at` that is not an integer", clause, DOC,
+                             "the false predicate: a digit string and a float are not integers and are read as their value")
+        self.assertQuoted("an `at` the reader cannot read as a whole number gives the card the build's time", clause, DOC,
                           "a field's type never moves a record aside; the card takes the build's clock")
         self.assertQuoted("the bus sorts such a record as the oldest", clause, DOC)
+        self.assertQuoted("reads as a whole number (a string of digits, a decimal number) is read as its value by both readers",
+                          clause, DOC, "an `at` the reader can read as a whole number is nothing apart: both readers take its value")
+        self.assertNotQuoted("int()", clause, DOC, "doc voice: the reader's rule, not the builtin's name")
+
+    def test_a_record_left_unread_beside_served_ones_is_named_on_every_reader_of_the_wire(self):
+        # the property: the clause names the unread beside what was served on the route, the summary and the panel,
+        # so `never reported absent` holds of the mixed store and not only of the refused one (the third round's
+        # correctness-2: until it, a record left unread beside served ones was dropped from GET /quarantine's
+        # `held` under a 200 and from the summary rows with nothing on the wire saying it existed)
+        clause = _clause()
+        self.assertQuoted("never reported absent", clause, DOC)
+        sentences = [s for s in re.split(r"(?<=\.) ", clause) if "left unread" in s]
+        self.assertTrue(sentences, "%s does not say how a record left unread beside records that were read is reported" % DOC)
+        s = sentences[0]
+        for needle, why in (("`GET /quarantine`", "the route lists the unread beside `held`"),
+                            ("`held`", "beside what was served, never in place of it"),
+                            ("summary peers see", "the summary carries a marker beside the message rows"),
+                            ("Held for approval elsewhere", "the viewing panel shows the partial listing"),
+                            ("could not be read", "the panel's line names how many could not be read")):
+            self.assertQuoted(needle, s, DOC, why)
+        self.assertQuoted("beside the count of messages held", s, DOC, "the unread are never counted as messages")
+
+    def test_the_rename_back_advice_is_the_error_centers_for_the_record_it_names(self):
+        # the property: the advice is qualified by the record's class and carries the id road, never an unconditional
+        # `until you rename the file back ... or delete it` (the second round stopped giving that advice for an aside
+        # whose de-suffixed stem the bus cannot decide, since renaming such a file back has it refused again; the
+        # clause's own rule is that the shapes are listed in the statement, so both classes ride one sentence)
+        clause = _clause()
+        self.assertIsNone(re.search(r"until you rename the file back", clause),
+                          "%s gives the unconditional rename-back advice; the advice is the error center's, by class" % DOC)
+        sentences = [s for s in re.split(r"(?<=\.) ", clause) if "`.corrupt-` suffix to try the record again" in s]
+        self.assertTrue(sentences, "%s no longer carries the rename-back road for a torn record" % DOC)
+        s = sentences[0]
+        self.assertQuoted("carries the advice for the record it names", s, DOC, "the advice is the error center's, for that record")
+        self.assertQuoted("the bus cannot decide", s, DOC, "the id road: an aside from a name the bus cannot decide")
+        self.assertQuoted("matching message id", s, DOC, "such a file needs a decidable name and a matching message id")
 
 
 if __name__ == "__main__":

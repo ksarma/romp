@@ -1246,13 +1246,18 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
 /* The feed's DOCKED control bar (the user 2026-06-29): its own dedicated rectangle in normal flow at the
    bottom of the pane, NOT a floating overlay. The body is a column flex, so #feed-list flexes to fill above
    it and the bar sits below without overlapping a card. Layout (the user 2026-07-13): the VIEW controls
-   (the view-menu icon · Session ▴ · Search) sit left; the ACTIONS (Clear all, then Undo) dock right: flex
-   `order` on the actions plus margin-right:auto on the session box (#feed-search), the last control of the left
-   cluster and on the bar whenever any card is, so the split holds whatever order the ensure* calls appended the
-   buttons in and whether Clear all is offered or not. The auto margin rode on Clear all until the held-mail readers
-   PR's review (2026-09-20), which hides that button on a board of held messages or placeholders alone: with it
-   hidden, Undo slid left beside Search. On the empty board the session box is hidden too and Undo stays at the
-   left edge, as before. */
+   (the view-menu icon · Session ▴ · Search) sit left; the ACTIONS (Clear all, then Undo) dock right. The split
+   rides the actions' own wrapper (#feed-actions, minted by feed.ts ensureActions with both buttons inside it):
+   margin-left:auto on the wrapper, PER LINE, so the pair wraps as one flex item and docks at the right edge of
+   whatever row the wrap puts it on, whether Clear all is offered or not, and whatever order the ensure* calls
+   appended the controls in. Two earlier homes for the margin failed: on Clear all itself, until the held-mail
+   readers PR's review (2026-09-20) hid that button on a board of held messages or placeholders alone and Undo
+   slid left beside Search; then margin-right:auto on the session box, which held on one line and failed on a
+   bar that wraps, since a margin on the row above cannot dock a row below it. Two auto margins on one line
+   would split the free space between them, so #feed-search carries none. On the empty board the left cluster
+   is hidden and Undo stays at the left edge by state: renderBody marks the bar with .empty-board and the
+   wrapper's auto margin is off under it. Measured in feed-css-footer.test.ts on a one-line bar, a wrapped bar
+   and the empty board. */
 #feed-foot { flex: 0 0 auto; z-index: 5;
   display: flex; align-items: center; gap: 8px; padding: 6px 12px;
   flex-wrap: wrap; row-gap: 5px;   /* a narrow pane folds buttons onto another row — never a horizontal scrollbar */
@@ -1262,7 +1267,9 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
      bar itself must sit on the same dark): the border-top hairline is the separator now. The old
      editorWidget token resolved to #252526 under the kernel's THEME_CSS. */
   background: var(--bg); }
-#feed-clearall { order: 10; }   /* accent hover like every action button; the right dock is the session box's margin (#feed-search) */
+#feed-actions { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; }   /* the actions' wrapper: the footer's right dock, per line (the comment above) */
+#feed-foot.empty-board #feed-actions { margin-left: 0; }   /* the empty board: the lone Undo keeps the left edge by state (renderBody sets the class) */
+#feed-clearall { order: 10; }   /* accent hover like every action button; the pair's order inside #feed-actions, whatever order the buttons were minted in */
 #feed-undoclear { order: 11; }                     /* restorative — far right */
 #feed-foot .fdismiss { font-size: 10.5px; padding: 1px 9px; opacity: 0.95; }
 
@@ -2718,8 +2725,7 @@ body.filebrowse-open { overflow: hidden; }
    it whole (the footer wraps) rather than overflowing. Expansion animates max-width, so it still
    "grows" out of the button instead of popping. Active (a live query) keeps the button accented like
    every .on toggle. */
-#feed-search { display: inline-flex; align-items: center; gap: 5px; position: relative;
-  margin-right: auto; }   /* the footer's split: the actions (Clear all, Undo) dock right of it whether or not Clear all is shown (#feed-foot) */
+#feed-search { display: inline-flex; align-items: center; gap: 5px; position: relative; }   /* no auto margin here: the footer's dock is #feed-actions' (#feed-foot) */
 #feed-search.open { flex: 1 1 150px; min-width: 110px; max-width: 340px; }
 #feed-search input { flex: 1 1 auto; min-width: 0; max-width: 0; padding: 0; border: 0; opacity: 0;
   transition: max-width 0.15s ease, opacity 0.15s ease;

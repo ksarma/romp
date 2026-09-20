@@ -488,6 +488,77 @@ class AHoldersUnlistableStoreReachesThePeerAsAFaultRow(_TwoBusHarness):
         self.assertEqual([(r["mid"], r["atHost"]) for r in pmb.remote_holds()], [(self.HOLD["mid"], "hosta")])
 
 
+class ARecordLeftUnreadOnTheHolderRidesTheExchangeAsAMarkerRow(_TwoBusHarness):
+    """The wire half of the fork PR's correctness-2 (round 3, 2026-09-20), over the real exchange: A's held-mail store holds
+    two readable records and one whose bytes cannot be read, so A's request carries the two message rows and ONE marker
+    row after them (the fault row's key shape with `fault` carrying the count wording, `unread` 1 and `served` 2, never a
+    path or a record's text); B's handler folds it into PEER_STATE as any row, B's remote_holds, what B's kernel proxies
+    to its panel, carries all three stamped `atHost` with A's name and the marker's text and counts unchanged on the way,
+    and peers_snapshot()["remoteHolds"] is that list. Before, A's summary gossiped the two read records alone and the
+    unread one was absent from B with nothing saying so (the refusal on nothing served closed the lone case and left this
+    one). A store every record of which reads ships no marker (the control). Skipped as root, who reads a mode-000 file.
+    Synthetic: the harness's hosta and hostb, placeholder mids.
+
+    Fails before over a git archive of f418f75e9: A's request carries two rows and no marker, B's remote_holds two."""
+
+    HOLD = {"mid": "11111111-2222-3333-4444-555555550811", "to": "beta", "toId": "sid-b", "frm": "alpha",
+            "frmId": "sid-a", "body": "invented held text", "kind": "coordinate", "origin": "hostc", "via": "hostc",
+            "at": 1700000000}
+    M2, M3 = "11111111-2222-3333-4444-555555550812", "11111111-2222-3333-4444-555555550813"
+
+    def setUp(self):
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            self.skipTest("root reads a mode-000 file; the fault cannot be staged")   # before the fixture patches
+        super().setUp()
+        pm.QUARANTINE.mkdir(parents=True, exist_ok=True)
+        for f in pm.QUARANTINE.iterdir():
+            f.unlink()
+        for mid in (self.HOLD["mid"], self.M2, self.M3):
+            (pm.QUARANTINE / (mid + ".json")).write_text(json.dumps(dict(self.HOLD, mid=mid)))
+        self.locked = pm.QUARANTINE / (self.M3 + ".json")
+        os.chmod(self.locked, 0)
+        self._saved_log = pm._log
+        pm._log = lambda m: None
+        getattr(pm, "_HOLD_SKIPPED_SAID", {}).clear()
+        self.addCleanup(self._restore)
+
+    def _restore(self):
+        for f in pm.QUARANTINE.iterdir():
+            try:
+                os.chmod(f, 0o644)
+            except OSError:
+                pass
+            f.unlink()
+        pm._log = self._saved_log
+        getattr(pm, "_HOLD_SKIPPED_SAID", {}).clear()
+
+    def test_the_marker_rides_the_exchange_and_lands_in_the_peers_remote_holds_with_at_host(self):
+        req = pm.build_exchange_request("srv", wait=False)      # A dials: two message rows and the marker
+        rows = req["holds"]
+        self.assertEqual(sorted(r["mid"] for r in rows if r.get("mid")), sorted([self.HOLD["mid"], self.M2]), rows)
+        self.assertEqual(len(rows), 3, "the two read records and one marker row: %r" % (rows,))
+        marker = rows[2]
+        self.assertEqual((marker.get("mid"), marker.get("unread"), marker.get("served")), ("", 1, 2), marker)
+        self.assertEqual(marker["fault"], "held mail: 1 of its 3 records, %s, cannot be read (errno %d: %s); the rest is served"
+                         % (self.locked.name, errno.EACCES, os.strerror(errno.EACCES)))
+        self.assertNotIn(str(pm.QUARANTINE), json.dumps(rows), "no path on the wire")
+        self.assertNotIn("invented", json.dumps(marker), "no record text in the marker")
+        resp, status = pmb.peer_exchange_handle(req)
+        self.assertEqual(status, 200)
+        remote = pmb.remote_holds()
+        self.assertEqual(len(remote), 3, remote)
+        self.assertEqual({r["atHost"] for r in remote}, {"hosta"}, "every row stamped with the holder's name")
+        self.assertEqual(remote[2], dict(marker, atHost="hosta"), "the marker's text and counts unchanged on the way")
+        self.assertEqual(pmb.peers_snapshot()["remoteHolds"], remote, "what B's kernel proxies to its panel")
+        os.chmod(self.locked, 0o644)
+        req = pm.build_exchange_request("srv", wait=False)
+        self.assertEqual(sorted((r["mid"], "unread" in r) for r in req["holds"]),
+                         sorted((m, False) for m in (self.HOLD["mid"], self.M2, self.M3)), "every record read: no marker")
+        pmb.peer_exchange_handle(req)
+        self.assertEqual(len(pmb.remote_holds()), 3)
+        self.assertTrue(all("unread" not in r and "fault" not in r for r in pmb.remote_holds()))
+
+
 class ExchangeRelaysAreBudgeted(_TwoBusHarness):
     """One exchange carries the outbox's oldest-first prefix under _RELAY_BUDGET_BYTES (half the dialed
     bus's 1 MiB body cap); the rest ride the next round. The request used to carry the WHOLE outbox

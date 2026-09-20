@@ -11,6 +11,7 @@ import errno
 import inspect
 import json
 import os
+import re
 import sys
 import tempfile
 import threading
@@ -785,6 +786,13 @@ class HeldMailRecordsThatCannotBeParsed(_HeldStore):
         self.assertEqual((code, len(body["held"])), (200, 4))
         self.assertEqual(self._said(), [], "a type-wrong `at` is not a skip: the hold is listed and decidable")
         self.assertEqual(len(list(ps.QUARANTINE.iterdir())), 4, "nothing moved aside")
+        # the sort keys on what int() accepts, not on the value's type (correctness-1, round 3): a float is truncated, a
+        # digit string is its value, a word and a container and a float infinity are 0, and so is an absent at
+        for at, key in ((1.5, 1), ("1758300000", 1758300000), (7, 7), ("yesterday-at-noon", 0), (["1"], 0),
+                        (float("inf"), 0), (None, 0)):
+            with self.subTest(at=repr(at)):
+                self.assertEqual(ps._hold_sort_at({"at": at}), key)
+        self.assertEqual(ps._hold_sort_at({}), 0)
 
     def test_a_record_that_cannot_be_parsed_or_followed_skips_and_is_said_once(self):
         torn = self._write(self.M2, "{not json")
@@ -1447,13 +1455,20 @@ class ALoneUnreadableRecordRefusesTheStoreNeverNothingHeld(_HeldStore):
     readbox lister's wording); the per-file say runs before the refusal and is the say for this road (the file's own key,
     never the directory's, which is the fold's), so the two roads never re-say one fault at each other; the refusal's
     text names the file through _listed_name, the errno and its text, never the record's contents. A good record beside
-    an unreadable one stays served with the skip said per file (the accepted partial shape, unchanged: that case is a
-    control here).
+    an unreadable one stays served, and since round 3 (correctness-2) the unread one is reported beside it, on the route's
+    `unread` list and as the summary's marker row, instead of being absent from the wire; the marker's own class is
+    ARecordLeftUnreadBesideServedOnesIsReportedNeverDropped, and the mixed case here pins the two together with the
+    per-file say. The log's per-file skip line ends with what the pass served (round 3, correctness-3 with extra6-1): the
+    rest is served when a record was, the refusal's own tail when nothing was, since on this road that line is the one
+    the log carries for the refusal; the registry keys the file, the reason and the served-ness, so a store that served
+    on one pass and nothing on the next says the transition, where before the lone record's only line ended `the rest
+    is served` and the transition said nothing.
 
-    Fails before over a git archive of 35fad278c (the archive that carries this fixture; the defect is older: both refuters
+    Fails before over a git archive of 35fad278c (the archive that carries this fixture; the defect is older: the review
     proved the base bc88256e8 answers [] at one record too, and this module over that archive reds the same way):
-    quarantine_list answers [], _hold_rows [], the route 200 with nothing held. Skipped as root, who reads a mode-000
-    file. Synthetic: placeholder mids."""
+    quarantine_list answers [], _hold_rows [], the route 200 with nothing held. The mixed case and the two log-tail cases
+    fail before over f418f75e9: no marker row, no `unread` on the route, the lone line ending `the rest is served`, the
+    transition unsaid. Skipped as root, who reads a mode-000 file. Synthetic: placeholder mids."""
 
     def _root_skip(self):
         if hasattr(os, "geteuid") and os.geteuid() == 0:
@@ -1504,22 +1519,64 @@ class ALoneUnreadableRecordRefusesTheStoreNeverNothingHeld(_HeldStore):
         self.assertIsInstance(self._listing(), Exception, "the fault's return refuses again")
         self.assertEqual(len(self._said()), 2, "the clean listing ended the episode; the fault's return is said again")
 
-    def test_a_good_record_beside_an_unreadable_one_stays_served_and_the_skip_is_said_per_file(self):
-        self._root_skip()                            # the control: the accepted partial shape, green at every head
+    def test_a_good_record_beside_an_unreadable_one_is_served_and_the_unread_one_is_reported_beside_it(self):
+        self._root_skip()                            # the mixed case: served, not refused, and the unread one never dropped
         f2 = self._write(self.M2, json.dumps(dict(self.HOLD, mid=self.M2)))
         f3 = self._write(self.M3, json.dumps(dict(self.HOLD, mid=self.M3)))
         os.chmod(f3, 0)
         self.assertEqual(sorted(h["mid"] for h in ps.quarantine_list()), sorted([self.HOLD["mid"], self.M2]),
                          "the readable holds are served")
         rows = ps._hold_rows()
-        self.assertEqual(sorted(r["mid"] for r in rows), sorted([self.HOLD["mid"], self.M2]))
-        self.assertFalse(any("fault" in r for r in rows), "a partial read is served, not refused")
+        self.assertEqual(sorted(r["mid"] for r in rows if r["mid"]), sorted([self.HOLD["mid"], self.M2]))
+        markers = [r for r in rows if not r["mid"]]
+        self.assertEqual([(r.get("unread"), r.get("served")) for r in markers], [(1, 2)],
+                         "one marker row for the record left unread beside the two served: %r" % (rows,))
+        self.assertIn(f3.name, markers[0]["fault"])
         code, body = self._get(self._serve())
         self.assertEqual((code, sorted(h["mid"] for h in body["held"])), (200, sorted([self.HOLD["mid"], self.M2])))
+        self.assertEqual([u["name"] for u in body.get("unread") or []], [f3.name], "reported on the route, never dropped: %r" % (body,))
         said = self._said()
         self.assertEqual(len(said), 1, self.logged)
         self.assertIn(f3.name, said[0])
+        self.assertTrue(said[0].endswith("; the rest is served"), said[0])
         self.assertTrue(f2.is_file() and f3.is_file())
+
+    def test_the_lone_unread_pass_logs_one_line_ending_with_the_refusals_tail_never_the_rest_is_served(self):
+        self._root_skip()
+        self._clear_store()
+        alone = self._write(self.M2, json.dumps(dict(self.HOLD, mid=self.M2)))
+        os.chmod(alone, 0)
+        self.assertIsInstance(self._listing(), Exception, "refused: nothing served")
+        said = self._said()
+        self.assertEqual(len(said), 1, "one line for the refusal: %r" % (self.logged,))
+        self.assertIn(alone.name, said[0])
+        self.assertNotIn("the rest is served", said[0], "nothing was served: the tail must not say it was: %r" % (said[0],))
+        self.assertTrue(said[0].endswith("; nothing there is served until it can be read again, and nothing was moved or dropped"),
+                        "the refusal's own tail: %r" % (said[0],))
+        self.assertNotIn("invented held text", said[0])
+        self.assertIsInstance(self._listing(), Exception)
+        self.assertEqual(len(self._said()), 1, "a second pass in the same state says nothing more")
+
+    def test_the_served_then_refused_transition_is_said_again_with_the_refusals_tail(self):
+        self._root_skip()
+        good = ps.QUARANTINE / (self.HOLD["mid"] + ".json")
+        locked = self._write(self.M2, json.dumps(dict(self.HOLD, mid=self.M2)))
+        os.chmod(locked, 0)
+        self.assertEqual([h["mid"] for h in ps.quarantine_list()], [self.HOLD["mid"]], "pass one: the good record served")
+        said = self._said()
+        self.assertEqual(len(said), 1, self.logged)
+        self.assertTrue(said[0].endswith("; the rest is served"), said[0])
+        ps.quarantine_list()
+        self.assertEqual(len(self._said()), 1, "a second served pass says nothing more")
+        good.unlink()                                # the good record decided meanwhile: pass two serves nothing
+        self.assertIsInstance(self._listing(), Exception, "nothing served: refused")
+        said = self._said()
+        self.assertEqual(len(said), 2, "the transition is said: %r" % (self.logged,))
+        self.assertIn(locked.name, said[1])
+        self.assertTrue(said[1].endswith("; nothing there is served until it can be read again, and nothing was moved or dropped"),
+                        said[1])
+        self.assertIsInstance(self._listing(), Exception)
+        self.assertEqual(len(self._said()), 2, "a second refused pass says nothing more")
 
     def test_one_vanished_mid_read_beside_one_unread_refuses_too(self):
         self._root_skip()
@@ -1566,6 +1623,131 @@ class ALoneUnreadableRecordRefusesTheStoreNeverNothingHeld(_HeldStore):
         self.assertTrue(f2.is_file() and f3.is_file())
 
 
+class ARecordLeftUnreadBesideServedOnesIsReportedNeverDropped(_HeldStore):
+    """The walk refused the store on `unread and not out`, so whenever at least one record WAS served, a record whose bytes
+    could not be read was dropped from GET /quarantine's `held` under a 200 and from the summary rows, with nothing on the
+    wire saying it existed: the mixed case of the defect the refusal closed for the lone record, a reader reporting absent
+    a record it did not read (the fork PR's correctness-2, round 3, 2026-09-20; the ruling: do not widen the refusal,
+    report the unread beside what was served). Now the walk exposes the unread facts (quarantine_listing answers (held,
+    unread), each entry the file's name through _listed_name, its errno and the errno's text, never a path or a record's
+    contents), GET /quarantine answers `unread` on every 200 (an empty list when nothing was left unread, so a clean
+    listing reads apart from an older bus's silence) and beside the 503's shape, and _hold_rows appends ONE marker row
+    after the message rows in the fault row's key shape, `fault` carrying the count wording and `unread` and `served` the
+    counts, never cut by the twenty-row bound; the marker rides the exchange as a fault row does; it leaves when the file
+    reads again and returns with the fault; quarantine_list keeps its shape for its other callers, and the refusal on
+    nothing served is unchanged.
+
+    Fails before over a git archive of f418f75e9 (the mixed case dropped the record at every earlier head): there the
+    route answers 200 with the two read records and no `unread` key, _hold_rows two rows and no marker, remote_holds two
+    rows, and the listing entry point does not exist, so the cases take the old road's answer (the list, and nothing left
+    unread) and red at the marker assertions. Skipped as root, who reads a mode-000 file. Synthetic: placeholder mids,
+    invented text, the peer name TESTHOST."""
+
+    def _root_skip(self):
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            self.skipTest("root reads a mode-000 file; the fault cannot be staged")
+
+    def setUp(self):
+        super().setUp()
+        self._root_skip()
+        self.addCleanup(ps.PEER_STATE.pop, "TESTHOST", None)
+        self.f2 = self._write(self.M2, json.dumps(dict(self.HOLD, mid=self.M2)))
+        self.f3 = self._write(self.M3, json.dumps(dict(self.HOLD, mid=self.M3)))
+        os.chmod(self.f3, 0)
+        self.served = sorted([self.HOLD["mid"], self.M2])
+        self.entry = {"name": self.f3.name, "errno": errno.EACCES, "text": os.strerror(errno.EACCES)}
+        self.wording = ("held mail: 1 of its 3 records, %s, cannot be read (errno %d: %s); the rest is served"
+                        % (self.f3.name, errno.EACCES, os.strerror(errno.EACCES)))
+
+    def _listing(self):
+        """(held, unread) from the walk's entry point; an older bus has none and reports nothing left unread, so the
+        case takes the list and an empty `unread`, the old road's answer, and reds at the assertion on the entries."""
+        listing = getattr(ps, "quarantine_listing", None)
+        if listing is None:
+            return ps.quarantine_list(), []
+        return listing()
+
+    def _marker(self, rows):
+        return [r for r in rows if not r.get("mid")]
+
+    def test_quarantine_listing_answers_the_read_records_and_the_unread_entry_while_quarantine_list_keeps_its_shape(self):
+        held, unread = self._listing()
+        self.assertEqual(sorted(h["mid"] for h in held), self.served, "the two read records are served")
+        self.assertEqual(unread, [self.entry], "the one left unread is reported beside them, by file, errno and text")
+        self.assertEqual(sorted(h["mid"] for h in ps.quarantine_list()), self.served, "the list keeps its shape for its callers")
+        self.assertNotIn("invented held text", json.dumps(unread), "never a record's contents")
+        self.assertNotIn(str(ps.QUARANTINE), json.dumps(unread), "never a path")
+        self.assertTrue(self.f3.is_file(), "left in place")
+
+    def test_the_route_answers_200_with_held_and_unread_and_a_clean_store_answers_unread_empty(self):
+        port = self._serve()
+        code, body = self._get(port)
+        self.assertEqual((code, sorted(h["mid"] for h in body["held"])), (200, self.served))
+        self.assertEqual(body.get("unread"), [self.entry], "reported on the route, never dropped: %r" % (body,))
+        self.assertNotIn("invented held text", json.dumps(body.get("unread")))
+        os.chmod(self.f3, 0o644)
+        code, body = self._get(port)
+        self.assertEqual((code, sorted(h["mid"] for h in body["held"])), (200, sorted(self.served + [self.M3])))
+        self.assertEqual(body.get("unread"), [], "present on every 200, empty when nothing was left unread: %r" % (body,))
+
+    def test_hold_rows_carries_one_marker_row_after_the_message_rows_and_it_rides_the_exchange(self):
+        rows = ps._hold_rows()
+        self.assertEqual(sorted(r["mid"] for r in rows if r.get("mid")), self.served, "the message rows")
+        self.assertEqual(len(rows), 3, "the two message rows and one marker: %r" % (rows,))
+        marker = rows[2]
+        self.assertFalse(marker.get("mid"), "the marker rides after the message rows")
+        self.assertEqual((marker.get("unread"), marker.get("served")), (1, 2), marker)
+        self.assertEqual(marker.get("fault"), self.wording)
+        self.assertEqual((marker["mid"], marker["frm"], marker["to"], marker["origin"], marker["at"], marker["gist"]),
+                         ("", "", "", "", 0, ""), "the fault row's key shape, the ordinary keys empty")
+        self.assertNotIn("invented held text", json.dumps(marker))
+        self.assertNotIn(str(ps.QUARANTINE), json.dumps(marker))
+        for k, v in marker.items():
+            self.assertIsInstance(v, (str, int), "%s rides the wire as text or an integer" % k)
+        payload = ps.holds_payload("other")
+        self.assertEqual(payload[2], marker, "the exchange payload carries the marker as it carries a fault row")
+        ps.peer_exchange_apply("TESTHOST", {}, {"presence": [], "epoch": 1, "holds": payload})
+        remote = ps.remote_holds()
+        self.assertEqual(len(remote), 3, remote)
+        self.assertEqual(remote[2], dict(marker, atHost="TESTHOST"), "stamped atHost, the counts and the text unchanged on the way")
+        self.assertEqual(ps.peers_snapshot()["remoteHolds"], remote, "what the viewing kernel proxies to its panel")
+        self.assertEqual(self._said(), [l for l in self._said() if self.f3.name in l], "the skip said per file, nothing else")
+
+    def test_the_marker_rides_after_the_twenty_row_bound(self):
+        for i in range(19):                          # 21 readable in all: the fixture's, M2 and these
+            mid = "11111111-2222-3333-4444-%012d" % (600 + i)
+            self._write(mid, json.dumps(dict(self.HOLD, mid=mid)))
+        rows = ps._hold_rows()
+        self.assertEqual(len(rows), 21, "twenty message rows and the marker: %r" % ([r.get("mid") for r in rows],))
+        self.assertTrue(all(r["mid"] for r in rows[:20]), "the bound is over the message rows")
+        self.assertEqual((rows[20].get("unread"), rows[20].get("served")), (1, 21), rows[20])
+        self.assertIn("1 of its 22 records", rows[20]["fault"])
+
+    def test_the_marker_leaves_when_the_file_reads_again_and_returns_with_the_fault(self):
+        self.assertEqual(len(self._marker(ps._hold_rows())), 1)
+        os.chmod(self.f3, 0o644)
+        rows = ps._hold_rows()
+        self.assertEqual(self._marker(rows), [], "readable again: no marker, the episode's end is the clean read")
+        self.assertEqual(sorted(r["mid"] for r in rows), sorted(self.served + [self.M3]))
+        self.assertEqual(self._listing()[1], [], "nothing left unread")
+        os.chmod(self.f3, 0)
+        self.assertEqual([(r.get("unread"), r.get("served")) for r in self._marker(ps._hold_rows())], [(1, 2)], "the fault's return")
+        self.assertEqual(len(self._said()), 2, "the clean read ended the say's episode too; the return is said again: %r" % (self.logged,))
+
+    def test_the_refusal_on_nothing_served_carries_the_unread_entries_beside_its_shape(self):
+        self._clear_store()
+        alone = self._write(self.M4, json.dumps(dict(self.HOLD, mid=self.M4)))
+        os.chmod(alone, 0)
+        code, body = self._get(self._serve())
+        self.assertEqual((code, body["held"]), (503, []), "the refusal on nothing served is unchanged: %r" % (body,))
+        self.assertIn(alone.name, body["unreadable"])
+        self.assertEqual(body.get("unread"), [{"name": alone.name, "errno": errno.EACCES, "text": os.strerror(errno.EACCES)}],
+                         "the same entries beside the refusal: %r" % (body,))
+        rows = ps._hold_rows()
+        self.assertEqual(len(rows), 1, "the fault row alone: no marker beside a refusal")
+        self.assertNotIn("unread", rows[0], "a fault row with no unread count: the whole store refused")
+
+
 class AnApproveOfAToIdThatIsNotTextIsRefused(_HeldStore):
     """quarantine_decide's approve arm read `toId` with no type vet and tested it against the set of live session ids, so a
     held record whose toId is a container raised TypeError (unhashable) out of POST /quarantine/act on both approve
@@ -1577,7 +1759,7 @@ class AnApproveOfAToIdThatIsNotTextIsRefused(_HeldStore):
     nothing delivered, and the route a 400; a text toId delivers as before, and an absent one keeps the name re-match.
 
     Fails before over a git archive of 35fad278c (the archive that carries this fixture; the crash line is older, identical
-    at bc88256e8, both refuters proved it): TypeError out of quarantine_decide at the function level, the connection
+    at bc88256e8, the review proved it): TypeError out of quarantine_decide at the function level, the connection
     dropped at the route. Synthetic: placeholder mids, invented text."""
 
     def _decide(self, mid, action, **extra):
@@ -1633,6 +1815,278 @@ class AnApproveOfAToIdThatIsNotTextIsRefused(_HeldStore):
         self.assertFalse(f3.exists(), "an older sender's hold, no toId: matched by name as before")
 
 
+class AnApproveOverAFieldThatIsNotOfItsClassIsRefusedByTheOneVet(_HeldStore):
+    """quarantine_decide's approve arm vetted `body` and `toId`, each on the line it had been editing, and handed frm,
+    frmId, kind, origin, via and relayMarker to deliver() with no vet, wrote userAsk's inner text, sid and host into the
+    sent row the same way, and formatted toWireId and `to` raw into the not-live refusals (the fork PR's regression-1 with
+    extra7-1, extra7-2 and tests-3, round 3, 2026-09-20): a shallow container in any of those fields was delivered with
+    the container's repr as the recipient's From line or X-Kind header and written raw into the sent row, a deep one
+    raised RecursionError out of the decide and dropped POST /quarantine/act (the kernel reporting the bus unreachable),
+    and a container toWireId or `to` put the record's value into a refusal's text where the rule is the type. Now ONE vet
+    (_approve_field_fault) walks the approve road's written-down field table (_APPROVE_FIELDS) at the top of the arm,
+    before either road reads a field: a field present and not of its class is refused in words naming the field and the
+    type alone and what would work, on the bare and the edited-text road alike, the record untouched and still held,
+    nothing delivered, the route a 400; keyed on type, never on depth; never coerced and never routed through _hold_text
+    into a header. The body's and toId's refusals keep their words as arms of the vet. The census case derives the keys
+    the minter writes and the arm reads from the source and holds the table to them both ways, so a field added to
+    either joins the vet by construction or reds by name.
+
+    Fails before over a git archive of 35fad278c (the archive that carries this fixture; the deliver hand-off is
+    byte-identical since the base bc88256e8 and the toWireId line since 2026-09-08, as the review proved at the base): the
+    shallow cases at the assertion that the approve was refused (the container's repr delivered), or that the refusal
+    carries none of the value; the deep ones at the decide helper's `raised out of the decide` (the RecursionError
+    itself), except a deep `to` or toWireId beside a live toId, which that head never read and delivered; the route cases
+    at the 400 (the repr delivered under a 200); the recipient-name cases over 085e08deb too, where the raw formatting
+    stands. The census's evidence is a mutation at the tree (a read added to the arm, a key added to the minter: each red
+    naming it); its subject is the table, new in this round. Synthetic: placeholder mids, invented text, TESTHOST, the
+    deep value built iteratively."""
+
+    # the review's text-class list, the stand-in for an older bus with no table, so a case reaches the old behaviour
+    # (the container delivered, the value formatted) instead of erroring on the table's name
+    TEXT_FIELDS_DERIVED = ("to", "frm", "frmId", "kind", "origin", "via", "toWireId", "relayMarker")
+    INNER = "invented-inner"
+    GONE = "sess-gone"                               # a text toId no live session carries: the not-live roads
+    WIRE = "0123456789abcdef"                        # a toWireId of id form: the id-strict road
+    CLASSES = ("text", "body", "object", "bool", "mid", "not-read")
+    MINTER_FLOOR = 14
+
+    def _text_fields(self):
+        table = getattr(ps, "_APPROVE_FIELDS", None)
+        if table is None:
+            return list(self.TEXT_FIELDS_DERIVED)
+        return [f for f, (cls, _what) in table.items() if cls == "text" and f not in ("body", "toId")]
+
+    def _decide(self, mid, action, **extra):
+        try:
+            return ps.quarantine_decide(mid, action, **extra)
+        except Exception as e:
+            self.fail("%s raised out of the decide (%s %r): the crash the case exists to catch" % (type(e).__name__, action, extra))
+
+    def _mail(self):
+        d = ps.MAILROOT / "sess-web" / "new"
+        return sorted(d.iterdir()) if d.is_dir() else []
+
+    def _clear_mail(self):
+        for f in self._mail():
+            f.unlink()
+
+    def setUp(self):
+        super().setUp()
+        self._clear_mail()
+        self.addCleanup(self._clear_mail)
+
+    def _write_hold(self, mid, **fields):
+        return self._write(mid, json.dumps(dict(self.HOLD, mid=mid, **fields)))
+
+    def _write_deep(self, mid, field, **fields):
+        """The record on disk with `field` (or userAsk's text, for `userAsk.text`) the deep document; the stand-in the
+        parser returns for it (the free-threaded 3.14 outcome, deterministic on every Python)."""
+        if field == "userAsk.text":
+            disk = dict(self.HOLD, mid=mid, userAsk={"text": "DEEP", "sid": "sess-origin", "host": "TESTHOST"}, **fields)
+            value = dict(self.HOLD, mid=mid, userAsk={"text": _deep_list(), "sid": "sess-origin", "host": "TESTHOST"}, **fields)
+        else:
+            disk = dict(self.HOLD, mid=mid, **{field: "DEEP"}, **fields)
+            value = dict(self.HOLD, mid=mid, **{field: _deep_list()}, **fields)
+        f = self._write(mid, json.dumps(disk).replace('"DEEP"', DEEP))
+        return f, {'{"mid": "%s"' % mid: value}
+
+    def _refused(self, mid, field, tname, ok, err, what):
+        self.assertFalse(ok, "%s: refused, never delivered: %r" % (what, err))
+        self.assertIn("(%s) of type %s" % (field, tname), err, "%s: the field and the type: %r" % (what, err))
+        self.assertIn("nothing was done and the message is still held", err)
+        self.assertNotIn(self.INNER, err, "%s: the type alone, never the value: %r" % (what, err))
+        self.assertTrue((ps.QUARANTINE / (mid + ".json")).is_file(), "%s: the record is untouched" % what)
+        self.assertEqual(ps.read_box("sess-web", consume=False), [], "%s: nothing was delivered" % what)
+        self.assertEqual(self._mail(), [], "%s: no maildir file" % what)
+
+    def test_a_container_in_any_text_field_is_refused_on_both_roads_and_the_hold_stands(self):
+        fields = self._text_fields()
+        self.assertGreaterEqual(len(fields), 8, fields)
+        for field in fields:
+            f = self._write_hold(self.M2, **{field: [self.INNER]})
+            for extra in ({}, {"text": "edited by the human"}):
+                ok, err = self._decide(self.M2, "approve", **extra)
+                self._refused(self.M2, field, "list", ok, err, "approve %r over a list %s" % (extra, field))
+            self.assertIn(self.M2, [h["mid"] for h in ps.quarantine_list()], "%s: still listed and decidable" % field)
+            f.unlink()
+        port = self._serve()
+        for field in fields:
+            self._write_hold(self.M2, **{field: {"n": self.INNER}})
+            code, body = self._act(port, {"mid": self.M2, "action": "approve"})
+            self.assertEqual((code, (body or {}).get("ok")), (400, False),
+                             "%s: the route answers the refusal, never delivers and never drops the connection: %r" % (field, body))
+            self.assertIn("(%s) of type dict" % field, body["error"])
+            self.assertNotIn(self.INNER, json.dumps(body))
+            self.assertEqual(self._mail(), [], "%s: nothing was delivered" % field)
+        self.assertEqual(ps.read_box("sess-web", consume=False), [])
+
+    def test_a_number_and_a_bool_in_a_text_field_are_refused_by_type_too(self):
+        for bad in (7, True, 2.5):
+            self._write_hold(self.M2, frm=bad)
+            ok, err = self._decide(self.M2, "approve")
+            self.assertFalse(ok, (bad, err))
+            self.assertIn("(frm) of type %s" % type(bad).__name__, err, err)
+            self.assertEqual(self._mail(), [], "a number is not a name: nothing was delivered under `From: %r`" % (bad,))
+
+    def test_a_walked_asks_inner_fields_that_are_not_text_are_refused_naming_the_ask_and_the_field_and_text_ones_deliver(self):
+        for ask, inner, tname in (({"text": [self.INNER], "sid": "sess-origin", "host": "TESTHOST"}, "text", "list"),
+                                  ({"text": "the ask", "sid": {"s": self.INNER}, "host": "TESTHOST"}, "sid", "dict"),
+                                  ({"text": "the ask", "sid": "sess-origin", "host": 7}, "host", "int")):
+            self._write_hold(self.M2, userAsk=ask)
+            for extra in ({}, {"text": "edited by the human"}):
+                ok, err = self._decide(self.M2, "approve", **extra)
+                self.assertFalse(ok, (inner, extra, err))
+                self.assertIn("(userAsk) whose %s is of type %s" % (inner, tname), err, err)
+                self.assertNotIn(self.INNER, err)
+                self.assertEqual(self._mail(), [], "nothing was delivered")
+        self._write_hold(self.M2, userAsk=["not", "an", "object"])
+        ok, err = self._decide(self.M2, "approve")
+        self.assertFalse(ok, err)
+        self.assertIn("(userAsk) of type list, not an object", err, err)
+        self.assertEqual(self._mail(), [])
+        self._write_hold(self.M2, userAsk={"text": "invented ask text", "sid": "sess-origin", "host": "TESTHOST"})
+        ok, err = self._decide(self.M2, "approve")
+        self.assertTrue(ok, err)
+        self.assertEqual(len(self._mail()), 1, "the control: a well-formed ask delivers")
+        rows = [json.loads(l) for l in (ps.TLDIR / "messages.jsonl").read_text().splitlines() if l.strip()]
+        asks = [r.get("userAsk") for r in rows if r.get("ev") == "sent" and (r.get("userAsk") or {}).get("text") == "invented ask text"]
+        self.assertEqual(asks, [{"text": "invented ask text", "sid": "sess-origin", "host": "TESTHOST"}],
+                         "the ask's inner text reaches the delivered row")
+
+    def test_a_deep_container_in_any_text_field_or_the_asks_text_is_refused_and_never_raises(self):
+        for field in self._text_fields() + ["userAsk.text"]:
+            f, stand_in = self._write_deep(self.M2, field, toId=self.GONE)   # a non-live toId: the roads that formatted `to` and toWireId
+            with _parser_returning(stand_in):
+                ok, err = self._decide(self.M2, "approve")
+            self.assertFalse(ok, (field, err))
+            self.assertIn(field.split(".")[0], err, (field, err))
+            self.assertLess(len(err), 400, "%s: the type is named, never the value" % field)
+            self.assertNotIn("[[", err)
+            self.assertTrue(f.is_file())
+            self.assertEqual(self._mail(), [], "%s: nothing was delivered" % field)
+            f.unlink()
+
+    def test_a_container_wire_id_is_refused_by_type_never_formatted_into_the_refusal(self):
+        self._write_hold(self.M2, toId=self.GONE, toWireId=["sess-w"])
+        ok, err = self._decide(self.M2, "approve")
+        self.assertFalse(ok, err)
+        self.assertIn("(toWireId) of type list", err, err)
+        self.assertNotIn("sess-w", err, "the type alone, never the value: %r" % (err,))
+        self.assertNotIn("id [", err, "never the raw repr's head")
+        self.assertEqual(self._mail(), [])
+        f, stand_in = self._write_deep(self.M3, "toWireId", toId=self.GONE)
+        with _parser_returning(stand_in):
+            ok, err = self._decide(self.M3, "approve")
+        self.assertFalse(ok, err)
+        self.assertLess(len(err), 400)
+        self.assertTrue(f.is_file())
+
+    def test_a_container_recipient_name_is_refused_by_type_on_the_name_re_match_road_and_the_id_strict_road(self):
+        bad = [self.INNER, "list"]
+        for mid, extra, road in ((self.M2, {}, "the name re-match road"), (self.M3, {"toWireId": self.WIRE}, "the id-strict road")):
+            self._write_hold(mid, to=bad, toId=self.GONE, **extra)
+            ok, err = self._decide(mid, "approve")
+            self.assertFalse(ok, (road, err))
+            self.assertIn("(to) of type list", err, "%s: the field and the type: %r" % (road, err))
+            self.assertNotIn(self.INNER, err, "%s: none of the contents: %r" % (road, err))
+            self.assertNotIn(repr(bad), err, "%s: never the raw repr" % road)
+            self.assertEqual(self._mail(), [])
+        for mid, extra in ((self.M2, {}), (self.M3, {"toWireId": self.WIRE})):
+            f, stand_in = self._write_deep(mid, "to", toId=self.GONE, **extra)
+            with _parser_returning(stand_in):
+                ok, err = self._decide(mid, "approve")
+            self.assertFalse(ok, err)
+            self.assertLess(len(err), 400)
+            self.assertTrue(f.is_file())
+
+    def _header(self):
+        files = self._mail()
+        self.assertEqual(len(files), 1, files)
+        text = files[0].read_text()
+        return text.split("\n\n", 1)[0] + "\n", text.split("\n\n", 1)[1]
+
+    def test_a_well_formed_record_delivers_on_both_roads_with_its_attribution_and_blanks_for_absent_fields(self):
+        self._write_hold(self.M2, kind="question", relayed=True, relayMarker="relay:1")
+        ok, err = self._decide(self.M2, "approve")
+        self.assertTrue(ok, err)
+        hdr, body = self._header()
+        for line in ("From: api\n", "From-Id: id-api\n", "X-Kind: question\n", "X-From-Host: TESTHOST\n",
+                     "X-Peer-Mid: %s\nX-Peer-Via: TESTHOST\n" % self.M2, "X-Relayed: romp\n", "X-Relay-Marker: relay:1\n"):
+            self.assertIn(line, hdr, "the record's text values, as before: %r" % (hdr,))
+        self.assertIn("invented held text", body)
+        self._clear_mail()
+        self._write_hold(self.M3)
+        ok, err = self._decide(self.M3, "approve", text="edited by the human")
+        self.assertTrue(ok, err)
+        hdr, body = self._header()
+        self.assertIn("From: api\n", hdr)
+        self.assertIn("edited by the human", body)
+        self._clear_mail()
+        rec = {k: v for k, v in dict(self.HOLD, mid=self.M4).items() if k not in ("origin", "via", "frmId", "kind", "relayMarker")}
+        self._write(self.M4, json.dumps(rec))
+        ok, err = self._decide(self.M4, "approve")
+        self.assertTrue(ok, err)
+        hdr, _body = self._header()
+        self.assertIn("From: api\nFrom-Id: \n", hdr, "an absent field delivers the blank, as before: %r" % (hdr,))
+        for absent in ("X-Kind:", "X-From-Host:", "X-Peer-Via:", "X-Relay"):
+            self.assertNotIn(absent, hdr, "%s: blank, never a type name" % absent)
+
+    def test_the_route_survives_a_container_in_every_text_field_at_once(self):
+        fields = self._text_fields()
+        self._write_hold(self.M2, **{f: [self.INNER] for f in fields})
+        code, body = self._act(self._serve(), {"mid": self.M2, "action": "approve"})
+        self.assertEqual((code, (body or {}).get("ok")), (400, False),
+                         "one refusal, never a dropped connection and never a delivery: %r" % (body,))
+        first = next(f for f in fields)              # the table's order: the first refused field is named
+        self.assertIn("(%s) of type list" % first, body["error"], body)
+        self.assertNotIn(self.INNER, json.dumps(body))
+        self.assertEqual(self._mail(), [])
+
+    def test_every_key_the_minter_writes_and_the_approve_road_reads_is_classified_by_the_table(self):
+        """The census: the population the one vet is applied over, derived from the source (the minter's literal and
+        conditional keys; the approve arm's and the preamble's literal reads) and held equal to the table's keys both
+        ways, every class one of the named ones, the vet walking the table and the arm calling the vet. A write or read
+        shape the census does not read reds loudly; the derived set is floored at the fourteen keys the minter writes
+        today, so an empty read reds. Proved by mutation at the tree: a `rec.get("newField")` added to the arm reds
+        naming newField; a key added to the minter's literal reds naming it."""
+        table = ps._APPROVE_FIELDS
+        minter = inspect.getsource(ps._quarantine_put)
+        lit = minter[minter.index("rec = {"):]
+        lit = lit[:lit.index("}") + 1]
+        written = set(re.findall(r'"([A-Za-z]+)":', lit))
+        keyed = re.findall(r'rec\["([A-Za-z]+)"\]', minter)   # every rec[...] after the literal: a conditional write, or a read of a written key
+        self.assertEqual(minter.count("rec["), len(keyed), "every rec[...] in the minter carries a literal key the census reads")
+        for shape in ("rec.update(", "setdefault(", "rec |=", "**"):
+            self.assertNotIn(shape, minter, "a write shape the census does not read: %s" % shape)
+        written |= set(keyed)
+        self.assertGreaterEqual(len(written), self.MINTER_FLOOR, "the minter's keys were read: %r" % (sorted(written),))
+        decide = inspect.getsource(ps.quarantine_decide)
+        arm = decide[decide.index('if action == "approve":'):]
+        pre = decide[:decide.index('if action == "deny":')]
+        reads = set()
+        for label, part in (("the approve arm", arm), ("the preamble", pre)):
+            lits = re.findall(r'rec\.get\("([A-Za-z]+)"', part) + re.findall(r'rec\["([A-Za-z]+)"\]', part)
+            self.assertEqual(part.count("rec.get(") + part.count("rec["), len(lits),
+                             "%s: every read of the record is a literal key the census reads" % label)
+            reads |= set(lits)
+        self.assertGreaterEqual(len(reads), 10, "the arm's reads were read: %r" % (sorted(reads),))
+        population = written | reads
+        self.assertEqual(sorted(set(table) - population), [], "table entries no source names: classified but neither written nor read")
+        self.assertEqual(sorted(population - set(table)), [], "keys written or read that the table does not classify")
+        for field, entry in table.items():
+            cls, what = entry
+            self.assertIn(cls, self.CLASSES, field)
+            self.assertIn(cls, ps._APPROVE_CLASSES, field)
+            self.assertTrue(what and isinstance(what, str), field)
+        self.assertEqual({f for f, (c, _w) in table.items() if c == "text"}, set(self._text_fields()) | {"toId"},
+                         "the text class is the set the behavioural cases loop over, plus toId, whose words are its own")
+        vet = inspect.getsource(ps._approve_field_fault)
+        self.assertIn("_APPROVE_FIELDS", vet, "the vet walks the table")
+        self.assertIn("_approve_field_fault(rec, mid, edited)", arm, "the arm's one point of refusal is the vet, before either road")
+        self.assertLess(arm.index("_approve_field_fault("), arm.index('rec.get("body")'), "the vet runs before the first field is read")
+        self.assertLess(arm.index("_approve_field_fault("), arm.index("local_agents_checked()"), "and before the liveness fetch")
+
+
 class ADenyWithANoteOverASenderThatIsNotTextIsRefused(_HeldStore):
     """quarantine_decide's deny-with-note arm handed `origin`, `frm` and `to` to the note road with no type vet: a record
     whose origin is a container raised out of the outbox's path (a dropped connection the kernel reported as the bus
@@ -1645,7 +2099,7 @@ class ADenyWithANoteOverASenderThatIsNotTextIsRefused(_HeldStore):
     the record: refusing a non-text frm changes a road that until now succeeded by parking a malformed note.
 
     Fails before over a git archive of 35fad278c (the archive that carries this fixture; the crash lines are older,
-    identical at bc88256e8, both refuters proved it): AttributeError or TypeError out of the deny on a container origin, a
+    identical at bc88256e8, the review proved it): AttributeError or TypeError out of the deny on a container origin, a
     parked note and ok on a container frm, RecursionError on the deep `to` under the module's free-threaded-parser
     stand-in (the real 3.12 parser refuses a deep enough document earlier, as unreadable, so the stand-in is the
     vehicle). Synthetic: placeholder mids, invented text, the deep value built iteratively."""
@@ -1724,7 +2178,7 @@ class TheRouteNamesEveryNonScalarFieldByType(_HeldStore):
     """_hold_wire substituted the `body` alone, so a held record whose frm, to, origin, kind or toId was a nested container
     still had json.dumps raise RecursionError inside the handler's send and GET /quarantine drop the connection: the exact
     failure _hold_wire was added to close, left open on every field but one (the fork PR's correctness-3, 2026-09-20;
-    the refuter reproduced it on 3.12 through the real route, no free-threaded parser needed). Now every field whose
+    the review reproduced it on 3.12 through the real route, no free-threaded parser needed). Now every field whose
     value is not text, a number or null is served as its type name with `<field>Type` beside it, the idiom bodyType set;
     a bool passes as the int subclass it is, an int at stays an int, a text field stays as it is, and the record stays
     listed and decidable. Never a pass through _hold_text, which would spell a number and blank a falsy value.
@@ -1770,6 +2224,29 @@ class TheRouteNamesEveryNonScalarFieldByType(_HeldStore):
         json.dumps(wire)
         plain = {"mid": self.M2, "at": 5, "ok": True}
         self.assertIs(ps._hold_wire(plain), plain, "a record of scalars is served as it is")
+
+    def test_a_carried_type_key_never_wins_over_the_substitution_whatever_the_key_order(self):
+        """_hold_wire wrote each `<field>Type` in the same pass as the substitutions, so a record carrying a key spelled
+        `bodyType` after its `body` overwrote the substitution's name and the wire stated the wrong type for the body (the
+        fork PR's extra8-1, round 3, 2026-09-20). The property is key-order independence: two records equal as JSON objects
+        serve one wire, and the wire's triple reads body `list`, bodyType `list` (the substitution's name) and
+        bodyTypeType `dict` (the carried field's own type). Fails before over a git archive of f418f75e9 at the identical
+        wire assertion (the two orders served different bodyType values there)."""
+        carried = {"x": "invented-inner"}
+        first = {"mid": self.M2, "body": ["invented", "list"], "bodyType": carried, "at": 5}
+        second = {"mid": self.M2, "bodyType": carried, "body": ["invented", "list"], "at": 5}
+        self.assertEqual(first, second, "one record, two key orders")
+        w1, w2 = ps._hold_wire(first), ps._hold_wire(second)
+        self.assertEqual(w1, w2, "identical wire whatever the record's key order")
+        self.assertEqual((w1["body"], w1["bodyType"], w1["bodyTypeType"]), ("list", "list", "dict"),
+                         "the substitution's name wins; the carried field's own type is named beside it")
+        self.assertNotIn("invented-inner", json.dumps(w1))
+        self.assertEqual(ps._hold_wire({"mid": self.M2, "body": ["x"], "bodyType": "text"})["bodyType"], "list",
+                         "a carried scalar bodyType is replaced by the substitution's name")
+        self._write(self.M2, json.dumps(second))
+        code, body = self._get(self._serve())
+        served = {h["mid"]: h for h in body["held"]}[self.M2]
+        self.assertEqual((code, served["body"], served["bodyType"], served["bodyTypeType"]), (200, "list", "list", "dict"))
 
 
 class TheBusCitesTheStatementAndRestatesNothing(unittest.TestCase):

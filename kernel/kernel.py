@@ -6744,7 +6744,13 @@ def _note_read_fault_once(path, text, fold=None, fold_head="", name=""):
     (1) Bytes that could not be READ: a stat or read fault (EACCES, EIO, a directory that lists but cannot be searched).
     Every reader skips the file, says the fault once per episode, and leaves the file for the next build; none renames,
     because the bytes may be a good record and a rename is terminal, and none reports the record absent, because it did
-    not read it, a store holding exactly ONE record it could not read included. ONE LABELLED EXCEPTION to the never-rename, deliberate
+    not read it, a store holding exactly ONE record it could not read included and a store holding one beside records
+    that were read alike: each reader says where it reports, the kernel on the bell (the board kept, the cards of the
+    records it read standing) and the bus on the wire beside what it served (a store none of whose records could be
+    served is refused whole, a 503 with the reason on GET /quarantine and a fault row in the summary peers read; a
+    store with records served beside the unread answers them under `unread` on GET /quarantine and appends one marker
+    row after the message rows of the summary, which the viewing machines' Held for approval elsewhere panel renders
+    as a partial listing under the host's count) and in its log. ONE LABELLED EXCEPTION to the never-rename, deliberate
     and pinned: a `.json` symlink with nothing behind it (its lstat succeeds and its read answers FileNotFoundError, so
     it is listed on every build and never readable) is a read that proved the record absent, not a fault on bytes that
     exist; the kernel's reader (_held_records) moves the LINK aside by its own name, moving no message bytes, and its
@@ -6757,8 +6763,10 @@ def _note_read_fault_once(path, text, fold=None, fold_head="", name=""):
     the notices reader skips the row and says so. (3) A record that parsed whose FIELD has an unexpected type: a `body`,
     `frm`, `to`, `origin` or `toId` that is not text, or an `at` that is not an integer. The field is handled and the
     file is never moved or refused for it, on either daemon: a text field is named by its type alone and never
-    formatted (_hold_text), and an `at` that is not an integer is the one field the two readers handle apart, and what
-    a person sees is this: the kernel's card takes the build's clock, so the held message reads as just arrived, dated
+    formatted (_hold_text), and an `at` int() REFUSES (a word, a container, a float infinity) is the one field the two
+    readers handle apart, while an `at` int() ACCEPTS that is not an integer (a JSON string of digits, a float, which
+    int() truncates) is read as its value by both readers with nothing apart about it; what a person sees of the
+    refused one is this: the kernel's card takes the build's clock, so the held message reads as just arrived, dated
     the moment the feed was built and re-dated by every build, and sorts with the board's newest cards (at the top of
     its column when the feed is sorted newest first), while the bus gives the same message 0 for its `at`
     (postal_service._hold_sort_at, where an absent `at` lands too) and sorts it as the oldest of everything held, the
@@ -29828,11 +29836,12 @@ SYNC_NOTICE_FIT = 240
 
 
 def _bell_fit(text):
-    """The last-line belt every reader's bell row passes through: `text` whole when it fits SYNC_NOTICE_FIT, else cut to
-    it with an ellipsis. The point of a row is put first by its builder (_notice_list, _hold_bell_text), so what a cut
-    loses is a tail; the belt exists because a fit helper that can overflow is the trap (fresh-2, the manager's round 2
-    on the held-mail readers PR: a hand-made notices file whose 128-character stem cleared _safe_id rendered whole into
-    rows of 241 to 272 characters on every notices road, while the hold rows of the same commit wore this belt)."""
+    """The last-line belt the notices and held-mail readers' bell rows pass through: `text` whole when it fits
+    SYNC_NOTICE_FIT, else cut to it with an ellipsis. The point of a row is put first by its builder (_notice_list,
+    _hold_bell_text), so what a cut loses is a tail; the belt exists because a fit helper that can overflow is the trap
+    (fresh-2, the manager's round 2 on the held-mail readers PR: a hand-made notices file whose 128-character stem
+    cleared _safe_id rendered whole into rows of 241 to 272 characters on every notices road, while the hold rows of the
+    same commit wore this belt)."""
     return text if len(text) <= SYNC_NOTICE_FIT else text[:SYNC_NOTICE_FIT - 1] + "\u2026"
 
 
@@ -69898,9 +69907,16 @@ list.appendChild(hh);
 // kernel), so the section read as complete. Read `fault` first: such a row is never counted as a message and none
 // of its other fields is rendered; the fault gets the host's own line, the way the trust table above says an
 // unreadable tier (the cause named, retried on the next refresh), and the other hosts' rows stand as they were.
-Object.keys(byHost).sort().forEach(function(hn){var all=byHost[hn],ehn=esc(hn),rows=[],faults=[];
+// A `fault` row that ALSO carries a numeric `unread` is the PARTIAL marker (review round 3 on the held-mail readers
+// PR): the holder read some of its held records and could not read the rest, and its _hold_rows appended one such
+// row after the rows of the records it read, with `unread` and `served` the counts. The count line stands over the
+// message rows as it is (the unread are never counted), and the marker is one line under it in the fault line's
+// dress, its text the bus's count wording, one line per distinct text per host; nothing else of the row renders.
+// A `fault` row with no `unread` is the whole store refused and renders as before.
+Object.keys(byHost).sort().forEach(function(hn){var all=byHost[hn],ehn=esc(hn),rows=[],faults=[],partial=[];
 all.forEach(function(r){if(!r.fault){rows.push(r);return;}
-var ft=typeof r.fault==='string'?r.fault:'a fault of type '+(typeof r.fault);if(faults.indexOf(ft)<0)faults.push(ft);});
+var ft=typeof r.fault==='string'?r.fault:'a fault of type '+(typeof r.fault);
+if(typeof r.unread==='number'){if(partial.indexOf(ft)<0)partial.push(ft);}else if(faults.indexOf(ft)<0)faults.push(ft);});
 if(rows.length){var gl=rows.slice(0,6).map(function(r){return r.frm+' \\u2192 '+r.to+((r.origin&&r.origin!==hn)?' (from '+r.origin+')':'')+': '+(r.gist||'');}).join('\\n');
 var hr=document.createElement('div');hr.className='rnet-row rnet-known';
 hr.innerHTML='<span class=rnet-dot style=\"background:#b58900\" title=\"Mail is waiting for approval on '+ehn+'.\"></span>'+
@@ -69909,7 +69925,11 @@ list.appendChild(hr);}
 faults.forEach(function(ft){var eft=esc(ft),fr=document.createElement('div');fr.className='rnet-row rnet-known';
 fr.innerHTML='<span class=rnet-dot style=\"background:transparent;box-shadow:inset 0 0 0 1.5px #b58900\" title=\"'+ehn+' could not read its held mail on this pass.\"></span>'+
 '<span class=nm><b>'+ehn+'</b> <span class=st title=\"'+ehn+' could not read its own held-mail store: '+eft+'. Whatever is held there is not counted here; it is retried on the next refresh, and '+ehn+'\\u2019s own dashboard names the same fault.\">held mail could not be read: '+eft+'</span></span>';
-list.appendChild(fr);});});}
+list.appendChild(fr);});
+partial.forEach(function(ft){var eft=esc(ft),pr=document.createElement('div');pr.className='rnet-row rnet-known';
+pr.innerHTML='<span class=rnet-dot style=\"background:transparent;box-shadow:inset 0 0 0 1.5px #b58900\" title=\"'+ehn+' could not read every record in its held mail on this pass.\"></span>'+
+'<span class=nm><b>'+ehn+'</b> <span class=st title=\"'+ehn+' read part of its held mail and not the rest: '+eft+'. The held messages it read are counted; the ones it could not read are not counted here, and the read is retried on the next refresh.\">'+eft+'</span></span>';
+list.appendChild(pr);});});}
 // Pending is recorded ON THE CLICK (ack now — the buttons rule), so any re-render in the round-trip
 // window repaints the chosen level + applying cue instead of the stale snapshot's old value. A
 // refused/failed write DELETES the pending entry, so the next render honestly reverts — plus the alert.

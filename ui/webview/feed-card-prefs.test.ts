@@ -25,13 +25,18 @@ test("feed prefs from romp:settings: newestFirst/collapsed default OFF, grouped 
 
 test("footer layout: view controls left, Clear all + Undo dock right (the user 2026-07-13)", () => {
   const CSS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "feed.css"), "utf8");
-  // flex `order` on the actions plus margin-right:auto on the session box, the last left control that is on the bar
-  // whenever any card is, so the split holds whatever order the ensure* calls appended in and whether Clear all is
-  // offered or not (the held-mail readers PR's review, 2026-09-20: the auto margin rode on Clear all, and once that
-  // button hid on a board of held messages alone, Undo slid left beside Search)
+  // the two actions sit in one wrapper (#feed-actions, feed.ts ensureActions) carrying margin-left:auto, so the split
+  // holds PER LINE: the pair wraps as one flex item and docks right on whatever row it lands on, whether Clear all is
+  // offered or not and whatever order the ensure* calls appended in; flex `order` keeps the pair's order inside it
+  // (the held-mail readers PR's review, 2026-09-20: the auto margin rode on Clear all, and once that button hid on a
+  // board of held messages alone Undo slid left beside Search; a round moved it to the session box's margin-right:auto,
+  // which held on one line and left a wrapped row of actions flush left). The empty board's lone Undo keeps the left
+  // edge by state: renderBody marks #feed-foot with .empty-board and the margin is off under it.
+  assert.match(CSS, /#feed-actions \{[^}]*margin-left: auto; \}/, "the wrapper carries the dock");
+  assert.match(CSS, /#feed-foot\.empty-board #feed-actions \{ margin-left: 0; \}/, "off on the empty board, by state");
   assert.match(CSS, /#feed-clearall \{ order: 10; \}/);
   assert.doesNotMatch(CSS, /#feed-clearall \{[^}]*margin-left: auto/, "the dock no longer rides the button that can be hidden");
-  assert.match(CSS, /#feed-search \{[^}]*\n\s*margin-right: auto; \}/, "the session box carries the split");
+  assert.doesNotMatch(CSS, /#feed-search \{[^}]*margin-right: auto/, "nor the session box: a second auto margin on the line would split the free space");
   assert.match(CSS, /#feed-undoclear \{ order: 11; \}/);
 });
 

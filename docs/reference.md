@@ -5485,10 +5485,16 @@ The bus (`GET /quarantine` and the summary peers see) says so in the log, and
 when nothing in the store could be served while such a record stands, one
 record alone included, it refuses the store rather than answering that nothing
 is held: `GET /quarantine` answers 503 with the reason, and a machine viewing
-the holder sees a fault row in place of the section. The kernel, which builds
-the held-mail cards from the same directory, says so on the error center too
-and keeps the board. A held record the kernel read and could not parse or take
-is the one it moves aside, under the same `<name>.corrupt-<UTC stamp>` naming,
+the holder sees a fault row in place of the section. A record left unread
+beside records that were read is listed as unread on `GET /quarantine` beside
+`held` (the file's name, the errno and its text, on every answer, an empty list
+when nothing was left unread), counted on the summary peers see as one marker
+row after the message rows, and shown on a viewing machine's Held for approval
+elsewhere as a line naming how many could not be read, beside the count of
+messages held. The kernel, which builds the held-mail cards from the same
+directory, says so on the error center too and keeps the board. A held record
+the kernel read and could not parse or take is the one it moves aside, under
+the same `<name>.corrupt-<UTC stamp>` naming,
 with the error center saying so under the `refused` kind; the shapes that earn
 the move are listed in that statement, not here. That move changes no receipt:
 the relay was acknowledged when the hold landed, so the sender's side reads as
@@ -5497,13 +5503,17 @@ exception on the never-rename side is a `.json` link with nothing behind it:
 reading it proves the record absent, so the kernel moves the link itself aside
 by its own name, moving no message bytes, and the bus skips it. A record that
 parsed keeps its card and its listing whatever the types of its fields: a field
-that should be text and is not is named by its type, and an `at` that is not
-an integer gives the card the build's time (the bus sorts such a record as the
-oldest). A held record the kernel moved aside is
-named again by the error center each time its entry has left it, after a
-kernel restart or once forty later entries have pushed it out (several asides
-share one entry), until you rename the file back without its `.corrupt-`
-suffix (to try the record again) or delete it. At start the bus removes the
+that should be text and is not is named by its type, an `at` the reader cannot
+read as a whole number gives the card the build's time (the bus sorts such a
+record as the oldest), and one that reads as a whole number (a string of
+digits, a decimal number) is read as its value by both readers. A held record
+the kernel moved aside is named again by the error center each time its entry
+has left it, after a kernel restart or once forty later entries have pushed it
+out (several asides share one entry), until you deal with the file; the entry
+carries the advice for the record it names: rename it back without its
+`.corrupt-` suffix to try the record again, or, when its id is one the bus
+cannot decide, give it a name the bus can decide with a matching message id,
+or delete it. At start the bus removes the
 temporary files a crash left behind (a message written but never placed, a
 store record never finished), closes each one's receipt as refused, and says
 so once. The sidecars are yours to inspect or delete.

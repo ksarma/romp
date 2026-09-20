@@ -622,8 +622,10 @@ class UnreadableEpisodeEndsWithTheDirectory(_R2Case):
     directory was removed, every file in it with it, the entries under it stood; the same fault in a recreated directory
     was skipped with nothing said for the rest of the run. The arm ends the directory's episodes now. The line names the
     class the record was refused for, `could not be parsed and could not be moved aside` for the torn record
-    (regression-7, the manager's round 2); over the 085e08deb archive the case is red at that wording, the stated
-    reason, and over the 4383cc9af archive at the recreated directory's row count, its own."""
+    (regression-7, the manager's round 2). What fires, by execution with the tree's module over each archive: over
+    085e08deb the case is red at that wording alone, asserted at both passes (the first, then the recreated directory's),
+    and passes once both are neutralised; over 4383cc9af it is red at that wording first, past it at the episode-registry
+    assertion (the directory's episodes ended with it), and only third at the recreated directory's row count, its own."""
 
     def test_the_same_fault_in_a_recreated_directory_is_said_again(self):
         _skip_as_root(self)

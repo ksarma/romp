@@ -4076,12 +4076,26 @@ function clearUndoBusy(): void {
   if (b) { b.classList.remove("undo-busy"); b.querySelector(".undo-dots")?.remove(); }
 }
 
-// Clear-all + UndoClear live in #feed-foot — a footer bar in normal flow BELOW the scrolling card
+// Clear-all + UndoClear live in #feed-foot, a footer bar in normal flow BELOW the scrolling card
 // list, so they can never overlap a card (the user 2026-06-15). Appended once; render() toggles
 // each one's display. Clear all is appended first (left); UndoClear second (far right).
+// THE ACTIONS' WRAPPER (the held-mail readers PR's review round 3): the two actions sit in one element,
+// #feed-actions, and the footer's right-hand dock is that element's margin-left:auto (feed.css). The dock
+// rode on Clear all's own margin until that button could be hidden (a board of held messages alone, the
+// switch off), then on the session box's margin-right:auto, which held on one line and failed on a bar that
+// WRAPS: when the line break put the two actions on a row of their own they sat at the row's left, since the
+// auto margin was on the row above. One wrapper wraps as one flex item and carries the margin onto whatever
+// row it lands on, so the pair docks right on a wrapped row too, with Clear all shown or hidden. The empty
+// board's lone Undo keeps the left edge by state: renderBody marks #feed-foot with the empty-board class
+// while no card is on the board, and feed.css turns the wrapper's auto margin off under it.
+function ensureActions(): HTMLElement {
+  let w = document.getElementById("feed-actions");
+  if (!w) { w = el("span", ""); w.id = "feed-actions"; (document.getElementById("feed-foot") || document.body).appendChild(w); }
+  return w;
+}
 function ensureUndoClear(): HTMLElement {
   let b = document.getElementById("feed-undoclear");
-  if (!b) { b = makeUndoClearBtn(); (document.getElementById("feed-foot") || document.body).appendChild(b); }
+  if (!b) { b = makeUndoClearBtn(); ensureActions().appendChild(b); }
   return b;
 }
 
@@ -4100,7 +4114,7 @@ function makeClearAllBtn(): HTMLElement {
 
 function ensureClearAll(): HTMLElement {
   let b = document.getElementById("feed-clearall");
-  if (!b) { b = makeClearAllBtn(); (document.getElementById("feed-foot") || document.body).appendChild(b); }
+  if (!b) { b = makeClearAllBtn(); ensureActions().appendChild(b); }
   return b;
 }
 
@@ -5686,6 +5700,10 @@ function renderBody(list: HTMLElement) {
   const foot = document.getElementById("feed-foot");
   // show the footer whenever there are cards (so the Sub-goals toggle is reachable) or an undo is available
   if (foot) foot.style.display = (showCA || canUndoClear) ? "" : "none";
+  // the empty board by state (the held-mail readers PR's review round 3): with the count-gated left cluster hidden
+  // and no card on the board, the lone Undo keeps the bar's left edge because feed.css turns the actions' dock off
+  // under this class, not because nothing happens to stand left of it; a card on the board takes the class off
+  if (foot) foot.classList.toggle("empty-board", !showCA);
 
   if (!asks.length) {   // the removed FeedItem subsystem left a stale second operand here (a read of the gone
     //                     `standalone` array) that threw a ReferenceError on an EMPTY feed → the inbox-zero
@@ -6459,7 +6477,6 @@ function applyFeedPayload(m: any): void {
   // for cards that left, never growth without a gesture. The frame's own `off` stays the local kernel's word.
   const cardsUnknown = frameCardsUnknown(m);
   boardCardsUnknown = cardsUnknown;   // the footer's Clear all reads it at render time (clearAllOffered)
-  feedOff = false;                    // a built frame: the switch is on, the footer's Clear all is offered again where its gate says
   // A clear is CONFIRMED once the kernel's payload no longer lists it → stop suppressing it. Then drop
   // any still-pending (kernel hasn't caught up) from this payload so a stale push can't resurrect them.
   if (!cardsUnknown) for (const id of Array.from(pendingCleared)) if (!incomingAsks.some((a) => a.itemId === id)) pendingCleared.delete(id);
@@ -6608,8 +6625,9 @@ listenForFrames(perfFrameHandler("feed", (m) => vscodeApi?.postMessage(m), (e: M
       // before renderBody, so the button of the last render stood under the notice while the list was hidden, and a
       // press reached a kernel that builds no feed while off, clears nothing and answers nothing. It is hidden below and
       // held hidden by feedOff through the renderBody a romp:settings storage event re-runs over the still-populated
-      // asks; a built frame clears the latch (applyFeedPayload). Undo stays: the frame carries canUndoClear and the
-      // undoClear door has no tracking gate.
+      // asks; a built frame's ARRIVAL clears the latch (below, above the hover-freeze queue), never the flush of a
+      // frame queued before this one. Undo stays: the frame carries canUndoClear and the undoClear door has no
+      // tracking gate.
       mirrorBadges([], Array.isArray(m.clearNotices) ? m.clearNotices : [], Array.isArray(m.sdkNotices) ? m.sdkNotices : [], Array.isArray(m.syncNotices) ? m.syncNotices : [], { cardsUnknown: true });
       if (typeof m.dismissedCount === "number") dismissedCount = m.dismissedCount;
       if (typeof m.canUndoClear === "boolean") canUndoClear = m.canUndoClear;
@@ -6617,6 +6635,12 @@ listenForFrames(perfFrameHandler("feed", (m) => vscodeApi?.postMessage(m), (e: M
       ensureClearAll().style.display = "none";
       return;
     }
+    // A built frame ARRIVING is the evidence that the switch is on now, so the latch clears here (the held-mail readers
+    // PR's review round 3) and not in applyFeedPayload: the hover-freeze flush below applies a payload QUEUED earlier,
+    // and one queued before the off frame says nothing about the switch now, so a clear there brought Clear all back
+    // under the off notice with the list still hidden. This arm is the queue's only filler (the flush only empties it),
+    // so every queued payload passed this line when it arrived and the flush needs no line of its own.
+    feedOff = false;
     // HOVER-FREEZE: a hovered card must not move on screen — queue the payload (newest wins) and
     // hint the deferred churn on the headers instead; mouseleave/blur flush it (see freezeEnter).
     if (freezeKey || tabScopeKey) { pendingFeedPayload = m; paintFreezeBadges(); return; }

@@ -13,7 +13,10 @@
 // machine, the gear's word) on the toast and the bell row, and folds one press's answers into one toast keyed on the
 // press and the toast on screen, never a clock; the Task tracking switch's off frame hides the button and a latch
 // holds it hidden through a renderBody a settings change re-runs (Undo stays); and the footer's right-hand dock
-// rides the session box's margin-right:auto (feed.css) instead of the button that can now be hidden.
+// left the button that can now be hidden. Round 3 (2026-09-20) moved two of those: the latch clears where a built
+// frame ARRIVES, above the hover-freeze queue, so the flush of a frame queued before the off frame leaves it set;
+// and the dock rides the two actions' own wrapper (#feed-actions, margin-left:auto, per line), since the round 2
+// home on the session box's margin-right:auto held on one line and failed on a bar that wraps.
 // Source pins, in the style of the other feed tests (feed-sess-clear.test.ts); the behaviour runs under the DOM
 // stand-in in feed-render-incremental.test.ts (its last cases).
 import { test } from "node:test";
@@ -122,7 +125,7 @@ test("a remote kernel's clearAllResult is host-stamped by federation, beside set
   assert.ok(at < FED.indexOf("function _prefixIdBearing("), "inside prefixInbound");
 });
 
-test("the Task tracking switch's off frame hides the footer's Clear all and latches it hidden until a built frame; Undo is not touched", () => {
+test("the Task tracking switch's off frame hides the footer's Clear all and latches it hidden until a built frame ARRIVES; Undo is not touched", () => {
   // extra8-2 (the review's round 2): the off arm returns before renderBody, so the button of the last render stood under
   // the notice and a press reached a kernel that clears nothing while off and answers nothing; a storage event on
   // romp:settings re-runs renderBody over the still-populated asks, so hiding the button once would not have held
@@ -130,19 +133,41 @@ test("the Task tracking switch's off frame hides the footer's Clear all and latc
   const off = FEED.slice(FEED.indexOf("if (m.off) {"), FEED.indexOf("// HOVER-FREEZE:"));
   assert.match(off, /feedOff = true;\s*\n\s*ensureClearAll\(\)\.style\.display = "none";\s*\n\s*return;\s*\n\s*\}/, "set and hidden in the off arm, before its return");
   assert.doesNotMatch(off, /ensureUndoClear|feed-undoclear|foot\.style/, "Undo and the footer are left as the last render had them: the off frame carries canUndoClear and the undoClear door has no tracking gate");
-  assert.match(FEED, /boardCardsUnknown = cardsUnknown;[^\n]*\n\s*feedOff = false;/, "cleared where a built frame lands (applyFeedPayload)");
-  assert.equal(FEED.split("feedOff").length - 1, 6, "the latch is read at the gate and written on the two frames alone (the declaration, the off arm's comment and write, applyFeedPayload, the gate and its comment)");
+  // ui-2 (round 3): the clear keyed on applyFeedPayload, which the hover-freeze flush also runs over a payload QUEUED
+  // earlier; one queued before the off frame then brought Clear all back under the notice with the list still hidden.
+  // The clear sits in the arrival arm now, after the off arm's return and above the freeze queue, so the event it keys
+  // on is a built frame arriving, evidence the switch is on now; the flush clears nothing, and needs no line of its
+  // own, since that queue has one filler (feed-render-incremental.test.ts drives both flush roads)
+  const arm = FEED.slice(FEED.indexOf("if (m.off) {"), FEED.indexOf("applyFeedPayload(m);", FEED.indexOf("if (m.off) {")));
+  assert.match(arm, /return;\s*\n\s*\}\s*\n(?:\s*\/\/[^\n]*\n)*\s*feedOff = false;\s*\n(?:\s*\/\/[^\n]*\n)*\s*if \(freezeKey \|\| tabScopeKey\) \{ pendingFeedPayload = m; paintFreezeBadges\(\); return; \}/,
+    "cleared at the frame's arrival: after the off arm's return, above the hover-freeze queue");
+  const apply = FEED.slice(FEED.indexOf("function applyFeedPayload(m: any): void {"), FEED.indexOf("\n}\n", FEED.indexOf("function applyFeedPayload(m: any): void {")));
+  assert.doesNotMatch(apply, /feedOff/, "applyFeedPayload writes the latch no more: the flush runs it over a queued payload");
+  assert.equal(FEED.split("pendingFeedPayload = m;").length - 1, 1, "the arrival arm is the queue's only filler, so every queued payload passed the clear when it arrived");
+  assert.equal(FEED.split("feedOff").length - 1, 6, "the latch is read at the gate and written on the two frames alone (the declaration, the off arm's comment and write, the arrival arm's clear, the gate and its comment)");
 });
 
-test("the footer's right-hand dock rides the session box, not the button that can now be hidden (feed.css)", () => {
+test("the footer's right-hand dock rides the two actions' own wrapper, per line; the empty board's lone Undo keeps the left edge by state (feed.ts, feed.css)", () => {
   // ui-2 (the review's round 2): the dock lived on #feed-clearall's margin-left:auto, so with Clear all hidden on a board
-  // of held messages alone Undo slid left beside Search; margin-right:auto on #feed-search, the last left control that is
-  // on the bar whenever any card is, keeps Undo right-docked whether Clear all is shown or not and leaves the empty
-  // board's left-edge Undo as it was (the session box is hidden there too). feed-css-footer.test.ts measures it.
-  assert.match(CSS, /#feed-search \{ display: inline-flex; align-items: center; gap: 5px; position: relative;\s*\n\s*margin-right: auto; \}/, "the split on the session box");
-  assert.match(CSS, /#feed-clearall \{ order: 10; \}/, "the button keeps its order alone");
+  // of held messages alone Undo slid left beside Search; round 2 moved it to margin-right:auto on #feed-search. ui-1
+  // (round 3): that held on one line and failed on a bar that WRAPS, since a margin on the row above cannot dock a row
+  // below it: with Clear all and Undo folded onto a row of their own they sat flush left. The dock is the wrapper's
+  // now: feed.ts mints #feed-actions once and appends both buttons into it, so the pair wraps as one flex item and
+  // carries margin-left:auto onto whatever row it lands on; renderBody marks the empty board on #feed-foot and the
+  // sheet turns the margin off under that class, so the lone Undo's left edge is a stated rule and not an accident.
+  // feed-css-footer.test.ts measures all of it where a browser exists.
+  assert.match(FEED, /function ensureActions\(\): HTMLElement \{\s*\n\s*let w = document\.getElementById\("feed-actions"\);\s*\n\s*if \(!w\) \{ w = el\("span", ""\); w\.id = "feed-actions"; \(document\.getElementById\("feed-foot"\) \|\| document\.body\)\.appendChild\(w\); \}/,
+    "the wrapper, minted once into the footer");
+  assert.match(FEED, /if \(!b\) \{ b = makeClearAllBtn\(\); ensureActions\(\)\.appendChild\(b\); \}/, "Clear all is appended into it");
+  assert.match(FEED, /if \(!b\) \{ b = makeUndoClearBtn\(\); ensureActions\(\)\.appendChild\(b\); \}/, "and so is Undo");
+  assert.doesNotMatch(FEED, /make(?:ClearAll|UndoClear)Btn\(\); \(document\.getElementById\("feed-foot"\)/, "neither action is appended to the bar directly any more");
+  assert.match(footer, /if \(foot\) foot\.classList\.toggle\("empty-board", !showCA\);/, "the empty board is a state on the bar: set while no card is on it, cleared by a card");
+  assert.match(CSS, /#feed-actions \{ display: inline-flex; align-items: center; gap: 8px; margin-left: auto; \}/, "the dock is the wrapper's margin");
+  assert.match(CSS, /#feed-foot\.empty-board #feed-actions \{ margin-left: 0; \}/, "and it is off on the empty board");
+  assert.match(CSS, /#feed-search \{ display: inline-flex; align-items: center; gap: 5px; position: relative; \}/, "the session box carries no auto margin: two on one line would split the free space between them");
+  assert.match(CSS, /#feed-clearall \{ order: 10; \}/, "the pair's order inside the wrapper stands");
   assert.doesNotMatch(CSS, /#feed-clearall \{[^}]*margin-left: auto/, "no auto margin on a control that hides");
-  assert.equal(CSS.split("margin-right: auto").length - 1, 3, "three right auto margins in the sheet: the session box's, the card modal's age and the file-comments composer's hint");
+  assert.equal(CSS.split("margin-right: auto").length - 1, 2, "two right auto margins in the sheet: the card modal's age and the file-comments composer's hint; none on the footer");
   // the state that made this reachable: the button's own gate at renderBody, not the card count the left cluster reads
   assert.match(footer, /ensureClearAll\(\)\.style\.display = clearAllOffered\(asks, boardCardsUnknown\)/);
 });
