@@ -369,7 +369,10 @@ the S cases keep touching, state instead the RULE every red case satisfies and c
 exactly once at this tree and that the matrix and the table name the same cells, and
 `python -B tests/test_sdk_singleton_ratchet.py --derive <id>` plants the cell in a detached worktree at HEAD, runs this
 module there, prints the red cases by case id with the head it ran at, and removes the worktree: a cell's current list
-is that run's, at the head it prints, and none is written here.
+is that run's, at the head it prints, and none is written here. The count of cells is the table's the same way:
+`python -B tests/test_sdk_singleton_ratchet.py --count` prints it at the tree it runs in, by block and in total
+(cell_counts), and no sentence here states it (the pin holds a number of cells absent from this docstring: a count
+written in prose is measured once and outlives the cell added after it).
   the reads (_sdk_read): the marker ignored, every test on the same-marker road (A.c fails falsely on the stale
     pre-reload object); a None marker before treated as the same-marker road (H2.a fails falsely) or as an exemption
     (H.a passes); os.path.isdir replaced by os.path.exists (D.One's boundary verdict disappears, A.g); isdir forced
@@ -489,7 +492,7 @@ is that run's, at the head it prints, and none is written here.
     disappears) or without its reference condition (K.One passes silently); the windows never recorded (as the
     yield removed).
   the function fixture not naming the object it accused (A.h gets an inherited report, E, D).
-Ninety-one cells red at the round-6 close head.
+The count of cells is the table's, printed by `python -B tests/test_sdk_singleton_ratchet.py --count` (above).
 Four are pinned by no run at the round-6 close head, each for a stated reason: the unreadable reference root granting
 the allowance (not constructible: the kernel always binds jd); the yield's identity condition dropped (redundant by
 construction: when the end value is the last read's and is not the last window's value, a class teardown inside the
@@ -646,6 +649,30 @@ DERIVE_ENV_DROPPED = ("PYTEST_ADDOPTS", "PYTEST_PLUGINS", "PYTEST_DISABLE_PLUGIN
                       "PYTEST_XDIST_WORKER", "PYTEST_XDIST_WORKER_COUNT", "ROMP_TESTS_SYSTEM_TMPDIR",
                       "PY_COLORS", "FORCE_COLOR", "CLICOLOR_FORCE",      # what nested_run pops from its child's
                       "CLAUDE_CODE_SESSION_ID")                          # environment; the session id the recipe unsets
+# The matrix's blocks by key prefix, the same blocks the docstring's two "each cell a rule and a derive id" heads open.
+# cell_counts refuses a key that opens on no block's prefix, or on two, so a cell of a new block is added here before it
+# can be counted: never a silent third bucket.
+CELL_BLOCKS = (("the refusal block", ("refusal-", "refused-", "report-")), ("the boundary link", ("boundary-",)))
+# A number of cells stated in prose: the form the pin holds absent from the module docstring (the count is printed)
+NUMBER_OF_CELLS = re.compile(r"\b(?:\w+-)?(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|"
+                             r"fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|"
+                             r"seventy|eighty|ninety|hundred|\d+) cells\b", re.I)
+
+
+def cell_counts(table=None):
+    """The count of cells by block and in total, computed from the table (MUTATIONS unless another is given): what
+    `--count` prints and what the floor pin's message quotes. No sentence in this module states the count; a count
+    written in prose is measured once and outlives the cell added after it, and this one is read at the tree it runs
+    in. A key that opens on no block's prefix, or on more than one, is a loud error, never an uncounted cell."""
+    table = MUTATIONS if table is None else table
+    counts = {block: 0 for block, _ in CELL_BLOCKS}
+    for cell in table:
+        blocks = [block for block, prefixes in CELL_BLOCKS if cell.startswith(prefixes)]
+        if len(blocks) != 1:
+            raise ValueError("%s opens on %s block prefix (CELL_BLOCKS)" % (cell, "no" if not blocks else "more than one"))
+        counts[blocks[0]] += 1
+    counts["in total"] = len(table)
+    return counts
 
 
 def mutation_cell_text(doc, cell):
@@ -2677,8 +2704,30 @@ class TheMutationCellsApply(unittest.TestCase):
             self.assertFalse(text.startswith("derive: ") or "a derive id: " in text, "%s: %s" % (cell, text[:120]))
 
     def test_the_table_is_not_short(self):
-        self.assertGreaterEqual(len(MUTATIONS), 30, "the refusal block's twenty-three cells and the boundary link's seven "
-                                "at the round-6 close head; a shorter table is a failure, not a pass: %r" % sorted(MUTATIONS))
+        counts = cell_counts()
+        self.assertGreaterEqual(len(MUTATIONS), 30, "the table came back under the floor of thirty, set at the round-6 close "
+                                "head; a shorter table is a failure, not a pass. The table now: %s: %r"
+                                % (", ".join("%s %d" % (block, n) for block, n in counts.items()), sorted(MUTATIONS)))
+        self.assertEqual(counts["in total"], len(MUTATIONS))
+
+    def test_the_count_is_printed_never_written(self):
+        """The count of cells is the table's: no sentence in the module docstring states a number of cells, the docstring
+        names the command that prints it, and that command, run as the docstring gives it, prints cell_counts() at this
+        tree, block by block and in total, whose blocks sum to the table's length."""
+        doc = re.sub(r"\s+", " ", __doc__)
+        self.assertIsNone(NUMBER_OF_CELLS.search(doc), "the docstring states a number of cells: %r"
+                          % (NUMBER_OF_CELLS.search(doc) and NUMBER_OF_CELLS.search(doc).group(0)))
+        self.assertIn("`python -B tests/test_sdk_singleton_ratchet.py --count`", doc,
+                      "the docstring does not name the command that prints the count")
+        counts = cell_counts()
+        self.assertEqual(sum(n for block, n in counts.items() if block != "in total"), len(MUTATIONS), counts)
+        with tempfile.TemporaryDirectory() as tmp:                # the script's import-time state root lands here
+            env = {k: v for k, v in os.environ.items() if not k.startswith("ROMP_") and k not in DERIVE_ENV_DROPPED}
+            env.update(TMPDIR=tmp, PYTHONDONTWRITEBYTECODE="1")
+            r = subprocess.run([sys.executable, "-B", os.path.join("tests", "test_sdk_singleton_ratchet.py"), "--count"],
+                               cwd=ROOT, env=env, capture_output=True, text=True, timeout=300)
+        self.assertEqual(r.returncode, 0, r.stdout[-2000:] + r.stderr[-2000:])
+        self.assertEqual(r.stdout.splitlines(), ["%s: %d" % (block, n) for block, n in counts.items()], r.stdout)
 
 
 class ClassTeardownRemovesTheDirectory(_NestedRun, unittest.TestCase):
@@ -3849,5 +3898,8 @@ if __name__ == "__main__":
         for name in (sorted(MUTATIONS) if sys.argv[2] == "all" else [sys.argv[2]]):
             derive(name)
             print()
+    elif len(sys.argv) == 2 and sys.argv[1] == "--count":      # the count of cells, the table's: by block and in total
+        for block, n in cell_counts().items():
+            print("%s: %d" % (block, n))
     else:
         unittest.main()
