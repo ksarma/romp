@@ -569,8 +569,10 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
         the pad and unkeyed (no excuse); a frame on the feed page's socket counts for nothing; a phase with no change record
         fails rather than widening. Then the socket's state at the posts: open and served across all three posts with a
         later frame in the window (no excuse: the 42 recorded windows the frame alone excused with their patches delivered),
-        the same socket closing after the last post with the redial's frame (no excuse), closed before the posts (an excuse:
-        the tightening kept the recorded churn's excuse), closing between notice 1 and notice 2 (an excuse), open across the
+        the same socket closing after the last post with the redial's frame (no excuse), closed before the posts (an excuse),
+        closing between notice 1 and notice 2 (an excuse: the recorded churn's own shape, since in all five churned drives the
+        first post, 0.01 s in, found the socket open and served and it closed 0.6 to 0.7 s in, before the second; the fixer
+        pass of round 4 corrected the labels, which had put the recorded churn on the closed-before cell), open across the
         posts but served only after notice 2 (an excuse). And the floor the excuse guards, with the excuse frame PRESENT in
         the record: a phase with no patch and no row whose socket was open and served across the posts reds
         _assert_one_row_per_outline_feed_patch (the planted miss), the same with the socket closed across the posts passes
@@ -628,7 +630,8 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
                        ([sock(0, A0 - 5000, A0 - 100, [frame(A0 - 4000)]), redial], True,
                         "closed before the first post (every post found no open socket), the redial's frame after the last post"),
                        ([sock(0, A0 - 5000, A0 + 500, [frame(A0 - 4000)]), redial], True,
-                        "closing between notice 1 and notice 2 (posts 2 and 3 found no open socket)"),
+                        "closing between notice 1 and notice 2 (posts 2 and 3 found no open socket: the recorded churn's shape, the socket closed 0.6 to 0.7 s "
+                        "into phase A in every churned drive, after the first post)"),
                        ([sock(0, A0 - 5000, None, [frame(A0 + 1500), frame(A0 + 3000)])], True,
                         "open across the posts but served its first frame only after notice 2 (posts 1 and 2 found it unserved)")]
         for socks, want, why in state_cells:
@@ -642,8 +645,8 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
             record([], socks=[sock(0, A0 - 5000, None, [frame(A0 - 4000), frame(A0 + 3000)])])._assert_one_row_per_outline_feed_patch("A0", "A1", patches_due=True)
         self.assertIn("neither happened", str(cm.exception), "a phase with no patch and no row whose socket was open and served across the posts is a change that "
                                                               "reached the Outline as nothing; the later whole frame excuses nothing: %s" % cm.exception)
-        self.assertEqual(record([], socks=[held.copy() | {"closeAt": A0 - 100}, redial])._assert_one_row_per_outline_feed_patch("A0", "A1", patches_due=True), 0,
-                         "the churn: no patch and no row, the socket closed across the posts, the redial's whole frame after the last post")
+        self.assertEqual(record([], socks=[held.copy() | {"closeAt": A0 + 700}, redial])._assert_one_row_per_outline_feed_patch("A0", "A1", patches_due=True), 0,
+                         "the churn as recorded: no patch and no row, the socket closed 0.7 s in (after the first post, before the second), the redial's whole frame after the last post")
         patch = {"t": "delta", "slot": "feed", "at": A0 + 1200, "coll": ["asks"], "rev": 1, "len": 300, "restAll": False}
         row = {"surface": "outline", "what": "delta-unapplied", "t": (A0 + 1200) // 1000, "wid": "w1", "reconnect": False, "data": {"rev": 1, "slot": "feed"}}
         self.assertEqual(record([], socks=[sock(0, A0 - 5000, None, [frame(A0 - 4000), patch, frame(A0 + 3000)])], rows=[row])._assert_one_row_per_outline_feed_patch("A0", "A1", patches_due=True), 1,

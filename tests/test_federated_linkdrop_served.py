@@ -94,8 +94,10 @@ margin pin with its floors green; and one at this code the same day, green (`r5/
 behind the churn-keyed allowance (_outline_caught_up_whole: an empty phase is excused only when one of its notice posts
 found the Outline holding no open relay socket that had received its first feed-family frame, and then only by a whole
 keyed feed frame the Outline received there after the bundle's last notice could have been posted; in all three the
-socket closed 0.7 s into phase A, before the posts, and the frames came about 0.8 s after the last, 2.87, 2.83 and 2.86 s
-into phase A against a last notice posted from 2.01 s, so all three are green on the floors under it). The population is counted as of that last drive, since any later drive can add either shape: the
+socket closed 0.7 s into phase A, between the first and second posts (the first, 0.01 s in, found it open and served;
+the second and third, at 1.01 and 2.01 s, found no open socket, so the gap held at those two), and the frames came about
+0.8 s after the last, 2.87, 2.83 and 2.86 s into phase A against a last notice posted from 2.01 s, so all three are green
+on the floors under it). The population is counted as of that last drive, since any later drive can add either shape: the
 builder's cache then held 18 old-hub records of the unmutated module (the builder's earlier drives at three pre-PR
 vintages among them, two with a hand-built old hub), 15 at 3 / 0 / 3 / 3 and those 3 at 0 / 0 / 3 / 3, and the
 reviewers' further drives at round 1's head gave 3 / 0 / 3 / 3 (the per-window table over the report JSONs outside the
@@ -1159,7 +1161,10 @@ class _LinkDrop(unittest.TestCase):
         repo), load-bearing in 5, and a planted gating miss (a phase's patches and rows removed from the record) stayed green
         at both floors; keyed on the gap it is available in 5 of those 75, the phase-A windows of the five drives whose
         Outline socket churned inside phase A (the same command at this module), and the planted miss reds. The post times
-        are DERIVED from the change record (its t0 plus i x NOTICE_GAP_S, _change's own timing), not recorded per notice. The
+        are DERIVED from the change record (its t0 plus i x NOTICE_GAP_S, _change's own sleeps between the posts, on the
+        poster's clock at millisecond resolution); each notice's answer in the record carries the remote kernel's own stamp
+        for the notice too (`at`, `t`), but in whole seconds and on the other clock, too coarse for a millisecond gap check,
+        so it is not read here. The
         frame key is after the bundle's last notice, not in the window: the left edge is the later of the window's mark and
         the earliest the last notice's post could have started, because a frame before that carries at most the earlier
         notices and cannot explain the later ones reaching the Outline as nothing (round 3: a frame anywhere in the window's
