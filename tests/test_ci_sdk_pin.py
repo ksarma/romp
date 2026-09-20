@@ -204,7 +204,14 @@ class InstalledVersion(unittest.TestCase):
     def test_the_installed_sdk_is_the_pin_where_it_imports_and_the_pin_is_well_formed_where_it_does_not(self):
         pin = sh.SDK_TESTED_VERSION
         self.assertRegex(pin, VERSION_RE, "SDK_TESTED_VERSION is not a bare x.y.z version: %r" % pin)
-        if importlib.util.find_spec(sh.SDK_PACKAGE) is None:
+        try:
+            spec = importlib.util.find_spec(sh.SDK_PACKAGE)
+        except ValueError as e:
+            # a fixture's stand-in module left in sys.modules has no __spec__, and find_spec raises rather than answers:
+            # name the leak, which is a test-hygiene fault, not a pin verdict
+            self.fail("sys.modules holds a %s that is not an installed package (%r: %s); a fixture's fake SDK leaked into "
+                      "this process, so the pin cannot be judged here" % (sh.SDK_PACKAGE, sys.modules.get(sh.SDK_PACKAGE), e))
+        if spec is None:
             warnings.warn("claude_agent_sdk does not import in this interpreter (%s): the pin's form is checked, the installed "
                           "version is not; a CI cell that ran the install step never takes this road" % sys.executable)
             return
