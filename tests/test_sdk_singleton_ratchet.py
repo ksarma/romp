@@ -3561,11 +3561,15 @@ class TheDerivationIsRunnable(unittest.TestCase):
     fabricated -rf output, the lines carry the case id by SCRATCH identity (the case class taken from
     case_population's map, never written here), the class and its sorted tests, "-" for a pin and for a class this
     module does not define, another module's FAILED line unread. derive itself: over a faked subprocess.run
-    (rev-parse answering a fabricated head, worktree add copying the real conftest into the tree, status answering
-    clean, the pytest call recorded and answering the fabricated output, worktree remove recorded) and a real
-    mkdtemp under the test's directory, it prints the cell, the head, the plant, the run line, the red lines, the
-    summary and the cell's text, runs derive_command()'s argv in the added tree under the recipe's environment, and
-    removes the tree and the scratch directory. Before this class no test called derive: the round-7 review found the
+    (rev-parse answering a fabricated head, worktree add writing a synthetic conftest into the tree, status answering
+    clean, the pytest call recorded and answering the fabricated output, worktree remove recorded), the table's entry
+    for the cell replaced by a synthetic substitution over that text (mock.patch.dict on MUTATIONS, so the test reads
+    no conftest of this checkout and plants none of the real table: the round-8 review found the fake copying the
+    real tests/conftest.py, so under a derivation of any of the five cells whose plant removes the first cell's old
+    text this test redded on derive's exact-once count, a pin's red printed with no case id) and a real mkdtemp under
+    the test's directory, it prints the cell, the head, the plant, the run line, the red lines, the summary and the
+    cell's text, runs derive_command()'s argv in the added tree under the recipe's environment, and removes the tree
+    and the scratch directory. Before this class no test called derive: the round-7 review found the
     two behaviours last added to it (the second --deselect and the refusal) executed by no run of the suite, so
     derive replaced by a raiser left the module green. The module's --derive arm (its __main__ block, compiled from
     this file's source by main_block and run with derive replaced by a recorder over a synthetic table written out
@@ -3654,28 +3658,36 @@ class TheDerivationIsRunnable(unittest.TestCase):
         self.assertEqual(derive_red_lines("195 passed in 60.00s\n"), [],
                          "an output with no FAILED line gives red lines (derive_red_lines over a summary line alone)")
 
-    def test_derive_runs_the_command_in_a_worktree_and_prints_the_plant_the_reds_and_the_cell(self):
-        cell = sorted(MUTATIONS)[0]
-        target, subs = MUTATIONS[cell]
+    FAKE_CONFTEST = "PLANT = 'old'\nKEPT = 1\n"          # the synthetic tests/conftest.py the faked worktree add writes
+    FAKE_SUBS = [("PLANT = 'old'\n", "PLANT = 'new'\n")]  # the synthetic substitution the table's entry is replaced by
+
+    def _derive_over_fakes(self, cell, conftest_text=FAKE_CONFTEST, subs=FAKE_SUBS, returncode=1, stdout=""):
+        """derive(cell) over a faked subprocess.run, a real mkdtemp under a directory of the test's own, and the table's
+        entry for the cell replaced by `subs` over tests/conftest.py: rev-parse answers a fabricated head, worktree add
+        makes the tree and writes `conftest_text` as its tests/conftest.py (a synthetic text, so no conftest of this
+        checkout is read), status answers clean, the module's run is recorded with the planted text and answers
+        `returncode` and `stdout`, worktree remove is recorded, and any other git call is an AssertionError. Returns
+        (seen, out): the trees added and removed, the pytest argv and keyword arguments (None when derive never ran
+        it), the planted text, and derive's stdout; the scratch directory is asserted removed whatever derive raised,
+        and the exception, when derive raised one, is re-raised after that assertion."""
         head = "1111111122222222333333334444444455555555"
-        stdout, reds = self._fabricated_output()
-        seen = {"added": [], "removed": [], "pytest": None, "planted": None}
+        seen = {"added": [], "removed": [], "pytest": None, "planted": None, "head": head}
         real_mkdtemp = tempfile.mkdtemp
 
         def fake_run(argv, **kw):
             done = lambda rc, out="": subprocess.CompletedProcess(argv, rc, out, "")
             if argv[:3] != ["git", "-C", ROOT]:                                   # the module's run
-                with open(os.path.join(kw["cwd"], "tests", target)) as f:
-                    planted = f.read()
-                seen["planted"] = all(new in planted for _, new in subs)
+                with open(os.path.join(kw["cwd"], "tests", "conftest.py")) as f:
+                    seen["planted"] = f.read()
                 seen["pytest"] = (argv, kw)
-                return done(1, stdout)
+                return done(returncode, stdout)
             if argv[3] == "rev-parse":
                 return done(0, head + "\n")
             if argv[3:5] == ["worktree", "add"]:
                 tree = argv[-2]
                 os.makedirs(os.path.join(tree, "tests"))
-                shutil.copy(os.path.join(HERE, target), os.path.join(tree, "tests", target))
+                with open(os.path.join(tree, "tests", "conftest.py"), "w") as f:
+                    f.write(conftest_text)
                 seen["added"].append(tree)
                 return done(0)
             if argv[3] == "status":
@@ -3687,26 +3699,40 @@ class TheDerivationIsRunnable(unittest.TestCase):
 
         out = io.StringIO()
         with tempfile.TemporaryDirectory() as tmp:
-            with mock.patch.dict(os.environ, {"ROMP_PROBE": "1", "PYTEST_ADDOPTS": "-x", "CLAUDE_CODE_SESSION_ID": "s"}), \
-                 mock.patch.object(subprocess, "run", side_effect=fake_run), \
-                 mock.patch.object(tempfile, "mkdtemp", side_effect=lambda **kw: real_mkdtemp(dir=tmp, **kw)), \
-                 contextlib.redirect_stdout(out):
-                derive(cell)
-            self.assertEqual(os.listdir(tmp), [], "derive left its scratch directory")
+            try:
+                with mock.patch.dict(os.environ, {"ROMP_PROBE": "1", "PYTEST_ADDOPTS": "-x", "CLAUDE_CODE_SESSION_ID": "s"}), \
+                     mock.patch.dict(MUTATIONS, {cell: ("conftest.py", subs)}), \
+                     mock.patch.object(subprocess, "run", side_effect=fake_run), \
+                     mock.patch.object(tempfile, "mkdtemp", side_effect=lambda **kw: real_mkdtemp(dir=tmp, **kw)), \
+                     contextlib.redirect_stdout(out):
+                    derive(cell)
+            finally:
+                self.assertEqual(os.listdir(tmp), [], "derive left its scratch directory (the entries under the test's "
+                                 "mkdtemp root after derive returned or raised)")
+        return seen, out.getvalue()
+
+    def test_derive_runs_the_command_in_a_worktree_and_prints_the_plant_the_reds_and_the_cell(self):
+        cell = sorted(MUTATIONS)[0]
+        stdout, reds = self._fabricated_output()
+        seen, out = self._derive_over_fakes(cell, stdout=stdout)
         argv, kw = seen["pytest"]
         self.assertEqual(argv, derive_command(),
                          "derive did not run derive_command()'s argv (the pytest call the faked subprocess.run saw)")
         self.assertEqual(seen["added"], [kw["cwd"]], "the module ran outside the worktree derive added")
         self.assertEqual(seen["removed"], seen["added"], "the worktree derive added was not the one it removed")
-        self.assertTrue(seen["planted"], "the module ran over a tree without the cell's plant")
-        self.assertTrue(kw["env"]["TMPDIR"].startswith(tmp + os.sep), kw["env"]["TMPDIR"])
+        self.assertEqual(seen["planted"], "PLANT = 'new'\nKEPT = 1\n",
+                         "the module ran over a tree whose tests/conftest.py is not the synthetic text with the "
+                         "substitution applied (the file the faked run read in the tree)")
+        self.assertEqual(kw["env"]["TMPDIR"], os.path.dirname(seen["added"][0]),
+                         "the run's TMPDIR is not derive's scratch directory, the added tree's parent (the env the faked "
+                         "subprocess.run saw)")
         self.assertEqual(kw["env"]["PYTHONDONTWRITEBYTECODE"], "1",
                          "the run's environment does not set PYTHONDONTWRITEBYTECODE=1 (the env the faked subprocess.run saw)")
         self.assertEqual([k for k in kw["env"] if k.startswith("ROMP_") or k in DERIVE_ENV_DROPPED], [],
                          "the run's environment carries a ROMP_* name or a name of DERIVE_ENV_DROPPED (the env the faked "
                          "subprocess.run saw)")
-        self.assertEqual(out.getvalue().splitlines(),
-                         ["# cell: %s" % cell, "# head: %s" % head, "# planted: %s, %d substitution(s)" % (target, len(subs)),
+        self.assertEqual(out.splitlines(),
+                         ["# cell: %s" % cell, "# head: %s" % seen["head"], "# planted: conftest.py, 1 substitution(s)",
                           "# run: %s (in the worktree)" % " ".join(derive_command()[1:])] + reds
                          + ["summary: 4 failed, 191 passed in 60.00s (0:01:00)", "cell: %s" % mutation_cell_text(__doc__, cell)],
                          "derive's output differs (its stdout lines over the faked run: the cell, the head, the plant, the "
