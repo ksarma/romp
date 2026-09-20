@@ -56,14 +56,18 @@ body.rs-lifted.rs-pane-gone::before { display: none; }
 #rsettings .rs-judges { display: flex; gap: 18px; }
 #rsettings .rs-judges .rs-half { flex: 1 1 0; min-width: 0; }
 /* the per-setting description is a HOVER tooltip (the user 2026-06-23): hidden by default,
-   floats below the row on hover (absolute → no layout shift). */
+   floats below the row on hover (absolute → no layout shift). Since 2026-09-20 it opens on FOCUS too (:focus-within: the row's
+   checkbox or control holds the focus), so a keyboard, a screen reader or a touch browser that focuses the control on a tap
+   reads the description a pointer user hovers; until then the disclosure under the Diagnostics share switch, the consent text
+   for the phone's timing rows, rendered for a pointer alone (review round 3 of that field, ui-1). */
 #rsettings .rs-sub { display: none; }
-#rsettings .rs-row:hover .rs-sub, #rsettings .rs-widget:hover .rs-sub { display: block; position: absolute; left: 0; right: 0; top: 100%; z-index: 10;
+#rsettings .rs-row:hover .rs-sub, #rsettings .rs-row:focus-within .rs-sub, #rsettings .rs-widget:hover .rs-sub, #rsettings .rs-widget:focus-within .rs-sub { display: block; position: absolute; left: 0; right: 0; top: 100%; z-index: 10;
   margin-top: 2px; color: var(--text-soft, #cdd3da); font-size: 0.92em; line-height: 1.35; background: var(--input-bg, #1b1b1c); border: 1px solid var(--hairline, #3a3a3a);
   border-radius: 6px; padding: 6px 9px; box-shadow: 0 4px 14px #000000aa; pointer-events: none; }
-/* the popover opens ABOVE a row whose popover would run past the card's bottom (gear.js placeSub sets rs-up on hover): the card
-   is the modal's scroll box, and a popover past its bottom grew it a scrollbar and was clipped (the T408 read) */
+/* the popover opens ABOVE a row whose popover would run past the card's bottom (gear.js placeSub sets rs-up on hover and on
+   focus): the card is the modal's scroll box, and a popover past its bottom grew it a scrollbar and was clipped (the T408 read) */
 #rsettings .rs-row.rs-up:hover .rs-sub, #rsettings .rs-widget.rs-up:hover .rs-sub { top: auto; bottom: 100%; margin-top: 0; margin-bottom: 2px; }
+#rsettings .rs-row.rs-up:focus-within .rs-sub, #rsettings .rs-widget.rs-up:focus-within .rs-sub { top: auto; bottom: 100%; margin-top: 0; margin-bottom: 2px; }
 /* the Fast mode box's own popover, positioned against its row like the row's (the box is static, so the row is the
    containing block and the popover keeps the row's width): the box carries rs-up itself (gear.js hostOf). Specificity
    (1,5,0): two classes above the hover rule and one above the row's own rs-up rule, so the box's placement wins whatever the
@@ -103,6 +107,9 @@ body.rs-lifted.rs-pane-gone::before { display: none; }
 #rsettings .rs-fastin.rs-off { color: var(--text-faint, #6e7681); cursor: default; }
 #rsettings .rs-fastin.rs-off input { opacity: .4; cursor: default; }
 #rsettings .rs-row:hover .rs-fastin .rs-sub { display: none; }
+/* the same while the row holds the FOCUS (2026-09-20): a Tab into the Fast mode box focuses its checkbox, which puts the row
+   in :focus-within and would show the row's description AND the box's nested one, stacked; on the keyboard the row's shows */
+#rsettings .rs-row:focus-within .rs-fastin .rs-sub { display: none; }
 #rsettings .rs-row:has(.rs-fastin:hover) > .rs-sub { display: none; }
 #rsettings .rs-row:has(.rs-fastin:hover) .rs-fastin .rs-sub { display: block; }
 /* the label's nowrap keeps the box and its word together; the hint must NOT inherit it, or it runs off
