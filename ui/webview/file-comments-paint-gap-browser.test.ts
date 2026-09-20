@@ -50,7 +50,7 @@
 // paths, the placeholder sid, invented comment ids.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
-import { inBrowser, openViewer, openPanel, frames, REPORT, STATUS } from "./real-viewer-leg";
+import { inBrowser, openViewer, openPanel, frames, PARA, REPORT, SID, STATUS } from "./real-viewer-leg";
 
 const T0 = 1757145600000;
 const NOTE = "# Report\n\nParagraph 1: alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau.\n\n"
@@ -549,5 +549,145 @@ test("in a browser, the real viewer and panel: a change whose selectionchange AL
     await frames(page, 2);
     assert.deepEqual(errors, [], "no script error");
     await page.close();
+  });
+});
+
+// ── the third refusal in the gap: the paint-offer browser file's leg 7 (a tracked note whose struck label, shown inline, pushes a
+// last-visible-line selection whole below the body's bottom edge) with the pass landing in the gap of the person's Shift+ArrowRight ──
+const NOTE_TRACKED = "# Report\n\n" + Array.from({ length: 40 }, (_, i) => PARA(i + 1)).join("\n\n") + "\n";
+const P5_END = NOTE_TRACKED.indexOf(PARA(5)) + PARA(5).length;
+const OLD = " Removed sentence: this text was cut from the end of the fifth paragraph and is long enough to add at least one line at the pane's width.";
+const DEL = { id: "d1", author: "api", ts: T0 + 1000, kind: "del", curFrom: P5_END, curTo: P5_END, baseFrom: P5_END, baseTo: P5_END + OLD.length, oldText: OLD, newText: "", anchor: null };
+const TRACKED = { ...STATUS, hunks: [DEL], store: { ...STATUS.store, suggestions: [{ id: "d1", authorId: SID }] } };
+type ClipScene = { hidden: boolean; left: number; top: number; expectedLeft: number; expectedTop: number; selected: string; selBottom: number; bodyBottom: number; selInBody: boolean; selBelowBody: boolean; floatInBodyBand: boolean | null; dels: number; composer: boolean; selChanges: number };
+/** The float, the selection's box against the body's, and whether the button's own box lies inside the body's band. */
+const clipScene = (page: any): Promise<ClipScene> => page.evaluate(() => {
+  const f = document.querySelector(".fc-float") as HTMLElement; const sel = getSelection()!;
+  const body = document.querySelector(".fileview-body") as HTMLElement; const b = body.getBoundingClientRect();
+  const r = sel.rangeCount && !sel.isCollapsed ? sel.getRangeAt(sel.rangeCount - 1).getBoundingClientRect() : null;
+  const fr = f.hidden ? null : f.getBoundingClientRect();
+  return { hidden: f.hidden, left: parseFloat(f.style.left), top: parseFloat(f.style.top),
+    expectedLeft: r ? Math.min(Math.max(8, r.right + 6), window.innerWidth - 90) : NaN, expectedTop: r ? Math.min(Math.max(8, r.top - 30), window.innerHeight - 34) : NaN,
+    selected: String(sel), selBottom: r ? r.bottom : NaN, bodyBottom: b.bottom,
+    selInBody: !!r && r.bottom > b.top && r.top < b.bottom, selBelowBody: !!r && r.top >= b.bottom,
+    floatInBodyBand: fr ? fr.bottom > b.top && fr.top < b.bottom : null,
+    dels: document.querySelectorAll(".fileview-body .fc-del").length, composer: !!document.querySelector(".fileview-aside .fc-composer .fc-input"),
+    selChanges: (window as any).__selChanges as number };
+});
+/** The 500 by 400 px pane on the tracked note, Show changes inline OFF, a real drag over paragraph 6's characters 5 to 20, then (`pushOut`)
+ *  a scroll that leaves the selected line the body's LAST visible one (leg 7's scene: the scroll hides the float) or none (the control,
+ *  the passage in the body's middle); then Shift+ArrowRight, the keyboard's offer beside the line, which is the record of it. */
+async function upToClipOffer(browser: any, pushOut: boolean): Promise<{ page: any; errors: string[] }> {
+  const { page, errors } = await openViewer(browser, "pane", 500, 400, { docs: { [REPORT]: NOTE_TRACKED } });
+  await page.evaluate((st: unknown) => { (window as any).__status = st; }, TRACKED);
+  await openPanel(page);
+  await page.waitForFunction(() => document.querySelectorAll(".fileview-body .fc-del").length === 1, null, { timeout: 10000 });
+  await page.click('button[data-act="fcinline"]');
+  await page.waitForFunction(() => document.querySelectorAll(".fileview-body .fc-del").length === 0, null, { timeout: 10000 });
+  await frames(page, 2);
+  await page.evaluate(() => {
+    const w = window as any;
+    w.__selChanges = 0; document.addEventListener("selectionchange", () => { w.__selChanges++; });
+    w.__pick = () => {
+      const KEY = "romp:settings"; const raw = localStorage.getItem(KEY); const cur = raw ? JSON.parse(raw) : {};
+      const next = { ...cur, changesInline: cur.changesInline === false };
+      localStorage.setItem(KEY, JSON.stringify(next));
+      window.dispatchEvent(new StorageEvent("storage", { key: KEY, oldValue: raw, newValue: JSON.stringify(next), storageArea: localStorage, url: location.href }));
+    };
+  });
+  await page.evaluate(() => {
+    const body = document.querySelector(".fileview-body") as HTMLElement;
+    const p = Array.from(document.querySelectorAll(".fileview-md > p")).find((e) => (e.textContent || "").startsWith("Paragraph 6:")) as HTMLElement;
+    body.scrollTop += p.getBoundingClientRect().top - body.getBoundingClientRect().top - 40;
+  });
+  await frames(page, 2);
+  const g = await page.evaluate(() => {
+    const p = Array.from(document.querySelectorAll(".fileview-md > p")).find((e) => (e.textContent || "").startsWith("Paragraph 6:")) as HTMLElement;
+    const range = document.createRange(); range.setStart(p.firstChild!, 5); range.setEnd(p.firstChild!, 20);
+    const b = range.getBoundingClientRect(); return { x1: b.left + 1, x2: b.right - 1, y: b.top + b.height / 2 };
+  });
+  await page.mouse.move(g.x1, g.y); await page.mouse.down(); await page.mouse.move(g.x2, g.y, { steps: 4 }); await page.mouse.up();
+  await page.waitForFunction(() => !(document.querySelector(".fc-float") as HTMLElement).hidden, null, { timeout: 5000 });
+  if (pushOut) {
+    await page.evaluate(() => {
+      const body = document.querySelector(".fileview-body") as HTMLElement; const sel = getSelection()!;
+      const r = sel.getRangeAt(0).getBoundingClientRect(); const b = body.getBoundingClientRect();
+      body.scrollTop -= (b.bottom - r.bottom) - 3;
+    });
+    await page.waitForFunction(() => (document.querySelector(".fc-float") as HTMLElement).hidden, null, { timeout: 5000 });
+    await frames(page, 2);
+  }
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await page.keyboard.down("Shift"); await page.keyboard.press("ArrowRight"); await page.keyboard.up("Shift");
+  await page.waitForFunction((n: number) => !(document.querySelector(".fc-float") as HTMLElement).hidden && String(getSelection()).length === n, 16, { timeout: 5000 });
+  await frames(page, 2);
+  return { page, errors };
+}
+type ClipGap = { key: string; selectedAtHook: string; selChangesAtHook: number; hiddenBefore: boolean; hiddenAfter: boolean; delsAfter: number; selTopAfter: number; bodyBottomAfter: number };
+/** Shift+ArrowRight with the pass armed in its gap (a one-shot capture keyup listener reads the scene, fires the pick and reads it again),
+ *  awaited on the key's selectionchange; the hook's record. */
+async function clipPressInGap(page: any): Promise<ClipGap> {
+  const baseline: number = await page.evaluate(() => (window as any).__selChanges as number);
+  await page.evaluate(() => {
+    const w = window as any; w.__gap = null;
+    const read = () => {
+      const f = document.querySelector(".fc-float") as HTMLElement; const sel = getSelection()!; const body = document.querySelector(".fileview-body") as HTMLElement;
+      const r = sel.rangeCount && !sel.isCollapsed ? sel.getRangeAt(sel.rangeCount - 1).getBoundingClientRect() : null;
+      return { hidden: f.hidden, selTop: r ? r.top : NaN, bodyBottom: body.getBoundingClientRect().bottom, dels: document.querySelectorAll(".fileview-body .fc-del").length };
+    };
+    document.addEventListener("keyup", (ev) => {
+      const before = read(); const selectedAtHook = String(getSelection()); const selChangesAtHook = w.__selChanges as number;
+      w.__pick();
+      const after = read();
+      w.__gap = { key: (ev as KeyboardEvent).key, selectedAtHook, selChangesAtHook, hiddenBefore: before.hidden, hiddenAfter: after.hidden, delsAfter: after.dels, selTopAfter: after.selTop, bodyBottomAfter: after.bodyBottom };
+    }, { once: true, capture: true });
+  });
+  await page.keyboard.down("Shift"); await page.keyboard.press("ArrowRight"); await page.keyboard.up("Shift");
+  await page.waitForFunction(() => (window as any).__gap !== null, null, { timeout: 5000 });
+  await page.waitForFunction((n: number) => (window as any).__selChanges > n, baseline, { timeout: 5000 });
+  await frames(page, 3);
+  const gap: ClipGap = await page.evaluate(() => (window as any).__gap);
+  assert.ok(gap, "the keyup hook ran");
+  assert.equal(gap.key, "ArrowRight", "...at the arrow's keyup");
+  assert.equal(gap.selectedAtHook.length, 17, "the premise: the person's change is already in the live selection at the hook");
+  assert.equal(gap.selChangesAtHook, baseline, "the premise: their selectionchange has not been delivered yet (the pass is in the gap)");
+  assert.equal(gap.delsAfter, 1, "the pass painted the struck label above the line");
+  return gap;
+}
+
+test("in a browser, the real Files pane at 500 by 400 px: the paint-offer browser file's leg 7 with the pass landing in the GAP (the review's round 1, ui-1 and extra6-2), each scene its own subtest: a tracked note with a deletion above the sixth paragraph, Show changes inline off, a real drag over that paragraph's words, a scroll that leaves the selected line the body's last visible one, Shift+ArrowRight (the keyboard's offer beside the line), then Shift+ArrowRight again with a settings pick from another pane in its gap, whose struck label pushes the whole passage below the body's bottom edge: the pass hides the float and the person's event refuses the clipped passage, so no Comment button stands over the body's last visible line beside text nobody selected (before: the pending branch left the float for the event, and the event seated the button inside the body's band while the passage was out of view, case (9) by the pending road); the control, the same pass in the same gap with the passage in the body's middle: the event offers beside it, inside the band", { timeout: 300000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    await t.test("the passage pushed below the body's bottom edge: hidden, and no button over the last visible line", { timeout: 120000 }, async (st) => {
+      const { page, errors } = await upToClipOffer(browser, true);
+      let s = await clipScene(page);
+      assert.deepEqual([s.selected, s.selInBody, s.hidden], [PARA(6).slice(5, 21), true, false], "the keyboard's offer stands beside the passage, on the body's last visible line");
+      assert.ok(s.bodyBottom - s.selBottom < 30, "the premise: the selected line is the body's last visible one (" + (s.bodyBottom - s.selBottom).toFixed(1) + " px above the body's bottom)");
+      const gap = await clipPressInGap(page);
+      st.diagnostic("at the hook the float was " + (gap.hiddenBefore ? "hidden" : "shown") + "; after the pass the passage sits at " + gap.selTopAfter.toFixed(1) + " against the body's bottom edge at " + gap.bodyBottomAfter.toFixed(1) + ", the float " + (gap.hiddenAfter ? "hidden" : "shown"));
+      assert.ok(gap.selTopAfter >= gap.bodyBottomAfter, "the premise: the pass pushed the whole passage below the body's bottom edge, out of view");
+      assert.equal(gap.hiddenAfter, true, "the pass hides the float: a passage pushed out of the body's box takes no button, the change pending or not (before: left standing for the event)");
+      s = await clipScene(page);
+      st.diagnostic("after the person's event: hidden " + s.hidden + ", the button at " + s.left + "," + s.top + ", the passage's bottom at " + s.selBottom.toFixed(1) + ", the body's at " + s.bodyBottom.toFixed(1) + ", inside the body's band " + s.floatInBodyBand);
+      assert.equal(s.selected, PARA(6).slice(5, 22), "the person's change stands");
+      assert.equal(s.selBelowBody, true, "the passage is still below the body's bottom edge, out of view");
+      assert.equal(s.hidden, true, "the person's event refuses the clipped passage: no Comment button over the body's last visible line (before: seated inside the band, beside other text, while the passage it would comment on was out of view)");
+      assert.equal(s.composer, false, "no composer opened on its own");
+      assert.deepEqual(errors, [], "no script error");
+      await page.close();
+    });
+    await t.test("the control: the passage in the body's middle, the same pass in the same gap: offered beside it, inside the band", { timeout: 120000 }, async (st) => {
+      const { page, errors } = await upToClipOffer(browser, false);
+      let s = await clipScene(page);
+      assert.deepEqual([s.selected, s.selInBody, s.hidden], [PARA(6).slice(5, 21), true, false], "the keyboard's offer stands beside the passage, in the body's middle");
+      const gap = await clipPressInGap(page);
+      st.diagnostic("control: after the pass the passage sits at " + gap.selTopAfter.toFixed(1) + ", the body's bottom at " + gap.bodyBottomAfter.toFixed(1) + ", the float " + (gap.hiddenAfter ? "hidden" : "shown"));
+      s = await clipScene(page);
+      assert.equal(s.selInBody, true, "the passage is in view");
+      assert.equal(s.hidden, false, "the person's event offers the float beside their change");
+      near(s.left, s.expectedLeft, "...beside the selection as the pass left it"); near(s.top, s.expectedTop, "...on its line");
+      assert.equal(s.floatInBodyBand, true, "...inside the body's band");
+      assert.deepEqual(errors, [], "no script error");
+      await page.close();
+    });
   });
 });

@@ -25,7 +25,8 @@
 //     with no client rect. passageGone read it as a standing passage and the float stayed shown beside text nobody can see; the offer
 //     itself refuses such a selection (onSelection's guard on a range with no width and no height), and a click on the button opened a
 //     composer the whitespace refusal closed at once. Now afterPaint hides the float when the remnant has no box too, by the subject
-//     test hideFloatOnScroll reads (floatSubjectRect); a remnant with a box keeps the float, as (4) has it.
+//     test hideFloatOnScroll reads (floatSubjectRect); a remnant with a box keeps the float, as (4) has it. Since (16) the offer's own
+//     refusal hides a passage's float too, so a boxless selection of the person's making leaves no button standing at the old place.
 // (6) The writes can cut the selection to a remnant WITH a box that has MOVED from under the button (the review's round 6): the same
 //     drag carried into the next paragraph's middle leaves the line break and that paragraph's first half, a line or more below the
 //     offer's box, and the float stayed where the offer put it, 74 px above the passage it now offered to comment on, while a scroll
@@ -89,6 +90,16 @@
 //     cut it fires an event that is no offer; with the release gone the latch stands, that pass drops the record, and its own event
 //     offers the float beside a remnant nobody selected. A key that changes nothing (Shift alone) raises nothing: a latch keyed on the
 //     keydown would stand until an unrelated event lowered it, (14) by another road.
+// (16) The pending road took two of afterPaint's three refusals (the same round, ui-1 and extra6-2): a subject the pass left gone or
+//     boxless was hidden, but one the pass pushed OUT OF THE BODY'S BOX while the person's change was pending was left for the event, and
+//     the offer's own path had no body-box guard, so the event seated the Comment button over the body's last visible line beside other
+//     text while the passage stood out of view, (9) by the pending road. Now afterPaint hides a clipped subject whatever the latch says,
+//     and onSelection refuses a selection whose box lies outside the body's (and a boxless one) with the standing float hidden and the
+//     selection recorded as answered, so a scroll that brings it into view re-offers nothing and the person's next change offers.
+// (17) With the latch raised and the float showing, a subject the writes moved WHOLE and in view is re-seated by the pass (the same
+//     round, extra6-3: the pending branch re-seated nothing), the person's event then re-offering at the same place; a whole move out of
+//     the box is hidden as (16) has it; a remnant the writes cut and moved with the change pending stands for the person's event, which
+//     offers beside it as it stands (one move of the button, where a hide and a show would flap within a frame), as (11) has it.
 // Driven over the behavior suite's DOM stand-in with the selection faked per case (window.getSelection is what the panel reads and
 // what afterPaint records; a cut the paint makes is applied when the paint replaces the node, liveSelectionOn's cutOnPaint, since the
 // pass reads the selection at its head too; a drag delivers its own selectionchange under the press, dragOffer, as a browser does), the
@@ -479,9 +490,9 @@ function liveSelectionOn(root: El, passage: string, length: number, rect: Rect):
   let cut: { node: Txt; length: number; text: string | null } | null = null;
   const settle = () => { if (cut && hit().node !== cut.node) { sel.length = cut.length; sel.remnant = cut.text; if (cut.length === 0) collapsed = true; cut = null; } };
   let collapsed = false;   // live, as a browser's isCollapsed is: the panel reads it before any end (passageGone), so the cut settles here too
-  const sel: any = { rangeCount: 1, length, rect, remnant: null as string | null,
+  const sel: any = { rangeCount: 1, length, rect, remnant: null as string | null, swapped: false,   // `swapped`: the anchor at the passage's end and the focus at its start, the same text between other ends (a re-selection from the far side)
     get isCollapsed() { settle(); return collapsed; }, set isCollapsed(v: boolean) { collapsed = v; },
-    get anchorNode() { settle(); return hit().node; }, get anchorOffset() { settle(); return hit().at; }, get focusNode() { settle(); return hit().node; }, get focusOffset() { settle(); return hit().at + sel.length; },
+    get anchorNode() { settle(); return hit().node; }, get anchorOffset() { settle(); return sel.swapped ? hit().at + sel.length : hit().at; }, get focusNode() { settle(); return hit().node; }, get focusOffset() { settle(); return sel.swapped ? hit().at : hit().at + sel.length; },
     toString: () => { settle(); return sel.remnant ?? passage.slice(0, sel.length); }, getRangeAt: () => ({ getBoundingClientRect: () => sel.rect }),
     cutOnPaint: (n: number, text: string | null = null) => { cut = { node: hit().node, length: n, text }; } };
   return sel;
@@ -880,7 +891,7 @@ test("a paint landing in the GAP and CUTTING the pending selection (the review o
   documentEvent("selectionchange");   // the person's event: the remnant refused, nothing shown
   assert.equal(float.hidden, true, "the person's event offers nothing beside a remnant with no box: hidden it stays");
   externalFilterPick();
-  assert.equal(float.hidden, true, "a further pass over the standing remnant leaves it hidden (no record, no latch)");
+  assert.equal(float.hidden, true, "a further pass over the standing remnant leaves it hidden (the refusal recorded the remnant as answered; nothing pending)");
   live.remnant = null; live.length = 5; live.rect = RECT_B;
   documentEvent("selectionchange");
   assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_B) }, "the keyboard's next selection offers the float");
@@ -1054,4 +1065,88 @@ test("the latch's release is the delivered selectionchange, and nothing else low
   assert.equal(float.hidden, true, "...whose box moved from under the button: the float goes with the pass, as (6) has it (a latch keyed on the keydown would stand here, the pass would drop the record and leave the float, and the event would seat the button beside the remnant)");
   documentEvent("selectionchange");
   assert.equal(float.hidden, true, "the paint's own event is no offer: the key that changed nothing raised nothing");
+});
+
+test("the THIRD refusal with the person's change pending (the review's round 1, ui-1 and extra6-2): Shift+ArrowRight grows a last-visible-line selection, and a settings pick from another pane lands in its gap and pushes the passage whole below the body's bottom edge (a struck label above the line, (9)'s geometry): the pass hides the float (before: left for the event, which seated the button over the body's last visible line beside text nobody selected); the person's event refuses the clipped passage and records it, a further pass leaves it hidden, and the next change in view offers; the offer's own path refuses a clipped selection and a boxless one of the person's making, hiding the standing float (before: the boxless refusal left the button at the old place)", async (t) => {
+  const w = world(); t.after(() => w.close()); t.after(() => { selection = null; });
+  await openPanel(w);
+  const box = w.body.getBoundingClientRect();
+  const live = liveSelectionOn(w.body, QUOTE, 9, RECT_B);
+  const float = dragOffer(w, live);
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_B) });
+  // the person's Shift+ArrowRight, its event a task away; the pass in the gap moves the grown selection whole below the body's bottom edge
+  live.length = 10; live.rect = RECT_BELOW_CLIP;
+  externalFilterPick();
+  assert.deepEqual([String(live), live.isCollapsed, w.body.contains(live.anchorNode)], [QUOTE.slice(0, 10), false, true], "the pass left the grown selection whole, in the body");
+  assert.ok(live.rect.top >= box.bottom, "...below the body's bottom edge, out of view");
+  assert.equal(float.hidden, true, "the pass hides the float: a passage out of the body's box takes no button, the change pending or not (before: left standing for the event)");
+  documentEvent("selectionchange");   // the person's event: the passage out of view, refused
+  assert.equal(float.hidden, true, "the person's event offers nothing beside a passage out of view (before: seated the button at top " + placeOf(RECT_BELOW_CLIP).top + ", over the body's last visible line)");
+  externalFilterPick();
+  assert.equal(float.hidden, true, "a further pass leaves it hidden (the refusal recorded the passage; nothing pending)");
+  documentEvent("selectionchange");
+  assert.equal(float.hidden, true, "...and the pass's own event is no offer");
+  // the person's next change, in view: offered
+  live.length = 12; live.rect = RECT_A;
+  documentEvent("selectionchange");
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_A) }, "the next change in view offers");
+  // the offer's own path: a selection of the person's whose box lies outside the body's (a screen reader's move to a passage scrolled
+  // out of view) offers nothing and hides the standing float; one with no box (a bare line break) the same
+  const clipped = selectionOn(w.body, QUOTE, 5, RECT_ABOVE_CLIP);
+  selection = clipped;
+  documentEvent("selectionchange");
+  assert.equal(float.hidden, true, "a selection out of the body's box: no offer, and the standing float goes");
+  selection = selectionOn(w.body, QUOTE, 7, RECT_A);
+  documentEvent("selectionchange");
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_A) }, "a selection in view offers again");
+  const boxless = selectionOn(w.body, QUOTE, 1, RECT_NONE); boxless.toString = () => "\n";
+  selection = boxless;
+  documentEvent("selectionchange");
+  assert.equal(float.hidden, true, "a selection with no box: no offer, and the standing float goes (before: refused without hiding, a Comment button at the old place whose click opened a composer the whitespace refusal closed)");
+  documentEvent("selectionchange");
+  assert.equal(float.hidden, true, "the same refused selection again: nothing");
+  selection = selectionOn(w.body, QUOTE, 4, RECT_B);
+  documentEvent("selectionchange");
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_B) }, "the next selection with a box in view offers");
+});
+
+test("a subject the writes MOVED with the latch raised and the float showing (the review's round 1, extra6-3): the person's re-selection of the same passage from its far side (the anchor and focus exchanged, the same text between other ends: a screen reader reading it back), its event a task away, and a settings pick from another pane landing in the gap moves the passage whole by a mark's padding: the pass re-seats the float beside the passage's box now (before: the pending branch re-seated nothing, and a stale button stood where no event came), and the person's event offers at the same place; the same whole move out of the body's box hides the float; a remnant the writes cut and moved with the change pending stands for the event, as (11) has it", async (t) => {
+  const w = world(); t.after(() => w.close()); t.after(() => { selection = null; });
+  await openPanel(w);
+  const live = liveSelectionOn(w.body, QUOTE, 9, RECT_B);
+  const float = dragOffer(w, live);
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_B) });
+  // the re-selection from the far side: the same text, the ends exchanged, its event still to come; the pass in the gap wraps a peer's
+  // mark on the line and moves the passage whole 4 px right (the mark's padding), as (7) has it
+  live.swapped = true;
+  assert.deepEqual([live.anchorOffset > live.focusOffset, String(live)], [true, QUOTE.slice(0, 9)], "the ends exchanged, the text the same");
+  const PADDED_B: Rect = { ...RECT_B, right: RECT_B.right + 4 };
+  live.rect = PADDED_B;
+  const before = live.anchorNode;
+  externalFilterPick();
+  assert.notEqual(live.anchorNode, before, "the pass replaced the selection's node");
+  assert.equal(String(live), QUOTE.slice(0, 9), "...and left every selected character selected: a whole move");
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(PADDED_B) }, "the pass re-seats the float beside the passage's box now, the change pending (before: the pending branch re-seated nothing, the button 4 px off where the offer put it)");
+  documentEvent("selectionchange");   // the person's event: the same passage between other ends, offered where it stands
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(PADDED_B) }, "the person's event offers beside the passage: the same place, one move of the button");
+  // the same, the pass pushing the passage whole out of the body's box: hidden, as (16) has it
+  live.swapped = false;
+  documentEvent("selectionchange");
+  assert.equal(float.hidden, false, "the re-selection back: offered");
+  live.swapped = true; live.rect = RECT_BELOW_CLIP;
+  externalFilterPick();
+  assert.equal(String(live), QUOTE.slice(0, 9), "the pass left the passage whole");
+  assert.equal(float.hidden, true, "...out of the body's box: the float goes with the pass, the change pending");
+  documentEvent("selectionchange");
+  assert.equal(float.hidden, true, "the person's event refuses the clipped passage");
+  // a remnant the writes cut AND moved with the change pending: the float stands for the person's event, which offers beside the remnant
+  live.swapped = false; live.length = 7; live.rect = RECT_A;
+  documentEvent("selectionchange");
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_A) }, "the next change offers");
+  live.length = 8; live.cutOnPaint(5); live.rect = RECT_BELOW;
+  externalFilterPick();
+  assert.equal(String(live), QUOTE.slice(0, 5), "the pass cut the pending selection to a remnant, moved from under the button");
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_A) }, "the float stands for the person's event (a hide here and the event's show would flap within a frame)");
+  documentEvent("selectionchange");
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_BELOW) }, "the person's event offers beside the remnant as it stands: one move");
 });

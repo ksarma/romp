@@ -2954,7 +2954,20 @@ class Panel {
     const body = this.ctx.body();
     if (!body.contains(sel.anchorNode) || !body.contains(sel.focusNode)) return;
     const rect = sel.getRangeAt(sel.rangeCount - 1).getBoundingClientRect();
-    if (!rect.width && !rect.height) return;
+    // a selection nobody can see takes no button: a range with no box (a bare line break between two blocks, the whitespace refusal's
+    // subject) or one whose box lies wholly outside the body's (inBodyBox: the body clips what it scrolls and showFloat clamps to the
+    // window alone, so a passage the panel's own writes pushed past the body's edge while the person's selectionchange was still to come,
+    // which that event then read as their change, took a button over the body's last visible line beside other text, case (9) by the
+    // pending road; the review's round 1, ui-1). A passage's float standing goes with the refusal, since the passage it was offered for
+    // is no longer what is selected (the listener's rule for a collapsed selection; before, a boxless change of the keyboard's left the
+    // button standing at the old place, and its click opened a composer the whitespace refusal closed), and the selection is recorded
+    // as answered: a scroll that brings it into view fires no selectionchange and re-offers nothing, as a scroll-hidden float has it,
+    // and the person's next change offers
+    if ((!rect.width && !rect.height) || !this.inBodyBox(rect)) {
+      if (this.floatAt && !this.floatAt.img) this.hideFloat();
+      this.offeredFor = { text: text ?? sel.toString(), ...endsOf(sel) };
+      return;
+    }
     this.imageTarget = null;                           // a text selection replaces a picture as the float's subject
     this.offeredFor = { text: text ?? sel.toString(), ...endsOf(sel) };   // what a selectionchange compares with (onSelectionChange; `text` when it read the text already)
     this.showFloat(rect);
@@ -3962,39 +3975,48 @@ class Panel {
    *  click on it commented on text out of view (78c0806ce hid it, as for any move; the scroll's listener hides for the same
    *  displacement). The re-seat takes a box at least partly inside the body's (inBodyBox) and hides otherwise, as for a remnant
    *  that moved; the offer's own path (onSelection) keeps its guards, since a gesture's selection is in view by the browser's doing.
-   *  All of it for a selection the float has answered. A change of the person's the pass found at its head, its event still to come
-   *  (pendingChange), is that event's to answer: the record is dropped and the float left standing for it, which offers beside the
-   *  selection as the writes left it, a remnant with a box included (the ON cut and round 6's moved remnant, which go with the paint
-   *  when no change is pending, re-seat beside the remnant then: 235.8 to 245.0 px and 530.0 to 488.1 px in the review's 900 by 700 px
-   *  pane, where the paint hid them before), except a subject the writes left gone or with no box, which goes now as above: the event
-   *  hides a collapsed selection itself (the listener's guard) but refuses a boxless one without hiding (onSelection's), and the button
-   *  stood beside a bare line break with a composer the whitespace refusal closed, round 5 over again (the review of the fix,
-   *  2026-09-20). */
+   *  The record is for a selection the float has answered. A change of the person's the pass found at its head, its event still to
+   *  come (pendingChange), is that event's to answer: the record is dropped and the event offers beside the selection as the writes left
+   *  it, a remnant with a box included (the ON cut and round 6's moved remnant, hidden by the paint when no change is pending, are
+   *  offered beside the remnant by the event then: 235.8 to 245.0 px and 530.0 to 488.1 px in the review's 900 by 700 px pane, where
+   *  nothing offered before). The subject test is the same with a change pending as without: the first version of the pending branch
+   *  returned before every hide, so a pass that cut the pending selection to a bare line break left the button beside it, which the
+   *  event refused without hiding (round 5 over again; the review of the fix, 2026-09-20); its second took the gone and boxless hides
+   *  but not the third refusal, so a pass that pushed the pending passage whole past the body's edge left the button for an event that
+   *  seated it over the body's last visible line beside other text (case (9) by the pending road), and a subject the writes moved was
+   *  left with its stale button where no event came (the review's round 1, ui-1 and extra6-3; the latch is raised on the delivered
+   *  event's note now and not by inference, so no event fails to come, pendingChange). Now the pass reads all three over a showing
+   *  float whatever the latch says, hiding a gone, boxless or clipped subject and re-seating a whole move in view; a remnant the writes
+   *  cut and moved while the person's change is pending stands for their event alone, which offers beside it as it stands or refuses
+   *  it, one move of the button where a hide and a show would flap within a frame; the event's own path refuses a passage out of the
+   *  body's box as well (onSelection). */
   private afterPaint(): void {
     const sel = typeof window.getSelection === "function" ? window.getSelection() : null;
     this.passLeft = noteEnds(sel);   // what this pass left, the note that tells its own move from the person's at the next head (pendingChange)
-    // the person's own change, its selectionchange still to come (pendingChange, latched at the pass's head and lowered by that event):
-    // recorded here, from a live selection that already holds it, the event read the change as answered and offered nothing (the
-    // record's note on the gap). The record is dropped instead, so the event compares the selection as the pass left it with no record
-    // and offers beside it, or hides, as for any change of theirs; the float is that event's to move and stands until it, except beside
-    // a subject the writes left gone or with no box, hidden now as with no change pending (the rounds 2 and 5 hides below): the event
-    // refuses a boxless remnant without hiding (onSelection's guard), and the button stood beside a bare line break (the docblock's tail)
-    if (this.pendingChange && !this.ctx.editing()) {
-      this.offeredFor = null;
-      if (sel && !this.float.hidden && this.floatAt && !this.floatAt.img && (this.passageGone(sel) || !this.floatSubjectRect())) this.hideFloat();
-      return;
-    }
     const was = this.offeredFor;
-    this.offeredFor = sel && sel.rangeCount ? { text: sel.toString(), ...endsOf(sel) } : null;
+    // the record: the selection as the writes left it, for a selection the float has answered, so the selectionchange the writes fire
+    // is no offer; DROPPED for a change of the person's the pass found at its head, its selectionchange still to come (pendingChange,
+    // latched there and lowered by that event), since recorded here from a live selection that already holds their change, the event
+    // read it as answered and offered nothing (the record's note on the gap); with no record the event compares the selection as the
+    // pass left it and offers beside it, or hides, as for any change of theirs. The text read once (Selection.toString walks it)
+    const pending = this.pendingChange && !this.ctx.editing();
+    let text: string | null = null;
+    const read = (): string => text ?? (text = sel && sel.rangeCount ? sel.toString() : "");
+    this.offeredFor = pending || !sel || !sel.rangeCount ? null : { text: read(), ...endsOf(sel) };
     // no passage's float SHOWING: a hidden float stays hidden whatever hid it, the scroll listener's own guard (a picture's stands)
     if (!sel || this.float.hidden || !this.floatAt || this.floatAt.img) return;
-    if (this.passageGone(sel)) { this.hideFloat(); return; }          // the writes left the float beside no selection
-    if (this.subjectHeld()) return;                                    // the subject sits under the button, cut or whole
-    // moved a pixel or more, or left with no box: a remnant the writes cut goes, as on a scroll; a selection the writes moved whole
-    // (the same text as the record's between two ends in the body) is offered again beside its box now, when that box lies at least
-    // partly inside the body's (inBodyBox: the body clips what it scrolls, and showFloat clamps to the window alone)
-    const now = was && this.offeredFor && this.offeredFor.text === was.text ? this.floatSubjectRect() : null;
-    if (now && this.inBodyBox(now)) this.showFloat(now); else this.hideFloat();
+    // the three refusals over the float's subject, a change of the person's pending or not (the docblock's tail): the writes left the
+    // float beside no selection, or beside a subject with no box, or beside one pushed out of the body's box (inBodyBox: the body clips
+    // what it scrolls, and showFloat clamps to the window alone); the subject under the button, cut or whole, stays; a selection the
+    // writes moved whole (the same text as the record's between two ends in the body) is offered again beside its box now; a remnant
+    // the writes cut and moved goes, as on a scroll, unless the person's own change is pending, when it stands for their event, which
+    // offers beside the remnant as it stands or hides it (onSelection's refusals), one move of the button and not a hide and a show
+    if (this.passageGone(sel)) { this.hideFloat(); return; }
+    if (this.subjectHeld()) return;
+    const box = this.floatSubjectRect();
+    if (!box || !this.inBodyBox(box)) { this.hideFloat(); return; }
+    if (was && was.text === read()) { this.showFloat(box); return; }
+    if (!pending) this.hideFloat();
   }
   /** The layout-time trim over the pass's standing Rendered marks (anchor-map.ts trimCollapsedMarks: a mark whose text is blank
    *  and lays out at zero width is unwrapped, the sheet's padding around nothing otherwise): once after the pass, over every

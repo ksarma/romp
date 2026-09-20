@@ -273,7 +273,7 @@ function rows(code: El, src: string): void {
 }
 function world(): World {
   const main = new El("div"); main.className = "fileview-main";
-  const body = new El("div"); body.className = "fileview-body";
+  const body = new El("div"); body.className = "fileview-body"; body.rect = BODY_BOX;   // the pane's clip: the offer refuses a selection whose box lies outside it (onSelection, inBodyBox), and every rect below sits inside
   const actions = new El("div"); actions.className = "fileview-actions"; actions.appendChild(new Txt("Rendered · Raw"));   // a node OUTSIDE the body
   const wrap = new El("div"); wrap.className = "fileview-code";
   const pre = new El("pre"); pre.className = "fileview-pre fileview-wrap";
@@ -339,6 +339,7 @@ function selectionOn(root: El, passage: string, length: number, rect: Rect): any
     toString: () => passage.slice(0, length), getRangeAt: () => ({ getBoundingClientRect: () => sel.rect }), rect };
   return sel;
 }
+const BODY_BOX: Rect = { left: 0, top: 100, right: 1000, bottom: 600, width: 1000, height: 500 };   // the body's box in the stand-in (world), the paint-offer file's
 const theFloat = (): El => { const all = doc.body.querySelectorAll(".fc-float"); return all[all.length - 1]; };
 /** Where showFloat puts the button for a rect (its own arithmetic: beside the selection's end, above its line, kept on screen). */
 const placeOf = (r: Rect) => ({ left: Math.min(Math.max(8, r.right + 6), win.innerWidth - 90) + "px", top: Math.min(Math.max(8, r.top - 30), win.innerHeight - 34) + "px" });
