@@ -28,7 +28,8 @@
 // The plan's kind is asserted per frame, and after an append the units below the plan's u0 are the SAME nodes and the units from u0
 // are new, so a seam that silently fell back to the rebuild, with the plan asked or not, could not make the comparison vacuously green
 // (the plan assertion alone guarded the planner, not the executor: round 1's second pass); a spacer frame replaces no node. The rebuild
-// leg reads the working state the seam stored on the view (v.working), never a restatement of the state test. The renderers are
+// leg and the browse helper's window build read the working state the seam stored on the view (v.working), never a restatement of the
+// state test, and every read asserts the value present first (workingOf). The renderers are
 // stubs that record their inputs; the rail and day rules, the trim, the hover clear and the footer patch are the real functions.
 // Silent on scroll-only properties: the spacers' heights, the measured figures, the keepTop guard and every scroll write are outside
 // what a DOM projection can see (spacer-measure.test.ts, chat-compact-tail.test.ts and the served labs carry those). Synthetic events.
@@ -241,9 +242,16 @@ function world(events: Ev[], open: Set<string>, working = true, gapBefore?: numb
  *  not a rebuild over `undefined` that happens to match. */
 function rebuild(w: World): FakeEl {
   const v2: any = { el: new FakeEl("div"), rendered: 0, scrollTop: 0, stick: true, shown: true, stale: false, winStart: 0 };
-  assert.notEqual(w.v.working, undefined, "the view holds the working state the seam's last paint computed (syncViewInner stores v.working); the rebuild leg reads it");
-  w.L.renderWindowItems(v2, w.s, itemsOf(w.s), w.v.winStart ?? 0, w.v.winEnd ?? itemsOf(w.s).length, w.v.working);
+  w.L.renderWindowItems(v2, w.s, itemsOf(w.s), w.v.winStart ?? 0, w.v.winEnd ?? itemsOf(w.s).length, workingOf(w, "the rebuild leg"));
   return v2.el;
+}
+/** The working state the seam's last paint computed and stored on the view (render.ts `v.working = working`), asserted present BEFORE
+ *  any use: the one reader for the rebuild leg and the browse helper, so a production change that stops storing it reds at the read
+ *  that would have rendered over `undefined` (as idle), naming the leg, rather than one step later (review round 3: the browse helper
+ *  handed the value on unasserted, so under that change the browsed window rendered idle first and the red came from the rebuild). */
+function workingOf(w: World, leg: string): boolean {
+  assert.notEqual(w.v.working, undefined, leg + " reads the working state the seam's last paint stored on the view (syncViewInner stores v.working), and the view holds none");
+  return w.v.working as boolean;
 }
 /** The two DOMs agree, unit by unit, and nothing foreign stands among the incremental view's units. */
 function compare(w: World, label: string): void {
@@ -302,7 +310,7 @@ function frame(w: World, label: string, mutate: (events: Ev[]) => Ev[], expect: 
 function browse(w: World, ws: number, we: number): void {
   const items = itemsOf(w.s);
   assert.ok(we < items.length, "a browsed window ends below the unit count (" + we + " of " + items.length + ")");
-  w.L.renderWindowItems(w.v, w.s, items, ws, we, w.v.working);
+  w.L.renderWindowItems(w.v, w.s, items, ws, we, workingOf(w, "the browse"));
   assert.equal(w.v.winEnd, we, "the window ends where the browse put it");
   assert.ok((w.v.el as FakeEl).querySelector(":scope > .tx-spacer-bot"), "a bottom spacer stands for the units below the window");
   w.frames.push("browse [" + ws + ", " + we + ")");
