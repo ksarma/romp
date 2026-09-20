@@ -43,7 +43,8 @@ fixture's environment check names; identical with the ratchet off);
 the sweep repeated over all 364 after the fixes was green alone (the missing road, CI's) except that one. The full-suite
 census, on the importable road, saw none of the five, because an earlier first builder in every worker made their builds cache
 hits: a green suite run is no evidence a module is clean, and the module-alone sweep is the measurement; a green CI
-run of the suite is the missing-road full-suite datum.
+run of the suite is the missing-road full-suite datum (TheMissingRoadDatumIsWorded holds that sentence here, in the
+conftest's design comment and in the ledger entry).
 
 The residual that leaves, a stated limit: a green run under the ratchet proves no leak occurred in that run and not that no
 test would leak alone, because a first builder that leaves its build masks a later sandboxed test's reach as a cache hit
@@ -2760,9 +2761,11 @@ class TheStatedLimitIsWorded(unittest.TestCase):
 
 RESIDUAL_GREEN = "proves no leak occurred in that run and not that no test would leak alone"
 RESIDUAL_MASK = "a first builder that leaves its build masks a later sandboxed test's reach as a cache hit"
+RESIDUAL_OPENER = "Measured as a pair and module alone"
 RESIDUAL_MEASURED = ("77 passed and 0 verdicts", "65 passed and 1 error")
 RESIDUAL_INSTRUMENT = "the order-independent instrument is the module-alone sweep"
 RESIDUAL_FOLLOWUP = "a follow-up item, its own PR after this one"
+CI_DATUM = "a green CI run of the suite is the missing-road full-suite datum"
 LEDGER_ENTRY = os.path.join(ROOT, "upstream", "2026-09-19-sdk-singleton-ratchet.md")
 
 
@@ -2779,15 +2782,20 @@ def ledger_entry_body():
 class TheResidualIsWorded(unittest.TestCase):
     """The residual the ratchet leaves is worded, in this module's docstring and in the ledger entry, as a stated
     limit: a green run under it proves no leak occurred in that run and not that no test would leak alone, because a
-    first builder that leaves its build masks a later sandboxed test's reach as a cache hit; with the measurement that
-    shows it, the order-independent instrument (the module-alone sweep) and the follow-up arm as its own PR, in that
-    order. An edit that drops any of them reds here."""
+    first builder that leaves its build masks a later sandboxed test's reach as a cache hit; with the measurement's
+    opener (measured as a pair and module alone), the measurement that shows it, the order-independent instrument (the
+    module-alone sweep) and the follow-up arm as its own PR, in that order. Keyed on the needles below: each sentence
+    held verbatim in the text with whitespace collapsed, in the stated order; a word outside every needle is not read,
+    which is how the ledger entry carried a head label before the opener, with this pin green, after both its twins
+    dropped it (the round-7 review; the opener has been a needle since). An edit that drops a needle or reorders them
+    reds here naming the copy and the sentence."""
 
     def _assert_worded(self, text, where):
-        for needle in (RESIDUAL_GREEN, RESIDUAL_MASK, RESIDUAL_INSTRUMENT, RESIDUAL_FOLLOWUP) + RESIDUAL_MEASURED:
+        for needle in (RESIDUAL_GREEN, RESIDUAL_MASK, RESIDUAL_OPENER, RESIDUAL_INSTRUMENT, RESIDUAL_FOLLOWUP) + RESIDUAL_MEASURED:
             self.assertTrue(needle in text, "%s does not say: %s" % (where, needle))
         self.assertLess(text.index(RESIDUAL_GREEN), text.index(RESIDUAL_MASK), "%s: the claim before its mechanism" % where)
-        self.assertLess(text.index(RESIDUAL_MASK), text.index(RESIDUAL_MEASURED[0]), "%s: the mechanism before the measurement" % where)
+        self.assertLess(text.index(RESIDUAL_MASK), text.index(RESIDUAL_OPENER), "%s: the mechanism before the measurement's opener" % where)
+        self.assertLess(text.index(RESIDUAL_OPENER), text.index(RESIDUAL_MEASURED[0]), "%s: the opener before the measurement" % where)
         self.assertLess(text.index(RESIDUAL_MEASURED[1]), text.index(RESIDUAL_INSTRUMENT), "%s: the measurement before the instrument" % where)
         self.assertLess(text.index(RESIDUAL_INSTRUMENT), text.index(RESIDUAL_FOLLOWUP), "%s: the instrument before the follow-up" % where)
 
@@ -2796,6 +2804,21 @@ class TheResidualIsWorded(unittest.TestCase):
 
     def test_the_ledger_entry_names_the_residual(self):
         self._assert_worded(ledger_entry_body(), "the ledger entry")
+
+
+class TheMissingRoadDatumIsWorded(unittest.TestCase):
+    """The missing-road full-suite datum is worded alike in the three copies of the road paragraph, this module's
+    docstring, the ratchet's design comment in tests/conftest.py and the ledger entry: a green CI run of the suite is
+    the missing-road full-suite datum, since CI's install has no SDK and every full run on the box takes the other
+    road. Keyed on one needle, CI_DATUM, held verbatim in each copy with whitespace collapsed; a copy that names a
+    run at a head instead of the suite's CI run, the ledger entry's form before the round-7 review, reds here naming
+    the copy."""
+
+    def test_the_three_copies_say_a_green_ci_run_of_the_suite_is_the_datum(self):
+        for text, where in ((re.sub(r"\s+", " ", __doc__), "the module docstring"),
+                            (ratchet_comment_text(), "the design comment"),
+                            (ledger_entry_body(), "the ledger entry")):
+            self.assertTrue(CI_DATUM in text, "%s does not say: %s" % (where, CI_DATUM))
 
 
 PROTECT_READS = "The PROTECTION is the structured reads above: none of them counts occurrences"
