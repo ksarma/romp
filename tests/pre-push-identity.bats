@@ -26,7 +26,7 @@
 # makes peels a tag to the commit it names, so the tag object's own address is
 # read too: the tag cases at the end hold that. A tag field the hook cannot READ
 # refuses the push as unscanned (the last cases): an unread tagger is not an
-# empty one.
+# empty one, and an object whose TYPE the hook cannot read is not a non-tag.
 #
 # Every identifier below is SYNTHETIC: the denylist, the logins, the hosts and
 # the domains are invented per test (the repo may go public, and a real one
@@ -370,24 +370,30 @@ commit_clean() {   # <path> <message>
 # `cat-file -p` that failed while `cat-file -t` still said tag let a tag whose
 # tagger domain was on the denylist through a real push, with nothing printed).
 #
-# The fault is a git first on the hook's PATH whose `cat-file -p` of ONE object
-# fails; every other command runs the real git. It is written into the test's
-# temp dir at run time, keyed to the sha the test names.
-
-# Put that git on PATH. The test body is its own subshell, so the PATH change
-# does not outlive the test.
-fail_cat_file_p() {   # <sha whose `cat-file -p` fails>
+# The fault is a git first on the hook's PATH that refuses ONE command shape (here
+# a `cat-file` of ONE object, keyed to the sha the test names) and runs the real
+# git for every other. It is written into the test's temp dir at run time; the
+# test body is its own subshell, so the PATH change does not outlive the test.
+# Once per test: a second call would resolve `command -v git` to the first shim,
+# and the new one would exec itself forever.
+git_refusing() {   # <bash test over the shim's "$@"> <exit status> <stderr line>
     local real_git
     real_git="$(command -v git)"
     mkdir -p "$TEST_DIR/shim"
     {
         printf '#!/usr/bin/env bash\n'
-        printf 'if [ "${1:-}" = cat-file ] && [ "${2:-}" = -p ] && [ "${3:-}" = %q ]; then\n' "$1"
-        printf '    echo "shim: cat-file -p refused for $3" >&2\n    exit 1\nfi\n'
+        printf 'if %s; then\n' "$1"
+        printf '    echo %q >&2\n    exit %d\nfi\n' "$3" "$2"
         printf 'exec %q "$@"\n' "$real_git"
     } > "$TEST_DIR/shim/git"
     chmod 755 "$TEST_DIR/shim/git"
     export PATH="$TEST_DIR/shim:$PATH"
+}
+fail_cat_file_p() {   # <sha whose `cat-file -p` fails>
+    git_refusing "[ \"\${1:-}\" = cat-file ] && [ \"\${2:-}\" = -p ] && [ \"\${3:-}\" = $1 ]" 1 "shim: cat-file -p refused for $1"
+}
+fail_cat_file_t() {   # <sha whose `cat-file -t` fails>
+    git_refusing "[ \"\${1:-}\" = cat-file ] && [ \"\${2:-}\" = -t ] && [ \"\${3:-}\" = $1 ]" 128 "fatal: shim: cat-file -t refused for $1"
 }
 
 @test "a tag whose fields cannot be READ is refused as unscanned, naming the tag and each field: a failed read is not an empty field" {
@@ -424,4 +430,69 @@ fail_cat_file_p() {   # <sha whose `cat-file -p` fails>
     [ "$status" -eq 1 ]
     [[ "$output" == *"the TAGGER of tag refs/tags/other"* ]]
     [[ "$output" != *"BLOCKED"* ]]
+}
+
+# ── the tag TYPE read ─────────────────────────────────────────────────────
+# `git cat-file -t` on the pushed object, and again on each object the peel
+# reaches, decides whether there is a tag to scan at all. Read as "not a tag"
+# when it failed (the loop's test swallowed the status), a tag whose type could
+# not be read was neither peeled nor scanned and passed with nothing printed
+# (found by execution, 2026-09-20: the fault above moved from `cat-file -p` to
+# `cat-file -t` published a tag whose tagger domain was on the denylist through a
+# real push). The same shim shape, keyed to the type read of ONE object.
+
+@test "a tag whose TYPE cannot be read is refused as unscanned, naming the ref and the type read: an unread type is not a non-tag" {
+    commit_clean ok.txt "clean"
+    GIT_COMMITTER_EMAIL="$STAMPED" git -C "$REPO" tag -a v1 -m "release one"
+    sha="$(git -C "$REPO" rev-parse refs/tags/v1)"
+    fail_cat_file_t "$sha"
+    # the fault as the hook meets it, from the repo's top level: the content read works, the type read does not
+    run _hook_in "$REPO" -c 'git cat-file -p "$1"' _ "$sha"
+    [ "$status" -eq 0 ]
+    run _hook_in "$REPO" -c 'git cat-file -t "$1"' _ "$sha"
+    [ "$status" -ne 0 ]
+    run_hook_tag v1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"the TYPE of the object refs/tags/v1 pushes (${sha:0:10}) could not be read"* ]]
+    [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" == *"git push --no-verify"* ]]
+    # reported as a failed read, not as a finding: the tagger was never read
+    [[ "$output" != *"is tagged as"* ]]
+    [[ "$output" != *"BLOCKED"* ]]
+}
+
+@test "the type is read for every object the peel reaches: an INNER tag whose type cannot be read is refused naming it, after the outer tag was read" {
+    commit_clean ok.txt "clean"
+    GIT_COMMITTER_EMAIL="$STAMPED" git -C "$REPO" tag -a v1 -m "release one"
+    git -C "$REPO" tag -a v1-outer refs/tags/v1 -m "the outer tag"     # the hermetic identity, a clean message
+    inner="$(git -C "$REPO" rev-parse refs/tags/v1)"
+    fail_cat_file_t "$inner"
+    run_hook_tag v1-outer
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"the TYPE of the object refs/tags/v1-outer pushes (${inner:0:10}) could not be read"* ]]
+    [[ "$output" != *"is tagged as"* ]]
+}
+
+@test "every pushed ref goes through the type read: a branch whose tip's type cannot be read is refused, with a line that does not call it a tag" {
+    commit_clean ok.txt "clean"
+    tip="$(git -C "$REPO" rev-parse HEAD)"
+    fail_cat_file_t "$tip"
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"the TYPE of the object refs/heads/main pushes (${tip:0:10}) could not be read"* ]]
+    [[ "$output" != *"of tag refs/heads/main"* ]]
+    [[ "$output" != *"BLOCKED"* ]]
+}
+
+@test "a branch and a lightweight tag pass beside that git when the fault sits on another object: the refusal is the failed read, not the shim's presence" {
+    commit_clean ok.txt "clean"
+    git -C "$REPO" tag -a other -m "the other tag"
+    fail_cat_file_t "$(git -C "$REPO" rev-parse refs/tags/other)"
+    run_hook
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    git -C "$REPO" tag light
+    run_hook_tag light
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
 }

@@ -31,6 +31,12 @@
 # regular-file blobs only, and a committed link's target is its blob content, so
 # a link pointing into a home directory is a leak the grep pass alone cannot see.
 # The added-lines pass sees a NEW link the way it sees any added line.
+#
+# A read the hook cannot COMPLETE is not an empty result: a tip whose tree git
+# grep could not scan, a tree whose listing failed, a link whose blob could not
+# be read is refused as unscanned, the way a tag field the hook cannot read is
+# (pre-push-identity.bats). The cases at the end hold that line, each with a git
+# first on the hook's PATH that refuses one command shape.
 
 ROMP_DIR="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
 HOOK="$ROMP_DIR/.githooks/pre-push"
@@ -308,16 +314,19 @@ branch_inheriting_mains_symlink_leak() {
 
 @test "a symlink whose blob cannot be read does not end the hook before its verdict" {
     # Under set -e a failed `target=$(git cat-file ...)` would exit the hook with
-    # no message; such a link counts as empty and the other findings still print.
+    # no message; the link is reported as unread (the cases at the end), its target
+    # counts as empty, and the other findings still print beside it.
     commit_file leak.txt "home is /home/zzsynthuser/code" "leak"
     ln -s ../elsewhere "$REPO/link"
     git -C "$REPO" add link
     git -C "$REPO" commit -qm "link"
     blob="$(git -C "$REPO" rev-parse HEAD:link)"
     rm "$REPO/.git/objects/${blob:0:2}/${blob:2}"   # loose in a fresh repo; ls-tree still lists the entry
+    sha="$(git -C "$REPO" rev-parse HEAD)"
     run_hook
     [ "$status" -eq 1 ]                              # the hook's refusal; a set -e death exits 128
     [[ "$output" == *"leak.txt"* ]]
+    [[ "$output" == *"the SYMLINK TARGET of link at the tip of refs/heads/main (${sha:0:10}) could not be read"* ]]
     [[ "$output" == *"BLOCKED"* ]]                   # the verdict was reached
 }
 
@@ -456,4 +465,222 @@ branch_merged_main_while_leak_was_live() {
     run_hook "$remote_sha"
     [ "$status" -ne 0 ]
     [[ "$output" == *"commit ${leak_sha:0:10} ADDS"* ]]
+}
+
+# ── reads the hook cannot COMPLETE ────────────────────────────────────────
+# Every read above is a git command whose output the hook greps, and a read that
+# FAILS is another thing from one that finds nothing: the tip is then part-scanned,
+# and what went unread may be exactly the string the scan exists for. The hook
+# refuses such a push as unscanned, the way it does a tag field it cannot read
+# (pre-push-identity.bats) and a gitleaks that cannot run, instead of reading the
+# failure as a clean tree, a tree with no links, or an empty target. Found by
+# execution (2026-09-20), one read at a time: a git grep exiting 2, an ls-tree
+# that failed after listing the link, and a cat-file -p of the link's blob that
+# failed each let a tip that only INHERITED main's leak, the tip scan's own case,
+# through a real push with nothing printed and every counter at zero (the
+# added-lines pass reads the range with grep, not git grep, and an inherited file
+# is in no new commit's diff).
+#
+# The fault is a git first on the hook's PATH that refuses ONE command shape and
+# runs the real git for every other, written into the test's temp dir at run
+# time. The test body is its own subshell, so the PATH change does not outlive
+# the test. Once per test: a second call would resolve `command -v git` to the
+# first shim, and the new one would exec itself forever.
+git_refusing() {   # <bash test over the shim's "$@"> <exit status> <stderr line>
+    local real_git
+    real_git="$(command -v git)"
+    mkdir -p "$TEST_DIR/shim"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'if %s; then\n' "$1"
+        printf '    echo %q >&2\n    exit %d\nfi\n' "$3" "$2"
+        printf 'exec %q "$@"\n' "$real_git"
+    } > "$TEST_DIR/shim/git"
+    chmod 755 "$TEST_DIR/shim/git"
+    export PATH="$TEST_DIR/shim:$PATH"
+}
+fail_git_grep() { git_refusing '[ "${1:-}" = grep ]' 2 "shim: git grep refused"; }
+fail_ls_tree()  { git_refusing '[ "${1:-}" = ls-tree ]' 128 "fatal: shim: ls-tree refused"; }
+fail_cat_file_p() {   # <sha whose `cat-file -p` fails>
+    git_refusing "[ \"\${1:-}\" = cat-file ] && [ \"\${2:-}\" = -p ] && [ \"\${3:-}\" = $1 ]" 128 "fatal: shim: cat-file -p refused for $1"
+}
+
+# The tip's CONTENT scan is one `git grep` over the tree. It exits 1 for no match
+# and above 1 when it could not scan (a git that would not run, a killed process,
+# an argument list too long, a partial clone whose promisor is unreachable), and a
+# blob it cannot read it reports on stderr and skips, exiting 1 or 0.
+
+@test "a tip whose tree cannot be SCANNED is refused as unscanned, naming the ref: a failed content scan is not a clean tree" {
+    branch_inheriting_mains_leak             # only the tip scan can see leak.txt: the leak is in no new commit's diff
+    fail_git_grep
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    # the fault as the hook meets it, from the repo's top level: the grep fails above 1, the other reads work
+    run _hook_in "$REPO" -c 'git grep -l -F -e x "$1" --' _ "$sha"
+    [ "$status" -eq 2 ]
+    run _hook_in "$REPO" -c 'git ls-tree -r "$1" >/dev/null && git rev-list "$1" --not --remotes >/dev/null' _ "$sha"
+    [ "$status" -eq 0 ]
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"the CONTENT of the tip of refs/heads/main (${sha:0:10}) could not be"*"scanned"* ]]
+    [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" == *"git push --no-verify"* ]]
+    # reported as a failed scan, not as a finding: nothing was read to find
+    [[ "$output" != *"would publish"* ]]
+    [[ "$output" != *"BLOCKED"* ]]
+}
+
+@test "a clean tip beside that git is refused too: unscanned, it cannot be known clean" {
+    commit_file file.txt "nothing to see" "clean"
+    fail_git_grep
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"the CONTENT of the tip of refs/heads/main"* ]]
+    [[ "$output" != *"BLOCKED"* ]]
+}
+
+@test "a regular file whose blob cannot be read is refused as unscanned, not read as clean" {
+    # git grep reports the blob on stderr and exits as if the file had no match; the
+    # inherited shape again, so no other pass reads the file (no worktree copy either:
+    # diff-tree would read a checked-out file in the blob's place).
+    branch_inheriting_mains_leak
+    blob="$(git -C "$REPO" rev-parse HEAD:leak.txt)"
+    rm "$REPO/.git/objects/${blob:0:2}/${blob:2}" "$REPO/leak.txt"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"the CONTENT of the tip of refs/heads/main (${sha:0:10}) could not be"*"scanned"* ]]
+    [[ "$output" == *"unable to read"* ]]
+    [[ "$output" != *"BLOCKED"* ]]
+}
+
+# The symlink LISTING: `git ls-tree -r` was piped straight into the grep for link
+# entries, so the pipeline's status was the grep's and a listing that FAILED read
+# as a tree with no symlinks. The hook now names any link the listing did reach.
+
+@test "a tip whose SYMLINKS cannot be listed is refused as unscanned, naming the ref: a failed listing is not a tree with no links" {
+    branch_inheriting_mains_symlink_leak      # main's link, already published: only the tip pass can see it
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    fail_ls_tree
+    run _hook_in "$REPO" -c 'git ls-tree -r "$1"' _ "$sha"   # the fault as the hook meets it, from the repo's top level
+    [ "$status" -eq 128 ]
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"the SYMLINKS of the tip of refs/heads/main (${sha:0:10}) could not be listed"* ]]
+    [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" == *"git push --no-verify"* ]]
+    # reported as a failed listing, not as a finding: no link was listed to name
+    [[ "$output" != *"SYMLINK TARGET"* ]]
+    [[ "$output" != *"BLOCKED"* ]]
+}
+
+@test "a listing that fails PARTWAY still names the link it reached, and the push is refused as unscanned all the same" {
+    # The fault's real shape: a subtree object missing from the store. ls-tree lists the
+    # entries before it, the link among them, then exits 1. The subdirectory is main's,
+    # published beside the link, so the branch's own diff never reads it.
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    ln -s /home/zzsynthuser/code/romp/vscode-extension/node_modules "$REPO/node_modules"
+    mkdir -p "$REPO/sub"
+    printf '%s\n' "clean" > "$REPO/sub/inner.txt"
+    git -C "$REPO" add node_modules sub
+    git -C "$REPO" commit -qm "symlink leak beside a subdirectory"
+    git -C "$REPO" push -q origin main
+    git -C "$REPO" checkout -q -b feature
+    commit_file web.txt "the web session's work" "branch work"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    tree="$(git -C "$REPO" rev-parse "$sha:sub")"
+    rm "$REPO/.git/objects/${tree:0:2}/${tree:2}"   # loose in a fresh repo
+    run _hook_in "$REPO" -c 'git ls-tree -r "$1"' _ "$sha"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"120000 "*"node_modules"* ]]      # listed before the failure
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"the SYMLINKS of the tip of refs/heads/main (${sha:0:10}) could not be listed"* ]]
+    [[ "$output" == *"SYMLINK TARGET of node_modules -> /home/zzsynthuser/code/romp/vscode-extension/node_modules"* ]]
+    [[ "$output" == *"BLOCKED"* ]]
+}
+
+# Each link's TARGET is a `cat-file -p` of its blob. Read as empty when it failed,
+# a link whose target could not be read was a link with nothing in it.
+
+@test "a symlink whose TARGET cannot be read is refused as unscanned, naming the ref and the link: an unread target is not an empty one" {
+    branch_inheriting_mains_symlink_leak      # main's link, already published: only the tip pass can see it
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    blob="$(git -C "$REPO" rev-parse "$sha:node_modules")"
+    fail_cat_file_p "$blob"
+    # the fault as the hook meets it, from the repo's top level: the listing works, the blob read does not
+    run _hook_in "$REPO" -c 'git ls-tree -r "$1"' _ "$sha"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"120000 "*"node_modules"* ]]
+    run _hook_in "$REPO" -c 'git cat-file -p "$1"' _ "$blob"
+    [ "$status" -eq 128 ]
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"the SYMLINK TARGET of node_modules at the tip of refs/heads/main (${sha:0:10}) could not be read"* ]]
+    [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" == *"git push --no-verify"* ]]
+    # reported as a failed read, not as a finding: no target was read to name
+    [[ "$output" != *"-> /home/zzsynthuser"* ]]
+    [[ "$output" != *"BLOCKED"* ]]
+}
+
+@test "the loop goes on past an unread link: a readable link beside it is still read and named, and the push is refused on both counts" {
+    # ls-tree lists data-link before node_modules, so the unread link comes first
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    ln -s /home/zzsynthuser/code/romp/vscode-extension/node_modules "$REPO/node_modules"
+    ln -s ../shared/data "$REPO/data-link"
+    git -C "$REPO" add node_modules data-link
+    git -C "$REPO" commit -qm "two links"
+    git -C "$REPO" push -q origin main
+    git -C "$REPO" checkout -q -b feature
+    commit_file web.txt "the web session's work" "branch work"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    fail_cat_file_p "$(git -C "$REPO" rev-parse "$sha:data-link")"
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"the SYMLINK TARGET of data-link at the tip of refs/heads/main (${sha:0:10}) could not be read"* ]]
+    [[ "$output" == *"SYMLINK TARGET of node_modules -> /home/zzsynthuser/code/romp/vscode-extension/node_modules"* ]]
+    [[ "$output" == *"BLOCKED"* ]]
+}
+
+@test "a link whose target reads clean passes beside that git when the fault sits on another blob: the refusal is the failed read, not the shim's presence" {
+    commit_file kernel.py "x" "a file"
+    ln -s ./kernel.py "$REPO/romp-kernel"
+    git -C "$REPO" add romp-kernel
+    git -C "$REPO" commit -qm "relative link"
+    fail_cat_file_p "$(git -C "$REPO" rev-parse HEAD:kernel.py)"   # a regular file's blob, which no read of the hook fetches by hand
+    run_hook
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+# A pushed object that PEELS TO A BLOB (a tag of a blob; git's own repository
+# carries one for a public key) has no tree: `git ls-tree -r` fails on it with
+# "not a tree object", and git grep reads the blob as one file, printing the bare
+# sha for a hit. Neither is a failed read: the listing is absent, and the hit is a
+# hit. Found by the round f4 audit, on the first text of the cases above, which
+# refused every such tag as unlisted. The hook is fed a tag ref line here.
+
+@test "a tag of a BLOB passes: a blob has no tree to list, so an absent listing is not a failed one" {
+    commit_file f.txt "plain" "base"
+    git -C "$REPO" tag -a blobtag "$(git -C "$REPO" rev-parse HEAD:f.txt)" -m "a tag of a blob"
+    sha="$(git -C "$REPO" rev-parse refs/tags/blobtag)"
+    run _hook_in "$REPO" -c 'git ls-tree -r "$1"' _ "$sha"      # the read as the hook meets it: not a tree
+    [ "$status" -ne 0 ]
+    run _hook_in "$REPO" "$HOOK" origin git@example.invalid:x/y.git <<< "refs/tags/blobtag $sha refs/tags/blobtag $ZERO"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "a tag of a blob whose CONTENT carries the string is refused as a finding, not as a failed scan" {
+    commit_file f.txt "plain" "base"
+    blob="$(printf '%s\n' "the TESTHOST machine" | git -C "$REPO" hash-object -w --stdin)"
+    git -C "$REPO" tag -a dirtyblob "$blob" -m "a tag of a blob"
+    sha="$(git -C "$REPO" rev-parse refs/tags/dirtyblob)"
+    run _hook_in "$REPO" "$HOOK" origin git@example.invalid:x/y.git <<< "refs/tags/dirtyblob $sha refs/tags/dirtyblob $ZERO"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"the tip of refs/tags/dirtyblob (${sha:0:10}) would publish a personal identifier"* ]]
+    [[ "$output" == *"BLOCKED"* ]]
+    [[ "$output" != *"could not be"* ]]
 }

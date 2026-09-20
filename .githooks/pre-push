@@ -74,9 +74,17 @@
 #                     is read whenever its ref is pushed: a remote holding it at
 #                     this sha would not be updating the ref, and one holding it
 #                     at another sha is receiving a new object. A tag of a tag
-#                     is peeled one object at a time. A tag field the hook cannot
-#                     READ leaves the tag part-scanned and refuses the push, as a
-#                     gitleaks that cannot scan does.
+#                     is peeled one object at a time.
+#
+# A read the hook cannot COMPLETE is not an empty result. The tip's content scan,
+# its symlink listing, each link's target, an object's type and a tag's fields are
+# git reads whose output the checks above grep, and a read that FAILED (git's
+# status, or an error line) leaves the push part-scanned: what went unread may be
+# exactly the string the scan exists for. Each such read reports one line naming
+# the ref and the read and refuses the push as unscanned, as a gitleaks that
+# cannot scan does; an ABSENT value (a tag with no message, a tree with no links)
+# reads as empty and passes. Found by execution (2026-09-20), one read at a time,
+# each letting a dirty tip or tag through a real push with nothing printed.
 #
 # The credential scan reads the same new commits, each merge by its
 # first-parent diff, and refuses the push on a hit. A range this clone cannot
@@ -102,7 +110,7 @@ blocked_addresses=0     # a subset of blocked_ids, with a remedy of its own
 blocked_messages=0      # likewise a subset of blocked_ids, with a remedy of its own
 blocked_tags=0          # an annotated tag's own tagger or message: one of the two above, with a remedy of its own
 blocked_creds=0
-failed_scan=0
+failed_scan=0           # a read or scan that could not complete: refused as unscanned (unscanned, the gitleaks arm)
 failed_creds=0          # a subset of failed_scan: gitleaks itself could not scan, with advice of its own
 
 # The commits THIS push publishes for one ref: what no remote already has.
@@ -205,23 +213,36 @@ tag_message() {   # <tag_sha>
     git cat-file -p "$1" | awk 'BEGIN { hdr = 1 } hdr && !NF { hdr = 0; next } !hdr { print }'
 }
 
-# A tag field whose read FAILED (the pipeline's status is git's; an absent field
-# prints nothing and exits 0): the tag is then only part-scanned, and a tagger
-# that was never read may be exactly the address the scan exists for. Report it
-# and refuse the push as unscanned, the road the credential scan takes when
-# gitleaks cannot run. Found by execution (2026-09-20): with the field counted as
-# empty instead, a `cat-file -p` that failed while `cat-file -t` still said tag
-# published a tag whose tagger domain was on the denylist, with nothing printed
-# and every counter at zero.
-tag_unread() {   # <local_ref> <tag_sha> <FIELD> [<consequence>]
-    echo "romp pre-push: the $3 of tag $1 (${2:0:10}) could not be read${4:+, $4}; the scan is incomplete, so the push is refused" >&2
+# A read that FAILED (git's status, or an error it printed; an absent field or an
+# empty tree prints nothing and exits 0): the push is then only part-scanned, and
+# what went unread may be exactly the string the scan exists for. Report it and
+# refuse the push as unscanned, the road the credential scan takes when gitleaks
+# cannot run. Found by execution (2026-09-20), with each such read counted as
+# empty instead: a `cat-file -p` that failed while `cat-file -t` still said tag
+# published a tag whose tagger domain was on the denylist; a git grep exiting 2,
+# an ls-tree that failed after listing the link, a link blob that would not read
+# and a failed type read each published a tip that inherited main's leak; nothing
+# printed, every counter at zero. Each caller says what could not be read; the
+# tail and the counter are the same for all.
+unscanned() {   # <what could not be read, as a clause>
+    echo "romp pre-push: $1; the scan is incomplete, so the push is refused" >&2
     failed_scan=1
+}
+tag_unread() {   # <local_ref> <tag_sha> <FIELD> [<consequence>]
+    unscanned "the $3 of tag $1 (${2:0:10}) could not be read${4:+, $4}"
+}
+# The TYPE read decides whether there is a tag to scan at all, on the pushed
+# object and on each one the peel reaches; read as "not a tag" when it failed, it
+# left the tag unpeeled and unscanned. A branch is pushed through this read too,
+# so the line names the object the ref pushes, not "the tag".
+type_unread() {   # <local_ref> <sha>
+    unscanned "the TYPE of the object $1 pushes (${2:0:10}) could not be read, so whether it is an annotated tag is unknown"
 }
 
 # ── identifiers ───────────────────────────────────────────────────────────
 scan_identifiers() {
     local strings_file line grep_args local_ref local_sha _remote_ref remote_sha lines role email obj tagger chosen
-    local hits links link blob link_path target revs rev msg inner
+    local rc out errs hits listing links link blob link_path target revs rev msg inner kind
     strings_file="${ROMP_PRIVATE_STRINGS:-${XDG_CONFIG_HOME:-$HOME/.config}/romp/private-strings.txt}"
     [ -f "$strings_file" ] || return 0
 
@@ -240,8 +261,26 @@ scan_identifiers() {
         [ -n "${local_sha:-}" ] || continue
         [ "$local_sha" = "$zero" ] && continue          # deleting a remote ref pushes nothing
 
-        # The tip's tree. -I skips binaries; -l lists files.
-        if hits=$(git grep -i -I -l -F "${grep_args[@]}" "$local_sha" -- 2>/dev/null) && [ -n "$hits" ]; then
+        # The tip's tree. -I skips binaries; -l lists files. The status and the
+        # error stream are read apart from the hits: git grep exits 1 for no match
+        # and above 1 when it could not scan (a git that would not run, a killed
+        # process, an argument list too long, a partial clone whose promisor is
+        # unreachable), and a blob it cannot read it reports on stderr and skips,
+        # exiting 1 (or 0, listing the files it did read), so a corrupt store made
+        # the leaking file a clean one. Every hit is "<sha>:<path>", or the bare
+        # "<sha>" when the pushed object peels to a blob (a tag of a blob, which
+        # git grep reads as one file); any other line is an error, echoed under
+        # the report. Found by execution (2026-09-20):
+        # with a git grep exiting 2, and again with the leaking file's blob
+        # missing, a tip whose tree carried a denylist string passed.
+        rc=0; out=$(git grep -i -I -l -F "${grep_args[@]}" "$local_sha" -- 2>&1) || rc=$?
+        hits=$(printf '%s\n' "$out" | grep -E "^$local_sha(:|\$)" || true)
+        errs=$(printf '%s\n' "$out" | grep -Ev "^$local_sha(:|\$)" | grep . || true)
+        if [ "$rc" -gt 1 ] || [ -n "$errs" ]; then
+            unscanned "the CONTENT of the tip of $local_ref (${local_sha:0:10}) could not be fully scanned (git grep exited $rc)"
+            [ -z "$errs" ] || printf '%s\n' "$errs" | sed 's/^/  /' >&2
+        fi
+        if [ -n "$hits" ]; then
             echo "romp pre-push: the tip of $local_ref (${local_sha:0:10}) would publish a personal identifier in:" >&2
             echo "$hits" | sed "s/^$local_sha:/  /" >&2
             blocked_ids=1
@@ -253,14 +292,34 @@ scan_identifiers() {
         # hypothetical: a `node_modules -> /home/<user>/code/romp/...` link, made to
         # run the extension tests in a worktree and swept up by a broad `git add`,
         # reached a public branch past a git grep of its tree, and a reviewer found
-        # it, not the hook. An ls-tree line is "<mode> <type> <sha>\t<path>". A blob
-        # that cannot be read counts as empty: under set -e a failed substitution
-        # would end the hook with no message, before its verdict on everything else.
-        if links=$(git ls-tree -r "$local_sha" 2>/dev/null | grep '^120000 '); then
+        # it, not the hook. An ls-tree line is "<mode> <type> <sha>\t<path>". The
+        # listing is captured before the grep so a failed ls-tree has a road of its
+        # own: piped straight into grep, the listing's failure was grep's no-match,
+        # and a tree that could not be listed read as a tree with no symlinks (found
+        # by execution, 2026-09-20: with one subtree object missing, ls-tree listed
+        # the link and exited 1, the pipeline took that status, and a real push
+        # published the branch). A failed listing refuses the push as unscanned;
+        # whatever it did list is still read, so a link it named is still named.
+        # A pushed object that peels to a BLOB (a tag of a blob) has no tree to
+        # list: the listing is absent, not unreadable, and the content scan above
+        # read the blob itself. The peel-type read is made only when the listing
+        # failed, and its own failure refuses like any other.
+        listing=$(git ls-tree -r "$local_sha" 2>/dev/null) || {
+            if [ "$(git cat-file -t "${local_sha}^{}" 2>/dev/null || true)" = blob ]; then
+                listing=""
+            else
+                unscanned "the SYMLINKS of the tip of $local_ref (${local_sha:0:10}) could not be listed"
+            fi
+        }
+        if links=$(printf '%s\n' "$listing" | grep '^120000 '); then
             while IFS= read -r link; do
                 blob=${link#* * }; blob=${blob%%[[:space:]]*}
                 link_path=${link#*$'\t'}
-                target=$(git cat-file -p "$blob" 2>/dev/null) || target=""
+                # A blob that cannot be read is reported the same way, and its target
+                # counts as empty so the loop goes on to the next link (under set -e a
+                # bare failed substitution would end the hook before its verdict).
+                target=$(git cat-file -p "$blob" 2>/dev/null) \
+                    || { target=""; unscanned "the SYMLINK TARGET of $link_path at the tip of $local_ref (${local_sha:0:10}) could not be read"; }
                 if printf '%s' "$target" | grep -qi -F "${grep_args[@]}"; then
                     echo "romp pre-push: the tip of $local_ref (${local_sha:0:10}) would publish a personal identifier" >&2
                     echo "  in the SYMLINK TARGET of $link_path -> $target" >&2
@@ -303,12 +362,16 @@ scan_identifiers() {
         # An annotated tag's own tagger and message (the header note): the pushed
         # object, peeled tag by tag down to the commit, which the loop above read.
         # The tagger's address is read as a commit's are (not when the clone chose
-        # it, its domain otherwise) and the message like a commit's. A field whose
-        # read fails is reported by tag_unread and refuses the push; its value still
-        # counts as empty so the peel ends, and under set -e a bare failed
-        # substitution would end the hook before its verdict.
+        # it, its domain otherwise) and the message like a commit's. The type read
+        # that opens the peel, and the one after each step, is captured apart from
+        # the loop's test: read as "not a tag" when it failed, it left a tag unpeeled
+        # and unscanned. A type or field whose read fails is reported (type_unread,
+        # tag_unread) and refuses the push; its value still counts as empty so the
+        # peel ends, and under set -e a bare failed substitution would end the hook
+        # before its verdict.
         obj="$local_sha"
-        while [ "$(git cat-file -t "$obj" 2>/dev/null || true)" = tag ]; do
+        kind="$(git cat-file -t "$obj" 2>/dev/null)" || { kind=""; type_unread "$local_ref" "$obj"; }
+        while [ "$kind" = tag ]; do
             tagger="$(tag_field "$obj" tagger 2>/dev/null)" || { tagger=""; tag_unread "$local_ref" "$obj" TAGGER; }
             email=""
             case "$tagger" in *"<"*">"*) email="${tagger#*<}"; email="${email%%>*}";; esac
@@ -330,6 +393,8 @@ scan_identifiers() {
             fi
             inner="$(tag_field "$obj" object 2>/dev/null)" || { inner=""; tag_unread "$local_ref" "$obj" OBJECT "which ends the peel here"; }
             obj="$inner"
+            [ -n "$obj" ] || break      # the OBJECT read failed, reported above: nothing to peel to
+            kind="$(git cat-file -t "$obj" 2>/dev/null)" || { kind=""; type_unread "$local_ref" "$obj"; }
         done
     done <<< "$refs"
 
