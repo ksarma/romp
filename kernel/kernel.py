@@ -70313,8 +70313,9 @@ def _landing():
             # first dial takes the skeleton diet, so the kernel's one full went to the last-shown tab while the notified session, parked
             # as a pending reveal, arrived as a skeleton and cost a second kernel round trip (a skeleton-click) before it showed. The blob
             # is seeded HERE, in the head, before the parser reaches the chat iframe: the notified session becomes the stored tab, the
-            # first dial carries active=<it>, the kernel's one full is its by construction (_resolve_reconnect reads the hint as before;
-            # no kernel change), and render.ts's wantActive restores that tab before the reveal's focus lands, which then finds it active
+            # first dial carries active=<it>, the kernel's one full is its by construction (_resolve_reconnect read the hint as before until
+            # review round 4b, whose parked-reveal preference covers the roads the seed does not), and render.ts's wantActive restores
+            # that tab before the reveal's focus lands, which then finds it active
             # and loaded. The value is admitted in push-card's shape (a host-prefixed id passes); a blob that already names it is left
             # alone; the param stays for the reveal script, whose /reveal still lands the focus (a revive prompt for an ended session). Its
             # own try/catch: a page whose storage is missing or throws must still reach the token scrub below. No layout gate: on the desktop
@@ -70327,7 +70328,9 @@ def _landing():
             # already describe: a local strip that lists no such local tab opens the prefetch gate (skeleton-tabs.ts gateOnStrip) and the idle
             # chain loads the tabs in the kernel's order; a tap loads its tab at once. A kernel-side fail-safe (a live-session fallback in
             # _resolve_reconnect) was executed in the review and declined: it restored the whole board in place of one full, misfired for
-            # the host-prefixed hints the page handles by design, and reached beyond the push cold open.
+            # the host-prefixed hints the page handles by design, and reached beyond the push cold open. The round-4b preference in
+            # _resolve_reconnect is a different clause: it reads a reveal PARKED for the window, not the hint's match, and falls back to
+            # the hint when the parked sid is not a session this kernel lists.
             "try{var _pr=new URL(location.href).searchParams.get('push-reveal');if(_pr&&/^[A-Za-z0-9_.:-]{1,128}$/.test(_pr)){"
             "var _sk='romp-vscode-state-chat',_sb=null;try{_sb=JSON.parse(localStorage.getItem(_sk)||'null');}catch(e){}"
             "if(!_sb||typeof _sb!=='object'||Array.isArray(_sb))_sb={};"
