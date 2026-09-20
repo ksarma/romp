@@ -19,15 +19,23 @@ This module holds four things, and it never skips: a pin that skips reports gree
 2. The derivation, executed rather than read: the step's own sed run at the repo root prints one well-formed version
    equal to the constant read as a regex over the file (the installer's and the bats test's read) and as the attribute
    of the loaded module (the host's read); and the step's whole run block, run under bash with a `python` shim in a
-   scratch checkout, hands pip exactly `claude-agent-sdk==<pin>` against the real file and exits 1 without calling pip
-   when the constant is missing or duplicated. The composition is pinned, not the halves.
+   scratch checkout, hands pip exactly `claude-agent-sdk==<pin>` against the real file, then imports the package in
+   the same `python` (the step reds, with its name on it, when the install did not reach the interpreter on PATH; the
+   shim case where that import exits 1 shows the block exits 1), and exits 1 without calling pip when the constant is
+   missing or duplicated. The composition is pinned, not the halves.
 3. The installed version, on whichever road this interpreter is on. When claude_agent_sdk imports, the version the
    host would run (installed_sdk_version: the module's __version__, else the metadata) and the metadata both equal the
    pin; the failure message names the two roads that disagree here: a box whose SDK venv moved (re-run
    bin/romp-sdk-setup, which installs the tested version) or a CI cell whose install disagreed with the constant. When
    the SDK does not import (a plain venv), the same test asserts the pin's presence and form and WARNS (warnings.warn,
    which pytest lists in its summary under -q; a print is captured and shows only under -s or -rA) that the equality is
-   not checked on this road. So a box's full run and a CI cell both go red the moment the installed SDK and
+   not checked on this road; under ROMP_SDK_REQUIRE=1, which the workflow's Run pytest step sets (a source pin holds it
+   there; the file's precedent is ROMP_SERVED_TESTS_REQUIRE), the same road is a FAILURE naming the interpreter: the
+   run declared that its interpreter has the SDK the step above installed, and one without it is a cell whose SDK
+   checks are all silently on the no-SDK road. The switch, not GITHUB_ACTIONS: a platform variable infers the
+   requirement, the switch declares it, and a future CI step that runs pytest without the SDK on purpose (the
+   served-page step installs none today) would red for the wrong reason under the former. Off the switch a box's bare
+   road warns and never fails. So a box's full run and a CI cell both go red the moment the installed SDK and
    the constant disagree, and the bump stays the act the constant's comment describes: install the new version, run the
    host tests on it, move the number. The residual is stated here because nothing else states it: nothing polls PyPI,
    a person notices a release; the trigger for the bump is a red from this module on a box whose venv moved or a red
@@ -138,6 +146,25 @@ class InstallStep(unittest.TestCase):
         self.assertFalse(re.search(r"claude-agent-sdk==\d", self.block), "the run block pins a literal version: read SDK_TESTED_VERSION instead")
         self.assertFalse(re.search(r"\b\d+\.\d+\.\d+\b", self.block), "the run block carries a version number: the constant is the one declaration")
 
+    def test_the_run_block_checks_the_import_in_the_interpreter_it_installed_into(self):
+        # correctness: pip and pytest share `python` on PATH, and the import in that same `python` is the step's own
+        # check that the install reached it; without it an install into another interpreter is 48 skips and a warning
+        lines = self.block.splitlines()
+        pip = [i for i, l in enumerate(lines) if re.match(r'^python -m pip install "claude-agent-sdk==\$pin"$', l)]
+        imp = [i for i, l in enumerate(lines) if l == 'python -c "import claude_agent_sdk"']
+        self.assertEqual(len(pip), 1, "the run block's pip line moved: %r" % lines)
+        self.assertEqual(len(imp), 1, "the run block does not import claude_agent_sdk after installing it: %r" % lines)
+        self.assertLess(pip[0], imp[0], "the import must follow the install")
+
+    def test_the_pytest_step_requires_the_sdk_the_step_installed(self):
+        # the run declares that its interpreter has the SDK: tests/test_ci_sdk_pin.py's InstalledVersion fails rather
+        # than warns on an interpreter without it, and tests/test_session_host.py's host case asserts the host a test
+        # spawns imports it (the stance of ROMP_SERVED_TESTS_REQUIRE in this file)
+        step = step_block(self.job, "Run pytest")
+        self.assertTrue(step, "no step named 'Run pytest' in the python job: re-anchor this pin")
+        self.assertTrue(re.search(r'^          ROMP_SDK_REQUIRE: "1"$', step, re.M),
+                        "the Run pytest step does not set ROMP_SDK_REQUIRE=1: a cell whose interpreter lost the SDK reads green")
+
     def test_the_comment_states_the_pin_source_the_bump_and_the_residual(self):
         for phrase in ("SDK_TESTED_VERSION", "kernel/session_host.py", "bin/romp-sdk-setup", "not PyPI's latest",
                        "run the host tests on it, move the number", "nothing polls PyPI", "continue-on-error", "cryptography"):
@@ -163,9 +190,10 @@ class PinDerivation(unittest.TestCase):
         self.assertRegex(lines[0], VERSION_RE, "the step's sed printed something other than a version: %r" % lines[0])
         self.assertEqual(lines[0], sh.SDK_TESTED_VERSION, "the workflow would install %s; the host is written against %s" % (lines[0], sh.SDK_TESTED_VERSION))
 
-    def _run_block(self, constant_lines):
+    def _run_block(self, constant_lines, import_fails=False):
         """The step's run block under bash in a scratch checkout whose kernel/session_host.py holds `constant_lines`,
-        with a `python` shim that records its arguments and installs nothing."""
+        with a `python` shim that records its arguments and installs nothing; with `import_fails` the shim exits 1 on
+        `-c`, the interpreter whose import of the package the block runs after pip."""
         tmp = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
         os.makedirs(os.path.join(tmp, "kernel"))
@@ -175,17 +203,23 @@ class PinDerivation(unittest.TestCase):
         os.makedirs(shim)
         calls = os.path.join(tmp, "python-calls")
         with open(os.path.join(shim, "python"), "w") as f:
-            f.write('#!/bin/sh\nprintf "%s\\n" "$*" >> "' + calls + '"\n')
+            f.write('#!/bin/sh\nprintf "%s\\n" "$*" >> "' + calls + '"\n' + ('if [ "$1" = -c ]; then exit 1; fi\n' if import_fails else ''))
         os.chmod(os.path.join(shim, "python"), 0o755)
         env = dict(os.environ, PATH=shim + os.pathsep + os.environ.get("PATH", ""))
         p = subprocess.run(["bash", "-c", self.block], cwd=tmp, env=env, capture_output=True, text=True)
         recorded = open(calls).read().splitlines() if os.path.exists(calls) else []
         return p, recorded
 
-    def test_the_run_block_hands_pip_exactly_the_pinned_requirement(self):
+    def test_the_run_block_hands_pip_exactly_the_pinned_requirement_then_imports_the_package(self):
         p, calls = self._run_block('SDK_TESTED_VERSION = "%s"\n' % sh.SDK_TESTED_VERSION)
         self.assertEqual(p.returncode, 0, p.stderr)
-        self.assertEqual(calls, ["-m pip install claude-agent-sdk==%s" % sh.SDK_TESTED_VERSION])
+        self.assertEqual(calls, ["-m pip install claude-agent-sdk==%s" % sh.SDK_TESTED_VERSION, "-c import claude_agent_sdk"])
+
+    def test_the_run_block_fails_when_the_interpreter_it_installed_into_cannot_import_the_package(self):
+        # the import is load-bearing: a block that ran pip and stopped would exit 0 here
+        p, calls = self._run_block('SDK_TESTED_VERSION = "%s"\n' % sh.SDK_TESTED_VERSION, import_fails=True)
+        self.assertEqual(p.returncode, 1, "the block must fail when its own interpreter cannot import what pip installed: %r" % p.stderr)
+        self.assertEqual(calls, ["-m pip install claude-agent-sdk==%s" % sh.SDK_TESTED_VERSION, "-c import claude_agent_sdk"])
 
     def test_the_run_block_refuses_a_missing_constant_without_installing(self):
         p, calls = self._run_block('SDK_DIST = "claude-agent-sdk"\n')
@@ -207,8 +241,10 @@ class InstalledVersion(unittest.TestCase):
     so a venv that moved past the constant (or a constant moved past the venv) reds there before a hosted session finds
     out; a worker on the other road checks the form and warns that it checked no more (a warning, because pytest prints
     the warnings summary under -q where a captured print never shows; no filter in the repo turns a UserWarning into an
-    error). In CI (GITHUB_ACTIONS set) the other road is a failure, not a warning: the install step put the pin into the
-    interpreter pytest runs, so an interpreter without it is a cell whose SDK checks are all silently on the no-SDK road."""
+    error). Under ROMP_SDK_REQUIRE=1 the other road is a failure, not a warning: the run declared that the interpreter
+    running pytest has the SDK the install step put there (the workflow's Run pytest step sets the switch, and a source
+    pin in InstallStep holds it), so an interpreter without it is a cell whose SDK checks are all silently on the no-SDK
+    road. Off the switch, a box's bare road warns and never fails."""
     def test_the_installed_sdk_is_the_pin_where_it_imports_and_the_pin_is_well_formed_where_it_does_not(self):
         pin = sh.SDK_TESTED_VERSION
         self.assertRegex(pin, VERSION_RE, "SDK_TESTED_VERSION is not a bare x.y.z version: %r" % pin)
@@ -220,16 +256,19 @@ class InstalledVersion(unittest.TestCase):
             self.fail("sys.modules holds a %s that is not an installed package (%r: %s); a fixture's fake SDK leaked into "
                       "this process, so the pin cannot be judged here" % (sh.SDK_PACKAGE, sys.modules.get(sh.SDK_PACKAGE), e))
         if spec is None:
-            # In CI the install step put the pin into this interpreter, so no cell takes this road with the step in place; a
-            # cell that does has lost the SDK between the step and pytest (an install into another interpreter, a
-            # PYTHONPATH leak in the runner), and every SDK check in the run is then reading the no-SDK road: the gated
-            # tests skip, the no-SDK controls pass on the pipe transport, and a warning is the only trace. That is a
-            # failure there (2026-09-20). On a box the road is ordinary and the warning says what was not checked.
-            self.assertFalse(os.environ.get("GITHUB_ACTIONS"),
-                             "claude_agent_sdk does not import in CI's interpreter (%s) after the install step: the pinned "
-                             "version was not checked and the SDK-gated tests are skipping in this cell" % sys.executable)
+            # Where the run requires the SDK (ROMP_SDK_REQUIRE=1, set by the workflow's Run pytest step after the install
+            # step put the pin into `python`), this road is a cell that lost the SDK between the step and pytest (an
+            # install into another interpreter, a PYTHONPATH leak in the runner), and every SDK check in the run is
+            # then reading the no-SDK road: the gated tests skip, the no-SDK controls pass on the pipe transport, and a
+            # warning would be the only trace. That is a failure (2026-09-20). Off the switch, a box's bare road is
+            # ordinary and the warning says what was not checked.
+            if os.environ.get("ROMP_SDK_REQUIRE") == "1":
+                self.fail("ROMP_SDK_REQUIRE=1: this run requires the SDK, and claude_agent_sdk does not import in the "
+                          "interpreter running pytest (%s): the pinned version was not checked and the SDK-gated tests "
+                          "are skipping in this run" % sys.executable)
             warnings.warn("claude_agent_sdk does not import in this interpreter (%s): the pin's form is checked, the installed "
-                          "version is not; a CI cell that ran the install step never takes this road" % sys.executable)
+                          "version is not; under ROMP_SDK_REQUIRE=1, which CI's pytest step sets, this road is a failure"
+                          % sys.executable)
             return
         installed = sh.installed_sdk_version()
         try:

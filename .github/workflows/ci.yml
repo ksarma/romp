@@ -131,6 +131,11 @@ jobs:
         # latest, and it carries no continue-on-error: the SDK requires cryptography (through mcp's
         # pyjwt[crypto]), so a cryptography wheel lagging an interpreter fails THIS step, and that must be the
         # cell's red, not 48 tests silently skipping. Runs after the cryptography step so pip finds it installed.
+        # After pip, the same `python` imports the package: pip and the pytest step below share that name on
+        # PATH, so an install that reached another interpreter reds THIS step, with its name on it, instead
+        # of a run with the 48 tests skipping and a warning as the only trace. The pytest step declares the
+        # requirement with ROMP_SDK_REQUIRE=1 (its env below), so the pin test fails on an interpreter that
+        # lost the SDK between the two steps.
         # The 3.14t cell installs it too: the wheel is py3-none with Requires-Python >=3.10, its compiled
         # dependencies (cryptography, cffi, pydantic-core, rpds-py) publish cp314t wheels, and on a free-threaded
         # 3.14.6 the install, the import and the gated and host test modules ran green before this landed
@@ -158,8 +163,19 @@ jobs:
             exit 1
           }
           python -m pip install "claude-agent-sdk==$pin"
+          python -c "import claude_agent_sdk"
       - name: Run pytest
         env:
+          # This run requires the SDK the step above installed, said as a switch rather than inferred
+          # from GITHUB_ACTIONS (a future step that runs pytest without the SDK on purpose, as the
+          # served-page step in the extension job does, would red for the wrong reason under an
+          # inference): tests/test_ci_sdk_pin.py's InstalledVersion FAILS, naming the interpreter, where
+          # claude_agent_sdk does not import in the interpreter running pytest, instead of the warning a
+          # box's bare road gets, and tests/test_session_host.py's switch case asserts that the host a
+          # test spawns imports it. The stance of ROMP_SERVED_TESTS_REQUIRE below; a source pin in
+          # tests/test_ci_sdk_pin.py holds this line. Off (a box), that road warns and the host case
+          # skips, saying so.
+          ROMP_SDK_REQUIRE: "1"
           # The free-threaded cell runs with the GIL off, stated rather than defaulted (a 't'
           # build disables it by default, and an extension that lacks free-threading support
           # would otherwise turn it back on, with a RuntimeWarning in pytest's summary that the

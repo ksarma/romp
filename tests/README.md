@@ -54,7 +54,11 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   asserts the installed version equals it, so a box whose venv moved and a CI
   cell whose install disagreed with the constant both go red; on a venv without
   the SDK it checks the pin's presence and form and warns (in pytest's warnings
-  summary) that the equality was not checked there. To execute the gated tests
+  summary) that the equality was not checked there; under `ROMP_SDK_REQUIRE=1`,
+  which the workflow's "Run pytest" step sets (the same stance as
+  `ROMP_SERVED_TESTS_REQUIRE`), that road is a failure naming the interpreter, and
+  the install step's own `python -c "import claude_agent_sdk"` reds first when the
+  install missed the interpreter on PATH. To execute the gated tests
   from a plain venv, put romp's SDK
   venv on the path:
   `PYTHONPATH=~/.local/state/romp/sdkvenv/lib/python3.12/site-packages python3 -m

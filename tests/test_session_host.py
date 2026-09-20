@@ -1301,14 +1301,19 @@ class HostProcess(unittest.TestCase):
         k.recv_until(lambda f: f.get("t") == "exit")
         k.close()
 
-    @unittest.skipUnless(os.environ.get("GITHUB_ACTIONS"), "CI's road only: a box's host may run without the SDK")
-    def test_in_ci_the_hosts_interpreter_imports_the_sdk(self):
-        """In CI every Python cell installs the pinned SDK before pytest runs (.github/workflows/ci.yml), so the host a test
-        spawns imports it and the two SDK-transport cases below run. Without this pin a cell whose interpreter lost the
-        SDK (an install that did not reach the interpreter pytest runs, a PYTHONPATH leak in the runner) read green: the
-        two cases skipped, both no-SDK controls passed on the pipe transport, and nothing was red (2026-09-20)."""
-        self.assertTrue(HOST_SDK, "a child of %s does not import claude_agent_sdk, and this runner has no SDK venv: the "
-                        "SDK-transport cases are skipping in CI" % sys.executable)
+    @unittest.skipUnless(os.environ.get("ROMP_SDK_REQUIRE") == "1",
+                         "the run does not require the SDK (ROMP_SDK_REQUIRE unset): a box's host may run without it")
+    def test_where_the_run_requires_the_sdk_the_hosts_interpreter_imports_it(self):
+        """Under ROMP_SDK_REQUIRE=1, which the workflow's Run pytest step sets after every Python cell installs the pinned
+        SDK (.github/workflows/ci.yml; tests/test_ci_sdk_pin.py pins the line), the host a test spawns imports it and the
+        two SDK-transport cases run. Without this pin a cell whose interpreter lost the SDK (an install that did not
+        reach the interpreter pytest runs, a PYTHONPATH leak in the runner) read green: the two cases skipped, both
+        no-SDK controls passed on the pipe transport, and nothing was red (2026-09-20). Keyed on the switch the run
+        sets, not on GITHUB_ACTIONS: the switch declares the requirement, a platform variable only infers it. Off the
+        switch, a box's host may run without the SDK and this case skips, saying so."""
+        self.assertTrue(HOST_SDK, "ROMP_SDK_REQUIRE=1: this run requires the SDK, and a child of %s does not import "
+                        "claude_agent_sdk, and this runner has no SDK venv: the SDK-transport cases are skipping in this run"
+                        % sys.executable)
 
     @unittest.skipUnless(HOST_SDK, "the host's interpreter does not import the SDK and this machine has no SDK venv; the pipe transport covered the host")
     def test_the_sdk_transport_drives_the_fake_cli_the_same_way(self):
