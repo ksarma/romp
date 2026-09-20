@@ -2260,7 +2260,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // next frame (requestAnimationFrame, the frame's own event) and the frame repaints only if the width it finds
   // differs from the one last painted over, so a burst of reports (several observers' entries, a width that
   // moved and came back, the body growing taller as a figure loaded) costs one pass or none. The figures' "Open the picture"
-  // controls are NOT decided here: each figure's own ResizeObserver (watchFigureBoxes, armed with the load and error pair above)
+  // controls are NOT decided here: each figure's own ResizeObserver (watchFigureBoxes, set up above and armed at each text paint
+  // through the seam's onRendered, the first paint's included; nothing is observed at the open, the body being empty then)
   // hears the reflow this report causes as it hears a text-size step's, which moves the column and not the body (the file
   // review's round 2: a call here ran on one road of the two). The panel answers a
   // reflow by re-placing its cards and nothing more (file-comments.ts): until 2026-09-09 it ran its whole paint
@@ -5081,7 +5082,7 @@ function armFigureControls(body: HTMLElement, filePath: string): () => void {
  *  reopened after a narrowing to 420 px, the report of 334 by 33 removed the control under the floor). A road added later that
  *  hides a figure and reports for it decides the figure itself or lifts this skip for it. Armed at
  *  each text paint (`onRendered` with any `why` but "reflow": a reflow keeps the figure nodes, a paint replaces them) over the
- *  figures the box holds then, and dropped by the function returned; the body is empty when the open arms this, before its
+ *  figures the box holds then, and dropped by the function returned; the body is empty when the open sets this up, before its
  *  first paint (renderBody runs after the setup), so nothing is observed until that paint. Null where ResizeObserver is missing
  *  (a stand-in outside a browser), where nothing reflows and the paint's decision stands. */
 function watchFigureBoxes(body: HTMLElement, filePath: string, onRendered: (cb: (why?: FileViewRenderWhy) => void) => void): (() => void) | null {

@@ -7983,8 +7983,8 @@ load event, which fires all the same, decides it again over the laid-out box (th
 re-open the 761 by 76 picture's paint-time control left at its load, the picture laid out 324 by 32; at 900 it stood;
 file-view-figure-floor-browser.test.ts); and the floor is read
 again at each change of the figure's own laid-out box (`watchFigureBoxes`: one ResizeObserver per open over the
-figures of the Rendered box, armed beside the load and error pair, re-armed at each text paint through the seam's
-onRendered and dropped with the viewer, running the same decision for the figure whose box changed; a report of 0 by 0
+figures of the Rendered box, armed at each text paint through the seam's onRendered, the first paint's included
+(nothing is observed at the open: the body is empty then), and dropped with the viewer, running the same decision for the figure whose box changed; a report of 0 by 0
 runs no decision, a rule over the report whatever produced it: a 0 by 0 report decides nothing, and the figure is decided
 by its load or its error, by the gate's restore or by its next report with a box (the file review's round 4, regression-3:
 the reason before it named two roads to such a report as the only ones, and a loaded figure the author gave no box was a
@@ -8013,7 +8013,7 @@ pointer's reach; reopened at the width it folded at, no report and the control s
 report removed the control under the floor; the record before it said the product had no such road, reached only by an
 injected stylesheet), so a road added later that hides a figure and reports for it decides the figure itself or lifts
 the skip for it (recorded, not built against); the watch
-is armed at each text paint and not before the first, since the body is empty when the open arms it (the file review's
+is armed at each text paint and not before the first, since the body is empty when the open sets it up (the file review's
 round 3, tests-4: an arm there observed nothing on any road, measured in Chromium over the fresh open, the replace, Back,
 Forward and a reopen, and was removed), which is the
 reflow itself whatever caused it: the pane dragged, the Comments aside opened or closed, the window resized, or a
