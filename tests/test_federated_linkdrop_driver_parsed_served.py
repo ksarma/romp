@@ -1207,8 +1207,8 @@ CONTROLS = ("count-control", "identity-control", "hook-control", "evaluate-fn-co
 # the disclosed class, passing by disclosure (the rule is the module docstring's Disclosed paragraph; these are its witness rows,
 # by member): a wait with no timer, promise, script, module or playwright name as a node, and a call on a root the walk resolves
 # to no receiver and reads nothing of (a known global or a known member of a global or a module, with any argument, however reached)
-DISCLOSED = ("busy-loop", "evaluate-busy", "thenable-await", "poll-break-loop", "cpu-bound-work", "date-now-bound-busy",
-             "fs-blocking-read", "fs-blocking-fifo", "fs-alias-read", "fs-member-bound", "named-import-known-member", "fs-default-import-read")
+DISCLOSED = ("busy-loop", "evaluate-busy", "thenable-await", "poll-break-loop", "cpu-bound-work", "array-sort-cpu", "date-now-bound-busy",
+             "fs-blocking-read", "fs-blocking-fifo", "fs-alias-read", "fs-member-bound", "named-import-known-member", "fs-default-import-read", "fs-namespace-import-read")
 PLANTS = (
     ("var-held-page", "const p = pages.feed; await p.locator(cfg.provSel).textContent();", "unlisted"),
     ("var-held-locator", "const Lx = pages.feed.locator(cfg.provSel); await Lx.textContent();", "unlisted"),
@@ -1375,9 +1375,11 @@ PLANTS = (
     # the disclosed class's first member, redrawn as control flow: a loop whose exit is decided in its body
     ("poll-break-loop", "for (;;) { if (await pages.feed.locator(%s).count()) break; }" % SEL, "passed"),
     ("cpu-bound-work", '"x".repeat(2 ** 30);', "passed"),
+    ("array-sort-cpu", "new Array(2 ** 26).fill(0).sort();", "passed"),
     ("date-now-bound-busy", "const nowF = Date.now; for (const t0 = nowF(); nowF() - t0 < 100000;) {}", "passed"),
     # ...and the second member through another import binding of the same module
     ("fs-default-import-read", 'import nfs from "node:fs"; nfs.readFileSync("/dev/stdin", "utf8");', "passed"),
+    ("fs-namespace-import-read", 'import * as nfs2 from "node:fs"; nfs2.readFileSync("/dev/stdin", "utf8");', "passed"),
 )
 
 
