@@ -3520,14 +3520,23 @@ CLIENT_DIAG_KEYS = {
                        "wsBytesByHost")),   # the shared field the user approved on 2026-09-19 (the bytes each attached host sent, one number per host, no
                                             # content): {h1: int, h2: int, ...}, one key per attached host and no cap,
                                             # the text-frame characters each REMOTE host's sockets delivered in the
-                                            # minute (wsBytes's unit; the two are disjoint), keyed by the host's attach ORDINAL on the page: h1 the first
-                                            # remote host the page attached, assigned when the host first attaches, kept for the page's life and never
-                                            # shifting on a detach (a re-attached host keeps its ordinal), so h2 names
-                                            # one host across every row of a page life. The perf minute row carries positions, never names; the file's shell
-                                            # and federation surfaces and the kernel's own wsopen row carry host names already (the `host` key of the shell
-                                            # and federation entries below, an earlier approval, and of the kernel entry below, written by one of the kernel's four
-                                            # direct writers, _note_ws_open, as the host a hub's spliced upgrade was relayed to), so a reader holding the perf
-                                            # row and any of those three can map a position to a name within one page life; this entry says that and no more.
+                                            # minute (wsBytes's unit; the two are disjoint), keyed by the host's attach ORDINAL in the pane document that
+                                            # counts (one federation manager per pane document; the row's app names the pane): h1 the first remote host it
+                                            # attached, assigned when the host first attaches, kept for that document's life and never shifting on a
+                                            # detach (a re-attached host keeps its ordinal), so h2 names one host across every row that document files.
+                                            # The map's keys carry positions and no host name. Host names reach this file wherever an admitted VALUE
+                                            # can hold one, in three forms, and tests/test_client_diag_allowlist.py classifies every admitted key of
+                                            # every surface by content, so a new key fails there until classified: a bare name under a `host` key (the
+                                            # shell's push-test row, federation's hostconn rows, and the kernel's own wsopen row for a spliced relay,
+                                            # written by _note_ws_open); a host-prefixed session id, <host>:<uuid>, when the row concerns a remote
+                                            # session (the chat surface's sid, id, ids and active: federation.ts prefixes every remote session id the
+                                            # page holds, and the cut at CLIENT_DIAG_STR_MAX keeps the head, prefix included); and a host-keyed map
+                                            # (federation's feedmerge counts). The chat road is older than this field, is not gated by the perf share
+                                            # switch, and is filed on routine use (a send, a scroll, a tab set: up to 40 scroll rows a minute per kind),
+                                            # so on a federated page it is the most frequent host-carrying row type; the position-to-name MAP itself
+                                            # follows from the rows that record a host at attach (federation's hostconn open rows of the same pane
+                                            # document), not from chat rows alone, which name a host without its position. This entry says that and no
+                                            # more.
     "pane-shim": frozenset(("app", "why", "ready", "quietMs", "hidden",                                         # staleDiag rows
                             "decision", "resumed", "hiddenMs", "frozenMs", "quietAtResumeMs", "resent",         # return
                             "ms", "bytesSince", "redialed",                                                     # return-fresh

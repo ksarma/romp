@@ -4845,18 +4845,31 @@ The two rows, as the kernel writes them (`t` its clock, `wid` the dashboard id):
   one key per host, however many the page attaches), since the previous
   row (an idle or muted minute carries on the same way).
   The two are disjoint: a remote socket's characters are counted under its
-  position and never in `wsBytes`. Positions are assigned per page life and
-  never reused: a position is on a row when its host is attached at the
+  position and never in `wsBytes`. Positions are assigned per pane document
+  (each pane runs its own federation manager; the row's `app` names the pane)
+  and never reused: a position is on a row when its host is attached at the
   flush or received characters in the minute, so the row closing the minute
   of a host's detach carries the characters it received in it and the rows
   after carry no key for it, an attached host that received nothing reads
   0, a host that re-attaches counts on under its old position, and a reload
-  starts over, so `h1` can mean a different host after a reload. The
-  perf minute row carries positions, never names; the file's shell and
-  federation surfaces and the kernel's own `wsopen` row (`kind` `hub`, above)
-  carry host names already under their `host` key, so a reader holding the
-  perf row and any of those three can map a position to a name within one
-  page life. The key is absent, not `null`, when no remote host is attached
+  starts over, so `h1` can mean a different host after a reload. The map's
+  keys carry positions and no host name. Host names reach the file wherever
+  an admitted value can hold one, in three forms: a bare name under a `host`
+  key (the shell's push-test row, federation's `hostconn` rows and the
+  kernel's own `wsopen` row for a spliced relay, `kind` `hub`, above); a
+  host-prefixed session id, `<host>:<uuid>`, when the row concerns a remote
+  session (the chat surface's `sid`, `id`, `ids` and `active`: every remote
+  session id a federated page holds carries its host, and the 64-character
+  cut keeps the head, prefix included); and a host-keyed map (federation's
+  `feedmerge` `counts`). The chat road is older than this field, is not gated
+  by the share switch, and is filed on routine use (a send, a scroll, a tab
+  set: up to 40 scroll rows a minute per kind), so on a federated page it is
+  the most frequent host-carrying row type; the position-to-name map itself
+  follows from the rows that record a host at attach (federation's
+  `hostconn` open rows of the same pane), not from chat rows alone, which
+  name a host without its position. `tests/test_client_diag_allowlist.py`
+  classifies every admitted key of every surface by the content its value
+  can carry, so a new key fails there until classified. The key is absent, not `null`, when no remote host is attached
   at the flush and none received characters in the minute: a page that never
   attached one, the shell, and the rows after every host has detached. `rafGap` is
   `{n, worst}`, the animation-frame gaps over 50 ms while the document was

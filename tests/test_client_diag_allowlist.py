@@ -57,6 +57,134 @@ SHARED = {"nav": {"type": "reload", "responseEnd": 210, "domContentLoaded": 656,
           # the same unit per REMOTE host by its position on the page, h1 the first remote host it attached; positions, never names
           "wsBytesByHost": {"h1": 40123, "h2": 991}}
 
+# The content census (review round 1 of the wsBytesByHost change, 2026-09-20). Every admitted key of every surface, classified by
+# what its VALUE can carry as the first-party posters and the kernel's own writers build it: BARE (a host name as the value),
+# PREFIXED (a session id with its host in front, <host>:<uuid>, when the row concerns a remote session), KEYED (a map whose keys
+# are host names), NONE (why it cannot carry one, and where a shape holds it, who holds it: the collector, the poster or the
+# kernel). A census keyed on the NAME `host` had missed the chat surface, whose sid, id, ids and active are the tab ids the page
+# holds, which federation.ts prefixes for every remote session (prefixInbound on SCALAR_ID and ARRAY_ID, the tab records through
+# OBJ_ID); the cut at CLIENT_DIAG_STR_MAX keeps the head of a string, prefix included. The kernel admits a surface's top-level
+# keys and cuts nested string values; it inspects no nested key and no value's form, so every class here names the writer that
+# holds the shape. test_every_admitted_key_is_classified_by_the_content_its_value_can_carry ties this table to CLIENT_DIAG_KEYS
+# both ways, so a key added to the table without a row here fails, and the disclosure copies are read back against the
+# host-carrying surfaces this table derives (test_the_disclosure_copies_state_the_content_rule_and_name_every_host_carrying_surface).
+BARE, PREFIXED, KEYED, NONE = "bare", "prefixed", "keyed", "none"
+_ENUM, _INT, _BOOL = "a fixed word", "a number", "a boolean"
+CENSUS = {
+    "perf": {   # perf-telemetry.ts: the minute and slowframe rows; every key's shape is the collector's
+        "app": (NONE, "the pane word the collector is created with"), "since": (NONE, _INT), "span_ms": (NONE, _INT),
+        "frames": (NONE, "keys: classifyFrame's type, an identifier of at most 32 characters or the fold word; values: counts"),
+        "free": (NONE, "percentiles"), "loaf": (NONE, "top[].k is scriptKey's basename form, top[].inv is sanitizeInvoker's, which strips an element id and reduces a URL to its basename; src a fixed word"),
+        "slow": (NONE, "counts"), "dom": (NONE, _INT), "visible": (NONE, _BOOL), "hidden_pane": (NONE, _BOOL),
+        "ua": (NONE, "uaClass's fixed word"), "heap_mb": (NONE, _INT), "type": (NONE, "the slow frame's classified type"), "ms": (NONE, _INT),
+        "nav": (NONE, "fixed keys, type from NAV_TYPES or other, whole ms"),
+        "res": (NONE, "keys: resourceKey's same-origin /dist/ or /media/ basename, a root file name or other, so a cross-origin URL folds"),
+        "marks": (NONE, "fixed keys, whole ms"), "env": (NONE, "fixed keys; entryTypes from a fixed list; dv a number"),
+        "vis": (NONE, "counts"), "wsBytes": (NONE, _INT), "rafGap": (NONE, "counts"),
+        "wsBytesByHost": (NONE, "keys h<ordinal>: the collector's bytesByHost keeps a key only on ^h[1-9][0-9]*$ and federation.ts mints them as 'h' plus the attach ordinal; values: characters; the kernel admits the key and does not inspect the map's keys"),
+    },
+    "pane-shim": {   # kernel.py's pane shim: staleDiag, returnDiag, the wsclose, wsconnfail and page-load rows
+        "app": (NONE, "the pane word"), "why": (NONE, "a stale cause word"), "ready": (NONE, _INT), "quietMs": (NONE, _INT), "hidden": (NONE, _BOOL),
+        "decision": (NONE, _ENUM), "resumed": (NONE, _BOOL), "hiddenMs": (NONE, _INT), "frozenMs": (NONE, _INT), "quietAtResumeMs": (NONE, _INT),
+        "resent": (NONE, _BOOL), "ms": (NONE, _INT), "bytesSince": (NONE, _INT), "redialed": (NONE, _BOOL), "code": (NONE, "the close code"),
+        "reason": (NONE, "the close frame's reason text: this kernel sends no close frame (a drop reads 1006), so empty, or an intermediary's text, cut"),
+        "wasClean": (NONE, _BOOL), "sinceOpenMs": (NONE, _INT), "everConnected": (NONE, _BOOL), "bundleReady": (NONE, _BOOL),
+        "attempts": (NONE, _INT), "firstFailMs": (NONE, _INT), "wasDiscarded": (NONE, _BOOL), "nav": (NONE, "the navigation type word"),
+        "awaitLink": (NONE, _BOOL), "linkUpMs": (NONE, _INT), "parked": (NONE, _BOOL),
+    },
+    "reload-core": {"reason": (NONE, "build or fresh"), "detail": (NONE, "the offered dist token or code, a number's text"), "hold": (NONE, "the hold word"), "ageMs": (NONE, _INT)},
+    "shell": {   # kernel.py's shell scripts: the push panel's rows, the tap ledger rows, the return probe
+        "sidAttached": (NONE, _BOOL),
+        "host": (BARE, "push-test: the active tab's host, read off the tab id's prefix (activeSession), empty for a local session"),
+        "why": (NONE, "activeSession's cause word"), "tabs": (NONE, _INT), "status": (NONE, "an HTTP status or ok"), "via": (NONE, _ENUM), "boot": (NONE, _BOOL),
+        "hasSid": (NONE, _BOOL), "hasCard": (NONE, _BOOL), "hasPid": (NONE, _BOOL), "controlled": (NONE, _BOOL), "dup": (NONE, _BOOL), "sub": (NONE, _BOOL),
+        "rows": (NONE, _INT), "err": (NONE, "true when GET /push/pending failed; the row carries no text"), "getNotifications": (NONE, _BOOL),
+        "displayed": (NONE, _INT), "vanished": (NONE, _INT), "superseded": (NONE, _INT),
+        "sid8": (NONE, "the first 8 characters of a push ledger row's sid, a bare uuid: _push_pending carries the host in its own field, which the row does not copy"),
+        "ageS": (NONE, _INT), "shape": (NONE, _ENUM), "kind": (NONE, "the worker message's kind word"), "sw": (NONE, _BOOL), "decision": (NONE, _ENUM),
+        "hiddenMs": (NONE, _INT), "quietMs": (NONE, _INT), "attempts": (NONE, _INT), "firstFailMs": (NONE, _INT), "ms": (NONE, _INT),
+    },
+    "federation": {   # federation.ts diag(): hostconn, feedDelta-nobase, feedDelta-stale, feedmerge, sendqueue, senddrop
+        "host": (BARE, "the conn's host on every hostconn, feedDelta and send row; empty on the poll rows, local on the local nobase row"),
+        "ev": (NONE, "the hostconn event word"),
+        "why": (NONE, "a cause word, a slot name, the remote's build id, or the page's own /tunnels fetch failure text cut at 200"),
+        "quietMs": (NONE, _INT), "foreground": (NONE, _BOOL), "msgType": (NONE, "a message type word"), "rs": (NONE, "a readyState"),
+        "flushed": (NONE, "message type words"), "held": (NONE, "message type words"), "unread": (NONE, _BOOL), "endedUnread": (NONE, _BOOL),
+        "code": (NONE, "the close code"), "clean": (NONE, _BOOL), "detached": (NONE, _BOOL), "pendingDropped": (NONE, "message type words or a count"),
+        "buildId": (NONE, "the remote kernel's build id"),
+        "counts": (KEYED, "feedmerge: the merged feed's ask count per host, keyed by the host name (local for the local kernel)"),
+        "gt": (NONE, _INT), "superseded": (NONE, _BOOL),
+    },
+    "chat": {   # render.ts's direct posts and scroll-write.ts's rows through scrollDiagRow
+        "sid": (PREFIXED, "the active tab's id or the session's id: <host>:<uuid> for a remote session (send, cancel-miss, reconcile-optimistic-failed, every scroll row)"),
+        "error": (NONE, "a caught exception's message, cut at 200 by the poster and 64 here"), "held": (NONE, _INT), "got": (NONE, _INT), "distVer": (NONE, _INT),
+        "path": (NONE, "location.pathname, the page's own route"), "mdLen": (NONE, _INT), "queuedLeft": (NONE, _INT),
+        "ids": (PREFIXED, "live-omitted-kept: tab ids the kernel still affirms live, prefixed for remote sessions"),
+        "n": (NONE, _INT),
+        "active": (PREFIXED, "skeleton: the active tab's id, prefixed for a remote session"),
+        "ts": (NONE, _INT), "len": (NONE, _INT), "route": (NONE, "plain, quote or followup"),
+        "id": (PREFIXED, "empty-session-frame: the frame's session id, prefixed by prefixInbound for a remote session"),
+        "load": (NONE, "the federation.js resource entry's figures"), "first": (NONE, "the earlier pass's load figures or a boolean"),
+        "recovered": (NONE, _BOOL), "hadRestore": (NONE, _BOOL), "perMinute": (NONE, _INT), "writer": (NONE, "the writing function's name"),
+        "before": (NONE, _INT), "after": (NONE, _INT), "delta": (NONE, _INT), "stick": (NONE, _BOOL), "gesture": (NONE, _BOOL), "sh": (NONE, _INT), "ch": (NONE, _INT),
+        "anchor": (NONE, "the last 12 characters of an atom uuid"), "proto": (NONE, _INT), "events": (NONE, _INT), "regions": (NONE, _BOOL),
+        "headKnown": (NONE, _BOOL), "headFrom": (NONE, _ENUM), "older": (NONE, _BOOL), "noframe": (NONE, _BOOL), "trail": (NONE, _INT),
+        "dh": (NONE, _INT), "last": (NONE, "the tail element's class list or live-ask"), "cls": (NONE, "an element's class name"), "fromTail": (NONE, _INT),
+        "atBottom": (NONE, _BOOL), "where": (NONE, "view or live-ask"), "removed": (NONE, "element class names"), "added": (NONE, "element class names"),
+        "reAdded": (NONE, _BOOL), "shBefore": (NONE, _INT), "shAfter": (NONE, _INT), "st": (NONE, _INT), "top": (NONE, _INT), "bot": (NONE, _INT),
+        "dTop": (NONE, _INT), "dBot": (NONE, _INT), "lo": (NONE, _INT), "hi": (NONE, _INT), "edge": (NONE, "top or bottom"), "why": (NONE, "scroll or land"),
+        "notice": (NONE, _BOOL), "nav": (NONE, "the navigation type word"), "kind": (NONE, "the region kind word"), "keep": (NONE, _INT), "reland": (NONE, _BOOL),
+    },
+    "strip": {   # strip.ts: the host popover's fetch and toggle rows
+        "ok": (NONE, _BOOL), "tunnels": (NONE, _INT), "err": (NONE, "the page's own /tunnels fetch failure as String(err), cut"), "open": (NONE, _BOOL),
+        "base": (NONE, "empty on a kernel page; in the VS Code webview the extension's kernel URL, http://127.0.0.1:<port> (extension.ts HOST is the loopback literal), a URL with no host name"),
+    },
+    "feed": {   # feed.ts: colflip, itemset, feedDelta-unapplied
+        "id": (NONE, "an item id, <bare sid>:g<n>: prefixInbound prefixes a row's sid and not its item ids"), "from": (NONE, "a column word"), "to": (NONE, "a column word"),
+        "ev": (NONE, "the input change word"), "buildId": (NONE, _INT), "predicted": (NONE, _BOOL),
+        "appeared": (NONE, "item ids, the bare-sid form"), "gone": (NONE, "item ids, the bare-sid form"), "total": (NONE, _INT),
+    },
+    "outline": {"buildId": (NONE, _INT), "slot": (NONE, "a slot word"), "rev": (NONE, _INT)},
+    "waiting": {"buildId": (NONE, _INT)},
+    "kernel": {   # the kernel's four direct writers: _note_ws_open, _note_history_reply, _note_chat_withheld_at_close, _implicit_handshake
+        "app": (NONE, "the dial's app word"), "kind": (NONE, "page, relay or hub"), "reconnect": (NONE, _BOOL), "iid": (NONE, "a boolean: whether the dial stated one"),
+        "cid": (NONE, "a minted hex id"),
+        "host": (BARE, "wsopen, kind hub: the host a spliced /remote/<host>/ws upgrade was relayed to (_note_ws_open, from the hub's splice)"),
+        "sid": (NONE, "the session id a history ask named: a page asks for its local sessions bare, and the relay strips a remote id's host before forwarding (federation.ts stripHost)"),
+        "type": (NONE, "the ask's type word"), "span": (NONE, "turn numbers"), "events": (NONE, _INT), "bytes": (NONE, _INT), "head": (NONE, _BOOL),
+        "missing": (NONE, _BOOL), "refused": (NONE, _BOOL),
+        "reason": (NONE, "the fault text the kernel minted for a refused history reply (no build to answer from, or an exception's class and text)"),
+        "sent": (NONE, _BOOL), "frames": (NONE, _INT), "ageS": (NONE, _INT), "frame": (NONE, "a WS_OPS word or other"), "withheld": (NONE, _INT), "proto": (NONE, _INT),
+    },
+}
+
+
+def host_carrying_keys():
+    """The census's host-carrying keys by surface, {surface: {key: class}}, derived from the rows whose class is not NONE."""
+    out = {}
+    for surface, table in CENSUS.items():
+        keys = {k: c for k, (c, _why) in table.items() if c != NONE}
+        if keys:
+            out[surface] = keys
+    return out
+
+
+def disclosure_copies():
+    """The three disclosure copies in the tree, each as its text or None when the anchors are gone: the wsBytesByHost entry's
+    comment in kernel.py (from the entry to the next surface), the minute-row entry's wsBytesByHost passage in docs/reference.md
+    (from the field's sentence to rafGap's) and the ledger entry's body (after its front matter)."""
+    root = os.path.dirname(HERE)
+    ksrc = open(os.path.join(root, "kernel", "kernel.py"), encoding="utf-8").read()
+    k = re.search(r'"wsBytesByHost"\)\),(.*?)"pane-shim": frozenset\(', ksrc, re.S)
+    dsrc = open(os.path.join(root, "docs", "reference.md"), encoding="utf-8").read()
+    d = re.search(r"`wsBytesByHost` is the same\n(.*?)`rafGap` is\n", dsrc, re.S)
+    lsrc = open(os.path.join(root, "upstream", "2026-09-19-relay-dial-page-caps-ws-bytes-by-host.md"), encoding="utf-8").read()
+    l = re.search(r"^---\n.*?\n---\n(.*)", lsrc, re.S)
+    def flat(m):
+        # one line per copy: the comment markers and the doc's wrapping are not part of the claim
+        return re.sub(r"\s+", " ", re.sub(r"\n\s*#", " ", m.group(1))).strip() if m else None
+    return {"kernel": flat(k), "docs": flat(d), "ledger": flat(l)}
+
 
 class ClientDiagAllowlistTest(unittest.TestCase):
     def setUp(self):
@@ -497,13 +625,62 @@ class ClientDiagAllowlistTest(unittest.TestCase):
             self.assertEqual(len(row["data"]["frames"]), 2 * (max_types + 1), "every frame type intact")
         self.assertEqual(self.rows()[-1]["data"]["wsBytesByHost"], by_host, "the per-host map lands whole: the admit filters top-level keys only, the scrub walks it")
 
+    def test_every_admitted_key_is_classified_by_the_content_its_value_can_carry(self):
+        # The census (CENSUS, above) against the table, both ways per surface: a key the table admits with no row here fails, as
+        # does a row here for a key the table no longer admits, so a surface cannot grow a key without a reader deciding what its
+        # value can carry. The host-carrying surfaces are DERIVED from the rows' classes, never listed by hand, and the derivation
+        # must not come out empty: the file carries host names today (the shell's and federation's `host`, the kernel's wsopen row,
+        # federation's counts, the chat surface's prefixed session ids), and a census that found none would be reading nothing.
+        self.assertEqual(sorted(CENSUS), sorted(km.CLIENT_DIAG_KEYS), "every surface of the table is classified and no other")
+        for surface, table in sorted(CENSUS.items()):
+            self.assertEqual(sorted(table), sorted(km.CLIENT_DIAG_KEYS[surface]),
+                             "%s: every admitted key has a classification and every classified key is admitted" % surface)
+            for key, (cls, why) in sorted(table.items()):
+                self.assertIn(cls, (BARE, PREFIXED, KEYED, NONE), (surface, key))
+                self.assertTrue(isinstance(why, str) and why, "%s.%s: a class names its reason" % (surface, key))
+        carrying = host_carrying_keys()
+        self.assertTrue(carrying, "the derivation found no host-carrying key: the census is reading nothing")
+        self.assertEqual(carrying, {"chat": {"active": PREFIXED, "id": PREFIXED, "ids": PREFIXED, "sid": PREFIXED},
+                                    "federation": {"counts": KEYED, "host": BARE}, "kernel": {"host": BARE}, "shell": {"host": BARE}},
+                         "the host-carrying keys and their forms, as derived; a change here is a change to the disclosure copies")
+        # the prefixed form lands as posted: the head of a string survives the cut, host and all (a 64-character cut of
+        # <host>:<uuid> keeps the whole id for a host name of up to 27 characters and the host for any longer one)
+        sid = "TESTHOST:11111111-2222-3333-4444-555555555555"
+        self.assertEqual(self.post("chat", "send", {"sid": sid, "ts": 1700000000000, "len": 3, "route": "plain"}), "")
+        self.assertEqual(self.rows()[-1]["data"]["sid"], sid)
+        long_host = "h" * 80
+        self.post("chat", "skeleton", {"n": 1, "active": long_host + ":" + sid.split(":")[1]})
+        self.assertEqual(self.rows()[-1]["data"]["active"], long_host[:km.CLIENT_DIAG_STR_MAX])
+
+    def test_the_disclosure_copies_state_the_content_rule_and_name_every_host_carrying_surface(self):
+        # The disclosure is stated three times in the tree (the wsBytesByHost entry's comment in kernel.py, the minute-row entry
+        # in docs/reference.md, the ledger entry) and once in the PR body outside it. Its first version enumerated the surfaces
+        # that name a `host` KEY and missed the chat surface, whose values carry a host inside a session id (round 1, 2026-09-20).
+        # Each copy must now state the rule (a value can carry a host name bare under a host key, as a host-prefixed session id
+        # when the row concerns a remote session, or as a host-keyed map), name the chat road's condition and its independence
+        # from the share switch, and name every host-carrying surface the census derives; a copy that drops a clause fails here.
+        copies = disclosure_copies()
+        self.assertEqual(sorted(copies), ["docs", "kernel", "ledger"])
+        for name, text in sorted(copies.items()):
+            self.assertIsNotNone(text, "%s: the disclosure copy was not found: re-aim disclosure_copies()" % name)
+            self.assertGreater(len(text), 200, name)
+            for token in (r"host-prefixed session id", r"host-keyed map", r"remote session", r"share switch", r"`?host`? key", r"positions and no host name"):
+                self.assertIsNotNone(re.search(token, text, re.I), "%s: the disclosure no longer states %r" % (name, token))
+        named = {"chat": r"\bchat\b", "federation": r"\bfederation\b", "shell": r"\bshell\b", "kernel": r"\bwsopen\b"}
+        carrying = host_carrying_keys()
+        self.assertTrue(carrying)
+        for surface in sorted(carrying):
+            self.assertIn(surface, named, "a new host-carrying surface: say how each disclosure copy names it")
+            for name, text in sorted(copies.items()):
+                self.assertIsNotNone(re.search(named[surface], text), "%s: the disclosure does not name the %s surface" % (name, surface))
+
     def test_one_fixture_row_per_poster_call_site_passes_whole_and_the_table_names_nothing_else(self):
         """The table against the posters: one synthetic row per clientDiag call site in the bundles (render.ts and
         scroll-write.ts, federation.ts, feed.ts, fleet.ts, waiting.ts, strip.ts) and the shell scripts in kernel.py, with the
         keys each posts. Every row passes whole with no stderr line, and per surface the fixtures' keys are exactly the
         table's, so a poster that grows a key without the table, or a table key no poster sends, fails here. The perf,
         pane-shim and reload-core rows are test_todays_rows_pass_whole_and_quietly's."""
-        sid = "11111111-2222-3333-4444-555555555555"
+        sid = "TESTHOST:11111111-2222-3333-4444-555555555555"   # a REMOTE session's tab id as the page holds it, host-prefixed (the census, CENSUS)
         host = "TESTHOST"
         posters = {
             "chat": [   # render.ts's direct posts, then scrollDiagRow's kinds (scroll-write.ts builds the rows)
@@ -511,8 +688,8 @@ class ClientDiagAllowlistTest(unittest.TestCase):
                 ("views-stale-blob", {"held": 3, "got": 1}),
                 ("pageload", {"distVer": 1757100000, "path": "/chat"}),
                 ("cancel-provisional", {"mdLen": 12, "queuedLeft": 0}),
-                ("live-omitted-kept", {"ids": ["u1", "u2"]}),
-                ("skeleton", {"n": 4, "active": True}),
+                ("live-omitted-kept", {"ids": [sid, "TESTHOST:11111111-2222-3333-4444-666666666666"]}),
+                ("skeleton", {"n": 4, "active": sid}),
                 ("send", {"sid": sid, "ts": 1700000000000, "len": 42, "route": "local"}),
                 ("empty-session-frame", {"id": sid, "held": True}),
                 ("federation-missing", {"load": 1, "first": True}),
@@ -561,8 +738,8 @@ class ClientDiagAllowlistTest(unittest.TestCase):
                 ("reveal-post", {"status": "ok", "via": "tap", "boot": False}),
                 ("deeplink", {"via": "url", "hasSid": True, "hasCard": False, "hasPid": False, "dup": False, "controlled": True}),
                 ("tap-pending", {"via": "sw", "sub": True, "rows": 1, "err": "", "getNotifications": 1, "displayed": 1, "vanished": 0, "superseded": 0}),
-                ("tap-pending-land", {"sid8": sid[:8], "ageS": 4, "dup": False}),
-                ("tap-vanish-land", {"sid8": sid[:8], "ageS": 4}),
+                ("tap-pending-land", {"sid8": sid.split(":")[1][:8], "ageS": 4, "dup": False}),   # the push ledger's sid is bare; its host rides a field the row does not copy
+                ("tap-vanish-land", {"sid8": sid.split(":")[1][:8], "ageS": 4}),
                 ("sw-message", {"shape": "object", "hasSid": True, "kind": "tap", "dup": False, "sw": True}),
                 ("return-probe", {"decision": "redial-closed", "hiddenMs": 30000, "quietMs": 31000, "attempts": 3, "firstFailMs": 12500, "ms": 30500}),   # D3 (2026-09-18): the shell socket's return probe, one row per return; decision is an enum, the rest ints
             ],
