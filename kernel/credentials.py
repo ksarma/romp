@@ -235,11 +235,37 @@ RING_NAME_BUDGET = len("OP_SERVICE_ACCOUNT_TOKEN")   # every 1Password name romp
 COUNT_CAP = 999                                      # a count of more past this renders as "999+": four characters at most
 
 
-def cut_to(text, budget: int) -> str:
-    """`text` whole when it fits `budget` characters, else its head cut to the budget with CUT_MARK as the last
-    character, so the result is never longer than the budget."""
+def utf16_units(text) -> int:
+    """The length of `text` in UTF-16 code units, the unit the error centre measures (ui/webview/badge-mirror.ts cuts a
+    row with JavaScript's `s.length` and `s.slice`, which count UTF-16 code units): one per code point up to U+FFFF,
+    two per code point above it (a surrogate pair in UTF-16). Every budget a ring text is cut to derives from that
+    centre's cap, so this is the unit a cut charges (round 7 of the env-pick door's review, 2026-09-20)."""
     text = str(text)
-    return text if len(text) <= budget else text[:budget - len(CUT_MARK)] + CUT_MARK
+    return len(text) + sum(1 for ch in text if ord(ch) > 0xFFFF)
+
+
+def cut_to(text, budget: int) -> str:
+    """`text` whole when it fits `budget` UTF-16 code units, else its head cut to the budget with CUT_MARK as the last
+    character, so the result is never longer than the budget IN THE CONSUMER'S UNIT. Until round 7 of the env-pick
+    door's review (2026-09-20) the budget was charged in Python code points, one per character, while the cap every
+    budget derives from (sdk_backend.ERROR_CENTER_TEXT_CAP) is the error centre's, in UTF-16 code units: a code point
+    above U+FFFF (an emoji in a host's traceback tail) cost the budget one and the centre two, so a row computed to
+    fit the cap exactly overran it by one unit per such character, and a run of them put the centre's own cut inside
+    a surrogate pair. A code point above U+FFFF now costs two, and the head is taken whole code points at a time (a
+    Python slice never splits a pair), so the cut never lands inside one and the centre's cut has nothing left to do.
+    For text within the Basic Multilingual Plane the two units agree and nothing changes."""
+    text = str(text)
+    if utf16_units(text) <= budget:
+        return text
+    room = budget - utf16_units(CUT_MARK)
+    out, used = [], 0
+    for ch in text:
+        w = 2 if ord(ch) > 0xFFFF else 1
+        if used + w > room:
+            break
+        out.append(ch)
+        used += w
+    return "".join(out) + CUT_MARK
 
 
 def count_text(n: int) -> str:

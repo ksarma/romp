@@ -131,8 +131,9 @@ SDK_BACKEND = os.path.join(os.path.dirname(HERE), "kernel", "sdk_backend.py")
 # currently unmet and names the tracked item; the same clause stands at the road's comment, in the census docstring and in
 # the ENV ROWS paragraph, and test_each_existence_row_filed_as_a_problem_says_why_it_is_declared_and_not_bounded pins it
 # on each (the post-merge census of the env-pick door, 2026-09-20, ruling 2's sharpening).
-UNMET_CLAUSE = ("That responsibility is CURRENTLY UNMET: both callers format self.name uncut (kernel.NAME_RE caps no length), "
-                "and the second joins up to twelve CLI key names uncut into its text and its key; tracked as ")
+UNMET_CLAUSE = ("That responsibility is CURRENTLY UNMET: every caller formats self.name uncut (kernel.NAME_RE caps no length), the "
+                "unreadable-list line joins up to twelve CLI key names uncut into its text and its key, and the five failure reports "
+                "interpolate an exception's text uncut; tracked as ")
 UNMET_ITEM = "ITEM: _log_quietly True callers unbounded (2026-09-20)"
 KERNEL_PY = os.path.join(os.path.dirname(HERE), "kernel", "kernel.py")
 CREDENTIALS_PY = os.path.join(os.path.dirname(HERE), "kernel", "credentials.py")
@@ -169,6 +170,37 @@ def _lock_withs_above(node, parents):
     return out
 
 
+def _declaration_surfaces():
+    """The two prose surfaces the census's declarations are pinned on, each read AS ITSELF (round 7 of the env-pick door's
+    review, 2026-09-20, tests-3: read module-wide, a phrase could leave the surface an assertion names and the pin stayed
+    green): the census module's docstring through ast.get_docstring, whitespace-normalised, and the ENV ROWS paragraph in
+    kernel/sdk_backend.py as its list of comment lines (hash-stripped; join them with a space to read a phrase across a
+    wrap), read from the one line starting `# ENV ROWS: ` to the first line that is not a comment."""
+    tree, _parents = _parsed(os.path.join(HERE, "env_ring_census.py"))
+    census_doc = " ".join((ast.get_docstring(tree) or "").split())
+    lines = Path(SDK_BACKEND).read_text(encoding="utf-8").splitlines()
+    starts = [i for i, ln in enumerate(lines) if ln.startswith("# ENV ROWS: ")]
+    assert len(starts) == 1, "one ENV ROWS line to read the paragraph under: %r" % starts
+    para, j = [], starts[0] + 1
+    while j < len(lines) and lines[j].startswith("#"):
+        para.append(lines[j].lstrip("#").strip())
+        j += 1
+    return census_doc, para
+
+
+def _true_road(p):
+    """The conduit's problem road a bound constant argument takes: any constant other than False or None (the round-7
+    ruling's rule; a falsy constant such as 0 is filed here too, a false red rather than a silent miss)."""
+    return isinstance(p, ast.Constant) and p.value is not False and p.value is not None
+
+
+def _true_callers(rows):
+    """[(caller name, carries a ring_text)] over Census.bound_site_args rows for the sites on the conduit's True road: the
+    ring_text is carried unless the bound argument is the constant None (the default, or None written)."""
+    return sorted((caller.name, not (isinstance(b.get("ring_text"), ast.Constant) and b["ring_text"].value is None))
+                  for caller, _call, b in rows if _true_road(b.get("problem")))
+
+
 CENSUS_FILES = (SDK_BACKEND, KERNEL_PY, CREDENTIALS_PY)
 # The content rows by identity: the writing function, the module-level format the ring text starts from, and whether
 # the call passes key= (the rows the launch files at every connect are keyed). Nine at review round 6; eleven since the
@@ -187,27 +219,33 @@ ROWS = [
     ("fork", "FORK_RESERVED_RING", False), ("fork", "FORK_DROP_RING", False),
     ("set_env", "REFUSAL_RING_HEAD", False), ("set_env", "REFUSAL_RING_HEAD", False),
 ]
-# The floors: what the census found at review round 6's head (5d5507ee3 plus this round's commit), each with its
-# derivation. A run that finds FEWER is a blind derivation, not a cleaner module; lowering one is a deliberate edit.
+# The floors: what the census found at round 7's head (the merge of main and that round's commit, 2026-09-20), each with
+# its derivation, pasted from `python -m tests.env_ring_census` there. A run that finds FEWER is a blind derivation, not
+# a cleaner module; lowering one is a deliberate edit, and a merge that grows the population re-derives them (round 7:
+# the merge of main grew the census by 38 doors and the floors stayed at review round 6's, 38 doors of slack a blinded
+# walk could hide in).
 FLOORS = {
-    "doors": 395,                  # 1 appender + 330 calls reaching it + 31 conduit and feeder call sites + 18 door-as-argument
+    "doors": 433,                  # 1 appender + 353 calls reaching it + 45 conduit and feeder call sites (_log_quietly 21,
+    #                                problem_row 12, _sdk_problem 8, _spend_guard_row 2, _note_ws_drop 2) + 19 door-as-argument
     #                                sites + 10 parameter-bound functions + 2 feeder appends + 3 merge reads
-    "calls_reaching_writer": 330,  # self._log in SdkBackend 183, another receiver 101, ApiHealth's bound self._log 7,
+    "calls_reaching_writer": 353,  # self._log in SdkBackend 198, another receiver 109, ApiHealth's bound self._log 7,
     #                                a log= parameter 34, a local alias 5
     "log_param_fns": 10,           # problem_row, ApiHealth.__init__, flag_settings_path, cli_scope_supported, cli_scope_limits and
     #                                its pass-through _cli_scope_settle, helper_fast_org_env and its pass-through key_fast_org_env,
     #                                relocate_transcripts, sweep_dead_test_roots
-    "door_value_sites": 18,        # call sites passing a door as an argument: 11 problem_row (one in kernel.py, through getattr),
+    "door_value_sites": 19,        # call sites passing a door as an argument: 12 problem_row (one in kernel.py, through getattr),
     #                                ApiHealth, cli_scope_supported, cli_scope_limits, sweep_dead_test_roots, flag_settings_path,
     #                                helper_fast_org_env, relocate_transcripts
-    "problem_row_sites": 11,
+    "problem_row_sites": 12,       # main's two refused-launch rows call problem_row without log=, so they are sites of it and
+    #                                not door-as-argument sites
     "sdk_problem_sites": 8,
     "feeder_appends": 2,           # _SDK_BOOT_PROBLEMS in _sdk_problem, _WS_DROPS in _note_ws_drop
     "merge_reads": 3,              # _sdk_problem_rows reads the two lists and be.problems()
-    "content_rows": 9,
-    "functions": 3157,             # every def and lambda of the three files, nested ones included
+    "content_rows": 11,            # the ENV ROWS line's rows; content_identities() == ROWS holds them exactly, so this floor
+    #                                carries no tension of its own and is here so the block is truthful
+    "functions": 3232,             # every def and lambda of the three files, nested ones included
 }
-CALLS_BY_KIND = {"self": 183, "typed": 101, "bound-self": 7, "param": 34, "alias": 5}   # the 330's derivation, a floor each
+CALLS_BY_KIND = {"self": 198, "typed": 109, "bound-self": 7, "param": 34, "alias": 5}   # the 353's derivation, a floor each
 
 
 def _floor_shortfalls(counts, by_kind):
@@ -1019,7 +1057,7 @@ class EnvRowsPopulation(unittest.TestCase):
         self.assertIn("sdk session ", {h for dc in fstrings for h in dc.heads}, "the crash line is one of them")
 
     def test_existence_only_lines_declare_a_constant_and_are_outside_the_population(self):
-        """The one sentence beside the nine, pinned: lines tainted through the pending-pick surface set alone (the
+        """The one sentence beside the content rows, pinned: lines tainted through the pending-pick surface set alone (the
         reconnect heading's, the mode landing's) name a pick's existence in a fixed vocabulary plus the session name,
         never a value; every one declares a constant, none is a content row, and the ones filed problem=True are the
         landing's three failure reports (the mode-truth tests own those) and, since the merge of main, the conduit's
@@ -1035,7 +1073,7 @@ class EnvRowsPopulation(unittest.TestCase):
         'live work (%s): %d background task%s'), the conduit's problem road (ruling 2 of the post-merge census)."""
         c = self.c
         ex = c.existence_rows
-        self.assertGreaterEqual(len(ex), 18)
+        self.assertGreaterEqual(len(ex), 20, "the existence floor at round 7's head (20 at the merge of main); fewer is a blind walk")
         for dc in ex:
             self.assertEqual(dc.taint, frozenset({"pick"}), (dc.lineno, dc.taint))
             self.assertEqual(dc.problem_decl[0], "const", (dc.lineno, dc.problem_decl))
@@ -1078,7 +1116,7 @@ class EnvRowsPopulation(unittest.TestCase):
     def test_the_derivation_meets_its_floors(self):
         c = self.c
         self.assertEqual(_floor_shortfalls(c.counts, c.by_kind), [],
-                         "derivation blind: (floor, found, the floor at review round 6); a run that finds fewer is blind, not cleaner")
+                         "derivation blind: (floor, found, the floor at round 7's head); a run that finds fewer is blind, not cleaner")
         self.assertEqual(sum(c.by_kind.values()), c.counts["calls_reaching_writer"])
 
     def test_a_per_kind_floor_fires_alone_and_at_the_floor_none_does(self):
@@ -1261,27 +1299,35 @@ class EnvRowsPopulation(unittest.TestCase):
         Ruling 2 of the post-merge census (2026-09-20): a FOURTH row, SdkSession._log_quietly's problem road (main's PR
         787 made the conduit forward problem=True, key= and ring_text=), is accepted on the same terms with its own
         reason: its text is the union of every caller's line, formatted inline by each caller, the conduit shapes nothing
-        and forwards ring_text as given, so the bound is each CALLER's responsibility; the callers passing problem=True
-        (read off the module's AST here: every _log_quietly call with problem=True, two at this head) are named in the
-        comment and pass no ring_text, so each rings its whole line. Owners by line: ['_log_quietly', '_do_set_mode',
+        and forwards ring_text as given, so the bound is each CALLER's responsibility; the callers passing problem=True are
+        named in the comment and pass no ring_text, so each rings its whole line. They are read off the module with each
+        _log_quietly call's arguments BOUND against the conduit's signature (Census.bound_site_args: problem whether keyword
+        or positional index 1, ring_text whether keyword or index 3; any constant other than False or None is the True
+        road; a problem= that is not a constant is a failure row naming the site, never counted as False; round 7 of the
+        review, 2026-09-20, tests-2 and extra7-1: read from n.keywords alone, a positional caller counted as saying
+        nothing and the roster went stale green). Seven at round 7's head: the two live-work notes and the five failure
+        reports the merge of main brought (regression-1, extra5-1: the merge's resolution had sent them down the
+        problem=False road; each passes problem=True itself now). Owners by line: ['_log_quietly', '_do_set_mode',
         '_do_set_mode', '_do_set_mode']; the conduit's road forwards ring_text (a Name) where the three carry none.
         The sharpening of that ruling (2026-09-20): the declaration states that the callers' responsibility is CURRENTLY
-        UNMET (both format self.name uncut, the second joins up to twelve CLI key names uncut into text and key) and names
-        the tracked item, so a reader of the census sees a known unbounded row, tracked, never a false clean one. The
-        clause and the item title are pinned on all three surfaces, the road's comment block, the census docstring and
-        the ENV ROWS paragraph read as its own comment block (the module-wide read would be satisfied by the road's
-        comment alone), so a drop from any one of them is red."""
+        UNMET (every caller formats self.name uncut, the unreadable-list line joins up to twelve CLI key names uncut into
+        text and key, the five failure reports interpolate an exception's text uncut) and names the tracked item, so a
+        reader of the census sees a known unbounded row, tracked, never a false clean one. The clause and the item title
+        are pinned on all three surfaces, each read AS ITSELF (round 7, tests-3): the road's comment block, the census
+        module's docstring (ast.get_docstring, not the file) and the ENV ROWS paragraph (its own comment lines, not the
+        module), so a phrase leaving any one of them is red on that surface's assertion."""
         c = self.c
         lines = Path(SDK_BACKEND).read_text(encoding="utf-8").splitlines()
         filed = sorted((dc for dc in c.existence_rows if dc.problem_decl == ("const", True)), key=lambda d: d.lineno)
         self.assertEqual([dc.owner for dc in filed], ["_log_quietly", "_do_set_mode", "_do_set_mode", "_do_set_mode"])
-        tree, parents = _parsed(SDK_BACKEND)
-        true_callers = sorted((_enclosing_def(n, parents).name, any(k.arg == "ring_text" for k in n.keywords)) for n in ast.walk(tree)
-                              if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == "_log_quietly"
-                              and any(k.arg == "problem" and isinstance(k.value, ast.Constant) and k.value is not None and k.value.value is True
-                                      for k in n.keywords))
-        self.assertEqual(true_callers, [("_note_unknown_bg_type", False), ("_note_unreadable_bg_list", False)],
-                         "the conduit's problem=True callers at this head, none passing ring_text (the reason's 'each rings its whole line')")
+        rows, refused = c.bound_site_args("SdkSession._log_quietly", constants=("problem",))
+        self.assertEqual(refused, [], "a _log_quietly site whose problem= the census cannot read is refused, never counted as False")
+        self.assertEqual(len(rows), c.counts["conduit_sites"]["conduit:SdkSession._log_quietly"], "every site of the conduit is bound")
+        true_callers = _true_callers(rows)
+        self.assertEqual(true_callers, [("_arm_after_relaunch_slot", False), ("_note_unknown_bg_type", False), ("_note_unreadable_bg_list", False),
+                                        ("_reconcile_seeded_with_report", False), ("_reconcile_seeded_with_report", False),
+                                        ("_reconcile_seeded_work", False), ("_served_by_connect", False)],
+                         "the conduit's problem=True callers at round 7's head, none passing ring_text (the reason's 'each rings its whole line')")
         for dc in filed:
             i, block = dc.lineno - 2, []
             while i >= 0 and lines[i].strip().startswith("#"):
@@ -1302,23 +1348,17 @@ class EnvRowsPopulation(unittest.TestCase):
                          "a failure report about the mode landing", "outside what the env-pick door bounds")
             for part in parts:
                 self.assertIn(part, text, "line %d's comment lacks the reason's part %r: %r" % (dc.lineno, part, text[:120]))
-        norm = lambda t: " ".join(t.split())
-        census_doc = norm(Path(os.path.join(HERE, "env_ring_census.py")).read_text(encoding="utf-8"))
-        module = norm(Path(SDK_BACKEND).read_text(encoding="utf-8"))
-        self.assertIn("a declared residual with no reason reads later as an oversight", census_doc)
+        census_doc, para = _declaration_surfaces()
+        self.assertIn("a declared residual with no reason reads later as an oversight", census_doc, "ruling 1's condition, in the census docstring")
         self.assertIn("the bound of a row through it is its CALLER's responsibility", census_doc, "the fourth row's reason class, in the census docstring")
-        self.assertIn("each declared and not bounded for a stated reason", module)
-        self.assertIn("the bound is each caller's responsibility", module, "the fourth row's reason class, in the ENV ROWS paragraph")
         self.assertIn(UNMET_CLAUSE + UNMET_ITEM, census_doc, "the fourth row's bound is stated unmet and tracked, in the census docstring")
-        starts = [i for i, ln in enumerate(lines) if ln.startswith("# ENV ROWS: ")]
-        self.assertEqual(len(starts), 1, "one ENV ROWS line to read the paragraph under")
-        para, j = [], starts[0] + 1
-        while j < len(lines) and lines[j].startswith("#"):
-            para.append(lines[j].lstrip("#").strip())
-            j += 1
+        self.assertIn("the five failure reports the merge of main brought", census_doc,
+                      "the census docstring's reason class covers the merged population's True callers (the road's comment names each)")
         self.assertIn("^ the CONTENT rows", para[0], "the paragraph under the ENV ROWS line")
-        self.assertIn(UNMET_CLAUSE + UNMET_ITEM, " ".join(para),
-                      "the fourth row's bound is stated unmet and tracked, in the ENV ROWS paragraph itself")
+        paragraph = " ".join(para)
+        self.assertIn("each declared and not bounded for a stated reason", paragraph, "ruling 1's condition, in the ENV ROWS paragraph")
+        self.assertIn("the bound is each caller's responsibility", paragraph, "the fourth row's reason class, in the ENV ROWS paragraph")
+        self.assertIn(UNMET_CLAUSE + UNMET_ITEM, paragraph, "the fourth row's bound is stated unmet and tracked, in the ENV ROWS paragraph itself")
 
     def test_the_pick_tags_dict_bound_is_stated_as_the_censuss_reach_and_not_as_the_kernels(self):
         """Ruling 3 of review round 6 (2026-09-19): that the pick tag does not cross a dict return is a bound on the
@@ -1498,7 +1538,7 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
 
     def test_the_env_key_of_a_dict_return_stays_a_source_at_the_read_and_does_not_taint_the_dicts_other_keys(self):
         """The other boundary of the dict rule: a helper returning {"env": sess.env_vars, "mode": sess.mode} taints
-        no reader of its "mode" key (the env key is a source at its own read), so the nine stay nine; and the launch
+        no reader of its "mode" key (the env key is a source at its own read), so the count does not move; and the launch
         shape, a source function returning a dict, taints `shape["mode"]` no more (before this rule the attributes
         stored from it cascaded env taint to 96 content rows)."""
         c = self._census(self._copy(lambda s: self._with_format(s).replace(self.METHOD_ANCHOR,
@@ -1871,7 +1911,7 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         `shape.values()`, outside the census) is inside it now: a value has a WHOLE set and a CARRIED set (what a read of one
         non-source key yields), for a local, a parameter, a return and an attribute alike, so `str(shape)`, `shape.values()`
         and a whole dict held on an attribute carry the env while `shape["mode"]`, `.get`, `.pop` and `.setdefault` of another
-        key, `(shape or {}).get("mode")` and a scalar attribute stored from a keyed read stay clean, and the head stays at nine
+        key, `(shape or {}).get("mode")` and a scalar attribute stored from a keyed read stay clean, and the head stays at BASE
         (the first draft gave every attribute a whole set and read 95 content rows, since attributes are keyed by name across
         every receiver; an attribute takes a whole set only from a dict by shape). The refusal side of the ruling-2 rule is
         pinned beside it: the located local's boundary excludes the key (m2k); a holder found through a conditional is located
@@ -2060,6 +2100,116 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
                          "product code binds no alias of the door at class or module scope: the census tells the bindings apart by scope, and no rename was needed")
 
 
+    def test_the_conduits_true_callers_are_read_by_binding_each_call_against_its_signature_and_an_unreadable_road_is_refused(self):
+        """Round 7 of the review (2026-09-20, tests-2 and extra7-1): the pin naming _log_quietly's problem=True callers read
+        n.keywords alone, so a third caller passing problem positionally was counted as saying nothing (plant A stayed green
+        at the round-6 head; the same caller as a keyword reded the pin), and the declaration's roster went stale with every
+        test green. Census.bound_site_args binds each call against the conduit's signature (positional by index, keyword by
+        name, the default for a parameter left unsaid), and the roster is read off the bound arguments: problem=True as a
+        keyword and positionally are both the True road; ring_text positionally is a carrier and an explicit ring_text=None
+        is not; a falsy constant other than False or None (0) is filed on the True road, the ruling's rule, a false red
+        rather than a silent miss; and a problem= that is not a constant (a name, a call) or a call the signature cannot
+        place (a starred argument) is a FAILURE ROW naming the site, never counted as False, the standing rule's restricted
+        side. Each form is a plant on a module copy: a `_tenth_caller` method in the conduit's class."""
+        c0 = Census((SDK_BACKEND, CREDENTIALS_PY), DEFAULT_SOURCES)
+        rows0, refused0 = c0.bound_site_args("SdkSession._log_quietly", constants=("problem",))
+        base = _true_callers(rows0)
+        self.assertEqual((len(base), refused0), (7, []), "the module's own roster at round 7's head: seven, none refused")
+        plant = "    def _tenth_caller(self, flag, *rest):\n        self._log_quietly(%s)\n\n"
+
+        def roster(call):
+            path = self._copy(lambda s: s.replace(self.SESSION_ANCHOR, plant % call + self.SESSION_ANCHOR))
+            c = self._census(path)
+            rows, refused = c.bound_site_args("SdkSession._log_quietly", constants=("problem",))
+            self.assertEqual(len(rows) + len([r for r in refused if r[0] == "site-unbound"]), len(rows0) + 1,
+                             "the planted site is bound like the others, or refused as unbound")
+            return [t for t in _true_callers(rows) if t[0] == "_tenth_caller"], [(k, ln, text) for k, _b, ln, text in refused]
+        counted = {
+            "keyword True": '"live work (%s): planted" % self.name, problem=True',
+            "positional True": '"live work (%s): planted" % self.name, True',
+            "keyword True, ring_text=None written": '"live work (%s): planted" % self.name, problem=True, ring_text=None',
+            "falsy constant 0 (the ruling's rule: any constant but False and None)": '"live work (%s): planted" % self.name, problem=0',
+        }
+        for label, call in counted.items():
+            with self.subTest(form=label):
+                self.assertEqual(roster(call), ([("_tenth_caller", False)], []), label)
+        with self.subTest(form="positional True with a positional ring_text"):
+            self.assertEqual(roster('"live work (%s): planted" % self.name, True, None, "planted ring text"'), ([("_tenth_caller", True)], []))
+        with self.subTest(form="keyword False, and None written: the routine road"):
+            self.assertEqual(roster('"live work (%s): planted" % self.name, problem=False'), ([], []))
+            self.assertEqual(roster('"live work (%s): planted" % self.name, problem=None'), ([], []))
+        line = self.src[:self.src.index(self.SESSION_ANCHOR)].count("\n") + 2      # the planted call's line in the copy
+        refused = {
+            "positional non-constant": ('"live work (%s): planted" % self.name, flag', "site-argument-unread", "problem= at SdkSession._tenth_caller is"),
+            "a name": ('"live work (%s): planted" % self.name, problem=flag', "site-argument-unread", "problem= at SdkSession._tenth_caller is"),
+            "a call": ('"live work (%s): planted" % self.name, problem=bool(flag)', "site-argument-unread", "problem= at SdkSession._tenth_caller is"),
+            "a starred argument": ('"live work (%s): planted" % self.name, *rest', "site-unbound", "SdkSession._log_quietly at SdkSession._"),
+        }
+        for label, (call, kind, head) in refused.items():
+            with self.subTest(form=label):
+                counted, rows = roster(call)
+                self.assertEqual((counted, [(k, ln) for k, ln, _t in rows]), ([], [(kind, line)]), "%s: a failure row naming the site, not a False" % label)
+                self.assertTrue(rows[0][2].startswith(head), rows[0][2])
+
+    def test_a_conduit_whose_inner_call_folds_a_source_of_its_own_is_refused_at_the_inner_call_and_the_no_fold_control_is_not(self):
+        """Round 7 of the review (2026-09-20, kernel-1): the post-merge census took every conduit's inner door call out of
+        the rule-(2) check on the premise that each site carries every inner road, which is true of the DECLARATION and
+        false of the TAINT: a site carries the taint of the argument it passes, not what the conduit's own body folds into
+        the message, the ring text or the key, so a fold of a declared env source inside the conduit was refused by nothing
+        (the round-6 refuters' probe: byte-identical census output with AUTH_ENV_NAMES folded into problem_row's ring text).
+        The skip is narrowed to inner calls whose RESIDUAL taint, recomputed with the conduit's parameters clean and
+        re-propagated through its locals and its helpers' returns, is empty. Plants on a module copy: a conduit method
+        `_tenth_relay(self, msg, ring=True)` whose inner call forwards problem=bool(ring) (problem_row's shape) and folds
+        AUTH_ENV_NAMES into its message, its ring text or its key, called from `_tenth` with a clean prose; each fold is a
+        violation AT THE INNER CALL ("problem= is the expression bool(ring)"), the census's residual names the env, and the
+        content rows stay at BASE (no constant True, so no row). The site: clean for the message and ring-text folds, whose
+        expressions _through collapses to the site's own argument (str(msg) + X reduces to msg), so nothing but the inner
+        call's row refuses them; tainted for the key fold, which is no wrap of a parameter and so stays the site's own key
+        expression, a second refusal at the site beside the inner call's and, the site being declared True through ring's
+        default, a content row with an UNBOUNDED identity (BASE + 1). The no-fold control is silent (the inner call is
+        not tainted at all). Under the blanket skip of the round-6 head the message and ring-text folds were silent, 0
+        violations each, and the key fold was not tainted at all (rule 6 read the key since round 7; the round-7 build's
+        probe, pasted in the PR body)."""
+        anchor = self.METHOD_ANCHOR
+        relay = "    def _tenth_relay(self, msg, ring=True):\n        self._log(%s)\n\n"
+        site = "    def _tenth(self, sess):\n        self._tenth_relay('env (%s): tenth' % sess.name)\n\n"
+
+        def census_with(inner):
+            path = self._copy(lambda s: s.replace(anchor, relay % inner + site + anchor))
+            c = self._census(path)
+            self.assertEqual(c.failures, [])
+            inner_calls = [dc for dc in c.door_calls if dc.owner == "_tenth_relay"]
+            self.assertEqual([dc.kind for dc in inner_calls], ["self"], "the conduit's one inner call")
+            self.assertEqual([dc.kind for dc in c.door_calls if dc.owner == "_tenth"], ["conduit:SdkBackend._tenth_relay"], "the planted site")
+            return c, inner_calls[0]
+        fold = "', '.join(sorted(AUTH_ENV_NAMES))"
+        at_site = [("_tenth", "problem=True with a ring text that reduces to no format")]
+        for road, inner, site_rows in (("message", "msg + %s, problem=bool(ring)" % fold, []),
+                                       ("ring_text", "msg, problem=bool(ring), ring_text=str(msg) + %s" % fold, []),
+                                       ("key", "msg, problem=bool(ring), key=%s" % fold, at_site)):
+            with self.subTest(road=road):
+                c, dc = census_with(inner)
+                self.assertEqual(sorted(dc.taint), ["env"], "the inner call is tainted by the fold")
+                self.assertEqual(sorted(dc.residual), ["env"], "the residual names what no site carries")
+                self.assertEqual(sorted((d.owner, why) for d, why in c.explicit_violations),
+                                 sorted([("_tenth_relay", "problem= is the expression bool(ring)")] + site_rows),
+                                 "refused at the inner call, on its own declaration (and at the site where _through keeps the fold)")
+                self.assertEqual([d.owner for d in c.tainted if d.owner == "_tenth"], ["_tenth"] if site_rows else [],
+                                 "the site passed a clean prose; only a key the walk cannot collapse to a parameter taints it")
+                self.assertEqual(len(c.content_rows), self.BASE + (1 if site_rows else 0),
+                                 "no constant True at the inner call, so no row of its own; the key-tainted site, declared True through "
+                                 "ring's default, is a content row with an UNBOUNDED identity the identity pin refuses")
+                if site_rows:
+                    self.assertIn(("_tenth", "UNBOUNDED", True), c.content_identities(), "keyed: the fold is its key")
+        with self.subTest(road="no fold (the control)"):
+            c, dc = census_with("msg, problem=bool(ring)")
+            self.assertEqual((sorted(dc.taint), sorted(dc.residual), c.explicit_violations), ([], [], []))
+            self.assertEqual(len(c.content_rows), self.BASE)
+        with self.subTest(road="the head's own inner calls carry no residual"):
+            self.assertEqual([(dc.owner, dc.lineno) for dc in census(CENSUS_FILES).tainted if dc.residual], [],
+                             "problem_row's line, built from prose through a helper's returned row, and _log_quietly's forwarded parameters")
+
+
 class LogQuietlyAtRuntime(_Backend):
     """The runtime half of _log_quietly's problem=False (round 6; its lexical half is the census's rule (2)): a line
     through the conduit inside a live except handler, where _log's default would file it, lands on the kernel log
@@ -2079,6 +2229,31 @@ class LogQuietlyAtRuntime(_Backend):
         self.assertIn("probe: a bare line in a live handler", texts, "the handler was live: _log's default filed the bare line")
         self.assertEqual([t for t in texts if "through the conduit" in t], [], "the conduit's line is no ring row")
         self.assertIn("reconnect (web): a routine line through the conduit", lines, "the kernel log keeps it")
+
+    def test_a_failure_report_through_the_conduit_from_its_own_handler_is_one_ring_row(self):
+        """Round 7 of the review (2026-09-20, regression-1 and extra5-1): the merge of main resolved _log_quietly so that a
+        caller saying nothing of problem= takes the problem=False road, which demoted the five failure reports main's PR 787
+        files inside except handlers to kernel-log lines nobody reads. Each passes problem=True itself now. Driven on
+        _reconcile_seeded_work's except road: a lock that refuses raises inside the reconcile, and the guard's one line is
+        one ring row (be.problems()) and one kernel-log line. Red at the round-6 head: 0 ring rows, the line in the kernel
+        log alone."""
+        lines = []
+        self.be._log_cb = lines.append
+        sid = self.be.spawn("web", "/tmp", env=ENV)
+        s = self._sess(sid)
+
+        class _Refusing:
+            def __enter__(self):
+                raise RuntimeError("the lock refused")
+
+            def __exit__(self, *a):
+                return False
+        s._sub_lock = _Refusing()
+        s._reconcile_seeded_work()
+        want = "live work (web): the seeded-work reconcile failed: RuntimeError: the lock refused"
+        self.assertEqual([r["text"] for r in self.be.problems() if "the seeded-work reconcile failed" in r["text"]], [want],
+                         "the caught exception's report is one ring row (as on main before the merge)")
+        self.assertEqual([l for l in lines if "the seeded-work reconcile failed" in l], [want], "and one kernel-log line")
 
 class FlagSettingsLockOrder(_OptionsBackend):
     """The callee half of _flag_settings_lock's order sentence, pinned by execution (correctness-3, tests-4, regression-2;
@@ -2477,14 +2652,19 @@ class EnvSecretsStayPrivate(unittest.TestCase):
         p2 = sb.flag_settings_path(d, "11111111-2222-3333-4444-555555555555", env={"TOKEN": "other"})
         self.assertEqual(stat.S_IMODE(os.stat(p2).st_mode), 0o600, "a rewrite keeps it private")
 
-    def test_a_pre_existing_looser_file_is_tightened_before_the_env_block_lands_in_it(self):
+    def test_the_published_path_ends_0600_over_a_pre_existing_looser_inode_with_the_mode_on_the_temps_descriptor_before_the_write(self):
         # Until 2026-09-18 the writer opened the published path O_CREAT|O_TRUNC at 0600 and chmod'd it AFTER the
         # write: a fresh file was born 0600, but a file created before the 0600 open (2026-09-03) kept its looser
-        # mode through the truncating open, took the env block at that mode, and tightened only afterwards. The
-        # mode now goes onto the descriptor before the write (PR 789, review round 1: the same write-then-tighten
-        # window the reg and the parked-ops mirror lost). os.chmod is interposed and NOT performed, so the old order
-        # leaves the file at 0644 and the case reads the descriptor's mode alone; os.fchmod is recorded with the
-        # file's size at that moment, so "before the write" is executed, not read off the source.
+        # mode through the truncating open, took the env block at that mode, and tightened only afterwards. Since the
+        # merge of PR 789 with the env-pick door's temp-and-rename write the published path is never opened: the
+        # writer creates a fresh O_EXCL 0600 temp, puts the mode onto the TEMP's descriptor before the first byte
+        # (PR 789, review round 1: the same write-then-tighten window the reg and the parked-ops mirror lost; the
+        # fchmod is what makes the mode exact under a umask that would strip bits from the create), writes the env
+        # block, and os.replace carries the temp onto the path over the pre-existing looser inode, which is unlinked,
+        # not tightened. os.chmod is interposed and recorded, so a chmod on the path would show; os.fchmod is
+        # recorded with the descriptor's size at that moment, so "before the write" is executed (size 0), not read
+        # off the source. Reworded in round 7 of the env-pick door's review (2026-09-20, extra5-2): the merge had
+        # carried the prose of the in-place write the resolution discarded; the assertions are unchanged.
         import stat
         d = tempfile.mkdtemp()
         p = Path(d, sb.FLAG_SETTINGS_DIR, "%s.json" % PARENT)
@@ -2503,8 +2683,8 @@ class EnvSecretsStayPrivate(unittest.TestCase):
         with mock.patch.object(os, "fchmod", fchmod_probe), mock.patch.object(os, "chmod", chmod_probe):
             out = sb.flag_settings_path(d, PARENT, env={"FEATURE_FLAG": "1"})
         self.assertEqual(out, str(p))
-        self.assertEqual(stat.S_IMODE(os.stat(p).st_mode), 0o600, "tightened before the write, with no chmod performed")
-        self.assertEqual(fchmods, [(0o600, 0)], "one fchmod on the descriptor while the file is still empty")
+        self.assertEqual(stat.S_IMODE(os.stat(p).st_mode), 0o600, "0600 on the published path: the temp's mode, carried over the looser inode by os.replace")
+        self.assertEqual(fchmods, [(0o600, 0)], "one fchmod, on the temp's descriptor while it is still empty (size 0: before the write)")
         self.assertEqual(chmods, [], "no chmod on the path after the write")
         self.assertEqual(json.loads(p.read_text()), {"env": {"FEATURE_FLAG": "1"}}, "and the env block landed")
 
@@ -2534,7 +2714,7 @@ class EnvSecretsStayPrivate(unittest.TestCase):
                 mock.patch.object(os, "close", close_probe):
             out = sb.flag_settings_path(d, PARENT, env={"FEATURE_FLAG": "1"}, log=lambda m, **k: logged.append(m))
         self.assertEqual(out, "", "no settings file: the launch goes without the keys")
-        self.assertEqual(len(opened), 1, "one descriptor, the published file's")
+        self.assertEqual(len(opened), 1, "one descriptor, the temp's (the published path is never opened)")
         self.assertEqual(closed, opened, "closed on the failure road")
         self.assertEqual(len(logged), 1, logged)
         self.assertIn("unwritable", logged[0])
@@ -2552,10 +2732,13 @@ class EnvSecretsStayPrivate(unittest.TestCase):
 class RefusedLaunchRowsRingBounded(unittest.TestCase):
     """Ruling 1 (a) of the post-merge census (2026-09-20), by execution: main's two refused-launch rows in
     _host_transport_for (fork PR 777) ring a text bounded by HOST_REFUSED_RING while the ledger row and the kernel log
-    line keep the reason whole. The driver is the host tests' (a fake _spawn_host that writes a host-crashed row and
-    returns an exited process), with a 300-character host reason: until this commit problem_row's log= rang the whole
-    prose, and the census read the row as an UNBOUNDED content row. Red before: the ring text held the whole reason and
-    no marker."""
+    line keep the reason whole. The drivers are the host tests' (a fake _spawn_host that writes a host-crashed row and
+    returns an exited process for the EXITED road; one whose process never exits and never serves its socket, with
+    SOCKET_WAIT_S patched short, for the DEADLINE road, added in round 7 of the review, 2026-09-20, tests-1: until then
+    only the exited row's ring text was driven, and the census identity is blind to which tainted value fills which
+    placeholder, so a swapped argument at the deadline row rendered green), each with a 300-character host reason: until
+    the post-merge commit problem_row's log= rang the whole prose, and the census read the row as an UNBOUNDED content row.
+    Red before: the ring text held the whole reason and no marker."""
 
     SID = "11111111-2222-3333-4444-555555555555"
 
@@ -2593,6 +2776,52 @@ class RefusedLaunchRowsRingBounded(unittest.TestCase):
         self.assertNotIn(reason, text, "the whole reason is not on the ring")
         self.assertTrue(text.startswith("the session host for web exited before serving its socket (code 1); see hosts/%s/host.log: OSError: B" % self.SID))
         self.assertEqual(len(rows[0]["text"]), len("the session host for web exited before serving its socket (code 1); see hosts/%s/host.log: " % self.SID) + len(reason))
+
+    def test_a_host_that_never_serves_its_socket_rings_the_bounded_text_and_the_ledger_and_the_log_keep_the_reason_whole(self):
+        """The deadline road (round 7, tests-1), driven the way the exited road is: a fake _spawn_host whose process never
+        exits and never serves its socket, host.log carrying a host-crashed row with a 300-character reason (a wedged host
+        that wrote a failing row and did not exit, the read host_exit_reason answers for), SOCKET_WAIT_S patched to 0.3 s.
+        The row's kind is host.never-served-socket, the wedged host is ended, the ring text EQUALS
+        host_refused_ring_text(sess.name, said) with the marker last (an equality, not a prefix: a prefix assertion is what
+        an argument swap slips past on a short name), and the ledger row and the kernel log line keep the reason whole.
+        Red under the swap host_refused_ring_text(said, sess.name) at the deadline site, which every other test leaves green."""
+        import asyncio
+        d = tempfile.mkdtemp()
+        logs = []
+        be = sb.SdkBackend(d, "/bin/true", lambda *a, **k: None, log=lambda m, *a, **k: logs.append(m))
+        Path(d, "session-hosts").write_text("on")
+        sb.write_reg(Path(d), self.SID, {"sid": self.SID, "name": "web", "alive": True, "lastSid": self.SID})
+        s = types.SimpleNamespace(sid=self.SID, name="web", _host_intent=True, _host=None, _host_is_attach=False,
+                                  _options_login="", _seed_for_dead_cli=lambda cli: None)
+        reason = "OSError: " + "B" * 291
+        ended = []
+
+        def fake_spawn(sess, spec_path, secret_env=None):
+            with open(Path(spec_path).parent / "host.log", "a") as f:
+                f.write(json.dumps({"t": 1, "kind": "host-started"}) + "\n" + json.dumps({"t": 2, "kind": "host-crashed", "error": reason}) + "\n")
+            return types.SimpleNamespace(poll=lambda: None, returncode=None, pid=4343, terminate=lambda: ended.append(1))
+        with mock.patch.object(be, "_spawn_host", fake_spawn), mock.patch.object(sb._ht(), "SOCKET_WAIT_S", 0.3):
+            with self.assertRaises(sb.CLIConnectionErrorLike) as cm:
+                asyncio.run(be._host_transport_for(s, types.SimpleNamespace(), (None, None, None)))
+        self.assertEqual(ended, [1], "the wedged host was ended")
+        said = "did not serve its socket within 0 s; it was ended; see hosts/%s/host.log: %s" % (self.SID, reason)
+        self.assertEqual(str(cm.exception), "the session host " + said)
+        rows = [json.loads(l) for l in (Path(d) / sb.SESSION_EVENTS_FILE).read_text().splitlines()]
+        self.assertEqual([r["kind"] for r in rows], ["host.never-served-socket"])
+        self.assertEqual(rows[0]["text"], "the session host for web " + said, "the ledger row keeps the reason whole (the card reads it)")
+        line = [l for l in logs if sb.PROBLEM_ROW_MARK in l and "did not serve its socket" in l]
+        self.assertEqual(len(line), 1, logs)
+        self.assertIn(reason, line[0], "the kernel log line keeps the reason whole, with its ;; problem-row tail")
+        self.assertEqual(sb.parse_problem_row(line[0])["kind"], "host.never-served-socket")
+        ring = [p["text"] for p in be.problems() if p["text"].startswith("the session host for ")]
+        self.assertEqual(len(ring), 1, be.problems())
+        text = ring[0]
+        self.assertEqual(text, sb.host_refused_ring_text("web", said), "the ring text is the helper's over (name, said), in that order")
+        self.assertLessEqual(len(text), sb.ERROR_CENTER_TEXT_CAP)
+        self.assertLessEqual(len(text.encode("utf-16-le")) // 2, sb.ERROR_CENTER_TEXT_CAP, "in the error centre's unit too")
+        self.assertTrue(text.endswith(sb._cred.CUT_MARK), "the cut is visible: the marker is the last character")
+        self.assertNotIn(reason, text, "the whole reason is not on the ring")
+        self.assertTrue(text.startswith("the session host for web did not serve its socket within 0 s; it was ended; see hosts/%s/host.log: OSError: B" % self.SID))
 
 
 class CredentialShapedNamesAtTheDoor(unittest.TestCase):
@@ -3103,6 +3332,7 @@ class CredentialShapedNamesEndToEnd(_OptionsBackend):
             fmt = getattr(sb, fmt_name)
             for text in worst[fmt_name]:
                 self.assertLessEqual(len(text), cap, (fmt_name, len(text), text))
+                self.assertLessEqual(len(text.encode("utf-16-le")) // 2, cap, (fmt_name, "in the error centre's unit, UTF-16 code units (round 7)"))
                 self.assertEqual(km._sdk_problem_text(text), text, (fmt_name, "whole in the feed"))
                 self.assertTrue(text.startswith(fmt.split("%s")[0]), (fmt_name, text))
             lengths[fmt_name] = max(len(t) for t in worst[fmt_name])
@@ -3152,6 +3382,58 @@ class CredentialShapedNamesEndToEnd(_OptionsBackend):
         km = self._real_ring()
         for text in (whole, cut, named, worst):
             self.assertEqual(km._sdk_problem_text(text), text, "whole through the feed's own cut")
+
+    @staticmethod
+    def _centre_cut(text, n):
+        """ui/webview/badge-mirror.ts's cap, `s.length > n ? s.slice(0, n - 1) + "…" : s`, over UTF-16 code units the way
+        JavaScript counts them; the result is the unit sequence, so a slice inside a surrogate pair shows as a lone surrogate."""
+        units = text.encode("utf-16-le")
+        if len(units) // 2 <= n:
+            return text
+        return units[: (n - 1) * 2].decode("utf-16-le", errors="surrogatepass") + "\u2026"
+
+    def test_the_reason_is_cut_in_the_error_centres_unit_so_an_astral_reason_neither_overruns_the_cap_nor_splits_a_pair(self):
+        """Round 7 of the review (2026-09-20, extra6-1): RING_REASON_BUDGET is derived from ERROR_CENTER_TEXT_CAP, which is the
+        error centre's cut in UTF-16 CODE UNITS (badge-mirror.ts, `s.length` and `s.slice`), while the cut charged it in
+        Python code points, so a character above U+FFFF in a host's reason cost the budget one and the centre two. At the
+        round-6 head a 300-emoji reason rendered 420 units against the cap of 240 (an overrun of 180; the budget-spending
+        worst case 437), and the centre's own slice at 239 units landed on a lone high surrogate for a four-letter session
+        name (the fixed prefix's parity decides which half). credentials.cut_to charges two units per code point above
+        U+FFFF and takes whole code points, so the row fits the cap in the consumer's unit, the centre's cut has nothing left
+        to do (it cannot split a pair it never reaches), and no lone surrogate exists in the text; the marker stays last.
+        Headroom would not have closed it (an all-astral reason at the budget is 437 units), and mapping such characters out
+        of `said` would have destroyed the traceback tail the reason exists to carry, which is why the cut is unit-aware
+        instead. For text within the Basic Multilingual Plane the units agree and the cut is as before."""
+        cap, mark = sb.ERROR_CENTER_TEXT_CAP, sb._cred.CUT_MARK
+        units = lambda t: len(t.encode("utf-16-le")) // 2
+        lone = lambda t: [hex(ord(ch)) for ch in t if 0xD800 <= ord(ch) <= 0xDFFF]
+        astral = "\U0001F600" * 300
+        for name in ("web", "webb"):
+            with self.subTest(name=name):
+                text = sb.host_refused_ring_text(name, astral)
+                self.assertLessEqual(units(text), cap, (units(text), "the row fits the cap in the centre's unit"))
+                self.assertLessEqual(len(text), cap)
+                self.assertTrue(text.endswith(mark), "the cut is visible")
+                self.assertEqual(self._centre_cut(text, cap), text, "the centre's cut has nothing to do")
+                self.assertEqual(lone(text), [], "no lone surrogate: whole code points only")
+                self.assertEqual(text.encode("utf-16-le").decode("utf-16-le"), text)
+        one = sb.host_refused_ring_text("web", "OSError: " + "\U0001F600" + "B" * 300)
+        self.assertLessEqual(units(one), cap, "one astral character in the tail costs the budget two, not one")
+        self.assertEqual(self._centre_cut(one, cap), one)
+        worst = sb.host_refused_ring_text("n" * 400, "\U0001F600" * 4000)
+        self.assertLessEqual(units(worst), cap)
+        self.assertEqual(worst.count(mark), 2, "both budgets spent, both cuts marked")
+        self.assertEqual(self._centre_cut(worst, cap), worst)
+        self.assertEqual(sb._cred.utf16_units("a\U0001F600"), 3, "one BMP code point and one pair")
+        self.assertEqual(sb._cred.cut_to("\U0001F600" * 3, 4), "\U0001F600" + mark, "a budget of 4 units holds one pair and the marker, never half a pair")
+        self.assertEqual(sb._cred.cut_to("\U0001F600" * 2, 4), "\U0001F600" * 2, "4 units: fits whole")
+        self.assertEqual(sb._cred.cut_to("abcd", 3), "ab" + mark, "BMP text: as before")
+        self.assertEqual(sb._cred.cut_to("abc", 3), "abc")
+        # the centre's cut on a row built by the pre-fix rule, for the record: a code-point cut of the same reason lands the
+        # centre's slice inside a pair for the four-letter name (the defect the unit-aware cut removes)
+        old = sb.HOST_REFUSED_RING % ("webb", astral[:sb.RING_REASON_BUDGET - 1] + mark)
+        self.assertGreater(units(old), cap)
+        self.assertEqual(len(lone(self._centre_cut(old, cap))), 1, "the pre-fix row: the centre's slice left a lone surrogate")
 
     SKIP_FORMAT = ('RESERVED_DROP_RING = ("env (%s): ignoring reserved %s from the stored session env: romp sets the identity env; a credential is "\n'
                    '                      "Claude Code\'s own")')

@@ -59,7 +59,16 @@ by resolution and not by name:
      a fallback road with no problem= (problem_row's plainer-callable `log(line)`) can carry no value-tainted row:
      a tainted site through it is a rule-(2) violation whatever it declares, and such a row takes the conduit's
      other outputs and files its own ring row (the post-merge census of the env-pick door, 2026-09-20, on main's two
-     refused-launch rows).
+     refused-launch rows). An inner call is judged at its sites ONLY where its taint is wholly its sites' (round 7
+     of that review, 2026-09-20, kernel-1): a site carries the taint of the argument it passes and nothing the
+     conduit's own body folds in, so the census recomputes each inner call's taint, over its message, its ring text
+     and its key, with the conduit's parameters reading as clean and re-propagated through the conduit's own locals
+     and the returns of the helpers they are assigned from (problem_row's `line` is built from its `prose` through a
+     helper's returned row), and an inner call whose RESIDUAL is empty is skipped, while one that folds a source of
+     its own into any of the three (a fold into the message as much as into the ring text) keeps its own row in the
+     rule-(2) check and is judged on its own declaration, since no site carries that taint. A parameters-only mask
+     (the arguments read as clean, the locals left with their propagated taint) reds the clean head through that
+     `line`; the residual walk is what keeps the head green and the fold refused.
   4. THE KERNEL'S FEEDERS. kernel.py has no call to the writer; its rows reach the same bell through the lists
      _sdk_problem_rows merges beside the backend's ring. The census reads _sdk_problem_rows, takes every module-level
      list it reads as a sibling of the ring, finds the functions that append to those lists (_sdk_problem,
@@ -74,8 +83,9 @@ by resolution and not by name:
      alias's, spelled as a string anywhere but the getattr form the walk follows (`operator.attrgetter("_log")`,
      `LOG_ATTR = "_log"`, `vars(be)["_log"]`, `ATTR = "_ring"`: a door reached by reflection), and the ring's name
      spelled as a string at all.
-  6. TAINT. A door call is VALUE-TAINTED when its message or its ring text carries a value derived from a per-session
-     env source: the data road's sources (the env attributes of a session, the 'env' key of a registry row, launch
+  6. TAINT. A door call is VALUE-TAINTED when its message, its ring text or its key carries a value derived from a
+     per-session env source (the key since round 7, 2026-09-20: SdkBackend._log stores it on the ring row, which
+     problems() hands back whole, so a value in a key is a value on the ring; no key at the head carries one): the data road's sources (the env attributes of a session, the 'env' key of a registry row, launch
      shape or request body, the flag-settings constants and helpers, the reserved and credential name sets and the
      functions that judge them; tag "env") and the pending-pick surface set (_reconnect_surfaces and _pick_names,
      which can name the env pick's existence; tag "pick"). Taint flows through assignments (flow-insensitively,
@@ -135,7 +145,7 @@ by resolution and not by name:
      the pin holds that set to the sites it names; an unreduced call stays in the population and is judged by taint
      like every other, so nothing falls out of an assertion by failing to reduce.
 
-From these the pin derives the CONTENT rows (value-tainted door calls filed with problem=True), holds them to the nine
+From these the pin derives the CONTENT rows (value-tainted door calls filed with problem=True), holds them to the rows
 the module's ENV ROWS line names by identity (writing function plus the module-level format the ring text starts
 from), requires every value-tainted door call to declare problem= explicitly (False, or True with a ring text that
 reduces to one module-level format the worst-case table bounds), asserts the negative half of kernel.py and
@@ -150,12 +160,16 @@ what the env-pick door bounds (the pick's values and file); the comment at each 
 SdkSession._log_quietly's problem road (the post-merge census, 2026-09-20, ruling 2): its text is the union of every
 caller's line, each formatted inline by its caller over the session name and the surface names, and the conduit
 shapes nothing of it and forwards ring_text as given, so the bound of a row through it is its CALLER's
-responsibility; the two callers passing problem=True at this head, the live-work reconcile's unknown label and
-unreadable list, pass no ring_text, so each rings its whole line, again about a mechanism outside what the door
-bounds. That responsibility is CURRENTLY UNMET: both callers format self.name uncut (kernel.NAME_RE caps no length),
-and the second joins up to twelve CLI key names uncut into its text and its key; tracked as ITEM: _log_quietly True
-callers unbounded (2026-09-20) in ~/romp-handoffs/romp-general-notes/small-asks.md, outside the repo. The comment at
-the road names them.
+responsibility; the callers passing problem=True at this head (read off the module with each call's arguments bound
+against the conduit's signature, positional or keyword: the live-work reconcile's unknown label and unreadable list,
+and the five failure reports the merge of main brought, the reconnect's reg-flag clear and slot wait, the reconcile's
+mirror write and the guard around each of the two reconciles; round 7, 2026-09-20, which re-derived the roster over
+the merged population rather than citing the round-6 ruling, made over a population in which no caller was itself a
+failure report) pass no ring_text, so each rings its whole line, again about a mechanism outside what the door
+bounds. That responsibility is CURRENTLY UNMET: every caller formats self.name uncut (kernel.NAME_RE caps no length),
+the unreadable-list line joins up to twelve CLI key names uncut into its text and its key, and the five failure
+reports interpolate an exception's text uncut; tracked as ITEM: _log_quietly True callers unbounded (2026-09-20) in
+~/romp-handoffs/romp-general-notes/small-asks.md, outside the repo. The comment at the road names them.
 
 Pure AST: imports nothing of romp, executes nothing of it, and parses each file once per process (ASTS below). The
 public entry is `census(files=None, sources=None)`, returning a Census with the counts, the door calls and the
@@ -358,7 +372,7 @@ class Mod:
 class DoorCall:
     """One call that reaches the ring. `site` is the call node whose line names it; `kind` says how it resolves."""
     __slots__ = ("file", "base", "lineno", "fn", "kind", "node", "message", "ring_text", "problem", "key", "heads",
-                 "unreduced", "taint", "ring_formats", "lexical", "via", "alts")
+                 "unreduced", "taint", "ring_formats", "lexical", "via", "alts", "residual")
 
     def __init__(self, fn, node, kind, message, ring_text, problem, key, via=None):
         self.fn, self.node, self.kind = fn, node, kind
@@ -366,6 +380,7 @@ class DoorCall:
         self.message, self.ring_text, self.problem, self.key, self.via = message, ring_text, problem, key, via
         self.heads, self.unreduced, self.taint, self.ring_formats, self.lexical = [], False, frozenset(), [], False
         self.alts = []     # (problem, ring_text, inner DoorCall) of further inner calls the same conduit site reaches
+        self.residual = frozenset()   # a conduit's inner call: the taint its sites do NOT carry (residual_taint)
 
     def decls(self):
         """Every problem= declaration this site files under: its own, plus each alternative inner call's."""
@@ -1988,6 +2003,7 @@ class Census:
         self._decl_node_tags = {}    # id(node) -> tag: the structural roots of a declared dict source's env (_declare_roots)
         self._decl_roots = {}        # Fn -> (Name roots, attribute roots) of the value it stores under the source key
         self._grown_attrs, self._grown_globals = set(), set()
+        self._residual_returns, self._residual_stack = {}, set()   # residual_taint's caches (round 7, kernel-1)
         work = collections.deque(self.all_fns)
         queued = set(id(f) for f in self.all_fns)
         rounds = 0
@@ -2780,6 +2796,8 @@ class Census:
                 tags |= self.expr_taint(dc.message, ctx)
             if dc.ring_text is not None and not isinstance(dc.ring_text, tuple):
                 tags |= self.expr_taint(dc.ring_text, dc.fn if dc.ring_text is not (dc.via.ring_text if dc.via else None) else dc.via.fn)
+            if dc.key is not None and not isinstance(dc.key, tuple):
+                tags |= self.expr_taint(dc.key, dc.fn if dc.key is not (dc.via.key if dc.via else None) else dc.via.fn)
             for _p, r, inner in dc.alts:
                 if r is not None and not isinstance(r, tuple):
                     tags |= self.expr_taint(r, dc.fn if r is not inner.ring_text else inner.fn)
@@ -2801,7 +2819,12 @@ class Census:
         inner_calls = {id(inner) for lst in self.conduits.values() for inner, _p in lst}
         for dc in self.tainted:
             if id(dc) in inner_calls:
-                continue
+                # narrowed (round 7, kernel-1): skipped only when its taint is wholly its sites' (the residual, with the
+                # conduit's parameters clean and its locals re-propagated, is empty); a fold of the conduit's own into
+                # the message, the ring text or the key keeps this row in the check, judged on its own declaration
+                dc.residual = frozenset(self.residual_taint(dc))
+                if not dc.residual:
+                    continue
             decls = dc.decls()
             bad = [d for d in decls if d[0] != "const"]
             if bad:
@@ -2840,6 +2863,199 @@ class Census:
                                 + self.counts["door_value_sites"] + self.counts["log_param_fns"] + self.counts["feeder_appends"]
                                 + self.counts["merge_reads"])
 
+    # ------------------------------------------------------------------ residual taint (round 7, kernel-1)
+    RESIDUAL_DEPTH = 6
+
+    def residual_taint(self, inner):
+        """The taint a conduit's inner door call carries that its SITES do not: its message's, ring text's and key's
+        taint recomputed with the conduit's own parameters reading as clean and re-propagated through the conduit's
+        locals (a flow-insensitive fixpoint over its assignments, loops, with-items and in-place adds) and through the
+        returns of the helpers those locals are assigned from, each helper read the same way with ITS parameters clean
+        (problem_row's `line` is str(prose) + a mark + json.dumps(row), `row` the return of append_session_event over
+        the same parameters: with the parameters clean and the helper's return recomputed, the residual is empty, and
+        the inner call is judged at its sites; with the parameters clean and the helper's return read from the
+        context-insensitive pass, `row` carries the env every caller ever passed and the clean head reds). A source
+        read in the conduit's body (a source name, an attribute source on any receiver, a source function's call), an
+        attribute read's stored taint, a module name's stored taint and an enclosing scope's taint all count; a call
+        the walk cannot resolve is walked into; a helper deeper than RESIDUAL_DEPTH, or one in a recursion, reads as
+        its whole return from the main pass, the over-approximating side."""
+        fn = inner.fn
+        names = self._residual_names(fn, 0)
+        tags = set()
+        for e in (inner.message, inner.ring_text, inner.key):
+            if e is not None and not isinstance(e, tuple):
+                tags |= self._residual_expr(e, fn, names, 0)
+        return tags
+
+    def _residual_names(self, fn, depth):
+        """{local: tags} over fn's own body with fn's parameters clean (residual_taint says how)."""
+        names = {}
+
+        def store(target, tags):
+            grew = False
+            for leaf in Census._leaves(target):
+                if isinstance(leaf, ast.Starred):
+                    leaf = leaf.value
+                if isinstance(leaf, ast.Name) and tags and not tags <= names.get(leaf.id, set()):
+                    names.setdefault(leaf.id, set()).update(tags)
+                    grew = True
+            return grew
+        for _ in range(6):
+            grew = False
+            for st in fn.assigns:
+                if st.value is None:
+                    continue
+                vt = self._residual_expr(st.value, fn, names, depth)
+                if not vt:
+                    continue
+                for t in (st.targets if isinstance(st, ast.Assign) else [st.target]):
+                    grew |= store(t, vt)
+            for node in fn.loops():
+                if isinstance(node, (ast.For, ast.AsyncFor, ast.comprehension)):
+                    grew |= store(node.target, self._residual_expr(node.iter, fn, names, depth))
+                elif isinstance(node, (ast.With, ast.AsyncWith)):
+                    for item in node.items:
+                        if item.optional_vars is not None:
+                            grew |= store(item.optional_vars, self._residual_expr(item.context_expr, fn, names, depth))
+            for call in fn.calls:
+                f = call.func
+                if isinstance(f, ast.Attribute) and f.attr in self.MUTATING_METHODS:
+                    vt = set()
+                    for a in list(call.args) + [k.value for k in call.keywords]:
+                        vt |= self._residual_expr(a, fn, names, depth)
+                    grew |= store(f.value, vt)
+            if not grew:
+                break
+        return names
+
+    def _residual_return(self, callee, depth):
+        """What `callee` returns with ITS parameters clean, by the same walk; past RESIDUAL_DEPTH or inside a recursion,
+        its whole return from the main pass."""
+        if depth > self.RESIDUAL_DEPTH or callee in self._residual_stack:
+            out = set()
+            for v in self.ret_whole.get(callee, {}).values():
+                out |= v
+            return out
+        hit = self._residual_returns.get(callee)
+        if hit is not None:
+            return hit
+        self._residual_stack.add(callee)
+        try:
+            names = self._residual_names(callee, depth)
+            tags = set()
+            for r in callee.returns:
+                if r is not None:
+                    tags |= self._residual_expr(r, callee, names, depth)
+            decl = self._declared_dict_source(callee)
+            if decl:
+                tags.add(decl)
+        finally:
+            self._residual_stack.discard(callee)
+        self._residual_returns[callee] = tags
+        return tags
+
+    def _residual_expr(self, expr, fn, names, depth):
+        """expr_taint with fn's parameters clean: a parameter Name yields nothing, a local its residual, everything else
+        what the main pass gives it (a source read, a stored attribute, a module name, an enclosing scope), a resolved
+        call its callee's residual return plus its arguments' residual (the safe side: an argument's fold reaches the
+        return whether or not the callee keeps it)."""
+        tags = set()
+        stack = [expr]
+        mod = self.mod_of(fn)
+        params = fn.all_params()
+        while stack:
+            node = stack.pop()
+            if node is None or isinstance(node, tuple):
+                continue
+            tag = self._source_tag(node, fn)
+            if tag:
+                tags.add(tag)
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+                if node.id in params:
+                    continue
+                if node.id in names:
+                    tags |= names[node.id]
+                    continue
+                if node.id in fn.assigned():
+                    continue
+                found = False
+                for s in self.scope_chain(fn)[1:]:
+                    tn = self.tainted_names.get(s)
+                    if tn and node.id in tn:
+                        tags |= tn[node.id]
+                        found = True
+                        break
+                    if node.id in s.all_params() or node.id in s.assigned():
+                        found = True
+                        break
+                if not found:
+                    gt = self.global_taint.get((mod.path, node.id))
+                    if gt:
+                        tags |= gt
+                continue
+            if isinstance(node, ast.Compare) and all(isinstance(op, (ast.Is, ast.IsNot)) for op in node.ops) \
+                    and all(isinstance(cmp, ast.Constant) and cmp.value is None for cmp in node.comparators):
+                continue
+            ra = self._reflected_attr(node)
+            if ra is not None:
+                tags |= self.attr_taint.get(ra[1], set()) | self.attr_whole.get(ra[1], set())
+                stack.append(ra[0])
+                stack.extend(ra[2])
+                continue
+            if isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load):
+                tags |= self.attr_taint.get(node.attr, set()) | self.attr_whole.get(node.attr, set())
+            if isinstance(node, ast.Call):
+                res = self.callees.get(id(node), [])
+                if res:
+                    for callee, _via in res:
+                        if (callee.base, callee.qual) in self.sources["opaque_returns"]:
+                            continue
+                        tags |= self._residual_return(callee, depth + 1)
+                stack.extend(node.args)
+                stack.extend(k.value for k in node.keywords)
+                if not res:
+                    stack.append(node.func)
+                continue
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                continue
+            stack.extend(ast.iter_child_nodes(node))
+        return tags
+
+    # ------------------------------------------------------------------ bound site arguments (round 7, tests-2, extra7-1)
+    def bound_site_args(self, fn, constants=()):
+        """Every call reaching the def `fn` (a Fn, or its qualified name in one of the files), its arguments bound against
+        the def's signature the way the conduit walk binds them (bind_args: a positional by index, a keyword by name, a
+        receiver's self dropped, a parameter left unsaid reading its default), as [(caller Fn, call node, {parameter:
+        argument node})]; beside them the FAILURE rows (kind, file, line, text) for a site the signature cannot read: a
+        starred argument or a ** mapping, whose parameters the walk cannot place, and, for each parameter named in
+        `constants`, an argument that is not an ast.Constant (a name, a call, an expression), whose road the census cannot
+        tell from the text. Both are REFUSED, never read as absent (round 7 of the env-pick door's review, 2026-09-20,
+        tests-2 and extra7-1: the pin naming the conduit's problem=True callers read n.keywords alone, so a caller passing
+        problem positionally counted as saying nothing and the roster it holds the declaration to went stale with every
+        test green); an unverifiable value goes to the restricted side, never to False. A site whose bound argument is
+        the parameter's own default said nothing of it."""
+        if isinstance(fn, str):
+            hits = [f for f in self.all_fns if f.qual == fn]
+            if len(hits) != 1:
+                raise CensusError("%d defs named %s in the files" % (len(hits), fn))
+            fn = hits[0]
+        rows, failures = [], []
+        for call, caller, via in self.callers.get(fn, []):
+            starred = [a for a in call.args if isinstance(a, ast.Starred)] + [k for k in call.keywords if k.arg is None]
+            if starred:
+                failures.append(("site-unbound", caller.base, call.lineno, "%s at %s passes %s, which the signature cannot place; "
+                                 "the site is refused, not read" % (fn.qual, caller.qual, ", ".join(ast.unparse(x) for x in starred))))
+                continue
+            b = self.bind_args(call, fn, via)
+            for name in constants:
+                v = b.get(name)
+                if v is not None and not isinstance(v, ast.Constant):
+                    failures.append(("site-argument-unread", caller.base, call.lineno, "%s= at %s is the expression %s, not a "
+                                     "constant: the road is unread and the site refused, never counted as False"
+                                     % (name, caller.qual, ast.unparse(v)[:60])))
+            rows.append((caller, call, b))
+        return rows, failures
+
     # ------------------------------------------------------------------ views
     def sites(self, calls):
         return sorted((dc.base, dc.lineno) for dc in calls)
@@ -2866,6 +3082,8 @@ class Census:
         out["tainted_all"] = [(dc.base, dc.lineno, dc.owner, dc.kind, dc.problem_decl, sorted(dc.taint)) for dc in
                               sorted(self.tainted, key=lambda d: (d.base, d.lineno))]
         out["unreduced"] = [(dc.base, dc.lineno, dc.owner, dc.kind) for dc in sorted(self.unreduced, key=lambda d: (d.base, d.lineno))]
+        out["inner_residuals"] = [(dc.base, dc.lineno, dc.owner, sorted(dc.residual)) for dc in
+                                  sorted(self.tainted, key=lambda d: (d.base, d.lineno)) if dc.residual]
         out["existence_rows"] = [(dc.base, dc.lineno, dc.owner, dc.kind, dc.problem_decl, dc.heads[:1]) for dc in
                                  sorted(self.existence_rows, key=lambda d: (d.base, d.lineno))]
         out["failures"] = list(self.failures)

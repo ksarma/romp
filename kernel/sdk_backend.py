@@ -5335,7 +5335,11 @@ FLAG_SETTINGS_DIR = "sdk-flag-settings"   # per-session --settings payloads, one
 # cap(r.text, 240), on top of the kernel's own cut at kernel.SDK_PROBLEM_TEXT_CAP, which the feed applies to the same
 # ring text): a ring_text meant to be read whole there stays under it (review round 1 of the env-pick door,
 # 2026-09-18: set_env's refusal row, whose ring text was then the whole line, ran to 414 characters and was clipped
-# mid-word on both surfaces). Pinned to the TypeScript literal by tests/test_session_env.py.
+# mid-word on both surfaces). Pinned to the TypeScript literal by tests/test_session_env.py. The cap counts UTF-16 CODE
+# UNITS (JavaScript's `s.length`), so every budget derived from it is charged in that unit by credentials.cut_to (round 7
+# of the env-pick door's review, 2026-09-20: charged in code points, a host reason of characters above U+FFFF overran
+# the cap by one unit each and a run of them put the centre's cut inside a surrogate pair); the worst-case table
+# measures each row in both units.
 ERROR_CENTER_TEXT_CAP = 240
 # The problem rows this module writes about a per-session env or its flag-settings file are a DERIVED population, and
 # the derivation is a rule over RING WRITERS, not over call-site names (review round 6 of the env-pick door, 2026-09-19;
@@ -5408,8 +5412,9 @@ FLAG_UNWRITABLE_RING = "flag settings (%s): the per-session settings file could 
 # budget, and the road's reason (the exit code or the wait, the host.log path and the host's last word, a traceback
 # line of up to 200 characters or the SDK mismatch's prose) cut to what the cap leaves after the fixed text and the
 # session budget, the way set_env's refusal body is cut. A cut is VISIBLE: credentials.cut_to puts the feed's marker
-# as the last character, so a cut reason never reads as a whole sentence. The ledger row and the kernel log line keep
-# the reason whole; the card reads the ledger.
+# as the last character, so a cut reason never reads as a whole sentence, and it is charged in the cap's own unit
+# (UTF-16 code units; the reason is the one piece of these rows that can carry a character above U+FFFF, a host's
+# traceback tail). The ledger row and the kernel log line keep the reason whole; the card reads the ledger.
 HOST_REFUSED_RING = "the session host for %s %s"
 RING_REASON_BUDGET = ERROR_CENTER_TEXT_CAP - len(HOST_REFUSED_RING % ("", "")) - RING_SESSION_BUDGET   # what the cap leaves: 198
 # The two reserved-name rows' short forms (review round 4 of the env-pick door, 2026-09-19: both rows predate the door and
@@ -5440,14 +5445,16 @@ FORK_RESERVED_RING = ("env (%s): dropping reserved %s from the inherited env: ro
 #   population, and the routine ones are closed by problem=False. Four are filed problem=True,
 #   each declared and not bounded for a stated reason: _do_set_mode's three failure reports about the mode landing (no
 #   ring_text, so the whole line rings, unbounded by a format, and a mechanism outside what this door bounds; the comment
-#   at each line says so; review round 6, ruling 1), and the conduit's problem road, whose text is its callers' (two pass
-#   problem=True today,
-#   the live-work reconcile's unknown label and unreadable list), each formatted inline by its caller and bounded by no
+#   at each line says so; review round 6, ruling 1), and the conduit's problem road, whose text is its callers' (seven
+#   pass problem=True at round 7's head, 2026-09-20: the live-work reconcile's unknown label and unreadable list, and
+#   the five failure reports the merge of main brought, the reconnect's reg-flag clear and slot wait, the reconcile's
+#   mirror write and the guard around each of the two reconciles), each formatted inline by its caller and bounded by no
 #   format: the conduit shapes nothing, so the bound is each caller's responsibility, and the subject is again a
 #   mechanism outside what this door bounds (the comment at the road says so; the post-merge census, ruling 2). That
-#   responsibility is CURRENTLY UNMET: both callers format self.name uncut (kernel.NAME_RE caps no length), and the
-#   second joins up to twelve CLI key names uncut into its text and its key; tracked as ITEM: _log_quietly True callers
-#   unbounded (2026-09-20) in ~/romp-handoffs/romp-general-notes/small-asks.md, outside the repo. A pick that
+#   responsibility is CURRENTLY UNMET: every caller formats self.name uncut (kernel.NAME_RE caps no length), the
+#   unreadable-list line joins up to twelve CLI key names uncut into its text and its key, and the five failure reports
+#   interpolate an exception's text uncut; tracked as ITEM: _log_quietly True callers unbounded (2026-09-20) in
+#   ~/romp-handoffs/romp-general-notes/small-asks.md, outside the repo. A pick that
 #   crosses a dict return is outside the census (a bound on its reach, stated above), so this population is the direct
 #   readers of the surface set by construction. kernel.py and credentials.py write no such row: the kernel's problem rows are this
 #   module's ring and its two feeders (_sdk_problem, _note_ws_drop), and the census finds those doors before it asserts
@@ -7713,15 +7720,21 @@ class SdkSession:
         callback failing (a closed stderr under a service restart) would otherwise escape a hook (the SDK
         turns that into an error control_response) or the settle's finally (skipping its failed-step
         report). A line that says nothing of problem= is routine bookkeeping (the reconnect's arms, holds and
-        withdrawals; the consult under a held bypass pick; the live-work reconcile's lines), so it is filed
-        problem=False (review round 6 of the env-pick door, 2026-09-19): left to _log's default, a line reached
-        inside a handler's dynamic extent (the mode landing's except, _on_message's finally) became a ring row, and
-        its text can name a pending pick, so the ring census (tests/env_ring_census.py) requires this conduit to
-        declare the classification rather than hand every caller the exception state it happens to run in. Never a
-        ring row, then; the kernel log keeps every line. `problem`, `key` and `ring_text` are _log's own (round 5
-        of the reviewer's review of the auth-default PR, 2026-09-19): a problem row from a place that must not
-        raise (the Stop hook's unreadable list, the reconcile's unknown label) passes problem=True through, keyed
-        so a recurring shape counts on one ring row. The two roads are two calls with a constant problem= each,
+        withdrawals; the consult under a held bypass pick; the live-work reconcile's report and hold lines), so it
+        is filed problem=False (review round 6 of the env-pick door, 2026-09-19): left to _log's default, a line
+        reached inside a handler's dynamic extent (the mode landing's except, _on_message's finally) became a ring
+        row, and its text can name a pending pick, so the ring census (tests/env_ring_census.py) requires this
+        conduit to declare the classification rather than hand every caller the exception state it happens to run
+        in. Never a ring row, then; the kernel log keeps every line. That ruling was made over a population in
+        which no caller was itself a failure report; the merge of main brought five that are, each inside an except
+        handler (the reconnect's reg-flag clear and relaunch-slot wait, the live-work reconcile's mirror write and
+        the guard around each of the two reconciles), and round 7 of the same review (2026-09-20) re-derived them
+        over the merged population rather than citing the ruling: each passes problem=True itself, so the caught
+        exception reaches the error centre as it did on main. `problem`, `key` and `ring_text` are _log's own
+        (round 5 of the reviewer's review of the auth-default PR, 2026-09-19): a problem row from a place that must
+        not raise (the Stop hook's unreadable list, the reconcile's unknown label, the five failure reports) passes
+        problem=True through, keyed where a recurring shape should count on one ring row. The two roads are two
+        calls with a constant problem= each,
         never one call forwarding the parameter: the census's rule (2) reads the constant at the call, and the
         parameter's None default (a caller that said nothing) takes the routine road, so no line through here
         reaches _log's exception-state default."""
@@ -7736,13 +7749,19 @@ class SdkSession:
                 # bypass consult, the live-work reconcile's), each formatted inline by its caller with % over self.name
                 # and the surface names, the pick's existence in a fixed vocabulary plus the session name, never a value
                 # of the env pick. This conduit shapes nothing of that text and forwards ring_text as given, so the
-                # bound of a row through here is its CALLER's responsibility, not this road's: the two callers that
-                # pass problem=True today, _note_unknown_bg_type (a task label cut to 60 characters) and
-                # _note_unreadable_bg_list (a list's shape), pass no ring_text, so the ring shows each one's whole
-                # line, unbounded by a module-level format; and their subject, the live-work reconcile, is a
-                # mechanism outside what the env-pick door bounds. That responsibility is CURRENTLY UNMET: both callers
-                # format self.name uncut (kernel.NAME_RE caps no length), and the second joins up to twelve CLI key names
-                # uncut into its text and its key; tracked as ITEM: _log_quietly True callers unbounded (2026-09-20) in
+                # bound of a row through here is its CALLER's responsibility, not this road's: the callers that pass
+                # problem=True at this head (read off the module's AST by tests/test_session_env.py, each call's
+                # arguments bound against this signature), _note_unknown_bg_type (a task label cut to 60 characters),
+                # _note_unreadable_bg_list (a list's shape) and the five failure reports the merge of main brought,
+                # _served_by_connect (the served ask's reg flag), _arm_after_relaunch_slot (the slot wait),
+                # _reconcile_seeded_with_report (the mirror write, and the reconcile's guard) and _reconcile_seeded_work
+                # (its guard), each interpolating an exception's class and text (round 7, 2026-09-20), pass no
+                # ring_text, so the ring shows each one's whole line, unbounded by a module-level format; and their
+                # subject, the live-work reconcile and the reconnect's bookkeeping, is a mechanism outside what the
+                # env-pick door bounds. That responsibility is CURRENTLY UNMET: every caller formats self.name uncut
+                # (kernel.NAME_RE caps no length), the unreadable-list line joins up to twelve CLI key names uncut into
+                # its text and its key, and the five failure reports interpolate an exception's text uncut; tracked as
+                # ITEM: _log_quietly True callers unbounded (2026-09-20) in
                 # ~/romp-handoffs/romp-general-notes/small-asks.md, outside the repo. A defect of the callers, not of
                 # this road.
                 self.backend._log(line, problem=True, key=key, ring_text=ring_text)
@@ -7949,7 +7968,8 @@ class SdkSession:
                 try:
                     self._mirror_auth_pending()
                 except Exception as e:
-                    self._log_quietly("reconnect (%s): the served ask's reg flag could not be cleared: %s" % (self.name, e))
+                    self._log_quietly("reconnect (%s): the served ask's reg flag could not be cleared: %s" % (self.name, e),
+                                      problem=True)   # a caught exception's report: the error centre's, as on main (round 7)
                 try:
                     self.backend._poke()   # every sibling clear pokes: left to the next unrelated poke, the dots stayed on
                 except Exception:
@@ -8126,7 +8146,8 @@ class SdkSession:
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            self._log_quietly("reconnect (%s): the relaunch slot wait failed: %s: %s" % (self.name, type(e).__name__, e))
+            self._log_quietly("reconnect (%s): the relaunch slot wait failed: %s: %s" % (self.name, type(e).__name__, e),
+                              problem=True)   # a caught exception's report: the error centre's, as on main (round 7)
 
     def _note_work_ended(self, what: str) -> None:
         """A removal from the live sets (a subagent's stop, a task's end, a run's roster drop) while a pick
@@ -12956,14 +12977,16 @@ class SdkSession:
                 try:
                     self.backend._update_reg(self.sid, bgTasks=self._live_bg_tasks())
                 except Exception as e:
-                    self._log_quietly("live work (%s): bgTasks mirror write failed after the report's reconcile: %s" % (self.name, e))
+                    self._log_quietly("live work (%s): bgTasks mirror write failed after the report's reconcile: %s" % (self.name, e),
+                                      problem=True)   # a caught exception's report: the error centre's, as on main (round 7)
             try:
                 self.backend._poke()
             except Exception:
                 pass
         except Exception as e:
             self._log_quietly("live work (%s): the seeded-work reconcile against the turn-end report failed: %s: %s"
-                              % (self.name, type(e).__name__, e))
+                              % (self.name, type(e).__name__, e), problem=True)   # a caught exception's report: the error
+            #   centre's, as on main (round 7 of the env-pick door, 2026-09-20)
 
     def _note_unknown_bg_type(self, label, where: str) -> None:
         """A task type spelling this build's record does not know is SAID (round 5 of the reviewer's review, 2026-09-19;
@@ -13046,7 +13069,8 @@ class SdkSession:
                               % (self.name, n, "" if n == 1 else "s", shape,
                                  "it" if n == 1 else "they", "it" if n == 1 else "them"))
         except Exception as e:
-            self._log_quietly("live work (%s): the seeded-work reconcile failed: %s: %s" % (self.name, type(e).__name__, e))
+            self._log_quietly("live work (%s): the seeded-work reconcile failed: %s: %s" % (self.name, type(e).__name__, e),
+                              problem=True)   # a caught exception's report: the error centre's, as on main (round 7)
 
     # ---- snapshot for live_sessions() ----
 
