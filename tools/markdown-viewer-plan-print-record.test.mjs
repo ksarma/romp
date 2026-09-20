@@ -52,6 +52,35 @@ function figureRows() {
   assert.ok(Array.isArray(rows) && rows.length > 0 && rows.every((r) => typeof r.name === 'string' && typeof r.html === 'function'), 'the built table: rows with a name and an html builder');
   return rows;
 }
+/** The figure leg's per-engine rows, derived from the table it builds: every row whose ink (`paints`), root answer
+ *  (`hidden`), twin oracle reading (`twinReads`) or flow answer (`flowReads`) is recorded per engine, each as the words the
+ *  Tests list carries for it, the row's name and the engines named (the round-6 review's cluster E, 2026-09-20: the
+ *  roster bullet stated single answers for rows the leg holds per engine, and a literal-sentence pin held the stale
+ *  sentence; the bullet now carries this list and the pin below derives it, so a row the leg gains with a per-engine
+ *  column reds until the bullet names it). */
+const ENGINE_NAMES = { chromium: 'Chromium', firefox: 'Firefox', webkit: 'WebKit' };
+const ENGINE_ORDER = ['chromium', 'firefox', 'webkit'];
+const engineList = (engines) => engines.length <= 1 ? engines.map((e) => ENGINE_NAMES[e]).join('') : engines.slice(0, -1).map((e) => ENGINE_NAMES[e]).join(', ') + ' and ' + ENGINE_NAMES[engines[engines.length - 1]];
+function divergenceNotes(rows) {
+  const out = [];
+  for (const r of rows) {
+    const parts = [];
+    if (typeof r.paints === 'object') parts.push('ink in ' + engineList(ENGINE_ORDER.filter((e) => r.paints[e])) + ', none in ' + engineList(ENGINE_ORDER.filter((e) => !r.paints[e])));
+    if (typeof r.hidden === 'object') parts.push('the root read hidden in ' + engineList(ENGINE_ORDER.filter((e) => r.hidden[e])) + ' alone');
+    if (r.twinReads) {
+      const on = ENGINE_ORDER.filter((e) => r.twinReads[e] === true), off = ENGINE_ORDER.filter((e) => r.twinReads[e] === false);
+      if (on.length) parts.push('the twin oracle reads a box in ' + engineList(on));
+      if (off.length) parts.push('the twin oracle reads none in ' + engineList(off));
+    }
+    if (r.flowReads) {
+      const on = ENGINE_ORDER.filter((e) => r.flowReads.in[e] === true), off = ENGINE_ORDER.filter((e) => r.flowReads.in[e] === false);
+      if (on.length) parts.push('the flow counts it in ' + engineList(on));
+      if (off.length) parts.push('the flow reads it off in ' + engineList(off));
+    }
+    if (parts.length) out.push('`' + r.name + '` (' + parts.join('; ') + ')');
+  }
+  return out;
+}
 /** A count in the section's words, for a pin that derives the number and reads the sentence. */
 const WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve'];
 const ORDINALS = ['', 'first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth', 'tenth', 'eleventh', 'twelfth'];
@@ -375,7 +404,8 @@ test('P2: only a placeholder that reaches the paper is counted, named and restor
   assert.ok(P2.includes('every other kept attribute leaves the figure on the paper as far as the flow reads, an svg\'s `transform`, `clip-path`, `mask` and `filter` among them (open point 8)'));
   // the round-3 history and the legs that hold it
   assert.ok(P2.includes('before the round-3 review (2026-09-20) the opacity was matched against one spelling of zero by a pattern and the placeholder\'s first element child alone was read'));
-  assert.ok(P2.includes('file-print-figure-browser.test.ts, in Chromium, Firefox and WebKit since the round-5 review: every one of ') && P2.includes(' gated shapes built twice on one page, ') && P2.includes(' at the round-3 review and ') && P2.includes(' more since the round-4 review'), 'the sentence around the shape count; the count and its history clause are the derived pin\'s alone (the branch\'s verification pass finding copies-1: this module carried two literal copies)');
+  const p2Sentence = P2.match(/file-print-figure-browser\.test\.ts, in Chromium, Firefox and WebKit since the round-5 review: every one of (\d+) gated shapes built twice on one page, (\d+) at the round-3 review and (\w+) more since the round-4 review/);
+  assert.ok(p2Sentence !== null && Number(p2Sentence[1]) === figureRows().length, 'the P2 sentence around the shape count, ONE match with the count of the rows the leg builds inside it and the history clause after it (the branch\'s verification pass finding copies-1: this module carried two literal copies; the round-6 review\'s tests-3: four independent substring pins let the count leave the sentence)');
   assert.ok(read('ui', 'webview', 'file-print-egress-browser.test.ts').includes('test("(12) a gated svg at opacity 0e0 and a <picture> whose <img> is hidden, beside a plain placeholder, on three hosts, and a gated svg at opacity 0 on the plain placeholder\'s host:'), 'the egress leg\'s case (12), with the shared-host shape (round 5: the round-4 review\'s tests-4)');
   assert.ok(P2.includes('and since the round-4 review\'s tests-4 (2026-09-20) a gated svg at `opacity="0"` on the plain placeholder\'s own host'));
   assert.ok(P2.includes('file-print-egress-browser.test.ts case (12): a gated svg at `opacity="0e0"` and a `<picture>` whose `<img>` carries `hidden`'));
@@ -596,7 +626,10 @@ test('Open points 6 and 7 record two pre-existing gate observations, each agains
   assert.ok(OPEN.includes('7. A gated host that redirects to a second host. The gate names the host of the URL as written and nothing reads the response'));
   assert.ok(!/\bfetch\(|currentSrc|responseURL|\bResponse\b/.test(gate), 'nothing in the gate reads a response');
   for (const n of ['6.', '7.']) assert.ok(OPEN.includes(n + ' ') && OPEN.includes('Recorded, not fixed.'), 'open point ' + n + ' is recorded, not fixed');
-  inOrder(OPEN, ['1. Wording.', '5. Escape with a re-place pending', '6. The gate judges by origin', '7. A gated host that redirects', '8. The figure half of the printable rule', '9. The wait and a figure reached through a paint reference'], 'the open points\' order');
+  inOrder(OPEN, ['1. Wording.', '5. Escape with a re-place pending', '6. The gate judges by origin', '7. A gated host that redirects', '8. The figure half of the printable rule', '9. The wait and a figure reached through a paint reference', '10. A `script-src` content security policy on the kernel\'s page.'], 'the open points\' order');
+  // round 7: the CSP follow-up, recorded as one that simplifies the census (the maintainer's approval of the round-6 pre-answers)
+  assert.ok(OPEN.includes('10. A `script-src` content security policy on the kernel\'s page. The census in file-print.test.ts refuses the string roads by rule') && OPEN.slice(OPEN.indexOf('10. A `script-src`')).includes('would then drop its string-road rule and shrink') && OPEN.slice(OPEN.indexOf('10. A `script-src`')).includes('Recorded, not fixed.'), 'open point 10 records the CSP follow-up as simplifying the census, not fixed here');
+  assert.ok(read('ui', 'webview', 'file-print.test.ts').includes('stringRoads'), 'the census has the string-road rule the open point names');
   // round 4: the redirect is counted on both roads and the caveat is stated where the title's contract is (the round-2 review's tests-3 and correctness-4)
   const egress = read('ui', 'webview', 'file-print-egress-browser.test.ts');
   assert.ok(egress.includes('test("(13) a gated host that answers 302 to a second host: Print with them over its placeholder fetches both hosts, one request each'), 'the egress leg\'s case (13)');
@@ -877,16 +910,24 @@ test('Derivations and their unknown cases: the paragraph stands between P7 and t
   assert.ok(unit.includes('test("figureHidden under node, where no browser computes a style:'), 'the figureHidden case under node');
   assert.ok(exists('ui', 'webview', 'file-print-figure-browser.test.ts') && read('ui', 'webview', 'file-print-figure-browser.test.ts').includes('for every shape the flow\'s answer equals the INK the shape\'s ungated twin puts on the page'), 'the figure leg in the three engines, the computed half held to the ink (round 7)');
   // the shape count, ONE pin (the round-5 review's correctness-4 and regression-3: the number stood in five places and a
-  // delta updated two): the count is of the rows the leg builds, read here by running its table; one regex over the P2, D
-  // and Tests slices finds every copy, and each must be that count. D carries none (it says "every gated shape"), the
-  // ledger entry carries none (it points here), and this module carries none (the branch's verification pass finding copies-1, 2026-09-20:
-  // two of its pins spelled the count and the history clause by hand; they now pin the sentence around them, and the
-  // assertion below holds this module to no literal copy), so the copies are P2's and the Tests list's, and a row added
-  // to the leg reds both at once, here alone.
+  // delta updated two): the count is of the rows the leg builds, read here by running its table; one regex over the WHOLE
+  // Print section (the heading to the plan's end: tools/markdown-viewer-plan-print.test.mjs holds that no `## ` follows
+  // it) finds every copy, read slice by slice (P2, Derivations, the Tests list, and everything else in the section), and
+  // each must be that count: P2 and the Tests list carry one each, Derivations none (it says "every gated shape") and the
+  // rest of the section none. The round-6 review's cluster F (2026-09-20): the scan read P2, Derivations and the Tests
+  // list alone, under two thirds of the section, so a stale count planted in P1, P5, the open points or the ledger
+  // entry's where: line stayed green; the ledger entry (upstream/2026-09-19-markdown-viewer-print.md) is read below and
+  // carries none, since it points here. This module carries none either (the branch's verification pass finding
+  // copies-1, 2026-09-20: two of its pins spelled the count and the history clause by hand; they now match the sentence
+  // with the count inside it, and the assertion below holds this module to no literal copy), so the copies are P2's and
+  // the Tests list's, and a row added to the leg reds both at once, here alone.
   const rows = figureRows();
   assert.ok(!/\b\d+ gated shapes?\b/.test(read('tools', 'markdown-viewer-plan-print-record.test.mjs')), 'this module carries no literal copy of the shape count');
   const counts = (slice) => [...slice.matchAll(/\b(\d+) gated shapes?\b/g)].map((m) => Number(m[1]));
-  assert.deepEqual({ P2: counts(P2), D: counts(D), TESTS: counts(TESTS) }, { P2: [rows.length], D: [], TESTS: [rows.length] }, 'the shape count, in P2 and the Tests list once each and nowhere else in the section\'s derivations, is the number of rows the leg builds (' + rows.length + ')');
+  const elsewhere = section.replace(P2, '').replace(D, '').replace(TESTS, '');   // the rest of the section: P1, P3 to P4, P5 to P7, the ask, the open points
+  assert.ok(elsewhere.length === section.length - P2.length - D.length - TESTS.length, 'the three slices are cut from the section once each');
+  assert.deepEqual({ P2: counts(P2), D: counts(D), TESTS: counts(TESTS), elsewhere: counts(elsewhere), whole: counts(section) }, { P2: [rows.length], D: [], TESTS: [rows.length], elsewhere: [], whole: [rows.length, rows.length] }, 'the shape count over the WHOLE Print section, read by slice: once in P2, once in the Tests list, none in Derivations and none anywhere else in the section, each the number of rows the leg builds (' + rows.length + ')');
+  assert.deepEqual(counts(read('upstream', '2026-09-19-markdown-viewer-print.md')), [], 'the ledger entry carries no shape count: it points at the plan\'s derived pin (the round-6 review\'s cluster F: the entry\'s where: line carried a stale count at round 5, and the scan did not reach that file)');
   assert.ok(D.includes('the flow\'s answer equal to the browser\'s for the ungated twin of every gated shape, the spellings of zero among them'), 'D states the rule over every shape and counts none');
   // the history clause beside each copy (the count at the round-3 review, and how many joined since) adds up to the same number
   for (const [name, slice, added] of [['P2', P2, 'more'], ['TESTS', TESTS, 'added']]) {
@@ -968,7 +1009,8 @@ test('P2: the ask\'s line and the open-ended wait\'s line end with the button\'s
   assert.ok(driver.includes('pressing it prints once with the parked picture still incomplete and the placeholder on the paper'), 'case (15)\'s title stands: the placeholder\'s box is on the paper (the gated box, not the picture)');
   assert.ok(TESTS.includes('Print anyway printing once with the parked picture incomplete and the placeholder on the paper, the request still parked'), 'and so does the record\'s sentence about it');
   assert.ok(TESTS.includes('case (15a), what reaches the paper: under the deadline\'s ask and under Keep waiting\'s open-ended wait both lines read, before any press, the count then the button\'s own sentence'));
-  assert.ok(read('ui', 'webview', 'file-print-browser.test.ts').includes('assert.equal(b.line, "1 picture has not loaded. Print anyway leaves out any picture still loading.", "the ask\'s line, read before the press'), 'the gated leg reads the ask\'s line before the press');
+  assert.ok(read('ui', 'webview', 'file-print-browser.test.ts').includes('assert.equal(b.line, "1 picture has not loaded. " + anywayWords(), "the ask\'s line, read before the press'), 'the gated leg reads the ask\'s line before the press, the sentence derived from anywayWords() (the round-6 review\'s cluster D: no copy of the words in a leg)');
+  assert.ok(!read('ui', 'webview', 'file-print-browser.test.ts').includes('Print anyway leaves out any picture still loading.'), 'the gated leg holds no copy of the sentence');
   assert.ok(read('ui', 'webview', 'file-print.test.ts').includes('the ask\'s line and the open-ended wait\'s line each end with the button\'s own sentence, what Print anyway does (FAILS BEFORE:'), 'the node test pins the words');
   // the guide says it as the person reads it
   const label = '**Opening a markdown document.**';
@@ -987,9 +1029,31 @@ test('P2: the sentence beside Print anyway takes no count and names no picture, 
   assert.ok(P2.includes('The sentence takes no count and names no picture (the round-5 review\'s ui-1, 2026-09-20): the line\'s count is the aim\'s and does not fall as pictures land, and a picture that lands while the line stands prints, so the round-5 wording, "Print anyway prints without them.", was false from that landing on; file-print-driver-browser.test.ts case (15b) releases pictures under both lines and reads what prints.'));
   const driver = read('ui', 'webview', 'file-print-driver-browser.test.ts');
   assert.ok(driver.includes('test("(15b) a picture that lands while the line stands prints, and the line\'s last sentence stays true of it:'), 'the driver leg\'s case (15b)');
-  inOrder(between(driver, 'test("(15b) a picture that lands while the line stands prints', '\n});'), ['await s.release([SLOW, SLOW2]);', '{ phase: "stalled", line: STALLED_TWO, buttons: [ANYWAY_WORDS, KEEP_WORDS], prints: 0 }', 'const askLine = b.line!;', 'await page.click(ANYWAY_BTN);', 'assert.deepEqual(p[0].incomplete, [], "every <img> complete at the print', 'assert.ok(askLine.endsWith(" " + SENTENCE)', 'await page.click(KEEP_BTN);', 'await s.release([SLOW]);', '{ phase: "preparing", line: waitingWords(2), buttons: [ANYWAY_WORDS], prints: 0 }', 'const waitPrint = await paper(page, "print");', 'assert.equal(waitPrint.parkedComplete, true,', 'assert.ok(waitPrint.parked && waitPrint.parked.w > 0 && waitPrint.parked.h > 0,', 'await page.click(ANYWAY_BTN);', 'assert.equal(p[0].incomplete.length, 1', 'assert.ok(waitLine.endsWith(" " + SENTENCE)', 'await s.release([SLOW, SLOW2]);', 'await printsReach(page, 1);'], 'case (15b): both released under the ask, the line read before the press and held against a print with every picture complete; one released under Keep waiting, read under print media while the line stands (the author\'s closing pass: finding engines-1), then the print with one still loading; both released under Keep waiting, the settle\'s print');
+  inOrder(between(driver, 'test("(15b) a picture that lands while the line stands prints', '\n});'), ['await s.release([SLOW, SLOW2]);', '{ phase: "stalled", line: STALLED_TWO, buttons: [ANYWAY_WORDS, KEEP_WORDS], prints: 0 }', 'const askLine = b.line!;', 'const askPrint = await paper(page, "print");', '{ parkedComplete: true, sizedComplete: true, sized: { w: 120, h: 120 } }', 'await page.click(ANYWAY_BTN);', 'assert.deepEqual(named(p[0].incomplete), [], "every <img> complete at the print', 'assert.ok(askLine.endsWith(" " + anywayWords())', 'await page.click(KEEP_BTN);', 'await s.release([SLOW]);', '{ phase: "preparing", line: waitingWords(2), buttons: [ANYWAY_WORDS], prints: 0 }', 'const waitPrint = await paper(page, "print");', '{ parkedComplete: true, sizedComplete: false, sized: { w: 120, h: 80 } }', 'assert.ok(waitPrint.parked && waitPrint.parked.w > 0 && waitPrint.parked.h > 0,', 'await page.click(ANYWAY_BTN);', 'assert.deepEqual(named(p[0].incomplete), ["sized"]', 'assert.ok(waitLine.endsWith(" " + anywayWords())', 'await page.click(KEEP_BTN);', 'await s.release([SLOW2]);', 'const sizedPrint = await paper(page, "print");', '{ parked: { w: 0, h: 0 }, parkedComplete: false, sized: { w: 120, h: 120 }, sizedComplete: true }', 'await page.click(ANYWAY_BTN);', 'assert.deepEqual(named(p[0].incomplete), ["parked"]', 'await s.release([SLOW, SLOW2]);', 'await printsReach(page, 1);'], 'case (15b): both released under the ask, both pictures read complete in their boxes under print media while the ask stands, then the print with every picture complete and the line\'s sentence held to anywayWords(); the unsized one released under Keep waiting, read complete with a box while the sized one is still loading in its declared box (the author\'s closing pass: finding engines-1), then the print with the sized one alone still loading; the sized one released under Keep waiting, the unsized one read as a 0 by 0 box still loading while the line stands (the round-6 review\'s cluster D), then the print with it alone still loading; both released under Keep waiting, the settle\'s print');
+  assert.ok(!driver.includes('"Print anyway leaves out any picture still loading."'), 'the driver leg holds no copy of the sentence: every read of it is anywayWords() (the round-6 review\'s cluster D: a hand-spelled copy was the only red at the retired words, so a red there measured the copy and not the print)');
+  assert.ok(driver.includes('sizedComplete: sized ? sized.complete : null') && driver.includes('type Paper = { media: string; parked: Box | null; sized: Box | null; gate: Box | null; line: Box | null; parkedComplete: boolean | null; sizedComplete: boolean | null };'), 'paper() reads both pictures\' complete beside their boxes');
+  assert.equal([...read('ui', 'webview', 'file-print.test.ts').matchAll(/"Print anyway leaves out any picture still loading\."/g)].length, 1, 'the words are spelled once, in the node module\'s pin of anywayWords()');
   assert.ok(TESTS.includes('Since the round-5 review (2026-09-20), case (15b), a picture that lands while the line stands prints, and the sentence stays true of it'), 'the Tests list names case (15b)');
   assert.ok(read('ui', 'webview', 'file-print.test.ts').includes('assert.equal(anywayWords.length, 0, "the sentence takes no count'), 'the node test pins the arity');
+  // round 7 (the round-6 review's cluster D): the case asserts the print, and the plan says so in P2 and the Tests list
+  assert.ok(P2.includes('Since the round-7 fixes (the round-6 review\'s cluster D, 2026-09-20) that case reads the PRINT under print media while each line stands, the released picture complete with a non-zero box and the unreleased one still loading in the box case (15a) measured for it, and holds the press\'s print to exactly the unreleased pictures incomplete; the sentence beside the button is read off the line and held equal to `anywayWords()`, the leg holding no copy of the words'), 'P2 says the case reads the print and derives the sentence');
+  assert.ok(TESTS.includes('the case reads the print under print media while each line stands: the released picture complete with a non-zero box (the sized one at 120 by 120 once landed, its declared width and the square picture\'s own height, where its parked box is 120 by 80), the unreleased one still loading in the box case (15a) measured for it (0 by 0 with no declared size, the declared box otherwise), the sized picture released alone as a third road with the unsized one a 0 by 0 box while the line stands, and the press\'s print holding exactly the unreleased pictures incomplete'), 'the Tests list says what the case reads');
+  assert.ok(driver.includes('test("(15b) a picture that lands while the line stands prints, and the line\'s last sentence stays true of it: the PRINT is read under print media while each line stands'), 'the case\'s title states that the print is asserted');
+});
+
+test('the Tests list\'s figure-leg entry names every row the leg holds per engine, per engine, derived from the leg\'s built table (the round-6 review\'s cluster E, regression-1 and extra7-1, 2026-09-20: the entry stated single answers for the svg link at display contents, the six never-rendering containers and opacity 1e-9 while the leg held them per engine, and a literal-sentence pin held the stale sentences; the entry now says what the leg measures and carries this derived list)', () => {
+  const bullet = between(TESTS, '- ui/webview/file-print-figure-browser.test.ts, headless Chromium, Firefox and WebKit', '- ui/webview/file-view-print-takings-browser.test.ts');
+  const rows = figureRows();
+  const notes = divergenceNotes(rows);
+  const perEngine = rows.filter((r) => typeof r.paints === 'object' || typeof r.hidden === 'object' || r.twinReads !== undefined || r.flowReads !== undefined);
+  assert.equal(notes.length, perEngine.length, 'one note per row with a per-engine column (paints or hidden per engine, twinReads, flowReads)');
+  assert.ok(notes.length >= 3 && notes.length < rows.length, 'the population at this head: ' + notes.length + ' of ' + rows.length + ' rows hold a per-engine column');
+  const list = 'The rows the leg holds per engine, each held to its record and named here from the leg\'s built table (the record test derives this list from `shapes()`, so a row the leg gains with a per-engine column reds until it is named): ' + notes.join('; ') + '.';
+  assert.ok(bullet.includes(list), 'the figure-leg entry names every per-engine row per engine, in the leg\'s order: the population derived is the rows with per-engine paints or hidden, twinReads or flowReads, read in the entry\'s slice of the Tests list (its head to the takings leg\'s entry). Expected in the entry: ' + list);
+  assert.ok(bullet.includes('the flow\'s answer for the gated figure and the twin oracle\'s reading (`checkVisibility` with visibility and opacity, and a client rect, over the twin\'s painting elements) each held, per engine, to the INK the twin puts on the page'), 'the entry says what the leg measures: both readings held to the ink per engine');
+  assert.ok(!bullet.includes('held equal to the browser\'s own for the twin (`checkVisibility`'), 'the entry no longer frames the flow as held equal to the twin oracle (7 Firefox and 8 WebKit rows diverge from that framing)');
+  assert.ok(!bullet.includes('marker and metadata never render; g, a and switch do)') && !bullet.includes('a link and a switch (it does not)') && !/`0\.`, `1e-9`, `50%`/.test(bullet), 'the single-answer clauses are gone from the entry');
+  assert.ok(bullet.includes('`1e-9` inks nothing in any engine, and what each engine\'s root read, twin oracle and flow make of it is recorded per engine, below') && bullet.includes('Firefox and WebKit report a box for the image inside the six that never render their content, recorded per row, below') && bullet.includes('on a link (Firefox inks the image inside, Chromium and WebKit do not, recorded per engine, below)'), 'the three clauses the round named point at the per-engine list');
 });
 
 test('P2, P6, open point 8 and the guide carry the figure-level grant sentence: the restore is the whole figure\'s, so a remote URL inside a non-painting element of a painting figure is counted, named and fetched (the round-4 review\'s HIGH 2, a consent-text correction), and the code road is recorded as needing an owner', () => {
@@ -998,6 +1062,11 @@ test('P2, P6, open point 8 and the guide carry the figure-level grant sentence: 
   assert.ok(!P2.includes('every URL the figure names is fetched'), 'the round-5 over-promise is gone from P2');
   assert.ok(P2.includes('A placeholder is counted, named and restored only when its figure paints (`figurePrintable`, below), and that is what the grant covers (the round-4 review\'s HIGH 2, 2026-09-20, a consent-text correction'));
   const P6 = part('P6. **', 'P7. **');
+  // round 7, item 11 (the round-6 pre-answers): the promise that a new root is a red test rather than a dead button names the axes it holds on
+  const P7 = part('P7. **', '**Derivations and their unknown cases.**');
+  assert.ok(P7.includes('red test rather than a dead button: since the round-7 fixes it refuses a seat it has not read on the receiver, argument, verb and write axes, so a root the viewer seats by any of them reds until read, and the promise holds on those four axes and on no other'), 'P7 states the promise with its four axes');
+  assert.ok(flowRaw0().replace(/\n \*  /g, ' ').includes('a red test rather than a dead button: since the round-7 fixes it refuses a seat it has not read on the receiver, argument, verb and write axes, so a root the viewer seats by any of them reds until read'), 'bodyReady\'s docstring states the same (a comment, read as one)');
+  assert.ok(read('ui', 'webview', 'file-print.test.ts').includes('a red test rather than a dead button, on the receiver, argument, verb and write axes since the round-7 fixes'), 'the census pin\'s message names the axes');
   assert.ok(P6.replace(/\n/g, ' ').includes('The restore is the whole figure\'s, so a placeholder whose figure paints may have any URL the figure names fetched, a remote URL inside a non-painting element among them, for something never on the paper; which the browser fetches is its own, measured per shape in file-print-figure-browser.test.ts (P2; the round-4 review\'s HIGH 2, 2026-09-20; open point 8)'), 'P6 (read with its wraps collapsed)');
   assert.ok(!P6.includes('every URL the figure names fetched'), 'the round-5 over-promise is gone from P6');
   assert.ok(OPEN.includes('And the answer is the FIGURE\'s: when one painting element shows, `loadGatedFigure` restores every moved attribute of the root and of its descendants, so a remote URL inside a non-painting element of a painting figure'));
@@ -1017,7 +1086,8 @@ test('P2, P6, open point 8 and the guide carry the figure-level grant sentence: 
   const fig = read('ui', 'webview', 'file-print-figure-browser.test.ts');
   assert.ok(fig.includes('name: "svg>image[a]+defs>image[b]"') && fig.includes('fetches: ["a", "b"]') && fig.includes('name: "picture>source[a]+img[b]"') && fig.includes('fetches: ["a"]'), 'the figure leg holds the fetched URLs per shape, two hosts among them');
   assert.ok(TESTS.includes('a second oracle keyed on the URL, every placeholder whose figure paints restored the way "Print with them" restores it (`loadGatedFigure`, one at a time) and the remote URLs the page then asks for held per shape equal to the table\'s `fetches` column'));
-  assert.ok(TESTS.includes('every one of ') && TESTS.includes(' gated shapes built twice on one page (') && TESTS.includes(' at the round-3 review, ') && TESTS.includes(' added since the round-4 review, below)'), 'the sentence around the shape count; the count and its history clause are the derived pin\'s alone (the branch\'s verification pass finding copies-1)');
+  const testsSentence = TESTS.match(/every one of (\d+) gated shapes built twice on one page \((\d+) at the round-3 review, (\w+) added since the round-4 review, below\)/);
+  assert.ok(testsSentence !== null && Number(testsSentence[1]) === figureRows().length, 'the Tests list\'s sentence around the shape count, ONE match with the count of the rows the leg builds inside it and the history clause in its parenthesis (the branch\'s verification pass finding copies-1; the round-6 review\'s tests-3)');
   // the two-URL qualifier (the round-5 review's regression-5 and extra6-4): the number of added shapes with two URLs is
   // derived from the rows the leg builds whose html takes the second URL, not spelled by hand (the `fetches:` column no
   // longer marks them alone: since the round-6 Firefox fix two one-URL rows carry it per engine), and the ninth is the
@@ -1056,20 +1126,35 @@ test('P2: the wait\'s count is the aim\'s and does not fall as pictures settle, 
  *  names, the gate's node module, the takings leg and the legs' shared harness. Read from the directory, so a module added
  *  under the pattern joins the census on its own. */
 const printTestModules = () => [...fs.readdirSync(path.join(REPO, 'ui', 'webview')).filter((f) => /^file-print.*\.test\.ts$/.test(f)), 'figure-gate.test.ts', 'file-view-print-takings-browser.test.ts', 'real-viewer-leg.ts'].sort();
-/** Every `.filter(...).map((row, i) => ...)` chain in `src` by its syntax: a map whose callback declares an index, over a
- *  filter's result (a `!` or parentheses between them unwrapped), so `i` counts the rows the filter KEPT and no longer names
- *  the row of any table the callback indexes. Each as `line: text`. */
+/** The array methods whose callback takes the element's index (the index is the third parameter of reduce and reduceRight,
+ *  the second of the rest). */
+const INDEXED_ITERATORS = ['map', 'forEach', 'flatMap', 'filter', 'some', 'every', 'find', 'findIndex', 'findLast', 'findLastIndex', 'reduce', 'reduceRight'];
+/** Every chain in `src` that indexes a filter's result by its POST-FILTER index, by its syntax, so `i` counts the rows the
+ *  filter KEPT and no longer names the row of any table the callback indexes. The shape space read (the round-6 review's
+ *  tests-4, 2026-09-20: before this the census matched one shape, a `.map` with an indexed callback directly on a `.filter`
+ *  call): a call of any INDEXED_ITERATORS method whose callback declares the index parameter, on a receiver that is a
+ *  `.filter(...)` call or an identifier a variable declaration anywhere in the module binds to one (a `!` or parentheses
+ *  between them unwrapped), and `Array.from(<filter result>, (row, i) => ...)`. NOT read, so a chain written these ways
+ *  passes unseen: a filter result handed to a function as an argument and indexed inside it, returned from a function,
+ *  reassigned after its declaration, reached through a property or an element access, or spread into another array; a
+ *  binding is matched by NAME across the module, not by scope, so a name bound to a filter in one function marks that
+ *  name everywhere. Each as `line: text`. */
 function postFilterIndexChains(name, src) {
   const sf = tsc.createSourceFile(name, src, tsc.ScriptTarget.Latest, true, tsc.ScriptKind.TS);
   const out = [];
-  const unwrap = (n) => { while (tsc.isNonNullExpression(n) || tsc.isParenthesizedExpression(n)) n = n.expression; return n; };
+  const unwrap = (n) => { while (tsc.isNonNullExpression(n) || tsc.isParenthesizedExpression(n) || tsc.isAsExpression(n) || tsc.isTypeAssertionExpression(n)) n = n.expression; return n; };
+  const isFilterCall = (n) => tsc.isCallExpression(n) && tsc.isPropertyAccessExpression(n.expression) && n.expression.name.text === 'filter';
+  const filterBound = new Set();
+  const collect = (n) => { if (tsc.isVariableDeclaration(n) && tsc.isIdentifier(n.name) && n.initializer !== undefined && isFilterCall(unwrap(n.initializer))) filterBound.add(n.name.text); tsc.forEachChild(n, collect); };
+  collect(sf);
+  const fromFilter = (n) => { const r = unwrap(n); return isFilterCall(r) || (tsc.isIdentifier(r) && filterBound.has(r.text)); };
+  const indexed = (fn, min) => fn !== undefined && (tsc.isArrowFunction(fn) || tsc.isFunctionExpression(fn)) && fn.parameters.length >= min;
+  const at = (n) => (sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1) + ': ' + n.getText(sf);
   const walk = (n) => {
-    if (tsc.isCallExpression(n) && tsc.isPropertyAccessExpression(n.expression) && n.expression.name.text === 'map') {
-      const fn = n.arguments[0];
-      const recv = unwrap(n.expression.expression);
-      const indexed = fn !== undefined && (tsc.isArrowFunction(fn) || tsc.isFunctionExpression(fn)) && fn.parameters.length >= 2;
-      const afterFilter = tsc.isCallExpression(recv) && tsc.isPropertyAccessExpression(recv.expression) && recv.expression.name.text === 'filter';
-      if (indexed && afterFilter) out.push((sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1) + ': ' + n.getText(sf));
+    if (tsc.isCallExpression(n) && tsc.isPropertyAccessExpression(n.expression)) {
+      const method = n.expression.name.text, recv = n.expression.expression;
+      if (INDEXED_ITERATORS.includes(method) && fromFilter(recv) && indexed(n.arguments[0], /^reduce/.test(method) ? 3 : 2)) out.push(at(n));
+      else if (method === 'from' && tsc.isIdentifier(recv) && recv.text === 'Array' && n.arguments.length >= 2 && fromFilter(n.arguments[0]) && indexed(n.arguments[1], 2)) out.push(at(n));
     }
     tsc.forEachChild(n, walk);
   };
@@ -1083,7 +1168,7 @@ const POST_FILTER_INDEX_RECORDS = [
   { file: 'file-print-figure-browser.test.ts', text: 'restored.filter(holds).map((_, i) => names[i])', why: 'namesWhere\'s fails-before record (the round-5 review\'s correctness-3)' },
 ];
 
-test('the post-filter index (the round-4 review\'s correctness-4, tests-7 and regression-3; the round-5 review\'s correctness-3, tests-2, regression-2 and extra7-1, one defect filed seven times): a census over the print test modules by syntax finds every filter-then-map-by-index chain, passes the two fails-before records by their exact text and refuses any other with its module and line; a named helper stands at each site the records replaced', () => {
+test('the post-filter index (the round-4 review\'s correctness-4, tests-7 and regression-3; the round-5 review\'s correctness-3, tests-2, regression-2 and extra7-1, one defect filed seven times; the round-6 review\'s tests-4: the shape space widened from one form): a census over the print test modules by syntax finds every chain that indexes a filter\'s result by the post-filter index in the forms its docstring names, passes the two fails-before records by their exact text and refuses any other with its module and line, saying what it does not read; a named helper stands at each site the records replaced', () => {
   const modules = printTestModules();
   assert.ok(modules.length >= 9 && modules.includes('file-print-figure-browser.test.ts'), 'the listing is the follow-on\'s: ' + modules.join(', '));
   const refused = [], found = [];
@@ -1094,7 +1179,7 @@ test('the post-filter index (the round-4 review\'s correctness-4, tests-7 and re
       if (record) found.push(record); else refused.push(file + ':' + chain);
     }
   }
-  assert.deepEqual(refused, [], 'a filter-then-map-by-index chain the census has not read by hand: a message built from it names a row other than the one that failed (namesWhere or paperMismatches carry the row with its name)');
+  assert.deepEqual(refused, [], 'a post-filter-index chain the census has not read by hand: a message built from it names a row other than the one that failed (namesWhere or paperMismatches carry the row with its name). Read: an indexed callback of ' + INDEXED_ITERATORS.join(', ') + ' or Array.from on a filter call or a name a declaration binds to one, through !, parentheses and casts. Not read: a filter result handed as an argument, returned, reassigned, reached through a property or an element access, or spread');
   assert.deepEqual(found.map((r) => r.text).sort(), POST_FILTER_INDEX_RECORDS.map((r) => r.text).sort(), 'each sanctioned record stands once, none stale');
   assert.equal(found.length, 2, 'the population of the class at the round-6 head: the two records, no live chain');
   // the two records are executed as FAILS BEFORE inside the node cases that hold the helpers

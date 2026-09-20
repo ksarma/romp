@@ -8059,7 +8059,14 @@ visible statement of what will happen, where a silent omission was the defect; n
 picture (the round-5 review's ui-1, 2026-09-20): the line's count is the aim's and does not fall as pictures land, and a
 picture that lands while the line stands prints, so the round-5 wording, "Print anyway prints without them.", was false
 from that landing on; file-print-driver-browser.test.ts case (15b) releases pictures under both lines and reads what
-prints. "Keep waiting" waits on the load and error events alone, with no timer (`settlePictures`
+prints. Since the round-7 fixes (the round-6 review's cluster D, 2026-09-20) that case reads the PRINT under print
+media while each line stands, the released picture complete with a non-zero box and the unreleased one still loading
+in the box case (15a) measured for it, and holds the press's print to exactly the unreleased pictures incomplete; the
+sentence beside the button is read off the line and held equal to `anywayWords()`, the leg holding no copy of the
+words (until then its only red at the round-5 wording was a compare against a copy of the sentence spelled in the leg,
+which measured the copy and not the print; the round-6 wording fix changed no print, so the print reads hold at either
+wording and the words are pinned in file-print.test.ts alone). "Keep waiting" waits on the load and error events
+alone, with no timer (`settlePictures`
 under a null deadline; the state carries `untimed`), until every pending picture settles, then prints; Escape cancels
 that open-ended wait, where the timed wait's Escape stays the viewer's, which closes the card. While that open-ended
 wait stands the line reads "Waiting for 1 picture…" or "Waiting for N pictures…" then the same sentence
@@ -8255,7 +8262,7 @@ takes the PDF road), the pages' host once page 1 removed the loader, and the Cod
 prints the whole file (6 to 7 pages of a hundred paragraphs) and stays live. The unknown child answers NOT in, the safe
 side (the round-2 review, 2026-09-19: the first derivation read every child it had not seen as content, the permissive
 side for a print button, so an unwired pane would have had a live button and a silent print of whatever stood; the
-census below is what makes a root the viewer gains a red test rather than a dead button). The PDF kind is the one
+census below is what makes a root the viewer gains a red test rather than a dead button: since the round-7 fixes it refuses a seat it has not read on the receiver, argument, verb and write axes, so a root the viewer seats by any of them reds until read, and the promise holds on those four axes and on no other). The PDF kind is the one
 exception, for the loader: `bodyReady` takes the file's kind (the host's `kind`, read at every observer callback and at
 the press through the driver's `ready`), and for a PDF the loader (`PDF_LOADER_ROOT`, `div.fileview-load`) reads as
 content, so the Comments panel's pages attempt with no frame kept, the loader alone in the body, leaves Print live and a
@@ -8624,7 +8631,14 @@ _Avoid_ (a review finding, 2026-09-19).
   anyway prints without them." with both complete), and Print anyway prints once with every `<img>` complete, the landed
   picture with a box under print media where the parked one had none; under Keep waiting one of the two released leaves
   the line reading two with the same sentence, and Print anyway prints once with the released picture complete and the
-  other still loading; under Keep waiting both released print once on the settle, no press.
+  other still loading; under Keep waiting both released print once on the settle, no press. Since the round-7 fixes
+  (the round-6 review's cluster D, 2026-09-20) the case reads the print under print media while each line stands: the
+  released picture complete with a non-zero box (the sized one at 120 by 120 once landed, its declared width and the
+  square picture's own height, where its parked box is 120 by 80), the unreleased one still loading in the box case
+  (15a) measured for it (0 by 0 with no declared size, the declared box otherwise), the sized picture released alone
+  as a third road with the unsized one a 0 by 0 box while the line stands, and the press's print holding exactly the
+  unreleased pictures incomplete; the sentence beside the button is read off the line and held equal to
+  `anywayWords()`, the leg holding no copy of the words.
 - ui/webview/file-print-armed-browser.test.ts, under node first (the machine's `recount` event; `ownsEscape` over
   stand-ins: the keyboard inside a menu or a dialog, an open popup's trigger anywhere in the scope whatever the target,
   not an aria-expanded alone, not a scope with none; `printable` over stand-in trees: the open body, a closed details
@@ -8666,20 +8680,29 @@ _Avoid_ (a review finding, 2026-09-19).
   the printable rule over real elements, every one of 83 gated shapes built twice on one page (74 at the round-3 review,
   nine added since the round-4 review, below), gated on a host the
   gear's list does not name through the real gate on a parser document under the sheets' own gate rule, and as an
-  ungated twin at a local URL, the flow's answer for the gated figure held equal to the browser's own for the twin
-  (`checkVisibility` with visibility and opacity, and a client rect, over the twin's painting elements): the spellings
-  of opacity on a gated svg (`0`, `-0`, `+0`, `0e0`, `0%`, ` 0 `, `-1`, `1e-100`, `calc(0)` and `.0` off the paper;
-  `0.0.0`, `0.`, `1e-9`, `50%`, `0.5`, `1`, `abc` and an empty value on it), of visibility (`hidden`, `HIDDEN`, a spaced
+  ungated twin at a local URL, the flow's answer for the gated figure and the twin oracle's reading (`checkVisibility`
+  with visibility and opacity, and a client rect, over the twin's painting elements) each held, per engine, to the INK
+  the twin puts on the page, the leg's measure since the round-7 fixes (the round-6 review's cluster E, 2026-09-20:
+  until then this entry framed the flow as held equal to the twin oracle and stated one answer for rows the leg holds
+  per engine), and where a row records either reading other than the ink in an engine, held to the record there (the
+  rows named per engine at the end of this entry): the spellings of opacity on a gated svg (`0`, `-0`, `+0`, `0e0`,
+  `0%`, ` 0 `, `-1`, `1e-100`, `calc(0)` and `.0` off the paper; `0.0.0`, `0.`, `50%`, `0.5`, `1`, `abc` and an empty
+  value on it; `1e-9` inks nothing in any engine, and what each engine's root read, twin oracle and flow make of it is
+  recorded per engine, below), of visibility (`hidden`, `HIDDEN`, a spaced
   `collapse` and `hidden` beside a CSS comment off; `visible` and `bogus` on) and of display (`none` in five spellings,
   the escaped `n\6fne` among them, and `contents` off; `inline`, `block` and `bogus` on), `hidden` and `popover` on HTML
   and on SVG elements (an `<svg hidden>` and an svg `<image hidden>` paint), a `<picture>` whose `<img>` is hidden, with
   and without a `<source>`, a hidden `<picture>`, a video's poster and a hidden video, the fallback content of a video
   (nothing inks of a video with no poster and no source in any engine; the flow counts its box, recorded on the row)
-  and of an audio (nothing does), an audio with and without `controls`, an svg image inside each SVG
-  container (defs, symbol, clipPath, mask, pattern, marker and metadata never render; g, a and switch do), an svg image
-  hidden by its own display, opacity or visibility, a hidden group over a visible image, `display: contents` on a group
-  and a nested svg (its content renders) and on the outermost svg, a link and a switch (it does not), and an svg reached
-  through a paint reference alone; the gate's sheet rule stands in both sheets and sets display none on the gated root
+  and of an audio (nothing does), an audio with and without `controls`, an svg image inside each SVG container (the
+  image inside defs, symbol, clipPath, mask, pattern, marker and metadata inks nothing in any engine and the one
+  inside g, a and switch does; Firefox and WebKit report a box for the image inside the six that never render their
+  content, recorded per row, below), an svg image hidden by its own display, opacity or visibility, a hidden group
+  over a visible image, `display: contents` on a group and a nested svg (its content inks), on the outermost svg and a
+  switch (nothing inks), and on a link (Firefox inks the image inside, Chromium and WebKit do not, recorded per
+  engine, below), and an svg reached through a paint reference alone (nothing inks where the page cannot resolve the
+  server; the oracle's box and the flow's count recorded per row, below); the gate's sheet rule stands in both sheets
+  and sets display none on the gated root
   alone; no remote host reached before any restore. FAILS BEFORE recorded in its title: `-0`, `+0`, `0e0`, `-1` and
   `calc(0)` read on the paper and `0.0.0` off it; the hidden img inside a picture, the image inside defs and one with
   display none or opacity 0 counted; `<svg hidden>` read as hidden where the browser paints it. Since the round-4 review
@@ -8710,7 +8733,20 @@ _Avoid_ (a review finding, 2026-09-19).
   container, and an `<img>`: the pictures are the `<img>` and the image inside `<g>` alone, the seven other hrefs not
   probed, and the render itself requested every one of the nine (FAILS BEFORE in its title, in Firefox and WebKit: eight
   pictures and seven probes against Chromium's two and one), with `rendered` read per container and held to the
-  per-engine reading the docstrings state.
+  per-engine reading the docstrings state. The rows the leg holds per engine, each held to its record and named here
+  from the leg's built table (the record test derives this list from `shapes()`, so a row the leg gains with a
+  per-engine column reds until it is named): `opacity="1e-9"` (the root read hidden in WebKit alone; the twin oracle
+  reads a box in Chromium, Firefox and WebKit; the flow counts it in Chromium and Firefox); `video>img (fallback)`
+  (the twin oracle reads a box in Chromium, Firefox and WebKit; the flow counts it in Chromium, Firefox and WebKit);
+  `svg>defs>image` (the twin oracle reads a box in Firefox and WebKit); `svg>symbol>image` (the twin oracle reads a
+  box in Firefox and WebKit); `svg>clipPath>image` (the twin oracle reads a box in Firefox and WebKit);
+  `svg>mask>image` (the twin oracle reads a box in Firefox and WebKit); `svg>pattern>image` (the twin oracle reads a
+  box in Firefox and WebKit); `svg>marker>image` (the twin oracle reads a box in Firefox and WebKit);
+  `svg[visibility=hidden]>image[visibility=visible]` (ink in Chromium and Firefox, none in WebKit; the twin oracle
+  reads a box in WebKit; the flow counts it in WebKit); `svg>a[display=contents]>image` (ink in Firefox, none in
+  Chromium and WebKit); `svg[fill=url]>rect` (the twin oracle reads a box in Chromium, Firefox and WebKit; the flow
+  counts it in Chromium, Firefox and WebKit); `svg[fill=url]>defs>rect` (the twin oracle reads a box in Firefox and
+  WebKit).
 - ui/webview/file-view-print-takings-browser.test.ts, headless Chromium: P7's takings and seatings after a paint that
   held the file, each executed against the derived readiness: a reload that fails while the bar is armed with the
   keyboard on a word button of the line (the line goes, the button disables by aria-disabled with the property false,
@@ -8913,3 +8949,11 @@ _Avoid_ (a review finding, 2026-09-19).
    round-3 review (2026-09-20, extra7-3) measured that road, and measured a probe Image of such a URL as a second
    request beyond the restore's own, so a wait over paint references changes the egress counts; whether the wait should
    cover them, or the module header and the guide should say it does not, is a ruling. Recorded, not fixed.
+10. A `script-src` content security policy on the kernel's page. The census in file-print.test.ts refuses the
+   string roads by rule (a callee handed a string where a function is expected: `eval` and its aliases, `Function`, a
+   `setTimeout` or `setInterval` string, `import()`, a `javascript:` URL, a handler member or attribute holding a
+   string), since a string that runs is a seat the census cannot read. A `script-src` policy on the page the kernel
+   serves, without `unsafe-eval` and `unsafe-inline`, would refuse those roads in the browser itself, and the census
+   would then drop its string-road rule and shrink (the maintainer's approval of the round-6 pre-answers, 2026-09-20:
+   deferred as a follow-up that SIMPLIFIES the census rather than one it needs). A kernel change, out of this PR's
+   scope. Recorded, not fixed.

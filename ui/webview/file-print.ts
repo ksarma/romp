@@ -811,7 +811,9 @@ export function rootKind(c: BodyChild): RootKind {
  *  (`div.fileview-err` and nothing else: the fetch's pane, a picture that would not decode, the URL viewer's failure), and
  *  NOT while a child none of the lists names stands, whatever else does: the flow cannot say what a press would print, so
  *  the button stays disabled (the safe side; the census in file-print.test.ts is what makes a new root a red test rather
- *  than a dead button). In when a content root stands and nothing above holds: the rendered root, the code block (a
+ *  than a dead button: since the round-7 fixes it refuses a seat it has not read on the receiver, argument, verb and write
+ *  axes, so a root the viewer seats by any of them reds until read). In when a content root stands and nothing above
+ *  holds: the rendered root, the code block (a
  *  `div.fileview-err` line above either, an empty file's or a render that fell, is a line over content, not a pane), a
  *  picture's box, a PDF frame's column (the pages attempt's notice inside it included), the pages' host once the loader has
  *  gone, the CodeMirror mount (`div.fileview-cm`, which prints the whole file). An empty body is not in. `kind` is the file's
