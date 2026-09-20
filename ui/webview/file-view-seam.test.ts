@@ -1104,7 +1104,10 @@ test("source: the Slice 3 seam members exist with their doc comments; the media 
   // contract (no pass after the adoption sets, repoints, moves or creates a fetching element on an unlisted host) is the node
   // scene's end-state pin through figure-gate's own gateRefs and unlistedHosts (file-view-figures-gate-adopt.test.ts), keyed on
   // the outcome under the box and on no list of names: a new helper, or a pass that creates an element (the fence class), is red
-  // there and not here (the round-1 ruling of the fork PR's review, defect A, 2026-09-20)
+  // there and not here (the round-1 ruling of the fork PR's review, defect A, 2026-09-20). That outcome is the gate's own model of
+  // one, gateRefs over FIGURE_SEL's seven tags and the attributes the gate reads per tag, so the scene answers "did the gate's
+  // model see a leak" and not "did anything fetch"; an element outside the gate's table is the gate's blind spot and the product's,
+  // which no guard keyed on the product's model can see (the review's round 2, correctness-3, tests-2, extra6-2, disclosed there)
   assert.doesNotMatch(mdFn, /(resolveFigureRefs|rewriteFigureSrcs|gateRemoteFigures)\(box,/, "no figure pass runs on the live document's box (a name list, the second layer; the node scene's end-state pin is the guard)");
   assert.ok(mdFn.indexOf("resolveFigureRefs(clean, doc.href);") >= 0 && mdFn.indexOf("resolveFigureRefs(clean, doc.href);") < adoptAt, "the URL kind's resolution runs on `clean` too, before the adoption");
   assert.ok(mdFn.indexOf("return box;") > adoptAt);

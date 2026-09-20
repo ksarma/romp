@@ -40,7 +40,13 @@
 // the box's end state by two readers: figure-gate's own gateRefs and unlistedHosts (the product's oracle, remoteHost against the
 // page and the allowed set, so the CI-run guard is keyed on the OUTCOME at the boundary and on no list of passes, calls or names:
 // an element a pass wrote, moved or created under the box with a fetching attribute on an unlisted host is red here whatever the
-// pass is called) and the scene's own oracle (a URL parse against the page, the host against the allowed set, a same-origin path
+// pass is called; the OUTCOME is the gate's model of one: gateRefs walks figure-gate's own tag table, FIGURE_SEL, img, source,
+// video, audio, track, image and feImage, with the attributes the gate reads per tag, and the scene's FETCHING table is pinned
+// equal to it, so this guard answers "did the gate's model see a leak" and not "did anything fetch"; an element outside those
+// seven tags, an iframe, an object, an embed, a url() in an inline style, is invisible to it, which is the gate's blind spot and
+// the product's and not this guard's to catch, since a guard keyed on the product's own model cannot see past the model, and
+// modelling every fetching element is the gate's job, not this scene's: the fork PR review's round 2, findings correctness-3,
+// tests-2 and extra6-2, disclosed here and left to the gate) and the scene's own oracle (a URL parse against the page, the host against the allowed set, a same-origin path
 // against /file or the document's directory), which alone sees a page-relative leak, since remoteHost answers null for the page's
 // own origin by design; the engines' own loading, DOMPurify's document and its inertness
 // (the seam test's premise pin), and the bytes are the browser legs'. So is what the fence pass's re-parse (code-block.ts
@@ -663,7 +669,10 @@ function assertGateBeforeFirstMove(): { firstMove: Adoption; lastGate: GateMove 
  *  judges an element), none is page-relative or outside a URL document's directory (the scene's oracle, which alone sees the
  *  page's own origin), the gate's walk found the figures left live, and every element the gate moved an attribute aside on stands
  *  under a placeholder naming a host. Keyed on what the box HOLDS when the render is done, so an element a later pass wrote,
- *  moved or created (the fence class) is read here whatever the pass is called. */
+ *  moved or created (the fence class) is read here whatever the pass is called, within the gate's own model: the read is gateRefs
+ *  over FIGURE_SEL's seven tags and the attributes the gate reads per tag (the scene's FETCHING is pinned equal), so it answers
+ *  "did the gate's model see a leak", not "did anything fetch"; an element the gate does not model is the gate's blind spot, not
+ *  this read's to catch (the header says so, and why). */
 function assertEndState(md: El, kind: Kind, sceneAllowed: Set<string>): void {
   const box = md as unknown as Element;
   // the set the gate reads (figure-gate.ts allowedFigureHosts: the gear's list, the hosts loaded in this document, the URL kind's

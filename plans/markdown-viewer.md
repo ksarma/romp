@@ -7963,7 +7963,14 @@ Rendered box's end state through figure-gate's own gateRefs and unlistedHosts, a
 kind's test, a red naming each leaking element by tag, attribute, value and host (the round-2 review's guards-2: three
 plants named the host alone), so an element any pass wrote, moved or created under the box with a fetching attribute
 on an unlisted host is red there whatever the pass is called (the three-name denylist over `box` in
-file-view-seam.test.ts stays as a second layer). Measured in scratch copies of the head, this scene alone: a
+file-view-seam.test.ts stays as a second layer). The guard is keyed on figure-gate's own tag table (FIGURE_SEL: img,
+source, video, audio, track, image and feImage, with the attributes the gate reads per tag; the scene's FETCHING table
+is pinned equal to it), so it answers "did the gate's model see a leak", not "did anything fetch": an element outside
+those seven tags (an iframe, an object, an embed, a url() in an inline style) is the gate's blind spot and the
+product's, not this guard's to catch, since a guard keyed on the product's own model cannot detect the model's gap,
+and modelling every fetching element is the gate's job and not this fix's (the round-2 review's correctness-3, tests-2
+and extra6-2, disclosed here and left to the gate; the plan pin derives the seven tags from figure-gate.ts and holds
+this sentence and the scene's header to them). Measured in scratch copies of the head, this scene alone: a
 post-adoption write of a gated src back into src, a created img minted in the sanitizer's document and appended under
 the box, and a new helper named in no list creating a live img under the box each turned both property-guard tests red
 with unlistedHosts answering the host (4 of 6 red each); the base's order turned the two kind tests red on road (a)
