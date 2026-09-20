@@ -101,24 +101,29 @@ class CapSwitchOffer(unittest.TestCase):
             return out
         # (1) the callables of kernel/sdk_backend.py that REACH set_auth: set_auth itself, and transitively any callable
         # whose body reaches for one already in the set, by attribute or by name (getattr(self, "set_auth") included).
-        # EVERY DEF THE MODULE DEFINES AT ITS TOP LEVEL OR IN A CLASS BODY (round 4 of the review, 2026-09-20; its
-        # correctness-2, tests-2 and extra6-1, all refuters): round 3 derived the set from SdkBackend's own methods alone,
-        # so a kernel call reaching set_auth through a module-level function of this file or through a method of another
-        # class here (SdkSession's, a mixin's) stayed green, ordinary spellings and not adversarial ones. Nested defs are
-        # not walked on their own (set_auth_guarded's `step` closure would otherwise join the set as a name no kernel site
-        # spells): a nested reach is its enclosing def's, which the walk over that def already sees. Two classes can share
-        # a method name, so nodes are kept per name. set_auth_guarded and set_auth_followers each run self.set_auth in
-        # their step; no other callable in the file reaches it. Derived, not listed, so a new reaching callable of any of
-        # those shapes both grows this set and, being a name the kernel census below looks for, cannot be called from
-        # kernel.py without redding. THE RESIDUALS, stated: a reaching helper defined in a THIRD kernel module (neither
-        # kernel/sdk_backend.py nor kernel/kernel.py) is outside both walks; a non-def carrier in this file (a module-level
-        # assignment binding a reaching method to another name) is no def and grows nothing; and the run-time-assembled
-        # name above. The class SdkBackend must still exist by that name: the widened derivation no longer stops on it.
+        # EVERY DEF AT THE MODULE'S TOP LEVEL OR IN THE BODY OF ANY CLASS THE MODULE DEFINES, WHEREVER THAT CLASS SITS
+        # (round 4 of the review, 2026-09-20; its correctness-2, tests-2 and extra6-1, all refuters, and the round's
+        # independent verifier): round 3 derived the set from SdkBackend's own methods alone, so a kernel call reaching
+        # set_auth through a module-level function of this file or through a method of another class here (SdkSession's,
+        # a mixin's) stayed green, ordinary spellings and not adversarial ones. The round-4 commit then walked the
+        # module's TOP-LEVEL classes only, so a staticmethod on a class nested in SdkBackend that reached set_auth stayed
+        # green too (the verifier's plant); the classes are now collected by ast.walk, so a class nested in a class body
+        # or in a def is walked like a top-level one. A def nested in a DEF (a closure) is not walked on its own
+        # (set_auth_guarded's `step` would otherwise join the set as a name no kernel site spells): its reach is its
+        # enclosing def's, which the walk over that def already sees. Two classes can share a method name, so nodes are
+        # kept per name. set_auth_guarded and set_auth_followers each run self.set_auth in their step; no other callable
+        # in the file reaches it. Derived, not listed, so a new reaching callable of any of those shapes both grows this
+        # set and, being a name the kernel census below looks for, cannot be called from kernel.py without redding. THE
+        # RESIDUALS, stated, each a carrier this walk does not visit: a reaching helper defined in a THIRD kernel module
+        # (neither kernel/sdk_backend.py nor kernel/kernel.py) is outside both walks; a non-def carrier in this file (a
+        # lambda, or an assignment binding a reaching method to another name, at module level or in a class body) is no
+        # def and grows nothing; and the run-time-assembled name above. The class SdkBackend must still exist by that
+        # name: the widened derivation no longer stops on it.
         mod = ast.parse(sdk_src)
         self.assertTrue(any(isinstance(n, ast.ClassDef) and n.name == "SdkBackend" for n in mod.body),
                         "the kernel census below is keyed on SdkBackend's method names; a rename must re-derive it")
         defs = {}
-        for scope in [mod] + [n for n in mod.body if isinstance(n, ast.ClassDef)]:
+        for scope in [mod] + [n for n in ast.walk(mod) if isinstance(n, ast.ClassDef)]:
             for d in scope.body:
                 if isinstance(d, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     defs.setdefault(d.name, []).append(d)

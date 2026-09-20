@@ -8164,7 +8164,7 @@ class SdkSession:
         whichever thread wrote last, the mechanism round 3 built for authPending."""
         return {"auth": self.auth, "authLogin": self.auth_login, "authPending": bool(self._auth_pending)}
 
-    def _mirror_auth(self, **fields) -> None:
+    def _mirror_auth(self, **fields) -> bool:
         """_mirror_auth_pending for a writer that changed the session's PICK too (set_auth's branches, the verb's clear):
         auth, authLogin and authPending from the live fields, `fields` in the same RMW, the hold released (round 2 of the
         billing verb's review, 2026-09-18; _auth_live_fields says why the pair is no longer a literal). Returns whether
@@ -8176,7 +8176,7 @@ class SdkSession:
             self._record_writes = getattr(self, "_record_writes", 0) + 1
         return wrote
 
-    def _mirror_auth_pending(self, **fields) -> None:
+    def _mirror_auth_pending(self, **fields) -> bool:
         """The reg's authPending (the badge dots, and the ask the constructor carries across a restart), written from the
         LIVE pending inside the reg lock, with `fields` in the same RMW (round 3 of the review, 2026-09-18). Two threads
         write the pending, each under the hold lock: the walk's step and set_auth on the kernel thread, the landing on
