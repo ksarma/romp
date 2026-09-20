@@ -560,6 +560,11 @@ const appTop = () => PROPS['--app-top'];
 out.restTop = appTop();
 visualViewport.height = 460; visualViewport.offsetTop = 83; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
 out.pan = { appTop: appTop(), appH: appH(), barH: barH() };
+// round 4 (2026-09-20): a height report the run REFUSES (h 0) publishes no pan either. The pan belongs to the height it was
+// measured with, so a report of height 0 with offsetTop 300 leaves --app-top and --app-h where the last valid run put them
+// (83 and 460); publishing the pan alone had moved the fixed body 300 px down under a height that never followed
+visualViewport.height = 0; visualViewport.offsetTop = 300; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+out.refusedHeight = { appTop: appTop(), appH: appH(), barH: barH() };
 // the keyboard goes: the visual viewport grows back and the pan with it
 visualViewport.height = 844; visualViewport.offsetTop = 0; fire(VV, 'resize'); flush();
 out.panDown = { appTop: appTop(), appH: appH(), barH: barH() };
@@ -738,6 +743,10 @@ class MobileFitExecutes(unittest.TestCase):
     def test_the_visual_viewports_pan_is_published_for_the_body_to_sit_at(self):
         self.assertEqual(self.out["restTop"], "0px", "no pan at rest")
         self.assertEqual(self.out["pan"], {"appTop": "83px", "appH": "460px", "barH": "0px"})
+        # round 4 (2026-09-20): the pan is published under the height's validity guard (round 1's fresh-3, landing here). A
+        # report of height 0 with offsetTop 300 is refused whole: --app-h keeps 460 as before, and --app-top keeps 83 rather
+        # than moving the fixed body by a pan measured against no height (the base tree published 300px).
+        self.assertEqual(self.out["refusedHeight"], {"appTop": "83px", "appH": "460px", "barH": "0px"}, "a refused height report publishes no pan")
         self.assertEqual(self.out["panDown"], {"appTop": "0px", "appH": "844px", "barH": "44px"})
 
     def test_a_keyboard_that_shrinks_the_layout_viewport_collapses_the_reservation_only_for_a_hidden_bar(self):

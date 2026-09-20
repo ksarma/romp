@@ -223,12 +223,15 @@ class RefitsWhenTheVisibleHeightChanges(unittest.TestCase):
         # run publishes, so a keyboard dismissed while zoomed cannot leave the body hanging below the viewport (round 2,
         # 2026-09-19); the clamp bounds what is published and never writes back into the hold (round 4, 2026-09-20: it had,
         # so the hold decayed to 0 the first time the clamp bound and a keyboard raised again under the zoom reopened the
-        # band), and the hold is the last value published on EVERY road, the 0px road included. Behaviour:
+        # band), and the hold is the last value published on EVERY road, the 0px road included. Both coarse branches sit
+        # under the height's own validity guard (h truthy, the `if(h)` of the --app-h write above them): a refused height
+        # report publishes no pan either, so the prior pan stands beside the prior height (round 4, 2026-09-20, as round 1
+        # confirmed it); the 0px road has no height to belong to and stays unconditional. Behaviour:
         # test_kernel_mobile.MobileFitExecutes.
         self.assertIn("\nvar lastPan=0;\nfunction fit(){", self.js)
         self.assertIn("if(!coarse||!vv)document.documentElement.style.setProperty('--app-top',(lastPan=0)+'px');", self.js)
-        self.assertIn("else if((vv.scale||1)<=1.01)document.documentElement.style.setProperty('--app-top',(lastPan=Math.round(vv.offsetTop||0))+'px');\n"
-                      "else document.documentElement.style.setProperty('--app-top',Math.min(lastPan,Math.max(0,window.innerHeight-h))+'px');", self.js)
+        self.assertIn("else if(h&&(vv.scale||1)<=1.01)document.documentElement.style.setProperty('--app-top',(lastPan=Math.round(vv.offsetTop||0))+'px');\n"
+                      "else if(h)document.documentElement.style.setProperty('--app-top',Math.min(lastPan,Math.max(0,window.innerHeight-h))+'px');", self.js)
         self.assertNotIn("lastPan=Math.min", self.js, "the clamp is at use: nothing writes its result back into the hold")
         # the write sits inside fit(), after the --app-h write and before the stray-scroll reset, so one frame publishes both
         self.assertLess(self.js.index("setProperty('--app-h',h+'px')"), self.js.index("setProperty('--app-top'"))

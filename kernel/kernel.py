@@ -69863,10 +69863,14 @@ if(h)document.documentElement.style.setProperty('--app-h',h+'px');
 // bound the held pan decayed to 0 and a keyboard raised again under the same zoom laid the shell out at pan 0 under a
 // keyboard-sized --app-h, the band reopened). The hold is the last value PUBLISHED, on every road: the 0px road writes it
 // too, so a pointer that turns fine and coarse again under a zoom holds the 0 the page is using, not the coarse pan from
-// before the flip. The visual viewport's scroll event, where a pan lands, is already bound below, so no new listener.
+// before the flip. The pan is published under the same validity guard as the height it belongs to (round 4, 2026-09-20,
+// as round 1 confirmed it): a coarse run whose height report is refused (h 0) publishes neither, so the prior pan stands
+// beside the prior height rather than moving the fixed body by a pan measured against nothing; the 0px road has no height
+// to belong to and is unconditional. The visual viewport's scroll event, where a pan lands, is already bound below, so no
+// new listener.
 if(!coarse||!vv)document.documentElement.style.setProperty('--app-top',(lastPan=0)+'px');
-else if((vv.scale||1)<=1.01)document.documentElement.style.setProperty('--app-top',(lastPan=Math.round(vv.offsetTop||0))+'px');
-else document.documentElement.style.setProperty('--app-top',Math.min(lastPan,Math.max(0,window.innerHeight-h))+'px');
+else if(h&&(vv.scale||1)<=1.01)document.documentElement.style.setProperty('--app-top',(lastPan=Math.round(vv.offsetTop||0))+'px');
+else if(h)document.documentElement.style.setProperty('--app-top',Math.min(lastPan,Math.max(0,window.innerHeight-h))+'px');
 // iOS ignores interactive-widget and reveals a focused input by SCROLLING this overflow:hidden page
 // (a UA scroll bypasses the clamp) — the shell then sits a keyboard-height up until dragged back
 // (the user 2026-09-02). The layout must never scroll: undo any stray offset on the same events.
