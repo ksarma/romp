@@ -1,5 +1,5 @@
 // A paint of the panel's landing in the GAP between a person's keyboard change of the selection and the browser's selectionchange for
-// it, in headless Chromium over the REAL viewer and panel (file-comments.ts noteSelectionAtHead, pendingChange, afterPaint, offeredFor;
+// it, in headless Chromium over the REAL viewer and panel (file-comments.ts noteSelectionAtHead, pendingChange, lastDelivered, passLeft, afterPaint, offeredFor;
 // real-viewer-leg.ts: the Files pane under styles.css and files-pane.css). Chromium posts selectionchange as a normal-priority task,
 // 0.7 to 14.3 ms after the keydown over 20 measured presses (found 2026-09-19 while a keyboard-offer wait of the paint-offer file was
 // under investigation). afterPaint read the LIVE selection at the end of every pass into the record the listener compares with
@@ -8,13 +8,18 @@
 // answered (the same ends, the same text) and offered nothing. What the person saw depends on the geometry: on a one-line selection the
 // pass leaves intact, the grown (or shrunk) selection's right edge had moved a glyph from under the button, so afterPaint's subject test
 // read the passage as moved, the text as not the record's, and hid the float, which the coming event did not re-offer: the Comment button
-// vanished on Shift+ArrowRight. Now every pass reads the selection at its head, before its writes: one the float has not answered (a
-// passage of the body's, not the record's by its ends or its text, no pointer down, no editor, the panel open) is the person's change
-// with its event still to come, a latch the event lowers, and afterPaint drops the record instead of reading it from a selection that
-// holds their change and leaves the float to that event, which compares the selection as the pass left it with no record and offers
-// beside it as for any change of theirs; a subject the pass left gone or with no box goes with the pass, as it does with no change
-// pending (the review of the fix, 2026-09-20: the event refuses a boxless remnant without hiding, and the button stood beside a bare
-// line break). The pass is forced into the gap deterministically through a road the product exposes to its host: a settings pick from
+// vanished on Shift+ArrowRight. Now every pass reads the selection at its head, before its writes, against the two notes the events
+// themselves write: the selection the last delivered selectionchange found (lastDelivered, the listener's first read) and the one the
+// last pass left (passLeft, afterPaint's last read); a selection at neither is the person's change with its event still to come, a
+// latch the event lowers, and afterPaint drops the record instead of reading it from a selection that holds their change and leaves
+// the float to that event, which compares the selection as the pass left it with no record and offers beside it as for any change of
+// theirs; a subject the pass left gone or with no box goes with the pass, as it does with no change pending (the review of the fix,
+// 2026-09-20: the event refuses a boxless remnant without hiding, and the button stood beside a bare line break). The first version of
+// the latch compared the live selection with the RECORD and inferred a pending event from a mismatch, which was wrong three ways (the
+// review's round 1): true after the event had run (a press ended by the window's blur), true of a stale record, and false with no record,
+// the ordinary state of an open panel, where a pass in the gap of a keyboard or assistive-technology selection recorded it as its own
+// and the person's event offered nothing; the fourth and fifth tests below drive those roads. The pass is forced into the gap
+// deterministically through a road the product exposes to its host: a settings pick from
 // another pane (settings.ts onExternalSettingsChange: the window's storage event for the settings key, which file-comments.ts answers
 // with paintAll at once), fired from a one-shot keyup listener the leg installs, since the ArrowRight keyup is a separate input task
 // Chromium runs ahead of the posted selectionchange; each scene asserts that premise (at the hook the selection already holds the
@@ -33,7 +38,14 @@
 // dragend at the detached node, where nothing of the document's runs (the probe of 2026-09-20): the flag stood past the drop, and every
 // change of the selection after it (a passage selected by caret browsing or assistive technology, then Shift+ArrowRight) offered nothing
 // until the next primary press. Now the press's end is heard at the source itself, hooked at the document's capture dragstart. The leg
-// asserts its premise too: the source detached by the pass and no dragend at the document. Legs await the DOM's own states and frames,
+// asserts its premise too: the source detached by the pass and no dragend at the document. The fourth test is the ordinary state, NO
+// record (a real click's caret, which the listener drops the record for), and the person's selection with the pass in its gap on three
+// roads, each its own subtest: the keyboard (Shift+ArrowRight from the caret, the pass at the keyup) and the selection API with no key
+// event (setBaseAndExtent, and Selection.modify by a word: the closest a test comes to a screen reader's or caret browser's move through
+// the accessibility layer, the pass fired in the same task, so it is in the gap by construction), each offering beside the selection.
+// The fifth is the change whose event ALREADY RAN over a stale record: a second press inside the highlight dragged and ended by the
+// window's blur (no mouseup, so the seam never offered and the record names the first passage), then the pick, whose own event must
+// offer nothing. Legs await the DOM's own states and frames,
 // never a timer. Skips LOUDLY without a playwright browser (CI installs none). Synthetic values only: an invented report, /repo/notes-api
 // paths, the placeholder sid, invented comment ids.
 import { test } from "node:test";
@@ -382,6 +394,159 @@ test("in a browser, the real viewer and panel: a real drag inside a peer's highl
     s = await scene(page);
     assert.deepEqual([s.selected, s.hidden], [P3.slice(5, 21), false], "Shift+ArrowRight grows the selection and offers beside it (before: ignored while the flag stood)");
     assert.equal(s.composer, false, "no composer opened on its own");
+    assert.deepEqual(errors, [], "no script error");
+    await page.close();
+  });
+});
+
+type CaretGap = { before: { selected: string; collapsed: boolean; selChanges: number; hidden: boolean }; after: { selected: string; selChanges: number; hidden: boolean; marks: number } };
+/** A real click in paragraph 3's plain text, at its sixth character: a collapsed caret in the body, the ORDINARY state of an open panel
+ *  (the seam refuses a collapsed selection, and the listener hides a passage's float and drops its record for one), awaited on the
+ *  selection itself. */
+async function clickCaret(page: any): Promise<void> {
+  const at = await page.evaluate(() => { const t = document.querySelectorAll(".fileview-md > p")[2].firstChild as Text; const r = document.createRange(); r.setStart(t, 5); r.setEnd(t, 6); const b = r.getBoundingClientRect(); return { x: b.left + 1, y: b.top + b.height / 2 }; });
+  await page.mouse.click(at.x, at.y);
+  await page.waitForFunction(() => { const s = getSelection()!; return s.rangeCount === 1 && s.isCollapsed; }, null, { timeout: 5000 });
+  await frames(page, 2);
+}
+/** A change of the selection through the selection API, no key event at all (the closest a test comes to a screen reader's or a caret
+ *  browser's move through the accessibility layer), with the pass fired in the same task right after it: the posted selectionchange
+ *  cannot run before the script returns, so the pass is in its gap by construction. `kind` is the call: setBaseAndExtent over paragraph
+ *  3's characters 5 to 20, or Selection.modify extending the caret forward by a word. Returns the scene at the call and after the pass,
+ *  awaited on the change's selectionchange. */
+async function apiChangeInGap(page: any, kind: "extent" | "modify"): Promise<CaretGap> {
+  const baseline: number = await page.evaluate(() => (window as any).__selChanges as number);
+  const gap: CaretGap = await page.evaluate((k: string) => {
+    const w = window as any; const f = document.querySelector(".fc-float") as HTMLElement; const sel = getSelection()!;
+    const read = () => ({ selected: String(sel), collapsed: sel.isCollapsed, selChanges: w.__selChanges as number, hidden: f.hidden });
+    if (k === "extent") { const t = document.querySelectorAll(".fileview-md > p")[2].firstChild as Text; sel.setBaseAndExtent(t, 5, t, 20); }
+    else sel.modify("extend", "forward", "word");
+    const before = read();
+    w.__pick();
+    return { before, after: { ...read(), marks: document.querySelectorAll(".fileview-body mark.fc-hl").length } };
+  }, kind);
+  await page.waitForFunction((n: number) => (window as any).__selChanges > n, baseline, { timeout: 5000 });
+  await frames(page, 2);
+  assert.equal(gap.before.selChanges, baseline, "the premise: the change's selectionchange is still to come when the pass runs (the pass is in its gap)");
+  return gap;
+}
+
+const API_ROADS: Array<{ name: string; kind: "extent" | "modify"; text: string | RegExp }> = [
+  { name: "the selection API from a click's caret: setBaseAndExtent over fifteen characters, no key event, the pass in the same task", kind: "extent", text: P3.slice(5, 20) },
+  { name: "the selection API from a click's caret: Selection.modify extending the caret by a word, no key event, the pass in the same task", kind: "modify", text: /^raph ?$/ },
+];
+/** Shift with `key` once, awaited on the key's selectionchange (the count past its value before the press). */
+async function shiftKey(page: any, key: string): Promise<void> {
+  const n: number = await page.evaluate(() => (window as any).__selChanges as number);
+  await page.keyboard.down("Shift"); await page.keyboard.press(key); await page.keyboard.up("Shift");
+  await page.waitForFunction((k: number) => (window as any).__selChanges > k, n, { timeout: 5000 });
+  await frames(page, 1);
+}
+const focusInBody = (page: any): Promise<boolean> => page.evaluate(() => { const s = getSelection()!; const b = document.querySelector(".fileview-body")!; return !!s.focusNode && b.contains(s.focusNode); });
+/** The outcome every no-record road shares: the person's event offers the float beside the selection as the pass left it, and a further
+ *  pick with no change of theirs moves nothing. */
+async function offeredAfterGap(page: any, st: any, text: string | RegExp | null): Promise<void> {
+  let s = await scene(page);
+  if (typeof text === "string") assert.equal(s.selected, text, "the person's selection stands"); else if (text) assert.match(s.selected, text, "the person's selection stands");
+  assert.deepEqual([s.collapsed, s.inBody, s.boxless], [false, true, false], "a passage in the body with a box");
+  assert.equal(s.hidden, false, "the person's event offers the float (before: the pass in the gap, with no record to compare with, recorded their selection as its own, and the event compared equal and offered nothing)");
+  near(s.left, s.expectedLeft, "...beside the selection's end, showFloat's arithmetic for the live range"); near(s.top, s.expectedTop, "...on its line");
+  assert.equal(s.composer, false, "no composer opened on its own");
+  // the pinned rule stands: the same pick with no change of the person's moves nothing and offers nothing new
+  const standing = { left: s.left, top: s.top, selChanges: s.selChanges };
+  await page.evaluate(() => { (window as any).__pick(); });
+  await frames(page, 4);
+  s = await scene(page);
+  assert.deepEqual([s.hidden, s.left, s.top, s.marks], [false, standing.left, standing.top, 1], "a pick with no change of the person's leaves the float where the offer put it: the paint's own move is no offer");
+  st.diagnostic("the pick with no change fired " + (s.selChanges - standing.selChanges) + " selectionchange event(s) of its own");
+}
+
+test("in a browser, the real viewer and panel: the ORDINARY state of an open panel, NO record, then the person's selection with a settings pick from another pane landing in its gap, on three roads, each its own subtest: the KEYBOARD (a real drag in the last paragraph, Shift+ArrowDown until the focus leaves the body for the aside, where the listener hides the float and drops the record, then Shift+ArrowUp bringing the selection back into the body with the pass at the arrow's keyup: the keyboard-offer leg's round-4 geometry, since Chromium extends no selection from a bare caret in plain text), and the SELECTION API from a real click's caret with no key event at all (setBaseAndExtent, and Selection.modify by a word: a screen reader or caret browser moves the selection through the accessibility layer and the page sees no key; the pass fired in the same task, so in the gap by construction); each offers the float beside the selection as the pass left it (before: the first latch was raised over a standing record alone, so with none the pass recorded the person's selection as its own, and their event compared equal and offered nothing, the PR's own defect still reachable on the road the feature exists for); then the same pick with no change of the person's offers nothing", { timeout: 300000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    await t.test("the keyboard: Shift+ArrowDown out of the body (the record dropped), Shift+ArrowUp back in with the pass at the arrow's keyup", { timeout: 120000 }, async (st) => {
+      const { page, errors } = await openWith(browser, E);
+      // the body at its end, a real drag over the last paragraph's first ten characters: offered
+      await page.evaluate(() => { getSelection()!.removeAllRanges(); const b = document.querySelector(".fileview-body") as HTMLElement; b.scrollTop = b.scrollHeight; });
+      await frames(page, 2);
+      const r: Ends = await page.evaluate(() => { const ps = document.querySelectorAll(".fileview-md > p"); const p = ps[ps.length - 1] as HTMLElement; const range = document.createRange(); range.setStart(p.firstChild!, 0); range.setEnd(p.firstChild!, 10); const b = range.getBoundingClientRect(); return { x1: b.left + 1, y1: b.top + b.height / 2, x2: b.right - 1, y2: b.top + b.height / 2 }; });
+      await drag(page, r);
+      let s = await scene(page);
+      assert.deepEqual([s.selected, s.hidden, s.marks], ["Filler 40:", false, 1], "the drag selected the last paragraph's first ten characters and the float is offered; the peer's mark stands on paragraph 2");
+      await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+      // Shift+ArrowDown until the focus leaves the body for the aside: the float goes and the listener drops the record (round 4)
+      let downs = 0;
+      while (await focusInBody(page)) { await shiftKey(page, "ArrowDown"); downs++; assert.ok(downs < 12, "Shift+ArrowDown reaches the aside within twelve presses"); }
+      s = await scene(page);
+      assert.deepEqual([s.hidden, s.inBody], [true, false], "the focus out of the body after " + downs + " presses: the float goes, and the record with it (the ordinary state)");
+      const baseline = s.selChanges;
+      // Shift+ArrowUp with the pass in its gap: the selection back in the body, a passage over NO record
+      const gap = await pressInGap(page, "ArrowUp", baseline);
+      assert.equal(gap.before.selChanges, baseline, "the premise: at the keyup the key's selectionchange is still to come (the pass is in the gap)");
+      assert.equal(gap.before.hidden, true, "...with no offer standing");
+      assert.deepEqual([gap.after.collapsed, gap.after.marks], [false, 1], "the pass left the selection standing and the peer's mark painted anew");
+      assert.equal(gap.after.selChanges, baseline, "the pass fired nothing of its own (its writes touch paragraph 2 alone)");
+      st.diagnostic("at the keyup the selection read " + JSON.stringify(gap.after.selected.slice(0, 40)) + "; the float was " + (gap.after.hidden ? "hidden" : "shown"));
+      await offeredAfterGap(page, st, null);
+      assert.deepEqual(errors, [], "no script error");
+      await page.close();
+    });
+    for (const road of API_ROADS) await t.test(road.name, { timeout: 120000 }, async (st) => {
+      const { page, errors } = await openWith(browser, E);
+      await clickCaret(page);
+      const s = await scene(page);
+      assert.deepEqual([s.collapsed, s.inBody, s.hidden, s.marks], [true, true, true, 1], "the click's caret: a collapsed selection in the body, no offer standing, the peer's mark on paragraph 2");
+      const baseline = s.selChanges;
+      const { before, after } = await apiChangeInGap(page, road.kind);
+      if (typeof road.text === "string") assert.equal(before.selected, road.text, "the premise: at the pass the selection holds the person's change"); else assert.match(before.selected, road.text, "the premise: at the pass the selection holds the person's change");
+      assert.equal(before.selChanges, baseline, "...and its selectionchange is still to come");
+      assert.equal(before.hidden, true, "...with no offer standing (no record: the ordinary state)");
+      assert.deepEqual([after.selected, after.marks], [before.selected, 1], "the pass left the selection whole (paragraph 3 holds no mark) and the peer's mark standing");
+      assert.equal(after.selChanges, baseline, "the pass fired nothing of its own (its writes touch paragraph 2 alone)");
+      st.diagnostic("at the pass the float was " + (after.hidden ? "hidden" : "shown") + "; the selection read " + JSON.stringify(after.selected));
+      await offeredAfterGap(page, st, road.text);
+      assert.deepEqual(errors, [], "no script error");
+      await page.close();
+    });
+  });
+});
+
+test("in a browser, the real viewer and panel: a change whose selectionchange ALREADY RAN, over a STALE record (the review's round 1, extra6-1): a real drag inside a peer's highlight offers the float; a second press inside the highlight drags out another passage, its events delivered under the press (which the listener ignores), and the press ends at the window's blur, with no mouseup for the seam to offer at, so the record still names the first passage; a settings pick from another pane then repaints the marks, moving the selection's anchor out of the mark and firing an event of its own: no Comment button, since nobody selected the remnant (before: the head read the delivered change as one still to come over the stale record, dropped the record, and the pass's own event offered the float with no gesture)", { timeout: 180000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const { page, errors } = await openWith(browser, ON);
+    await dragInside(page, MARK_ON, 3, 14);
+    let s = await scene(page);
+    assert.equal(s.selected, "lorem ipsum dolor sit amet".slice(3, 14), "the drag selected the passage inside the highlight");
+    assert.deepEqual([s.hidden, s.marks], [false, 1], "the drag's mouseup offers the float; the peer's mark stands");
+    // the second press inside the mark, on a character outside the first selection (a press inside a selection starts a drag of its
+    // text instead), dragged into the plain text after the mark and HELD: the float goes at the press, the drag's events run, and the
+    // pass to come moves the anchor out of the mark and leaves the plain text's part, a remnant with a box (the ON cut's geometry)
+    const ends = await page.evaluate(([sel, a, k]: [string, number, number]) => {
+      const m = document.querySelector(sel) as HTMLElement; const t = m.firstChild as Text; const after = m.nextSibling as Text;
+      const ra = document.createRange(); ra.setStart(t, a); ra.setEnd(t, a + 1); const x = ra.getBoundingClientRect();
+      const rb = document.createRange(); rb.setStart(after, k - 1); rb.setEnd(after, k); const y = rb.getBoundingClientRect();
+      return { x1: x.left + 1, y1: x.top + x.height / 2, x2: y.right - 1, y2: y.top + y.height / 2 };
+    }, [MARK_ON, 20, 8]);
+    const dragged = "lorem ipsum dolor sit amet".slice(20) + P2.slice(P2.indexOf(" consectetur"), P2.indexOf(" consectetur") + 8);
+    await page.mouse.move(ends.x1, ends.y1); await page.mouse.down(); await page.mouse.move(ends.x2, ends.y2, { steps: 6 });
+    await page.waitForFunction((tx: string) => String(getSelection()) === tx, dragged, { timeout: 5000 });
+    await frames(page, 4);
+    const held = await scene(page);
+    assert.deepEqual([held.selected, held.hidden], [dragged, true], "the drag's passage, from inside the mark into the plain text after it, stands selected and the press hid the float");
+    const c1 = held.selChanges; await frames(page, 4); const c2 = (await scene(page)).selChanges;
+    assert.equal(c2, c1, "the drag's every selectionchange has run: the count stands still (" + c1 + ")");
+    // the window's blur ends the press (a release in another window never reaches this one): no mouseup, no offer, the record stale
+    await page.evaluate(() => { window.dispatchEvent(new Event("blur")); });
+    // the pass, from the test with no hook and nothing pending: a settings pick from another pane
+    await page.evaluate(() => { (window as any).__pick(); });
+    await frames(page, 4);
+    s = await scene(page);
+    t.diagnostic("after the pick the selection reads " + JSON.stringify(s.selected) + " as " + JSON.stringify(s.anat) + "; the pass fired " + (s.selChanges - c2) + " selectionchange event(s) of its own; the float is " + (s.hidden ? "hidden" : "shown at " + s.left + "/" + s.top));
+    assert.ok(s.selChanges > c2, "the premise: the pass moved the selection (the mark's text merged away and wrapped anew) and fired an event of its own");
+    assert.deepEqual([s.collapsed, s.inBody, s.boxless, s.marks], [false, true, false, 1], "...leaving a remnant with a box in the body (the plain text's part), the peer's mark painted anew: a remnant the event would offer beside over no record");
+    assert.equal(s.hidden, true, "no Comment button with no gesture: the paint's own move of the selection is no offer (before: the pass read the delivered drag as a change still to come, dropped the record, and this event offered the float beside a remnant nobody selected)");
+    assert.equal(s.composer, false, "no composer opened on its own");
+    await page.mouse.up();
+    await frames(page, 2);
     assert.deepEqual(errors, [], "no script error");
     await page.close();
   });

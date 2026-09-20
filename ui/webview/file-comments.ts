@@ -542,6 +542,20 @@ type SelectionEnds = { anchorNode: Node | null; anchorOffset: number; focusNode:
 const endsOf = (sel: Selection): SelectionEnds => ({ anchorNode: sel.anchorNode, anchorOffset: sel.anchorOffset, focusNode: sel.focusNode, focusOffset: sel.focusOffset });
 const atEnds = (was: SelectionEnds, sel: Selection): boolean =>
   was.anchorNode === sel.anchorNode && was.anchorOffset === sel.anchorOffset && was.focusNode === sel.focusNode && was.focusOffset === sel.focusOffset;
+/** A selection's two ends noted for a later compare with the live selection (Panel.lastDelivered, Panel.passLeft), by node identity
+ *  and offset as atEnds compares, the nodes held weakly: the listener's note outlives the pass that swaps the body out from under it,
+ *  and the record's rule holds for every note of the panel's (offeredFor: no node of a swapped-out render is held). null is no range
+ *  at all; a collapsed selection is a note like any other. A note whose node the collector took compares equal to nothing, as a live
+ *  selection names no node the document has lost. */
+type EndsNote = { anchor: WeakRef<Node> | null; anchorOffset: number; focus: WeakRef<Node> | null; focusOffset: number } | null;
+const noteEnds = (sel: Selection | null): EndsNote => sel && sel.rangeCount
+  ? { anchor: sel.anchorNode ? new WeakRef(sel.anchorNode) : null, anchorOffset: sel.anchorOffset, focus: sel.focusNode ? new WeakRef(sel.focusNode) : null, focusOffset: sel.focusOffset }
+  : null;
+const heldNode = (r: WeakRef<Node> | null): Node | null | undefined => (r ? r.deref() : null);
+const atNote = (note: EndsNote, sel: Selection | null): boolean => {
+  if (!note || !sel || !sel.rangeCount) return !note && !(sel && sel.rangeCount);
+  return heldNode(note.anchor) === sel.anchorNode && note.anchorOffset === sel.anchorOffset && heldNode(note.focus) === sel.focusNode && note.focusOffset === sel.focusOffset;
+};
 /** Whether a selection end (`node`, `offset`) lies inside the mark `x`, or at one of its edges (Panel.dragClick). A drag
  *  that ends at the mark's boundary may be reported by the engine not as a point inside the mark but as one in the mark's
  *  parent, at the mark's index (its start) or the next (its end), or at the end of the text node before the mark or the
@@ -1297,37 +1311,54 @@ class Panel {
    *  live selection and recorded it here, so their own event then read the selection as already offered and offered nothing; on a
    *  one-line selection the paint left intact, the change had moved the right edge a glyph from under the button, and afterPaint hid
    *  the float, which the coming event did not re-offer: the Comment button vanished on Shift+ArrowRight (found 2026-09-19). Now a
-   *  pass reads the selection at its head (noteSelectionAtHead), and one the float has not answered leaves the record dropped and the
-   *  float to the pending event. */
+   *  pass reads the selection at its head (noteSelectionAtHead) against the two notes the events write (lastDelivered, passLeft), and
+   *  a change whose event is still to come leaves the record dropped and the float to that event. */
   offeredFor: SelectionEnds & { text: string } | null = null;
-  /** A change of the selection the float has NOT answered is on its way: the person changed it since the last offer or pass, a pass found
-   *  the change at its head, and the browser's selectionchange for it is still to come (offeredFor's note on the gap). A latch: raised by
-   *  noteSelectionAtHead before a pass's writes (paintAll, repaintPreselPass), read by afterPaint at the pass's end, which then drops the
-   *  record instead of reading it from a selection that holds their change and leaves the float to that event, and lowered by the event
-   *  itself (onSelectionChange's first line), never by a pass: a second pass in the same task, the record dropped by the first, reads the
-   *  same pending change, whose event has not run. The event compares the selection as the pass left it with no record and offers
-   *  beside it (or hides) as for any change of theirs, and the pass's own move of the selection, where it makes one, rides the same
-   *  posted event. Raised over a standing record alone: with NO record a pass records the selection as before and its own event is no
-   *  offer, since a passage standing over no record is one the listener refused (a range with no box) or made while the panel was
-   *  closed, no change the float has to answer. Read as pending whenever no record stood, opening the panel over a selection made
-   *  while it was closed offered the float when the open's writes happened to split the selection's text node, and not otherwise (the
-   *  review of the fix, 2026-09-20). A pass the editor's stand-down ends (paintAll's first line) reads none of it: the editor's
-   *  selections are edits, as the listener has them. Nothing is pending while the panel is closed (the listener answers no change
-   *  then), and openPanel starts the record and the latch afresh, so a selection standing from while it was closed is the open's own
-   *  pass to record. */
+  /** The selection as the document's last delivered selectionchange found it, by its ends (EndsNote): onSelectionChange's first
+   *  read, before any of its guards, so an event delivered under a press or to the editor notes it too. One of the two notes a pass's
+   *  head compares the live selection with (noteSelectionAtHead, pendingChange): a live selection at this note is one the listener
+   *  has heard, every change since it having its event still posted. Begins as the selection standing when the listener is installed
+   *  (the constructor): a change before that had its event before the panel heard, and one whose event is still to come at the install
+   *  is heard. Cleared at dispose. */
+  lastDelivered: EndsNote = null;
+  /** The selection as the last pass left it, by its ends (EndsNote): afterPaint's read after the writes, every pass, the editor's
+   *  stand-down included. The other note a pass's head compares with: a live selection at it is the last pass's own product, its
+   *  event pending (a merged or split text node) or never coming (the lone-child collapse, afterPaint's note), no change of the
+   *  person's. Cleared at dispose. */
+  passLeft: EndsNote = null;
+  /** A selectionchange of the person's is on its way: the selection changed since the document's last selectionchange was delivered,
+   *  by other hands than the last pass's, and the browser has posted the event and not yet delivered it (offeredFor's note on the gap).
+   *  A latch: raised at a pass's head (noteSelectionAtHead, before the writes of paintAll and repaintPreselPass) when the live selection
+   *  is at neither note the events write, the last delivered event's (lastDelivered) nor the last pass's own (passLeft); read by
+   *  afterPaint at the pass's end, which then drops the record instead of reading it from a selection that holds their change and
+   *  leaves the float to that event; and lowered by the event itself (onSelectionChange's first lines), never by a pass and not by the
+   *  panel's open, so a second pass in the same task, the record dropped by the first, reads the same pending change. The event
+   *  compares the selection as the pass left it with no record and offers beside it (or hides) as for any change of theirs, and the
+   *  pass's own move of the selection, where it makes one, rides the same posted event. The first version of the latch (2026-09-20)
+   *  compared the live selection with the RECORD (offeredFor) and inferred a pending event from a mismatch, and the inference was
+   *  wrong three ways (the review's round 1): true after the event had run and returned without recording (a press ended by the
+   *  window's blur mid-drag, the record standing from before the press), so the record was dropped for an event that never came and
+   *  the pass's own event then offered with no gesture; true of a stale record, so the latch stood with nothing coming and every later
+   *  pass skipped its record, its re-seat and its hides; and false with no record standing, the ordinary state of an open panel (the
+   *  listener drops the record at every collapsed or out-of-body selection), so a pass landing in the gap of a keyboard or
+   *  assistive-technology selection recorded it as its own and the person's event offered nothing. The notes are written by the
+   *  deciding events alone, so none of the three holds: onSelectionChange notes the selection every delivered event finds, and
+   *  afterPaint notes what every pass leaves, so a live selection at neither is one some other hand moved since the listener last
+   *  heard, whose event is posted and not delivered; a pass's own move is at passLeft, its event pending or, for the lone-child
+   *  collapse, never coming. A raise keyed on the gesture instead (the document's keydown, a press's end) was weighed and not built:
+   *  a key that changes nothing (Shift alone, a copy, an arrow at the document's edge) posts no selectionchange, so a latch it raised
+   *  would stand until an unrelated event lowered it, the stale-record defect by another road; and the assistive-technology road (a
+   *  screen reader or caret browser moving the selection through the accessibility layer, a programmatic setBaseAndExtent) shows the
+   *  page no key at all, where the delivered event's note covers it as it covers the keyboard's. A pass the editor's stand-down ends
+   *  (paintAll's first line) reads none of it: the editor's selections are edits, as the listener has them. */
   pendingChange = false;
-  /** Read the selection at the head of a pass, before its writes, into pendingChange: raised when a record stands (offeredFor) and the
-   *  selection is a passage of the body's (passageGone's rule) that is not the record's, by its ends (atEnds: free, and the common case, a
-   *  poll's paint over a selection nobody touched) nor, the ends renamed by an earlier paint's split of a text node while the text stands
-   *  (the seam's own test of a selection its paint left standing, afterPaint's note), by its text; nothing while a pointer is down (a
-   *  drag's changes are the mouseup's offer, and its mid-drag selection is no pending change of the keyboard's), while the editor holds
-   *  the body, the listener's own guards (onSelectionChange), or while the panel is closed (the listener answers no change then). A latch
-   *  already raised stands: the event that lowers it has not run, and the record it compared with is gone (pendingChange). */
+  /** Read the selection at the head of a pass, before its writes, into pendingChange: raised when the live selection is at neither
+   *  note (atNote: lastDelivered, the last delivered event's; passLeft, the last pass's own). A latch already raised stands: the event
+   *  that lowers it has not run. */
   private noteSelectionAtHead(): void {
     if (this.pendingChange) return;
     const sel = typeof window.getSelection === "function" ? window.getSelection() : null;
-    const was = this.offeredFor;
-    this.pendingChange = !!sel && !!was && this.open && !this.pointerHeld && !this.ctx.editing() && !this.passageGone(sel) && !atEnds(was, sel) && was.text !== sel.toString();
+    this.pendingChange = !atNote(this.lastDelivered, sel) && !atNote(this.passLeft, sel);
   }
   /** A pointer is down (the document's capture mousedown, for the PRIMARY button, or touchstart; cleared at mouseup, touchend,
    *  touchcancel, the dragend of a press that became a drag of the selected text, which ends in no mouseup, a contextmenu, and the
@@ -1414,9 +1445,10 @@ class Panel {
    *  every paint and reflow.
    *  Nothing while the editor holds the body: its selections are edits (the seam gates its own path the same way). */
   onSelectionChange = (): void => {
-    this.pendingChange = false;   // the change a pass's head found still to come has come, its own move riding the same event (pendingChange)
-    if (this.pointerHeld || this.ctx.editing()) return;
     const sel = typeof window.getSelection === "function" ? window.getSelection() : null;
+    this.lastDelivered = noteEnds(sel);   // the event's own note of the selection it delivered, before any guard (pendingChange's two notes)
+    this.pendingChange = false;           // the change a pass's head found still to come has come, its own move riding the same event (pendingChange)
+    if (this.pointerHeld || this.ctx.editing()) return;
     if (!sel || this.passageGone(sel)) {
       if (this.floatAt && !this.floatAt.img) this.hideFloat();
       this.offeredFor = null;   // the passage is gone, and the record of its offer with it: a selection brought back to those ends is a new one (the header)
@@ -1792,6 +1824,7 @@ class Panel {
     window.addEventListener("blur", this.pressEnded);
     document.addEventListener("dragstart", this.dragBegan, true);   // a drag's end is heard on its source too, which a pass mid-drag can detach (dragBegan)
     document.addEventListener("selectionchange", this.onSelectionChange);
+    this.lastDelivered = noteEnds(typeof window.getSelection === "function" ? window.getSelection() : null);   // the listener hears from here: the selection standing now is its baseline (lastDelivered)
     // the layout changes that re-wrap the lines with no width report, so the seam fires no reflow (the width observer's report
     // is its only source): a figure's bytes landing (the same captured `load`; a gated figure's restored media loads through it
     // too) and a font face arriving (the document's FontFaceSet `loadingdone`: the sheet's faces load with `font-display: swap`,
@@ -2273,9 +2306,10 @@ class Panel {
   openPanel(): void {
     if (this.open) return;
     this.open = true;
-    // the float's record and the pending latch are the OPEN panel's (pendingChange): a selection standing from while it was closed,
-    // which the listener refused then (onSelection), is the pass this open runs to record, and that pass's own event is no offer
-    this.offeredFor = null; this.pendingChange = false;
+    // the open runs a pass of its own (refresh, then applyStatus's paintAll), which records the selection standing as any pass does
+    // (afterPaint), so a selection made while the panel was closed, which the listener refused then (onSelection), is recorded by that
+    // pass and its own event is no offer; the record and the pending latch need no fresh start here (pendingChange: the latch is the
+    // events' alone, raised at a pass's head and lowered by the delivered selectionchange)
     if (!this.root) {
       this.root = el("div", "fc-panel");
       // the list layout's scroll (the viewer makes this root the aside, .fileview-aside, whose box scrolls the cards): the
@@ -2363,6 +2397,7 @@ class Panel {
     document.removeEventListener("dragstart", this.dragBegan, true);
     document.removeEventListener("selectionchange", this.onSelectionChange);   // the keyboard's offer goes with the float (onSelectionChange)
     this.offeredFor = null;                                                      // ...and the selection it compared with
+    this.lastDelivered = null; this.passLeft = null;                             // ...and the two notes a pass's head compares with (pendingChange)
     this.ctx.body().removeEventListener("load", this.scheduleRetrim, true);
     const fonts = typeof document !== "undefined" ? (document as any).fonts : null;
     if (fonts && typeof fonts.removeEventListener === "function") fonts.removeEventListener("loadingdone", this.scheduleRetrim);   // the document outlives the viewer
@@ -3937,6 +3972,7 @@ class Panel {
    *  2026-09-20). */
   private afterPaint(): void {
     const sel = typeof window.getSelection === "function" ? window.getSelection() : null;
+    this.passLeft = noteEnds(sel);   // what this pass left, the note that tells its own move from the person's at the next head (pendingChange)
     // the person's own change, its selectionchange still to come (pendingChange, latched at the pass's head and lowered by that event):
     // recorded here, from a live selection that already holds it, the event read the change as answered and offered nothing (the
     // record's note on the gap). The record is dropped instead, so the event compares the selection as the pass left it with no record
