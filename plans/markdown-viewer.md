@@ -3405,7 +3405,11 @@ re-verifies. Where the code as built departs from the text above, why, and which
    record of the OFFER's ends read as the person's and re-showed a hidden float beside a passage nobody selected; read
    after each paint, the record also holds no node of a swapped-out render, where it used to keep the offer's nodes,
    and the render behind them, until the next offer; the guard compares the four ends first and reads the text once,
-   for ends that match, handing it to onSelection; the review's round 1); a collapsed selection, or one with an end
+   for ends that match, handing it to onSelection; the review's round 1; history since 2026-09-20, the paint-gap fix of
+   upstream/2026-09-20-paint-gap-reoffer.md: a pass reads the selection at its head, before its writes, against the
+   selection the last delivered selectionchange found and the one the previous pass left, and a change of the person's
+   whose event is still to come leaves the record dropped and the float to that event, the mechanics in the offeredFor,
+   lastDelivered, passLeft, pendingChange and afterPaint docblocks of ui/webview/file-comments.ts); a collapsed selection, or one with an end
    outside the body (Ctrl+A puts one at the page's start; a selection in the aside), HIDES a passage's float
    (`passageGone`, the listener's rule), one point beyond what was first designed, which had the outside-body case do
    nothing (the passage the float was offered for is no longer the selection; a picture's float stands), and since the
