@@ -707,8 +707,8 @@ test("a stamped delta whose gen differs, or whose base is above the held rev, or
     // this one can, since without it the frame falls through to "disagree"
     ws.frame({ type: "feedDelta", gen: G, base: 0.5, rev: 1, through: 1, now: 525, buildId: 35, asks: [card(SID_A, 9)] });
     assert.equal(ws.sent.length, 6, "a base that is no safe integer: asked again");
-    assert.deepEqual(diagRows(sent, "feedDelta-stale"), [{ host: HOST, buildId: 30, why: "gen" }, { host: HOST, buildId: 31, why: "ahead" }, { host: HOST, buildId: 32, why: "behind" }, { host: HOST, buildId: 33, why: "through" }, { host: HOST, buildId: 34, why: "behind" }, { host: HOST, buildId: 35, why: "base" }],
-                     "a field's word for a field's own failure (gen; through not carried; a base that is no safe integer) and a relation's word for a relation's (ahead: the base above the held rev; behind: the through below it), the gate's tests in order: a frame below the held rev reads behind whatever its rev (round 4: base and through each carried a relation under their field's word)");
+    assert.deepEqual(diagRows(sent, "feedDelta-stale"), [{ host: HOST, buildId: 30, why: "gen" }, { host: HOST, buildId: 31, why: "ahead" }, { host: HOST, buildId: 32, why: "behind" }, { host: HOST, buildId: 33, why: "through" }, { host: HOST, buildId: 35, why: "base" }],
+                     "a field's word for a field's own failure (gen; through not carried; a base that is no safe integer) and a relation's word for a relation's (ahead: the base above the held rev; behind: the through below it), the gate's tests in order: a frame below the held rev reads behind whatever its rev (round 4: base and through each carried a relation under their field's word); the row is latched on its word, so the second behind (buildId 34) files no row while its ask was sent");
     assert.equal(feeds(emitted).length, before, "nothing applied, nothing emitted");
     assert.equal(fm.conns.get(HOST).feedRaw, raw, "the base stands");
     assert.deepEqual(heldOf(fm), { gen: G, rev: 1 }, "…and the pair with it");
@@ -861,7 +861,7 @@ test("a per-cycle stamped delta carrying through equal to its rev applies under 
 // integers and no field failed, and the row carries the word alone, so a field's word ("rev") would hide the cause from
 // its reader; "rev" is a rev that is no safe integer, and it is read before the relation, so a non-integer rev that also
 // disagrees reads "rev".
-test("a stamped delta whose rev and through disagree is refused with why disagree and the held pair on the ask, in either direction and for a composed frame; a non-integer rev reads rev, disagreeing or not; nothing applied, the pair stands, and the redial declares only what applied", async () => {
+test("a stamped delta whose rev and through disagree is refused with why disagree and the held pair on the ask, in either direction and for a composed frame; a non-integer rev reads rev, disagreeing or not; the row is latched on its word and the remote's build while every refused frame asks; nothing applied, the pair stands, and the redial declares only what applied", async () => {
   await withManager(({ fm, emitted, sent }) => {
     fm.outbound({ type: "ready", proto: 2 });
     fm.openRemote(HOST, true);
@@ -878,11 +878,17 @@ test("a stamped delta whose rev and through disagree is refused with why disagre
     ws.frame({ type: "feedDelta", gen: G, newGen: G2, base: 1, rev: 4, through: 5, now: 522, buildId: 52, asks: [card(SID_A, 9)] });   // a composed frame whose two disagree
     ws.frame({ type: "feedDelta", gen: G, base: 1, rev: 2.5, through: 2, now: 523, buildId: 53, asks: [card(SID_A, 9)] });   // gen, base and through pass; the rev is no safe integer: the rev field's own failure
     ws.frame({ type: "feedDelta", gen: G, base: 1, rev: 2.5, through: 7, now: 524, buildId: 54, asks: [card(SID_A, 9)] });   // a non-integer rev that also disagrees with its through: the field word, read before the relation
-    assert.equal(ws.sent.filter((x: any) => x.type === "needFullFeed").length, 5, "each refused frame asks once");
+    assert.equal(ws.sent.filter((x: any) => x.type === "needFullFeed").length, 5, "each refused frame asks once: the ask is not latched (the bars road's needSlot is not either)");
     assert.ok(ws.sent.filter((x: any) => x.type === "needFullFeed").every((x: any) => x.gen === G && x.rev === 1), "every ask carries the pair that applied");
     assert.deepEqual(diagRows(sent, "feedDelta-stale"),
-                     [{ host: HOST, buildId: 50, why: "disagree" }, { host: HOST, buildId: 51, why: "disagree" }, { host: HOST, buildId: 52, why: "disagree" }, { host: HOST, buildId: 53, why: "rev" }, { host: HOST, buildId: 54, why: "rev" }],
-                     "the relation word for two good revs that disagree (not one rev to advance to), the field word for a rev that is no safe integer, whatever its through");
+                     [{ host: HOST, buildId: 50, why: "disagree" }, { host: HOST, buildId: 53, why: "rev" }],
+                     "the relation word for two good revs that disagree (not one rev to advance to), the field word for a rev that is no safe integer, whatever its through; the row is latched on its word and the remote's build (round 4, sayDeltaOnce), so the same word again on this conn files no second row");
+    // the latch's key carries the remote's build: the same word from the remote on another build is news and files again
+    fm.conns.get(HOST).peerSha = "a1b2c3d4e";
+    ws.frame({ type: "feedDelta", gen: G, base: 1, rev: 2, through: 7, now: 525, buildId: 55, asks: [card(SID_A, 9)] });
+    assert.equal(ws.sent.filter((x: any) => x.type === "needFullFeed").length, 6, "asked again");
+    assert.deepEqual(last(diagRows(sent, "feedDelta-stale")), { host: HOST, buildId: 55, why: "disagree" }, "the word again under another build files its own row");
+    assert.equal(diagRows(sent, "feedDelta-stale").length, 3);
     assert.equal(feeds(emitted).length, before, "nothing applied, nothing emitted");
     assert.equal(fm.conns.get(HOST).feedRaw, raw, "the base stands");
     assert.deepEqual(heldOf(fm), { gen: G, rev: 1 }, "the pair is what applied");

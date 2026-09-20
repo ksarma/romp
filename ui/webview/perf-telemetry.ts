@@ -57,18 +57,17 @@
 // token); every row `vis` (visibility transitions and hidden time inside the minute), `wsBytes` (text-frame characters
 // the shim received on the pane's LOCAL socket in the minute, from its counter), `wsBytesByHost` (the same unit, per
 // REMOTE host by its position in the pane document (one federation manager each), h1 the first remote host this document
-// attached, one key per host the document attached, however many, from federation's totals for the manager's life
-// through window.__rompFed.wsBytesByHost and the hosts
-// attached at the flush through window.__rompFed.attachedHostOrdinals: a position is on the row when its host is attached
-// at the flush or received characters in the minute, so the row closing a detach's minute carries the host and the rows
-// after it do not, an attached idle host reads 0, and the key is absent, not null, when no host is attached and none
-// received characters, a page that never attached one and the shell included; disjoint from wsBytes: a remote socket's
-// characters are counted here and never there; 2026-09-19, the user approved the field as one number per host and no
-// content) and `rafGap` (animation-frame gaps over RAF_GAP_MS while visible, from a loop that runs only while the switch
-// is on and the document visible). A Performance API the browser lacks reads as null, never a guess. The pending minute also flushes on visibilitychange to hidden: iOS fires that on an
-// app switch and then freezes the page, and pagehide, a navigation event, never comes. That flush leaves a held
-// slowframe row for its long-frame report (the timer tick and pagehide stay its backstops) and does not re-arm the
-// slowframe budget.
+// attached, one key per host the document attached, however many, from federation's totals for the manager's life through
+// window.__rompFed.wsBytesByHost and the hosts attached at the flush through window.__rompFed.attachedHostOrdinals: a
+// position is on the row when its host is attached at the flush or received characters in the minute, so the row closing
+// a detach's minute carries the host and the rows after it do not, an attached idle host reads 0, and the key is absent,
+// not null, when no host is attached and none received characters, a page that never attached one and the shell included;
+// disjoint from wsBytes: a remote socket's characters are counted here and never there; 2026-09-19, the user approved the
+// field as one number per host and no content) and `rafGap` (animation-frame gaps over RAF_GAP_MS while visible, from a
+// loop that runs only while the switch is on and the document visible). A Performance API the browser lacks reads as
+// null, never a guess. The pending minute also flushes on visibilitychange to hidden: iOS fires that on an app switch and
+// then freezes the page, and pagehide, a navigation event, never comes. That flush leaves a held slowframe row for its
+// long-frame report (the timer tick and pagehide stay its backstops) and does not re-arm the slowframe budget.
 
 export const SLOW_FRAME_MS = 100;      // a frame whose whole handling is at or over this sends a slowframe row
 export const LONG_FRAME_MS = 50;       // the browser's own long-frame threshold; entries under it are ignored

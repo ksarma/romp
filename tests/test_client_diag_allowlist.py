@@ -202,10 +202,12 @@ def stale_why_words():
     gone. The anchor includes the minter's literal, `{ host, buildId: d.buildId, why }`, so the read also holds that the row
     carries host, buildId and why and nothing else: the word is the whole signal a reader of the file has (a stale row in
     the file carries no gen, base, rev or through), which is why a relation failure between two valid fields needs a word
-    of its own and cannot ride a field's. test_the_stale_rows_vocabulary_is_the_ladders holds this list to STALE_WHY_WORDS,
+    of its own and cannot ride a field's; and since round 4 the anchor holds the row's latch too (sayDeltaOnce keyed on the
+    word and the remote's build, the ask beside it unlatched). test_the_stale_rows_vocabulary_is_the_ladders holds this list to STALE_WHY_WORDS,
     and tests/test_federated_dial_terms_served.py's held_pair points here for the refusals its model does not reproduce."""
     src = open(os.path.join(os.path.dirname(HERE), "ui", "webview", "federation.ts"), encoding="utf-8").read()
-    m = re.search(r'const why = ([^;]*);\s*\n\s*this\.diag\("feedDelta-stale", \{ host, buildId: d\.buildId, why \}\);', src)
+    m = re.search(r'const why = ([^;]*);\s*\n\s*if \(this\.sayDeltaOnce\(c, "feedDelta-stale", why \+ this\.peerTag\(c\)\)\) '
+                  r'this\.diag\("feedDelta-stale", \{ host, buildId: d\.buildId, why \}\);', src)
     return re.findall(r'"([\w-]+)"', m.group(1)) if m else None
 
 
@@ -224,6 +226,24 @@ def disclosure_copies():
         # one line per copy: the comment markers and the doc's wrapping are not part of the claim
         return re.sub(r"\s+", " ", re.sub(r"\n\s*#", " ", m.group(1))).strip() if m else None
     return {"kernel": flat(k), "docs": flat(d), "ledger": flat(l)}
+
+
+def federation_grain_texts():
+    """Every federation.ts text that states the positions' grain, flattened, keyed by site: the two-maps comment
+    (maps_comment), the wsBytesByHost() and attachedHostOrdinals() docstrings, and the __rompFed publication comment in
+    start() (round 4, 2026-09-20: the grain pass left "over this page's life" at two of them and "attached to this page"
+    at the third, against the maps declaration 800 lines above). A site whose anchors are gone reads None, so the phrase
+    loop fails on it rather than passing on nothing."""
+    root = os.path.dirname(HERE)
+    fsrc = open(os.path.join(root, "ui", "webview", "federation.ts"), encoding="utf-8").read()
+    def flat(m):
+        return re.sub(r"\s+", " ", re.sub(r"\n\s*(//|\*)", " ", m.group(1))).strip() if m else None
+    return {
+        "maps": maps_comment(),
+        "wsBytesByHost": flat(re.search(r"(/\*\* The text-frame characters received on each remote host's sockets.*?\*/)\s*wsBytesByHost\(\)", fsrc, re.S)),
+        "attachedHostOrdinals": flat(re.search(r"(/\*\* The positions of the hosts attached.*?\*/)\s*attachedHostOrdinals\(\)", fsrc, re.S)),
+        "publication": flat(re.search(r"\n(\s*// the characters each remote host's sockets delivered.*?)attachedHostOrdinals: \(\) => this\.attachedHostOrdinals\(\),", fsrc, re.S)),
+    }
 
 
 def maps_comment():
@@ -884,6 +904,18 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         self.assertIsNotNone(maps, "federation.ts: the two-maps comment's anchors are gone: re-aim maps_comment()")
         for token in (r"names the same one again", r"dialable rows", r"first poll", r"attach and detach history"):
             self.assertIsNotNone(re.search(token, maps, re.I), "maps: the reload sentence no longer states %r" % token)
+        # and no federation.ts site that states the grain keeps the page grain (round 4, regression-1: the grain pass left
+        # "over this page's life" at the wsBytesByHost() docstring and the publication comment and "attached to this page" at
+        # attachedHostOrdinals(), against the maps declaration). The phrases are federation.ts's alone: kernel.py says "for the
+        # page's life" of the once-per-page fields, another grain, and is not read here.
+        grain = federation_grain_texts()
+        for site, text in sorted(grain.items()):
+            self.assertIsNotNone(text, "federation.ts: the %s text's anchors are gone: re-aim federation_grain_texts()" % site)
+            self.assertGreater(len(text), 80, site)
+            for phrase in (r"position on the page", r"the page saw", r"this page attached", r"page-lifetime", r"the page attaches", r"appeared to the page",
+                           r"page's life", r"attached to this page", r"this page NOW"):
+                self.assertIsNone(re.search(phrase, text, re.I), "federation.ts %s: the page grain again: %r" % (site, phrase))
+            self.assertIsNotNone(re.search(r"manager|pane document", text), "federation.ts %s: the grain is stated (the manager, the pane document)" % site)
         named = {"chat": r"\bchat\b", "federation": r"\bfederation\b", "shell": r"\bshell\b", "kernel": r"\bwsopen\b"}
         carrying = host_carrying_keys()
         self.assertTrue(carrying)

@@ -927,7 +927,7 @@ interface Conn {
   readyAcked?: boolean; // the remote answered this page's `ready` with a `caps` frame at least once (the shim's readyAcked): the redial gate's latch that the remote served this page whole and holds its sessions
   dialedReconnect?: boolean; // the CURRENT socket was dialed with reconnect=1, so its open must post NO `ready`: the redial's dial term IS the handshake, and a `ready` would make the remote's ready reset pop `reconnect` and serve the whole board (the shim posts no ready on a redial for the same reason)
   deferred?: boolean; // a dial connect() put off because the pane's LOCAL socket is down (window.__rompLocalUp false): set with the one dial-deferred row per down spell, cleared by the dial that finally runs
-  saidDelta?: Set<string>; // the delta breadcrumbs this conn has filed (delta-unkeyed-base, delta-unknown-slot), keyed on the EVENT and not the conn's life (sayDeltaOnce, 2026-09-19): the same event again, however many patches, reposts or redials produce it, files nothing (a row per frame would be a row a minute per host); a different reason, or the same reason from a remote that redialed on another build, is news and files. Bounded, and not by the peer: the refused-base row's key is the row itself (ev and why: the slot, one of the EIGHT refusals this side's table can produce (VIEW_DELTA_KINDS, view-deltas.ts split: a list where a kind says dictlist or not, a non-list where it says a list, a dictlist lane whose name carries the separator), and the remote's build as the /tunnels row last named it, peerSha); the unknown-slot row's key holds ONE marker for every slot this bundle does not decode (UNKNOWN_SLOT_KEY), the peer's slot name riding in the row and never in the key. So at most nine keys per distinct kernelSha the row has named on this conn, and a remote that names a new slot in every frame spends one row, one console line and one key per build. The conn's, so a detach ends it. The two rows' conditions differ in what they are a property of: the unknown slot is this bundle's (it lasts the page, whatever the remote sends); the refused seed is the remote's frames' (it holds only while that kernel keeps sending a shape this table cannot key, and it is checked per FRAME: one refused whole frame drops a base an earlier frame seeded, and the next whole frame that keys seeds again), which is why the key is the row and not the conn's life
+  saidDelta?: Set<string>; // the delta breadcrumbs this conn has filed (delta-unkeyed-base, delta-unknown-slot, and since round 4 of the wsBytesByHost review the feed road's feedDelta-stale), keyed on the EVENT and not the conn's life (sayDeltaOnce, 2026-09-19): the same event again, however many patches, reposts or redials produce it, files nothing (a row per frame would be a row a minute per host); a different reason, or the same reason from a remote that redialed on another build, is news and files. Bounded, and not by the peer: the refused-base row's key is the row itself (ev and why: the slot, one of the EIGHT refusals this side's table can produce (VIEW_DELTA_KINDS, view-deltas.ts split: a list where a kind says dictlist or not, a non-list where it says a list, a dictlist lane whose name carries the separator), and the remote's build as the /tunnels row last named it, peerSha); the unknown-slot row's key holds ONE marker for every slot this bundle does not decode (UNKNOWN_SLOT_KEY), the peer's slot name riding in the row and never in the key. So at most eighteen keys per distinct kernelSha the row has named on this conn: those nine, and the feed road's stale row's key, the row itself again (ev and the why word: one of the NINE words applyRemoteFeedDelta's ladder mints, plus the build), the ask beside that row unlatched as the bars road's needSlot is; and a remote that names a new slot in every frame spends one row, one console line and one key per build. The conn's, so a detach ends it. The two rows' conditions differ in what they are a property of: the unknown slot is this bundle's (it lasts the page, whatever the remote sends); the refused seed is the remote's frames' (it holds only while that kernel keeps sending a shape this table cannot key, and it is checked per FRAME: one refused whole frame drops a base an earlier frame seeded, and the next whole frame that keys seeds again), which is why the key is the row and not the conn's life
   peerSha?: string; // the remote kernel's build as the hub's /tunnels row last named it (kernelSha: the sha it booted from, "-dirty" included), read by poll() every 4 s; "" when the row names none (an older remote, or before the hub's supervisor has read the peer's /version; a rig without the poll). The delta breadcrumbs carry it in their why and key their latch on it, so a redial across the remote's deploy says its row again (2026-09-19)
   // KERNEL_SETTING messages (newest per type) and the pane's own BOOKKEEPING (newest per key, see
   // BOOKKEEPING) that arrived while this host's socket was down — flushed on the socket's open event
@@ -1135,8 +1135,9 @@ export class FederationManager {
       // this (host-prefix.ts hostDialLive: the socket's CONNECTING state), and romp:hostDial below says
       // when it changes — on the dial, the open and the close, never on a timer
       dialing: (h: string) => { const c = this.conns.get(h); return hostDialLive(this.dialingHosts.has(h), c && c.ws ? c.ws.readyState : null); },
-      // the characters each remote host's sockets delivered over this page's life, by the host's ordinal (the maps
-      // declared beside hostSeq): the collector's reader for the minute row's wsBytesByHost (perf-telemetry.ts)
+      // the characters each remote host's sockets delivered over this manager's life (one manager per pane document), by
+      // the host's ordinal (the maps declared beside hostSeq): the collector's reader for the minute row's wsBytesByHost
+      // (perf-telemetry.ts)
       wsBytesByHost: () => this.wsBytesByHost(),
       // the positions of the hosts attached right now, the collector's second reader: which of the totals above belongs to
       // an attachment at the flush (an attached idle host reads 0 on the row; a detached silent one has no key)
@@ -1564,12 +1565,17 @@ export class FederationManager {
         // _client_diag_admit) filters the row's top-level KEYS against CLIENT_DIAG_KEYS and tests no value for admission
         // (an admitted key's value is stored as posted, a string cut at CLIENT_DIAG_STR_MAX, 64 characters, which no word
         // here approaches), so a new word needs no allowlist change where a new key does; tests/test_client_diag_allowlist.py
-        // drives each word through it, and a 65-character word through the cut, and holds its list to this ladder.
+        // drives each word through it, and a 65-character word through the cut, and holds its list to this ladder. The row
+        // is latched on the event it describes (sayDeltaOnce, keyed on the word and the remote's build: Conn.saidDelta says
+        // the bound), as the view-delta road's two breadcrumbs are: the same refusal again from the same build files no
+        // second row, a different word or a redial that finds the remote on another build files its own (round 4,
+        // 2026-09-20; a row per refused frame was a row a cycle against a kernel that keeps mis-stamping). The ASK beside
+        // it is not latched, as the bars road's needSlot is not: every refused frame still asks for the full it needs.
         const why = !held ? "unpaired" : gen !== held.gen ? "gen" : d.newGen !== undefined && genOf(d.newGen) === undefined ? "newGen"
                     : !Number.isSafeInteger(d.base) ? "base" : d.base > held.rev ? "ahead"
                     : !Number.isSafeInteger(d.through) ? "through" : d.through < held.rev ? "behind"
                     : !Number.isSafeInteger(d.rev) ? "rev" : "disagree";
-        this.diag("feedDelta-stale", { host, buildId: d.buildId, why });
+        if (this.sayDeltaOnce(c, "feedDelta-stale", why + this.peerTag(c))) this.diag("feedDelta-stale", { host, buildId: d.buildId, why });
         this.sendRemote(host, held ? { type: "needFullFeed", gen: held.gen, rev: held.rev } : { type: "needFullFeed" });
         return;
       }
@@ -1937,7 +1943,8 @@ export class FederationManager {
     return o;
   }
 
-  /** The text-frame characters received on each remote host's sockets over this page's life, keyed h<ordinal> in
+  /** The text-frame characters received on each remote host's sockets over this manager's life (h1 the first remote host
+   *  this pane document saw), keyed h<ordinal> in
    *  ordinal order (window.__rompFed.wsBytesByHost, the collector's reader; the shim's unit, wsBytes's): {} while no
    *  remote host has ever been attached. A host that attached and sent nothing yet, or one detached since, reads its
    *  total so far (0 for the first): a monotone counter the collector differences per minute, which decides from the
@@ -1948,7 +1955,7 @@ export class FederationManager {
     return out;
   }
 
-  /** The positions of the hosts attached to this page NOW, h<ordinal> in ordinal order (window.__rompFed.attachedHostOrdinals,
+  /** The positions of the hosts attached to this pane document NOW, h<ordinal> in ordinal order (window.__rompFed.attachedHostOrdinals,
    *  the collector's second reader): a conn in the map is an attachment, whatever its tunnel's state (a down host is attached
    *  and idle), and closeRemote's delete ends it. The collector keys a row's wsBytesByHost on this and on the minute's
    *  characters: an attached idle host reads 0, a host that received characters in the minute carries them whether or not
