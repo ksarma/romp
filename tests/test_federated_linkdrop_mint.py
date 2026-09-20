@@ -85,8 +85,10 @@ Synthetic: a scratch repository minted here, hostname TESTHOST; no kernel, no br
 import _posixsubprocess
 import ast
 import asyncio
+import contextlib
 import functools
 import glob
+import io
 import os
 import pty
 import shutil
@@ -978,25 +980,40 @@ class OldHubMintIsPrivate(unittest.TestCase):
         and subprocess (_foreign_touch_sites); and what _bound_spawners does not enter, by path and kind, with the depth it
         reached against its bound. Each list is printed to stdout, which pytest shows for a passed test under -rA or -s, and
         carried in an assertion's message for a red, so a run's record can carry the derived residual as it stood (round 5's
-        fixer pass: the lists sat in assertion messages alone, which a green run never prints)."""
-        mods = _lab_modules()
-        sites = _own_spawn_sites(mods)
-        print("the residual on the recorder's side, road 1, derived by _own_spawn_sites (module, line, function): %r" % (sites,))
+        fixer pass: the lists sat in assertion messages alone, which a green run never prints; the maintainer's round 5, tests-3:
+        the prints themselves are pinned, the cell's stdout captured, asserted to carry each list and re-emitted). Its two
+        assertions over the sites state what they check about the DERIVATION (the maintainer's round 5, extra6-3): the
+        derivation files no site for the lab module by construction (the lab module's own calls are the recorder's, pinned by
+        test_the_recorder_sees_every_spawning_function_once_and_delegates_the_rest), and every filed site names a module the
+        census read."""
+        buf = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(buf):
+                mods = _lab_modules()
+                sites = _own_spawn_sites(mods)
+                print("the residual on the recorder's side, road 1, derived by _own_spawn_sites (module, line, function): %r" % (sites,))
+                roads, unread = _foreign_spawn_roads(mods)
+                touches = _foreign_touch_sites(mods, roads)
+                print("the residual on the recorder's side, road 3, derived by _foreign_spawn_roads (module: [(line, form)]; direct sites in each module's own source, a module it imports being a further road): %r; unread (no Python source): %r"
+                      % (roads, unread))
+                print("where the censused set touches the road modules other than os and subprocess, derived by _foreign_touch_sites (module, line, dotted name): %r" % (touches,))
+                stats = {}
+                bound, boundary = _bound_spawners(L, stats=stats)
+                print("the identity walk's boundary over the lab module, derived by _bound_spawners (path, kind): %r; the walk entered to depth %d of its bound %d"
+                      % (sorted(boundary), stats["max_depth"], 8))
+        finally:
+            sys.stdout.write(buf.getvalue())   # re-emitted whole, so a green run still shows the lists under -rA or -s
+        shown = buf.getvalue()
+        for label, text in (("road 1 (the sites)", repr(sites)), ("road 3 (the foreign roads)", repr(roads)), ("road 3 (the unread modules)", repr(unread)),
+                            ("the touches", repr(touches)), ("the boundary", repr(sorted(boundary)))):
+            self.assertIn(text, shown, "the disclosure cell prints its %s list, so a run's record carries the derived residual: %r" % (label, shown[:300]))
         self.assertTrue(sites, "the derivation reads the censused modules' own spawning calls: %r" % (sites,))
-        self.assertEqual([site for site in sites if site[0] == LAB_MODULE], [], "the lab module's own calls are the recorder's, never a residual")
-        self.assertTrue(all(name in mods and name != LAB_MODULE for name, _, _ in sites),
-                        "the residual on the recorder's side, derived: a program these modules' own functions start through their own subprocess "
-                        "binding when the lab module calls them, unseen by the recorder over the lab module's attribute (module, line, function): %r" % (sites,))
-        roads, unread = _foreign_spawn_roads(mods)
-        touches = _foreign_touch_sites(mods, roads)
-        print("the residual on the recorder's side, road 3, derived by _foreign_spawn_roads (module: [(line, form)]; direct sites in each module's own source, a module it imports being a further road): %r; unread (no Python source): %r"
-              % (roads, unread))
-        print("where the censused set touches the road modules other than os and subprocess, derived by _foreign_touch_sites (module, line, dotted name): %r" % (touches,))
+        self.assertEqual([site for site in sites if site[0] == LAB_MODULE], [],
+                         "the derivation files no site for the lab module by construction: its own calls are the recorder's (pinned by "
+                         "test_the_recorder_sees_every_spawning_function_once_and_delegates_the_rest), so a lab-module site here is the derivation reading the wrong module: %r" % (sites,))
+        self.assertTrue(all(name in mods for name, _, _ in sites),
+                        "every filed site names a module the census read (a site under a module outside the censused set is a derivation over a source the census never saw): %r" % (sites,))
         self.assertTrue(roads and touches, "the derivation names the foreign roads and where the censused set reaches them: %r %r" % (roads, touches))
-        stats = {}
-        bound, boundary = _bound_spawners(L, stats=stats)
-        print("the identity walk's boundary over the lab module, derived by _bound_spawners (path, kind): %r; the walk entered to depth %d of its bound %d"
-              % (sorted(boundary), stats["max_depth"], 8))
         self.assertEqual(bound, [])
         self.assertTrue(boundary, "the identity walk names what it does not enter: %r" % (sorted(boundary),))
         modules = [path for path, kind in boundary if kind == "module"]
