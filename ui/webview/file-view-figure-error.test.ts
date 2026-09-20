@@ -317,9 +317,11 @@ const block = (tag: string, ...kids: Array<El | Txt>): El => { const e = new El(
 /** Every label under `root`, by the MARK (contract C2: the label is found by `[data-fv-figerr]`, never by its class). */
 const labels = (root: El): El[] => root.querySelectorAll("[data-fv-figerr]");
 /** The label right after `n`: its next sibling when that carries the mark, else null. Since the link-navigation follow-on's L3 a
- *  figure that LOADED wears its "Open the picture" control as that sibling (file-view.ts armFigureControls hears the load; a figure
- *  laid by hand here has none until then), and a label after such a figure stands after the control (figureLabelAfter): the read
- *  steps past a sibling carrying the control's mark, as the viewer's own lookup does. */
+ *  figure may wear its "Open the picture" control as that sibling (file-view.ts decideFigureControl: in a browser a LOADED figure's,
+ *  added at its load; in this suite's DOM every figure is a stand-in, which the paint decides from its source and the load and
+ *  error listeners leave as the paint decided it, so a figure laid by hand after the paint has none), and a label after such a
+ *  figure stands after the control (figureLabelAfter): the read steps past a sibling carrying the control's mark, as the viewer's
+ *  own lookup does. */
 const labelAfter = (n: El): El | null => { let s = n.nextSibling; if (s instanceof El && s.hasAttribute("data-fv-figopen")) s = s.nextSibling; return s instanceof El && s.hasAttribute("data-fv-figerr") ? s : null; };
 const fire = (n: El, type: "error" | "load"): void => { n.dispatchEvent(new Ev(type)); };
 /** The body's capture listeners of `type` (the viewer's error and load listeners are armed there, once per open). */

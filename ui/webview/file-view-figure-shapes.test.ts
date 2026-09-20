@@ -11,12 +11,15 @@
 // no class, so linkOf read none and the plain click opened the tab AND the picture); (3) a figure under 48px on either side
 // (a badge, an inline icon) wore a control the sheets' fixed margins laid over its neighbours, transparent, taking the click
 // meant for the badge's link or the prose before the icon: a floor (FIGOPEN_MIN_PX) read from the loaded figure. Since the
-// round-2 review the control is decided from the figure's CURRENT state by one function (decideFigureControl, the verdict
-// figureWantsControl over figureState) at the paint, at the load and the error, and at each change of the body's width
-// (refigureControls, from the width watch's repaint), so a fetching or a failed figure wears none, a figure the column
-// narrowed under the floor loses its control and one it widened past gets it back (read once, at the load, a figure the pane
-// narrowed to 323 by 32 kept a control that hung over it, file-view-figure-floor-browser.test.ts; the other states in
-// file-view-figure-state-browser.test.ts). (2)'s exclusion reads ANY anchor above the figure (linkAbove), a dead link too.
+// file review the control is decided from the figure's CURRENT state by one function (decideFigureControl, the verdict
+// figureWantsControl over figureState) at the paint, at the load and the error, and at each change of the figure's OWN
+// laid-out box (watchFigureBoxes, one ResizeObserver per open over the figures of the Rendered box; the file review's round 2:
+// decided from the width watch's repaint alone, a text-size step, which reflows the 80ch column at a constant body width,
+// never re-decided), so a fetching or a failed figure wears none and opens nothing (figureTarget refuses both states), a figure
+// the column narrowed under the floor loses its control and one it widened past gets it back (read once, at the load, a figure
+// the pane narrowed to 323 by 32 kept a control that hung over it, file-view-figure-floor-browser.test.ts; the other states in
+// file-view-figure-state-browser.test.ts); a control removed while it holds the keyboard hands it to the viewer's body first
+// (removeFigureControl). (2)'s exclusion reads ANY anchor above the figure (linkAbove), a dead link too.
 // Every pin reads the tree's own source, so a rename fails loudly; the leg executes each rule in a browser. Synthetic values
 // only.
 import { test } from "node:test";
@@ -54,7 +57,7 @@ test("figureTarget reads the web address before the model's join, so a protocol-
   assert.match(fn, /figurePath reads a protocol-relative source \(`\/\/host\/pic\.svg`\) as an\n\s*\/\/ absolute path of the disk/, "the comment says why the order matters");
 });
 
-test("the one decision: figureWantsControl reads the figure's state (fetching and failed get none), then the floor, the target and any link above; decideFigureControl adds or removes against the control standing; the floor is 48px on either side, read from the loaded picture's rendered box (or its own size when not laid out); linkAbove is any anchor; the load, the error and the width watch's repaint all run the decision", () => {
+test("the one decision: figureWantsControl reads the figure's state (fetching and failed get none), then the floor, the target and any link above; decideFigureControl adds or removes against the control standing, handing the keyboard to the viewer's body before a removal; the floor is 48px on either side, read from the loaded picture's rendered box (or its own size when not laid out); linkAbove is any anchor; the load, the error and the figures' own ResizeObserver all run the decision, and the width watch's repaint runs none; figureTarget refuses the fetching and the failed state alike", () => {
   const want = between(VIEW, "function figureWantsControl(img: Element, anchor: Element, filePath: string): boolean {", "function decideFigureControl(");
   inOrder(want, [
     "if (img.closest('[data-act=\"' + GATE_ACT + '\"]')) return false;",
@@ -69,11 +72,17 @@ test("the one decision: figureWantsControl reads the figure's state (fetching an
     "const anchor = figureAnchor(img);",
     "const standing = figureControlAfter(anchor);",
     "const want = figureWantsControl(img, anchor, filePath);",
-    "if (standing) { if (!want) standing.remove(); return; }",
+    "if (standing) { if (!want) removeFigureControl(standing); return; }",
     "if (!want) return;",
     'const b = el("button", "fileview-btn fileview-icon " + FIGOPEN_CLASS) as HTMLButtonElement;',
     "parent.insertBefore(b, anchor.nextSibling);",
   ], "decideFigureControl: the verdict against the control standing, one place that adds or removes");
+  // the removal hands the keyboard on first (the file review's round 2, ui-4): the holder read before the control goes, the
+  // viewer body's takeKeyboard (registered per open) called after it, with the ring the holder wore
+  const remove = between(VIEW, "function removeFigureControl(control: HTMLElement): void {", "\n}\n");
+  inOrder(remove, ["const a = document.activeElement;", "const held = !!a && control.contains(a);", "const ring = held ? ringOf(a) : false;", "control.remove();", "if (take) take(ring);"], "removeFigureControl: the keyboard read before the removal and handed to the viewer's body after it");
+  assert.match(VIEW, /\nconst keyboardTakers = new WeakMap<HTMLElement, \(ring\?: boolean\) => void>\(\);\n/, "the per-open register of the body's takeKeyboard");
+  assert.match(VIEW, /keyboardTakers\.set\(body, takeKeyboard\);[^\n]*\n\s*closeHooks\.push\(\(\) => \{ keyboardTakers\.delete\(body\); \}\);/, "registered once per open where takeKeyboard is defined, dropped with the viewer");
   assert.equal((VIEW.match(/setAttribute\(FIGOPEN_MARK, ""\)/g) || []).length, 1, "one place mints a control");
   assert.doesNotMatch(VIEW, /function ensureFigureControl|function dropFigureControl/, "the add-only builder and the drop arm are gone: one decision");
   const state = between(VIEW, "function figureState(img: Element): FigureState {", "\n}\n");
@@ -92,16 +101,42 @@ test("the one decision: figureWantsControl reads the figure's state (fetching an
   const arm = between(VIEW, "function armFigureControls(body: HTMLElement, filePath: string): () => void {", "\n}\n");
   assert.match(arm, /const decide = \(e: Event\): void => \{ const img = figureOf\(e\); if \(img && figureState\(img\) !== "standin"\) decideFigureControl\(img, filePath\); \};/, "the events' road into the decision, for an element carrying the browser's record (a stand-in stays as the paint decided it)");
   assert.match(arm, /body\.addEventListener\("load", decide, true\);\n\s*body\.addEventListener\("error", decide, true\);/, "the load and the error, both capture (neither bubbles)");
-  // the width's report re-runs it over every figure of the box, from the repaint the width watch folds into a frame
-  const refigure = between(VIEW, "function refigureControls(body: HTMLElement, filePath: string): void {", "\n}\n");
-  assert.match(refigure, /body\.querySelectorAll\("\.fileview-md img"\)\.forEach\(\(img\) => \{ decideFigureControl\(img, filePath\); \}\);/, "every figure of the Rendered box, the same decision");
+  // each figure's OWN box re-runs it (the file review's round 2): one ResizeObserver per open over the figures of the Rendered
+  // box, re-armed at each text paint (never at a reflow, whose figures are the same nodes), dropped with the viewer; the
+  // observer hears every reflow of the figure, the body's width and a text-size step alike, so no road calls the decision
+  // itself; absent ResizeObserver (a stand-in outside a browser) nothing is armed and the paint's decision stands
+  const watch = between(VIEW, "function watchFigureBoxes(body: HTMLElement, filePath: string, onRendered: (cb: (why?: FileViewRenderWhy) => void) => void): (() => void) | null {", "\n}\n");
+  inOrder(watch, [
+    'if (typeof ResizeObserver !== "function") return null;',
+    "const ro = new ResizeObserver((entries) => {",
+    'if (img.isConnected && figureState(img) !== "standin") decideFigureControl(img, filePath);',
+    'body.querySelectorAll(".fileview-md img").forEach((img) => { ro.observe(img); });',
+    'onRendered((why) => { if (why !== "reflow") rearm(); });',
+    "rearm();",
+    "return () => { ro.disconnect(); };",
+  ], "watchFigureBoxes: the guard, the observer over the figures, the re-arm at each paint, the drop");
+  assert.match(VIEW, /const figureWatch = watchFigureBoxes\(body, path, ctx\.onRendered\);\n\s*if \(figureWatch\) ctx\.onClose\(figureWatch\);/, "armed once per open beside the load and error pair, dropped through the close hooks");
   const paint = between(VIEW, "function addFigureControls(box: HTMLElement, filePath: string): void {", "\n}\n");
   assert.match(paint, /box\.querySelectorAll\("img"\)\.forEach\(\(img\) => \{ decideFigureControl\(img, filePath\); \}\);/, "the paint runs the same decision (a stand-in's only one)");
+  // the width watch's repaint decides no figure: a call there ran on one road of two (the file review's round 2), and the
+  // figures' observer hears that reflow as it hears the text-size step's
   const repaint = between(VIEW, "const repaint = () => {", "\n  };\n");
-  inOrder(repaint, ["if (seenWidth === paintedWidth) return;", "paintedWidth = seenWidth;", "if (!textShowing()) return;", "if (unmeasurable()) return;", "landRemembered(); landTarget();", "retakeAfterHide();", "refigureControls(body, path);"], "the repaint: the decision once the width moved, over a text view with a box, after the seat (the control is a zero-width inline box and moves no layout)");
-  // the target waits for the browser's answer too, so a plain click on a fetching figure opens nothing
+  inOrder(repaint, ["if (seenWidth === paintedWidth) return;", "paintedWidth = seenWidth;", "if (!textShowing()) return;", "if (unmeasurable()) return;", "landRemembered(); landTarget();", "retakeAfterHide();"], "the repaint as it was before the figures had a decision of their own");
+  assert.doesNotMatch(repaint, /igureControl/, "no figure decision in the width watch's repaint");
+  assert.doesNotMatch(VIEW, /refigureControls/, "the width-only road is gone");
+  // the target waits for the browser's answer too, and refuses a failed figure as the control does (the file review's round 2,
+  // regression-3 with extra5-4): a plain click on a fetching or a failed figure opens nothing, and the two readers agree
   const target = between(VIEW, "function figureTarget(img: Element, filePath: string): FigureTarget | null {", "\n}\n");
-  inOrder(target, ['if (figureState(img) === "fetching") return null;', "const dest = chosenSource(img);"], "figureTarget: no candidate before the browser has picked");
+  inOrder(target, ["const state = figureState(img);", 'if (state === "fetching" || state === "failed") return null;', "const dest = chosenSource(img);"], "figureTarget: no candidate before the browser has picked, nothing to open after a failure");
+});
+
+test("the sheets' figure-control comment names the builder that exists (decideFigureControl), not the one the one decision replaced", () => {
+  const web = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
+  for (const name of ["styles.css", "feed.css"]) {
+    const css = web(name);
+    assert.doesNotMatch(css, /ensureFigureControl|dropFigureControl/, name + ": no name of the retired builder or drop arm");
+    assert.match(css, /file-view\.ts\n\s+decideFigureControl\): a glyph button of the bar's family/, name + ": the comment names decideFigureControl");
+  }
 });
 
 test("the figure listener: the bare figure's plain click yields to an anchor with an href as it yields to the links listener's links; the control's branch and the pinned guards stand as they were", () => {

@@ -1295,7 +1295,11 @@ const SCRIPTED = ROOT + "/docs/scripted.md";
 const SCRIPTED_MD = "# Report\n\nA paragraph before the script.\n\n<script>alert(1)</script>\n\n`</script>` inside a code span, and `<!--` before it.\n\nAfter the script.\n";
 const README = `<img src="${TALL_SVG(1600)}" width="1600" height="200">\n\n# Report\n\nProse ${"lorem ipsum ".repeat(60)}\n\n![plot](${TALL_SVG(1600)})\n\n<div align="center"><img src="${TALL_SVG(1600)}" width="1600" height="200"></div>\n\n\`\`\`\nconst x = 1;\nconst y = 2;\n\`\`\`\n\n\`\`\`\n${"const z = 1; ".repeat(20)}\n\`\`\`\n\n| run | p95 |\n| --- | --- |\n| a | 120 |\n`;
 /** The file table the page inlines (scriptLiteral: `<` as `\u003c`, so SCRIPTED's `</script>` cannot end the script). */
-const DOCS: Record<string, string> = { [REPORT]: README, [SNIPPET]: SNIPPET_MD, [BREAK]: BREAK_MD, [SCRIPTED]: SCRIPTED_MD };
+// a short note linking the report: the bar case follows its link so the trail has a step behind and the Back and Forward group
+// shows (a fresh open hides it, T367), and the two glyphs are measured inside the card with the rest of the row
+const LINKED = ROOT + "/docs/linked.md";
+const LINKED_MD = "# Linked\n\nSee [the report](report.md) for the figures.\n";
+const DOCS: Record<string, string> = { [REPORT]: README, [SNIPPET]: SNIPPET_MD, [BREAK]: BREAK_MD, [SCRIPTED]: SCRIPTED_MD, [LINKED]: LINKED_MD };
 /** The page a viewer surface is: the chat modal (styles.css), the feed modal (feed.css) or the Files pane (styles.css +
  *  files-pane.css under body.fileview-pane), the bundle, a fetch that serves the README with the kernel's headers, and two
  *  registered actions standing in for Comments and the GitHub unit (both mount once the kernel answers; the row is measured
@@ -1458,11 +1462,22 @@ test("in a browser, the real module: a bare <img> line, an image paragraph and a
   });
 });
 
-test("in a browser, the real module: the bar wraps, so the close button and every action stay inside the card at 380, 420, 480 and 600px in the chat and feed modals, with the kernel-answered row, at the default and with the readout showing; the trail's two glyphs at the bar's left are among the actions measured", async (t) => {
+test("in a browser, the real module: the bar wraps, so the close button and every action stay inside the card at 380, 420, 480 and 600px in the chat and feed modals, with the kernel-answered row, at the default and with the readout showing; on a fresh open the trail's group is hidden and takes no room (T367), and once a link inside a file has been followed its two glyphs at the bar's left are among the actions measured, Back live and Forward dimmed", async (t) => {
   await inBrowser(t, async (browser) => {
     for (const mode of ["chat", "feed"] as const) for (const width of [380, 420, 480, 600]) for (const size of [100, 115]) {
       const cell = `${mode} ${width}px @${size}%`;
-      const { page, errors } = await openReal(browser, mode, width, size);
+      // the linked note first: a fresh open has nothing to step to either way, so the group is hidden and rows no glyph (T367; the
+      // file review's round 2, extra8-2); its link to the report then puts the note behind, and the report's bar is measured with
+      // the group showing
+      const { page, errors } = await openReal(browser, mode, width, size, false, { path: LINKED, raw: false });
+      const fresh = await page.evaluate(() => {
+        const nav = document.querySelector(".fileview .fileview-nav") as HTMLElement;
+        return { hidden: nav.hidden, boxes: nav.getClientRects().length, back: (document.querySelector(".fileview-nav-back") as HTMLElement).getAttribute("aria-disabled"), forward: (document.querySelector(".fileview-nav-forward") as HTMLElement).getAttribute("aria-disabled") };
+      });
+      assert.deepEqual(fresh, { hidden: true, boxes: 0, back: "true", forward: "true" }, cell + ": a fresh open hides the trail's group, which takes no room, both buttons aria-disabled");
+      await page.locator(".fileview-md a", { hasText: "the report" }).click();
+      await page.waitForFunction(() => !!document.querySelector(".fileview-md > pre") && /report\.md$/.test((document.querySelector(".fileview-base") as HTMLElement).textContent || ""), null, { timeout: 10000 });
+      await page.evaluate(() => new Promise<null>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null)))));
       const m = await page.evaluate(() => {
         const root = document.querySelector(".fileview") as HTMLElement;
         const bar = root.querySelector(".fileview-bar") as HTMLElement;
@@ -1478,8 +1493,8 @@ test("in a browser, the real module: the bar wraps, so the close button and ever
           navLeft: bar.querySelector(".fileview-nav")!.getBoundingClientRect().left, nameLeft: bar.querySelector(".fileview-name")!.getBoundingClientRect().left };
       });
       // A− and A+ live in the zoom glyph's flyout since T367 (hidden until the glyph is pressed), so the glyph stands for them in the row;
-      // Back and Forward wear their word alone here (a fresh open has no trail either way)
-      for (const l of ["Back", "Forward", "Rendered", "Raw", "Text size", "Edit", "Comments", "GitHub", "Download", "Copy path", "Close the file viewer"]) assert.ok(m.labels.includes(l), cell + ": the row measured is the kernel-answered one, with " + l + ": " + m.labels.join(","));
+      // Back names the note behind and Forward, with nothing ahead, wears its word alone under aria-disabled: the group shows for the one
+      for (const l of ["Back to linked.md", "Forward", "Rendered", "Raw", "Text size", "Edit", "Comments", "GitHub", "Download", "Copy path", "Close the file viewer"]) assert.ok(m.labels.includes(l), cell + ": the row measured is the kernel-answered one, with " + l + ": " + m.labels.join(","));
       assert.ok(m.navLeft <= m.nameLeft + 0.5, cell + ": the two glyphs stand at the bar's left, before the path: " + m.navLeft + " vs " + m.nameLeft);
       assert.ok(m.close.left >= m.root.left - 0.5 && m.close.right <= m.root.right + 0.5, cell + `: the close button lies inside the card: x ${m.close.left}-${m.close.right} in ${m.root.left}-${m.root.right}`);
       assert.ok(m.minLeft >= m.root.left - 0.5 && m.maxRight <= m.root.right + 0.5, cell + `: every action lies inside the card: x ${m.minLeft}-${m.maxRight} in ${m.root.left}-${m.root.right}`);

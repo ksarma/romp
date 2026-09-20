@@ -16,7 +16,11 @@
 // since mdBlock's box is not in the document yet, and its load event, which fires all the same, decides it again over the
 // laid-out box, so at a 381 px re-open the paint's control leaves at the load and at 900 it stands (the record had said every
 // figure is fetching at the paint, which a held picture is not; the first open's picture, on the wire at the paint, gets none
-// until its load, and the leg records that too). Skipped LOUDLY where playwright has no browser (CI installs none). Synthetic
+// until its load, and the leg records that too); (5) the text-size road (the file review's round 2): A- and Ctrl + wheel steps
+// reflow a column-capped figure at a constant body width, and the control leaves under the floor and returns above it, since
+// the decision hangs on the figure's own box (watchFigureBoxes) and not on the width watch alone; (6) a control holding the
+// keyboard when the width's change removes it hands the keyboard to the viewer's body, so PageDown scrolls (the file review,
+// ui-4). Skipped LOUDLY where playwright has no browser (CI installs none). Synthetic
 // values only: the notes-api world, a placeholder session id, example.invalid addresses, /repo/notes-api paths.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
@@ -266,6 +270,111 @@ test("in a browser: a picture the browser already holds (the viewer closed and t
     assert.equal(again.loads[0].controlBefore, true, "the paint's control stood when the load arrived");
     assert.ok(again.loads[0].box[0] >= FLOOR && again.loads[0].box[1] >= FLOOR, "laid out above the floor at the load: " + JSON.stringify(again.loads[0].box));
     assert.equal(againFig.control, true, "and the load's decision left it standing: " + fmt(againFig));
+    assert.deepEqual(errors, [], "no page errors");
+    await page.close();
+  });
+});
+
+// ── the text-size road (the file review, correctness-1 with tests-1, regression-1, ui-1 and extra6-1: one defect) ──────────
+// A text-size step (A- and A+ in the zoom flyout, Ctrl/Cmd + wheel over the body) reflows every column-capped figure at a
+// CONSTANT body width: the prose column is 80ch of a font that carries --fv-scale, so the figure's laid-out box shrinks and
+// grows with the step while the body's clientWidth never moves and the width watch reports nothing. The decision now hangs on
+// the figure's own box (watchFigureBoxes: a ResizeObserver over the figures of the Rendered box), so a step that narrows the
+// figure under the floor takes the control away and a step that widens it past brings it back, on the buttons and on the
+// wheel alike, with no call from either road.
+const BAND = ROOT + "/docs/figs/band.svg";
+// the band: 1300 by 110, wider than the column at every size, so the column caps it; in the chat modal at 1200 px it is laid out
+// 762 by 64.5 at 100% and 534 by 45.2 at 70% (measured before the fix, where the control stood on the 45 px figure)
+const BAND_TEXT = "# Report\n\n![band](figs/band.svg)\n\nA sentence under the band.\n\n" + Array.from({ length: 30 }, (_, i) => PARA(i + 1)).join("\n\n") + "\n";
+const BAND_DOCS: Record<string, string> = { [REPORT]: BAND_TEXT, [BAND]: svg(1300, 110, "#684") };
+const pct = (page: any): Promise<string | undefined> => page.evaluate(() => (document.querySelector(".fileview") as HTMLElement).dataset.fvText);
+/** The zoom flyout opened when it is shut (T367: A- and A+ ride it), so a press lands on a shown button. */
+const openZoom = async (page: any): Promise<void> => { if (await page.evaluate(() => { const m = document.querySelector(".fileview .fileview-zoom-menu") as HTMLElement | null; return !m || m.hidden; })) await page.click(".fileview .fileview-zoom-btn"); };
+/** `n` presses of A- (`dir` -1) or A+ (`dir` 1) in the flyout. */
+async function stepText(page: any, dir: 1 | -1, n: number): Promise<void> {
+  await openZoom(page);
+  for (let i = 0; i < n; i++) { await page.click(dir < 0 ? 'button[aria-label="Smaller text"]' : 'button[aria-label="Larger text"]'); await frames(page, 2); }
+}
+/** `n` Ctrl + wheel steps over the body's middle, one WHEEL_STEP_PX (40 px of deltaY) each: down (`dir` -1) is smaller, up is larger. */
+async function wheelText(page: any, dir: 1 | -1, n: number): Promise<void> {
+  const at = await page.evaluate(() => { const r = (document.querySelector(".fileview-body") as HTMLElement).getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
+  await page.mouse.move(at.x, at.y);
+  await page.keyboard.down("Control");
+  try { for (let i = 0; i < n; i++) { await page.mouse.wheel(0, dir < 0 ? 40 : -40); await frames(page, 2); } } finally { await page.keyboard.up("Control"); }
+}
+
+test("in a browser: a text-size step reflows the column-capped figure at a constant body width and the control follows it: the 1300 by 110 band at a 1200 px chat modal wears its control at 100%, loses it after three A- presses (70%, under the floor), gets it back after three A+ presses; Ctrl + wheel steps do the same", async (t) => {
+  await inBrowser(t, async (browser) => {
+    const { page, errors } = await openViewer(browser, "chat", 1200, 700, {
+      docs: BAND_DOCS,
+      serve: (u) => { const p = u.pathname === "/file" ? u.searchParams.get("path") || "" : ""; return BAND_DOCS[p] !== undefined && /\.svg$/.test(p) ? { status: 200, type: "image/svg+xml", body: BAND_DOCS[p] } : null; },
+    });
+    await page.waitForFunction(() => { const i = document.querySelector(".fileview-md img") as HTMLImageElement | null; return !!i && i.complete && i.naturalWidth > 0; }, null, { timeout: 10000 });
+    await settle(page, true);
+    const at100 = await figure(page);
+    t.diagnostic("100%: " + fmt(at100));
+    assert.equal(await pct(page), "100", "the default size");
+    assert.ok(at100.w >= FLOOR && at100.h >= FLOOR, "above the floor at 100%: " + fmt(at100));
+    assert.equal(at100.control, true, "the control stands at 100%: " + fmt(at100));
+    // A- three times: 90, 80, 70. The body's width does not move; the column does, and the band with it
+    await stepText(page, -1, 3);
+    await settle(page, false);
+    const at70 = await figure(page);
+    t.diagnostic("70% by the buttons: " + fmt(at70));
+    assert.equal(await pct(page), "70", "three steps down");
+    assert.equal(at70.bodyW, at100.bodyW, "the body's width did not move: the step reflows the column alone");
+    assert.ok(at70.h < FLOOR, "the band fell under the floor on its short side: " + fmt(at70));
+    // FAILS BEFORE: the re-decision ran from the width watch alone, which a text-size step never fires; the control stayed on the 45 px band
+    assert.equal(at70.control, false, "the control left at the step: " + fmt(at70));
+    // A+ three times: back to 100, and the control returns
+    await stepText(page, 1, 3);
+    await settle(page, true);
+    const back = await figure(page);
+    t.diagnostic("100% again: " + fmt(back));
+    assert.equal(await pct(page), "100");
+    assert.ok(back.h >= FLOOR, "above the floor again: " + fmt(back));
+    assert.equal(back.control, true, "the control is back: " + fmt(back));
+    // the wheel road: Ctrl + wheel over the body steps the same table (foldWheel, WHEEL_STEP_PX)
+    await wheelText(page, -1, 3);
+    await settle(page, false);
+    const wheel70 = await figure(page);
+    t.diagnostic("70% by the wheel: " + fmt(wheel70));
+    assert.equal(await pct(page), "70", "three wheel steps down");
+    assert.ok(wheel70.h < FLOOR, "under the floor: " + fmt(wheel70));
+    assert.equal(wheel70.control, false, "the control left at the wheel's step: " + fmt(wheel70));
+    await wheelText(page, 1, 3);
+    await settle(page, true);
+    const wheel100 = await figure(page);
+    t.diagnostic("100% by the wheel: " + fmt(wheel100));
+    assert.equal(await pct(page), "100");
+    assert.equal(wheel100.control, true, "and back at the wheel's steps up: " + fmt(wheel100));
+    assert.deepEqual(errors, [], "no page errors");
+    await page.close();
+  });
+});
+
+// ── the keyboard when the control goes (the file review, ui-4) ────────────────────────────────────────────────────────────
+test("in a browser: a control holding the keyboard when the width's change takes it away hands the keyboard to the viewer's body, so PageDown scrolls the report (before: the removal dropped the focus to the document's body, and the scroll keys did nothing until a click)", async (t) => {
+  await inBrowser(t, async (browser) => {
+    const { page, errors } = await openReport(browser, 900, 600);
+    await settle(page, true);
+    // Tab from the body: the wide figure's control is the body's first focusable element
+    await page.evaluate(() => { (document.querySelector(".fileview-body") as HTMLElement).focus(); });
+    await page.keyboard.press("Tab");
+    assert.equal(await page.evaluate(() => !!document.activeElement && document.activeElement.hasAttribute("data-fv-figopen")), true, "Tab from the body lands on the control");
+    // the viewport narrowed under the floor: the control leaves while it holds the keyboard
+    await page.setViewportSize({ width: 381, height: 600 });
+    await settle(page, false);
+    const narrow = await figure(page);
+    assert.equal(narrow.control, false, "the control left: " + fmt(narrow));
+    const holder = await page.evaluate(() => { const a = document.activeElement; return a === null ? "none" : a === document.body ? "document.body" : a.classList.contains("fileview-body") ? "viewer body" : a.localName; });
+    // FAILS BEFORE: "document.body", the browser's own fixup for a removed holder
+    assert.equal(holder, "viewer body", "the keyboard went to the viewer's body");
+    const top0: number = await page.evaluate(() => (document.querySelector(".fileview-body") as HTMLElement).scrollTop);
+    await page.keyboard.press("PageDown");
+    await frames(page, 3);
+    const top1: number = await page.evaluate(() => (document.querySelector(".fileview-body") as HTMLElement).scrollTop);
+    assert.ok(top1 > top0, "PageDown scrolls the report: " + top0 + " to " + top1);
     assert.deepEqual(errors, [], "no page errors");
     await page.close();
   });

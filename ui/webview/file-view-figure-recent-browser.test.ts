@@ -1,5 +1,5 @@
-// A picture opened from a figure takes no Recent row (plans/markdown-viewer.md, "Follow-on: Link navigation", L3; the review's
-// round 1, regression-1): headless Chromium boots the real Files page (files.ts: the shared viewer, the pane's own opener and
+// A picture opened from a figure takes no Recent row (plans/markdown-viewer.md, "Follow-on: Link navigation", L3; the file
+// review, regression-1): headless Chromium boots the real Files page (files.ts: the shared viewer, the pane's own opener and
 // its Recent list of eight rows), opens a synthetic report holding a figure and a link, and reads the Recent rows off
 // localStorage after each open. Before: every figure open, from the control and from the plain click, went through the pane's
 // opener (files.ts openHere) and minted a row for the picture, so eight figures opened in one report evicted every other file's
@@ -7,7 +7,10 @@
 // through the viewer's own door (file-view.ts openFigureInViewer): the trail's push, so Back returns to the report at its
 // place, and no row for the picture. Read off the DOM and the store: the rows' paths after the control's open and after the
 // plain click's (FAILS BEFORE: plot.svg at the head of the list), Back enabled to the report each time and returning to the
-// reader's block, and the link's open still adding its row (the contrast that shows the door and not the store changed).
+// reader's block, and the link's open still adding its row (the contrast that shows the door and not the store changed). The
+// exception L2 states is driven too (the file review's round 2, extra8-1): a Forward step to the picture is a Back or Forward
+// open, which the Files pane records as any open there (openFromViewer through the host's opener), so it DOES mint the
+// picture's row, one per step, where the figure's own open did not; open point 12 states it beside the default.
 // Skips LOUDLY without a playwright browser (CI installs none). Synthetic values only: the notes-api world, a placeholder
 // session id, /repo/notes-api paths.
 import { test } from "node:test";
@@ -137,7 +140,7 @@ test("the Recent key this leg reads is files-recent.ts's", () => {
   assert.match(fs.readFileSync(path.join(UI, "files-recent.ts"), "utf8"), new RegExp('^export const RECENT_KEY = "' + RECENT_KEY.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&") + '";$', "m"));
 });
 
-test("in a browser, the Files page: a picture opened from a figure, by the control and by the plain click, takes no Recent row while Back returns to the report at the reader's block; a link's open still takes its row", async (t) => {
+test("in a browser, the Files page: a picture opened from a figure, by the control and by the plain click, takes no Recent row while Back returns to the report at the reader's block; a Forward step to that picture mints its row (L2's rule, the exception open point 12 states); a link's open still takes its row", async (t) => {
   await inBrowser(t, async (h) => {
     await h.open(REPORT);
     assert.deepEqual(await h.recent(), ["report.md"], "the relay's open is the pane's: one row");
@@ -166,11 +169,22 @@ test("in a browser, the Files page: a picture opened from a figure, by the contr
     await h.page.click("#romp-fileview .fileview-nav-back");
     await h.painted("report.md");
     assert.ok((await h.top())!.text.startsWith("Paragraph 20"), "back at the block again");
+    assert.deepEqual(await h.shape(), { back: [], current: "report.md", forward: ["plot.svg"] }, "the picture stands ahead");
+    // the exception L2 states (the file review's round 2, extra8-1): a Forward step to the picture is a Back or Forward open, the
+    // pane's own (openFromViewer through the host's opener, files.ts openHere), so it mints the picture's row where the figure's
+    // open did not; one row per step, at the head, and Back then moves the report's row back to the head over it
+    await h.page.click("#romp-fileview .fileview-nav-forward");
+    await h.painted("plot.svg");
+    assert.deepEqual(await h.shape(), { back: ["report.md"], current: "plot.svg", forward: [] }, "Forward retraced the step");
+    assert.deepEqual(await h.recent(), ["plot.svg", "report.md"], "a Forward step to the picture mints its row (L2's rule), where the figure's own open did not");
+    await h.page.click("#romp-fileview .fileview-nav-back");
+    await h.painted("report.md");
+    assert.deepEqual(await h.recent(), ["report.md", "plot.svg"], "Back moves the report's row to the head; the picture's row stands");
     // the contrast: a link followed inside the report goes through the pane's opener and takes its row, as before
     await h.page.locator("#romp-fileview .fileview-md .file-uri-link, #romp-fileview .fileview-md a", { hasText: "the notes" }).first().click();
     await h.page.locator("#romp-fileview .fileview-base", { hasText: "notes.md" }).waitFor({ timeout: 10000 });
     await h.frames(3);
-    assert.deepEqual(await h.recent(), ["notes.md", "report.md"], "a link's open still enters the Recent list: the door changed for the figure alone");
+    assert.deepEqual(await h.recent(), ["notes.md", "report.md", "plot.svg"], "a link's open still enters the Recent list: the door changed for the figure alone");
     assert.deepEqual(await h.back(), { present: true, title: "Back to report.md", disabled: null }, "and is the trail's push too");
   });
 });

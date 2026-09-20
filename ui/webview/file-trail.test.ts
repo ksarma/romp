@@ -144,7 +144,7 @@ test("the viewer's own openers set ONE tag that openFileView reads and clears be
   // the body delegate's path-link open and the Back and Forward controls are the callers; the delegate calls nothing else on openLinkedFile
   assert.match(VIEW, /openFromViewer\("push", p, sid \|\| null, ln > 0 \? \{ line: ln \} : x\.dataset\.frag \? \{ heading: x\.dataset\.frag \} : null\);/, "the delegate's path link is a push");
   assert.equal((VIEW.match(/openLinkedFile\(/g) || []).length, 1, "openLinkedFile is called from openFromViewer alone (its declaration is a type annotation, not a call)");
-  // the population behind "by construction" (the review's round 1): every openFileView call in file-view.ts, named, so a new
+  // the population behind "by construction" (the file review): every openFileView call in file-view.ts, named, so a new
   // site fails here until its author says which side of the door it stands on; every assignment of the tag the same way; and
   // no alias of the function, which a textual count would not see
   const OPEN_SITES: Array<[string, string]> = [
@@ -180,12 +180,16 @@ test("both exits end the trail after their guards, the URL viewer's replace ends
   assert.match(VIEW, /case "reload": setTrail\(s\); return null;/, "moveTrail: a reload records the leaving view and moves nothing");
 });
 
-test("the two glyph buttons stand first in the bar with the icon family's drawings, aria-disabled alone when empty; the chord listener is capture-phase, stands down for a prevented key or a typing target, and leaves with the viewer", () => {
+test("the two glyph buttons stand first in the bar with the icon family's drawings, aria-disabled alone on the one without a target and the group hidden when neither has one (T367); the chord listener is capture-phase, stands down for a prevented key or a typing target, and leaves with the viewer", () => {
   assert.match(ICONS, /^export const ICON_BACK = svg\(/m); assert.match(ICONS, /^export const ICON_FORWARD = svg\(/m);
   assert.match(VIEW, /import \{ ICON_DOWNLOAD, ICON_COPY, ICON_EDIT, ICON_ZOOM, ICON_CHECK, ICON_CROSS, ICON_BACK, ICON_FORWARD, ICON_EXPAND \} from "\.\/icons";/);   // the two arrows beside the bar's glyphs (and, since L3, the figure control's)
   assert.match(VIEW, /const nav = el\("span", "fileview-group fileview-nav"\);/);
   assert.match(VIEW, /b\.innerHTML = dir === "back" \? ICON_BACK : ICON_FORWARD; b\.dataset\.icon = "1";/);
   assert.match(VIEW, /if \(!target\) b\.setAttribute\("aria-disabled", "true"\);/, "the bar's precedent (the text-size ends): aria-disabled, never disabled, so the keyboard focus stays");
+  // T367 (the greyed GitHub link removed rather than dimmed; the file review's round 2, extra8-2): the GROUP is hidden when neither
+  // direction has a target, so an open with nothing to step to rows no dimmed pair and takes no gap; the one of the pair without a
+  // target keeps aria-disabled when the other has one
+  assert.match(VIEW, /nav\.hidden = !trailBackTarget\(trailNow\) && !trailForwardTarget\(trailNow\);/, "the group hides when the trail has nothing either way (T367)");
   assert.match(VIEW, /bar\.appendChild\(nav\);\n  \/\/ BACK to the listing/, "the nav group is the bar's first child; the pane's Files link follows it and keeps its meaning");
   assert.match(VIEW, /back\.textContent = "‹ Files"; back\.title = "Back to the file listing";/, "unchanged");
   assert.match(VIEW, /document\.addEventListener\("keydown", onNavKey, true\);\n  closeHooks\.push\(\(\) => document\.removeEventListener\("keydown", onNavKey, true\)\);/,

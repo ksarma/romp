@@ -30,7 +30,7 @@ test("the control: one decision (decideFigureControl) puts a button of the bar's
   const want = between(VIEW, "function figureWantsControl(img: Element, anchor: Element, filePath: string): boolean {", "function decideFigureControl(");
   assert.match(want, /if \(img\.closest\('\[data-act="' \+ GATE_ACT \+ '"\]'\)\) return false;/, "a gated figure waits for its load");
   assert.match(want, /if \(figureTarget\(img, filePath\) === null\) return false;/, "none for a figure with nothing to open");
-  assert.match(fn, /const anchor = figureAnchor\(img\);\n\s*const standing = figureControlAfter\(anchor\);\n\s*const want = figureWantsControl\(img, anchor, filePath\);\n\s*if \(standing\) \{ if \(!want\) standing\.remove\(\); return; \}\n\s*if \(!want\) return;/, "one control per figure: the verdict against the one standing, added when missing and wanted, removed when standing and unwanted");
+  assert.match(fn, /const anchor = figureAnchor\(img\);\n\s*const standing = figureControlAfter\(anchor\);\n\s*const want = figureWantsControl\(img, anchor, filePath\);\n\s*if \(standing\) \{ if \(!want\) removeFigureControl\(standing\); return; \}\n\s*if \(!want\) return;/, "one control per figure: the verdict against the one standing, added when missing and wanted, removed when standing and unwanted (the removal hands the keyboard on first, removeFigureControl)");
   assert.match(fn, /el\("button", "fileview-btn fileview-icon " \+ FIGOPEN_CLASS\)/, "the bar's glyph dress and the control's own class");
   assert.match(fn, /b\.type = "button"; b\.innerHTML = ICON_EXPAND; b\.dataset\.icon = "1";/, "the icon family's drawing");
   assert.match(fn, /b\.setAttribute\(FIGOPEN_MARK, ""\);/, "the mark it is found by");
@@ -71,7 +71,7 @@ test("where it is decided: mdBlock's file arm after the anchors are sorted; a fi
   assert.match(VIEW, /parent\.insertBefore\(label, \(figureControlAfter\(anchor\) \|\| anchor\)\.nextSibling\);/, "the label goes after the control");
 });
 
-test("the click: a listener of its own on the body beside the links'; the control's click is the figure's own; a bare figure's click yields to a link, a panel mark, the open panel and a drag-select; a remote picture is a tab, a modified click the /file URL in a tab (stopped before the row), a plain one the viewer through openFromViewer with no target; a click another listener already answered stands down first", () => {
+test("the click: a listener of its own on the body beside the links'; the control's click is the figure's own; a bare figure's click yields to a link, a panel mark, the open panel and a drag-select; a remote picture is a tab, a modified click the /file URL in a tab (stopped before the row), a plain one the viewer through openFigureInViewer with no target; a click another listener already answered stands down first", () => {
   const listeners = VIEW.split('body.addEventListener("click", (ev) => {');
   assert.equal(listeners.length, 3, "two click listeners on the viewer's body: the links' and the figures'");
   const fig = listeners[2].split("\n  });\n")[0];

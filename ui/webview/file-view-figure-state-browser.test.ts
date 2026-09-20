@@ -1,8 +1,12 @@
 // The figure control decided from the figure's CURRENT state (plans/markdown-viewer.md, "Follow-on: Link navigation", L3; the
-// review's round 2: five findings, one cause, the control decided once at the paint from what was known then), driven through
+// file review: five findings, one cause, the control decided once at the paint from what was known then), driven through
 // the REAL viewer in headless Chromium (real-viewer-leg.ts: the chat modal, file-view.ts bundled from this tree, styles.css,
 // the /file fetch stub, a route for the figures' own requests). Three states beside the floor's (file-view-figure-floor-
-// browser.test.ts), each red at the head before the one decision (decideFigureControl over figureState):
+// browser.test.ts), each red at the head before the one decision (decideFigureControl over figureState), and a fourth case
+// (the file review's round 2, regression-3 with extra5-4): a FAILED figure WITH a box (a non-empty alt, which Chromium lays
+// out as text where an empty alt is 0 by 0) opens nothing on a plain click and nothing on a Ctrl-click, as it wears no control, since figureTarget
+// refuses the failed state as it refuses the fetching one (FAILS BEFORE: figureTarget refused fetching alone, so the plain click
+// opened the missing path in the viewer and pushed it onto the trail while the control was withheld):
 // (1) FAILED: a figure whose file is missing, with an empty alt, is a 0 by 0 box; the control the paint added stood 28 px to
 //     its left over the link before it and took the click meant for the link (the click opened the missing picture's path in
 //     the viewer). Now a failed figure wears no control and the click reaches the link.
@@ -25,7 +29,8 @@ const FIGS = ROOT + "/docs/figs/";
 const PLOT = FIGS + "plot.svg";
 const SLOW = FIGS + "slow.svg";
 const MISSING = FIGS + "missing.svg";
-const svg = (w: number, h: number, fill: string): string => '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '"><rect width="' + w + '" height="' + h + '" fill="' + fill + '"/></svg>';
+const GONE = FIGS + "gone.svg";        // a missing local figure WITH a box: a non-empty alt, which Chromium lays out as text
+const svg =(w: number, h: number, fill: string): string => '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '"><rect width="' + w + '" height="' + h + '" fill="' + fill + '"/></svg>';
 /** A `data:` candidate with no whitespace (a srcset splits candidates on whitespace), put SECOND in the value: DOMPurify drops a
  *  srcset whose first candidate is a data: URL. At a device scale of 1 the browser takes the 1x candidate, this one. */
 const INLINE = "data:image/svg+xml," + encodeURIComponent(svg(100, 100, "#987"));
@@ -82,7 +87,7 @@ const gotFiles = async (page: any): Promise<string[]> => {
 const serve = (u: URL): Served | null => {
   if (u.pathname !== "/file") return null;
   const p = u.searchParams.get("path") || "";
-  if (p === MISSING) return { status: 404, type: "text/plain; charset=utf-8", body: "not found: " + p };
+  if (p === MISSING || p === GONE) return { status: 404, type: "text/plain; charset=utf-8", body: "not found: " + p };
   return DOCS[p] !== undefined && /\.svg$/.test(p) ? { status: 200, type: "image/svg+xml", body: DOCS[p] } : null;
 };
 
@@ -174,6 +179,50 @@ test("in a browser: a FAILED figure (missing file, empty alt) wears no control, 
     const inl = await boxOf(page, ".fileview-md img", 2);
     const corner = await under(page, inl.right - 17, inl.top + 17);
     assert.deepEqual([corner.control, corner.tag], [false, "img"], "the corner of the inline-candidate figure is the figure: " + JSON.stringify(corner));
+    assert.deepEqual(errors, [], "no page errors");
+    await page.close();
+  });
+});
+
+// the report for the fourth case: a missing local figure with a box to click on (a non-empty alt, laid out as text; the width and
+// height attributes are written as an author would, and Chromium does not size the alt text by them), a sentence under it, and prose
+const GONE_TEXT = "# Report\n\n<img src=\"figs/gone.svg\" alt=\"gone\" width=\"300\" height=\"200\">\n\nA sentence under the missing picture.\n\n"
+  + Array.from({ length: 10 }, (_, i) => PARA(i + 1)).join("\n\n") + "\n";
+
+test("in a browser: a FAILED local figure with a box (a non-empty alt, laid out as text) wears no control, and its plain click opens nothing (the viewer shows the report still, no GET, the trail unmoved) while its label names the missing source; a Ctrl-click opens no tab either", { timeout: 120000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const { page, errors } = await openViewer(browser, "chat", 900, 600, { docs: { [REPORT]: GONE_TEXT, [PLOT]: DOCS[PLOT] }, serve });
+    await page.evaluate(() => {
+      const w = window as any;
+      w.__opened = []; window.open = ((u: unknown) => { w.__opened.push(String(u)); return { opener: null }; }) as unknown as typeof window.open;
+      const f = window.fetch; w.__fetched = [];
+      window.fetch = function (u: any, i?: any) { w.__fetched.push({ u: String(u), m: (i && i.method) || "GET" }); return f.call(window, u, i); } as typeof window.fetch;
+    });
+    await page.waitForFunction(() => { const i = document.querySelector(".fileview-md img") as HTMLImageElement | null; return !!i && i.complete; }, null, { timeout: 10000 });
+    await frames(page, 3);
+    await gotFiles(page);   // anything since the open: not the click's
+    const at = await figures(page);
+    t.diagnostic("the failed figure: " + JSON.stringify(at));
+    assert.deepEqual([at[0].alt, at[0].state, at[0].control], ["gone", "failed", false], "failed, and no control (the round-1 state)");
+    // Chromium lays a failed img with a non-empty alt out as its alt text (53 by 22 here, measured), not as its width and height
+    // attributes: a box all the same, and the click lands on the img
+    assert.ok(at[0].box[0] > 0 && at[0].box[1] > 0, "the alt gives it a box to click on: " + JSON.stringify(at[0].box));
+    assert.match(await page.evaluate(() => (document.querySelector(".fileview-md [data-fv-figerr]") as HTMLElement | null)?.textContent || ""), /gone\.svg/, "the label names the missing source");
+    // the plain click on the failed figure's box: nothing opens, nothing is fetched, the trail stands. FAILS BEFORE: the viewer
+    // opened gone.svg (the kernel's not-found pane), Back read "Back to report.md", and one GET of gone.svg left
+    const b = await boxOf(page, ".fileview-md img", 0);
+    assert.equal(await page.evaluate(([x, y]: [number, number]) => { const e = document.elementFromPoint(x, y); return e ? e.localName : ""; }, [b.left + b.width / 2, b.top + b.height / 2]), "img", "the img is under the point clicked");
+    await page.mouse.click(b.left + b.width / 2, b.top + b.height / 2);
+    await frames(page, 3);
+    assert.equal(await base(page), "report.md", "a plain click on a failed figure opens nothing");
+    assert.deepEqual(await gotFiles(page), [], "and fetches nothing");
+    assert.deepEqual(await backNav(page), { present: true, title: "Back", disabled: "true" }, "the trail did not move");
+    // a Ctrl-click: no tab either (the same target, none)
+    await page.keyboard.down("Control"); await page.mouse.click(b.left + b.width / 2, b.top + b.height / 2); await page.keyboard.up("Control");
+    await frames(page, 3);
+    assert.deepEqual(await page.evaluate(() => (window as any).__opened.splice(0)), [], "no tab from a Ctrl-click on a failed figure");
+    assert.equal(await base(page), "report.md");
+    assert.deepEqual(await gotFiles(page), []);
     assert.deepEqual(errors, [], "no page errors");
     await page.close();
   });

@@ -21,8 +21,10 @@ either side (a badge, an inline icon; `figureTooSmall`, read by the one decision
 at each change of the body's width), and one inside a link that holds more than the picture (`linkAbove`: the climb of `figureAnchor`
 leaves such a link standing over the img, where `linkAround` climbs a link holding the picture alone so its button
 lands after the link). A small picture no link holds still opens on a plain click: the figure's click listener reads
-the link above the target and never the size. The guide names all three kinds of picture without the button (the
-`data:` picture among them) and the number it gives is read off the constant here. The file review of the PR
+the link above the target and never the size. The guide's list of pictures without the button is read against the
+refusal arms of `figureWantsControl` (a census pinned here, so an arm added or removed asks for the sentence again; the
+file review's round 2 added the failed picture to the code's refusals, and `figureTarget` refuses it too, so the button
+and the plain click agree), and the floor's number is read off the constant here. The file review of the PR
 (2026-09-20) added two clauses, held here too: with the Comments panel open a drag that starts on the button draws no
 rectangle (the button takes the press; the loss is recorded, not built against), and inside a link with no address
 left, or an anchor that only marks a place, the plain click opens the picture (linkOf reads neither, and the button is
@@ -190,8 +192,39 @@ class TheShellTakesTheArrowsInTheDashboard(GuideSentences):
         self.assertIn('if (e.key === "]") return "forward";', chord)
 
 
-class ThreeKindsOfPictureWithoutTheButton(GuideSentences):
-    """The sentence's exceptions: the floor, the link holding more, and a `data:` picture with nothing to open."""
+class PicturesWithoutTheButton(GuideSentences):
+    """The sentence's exceptions, held to the code: the floor, the link holding more, a `data:` picture with nothing to open, and
+    (the file review's round 2) the picture that did not load, which the button and the plain click refuse on one verdict.
+    The refusal arms of figureWantsControl are the census the guide's list is read against: an arm added or removed fails here
+    until the guide's sentence is revisited, so the count the guide gives can no longer drift from the code unseen."""
+
+    def test_the_target_refuses_a_fetching_and_a_failed_figure_so_the_click_and_the_button_agree(self):
+        """The file review's round 2 (regression-3 with extra5-4): figureWantsControl withheld the button on a failed figure while
+        figureTarget refused the fetching state alone, so a plain click on a failed local figure opened the missing path in the
+        viewer and pushed it onto the trail, and a plain click on a failed remote figure opened a tab at a host whose image
+        request had answered 404. Both readers now refuse both states, read before the candidate; the clause that a picture
+        which did not load has nothing to open is true by this pin and by file-view-figure-state-browser.test.ts's execution."""
+        target = _body(self.viewer, "function figureTarget(img: Element, filePath: string): FigureTarget | null {", "}")
+        self.assertIn("const state = figureState(img);", target)
+        self.assertIn('if (state === "fetching" || state === "failed") return null;', target, "no target while fetching or after a failure")
+        self.assertLess(target.index('if (state === "fetching"'), target.index("const dest = chosenSource(img);"), "the state read before the candidate")
+        build = _body(self.viewer, "function figureWantsControl(img: Element, anchor: Element, filePath: string): boolean {", "}")
+        self.assertIn('if (state === "fetching" || state === "failed") return false;', build, "the button withheld on the same verdict")
+
+    def test_the_refusals_of_figure_wants_control_are_these_and_no_more(self):
+        """Every `return false` arm of figureWantsControl, named and in order: the gate's placeholder (its figure loads on the
+        click), the state (fetching or failed), the floor, the target (a `data:` picture, no source), and the last word, any
+        link above. A fifth arm, or one gone, fails here and asks for the guide's sentence to be read again."""
+        build = _body(self.viewer, "function figureWantsControl(img: Element, anchor: Element, filePath: string): boolean {", "}")
+        arms = [ln.strip() for ln in build.splitlines() if ln.strip().startswith("if (") and ln.strip().endswith("return false;")]
+        self.assertEqual(arms, [
+            "if (img.closest('[data-act=\"' + GATE_ACT + '\"]')) return false;",
+            'if (state === "fetching" || state === "failed") return false;',
+            "if (figureTooSmall(img)) return false;",
+            "if (figureTarget(img, filePath) === null) return false;",
+        ], "the refusal arms, as the guide's list of pictures without the button reads them")
+        self.assertTrue(build.rstrip().endswith("return linkAbove(anchor) === null;"), "the last word: any link above the picture")
+        self.assertEqual(build.count("return false;"), 4, "four refusals and the link's verdict; a change here is a change to the guide's sentence")
 
     def test_the_floor_the_guide_gives_is_the_constant_and_is_read_on_either_side(self):
         m = re.search(r"\nconst FIGOPEN_MIN_PX = (\d+);\n", self.viewer)
@@ -209,7 +242,7 @@ class ThreeKindsOfPictureWithoutTheButton(GuideSentences):
         self.assertIn("return linkAbove(anchor) === null;", build, "a link holding more than the picture")
         decide = _body(self.viewer, "function decideFigureControl(img: Element, filePath: string): void {", "}")
         self.assertIn("const anchor = figureAnchor(img);", decide)
-        self.assertIn("if (standing) { if (!want) standing.remove(); return; }", decide, "the one place a control is added or removed")
+        self.assertIn("if (standing) { if (!want) removeFigureControl(standing); return; }", decide, "the one place a control is added or removed")
         self.assertLess(build.index("figureTooSmall"), build.index("linkAbove"))
         above = _body(self.viewer, "function linkAbove(anchor: Element): Element | null {", "}")
         self.assertIn("return p ? p.closest('a, [data-act=\"openpath\"]') : null;", above, "any link: to a file, a web address or a section, and a dead one")

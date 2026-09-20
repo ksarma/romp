@@ -3,7 +3,10 @@
 // opener and its Recent list) and a chat-modal page (the viewer with its default opener), opens synthetic notes and
 // follows the links inside them. Read off the real DOM: the two glyph buttons at the left of the bar, their titles and
 // aria-disabled state after each step, the file the card shows, the reader's block and scrollTop after a Back, the view
-// it opened in and the saved preference it left alone, the trail's state through the bundle's probe. The cases are the
+// it opened in and the saved preference it left alone, the trail's state through the bundle's probe. On an open with nothing
+// to step to either way (a fresh open from outside) the GROUP is hidden and takes no room, and it shows once a step exists
+// one way, the other button wearing aria-disabled alone (T367, the rule the greyed GitHub link follows; the file review's round
+// 2, extra8-2), read here off the group's hidden attribute and its client rects. The cases are the
 // contract's: (1) a link followed, Back present and returning to the report at its place and view, red over the
 // unchanged viewer at the first Back assertion (no Back button existed); (2) Forward after Back; (3) an open from
 // outside, the Recent row and the shell's relay, starts the trail over; (4) the chords, with and without a text field
@@ -67,7 +70,7 @@ window.putAtTop = function (text) {
   body.scrollTop += k.getBoundingClientRect().top - body.getBoundingClientRect().top;
 };
 window.nav = function () {
-  var read = function (dir) { var b = document.querySelector("#romp-fileview .fileview-nav-" + dir); return b ? { present: true, title: b.title, aria: b.getAttribute("aria-label"), disabled: b.getAttribute("aria-disabled"), svg: !!b.querySelector("svg"), text: (b.textContent || "").trim(), first: b.closest(".fileview-bar").firstElementChild === b.parentElement } : { present: false }; };
+  var read = function (dir) { var b = document.querySelector("#romp-fileview .fileview-nav-" + dir); return b ? { present: true, title: b.title, aria: b.getAttribute("aria-label"), disabled: b.getAttribute("aria-disabled"), svg: !!b.querySelector("svg"), text: (b.textContent || "").trim(), first: b.closest(".fileview-bar").firstElementChild === b.parentElement, groupHidden: b.parentElement.hidden, groupBoxes: b.parentElement.getClientRects().length } : { present: false }; };
   return { back: read("back"), forward: read("forward") };
 };
 window.trailShape = function () { var s = window.__trail(); var n = function (e) { return e.path.slice(e.path.lastIndexOf("/") + 1) + (e.view ? "@" + e.view : ""); }; return { back: s.back.map(n), current: s.current ? n(s.current) : null, forward: s.forward.map(n) }; };
@@ -153,7 +156,18 @@ async function inBrowser(t: any, host: "files" | "chat", body: (h: H) => Promise
 }
 const near = (a: number, b: number, tol = 1) => Math.abs(a - b) <= tol;
 const disabled = (b: any, msg: string) => { assert.equal(b.present, true, msg + ": the button is in the bar"); assert.equal(b.disabled, "true", msg + ": aria-disabled alone when empty: " + JSON.stringify(b)); };
-const enabledTo = (b: any, title: string, msg: string) => { assert.equal(b.present, true, msg + ": the button is in the bar"); assert.equal(b.disabled, null, msg + ": no aria-disabled with a target: " + JSON.stringify(b)); assert.equal(b.title, title, msg); assert.equal(b.aria, title, msg + ": the aria-label says the same"); };
+const enabledTo = (b: any, title: string, msg: string) => { assert.equal(b.present, true, msg + ": the button is in the bar"); assert.equal(b.disabled, null, msg + ": no aria-disabled with a target: " + JSON.stringify(b)); assert.equal(b.title, title, msg); assert.equal(b.aria, title, msg + ": the aria-label says the same"); assert.equal(b.groupHidden, false, msg + ": the group shows with a target that way"); assert.ok(b.groupBoxes > 0, msg + ": and has a box"); };
+/** Nothing to step to either way (an open from outside the viewer, a trail of one file): the GROUP is hidden and takes no room
+ *  (T367, the rule the greyed GitHub link follows, removed rather than dimmed; the file review's round 2, extra8-2), and each
+ *  button still carries aria-disabled for a reader that reaches it by other means (the pair is built once per open). */
+const hiddenPair = (n: any, msg: string) => {
+  for (const [dir, b] of [["back", n.back], ["forward", n.forward]] as Array<[string, any]>) {
+    assert.equal(b.present, true, msg + ": the " + dir + " button is in the bar");
+    assert.equal(b.disabled, "true", msg + ": " + dir + " wears aria-disabled: " + JSON.stringify(b));
+    assert.equal(b.groupHidden, true, msg + ": the group is hidden (T367)");
+    assert.equal(b.groupBoxes, 0, msg + ": and takes no room");
+  }
+};
 
 test("in a browser, the Files page: a link followed from the report replaces the card; Back is a glyph at the bar's left titled with the report's name and returns to the report at its block, its scrollTop and its view (a Raw open for a line target comes back Raw with the saved preference untouched); Forward then retraces the step", async (t) => {
   await inBrowser(t, "files", async (h) => {
@@ -162,7 +176,7 @@ test("in a browser, the Files page: a link followed from the report replaces the
     // (1) FAILS BEFORE: the unchanged viewer has no Back button
     assert.equal(n.back.present, true, "a Back button in the viewer's bar");
     assert.deepEqual([n.back.svg, n.back.text, n.back.first], [true, "", true], "a glyph, no word, in the bar's first group: " + JSON.stringify(n.back));
-    disabled(n.back, "a fresh open from the relay is the trail's root"); disabled(n.forward, "nothing ahead");
+    hiddenPair(n, "a fresh open from the relay is the trail's root: nothing either way, so the group is hidden");
     assert.deepEqual(await h.shape(), { back: [], current: "report.md", forward: [] });
     await h.putAtTop("Paragraph 40");
     const before = await h.top();
@@ -236,7 +250,7 @@ test("in a browser, the Files page: a wikilink pushes like any path link; an ope
     await h.page.locator("#files-empty .fs-row", { hasText: "report.md" }).first().click();
     await h.painted("report.md");
     let n = await h.nav();
-    disabled(n.back, "a Recent row's open is outside the viewer"); disabled(n.forward, "outside: nothing ahead");
+    hiddenPair(n, "a Recent row's open is outside the viewer: nothing either way, the group hidden");
     assert.deepEqual(await h.shape(), { back: [], current: "report.md", forward: [] });
     // (3) the relay over an open viewer with a trail: a fresh root too
     await h.follow("the notes", "notes.md");
@@ -244,7 +258,7 @@ test("in a browser, the Files page: a wikilink pushes like any path link; an ope
     assert.deepEqual((await h.shape()).back, ["report.md@rendered", "notes.md@rendered"]);
     await h.open(NOTES);
     n = await h.nav();
-    disabled(n.back, "the shell's relay is an open from outside"); disabled(n.forward, "");
+    hiddenPair(n, "the shell's relay is an open from outside: the group hidden again");
     assert.deepEqual(await h.shape(), { back: [], current: "notes.md", forward: [] });
     // the Recent list keeps its meaning: one row per file, the files this page opened
     await h.page.click("#romp-fileview .fileview-close");
@@ -302,7 +316,7 @@ test("in a browser, the Files page: Alt+Left and Alt+Right step the trail while 
     assert.deepEqual(taken, { back: true, none: true }, "the browser's history step is taken over while the viewer is up, with a target and without one");
     await h.painted("report.md");
     assert.equal(await h.base(), "report.md");
-    // the editor's stand-down (the guide's sentence; the review's round 1 held it by source text alone): with the editor up the chord
+    // the editor's stand-down (the guide's sentence; the file review held it by source text alone): with the editor up the chord
     // asks nothing, though the keyboard is on a bar button and not in a text field; leaving edit mode gives the chord back. Edit's
     // consent ask is a confirm dialog here (/version is not served by this harness), accepted; the editor chunk is not served either,
     // so the plain fallback editor comes up, which is enough: `editing` is the guard, whichever editor holds the text.
@@ -346,7 +360,7 @@ test("in a browser, the Files page: a section link scrolls and pushes nothing, a
     const top1 = (await h.top())!.scrollTop;
     assert.ok(top1 > top0, "the section link scrolled the body: " + top0 + " to " + top1);
     assert.deepEqual(await h.shape(), s0, "a section link pushes nothing");
-    disabled((await h.nav()).back, "still the root");
+    hiddenPair(await h.nav(), "still the root: the group stays hidden");
     // a web address: a tab, the trail unchanged
     const [tab] = await Promise.all([h.ctx.waitForEvent("page", { timeout: 10000 }), h.page.locator("#romp-fileview .fileview-md a", { hasText: "the web" }).click()]);
     await tab.waitForLoadState();
@@ -359,7 +373,7 @@ test("in a browser, the Files page: a section link scrolls and pushes nothing, a
     await h.painted("report.md", true);
     assert.equal((await h.top())!.view, "raw", "the line target took the Raw view for this open");
     assert.deepEqual(await h.shape(), { back: [], current: "report.md@rendered", forward: [] }, "a target inside the same file is no step between files: nothing behind, the entry's view the Rendered leave's");
-    disabled((await h.nav()).back, "no Back for a jump inside the file");
+    hiddenPair(await h.nav(), "no Back for a jump inside the file: the group stays hidden");
   });
 });
 
@@ -368,7 +382,7 @@ test("in a browser, the chat modal (the viewer's default opener, no host): a lin
     await h.open(REPORT);
     const n0 = await h.nav();
     assert.equal(n0.back.present, true, "the Back glyph over the chat too");
-    disabled(n0.back, "the root"); disabled(n0.forward, "");
+    hiddenPair(n0, "the root: nothing either way, the group hidden over the chat too");
     await h.putAtTop("Paragraph 40");
     const before = await h.top();
     await h.follow("the notes", "notes.md");

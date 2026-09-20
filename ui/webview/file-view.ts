@@ -672,7 +672,7 @@ function openFromViewer(how: TrailHow, path: string, sid: string | null, at: At 
  *  (Back returns to the report at the figure's place) and the picture enters no Recent list. The host's opener (files.ts
  *  openHere) records every file it opens as recent, and in the Files pane every figure opened from a report took a row
  *  from a file the reader had read: eight figures opened in one report evicted every other file's row and the reading place
- *  stored on it (the review's round 1; the list holds eight). A picture reached from its report is a step inside that
+ *  stored on it (the file review; the list holds eight). A picture reached from its report is a step inside that
  *  report's reading and no file the reader chose from the pane, so it takes no row; the report's own row stands, and Back
  *  reaches the report through the trail. The default the record names as the one taken. No place rides: a picture has none
  *  (its leave writes nothing), and a picture with a row of its own is opened from that row, through the host. */
@@ -1192,7 +1192,10 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // buttons in the icon family, the bar's first group: an arrow left and an arrow right, the words in the title and
   // aria-label with the target's file name ("Back to report.md"), and the word alone with aria-disabled when the trail
   // has nothing that way (the bar's precedent, the text-size ends: never `disabled`, so a focused button keeps the
-  // keyboard). Built once per open from the trail as this open left it (moveTrail ran above), never rebuilt: every step
+  // keyboard); the GROUP hidden when the trail has nothing EITHER way, the ordinary open from outside (T367, the user
+  // 2026-09-12: a control with nothing to do is not rowed, as the greyed GitHub link was removed rather than dimmed; the
+  // file review's round 2, extra8-2, which found the rule the round-1 record said did not exist). Built once per open from
+  // the trail as this open left it (moveTrail ran above), never rebuilt: every step
   // is an open that builds a new bar, so the state cannot go stale. The click's acknowledgement is the replace itself,
   // in the same tick; a step re-opens its entry through openFromViewer with NO target, so the remembered place re-seats
   // the file where it was left (pendingPlace) and the entry's recorded view is the view for that open (trailView).
@@ -1209,6 +1212,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     return b;
   };
   nav.appendChild(navBtn("back")); nav.appendChild(navBtn("forward"));
+  nav.hidden = !trailBackTarget(trailNow) && !trailForwardTarget(trailNow);   // nothing to step to either way: the group is out of the row and takes no gap (the sheets' .fileview-group[hidden]), the rule T367 set for the bar with the greyed GitHub link; with a target one way the group shows and the other button wears aria-disabled alone
   bar.appendChild(nav);
   // BACK to the listing (the user 2026-08-24): a file opened FROM the browser overlays it with the
   // listing intact beneath (the one-directional stack above) — closing just the viewer IS the back.
@@ -1793,6 +1797,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     const opts: FocusOptions & { focusVisible: boolean } = { preventScroll: true, focusVisible: ring ?? (a === null || a === document.body ? ringWithNoHolder() : ringOf(a)) };
     try { body.focus(opts); } finally { takingKeyboard = false; }
   };
+  keyboardTakers.set(body, takeKeyboard);   // for a figure control removed while it holds the keyboard (removeFigureControl, module level): this open's hand-over, found through the control's body
+  closeHooks.push(() => { keyboardTakers.delete(body); });
   // The ring after a key (the review's round 4). Chromium keeps the verdict a focus call named for the life of that focus, so a
   // body handed the keyboard without the ring (a pointer open, a mouse click on a toggle or a text-size step) showed none after
   // any number of keys, where the heuristic gives a mouse-focused element the ring on its first key. The body's own keydown
@@ -2175,6 +2181,11 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // placeholder restored, the chat page's heal landing a retry): the body's `load` capture listener, armed once per open like
   // the labels' and dropped with the viewer.
   ctx.onClose(armFigureControls(body, path));
+  // Every figure's own laid-out box watched (watchFigureBoxes: one ResizeObserver per open, re-armed at each text paint through
+  // the seam's onRendered), so the control is decided again at every reflow of the figure, the body's width and a text-size step
+  // alike; null outside a browser, where nothing reflows.
+  const figureWatch = watchFigureBoxes(body, path, ctx.onRendered);
+  if (figureWatch) ctx.onClose(figureWatch);
   // The write, at the moments the reader leaves the file (runLeave: closeFileView and both replace paths; the window's
   // pagehide listener in initFileView runs it too): the place as the body stands, read once here and never per frame (the Slice 5 review's cost
   // lesson), at this file's mtime and scrollTop, with the Rendered view's open folds by ordinal, into the module's map and the
@@ -2248,9 +2259,10 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // the size at observe(), not a change. The repaint is ONE per animation frame: the reports are folded into the
   // next frame (requestAnimationFrame, the frame's own event) and the frame repaints only if the width it finds
   // differs from the one last painted over, so a burst of reports (several observers' entries, a width that
-  // moved and came back, the body growing taller as a figure loaded) costs one pass or none. The same pass decides every
-  // figure's "Open the picture" control again (refigureControls): its size floor is measured against the new width, where
-  // a floor read once, at the picture's load, left a control on a figure the pane or the aside then narrowed under it. The panel answers a
+  // moved and came back, the body growing taller as a figure loaded) costs one pass or none. The figures' "Open the picture"
+  // controls are NOT decided here: each figure's own ResizeObserver (watchFigureBoxes, armed with the load and error pair above)
+  // hears the reflow this report causes as it hears a text-size step's, which moves the column and not the body (the file
+  // review's round 2: a call here ran on one road of the two). The panel answers a
   // reflow by re-placing its cards and nothing more (file-comments.ts): until 2026-09-09 it ran its whole paint
   // pass here, unwrapping and re-wrapping every highlight and rebuilding the cards, once per frame of a pane drag,
   // and at a big reviewed file (15,000 lines, hundreds of comments and changes) that pass took seconds a frame and
@@ -2298,7 +2310,6 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     if (restored) notePlace(); else seat(place);   // the restored offset read, or the place read before the width moved (see notePlace) seated
     landRemembered(); landTarget();                // then a remembered place a first paint under a boxless body left pending (landRemembered), and the target and the keyboard such a paint left pending (landTarget)
     retakeAfterHide();                             // and the keyboard the hide's focus fixup dropped off the body, if the body held it (retakeAfterHide)
-    refigureControls(body, path);   // every figure's control decided again at the new width (the figure-control section before keepVideoShape): one the column narrowed under the floor leaves, one it widened past arrives
   };
   // The Files pane toggled off and on (the shell's display:none on the pane; a phone's tab swap): the browser's focus fixup drops
   // the keyboard off a body that has no box, to the document's body, and nothing re-took it at the show, since keyboardOnLanding
@@ -2735,7 +2746,9 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // viewer through openFigureInViewer, so the shown file goes onto the trail and Back returns to it at the figure's place (the
   // replace's runLeave writes the reader's place as for any link) and the picture enters no Recent list; a Cmd/Ctrl-click opens the kernel's /file URL in a tab, as
   // a PDF's modified click does (openFileTab; a blocked popup falls through to the viewer), and stops before the row, as a
-  // link's modified click does. A remote picture (an http source) opens in a tab whatever the gesture, never in the viewer.
+  // link's modified click does. A remote picture (an http source) opens in a tab whatever the gesture, never in the viewer:
+  // the plain click, the control and the Cmd/Ctrl-click all hand its own address to openUrlTab (the file review's round 2,
+  // extra5-3: the record had named the first two gestures alone). A failed figure opens nothing on any gesture (figureTarget).
   // The control's click is the figure's own wherever it stands (and it never stands inside a link: decideFigureControl puts it
   // after a link holding the figure alone and adds none inside any link holding more, linkAbove). The figure's own click yields
   // where another gesture owns it: a figure inside a link (linkOf: the links listener follows the author's link; an anchor
@@ -4650,9 +4663,14 @@ function linkAround(p: Element, a: Element): boolean {
   return p.localName === "a" && p.children.length === 1 && p.children[0] === a && (p.textContent || "").trim() === "";
 }
 /** The label standing right after `anchor`, when one does: its next sibling carrying the mark, or the sibling after the
- *  figure's "Open the picture" control when that stands at the anchor's side (figureControlAfter). The control goes in at the
- *  anchor's side at paint time, before any error can fire, so the label goes after it; a control added on a later load, a
- *  gated figure's, goes in at the anchor's side as well, ahead of a label already standing, and the label is found past it. */
+ *  figure's "Open the picture" control when that stands at the anchor's side (figureControlAfter). The rule over the two
+ *  writers: a control stands on a LOADED figure alone (decideFigureControl) and a label on a FAILED one, so in a browser the
+ *  two meet only inside one error dispatch, where the labels' listener, armed first, puts the label past a control an earlier
+ *  load had added and the controls' listener then removes that control (a heal's retry that fails again); the read steps past
+ *  the control so that dispatch finds its label, and a control added at a later load goes in at the anchor's side ahead of a
+ *  label the same dispatch removes. A stand-in outside a browser (the node suites' DOM) is decided from its source at the paint
+ *  and keeps that control through a fired error, its label after it (the file review's round 2, fresh-2: this doc had said the
+ *  control goes in at the paint before any error can fire, which a browser's fetching figure made false). */
 function figureLabelAfter(anchor: Element): Element | null {
   const n = (figureControlAfter(anchor) || anchor).nextSibling;
   return n && n.nodeType === 1 && (n as Element).hasAttribute(FIGERR_MARK) ? n as Element : null;
@@ -4807,19 +4825,28 @@ function resolveFigureRefs(root: ParentNode, base: string): void {
 // Whether the control stands is DECIDED FROM THE FIGURE AS IT IS NOW, by one function (decideFigureControl, the one place a
 // control is added or removed), and decided again at every event that changes what it reads: the paint (mdBlock,
 // addFigureControls), the picture's load and its error (armFigureControls, one capture-phase pair on the body), and each
-// change of the body's width (the width watch's repaint in openFileView, refigureControls). The verdict (figureWantsControl)
+// change of the figure's OWN laid-out box (watchFigureBoxes: one ResizeObserver per open over the figures of the Rendered
+// box, re-armed at each text paint), which is the reflow itself whatever caused it: the pane dragged, the Comments aside
+// opened or closed, the window resized, or a text-size step (A-, A+, Ctrl/Cmd + wheel), which re-measures the 80ch column
+// at a CONSTANT body width and so reflows every column-capped figure with no width report (the file review's round 2:
+// decided from the width watch's repaint alone, the floor went stale both ways across a step, a control on a figure the step
+// had narrowed under 48 px and none on one it had widened past). Where ResizeObserver is missing (a stand-in outside a
+// browser) nothing reflows and the paint's decision stands. The verdict (figureWantsControl)
 // reads the figure's state off the element (figureState: `complete` and `naturalWidth`, the browser's own record). A figure
 // still FETCHING gets none: nothing about it is known yet, not its size and not the candidate the browser will show (the
-// round-2 review: a `<picture>` or a srcset figure read before its load had an empty currentSrc, which chosenSource took as
+// file review: a `<picture>` or a srcset figure read before its load had an empty currentSrc, which chosenSource took as
 // the src, so the control and the plain click opened the fallback src the browser never asked for and put that file on the
 // trail; a control added then was never re-judged, so a srcset figure whose chosen candidate is a `data:` URI kept a control
-// whose click did nothing). A figure that FAILED gets none: there is no picture to open and, with an empty alt, no box (a 0
-// by 0 figure wore a control laid 28 px to its left, over the prose before it, which took the click meant for that prose). A
+// whose click did nothing). A figure that FAILED gets none, and its clicks open nothing (figureTarget refuses the failed state
+// as it refuses the fetching one, so the control and the click agree): there is no picture to open and, with an empty alt,
+// no box (a 0 by 0 figure wore a control laid 28 px to its left, over the prose before it, which took the click meant for
+// that prose). A
 // LOADED figure under the floor on either side (FIGOPEN_MIN_PX, figureTooSmall: a badge, an inline icon, a figure the column
 // narrowed under it) gets none, one with nothing to open (figureTarget: no source, a `data:` candidate) gets none, one
 // inside a link holding more than it (linkAbove) gets none, and every other loaded figure gets one. A verdict that changed
-// removes the control that stands or adds the one that is missing; one that did not leaves the figure as it is, so every
-// caller runs the decision as often as its event fires. This is the class the review's round 1 named: a value measured once
+// removes the control that stands (handing the keyboard to the viewer's body first when the control holds it,
+// removeFigureControl) or adds the one that is missing; one that did not leaves the figure as it is, so every
+// caller runs the decision as often as its event fires. This is the class the file review named: a value measured once
 // against a condition that can change is re-read on the event that changes it (the floor read once at the load: a 761 by 76
 // figure narrowed to 323 by 32 kept its control, which hung over the figure and took the click meant for the prose, where the
 // note reopened at that width had none). currentSrc changes only with a new fetch (a `<picture>` re-selecting its source at
@@ -4847,12 +4874,17 @@ function resolveFigureRefs(root: ParentNode, base: string): void {
 // no source, a `data:` URL (inline bytes, which a tab will not show), any other scheme. A figure still fetching has no
 // target yet (figureState): its control waits for the load and its plain click opens nothing, since the candidate the
 // browser will show is not known (currentSrc is empty while the source is on the wire, and chosenSource read that as the
-// src). The target is read again at the click. A gated placeholder (figure-gate.ts) gets none
-// until its figure is loaded: armFigureControls hears the load on the body.
+// src); nor has a figure that FAILED: there is no picture to open, so its plain click and its Cmd/Ctrl-click open nothing,
+// as its control is withheld on the same verdict (the file review's round 2: the target refused the fetching state alone,
+// so a failed local figure's click opened the missing path in the viewer and pushed it onto the trail, and a failed remote
+// figure's click opened a tab at a host whose image request had answered 404, while the control was already withheld; the
+// two readers of "is there something to open" now answer alike). The target is read again at the click. A gated
+// placeholder (figure-gate.ts) gets none until its figure is loaded: armFigureControls hears the load on the body.
 /** What "Open the picture" opens for a figure, or null when there is nothing to open. `filePath` is the shown file's. */
 type FigureTarget = { kind: "file"; path: string } | { kind: "web"; href: string };
 function figureTarget(img: Element, filePath: string): FigureTarget | null {
-  if (figureState(img) === "fetching") return null;    // the browser has not answered for the figure yet: no candidate to name, nothing to open until the load or the error decides (decideFigureControl)
+  const state = figureState(img);
+  if (state === "fetching" || state === "failed") return null;   // fetching: the browser has not answered for the figure yet, no candidate to name until the load or the error decides; failed: no picture to open, the verdict the control is withheld on (figureWantsControl), so the click and the control agree (the file review's round 2)
   const dest = chosenSource(img);                      // the candidate the browser chose, as the author wrote it: the picture's source or the srcset candidate in currentSrc, else the src by pictureDest's rule
   if (dest === null) return null;
   // The web address FIRST, before the model's join: figurePath reads a protocol-relative source (`//host/pic.svg`) as an
@@ -4925,7 +4957,7 @@ function figureTooSmall(img: Element): boolean {
  *  href taken off at mark time). A control inside one is nested interactive content and the link's click too, whatever the
  *  anchor's href: a web address, a section, a file, and a dead link, an anchor the sanitizer or the viewer stripped of its
  *  href (file-view-links.ts DEAD_LINK_CLASS), which a read of `a[href]` missed, so a captioned picture inside a dead link
- *  wore its control inside the anchor (the review's round 1). An author's named target with no href (`<a id="fig1">` around
+ *  wore its control inside the anchor (the file review). An author's named target with no href (`<a id="fig1">` around
  *  a captioned picture) counts as a link too, and its figure gets no control. A link holding the figure alone IS the anchor
  *  (figureAnchor climbed it) and is not read. */
 function linkAbove(anchor: Element): Element | null {
@@ -4946,13 +4978,13 @@ function figureWantsControl(img: Element, anchor: Element, filePath: string): bo
 }
 /** The ONE place a control is added or removed: the verdict (figureWantsControl) against the control standing after `img`'s
  *  anchor (figureControlAfter). Wanted and standing, or unwanted and absent: nothing happens. Run at the paint
- *  (addFigureControls), at the figure's load and error (armFigureControls) and at each change of the body's width
- *  (refigureControls). */
+ *  (addFigureControls), at the figure's load and error (armFigureControls) and at each change of the figure's own laid-out box
+ *  (watchFigureBoxes). A control removed while it holds the keyboard hands it to the viewer's body first (removeFigureControl). */
 function decideFigureControl(img: Element, filePath: string): void {
   const anchor = figureAnchor(img);
   const standing = figureControlAfter(anchor);
   const want = figureWantsControl(img, anchor, filePath);
-  if (standing) { if (!want) standing.remove(); return; }
+  if (standing) { if (!want) removeFigureControl(standing); return; }
   if (!want) return;
   const b = el("button", "fileview-btn fileview-icon " + FIGOPEN_CLASS) as HTMLButtonElement;
   b.type = "button"; b.innerHTML = ICON_EXPAND; b.dataset.icon = "1";
@@ -4962,6 +4994,24 @@ function decideFigureControl(img: Element, filePath: string): void {
   if (align === "left" || align === "right") b.classList.add(FIGOPEN_CLASS + "-" + align);   // the figure floats that way (the sanitizer keeps `align`); the control floats with it
   const parent = anchor.parentNode;
   if (parent) parent.insertBefore(b, anchor.nextSibling);
+}
+/** Per open, the viewer body's takeKeyboard (openFileView), for a control removed while it holds the keyboard: the decision is
+ *  module-level and the hand-over is the open's, so the open registers it against its body and removeFigureControl finds it
+ *  through the control's body. Dropped with the viewer (a WeakMap, so a body that is gone holds nothing either way). */
+const keyboardTakers = new WeakMap<HTMLElement, (ring?: boolean) => void>();
+/** The control removed, the keyboard handed on first when the control holds it (the file review's round 2, ui-4): a removed
+ *  holder drops the browser's focus to the document's body, where PageDown, the arrows and End scroll nothing until a click, the
+ *  class this file treats as a defect at its other removals (the Outline popover's close, the changed-on-disk bar's landing). The
+ *  holder and its ring are read before the removal (ringOf: the ring is the holder's, not the body's), the control goes, and the
+ *  body's takeKeyboard runs after it, through its own gate (the focus is on the document's body then, which the gate admits). */
+function removeFigureControl(control: HTMLElement): void {
+  const a = document.activeElement;
+  const held = !!a && control.contains(a);
+  const ring = held ? ringOf(a) : false;
+  const body = held ? control.closest(".fileview-body") as HTMLElement | null : null;
+  control.remove();
+  const take = body ? keyboardTakers.get(body) : undefined;
+  if (take) take(ring);
 }
 /** Every figure of a freshly painted Rendered box decided (mdBlock, the file kind, after the links are sorted): in a browser a
  *  figure still fetching gets none here and its control at its load; one the browser already holds is complete here and is
@@ -4982,11 +5032,25 @@ function armFigureControls(body: HTMLElement, filePath: string): () => void {
   body.addEventListener("error", decide, true);
   return () => { body.removeEventListener("load", decide, true); body.removeEventListener("error", decide, true); };
 }
-/** Every figure of the body's Rendered box decided again once the body's width has changed (the width watch's repaint in
- *  openFileView: the pane dragged, the Comments aside opened or closed), the event the floor's measure depends on: a figure
- *  the column narrowed under the floor loses its control and one it widened past gets it back. */
-function refigureControls(body: HTMLElement, filePath: string): void {
-  body.querySelectorAll(".fileview-md img").forEach((img) => { decideFigureControl(img, filePath); });
+/** Every figure of the body's Rendered box watched for a change of ITS OWN laid-out box, one ResizeObserver per open, the event
+ *  the floor's measure depends on: a figure the column narrowed under the floor loses its control and one it widened past gets
+ *  it back, whatever reflowed it (the pane dragged, the Comments aside opened or closed, the window resized, a text-size step
+ *  re-measuring the 80ch column at a constant body width), with no call from any road (the file review's round 2: a call from
+ *  the width watch's repaint ran on one road of two and missed the text-size step). The observer's first report describes each
+ *  figure's box at observe(), the decision the paint took over a box not yet laid out, run again over the laid-out one; a gated
+ *  placeholder's img reports 0 by 0 until its click restores it, and figureWantsControl reads the placeholder first. Re-armed at
+ *  each text paint (`onRendered` with any `why` but "reflow": a reflow keeps the figure nodes, a paint replaces them) over the
+ *  figures the box holds then, and dropped by the function returned. Null where ResizeObserver is missing (a stand-in outside
+ *  a browser), where nothing reflows and the paint's decision stands. */
+function watchFigureBoxes(body: HTMLElement, filePath: string, onRendered: (cb: (why?: FileViewRenderWhy) => void) => void): (() => void) | null {
+  if (typeof ResizeObserver !== "function") return null;
+  const ro = new ResizeObserver((entries) => {
+    for (const e of entries) { const img = e.target; if (img.isConnected && figureState(img) !== "standin") decideFigureControl(img, filePath); }
+  });
+  const rearm = (): void => { ro.disconnect(); body.querySelectorAll(".fileview-md img").forEach((img) => { ro.observe(img); }); };
+  onRendered((why) => { if (why !== "reflow") rearm(); });
+  rearm();
+  return () => { ro.disconnect(); };
 }
 
 /** A pixel-sized `<video>` keeps the shape its `width` and `height` attributes give it, capped or not. The viewer's sheets

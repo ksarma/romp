@@ -186,7 +186,7 @@ test("in a browser: Tab reaches the control and Enter opens the picture, the bar
   });
 });
 
-test("in a browser: a figure inside an author's link keeps the link on its plain click and still has its own control; a remote picture on an unlisted host gets its control once its placeholder is loaded and opens a tab, never the viewer; print media shows no control even when focused; a device with no hover keeps it visible", async (t) => {
+test("in a browser: a figure inside an author's link keeps the link on its plain click and still has its own control; a remote picture on an unlisted host gets its control once its placeholder is loaded and opens a tab at its own address from the control, the plain click and a Ctrl-click, never the viewer and never a /file URL; print media shows no control even when focused; a device with no hover keeps it visible", async (t) => {
   await inBrowser(t, async (browser) => {
     const { page, errors } = await openReport(browser);
     // the linked figure: the author's link opens the notes; the control after the link opens the picture
@@ -225,6 +225,17 @@ test("in a browser: a figure inside an author's link keeps the link on its plain
     await frames(page, 2);
     assert.deepEqual(await opened(page), [REMOTE], "and from the figure's own plain click");
     assert.equal(await base(page), "report.md");
+    // a Ctrl-click on the remote figure, and on its control: the picture's OWN address in a tab, never the kernel's /file URL (the
+    // file review's round 2, extra5-3: the record named the plain click and the control as the gestures that open the tab, and a
+    // modified click as the /file URL's; on a remote picture every gesture is the address); the viewer and the trail unmoved
+    await page.keyboard.down("Control"); await page.mouse.click(ri.left + ri.width * 0.3, ri.top + ri.height * 0.6); await page.keyboard.up("Control");   // mouse.click takes no modifiers option: the key is held around it
+    await frames(page, 2);
+    assert.deepEqual(await opened(page), [REMOTE], "the Ctrl-click on the remote figure: its own address, not a /file URL");
+    await page.locator(".fileview-md [data-fv-figopen]").nth(4).click({ modifiers: ["Control"] });
+    await frames(page, 2);
+    assert.deepEqual(await opened(page), [REMOTE], "and on its control: the same address");
+    assert.equal(await base(page), "report.md", "never the viewer");
+    disabled((await nav(page)).back, "a tab pushes nothing");
     assert.deepEqual((await controls(page))[5].control, false, "the inline data picture still has none");
     // print: the reveal rules are screen's, so a control holding the focus prints as its rest, transparent
     await page.evaluate(() => { document.querySelectorAll(".fileview-md img")[0].scrollIntoView({ block: "center" }); (document.querySelector(".fileview-body") as HTMLElement).focus(); });
