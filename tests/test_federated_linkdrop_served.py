@@ -200,9 +200,11 @@ DOWN_READ_ROOM_MS = 2000     # the room down_dwell_ms holds past DOWN_WINDOW_MAR
 #                              AFTER visible()'s reads (waitVisible), so it exceeds the wait's cap by the reads' duration on a phase that ran
 #                              to the cap; without the room the margin pin could red on a drive whose visibility legs pass. The reads
 #                              alone take 6 to 22 ms where the wait had nothing left to wait for (D.seenAfterReturn.waitedMs over 34
-#                              recorded drives as of 2026-09-20, `python3 reads_census.py <report.json>...` outside the repo), so the room the
-#                              reads get, this constant over DOWN_WINDOW_MARGIN (1 s: the relation pin divides through by the margin), is a
-#                              floor far above them, not a fit. The room is for the reads after a wait that RESOLVED: a phase whose wait ran
+#                              recorded drives as of 2026-09-20, `python3 reads_census.py <report.json>...` outside the repo); over the 45
+#                              unmutated recorded drives that carry the reading (of 56, as of the drive of 2026-09-20 at this code) it
+#                              runs 6 to 125 ms, the 125 ms one new-bundle drive's (`r6-margin/lab-head2.log`) where a wait still had a
+#                              render to wait for, so the reading is an upper bound on the reads. The room the reads get, this constant over DOWN_WINDOW_MARGIN
+#                              (1 s: the relation pin divides through by the margin), is a floor far above them, not a fit. The room is for the reads after a wait that RESOLVED: a phase whose wait ran
 #                              to the cap is refused by the margin leg (seen.expired, round 5), never measured against the room.
 #                              tests/test_federated_linkdrop_driver_bound.py pins down_dwell_ms >= DOWN_WINDOW_MARGIN x wait_ms + this
 QUIET_TRIES, QUIET_STEP_MS = 7, 2000   # quiet(): up to QUIET_TRIES windows of QUIET_STEP_MS with no new relay frame on any page
