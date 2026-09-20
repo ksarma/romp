@@ -87,6 +87,17 @@ BIN = os.path.join(ROOT, "bin")
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()   # hermetic BEFORE the loads
 os.environ.pop("ROMP_STATE_DIR", None)
 sh = load_source("romp_session_host", os.path.join(ROOT, "kernel", "session_host.py"))
+
+
+def host_dir_0700(root, sid):
+    """hosts/<sid>/ made the way the spawn road's helpers make it, both directories 0700 (pathlib's mkdir(parents=True)
+    makes the parent at the umask, 0775 under the 002 the box runs at): since the round-7 fourth addendum of fork PR
+    #814's review (2026-09-20) the read roads file one host.directory-loose row per loose component they descend
+    through, and a fixture at the umask put that row in front of the rows these pins read (four cases red at the
+    addendum's first cut). The pins are about the rows the served road files from host.log, not about the mode."""
+    hd = ht.host_dir(root, sid); hd.mkdir(parents=True)
+    os.chmod(hd.parent, 0o700); os.chmod(hd, 0o700)
+    return hd
 sb = load_source("romp_sdk_backend", os.path.join(BIN, "romp_sdk_backend.py"))
 # A PRIVATE copy of kernel/host_transport.py for the pure functions this module calls (host_exit_reason, host_dir),
 # never `sb._ht()` at import (round 1 addendum, 2026-09-18). The shared `romp_host_transport` entry is bound once per
@@ -493,7 +504,7 @@ class HostProcess(unittest.TestCase):
     def test_host_exit_reason_reads_the_last_crash_or_spawn_row_and_is_empty_otherwise(self):
         d = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, d, True)
         self.assertEqual(ht.host_exit_reason(d, SID), "", "no log yet")
-        hd = ht.host_dir(d, SID); hd.mkdir(parents=True)
+        hd = host_dir_0700(d, SID)
         (hd / "host.log").write_text(json.dumps({"t": 1, "kind": "host-started"}) + "\n")
         self.assertEqual(ht.host_exit_reason(d, SID), "", "a log with no failing row")
         with open(hd / "host.log", "a") as f:
@@ -525,7 +536,7 @@ class HostProcess(unittest.TestCase):
     # around no failure at all.
     def test_a_failing_row_with_no_error_an_empty_one_or_a_null_one_says_nothing_and_is_stepped_over(self):
         d = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, d, True)
-        hd = ht.host_dir(d, SID); hd.mkdir(parents=True)
+        hd = host_dir_0700(d, SID)
         started = {"t": 1, "kind": "host-started"}
         untested = {"t": 2, "kind": "sdk-version-untested", "installed": OTHER, "tested": sh.SDK_TESTED_VERSION, "relation": "newer"}
 
@@ -543,7 +554,7 @@ class HostProcess(unittest.TestCase):
         d = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, d, True); logs = []
         be = sb.SdkBackend(d, "/bin/true", lambda *a, **k: None, log=logs.append)
         sess = types.SimpleNamespace(sid=SID, name="web", _host=None)
-        hd = ht.host_dir(d, SID); hd.mkdir(parents=True)
+        hd = host_dir_0700(d, SID)
         (hd / "host.log").write_text(json.dumps({"t": 1, "kind": "host-started"}) + "\n"
                                      + json.dumps({"t": 2, "kind": "sdk-version-untested", "installed": OTHER,
                                                    "tested": sh.SDK_TESTED_VERSION, "relation": "newer"}) + "\n")
@@ -563,7 +574,7 @@ class HostProcess(unittest.TestCase):
         d = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, d, True); logs = []
         be = sb.SdkBackend(d, "/bin/true", lambda *a, **k: None, log=logs.append)
         sb.write_reg(Path(d), SID, {"sid": SID, "name": "web", "alive": True, "lastSid": SID})
-        hd = ht.host_dir(d, SID); hd.mkdir(parents=True)
+        hd = host_dir_0700(d, SID)
 
         def launch(pid, installed=OTHER, relation="newer"):
             # a new host each time: its own identity (hostLogPos is keyed by it, so its log is read from zero) and a
@@ -647,7 +658,7 @@ class HostProcess(unittest.TestCase):
 
     def test_host_exit_reason_states_the_version_from_the_untested_row_of_this_run_only(self):
         d = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, d, True)
-        hd = ht.host_dir(d, SID); hd.mkdir(parents=True)
+        hd = host_dir_0700(d, SID)
         rows = [{"t": 1, "kind": "host-started"},
                 {"t": 2, "kind": "sdk-version-untested", "installed": OTHER, "tested": sh.SDK_TESTED_VERSION, "relation": "newer"},
                 {"t": 3, "kind": "cli-spawn-failed", "error": "TypeError"}]
@@ -669,7 +680,7 @@ class HostProcess(unittest.TestCase):
     # run's failure and the second run's untested row from a host still running) and is not that failure's version.
     def test_an_untested_row_written_after_the_failing_row_is_not_that_failures_fact(self):
         d = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, d, True)
-        hd = ht.host_dir(d, SID); hd.mkdir(parents=True)
+        hd = host_dir_0700(d, SID)
         failed = {"t": 2, "kind": "cli-spawn-failed", "error": "FileNotFoundError"}
         untested = {"t": 4, "kind": "sdk-version-untested", "installed": OTHER, "tested": sh.SDK_TESTED_VERSION, "relation": "newer"}
 
@@ -691,7 +702,7 @@ class HostProcess(unittest.TestCase):
     # "different than" and "None than"; this case fails on either.
     def test_host_exit_reason_says_other_than_for_a_relation_that_is_not_newer_or_older_or_is_absent(self):
         d = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, d, True)
-        hd = ht.host_dir(d, SID); hd.mkdir(parents=True)
+        hd = host_dir_0700(d, SID)
         for extra in ({"relation": "different"}, {}, {"relation": "same"}):
             rows = [{"t": 1, "kind": "host-started"},
                     dict({"t": 2, "kind": "sdk-version-untested", "installed": "not-a-version", "tested": sh.SDK_TESTED_VERSION}, **extra),
@@ -716,7 +727,7 @@ class HostProcess(unittest.TestCase):
     # (host.sdk-untested, filed on the refused road too). No untested row in this run, no fact.
     def test_host_exit_reason_states_the_version_beside_every_spawn_failure_alike_and_never_the_remedy(self):
         d = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, d, True)
-        hd = ht.host_dir(d, SID); hd.mkdir(parents=True)
+        hd = host_dir_0700(d, SID)
 
         def reason(error, causes=None, untested=True):
             row = {"t": 3, "kind": "cli-spawn-failed", "error": error}
@@ -798,7 +809,7 @@ class HostProcess(unittest.TestCase):
     # host's run and carried its reason and remedy onto the card and into the ledger. The spawn is the event itself.
     def test_host_exit_reason_reads_past_the_spawn_watermark_never_a_previous_hosts_last_word(self):
         d = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, d, True)
-        hd = ht.host_dir(d, SID); hd.mkdir(parents=True)
+        hd = host_dir_0700(d, SID)
         self.assertEqual(ht.host_log_mark(d, SID), 0, "no log yet: the mark is the start")
         self.assertEqual(ht.host_log_rows(d, SID), [])
         first = [{"t": 1, "kind": "host-started"},
@@ -926,7 +937,7 @@ class HostProcess(unittest.TestCase):
     # another version, whose host writes its untested row and then its crash record in one run.
     def test_a_crash_row_after_an_untested_row_is_carried_whole_with_no_version_fact_composed_onto_it(self):
         d = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, d, True)
-        hd = ht.host_dir(d, SID); hd.mkdir(parents=True)
+        hd = host_dir_0700(d, SID)
         for text in ("OSError: AF_UNIX path too long", sh.sdk_mismatch_text(OTHER, LEAF + "." + NAME + "._process")):
             rows = [{"t": 1, "kind": "host-started"},
                     {"t": 2, "kind": "sdk-version-untested", "installed": OTHER, "tested": sh.SDK_TESTED_VERSION, "relation": "newer"},
@@ -1250,7 +1261,7 @@ class HostProcess(unittest.TestCase):
     # untested row survived under the stale lease); this launch's host wedges writing nothing.
     def test_a_wedged_host_that_wrote_nothing_inherits_no_previous_hosts_reason_or_drift_row_at_the_deadline(self):
         d, events = self._stale_lease_root()
-        hd = ht.host_dir(d, SID); hd.mkdir(parents=True)
+        hd = host_dir_0700(d, SID)
         previous = [{"t": 1, "kind": "host-started"}, self._UNTESTED, {"t": 3, "kind": "cli-spawn-failed", "error": "TypeError"},
                     {"t": 4, "kind": "host-started"}, {"t": 5, "kind": "host-crashed", "error": sh.sdk_mismatch_text(OTHER, LEAF + "." + NAME)}]
         (hd / "host.log").write_text("".join(json.dumps(r) + "\n" for r in previous))
@@ -1335,7 +1346,7 @@ class HostProcess(unittest.TestCase):
     def test_the_pinned_residual_a_previous_hosts_unfiled_row_vanishes_after_a_refused_launch(self):
         seed = [{"t": 1, "kind": "host-started"}, {"t": 2, "kind": "reader-behind"}, {"t": 3, "kind": "end-forced", "cliPid": 9}]
         d, events = self._stale_lease_root()
-        hd = ht.host_dir(d, SID); hd.mkdir(parents=True)
+        hd = host_dir_0700(d, SID)
         (hd / "host.log").write_text("".join(json.dumps(r) + "\n" for r in seed))
         self._launch(self._backend(d, []), self._sess(),
                      self._exiting([{"t": 4, "kind": "host-started"}, {"t": 5, "kind": "cli-spawn-failed", "error": "OSError"}]))
@@ -1357,7 +1368,7 @@ class HostProcess(unittest.TestCase):
         # the control: the same seed and no refused launch before the serving host; the served road files both rows,
         # under the new host's name (the other half of the residual, stated in round 3)
         d2, events2 = self._stale_lease_root()
-        hd2 = ht.host_dir(d2, SID); hd2.mkdir(parents=True)
+        hd2 = host_dir_0700(d2, SID)
         (hd2 / "host.log").write_text("".join(json.dumps(r) + "\n" for r in seed))
         self._backend(d2, [])._file_host_log_rows(served)
         self.assertEqual([r["kind"] for r in events2()], ["host.reader-behind", "host.end-forced"], "without the refusal the rows are filed")
@@ -1376,7 +1387,7 @@ class HostProcess(unittest.TestCase):
         base = be.problem_seq()
         for sid, name, pid in ((SID, "web", 101), (SID2, "api", 202)):
             sb.write_reg(Path(d), sid, {"sid": sid, "name": name, "alive": True, "lastSid": sid})
-            hd = ht.host_dir(d, sid); hd.mkdir(parents=True)
+            hd = host_dir_0700(d, sid)
             (hd / "host.log").write_text(json.dumps({"t": 1, "kind": "host-started"}) + "\n" + json.dumps(self._UNTESTED) + "\n")
             sess = types.SimpleNamespace(sid=sid, name=name, _host=types.SimpleNamespace(hello={"host": {"pid": pid, "start": "s%d" % pid}}))
             be._file_host_log_rows(sess)

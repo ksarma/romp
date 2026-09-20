@@ -474,7 +474,20 @@ class Journal:
 def read_journal_dir(directory, offset: int = 0):
     """Read an ORPHAN journal (its host is gone) from `offset` to the end without an index: segments in
     first-offset order, each record numbered from its segment's first offset, so acknowledged-and-deleted
-    early segments cost nothing but the records they held. Pure on the files."""
+    early segments cost nothing but the records they held. Pure on the files.
+
+    FOLLOW-UP, one item, "the journal reads descend by descriptor" (the general notes' small-asks file, filed
+    2026-09-20 by the round-7 fourth addendum of fork PR #814's review): the three reads below take PATHS (the
+    glob over the directory, gaps.json by the directory's path, each segment by the path the glob yields), and
+    with the two journal globs in the kernel that decide whether to call this (sdk_backend._host_lease_applies,
+    _host_orphan_recover) they are the item's five sites, one change: this function takes the verified `<sid>`
+    descriptor the kernel's read descent holds (host_transport.open_host_dirs_if_present), lists with a scandir
+    off it and a name match, and opens by name under it with O_NOFOLLOW and the owner check the other readers
+    under hosts/<sid>/ make (host_transport.read_host_file), its two callers (the orphan road's tail check and
+    HostTransport._read_journal) rewritten with it. Until then a re-point of `<sid>` landing between the kernel's
+    descent and these reads is read through the link, and a journal file a peer planted under a loose `<sid>/`
+    of the kernel's uid is read with no owner check. The host's own use of this module is unaffected: the host
+    writes its journal through Journal, which does not call this."""
     d = Path(directory)
     segs = sorted((f, p) for p in d.glob("journal-*.jsonl") for f in [_segment_first(p.name)] if f is not None)
     try:
