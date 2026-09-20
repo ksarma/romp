@@ -1333,10 +1333,27 @@ class _LinkDrop(unittest.TestCase):
         and this bundle's: on the old bundle a change shows only at the next churned socket's whole frame, 6 to 19 s. Without
         this pin the two temporal pins hold for a post at the END of the dwell (an 18 ms window, both round-2 voters), and
         "absent while down" cannot be told from "no time passed". The span is read to `settled`, the mark the while-down read
-        follows (resume is some 20 ms later). Returns (span_s, deliveries) for the record."""
+        follows (resume is some 20 ms later). A phase's waitedMs is a delivery only when every wait behind it RESOLVED: a
+        wait that ran to its cap leaves waitedMs at about wait_ms with the visible absent, and taking that as the yardstick
+        makes this pin `dwell >= DOWN_WINDOW_MARGIN x cap`, true by the relation pin's arithmetic and saying nothing about the
+        drive (round 5: the driver swallowed those timeouts and the leg passed at 42 >= 40). So every phase read here must
+        record an empty seen.expired (the driver's per-wait outcomes; a record with none cannot establish them and is
+        refused) and show the phase's visibles on every page, both classes, before its waitedMs is taken; a resolved wait
+        ended before its cap, so a delivery at the cap is then impossible by construction and DOWN_READ_ROOM_MS covers the
+        reads alone. On the old-hub class this is also where phase A's visibles are asserted, which no test did before.
+        Returns (span_s, deliveries) for the record."""
         m = self._marks()
         made = [c for c in self.changes_made if c.get("phase") == "D"]
         self.assertEqual(len(made), 1, "the control door made phase D's change bundle once: %r" % ([c.get("phase") for c in self.changes_made],))
+        todo = ("todo" in self.changes) or None
+        for p in self._link_up_phases():
+            rec = self._phase(p)
+            seen = rec.get("seen") or {}
+            self.assertEqual(seen.get("expired"), [], "phase %s's visibility waits all resolved before their cap (the driver records each wait that expired in "
+                                                      "seen.expired; a wait that ran to its cap is not a delivery, and a record with no expired list cannot say which "
+                                                      "it was), so its waitedMs is a delivery the down window can be measured against: %r" % (p, seen))
+            self._assert_seen(seen, True, todo=todo, prompt=((rec.get("change") or {}).get("prompt") if "append" in self.changes else None),
+                              what="phase %s's changes on every page (the delivery the down window is measured against)" % p)
         deliveries = {p: (self._phase(p).get("seen") or {}).get("waitedMs") for p in self._link_up_phases()}
         self.assertTrue(deliveries and all(isinstance(v, int) and not isinstance(v, bool) and v >= 0 for v in deliveries.values()),
                         "every link-up phase recorded its delivery (seen.waitedMs): %r" % (deliveries,))
