@@ -3,7 +3,7 @@ title: Two innerHeight reads in the phone shell script take the layout viewport'
 status: follow-up
 where: `kernel/kernel.py` (the shell script: the keyboard-open test `innerHeight - visualViewport.height * scale > 120` read only through the tab bar re-bind fallback; the bell popover placement `bottom = innerHeight - rect.top + 6` on a fixed box, run at every bell tap)
 added: 2026-09-20
-pr:
+pr: 870
 tier: docs
 offered:
 closed:
