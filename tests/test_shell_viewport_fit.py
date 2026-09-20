@@ -281,15 +281,75 @@ class ParsedSheetReads(unittest.TestCase):
         # only when its type is absent, empty or text/css; any other type is inert in every engine, and the parse had read such an
         # element's rules as live, so a census over what applies would have passed over a page whose only origin sat in a
         # <style type=text/plain>. The element refuses (no served page carries one); the CSS spellings read as before
-        for t in ("text/plain", "text/x-scss", "TEXT/PLAIN", "'text/css; charset=utf-8'"):
+        # round 9 (2026-09-20, the maintainer's round 5 ruling): HTML compares the type AS WRITTEN, so ' text/css ' is inert in every
+        # engine; the compare had stripped and this row had pinned the stripped answer as live. It refuses, and so does a
+        # whitespace-only type (neither empty nor the match)
+        for t in ("text/plain", "text/x-scss", "TEXT/PLAIN", "'text/css; charset=utf-8'", "' text/css '", "' '"):
             with self.assertRaises(AssertionError, msg=t) as cm:
                 served_css.rules("<style type=%s>#a{top:var(--app-top)}</style>" % t)
             self.assertIn("is not CSS", str(cm.exception))
-        for t in ("text/css", '"text/css"', "''", '""', "TEXT/CSS", "' text/css '"):
+        for t in ("text/css", '"text/css"', "''", '""', "TEXT/CSS"):
             self.assertEqual([(r.selector, r.at) for r in served_css.rules("<style type=%s>#a{top:0}</style>" % t)], [("#a", ())], t)
         self.assertEqual([(r.selector, r.at) for r in served_css.rules("<style type=text/css media=print>#a{top:0}</style>")], [("#a", ("@media print",))])
         # a script element's type is read and not judged (the module's disclosure): a data block is still script text to scripts()
         self.assertEqual(served_css.scripts("<script type=application/json>{\"a\":1}</script>"), ['{"a":1}'])
+
+    def test_every_attribute_compare_follows_the_html_rule_for_that_attribute(self):
+        # round 9 (2026-09-20), the maintainer's round 5 ruling asked once, of every road: the style type refusal had stripped the
+        # value before comparing where HTML compares the attribute as written, and the census this test is asks the same of EVERY
+        # attribute the reader compares. The population is every compare of an attr() value in tests/served_css.py (type, media,
+        # rel; the viewport meta's name, read through the same layer) plus the tokenizer's tag and attribute names, enumerated in
+        # the module docstring with the HTML rule beside each; one row per attribute per rule (whitespace: stripped or not, split or
+        # not; case: ASCII-folded, never Unicode-folded). A compare added to the module joins that paragraph and this test.
+        rules = lambda page: [(r.selector, r.at) for r in served_css.rules(page)]
+        ats = lambda page: [r.at for r in served_css.rules(page)]
+        # style type, whitespace: compared as written (HTML's update-a-style-block step returns for a value that is neither empty
+        # nor the match): leading, trailing or inner ASCII whitespace refuses, and so does a tab
+        for t in ("' text/css'", "'text/css '", "'\ttext/css'", "'text/ css'"):
+            with self.assertRaises(AssertionError, msg=t) as cm:
+                served_css.rules("<style type=%s>#a{top:0}</style>" % t)
+            self.assertIn("is not CSS", str(cm.exception), t)
+        # style type, case: an ASCII case-insensitive match; a letter outside ASCII is another character, however it folds
+        self.assertEqual(rules("<style type=Text/CSS>#a{top:0}</style>"), [("#a", ())])
+        with self.assertRaises(AssertionError):
+            served_css.rules("<style type=\uff54ext/css>#a{top:0}</style>")   # a fullwidth t
+        # style media, whitespace: a media query list, its surrounding ASCII whitespace consumed by CSS Syntax (space, tab, newline,
+        # form feed, carriage return), so these condition nothing; a no-break space is part of a CSS ident, so it is kept and the
+        # element is conditioned (its prelude is not the mobile block's)
+        for media in ("' all '", "'\tscreen\n'", "'\f\rall'"):
+            self.assertEqual(ats("<style media=%s>#a{top:0}</style>" % media), [()], media)
+        self.assertEqual(ats("<style media='\xa0all'>#a{top:0}</style>"), [("@media \xa0all",)])
+        self.assertEqual(ats("<style media='screen\tand\n(x)'>#a{top:0}</style>"), [("@media screen and (x)",)], "inner ASCII whitespace runs collapse in the prelude")
+        # style media, case: media types match ASCII case-insensitively
+        self.assertEqual(ats("<style media=SCREEN>#a{top:0}</style>"), [()])
+        self.assertEqual(ats("<style media=\u017fcreen>#a{top:0}</style>"), [("@media \u017fcreen",)], "a long s is not an s to an ASCII fold")
+        # link rel, whitespace: a set of space-separated tokens split on ASCII whitespace; a no-break space joins two words into one
+        # token, which is no keyword, so the element loads no sheet in HTML and refuses nothing here (the Unicode split had parted
+        # them and refused a sheet no engine loads)
+        self.assertEqual(len(served_css.linked_sheets("<link rel='preload\tstylesheet\n' href=x.css>")), 1)
+        self.assertEqual(served_css.linked_sheets("<link rel='preload\xa0stylesheet' href=x.css>"), [])
+        # link rel, case: each token ASCII case-insensitive
+        self.assertEqual(len(served_css.linked_sheets("<link rel=STYLESHEET href=x.css>")), 1)
+        self.assertEqual(served_css.linked_sheets("<link rel=\u017ftylesheet href=x.css>"), [])
+        # a duplicated attribute: HTML keeps the first and drops the later one, on any attribute
+        with self.assertRaises(AssertionError):
+            served_css.rules("<style type=text/plain type=text/css>#a{top:0}</style>")
+        self.assertEqual(rules("<style type=text/css type=text/plain>#a{top:0}</style>"), [("#a", ())])
+        self.assertEqual(ats("<style media=print media=all>#a{top:0}</style>"), [("@media print",)])
+        # tag and attribute names: HTML lower-cases them over ASCII and the tokenizer over Unicode; the two part on a letter outside
+        # ASCII whose lowercase is inside it (the Kelvin sign, which the tokenizer reads as k, so <lin\u212a> would be a link element
+        # to it and not to HTML), and the reader refuses a name outside ASCII rather than take the fold, in a start tag, a
+        # self-closing tag and an end tag; ASCII upper case folds as HTML folds it
+        for page in ("<lin\u212a rel=stylesheet href=x.css>", "<style \u212aind=x>#a{top:0}</style>", "<lin\u212a rel=stylesheet/>",
+                     "<div>x</di\u00dc>", "<div \u00dc=1>"):
+            with self.assertRaises(AssertionError, msg=page) as cm:
+                served_css.elements(page)
+            self.assertIn("outside ASCII", str(cm.exception), page)
+        self.assertEqual(len(served_css.linked_sheets("<LINK REL=StyleSheet HREF=x.css>")), 1)
+        self.assertEqual(rules("<STYLE TYPE=text/css MEDIA=all>#a{top:0}</STYLE>"), [("#a", ())])
+        # a value outside ASCII is a value, not a name: read as written
+        el = served_css.elements("<link title='\u00dc>x' rel=stylesheet href=x.css>")[0]
+        self.assertEqual((el.kind, served_css.attr(el, "title")), ("link", "\u00dc>x"))
 
     def test_a_statement_at_rule_is_consumed_and_the_rule_after_it_is_read(self):
         # a statement at-rule had accumulated into the next rule's prelude, which then began with @ and was dropped with its

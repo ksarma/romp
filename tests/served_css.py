@@ -23,10 +23,29 @@ closes, and a self-closing `<script/>` or `<style/>` (a start tag to HTML). A `<
 tracked: a style or script element inside one is read as live, though a scripting browser applies neither (no served page
 carries either container; disclosed, not closed, the fixer pass of round 8).
 
-Style rules: `rules(html)` parses every live style element (any attributes, except that a `type` neither empty nor text/css
-refuses, the fixer pass of round 8: no engine applies such an element's content and its rules had read as live, the sibling
-hole of the media attribute; a style or script element inside an HTML comment is comment text, not an element, round 5,
-2026-09-20), strips its comments, and brace-matches it into Rule(index, at, selector,
+Attribute compares (round 9, 2026-09-20): every value this module compares is compared as HTML compares that attribute, and the
+population is every compare of an `attr()` value in this file plus the tokenizer's own name handling; the rows are in
+tests/test_shell_viewport_fit.py (ParsedSheetReads, one per attribute per rule). style `type`: absent, or the empty string, or an
+ASCII case-insensitive match for text/css, compared AS WRITTEN, no whitespace stripped (HTML's "update a style block": a type
+that is neither returns; ` text/css ` is inert in every engine; the maintainer's round 5 ruling: this compare had stripped, and a
+row had pinned the stripped answer). style `media`: a media query list; CSS Syntax consumes the whitespace tokens around a
+query and media types match ASCII case-insensitively, so the value is stripped of ASCII whitespace (space, tab, LF, FF, CR: the
+five HTML and CSS whitespace characters, not str.strip's Unicode set; a no-break space is part of an ident to CSS) and
+ASCII-folded before the unconditional set is consulted, and its whitespace runs are collapsed in the prelude. link `rel`: a
+set of space-separated tokens, split on ASCII whitespace (a no-break space joins two words into one token that is no keyword),
+each token ASCII case-insensitive. meta `name` (the viewport meta reader): an ASCII case-insensitive match, not stripped. Tag and
+attribute names: HTML lower-cases them over ASCII, the tokenizer over Unicode (str.lower), and the two part on a letter outside
+ASCII whose lowercase is inside it (the Kelvin sign), so a tag or attribute NAME outside ASCII refuses rather than take the
+tokenizer's fold (read from the raw tag text, `_raw_names`); a duplicated attribute keeps its first value (HTML drops the later
+one; `attr`). The case folds here are ASCII folds (`_ascii_lower`), never str.lower: over the keyword sets compared the two agree
+(no character outside ASCII lower-cases to a letter of text/css, all, screen or stylesheet), and the fold is HTML's. A script
+element's `type` is read and not judged (below), so it is compared nowhere; HTML strips it before its match, the opposite rule
+from the style element's, recorded so a future judge takes that rule and not this file's.
+
+Style rules: `rules(html)` parses every live style element (any attributes, except that a `type` neither empty nor an ASCII
+case-insensitive match for text/css, as written, refuses, the fixer pass of round 8: no engine applies such an element's content
+and its rules had read as live, the sibling hole of the media attribute; a style or script element inside an HTML comment is
+comment text, not an element, round 5, 2026-09-20), strips its comments, and brace-matches it into Rule(index, at, selector,
 declarations, decls): `at` is the tuple of enclosing at-rule preludes (an @media query, a @supports condition), with the
 element's own `media` attribute as the outermost prelude where it conditions anything (`media_prelude`: `@media print`;
 absent, empty, `all` and `screen` add nothing; round 8: a rule under `<style media=print>` had read as unconditional, so a
@@ -94,6 +113,50 @@ Rule = namedtuple("Rule", "index at selector declarations decls")
 Element = namedtuple("Element", "kind start content_start content_end end attrs")
 
 _VAR = re.compile(r"var\(\s*(--[\w-]+)", re.I)
+# HTML's and CSS's whitespace: space, tab, LF, FF, CR (five characters; str.strip and str.split read Unicode whitespace, a wider set)
+_ASCII_WS = " \t\n\f\r"
+_ASCII_WS_RUN = re.compile("[%s]+" % _ASCII_WS)
+_ASCII_FOLD = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
+
+
+def _ascii_lower(s):
+    """HTML's ASCII lowercase: A to Z folded, every other character kept (str.lower folds Unicode too; round 9, 2026-09-20)."""
+    return s.translate(_ASCII_FOLD)
+
+
+def _raw_names(raw):
+    """The tag name and attribute names of a start tag's raw text as WRITTEN, before the tokenizer's fold, for the ASCII check
+    (round 9, 2026-09-20): the name after `<` to whitespace, `/` or `>`; then, per attribute, the name to whitespace, `/`, `>`
+    or `=`, skipping a quoted or unquoted value after `=`."""
+    names, i, n = [], 1, len(raw)
+    j = i
+    while j < n and raw[j] not in _ASCII_WS + "/>":
+        j += 1
+    names.append(raw[i:j])
+    i = j
+    while i < n:
+        while i < n and raw[i] in _ASCII_WS + "/":
+            i += 1
+        if i >= n or raw[i] == ">":
+            break
+        j = i
+        while j < n and raw[j] not in _ASCII_WS + "/>=":
+            j += 1
+        names.append(raw[i:j])
+        i = j
+        while i < n and raw[i] in _ASCII_WS:
+            i += 1
+        if i < n and raw[i] == "=":
+            i += 1
+            while i < n and raw[i] in _ASCII_WS:
+                i += 1
+            if i < n and raw[i] in "'\"":
+                q = raw.find(raw[i], i + 1)
+                i = n if q < 0 else q + 1
+            else:
+                while i < n and raw[i] not in _ASCII_WS + ">":
+                    i += 1
+    return [x for x in names if x]
 _IMPORTANT = re.compile(r"!\s*important\s*$", re.I)
 _BARE_VAR = re.compile(r"^var\(\s*(--[\w-]+)\s*(?:,(.*))?\)$", re.S | re.I)
 # a style element's media attribute that conditions nothing: absent, empty, `all`, or `screen` (every page here is a screen)
@@ -135,9 +198,16 @@ class _Elements(HTMLParser):
         end = pos + len(self.get_starttag_text())
         self.elements.append(Element("link", pos, end, end, end, tuple(attrs)))
 
+    def _ascii_names(self, pos, names):
+        # round 9 (2026-09-20): HTML lower-cases tag and attribute names over ASCII, the tokenizer over Unicode, and the two part on
+        # a letter outside ASCII whose lowercase is inside it (the Kelvin sign reads as k); a name outside ASCII refuses
+        for name in names:
+            assert name.isascii(), "a tag or attribute name outside ASCII at offset %d (%r): HTML folds names over ASCII and the tokenizer over Unicode; this reader refuses it" % (pos, name)
+
     def handle_starttag(self, tag, attrs):
         pos = self._pos()
         self._event(pos)
+        self._ascii_names(pos, _raw_names(self.get_starttag_text()))
         if tag in ("script", "style"):
             self.open = (tag, pos, pos + len(self.get_starttag_text()), tuple(attrs))
         elif tag == "link":
@@ -146,6 +216,7 @@ class _Elements(HTMLParser):
     def handle_startendtag(self, tag, attrs):
         pos = self._pos()
         self._event(pos)
+        self._ascii_names(pos, _raw_names(self.get_starttag_text()))
         assert tag not in ("script", "style"), "a self-closing <%s/> at offset %d is a start tag to HTML; this reader refuses it" % (tag, pos)
         if tag == "link":
             self._link(pos, attrs)
@@ -153,6 +224,7 @@ class _Elements(HTMLParser):
     def handle_endtag(self, tag):
         pos = self._pos()
         self._event(pos)
+        self._ascii_names(pos, _raw_names(self.html[pos + 1:self.html.index(">", pos) + 1]))   # `</name ...>`: the raw name after `</`
         if tag in ("script", "style"):
             assert self.open is not None and self.open[0] == tag, "a </%s> at offset %d with no open %s element" % (tag, pos, tag)
             kind, start, content_start, attrs = self.open
@@ -212,10 +284,12 @@ def attr(element, name):
 
 
 def rel_tokens(element):
-    """The tokens of a link element's rel set, lower-cased: HTML reads rel as whitespace-separated tokens and applies the keyword
-    wherever it sits (round 7, 2026-09-20: `rel="preload stylesheet"` had passed a start-anchored reading in silence)."""
+    """The tokens of a link element's rel set, ASCII-folded: HTML reads rel as a set of space-separated tokens, split on ASCII
+    whitespace, each ASCII case-insensitive, and applies the keyword wherever it sits (round 7, 2026-09-20: `rel="preload
+    stylesheet"` had passed a start-anchored reading in silence; round 9: the split had been str.split's, over Unicode whitespace,
+    so a no-break space parted two words HTML reads as one token)."""
     value = attr(element, "rel")
-    return set((value or "").lower().split())
+    return {t for t in _ASCII_WS_RUN.split(_ascii_lower(value or "")) if t}
 
 
 def linked_sheets(html):
@@ -238,14 +312,16 @@ def style_elements(html, linked=False):
     elements returns (round 6, 2026-09-20: an unconsumed tag refused while the linked sheet passed in silence, which taught a
     reader that unread CSS is always caught); `linked=True` states that the caller knows the page links its stylesheets and
     wants the style elements alone. A style element the page never closes refuses in the tokenizer (_Elements), and one whose
-    `type` is neither empty nor text/css (case-insensitive, stripped) refuses here: no engine applies its content, so its rules
-    would have read as live (the fixer pass of round 8; no served page carries one)."""
+    `type` is neither empty nor an ASCII case-insensitive match for text/css AS WRITTEN refuses here: no engine applies its
+    content, so its rules would have read as live (the fixer pass of round 8; no served page carries one). Not stripped (round
+    9, 2026-09-20, the maintainer's round 5 ruling): HTML compares the attribute as written, so `<style type=" text/css ">` is
+    inert in every engine, and the strip this compare had made read its rules as live, a one-space hole in the refusal."""
     links = linked_sheets(html)
     assert linked or not links, "the served page links %d external stylesheet(s) this parse does not read; pass linked=True to take the style elements alone" % len(links)
     styles = [e for e in elements(html) if e.kind == "style"]
     for e in styles:   # the sibling hole of the media attribute (the fixer pass of round 8): a non-CSS type is inert to every engine
-        t = attr(e, "type")
-        assert t is None or t.strip().lower() in _CSS_TYPES, "a <style type=%r> at offset %d is not CSS to any engine and no rule inside it applies; this parse refuses it" % (t, e.start)
+        t = attr(e, "type")   # compared as written: HTML strips nothing here (it does strip a SCRIPT's type, the opposite rule; that attribute is not judged)
+        assert t is None or _ascii_lower(t) in _CSS_TYPES, "a <style type=%r> at offset %d is not CSS to any engine and no rule inside it applies; this parse refuses it" % (t, e.start)
     return styles
 
 
@@ -258,12 +334,15 @@ def media_prelude(element):
     """The at-rule prelude a style element's own media attribute puts over every rule it holds (`@media print`), or None where
     the attribute conditions nothing (absent, empty, `all`, `screen`): round 8 (2026-09-20), a `<style media=print>` had been
     read as unconditional CSS, so a census over what applies on the phone's screen passed over a page whose only origin sat in
-    one. The query text is kept as written (whitespace collapsed); a folded prelude never equals the shell's mobile query, so
-    a rule under it is not the mobile block's."""
+    one. The query text is kept as written (its ASCII whitespace runs collapsed); a folded prelude never equals the shell's mobile
+    query, so a rule under it is not the mobile block's. The strip and the fold are CSS's (round 9, 2026-09-20): a media query
+    list is parsed by CSS Syntax, which consumes the whitespace tokens around a query, and media types match ASCII
+    case-insensitively; the whitespace is the five ASCII characters, not str.strip's Unicode set (a no-break space is part of an
+    ident to CSS, so `media="\xa0all"` conditions the element: its prelude is kept and never equals the mobile block's)."""
     value = attr(element, "media")
-    if value is None or value.strip().lower() in _UNCONDITIONAL_MEDIA:
+    if value is None or _ascii_lower(value.strip(_ASCII_WS)) in _UNCONDITIONAL_MEDIA:
         return None
-    return "@media " + " ".join(value.split())
+    return "@media " + " ".join(t for t in _ASCII_WS_RUN.split(value.strip(_ASCII_WS)) if t)
 
 
 def css_comment_spans(css):
