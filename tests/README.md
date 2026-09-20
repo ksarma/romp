@@ -82,13 +82,18 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   `PYTHONPATH` recipe. Its cases that build SDK
   options with a `can_use_tool` callback raise
   `claude_agent_sdk.types.CanUseToolShadowedWarning` (a `UserWarning` subclass); a
-  worker ships the warning to the controller, whose venv cannot import the class, and
-  xdist's `unserialize_warning_message` takes the run down with an INTERNALERROR.
+  worker ships the warning to the controller, whose venv on a box cannot import the
+  class, and xdist's `unserialize_warning_message` takes the run down with an
+  INTERNALERROR.
   `conftest.py`'s `pytest_configure` ignores it by MESSAGE prefix
   (`ignore:can_use_tool will not be invoked:UserWarning`): pytest re-parses the
   entries at every application, and one naming a class it cannot import is dropped
-  with a PytestConfigWarning (every worker until the venv path is inserted, the
-  controller always, CI always); a module-level `warnings.filterwarnings` does not
+  with a PytestConfigWarning (every xdist worker until the venv path is inserted; a
+  controller whose interpreter has no SDK, which on a box is every controller; and
+  the CI steps that install no SDK, today the vscode-extension job's served-page
+  pytest step, which loads this conftest; the five Python matrix cells' interpreter
+  imports the class since the SDK install step, and CI runs no xdist, so it has no
+  controller); a module-level `warnings.filterwarnings` does not
   survive pytest's per-test `catch_warnings`. So `-p no:warnings` is no longer part of an
   `-n` run. One more import-time leak reached the postal suite the same way until
   2026-09-18: `tests/test_kernel_tunnels.py` set `ROMP_POSTAL_PEERS=0` at module

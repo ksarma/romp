@@ -26,7 +26,9 @@ This module holds four things, and it never skips: a pin that skips reports gree
    scratch checkout, hands pip exactly `claude-agent-sdk==<pin>` against the real file, then imports the package in
    the same `python` (the step reds, with its name on it, when the install did not reach the interpreter on PATH; the
    shim case where that import exits 1 shows the block exits 1), and exits 1 without calling pip when the constant is
-   missing or duplicated. The composition is pinned, not the halves.
+   missing, malformed (a token that is not x.y.z: the case reads "latest", and the refusal names it, where a guard
+   loosened to any non-blank token would hand pip the unpinned latest) or duplicated. The composition is pinned, not
+   the halves.
 3. The installed version, on whichever road this interpreter is on. When claude_agent_sdk imports, the version the
    host would run (installed_sdk_version: the module's __version__, else the metadata) and the metadata both equal the
    pin; the failure message names the two roads that disagree here: a box whose SDK venv moved (re-run
@@ -249,6 +251,14 @@ class PinDerivation(unittest.TestCase):
     def test_the_run_block_refuses_a_duplicated_constant_without_installing(self):
         p, calls = self._run_block('SDK_TESTED_VERSION = "0.2.1"\nSDK_TESTED_VERSION = "0.2.2"\n')
         self.assertEqual(p.returncode, 1, "two declarations are not one pin; the block must refuse")
+        self.assertEqual(calls, [])
+
+    def test_the_run_block_refuses_a_malformed_constant_without_installing(self):
+        # one well-formed line is the guard's whole acceptance: a token that is not x.y.z (a channel name, a
+        # range, a prerelease) must be named in the refusal and never reach pip, where "latest" would resolve
+        p, calls = self._run_block('SDK_TESTED_VERSION = "latest"\n')
+        self.assertEqual(p.returncode, 1, "a constant that is not x.y.z must be refused, never handed to pip: %r" % p.stderr)
+        self.assertIn("latest", p.stderr, "the refusal must name what it read")
         self.assertEqual(calls, [])
 
 
