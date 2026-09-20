@@ -126,6 +126,22 @@ function shapes(): Shape[] {
 const expectedFetches = (s: Shape): string[] => s.fetches ?? (s.paints ? ["a"] : []);
 
 type Row = { name: string; gated: boolean; rootDisplay: string; rootOpacity: string; hidden: boolean | null; printable: boolean | null; twinPaints: boolean | null; remote: string };
+/** The shapes whose measured paint disagrees with the table, each named with ITS OWN expected value: the expectation travels
+ *  with its row through the filter. The round-4 review (2026-09-20): before this the leg filtered by the row's index and then
+ *  mapped by the POST-FILTER index, so when it reddened the message named another shape's expected value, misleading exactly
+ *  when it fired; the node case below executes both forms over three rows. */
+function paperMismatches(rows: Array<{ name: string; twinPaints: boolean | null }>, expected: boolean[]): string[] {
+  return rows.map((r, i) => ({ r, want: expected[i] })).filter((x) => x.r.twinPaints !== x.want).map((x) => x.r.name + ": the browser paints the twin " + x.r.twinPaints + ", the leg expected " + x.want);
+}
+
+test("paperMismatches names each disagreeing shape with its own expected value; the form before it (filter by the row's index, map by the post-filter index) named the third shape with the second's expected value, a message saying the leg expected what the browser painted", () => {
+  const rows = [{ name: "first", twinPaints: true }, { name: "second", twinPaints: false }, { name: "third", twinPaints: true }];
+  const expected = [true, true, false];
+  assert.deepEqual(paperMismatches(rows, expected), ["second: the browser paints the twin false, the leg expected true", "third: the browser paints the twin true, the leg expected false"], "each row with its own expectation");
+  assert.deepEqual(paperMismatches(rows, [true, false, true]), [], "no disagreement, no message");
+  const before = rows.filter((r, i) => r.twinPaints !== expected[i]).map((r, i) => r.name + ": the browser paints the twin " + r.twinPaints + ", the leg expected " + expected[i]);
+  assert.deepEqual(before, ["second: the browser paints the twin false, the leg expected true", "third: the browser paints the twin true, the leg expected true"], "FAILS BEFORE, kept as the record of the defect: the old form named the third shape with expected[1], the second's value, so its message claimed a disagreement between equal values");
+});
 type Read = { rows: Row[]; errors: string[] };
 type Restored = { restored: boolean | null; printableAtRestore: boolean | null };
 
@@ -189,7 +205,7 @@ test("figureHidden and figurePrintable over real gated figures in Chromium: for 
     // the named spellings and shapes, each to the answer the round named
     const wrong = rows.filter((r, i) => all[i].hidden !== undefined && r.hidden !== all[i].hidden).map((r, i) => r.name + ": figureHidden " + r.hidden);
     assert.deepEqual(wrong, [], "FAILS BEFORE: -0, +0, 0e0, -1 and calc(0) read as on the paper, 0.0.0 as off it, and <svg hidden> as hidden");
-    const wrongPaper = rows.filter((r, i) => r.twinPaints !== all[i].paints).map((r, i) => r.name + ": the browser paints the twin " + r.twinPaints + ", the leg expected " + all[i].paints);
+    const wrongPaper = paperMismatches(rows, all.map((s) => s.paints));
     assert.deepEqual(wrongPaper, [], "the browser's own answers are the ones this leg's table names (a change here is a change in the engine, and the flow follows it)");
     assert.deepEqual(requests.filter((u) => !u.startsWith(ORIGIN)), [], "no request left the origin before any restore: the gate moved every remote URL aside on the parser document");
     // the second oracle, keyed on the URL: every placeholder whose figure paints is restored as "Print with them" restores it,
