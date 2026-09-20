@@ -1009,7 +1009,10 @@ export function installFilePrint(host: PrintHost): { button: HTMLButtonElement }
       case "activate": {
         // exactly the placeholders the armed line counted, each restored alone through the gate's one-placeholder restore
         // (loadGatedFigure): the figure's own fetch and no other, a placeholder naming two hosts fetching from both as its
-        // title said, and no page-life grant for any host (a click's meaning, kept for the click: loadGatedHost). The list is
+        // title said, and no page-life grant for any host (a click's meaning, kept for the click: loadGatedHost);
+        // a host one of them answers with a redirect to is reached too, as the placeholder's own click reaches it (open point 7;
+        // withTitle's doc, figure-gate.ts's header and the egress leg's header say the same; the round-4 review's extra6-1
+        // named this comment as the one statement of that fetch left without the clause). The list is
         // the arm's (re-read at each recount), never the body's at the click: the title and the restores are one list. A
         // placeholder inside a closed fold or under hidden that names the same host is not in the list and stands. One a
         // repaint detached meanwhile is skipped (a detached img fetches too once its src is back); the recount that repaint
