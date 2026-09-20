@@ -10,13 +10,20 @@
  *  hole kept as its source text between `${` and `}`, so a phrase split by a hole is judged whole with the hole named), its
  *  regular expression literals, and its COMMENTS as text with the markers stripped and a run of line comments joined, so a
  *  sentence wrapped over two comment lines is one unit (the file review's round 5, correctness-2 with extra6-1 and tests-2:
- *  each literal TOKEN had been a unit of its own, so a phrase split across a `+` or a hole sat in no unit). What is still
- *  NOT read as the program's value, and is outside every guard built on this reader: the value a hole takes at run time, the
- *  part of a chain at and after a non-literal operand, a join or a concat call (each literal its own unit), a tagged template
- *  (String.raw among them: read as its cooked spans whatever the tag returns), a BigInt (`9n`) and a unary minus (`-9`) in a
- *  chain (not leaves: the chain is read operand by operand from there). A literal the compiler read with an error (unterminated,
- *  an invalid escape) makes the walk and the compiler disagree on the value, and the read THROWS naming the file, the kind and
- *  the line rather than charge lines it cannot vouch for; before this the erroneous token was read silently. Markdown, which
+ *  each literal TOKEN had been a unit of its own, so a phrase split across a `+` or a hole sat in no unit), and in a .tsx or
+ *  .jsx module the TEXT between JSX tags as written (kind "jsxtext"; the author's closing pass after the file review's round 5,
+ *  reader-1: the attribute's literal had been read and the text child skipped, so a phrase planted as JSX text sat in no unit).
+ *  What is still NOT read as the program's value, and is outside every guard built on this reader: the value a hole takes at
+ *  run time, the part of a chain at and after a non-literal operand (each literal there its own unit, so a round or an id split
+ *  at its hyphen or its digits across those operands, `who + "round N (records-" + "M)"`, sits in no unit and no message names it;
+ *  the same closing pass, reader-7), a join or a concat call (each literal its own unit), a tagged template
+ *  (String.raw among them: read as its cooked spans whatever the tag returns, except that a span the template grammar rejects
+ *  and the compiler reads raw, `String.raw`(a)\1``, is read as its raw body, the value String.raw sees; the same closing pass,
+ *  reader-3: the throw below had reached it, one such literal in any candidate file aborting the read of the whole tree),
+ *  a BigInt (`9n`) and a unary minus (`-9`) in a chain (not leaves: the chain is read operand by operand from there). An
+ *  UNTAGGED literal the compiler read with an error (unterminated, an invalid escape) makes the walk and the compiler disagree
+ *  on the value, and the read THROWS naming the file, the kind and the line rather than charge lines it cannot vouch for;
+ *  before this the erroneous token was read silently. Markdown, which
  *  the compiler does not read, is read as paragraphs as it stands (unitsOf routes on the suffix: the compiler for .ts, .mts,
  *  .cts, .tsx, .js, .mjs, .cjs and .jsx, each with its script kind; prose for the suffixes it lists and for a file with none;
  *  any other suffix refused by name rather than read as prose, the file review's round 5, correctness-7 with tests-4 and
@@ -38,7 +45,7 @@
  *  Node-only: the tests import it; the webview bundle never does. */
 import * as ts from "typescript";
 
-export type UnitKind = "comment" | "string" | "template" | "regex" | "prose";
+export type UnitKind = "comment" | "string" | "template" | "regex" | "jsxtext" | "prose";
 /** One readable unit of a source: `text` is the value (a literal's cooked text, a comment's words, a paragraph), `line` and
  *  `endLine` its 1-based lines, `pos` and `end` its offsets in the source, and `starts` the offset in `text` at which each
  *  source line's contribution begins, in line order (lineAt reads it). */
@@ -137,7 +144,17 @@ function cookBody(body: string, at: number, template: boolean): Piece {
 
 type Token = ts.StringLiteral | ts.NoSubstitutionTemplateLiteral | ts.TemplateHead | ts.TemplateMiddle | ts.TemplateTail;
 const isToken = (n: ts.Node): n is Token => ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n) || ts.isTemplateHead(n) || ts.isTemplateMiddle(n) || ts.isTemplateTail(n);
-/** A literal token cooked from its raw body, checked against the value the compiler gave it. */
+/** Whether a template token stands in a tagged template (`tag`...``): the literal itself, or the substitution template its
+ *  span belongs to, is the tag's template. */
+function isTagged(n: Token): boolean {
+  let t: ts.Node = n;
+  while (t.parent !== undefined && (ts.isTemplateSpan(t.parent) || ts.isTemplateExpression(t.parent))) t = t.parent;
+  return t.parent !== undefined && ts.isTaggedTemplateExpression(t.parent) && t.parent.template === t;
+}
+/** A literal token cooked from its raw body, checked against the value the compiler gave it. A span of a TAGGED template
+ *  whose escape the template grammar rejects (`String.raw`(a)\1``, a backreference; `\xq`) is valid code the compiler reads
+ *  raw, and is read here as its raw body, the value String.raw sees (the author's closing pass after the file review's round
+ *  5, reader-3: the throw had reached it, and one such literal in any candidate file aborted a tree-wide read). */
 function cookToken(n: Token, sf: ts.SourceFile, file: string): Piece {
   const start = n.getStart(sf);
   const raw = sf.text.slice(start, n.end);
@@ -146,6 +163,8 @@ function cookToken(n: Token, sf: ts.SourceFile, file: string): Piece {
   // a JSX attribute's quoted value has no escapes: the program sees its characters as written (the compiler reads it so)
   const piece = ts.isStringLiteral(n) && n.parent !== undefined && ts.isJsxAttribute(n.parent) ? verbatim(sf.text, start + 1, start + 1 + body.length) : cookBody(body, start + 1, !ts.isStringLiteral(n));
   if (piece.text !== n.text) {
+    const rawBody = verbatim(sf.text, start + 1, start + 1 + body.length);
+    if (!ts.isStringLiteral(n) && isTagged(n) && rawBody.text === n.text) return rawBody;
     const line = sf.getLineAndCharacterOfPosition(start).line + 1;
     throw new Error("source-units: " + file + ":" + line + " " + (ts.isStringLiteral(n) ? "string" : "template") + " literal " + JSON.stringify(raw.slice(0, 40)) + " cooks to " + JSON.stringify(piece.text.slice(0, 40)) + " where the compiler read " + JSON.stringify(n.text.slice(0, 40)) + " (an unterminated literal or an invalid escape); the reader cannot charge its lines and stops");
   }
@@ -188,6 +207,7 @@ function tokenSpans(sf: ts.SourceFile): { pos: number; end: number }[] {
   const out: { pos: number; end: number }[] = [];
   const visit = (n: ts.Node): void => {
     if (isToken(n) || ts.isRegularExpressionLiteral(n)) out.push({ pos: n.getStart(sf), end: n.end });
+    else if (ts.isJsxText(n)) out.push({ pos: n.pos, end: n.end });   // its quotes and slashes open no literal and no comment
     ts.forEachChild(n, visit);
   };
   visit(sf);
@@ -201,7 +221,8 @@ function tokenSpans(sf: ts.SourceFile): { pos: number; end: number }[] {
  *  first non-literal operand folds, the rest is read operand by operand; an all-numeric chain is a number and no unit); and a
  *  regular expression literal (its source text, slashes and flags included). `'a\'b'`, `"a'b"`, `` `a'b` `` and `"a" + "'b"`
  *  are one value. A literal inside a hole is a unit of its own too. A JSX attribute's quoted value (`<a title="x\n">`) has no
- *  escapes and is read as written, as the compiler reads it. */
+ *  escapes and is read as written, as the compiler reads it; the text between JSX tags (`<p>the words</p>`) is one unit as
+ *  written (kind "jsxtext"), a whitespace-only text no unit. */
 export function literals(source: string, file = "source.ts"): Unit[] {
   return literalsIn(ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, scriptKind(file)), file);
 }
@@ -226,6 +247,7 @@ function literalsIn(sf: ts.SourceFile, file: string): Unit[] {
   };
   const visit = (n: ts.Node): void => {
     if (ts.isRegularExpressionLiteral(n)) { push("regex", verbatim(sf.text, n.getStart(sf), n.end), n.getStart(sf), n.end); return; }
+    if (ts.isJsxText(n)) { if (!/^\s*$/.test(n.text)) push("jsxtext", verbatim(sf.text, n.pos, n.end), n.pos, n.end); return; }
     if (isToken(n) || ts.isTemplateExpression(n) || (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.PlusToken)) {
       const f = fold(n, sf, file);
       if (f) {
@@ -413,5 +435,11 @@ export function unitsOf(file: string, source: string): Unit[] {
   if (SCRIPT_SUFFIXES.includes(suffix)) return scriptUnits(source, file);
   if (suffix === ".py") return proseUnits(source, true);
   if (suffix === "" || PROSE_SUFFIXES.includes(suffix)) return proseUnits(source);
-  throw new Error("source-units: " + file + " has the suffix " + JSON.stringify(suffix) + ", which the reader has no rule for (scripts: " + SCRIPT_SUFFIXES.join(" ") + "; Python: .py; prose: " + PROSE_SUFFIXES.join(" ") + ", or no suffix); it refuses rather than read the file as prose, so add the suffix to the reader with its rule");
+  throw new Error("source-units: " + file + " has the suffix " + JSON.stringify(suffix) + ", which the reader has no rule for (scripts: " + SCRIPT_SUFFIXES.join(" ") + "; Python: .py; prose: " + PROSE_SUFFIXES.join(" ") + ", or no suffix); it refuses rather than read the file as prose, so add the suffix to the reader with its rule (a guard that reads the whole tree reaches every file that names its vocabulary, so a new fixture of an unlisted suffix that does so blocks that guard's job until its suffix is added here)");
+}
+/** Whether `unitsOf` has a rule for the file's suffix (the same three arms), for a tree-wide caller to count the population's
+ *  files of no known suffix before one of them names the vocabulary and trips the refusal. */
+export function readable(file: string): boolean {
+  const suffix = suffixOf(file);
+  return suffix === "" || suffix === ".py" || SCRIPT_SUFFIXES.includes(suffix) || PROSE_SUFFIXES.includes(suffix);
 }

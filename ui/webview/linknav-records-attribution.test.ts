@@ -2,8 +2,8 @@
 // "Follow-on: Link navigation (2026-09-19)", the opening paragraph). The convention: the branch's adversarial review before
 // the PR ran two rounds, "the review's round 1 and round 2"; the maintainer's review of the PR is "the file review", with the
 // rounds it has ruled enumerated there; the author's own verification after each round's fixes is "the author's closing pass
-// after that round", never a round, and its findings carry the ids behaviour-N, records-N and coverage-N, which no fixlist of
-// the file review holds. The file review's round 3 (tests-2) asked for a pin over the population of these attributions, and
+// after that round", never a round, and its findings carry the ids the convention lists (behaviour-N, records-N, coverage-N,
+// guards-N, attribution-and-gates-N, reader-N and tree-N), which no fixlist of the file review holds. The file review's round 3 (tests-2) asked for a pin over the population of these attributions, and
 // its round 4 (rules-1) re-ruled the pin onto the STRUCTURAL rule: the pin built after the file review's round 3 matched one
 // string, the branch's review named with a round over 2, and the commits that built it credited the author's closing pass to
 // a fourth round of the file review, which no maintainer had run at that head, in twelve lines of the tree, the ledger's
@@ -33,8 +33,10 @@
 // bare, escaped inside a JS string or typographic (the file review's round 4, tests-2: the earlier pin was keyed on one
 // spelling of the apostrophe and passed the escaped form its two scanned modules used) and whether it is one literal or
 // several joined by + or split by a hole (the file review's round 5, correctness-2 with extra6-1: a phrase split across
-// tokens had sat in no unit); what stays outside the read, a value assembled at run time (a join, a concat, a hole's value,
-// the part of a chain after a non-literal operand), the reader's header lists and the messages say; a Markdown file as
+// tokens had sat in no unit), and a .tsx or .jsx module's text between JSX tags as a unit too (the author's closing pass
+// after the file review's round 5, reader-1); what stays outside the read, a value assembled at run time (a join, a concat,
+// a hole's value, the part of a chain after a non-literal operand, where a round or an id split at its digits across two
+// literals sits in no unit), the reader's header lists and the messages say; a Markdown file as
 // paragraphs, a Python file as paragraphs with its literals cooked as Python cooks them and adjacent literals glued (the
 // compiler does not read Python), which the message says; the file's suffix picks the reader, and a suffix the reader has no
 // rule for is refused naming the file rather than read as prose (the file review's round 5, correctness-7 with tests-4 and
@@ -46,10 +48,17 @@
 // uncommitted file is judged like a committed one (road 2's diff lists tracked paths alone, so a phrase planted in a new
 // file was a false green there; the file review's round 5, correctness-5 with tests-6); a path that is not a regular file
 // or a symlink to one is skipped and counted (a dangling symlink; a symlink to a directory, which crashed the prototype's
-// read), and a file with a NUL byte in its first 8 KiB is binary and skipped. The candidates are the files whose text
-// names the file review or carries an id of the author's family (roadOneViewerUnit over the whole text, the narrow
+// read), and a file with a NUL byte in its first 8 KiB is binary and skipped; the reader refuses a suffix it has no rule
+// for by name, and over the tree that refusal reaches every candidate, so a file of an unlisted suffix that names the
+// vocabulary reds this module until its suffix is added to the reader (the diagnostic counts the population's files of no
+// known suffix, none at the swept head, so the next such file is seen before it names the vocabulary; the author's closing
+// pass after the file review's round 5, tree-4). The candidates are the files whose text names the file review, names the
+// author's closing pass, or carries an id of the author's family (roadOneViewerUnit over the whole text, the narrow
 // predicate: a loose one, every "round N" in the tree, faulted about 871 records of other projects' rounds by the round's
-// count) and the files the branch created (CREATED, kept as an existence roster: each must be in the population, and each
+// count; the pass's name joined the predicate in the same closing pass, reader-2: a pass named as a round with no id beside
+// it, "the author's closing pass (round N)", had been no candidate outside the created files, a silent green, and the
+// phrase stands in this follow-on's files alone at the swept head) and the files the branch created (CREATED, kept as an
+// existence roster: each must be in the population, and each
 // is judged in FULL, every unit of it, since the predicate alone drops the units naming only "the review"); the plan's
 // follow-on section, the guide's Links paragraph and the browser plan's pointer are this follow-on's records by their place
 // and are judged in full too. Every other candidate's units that carry the vocabulary are judged KEYED on the review named
@@ -60,7 +69,18 @@
 // "pass", since a caller's own pass is code); a phrase whose nearest review is another (a Slice N review, a fork PR review,
 // the bare "review" outside the roster) or none is that review's or no one's, left alone and counted in the diagnostic
 // (the gate-before-adoption fix the merge of the fork's main brought in names its rounds the fork PR review's and its
-// findings guards-N, the same family word). Floors that fail on an empty derivation: the population at least a
+// findings guards-N, the same family word). Two consequences of the key, stated so a red or a green here is read for what
+// it is (the author's closing pass after the file review's round 5, tree-2 and reader-6): the key is the words "file
+// review", the romp feature's name as well as this review's, so a record of another review that calls itself the file
+// review, or a sentence about the file-review feature followed by a round, is judged against this follow-on's enumeration
+// and reds this module, the remedy being a qualified name for that review (the PR N file review, the Slice N review) or an
+// extension of the key (no such unit at the swept head); and outside the created files and the three records a round with
+// no review named before it in its unit is COUNTED, never faulted, so a phrase assembled at run time (a join, a concat, a
+// `+=`, a hole's value) whose "round N" lands in a unit of its own is silent there and red only inside the created files,
+// where the full rule faults a round of no review; the diagnostic prints the file and line of every such counted phrase.
+// The review names are read in either case ("The File Review's round N" is the file review's; the same closing pass, reader-5 and
+// tree-3: the anchors and the predicate had been case-sensitive while the round was not, so a title-cased name was no
+// candidate outside the created files and faulted as "no review" inside them). Floors that fail on an empty derivation: the population at least a
 // thousand files, the candidates at least ten, the units judged at least two hundred; and the count of this follow-on's
 // units in file-view.ts is asserted equal to the derived count at the swept head, the lines printed beside it, so a deleted
 // or an added attribution there moves it and the fix is to re-derive, never to fit (the file review's round 5,
@@ -98,7 +118,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { execFileSync } from "node:child_process";
-import { comments, lineAt, literals, proseUnits, PROSE_SUFFIXES, SCRIPT_SUFFIXES, scriptUnits, suffixOf, unitsOf, type Unit } from "./source-units";
+import { comments, lineAt, literals, proseUnits, PROSE_SUFFIXES, readable, SCRIPT_SUFFIXES, scriptUnits, suffixOf, unitsOf, type Unit } from "./source-units";
 
 const REPO = path.resolve(process.cwd(), "..");
 const read = (rel: string): string => fs.readFileSync(path.join(REPO, rel), "utf8");
@@ -163,27 +183,33 @@ export function conventionOf(paragraph: string): Reviews {
 }
 
 type Who = "file" | "branch" | "other" | "pass";
-/** The reviews a unit can name, each by its own words: the file review; another project's review by a qualifier (a Slice N
- *  review); the bare "review" (the branch's, inside this follow-on's records); and the author's pass as the convention names
- *  it, the author's closing pass or a verifier's pass, never any word "pass" (the file review's round 5, regression-2: "the
- *  caller's own pass" in a shared test is code, and had anchored a round after it as a pass's). */
+/** The reviews a unit can name, each by its own words, in either case: the file review; another project's review by a
+ *  qualifier (a Slice N review); the bare "review" (the branch's, inside this follow-on's records); and the author's pass as
+ *  the convention names it, the author's closing pass or a verifier's pass, never any word "pass" (the file review's round 5,
+ *  regression-2: "the caller's own pass" in a shared test is code, and had anchored a round after it as a pass's). */
 const ANCHORS: [RegExp, Who][] = [
-  [/\bfile review\b/g, "file"],
-  [/\bSlice \d+ review\b/g, "other"],
-  [/\breview\b/g, "branch"],
-  [/\b(?:closing|verification|verifier's|author's) pass(?:es)?\b|\bverifier's\b/g, "pass"],
+  [/\bfile review\b/gi, "file"],
+  [/\bSlice \d+ review\b/gi, "other"],
+  [/\breview\b/gi, "branch"],
+  [/\b(?:closing|verification|verifier's|author's) pass(?:es)?\b|\bverifier's\b/gi, "pass"],
 ];
-/** A pass named by the round it followed ("the author's closing pass after the file review's round 4") is one name, its span
- *  through the round's digits, and an id after the whole name has the pass as the review named nearest before it. The name is
- *  an anchor for the id road alone: the round inside the name, and a round named after it (a record's "the round-N
- *  condition" after the pass's name), are judged against the review the name says, whose anchor stands inside the name. */
-const PASS_NAME_RE = /\b(?:closing|verification|verifier's|author's) pass(?:es)?\b after (?:the |its |that )?(?:file review's |review's )?rounds?[- ]\d+(?:(?:,\s*|\s+(?:and|or|to)\s+)\d+)*/g;
 /** A round phrase as the set of rounds it names: `round N` or `round-N`, the digits after a hyphen or any whitespace (a
  *  line break inside a literal too) and bare or wrapped in Markdown emphasis or code markers; after the plural, a comma list
  *  or a `to` range (`rounds N, M and K`, `rounds N to M`, the range expanded). Digits only: an ordinal, a spelled-out number
  *  and an abbreviation are outside the reader, which the messages say. */
 const MARK = "(?:\\*\\*|__|[*_`])?";   // Markdown emphasis or code markers around the digits
-const ROUND_RE = new RegExp("\\bround(?:-|\\s+)" + MARK + "(\\d+)" + MARK + "(?!\\w)|\\brounds(?:-|\\s+)" + MARK + "(\\d+)" + MARK + "((?:(?:,\\s*|\\s+(?:and|or|to)\\s+)" + MARK + "\\d+" + MARK + ")*)(?!\\w)", "gi");
+const DIGITS = MARK + "\\d+" + MARK;   // one round's digits, bare or marked up
+const LIST_TAIL = "(?:(?:,\\s*|\\s+(?:and|or|to)\\s+)" + DIGITS + ")*";   // the comma list or to-range after the plural
+const ROUND_RE = new RegExp("\\bround(?:-|\\s+)" + MARK + "(\\d+)" + MARK + "(?!\\w)|\\brounds(?:-|\\s+)" + MARK + "(\\d+)" + MARK + "(" + LIST_TAIL + ")(?!\\w)", "gi");
+/** A pass named by the round it followed ("the author's closing pass after the file review's round 4") is one name, its span
+ *  through the round's digits, and an id after the whole name has the pass as the review named nearest before it. The name is
+ *  an anchor for the id road alone: the round inside the name, and a round named after it (a record's "the round-N
+ *  condition" after the pass's name), are judged against the review the name says, whose anchor stands inside the name. Its
+ *  tail is ROUND_RE's own pieces, so the digits the name ends in are read wherever ROUND_RE reads them, after a line break
+ *  inside a literal or in Markdown markers (the author's closing pass after the file review's round 5, reader-4: the name had
+ *  taken one space or hyphen and bare digits, so a pass named over an escaped newline or with marked-up digits lost its
+ *  name and the id after it was faulted against the file review). */
+const PASS_NAME_RE = new RegExp("\\b(?:closing|verification|verifier's|author's)\\s+pass(?:es)?\\b\\s+after\\s+(?:(?:the|its|that)\\s+)?(?:file\\s+review's\\s+|review's\\s+)?rounds?(?:-|\\s+)" + DIGITS + LIST_TAIL, "gi");
 const roundsOf = (m: RegExpMatchArray): number[] => {
   if (m[1] !== undefined) return [Number(m[1])];
   const out = [Number(m[2])];
@@ -195,11 +221,18 @@ const roundsOf = (m: RegExpMatchArray): number[] => {
 };
 /** An id of the author's family: the family word, a hyphen and digits (the spaced form is not read). */
 const idPattern = (reviews: Reviews, flags = ""): RegExp => new RegExp("\\b(?:" + reviews.ids.join("|") + ")-\\d+\\b", flags);
-/** Road 1's selection of file-view.ts units: those naming the file review, and those carrying an id of the author's family
- *  (a pass misnamed as a round beside its id, in a figure comment that names no review, is judged in every checkout; the
- *  author's closing pass after the file review's round 4, records-1); a unit naming only "the review" is the viewer project's
- *  and road 2's. */
-export const roadOneViewerUnit = (text: string, reviews: Reviews): boolean => /\bfile review\b/.test(text) || idPattern(reviews).test(text);
+/** Road 1's vocabulary, the predicate that selects a candidate file by its whole text and, outside the created files, the
+ *  units judged in it: a text naming the file review (either case), naming the author's closing pass, or carrying an id of
+ *  the author's family. What the selection then judges depends on where the unit stands (the author's closing pass after
+ *  the file review's round 5, tree-1, correcting the record the earlier pass had left here under records-1): inside
+ *  the created files and the three records every unit is judged in full, so a round of no review and the branch's review
+ *  named with a round over 2 fault there; in a shared file such as file-view.ts a selected unit is judged under the key,
+ *  so a phrase is judged only where the review named nearest before it is the file review or the author's pass, and a
+ *  round beside an id with no review named, or the branch's review named with a round over 2 beside an id, is counted and
+ *  left alone there, green under the tree rule (the shape of the HIGH of the file review's round 4, in that file; the ruled
+ *  head's roster road judged it in full). A unit naming only "the review" is not selected by the vocabulary (inside a created file it is judged with
+ *  the file, in full). */
+export const roadOneViewerUnit = (text: string, reviews: Reviews): boolean => /\bfile review\b/i.test(text) || /\bauthor's closing pass(?:es)?\b/i.test(text) || idPattern(reviews).test(text);
 /** Every round phrase and every id of the author's family in a unit, judged against the review named NEAREST before it (the
  *  anchor whose span ends last before the phrase): the faults, each a sentence with the offset in `text` of the phrase it is
  *  about. The id road reads the same nearest anchor as the round road (the file review's round 5, correctness-3 with
@@ -213,7 +246,9 @@ export type Judgement = { faults: Fault[]; judged: number; foreign: number; unan
 export function roundFaults(text: string, reviews: Reviews, keyed = false): Fault[] {
   return judgeUnit(text, reviews, keyed).faults;
 }
-export function judgeUnit(text: string, reviews: Reviews, keyed = false): Judgement {
+/** `left`, when given, hears every phrase the keyed rule leaves alone, with its offset in `text` and why (`foreign`: another
+ *  review's; `unanchored`: no review named before it), so a caller can print where the counted phrases stand. */
+export function judgeUnit(text: string, reviews: Reviews, keyed = false, left?: (at: number, why: "foreign" | "unanchored") => void): Judgement {
   type Anchor = { at: number; end: number; who: Who };
   const anchors: Anchor[] = [];
   for (const [re, who] of ANCHORS) for (const m of text.matchAll(re)) anchors.push({ at: m.index!, end: m.index! + m[0].length, who });
@@ -231,9 +266,10 @@ export function judgeUnit(text: string, reviews: Reviews, keyed = false): Judgem
   let judged = 0, foreign = 0, unanchored = 0;
   /** Under the keyed rule, whether the phrase is this follow-on's to judge: the review named nearest before it is the file
    *  review or the author's pass. Another review's phrase, or one naming no review, is counted and left alone. */
-  const ours = (near: Anchor | null): boolean => {
+  const ours = (near: Anchor | null, at: number): boolean => {
     if (!keyed || (near && (near.who === "file" || near.who === "pass"))) { judged++; return true; }
     if (near) foreign++; else unanchored++;
+    if (left) left(at, near ? "foreign" : "unanchored");
     return false;
   };
   const quoteAt = (m: RegExpMatchArray): string => {
@@ -245,7 +281,7 @@ export function judgeUnit(text: string, reviews: Reviews, keyed = false): Judgem
     const ns = roundsOf(m);
     const list = ns.join(", ");
     const near = nearest(m.index!, kept);
-    if (!ours(near)) continue;
+    if (!ours(near, m.index!)) continue;
     if (!near) faults.push({ at: m.index!, fault: quoteAt(m) + ": names round " + list + " of no review (nothing is named before it in this unit); write the file review's round " + list + ", the review's round " + list + ", or the author's closing pass after the file review's round M" });
     else if (near.who === "pass") faults.push({ at: m.index!, fault: quoteAt(m) + ": a pass of the author's has no rounds; it is the author's closing pass after the file review's round M, with the finding's id kept" });
     else if (near.who === "file") {
@@ -260,7 +296,7 @@ export function judgeUnit(text: string, reviews: Reviews, keyed = false): Judgem
   const named: Record<Who, string> = { file: "the file review", branch: "the branch's review", other: "another review", pass: "the author's pass" };
   for (const m of text.matchAll(idRe)) {
     const near = nearest(m.index!, forIds);
-    if (!ours(near)) continue;
+    if (!ours(near, m.index!)) continue;
     if (!near || near.who !== "pass") faults.push({ at: m.index!, fault: quoteAt(m) + ": an id of the author's family (" + reviews.ids.map((p) => p + "-N").join(", ") + ") where the review named nearest before it is " + (near ? named[near.who] : "no review") + "; the finding is the author's closing pass's, never a round's of the file review, and the pass is named nearest before its id (the author's closing pass after the file review's round M, the id)" });
   }
   return { faults, judged, foreign, unanchored };
@@ -269,11 +305,11 @@ export function judgeUnit(text: string, reviews: Reviews, keyed = false): Judgem
 /** The judgement of a set of units under one label: the faults, each prefixed with the label and the line of the phrase, and
  *  the counts summed; `keep` narrows the faults to the lines a road is about (road 2: the lines the branch added), the unit
  *  still the context every phrase is judged in; `keyed` is the tree rule's scope outside this follow-on's own files. */
-type Tally = { faults: string[]; units: number; judged: number; foreign: number; unanchored: number };
+type Tally = { faults: string[]; units: number; judged: number; foreign: number; unanchored: number; left: string[] };
 function judgeUnits(label: string, units: Unit[], reviews: Reviews, keyed = false, keep: (line: number) => boolean = () => true): Tally {
-  const t: Tally = { faults: [], units: units.length, judged: 0, foreign: 0, unanchored: 0 };
+  const t: Tally = { faults: [], units: units.length, judged: 0, foreign: 0, unanchored: 0, left: [] };
   for (const u of units) {
-    const j = judgeUnit(u.text, reviews, keyed);
+    const j = judgeUnit(u.text, reviews, keyed, (at, why) => { if (why === "unanchored") t.left.push(label + ":" + lineAt(u, at)); });
     t.judged += j.judged; t.foreign += j.foreign; t.unanchored += j.unanchored;
     t.faults.push(...j.faults.map((f) => ({ line: lineAt(u, f.at), fault: f.fault })).filter((f) => keep(f.line)).map((f) => label + ":" + f.line + " " + f.fault));
   }
@@ -409,6 +445,11 @@ test("the reader (source-units.ts): a string the program sees as one value is on
   // naming the file rather than charge lines it cannot vouch for
   assert.throws(() => literals("const a = \"step 9\nconst b = 1;\n", "some/module.ts"), /source-units: some\/module\.ts:1 string literal .* cooks to .* where the compiler read/, "an unterminated literal aborts the read with the file named");
   assert.throws(() => literals("const a = \"\\x4g step 9\";\n", "some/module.ts"), /some\/module\.ts:1 string literal/, "an invalid escape aborts the read with the file named");
+  // a TAGGED template whose escape the template grammar rejects is valid code the compiler reads raw (String.raw sees the raw
+  // body; the cooked value is undefined by the language), so it is read as its raw body and no throw (the author's closing pass
+  // after the file review's round 5, reader-3: the throw had reached it, and one such literal in any candidate file aborted the
+  // read of the whole tree); a tagged template with a valid escape stays cooked
+  assert.deepEqual(literals("const r = new RegExp(String.raw`(a)\\1 step 9`);\nconst s = tag`\\xq step 8 ${z} \\1`;\nconst t = tag`a\\nb step 7`;\n", "probe.ts").map((l) => [l.kind, l.text, l.line]), [["template", "(a)\\1 step 9", 1], ["template", "\\xq step 8 ${z} \\1", 2], ["template", "a\nb step 7", 3]], "the backreference and the bad hex read raw under their tags, the valid escape cooked");
   // Python: the literals cooked as Python cooks them (the file review's round 5, extra6-3: every backslash had been dropped,
   // so \n read as the letter n, glued the words the escape separated and could manufacture a phrase the source does not
   // carry); adjacent literals glued with nothing between them, an f-string's field kept as written, a raw literal and a
@@ -438,7 +479,12 @@ test("the reader (source-units.ts): a string the program sees as one value is on
   const script = "// a note\nconst s = 'step 9';\n";
   for (const sfx of [".ts", ".mts", ".cts", ".js", ".mjs", ".cjs"]) assert.deepEqual(unitsOf("dir/x" + sfx, script).map((u) => [u.kind, u.text]), [["comment", "a note"], ["string", "step 9"]], sfx + " is read by the compiler");
   const jsx = "// a note\nconst el = <div title='step 9'>text</div>;\nconst s = 'x';\n";
-  for (const sfx of [".tsx", ".jsx"]) assert.deepEqual(unitsOf("dir/x" + sfx, jsx).map((u) => [u.kind, u.text]), [["comment", "a note"], ["string", "step 9"], ["string", "x"]], sfx + " is read by the compiler in its own kind: the attribute's literal a unit, the closing tag no regular expression");
+  for (const sfx of [".tsx", ".jsx"]) assert.deepEqual(unitsOf("dir/x" + sfx, jsx).map((u) => [u.kind, u.text]), [["comment", "a note"], ["string", "step 9"], ["jsxtext", "text"], ["string", "x"]], sfx + " is read by the compiler in its own kind: the attribute's literal a unit, the text between the tags a unit, the closing tag no regular expression");
+  // the text between JSX tags is one unit as written, charged to its lines; a whitespace-only text is no unit; its quotes and
+  // slashes open no literal and no comment (the author's closing pass after the file review's round 5, reader-1: the attribute's
+  // literal had been read and the text child skipped, so a phrase planted as JSX text sat in no unit)
+  const jsxText = unitsOf("x.tsx", "const el = (\n  <p>\n    the file review's\n    step 9 found it // it's so\n  </p>\n);\nconst two = <b>a</b>;\n");
+  assert.deepEqual(jsxText.map((u) => [u.kind, u.text.trim(), u.line, u.endLine, lineAt(u, u.text.indexOf("step"))]), [["jsxtext", "the file review's\n    step 9 found it // it's so", 2, 5, 4], ["jsxtext", "a", 7, 7, 7]], "the text between the tags one unit, the step charged to line 4, the whitespace between the tags no unit, the slashes no comment");
   assert.deepEqual(unitsOf("x.tsx", "const el = <a title=\"step\\n9\" href={\"step\\n8\"} />;\n").map((u) => u.text), ["step\\n9", "step\n8"], "a JSX attribute's quoted value has no escapes and is read as written; a literal inside its braces is cooked");
   assert.deepEqual(unitsOf("x.py", "x = 'a\\nstep 9'\n").map((u) => [u.kind, u.text]), [["prose", "x = 'a step 9'"]], ".py is read through the Python arm");
   for (const f of ["x.md", "x.css", "x.yml", "x.json", "x.sh", "Makefile", ".gitignore", "dir/LICENSE"]) assert.deepEqual(unitsOf(f, "one\n\ntwo\n").map((u) => [u.kind, u.text]), [["prose", "one"], ["prose", "two"]], f + " is read as paragraphs");
@@ -451,7 +497,7 @@ test("the convention: the branch's review has rounds 1 and 2, the file review's 
   const r = convention();
   assert.deepEqual([...r.branch], [1, 2]);
   assert.ok(r.file.size >= 4 && r.file.has(1) && r.file.has(r.file.size), "the file review's rounds 1 to " + r.file.size);
-  assert.deepEqual(r.ids, ["behaviour", "records", "coverage", "guards", "attribution-and-gates"]);
+  assert.deepEqual(r.ids, ["behaviour", "records", "coverage", "guards", "attribution-and-gates", "reader", "tree"]);
   const two: Reviews = { branch: new Set([1, 2]), file: new Set([1, 2, 3, 4]), ids: ["behaviour", "records", "coverage"] };
   // a phrase in the section is charged to the plan line that carries it: the section's last paragraph's last word stands at
   // the end of the plan line lineAt names (the starts follow the section's offset; the author's closing pass after the file
@@ -493,6 +539,24 @@ test("the convention: the branch's review has rounds 1 and 2, the file review's 
   assert.equal(roundFaults(F + "`" + n(9) + "` found it", two).length, 1, "the digits in Markdown code markers");
   assert.equal(roundFaults(F + "_" + n(9) + "_ found it", two).length, 1, "the digits in Markdown underscores");
   assert.deepEqual(roundFaults(F + "**" + n(4) + "** and " + B + "`" + n(2) + "` found it", two), [], "marked-up digits of rounds the reviews had");
+  // the pass's name ends in the same digits ROUND_RE reads, so the name holds over a line break inside a literal and around
+  // Markdown markers, and the id after it is the pass's (the author's closing pass after the file review's round 5, reader-4: the
+  // name had taken one space or hyphen and bare digits, and the id after such a name was faulted against the file review)
+  assert.deepEqual(roundFaults(P + "after " + F.trimEnd() + "\n" + n(4) + " (records-" + n(2) + ") settled it", two), [], "the pass named over a line break keeps its name through the digits");
+  assert.deepEqual(roundFaults(proseUnits(P + "after " + F + "**" + n(4) + "** (records-" + n(2) + ") settled it.\n")[0].text, two), [], "the pass named with marked-up digits in Markdown");
+  assert.deepEqual(roundFaults(P + "after\n" + F + n(4) + "\n(records-" + n(2) + ") settled it", two), [], "and over a line break inside the name's own words");
+  // the review names are read in either case (the same closing pass, reader-5 and tree-3: a title-cased name had anchored nothing, so it
+  // was no candidate outside the created files and faulted as no review inside them)
+  const titled = roundFaults("The File Review's round " + n(9) + " found it", two);
+  assert.ok(titled.length === 1 && /not one the convention enumerates/.test(titled[0].fault), "a title-cased file review is the file review, and its round past the enumeration faults as such: " + JSON.stringify(titled));
+  assert.equal(judgeUnit("The File Review's round " + n(9) + " found it", two, true).judged, 1, "and it is ours under the key");
+  assert.deepEqual(roundFaults("The File Review's round " + n(2) + " ruled it; The Review's round " + n(1) + " found it", two), [], "title-cased names of rounds the reviews had");
+  assert.equal(roundFaults("The Author's Closing Pass (round " + n(7) + ") settled it", two).length, 1, "a title-cased pass named as a round");
+  assert.ok(roadOneViewerUnit("The File Review ruled the width", two) && roadOneViewerUnit("the Author's closing pass settled it", two), "the predicate reads either case");
+  // the pass's own name is in the vocabulary (the same closing pass, reader-2): a pass named as a round with no id beside it, outside the
+  // created files, is a candidate and reds
+  const passOnly = "decided in the author's closing pass (round " + n(7) + "), which settled the width";
+  assert.ok(roadOneViewerUnit(passOnly, two) && roundFaults(passOnly, two, true).length === 1 && /has no rounds/.test(roundFaults(passOnly, two, true)[0].fault), "selected by the pass's name and judged under the key: a pass has no rounds");
   // a fault is charged to the source line of the phrase, so a line filter (road 2's added lines) keeps it (the file review's
   // round 5, extra7-1: with the starts map counting the cooked text's newlines, a one-line literal's fault was charged past
   // the literal and the filter dropped it, a real violation on an added line passing as a green)
@@ -557,16 +621,19 @@ test("road 1, every checkout, a rule over the tree: every file git lists at the 
   full.set("plans/file-browser.md", { label: "plans/file-browser.md (the pointer)", units: pointer.units, span: pointer.span });
   const faults: string[] = [];
   const tally = { units: 0, judged: 0, foreign: 0, unanchored: 0 };
-  const add = (x: Tally): void => { faults.push(...x.faults); tally.units += x.units; tally.judged += x.judged; tally.foreign += x.foreign; tally.unanchored += x.unanchored; };
+  const left: string[] = [];   // file:line of every round counted as naming no review and left alone (the run-time boundary is silent there)
+  const add = (x: Tally): void => { faults.push(...x.faults); tally.units += x.units; tally.judged += x.judged; tally.foreign += x.foreign; tally.unanchored += x.unanchored; left.push(...x.left); };
   for (const r of full.values()) add(judgeUnits(r.label, r.units, reviews));
   const candidates: string[] = [];
   const another: string[] = [];   // files with a phrase left alone as another review's or no review's
   const suffixes = new Map<string, number>();   // the suffixes the road read, each with its count (unitsOf refuses one it has no rule for, naming the file)
   let binary = 0;
   let viewerOwn: number[] = [];
+  const unknown: string[] = [];   // text files of a suffix the reader has no rule for: candidates-to-be that red the refusal once they name the vocabulary
   for (const f of pop.files) {
     const buf = fs.readFileSync(path.join(REPO, f));
     if (isBinary(buf)) { binary++; continue; }
+    if (!readable(f)) unknown.push(f);
     const text = buf.toString("utf8");
     const whole = CREATED.includes(f);
     if (!whole && !vocabulary(text)) continue;
@@ -581,9 +648,9 @@ test("road 1, every checkout, a rule over the tree: every file git lists at the 
   }
   assert.ok(candidates.length >= 10, "the candidates, the files naming the file review or carrying an id of the family, and the created files: " + candidates.length);
   assert.ok(tally.units >= 200, "the units judged: " + tally.units);
-  assert.deepEqual(faults, [], "every round a record names is a round the convention gives the review it names, and every finding of the author's family follows a pass (TS and JS read by the compiler, comments joined and each string the program sees as one value one unit, a + chain of literals and a template's spans folded, a join, a concat and a hole's run-time value outside the read; Markdown as paragraphs; Python as paragraphs with its literals cooked as Python cooks them; a round is read as the word round or rounds, a hyphen or whitespace and digits, bare or in Markdown emphasis or code markers, with a comma list or a to-range after rounds as the set, and not as an ordinal, a spelled-out number or an abbreviation; an id as the family word, a hyphen and digits, never spaced; outside the created files and the three records a phrase is judged only where the review named nearest before it is the file review or the author's pass)");
+  assert.deepEqual(faults, [], "every round a record names is a round the convention gives the review it names, and every finding of the author's family follows a pass (TS and JS read by the compiler, comments joined and each string the program sees as one value one unit, a + chain of literals and a template's spans folded, a join, a concat and a hole's run-time value outside the read; Markdown as paragraphs; Python as paragraphs with its literals cooked as Python cooks them; a round is read as the word round or rounds, a hyphen or whitespace and digits, bare or in Markdown emphasis or code markers, with a comma list or a to-range after rounds as the set, and not as an ordinal, a spelled-out number or an abbreviation; an id as the family word, a hyphen and digits, never spaced; outside the created files and the three records a phrase is judged only where the review named nearest before it is the file review or the author's pass, and a round naming no review there is counted, never faulted, so a phrase assembled at run time whose round lands in a unit of its own is silent outside the created files; a round or an id split at its digits across the operands after a non-literal one sits in no unit)");
   assert.equal(viewerOwn.length, VIEWER_UNITS, "ui/webview/file-view.ts carries " + VIEWER_UNITS + " units of this follow-on's (naming the file review, or the author's pass before a round or an id); derived: " + viewerOwn.length + " at lines " + viewerOwn.join(", ") + ". A deleted or an added attribution there moves this count; re-derive VIEWER_UNITS at the new head, never fit the records to it");
-  t.diagnostic("road 1 ran over the tree: " + pop.files.length + " files in the population (" + pop.skipped.length + " paths skipped as no regular file, " + binary + " binary), " + candidates.length + " candidates, " + tally.units + " units judged, " + tally.judged + " phrases ours, " + tally.foreign + " another review's and " + tally.unanchored + " naming no review left alone" + (another.length ? " in " + another.join("; ") : "") + ". Suffixes read: " + Array.from(suffixes, ([s, n]) => s + " " + n).join(", ") + ". Candidates (compare with the PR's added files): " + candidates.join(", "));
+  t.diagnostic("road 1 ran over the tree: " + pop.files.length + " files in the population (" + pop.skipped.length + " paths skipped as no regular file, " + binary + " binary), " + candidates.length + " candidates, " + tally.units + " units judged, " + tally.judged + " phrases ours, " + tally.foreign + " another review's and " + tally.unanchored + " naming no review left alone" + (another.length ? " in " + another.join("; ") : "") + (left.length ? " (the rounds naming no review, counted and not judged, at " + left.join(", ") + ")" : "") + ". Suffixes read: " + Array.from(suffixes, ([s, n]) => s + " " + n).join(", ") + "; text files of a suffix the reader has no rule for, which red the refusal once they name the vocabulary: " + unknown.length + (unknown.length ? " (" + unknown.join(", ") + ")" : "") + ". Candidates (compare with the PR's added files): " + candidates.join(", "));
   // road 2 (kept and disclosed: it runs in no CI job and in none after the merge; the plan's Tests paragraph says why)
   assert.ok(fs.existsSync(path.join(REPO, THIS_MODULE)), "THIS_MODULE names a file in the tree: " + THIS_MODULE + " (a misspelt path would hold road 2 off for good behind a green diagnostic; the file review's round 5, tests-7)");
   const r2 = roadTwo(REPO, reviews, THIS_MODULE);

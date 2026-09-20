@@ -8125,12 +8125,12 @@ with the build's deliberate departures from that contract recorded as the decisi
 rule on. The file review's rounds are named the file review's round 1 to round 5, the rounds it has ruled (its fixlists and
 rulings are kept outside the repo in the maintainer's notes, one pair per round); the author's own verification after each
 round's fixes, by a verifier of the author's, is named the author's closing pass after that round, never a round of either
-review, and its findings carry the ids behaviour-N, records-N, coverage-N, guards-N and attribution-and-gates-N, which no
-fixlist of the file review holds. A record naming a
+review, and its findings carry the ids behaviour-N, records-N, coverage-N, guards-N, attribution-and-gates-N, reader-N and
+tree-N, which no fixlist of the file review holds. A record naming a
 round names the review it belongs to first (ui/webview/linknav-records-attribution.test.ts holds this, in every checkout,
-over every unit of the files the branch created and over every unit in the tree that names the file review or carries an id
-of the author's family, a phrase outside the created files judged where the review named nearest before it is the file
-review or the author's pass; the file review's round 5, extra5-2: the sentence had claimed every record the branch wrote,
+over every unit of the files the branch created and over every unit in the tree that names the file review, names the
+author's closing pass, or carries an id of the author's family, a phrase outside the created files judged where the review
+named nearest before it is the file review or the author's pass; the file review's round 5, extra5-2: the sentence had claimed every record the branch wrote,
 which held only on a road that read the diff, and that road runs in no CI checkout).
 
 **What existed.** A link in a rendered file to another file (`[x](other.md)`, `other.md:7`, `other.md#section`, a
@@ -8669,13 +8669,19 @@ rules-1, after a pin keyed on one string missed the misattribution in the commit
 review named nearest before it in its unit of text and is one the convention enumerates for that review; a pass of the
 author's has no rounds; an id of the author's family stands only after a pass is named; a round with no review named
 fails), reading in every checkout, as a rule over the tree, every file git lists at the repo root, tracked or untracked
-and not ignored, whose text names the file review or carries an id of the author's family, together with the files the
-branch created (an existence roster, each judged in full, every unit of it) and this section, the guide's paragraph and
+and not ignored, whose text names the file review, names the author's closing pass, or carries an id of the author's
+family, together with the files the branch created (an existence roster, each judged in full, every unit of it) and this
+section, the guide's paragraph and
 the browser plan's pointer (judged in full), a phrase outside those judged only where the review named nearest before it
 is the file review or the author's pass, so another review's round in the shared file-view.ts, or in a file another PR
 brought in, is left alone and counted in the diagnostic (the file review's round 5, extra5-1 with tests-1, and
 regression-2: the first road had read a roster of eighteen files, checked against the diff only by the second road, which
-runs in no CI job, and had judged file-view.ts's units naming any review's round against this follow-on's enumeration),
+runs in no CI job, and had judged file-view.ts's units naming any review's round against this follow-on's enumeration; the
+key is the words "file review", the feature's name as well as this review's, so a record of another review that calls
+itself the file review, or a sentence about the file-review feature followed by a round, is judged against this
+enumeration and reds the module until that review takes a qualified name or the key is extended, no such unit standing at
+the swept head, and outside the created files a round naming no review is counted and not faulted, the diagnostic printing
+where it stands; the author's closing pass after the file review's round 5, tree-2 and reader-6),
 a new uncommitted file among the population (correctness-5 with tests-6: the second road's diff lists tracked paths
 alone, so a phrase planted in a new file was a false green), and the count of this follow-on's units in file-view.ts held
 equal to the derived count at the swept head (correctness-6 with tests-5 and extra8-4: a floor of ten had stood against
@@ -8706,8 +8712,13 @@ assembled at run time, a prefix or a case-folded test; guards-2 with attribution
 or abbreviated form, and an id as the family word, a hyphen and digits), had the attribution pin's second road diff the
 working tree against the merge-base so an uncommitted planted phrase is charged like a committed one (guards-3), charged a
 fault in this section to its plan line rather than a section-relative one (attribution-and-gates-4), and widened its first
-road's read of file-view.ts to the units carrying an id of the author's family beside those naming the file review, so a
-pass misnamed as a round in a figure comment is judged in every checkout (the same closing pass, records-1). The census
+road's read of file-view.ts to the units carrying an id of the author's family beside those naming the file review (the
+same closing pass, records-1); since the tree rule of the file review's round 5 that read is keyed on the review named, so
+a pass misnamed as a round beside its id is judged there where the pass is named nearest before the round, while a round
+beside an id with no review named, or the branch's review named with a round over 2 beside an id, is counted and left
+alone in that shared file, judged in full only inside the created files and the three records (the author's closing pass
+after the file review's round 5, tree-1, correcting the earlier form of this sentence, which said every such comment is
+judged in every checkout). The census
 those two pins grew out of, every line the branch added since the merge-base 3711863c9 that names a review, run for the
 file review's round 3, tests-2, with the corrections it produced: the commit that recorded it said 173 lines over 19
 files at this head, and 173 is the count at that commit's parent, 677b0e1c8; at the commit's own head, 2a35d92c9, the same
