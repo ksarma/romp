@@ -14,16 +14,20 @@
 //     from the same token in both theme blocks, never from a dark-accent literal. The held-mail card's
 //     Approve button (.fdismiss.fq-ok) wrote its border as rgba(156, 210, 255, 0.6), the dark accent at
 //     0.6, so in the light theme it computed the clay text inside a blue edge. The census at the end
-//     (2026-09-20) holds the rule for every rule of the three sheets, not one selector: no rule, and no
-//     keyframe taken whole, names an accent token beside a dark-accent literal outside a var() fallback.
-//     The same class had two more members when the Approve button was fixed: revealPulse's glow in
-//     feed.css and .staged-chip's dashed edge in styles.css, both written through the token now.
+//     (2026-09-20) holds the rule for every rule of every sheet under ui/webview, not one selector: no
+//     rule, and no keyframe taken whole, names an accent token beside a dark-accent literal outside a
+//     var() fallback. The same class had two more members when the Approve button was fixed: revealPulse's
+//     glow in feed.css and .staged-chip's dashed edge in styles.css, both written through the token now.
+//     The census read three named sheets at first and left five unread, three of which paint from the
+//     tokens (fresh-3, the same review): it reads the directory now, so a sheet added later joins by
+//     construction.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-const read = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
+const WEBVIEW = path.resolve(process.cwd(), "..", "ui", "webview");
+const read = (f: string) => fs.readFileSync(path.join(WEBVIEW, f), "utf8");
 const CHAT = read("styles.css");
 const FEED = read("feed.css");
 const GEAR = read("gear.css");
@@ -249,8 +253,20 @@ test("the census reader: the rule is the unit, a keyframe is one rule, and a fal
   assert.deepEqual(rulesOf(css, "t").map((r) => r.head).filter((h) => h.startsWith("@")), ["@keyframes two-stops", "@keyframes fades-out"], "a keyframe is one rule and an @media wrap is walked into");
 });
 
-test("no rule of the three sheets names an accent token beside the dark accent written out (two hues on one element in the light theme)", () => {
-  const found = ([["styles.css", CHAT], ["feed.css", FEED], ["gear.css", GEAR]] as const).flatMap(([sheet, css]) => mixedAccentRules(css, sheet));
+// The census's population: every sheet under ui/webview, by readdir, so a sheet added later joins by construction; the
+// three the census began on (styles.css, feed.css, gear.css) left five unread, three of which (the sessions pane's, the
+// strip's and the waiting pane's) paint from the tokens. CSS sheets only: accent chrome inlined in a Python or JS string
+// (kernel/kernel.py's served pages carry such rules) is outside this census.
+const SHEETS = fs.readdirSync(WEBVIEW).filter((f) => f.endsWith(".css")).sort();
+const ANCHORS = ["styles.css", "feed.css", "gear.css"];
+
+test("no rule of any sheet under ui/webview names an accent token beside the dark accent written out (two hues on one element in the light theme)", () => {
+  // the floor, so a resolve at the wrong directory or a filter that drops sheets reds instead of passing over nothing:
+  // the three sheets the census began on are among those read, and at least the eight that stood here when the floor
+  // was set (lower it only for a sheet retired on purpose)
+  for (const a of ANCHORS) assert.ok(SHEETS.includes(a), a + " is among the sheets read: " + SHEETS.join(", "));
+  assert.ok(SHEETS.length >= 8, "eight sheets stood under ui/webview when this floor was set; found " + SHEETS.length + ": " + SHEETS.join(", "));
+  const found = SHEETS.flatMap((sheet) => mixedAccentRules(read(sheet), sheet));
   assert.deepEqual(found, [], "rules mixing an accent token with the dark accent written out:\n  " + found.join("\n  "));
   // the reader saw the sheets: the Approve button, the two rules the census widened onto and the alpha-0 keyframe are rules it read
   const heads = new Set([...rulesOf(FEED, "feed.css"), ...rulesOf(CHAT, "styles.css")].map((r) => r.head));

@@ -180,6 +180,13 @@ export function prefixInbound(host: string, msg: any): any {
   // host ("") took the identity exit above, so a local frame has no host key: the gear words it as
   // this machine. The echoed `gesture` inside passes through untouched — it is re-issued as-is.
   if (out.type === "settingStale") out.host = host;
+  // the kernel's answer to the footer's Clear all (clearAllResult, the held-mail readers PR's review round 2): the
+  // press is broadcast to every known host and each kernel answers about its OWN board, so the feed pane names the
+  // machine each answer is about and folds one press's answers into one toast, as the gear does for settingStale;
+  // unstamped, a host that cleared nothing said "nothing was cleared" for the whole board while another host's
+  // cards had just left. The local host took the identity exit above, so a local frame carries no host key and
+  // the pane words it as this machine.
+  if (out.type === "clearAllResult") out.host = host;
   if (out.type === "sessionList" && Array.isArray(out.items)) {
     out.items = out.items.map((it: any) => (it && typeof it === "object" && typeof it.id === "string"
       ? { ...it, id: prefixId(host, it.id),

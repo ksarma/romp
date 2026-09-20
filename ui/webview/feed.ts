@@ -806,6 +806,7 @@ let showDismissed = false;
 let dismissedCount = 0;
 let canUndoClear = false;   // host: cleared.jsonl has rows → the UndoClear button shows
 let boardCardsUnknown: CardsUnknown = false;   // the last payload's frameCardsUnknown: while a host's cards are unknown the footer's Clear all is offered (clearAllOffered)
+let feedOff = false;   // the last frame was the Task tracking switch's off frame (T404): the footer's Clear all stays hidden until a built frame (the off arm, renderBody)
 // FLIP-across-identity (the user 2026-06-29): which render KEY covered each goal itemId on the LAST render.
 // A goal's card can change identity — a group ("g:"+turnId) dissolving to a solo ask ("a:"+itemId), a goal
 // absorbed under an umbrella ("a:"+umbrellaId) — which is a DIFFERENT DOM node, so the normal FLIP (reuse one
@@ -4093,7 +4094,7 @@ function makeClearAllBtn(): HTMLElement {
   b.id = "feed-clearall";
   b.textContent = "Clear all";
   b.title = "clear the open cards (inbox-zero); Undo restores them. A held message stays until you approve or deny it";
-  b.onclick = (ev) => { ev.stopPropagation(); vscodeApi?.postMessage({ type: "clearAll" }); };
+  b.onclick = (ev) => { ev.stopPropagation(); clearAllFold = null; vscodeApi?.postMessage({ type: "clearAll" }); };   // a press opens a fresh fold of answers (clearAllResult)
   return b;
 }
 
@@ -5419,6 +5420,13 @@ function feedToast(text: string) {
     window.setTimeout(() => { if (feedToastEl === t) feedToastEl = null; t.remove(); }, 300);
   }, 4200);
 }
+// The footer's Clear all answers of ONE press, folded into one toast (the gear's settingStale fold, one pane over: the
+// held-mail readers PR's review round 2). On a merged board the press reaches every host and each kernel answers about
+// its own board, and feedToast replaces the toast on screen, so two answers left only the last one showing. A press opens
+// a fresh fold (makeClearAllBtn); an answer joins the fold while its toast is the one on screen (feedToastEl) and starts
+// a new toast once that one has gone or another notice took its place. The keys are the press and the toast's own
+// state, never a clock. A host that cleared everything it was asked answers nothing, so a fold is never a complete set.
+let clearAllFold: { toast: HTMLElement; lines: string[] } | null = null;
 
 // ── usage-limit banner (the user 2026-08-18): a judge layer down on a USAGE LIMIT must say so ──
 // loudly, never fail quietly into retries. The kernel ships the judge-limit latch on the feed
@@ -5673,7 +5681,7 @@ function renderBody(list: HTMLElement) {
   ensureViewMenuBtn().style.display = showCA ? "" : "none";       // sort + layout menu (the user 2026-08-24)
   ensureTagLensBtn().style.display = showCA ? "" : "none";        // the feed-local tag lens (the user 2026-08-25, T70)
   ensureSessionBox().style.display = showCA ? "" : "none";        // session combobox: type-or-pick filter (the user 2026-08-24)
-  ensureClearAll().style.display = clearAllOffered(asks, boardCardsUnknown) ? "" : "none";   // its own gate: a card a clear would take, not the card count (clearAllOffered)
+  ensureClearAll().style.display = clearAllOffered(asks, boardCardsUnknown) && !feedOff ? "" : "none";   // its own gate: a card a clear would take, not the card count (clearAllOffered); never while the switch is off (feedOff)
   ensureUndoClear().style.display = canUndoClear ? "" : "none";
   const foot = document.getElementById("feed-foot");
   // show the footer whenever there are cards (so the Sub-goals toggle is reachable) or an undo is available
@@ -6451,6 +6459,7 @@ function applyFeedPayload(m: any): void {
   // for cards that left, never growth without a gesture. The frame's own `off` stays the local kernel's word.
   const cardsUnknown = frameCardsUnknown(m);
   boardCardsUnknown = cardsUnknown;   // the footer's Clear all reads it at render time (clearAllOffered)
+  feedOff = false;                    // a built frame: the switch is on, the footer's Clear all is offered again where its gate says
   // A clear is CONFIRMED once the kernel's payload no longer lists it → stop suppressing it. Then drop
   // any still-pending (kernel hasn't caught up) from this payload so a stale push can't resurrect them.
   if (!cardsUnknown) for (const id of Array.from(pendingCleared)) if (!incomingAsks.some((a) => a.itemId === id)) pendingCleared.delete(id);
@@ -6595,9 +6604,17 @@ listenForFrames(perfFrameHandler("feed", (m) => vscodeApi?.postMessage(m), (e: M
       // the error center is not task tracking (round four, the ruling): the off frame carries the notice rings, and the
       // shell's bell is fed from here as from a built frame, so a failed sync, a refused write or a session that cannot
       // start is told while off; the frame stays loaded hidden while the shell closes the pane, so this runs
+      // The footer's Clear all leaves with the board too (the held-mail readers PR's review round 2): this arm returns
+      // before renderBody, so the button of the last render stood under the notice while the list was hidden, and a
+      // press reached a kernel that builds no feed while off, clears nothing and answers nothing. It is hidden below and
+      // held hidden by feedOff through the renderBody a romp:settings storage event re-runs over the still-populated
+      // asks; a built frame clears the latch (applyFeedPayload). Undo stays: the frame carries canUndoClear and the
+      // undoClear door has no tracking gate.
       mirrorBadges([], Array.isArray(m.clearNotices) ? m.clearNotices : [], Array.isArray(m.sdkNotices) ? m.sdkNotices : [], Array.isArray(m.syncNotices) ? m.syncNotices : [], { cardsUnknown: true });
       if (typeof m.dismissedCount === "number") dismissedCount = m.dismissedCount;
       if (typeof m.canUndoClear === "boolean") canUndoClear = m.canUndoClear;
+      feedOff = true;
+      ensureClearAll().style.display = "none";
       return;
     }
     // HOVER-FREEZE: a hovered card must not move on screen — queue the payload (newest wins) and
@@ -6691,9 +6708,20 @@ listenForFrames(perfFrameHandler("feed", (m) => vscodeApi?.postMessage(m), (e: M
     // when the payload no longer lists them. `ok` false is a refusal (nothing cleared): the reason rides the fading
     // toast and the shell's bell keeps the durable record under its refused kind, as a refused bell toggle does;
     // `ok` true is a partial clear: the toast alone says what stayed and why. The text is the kernel's (the count,
-    // and how many are held messages awaiting a decision); the pane adds no reading of its own.
-    if (!m.ok) window.parent?.postMessage({ romp: "notify", kind: "refused", text: m.text, sid: "", itemId: "" }, "*");
-    feedToast(m.text);
+    // and how many are held messages awaiting a decision); the pane adds the MACHINE it is about and nothing else
+    // (the review's round 2): on a merged board the press reaches every host and each kernel answers about its own
+    // board, so a remote kernel's frame arrives host-stamped (federation.ts prefixInbound, as settingStale does) and
+    // its answer is labelled with that host, the local kernel's with this machine (the gear's word for its own frame),
+    // and an unqualified "nothing was cleared" is never said for a press that cleared cards on another machine. The
+    // durable bell row carries the same label, so two hosts' refusals are two facts there and not one row counted
+    // twice. One press's answers fold into one toast, a line per machine (clearAllFold, keyed on the press and on the
+    // toast on screen; a fold never waits for a complete set, since a host that cleared all it was asked answers nothing).
+    const where = typeof m.host === "string" && m.host ? m.host : "this machine";
+    const line = where + ": " + m.text;
+    if (!m.ok) window.parent?.postMessage({ romp: "notify", kind: "refused", text: line, sid: "", itemId: "" }, "*");
+    const lines = clearAllFold && clearAllFold.toast === feedToastEl ? [...clearAllFold.lines, line] : [line];
+    feedToast(lines.join("\n"));
+    clearAllFold = feedToastEl ? { toast: feedToastEl, lines } : null;
   } else if (m.type === "revealCards") {
     // chat rail CLICK → scroll to the card(s) covering that turn and pulse them (the user 2026-07-23).
     // Distinct from hoverCards, which only outlines whatever is already on screen: this one MOVES the

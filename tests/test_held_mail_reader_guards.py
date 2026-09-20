@@ -148,6 +148,17 @@ def _refused():
     return [r["text"] for r in km._sync_notice_rows(limit=40) if r["kind"] == "refused"]
 
 
+def _writer_rows(sid, skipped=None):
+    """The writer's reader (_notice_rows_unlocked) on either shape: (rows, error) since the manager's round 1
+    (regression-2: a file it could not read was folded to [], a false absence for expire_notice and a blind revision for
+    post_notice), a bare list before it. A case that pins the ROWS reads through this, so its red over an older archive is
+    the rows it names and never a tuple unpack of a list (the manager's round 2, LENS ONE: an error on a signature the fix
+    introduced records nothing); the pair's own claim is pinned where it lives (tests/test_held_mail_manager_r1.py
+    WriterRefusesOverAnUnreadableFile, and the round 2 module's WriterSideUnreadableFileIsSaidOnce, which read it direct)."""
+    got = km._notice_rows_unlocked(sid, skipped) if skipped is not None else km._notice_rows_unlocked(sid)
+    return got if isinstance(got, tuple) else (got, "")
+
+
 def _client(sent):
     return {"app": "feed", "wid": "w1", "alive": True, "send": lambda raw: sent.append(json.loads(raw))}
 
@@ -190,7 +201,9 @@ class NoticeKeyNotText(_Case):
     the sweep's newest map) and sorted on, so a key that is a list, an object or a number raised TypeError out of every
     feed build and out of the sweep, the F2 shape the int-field check left open. The parse now treats a key that is not
     text as a bad field: the row skips, is said once naming the type (a key that is not text has no name to give), and
-    the board stands."""
+    the board stands. Red over the 1943cf17a archive on the defect itself, the TypeError out of the build (the first case)
+    and out of the writer's reader (the second); the second case's pair read is the manager's round 1 adaptation
+    (_writer_rows), green over 35fad278c and pinning nothing there (LENS ONE)."""
 
     def test_a_key_that_is_not_text_skips_the_row_and_keeps_the_board(self):
         self.r.write_notice_rows([_good(self.now),
@@ -213,10 +226,10 @@ class NoticeKeyNotText(_Case):
     def test_the_writer_and_the_sweep_read_past_it_too(self):
         self.r.write_notice_rows([_good(self.now), dict(_good(self.now), key=[1])])
         with contextlib.redirect_stderr(io.StringIO()):
-            rows, err = km._notice_rows_unlocked(SID)   # (rows, error) since the manager's round 1 (regression-2)
+            rows, err = _writer_rows(SID)              # the rows on either shape: the pair read is an adaptation (LENS ONE)
             moved = km._compact_notices(self.now)
-        self.assertEqual(err, "", "a file that read is no fault")
         self.assertEqual([r["key"] for r in rows], ["figure"])
+        self.assertEqual(err, "", "a file that read is no fault")
         self.assertEqual(moved, 0)
 
 
@@ -224,7 +237,12 @@ class NonFiniteNumbers(_Case):
     """json.loads turns 1e400, Infinity and -Infinity into a float infinity, and int() refuses it with OverflowError, an
     ArithmeticError the (TypeError, ValueError) guards of _notice_row_bad_field and _held_records did not name: one such
     value in one notice row, or in a hold's `at`, still raised out of every feed build, the F2 and F4 shapes with one more
-    literal. Both guards name it now: the row skips and is said, the hold is moved aside with the float reason."""
+    literal. Both guards name it now: the row skips and is said; the hold keeps its card at the build's clock (the
+    manager's round 2, extra9-1: an `at` int() refuses is a field of state three at _note_read_fault_once, handled and
+    never a refusal, where the PR's first shape moved the record aside with the float reason and the bus kept serving a
+    record the kernel had moved off the decide road). Red over the 1943cf17a archive on the defect itself, the
+    OverflowError out of the build (both cases there); the row case's pair read through the writer's reader is the
+    manager's round 1 adaptation (_writer_rows), green over 35fad278c and pinning nothing there (LENS ONE)."""
 
     def test_an_infinite_rev_t_or_expiresat_skips_the_row(self):
         self.r.write_notice_rows([_good(self.now),
@@ -238,23 +256,33 @@ class NonFiniteNumbers(_Case):
         for key, field in (("sweep", "rev"), ("infy", "rev"), ("noon", "t"), ("later", "expiresAt"), ("nan", "rev")):
             self.assertIn("a row for key %s carries a float where %s needs an integer" % (key, field), log)
         with contextlib.redirect_stderr(io.StringIO()):
-            rows, err = km._notice_rows_unlocked(SID)   # (rows, error) since the manager's round 1 (regression-2)
-        self.assertEqual(err, "", "a file that read is no fault")
+            rows, err = _writer_rows(SID)              # the rows on either shape: the pair read is an adaptation (LENS ONE)
         self.assertEqual([r["key"] for r in rows], ["figure"], "the writer's reader skips them too")
+        self.assertEqual(err, "", "a file that read is no fault")
 
-    def test_an_infinite_at_moves_the_hold_aside(self):
+    def test_an_infinite_at_keeps_the_hold_at_the_builds_clock(self):
+        """An `at` int() refuses (OverflowError on a float infinity here; a string or a container takes the same road) is
+        a field of state three at _note_read_fault_once since the manager's round 2 (extra9-1): handled, never a
+        refusal. The card stands with the build's clock as its time, nothing is moved and nothing is said. Before
+        review round 1 the OverflowError raised out of every feed build; from round 1 to the reviewed head the record
+        was moved aside with the float reason. Red over the 085e08deb archive at the card list (one card where four are
+        due: the three records moved aside there), the stated reason; green here."""
         self.r.write_hold("qc-good")
         self.r.write_hold("qc-inf", at="1e400")
         self.r.write_hold("qc-neg", at="-Infinity")
         self.r.write_hold("qc-word", at="Infinity")
-        cards, log = self._cards()
-        self.assertEqual(cards, ["quarantine:qc-good"], "the readable hold stands")
+        all_four = ["quarantine:qc-good", "quarantine:qc-inf", "quarantine:qc-neg", "quarantine:qc-word"]
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            full = km._quarantine_cards(self.now)
+        self.assertEqual([c["itemId"] for c in full], all_four, "every hold stands")
+        self.assertEqual(err.getvalue(), "", "nothing said")
         for mid in ("qc-inf", "qc-neg", "qc-word"):
-            self.assertEqual(len(self._asides(mid)), 1, mid)
-            self.assertIn("%s.json could not be parsed (`at` is a float, not an integer)" % mid, log)
+            self.assertEqual(self._asides(mid), [], mid + ": nothing moved")
+        self.assertEqual([c["t"] for c in full], [1000, self.now, self.now, self.now],
+                         "the build's clock stands in for each `at` int() refused")
         feed, log = self._feed()
-        self.assertEqual([c["itemId"] for c in _asks(feed, "quarantine:")], ["quarantine:qc-good"])
-        self.assertEqual(log, "", "moved aside once: the next build meets no such file")
+        self.assertEqual(([c["itemId"] for c in _asks(feed, "quarantine:")], log), (all_four, ""), "the next build the same, quietly")
 
 
 class HoldIdsNeverJournaled(_Case):
@@ -363,7 +391,10 @@ class UnreadableHoldRingsTheBell(_Case):
     had succeeded), and the files one listing skips for one cause are ONE bell row naming the count and the files
     (correctness-3: one chmod on a directory of forty holds filed forty rows and evicted every other notice from the
     forty-row ring), the per-file line staying on stderr. The second case pins that shape; over the 35fad278c archive it
-    is red at the row count (2 rows, one per file, each claiming a failed move)."""
+    is red at the row count (2 rows, one per file, each claiming a failed move). The first case's row and line name the
+    class the record was refused for, `could not be parsed and could not be moved aside` for a torn record (regression-7,
+    the manager's round 2: the arm said `read or parsed` of every unmovable file, byte-identical for a torn record and an
+    undecidable id); over the 085e08deb archive that case is red at the wording, the stated reason."""
 
     def test_a_file_that_cannot_be_moved_aside_rings_the_bell_once_per_episode(self):
         _skip_as_root(self)
@@ -374,7 +405,7 @@ class UnreadableHoldRingsTheBell(_Case):
         self.assertEqual(cards, ["quarantine:qc-good"])
         rows = _refused()
         self.assertEqual(len(rows), 1, "the fault is on the bell, under the refused kind")
-        self.assertIn("qc-torn.json could not be read or parsed and could not be moved aside", rows[0])
+        self.assertIn("qc-torn.json could not be parsed and could not be moved aside", rows[0], "the class it was refused for (regression-7)")
         self.assertIn("Permission denied", rows[0])
         self.assertLessEqual(len(rows[0]), km.SYNC_NOTICE_FIT)
         self.assertEqual(log.count("qc-torn.json"), 1, "and stderr carries it once")
@@ -389,7 +420,7 @@ class UnreadableHoldRingsTheBell(_Case):
         self.r.chmod(self.r.qdir, 0o500)
         cards, log = self._cards()                   # the same fault again is a new episode
         self.assertEqual(len(_refused()), 3, "said again")
-        self.assertIn("qc-torn.json could not be read or parsed and could not be moved aside", log)
+        self.assertIn("qc-torn.json could not be parsed and could not be moved aside", log)
 
     def test_a_directory_that_lists_but_cannot_be_searched_rings_the_bell(self):
         _skip_as_root(self)
@@ -429,7 +460,11 @@ class BellRowFits(_Case):
     """The moved-aside bell row named the file twice (the aside's name is the file's plus a suffix), so for a relayed
     message's sixty-one-character mid the row ran to 300 characters and the bell cut it inside the aside name. The
     stderr line keeps the whole row; the bell's is fitted to SYNC_NOTICE_FIT with the file named once, the aside as its
-    suffix, and the reason last, cut before the reassurance."""
+    suffix, and the reason last, cut before the reassurance. Over the 1943cf17a archive the relayed-mid case is red at
+    the fit (a 300-character row); the unmovable case is red at the row count before its fit assertion (no bell row
+    existed for an unmovable file there, UnreadableHoldRingsTheBell's defect, fixed in the same commit as the fit, so no
+    archive carries an unfitted unmovable row); the helper case's subject is the new API itself and it errors there on
+    the helper's name, an error-shaped red legitimate in that one case and named in its docstring (LENS ONE)."""
 
     def test_the_moved_aside_row_fits_the_bell_for_a_relayed_mid(self):
         self.r.write_hold("qc-good")
@@ -457,6 +492,9 @@ class BellRowFits(_Case):
         self.assertEqual(rows[0].count(RELAYED_MID), 1)
 
     def test_the_fit_cuts_the_reason_first_and_the_tail_last(self):
+        """The subject is the fit helper itself (_hold_bell_text, review round 1), so over the 1943cf17a archive this case
+        errors on the helper's name before any assertion: an error-shaped red, legitimate for a case whose subject is the
+        new API and named as such (the manager's round 2, LENS ONE); the fit on the real road is the sibling cases'."""
         fit = km.SYNC_NOTICE_FIT
         short = km._hold_bell_text("held mail: a.json could not be parsed", "moved aside with the suffix .corrupt-1", "the rest stand", "why")
         self.assertEqual(short, "held mail: a.json could not be parsed; moved aside with the suffix .corrupt-1, the rest stand (why)")
@@ -476,7 +514,8 @@ class SweepArchivesSkippedLines(_Case):
     that is not JSON) was deleted by the first pass that had anything else to archive, against the sweep's own contract
     ('nothing is deleted') and the parse's account of the episode's end ('the sweep archived the row'). The pass archives
     those lines now as `skipped` rows carrying their text, in the same block as the rows, and the archive's readers pass
-    them by."""
+    them by. Red over the 1943cf17a archive at the archive's rows (the skipped line deleted, for the sweep case and the
+    Undo case); the nothing-to-archive case is a guard leg, green there and here."""
 
     def _archive_rows(self):
         ap = km._notice_archive_dir() / (SID + ".jsonl")
@@ -536,7 +575,8 @@ class OffFrameCountsPassOverHoldRows(_Case):
     whole for dismissedCount and canUndoClear after review round 2 taught build_feed's two counts and _undo_clear to pass
     over an older ledger's quarantine:<mid> rows (_cleared_undoable): with tracking off and such a ledger the off frame
     lit Undo with a count of one where nothing dismissable stood (the closing pass). The off frame reads the same
-    filtered count now."""
+    filtered count now. Red over the cdfa72e6e archive (the round 2 fix commit, the last before the closing pass) at the
+    counts, as over every earlier archive."""
 
     def setUp(self):
         super().setUp()
@@ -579,8 +619,9 @@ class TheHarnessLeavesNoEpisodeBehind(_Case):
     existed, to every later case of every module built on this harness (this one, the round 2 module and the manager's
     round 1 module; the follow-on module cleared it in its own setUp and tearDown). Harmless while two roots never share a
     path, and a leak all the same. Fails under a mutation that drops the clear from _Root._reset over the tree (the closed
-    root's key is still listed where none is due); over the 0a589d1e4 archive the kernel keeps no such registry, the
-    premise. Green here."""
+    root's key is still listed where none is due); over the 0a589d1e4 archive the kernel keeps no such registry, so the
+    case errors there (AttributeError on _HOLD_ASIDE_SAID), an error before its assertion and not a behavioural red: its
+    subject is the registry itself, and the mutation is the evidence. Green here."""
 
     def test_a_closed_root_takes_its_aside_episode_with_it(self):
         self.r.write_hold("qc-good")

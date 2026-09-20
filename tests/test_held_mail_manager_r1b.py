@@ -22,18 +22,46 @@ import io
 import json
 import os
 import re
+import threading
 import unittest
 from unittest import mock
 
 from tests.test_held_mail_reader_guards import (_Case, _asks, _client, _good, _refused, _skip_as_root, km,   # noqa: E402
-                                                NOTICE_ID, SID)
+                                                NOTICE_ID, RELAYED_MID, SID)
 
 SID2 = "11111111-2222-3333-4444-eeeeeeee0920"      # this module's PRIVATE synthetic sids: the files beside the good one
 SID3 = "11111111-2222-3333-4444-eeeeeeee0921"
 SID4 = "11111111-2222-3333-4444-eeeeeeee0922"
 BODY_MARKER = "SECRET-BODY-MARKER-TEXT"            # a held record's body: must never reach a log line or a bell row
 TITLE_MARKER = "SECRET-TITLE-MARKER-TEXT"          # a notice row's title: the same
-PLACEHOLDERS = ("provisional:", "awaiting:", "blocked:", "usertodo:")   # the stand-ins build_feed re-lists whatever the ledger holds
+PLACEHOLDERS = ("provisional:", "awaiting:", "blocked:", "usertodo:")   # the stand-ins build_feed re-lists whatever the ledger holds:
+#                                                                          the census's EXPECTED value, never its source (the minters are)
+LEDGER_HONOURING = ("parked:", "notice:")   # the two families whose readers honour the ledger, so a clear of them is a real dismissal
+KERNEL_SRC = os.path.realpath(km.__file__)
+FEED_TS = os.path.join(os.path.dirname(os.path.dirname(KERNEL_SRC)), "ui", "webview", "feed.ts")
+
+
+def _minted_families(src):
+    """The id families kernel.py's card minters spell, derived from the source rather than kept by hand (the manager's
+    round 2, LENS TWO: regression-4, correctness-7, kernel-5, extra7-1, tests-1). Three mint forms are read: the
+    placeholder form (`"itemId": "<family>:" + <expr>`, the colon captured, since the constant's members carry it), the
+    variable form (`item_id = "<family>:" + <expr>`, the hold card's and the parked handoff's), and the helper form
+    (`item_id = <helper>(`, the notice card's, whose helper's return spells its family). A coarser read counts every
+    itemId built from a string or f-string literal inline and every item_id assignment from a literal, an f-string or a
+    call, and a site the fine reads do not account for (an f-string, a literal in another shape, a helper this function
+    does not know) fails loudly instead of vanishing from the census; a frame's `"itemId": str(...)` is no mint and is
+    not counted. Returns (families, sites): the set of prefixes and the number of mint sites they came from."""
+    fine = re.findall(r'"itemId": "(\w+:)" \+ \w+', src) + re.findall(r'^\s+item_id = "(\w+:)" \+ ', src, re.M)
+    helpers = re.findall(r'^\s+item_id = (\w+)\(', src, re.M)
+    for h in helpers:
+        m = re.search(r'^def %s\([^)]*\):\n\s+return "(\w+:)' % re.escape(h), src, re.M)
+        if m is None:
+            raise AssertionError("an itemId helper the census cannot read: %s" % h)
+        fine.append(m.group(1))
+    coarse = len(re.findall(r'"itemId": f?"', src)) + len(re.findall(r'^\s+item_id = (?:f?"|\w+\()', src, re.M))
+    if coarse != len(fine):
+        raise AssertionError("%d itemId mint sites, %d read by the census: a mint shape it does not recognise" % (coarse, len(fine)))
+    return set(fine), len(fine)
 
 
 def _hold_doc(mid, body='"ship the parser fix"', at="1000"):
@@ -220,6 +248,10 @@ class AMovedAsideRecordOutlivesTheRing(_MCase):
         self.assertEqual([k for k in km._HOLD_ASIDE_SAID if k.startswith(str(self.r.qdir))], [])
 
     def test_a_directory_that_is_gone_ends_every_aside_episode(self):
+        """The subject is the aside registry itself (_HOLD_ASIDE_SAID, 0a589d1e4's), so over the 0a589d1e4 archive this case
+        errors on the registry's name before its assertion: an error-shaped red legitimate for a case whose subject is the
+        new API, named as such; the behaviour a user sees (the aside said again after a restart) is the sibling cases',
+        red there at the row count."""
         self.r.write_torn_hold("qc-torn")
         self._cards()
         self.assertEqual(len([k for k in km._HOLD_ASIDE_SAID if k.startswith(str(self.r.qdir))]), 1)
@@ -240,6 +272,118 @@ class AMovedAsideRecordOutlivesTheRing(_MCase):
         self.assertEqual((len(rows), log.count("\n"), log.count("romp-kernel:")), (1, 1, 1), "one line, one row")
         self.assertIn("�", log)
         self.assertNotIn("\n", rows[0])
+
+
+    def test_a_relayed_holds_aside_row_keeps_its_stamp_whole_and_the_advice_goes_first(self):
+        """correctness-5, the manager's round 2: _hold_bell_text shortened the file NAME before dropping the advice tail, so
+        the standing-aside row for a relayed hold (a 91-character aside name) cut the UTC stamp, the part that tells one
+        aside from the next, while 89 characters of generic advice stayed whole. The name whole with the tail dropped is
+        tried first; the stderr line carries the advice. Fails before over the 085e08deb archive: the stamp is cut."""
+        self.r.write_torn_hold(RELAYED_MID)
+        self._cards()
+        aside = self._asides(RELAYED_MID)[0]
+        self.assertGreater(len(aside), km._HOLD_NAME_FIT, "the aside's name is over the width the bell shortens at")
+        self._restart()
+        cards, log = self._cards()
+        rows = _refused()
+        self.assertEqual(len(rows), 1)
+        self.assertIn(aside, rows[0], "the aside is named whole, its UTC stamp included: the name the user must find")
+        self.assertLessEqual(len(rows[0]), km.SYNC_NOTICE_FIT)
+        self.assertNotIn("rename it without", rows[0], "the generic advice went first")
+        self.assertIn("rename it without the .corrupt- suffix", log, "the stderr line carries it")
+        self.assertIn(aside, log)
+
+    def test_an_aside_from_an_undecidable_name_gets_the_id_advice_and_a_torn_record_the_rename_advice(self):
+        """extra8-3, the manager's round 2: the standing-aside row told the user to rename the file back without its
+        suffix to try again, but a record moved aside because the bus cannot decide its id has the NAME as its fault, so
+        that advice loops forever. The class is read from the aside's own de-suffixed stem (_say_hold_asides opens no
+        file): a stem _safe_id refuses gets the advice that works, a name the bus can decide with a matching message id;
+        every other aside keeps the rename advice; the two classes are two fold heads, so two rows. Both rows fit. Fails
+        before over the 085e08deb archive: one folded row with the rename advice for both."""
+        self._write_raw_hold("with space.json", _hold_doc("with space"))   # refused as undecidable (correctness-1) and moved aside
+        self.r.write_torn_hold("qc-torn")
+        self._cards()
+        self.assertEqual((len([n for n in self._listing() if n.startswith("with space.json.corrupt-")]), len(self._asides("qc-torn"))), (1, 1))
+        self._restart()
+        cards, log = self._cards()
+        rows = _refused()
+        by_id = [r for r in rows if "with space.json.corrupt-" in r]
+        by_rename = [r for r in rows if "qc-torn.json.corrupt-" in r]
+        self.assertEqual((len(rows), len(by_id), len(by_rename)), (2, 1, 1), "two classes, two rows: %r" % rows)
+        self.assertIn("give it a name the bus can decide and a matching message id", by_id[0])
+        self.assertNotIn("rename it without", by_id[0], "renaming it back cannot succeed: the name itself is the fault")
+        self.assertIn("rename it without the .corrupt- suffix", by_rename[0])
+        for r in rows:
+            self.assertLessEqual(len(r), km.SYNC_NOTICE_FIT)
+        self.assertIn("its message id is not one the bus can decide, so renaming it back cannot succeed", log)
+        self.assertEqual(log.count("romp-kernel:"), 2)
+
+
+class OverlappingListingsSayTheAsideOnce(_MCase):
+    """kernel-2, the manager's round 2: the standing-aside say-once was a check-then-act across a whole listing, the
+    registry read at the top of _say_hold_asides and written only after the fold's rows were filed, so two listings of the
+    held-mail directory overlapping (the pusher's thread and a GET /feed.json) each said the same aside, two log lines and
+    two ring slots per episode. The check, the say and the write of the row's seq run under one lock now
+    (_HOLD_ASIDE_LOCK). The two listings are released together at a barrier inside the section, keyed on events (the
+    second listing's arrival at the section's door, or inside it on a head with no door), never a timer. Fails before over
+    the 085e08deb archive: two lines, two rows."""
+
+    def test_two_listings_released_together_say_a_standing_aside_once(self):
+        self.r.write_torn_hold("qc-torn")
+        self._cards()
+        aside = self._asides("qc-torn")[0]
+        self._restart()                              # the ring empty: the next listing must say the aside again
+        real = km._sync_notice_standing
+        a_inside, b_arrived, release = threading.Event(), threading.Event(), threading.Event()
+        calls, guard = [], threading.Lock()
+
+        def standing(seq):
+            with guard:
+                calls.append(seq)
+                n = len(calls)
+            if n == 1:                               # the first listing, inside the section: waits for the second to arrive
+                a_inside.set()
+                release.wait(60)
+            else:                                    # the second listing reached the check too (a head with no lock)
+                b_arrived.set()
+            return real(seq)
+        patches = [mock.patch.object(km, "_sync_notice_standing", standing)]
+        door = getattr(km, "_HOLD_ASIDE_LOCK", None)
+        if door is not None:
+            class _Door:                             # the second listing's arrival at the lock is its arrival at the section
+                def __enter__(self_):
+                    if a_inside.is_set():
+                        b_arrived.set()
+                    return door.__enter__()
+
+                def __exit__(self_, *a):
+                    return door.__exit__(*a)
+            patches.append(mock.patch.object(km, "_HOLD_ASIDE_LOCK", _Door()))
+        err = io.StringIO()
+        results = {}
+
+        def listing(name):
+            results[name] = km._quarantine_cards(self.now)
+        a, b = threading.Thread(target=listing, args=("a",)), threading.Thread(target=listing, args=("b",))
+        with contextlib.ExitStack() as stack:
+            for p in patches:
+                stack.enter_context(p)
+            stack.enter_context(contextlib.redirect_stderr(err))
+            a.start()
+            self.assertTrue(a_inside.wait(60), "the first listing reached the aside check")
+            b.start()
+            self.assertTrue(b_arrived.wait(60), "the second listing arrived while the first stood inside the section")
+            release.set()
+            a.join(60)
+            b.join(60)
+        self.assertFalse(a.is_alive() or b.is_alive(), "both listings finished")
+        self.assertEqual((results["a"], results["b"]), ([], []))
+        log = err.getvalue()
+        self.assertEqual(log.count("romp-kernel:"), 1, "one log line for the aside across the two listings:\n%s" % log)
+        rows = _refused()
+        self.assertEqual(len(rows), 1, "one ring slot: %r" % rows)
+        self.assertIn(aside, rows[0])
+        self.assertTrue(km._sync_notice_standing(km._HOLD_ASIDE_SAID[str(self.r.qdir / aside)]), "the registry holds the row that carries it")
 
 
 class PlaceholdersTakeNoLedger(_MCase):
@@ -342,27 +486,85 @@ class PlaceholdersTakeNoLedger(_MCase):
         self.assertEqual([m for m in self.sent if m.get("type") == "err"], [])
 
     def test_the_constant_is_the_one_place_the_families_are_spelled_and_both_halves_read_it(self):
-        self.assertEqual(set(km._CLEARED_NO_LEDGER), {"quarantine:"} | set(PLACEHOLDERS), "the population: the hold and every placeholder family")
-        self.assertTrue(set(km._CLEARED_NO_LEDGER) <= set(km._CLEARED_NO_SESSION), "every no-ledger family names no session")
-        self.assertEqual(set(km._CLEARED_NO_SESSION) - set(km._CLEARED_NO_LEDGER), {"parked:", "notice:"}, "the two whose readers honour the ledger")
-        src = open(km.__file__, encoding="utf-8").read()
+        """The census (the manager's round 2, LENS TWO): the population is DERIVED from kernel.py's minters at run time
+        and every derived family must be classified, into _CLEARED_NO_LEDGER (the kernel's) or into LEDGER_HONOURING (the
+        expected value kept here), by equality both ways, so a family minted later reds UNTIL CLASSIFIED and a member
+        with no minter reds too; the literals PLACEHOLDERS and LEDGER_HONOURING are the census's expected values, never
+        its source. The floor (no fewer than the seven families read today) reds a regex that stops matching; the
+        coarse count reds a mint shape the census does not read. kernel-5's extension: the pane's clearable predicate
+        (feed.ts, read by name) is a live-value test over the card's own fields, so what is pinned is that its inputs are
+        what every derived no-ledger family's card carries and nothing a ledger-honouring family's card carries. Red by
+        mutation at this head (a sixth family minted and left unclassified; a member dropped from the constant; the
+        regex written without the colon), green here; the write and the answer are driven over the derived set. Over the
+        0a589d1e4 archive it errors on the constant's name (an error before its assertion, not evidence); over 085e08deb
+        it is green, as a census on correct input should be; the mutations are the evidence."""
+        src = open(KERNEL_SRC, encoding="utf-8").read()
+        derived, sites = _minted_families(src)
+        self.assertTrue(derived, "the census read nothing")
+        self.assertGreaterEqual(len(derived), 7, "the floor: the seven families read today (%r)" % sorted(derived))
+        self.assertGreaterEqual(sites, 7)
+        for fam in derived:
+            self.assertRegex(fam, r"^\w+:$", "a family carries its colon, as the constant's members do")
+        no_ledger, honouring = set(km._CLEARED_NO_LEDGER), set(LEDGER_HONOURING)
+        self.assertEqual(no_ledger & honouring, set(), "a family is classified into exactly one of the two")
+        self.assertEqual(derived, no_ledger | honouring, "every minted family is classified, and every classified family is minted")
+        self.assertEqual(set(km._CLEARED_NO_SESSION), derived, "the no-session list is the whole derived population")
+        self.assertEqual(no_ledger, {"quarantine:"} | set(PLACEHOLDERS), "the expected value: the hold and every placeholder family")
         definition = re.search(r"^_CLEARED_NO_SESSION = (.*)$", src, re.M).group(1)
         self.assertIn("_CLEARED_NO_LEDGER", definition, "the session list is derived from the ledger list, not spelled twice")
         for fn in (km._clear_all, km._cleared_undoable):
             body = inspect.getsource(fn)
             self.assertIn("startswith(_CLEARED_NO_LEDGER)", body, fn.__name__)
             self.assertNotIn('startswith("quarantine:")', body, "%s: no literal member beside the constant" % fn.__name__)
-        for p in PLACEHOLDERS:
-            self.assertNotIn('startswith("%s")' % p, src, "no reader keys on one placeholder family by hand")
+        for p in sorted(no_ledger - {"quarantine:"}):
+            self.assertFalse('startswith("%s")' % p in src, "no reader keys on the %s family by hand" % p)
         held_counts = [l for l in src.splitlines() if 'startswith("quarantine:")' in l]
         self.assertEqual(len(held_counts), 1, "the one literal left is the clearAll door's count of the held messages it names")
         self.assertIn("_held = ", held_counts[0])
-        self.assertEqual(km._cleared_undoable({"quarantine:x": 1.0, "provisional:s": 2.0, "awaiting:s": 3.0, "blocked:s": 4.0,
-                                               "usertodo:s": 5.0, "parked:m": 6.0, NOTICE_ID: 7.0, "%s:g1" % SID: 8.0}),
-                         {"parked:m": 6.0, NOTICE_ID: 7.0, "%s:g1" % SID: 8.0})
-        written = []
-        self.assertEqual(km._clear_all([p + SID2 for p in PLACEHOLDERS] + ["quarantine:qc-1", ""], written=written), {})
-        self.assertEqual((written, self.r.ledger_rows()), ([], []), "every no-ledger id declined at the write, nothing journaled")
+        # the read half over the derived set
+        ledger = {p + "s": float(i) for i, p in enumerate(sorted(derived), 1)}
+        ledger.update({NOTICE_ID: 20.0, "%s:g1" % SID: 21.0})
+        kept = km._cleared_undoable(ledger)
+        self.assertEqual(set(kept), {p + "s" for p in honouring} | {NOTICE_ID, "%s:g1" % SID}, "Undo passes over every no-ledger family's rows")
+        # the write half and the answer over the derived set: one card per no-ledger family beside one ordinary card
+        placeholders = sorted(derived & no_ledger - {"quarantine:"})
+        self.stand = [_stand_in(p) for p in placeholders]
+        self.r.write_hold("qc-hold-1")
+        self.r.write_notice_rows([_good(self.now)])
+        self._dispatch({"type": "clearAll"}, self.client)
+        self.assertEqual([(r["id"], r["op"]) for r in self.r.ledger_rows()], [(NOTICE_ID, "clear")], "the ordinary card alone is written")
+        res = self._results()
+        self.assertEqual(len(res), 1)
+        self.assertEqual((res[0]["ok"], res[0]["cleared"], res[0]["left"], res[0]["held"]), (True, 1, len(placeholders) + 1, 1),
+                         "cleared 1; the stand-ins and the held message counted by family")
+        self.assertIn("%d session stand-in" % len(placeholders), res[0]["text"])
+        self.assertIn("1 held message", res[0]["text"])
+        # kernel-5: the pane's predicate over the same derived set
+        ts = open(FEED_TS, encoding="utf-8").read()
+        m = re.search(r"^function clearable\(it: AskItem\): boolean \{\n  return (.*);\n\}", ts, re.M)
+        self.assertIsNotNone(m, "feed.ts's clearable, read by name")
+        self.assertEqual(m.group(1), '!it.provisional && it.blocked?.state !== "quarantine"',
+                         "the predicate's inputs: the provisional bit and the hold's blocked state, nothing keyed on a family list")
+        clearable = lambda c: not c.get("provisional") and (c.get("blocked") or {}).get("state") != "quarantine"
+        feed, _ = self._feed()
+        cards = {c["itemId"].split(":", 1)[0] + ":": c for c in feed["asks"]}   # one card per family the board holds
+        self.assertEqual(set(cards), set(placeholders) | {"quarantine:"}, "the board holds every no-ledger family after the clear")
+        for fam in placeholders:
+            self.assertFalse(clearable(cards[fam]), "%s: a stand-in fails the pane's predicate (provisional)" % fam)
+            mint = src[src.index('"itemId": "%s" + ' % fam):]
+            mint = mint[:mint.index('"tree": []}') + 1]           # the card literal, to its last key
+            self.assertIn('"provisional": True', mint, "%s: its mint sets the bit the predicate reads" % fam)
+        self.assertFalse(clearable(cards["quarantine:"]), "a hold fails it (blocked.state quarantine)")
+        self.assertEqual(cards["quarantine:"]["blocked"]["state"], "quarantine")
+        self._dispatch({"type": "undoClear"}, self.client)
+        feed, _ = self._feed()
+        notice = [c for c in feed["asks"] if c["itemId"] == NOTICE_ID]
+        self.assertEqual(len(notice), 1)
+        self.assertTrue(clearable(notice[0]), "a ledger-honouring family's card passes it: the notice card carries neither input")
+        parked = src[src.index('item_id = "parked:" + '):]
+        parked = parked[:parked.index('"tree": []})') + 1]
+        self.assertNotIn('"provisional"', parked, "the parked handoff's mint sets no provisional bit...")
+        self.assertIn('"blocked": {"state": "parkedHandoff"', parked, "...and its blocked state is not the hold's: it passes the predicate")
 
 
 class FourReadersRingAlike(_MCase):

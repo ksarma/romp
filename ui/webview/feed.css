@@ -1246,8 +1246,13 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
 /* The feed's DOCKED control bar (the user 2026-06-29): its own dedicated rectangle in normal flow at the
    bottom of the pane, NOT a floating overlay. The body is a column flex, so #feed-list flexes to fill above
    it and the bar sits below without overlapping a card. Layout (the user 2026-07-13): the VIEW controls
-   (the view-menu icon · Session ▴ · Search) sit left; the ACTIONS (Clear all, then Undo) dock right — flex
-   `order` + margin-left:auto, so the split holds whatever order the ensure* calls appended the buttons in. */
+   (the view-menu icon · Session ▴ · Search) sit left; the ACTIONS (Clear all, then Undo) dock right: flex
+   `order` on the actions plus margin-right:auto on the session box (#feed-search), the last control of the left
+   cluster and on the bar whenever any card is, so the split holds whatever order the ensure* calls appended the
+   buttons in and whether Clear all is offered or not. The auto margin rode on Clear all until the held-mail readers
+   PR's review (2026-09-20), which hides that button on a board of held messages or placeholders alone: with it
+   hidden, Undo slid left beside Search. On the empty board the session box is hidden too and Undo stays at the
+   left edge, as before. */
 #feed-foot { flex: 0 0 auto; z-index: 5;
   display: flex; align-items: center; gap: 8px; padding: 6px 12px;
   flex-wrap: wrap; row-gap: 5px;   /* a narrow pane folds buttons onto another row — never a horizontal scrollbar */
@@ -1257,7 +1262,7 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
      bar itself must sit on the same dark): the border-top hairline is the separator now. The old
      editorWidget token resolved to #252526 under the kernel's THEME_CSS. */
   background: var(--bg); }
-#feed-clearall { order: 10; margin-left: auto; }   /* accent hover like every action button */
+#feed-clearall { order: 10; }   /* accent hover like every action button; the right dock is the session box's margin (#feed-search) */
 #feed-undoclear { order: 11; }                     /* restorative — far right */
 #feed-foot .fdismiss { font-size: 10.5px; padding: 1px 9px; opacity: 0.95; }
 
@@ -1522,6 +1527,7 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
   background: var(--vscode-menu-background, var(--surface-raised)); color: var(--fg);
   border: 1px solid rgba(255, 255, 255, 0.12); border-left: 3px solid var(--warn); border-radius: var(--radius-toast);
   box-shadow: var(--shadow-toast); font-size: 0.86em; line-height: 1.35;
+  white-space: pre-line;   /* a folded Clear all answer is one line per machine (feed.ts clearAllFold); no other toast carries a line break */
   opacity: 0; transition: opacity 0.18s ease, transform 0.18s ease; pointer-events: none;
 }
 .feed-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
@@ -2712,7 +2718,8 @@ body.filebrowse-open { overflow: hidden; }
    it whole (the footer wraps) rather than overflowing. Expansion animates max-width, so it still
    "grows" out of the button instead of popping. Active (a live query) keeps the button accented like
    every .on toggle. */
-#feed-search { display: inline-flex; align-items: center; gap: 5px; position: relative; }
+#feed-search { display: inline-flex; align-items: center; gap: 5px; position: relative;
+  margin-right: auto; }   /* the footer's split: the actions (Clear all, Undo) dock right of it whether or not Clear all is shown (#feed-foot) */
 #feed-search.open { flex: 1 1 150px; min-width: 110px; max-width: 340px; }
 #feed-search input { flex: 1 1 auto; min-width: 0; max-width: 0; padding: 0; border: 0; opacity: 0;
   transition: max-width 0.15s ease, opacity 0.15s ease;

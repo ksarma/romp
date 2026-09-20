@@ -30,8 +30,8 @@ import sys
 import threading
 from unittest import mock
 
-from tests.test_held_mail_reader_guards import (_Case, _asks, _client, _good, _refused, _skip_as_root, km, NOTICE_ID,   # noqa: E402
-                                                SID)
+from tests.test_held_mail_reader_guards import (_Case, _asks, _client, _good, _refused, _skip_as_root, _writer_rows, km,   # noqa: E402
+                                                NOTICE_ID, SID)
 
 SID2 = "11111111-2222-3333-4444-bbbbbbbb0920"      # a second PRIVATE synthetic sid: the file beside the good one
 UTF8_BOM = b"\xef\xbb\xbf"
@@ -89,7 +89,10 @@ class NoticeLineNotUtf8(_R2Case):
     one Latin-1 byte in one row, or a file saved as UTF-16, raised out of _notice_rows, the projection, build_feed, the
     push cycle, GET /feed.json and the sweep, and every session's cards went with it. The parse takes the bytes now and
     decodes each line on its own: a line that is not UTF-8 skips, is said once per episode (never its text), rides the
-    sweep's archive with its bytes escaped, and the other rows and the other sessions stand."""
+    sweep's archive with its bytes escaped, and the other rows and the other sessions stand. Red over the 4383cc9af
+    archive on the defect itself, the UnicodeDecodeError out of the build (two cases) and out of the sweep (the third);
+    the first case's pair read through the writer's reader is the manager's round 1 adaptation (_writer_rows), green
+    over 35fad278c and pinning nothing there (LENS ONE)."""
 
     def test_one_latin1_byte_in_one_row_skips_that_row_and_keeps_the_board(self):
         bad = ('{"op": "post", "key": "menu", "rev": 2, "t": %d, "at": %d, "title": "caf\xe9 MARKER-ROW-TEXT", '
@@ -103,9 +106,9 @@ class NoticeLineNotUtf8(_R2Case):
         feed, log = self._feed()
         self.assertEqual((self._notice_ids(feed), log), ([NOTICE_ID], ""), "said once per episode")
         with contextlib.redirect_stderr(io.StringIO()):
-            rows, err = km._notice_rows_unlocked(SID)   # (rows, error) since the manager's round 1 (regression-2)
-        self.assertEqual(err, "", "a file that read is no fault")
+            rows, err = _writer_rows(SID)              # the rows on either shape: the pair read is an adaptation (LENS ONE)
         self.assertEqual([r["key"] for r in rows], ["figure"], "the writer's reader skips it too")
+        self.assertEqual(err, "", "a file that read is no fault")
 
     def test_a_utf16_file_beside_a_good_one_takes_only_its_own_session_off(self):
         self.r.write_notice_rows([_good(self.now)])
@@ -134,15 +137,17 @@ class NoticeLineNotUtf8(_R2Case):
 
 class NoticeFileWithABom(_R2Case):
     """json.loads refuses a line that begins with U+FEFF, so the first row of a file an editor saved with a BOM was skipped
-    as a non-JSON line with nothing said; the parse drops a leading BOM before the first line."""
+    as a non-JSON line with nothing said; the parse drops a leading BOM before the first line. Red over the 4383cc9af
+    archive at the card list (the first row skipped); the pair read through the writer's reader is the manager's round 1
+    adaptation (_writer_rows), green over 35fad278c and pinning nothing there (LENS ONE)."""
 
     def test_the_first_row_of_a_bom_prefixed_file_stands(self):
         self._write_bytes(SID, UTF8_BOM + (json.dumps(_good(self.now)) + "\n").encode())
         feed, log = self._feed()
         self.assertEqual((self._notice_ids(feed), log), ([NOTICE_ID], ""))
         with contextlib.redirect_stderr(io.StringIO()):
-            rows, err = km._notice_rows_unlocked(SID)   # (rows, error) since the manager's round 1 (regression-2)
-        self.assertEqual((err, [r["key"] for r in rows]), ("", ["figure"]))
+            rows, err = _writer_rows(SID)              # the rows on either shape: the pair read is an adaptation (LENS ONE)
+        self.assertEqual(([r["key"] for r in rows], err), (["figure"], ""))
 
 
 class NoticeRowsSplitOnEveryLineBoundary(_R2Case):
@@ -151,20 +156,24 @@ class NoticeRowsSplitOnEveryLineBoundary(_R2Case):
     regression against main). The parse splits on the boundaries str.splitlines uses, in two steps: CR, LF and CRLF on
     the bytes, then VT, FF, FS, GS, RS, NEL, LINE SEPARATOR and PARAGRAPH SEPARATOR in each line that decodes. A line
     that is not UTF-8 still skips and is said once, and the sweep's skipped lines keep file order and carry no line
-    ending, as main's did. Over the round 2 archive the CR case and the boundary case read no rows; the CRLF case fails
-    there on the skipped line's text alone (json.loads takes a trailing CR as whitespace, so its rows already read).
+    ending, as main's did. Over the round 2 archive (cdfa72e6e) the CR case and the boundary case read no rows; the CRLF
+    case fails there on the skipped line's text alone (json.loads takes a trailing CR as whitespace, so its rows already
+    read).
     Since the manager's round 1 a line that is not JSON is said too (kernel-4, extra6-3: the parse skipped it in silence
     on both surfaces and the sweep then archived it unsaid), and every fact new to the episode is ONE refused bell row
     for the file (extra5-1, kernel-3), so the two cases that stage such a line assert the line and the row where they
-    asserted an empty log; over the 35fad278c archive both are red there (a silent skip, one line where two are due)."""
+    asserted an empty log; over the 35fad278c archive both are red there (a silent skip, one line where two are due). The
+    CR and boundary cases' pair read through the writer's reader (_rows, over _writer_rows) is the manager's round 1
+    adaptation, green over 35fad278c and pinning nothing there (LENS ONE); their red is over cdfa72e6e, at the rows."""
 
     MENU_ID = "notice:%s:menu:1" % SID
 
     def _rows(self, skipped=None):
         with contextlib.redirect_stderr(io.StringIO()):
-            rows, err = km._notice_rows_unlocked(SID, skipped)   # (rows, error) since the manager's round 1 (regression-2)
+            rows, err = _writer_rows(SID, skipped)     # the rows on either shape: the pair read is an adaptation (LENS ONE)
+        keys = [r["key"] for r in rows]
         self.assertEqual(err, "", "a file that read is no fault")
-        return [r["key"] for r in rows]
+        return keys
 
     def _two_rows(self, ending):
         return ending.join(json.dumps(_good(self.now, key=k)).encode() for k in ("figure", "menu")) + ending
@@ -312,8 +321,10 @@ class WriterSideUnreadableFileIsSaidOnce(_R2Case):
     reader are one episode); and the writer's reader answers (rows, error) with the fault named.
 
     Fails before by mutation: with the _note_notice_file_fault call deleted from the writer's OSError arm in a scratch
-    copy of the kernel, red at the bell assertion (no row after the sweep). Over the 35fad278c archive red at the shape
-    assertion (that writer answered a bare list), the row, the untouched bytes and the one episode already true there."""
+    copy of the kernel, red at the bell assertion (no row after the sweep). Over the 35fad278c archive red at the assertion
+    that an unreadable file is not answered as an empty one (that writer answered a bare [], indistinguishable from an
+    empty file; the pair is unpacked only after that assertion, so the red is the false absence and never a tuple unpack),
+    the row, the untouched bytes and the one episode already true there."""
 
     def test_the_sweep_alone_says_the_file_once_and_the_reader_adds_no_second_row(self):
         _skip_as_root(self)
@@ -343,7 +354,10 @@ class WriterSideUnreadableFileIsSaidOnce(_R2Case):
         self.assertEqual(self._notice_ids(feed), ["notice:%s:other:1" % SID2], "the other session's card stands")
         self.assertEqual((log, len(_refused())), ("", 1), "the reader meets the same episode: no second line, no second row")
         with contextlib.redirect_stderr(io.StringIO()):
-            rows, fault = km._notice_rows_unlocked(SID)
+            got = km._notice_rows_unlocked(SID)
+        self.assertNotEqual(got, [], "an unreadable file is not an empty one: the writer's reader answers the fault beside the "
+                                     "rows, where it folded the file to a bare [] that every caller read as nothing there (regression-2)")
+        rows, fault = got
         self.assertEqual(rows, [])
         self.assertIn("notices/%s.jsonl could not be read" % SID, fault)
         self.assertIn("Permission denied", fault)
@@ -361,7 +375,11 @@ class HeldRecordFaultsWidened(_R2Case):
     value is not one of them: the closing commit refused it by type and moved it aside, and the manager's round 1
     (extra8-1) ruled that a record that parsed is never declared corrupt for a field's type, so its card stands with the
     body named `list` and never formatted (_hold_text); the two deep cases assert that outcome where they asserted the
-    aside, and over the 35fad278c archive the parser-returning case is red there (the record moved aside, no card)."""
+    aside, and over the 35fad278c archive the parser-returning case is red there (the record moved aside, no card). The
+    unmovable link's line names the class it was refused for, `could not be read and could not be moved aside` (the link
+    is the labelled exception to state one's never-rename, and its class is `read`; regression-7, the manager's round 2:
+    the arm said `read or parsed` of every unmovable file); over the 085e08deb archive that case is red at the wording,
+    the stated reason."""
 
     def _full_cards(self):
         err = io.StringIO()
@@ -385,7 +403,11 @@ class HeldRecordFaultsWidened(_R2Case):
         parses it and hands back a record whose body is the deep list, and a record that parsed is never refused for a
         field's type (the manager's round 1, extra8-1): its card stands beside the readable hold with the body named
         `list` and never formatted (the sibling case below pins that outcome on every Python). Which arm the running
-        parser takes is read from the parser itself, never assumed."""
+        parser takes is read from the parser itself, never assumed. The rewrite (the manager's round 1) pins only the arm
+        a parser that RETURNS the deep value takes, so this case is green over the 35fad278c archive on Python 3.12, the
+        interpreter every local figure was measured on, and its red-before is CI's 3.14t cell alone, unverified locally:
+        the free-threaded 3.14.6 build available locally still raises RecursionError at this depth, so no locally
+        available interpreter makes this case a red-before/green-after pair (tests-2, the manager's round 2)."""
         self.r.write_hold("qc-good")
         (self.r.qdir / "qc-deep.json").write_text(DEEP_BODY_DOC % "qc-deep")
         try:
@@ -477,7 +499,7 @@ class HeldRecordFaultsWidened(_R2Case):
         self.r.chmod(self.r.qdir, 0o500)             # listable and readable, no rename inside it
         cards, log = self._cards()
         self.assertEqual((cards, len(_refused())), (["quarantine:qc-good"], 1))
-        self.assertIn("qc-link.json could not be read or parsed and could not be moved aside", log)
+        self.assertIn("qc-link.json could not be read and could not be moved aside", log, "the link's class is `read` (regression-7)")
         cards, log = self._cards()
         self.assertEqual((cards, log, len(_refused())), (["quarantine:qc-good"], "", 1), "said once per episode")
         self.r.chmod(self.r.qdir, 0o700)
@@ -598,7 +620,10 @@ class SaidOncePruneReadsASnapshot(_R2Case):
 class UnreadableEpisodeEndsWithTheDirectory(_R2Case):
     """The listing's FileNotFoundError arm returned before the prune that ends a said-once episode, so when the held-mail
     directory was removed, every file in it with it, the entries under it stood; the same fault in a recreated directory
-    was skipped with nothing said for the rest of the run. The arm ends the directory's episodes now."""
+    was skipped with nothing said for the rest of the run. The arm ends the directory's episodes now. The line names the
+    class the record was refused for, `could not be parsed and could not be moved aside` for the torn record
+    (regression-7, the manager's round 2); over the 085e08deb archive the case is red at that wording, the stated
+    reason, and over the 4383cc9af archive at the recreated directory's row count, its own."""
 
     def test_the_same_fault_in_a_recreated_directory_is_said_again(self):
         _skip_as_root(self)
@@ -606,7 +631,7 @@ class UnreadableEpisodeEndsWithTheDirectory(_R2Case):
         self.r.chmod(self.r.qdir, 0o500)
         cards, log = self._cards()
         self.assertEqual((cards, len(_refused())), ([], 1))
-        self.assertIn("qc-torn.json could not be read or parsed and could not be moved aside", log)
+        self.assertIn("qc-torn.json could not be parsed and could not be moved aside", log, "the class it was refused for (regression-7)")
         os.chmod(self.r.qdir, 0o700)
         shutil.rmtree(self.r.qdir)
         cards, log = self._cards()
@@ -616,7 +641,7 @@ class UnreadableEpisodeEndsWithTheDirectory(_R2Case):
         self.r.chmod(self.r.qdir, 0o500)
         cards, log = self._cards()
         self.assertEqual(len(_refused()), 2, "the fault in the recreated directory is a new episode")
-        self.assertIn("qc-torn.json could not be read or parsed and could not be moved aside", log)
+        self.assertIn("qc-torn.json could not be parsed and could not be moved aside", log)
 
 
 class OlderLedgerHoldRowsAreNoBatch(_R2Case):

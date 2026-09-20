@@ -876,14 +876,18 @@ def _say_unreadable_once(path, exc, where):
          "the rest is served" % (where, _listed_name(path.name), exc.errno, exc.strerror or exc))
 
 def _unread_fold(n, unread):
-    """The one (errno, text) every record of a listing failed to READ with, when two or more were listed and none read; None
-    when some record read, or the faults differ, or one record alone was listed. A listing none of whose records could be
-    read is one fact about the STORE (a directory that lists but cannot be searched, a device that faults, a process out of
-    descriptors), so it is said once for the directory with the count, never once per file: the kernel's bell keeps a ring
-    of 40 rows and a poll loop would fill it with near-identical rows in one pass, and a log a human reads is flooded the
-    same way (the manager's correctness-3 ruling on the fork PR, 2026-09-20: a directory fault is said once for the
-    directory). A fault some files carry and others do not is the files' own and is said per file. The count rides in the
-    text and never in the episode's key, so a store whose count moves is not said again for the move."""
+    """The one (errno, text) every record of a listing failed to read with, when two or more were listed and none read; None
+    when some record read, or the faults differ, or one record alone was listed. This gate chooses how a fault is WORDED
+    and never whether a store is refused: a listing none of whose records could be read is one fact about the STORE (a
+    directory that lists but cannot be searched, a device that faults, a process out of descriptors), so it is said once
+    for the directory with the count, never once per file: the kernel's bell keeps a ring of 40 rows and a poll loop would
+    fill it with near-identical rows in one pass, and a log a human reads is flooded the same way (the manager's
+    correctness-3 ruling on the fork PR, 2026-09-20: a directory fault is said once for the directory). A fault some files
+    carry and others do not is the files' own and is said per file, and so is one record alone. Whether the held-mail
+    store is refused is _held_records_bus's own question, answered on what was served and never on this fold (the fork
+    PR's correctness-2 with regression-3, 2026-09-20: while the walk refused on the fold, a store of exactly one record it
+    could not read answered nothing held). The count rides in the text and never in the episode's key, so a store whose
+    count moves is not said again for the move."""
     if n < 2 or len(unread) != n:
         return None
     faults = set(unread.values())
@@ -4244,11 +4248,12 @@ def _list_json_records(d, where, close_ledger_for=None):
     outbox record was mail parked for nobody with no trace anywhere (2026-09-08). The file's stat is
     fingerprinted BEFORE the read: if it changed by the time the parse failed, a writer's atomic
     rewrite raced the read and the file is left alone for the next pass — a torn read of a healthy
-    record is never moved aside. A file that cannot be READ (EACCES, EIO) is skipped, left in place and
+    record is never moved aside. A file that cannot be read (EACCES, EIO) is skipped, left in place and
     said once per (file, errno) per fault episode as a bell row and a log line (_say_unread_records; a
     store none of whose records read is said once for the store, with the count), never moved aside:
-    unreadable is not unparseable, and neither is corrupt, so the move is reserved for bytes actually
-    read and not parsed (2026-09-20, the manager's ruling on the fork PR; the kernel's held-mail reader
+    the rule every reader of a store follows is stated once, in the kernel's _note_read_fault_once
+    (kernel/kernel.py), and this lister cites it, so the move is reserved for bytes it actually read
+    and could not parse (2026-09-20, the manager's ruling on the fork PR; the kernel's held-mail reader
     holds the same line). From 2026-09-08 to then an unreadable file was moved aside like a torn one,
     with its ledger closed, which declared bytes nobody had read corrupt and a receipt refused. The
     episode ends when a listing no longer has to skip the file (_end_unreadable_episodes). Only a
@@ -4288,18 +4293,19 @@ def _list_json_records(d, where, close_ledger_for=None):
         except FileNotFoundError:
             continue                                 # gone between the listing and the read (deleted, moved)
         except OSError as e:
-            # THE FIRST STATE, bytes that could not be READ (the stat or the read: EACCES, EIO, EMFILE): skipped, left in
-            # place and said once per episode (_say_unread_records), never moved aside and never closed in the ledger. The
-            # bytes may be a good parked message the sender was already acked for, and a rename that declares a file corrupt
-            # is a judgement only a successful read supports; the record stands for the listing that can read it, and the
-            # sender's receipt keeps reading pending, which is true (the manager's correctness-2 ruling on the fork PR,
-            # 2026-09-20; the kernel's held-mail reader leaves a read fault in place the same way, so the two readers of
-            # one shape agree). This reverses the 2026-09-08 review find that moved such a file aside with a terminal
-            # bounced row: that closed a receipt as refused over bytes nobody had read.
+            # the read-fault arm (the kernel's _note_read_fault_once states the rule; this lister adds only its own): the
+            # stat or the read refused (EACCES, EIO, EMFILE), so the file is skipped, left in place and said once per
+            # episode (_say_unread_records), never moved aside and never closed in the ledger. The bytes may be a good
+            # parked message the sender was already acked for, and a rename that declares a file corrupt is a judgement
+            # only a successful read supports; the record stands for the listing that can read it, and the sender's
+            # receipt keeps reading pending, which is true (the manager's correctness-2 ruling on the fork PR, 2026-09-20;
+            # the kernel's held-mail reader leaves a read fault in place the same way, so the two readers of one shape
+            # agree). This reverses the 2026-09-08 review find that moved such a file aside with a terminal bounced row:
+            # that closed a receipt as refused over bytes nobody had read.
             unread[str(f)] = (f, e)
             continue
         except ValueError as e:
-            reason = e                               # THE SECOND STATE, bytes read and not parsed: the move aside is earned
+            reason = e                               # the parse-fault arm: bytes this lister read and could not parse, so the move aside is earned
         try:
             cur = f.stat()
             if (cur.st_ino, cur.st_mtime_ns, cur.st_size) != (st.st_ino, st.st_mtime_ns, st.st_size):
@@ -4724,9 +4730,9 @@ def _quarantine_put(origin, m, to_id, via="", wire_id=None):
         return False
 
 class QuarantineUnreadable(Exception):
-    """The held-mail directory exists and cannot be listed, or lists and none of its records can be read (the walk's own
-    refusal, _held_records_bus, 2026-09-20). quarantine_list raises it and GET /quarantine answers it as a
-    fault the client can show (a 503 with the reason and an `unreadable` field beside an empty `held`), the shape
+    """The held-mail directory exists and cannot be listed, or lists and nothing in it could be served while a listed record
+    could not be read, one record alone included (the walk's own refusal, _held_records_bus, 2026-09-20). quarantine_list
+    raises it and GET /quarantine answers it as a fault the client can show (a 503 with the reason and an `unreadable` field beside an empty `held`), the shape
     /inbox gives an inbox that cannot be listed (InboxUnreadable), never an empty list where every hold sits
     undelivered; _hold_rows answers it as one row carrying `fault` (_hold_fault_row) for the viewing machines. The bus
     says it once per episode in its log; the bell row is the kernel's, whose own reader of this
@@ -4740,23 +4746,28 @@ def _held_records_bus():
     one) and the listing's OSError is raised to the caller, which answers it its own way; an absent directory is
     nothing held.
 
-    Three states, and only the middle one is a corrupt file (the manager's ruling on the fork PR, 2026-09-20): bytes that
-    could not be READ (EACCES, EIO) are skipped and left in place for the listing that can read them, never renamed;
-    bytes read and not PARSED (not JSON, not UTF-8, nested past the parser's depth, a document that is not an object) are
-    skipped here and moved aside by the kernel's reader, which earns the rename by having read them; and a record that
-    parsed whose FIELD has an unexpected type is served with the field handled (_hold_text names a body that is not text
-    by its type; quarantine_decide refuses a bare approve of one in words), never skipped for the field. A record the
-    walk skips is said once per (file, reason) per episode (_say_hold_skipped_once), the file left in place: the kernel's
-    reader of this directory (_held_records) moves a file that earned it aside and files the bell row, and two movers of
-    one file would leave the bus to say a fault the kernel never saw. A record is also skipped, under the same rule the
-    kernel's reader applies, when its `mid` is missing, is not text, is not the file's name, or is one _safe_id refuses:
-    the bus decides a hold by its FILE name (quarantine_get), so such a record served by quarantine_list and GET
-    /quarantine, or gossiped by _hold_rows, would stand under an id no decide can reach, or under ANOTHER hold's id, and a
-    decide on that id would act on a file never read (the fork PR's extra6-1); the line names the file, never the id.
-    A listing none of whose records could be read, two or more, is one fact about the directory (it lists but cannot be
-    searched, the device faults): it is said once for the directory with the count, never once per file (_unread_fold),
-    and raised as QuarantineUnreadable like an unlistable directory, so GET /quarantine answers 503 and _hold_rows a fault
-    row rather than nothing held over a store full of mail no reader could read.
+    The states a reader of a store meets are stated once, in the kernel's _note_read_fault_once (kernel/kernel.py); this
+    walk cites that statement and adds only what is the bus's own. The bus moves no file: the kernel's reader of this
+    directory (_held_records) is the one mover and files the bell row, so a record the walk skips is said once per
+    (file, reason) per episode in the log (_say_hold_skipped_once), named by file and never by its text or its id, and
+    left where it is; two movers of one file would leave the bus to say a fault the kernel never saw. The walk serves
+    what it read: a record that parsed is listed whatever the types of its fields, the field handled where it is shown
+    or used (_hold_rows and _hold_wire name a field by its type; quarantine_decide refuses in words a bare approve of a
+    body that is not text, an approve of a toId that is not text, and a deny with a note of an origin or frm that is not
+    text), and is skipped, under the same rule the kernel's reader applies, only when its `mid` is missing, is not text,
+    is not the file's name, or is one _safe_id refuses: the bus decides a hold by its FILE name (quarantine_get), so such
+    a record served by quarantine_list and GET /quarantine, or gossiped by _hold_rows, would stand under an id no decide
+    can reach, or under ANOTHER hold's id, and a decide on that id would act on a file never read (the fork PR's
+    extra6-1); the line names the file, never the id.
+    The store is refused, as QuarantineUnreadable, whenever nothing could be served and at least one listed record could
+    not be read, one record alone included (the fork PR's correctness-2 with regression-3, 2026-09-20): a reader that
+    could not read must never report absent what it did not read, and an empty list here would have GET /quarantine
+    answer 200 with nothing held and every viewing machine a vanished section. When two or more were listed and none
+    read, all with one errno, the fault is the directory's (it lists but cannot be searched, the device faults) and is
+    said once for the directory with the count (_unread_fold, whose gate chooses the wording and is shared with the
+    outbox and readbox lister, never whether to refuse); otherwise each skipped file is said on its own and the refusal
+    names the one file's fault, or the count and the errnos (_held_unread_text). Until that ruling the walk refused on the
+    fold alone, so exactly one unreadable record, the commonest case, answered nothing held.
     A file gone between the listing and the read was decided meanwhile (the bus removes it on
     Approve or Deny): the ordinary race, skipped in silence. Before review round 2 (2026-09-19) quarantine_list's try
     wrapped json.loads alone with `except (OSError, ValueError)`: a hold holding a JSON list or null raised
@@ -4830,7 +4841,36 @@ def _held_records_bus():
     # consolidation, the kernel's _end_hold_unreadable_episodes mirrored)
     for k in [k for k in list(_HOLD_SKIPPED_SAID) if k.startswith(root) and k not in skipped]:
         _HOLD_SKIPPED_SAID.pop(k, None)
+    if unread and not out:
+        # nothing was served and a listed record could not be read: one alone (the commonest case), one beside records
+        # skipped for their own reasons, several with differing errnos, or one beside a file that vanished mid-read, which
+        # a literal count of the unread against the listing would miss. The store is refused, the shape the fold above
+        # has, never an empty list that GET /quarantine would answer as 200 with nothing held and every viewing machine
+        # as a vanished section (the fork PR's correctness-2 with regression-3, 2026-09-20). The say is the per-file line
+        # already written above, keyed on the FILE: this road claims no key of its own and never the directory's, which
+        # is the fold's key, so the two roads never re-say one fault at each other; the episode ends when a listing no
+        # longer has to skip the file, as for any skip. The text names the file through _listed_name, the errno and its
+        # text, never the record's contents.
+        raise QuarantineUnreadable(_held_unread_text(len(files), unread))
     return out
+
+def _held_unread_text(n, unread):
+    """The refusal's text for a held-mail listing of `n` names that served nothing while a record could not be read,
+    `unread` as {path: (errno, text)}: worded without _unread_fold, which is None for one record or for differing errnos.
+    One unread record is named (through _listed_name, so a name forges no line) with its errno and text, alone or beside
+    the count of records none of which could be served; several are the count and the errnos. Never a record's
+    contents, never a path: the text rides the route's 503 and the fault row every viewing machine receives."""
+    tail = "; nothing there is served until it can be read again, and nothing was moved or dropped"
+    if len(unread) == 1:
+        (path, (eno, etext)), = unread.items()
+        name = _listed_name(os.path.basename(path))
+        if n == 1:
+            return "held mail: its one record, %s, cannot be read (errno %s: %s)%s" % (name, eno, etext, tail)
+        return ("held mail: %s cannot be read (errno %s: %s) and none of its %d records could be served%s"
+                % (name, eno, etext, n, tail))
+    faults = "; ".join("errno %s: %s" % f for f in sorted(set(unread.values()), key=str))
+    return ("held mail: %d of its %d records cannot be read (%s) and none could be served%s"
+            % (len(unread), n, faults, tail))
 
 def _hold_sort_at(rec):
     """A hold's `at` as the integer quarantine_list sorts by, 0 for one that is not a number (the bus stamps an int at
@@ -4842,17 +4882,32 @@ def _hold_sort_at(rec):
     except (TypeError, ValueError, OverflowError):
         return 0
 
+_WIRE_SCALARS = (str, int, float, type(None))       # what GET /quarantine serves as it is; a bool passes as the int subclass it is
+
 def _hold_wire(rec):
-    """A held record as GET /quarantine serves it: the record as it is when its `body` is text or absent, else with the
-    body replaced by its type name and `bodyType` naming the substitution. The route serializes what it serves, and
-    json.dumps of a 100000-deep list (the body the free-threaded Python 3.14 parses where its predecessors raised) raises
-    RecursionError out of the handler, so the route would drop the connection over one record; the record itself stays
-    listed and decidable (the fork PR's extra8-1, 2026-09-20: a record that parsed is handled by the field, never skipped
-    for it). No reader formats a value it did not vet."""
-    body = rec.get("body")
-    if body is None or isinstance(body, str):
-        return rec
-    return dict(rec, body=_hold_text(body), bodyType=type(body).__name__)
+    """A held record as GET /quarantine serves it: every field whose value is text, a number or null as it is, and every
+    other value (a list, an object: a hand edit's or a peer's relay's) replaced by its type name, with `<field>Type`
+    beside the field naming the substitution, the idiom `bodyType` set for the body. The route serializes what it serves,
+    and json.dumps of a 100000-deep list (the body the free-threaded Python 3.14 parses where its predecessors raised)
+    raises RecursionError out of the handler, so the route would drop the connection over one record; the first cut (the
+    fork PR's extra8-1, 2026-09-20) substituted the body alone and left the same drop open on every other field
+    (correctness-3, the same day), so the rule is the field's class and not the one field. A bool passes as the int
+    subclass it is (json writes it as true or false, and nothing formats it); an int `at` stays the int it is; a text
+    field stays as it is; a `userAsk`, which the writer keeps as an object for the decide to replay, is served here by its
+    type name too, since this route is introspection and quarantine_get hands the decide the record whole. A field the
+    record already carries under a `<field>Type` name is overwritten by the substitution's. The record itself stays
+    listed and decidable: a record that parsed is handled by the field, never skipped for it. Never a pass through
+    _hold_text, a summary's helper that spells a number and blanks a falsy value. No reader formats a value it did not
+    vet."""
+    out = None
+    for k, v in rec.items():
+        if isinstance(v, _WIRE_SCALARS):
+            continue
+        if out is None:
+            out = dict(rec)
+        out[k] = type(v).__name__
+        out[k + "Type"] = type(v).__name__
+    return rec if out is None else out
 
 def quarantine_list():
     """All held messages, newest first: the approve/deny UI's and the tests' list (the kernel reads the directory itself
@@ -4861,7 +4916,9 @@ def quarantine_list():
     which on Python 3.12 swallowed the PermissionError before the old `except OSError` could see it, so an unlistable
     directory read as nothing held with nothing said (2026-09-19). A record that cannot be read or parsed, or is not
     an object, is skipped and said once (_held_records_bus), and a type-wrong `at` sorts as the oldest (_hold_sort_at):
-    neither raises out of the list or the route any more (review round 2)."""
+    neither raises out of the list or the route any more (review round 2). When nothing could be served while a listed
+    record could not be read, one record alone included, the walk refuses the store as QuarantineUnreadable rather than
+    answering nothing held (2026-09-20)."""
     try:
         out = _held_records_bus()
     except OSError as e:
@@ -4949,11 +5006,25 @@ def quarantine_decide(mid, action, text=None, feedback=None):
                        "message's; nothing was done and the file is still held" % mid)
     if action == "deny":
         note = " ".join(str(feedback or "").split())
+        if note:
+            for field, what in (("origin", "sender host"), ("frm", "sender name")):
+                v = rec.get(field)
+                if v is not None and not isinstance(v, str):
+                    # the note road addresses the sender by the record's origin (the outbox it parks in) and frm (the
+                    # recipient it names), and a value that is not text is no address (the fork PR's fresh-1, 2026-09-20:
+                    # a container origin raised out of the outbox's path and the route dropped the connection, which the
+                    # kernel reported as the bus unreachable; a container frm parked a note no reader could deliver, the
+                    # deny answering ok). Refused in words, by the type alone, BEFORE the note is built, the record
+                    # untouched and still held, mirroring the approve arm's refusal of a body that is not text; the bare
+                    # deny is the door that works, and is named. Never coerced: a guessed address misdelivers.
+                    return False, ("held message '%s' carries a %s (%s) of type %s, not text, so a note cannot be sent to "
+                                   "its sender; nothing was done and the message is still held: deny it without a note"
+                                   % (mid, what, field, type(v).__name__))
         if note and rec.get("origin") and rec.get("frm"):
             gist = " ".join(_hold_text(rec.get("body")).split())[:60]   # a body that is not text by its type, never its repr
             body = ('Your message to %s ("%s%s") was reviewed there and declined — it was not '
                     "delivered. Note from the reviewer: %s"
-                    % (rec.get("to") or "?", gist, "…" if len(gist) == 60 else "", note))
+                    % (_hold_text(rec.get("to"), "?"), gist, "…" if len(gist) == 60 else "", note))
             fb_mid = _unique()
             # The note parks BEFORE the hold is dropped, and a park that fails refuses the deny
             # (review find, 2026-09-08): outbox_put's False was ignored here, so a deny whose note
@@ -4983,7 +5054,20 @@ def quarantine_decide(mid, action, text=None, feedback=None):
             return False, ("held message '%s' carries a body of type %s, not text, so it cannot be delivered as it is; "
                            "nothing was done and the message is still held: edit the text and approve, or deny it"
                            % (mid, type(held).__name__))
-        to_id = rec.get("toId") or ""
+        to_id = rec.get("toId")
+        if to_id is not None and not isinstance(to_id, str):
+            # a recipient id that is not text (the fork PR's regression-1 with correctness-4, 2026-09-20): the membership
+            # test below raised TypeError (unhashable) out of /quarantine/act on both approve roads, bare and edited, a
+            # dropped connection the kernel read as the bus unreachable. Refused in words, by the type alone, the record
+            # untouched and still held. Never coerced to an empty id: that would take the not-live branch below and
+            # re-match the recipient by NAME, a guess about what a malformed record meant, and an approve on a guessed
+            # recipient is a write on an input nobody verified (the unverified case goes to the restricted side). Not
+            # approving a malformed record is the right outcome; the words say what would work. An absent or empty toId
+            # keeps its road, the name re-match for an older sender's hold.
+            return False, ("held message '%s' names its recipient by an id of type %s, not text, so it cannot be "
+                           "delivered; nothing was done and the message is still held: set the record's toId to the "
+                           "recipient's session id, or deny it" % (mid, type(to_id).__name__))
+        to_id = to_id or ""
         # ONE checked snapshot (2026-09-01): this arm paid TWO kernel fetches — its own fetch-pair
         # TOCTOU, and the pair alone (2×6s) could outlast the kernel's client cap on /quarantine/act
         # (the 830 budget-pair discipline: the halves move together — see _bus_quarantine_act). And
@@ -5012,7 +5096,7 @@ def quarantine_decide(mid, action, text=None, feedback=None):
                                "id %s), and a session that now wears the name is not the one the "
                                "sender chose, so it was not delivered. It stays held: deny it (with a "
                                "note, so the sender hears) or leave it."
-                               % (rec.get("to") or "?", wire[:8]))
+                               % (_hold_text(rec.get("to"), "?"), wire[:8]))
             # NAME-addressed (an older sender): the name still rules. A record held BEFORE
             # 2026-09-08 lands here too even when its wire chose a sid, the hold kept only the
             # resolved sid then, so nothing on the record can tell the two apart; that name
@@ -5020,7 +5104,7 @@ def quarantine_decide(mid, action, text=None, feedback=None):
             # their next approve/deny (review find, 2026-09-08).
             match = [a for a in agents if a["name"] == rec.get("to") and not _postal_off(a["id"])]
             if not match:
-                return False, "recipient '%s' is no longer a live local session" % (rec.get("to") or "?")
+                return False, "recipient '%s' is no longer a live local session" % _hold_text(rec.get("to"), "?")
             to_id = match[0]["id"]
         try:
             deliver(to_id, rec.get("frm") or "?", rec.get("frmId") or "", body, kind=rec.get("kind") or "",

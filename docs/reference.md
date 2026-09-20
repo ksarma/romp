@@ -5475,17 +5475,31 @@ kind. An outbox or readbox record the bus cannot read is not moved: it is
 skipped and left in place, said once per fault spell, the rest of the store is
 served, and the sender's receipt keeps reading pending until the record can be
 read. The held-mail store is the exception to the first of those sentences: it
-has two readers, and the bus's is not the one that moves a file. The bus (`GET
-/quarantine` and the summary peers see) skips a held record it cannot read or
-parse, says so once in the log, and leaves the file in place. The kernel, which
-builds the held-mail cards from the same directory, skips and leaves in place a
-record it cannot read, said once per fault spell, and moves aside a record it
-read but could not parse or take (not an object, no message id, an id that is
-not the file's name or one the bus would refuse to decide) under the same
-`<name>.corrupt-<UTC stamp>` naming, with the error center saying so under the
-`refused` kind. That move changes no receipt: the relay was acknowledged when
-the hold landed, so the sender's side reads as it did, and the message is off
-the board until you act on the file. A held record the kernel moved aside is
+has two readers, and the bus's is not the one that moves a file. Both follow
+the one statement of the states a reader of a store meets, in the kernel's
+`_note_read_fault_once`, and each reader's own code says what it does in each
+of its arms. A held record whose bytes exist but cannot be read (a stat or read
+fault on bytes that exist: permission denied, an I/O error) is skipped and left
+in place by both readers, said once per fault spell, and never reported absent.
+The bus (`GET /quarantine` and the summary peers see) says so in the log, and
+when nothing in the store could be served while such a record stands, one
+record alone included, it refuses the store rather than answering that nothing
+is held: `GET /quarantine` answers 503 with the reason, and a machine viewing
+the holder sees a fault row in place of the section. The kernel, which builds
+the held-mail cards from the same directory, says so on the error center too
+and keeps the board. A held record the kernel read and could not parse or take
+is the one it moves aside, under the same `<name>.corrupt-<UTC stamp>` naming,
+with the error center saying so under the `refused` kind; the shapes that earn
+the move are listed in that statement, not here. That move changes no receipt:
+the relay was acknowledged when the hold landed, so the sender's side reads as
+it did, and the message is off the board until you act on the file. The one
+exception on the never-rename side is a `.json` link with nothing behind it:
+reading it proves the record absent, so the kernel moves the link itself aside
+by its own name, moving no message bytes, and the bus skips it. A record that
+parsed keeps its card and its listing whatever the types of its fields: a field
+that should be text and is not is named by its type, and an `at` that is not
+an integer gives the card the build's time (the bus sorts such a record as the
+oldest). A held record the kernel moved aside is
 named again by the error center each time its entry has left it, after a
 kernel restart or once forty later entries have pushed it out (several asides
 share one entry), until you rename the file back without its `.corrupt-`

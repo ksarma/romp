@@ -107,6 +107,17 @@ def _qcards(now):
     return km._quarantine_cards(now, set())
 
 
+def _writer_rows(sid):
+    """The writer's reader (_notice_rows_unlocked) on either shape: (rows, error) since the manager's round 1
+    (regression-2: a file it could not read was folded to [], a false absence for expire_notice and a blind revision for
+    post_notice), a bare list before it. A case that pins the ROWS reads through this, so its red over an older archive is
+    the rows it names and never a tuple unpack of a list (the manager's round 2, LENS ONE: an error on a signature the fix
+    introduced records nothing); the pair's own claim is pinned where it lives (tests/test_held_mail_manager_r1.py
+    WriterRefusesOverAnUnreadableFile)."""
+    got = km._notice_rows_unlocked(sid)
+    return got if isinstance(got, tuple) else (got, "")
+
+
 class ClearAllLeavesHolds(unittest.TestCase):
     """F1: the feed footer's Clear-all posts {type: "clearAll"} with no filter; the kernel builds the feed and hands
     _clear_all EVERY ask id, a held message's included. The reader used to honour the cleared ledger for a hold, so one
@@ -250,14 +261,16 @@ class NoticeRowTypeFault(unittest.TestCase):
         self.assertEqual(log3.count("needs an integer"), 1)
 
     def test_the_writer_side_reader_skips_the_row_too(self):
-        # post_notice counts a key's revisions over _notice_rows_unlocked; a type-wrong row there raised for the writer.
-        # The writer's reader answers (rows, error) since the manager's round 1 (regression-2: a file it could not read
-        # was folded to [], a false absence for expire_notice and a blind revision for post_notice); a clean read is ""
+        # post_notice counts a key's revisions over _notice_rows_unlocked, and the base's reader admitted the type-wrong
+        # row, so the writer raised on it. Read through _writer_rows: the (rows, error) pair is the manager's round 1
+        # (regression-2) and this case pins the ROWS, not the pair, so over the bc88256e8 archive it is red at the keys
+        # (the bad row admitted) and over 35fad278c, where the reader still answered a bare list, it is green: the pair
+        # read is an adaptation and records nothing there (the manager's round 2, LENS ONE).
         self.r.write_notice_rows([self._good(), dict(self._good(key="sweep"), rev="abc-not-a-rev")])
         with contextlib.redirect_stderr(io.StringIO()):
-            rows, err = km._notice_rows_unlocked(SID)
+            rows, err = _writer_rows(SID)
+        self.assertEqual([r["key"] for r in rows], ["figure"], "the writer's reader skips the row too")
         self.assertEqual(err, "", "a file that read is no fault")
-        self.assertEqual([r["key"] for r in rows], ["figure"])
 
 
 def _forget_said_once():
@@ -279,7 +292,11 @@ class HeldMailReader(unittest.TestCase):
     [] with nothing said, so an unreadable directory drew a clean board with every hold invisible (and on this Python the
     glob swallowed the PermissionError itself, so the reader's except never even ran). F4: the try wrapped json.loads
     alone, so a hold file whose JSON is not an object raised AttributeError, and a non-integer `at` ValueError, out of
-    _quarantine_cards and build_feed. F5: a torn file, or a record with no mid, was skipped silently forever with the file
+    _quarantine_cards and build_feed; the PR's first shape moved a record with a non-integer `at` aside naming the type,
+    and since the manager's round 2 (extra9-1) such an `at` is a field of state three at _note_read_fault_once, handled
+    and never a refusal: the card stands with the build's clock as its time, as for an absent `at` (the bus kept serving
+    and sorting the record the kernel had moved off the decide road, so a hold became undecidable after one build).
+    F5: a torn file, or a record with no mid, was skipped silently forever with the file
     left in place. The port of the postal bus's _list_json_records, precondition included: a record that reads but
     cannot be parsed is moved aside ONCE to <name>.corrupt-<utc stamp> with a line naming the file, the other holds stay
     on the board, a file rewritten under the read is left for the next build, and a directory fault names itself (one
@@ -368,14 +385,24 @@ class HeldMailReader(unittest.TestCase):
         self.assertEqual(len(rows), 1, "and the bell carries it")
         self.assertIn("qc-list.json", rows[0]["text"])
 
-    def test_a_non_integer_at_moves_aside_naming_the_type_not_the_text(self):
+    def test_a_non_integer_at_keeps_its_card_at_the_builds_clock(self):
+        """A hold whose `at` is text is a record that parsed with a field of an unexpected type, state three at
+        _note_read_fault_once since the manager's round 2 (extra9-1): the field is handled, the card stands with the
+        build's clock as its time (as for an absent `at`), nothing is moved and nothing is said, and the value's text
+        reaches no card and no line. Before the PR the value raised ValueError out of every feed build (F4); from the
+        PR's first shape to the reviewed head the record was moved aside naming the type, which left a hold the bus was
+        still serving undecidable after one build. Red over the 085e08deb archive at the card list (one card where two
+        are due: the record moved aside there), the stated reason; green here."""
         self.r.write_hold("qc-good")
         self.r.write_hold("qc-when", at="yesterday-at-noon")
         cards, log = self._cards()
-        self.assertEqual([c["itemId"] for c in cards], ["quarantine:qc-good"])
-        self.assertEqual(len(self._asides("qc-when")), 1)
-        self.assertIn("qc-when.json could not be parsed (`at` is a str, not an integer)", log)
-        self.assertNotIn("yesterday-at-noon", log)
+        self.assertEqual([c["itemId"] for c in cards], ["quarantine:qc-good", "quarantine:qc-when"], "the card stands")
+        self.assertEqual((self._asides("qc-when"), log), ([], ""), "nothing moved, nothing said")
+        self.assertEqual([c["t"] for c in cards], [1000, self.now], "the build's clock stands in for the `at` it could not take")
+        self.assertNotIn("yesterday-at-noon", json.dumps(cards) + log, "the value's text reaches no card and no line")
+        cards, log = self._cards()
+        self.assertEqual(([c["itemId"] for c in cards], log), (["quarantine:qc-good", "quarantine:qc-when"], ""),
+                         "the next build the same, quietly")
 
     def test_a_torn_file_moves_aside_once_and_is_not_read_again(self):
         self.r.write_hold("qc-good")
@@ -429,14 +456,18 @@ class HeldMailReader(unittest.TestCase):
         cards, log = self._cards()
         self.assertEqual([c["itemId"] for c in cards], ["quarantine:qc-good"], "the readable hold stands")
         self.assertTrue((self.r.qdir / "qc-torn.json").exists(), "the file could not be moved: it stays")
-        self.assertIn("qc-torn.json could not be read or parsed and could not be moved aside", log)
+        # the class it was refused for, `parsed` for a torn record (regression-7, the manager's round 2: the arm said `read or
+        # parsed` of every unmovable file; red over the 085e08deb archive at this line, the stated reason)
+        self.assertIn("qc-torn.json could not be parsed and could not be moved aside", log)
         self.assertIn("Permission denied", log)
         self.assertEqual(log.count("qc-torn.json"), 1)
         cards, log = self._cards()                   # said once per (file, errno), not per build
         self.assertEqual((log, [c["itemId"] for c in cards]), ("", ["quarantine:qc-good"]))
 
     def test_the_directory_is_listed_never_globbed(self):
-        src = inspect.getsource(km._held_records)
+        # before the PR (bc88256e8) _quarantine_cards listed the directory itself, through Path.glob: read whichever
+        # function holds the listing, so the archive red is the glob and not an AttributeError on the PR's function
+        src = inspect.getsource(getattr(km, "_held_records", None) or km._quarantine_cards)
         self.assertIn("os.listdir(qdir)", src, "the listing raises on an unreadable directory")
         self.assertNotIn(".glob(", src, "Path.glob swallows a PermissionError on this Python and yields nothing")
 
@@ -446,7 +477,8 @@ class HeldMailReader(unittest.TestCase):
         a case of this class that moved a hold aside left its entry, keyed on a root that no longer existed, to every later
         case in the process. Fails under a mutation that drops the clear from _forget_said_once over the tree (the root's
         key is still listed at the assertion after the call); over the 0a589d1e4 archive the kernel keeps no such
-        registry, the premise. Green here."""
+        registry, so the case errors there (AttributeError on _HOLD_ASIDE_SAID), an error before its assertion and not a
+        behavioural red: its subject is the registry itself, and the mutation is the evidence. Green here."""
         self.r.write_hold("qc-good")
         (self.r.qdir / "qc-list.json").write_text(json.dumps([1, 2, 3]))
         cards, _ = self._cards()
