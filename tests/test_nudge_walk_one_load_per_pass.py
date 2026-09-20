@@ -725,8 +725,10 @@ def _traversal_references(tree):
     def's subtree (through _walk, as every reader here walks). Keyed on four names, the finder is wrong in both directions: an
     innocent use of a listed name needs a _WALK_EXEMPT row (the parent map in _loader_births lists a walked node's children and
     traverses nothing), and a walk under an unlisted name is not seen. Outside these forms: a traversal name read from the module's
-    namespace by string (`vars(ast)[...]`, `ast.__dict__[...]`, `operator.attrgetter(...)`) or assembled at run time, the limit the
-    walker case holds on its side with samples, and any traversal under an unlisted name, a recursion over ast.iter_fields,
+    namespace by string (`vars(ast)[...]`, `ast.__dict__[...]`, `operator.attrgetter(...)`) or assembled at run time, a getattr
+    reached under another name (`_g = getattr` then `_g(ast, "walk")`, `builtins.getattr(ast, "walk")`: the form keys on the callee
+    being the bare Name getattr, and a verifier of the round-5 fixes planted the rebound name as a real walk with the case green),
+    the limits the walker case holds on their side with samples, and any traversal under an unlisted name, a recursion over ast.iter_fields,
     node._fields or ast.dump, a whole walk this finder never sees (review round 5, correctness-2, tests-1, extra5-2 and regression-2:
     the ruling stops the name list at four, so the finder refuses the forms it names and is silent on the rest, an early warning;
     the contract, a stranger node refused and never passed over, is carried by execution in TheWalkersRefuseAStrangerByExecution
@@ -3013,7 +3015,8 @@ class TheGrammarIsTheOneTheWalkersClassify(unittest.TestCase):
         history paragraphs record, and the stated limit is run the same way and answers no reference, so it is held on its side
         (the finder reads a string constant only as getattr's second argument, so a sample spelling a name is no reference of this
         module's). Outside these forms: a traversal name read
-        from the module's namespace by string (vars(ast), ast.__dict__, operator.attrgetter) or assembled at run time, and any
+        from the module's namespace by string (vars(ast), ast.__dict__, operator.attrgetter) or assembled at run time, a getattr
+        reached under another name (a rebinding, builtins.getattr: the form keys on the bare Name getattr as the callee), and any
         traversal under an unlisted name, a recursion over ast.iter_fields, node._fields or ast.dump, a whole walk this finder never
         sees (the witness's negative control runs two such recursions over a planted tree and asserts this finder answers no
         reference over either); the interpreter check beside this case scans vars(ast) for every node class and reds by name on a
@@ -3029,8 +3032,9 @@ class TheGrammarIsTheOneTheWalkersClassify(unittest.TestCase):
         self.assertEqual(stale, [], "an exemption with no reference: %r (the row outlived the code it excused; remove it)" % stale)
         self.assertEqual([(r[1], r[2]) for r in refs if r[4] == "_walk"], [("walk", "attribute")],
                          "_walk holds exactly one traversal reference, the standard walk by attribute: %r" % [r for r in refs if r[4] == "_walk"])
-        # the roster is derived against the interpreter, not asserted: a name the ast module lacks is a misspelling the samples
-        # below cannot catch on their own (they spell the names independently, so a misspelled roster entry also fails its sample)
+        # the roster is derived against the interpreter, not asserted: a misspelled or renamed name also fails its sample row below
+        # (the samples spell the names independently since the round-5 fixes), and this line names the misspelling directly instead
+        # of leaving the sample's mismatch to say it (a verifier of the round-5 fixes: this comment said the samples could not catch it)
         self.assertEqual([n for n in _TRAVERSAL if not hasattr(ast, n)], [],
                          "every name in _TRAVERSAL is an attribute of the ast module; these are not: %r (a misspelled or renamed traversal "
                          "name is guarded by nothing, since no source can spell it)" % [n for n in _TRAVERSAL if not hasattr(ast, n)])
@@ -3070,14 +3074,19 @@ class TheGrammarIsTheOneTheWalkersClassify(unittest.TestCase):
         for source, expected in samples:
             got = _traversal_references(ast.parse(source))
             self.assertEqual(got, [expected], "the finder reads %r as one reference, %r, and answers %r" % (source, expected, got))
-        # the stated limit, held on its side: a traversal name read from the module's namespace by string is no reference here
+        # the stated limits, held on their side: a traversal name read from the module's namespace by string, and a getattr reached
+        # under another name (a rebinding, builtins.getattr), are no reference here (a verifier of the round-5 fixes planted the rebound
+        # name as a real walk at module level with the case green)
         limits = ("import ast\ndef census(t):\n    return list(vars(ast)['walk'](t))\n",
                   "import ast\ndef census(t):\n    return list(ast.__dict__['walk'](t))\n",
-                  "import ast, operator\ndef census(t):\n    return list(operator.attrgetter('walk')(ast)(t))\n")
+                  "import ast, operator\ndef census(t):\n    return list(operator.attrgetter('walk')(ast)(t))\n",
+                  "import ast\n_g = getattr\ndef census(t):\n    return list(_g(ast, 'walk')(t))\n",
+                  "import ast, builtins\ndef census(t):\n    return list(builtins.getattr(ast, 'walk')(t))\n")
         for source in limits:
             got = _traversal_references(ast.parse(source))
-            self.assertEqual(got, [], "the finder reads %r as no reference: a traversal name read from the module's namespace by string is "
-                                      "the limit the docstring states, and a change here is a widening the docstring must follow: %r" % (source, got))
+            self.assertEqual(got, [], "the finder reads %r as no reference: a traversal name read from the module's namespace by string, or a "
+                                      "getattr reached under another name, is the limit the docstring states, and a change here is a widening "
+                                      "the docstring must follow: %r" % (source, got))
 
 
 class TheWalkersRefuseAStrangerByExecution(unittest.TestCase):
