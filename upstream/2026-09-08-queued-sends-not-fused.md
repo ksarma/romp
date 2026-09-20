@@ -1,12 +1,12 @@
 ---
 title: Queued sends are delivered one message each, never fused; sends carry a client id
-status: offered
+status: merged
 where: kernel/sdk_backend.py (inputs() hold + _untaken_taken), tests/test_queued_sends_not_fused.py (the feeder-hold cases)
 added: 2026-09-08
 pr:
 tier: fix
 offered: their PR #1889
-closed:
+closed: 2026-09-20
 ---
 A fix in the SDK feeder, which upstream ships in the same shape: `inputs()` forwards every queued text to the CLI as soon as it is queued and the CLI drains its whole queue into one user record, so two messages sent during one turn reach the agent as one; only the rename ping's own pre-turn feed was held. The feeder now holds the next text until a turn frame proves the CLI took the last one, and each composer send carries a client-minted id through the queue entry, echo, queued chip and landed record, so the chat reconciles and cancels by id rather than by text. The sdk_backend.py hold and the send-pending.ts client port as they are; the kernel.py plumbing needs re-slotting, since the send id rides the parked op behind the fork's user-todo slot and upstream's `_send_or_park` takes `(be, sid, text, echo)`.
 
@@ -17,3 +17,6 @@ A fix in the SDK feeder, which upstream ships in the same shape: `inputs()` forw
 2026-09-18: approved for offer by the user (batch 2 of the 2026-09-18 plan; his answer covers the fix and docs entries of batches 2 to 7, batch by batch, features excluded). Filed stacked on dropped-sends-card-posted-on-the-boot-road (shared file kernel/sdk_backend.py), after https://github.com/romp-on/romp/pull/1827 merges or rebased around its three inputs() hunks.
 
 2026-09-19: offered as their PR #1889 at 08:59Z (batch 2 of the 2026-09-18 plan, position 8, the last; stacked on #1883; head 07d655899 on 2378fa77a). One case of the module, the stale-move-arm case, was held back from the offer on romp-manager's ruling: its two held reads rest on a timed settle with no happens-before after the arm's loop callback (the mechanism behind fork PR 833's 3.14t red); the fork fix is in flight as branch settle-race-833-fix and the case is offered separately once it keys on events.
+
+2026-09-19: offered as their PR #1889 at 08:59Z (fix tier, one commit stacked on their #1883's branch; one case of the module held back while the fork's settle-race fix landed).
+2026-09-20: merged upstream at 01:30Z (4d977bedf) by the project's maintainer; the scaffold and branch pair are closed.
