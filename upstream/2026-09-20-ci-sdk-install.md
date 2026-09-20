@@ -3,7 +3,7 @@ title: CI installs the Claude Agent SDK at the session host's tested version in 
 status: candidate
 where: .github/workflows/ci.yml (the Install the Claude Agent SDK step; the Linux job cap; the cryptography step's comment); tests/test_ci_sdk_pin.py (new); tests/test_ci_bats_bound.py (the cap pin); tests/test_session_host.py (the SDK-transport gate and the pipe-transport control); tests/test_session_host_sdk_pin.py (the no-SDK control); tests/test_host_transport.py (its docstring and the comment on the venv path); tests/README.md
 added: 2026-09-20
-pr:
+pr: 872
 tier: docs
 offered:
 closed:
