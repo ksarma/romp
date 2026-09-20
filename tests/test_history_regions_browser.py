@@ -303,6 +303,14 @@ class ServedCompactStream(WindowLab):
             print("STREAM:", json.dumps(self._r), file=sys.stderr)
         return self._r
 
+    def test_the_page_threw_nothing_through_the_stream(self):
+        # the driver collects the page's own errors (pageerror, console errors) and ships the last twelve in RESULT; without this the lab's
+        # named assertions stayed green under a paint that threw on every streamed frame (review round 1). Its own test, so the three
+        # tests sharing the cached run are all covered whichever fills the cache; the driver ships pageEvents.slice(-12), so emptiness is
+        # proven and a count is not
+        r = self._result()
+        self.assertEqual(r.get("pageEvents"), [], "the page threw nothing through the stream: %r" % r.get("pageEvents"))
+
     def test_the_boot_window_holds_no_complete_turn_at_the_bottom(self):
         # the premise the two measurements rest on: the tail window is the agentic turn (one visible user row; two at most, should the
         # kernel's closing notice row go), so it holds no second complete turn, and the reader is at the bottom
