@@ -54312,6 +54312,24 @@ def _resolve_reconnect(c, chat_list):
             # this socket; without the stamp a tap for this window parked for the rest of the page's life.
             c["ready"] = True
         act = c.get("active")
+        # [fork] review round 4b (2026-09-20; fresh-1 / regression-4, the round-3 fixlist's extra9-1): a reveal PARKED for this client's
+        # window (the shell's /reveal at boot beats the chat pane's socket on the ack and vanish roads, and on sw when the browser opens the
+        # installed app on its own start URL) names the session the user tapped, and the consume behind this strip will focus it. When the
+        # tab list carries it, the one full is ITS, not the last-shown tab's: before this the phone's skeleton first dial spent the full on
+        # the dial's hint and the notified session arrived as a skeleton and cost a skeleton-click round trip. The entry read is the one
+        # _consume_pending_reveal lands (the window's, else the no-wid one); a parked sid the list lacks (an ended session, another host's
+        # id) leaves the hint as before; no hint keeps the fail-safe whole push below. A dict read under this slot lock and no second lock:
+        # the park is one dict write (_reveal_request, _send_focus_to_view), and a park landing after this read is served as today, its
+        # consume behind the strip landing the focus on a skeleton tab the page then asks for. The ruled release+wake half is DEFERRED by
+        # the reviewer, not landed: executed, it added a duplicate full on the live road and closed nothing.
+        if act:
+            _pk = str(c.get("wid") or "")
+            _pr = _PENDING_REVEAL.get(_pk)
+            if _pr is None and _pk:
+                _pr = _PENDING_REVEAL.get("")
+            _ps = str((_pr or {}).get("sid") or "")
+            if _ps and _ps != str(act) and any(s.get("sid") == _ps for s in chat_list):
+                act = _ps
         held = c.get("echat") or {}
         if not act:
             # No active hint. A RELAY client that DIETED (skeleton=1 at the handshake: `dietSkeleton`, kind `relay`)

@@ -153,6 +153,12 @@ class SkeletonReconnect(unittest.TestCase):
     def _tab_orders(self, c):
         return self._frames(c, "tabOrder")
 
+    @staticmethod
+    def _names(ids):
+        """Tab names for a list of sids (the four synthetic tabs), so a red reads as tabs and not as ids the box's log
+        redactor masks (an unknown id is kept as it is)."""
+        return [NAMES.get(i, i) for i in ids]
+
     # ── §4.1 item 1 ──
     def test_00a_a_sid_already_held_whole_is_never_listed_when_the_set_resolves(self):
         # a full that won the race (a create's _push_session_now landing between the flag's pop and the set's write)
@@ -846,6 +852,57 @@ class SkeletonReconnect(unittest.TestCase):
             self.assertEqual(sorted(self._sessions(c)), sorted(TAB_ORDER), "the arm's push is every full, no set")
             self.assertRegex(trail.getvalue(), r"consumed \S+ the pane's ready")
             self.assertNotIn("the pane's redial", trail.getvalue(), "the strip inside the arm's push resolved no flag")
+        finally:
+            km._PENDING_REVEAL.clear()
+
+    # ── round 4b (2026-09-20; fresh-1 / regression-4, the round-3 fixlist's extra9-1) ──
+    def test_12e_a_reveal_parked_for_the_window_makes_the_parked_session_the_redials_one_full_when_the_kernel_lists_it(self):
+        # The phone's first dial takes the skeleton diet with the LAST-SHOWN tab as its hint. A notification tap whose /reveal
+        # beat the chat pane's socket (the ack and vanish roads land at boot; sw when the browser opens the installed app on
+        # its own start URL) sits parked for the window; before this the one full went to the hint and the notified session
+        # came as a skeleton, one skeleton-click round trip before it showed. _resolve_reconnect prefers the parked sid when
+        # the tab list carries it: the full is the parked session's, the stored tab is a skeleton, and the consume behind the
+        # strip lands the focus on a tab already whole. A parked sid the list lacks leaves the hint as before (two legs below).
+        km._PENDING_REVEAL.clear()
+        km._live_map = lambda: {S2: {}}       # the tapped session is live, so the reveal is a focus, not a revive
+        try:
+            trail = io.StringIO()
+            with contextlib.redirect_stderr(trail):
+                self.assertFalse(km._reveal_request(S2, "W1", via="ack"), "no socket for the window: parked")
+                c = self._client(active=S1, reconnect=True, wid="W1")   # the dial's hint is the last-shown tab, web
+                km._push([c])
+            self.assertTrue(self._sessions(c), "the cycle sent session frames (a derived expectation over nothing is no witness)")
+            self.assertTrue(self._tab_orders(c), "the cycle sent a strip")
+            self.assertEqual(sorted(self._names(self._sessions(c))), ["api", "docs"], "the one full is the PARKED session's (api), plus the transcript-less docs (whole as ever; build_order ranks it first)")
+            self.assertEqual(self._names(self._tab_orders(c)[0]["skeleton"]), ["tests", "web"], "the stored tab is a skeleton now, ascending size")
+            self.assertEqual(c["skeleton"], {S1, S3})
+            types = [f["type"] for f in c["_frames"]]
+            self.assertEqual([(f["id"], f["live"]) for f in self._frames(c, "focus")], [(S2, True)], "one focus, the parked tap's")
+            self.assertLess(types.index("tabOrder"), types.index("focus"), "behind the strip that names its tab")
+            self.assertEqual(km._PENDING_REVEAL, {}, "the park was consumed")
+            self.assertRegex(trail.getvalue(), REDIAL_TRAIL % "ack", "the journal says the redial landed the park")
+            # the fallback: a parked sid this kernel does not list (an ended session) leaves the hint's set as before, and the
+            # consume still lands its revive prompt
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertFalse(km._reveal_request(GONE, "W1", via="ack"))
+                c2 = self._client(active=S1, reconnect=True, wid="W1")
+                km._push([c2])
+            self.assertTrue(self._sessions(c2))
+            self.assertEqual(sorted(self._names(self._sessions(c2))), ["docs", "web"], "the hint's full, as before")
+            self.assertEqual(self._names(self._tab_orders(c2)[0]["skeleton"]), ["tests", "api"])
+            self.assertEqual([f["type"] for f in c2["_frames"] if f["type"] in ("focus", "confirmRevive")], ["confirmRevive"],
+                             "the ended session's park lands the revive prompt")
+            self.assertEqual(km._PENDING_REVEAL, {})
+            # ...and a host-prefixed sid (another host's session, admitted by the reveal's shape) matches no local row: the set
+            # is unchanged and the focus carries the id as-is (the page routes it)
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertFalse(km._reveal_request("gpu1:" + S2, "W1", via="sw"))
+                c3 = self._client(active=S1, reconnect=True, wid="W1")
+                km._push([c3])
+            self.assertTrue(self._sessions(c3))
+            self.assertEqual(sorted(self._names(self._sessions(c3))), ["docs", "web"])
+            self.assertEqual(self._names(self._tab_orders(c3)[0]["skeleton"]), ["tests", "api"])
+            self.assertEqual([(f["id"], f["live"]) for f in self._frames(c3, "focus")], [("gpu1:" + S2, True)])
         finally:
             km._PENDING_REVEAL.clear()
 
