@@ -3313,23 +3313,85 @@ class TheReadersRosterNamesEveryReader(unittest.TestCase):
 
 class TheDeriveEnvironmentIsNestedRuns(unittest.TestCase):
     """derive() runs the module under the environment nested_run gives its children, from the same name: nested_run
-    pops NESTED_RUN_POPS and nothing written beside it, read from its source by AST (every env.pop call's argument is
-    the loop variable of a loop over the name NESTED_RUN_POPS and nothing else), and DERIVE_ENV_DROPPED opens on that
-    tuple. Before this pin the two were kept by hand and could diverge with the module green."""
+    removes NESTED_RUN_POPS from the child's environment and nothing beside it, read from its source by AST
+    (_assert_pops_in_one_loop), and DERIVE_ENV_DROPPED opens on that tuple. What the check keys on: the removals
+    written as env.pop or as del of an env entry. Exactly one for loop holds an env.pop call, whatever its target's
+    shape; it iterates the name NESTED_RUN_POPS and binds one variable; every env.pop in the function sits in that
+    loop's body by node identity (not by its argument's spelling, so a pop of the same variable name written in a
+    second loop or in a comprehension is outside the body and reds) and pops the loop's variable; no del of an env
+    entry is written anywhere in the function. Outside what it reads: a rebinding of env to a filtered comprehension
+    removes entries by neither form, and assignments to env are not read (nested_run sets two keys under sdk_stub).
+    Before this pin the two tuples were kept by hand and could diverge with the module green; the round-7 review
+    found the pin's first form keyed on each pop argument's spelling and on the count of every Name-target loop, so a
+    del, a comprehension pop and a tuple-target loop stayed green and an unrelated loop redded with a message about
+    pops. The second test runs the check over synthetic sources of each shape."""
+
+    def _assert_pops_in_one_loop(self, source):
+        """The check, over one function's source (see the class docstring for what it keys on)."""
+        tree = ast.parse(textwrap.dedent(source))
+
+        def env(node):
+            return isinstance(node, ast.Name) and node.id == "env"
+        pops = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                and n.func.attr == "pop" and env(n.func.value)]
+        self.assertTrue(pops, "no env.pop call: the function pops nothing from the child's environment")
+        dels = [t for n in ast.walk(tree) if isinstance(n, ast.Delete) for t in n.targets
+                if isinstance(t, ast.Subscript) and env(t.value)]
+        self.assertTrue(not dels, "a del of an env entry beside the loop over NESTED_RUN_POPS (every removal is read, "
+                        "by pop or by del): %s" % ["line %d: del %s" % (t.lineno, ast.unparse(t)) for t in dels])
+        loops = [n for n in ast.walk(tree) if isinstance(n, ast.For)
+                 and any(any(m is p for p in pops) for stmt in n.body for m in ast.walk(stmt))]
+        self.assertEqual(len(loops), 1, "the env.pop calls run in one loop over NESTED_RUN_POPS (loops counted when "
+                         "an env.pop sits in their body, whatever their target's shape); pop-bearing loops: %s"
+                         % ["line %d: for %s in %s" % (n.lineno, ast.unparse(n.target), ast.unparse(n.iter))
+                            for n in loops])
+        loop = loops[0]
+        self.assertEqual(ast.unparse(loop.iter), "NESTED_RUN_POPS",
+                         "the pop-bearing loop iterates a shape beside the name NESTED_RUN_POPS (read as the iterable's spelling): %s"
+                         % ast.unparse(loop.iter))
+        self.assertIsInstance(loop.target, ast.Name, "the loop over NESTED_RUN_POPS binds a shape beside one variable: "
+                              "%s" % ast.unparse(loop.target))
+        inside = {id(m) for stmt in loop.body for m in ast.walk(stmt)}
+        for call in pops:
+            self.assertTrue(id(call) in inside, "an env.pop outside the body of the loop over NESTED_RUN_POPS (read by "
+                            "node identity against the loop body, not by the argument's spelling), line %d: %s"
+                            % (call.lineno, ast.unparse(call)))
+            self.assertTrue(call.args and isinstance(call.args[0], ast.Name) and call.args[0].id == loop.target.id,
+                            "an env.pop inside the loop that pops a shape beside its variable %s, line %d: %s"
+                            % (loop.target.id, call.lineno, ast.unparse(call)))
 
     def test_nested_run_pops_the_shared_tuple_and_no_literal(self):
-        tree = ast.parse(textwrap.dedent(inspect.getsource(nested_run)))
-        pops = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
-                and n.func.attr == "pop" and isinstance(n.func.value, ast.Name) and n.func.value.id == "env"]
-        self.assertTrue(pops, "nested_run pops nothing from the child's environment")
-        loops = [n for n in ast.walk(tree) if isinstance(n, ast.For) and isinstance(n.target, ast.Name)]
-        self.assertEqual(len(loops), 1, "nested_run's pops run in one loop: %s" % [ast.unparse(n.iter) for n in loops])
-        self.assertEqual(ast.unparse(loops[0].iter), "NESTED_RUN_POPS",
-                         "nested_run's loop iterates a shape beside the shared tuple: %s" % ast.unparse(loops[0].iter))
-        for call in pops:
-            self.assertEqual(ast.unparse(call.args[0]), loops[0].target.id,
-                             "an env.pop outside the loop over NESTED_RUN_POPS: %s" % ast.unparse(call))
-        self.assertEqual(DERIVE_ENV_DROPPED[:len(NESTED_RUN_POPS)], NESTED_RUN_POPS)
+        self._assert_pops_in_one_loop(inspect.getsource(nested_run))
+        self.assertEqual(DERIVE_ENV_DROPPED[:len(NESTED_RUN_POPS)], NESTED_RUN_POPS,
+                         "DERIVE_ENV_DROPPED does not open on NESTED_RUN_POPS: %r" % (DERIVE_ENV_DROPPED,))
+
+    def test_the_check_reads_removals_by_node_identity_over_synthetic_sources(self):
+        """The check over synthetic sources, nested_run's shape as the base (the loop over NESTED_RUN_POPS popping its
+        variable, and the two assignments sdk_stub makes, which are not removals): a del of an env entry, a pop inside
+        a comprehension, a second loop with a tuple target reusing the variable's name, a literal pop outside the loop,
+        a second Name-target loop over another tuple, a loop over another name, a pop inside the loop of another
+        variable and a function popping nothing each red naming the shape; the base and the base with an unrelated
+        loop that pops nothing are green."""
+        base = ('def f(env, sdk_stub):\n'
+                '    if sdk_stub:\n'
+                '        env["PYTHONPATH"] = "stub"\n'
+                '        env["ROMP_RATCHET_SDK_STUB"] = "stub"\n'
+                '    for var in NESTED_RUN_POPS:\n'
+                '        env.pop(var, None)\n')
+        self._assert_pops_in_one_loop(base)
+        self._assert_pops_in_one_loop(base + '    for _ in ():\n        pass\n')
+        reds = ((base + '    if "X" in env:\n        del env["X"]\n', "a del of an env entry .*line 8: del env\\['X'\\]"),
+                (base + '    [env.pop(var, None) for var in ("A",)]\n', "outside the body of the loop .*line 7: env.pop\\(var, None\\)"),
+                (base + '    for var, _ in (("A", 1),):\n        env.pop(var, None)\n',
+                 "run in one loop .*line 5: for var in NESTED_RUN_POPS.*line 7: for \\(var, _\\) in"),
+                (base + '    env.pop("A", None)\n', "outside the body of the loop .*line 7: env.pop\\('A', None\\)"),
+                (base + '    for var in ("A",):\n        env.pop(var, None)\n', "pop-bearing loops: .*line 7: for var in \\('A',\\)"),
+                (base.replace("NESTED_RUN_POPS", "OTHER_TUPLE"), "iterates a shape beside the name NESTED_RUN_POPS .*: OTHER_TUPLE"),
+                (base.replace("env.pop(var, None)", 'env.pop("A", None)'), "pops a shape beside its variable var, line 6"),
+                (base.replace("env.pop(var, None)", "pass"), "no env.pop call"))
+        for source, message in reds:
+            with self.assertRaisesRegex(AssertionError, message):
+                self._assert_pops_in_one_loop(source)
 
 
 class TheMutationCellsApply(unittest.TestCase):
