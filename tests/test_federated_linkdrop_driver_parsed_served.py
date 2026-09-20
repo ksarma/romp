@@ -47,12 +47,19 @@ the module's), and a name bound to two types in one scope is refused. Then every
 table, a list or an object holding one must be CONSUMED by one of the shapes the walk follows: the object of a member
 call (checked against the allow-list by kind, `evaluate` on a page only), a truth test (an if, a while, a for, a `!`, a
 ternary's condition, a `&&` or `||`), a binding or an assignment, an argument to a helper the driver declares (its type
-flows to the parameter) or to Object.keys (the table), an `await`, a return, a literal it is placed in, the iterable of a
-for-of over a list. Anything else is refused by line and text: a member READ that is not itself called (`pages.feed.request`,
-`pages.feed.keyboard`, `pages.feed.waitForFunction` bound to a name), a computed member (`locator(...)[mth]()`), a receiver
-passed to a callee the walk does not follow (`Reflect.get`, `wf.call`, a member call on an untyped object), a receiver in
-a template string, a comparison, a constructor, or any other parent. Enumerated on the safe side: the consumers are the
-list, and a new shape the driver grows is a red here until it is read.
+flows to the parameter) or to Object.keys (the table), an `await`, a literal it is placed in, the iterable of a for-of over
+a list, and a return from a helper the walk FOLLOWS TO A CALL: a helper is invoked where the walk reads a call of it (a bare
+name bound to it, a name reached through a list or a table, a call where it stands: an IIFE, `outer()()`, `fns[0]()`), and a
+receiver returned from a helper no followed call invokes (a callback handed to a member call, a helper held in a literal or
+read as a member, a getter, an object or class method, whose `this` the walk does not type) is refused where it is returned;
+a helper whose return is a receiver may itself sit only in a name binding, an assignment to a name, a direct call, or an
+argument to a helper the walk follows (round 5's fixer pass: nine shapes returned a page from a getter, an object or a
+class method, `hf.call`, a callback, an array-held or a returned arrow, and passed silently). Anything else is refused by
+line and text: a member READ that is not itself called (`pages.feed.request`, `pages.feed.keyboard`,
+`pages.feed.waitForFunction` bound to a name), a computed member (`locator(...)[mth]()`), a receiver passed to a callee the
+walk does not follow (`Reflect.get`, `wf.call`, a member call on an untyped object), a receiver in a template string, a
+comparison, a constructor, or any other parent. Enumerated on the safe side: the consumers are the list, and a new shape
+the driver grows is a red here until it is read.
 
 THE WAIT CENSUS reads the same tree: every call whose member name is a wait form (the WAIT_FORMS of the driver-bound
 module: the navigations, the waitFor family, waitForTimeout) or whose callee is the budget's poll is a site, whatever
@@ -60,18 +67,29 @@ punctuation spells it (`. waitFor`, `["goto"]`, `goto?.()` are the same calls); 
 object-literal argument by node, and must be exactly one budget.capped(...) call (CAPPED) as the whole value; a
 waitForTimeout draws on the budget or is one of the two fixed dwells. A bare `waitFor(` is the poll only when the tree binds
 that name to `budget.waitFor` in a scope the call sees; a bare wait-named call the tree binds to no poll is an unlisted
-form. A wait outside playwright and the budget is refused by name: a timer (setTimeout, setInterval, setImmediate,
-queueMicrotask, spelled bare or as a member, or bound to another name) or a `new Promise(...)` anywhere but the budget's own
-`sleep`, and a `require` or an `import` of any module but the driver's own (playwright; node:module, node:fs). Disclosed,
-the class the census cannot see: a wait spelled with none of those names, such as a busy loop inside a callback handed to
-evaluate or waitForFunction, or Atomics.wait; the budget is a deadline and bounds none of it. The two fetches (ctl and
-tunnelsStatus) stay the acknowledged driver_error road, pinned at two.
+form. A wait outside playwright and the budget is refused by the ROAD to it, wherever the name appears as an identifier (a
+reference, a member name, a binding): a timer (setTimeout, setInterval, setImmediate, queueMicrotask) anywhere but the
+budget's own `sleep`; `Promise` read anywhere but as that sleep's constructor or the object of a Promise.resolve or
+Promise.all call (an alias, a combinator that may never settle); `fetch` anywhere but as a callee, bare or as a member
+(counted there; an alias is refused); `Atomics`, `eval`, `Function`, `globalThis` and `global` (REFUSED_NAMES: script text
+or a name the census cannot read); a computed member call on a value the walk does not type (`x["set" + "Timeout"](...)`);
+and a SCRIPT_METHODS call (evaluate, evaluateHandle, waitForFunction, addInitScript and the rest) whose first argument is
+anything but a function literal or a name the tree binds to one, since a string handed to the page is script this census
+does not parse (the driver's `hook` is an arrow). A module is loaded only the driver's way: an `import` of node:module or
+node:fs, the one module-level `const require = createRequire(...)` (a second createRequire, or one bound to another name, is
+refused) and `require("playwright")` (a require of any other module or of a built name, and `require` read as a value, are
+refused); a dynamic `import()` is refused whatever its argument. Disclosed, the class the census cannot see: a wait with no
+timer, promise, script, module or playwright name as a node of the tree, such as a busy loop (in the driver or in a callback
+handed to evaluate or waitForFunction) or an awaited object whose `then` never settles; the budget is a deadline and bounds
+none of it. DISCLOSED names the plant rows of that class, which pass by disclosure and are pinned as passing, so a census
+that learns to see one says so. The two fetches (ctl and tunnelsStatus) stay the acknowledged driver_error road, pinned at two.
 
-THE PLANTS. The review's thirty-six instances (the receiver shapes, the wait spellings, the timers, the second browser, the
-controls) are a fixture here: each is one line inserted into the driver after `out.provBefore = await provText();`, run
-through this census, and must be refused by the class the table names (a walk refusal, an unlisted call, an uncapped or
-unlisted wait site, a third fetch), the two controls passing. Every one of them but the six the regex census already caught
-passed the driver-bound module at the round-5 head; the review record outside the repo carries the before and after outcomes.
+THE PLANTS. PLANTS is a fixture: each row is one line inserted into the driver after `out.provBefore = await provText();`,
+run through this census, and must give the verdict class its row names (a walk refusal, an unlisted call, an uncapped or
+unlisted wait site, a third fetch; `passed` for the CONTROLS and the DISCLOSED rows, and for nothing else). The rows are the
+prep note's tables for censuses 3, 4 and 5, the addendum's `null || pages.feed`, the builder's and the fixer's, as the
+comment on PLANTS says; the before-outcomes through the round-4 head's regex census are in the review record outside the
+repo, which names the rows that were red there. No count is kept in this docstring: len(PLANTS) is the count.
 
 Synthetic: no kernel, no browser; node and the extension's node_modules only.
 """
@@ -140,7 +158,18 @@ TIMERS = ("setTimeout", "setInterval", "setImmediate", "queueMicrotask")
 BARE_CALLEES = ("Object.keys",)                    # the one callee a table may be passed to bare
 IMPORTS_ALLOWED = ("node:module", "node:fs")       # the driver's own imports; any other module is a road the census does not know
 REQUIRE_ALLOWED = ("playwright",)
+# names refused wherever they appear as an identifier (a reference, a member name, a binding), by the road each opens: script
+# text this census does not parse (eval, the Function constructor), a wait spelled with no timer name (Atomics.wait), the global
+# object (a member of it named by a string is a name the walk cannot read)
+REFUSED_NAMES = {"eval": "eval runs script text this census does not parse", "Function": "the Function constructor runs script text this census does not parse",
+                 "Atomics": "Atomics.wait is a wait spelled with no timer name", "globalThis": "a member of the global object named by a string is a name the walk cannot read",
+                 "global": "a member of the global object named by a string is a name the walk cannot read"}
+PROMISE_ALLOWED = ("resolve", "all")               # the Promise members the driver calls; every other read of `Promise` is refused (a promise that may never settle)
+# the receiver methods that run SCRIPT in the page: their first argument must be a function literal, or a name the tree binds to
+# one, since a string (or a value built into one) handed to them is script this census does not parse
+SCRIPT_METHODS = ("evaluate", "evaluateHandle", "evaluateAll", "$eval", "$$eval", "waitForFunction", "addInitScript")
 FN_KINDS = ("ArrowFunction", "FunctionExpression", "FunctionDeclaration", "MethodDeclaration")
+ACCESSOR_KINDS = ("MethodDeclaration", "GetAccessor", "SetAccessor")   # a body the walk types no `this` for and follows to no call
 PASS_THROUGH = ("AwaitExpression", "ParenthesizedExpression", "NonNullExpression", "AsExpression", "SatisfiesExpression", "TypeAssertionExpression")
 LOGICAL = ("||", "&&", "??")
 AUX = ("budget", "poll")   # kinds the walk tracks that are no receiver
@@ -198,8 +227,8 @@ def show(k):
 
 class Walk:
     """The receiver walk by type and the wait census over one parsed source. After run(): `refusals` {(line, text, why)},
-    `calls` [(kind, method, line)], `waits` [(form, timeouts, first_arg, line)], `fetches`, `imports` [(module, line)],
-    `requires` [(module, line)], `poll_bindings` [(scope kind, line)]."""
+    `calls` [(kind, method, line)], `waits` [(form, timeouts, first_arg, line)], `fetches` [line], `imports` [(module, line)],
+    `requires` [(module, line)], `poll_bindings` [(scope kind, line)], `require_bindings` [line], `invoked` {id(fn node)}."""
 
     def __init__(self, src, tree):
         self.src, self.root = src, tree
@@ -210,7 +239,8 @@ class Walk:
         self.fn_ret = {}      # id(fn node) -> the kind its body returns, re-derived each round
         self.kinds = {}
         self.refusals = set()
-        self.calls, self.waits, self.fetches, self.timers, self.imports, self.requires, self.poll_bindings = [], [], [], [], [], [], []
+        self.invoked = set()  # id(fn node) of every helper some call the walk follows invokes: a receiver returned from any other is refused
+        self.calls, self.waits, self.fetches, self.timers, self.imports, self.requires, self.poll_bindings, self.require_bindings = [], [], [], [], [], [], [], []
 
     # ---- the tree ----
     def _link(self, n, parent):
@@ -375,6 +405,10 @@ class Walk:
         return None
 
     def _call(self, n, kids):
+        raw = n.get("c", [])
+        if raw and raw[0]["k"] == "Token" and raw[0].get("t") == "import":
+            self.refuse(n, "a dynamic import(): a module load this census does not follow, whatever its argument")
+            return None
         callee, args = kids[0], kids[1:]
         line = self.line(n)
         if callee["k"] == "Identifier":
@@ -383,23 +417,35 @@ class Walk:
                 mod = args[0]["t"] if args and args[0]["k"] == "StringLiteral" else None
                 self.requires.append((mod, line))
                 return "playwright" if mod == "playwright" else None
+            if name == "createRequire":
+                # the one loader the driver makes: `const require = createRequire(...)` at module level; a second loader, or one
+                # bound to another name, loads modules the census does not follow
+                p = self.parent[id(n)]
+                if p is not None and p["k"] == "VariableDeclaration" and self.kids(p)[0].get("t") == "require" and self.scope_of(p)["k"] == "SourceFile":
+                    self.require_bindings.append(line)
+                else:
+                    self.refuse(n, "a createRequire beyond the driver's one module-level `const require = createRequire(...)`: a loader the census does not follow")
+                return None
             if name == "makeBudget":
                 return "budget"
-            if name == "fetch":
-                self.fetches.append(line)
             kc = self.lookup(name, callee)
             if kc == "poll":
                 self.waits.append(self._site("waitFor", n, args))
                 return None
             if isinstance(kc, tuple) and kc[0] == "fn":
-                self._flow(kc[1], args, n)
-                return self.fn_ret.get(kc[1])
+                return self._invoke(kc, args, n)
             if WAIT_NAME.fullmatch(name):
                 self.waits.append(self._site(name + " (a bare name the tree binds to no poll)", n, args))
             return None
         if callee["k"] in ("PropertyAccessExpression", "ElementAccessExpression"):
             ck = self.kids(callee)
             ko = self.kind_of(ck[0])
+            kc = self.kind_of(callee)
+            if isinstance(kc, tuple) and kc[0] == "fn":
+                return self._invoke(kc, args, n)   # a helper reached through a list or a table (`fns[0]()`)
+            if callee["k"] == "ElementAccessExpression" and ko is None:
+                self.refuse(n, "a computed member call on a value the walk does not type (a member spelled by a string or a built name)")
+                return None
             method = ck[1].get("t") if callee["k"] == "PropertyAccessExpression" or ck[1]["k"] in ("StringLiteral", "NoSubstitutionTemplateLiteral") else None
             if method is None:
                 if receiverish(ko):
@@ -407,6 +453,8 @@ class Walk:
                 return None
             if isinstance(ko, str) and receiverish(ko):
                 self.calls.append((ko, method, line))
+                if method in SCRIPT_METHODS:
+                    self._script_arg(n, method, args)
                 if WAIT_NAME.fullmatch(method):
                     self.waits.append(self._site(".waitFor" if method == "waitFor" else method, n, args))
                 if method in B.LOCATOR_MAKERS and ko in ("page", "locator"):
@@ -424,7 +472,25 @@ class Walk:
             if WAIT_NAME.fullmatch(method):
                 self.waits.append(self._site(".waitFor" if method == "waitFor" else method, n, args))
             return None
+        kc = self.kind_of(callee)   # any other callee shape: a helper called where it stands (an IIFE, `outer()()`)
+        if isinstance(kc, tuple) and kc[0] == "fn":
+            return self._invoke(kc, args, n)
         return None
+
+    def _invoke(self, kc, args, at):
+        """A call of a helper the walk follows: the arguments' types flow to its parameters and its return type is the call's;
+        the helper is marked invoked, so a receiver its body returns has somewhere to go."""
+        self.invoked.add(kc[1])
+        self._flow(kc[1], args, at)
+        return self.fn_ret.get(kc[1])
+
+    def _script_arg(self, call, method, args):
+        """A SCRIPT_METHODS call's first argument is a function literal or a name the tree binds to one; anything else (a string,
+        a template, a value built or bound at run time, a Function) is script text this census does not parse."""
+        a = args[0] if args else None
+        ka = self.kind_of(a) if a is not None and a["k"] == "Identifier" else None
+        if a is None or not (a["k"] in FN_KINDS or (isinstance(ka, tuple) and ka[0] == "fn")):
+            self.refuse(call, "a script handed to %s as anything but a function literal or a name the tree binds to one (a string, a template, a bound or built value, a Function): its text is not this census's parse" % method)
 
     def _site(self, form, call, args):
         """A wait site: (form, the texts of every `timeout` property in the call's object-literal arguments, the first
@@ -543,8 +609,8 @@ class Walk:
         for _ in range(rounds):
             self.changed = False
             self.kinds = {}
-            self.calls, self.waits, self.fetches, self.imports, self.requires, self.poll_bindings = [], [], [], [], [], []
-            self.refusals = set()
+            self.calls, self.waits, self.fetches, self.imports, self.requires, self.poll_bindings, self.require_bindings = [], [], [], [], [], [], []
+            self.refusals, self.invoked = set(), set()
             for n in self.nodes:
                 self.kind_of(n)
             if not self.changed:
@@ -555,8 +621,51 @@ class Walk:
             k = self.kind_of(n)
             if receiverish(k):
                 self._consume(n, k)
+            elif isinstance(k, tuple) and k[0] == "fn" and receiverish(self.fn_ret.get(k[1])):
+                self._consume_fn(n, k)
         self._outside_playwright()
         return self
+
+    def _enclosing_fn(self, n):
+        p = self.parent[id(n)]
+        while p is not None and p["k"] not in FN_KINDS and p["k"] not in ACCESSOR_KINDS:
+            p = self.parent[id(p)]
+        return p
+
+    def _returned(self, n, k, fn):
+        """A receiver returned from `fn` (a return statement's value, an expression body) is followed only where the walk
+        follows a call of `fn` (_invoke), so the type has a call to flow to; a method's or an accessor's body is followed to no
+        call (the walk types no `this` and no object method), and a helper no followed call invokes (a callback handed to a
+        member call, a helper held in a literal, one reached through a road the walk does not read) returns it to nowhere the
+        walk can see."""
+        if fn is None:
+            return self.refuse(n, "%s returned outside a function" % show(k))
+        if fn["k"] in ACCESSOR_KINDS:
+            return self.refuse(fn, "%s returned from a method or an accessor: the walk types no `this` and no object method, so the call that reads it is unseen" % show(k))
+        if id(fn) not in self.invoked:
+            return self.refuse(fn, "%s returned from a helper the walk follows to no call (a callback handed to a member call, a helper held in a literal or reached through a road the walk does not read)" % show(k))
+
+    def _consume_fn(self, n, k):
+        """A helper whose return is a receiver flows only through a name binding, an assignment to a name, a direct call where it
+        stands, or an argument to a helper the walk follows (whose parameter's calls invoke it, _flow); placed anywhere else
+        (a literal, a member read such as `hf.call`, a callback to a member call, a return) its calls are unseen."""
+        p = self.parent[id(n)]
+        while p is not None and p["k"] in PASS_THROUGH:
+            n, p = p, self.parent[id(p)]
+        if p is None or n["k"] == "FunctionDeclaration":
+            return
+        pk, pkids = p["k"], self.kids(p)
+        if pk == "VariableDeclaration" and pkids[0]["k"] == "Identifier" and pkids[-1] is n:
+            return
+        if pk == "BinaryExpression" and p.get("op") == "=" and pkids[0]["k"] == "Identifier" and pkids[1] is n:
+            return
+        if pk == "CallExpression":
+            if pkids[0] is n:
+                return
+            kc = self.kind_of(pkids[0])
+            if isinstance(kc, tuple) and kc[0] == "fn":
+                return
+        self.refuse(p, "a helper that returns %s reaches a %s the walk does not follow (a helper's return flows only through a name binding, an assignment to a name, a direct call or an argument to a helper the walk follows)" % (show(self.fn_ret[k[1]]), pk))
 
     def _consume(self, n, k):
         p = self.parent[id(n)]
@@ -600,14 +709,16 @@ class Walk:
             return self.refuse(p, "%s in a %s expression" % (show(k), p.get("op")))
         if pk == "ExpressionStatement" and n["k"] == "BinaryExpression" and n.get("op") == "=":
             return
-        if pk in PASS_THROUGH or pk in ("ConditionalExpression", "ArrayLiteralExpression", "PropertyAssignment", "ShorthandPropertyAssignment", "ReturnStatement", "Parameter"):
+        if pk == "ReturnStatement":
+            return self._returned(n, k, self._enclosing_fn(p))
+        if pk in PASS_THROUGH or pk in ("ConditionalExpression", "ArrayLiteralExpression", "PropertyAssignment", "ShorthandPropertyAssignment", "Parameter"):
             return
         if pk == "PrefixUnaryExpression" and p.get("op") == "!":
             return
         if pk in ("IfStatement", "WhileStatement", "DoStatement", "ForStatement") and n["k"] != "Block":
             return
         if pk in FN_KINDS and pkids[-1] is n:
-            return
+            return self._returned(n, k, p)   # an expression body
         if pk == "ForOfStatement" and pkids[1] is n:
             if isinstance(k, tuple) and k[0] == "list":
                 return
@@ -615,8 +726,12 @@ class Walk:
         return self.refuse(p, "%s reaches a %s the walk does not follow" % (show(k), pk))
 
     def _outside_playwright(self):
-        """A timer name (bare, as a member, or bound to another name) or a promise constructor anywhere but the budget's own
-        `sleep` property; a require or an import of a module the driver does not own."""
+        """The names refused by the road they open, wherever they appear as an identifier: a timer (bare, as a member, or bound
+        to another name) or a promise constructor anywhere but the budget's own `sleep` property; `Promise` read anywhere but as
+        that constructor or as the object of a Promise.resolve or Promise.all call (an alias, a combinator that may never settle);
+        `fetch` anywhere but as a callee (counted there, bare or as a member); `require` read as a value; `createRequire` read as
+        a value; REFUSED_NAMES; and a require or an import of a module the driver does not own (a dynamic import() and a second
+        createRequire are refused in _call)."""
         def under_sleep(n):
             p = self.parent[id(n)]
             while p is not None:
@@ -628,18 +743,45 @@ class Walk:
                         q = self.parent[id(q)]
                 p = self.parent[id(p)]
             return False
+
+        def callee_of(p):
+            """The CallExpression `p` is the callee of, else None."""
+            gp = self.parent[id(p)]
+            return gp if gp is not None and gp["k"] == "CallExpression" and self.kids(gp)[0] is p else None
         why = "a wait outside playwright and the budget (a timer or a promise constructor that is not the budget's sleep)"
         for n in self.nodes:
-            if n["k"] == "Identifier" and n["t"] in TIMERS and not under_sleep(n):
-                self.refuse(self.parent[id(n)] or n, why)
-            elif n["k"] == "NewExpression" and self.kids(n) and self.kids(n)[0].get("t") == "Promise" and not under_sleep(n):
+            if n["k"] == "NewExpression" and self.kids(n) and self.kids(n)[0].get("t") == "Promise" and not under_sleep(n):
                 self.refuse(n, why)
+            if n["k"] != "Identifier":
+                continue
+            t, p = n["t"], self.parent[id(n)]
+            at = p or n
+            if t in TIMERS and not under_sleep(n):
+                self.refuse(at, why)
+            elif t in REFUSED_NAMES:
+                self.refuse(at, "%s: %s" % (t, REFUSED_NAMES[t]))
+            elif t == "Promise":
+                as_ctor = p is not None and p["k"] == "NewExpression" and under_sleep(n)
+                as_object = p is not None and p["k"] == "PropertyAccessExpression" and self.kids(p)[0] is n and self.kids(p)[1].get("t") in PROMISE_ALLOWED and callee_of(p) is not None
+                if not (as_ctor or as_object):
+                    self.refuse(at, "Promise read anywhere but as the budget's sleep constructor or as the object of a Promise.%s call: an alias or another combinator is a promise this census cannot see settle, a wait with no timer name" % "/Promise.".join(PROMISE_ALLOWED))
+            elif t == "fetch":
+                bare = p is not None and p["k"] == "CallExpression" and self.kids(p)[0] is n
+                member = p is not None and p["k"] == "PropertyAccessExpression" and self.kids(p)[1] is n and callee_of(p) is not None
+                if bare or member:
+                    self.fetches.append(self.line(n))
+                else:
+                    self.refuse(at, "fetch read as a value or named where it is not called: an alias carries the uncounted wait under another name")
+            elif t == "require" and self.is_reference(n) and not (p is not None and p["k"] == "CallExpression" and self.kids(p)[0] is n):
+                self.refuse(at, "require read as a value (an alias or a member of it loads a module the census does not see)")
+            elif t == "createRequire" and p is not None and p["k"] != "ImportSpecifier" and not (p["k"] == "CallExpression" and self.kids(p)[0] is n):
+                self.refuse(at, "createRequire read as a value (an alias makes a loader the census does not follow)")
         for mod, line in self.imports:
             if mod not in IMPORTS_ALLOWED:
                 self.refusals.add((line, "import ... from %r" % mod, "an import of a module the census does not know"))
         for mod, line in self.requires:
             if mod not in REQUIRE_ALLOWED:
-                self.refusals.add((line, "require(%r)" % (mod,), "a require of a module the census does not know"))
+                self.refusals.add((line, "require(%r)" % (mod,), "a require of a module the census does not know" if mod is not None else "a require whose module is not a string literal: a name built at run time"))
 
 
 def census(src, tree):
@@ -661,7 +803,8 @@ def census(src, tree):
             if first not in B.FIXED_DWELLS:
                 uncapped.append((line, form, first))
     return {"refusals": sorted(w.refusals), "unlisted": unlisted, "unlisted_waits": unlisted_waits, "uncapped": uncapped,
-            "dwells": sorted(dwells), "fetches": len(w.fetches), "calls": w.calls, "waits": w.waits, "poll_bindings": w.poll_bindings, "walk": w}
+            "dwells": sorted(dwells), "fetches": len(w.fetches), "calls": w.calls, "waits": w.waits, "poll_bindings": w.poll_bindings,
+            "require_bindings": w.require_bindings, "walk": w}
 
 
 def verdict(c):
@@ -679,10 +822,20 @@ def verdict(c):
 
 
 ANCHOR = "  out.provBefore = await provText();\n"   # the plants go one line after this, inside the driver's try block
-# The review's plants (round 5 of PR 857, the owner's read-only prep over the round-4 head): one JS line each, and the
-# class of red this census must give it. `passed` marks the two controls. Every row but the six the regex census caught
-# (var-held-page, var-held-locator, template-string, paren-receiver, space-before-dot-wait, third-fetch, set-default-timeout,
-# bracket-page-control) passed the driver-bound module at the round-5 head with the plant in place.
+SEL = "cfg.provSel"
+# The plants (round 5 of PR 857): one JS line each, and the class of red this census must give it; `passed` for the CONTROLS
+# and the DISCLOSED rows alone. Provenance: the rows from var-held-page to firefox-launch are the prep note's tables for
+# censuses 3, 4 and 5 (the owner's read-only prep over the round-4 head) but for computed-method, newline-chain, return-stmt,
+# param-default, method-ref-binding and reflect-get, the builder's from the round-4 fixlist's shapes (a returned receiver, a
+# computed member) and its own, and logical-or, the addendum's; timer-as-member, timer-import and identity-control are the
+# builder's; every row from getter-return on is the fixer pass's (the round's verifiers' shapes and the fixer's own). Through
+# the round-4 head's regex census thirteen of the builder's rows were red (var-held-page, var-held-locator, computed-method,
+# newline-chain, paren-receiver, param-default, space-before-dot-wait, method-ref-binding, reflect-get, third-fetch,
+# set-default-timeout, bracket-page-control, template-string; four of them by an accident of spelling) and the rest passed;
+# the review record outside the repo carries that table.
+CONTROLS = ("count-control", "identity-control", "hook-control", "evaluate-fn-control")
+# the disclosed class, passing by disclosure: a wait with no timer, promise, script, module or playwright name as a node
+DISCLOSED = ("busy-loop", "evaluate-busy", "thenable-await")
 PLANTS = (
     ("var-held-page", "const p = pages.feed; await p.locator(cfg.provSel).textContent();", "unlisted"),
     ("var-held-locator", "const Lx = pages.feed.locator(cfg.provSel); await Lx.textContent();", "unlisted"),
@@ -722,6 +875,58 @@ PLANTS = (
     ("timer-as-member", "await new Promise((r) => globalThis.setTimeout(r, 100000));", "refused"),
     ("timer-import", 'import { setTimeout as delay } from "node:timers/promises"; await delay(100000);', "refused"),
     ("identity-control", "", "passed"),
+    # a receiver returned from a helper the walk follows to no call, or a helper that returns one placed where its calls are unseen
+    ("getter-return", "const gobj = { get p() { return pages.feed; } }; await gobj.p.locator(%s).textContent();" % SEL, "refused"),
+    ("object-method-return", "const om = { m() { return pages.feed; } }; await om.m().locator(%s).textContent();" % SEL, "refused"),
+    ("class-method-return", "class CM { m() { return pages.feed; } } await new CM().m().locator(%s).textContent();" % SEL, "refused"),
+    ("fn-call-via-call", "function hf() { return pages.feed; } await hf.call(null).locator(%s).textContent();" % SEL, "refused"),
+    ("callback-return", "const pf = [1].map(() => pages.feed)[0]; await pf.locator(%s).textContent();" % SEL, "refused"),
+    ("reduce-callback", "const pr2 = [0].reduce(() => pages.feed, null); await pr2.locator(%s).textContent();" % SEL, "refused"),
+    ("arrow-in-array-invoked", "const fns = [() => pages.feed]; await fns[0]().locator(%s).textContent();" % SEL, "refused"),
+    ("fn-in-record-invoked", "const rec2 = { g: () => pages.feed }; await rec2.g().locator(%s).textContent();" % SEL, "refused"),
+    ("fn-returned-fn", "const outer = () => () => pages.feed; await outer()().locator(%s).textContent();" % SEL, "refused"),
+    # ...and the helpers the walk does follow to a call, whose returned page reaches the allow-list
+    ("async-iife-return", "const pi = await (async () => pages.feed)(); await pi.locator(%s).textContent();" % SEL, "unlisted"),
+    ("fn-passed-then-invoked", "const inv = (f) => f(); await inv(() => pages.feed).locator(%s).textContent();" % SEL, "unlisted"),
+    ("function-decl", "function gp() { return pages.feed; } await gp().locator(%s).textContent();" % SEL, "unlisted"),
+    ("async-fn-return-awaited", "async function ga() { return pages.feed; } await (await ga()).locator(%s).textContent();" % SEL, "unlisted"),
+    # script text handed to the page (a string, a template, a bound value, a Function, eval): not this census's parse
+    ("evaluate-string-timer", 'await pages.feed.evaluate("new Promise((r) => setTimeout(r, 100000))");', "refused"),
+    ("evaluate-new-function", 'await pages.feed.evaluate(new Function("return new Promise((r) => setTimeout(r, 100000))"));', "refused"),
+    ("evaluate-template", "await pages.feed.evaluate(`new Promise((r) => setTimeout(r, 100000))`);", "refused"),
+    ("evaluate-bound-string", 'const es = "new Promise((r) => setTimeout(r, 100000))"; await pages.feed.evaluate(es);', "refused"),
+    ("waitforfunction-string", 'await pages.feed.waitForFunction("false", null, { timeout: budget.capped(cfg.pageWaitMs) });', "refused"),
+    ("addinitscript-string", 'await pages.feed.addInitScript("setTimeout(() => {}, 100000)");', "refused"),
+    ("addinitscript-string-bound", 'const hs = "while (true) {}"; await pages.feed.addInitScript(hs);', "refused"),
+    ("eval-timer", 'await eval("new Promise((r) => setTimeout(r, 100000))");', "refused"),
+    ("indirect-eval", 'const ev = eval; await ev("new Promise((r) => setTimeout(r, 100000))");', "refused"),
+    ("function-ctor-bare", 'await Function("return new Promise((r) => setTimeout(r, 100000))")();', "refused"),
+    ("hook-control", "await pages.feed.addInitScript(hook, { stripCaps: false });", "passed"),
+    ("evaluate-fn-control", "await pages.feed.evaluate(() => 1);", "passed"),
+    # a module loaded any way but the driver's
+    ("dynamic-import-timers", 'const tp = await import("node:timers/promises"); await tp.scheduler.wait(100000);', "refused"),
+    ("dynamic-import-bracket", 'await (await import("node:timers/promises"))["setTimeout"](100000);', "refused"),
+    ("dynamic-import-built-name", 'const tp3 = await import("node:" + "timers/promises"); await tp3["set" + "Timeout"](100000);', "refused"),
+    ("createrequire-child-process", 'const rq2 = createRequire(process.env.EXT_PKG); rq2("child_process").execSync("sleep 100");', "refused"),
+    ("createrequire-import-meta", 'const req4 = createRequire(import.meta.url); req4("child_process").execSync("sleep 100");', "refused"),
+    ("require-alias", 'const rq = require; const tp2 = rq("node:timers/promises"); await tp2.scheduler.wait(100000);', "refused"),
+    ("require-built-name", 'const cp = require("child_" + "process"); cp.execSync("sleep 100");', "refused"),
+    # Promise read as anything but the sleep's constructor or Promise.resolve/Promise.all; fetch as anything but a callee
+    ("promise-alias", "const PC = Promise; await new PC(() => {});", "refused"),
+    ("promise-reject-alias", "const PR = Promise.reject; await PR(1).catch(() => {});", "refused"),
+    ("promise-any-empty", "await Promise.any([]).catch(() => {});", "refused"),
+    ("promise-withresolvers", "const { promise: pw } = Promise.withResolvers(); await pw;", "refused"),
+    ("promise-race-empty", "await Promise.race([]);", "refused"),
+    ("fetch-alias", "const f2 = fetch; await f2(cfg.tunnelsUrl);", "refused"),
+    ("fetch-globalthis", "await globalThis.fetch(cfg.tunnelsUrl);", "refused"),
+    # a wait spelled without a timer name, and the global object's members by string
+    ("atomics-wait", "Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100000);", "refused"),
+    ("atomics-alias", "const AW = Atomics; AW.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100000);", "refused"),
+    ("globalthis-string-timer", 'globalThis["set" + "Timeout"](() => {}, 100000);', "refused"),
+    # the disclosed class (DISCLOSED): no timer, promise, script, module or playwright name as a node of the tree
+    ("busy-loop", "for (const t0 = Date.now(); Date.now() - t0 < 100000;) {}", "passed"),
+    ("evaluate-busy", "await pages.feed.evaluate(() => { const t0 = Date.now(); while (Date.now() - t0 < 100000) {} });", "passed"),
+    ("thenable-await", "await { then() {} };", "passed"),
 )
 
 
@@ -774,6 +979,8 @@ class TheDriverParsed(unittest.TestCase):
                              "the wait census is not vacuous: the forms the driver uses today are all seen: %r" % (sorted({form for form, _, _, _ in c["waits"]}),))
         self.assertEqual(c["poll_bindings"], [("SourceFile", L.DRIVER.count("\n", 0, L.DRIVER.index("const waitFor = budget.waitFor;")) + 1)],
                          "the module scope binds `waitFor` to the budget's poll exactly once, the alias the bare waitFor( sites read: %r" % (c["poll_bindings"],))
+        self.assertEqual(c["require_bindings"], [L.DRIVER.count("\n", 0, L.DRIVER.index("const require = createRequire(")) + 1],
+                         "the module scope makes the driver's one loader, `const require = createRequire(...)`, exactly once (every other createRequire is a refusal above): %r" % (c["require_bindings"],))
         self.assertEqual(c["fetches"], 2, "the driver's two fetches (ctl and tunnelsStatus) carry no timeout: the acknowledged driver_error road, DRIVER_TIMEOUT_S, "
                                           "which the arithmetic does not count; a third fetch is a new uncounted wait")
         self.assertGreaterEqual(len(c["waits"]), 16, "the census saw the driver's wait sites (16 at the round-5 head): %d" % len(c["waits"]))
@@ -793,6 +1000,10 @@ class TheDriverParsed(unittest.TestCase):
             "helpers": root + "const getP = () => pages.feed; await getP().locator(s).count(); const getQ = () => { return pages.feed; }; await getQ().locator(s).count(); const read = async (p) => p.locator(s).count(); await read(await pages.feed); const readD = async (p = pages.feed) => p.locator(s).count(); await readD();",
             "shadow": root + "const p = pages.feed; const outcome = (name, p) => p.then(() => true); await p.locator(s).count();",
             "poll": "const budget = makeBudget({}); const waitFor = budget.waitFor; await waitFor(async () => true, 1000, \"w\"); await budget.waitFor(fn, 1, \"w\"); const inner = () => { const waitFor = async () => true; return waitFor(); };",
+            "invoked-helpers": root + "const inv = (f) => f(); await inv(() => pages.feed).locator(s).count(); const pi = await (async () => pages.feed)(); await pi.locator(s).count(); "
+                                      "const gp = () => pages.feed; const alias = gp; await alias().locator(s).count(); const fns = [() => 1]; await fns[0]();",
+            "scripts-and-names": root + "const hk = (o) => { window.x = o; }; await pages.feed.addInitScript(hk, { a: 1 }); await pages.feed.evaluate(() => 1); "
+                                        "await pages.feed.waitForFunction(() => true, null, { timeout: budget.capped(x) }); await Promise.all([]); const q = Promise.resolve(null); await fetch(u); await fetch(u);",
         }
         trees = parse_js(list(cells.items()))[1]
         for name, src in cells.items():
@@ -813,6 +1024,10 @@ class TheDriverParsed(unittest.TestCase):
         self.assertEqual(seen.count(("page", "locator")), 4, "a page returned from a helper, awaited into one, or a helper's default parameter is a page: %r" % (seen,))
         seen = [(k, m) for k, m, ln in census(cells["shadow"], trees["shadow"][1])["calls"] if ln > 1]
         self.assertEqual(seen, [("page", "locator"), ("locator", "count")], "outcome's parameter p shadows the module's p: p.then is no page call: %r" % (seen,))
+        seen = [(k, m) for k, m, ln in census(cells["invoked-helpers"], trees["invoked-helpers"][1])["calls"] if ln > 1]
+        self.assertEqual(seen.count(("page", "locator")), 3, "a page returned from a helper the walk follows to a call (an argument to a helper, an IIFE, an alias) is a page: %r" % (seen,))
+        c = census(cells["scripts-and-names"], trees["scripts-and-names"][1])
+        self.assertEqual(c["fetches"], 2, "fetch is counted as a callee: %r" % (c["fetches"],))
         w = census(cells["poll"], trees["poll"][1])
         self.assertEqual([(f, ln) for f, _, _, ln in w["waits"]], [("waitFor", 1), ("waitFor", 1)], "the bare call and the receiver call are the poll; inner's waitFor is its own function and no site")
         self.assertEqual(w["poll_bindings"], [("SourceFile", 1)])
@@ -835,6 +1050,27 @@ class TheDriverParsed(unittest.TestCase):
             "timer-bound": ("const st = setTimeout;", "a wait outside playwright and the budget"),
             "foreign-require": ('const cp = require("child_process");', "a require of a module the census does not know"),
             "foreign-import": ('import { setTimeout as delay } from "node:timers/promises";', "an import of a module the census does not know"),
+            # the fixer pass's roads (round 5)
+            "return-uninvoked": ("const cb = [1].map(() => pages.feed);", "returned from a helper the walk follows to no call"),
+            "return-method": ("const om = { m() { return pages.feed; } };", "returned from a method or an accessor"),
+            "return-getter": ("const go = { get p() { return pages.feed; } };", "returned from a method or an accessor"),
+            "helper-in-literal": ("const fns = [() => pages.feed];", "a helper that returns a page reaches a ArrayLiteralExpression"),
+            "helper-member": ("function hf() { return pages.feed; } await hf.call(null);", "a helper that returns a page reaches a PropertyAccessExpression"),
+            "dynamic-import": ('const tp = await import("node:timers/promises");', "a dynamic import()"),
+            "second-createrequire": ("const rq2 = createRequire(process.env.EXT_PKG);", "a createRequire beyond the driver's one"),
+            "require-alias": ("const rq = require;", "require read as a value"),
+            "require-built": ('const cp2 = require("child_" + "process");', "a require whose module is not a string literal"),
+            "eval": ('await eval("1");', "eval"),
+            "function-ctor": ('new Function("return 1");', "Function"),
+            "script-string": ('await pages.feed.evaluate("1");', "a script handed to evaluate as anything but a function literal"),
+            "script-bound-string": ('const es = "1"; await pages.feed.evaluate(es);', "a script handed to evaluate as anything but a function literal"),
+            "script-init": ('await pages.feed.addInitScript("1");', "a script handed to addInitScript as anything but a function literal"),
+            "promise-alias": ("const PC = Promise;", "Promise read anywhere but"),
+            "promise-race": ("await Promise.race([]);", "Promise read anywhere but"),
+            "fetch-alias": ("const f2 = fetch;", "fetch read as a value"),
+            "atomics": ("Atomics.wait(x, 0, 0, 1);", "Atomics"),
+            "globalthis": ("globalThis.x = 1;", "globalThis"),
+            "computed-callee": ('x["a" + "b"]();', "a computed member call on a value the walk does not type"),
         }
         trees = parse_js([(name, root + src) for name, (src, _) in refused.items()])[1]
         for name, (src, token) in refused.items():
@@ -873,9 +1109,12 @@ class TheDriverParsed(unittest.TestCase):
 
     def test_every_plant_of_the_review_is_refused_by_the_class_the_table_names(self):
         """The fixture: each PLANTS row inserted into the driver and run through this census gives the verdict the row
-        names, with the two controls passing. A row whose verdict moves is a change to what the census sees, and its
-        line in PLANTS is where to say why."""
-        self.assertGreaterEqual(len(PLANTS), 36, "the review's plants are all in the table: %d" % len(PLANTS))
+        names, `passed` for the CONTROLS and the DISCLOSED rows and for nothing else. A row whose verdict moves is a change
+        to what the census sees, and its line in PLANTS is where to say why; a DISCLOSED row that reds says the census now
+        sees that shape, and the docstring's disclosed class is re-drawn."""
+        self.assertEqual(len({name for name, _, _ in PLANTS}), len(PLANTS), "every plant has its own name")
+        self.assertEqual({name for name, _, want in PLANTS if want == "passed"}, set(CONTROLS) | set(DISCLOSED),
+                         "the rows that pass are exactly the controls and the disclosed class: %r" % (sorted(name for name, _, want in PLANTS if want == "passed"),))
         for name, js, want in PLANTS:
             with self.subTest(plant=name):
                 c = self._census(name if js else "driver.mjs", planted(js))
