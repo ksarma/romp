@@ -32,10 +32,15 @@ What the recorder cannot see, a command issued any other way (`os.system`, `os.p
 and `os.exec*` families, or a road to the subprocess module other than `import subprocess`: an import under another name, a
 name imported from it, the string "subprocess" handed to __import__ or importlib), a second census refuses by node in the
 lab module and in every module it imports from this directory, transitively (OS_SPAWNERS, pinned against this Python's os
-module; _commands_around_the_recorder, its detector pinned on a synthetic source of every form it refuses). What remains
-unseen is a command a function of an imported module issues through THAT module's own `subprocess` attribute (the recorder
-patches the lab module's alone): the mint's two commands and the teardown's none are the lab module's own, and no pin here
-exercises a road through an imported module.
+module; _commands_around_the_recorder, its detector pinned on a synthetic source of every form it refuses). Since the
+follow-up's fixer pass the census also refuses a string constant naming such an os function, the road through getattr,
+os.__dict__ or vars(os), and its import derivation reads every spelling of a sibling import, bare, package-qualified or
+relative (_sibling_imports, pinned on each spelling), where it read the bare spelling alone. Two roads remain unseen. A
+command a function of an imported module issues through THAT module's own `subprocess` attribute (the recorder patches the
+lab module's alone): the mint's two commands and the teardown's none are the lab module's own, and no pin here exercises a
+road through an imported module. And a name assembled at run time (a concatenated string handed to getattr, __import__ or
+importlib, an exec or eval over built text) is beyond a census over the parsed source by construction: the census refuses
+every spelling a source carries whole, and a source that builds the name carries none.
 
 Synthetic: a scratch repository minted here, hostname TESTHOST; no kernel, no browser.
 """
@@ -63,25 +68,51 @@ OS_SPAWNERS = ("system", "popen",
                "spawnl", "spawnle", "spawnlp", "spawnlpe", "spawnv", "spawnve", "spawnvp", "spawnvpe", "posix_spawn", "posix_spawnp",
                "execl", "execle", "execlp", "execlpe", "execv", "execve", "execvp", "execvpe")
 LAB_MODULE = "test_federated_linkdrop_served"
+PACKAGE = os.path.basename(HERE)   # this directory is a package (tests/__init__.py), so a sibling is importable as tests.x and as .x too
 
 
-def _lab_modules(root=LAB_MODULE):
+def _sibling_imports(src, package=PACKAGE):
+    """The names the import statements of the parsed source could resolve to a module beside the lab module in this directory:
+    a bare name (`import lab_dist`, `from lab_dist import x`, the spelling the lab modules use, resolved through sys.path), the
+    same name qualified by this directory's package (`import tests.lab_dist`, `from tests import lab_dist`, `from tests.lab_dist
+    import x`) and a one-level relative import (`from . import lab_dist`, `from .lab_dist import x`, the spelling
+    tests/__init__.py uses). An import from above this directory (`from .. import x`) names nothing here; a foreign module's
+    name (`import os`) is returned and left for the caller's file check to drop. The follow-up's fixer pass: the derivation read
+    the bare spelling alone, so a helper carrying `os.popen`, imported into the lab module as `from tests import <helper>` or
+    `import tests.<helper>`, passed the census cell."""
+    names = set()
+    for n in ast.walk(ast.parse(src)):
+        if isinstance(n, ast.Import):
+            for a in n.names:
+                parts = a.name.split(".")
+                names.add(parts[1] if parts[0] == package and len(parts) > 1 else parts[0])
+        elif isinstance(n, ast.ImportFrom):
+            parts = n.module.split(".") if n.module else []
+            if n.level == 0 and parts[:1] == [package]:
+                parts = parts[1:]
+            elif n.level > 1:
+                continue
+            if parts:
+                names.add(parts[0])
+            else:
+                names.update(a.name for a in n.names)
+    return names
+
+
+def _lab_modules(root=LAB_MODULE, here=HERE):
     """The lab module and, transitively, every module it imports that lives beside it in this directory, {name: source},
-    derived from the parsed import statements (an `import x` or `from x import y` naming a file HERE/x.py), so a helper the
-    lab module grows is censused without anyone listing it."""
-    out, todo = {}, [root]
+    derived from the parsed import statements (every spelling _sibling_imports resolves, each naming a file here/x.py), so a
+    helper the lab module grows is censused without anyone listing it. `here` is the directory (its basename the package the
+    qualified spellings name); the composition pin hands it a synthetic one."""
+    out, todo, package = {}, [root], os.path.basename(here)
     while todo:
         name = todo.pop()
-        path = os.path.join(HERE, name + ".py")
+        path = os.path.join(here, name + ".py")
         if name in out or not os.path.isfile(path):
             continue
         with open(path, encoding="utf-8") as f:
             out[name] = f.read()
-        for n in ast.walk(ast.parse(out[name])):
-            if isinstance(n, ast.Import):
-                todo += [a.name for a in n.names]
-            elif isinstance(n, ast.ImportFrom) and n.module and not n.level:
-                todo.append(n.module)
+        todo += sorted(_sibling_imports(out[name], package))
     return out
 
 
@@ -89,9 +120,12 @@ def _commands_around_the_recorder(src):
     """Every node of the parsed source that could start a program around the recorder, as (line, form): an attribute read
     named as one of OS_SPAWNERS on ANY value (`os.system`, a renamed os and a nested attribute are refused alike, the safe
     side); a call to such a bare name, or its import from os (`from os import system`, `from os import *`); an import of
-    the subprocess module under another name, or of a name from it; and the string "subprocess" as a constant, the road
-    through __import__, importlib.import_module or sys.modules. A comment or a docstring is no node of these kinds, so the
-    words in one do not count."""
+    the subprocess module under another name, or of a name from it; the string "subprocess" as a constant, the road
+    through __import__, importlib.import_module or sys.modules; and a string constant equal to one of OS_SPAWNERS, the road
+    through getattr(os, "system"), os.__dict__["system"] or vars(os)["system"] (the follow-up's fixer pass; the five modules
+    hold no such constant, and a getattr over another name is untouched since only the string is matched). A comment or a
+    docstring is no node of these kinds, so the words in one do not count; a docstring is one constant equal to its whole
+    text, so a docstring that names os.system is not equal to "system"."""
     found = []
     for n in ast.walk(ast.parse(src)):
         if isinstance(n, ast.Attribute) and n.attr in OS_SPAWNERS:
@@ -107,8 +141,8 @@ def _commands_around_the_recorder(src):
             for a in n.names:
                 if a.name.split(".")[0] == "subprocess" and (a.asname or a.name != "subprocess"):
                     found.append((n.lineno, "import %s as %s" % (a.name, a.asname)))
-        elif isinstance(n, ast.Constant) and n.value == "subprocess":
-            found.append((n.lineno, '"subprocess"'))
+        elif isinstance(n, ast.Constant) and (n.value == "subprocess" or n.value in OS_SPAWNERS):
+            found.append((n.lineno, '"%s"' % (n.value,)))
     return found
 
 
@@ -339,12 +373,14 @@ class OldHubMintIsPrivate(unittest.TestCase):
         from this directory, transitively (_lab_modules, derived from the import statements), carry no other road to a
         process, by node over the parsed source (_commands_around_the_recorder): no attribute named as one of this Python's
         program-starting os functions on any value, no call to or import of such a bare name, no import of subprocess under
-        another name or of a name from it, no constant "subprocess". OS_SPAWNERS is pinned against this Python's os module
-        (every name beginning spawn, exec or posix_spawn, plus system and popen); the derivation must reach the lab module
-        and lab_dist; and the detector is pinned on a synthetic source of each form it refuses and on the allowed spellings
-        (import os, import subprocess, subprocess.run, os.path.join, the words in a docstring), so an empty census is a red
-        and not a pass. What remains unseen is stated in the module docstring: a command a function of an imported module
-        issues through that module's own subprocess attribute."""
+        another name or of a name from it, no constant "subprocess", no constant naming one of those os functions (the road
+        through getattr, os.__dict__ or vars(os); the follow-up's fixer pass). OS_SPAWNERS is pinned against this Python's os
+        module (every name beginning spawn, exec or posix_spawn, plus system and popen); the derivation must reach the lab
+        module and lab_dist; and the detector is pinned on a synthetic source of each form it refuses and on the allowed
+        spellings (import os, import subprocess, subprocess.run, os.path.join, the words in a docstring), so an empty census
+        is a red and not a pass. What remains unseen is stated in the module docstring: a command a function of an imported
+        module issues through that module's own subprocess attribute, and a name assembled at run time (a concatenated
+        string, exec, eval, importlib over built text), which no census over the parsed source can read."""
         wanted = {n for n in dir(os) if n.startswith(("spawn", "exec", "posix_spawn")) or n in ("system", "popen")}
         self.assertTrue(wanted, "this Python's os module names program-starting functions")
         self.assertEqual(sorted(wanted - set(OS_SPAWNERS)), [], "every program-starting os function of this Python is in OS_SPAWNERS")
@@ -357,7 +393,9 @@ class OldHubMintIsPrivate(unittest.TestCase):
                  ('import subprocess as sp\n', "import subprocess as sp"),
                  ('from subprocess import Popen as P\n', "from subprocess import Popen"),
                  ('import importlib\nimportlib.import_module("subprocess")\n', '"subprocess"'),
-                 ('import sys\nsys.modules["subprocess"]\n', '"subprocess"'))
+                 ('import sys\nsys.modules["subprocess"]\n', '"subprocess"'),
+                 ('import os\ngetattr(os, "system")("true")\n', '"system"'),
+                 ('import os\nos.__dict__["execv"]\n', '"execv"'))
         for src, form in forms:
             with self.subTest(form=form):
                 hits = _commands_around_the_recorder(src)
@@ -369,6 +407,52 @@ class OldHubMintIsPrivate(unittest.TestCase):
         found = {name: hits for name, src in sorted(mods.items()) for hits in [_commands_around_the_recorder(src)] if hits}
         self.assertEqual(found, {}, "a road to a process around the recorder in the lab module or a module it imports from this directory (censused: %s): %r"
                                     % (", ".join(sorted(mods)), found))
+
+    def test_the_import_derivation_reads_every_spelling_of_a_sibling_import(self):
+        """The census walks a module by the file its import names, whatever the spelling. The follow-up's fixer pass: the
+        derivation followed `import x` and `from x import y` alone, so a helper reached as `from tests import x`, `import
+        tests.x` or `from . import x` (the spelling tests/__init__.py itself uses) fell outside the census with no red, and a
+        helper carrying `os.popen`, imported into the lab module the first two ways, passed the census cell. Each spelling of a
+        sibling import resolves to the sibling's bare name; an import from above this directory resolves to nothing; a foreign
+        module's name is left for _lab_modules's file check to drop (`import os` names `os`; no HERE/os.py exists)."""
+        self.assertTrue(os.path.isfile(os.path.join(HERE, "__init__.py")), "this directory is a package, so the qualified and relative spellings import")
+        self.assertEqual(PACKAGE, "tests", "the qualified spellings below are written for this directory's package name")
+        cases = (("import lab_dist\n", {"lab_dist"}),
+                 ("import lab_dist as d\n", {"lab_dist"}),
+                 ("from lab_dist import x\n", {"lab_dist"}),
+                 ("import tests.lab_dist\n", {"lab_dist"}),
+                 ("import tests.lab_dist as d\n", {"lab_dist"}),
+                 ("from tests import lab_dist\n", {"lab_dist"}),
+                 ("from tests import lab_dist, fs_clock\n", {"lab_dist", "fs_clock"}),
+                 ("from tests.lab_dist import x\n", {"lab_dist"}),
+                 ("from . import lab_dist\n", {"lab_dist"}),
+                 ("from .lab_dist import x\n", {"lab_dist"}),
+                 ("from .. import kernel\n", set()),
+                 ("import os\nfrom os.path import join\n", {"os"}))
+        for src, want in cases:
+            with self.subTest(src=src.strip()):
+                self.assertEqual(_sibling_imports(src), want, "the sibling names %r resolves to" % (src,))
+        self.assertNotIn("os", _lab_modules(), "the file check drops a foreign name")
+
+    def test_the_census_walks_a_sibling_whatever_spelling_imports_it(self):
+        """The composition: _lab_modules over a synthetic package directory (its basename `tests`, like this one) whose root
+        imports four siblings, one by each spelling, one of which imports a fifth through a qualified spelling, beside a sixth
+        nobody imports, reaches the five and not the sixth. Pinned apart from the resolver's own cells because a walk that
+        never called the resolver (the derivation before the follow-up's fixer pass) passes those cells and the census alike:
+        no module in this directory is reached through a qualified or relative spelling today, so only a synthetic one shows
+        the walk following them."""
+        top = tempfile.mkdtemp(prefix="linkdrop-census-")
+        self.addCleanup(shutil.rmtree, top, True)
+        here = os.path.join(top, "tests")
+        os.makedirs(here)
+        files = {"root": "import bare\nfrom tests import qualified_from\nimport tests.qualified_import as q\nfrom . import relative\n",
+                 "bare": "import os\n", "qualified_from": "from tests.deeper import x\n", "qualified_import": "", "relative": "",
+                 "deeper": "import os\n", "unimported": "import os\n"}
+        for name, src in files.items():
+            with open(os.path.join(here, name + ".py"), "w", encoding="utf-8") as f:
+                f.write(src)
+        self.assertEqual(sorted(_lab_modules("root", here)), ["bare", "deeper", "qualified_from", "qualified_import", "relative", "root"],
+                         "the walk reaches a sibling by every spelling, transitively, and no unimported one")
 
 
 if __name__ == "__main__":
