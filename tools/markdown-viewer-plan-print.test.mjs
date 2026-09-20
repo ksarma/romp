@@ -284,7 +284,7 @@ test('every ui/webview/file-print*.test.ts is named in the section and the count
   const named = [...new Set([...section.matchAll(/\b([\w-]+\.test\.(?:ts|mjs))\b/g)].map((m) => m[1]))];
   assert.ok(named.length >= onDisk.length + 9, 'the section names the follow-on\'s modules and the standing suites (' + named.length + ')');
   for (const f of named) {
-    const where = f.endsWith('.mjs') ? ['tools', f] : ['ui', 'webview', f];
+    const where = f.endsWith('.mjs') ? ['tools', f] : exists('ui', 'webview', f) ? ['ui', 'webview', f] : ['ui', f];   // the shared DOM stand-in's own test lives under ui/, which the population paragraph names
     assert.ok(exists(...where), f + ' exists under ' + where.slice(0, -1).join('/'));
   }
   for (const f of new Set([...section.matchAll(/\btests\/(test_\w+\.py)\b/g)].map((m) => m[1]))) assert.ok(exists('tests', f), f + ' exists under tests');
