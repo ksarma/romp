@@ -33,7 +33,26 @@
 // and GET /proto.png under Host remote.test while both placeholders stood, and the harness logged a page-relative GET
 // /rel.png before GET /notes/rel.png. In Chromium and Firefox both logs held no line for any of these figures before the
 // chain ran, so every scene was green there (measured 2026-09-20 at the base 2d41e5c9b; the engines' scheduling of the
-// fetch was not instrumented, the logs were read). Each engine is its own test and skips, saying so, when its binary is
+// fetch was not instrumented, the logs were read).
+// The fourth scene is the fence pass's re-parse (code-block.ts wrapCodeLines: each code element's markup serialized and re-parsed
+// through innerHTML, its line splitter carrying only <span> tags across a newline): a note with three raw multi-line fences,
+// `<pre><code><svg>` / `<image .../>` / `</svg></code></pre>`, the image with a `src`, with a `src` beside a gating `href`, and with a
+// `srcset`, and a control, the first shape inside a ```js fence, which hljs escapes to text. After the re-parse each svg image stands
+// outside its svg, and the HTML parser makes it an HTML <img> whose src or srcset fetches; the chain reads neither on an svg image
+// (figure-gate.ts FETCH_ATTRS.image is href and xlink:href), so with the fence pass after the adoption the img was created in the
+// live document after the chain had judged the svg, and fetched. The scene asserts that neither log holds a request for the
+// unlisted host after the paint and a drain, that each of the three fences holds one HTML img under exactly one placeholder with
+// its src or srcset under data-fv-gated-* and no svg image left, that the control holds no img, and that one click loads the host,
+// one request per img with no Referer. Red in all three engines with the fence pass over `box` after the adoption (the head this
+// scene was written against, in a scratch copy with the scene copied in: the figure server logged GET /a-src.png, GET /b-src.png
+// and GET /c-set.png under Host remote.test with no click; the review's round-2 probe had measured the same three lines), green
+// in all three with the pass over `clean` before the chain (2026-09-20). The fifth case is the Copy button under that order:
+// created in the live document (code-block.ts addCopyBtn, document.createElement), appended into the sanitizer's <pre> and adopted
+// with it; the case clicks each of two fences' buttons for real (page.click) and asserts the handler handed the clipboard write
+// the fence's text and the label read Copied, then Copy again (green in all three engines, 2026-09-20). The page is plain http
+// through the proxy, so navigator.clipboard is absent there and a recorder stands in for the write, as
+// file-view-copy-source-browser.test.ts does; the click and the listeners are the engine's own.
+// Each engine is its own test and skips, saying so, when its binary is
 // absent. Where it skips (CI installs no engine before npm test), file-view-figures-gate-adopt.test.ts executes the
 // order under plain node, the attributes at the adoption and every write of one, with no bytes to see. Synthetic values
 // only: an invented note, TESTHOST paths, a placeholder sid, .test hosts.
@@ -70,6 +89,24 @@ const URL_NOTE = "# A document at a URL\n\nOwn ![r](rel.png) far ![f](" + FIGURE
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64");
 /** The /file URL rewriteFigureSrcs gives a figure of the note's folder (preview.ts fileUrl: the path encoded whole, then the sid). */
 const FILE_URL = (name: string) => "/file?path=" + encodeURIComponent(DIR + name) + "&sid=" + SID;
+/** The fourth scene: raw multi-line fences, an svg image with a `src`, a gated svg image with a `src` beside its `href`, an svg
+ *  image with a `srcset`, and the control, the first shape again inside a `language-js` fence, which hljs escapes to text. */
+const FENCE_NOTE_PATH = DIR + "fence.md";
+const FENCE_A = "http://remote.test/a-src.png", FENCE_B_HREF = "http://remote.test/b-href.png", FENCE_B_SRC = "http://remote.test/b-src.png";
+const FENCE_C_SET = "http://remote.test/c-set.png 1x";
+const FENCE_NOTE = [
+  "# Fences", "",
+  "<pre><code><svg>", '<image src="' + FENCE_A + '" width="10" height="10"/>', "</svg></code></pre>", "",
+  "<pre><code><svg>", '<image href="' + FENCE_B_HREF + '" src="' + FENCE_B_SRC + '" width="10" height="10"/>', "</svg></code></pre>", "",
+  "<pre><code><svg>", '<image srcset="' + FENCE_C_SET + '" width="10" height="10"/>', "</svg></code></pre>", "",
+  "```js", "<svg>", '<image src="' + FENCE_A + '" width="10" height="10"/>', "</svg>", "```", "",
+  "after", "",
+].join("\n");
+/** The Copy case: two plain fences; what each Copy hands the clipboard is the fence's text as marked's code element holds it,
+ *  one trailing newline (the note holds no tab, so fenceCopyQueue hands back the rendered text itself). */
+const COPY_NOTE_PATH = DIR + "copy.md";
+const COPY_FENCES = ["alpha one\nalpha two\n", "beta\n"];
+const COPY_NOTE = "# Two fences\n\n```\nalpha one\nalpha two\n```\n\nbetween\n\n```\nbeta\n```\n";
 
 const BUILD = { bundle: true, write: false, format: "iife", platform: "browser", target: "es2020",
   nodePaths: [path.join(EXT, "node_modules")], external: ["*.png", "*.svg", "*.woff", "*.ttf", "../media/*.woff2"], logLevel: "silent" };
@@ -140,7 +177,7 @@ function harnessServer(js: string, log: Line[]): http.Server {
     if (u.pathname === "/dist/files.js") { head(200, "application/javascript"); res.end(js); return; }
     if (u.pathname === "/file") {
       const p = u.searchParams.get("path") || "";
-      const note = p === REMOTE_NOTE_PATH ? REMOTE_NOTE : p === LOCAL_NOTE_PATH ? LOCAL_NOTE : null;
+      const note = p === REMOTE_NOTE_PATH ? REMOTE_NOTE : p === LOCAL_NOTE_PATH ? LOCAL_NOTE : p === FENCE_NOTE_PATH ? FENCE_NOTE : p === COPY_NOTE_PATH ? COPY_NOTE : null;
       if (note !== null) { head(200, "text/plain; charset=utf-8", { "X-Romp-Mtime-Ns": "1", "X-Romp-Text-Utf8": "1" }); res.end(note); return; }
       if (p === DIR + "fig.png") { head(200, "image/png"); res.end(PNG); return; }
     }
@@ -314,6 +351,76 @@ for (const engine of ["chromium", "firefox", "webkit"] as const) {
         assert.equal(forPng(s.proxyLog, name).map((l) => l.method + " " + l.url).join(","), "GET " + url, "the proxy carried that one request and no other for " + name);
       }
       assert.equal(await page.evaluate(() => document.querySelectorAll("#romp-fileview .fv-gate").length), 0, "both placeholders are gone");
+    });
+  });
+
+  test(engine + ": raw multi-line fences holding an svg image with a src, a gated one with a src beside its href, and one with a srcset: the fence pass's re-parse makes each an HTML img, and since the pass runs before the chain every one stands gated, one placeholder per fence, with no request logged for the unlisted host; the language-js control stays text; the click loads the re-created img once", { timeout: 120000 }, async (t) => {
+    await inEngine(t, engine, async (s) => {
+      const { page } = s;
+      await s.open(FENCE_NOTE_PATH);
+      await page.waitForFunction(() => document.querySelectorAll("#romp-fileview .fileview-body .fileview-md pre").length === 4, null, { timeout: 15000 });
+      await s.drain();
+      // the bytes: nothing left for the unlisted host while the note stands rendered
+      const remote = (lines: Line[]) => lines.filter((l) => l.host === "remote.test" || l.url.includes("remote.test")).map((l) => l.method + " " + l.url + " host=" + l.host);
+      assert.deepEqual(remote(s.figureLog), [], engine + ": the figure server logged a request for the unlisted host after the fence re-parse; the proxy's lines: " + JSON.stringify(remote(s.proxyLog)));
+      assert.deepEqual(remote(s.proxyLog), [], engine + ": the proxy logged a request for the unlisted host after the fence re-parse");
+      // the tree: every img the re-parse created is an HTML img under one placeholder, its source moved aside, and the svg it left is empty
+      type Fence = { imgs: { ns: string | null; src: string | null; srcset: string | null; gatedSrc: string | null; gatedSrcset: string | null; gated: boolean }[]; images: number; gates: number; labels: string[]; text: string };
+      const seen: Fence[] = await page.evaluate(() => Array.from(document.querySelectorAll("#romp-fileview .fileview-md pre")).map((pre) => ({
+        imgs: Array.from(pre.querySelectorAll("img")).map((i) => ({ ns: i.namespaceURI, src: i.getAttribute("src"), srcset: i.getAttribute("srcset"), gatedSrc: i.getAttribute("data-fv-gated-src"), gatedSrcset: i.getAttribute("data-fv-gated-srcset"), gated: i.closest('[data-act="fv-load"]') !== null })),
+        images: pre.querySelectorAll("image").length,
+        gates: pre.querySelectorAll('[data-act="fv-load"]').length,
+        labels: Array.from(pre.querySelectorAll("[data-fv-label]")).map((l) => l.textContent || ""),
+        text: (pre.querySelector("code") as HTMLElement).textContent || "",
+      })));
+      const HTML_NS = "http://www.w3.org/1999/xhtml";
+      const img = (src: string | null, srcset: string | null) => ({ ns: HTML_NS, src: null, srcset: null, gatedSrc: src, gatedSrcset: srcset, gated: true });
+      assert.deepEqual(seen.map((f) => ({ imgs: f.imgs, images: f.images, gates: f.gates, labels: f.labels })), [
+        { imgs: [img(FENCE_A, null)], images: 0, gates: 1, labels: [LABEL] },
+        { imgs: [img(FENCE_B_SRC, null)], images: 0, gates: 1, labels: [LABEL] },
+        { imgs: [img(null, FENCE_C_SET)], images: 0, gates: 1, labels: [LABEL] },
+        { imgs: [], images: 0, gates: 0, labels: [] },
+      ], engine + ": three fences, each with one HTML img the re-parse created, gated under exactly one placeholder with its src or srcset moved aside and no svg image left; the language-js control holds no img and no placeholder; seen: " + JSON.stringify(seen));
+      assert.ok(seen[3].text.includes('<image src="' + FENCE_A + '"'), "the control's svg is text: hljs escaped it");
+      // the placeholders are the gate's own: one click loads the HOST (figure-gate.ts loadGatedHost), so the three re-created imgs load,
+      // one request each under the unlisted Host with no Referer, and every placeholder is gone
+      await page.click('#romp-fileview .fileview-md pre:nth-of-type(1) [data-act="fv-load"]');
+      await page.waitForFunction(() => { const imgs = Array.from(document.querySelectorAll("#romp-fileview .fileview-md pre img")) as HTMLImageElement[]; return imgs.length === 3 && imgs.every((i) => i.complete && i.naturalWidth === 1); }, null, { timeout: 10000 });
+      await s.drain();
+      const got = s.figureLog.filter((l) => l.host === "remote.test");
+      assert.deepEqual(got.map((l) => l.method + " " + l.url + " referer=" + l.referer).sort(), ["GET /a-src.png referer=null", "GET /b-src.png referer=null", "GET /c-set.png referer=null"],
+        "after the click, one request per re-created img under the unlisted Host, no Referer, and no other line: " + show(s.figureLog));
+      assert.equal(await page.evaluate(() => document.querySelectorAll('#romp-fileview .fileview-md [data-act="fv-load"]').length), 0, "every placeholder is gone");
+    });
+  });
+
+  test(engine + ": the Copy button, created in the live document and appended into the sanitizer's body before the adoption, answers a real click on each fence after it: the handler hands the clipboard the fence's text and the label acknowledges, then resets", { timeout: 120000 }, async (t) => {
+    await inEngine(t, engine, async (s) => {
+      const { page } = s;
+      await s.open(COPY_NOTE_PATH);
+      const buttons = page.locator("#romp-fileview .fileview-body .fileview-md pre.has-copy > .code-copy");
+      await buttons.nth(1).waitFor({ state: "attached", timeout: 15000 });
+      const shape: { count: number; perPre: number[]; live: boolean[]; labels: string[]; types: string[] } = await page.evaluate(() => {
+        const pres = Array.from(document.querySelectorAll("#romp-fileview .fileview-md pre"));
+        const btns = pres.map((p) => Array.from(p.querySelectorAll(":scope > .code-copy")) as HTMLButtonElement[]);
+        return { count: btns.flat().length, perPre: btns.map((b) => b.length), live: btns.flat().map((b) => b.ownerDocument === document && b.isConnected), labels: btns.flat().map((b) => b.textContent || ""), types: btns.flat().map((b) => b.type) };
+      });
+      assert.deepEqual(shape, { count: 2, perPre: [1, 1], live: [true, true], labels: ["Copy", "Copy"], types: ["button", "button"] }, "one Copy button per fence, in the live document, labelled Copy");
+      // the page is plain http through the proxy, no secure context, so navigator.clipboard is absent there and copyText would take
+      // its execCommand fallback; a recorder stands in for the write, as file-view-copy-source-browser.test.ts does, so the text the
+      // handler hands over is read. The click itself is the engine's: page.click on the button, no dispatchEvent.
+      await page.evaluate(() => { const w = window as any; w.__copied = []; Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: (t: string) => { w.__copied.push(t); return Promise.resolve(); } } }); });
+      for (let k = 0; k < 2; k++) {
+        await buttons.nth(k).hover();
+        await buttons.nth(k).click();
+        await page.waitForFunction((n: number) => { const b = document.querySelectorAll("#romp-fileview .fileview-md pre.has-copy > .code-copy")[n] as HTMLElement; return b.textContent === "Copied" && b.classList.contains("copied"); }, k, { timeout: 5000 })
+          .catch(async () => { const st = await page.evaluate((n: number) => { const b = document.querySelectorAll("#romp-fileview .fileview-md pre.has-copy > .code-copy")[n] as HTMLElement; return { label: b.textContent, cls: b.className, copied: (window as any).__copied }; }, k); assert.fail(engine + ": fence " + (k + 1) + "'s Copy did not acknowledge within 5 s after a real click; button: " + JSON.stringify(st)); });
+        const copied: string[] = await page.evaluate(() => (window as any).__copied);
+        assert.deepEqual(copied, COPY_FENCES.slice(0, k + 1), engine + ": the handler handed the clipboard fence " + (k + 1) + "'s text");
+      }
+      await page.waitForTimeout(1400);   // the acknowledgement's window (code-block.ts acknowledge: about 1.2 s)
+      const after: { labels: string[]; copied: boolean[] } = await page.evaluate(() => { const b = Array.from(document.querySelectorAll("#romp-fileview .fileview-md pre.has-copy > .code-copy")) as HTMLElement[]; return { labels: b.map((x) => x.textContent || ""), copied: b.map((x) => x.classList.contains("copied")) }; });
+      assert.deepEqual(after, { labels: ["Copy", "Copy"], copied: [false, false] }, "both labels read Copy again after the window");
     });
   });
 }

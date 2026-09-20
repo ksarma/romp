@@ -32,7 +32,11 @@
 // What it cannot see: no fetch happens under node, so a leak here is an attribute the browser WOULD fetch through, judged by the
 // scene's own oracle (a URL parse against the page, the host against the allowed set, a same-origin path against /file or the
 // document's directory), never by figure-gate's remoteHost; the engines' own loading, DOMPurify's document and its inertness
-// (the seam test's premise pin), and the bytes are the browser legs'.
+// (the seam test's premise pin), and the bytes are the browser legs'. So is the fence pass's re-parse (code-block.ts wrapCodeLines,
+// `code.innerHTML = wrapLinesHtml(code.innerHTML)`), which the round-2 move put before the chain: the stand-in's innerHTML is a
+// plain field, not a parser, so the HTML parser's rename of an svg <image> split from its svg into an HTML <img> cannot happen
+// here, and the fence scene of file-view-figures-gate-adopt-browser.test.ts is where that is seen; the seam test pins the pass's
+// place and derives the post-adoption re-parse population from the code.
 // Mutations, each applied to a scratch copy of the branch head and run with this scene alone (2026-09-20, at 8a599db74 with
 // the scene as first built and again at the head after the review's third round, which added road (a)'s tree-wide read and
 // the end-state pin; the scene compiled through esbuild's testBuild, the build's report holds the commands): (i) the base's
