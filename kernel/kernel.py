@@ -54312,6 +54312,7 @@ def _resolve_reconnect(c, chat_list):
             # this socket; without the stamp a tap for this window parked for the rest of the page's life.
             c["ready"] = True
         act = c.get("active")
+        _hint = None   # the page's hint the preference below replaced, when it did (review round 5, kernel-2: the record)
         # [fork] review round 4b (2026-09-20; fresh-1 / regression-4, the round-3 fixlist's extra9-1): a reveal PARKED for this client's
         # window (the shell's /reveal at boot beats the chat pane's socket on the ack and vanish roads, and on sw when the browser opens the
         # installed app on its own start URL) names the session the user tapped, and the consume behind this strip will focus it. When the
@@ -54357,6 +54358,7 @@ def _resolve_reconnect(c, chat_list):
             _cols = {str(x.get("col") or "") for x in list(_clients) if x.get("app") == "chat" and str(x.get("wid") or "") == _pk}
             _cols.add(_col)
             if _ps and (_pc is None or _pc == 1) and len(_cols) <= 1 and _ps != str(act) and any(s.get("sid") == _ps for s in chat_list):
+                _hint = str(act)   # the page's own hint, for the record below (review round 5, kernel-2)
                 act = _ps
         held = c.get("echat") or {}
         if not act:
@@ -54379,6 +54381,14 @@ def _resolve_reconnect(c, chat_list):
         skel = [sid for sid in _skeleton_for(c, str(act), chat_list) if sid not in held]
         c["skeleton"] = set(skel)
         c["skeletonOrder"] = skel
+        if _hint is not None:
+            # [fork] review round 5 (2026-09-20, kernel-2): the preference is the one place the kernel overrides the page's own active
+            # hint, and every other _PENDING_REVEAL transition prints a [reveal] line; this one filed nothing, and the `skeleton` client-diag
+            # row carries the page's activeId, so no record named the session the kernel served whole. Printed after the set is built, so the
+            # hint's fate is read off the resolved set (a hint with no transcript stays whole: _skeleton_for), and named by the EVENT, this
+            # client's set resolving, not by a road: the branch runs on the redial and on the ready arm's boot resolve alike.
+            print("[reveal] sid=%s wid=%s: preferred at the set's resolve, the one full in place of the page's hint %s (%s)"
+                  % (str(act)[:8], _pk[:8], _hint[:8], "a skeleton" if _hint in c["skeleton"] else "whole"), file=sys.stderr)
     return not fresh
 
 

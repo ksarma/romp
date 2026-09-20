@@ -51,6 +51,8 @@ TAB_ORDER = [S2, S1, S3, S4]                  # big, mid, small — the tab orde
 SIZES = {S2: 3000, S1: 2000, S3: 1000}        # transcript bytes; S4 has none
 # the journal of a tap that parked on the named road and was landed by the redial's first strip (item 12)
 REDIAL_TRAIL = r"\[reveal\] %s sid=\S+ wid=W1: parked[\s\S]*\[reveal\] sid=\S+ wid=W1: consumed \S+ the pane's redial"
+# the record the parked-reveal preference files when it applies (review round 5, kernel-2): the session served whole, the page's hint, its fate
+PREFERRED_LINE = r"\[reveal\] sid=%s wid=W1: preferred at the set's resolve, the one full in place of the page's hint %s \(%s\)"
 
 
 def _sess(sid, n, state):
@@ -881,14 +883,21 @@ class SkeletonReconnect(unittest.TestCase):
             self.assertLess(types.index("tabOrder"), types.index("focus"), "behind the strip that names its tab")
             self.assertEqual(km._PENDING_REVEAL, {}, "the park was consumed")
             self.assertRegex(trail.getvalue(), REDIAL_TRAIL % "ack", "the journal says the redial landed the park")
+            # review round 5 (kernel-2): the one place the kernel overrides the page's hint files a record, printed once the set is built
+            # and named by the event (the set's resolve; the branch runs on the redial and on the ready arm alike), the hint's fate read off
+            # the resolved set (web has a transcript: a skeleton)
+            self.assertRegex(trail.getvalue(), PREFERRED_LINE % (S2[:8], S1[:8], "a skeleton"), "the preference is recorded, naming the session served whole and the hint's fate")
+            self.assertEqual(len(re.findall(r"preferred at the set's resolve", trail.getvalue())), 1, "once")
             # the fallback: a parked sid this kernel does not list (an ended session) leaves the hint's set as before, and the
             # consume still lands its revive prompt
-            with contextlib.redirect_stderr(io.StringIO()):
+            gone_trail = io.StringIO()
+            with contextlib.redirect_stderr(gone_trail):
                 self.assertFalse(km._reveal_request(GONE, "W1", via="ack"))
                 c2 = self._client(active=S1, reconnect=True, wid="W1")
                 km._push([c2])
             self.assertTrue(self._sessions(c2))
             self.assertEqual(sorted(self._names(self._sessions(c2))), ["docs", "web"], "the hint's full, as before")
+            self.assertNotIn("preferred at the set's resolve", gone_trail.getvalue(), "not applied, so no record claims it (review round 5, kernel-2)")
             self.assertEqual(self._names(self._tab_orders(c2)[0]["skeleton"]), ["tests", "api"])
             self.assertEqual([f["type"] for f in c2["_frames"] if f["type"] in ("focus", "confirmRevive")], ["confirmRevive"],
                              "the ended session's park lands the revive prompt")
