@@ -24,7 +24,11 @@ standing as its own word in a test's text (_BANG: bounded by bash's metacharacte
 `!>/dev/null true`, `!(true)`, `` `! true` `` and a `!` alone on a line are words and `!=`, `$!` and `!cmd` are none), outside a
 comment, a quoted string and a here-document's body, with no grammar of where a pipeline begins. Test bodies are
 bash_test_extents, bash's own parse of the file as bats-preprocess rewrites it (an opener line's tail and a one-line test are in the
-population). Comment, string and heredoc are bash's call too: the test's text up to the `!`, with ` || ||` appended, goes through
+population). bats declares a test by either of two patterns, `@test "name" {` and `name() { # @test` (its BATS_TEST_PATTERN and
+BATS_TEST_PATTERN_COMMENT; the second has no `^` and one group, the name, and is matched as bats matches it, by a search), and every
+site here that reads an opener reads both (_test_line): before fork PR #871's commit 4 the module opened on the `@test` form alone,
+so a test written the other way was run by bats and read by nothing here, and a file of one each was one test to it where bats ran
+two. Comment, string and heredoc are bash's call too: the test's text up to the `!`, with ` || ||` appended, goes through
 `bash -n` in the C locale (its English wording is what is read), which refuses the `||` token only in command text
 (_command_context); a backtick substitution's text is opaque to bash -n, so a `!` inside one is a candidate whatever surrounds it,
 and its pipeline ends at the closing backtick. Three exclusions are lexical, by the word before the `!`: `[ !`, `[[ !` and `run !`
@@ -35,21 +39,22 @@ substitution the `!` sits in, or comment, `|` and `|&` inside, a trailing `\` or
 (negated_pipeline_end), decided on the safe side and pinned by the register below; the rewrite keeps every `!` of a run (`! ! true`
 negates twice, and bash reads a doubled negation's status) and replaces the command after it.
 
-Over the 46 tests/*.bats at this head (BatsSuites lists a file's candidates and judges none; BatsCorpus has bats decide them): 232
-`!` words file-wide, 191 of them `[ !`, 24 inside comments and strings (the word rule takes a `!` next to a backtick, a `)` or a
-`>`), 5 at file scope, and 12 candidates in test bodies (bootstrap-sh.bats 184; install-optional-deps.bats 505; install-sh.bats
-329, 400, 411; pr-orphans.bats 125; romp-serve.bats 117, 309, 334, 382; romp-service.bats 683; romp-sessions.bats 84), listed in
-4.25 s with the extents. bats reads all 12 (BatsCorpus, under 1.10.0 and 1.11.1): the nine at line start are `not ok` on their own
-line under `! true` and `ok` under `! false`; the three condition heads of romp-serve.bats (309, 334 and 382, `if ! _dead "$pid";
-then kill ...; return 1; fi`) the reverse, `ok` under `! true` and `not ok` on their own line under `! false`, so they are read only
-through the second rewrite; 0 inert, 0 undecided, in 90.67 s on this box, 56.27 s of it the three heads' probe tests, whose
-slowest single run is 12.95 s (romp-serve.bats 334 under `! true`, on a loaded box), against which RUN_TIMEOUT stands at
-60 s. The 5 file-scope
-`!` words sit in helpers and a setup (bats-state-isolation.bats 125, 126 and 129 twice; romp-postal.bats 47): outside the subject,
-since a `!` there has no enclosing test to run alone. Two classes this instrument does not see: that file scope, and a negation
-inside a string another shell runs (`eval "! true; true"`, `bash -c "! true; true"`), which is text to the predicate by bash's
-reading of the test's own text (G_eval_string_mid and G_bash_c_string_mid, declared in the register). One class it reports without
-deciding: a loop whose condition is the negation (`while ! cmd; do sleep 1; done`) never ends under one rewrite, so that run is
+Over the 46 suites at this head (the population is the glob CI's shell job hands bats, `tests/*.bats`, read off
+.github/workflows/ci.yml by the reading tests/test_ci_bats_bound.py pins that step with, and a glob naming no file raises rather
+than passing an empty corpus as clean: suite_files; BatsSuites lists a file's candidates and judges none; BatsCorpus has bats decide
+them): 232 `!` words file-wide, 191 of them `[ !`, 24 inside comments and strings (the word rule takes a `!` next to a backtick, a
+`)` or a `>`), 5 at file scope, and 12 candidates in test bodies (bootstrap-sh.bats 184; install-optional-deps.bats 505;
+install-sh.bats 329, 400, 411; pr-orphans.bats 125; romp-serve.bats 117, 309, 334, 382; romp-service.bats 683; romp-sessions.bats
+84), listed in 5.20 s with the extents. bats reads all 12 (BatsCorpus, under 1.10.0 and 1.11.1): the nine at line start are `not
+ok` on their own line under `! true` and `ok` under `! false`; the three condition heads of romp-serve.bats (309, 334 and 382, `if
+! _dead "$pid"; then kill ...; return 1; fi`) the reverse, `ok` under `! true` and `not ok` on their own line under `! false`, so
+they are read only through the second rewrite; 0 inert, 0 undecided, in 92.04 s on this box, 57.35 s of it the three heads' probe
+tests, whose slowest single run is 13.00 s (romp-serve.bats 334 under `! true`), against which RUN_TIMEOUT stands at 60 s. The 5
+file-scope `!` words sit in helpers and a setup (bats-state-isolation.bats 125, 126 and 129 twice; romp-postal.bats 47): outside
+the subject, since a `!` there has no enclosing test to run alone. Two classes this instrument does not see: that file scope, and
+a negation inside a string another shell runs (`eval "! true; true"`, `bash -c "! true; true"`), which is text to the predicate by
+bash's reading of the test's own text (G_eval_string_mid and G_bash_c_string_mid, declared in the register). One class it reports
+without deciding: a loop whose condition is the negation (`while ! cmd; do sleep 1; done`) never ends under one rewrite, so that run is
 ended at RUN_TIMEOUT and the candidate reported undecided, its row's head printed before its runs so a run an outer bound ends is
 attributable too; none in the tree today, by the 12 rows.
 
@@ -73,11 +78,11 @@ TAP reader, the bound on a run, the TERM to the process running one, a suite dec
 with every BATS_* variable unset (the job's BATS_TEST_TIMEOUT would otherwise hang a shape's bare `wait` on bats's timeout watcher)
 and skips on the macOS cell, whose bash 3.2.57 and Homebrew bats 1.14.0 the record is not verified against; the inner bats resolves
 through a PATH without the outer's libexec directory (_bats_env), since the entry point there expects the BATS_ROOT the scrub
-removes and did not load under CI's /usr/local layout. Measured at this head: 375 shapes, 385 tests; under `! true` 229 ok
-and 156 not ok, under `! false` 371 ok and 14 not ok (the four condition heads whose branch fails the test, `command _h` and
+removes and did not load under CI's /usr/local layout. Measured at this head: 381 shapes, 392 tests; under `! true` 234 ok
+and 158 not ok, under `! false` 378 ok and 14 not ok (the four condition heads whose branch fails the test, `command _h` and
 `env _h`, which find no shell function, `run ! true`, which run itself fails, the doubled negation mid and last, whose inversions
 cancel, `! true && false` mid and last, the backgrounded negation whose job status `wait %%` reads, mid and last, and the status
-saved with `rc=$?` and read by `[ ]`); decide over the 370 tests holding one candidate: 159 read, 208 inert, 3 undecided
+saved with `rc=$?` and read by `[ ]`); decide over the 377 tests holding one candidate: 161 read, 213 inert, 3 undecided
 (`command _h`, `env _h` and `! true && false` last, failing under both), the 5 holding two (the doubled and tripled negations,
 `if ! _h` with its helper) and the 10 holding none not asked. The 250 shapes of the earlier register keep their 260 recorded
 `! true` verdicts and are 260 ok under `! false`; every negation of the register is a candidate, the 139 recorded-inert line-start
@@ -90,8 +95,10 @@ them; the shapes those cases held that the register lacked are register shapes n
 shape and two bats runs, and can produce only a report a human reads, never a silent exemption.
 """
 import collections
+import glob
 import os
 import re
+import shlex
 import shutil
 import signal
 import subprocess
@@ -102,13 +109,25 @@ import time
 import unittest
 import unittest.mock
 
-HERE = os.path.dirname(os.path.realpath(__file__))
+from tests.test_ci_bats_bound import run_bats_step   # the one reading of the shell job's Run bats step: its pin and this population
 
-# bats-preprocess's BATS_TEST_PATTERN (bats-core 1.10 and 1.11, /usr/libexec/bats-core/bats-preprocess line 34): the lines it rewrites
-# into functions before bash parses the file. group(1) the name, group(2) whatever follows the brace (a comment, a command, a
-# one-line body)
+HERE = os.path.dirname(os.path.realpath(__file__))
+ROOT = os.path.dirname(HERE)   # the repository root, which the shell job's bats command and this module's suite paths are relative to
+
+# bats-preprocess's two test patterns (bats-core 1.10.0 and 1.11.1, libexec/bats-core/bats-preprocess lines 34 and 35, the same text
+# in both): a line matching either is rewritten into a function before bash parses the file, and is a test. bats matches them with
+# `=~`, a search, so a pattern without `^` matches anywhere in the line. Every site here that reads an opener reads both
+# (_test_line). BATS_TEST_PATTERN, `^[[:blank:]]*@test[[:blank:]]+(.*[^[:blank:]])[[:blank:]]+\{(.*)\$`: anchored, two groups,
+# group(1) the name and group(2) whatever follows the brace (a comment, a command, a one-line body)
 _TEST_LINE = re.compile(r"^[ \t]*@test[ \t]+(.*[^ \t])[ \t]+\{(.*)$")
-_TEST_OPENER = "_t() {"   # what a @test line is rewritten into here: the name dropped, the brace and its tail kept
+# BATS_TEST_PATTERN_COMMENT, `[[:blank:]]*([^[:blank:]()]+)[[:blank:]]*\(?\)?[[:blank:]]+\{[[:blank:]]+#[[:blank:]]*@test[[:blank:]]*\$`:
+# the function form `name() { # @test`, unanchored and with ONE group, the name (no blank or parenthesis in it; the parentheses
+# optional, so `name { # @test` is a test too, and `function name { # @test` one named `name`, the leftmost match). Nothing but
+# that comment follows the brace, and bats writes an empty body after bats_test_begin for it (`${BASH_REMATCH[2]:-}`). Before
+# fork PR #871's commit 4 the module opened on the `@test` form alone: a test written this way was run by bats and read by nothing
+# here, and a file of one each was one test to this module where bats ran two
+_TEST_LINE_COMMENT = re.compile(r"[ \t]*([^ \t()]+)[ \t]*\(?\)?[ \t]+\{[ \t]+#[ \t]*@test[ \t]*$")
+_TEST_OPENER = "_t() {"   # what a test's opener line is rewritten into here: the name dropped, the brace kept, the `@test` form's tail after it
 _CLOSE_CANDIDATE = re.compile(r"^\s*\}")
 # a `!` standing as its own word: bounded on each side by a blank, one of bash's other metacharacters (`|`, `&`, `;`, `(`, `)`,
 # `<`, `>`), the line's start or end, or a backtick (a substitution's text begins and ends at one). So `!>/dev/null true`,
@@ -153,23 +172,54 @@ def _bash_pending_heredoc(lines):
     return "delimited by end-of-file" in _bash_n(lines)[1]
 
 
+def _test_line(line):
+    """The match of whichever of bats-preprocess's two test patterns the line fits (_TEST_LINE, then _TEST_LINE_COMMENT, the order
+    bats tries them), None for a line that is no test: bats reads a line as a test when `=~` finds either pattern in it, and `=~`
+    is a search, so both are searched here (the `@test` pattern begins with `^`, so its search is a match at the line's start; the
+    comment pattern's leftmost match makes `function name { # @test` a test named `name`, which a match at the start would miss).
+    group(1) is the name under both, BASH_REMATCH[1] to bats."""
+    return _TEST_LINE.search(line) or _TEST_LINE_COMMENT.search(line)
+
+
+def _opener_tail(m):
+    """What follows the opener's brace as the test's text, for a match _test_line made: group(2) under the `@test` pattern (a
+    comment, a command, a one-line body); nothing under the comment form, whose one group is the name and after whose brace stands
+    only the `# @test` comment, which bats-preprocess drops (it writes `${BASH_REMATCH[2]:-}`, empty there, after bats_test_begin)."""
+    return m.group(2) if m.re is _TEST_LINE else ""
+
+
+def _tail_start(m):
+    """The column of the opener line at which the test's text begins, for a match _test_line made: where group(2) starts under the
+    `@test` pattern; the line's end under the comment form, whose opener line carries no text of the test's."""
+    return m.start(2) if m.re is _TEST_LINE else m.end()
+
+
+def _renamed(line, name):
+    """The test's opener line with its name replaced by `name`, under either pattern (_test_line): the first group's span, the
+    quotes of a quoted `@test` name included, so the new name stands unquoted."""
+    m = _test_line(line)
+    return line[:m.start(1)] + name + line[m.end(1):]
+
+
 def _rewritten(lines):
-    """The lines with every @test line rewritten into a function opener, as bats-preprocess does before bash parses the file."""
-    return [(_TEST_OPENER + m.group(2)) if (m := _TEST_LINE.match(l)) else l for l in lines]
+    """The lines with every test's opener line, under either pattern (_test_line), rewritten into a function opener as
+    bats-preprocess does before bash parses the file: _TEST_OPENER and the `@test` form's tail, _TEST_OPENER alone for the comment
+    form (an empty body, as bats writes it; `name { # @test`, no parentheses, is no function to bash until it is rewritten)."""
+    return [(_TEST_OPENER + _opener_tail(m)) if (m := _test_line(l)) else l for l in lines]
 
 
 def bash_test_extents(lines):
     """(open index, close index) for every test bash parses, from bash's own parse and not from this module's rules: every line
-    matching bats-preprocess's test pattern is rewritten into a function opener the way it does, an opener counts when the lines
-    before it parse as a complete script (so one inside a heredoc, a quoted string or another test does not; the lines are read from
-    the last point known to parse whole, the previous test's close, which is the same test by induction), and its close is its own
-    line when the rewritten line parses whole on its own (a one-line test), else the first later line beginning with `}` at which the
-    opener and the lines between parse as a complete function. None for the close: no such line (the file does not parse under this
-    bash). One `bash -n` per opener plus one per candidate close, no execution."""
+    matching either of bats-preprocess's two test patterns (_test_line) is rewritten into a function opener the way it does, an
+    opener counts when the lines before it parse as a complete script (so one inside a heredoc, a quoted string or another test
+    does not; the lines are read from the last point known to parse whole, the previous test's close, which is the same test by
+    induction), and its close is its own line when the rewritten line parses whole on its own (a one-line test), else the first
+    later line beginning with `}` at which the opener and the lines between parse as a complete function. None for the close: no
+    such line (the file does not parse under this bash). One `bash -n` per opener plus one per candidate close, no execution."""
     rewritten = _rewritten(lines)
     extents, after = [], 0   # after: the first line not yet known to be parsed whole, so the lines before an opener are checked once each
     for o, line in enumerate(lines):
-        if o < after or not _TEST_LINE.match(line):
+        if o < after or not _test_line(line):
             continue
         if not _bash_parses(rewritten[after:o]):   # the lines since the last known-complete point do not parse whole: not a top-level opener
             continue
@@ -188,9 +238,10 @@ def bash_test_extents(lines):
 
 def _test_text(lines, o, c):
     """(line index, the column the test's text begins at) for every line of the test bash opens at lines[o] and closes at lines[c]:
-    the opener line from just after its brace (a one-line test's whole body), then every line before the close from column 0. The
-    close line is `}` and whatever follows it, which bash runs at file scope, so it is not the test's."""
-    yield o, _TEST_LINE.match(lines[o]).start(2)
+    the opener line from just after its brace (a one-line test's whole body; nothing of a comment-form opener's, whose brace is
+    followed by the `# @test` comment alone: _tail_start), then every line before the close from column 0. The close line is `}`
+    and whatever follows it, which bash runs at file scope, so it is not the test's."""
+    yield o, _tail_start(_test_line(lines[o]))
     for i in range(o + 1, c):
         yield i, 0
 
@@ -239,7 +290,9 @@ def candidates(lines, extents):
     for t, (o, c) in enumerate(extents):
         if c is None:
             raise ValueError("line %d: bash finds no close for this test (the file does not parse under bash -n); its text is unknown" % (o + 1))
-        shift = len(_TEST_OPENER) - _TEST_LINE.match(lines[o]).start(2)   # the opener's columns move when the name is dropped
+        # the opener's columns move when the name is dropped; a comment-form opener's line holds no text of the test's, so no `!` of it
+        # reaches here
+        shift = len(_TEST_OPENER) - _tail_start(_test_line(lines[o]))
         for i, j in _test_bangs(lines, o, c):
             if _word_before(lines[i], j) in _OPERATOR_OF:
                 continue
@@ -343,24 +396,54 @@ def rewritten_shape(lines, extents, repl):
     return out
 
 
-def suite_files():
-    """The population of suites, by file name: every tests/*.bats, sorted. The one derivation both suite tests read (BatsSuites,
-    BatsCorpus)."""
-    return sorted(name for name in os.listdir(HERE) if name.endswith(".bats"))
+def suite_globs(root=ROOT):
+    """The patterns CI's shell job hands bats, read off the Run bats step's command in the workflow under root
+    (.github/workflows/ci.yml) by the reading tests/test_ci_bats_bound.py pins that step with (run_bats_step, imported, so the
+    two read one text one way): every word of the command after `bats` that is not an option. `tests/*.bats` today. Raises
+    LookupError when the step is not found or its command names no suite."""
+    _, cmd = run_bats_step(os.path.join(root, ".github", "workflows", "ci.yml"))
+    patterns = [w for w in shlex.split(cmd)[1:] if not w.startswith("-")]
+    if not patterns:
+        raise LookupError("the Run bats step's command names no suite: %r" % cmd)
+    return patterns
 
 
-def _read_suite(name):
-    """(lines, extents) of the suite tests/<name>: its text split at newlines and bash's parse of its tests (bash_test_extents)."""
-    with open(os.path.join(HERE, name), encoding="utf-8") as f:
+def suite_files(root=ROOT):
+    """The population of suites, as paths relative to root: every file the shell job's bats glob names (suite_globs), expanded
+    under root as the job's shell expands it, sorted, each once. Raises LookupError when the glob names no file: a population
+    derived from a pattern that matches nothing must red, never pass as a clean corpus (extra4-1 of fork PR #778's round 8: the
+    suite tests asserted agreement over whatever they enumerated and pinned the population nowhere, so an empty corpus printed
+    `0 files` and passed; a hand-kept floor was refused there, since the corpus has shrunk legitimately once and a suite added
+    under a widened glob would be missed). The one derivation both suite tests read (BatsSuites, BatsCorpus);
+    tests/bats-bare-negation-shell-job.bats, the wrapper that runs them in the job, is in it."""
+    patterns = suite_globs(root)
+    files = sorted({os.path.relpath(p, root) for pat in patterns for p in glob.glob(os.path.join(root, pat))})
+    if not files:
+        raise LookupError("the shell job's bats glob (%s) names no file under %s: the population is empty" % (" ".join(patterns), root))
+    return files
+
+
+def _read_suite(relpath, root=ROOT):
+    """(lines, extents) of the suite at relpath under root: its text split at newlines and bash's parse of its tests
+    (bash_test_extents)."""
+    with open(os.path.join(root, relpath), encoding="utf-8") as f:
         lines = f.read().split("\n")
     return lines, bash_test_extents(lines)
 
 
+def unopened_test_lines(lines, extents):
+    """The indices of the lines bats-preprocess rewrites into a test, under either pattern (_test_line), that bash does not open as
+    one (bash_test_extents): a fixture line inside a heredoc, a quoted string or another test. bats declares a test for each and
+    runs a file that is not the one on disk, so the suite test names them (FIXTURE_LINE_REMEDY)."""
+    opened = {o for o, _ in extents}
+    return [i for i, line in enumerate(lines) if _test_line(line) and i not in opened]
+
+
 def _test_name(line):
-    """The test's name as bats-preprocess reads it off its @test line: the pattern's first group with one `'` or `"` stripped from
-    each end (it strips one character at each end, whatever the pairing), the text as written and not as bash expands it, which is
-    what a `-f` filter is matched against."""
-    name = _TEST_LINE.match(line).group(1)
+    """The test's name as bats-preprocess reads it off its opener line, under either pattern (_test_line): the first group with one
+    `'` or `"` stripped from each end (it strips one character at each end, whatever the pairing, under both forms), the text as
+    written and not as bash expands it, which is what a `-f` filter is matched against. `first` for `first() { # @test`."""
+    name = _test_line(line).group(1)
     if name[:1] in "'\"":
         name = name[1:]
     if name[-1:] in "'\"":
@@ -593,27 +676,26 @@ def report(d):
 
 FIXTURE_LINE_REMEDY = ("bats-preprocess rewrites every line matching its test pattern wherever it sits, a heredoc or a string included, "
                        "so a fixture cannot carry such a line literally (it reaches the disk rewritten and the file declares a test it "
-                       "never runs); write it through printf, or begin the line with something other than @test")
+                       "never runs); write it through printf, or spell the line so that neither pattern takes it: a `@test` line begun "
+                       "with another word, a `name() { # @test` line with a word after `@test` in its comment")
 
 
 class BatsSuites(unittest.TestCase):
     def test_every_test_of_every_suite_is_closed_by_bash_and_its_candidates_are_listed(self):
-        # the population is every tests/*.bats; per file, bash's own parse (bash_test_extents) is the derivation of each test's text:
-        # a test bash cannot close, or a line bats-preprocess rewrites into a test that bash does not open as one (a fixture heredoc
-        # holding a `@test` line), is a problem named here, since the candidates of such a file cannot be derived. The candidates
-        # themselves are listed, not judged: bats judges them, where it is installed
+        # the population is every suite the shell job's bats glob names (suite_files, read off the workflow; a glob naming no file
+        # raises there); per file, bash's own parse (bash_test_extents) is the derivation of each test's text: a test bash cannot
+        # close, or a line bats-preprocess rewrites into a test, under either of its patterns, that bash does not open as one (a
+        # fixture heredoc holding a `@test` line or a `name() { # @test` line), is a problem named here, since the candidates of
+        # such a file cannot be derived. The candidates themselves are listed, not judged: bats judges them, where it is installed
         self.assertTrue(shutil.which("bash"), "bash is what bats runs tests under; without it nothing here can be derived")
         files = suite_files()
-        self.assertTrue(files, "no tests/*.bats: the population this reads is empty")
         problems, report, tests, total = [], [], 0, 0
         t0 = time.monotonic()
         for name in files:
             lines, extents = _read_suite(name)
-            opened = {o for o, _ in extents}
-            for i, line in enumerate(lines):
-                if _TEST_LINE.match(line) and i not in opened:
-                    problems.append("%s:%d: a line bats-preprocess rewrites into a test that bash does not open as one (inside a heredoc, "
-                                    "a quoted string or another test); %s" % (name, i + 1, FIXTURE_LINE_REMEDY))
+            for i in unopened_test_lines(lines, extents):
+                problems.append("%s:%d: a line bats-preprocess rewrites into a test that bash does not open as one (inside a heredoc, "
+                                "a quoted string or another test); %s" % (name, i + 1, FIXTURE_LINE_REMEDY))
             for o, c in extents:
                 if c is None:
                     problems.append("%s:%d: bash finds no close for this test (the file does not parse under this bash -n); its text is "
@@ -628,6 +710,49 @@ class BatsSuites(unittest.TestCase):
         self.assertEqual(problems, [], "tests whose text bash cannot derive:\n" + "\n".join(problems) + "\n\n" + "\n".join(report))
 
 
+class Population(unittest.TestCase):
+    """suite_files on scratch roots: the population is the glob the shell job's Run bats step hands bats, as the workflow under the
+    root states it, expanded there; a glob naming no file, or a workflow without the step, raises instead of passing as a clean
+    corpus (extra4-1 of fork PR #778's round 8)."""
+
+    WORKFLOW = ("jobs:\n  shell:\n    steps:\n      - name: Run bats\n        env:\n          BATS_TEST_TIMEOUT: \"180\"\n"
+                "        run: bats --print-output-on-failure %s\n")
+
+    def root(self, d, globs, files):
+        """A scratch root under d: a workflow whose Run bats step hands bats `globs`, and the empty files listed, by relative path."""
+        os.makedirs(os.path.join(d, ".github", "workflows"))
+        with open(os.path.join(d, ".github", "workflows", "ci.yml"), "w", encoding="utf-8") as f:
+            f.write(self.WORKFLOW % globs)
+        for rel in files:
+            os.makedirs(os.path.dirname(os.path.join(d, rel)), exist_ok=True)
+            open(os.path.join(d, rel), "w").close()
+
+    def test_the_population_is_what_the_workflow_hands_bats_and_an_empty_one_raises(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.root(d, "tests/*.bats", ["tests/b.bats", "tests/a.bats", "tests/c.bash", "other/d.bats"])
+            self.assertEqual(suite_globs(d), ["tests/*.bats"])
+            self.assertEqual(suite_files(d), ["tests/a.bats", "tests/b.bats"])
+        with tempfile.TemporaryDirectory() as d:
+            self.root(d, "tests/*.bats other/*.bats", ["tests/a.bats", "other/d.bats", "other/e.bats"])
+            self.assertEqual(suite_files(d), ["other/d.bats", "other/e.bats", "tests/a.bats"])
+        with tempfile.TemporaryDirectory() as d:
+            self.root(d, "tests/*.bats", ["tests/a.bash"])
+            with self.assertRaises(LookupError) as cm:
+                suite_files(d)
+            self.assertIn("the shell job's bats glob (tests/*.bats) names no file under", str(cm.exception))
+        with tempfile.TemporaryDirectory() as d:
+            self.root(d, "tests/*.bats", ["tests/a.bats"])
+            with open(os.path.join(d, ".github", "workflows", "ci.yml"), "w", encoding="utf-8") as f:
+                f.write("jobs:\n  shell:\n    steps:\n      - name: Run the bats suites\n        run: bats tests/*.bats\n")
+            with self.assertRaises(LookupError) as cm:
+                suite_files(d)
+            self.assertIn("the Run bats step moved or was renamed", str(cm.exception))
+        # the real root: the population is read off the checked-in workflow, and the wrapper that runs the suite tests in the job
+        # is one of the suites
+        self.assertEqual(suite_globs(), ["tests/*.bats"])
+        self.assertIn("tests/bats-bare-negation-shell-job.bats", suite_files())
+
+
 class Extents(unittest.TestCase):
     """bash_test_extents on synthetic files: bash's parse, not this module's rules, decides what a test is and where it ends."""
 
@@ -639,6 +764,33 @@ class Extents(unittest.TestCase):
         lines = text.split("\n")
         self.assertEqual(bash_test_extents(lines), [(6, 10), (11, 11), (12, 14)])
         self.assertEqual(bash_test_extents('@test "x" {\n    echo "\n'.split("\n")), [(0, None)])
+
+    def test_both_declaration_forms_open_a_test_as_bats_runs_both(self):
+        # tests-1 of fork PR #778's round 8: bats runs a test declared `name() { # @test` (bats-preprocess's second pattern) as it
+        # runs one declared `@test "name" {`, and the module opened on the `@test` form alone, so a file of one each was one test
+        # here, [(5, 8)], where bats ran two (`1..2`), the first's body outside every derivation. Both open now, at every site: the
+        # extents; the rewrite (an empty body for the comment form, the `# @test` dropped as bats drops it; `fourth { # @test`,
+        # no parentheses, is a test to bats and no function to bash until rewritten); the test's text (nothing on a comment-form
+        # opener's line); the candidates; the name a `-f` filter is matched against (the leftmost match, `third` under the
+        # `function` keyword, which a match at the line's start misses); the rename the register makes; and the guard on a test
+        # line bash does not open. A word after `@test` in the comment, or no blank between the brace and the `#`, is no test
+        text = ('first() { # @test\n    ! true\n    true\n}\n\n@test "second" {\n    true\n    ! true\n}\n\n'
+                'function third { # @test\n    true\n}\n\nfourth { # @test\n    true\n}\n  fifth() {  #  @test\n    true\n}\n'
+                '@test "sixth" {\n    cat <<EOF\nfake() { # @test\nEOF\n}\n')
+        lines = text.split("\n")
+        extents = bash_test_extents(lines)
+        self.assertEqual(extents, [(0, 3), (5, 8), (10, 12), (14, 16), (17, 19), (20, 24)])
+        self.assertEqual(bash_test_extents(lines[:9]), [(0, 3), (5, 8)])
+        self.assertEqual([_rewritten(lines)[o] for o, _ in extents], ["_t() {"] * 6)
+        self.assertEqual([_test_name(lines[o]) for o, _ in extents], ["first", "second", "third", "fourth", "fifth", "sixth"])
+        self.assertEqual(list(_test_text(lines, 0, 3)), [(0, len("first() { # @test")), (1, 0), (2, 0)])
+        self.assertEqual(candidates(lines, extents), [Candidate(0, 1, 4, False), Candidate(1, 7, 4, False)])
+        self.assertEqual(unopened_test_lines(lines, extents), [22])
+        self.assertIsNone(_test_line("x() { # @test fixture"))
+        self.assertIsNone(_test_line("x() {# @test"))
+        self.assertEqual(_renamed("first() { # @test", "s000_t_t1"), "s000_t_t1() { # @test")
+        self.assertEqual(_renamed("function third { # @test", "s000_t_t1"), "function s000_t_t1 { # @test")
+        self.assertEqual(_renamed('@test "x" { true; }', "s000_t_t1"), "@test s000_t_t1 { true; }")
 
     def test_a_heredoc_whose_terminator_comes_after_the_next_test_leaves_the_file_unparsed(self):
         # the `<<WORD` swallows the test's close and the next test whole; bash finds no close for the first test and no second test
@@ -768,7 +920,8 @@ def ground_truth_shapes():
     """{name: a synthetic .bats text} whose negations are `! true`, the negated command succeeding, so under bats a test passes
     (`ok`) exactly when the negation asserted nothing there. The families of the round-8 scanner lens (subshell closers, command
     substitutions, heredocs, nested helpers and their call sites, test closes, brace groups, positions on the negation's own line,
-    compounds, opener forms) and the ones the round-8 findings of fork PR #778 and their refuters named (condition heads, lists,
+    compounds, opener forms under both declaration patterns, `name() { # @test` among them) and the ones the round-8 findings of
+    fork PR #778 and their refuters named (condition heads, lists,
     inline subshells and substitutions, process substitutions, backticks, paren-bodied helpers, `coproc`, `;;&`, continued lines,
     call sites through `eval`, an assignment prefix, `time --`, `command` and `env`), each shape mid-test and as the last command
     where the distinction exists. Every other command in a shape succeeds (files are written to /dev/null), so a test's verdict
@@ -993,6 +1146,17 @@ def ground_truth_shapes():
     S["I_one_liner_negation"] = '@test "x" { ! true; }\n'
     S["I_one_liner_subshell"] = '@test "x" { ( ! true ); }\n'
     S["I_opener_trailing_negation"] = '@test "x" { ! true\n    true\n}\n'
+    # the comment form of a declaration, `name() { # @test` (bats-preprocess's BATS_TEST_PATTERN_COMMENT), which bats runs as it
+    # runs a `@test` line: with and without the parentheses (`x { # @test` is no function to bash until rewritten), under the
+    # `function` keyword (the name is the word before the brace, the pattern's leftmost match), indented with blanks inside the
+    # comment, and beside a `@test` test in one file (two tests to bats and to bash_test_extents; one to this module before fork
+    # PR #871's commit 4, when it opened on the `@test` form alone and a test written this way was bats's and no one else's)
+    S["I_comment_form_mid"] = 'x() { # @test\n    %s\n    true\n}\n' % N
+    S["I_comment_form_last"] = 'x() { # @test\n    true\n    %s\n}\n' % N
+    S["I_comment_form_no_parens_mid"] = 'x { # @test\n    %s\n    true\n}\n' % N
+    S["I_comment_form_function_keyword_mid"] = 'function x { # @test\n    %s\n    true\n}\n' % N
+    S["I_comment_form_indented_mid"] = '  x() {  #  @test\n    %s\n    true\n}\n' % N
+    S["I_comment_form_and_at_test"] = 'x() { # @test\n    %s\n    true\n}\n\n@test "y" {\n    true\n    %s\n}\n' % (N, N)
     # the `!` that is an operator of `[`, `[[` or bats's `run`, which the predicate leaves out by the word before it (_OPERATOR_OF)
     S["X_test_bracket_mid"] = '@test "x" {\n    [ ! -s /dev/null ]\n    true\n}\n'
     S["X_test_dbracket_mid"] = '@test "x" {\n    [[ ! -s /dev/null ]]\n    true\n}\n'
@@ -1035,10 +1199,11 @@ def record_under_bats(shapes, bats="bats"):
     candidate of a test rewritten at once rather than one at a time: in every test of the register but one the two are the same
     file, since the test holds one negated pipeline (a run of `!` words is one); the one, D_if_negated, holds two, a helper's
     `! true` and the `! _h` that calls it, and its record is the file with both rewritten. Each test is renamed to carry its shape's
-    index, the rewrite and its ordinal so the TAP lines map back (a @test line inside a heredoc or a string is renamed too,
-    harmlessly: bats-preprocess rewrites it either way). Each test's run comes back too, its outcome with the line bats blames and
-    the file, the shape's own file reported under the shape's name (decide compares the frame's file to the suite's path; a shape
-    is one file), so decide can be asked about a shape's test the way the corpus asks it about a candidate (BatsGroundTruth)."""
+    index, the rewrite and its ordinal so the TAP lines map back (_renamed, under either declaration pattern; a test line inside a
+    heredoc or a string is renamed too, harmlessly: bats-preprocess rewrites it either way). Each test's run comes back too, its
+    outcome with the line bats blames and the file, the shape's own file reported under the shape's name (decide compares the
+    frame's file to the suite's path; a shape is one file), so decide can be asked about a shape's test the way the corpus asks it
+    about a candidate (BatsGroundTruth)."""
     names = sorted(shapes)
     with tempfile.TemporaryDirectory() as d:
         files = {}
@@ -1047,8 +1212,8 @@ def record_under_bats(shapes, bats="bats"):
             extents = bash_test_extents(lines)
             for tag, repl in (("t", "! true"), ("f", "! false")):
                 k = iter(range(1, 100))
-                text = "\n".join(_TEST_LINE.sub(lambda m, n=n, tag=tag: m.group(0).replace(m.group(1), "s%03d_%s_t%d" % (n, tag, next(k)), 1), l)
-                                 if _TEST_LINE.match(l) else l for l in rewritten_shape(lines, extents, repl))
+                text = "\n".join(_renamed(l, "s%03d_%s_t%d" % (n, tag, next(k))) if _test_line(l) else l
+                                 for l in rewritten_shape(lines, extents, repl))
                 path = os.path.join(d, "%03d_%s.bats" % (n, tag))
                 files[path] = files[os.path.realpath(path)] = name
                 with open(path, "w", encoding="utf-8") as f:
@@ -1414,6 +1579,12 @@ class BatsGroundTruth(unittest.TestCase):
         'H_time_p_mid': ('ok', 'ok'),
         'H_until_head_break_mid': ('ok', 'ok'),
         'H_while_head_return_mid': ('ok', 'not ok'),
+        'I_comment_form_and_at_test': ('ok,not ok', 'ok,ok'),
+        'I_comment_form_function_keyword_mid': ('ok', 'ok'),
+        'I_comment_form_indented_mid': ('ok', 'ok'),
+        'I_comment_form_last': ('not ok', 'ok'),
+        'I_comment_form_mid': ('ok', 'ok'),
+        'I_comment_form_no_parens_mid': ('ok', 'ok'),
         'I_one_liner_between': ('ok,ok,not ok', 'ok,ok,ok'),
         'I_one_liner_negation': ('not ok', 'ok'),
         'I_one_liner_subshell': ('not ok', 'ok'),
@@ -1630,13 +1801,11 @@ class BatsCorpus(unittest.TestCase):
     def test_every_candidate_of_every_suite_is_read_by_bats(self):
         if not shutil.which("bats"):
             self.skipTest(self.SKIP)
-        root, files = os.path.dirname(HERE), suite_files()
-        self.assertTrue(files, "no tests/*.bats: the population this reads is empty")
+        root, files = ROOT, suite_files()
         decisions, t0 = [], time.monotonic()
         with tempfile.TemporaryDirectory() as scratch:
-            for name in files:
-                lines, extents = _read_suite(name)
-                relpath = os.path.join(os.path.basename(HERE), name)
+            for relpath in files:
+                lines, extents = _read_suite(relpath)
                 for cand in candidates(lines, extents):
                     print("%s:%d " % (relpath, cand.line + 1), end="", flush=True)   # the head before the runs: a run an outer bound ends is attributable
                     decisions.append(decide_under_bats(root, relpath, lines, extents, cand, scratch))
@@ -1852,7 +2021,8 @@ class BatsRoad(unittest.TestCase):
         # its own line is read, its failure blamed on the line before it (F1 of the commit-3 review: undecided before); a status
         # saved with `SAVED_RC=$?` and read by the teardown is undecided, the failure blamed outside the test, and the message says
         # so; a poll loop whose condition is the negation is undecided, its `! false` run ended at the bound (3 s here), and the
-        # message says so (F2)
+        # message says so (F2); a test declared `comment_form() { # @test` goes down the same road, its name matched by bats's `-f`
+        # (tests-1: no such test before, when the module opened on the `@test` form alone)
         if not shutil.which("bats"):
             self.skipTest(CORPUS_SKIP)
         text = ('@test "mid" {\n    ! true\n    true\n}\n'
@@ -1862,7 +2032,8 @@ class BatsRoad(unittest.TestCase):
                 '@test "subshell" {\n    true\n    ( ! true )\n    true\n}\n'
                 '@test "read in teardown" {\n    ! true\n    SAVED_RC=$?\n    true\n}\n'
                 '@test "poll" {\n    while ! test -e "$TMPDIR/ready"; do sleep 0.1; done\n}\n'
-                'teardown() {\n    [ "${SAVED_RC-1}" -eq 1 ]\n}\n')
+                'teardown() {\n    [ "${SAVED_RC-1}" -eq 1 ]\n}\n'
+                'comment_form() { # @test\n    ! true\n    true\n}\n')
         with tempfile.TemporaryDirectory() as d:
             os.makedirs(os.path.join(d, "tree", "tests"))
             with open(os.path.join(d, "tree", "tests", "one.bats"), "w", encoding="utf-8") as f:
@@ -1870,11 +2041,13 @@ class BatsRoad(unittest.TestCase):
             lines = text.split("\n")
             extents = bash_test_extents(lines)
             found = candidates(lines, extents)
-            self.assertEqual([c.line + 1 for c in found], [2, 7, 10, 14, 19, 23, 28])
+            self.assertEqual([c.line + 1 for c in found], [2, 7, 10, 14, 19, 23, 28, 34])
             decisions = [decide_under_bats(os.path.join(d, "tree"), "tests/one.bats", lines, extents, c, d, timeout=3) for c in found]
         self.assertEqual([(x.test, x.verdict) for x in decisions],
                          [("mid", "inert"), ("last", "read"), ("head", "read"), ("later failure", "undecided"), ("subshell", "read"),
-                          ("read in teardown", "undecided"), ("poll", "undecided")])
+                          ("read in teardown", "undecided"), ("poll", "undecided"), ("comment_form", "inert")])
+        self.assertEqual([(r.outcome, r.line) for r in decisions[7].runs], [("ok", None), ("ok", None)])
+        self.assertIn("tests/one.bats:34 in test 'comment_form': INERT", report(decisions[7]))
         self.assertEqual([(r.outcome, r.line) for r in decisions[1].runs], [("not ok", 7), ("ok", None)])
         self.assertEqual([(r.outcome, r.line) for r in decisions[2].runs], [("ok", None), ("not ok", 10)])
         self.assertEqual([(r.outcome, r.line) for r in decisions[3].runs], [("not ok", 15), ("not ok", 15)])

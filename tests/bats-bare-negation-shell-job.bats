@@ -3,19 +3,19 @@
 # shape run under both rewrites of its negation, the verdicts against RECORDED, and decide asked about every one-candidate test
 # from the same run), the road class (BatsRoad: the corpus road's pieces against the bats on PATH, the TAP reader, the bound on a
 # run, the TERM to the process running one, a synthetic suite decided candidate by candidate) and the oracle over the corpus
-# (BatsCorpus: every bare `!` in a test body of every tests/*.bats, decided by running its test alone with the negation rewritten
-# to `! true` and to `! false`). All skip in the python cells of CI, which install no bats; the shell job's
-# `bats --print-output-on-failure tests/*.bats` (.github/workflows/ci.yml) picks this file up, and that job is the one cell with a
-# bats (1.11.1, from the release tarball), so this is where the record is verified and where every negation of the tree is
-# decided. python3 is on the runner image, as that job's header comment says, and the module is stdlib-only; the tests print their
-# tables, and bats shows the output when a test fails.
+# (BatsCorpus: every bare `!` in a test body of every suite the job's bats command names, its glob read off the workflow, decided
+# by running its test alone with the negation rewritten to `! true` and to `! false`). All skip in the python cells of CI, which
+# install no bats; the shell job's `bats --print-output-on-failure tests/*.bats` (.github/workflows/ci.yml) picks this file up,
+# and that job is the one cell with a bats (1.11.1, from the release tarball), so this is where the record is verified and where
+# every negation of the tree is decided. python3 is on the runner image, as that job's header comment says, and the module is
+# stdlib-only; the tests print their tables, and bats shows the output when a test fails.
 #
 # One test per class or module test, not one for all: the job's BATS_TEST_TIMEOUT is a per-test bound of 180 s, and a single test
-# running the register and the corpus took 139 s under it on a loaded box (2:19.14 total); apart, on this box under that bound,
-# the register took 51494 ms, the road 7104 ms and the corpus 92468 ms with bats 1.10.0, and 56029 ms, 8048 ms and 95974 ms with
-# 1.11.1 from the release tarball in a scratch prefix as the outer and the inner bats (bats -T). Every bats run the module starts
-# is bounded itself (RUN_TIMEOUT, 60 s per corpus run), and the corpus prints each candidate's row as it is decided, so a run the
-# outer bound ends still names its candidate in the output bats shows.
+# running the register and the corpus took 139 s under it on a loaded box (2:19.14 total); apart, on this box under that bound
+# and beside each other, the register took 65185 ms, the road 7845 ms and the corpus 103415 ms with bats 1.10.0, and 63263 ms,
+# 8683 ms and 104918 ms with 1.11.1 from the release tarball in a scratch prefix as the outer and the inner bats (bats -T). Every
+# bats run the module starts is bounded itself (RUN_TIMEOUT, 60 s per corpus run), and the corpus prints each candidate's row as
+# it is decided, so a run the outer bound ends still names its candidate in the output bats shows.
 #
 # Every BATS_* variable is unset for the inner run. Under the job's BATS_TEST_TIMEOUT bats's timeout watcher is a background child
 # of each test, and a bare `wait` in a test waits on it: the register's D_bg shape hung to a 40 s kill with the variable set
