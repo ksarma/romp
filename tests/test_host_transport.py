@@ -2451,6 +2451,80 @@ class BackendHostRules(unittest.TestCase):
                          "the call runs on every iteration, under no condition: %r" % (chain,))
         self.assertTrue(hasattr(sb.SdkBackend, "_loose_rows_new_episode"), "the method the loop calls exists on the backend")
 
+    def test_a_directory_of_ours_with_no_search_bit_is_the_fault_it_is_out_of_the_lease_applies_road_and_the_other_roads_arms_answer_it(self):
+        """THE FAULT CELL on the three read roads (the round-7 sixth addendum, 2026-09-20, disclosing a cell the fifth
+        addendum changed without saying so): a `<sid>/` of ours at 0600 under a 0700 hosts/, identity.json (host.log for
+        the served road) of ours inside it, driven as the shape table's cells are. The descent admits the directory (its
+        O_RDONLY|O_DIRECTORY open needs the read bit, which 0600 has) and the fstatat of the name under it refuses (the
+        search bit, which it lacks): a PermissionError with errno EACCES, a FAULT of the directory and not a shape at the
+        name, so no host.directory-refused row on any road and no loose row (0600 is tight). LEASE-APPLIES, hosts off: the
+        fault propagates OUT of the road, which has no OSError arm, to the connect loop's handler (SdkSession._amain's
+        except records it as the launch error and ends the connect; pinned here at the road, the loop needing the SDK's
+        client to drive). That is the answer this PR's base gave: there the existence read was `Path.exists()` by path,
+        and pathlib re-raises every errno but ENOENT, ENOTDIR, EBADF and ELOOP, so the same directory raised the same
+        PermissionError out of _host_lease_applies; the second through fourth addenda answered False through
+        host_file_exists's `except OSError` arm and said nothing of it; the fifth dropped the arm and said nothing
+        either. SERVED: the OSError arm the road has had since the base returns, none of the file's rows filed and no
+        position kept. ORPHAN, a journal segment present: the identity read's fault is swallowed by the road's OSError arm
+        (raw None; the base's `except Exception` around its read_text did the same), no identity vouches for the ack, and
+        the road then raises the same PermissionError from its journal reads BY PATH (the glob lists the segment, listing
+        needing the read bit only, and read_journal_dir's open of it needs the search bit), the queued follow-up's sites,
+        which this PR does not touch: recorded as the base's behaviour by the frame the fault rises through, not designed
+        here. No romp code path makes such a directory (the helpers make 0700). Red at the fourth addendum's commit on the
+        lease-applies arm, `PermissionError not raised` (host_file_exists answered False through its arm), and the same
+        red under the mutation that puts the arm back at this commit; the served and orphan arms are the base's and hold
+        at both. Root ignores the search bit and is skipped."""
+        import errno, traceback
+        if os.geteuid() == 0:
+            self.skipTest("root bypasses the search bit")
+        identity = json.dumps({"pid": 7, "start": "p"})
+        log_rows = "".join(json.dumps(r) + "\n" for r in [{"t": 1, "kind": "end-forced", "cliPid": 5}])
+        for road in ("lease-applies", "orphan", "served"):
+            with self.subTest(road=road):
+                d, be = self._be()
+                name = "host.log" if road == "served" else "identity.json"
+                sdir = self._loose_sid(d, sid_mode=0o700, journal=1 if road == "orphan" else 0)
+                (sdir / name).write_text(log_rows if road == "served" else identity)
+                os.chmod(sdir, 0o600)
+                self.addCleanup(os.chmod, sdir, 0o700)             # before the state dir's rmtree (cleanups run last-in first)
+                s = types.SimpleNamespace(sid=SID, name="web", _host_intent=True, _host=None, _host_is_attach=False, _seed_for_dead_cli=lambda cli: None)
+                if road == "lease-applies":
+                    Path(d, "session-hosts").write_text("off")
+                    try:
+                        answer = be._host_lease_applies(s)
+                    except PermissionError as e:                 # by hand, not assertRaises: that drops the traceback the frame check reads
+                        fault, frames = e, [f.name for f in traceback.extract_tb(e.__traceback__)]
+                    else:
+                        self.fail("PermissionError not raised: the road answered %r to a fault of the directory" % (answer,))
+                    self.assertEqual(fault.errno, errno.EACCES, "the stat's own fault, out of the road")
+                    self.assertIn("_stat_name", frames, "raised by the owner question's stat: %r" % (frames,))
+                elif road == "orphan":
+                    sb.write_reg(Path(d), SID, {"sid": SID, "name": "web", "alive": True, "lastSid": SID,
+                                                 "hostAck": {"host": "7:p", "cli": "8:c", "offset": 1}})
+                    acks = []
+                    capture = classmethod(lambda cls, hdir, ack=-1, **kw: acks.append(ack) or types.SimpleNamespace(hdir=hdir))
+                    with mock.patch.dict(sys.modules, {"claude_agent_sdk": self._sdk_stub()}), \
+                         mock.patch.object(ht.HostTransport, "from_journal", capture), mock.patch.object(be, "_replay_drain", mock.AsyncMock()):
+                        try:
+                            asyncio.run(be._host_orphan_recover(s, types.SimpleNamespace(), None, (None, None, None), died=False))
+                        except PermissionError as e:
+                            fault, frames = e, [f.name for f in traceback.extract_tb(e.__traceback__)]
+                        else:
+                            self.fail("PermissionError not raised out of the orphan road")
+                    self.assertEqual(fault.errno, errno.EACCES)
+                    self.assertIn("read_journal_dir", frames, "the fault that escapes is the journal reads' by path: %r" % (frames,))
+                    self.assertNotIn("_stat_name", frames, "the identity read's fault was answered by the road's OSError arm")
+                    self.assertEqual(acks, [], "no replay was reached")
+                    self.assertNotIn("host.tail-replayed", self._kinds(d))
+                else:
+                    sb.write_reg(Path(d), SID, {"sid": SID, "name": "web", "alive": True})
+                    self.assertIsNone(be._file_host_log_rows(types.SimpleNamespace(sid=SID, name="web", _host=None)), "the arm returns")
+                    self.assertNotIn("host.end-forced", self._kinds(d), "none of the file's rows: it was not read")
+                    self.assertIsNone((sb.read_reg(Path(d), SID) or {}).get("hostLogPos"), "no position from a file that was not read")
+                self.assertEqual(self._refused(d), [], "%s: a fault of the directory is no refusal row" % road)
+                self.assertEqual(self._rows(d, "host.directory-loose"), [], "%s: 0600 and 0700 are tight" % road)
+                self.assertEqual(self._modes(d), (0o700, 0o600), "the read changed no mode")
+
 
 class ReadDescent(unittest.TestCase):
     """The read roads' descent and its three readers at function level (host_transport.open_host_dirs_if_present,
@@ -2756,6 +2830,40 @@ class ReadDescent(unittest.TestCase):
                 self.assertEqual(swapped, [True], "the swap landed inside the open, after the stat by name")
                 if fu is not None:
                     self.assertEqual(fu.path_stats, 0, "a reader took a path stat: %r" % (fu.path_stat_calls,))
+
+    def test_a_directory_of_ours_with_no_search_bit_is_the_fault_it_is_from_both_readers_with_nothing_opened(self):
+        """A FAULT of the directory is not a shape (the round-7 sixth addendum, 2026-09-20): a `<sid>/` of ours at 0600 admits
+        the descent (its O_RDONLY|O_DIRECTORY open needs the read bit) and refuses the fstatat of any name under it (the
+        search bit), so both readers raise the stat's PermissionError, errno EACCES, not a HostDirRefused of any shape,
+        with nothing opened (os.open spied), and neither swallows it into False or None. Through the fourth addendum
+        host_file_exists answered False here through an `except OSError` arm around its stat, undisclosed; the fifth
+        addendum's _stat_name dropped the arm without saying so; this pin holds it dropped and says so. Red at the fourth
+        addendum's commit: `PermissionError not raised` for host_file_exists (read_host_file, whose check was the fstat
+        after an open the directory refused, raised it there too). Root ignores the search bit and is skipped."""
+        import errno
+        if os.geteuid() == 0:
+            self.skipTest("root bypasses the search bit")
+        root = self._root()
+        sdir = root / "hosts" / SID
+        sdir.mkdir(parents=True); os.chmod(root / "hosts", 0o700)
+        (sdir / "identity.json").write_text("ours")
+        os.chmod(sdir, 0o600)
+        self.addCleanup(os.chmod, sdir, 0o700)                  # before the root's rmtree (cleanups run last-in first)
+        opens, real_open = [], os.open
+
+        def spy(path, *a, **k):
+            opens.append(os.fspath(path))
+            return real_open(path, *a, **k)
+        with ht.open_host_dirs_if_present(root, SID) as dirs, mock.patch.object(os, "open", spy):
+            self.assertEqual(dirs.loose, (), "0600 has no group or other bits: nothing loose")
+            for reader in (ht.host_file_exists, ht.read_host_file):
+                with self.assertRaises(PermissionError, msg=reader.__name__) as cm:
+                    reader("identity.json", dirs)
+                self.assertEqual(cm.exception.errno, errno.EACCES, reader.__name__)
+                self.assertNotIsInstance(cm.exception, ht.HostDirRefused, "%s: a fault is not a refusal" % reader.__name__)
+            self.assertEqual([m for _, _, m in dirs.modes], [0o700, 0o600], "the descent admitted both and read their modes")
+        self.assertEqual(opens, [], "nothing under the directory was opened")
+        self.assertEqual(stat.S_IMODE(os.lstat(sdir).st_mode), 0o600, "the read changed no mode")
 
 
 class Pins(unittest.TestCase):

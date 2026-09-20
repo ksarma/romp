@@ -13754,7 +13754,13 @@ class SdkBackend:
         # (host_transport.HostFileForeign: the fstatat of the name under the <sid> descriptor, a peer's plant under a
         # loose <sid>/ of ours) is one row naming the file and the owner, and then the answer an absent identity.json
         # gets: the road goes on to the journal listing below, which is by path until the queued follow-up lands; a
-        # directory, a FIFO or a socket of ours at the name is not the file, False, nothing opened.
+        # directory, a FIFO or a socket of ours at the name is not the file, False, nothing opened. A FAULT of the
+        # directory (host_transport._stat_name's PermissionError, EACCES, on a <sid>/ of ours with no search bit) has no
+        # arm here and propagates: the connect loop's handler (SdkSession._amain's except) records it as the launch
+        # error and ends the connect, which is what the base's Path.exists() did for the same directory (pathlib
+        # re-raises EACCES); the second through fourth addenda answered False through host_file_exists's OSError arm
+        # and said nothing of it, and the fifth restored the raise without saying so (the round-7 sixth addendum,
+        # 2026-09-20). The orphan and served roads answer the same fault through their OSError arms, from before this PR.
         try:
             dirs = ht.open_host_dirs_if_present(self.state_dir, sess.sid)
         except ht.HostDirRefused as e:

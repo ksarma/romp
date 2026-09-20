@@ -373,7 +373,8 @@ def _stat_name(name: str, dirs: HostDirs):
     HostDirRefused (`file` set, the wording _open_file_nofollow gives a link at spawn.json or host.stderr); anything
     else of ours, the stat result, for the caller to read the kind from (S_ISREG decides whether it is the file). Any
     other OSError of the stat (EACCES on a `<sid>/` of ours with no search bit, EIO) propagates as itself: a fault of
-    the directory, not a shape at the name. Why the question is asked here and not of an opened descriptor alone:
+    the directory, not a shape at the name (what each read road does with it: host_file_exists's docstring, the round-7
+    sixth addendum). Why the question is asked here and not of an opened descriptor alone:
     through the fourth addendum read_host_file's owner check was the fstat of the descriptor its open returned, and a
     UNIX socket a peer planted at the name never reached it, because open(2) answers ENXIO for a socket before any
     descriptor exists; the orphan and served roads catch OSError around their read, so the peer's socket at
@@ -402,7 +403,21 @@ def host_file_exists(name: str, dirs: HostDirs) -> bool:
     with no row); a directory, a FIFO or a socket of ours, False, nothing opened (an existence question reads no byte,
     takes no descriptor and cannot block on a FIFO). A device node is outside the table: making one needs a privilege no
     peer here has, and it would take the non-regular arm like a FIFO. Both readers resolve the name under the held
-    `<sid>` descriptor and never through a path, which is what keeps the re-point window the descent closed closed."""
+    `<sid>` descriptor and never through a path, which is what keeps the re-point window the descent closed closed.
+    A FAULT OF THE DIRECTORY IS NOT A SHAPE AND IS NOT ANSWERED HERE (the round-7 sixth addendum, 2026-09-20, disclosing a
+    cell the fifth changed without saying so): a `<sid>/` of ours with no search bit (0600: the descent's
+    O_RDONLY|O_DIRECTORY open needs the read bit, which it has; the fstatat of a name under it needs the search bit, which
+    it lacks) raises the stat's PermissionError, errno EACCES, out of this reader, and the lease-applies road, which has
+    no OSError arm, raises it on to the connect loop, whose handler records it as the session's launch error and ends the
+    connect (SdkSession._amain's except; the kernel log carries the traceback). That is the answer this PR's base gave:
+    there the existence read was Path.exists() by path, and pathlib re-raises every errno but ENOENT, ENOTDIR, EBADF and
+    ELOOP, so the same directory raised the same PermissionError out of _host_lease_applies. The second through fourth
+    addenda answered False here through an `except OSError` arm around the stat, a silent answer to a fault where the
+    repo's rule is to surface one, and said nothing of it; the fifth addendum's _stat_name dropped the arm and said
+    nothing either. No romp code path makes such a directory (the helpers make 0700). The orphan and served roads answer
+    the same fault through the OSError arms they have had since the base (read_host_file's docstring). Pinned in
+    tests/test_host_transport.py (ReadDescent: the fault from both readers with nothing opened; BackendHostRules: out of
+    the lease-applies road, and what the other two roads' arms do with it)."""
     st = _stat_name(name, dirs)
     return st is not None and stat.S_ISREG(st.st_mode)
 
@@ -434,8 +449,11 @@ def read_host_file(name: str, dirs: HostDirs):
     there now, the file-shape refusal _open_file_nofollow raises; ENXIO, a socket stands there now, the owner question
     asked once more by name (a peer's socket is its row) and then None, the socket's answer; every other errno (EACCES
     on a file of ours with no read bit, EMFILE, EIO) propagates as the fault it is, because the class is for the shapes
-    an entry can take and not for every failure of the open, and the roads' own OSError arms are where a fault is
-    answered. Every check is on the held descriptor or on the name under it, never on a path (a path stat would reopen
+    an entry can take and not for every failure of the open, and the OSError arms of this reader's two callers, the
+    orphan road (raw None) and the served road (return), arms from before this PR, are where a fault is answered; the
+    lease-applies road, host_file_exists's caller, has no such arm, and a fault of the directory propagates out of it to
+    the connect loop (host_file_exists's docstring; the round-7 sixth addendum, 2026-09-20). Every check is on the held
+    descriptor or on the name under it, never on a path (a path stat would reopen
     the re-point window the descent closes); the census (tests/test_hosts_path_census.py, CONVERTED) holds both stats
     by-descriptor."""
     st = _stat_name(name, dirs)
