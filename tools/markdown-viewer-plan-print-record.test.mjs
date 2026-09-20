@@ -851,10 +851,13 @@ test('P2: the ask\'s line and the open-ended wait\'s line end with the button\'s
 });
 
 test('P2, P6, open point 8 and the guide carry the figure-level grant sentence: the restore is the whole figure\'s, so a remote URL inside a non-painting element of a painting figure is counted, named and fetched (the round-4 review\'s HIGH 2, a consent-text correction), and the code road is recorded as needing an owner', () => {
-  assert.ok(P2.includes('The restore is the WHOLE figure\'s: every URL the figure names is fetched, a remote URL inside a non-painting element of a figure that paints among them'));
+  assert.ok(P2.replace(/\n/g, ' ').includes('The restore is the WHOLE figure\'s: the browser may fetch any URL the figure names, a remote URL inside a non-painting element of a figure that paints among them'), 'P2 (read with its wraps collapsed)');
+  assert.ok(P2.replace(/\n/g, ' ').includes('which of them the browser fetches is its own (the round-5 fix, 2026-09-20: "every URL is fetched" over-promised the egress, since a `<picture>` fetches one of its two)'), 'P2 says which URLs are fetched is the browser\'s own');
+  assert.ok(!P2.includes('every URL the figure names is fetched'), 'the round-5 over-promise is gone from P2');
   assert.ok(P2.includes('A placeholder is counted, named and restored only when its figure paints (`figurePrintable`, below), and that is what the grant covers (the round-4 review\'s HIGH 2, 2026-09-20, a consent-text correction'));
   const P6 = part('P6. **', 'P7. **');
-  assert.ok(P6.includes('The restore is the whole figure\'s, so a placeholder whose figure paints has every URL the figure names fetched, a remote URL inside a non-painting element among them, for something never on the paper (P2; the round-4 review\'s HIGH 2, 2026-09-20; open point 8)'));
+  assert.ok(P6.replace(/\n/g, ' ').includes('The restore is the whole figure\'s, so a placeholder whose figure paints may have any URL the figure names fetched, a remote URL inside a non-painting element among them, for something never on the paper; which the browser fetches is its own, measured per shape in file-print-figure-browser.test.ts (P2; the round-4 review\'s HIGH 2, 2026-09-20; open point 8)'), 'P6 (read with its wraps collapsed)');
+  assert.ok(!P6.includes('every URL the figure names fetched'), 'the round-5 over-promise is gone from P6');
   assert.ok(OPEN.includes('And the answer is the FIGURE\'s: when one painting element shows, `loadGatedFigure` restores every moved attribute of the root and of its descendants, so a remote URL inside a non-painting element of a painting figure'));
   assert.ok(OPEN.includes('is counted, its host named in the title and its URL fetched, for something never on the paper (the round-4 review\'s HIGH 2, 2026-09-20, a consent-text correction'));
   assert.ok(OPEN.includes('give `loadGatedFigure` the paint predicate and restore only the refs whose owning element passes `shows()`, with the video row moved to NOT_ON_PAPER as the fails-before') && OPEN.includes('Not this PR\'s work. Recorded, not fixed.'), 'the code road, recorded as the better shape needing an owner');
@@ -864,7 +867,9 @@ test('P2, P6, open point 8 and the guide carry the figure-level grant sentence: 
   const one = between(code(gateRaw), 'export function loadGatedFigure(wrap: Element): boolean {', '\n}');
   assert.ok(one.includes('restore(wrap);') && !/shows|offPaper|paints/.test(one), 'the restore is the whole figure\'s: no paint predicate in loadGatedFigure (the code road is deferred by the ruling)');
   const flowRaw = read('ui', 'webview', 'file-print.ts');
-  assert.ok(flowRaw.includes('The restore is the WHOLE figure\'s: every\n//      URL the figure names is fetched, a remote URL inside a non-painting element of a figure that paints among them'), 'the header (a comment, read as one)');
+  const flowOneLine = flowRaw.replace(/\n\/\/\s+/g, ' ');   // the header, its hard wraps collapsed, so a rewrap cannot red a sentence that stands (round 5)
+  assert.ok(flowOneLine.includes('The restore is the WHOLE figure\'s: the browser may fetch any URL the figure names, a remote URL inside a non-painting element of a figure that paints among them') && flowOneLine.includes('which of them it fetches is the browser\'s own (a <picture> fetches the <source> it picks and not its <img>\'s src), measured per shape in file-print-figure-browser.test.ts'), 'the header (a comment, read as one)');
+  assert.ok(!flowOneLine.includes('every URL the figure names is fetched'), 'the round-5 over-promise is gone from the header');
   assert.ok(!flowRaw.includes('a print fetches from one only for a picture that is on the paper'), 'the sentence that promised less than the code performs is gone');
   assert.ok(read('ui', 'webview', 'figure-gate.test.ts').includes('test("loadGatedFigure restores the FIGURE, painting or not: an svg <image> under <defs> beside one that paints gets its href back too'), 'the gate\'s node case pins the behaviour and the sentences');
   const fig = read('ui', 'webview', 'file-print-figure-browser.test.ts');

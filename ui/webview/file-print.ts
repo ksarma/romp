@@ -25,14 +25,16 @@
 //      disarms (the update banner's two-click shape: the gate is a privacy choice, so a print never fetches from an
 //      unlisted host unless the person chose it). "With them" restores exactly the placeholders it counted, each through
 //      the gate's restore of ONE placeholder (figure-gate.ts loadGatedFigure: the moved attributes back, the figure back in
-//      its place), so the requests are the ones those figures make and no other. The restore is the WHOLE figure's: every
-//      URL the figure names is fetched, a remote URL inside a non-painting element of a figure that paints among them (an
-//      svg <image> under <defs> beside one that paints; a hidden <img> inside a <video> that paints its poster), for
-//      something never on the paper; the title names that URL's host, since data-fv-hosts is read over every ref of the
-//      figure (the round-4 review's HIGH 2, 2026-09-20, a consent-text correction: the sentence read before the grant
-//      promised the pictures that reach the paper alone; restoring only the refs whose element shows is recorded as the
-//      better shape needing an owner, plans/markdown-viewer.md open point 8; file-print-figure-browser.test.ts holds the
-//      fetched URLs per shape). A placeholder inside a closed fold or
+//      its place), so the requests are the ones those figures make and no other. The restore is the WHOLE figure's: the
+//      browser may fetch any URL the figure names, a remote URL inside a non-painting element of a figure that paints among
+//      them (an svg <image> under <defs> beside one that paints; a hidden <img> inside a <video> that paints its poster),
+//      for something never on the paper; which of them it fetches is the browser's own (a <picture> fetches the <source>
+//      it picks and not its <img>'s src), measured per shape in file-print-figure-browser.test.ts; the title names every
+//      such URL's host, since data-fv-hosts is read over every ref of the figure (the round-4 review's HIGH 2, 2026-09-20,
+//      a consent-text correction: the sentence read before the grant promised the pictures that reach the paper alone;
+//      restoring only the refs whose element shows is recorded as the better shape needing an owner,
+//      plans/markdown-viewer.md open point 8; the round-5 fix: "every URL is fetched" over-promised the egress, since the
+//      figure leg measures a <picture> fetching one of its two). A placeholder inside a closed fold or
 //      under hidden that names the same host stands as it is (the round-2 review, 2026-09-19: before this "with them"
 //      loaded by HOST through loadGatedHost, the click's road, so a host one printable and one folded placeholder shared
 //      had both restored and the folded picture fetched for a print that never shows it). A print is a one-time act: the
@@ -421,8 +423,9 @@ export function rendered(el: PrintableNode): boolean | null {
  *  answered, and every hiding it did not know read as printable, the permissive side for a fetch). A placeholder the flow
  *  counts, names in the with-button's title or restores must pass this and figurePrintable below (gates, in the driver): a
  *  host is a privacy choice, and a print restores a placeholder only for a figure that puts paint on the paper. The restore
- *  is the whole figure's (figure-gate.ts loadGatedFigure), so every URL the figure names is fetched, a remote URL inside a
- *  non-painting element of a painting figure among them (the round-4 review, 2026-09-20; the header). */
+ *  is the whole figure's (figure-gate.ts loadGatedFigure), so the browser may fetch any URL the figure names, a remote URL
+ *  inside a non-painting element of a painting figure among them; which it fetches is its own (the round-4 review,
+ *  2026-09-20; the header). */
 export function printable(el: PrintableNode): boolean {
   for (let n: PrintableNode | null = el; n; n = n.parentElement) {
     if (n.hasAttribute("hidden")) return false;

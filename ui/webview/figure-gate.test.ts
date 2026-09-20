@@ -185,12 +185,15 @@ test("loadGatedFigure restores the FIGURE, painting or not: an svg <image> under
   assert.equal(video.line(), "poster=https://remote.test/poster.svg", "the poster is back");
   assert.equal(fallback.line(), "hidden= src=https://remote.test/fallback.svg", "the hidden fallback img's src is back too, hidden or not");
   assert.equal(allowedFigureHosts().has("remote.test"), false, "nothing granted for the page on either restore");
-  // the sentence the person and the owner read, in the code and pinned here: the grant covers every URL the figure names
+  // the sentence the person and the owner read, in the code and pinned here: the grant covers the whole figure, and which of
+  // its URLs the browser fetches is the browser's own (comments read with their wraps collapsed, so a rewrap cannot red them)
   const read = (f: string): string => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
   const gate = read("figure-gate.ts"), flow = read("file-print.ts");
   assert.ok(gate.includes("The restore is the FIGURE's, not a painting element's:") && gate.includes("is fetched for something that is never on the paper"), "loadGatedFigure's docstring states the figure-level rule");
-  assert.ok(flow.includes("The restore is the WHOLE figure's: every") && flow.includes("URL the figure names is fetched, a remote URL inside a non-painting element of a figure that paints among them"), "file-print.ts's header states it where \"with them\" is described");
-  assert.ok(flow.includes("so every URL the figure names is fetched, a remote URL inside a") && flow.includes("non-painting element of a painting figure among them (the round-4 review"), "printable's docstring states it where the privacy rule is stated");
+  const oneLine = flow.replace(/\n\/\/\s+/g, " ").replace(/\n\s*\*\s+/g, " ");
+  assert.ok(oneLine.includes("The restore is the WHOLE figure's: the browser may fetch any URL the figure names, a remote URL inside a non-painting element of a figure that paints among them") && oneLine.includes("which of them it fetches is the browser's own (a <picture> fetches the <source> it picks and not its <img>'s src), measured per shape in file-print-figure-browser.test.ts"), "file-print.ts's header states it where \"with them\" is described");
+  assert.ok(oneLine.includes("so the browser may fetch any URL the figure names, a remote URL inside a non-painting element of a painting figure among them; which it fetches is its own (the round-4 review"), "printable's docstring states it where the privacy rule is stated");
+  assert.ok(!oneLine.includes("every URL the figure names is fetched"), "the round-5 over-promise is gone: a <picture> fetches one of its two URLs (file-print-figure-browser.test.ts)");
   assert.ok(!flow.includes("a print fetches from one only for a picture that is on the paper"), "the sentence that promised less than the code performs is gone");
   forgetLoadedHosts();
 });

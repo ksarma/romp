@@ -7817,11 +7817,13 @@ is this
 print's alone: a placeholder inside a closed fold or under `hidden` that
 names the same host stands as it is, and the next paint of the page gates the host's figures again, since every paint
 reads the loaded set (a Reload of the note and a later note naming the host, both landing as placeholders:
-file-print-egress-browser.test.ts cases (7) to (11)). The restore is the WHOLE figure's: every URL the figure names is
-fetched, a remote URL inside a non-painting element of a figure that paints among them (an svg `<image>` under `<defs>`
-beside one that paints; an `<image>` at opacity zero beside one that paints; a hidden `<img>` inside a `<video>` that
-paints its poster), for something never on the paper, and the title names that URL's host, since `data-fv-hosts` is read
-over every ref of the figure. A placeholder is counted, named and restored only when its figure paints
+file-print-egress-browser.test.ts cases (7) to (11)). The restore is the WHOLE figure's: the browser may fetch any URL
+the figure names, a remote URL inside a non-painting element of a figure that paints among them (an svg `<image>` under
+`<defs>` beside one that paints; an `<image>` at opacity zero beside one that paints; a hidden `<img>` inside a `<video>`
+that paints its poster), for something never on the paper; which of them the browser fetches is its own (the round-5
+fix, 2026-09-20: "every URL is fetched" over-promised the egress, since a `<picture>` fetches one of its two), and the
+title names every such URL's host, since `data-fv-hosts` is read over every ref of the figure. A placeholder is counted,
+named and restored only when its figure paints
 (`figurePrintable`, below), and that is what the grant covers (the round-4 review's HIGH 2, 2026-09-20, a consent-text
 correction: the sentence the person read before granting promised the pictures that reach the paper alone, and the code
 performs more; the corrected sentence stands here, in P6, in open point 8, in file-print.ts's header, in
@@ -8161,9 +8163,9 @@ requests are the fetches those figures make, and only for a placeholder that rea
 rule): a placeholder that does not reach the paper is not restored and its URL is not
 asked, whether its host is shared with a printable placeholder or named by it alone; and the print grants no host for
 the page, so a later paint gates the host's figures again, where a click grants the host for the page (decision 8).
-The restore is the whole figure's, so a placeholder whose figure paints has every URL the figure names fetched, a remote
-URL inside a non-painting element among them, for something never on the paper (P2; the round-4 review's HIGH 2,
-2026-09-20; open point 8). file-print-egress-browser.test.ts case (7) reads the counts apart over one host named by an open and a folded
+The restore is the whole figure's, so a placeholder whose figure paints may have any URL the figure names fetched, a
+remote URL inside a non-painting element among them, for something never on the paper; which the browser fetches is its
+own, measured per shape in file-print-figure-browser.test.ts (P2; the round-4 review's HIGH 2, 2026-09-20; open point 8). file-print-egress-browser.test.ts case (7) reads the counts apart over one host named by an open and a folded
 placeholder, both routes answering: per host, one host asked and one request; per placeholder, the open one's URL once
 and the folded one's never; and a Reload of the same note afterwards shows both placeholders again and asks nothing
 (before the round-2 review the host was loaded whole, so the folded URL was asked too and the host stayed granted);
