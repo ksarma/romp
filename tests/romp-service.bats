@@ -4936,8 +4936,9 @@ EOF
     # is now written into the scratch at the same key path shape, key name and array index and read back, which must give the file's raw
     # read again; the value's own bytes and the key are then the file's, and what remains is the file-keyed class, a tool keyed on what
     # no scratch shares with the file: its dimensions are listed once, in clause (b) of the RULE in _plutil_calibrate's comment in
-    # bin/romp-service, and this comment repeats no list (round 9 of fork PR #778, extra6-1: the four-item list this line gave, place,
-    # size, name and format, was one dimension short of the reader's clause and was attributed to it). At the round-7 head:
+    # bin/romp-service, and this comment repeats no list of its own (round 9 of fork PR #778, extra6-1: this line had given a shorter
+    # list of its own and attributed it to the reader's clause; round 10, extra7-2: the record of that list restated it). At the
+    # round-7 head:
     # interior_nonl reject on the PATH fixture, exit 0,
     # 'Rewrote the login agent', PATH /a\nb\n written back as /a\nb (the drive in the PR body). The round-8 addendum (the plutil lens, by
     # execution at the round-8 commit): that echo wrote the value with the tool's line end TAKEN OFF, so a class conditioned on the value

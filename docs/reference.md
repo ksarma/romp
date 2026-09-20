@@ -1611,13 +1611,12 @@ service step under a running manager, so a unit change a release carried, the
 added by hand.) The rewrite keeps the unit's own identity, `ExecStart`,
 `ROMP_DIR`, `PATH`, the `service.env` path, the instance `Environment=`
 lines and the state root (the plist's log paths with it), whatever the
-deploying shell carries, and refuses, exit 5, when the two disagree (see
-[Two instances on one machine](#two-instances-on-one-machine)); `install.sh`
-then fails the run and points at the refusal's own lines, which name the way
-through. When systemd reports the service active but no unit is at the path
-`romp-service` writes, the rewrite exits 3 and `install.sh` goes on without
-failing the run and without running `install` (that would boot the running
-manager out): it says the release's unit did not land and that
+deploying shell carries, and refuses, exit 5, when the two disagree;
+`install.sh` then fails the run and points at the refusal's own lines, which
+name the way through. When systemd reports the service active but no unit is
+at the path `romp-service` writes, the rewrite exits 3 and `install.sh` goes on
+without failing the run and without running `install` (that would boot the
+running manager out): it says the release's unit did not land and that
 `romp-service install` from the owning shell and clone is the route. What
 that install does to the running manager depends on the platform: on macOS
 the `bootout` and `bootstrap` above restart it; on Linux the install writes

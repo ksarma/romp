@@ -1550,6 +1550,65 @@ class Routes(Fresh):
             km._MAIN_DRIFT[0] = km._MAIN_DRIFT[1] = ""
             km._MANAGER_READ_FAULT[0] = ""
 
+    def test_a_non_primary_kernel_in_auto_mode_latches_no_offer_so_update_check_counts_nothing_and_dials_no_registry(self):
+        # review round 10 of fork PR #778 (2026-09-20, kernel-2): round 1's gate for a non-primary kernel in auto mode returned
+        # AFTER _update_check latched the discovery slot, so that kernel held a release it never offers (no banner push; the
+        # route refuses a release click there), and since the counts gate above keys on bool(tag or dsha), every page load
+        # against it read _restart_impact() and dialled the manager's registry for counts no banner renders, with the stderr
+        # fault line on a silent manager: the cost the pin above removed. That pin passed on the re-entered code because it
+        # fills the slot by hand and never runs _update_check on such a kernel; this one runs the check pass itself. The gate
+        # now stands before the latch, with a slot of its own for the once-per-version notice (patched in with create=True so
+        # this pin reaches its assertions, not an AttributeError, on a kernel that lacks the slot)
+        import contextlib
+        saved_port, saved_be = os.environ.get("ROMP_MANAGER_PORT"), (km._sdk_backend, km._codex_backend)
+        dials, asked, err, sent = [], [], io.StringIO(), []
+
+        class Fake:
+            def restart_impact(self):
+                asked.append(1)
+                return (3, 1)
+        try:
+            os.environ["ROMP_MANAGER_PORT"] = "7777"
+            km._sdk_backend, km._codex_backend = Fake(), None
+            km._MAIN_DRIFT[0] = km._MAIN_DRIFT[1] = ""
+            with mock.patch.object(km, "_UPDATE_AUX_SAID", [""], create=True), \
+                 mock.patch.object(km, "_kernel_ver", return_value="v0.6.0"), \
+                 mock.patch.object(km, "_latest_release_tag", return_value="v0.7.0"), \
+                 mock.patch.object(km, "_run_update", side_effect=AssertionError("the aux kernel must not launch it")), \
+                 mock.patch.object(km, "_send_to_app", side_effect=lambda app, m: sent.append(m)), \
+                 mock.patch.dict(km.os.environ, {"ROMP_KERNEL_ID": "alice"}), \
+                 mock.patch.object(km.http.client, "HTTPConnection", _dials_only(-1, dials, allow={self.port})):
+                km._set_update_mode("auto")
+                km._update_check()
+                km._update_check()
+                self.assertEqual(km._UPDATE_AVAIL[0], "", "the offer slot stays empty: this kernel offers nothing it cannot run")
+                self.assertEqual(sent, [], "no banner push")
+                self.assertFalse((jd.STATE / "update-attempted.json").exists(), "not an attempt")
+                ns = self.notices()
+                self.assertEqual(len(ns), 1, "said once per discovered version, from the notice's own slot")
+                self.assertIn("not the primary", ns[0]["text"])
+                self.assertIn("v0.7.0", ns[0]["text"])
+                with contextlib.redirect_stderr(err):
+                    _, body = _serve_get("/update-check", headers={"X-Romp-Token": km.TOKEN})
+                d = json.loads(body)
+                self.assertEqual((d["mode"], d["tag"], d["drift"], d["sessions"], d["midTurn"], d["otherKernels"]),
+                                 ("auto", "", "", None, None, None), "nothing offered: every count null")
+                self.assertEqual((dials, asked), ([], []), "no registry read, no impact count, on a page load against this kernel")
+                self.assertEqual(err.getvalue(), "", "no fault line about a banner this kernel never shows")
+                # the gear flipped to ask: the release is offered by the next check pass (the slot was never latched, so the
+                # pass finds it new), not by a page load before it
+                km._set_update_mode("ask")
+                km._update_check()
+                self.assertEqual(km._UPDATE_AVAIL[0], "v0.7.0")
+                self.assertEqual([m.get("tag") for m in sent], ["v0.7.0"], "the ask-mode push, as on any kernel")
+        finally:
+            km._sdk_backend, km._codex_backend = saved_be
+            if saved_port is None:
+                os.environ.pop("ROMP_MANAGER_PORT", None)
+            else:
+                os.environ["ROMP_MANAGER_PORT"] = saved_port
+            km._MANAGER_READ_FAULT[0] = ""
+
     def test_update_check_reads_no_registry_while_the_update_runs(self):
         # while the update runs the banner shows the wait and its poll reads boot, failed and updated alone,
         # so the route skips the registry read (a loopback GET, up to 1 s on a manager that accepts and

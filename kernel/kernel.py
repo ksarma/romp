@@ -12041,6 +12041,9 @@ def _user_todos_off_boot_notice():
 # machines. `romp update [host]` remains the other direction (pushing THIS build to remotes).
 _UPDATE_AVAIL = [""]     # newest remote release tag when newer than ours ("" = none/unknown)
 _UPDATE_STATE = [""]     # "" | "running" — one update at a time; the banner reads this
+_UPDATE_AUX_SAID = [""]  # the release a non-primary kernel in auto mode last said is the primary's to run: the notice's
+                         # once-per-version slot, kept apart from _UPDATE_AVAIL so that kernel latches no offer it never makes
+                         # (review round 10 of fork PR #778, kernel-2; _update_check says what the latch cost)
 _NO_MANAGER_WHY = "no manager is running this kernel"   # the script's why when it had no manager port to ask; the
 #                                        consumer keys the restart hint on it (review find, 2026-09-08)
 _RESTART_REQUEST_MAX_S = 60   # curl --max-time on the script's restart request: a manager that accepts and never
@@ -12716,16 +12719,25 @@ def _update_check():
         return
     if latest == _UPDATE_AVAIL[0]:
         return                                      # already discovered and acted on this kernel run
-    prev, _UPDATE_AVAIL[0] = _UPDATE_AVAIL[0], latest
-    if _update_mode() == "auto":
-        if not _is_primary_kernel():
-            # round 1 of the install-rewrite review (2026-09-18): the update's install.sh rewrites the login
-            # service's unit, the primary's; an aux kernel launches nothing and spends no once-only marker, and
-            # says so once per discovered version (the slot keeps the tag). No banner: the route refuses the click.
+    if _update_mode() == "auto" and not _is_primary_kernel():
+        # round 1 of the install-rewrite review (2026-09-18): the update's install.sh rewrites the login service's
+        # unit, the primary's; an aux kernel launches nothing and spends no once-only marker, and says so once per
+        # discovered version. No banner: the route refuses the click. The gate stands BEFORE the discovery latch and
+        # the notice has a slot of its own (review round 10 of fork PR #778, kernel-2): round 1 latched _UPDATE_AVAIL
+        # first, so this kernel held a release it never offers, and /update-check's counts gate (bool(tag or dsha))
+        # then read the restart impact and dialled the manager's registry on every page load against it, for counts
+        # no banner renders and with the stderr fault line on a silent manager, the cost review round 6 of the confirm
+        # step removed. What the order costs: the gear flipped from auto to ask offers the release at the next check
+        # pass (the slot is empty, so the pass finds it new; _set_update_mode kicks no pass, and the cadence is
+        # _UPDATE_CHECK_EVERY_S), where the latched slot had offered it at the next page load.
+        if latest != _UPDATE_AUX_SAID[0]:
+            _UPDATE_AUX_SAID[0] = latest
             _sync_notice("a newer romp (%s) is available; this kernel is not the primary (ROMP_KERNEL_ID=%s), so the "
                          "automatic update is the primary kernel's to run"
                          % (latest, os.environ.get("ROMP_KERNEL_ID", "")), ok=False)
-            return
+        return
+    prev, _UPDATE_AVAIL[0] = _UPDATE_AVAIL[0], latest
+    if _update_mode() == "auto":
         tried = ""
         try:
             tried = json.loads((jd.STATE / "update-attempted.json").read_text()).get("tag", "")
@@ -71482,7 +71494,10 @@ _UPD_JS = (
     # a pull that left the code on disk with no manager that is the pulled sha, which the kernel's next pass
     # would offer again as a restart drift, and the dismissal is durable, so that offer stays quiet until a
     # newer sha (a window the running push flipped into the wait offered nothing, so its curTag is empty and
-    # its Not now hides the message alone). After the failed ending Not now hides the message and dismisses
+    # its Not now hides the message alone, unless a failed ending re-showed Update there and the window adopted
+    # the standing offer, the branch below: a retry from that Update whose wait ends updated then dismisses the
+    # adopted identifier, a durable write from a window that never made the offer; review round 10 of fork PR
+    # #778). After the failed ending Not now hides the message and dismisses
     # nothing, in every window: the failure's own text promises the next check's re-offer (a refused pull
     # re-arms the drift slot; a refused restart request keeps its offer), and a durable dismissal of the
     # refused target would stop that re-offer everywhere, on every page load and in the drift check's push.
@@ -71490,14 +71505,24 @@ _UPD_JS = (
     # next confirm and the updated ending; review round 8, 2026-09-10): it posts nothing and leaves the
     # page-local dismissedTag alone, so the next push of the same identifier shows in this window too. curTag
     # is cleared only when no offer stands; while Update is re-shown the window keeps the identifier it
-    # offers, so a retry from that Update whose wait ends updated has its Not now dismiss that identifier
+    # offers, or adopts the answer's when it had none (round 10 of fork PR #778, the comment on the branch
+    # below), so a retry from that Update whose wait ends updated has its Not now dismiss that identifier
     # durably, as the updated ending's rule above says (round 7 cleared curTag at every failed ending, and
     # the retry's updated ending posted nothing). A boot change retires the text whether or not Update
     # stands beside it (__rompUpdBoot above), so a previous life's failure does not outlive the kernel's
     # restart. Round 6 had the failed ending's Not now post the tag the
     # clicking window had offered (the refused target) and an empty tag from a pushed window, which the
     # kernel ignores, so one message dismissed durably in one window and nothing in another
-    "if(d.failed){waiting=false;var again=!!(d.tag||(d.drift&&d.driftSha));go.hidden=!again;go.disabled=false;dm.hidden=false;failedEnd=true;if(!again){curTag='';curKind='';}show('The update did not finish: '+d.failed);return;}"
+    "if(d.failed){waiting=false;var again=!!(d.tag||(d.drift&&d.driftSha));go.hidden=!again;go.disabled=false;dm.hidden=false;failedEnd=true;"
+    # a window with no offer of its own ADOPTS the answer's standing one when Update is re-shown (review round 10 of
+    # fork PR #778, kernel-1): flipped into the wait by a running push before it offered anything, or loaded while
+    # the update ran, its curTag was empty, so the re-shown Update's confirm posted {kind:"",id:""} and the route
+    # refused it (400, the click named no offer) until the page was reloaded, where before the confirm step the
+    # route derived the action from its own slots. The tag first, else the drift sha: reoffer()'s precedence on the
+    # load road, so the two cannot drift apart. A window that made its own offer keeps it (round 7's rule, the
+    # !curTag guard): its retry posts what it showed, and a kernel offering something else now answers the 409
+    # that re-reads the offer
+    "if(again){if(!curTag){curTag=d.tag||d.driftSha;curKind=d.tag?'release':'main';}}else{curTag='';curKind='';}show('The update did not finish: '+d.failed);return;}"
     # the kernel words the step by case (`romp refresh` exits 1 with no manager, where `romp up` is
     # the step; review find, 2026-09-08); the fallback is the manager case, for an older kernel
     "if(d.updated){waiting=false;failedEnd=false;go.hidden=true;dm.hidden=false;show('romp updated to '+d.updated+' on disk'+(d.why?', but '+d.why:'')"
