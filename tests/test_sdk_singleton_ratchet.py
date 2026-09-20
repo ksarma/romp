@@ -40,14 +40,14 @@ red the day that arm lands), and the 316 the first sweep ran, module alone on th
 first sweep, over its 316 at the base, module alone on the missing road, found the 4 red on these leaks and 1 red for an
 unrelated pre-existing reason (tests/test_sdk_rate_limit_usage.py, an unrestored ROMP_SERVE_TOKEN setdefault the judge
 fixture's environment check names; identical with the ratchet off);
-at this head every one of the 364 is green alone (the missing road, CI's) except that one. The full-suite census, on
-the importable road, saw none of the five, because an earlier first builder in every worker made their builds cache
-hits: a green suite run is no evidence a module is clean, and the module-alone sweep is the measurement; the green CI
-run at the round-3 head is the missing-road full-suite datum.
+the sweep repeated over all 364 after the fixes was green alone (the missing road, CI's) except that one. The full-suite
+census, on the importable road, saw none of the five, because an earlier first builder in every worker made their builds cache
+hits: a green suite run is no evidence a module is clean, and the module-alone sweep is the measurement; a green CI
+run of the suite is the missing-road full-suite datum.
 
 The residual that leaves, a stated limit: a green run under the ratchet proves no leak occurred in that run and not that no
 test would leak alone, because a first builder that leaves its build masks a later sandboxed test's reach as a cache hit
-(no build, no transition, the ratchet silent). Measured at this head, as a pair and module alone on the missing road,
+(no build, no transition, the ratchet silent). Measured as a pair and module alone on the missing road,
 which is CI's (the test venv's interpreter has no claude_agent_sdk and neither run collects
 tests/test_host_transport.py), tests/test_kernel_fleet_cache.py then
 tests/test_token_usage.py with CostWeighting's fix reverted gave 77 passed and 0 verdicts, while the module alone gave 65
@@ -347,18 +347,18 @@ source and reads each name here. CI's pytest is
 unpinned (the workflow installs the latest, 9.1.1
 today, the test venv's version here too), and pytest's short summary prints each error's message whole when CI is set
 in the environment or at -vv and trimmed to the terminal width otherwise, so a reader that counted the boundary text's
-occurrences read 1 on a box and 2 on CI for one verdict (the CI red at the round-3 preparation head: red here with
-CI=true alone and under a CI-like install through uv, green at this head both ways). The PROTECTION is the structured
-reads above: none of them counts occurrences,
+occurrences read 1 on a box and 2 on CI for one verdict (the CI red of 2026-09-19, reproduced here with CI=true
+alone and under a CI-like install through uv, and green both ways since the readers were made structured). The
+PROTECTION is the structured reads above: none of them counts occurrences,
 so the summary's shape cannot change what they read. The child also runs -vv, which is NOT a protection: it only makes a box
 run print what CI prints so a reader comparing the two by eye sees one shape; pytest may change what -vv prints and the
 readers would still hold, while a structured read removed as redundant with -vv would put the count back. Two of the
 readers parse plain text, outcomes over the per-phase lines and SUMMARY_LINE over the final line, so the child's colour
 is switched off at the nested_run boundary (its colour-forcing variables popped and --color=no passed; the pin is C's run
 from a parent that exports PY_COLORS=1 and FORCE_COLOR=1): under an inherited PY_COLORS=1 the child printed ANSI markup
-into both and 74 of the 100 tests at the round-3 head went red. The independence is of the short summary's shape, never
-of the summary line's own format: two readers parse that line (summary_mismatch over SUMMARY_LINE, and the warned run's
-segment read) and fail loudly, the line quoted, when it changes.
+into both and 74 of the module's 100 tests of the time went red (2026-09-19). The independence is of the short summary's
+shape, never of the summary line's own format: two readers parse that line (summary_mismatch over SUMMARY_LINE, and the
+warned run's segment read) and fail loudly, the line quoted, when it changes.
 
 Mutations of the fixture run against this module, each landed and reverted (2026-09-19; the runner compile-checks the
 mutated conftest and counts a NameError in the outer output as a crash, never as a weakening), listed by what the
@@ -497,9 +497,9 @@ added after it).
     yield removed).
   the function fixture not naming the object it accused (A.h gets an inherited report, E, D).
 The count of cells is the table's, printed by `python -B tests/test_sdk_singleton_ratchet.py --count` (above).
-The cells pinned by no run at the round-6 close head, each for a stated reason: the unreadable reference root granting
-the allowance (not constructible: the kernel always binds jd); the yield's identity condition dropped (redundant by
-construction: when the end value is the last read's and is not the last window's value, a class teardown inside the
+The cells pinned by no run, each for a stated reason (a list kept by hand, read by no pin): the unreadable reference root
+granting the allowance (not constructible: the kernel always binds jd); the yield's identity condition dropped (redundant
+by construction: when the end value is the last read's and is not the last window's value, a class teardown inside the
 scope installed it, and that class's own boundary judged it against its start, which only a restore of the value the
 scope found passes, so the module end is looking at its own start value); the windows list not cleared at the module
 end (the read-count filter never selects a stale entry; the clearing bounds memory); the refusal's _sdk_reported term (a
@@ -657,8 +657,8 @@ DERIVE_ENV_DROPPED = ("PYTEST_ADDOPTS", "PYTEST_PLUGINS", "PYTEST_DISABLE_PLUGIN
 # cell_counts refuses a key that opens on no block's prefix, or on two, so a cell of a new block is added here before it
 # can be counted: never a silent third bucket.
 CELL_BLOCKS = (("the refusal block", ("refusal-", "refused-", "report-")), ("the boundary link", ("boundary-",)))
-# The table's floor, set at the round-6 close head: a shorter table is a failure, not a pass. The floor pin's message
-# formats this constant, so the value has one copy.
+# The table's floor, the table's length when the floor pin was written: a shorter table is a failure, not a pass. The
+# floor pin's message formats this constant, so the value has one copy.
 TABLE_FLOOR = 30
 # A number of cells stated in prose: the form the pin holds absent from the module docstring (the count is printed)
 NUMBER_OF_CELLS = re.compile(r"\b(?:\w+-)?(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|"
@@ -2041,7 +2041,7 @@ def nested_run(text, follower=None, sdk_stub=False, conftest=None):
     environment (the message is whole at verbose >= 2, truncation happens only at verbose < 2, and the helper's CI
     branch runs only at verbose <= 0), which is why -vv stays and lowering the child's verbosity is unsafe: at -v two
     of the three vary. At -v a box saw every verdict once, in the ERRORS section, and CI saw each twice, so a count of occurrences over the
-    output read 1 here and 2 there for the same one boundary verdict (CI red at the round-3 preparation head); the
+    output read 1 here and 2 there for the same one boundary verdict (the CI red of 2026-09-19); the
     outer tests read the verdicts by the scope or test they name (boundary_scopes, boundary, verdict), never by
     occurrence, and that is the protection; -vv is not one. It only makes a box run print what CI prints so the two
     outputs compare by eye, and it is coupled to pytest's current behaviour; the structured reads hold whatever the
@@ -2051,7 +2051,7 @@ def nested_run(text, follower=None, sdk_stub=False, conftest=None):
     popped from its environment beside the pytest variables, and --color=no is on its argv. pytest 9.1.1's
     should_do_markup reads PY_COLORS and FORCE_COLOR (and NO_COLOR, left alone here: it only disables) before any
     isatty check, so a child under a parent that exported either printed ANSI markup into its rule and PASSED lines,
-    and 74 of this module's 100 tests at the round-3 head went red with messages naming nothing about colour
+    and 74 of this module's 100 tests of the time went red with messages naming nothing about colour
     (2026-09-19); CLICOLOR_FORCE is popped as the third forcing convention although pytest 9.1.1 does not read it.
     --color=no outranks every one of them (create_terminal_writer sets hasmarkup False after should_do_markup), so the
     pop and the flag are belt for each other and the pin (AChildStartedUnderAColourForcingEnvironment) reds only when
@@ -2112,8 +2112,8 @@ def summary_mismatch(out, errors):
     does not stand for 3. With `errors` 0 the line carries no errors segment at all, other counts allowed. The count
     is read on the summary line alone because SUMMARY_LINE selects that line (re.M without re.S, so its capture holds
     no newline); the segment class's newline exclusion ([^,\n]) and the [ ,] tail after the count are defence in
-    depth over a value already reduced to one line, and no test can red on the exclusion alone. At the round-3 head
-    the test named for the property credited the class; it pins SUMMARY_LINE's line selection
+    depth over a value already reduced to one line, and no test can red on the exclusion alone. The test named for
+    the property pins SUMMARY_LINE's line selection, and its earlier name credited the class
     (NestedSummaryMatcher.test_the_count_is_read_on_the_summary_line_alone). The first form asked for "N passed, M
     errors in" and "N passed in" exactly, so one unrelated warning in the child (an unpinned pytest's deprecation, a
     conftest filterwarnings entry pytest drops with a config warning)
@@ -2398,8 +2398,8 @@ class AChildStartedUnderAColourForcingEnvironment(FirstBuildOverAKeptSandbox):
     """C's run with the parent exporting PY_COLORS=1 and FORCE_COLOR=1 for the child's start (mock.patch.dict over
     os.environ around nested_run, restored after): every test of C runs again here over that child's output, each a
     positive structured read (outcomes, the verdict, the summary line through summary_mismatch) that misread ANSI
-    markup before nested_run popped the colour variables and passed --color=no (74 of the module's 100 tests red at
-    the round-3 head with PY_COLORS=1 exported), and the absence read below is the belt. The pin reds only when both
+    markup before nested_run popped the colour variables and passed --color=no (74 of the module's 100 tests of the
+    time red with PY_COLORS=1 exported, 2026-09-19), and the absence read below is the belt. The pin reds only when both
     the pop and --color=no go: each alone keeps the child plain (--color=no outranks the variables, and the pop
     starves --color=no's case)."""
 
@@ -2492,7 +2492,7 @@ class NestedSummaryMatcher(unittest.TestCase):
 
     def test_the_count_is_read_on_the_summary_line_alone(self):
         """SUMMARY_LINE's line selection, not the segment class, keeps the count on the summary line: the class's
-        newline exclusion is unreachable over the one-line capture (at the round-3 head this test's name credited the
+        newline exclusion is unreachable over the one-line capture (this test's earlier name credited the
         class). Three fabricated outputs: a count on a later line is not read (reds only when the segment search is
         repointed from the matched line to the whole output AND the class is widened to [^,]; neither alone); a later
         line carrying a passed-and-errors shape of its own is not read (reds under the repoint alone, with either
@@ -2623,7 +2623,7 @@ RUN_PROTECT_VV = "-vv is not one"
 
 
 class TheProtectionIsWorded(unittest.TestCase):
-    """The wording required at the round-3 preparation head, that the structured reads are the protection against the
+    """The wording round 3 required, that the structured reads are the protection against the
     short summary's shape and -vv only makes a box run and a CI run compare by eye, is pinned in both docstrings that
     carry it, this module's and nested_run's, each in its own words: the reads named as the protection BEFORE -vv is
     named as not one, so a later author does not delete a structured read as redundant with -vv. The other three
@@ -2645,9 +2645,9 @@ class TheProtectionIsWorded(unittest.TestCase):
 class TheReadersRosterNamesEveryReader(unittest.TestCase):
     """The module docstring's roster of structured output readers names every reader this module defines. The
     population is derived from the source, never listed here: the top-level functions between nested_run and _NestedRun
-    whose first parameter is the nested run's output, so a reader added without its roster entry reds this test. At the
-    round-4 head the roster omitted carriers, the reader that delta added, with the module green: the PROTECTION needle
-    pins two claim sentences and their order, not the roster's names."""
+    whose first parameter is the nested run's output, so a reader added without its roster entry reds this test. In
+    round 4 the roster omitted carriers, the reader that round's delta added, with the module green: the PROTECTION
+    needle pins two claim sentences and their order, not the roster's names."""
 
     def test_every_reader_is_named_in_the_roster(self):
         src = inspect.getsource(sys.modules[__name__])
@@ -2667,10 +2667,10 @@ class TheMutationCellsApply(unittest.TestCase):
     recipe that would not compile is caught before a derivation runs it. Every key is carried by exactly one docstring
     cell as "derive: <id>", inside a parenthesis that opens with the cell's rule ("(red: "), and every derive id in the
     docstring is a key: the composition, pinned both ways. The table is not short: a population that comes back under
-    the count at the head that set the floor is a failure, not a pass (the roster pin's convention). derive() deselects
-    this class, and under any plant it reds: a replacement that removes its old text fails the exact-once count, and one
-    that appends beside the old text (the new text containing the old, so the count holds after the plant) puts a new
-    text into the file that this class holds absent. It is no cell's set."""
+    TABLE_FLOOR, the table's length when the pin was written, is a failure, not a pass (the roster pin's convention).
+    derive() deselects this class, and under any plant it reds: a replacement that removes its old text fails the
+    exact-once count, and one that appends beside the old text (the new text containing the old, so the count holds
+    after the plant) puts a new text into the file that this class holds absent. It is no cell's set."""
 
     def test_each_cells_old_text_occurs_exactly_once_and_the_mutation_parses(self):
         for cell, (target, subs) in MUTATIONS.items():
@@ -2712,8 +2712,9 @@ class TheMutationCellsApply(unittest.TestCase):
 
     def test_the_table_is_not_short(self):
         counts = cell_counts()
-        self.assertGreaterEqual(len(MUTATIONS), TABLE_FLOOR, "the table came back under the floor of %d, set at the round-6 "
-                                "close head; a shorter table is a failure, not a pass. The table now: %s: %r"
+        self.assertGreaterEqual(len(MUTATIONS), TABLE_FLOOR, "the table came back under the floor of %d (TABLE_FLOOR, the "
+                                "table's length when this pin was written); a shorter table is a failure, not a pass. "
+                                "The table now: %s: %r"
                                 % (TABLE_FLOOR, ", ".join("%s %d" % (block, n) for block, n in counts.items()),
                                    sorted(MUTATIONS)))
         self.assertEqual(counts["in total"], len(MUTATIONS))
@@ -2883,7 +2884,7 @@ class ValuesThatAreNotTheKernelsBuild(_NestedRun, unittest.TestCase):
 
     def test_a_magicmock_left_fails_without_the_gone_clause(self):
         # The clause says a state_dir is NO LONGER a directory, true of the kernel's own class alone; a MagicMock's
-        # attribute never was one, and at the round-3 head the clause was appended to it all the same.
+        # attribute never was one, and until round 3 the clause was appended to it all the same.
         text = self.assertObjectRoad("Cases", "test_h_a_magicmock_left_fails")
         self.assertTrue(text.startswith("changed after its teardown: before types.SimpleNamespace over no state_dir, "
                                         "after unittest.mock.MagicMock over <MagicMock name='mock.state_dir'"), text)
@@ -2972,8 +2973,8 @@ class ScopesMoveJdStateUnderAnImportTimeBuildOverTheRunRoot(_NestedRun, unittest
     jd.STATE for their tests without building and put it back. Nothing leaked, and no window says anything: the
     kept-root report at the worker's first window compares the object's state_dir with jd.STATE as the MODULE START
     READ recorded it (the read whose object identity it checks), which the scope setups' moves come after. Compared
-    with jd.STATE at the window itself, as the report did before the fixed head's consolidation, One.a got the
-    kept-root report blaming import-time code for a build over another root or a move of jd.STATE that never
+    with jd.STATE at the window itself, as the report did before its compare was consolidated onto that read, One.a got
+    the kept-root report blaming import-time code for a build over another root or a move of jd.STATE that never
     happened (an ERROR on an innocent test, exit 1)."""
     SCRATCH = SCRATCH_K2
     ERRORS = 0
@@ -3621,7 +3622,7 @@ class SessionScopedFixtureInstallsBeforeTheModulesReads(_NestedRun, unittest.Tes
     module-scoped fixture of the module's own, the class start read, setUpClass, the function before-read), so the
     start read sees its object, the identity term holds, and the kept-root report on the first test names the cause
     family: import-time code, or a session- or package-scoped fixture. No read brackets a session fixture, so both
-    boundaries are quiet: the first-window report's stated residual. At the round-3 head the report blamed import-time
+    boundaries are quiet: the first-window report's stated residual. Until round 3 the report blamed import-time
     code alone."""
     SCRATCH = SCRATCH_W
     CONFTEST = CONFTEST_W
@@ -3645,7 +3646,7 @@ class ClassSetupBuildsOverAKeptSandboxAsTheWorkersFirstBuilder(_NestedRun, unitt
     """T: setUpClass makes the worker's first build over a kept sandbox and restores jd.STATE. The module boundary's
     start read saw None, so at One.a's window the object is not the one that read found, the kept-root inherited
     report is not taken (the identity term), and One's class boundary names the change from None with the sandbox
-    remedy at One.b's teardown. At the round-3 head One.a carried the kept-root report blaming import-time code with
+    remedy at One.b's teardown. Until round 3 One.a carried the kept-root report blaming import-time code with
     no remedy, and its naming silenced the class boundary; with the identity term dropped the report returns and, the
     two naming lists being apart, the boundary verdict stays too, so the run counts two errors."""
     SCRATCH = SCRATCH_T
@@ -3692,8 +3693,8 @@ class ALaterModulesClassMovesJdStateUnderAnUnnamedFirstBuild(_NestedRun, unittes
 class ClassSetupCompletesALeak(_NestedRun, unittest.TestCase):
     """U: setUpClass builds over a sandbox, restores jd.STATE and removes the sandbox before any test. Two error lines
     for one leak: the inherited gone report on One.a (its cause clause already names a class or module setup) and One's
-    class boundary at One.b's teardown, naming the change from None with the gone clause and the sandbox remedy. At
-    the round-3 head the report's naming silenced the boundary (one list held both kinds of naming), so the leak was
+    class boundary at One.b's teardown, naming the change from None with the gone clause and the sandbox remedy. Until
+    round 3 the report's naming silenced the boundary (one list held both kinds of naming), so the leak was
     never attributed to the scope; the boundary's quiet rule now reads the verdict list alone."""
     SCRATCH = SCRATCH_U
     ERRORS = 2
@@ -3830,8 +3831,8 @@ class ARepointedStateDir(_NestedRun, unittest.TestCase):
     One.c repoints and puts the state_dir back (quiet); Two's tearDownClass repoints the object its test left (the
     class boundary, before its quiet rules, on an object a verdict already named); Three's setUpClass saves and
     replaces the singleton and moves jd.STATE, Three.a builds over the class root (allowed at its own window), and its
-    tearDownClass puts the saved object back with its state_dir repointed (the put-back-repointed branch). At the
-    round-3 head the run was 4 passed, exit 0, and no window said anything: the same-object road compared isdir alone,
+    tearDownClass puts the saved object back with its state_dir repointed (the put-back-repointed branch). Until
+    round 3 the run was 4 passed, exit 0, and no window said anything: the same-object road compared isdir alone,
     although the readers hold the object and read its state_dir on every registry scan."""
     SCRATCH = SCRATCH_X
     ERRORS = 3
