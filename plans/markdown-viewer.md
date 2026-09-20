@@ -8254,7 +8254,14 @@ of created files checked against the diff's added files there. It and ui/webview
 ui/webview/source-units.ts, the compiler's parser (comments as text with wrapped lines joined, string literals by value
 in either quote, template spans, escapes resolved), Markdown as paragraphs and Python as paragraphs with backslash
 escapes folded: the one reader for both pins, since the file review's round 4 ruled that a guard against a form is
-keyed on the property or parses, and that three guards keyed on three spellings are fixed as one mechanism.
+keyed on the property or parses, and that three guards keyed on three spellings are fixed as one mechanism. The census
+those two pins grew out of, every line the branch added since the merge-base 3711863c9 that names a review, run for the
+file review's round 3, tests-2, with the corrections it produced: the commit that recorded it said 173 lines over 19
+files at this head, and 173 is the count at that commit's parent, 677b0e1c8; at the commit's own head, 2a35d92c9, the same
+definition gives 178 lines over the same 19 files, the five more being the lines that commit itself added, each naming
+its review rightly (the file review's round 4, tests-4; both counts re-derived on 2026-09-20 by the census script kept
+beside the contract, run in a detached copy at each of the two heads; the commit's message stands as pushed, since
+amending it would move every later commit).
 tests/test_file_view_bar_browser.py, the served bar pins, read the groups
 inside `.fileview-acts`, and the nav group stands outside it, in the bar itself, before the path; run as a single module
 at the records commit, green (`pytest tests/test_file_view_bar_browser.py`, a run that needs the extension deps and a
