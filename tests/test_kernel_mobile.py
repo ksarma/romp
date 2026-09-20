@@ -675,7 +675,8 @@ out.barInTheBandBack = { appTop: appTop(), appH: appH(), barH: barH() };
 // the band's top (BAR.top 296, 320, 339, 340 against a band from 340) and a bar wholly above the band (BAR.top 100); a short
 // band (vv.height 60) panned deep; the band a refused height report leaves standing after a rotation (innerHeight 390 puts
 // the bar at 346..390 while the last published band, 384..844, stands); a band shorter than the bar (vv.height 30: the first
-// form reserved more than the band holds); and the deep pan where the two forms agree (384).
+// form reserved more than the band holds); and the deep pan (384), the CONTROL: the test asserts both forms agree on it and
+// on every state whose band top is not below the bar's top, and differ on every state whose band top is (round 8, 2026-09-20).
 // Each record carries the bar's box and the band the shell published, so the test derives the overlap from the geometry
 // it reads back, not from a formula of its own.
 const sweep = [];
@@ -981,12 +982,50 @@ class MobileFitExecutes(unittest.TestCase):
         for edge, hit in (("band top = bar top", lambda k: band[k][0] == bar[k][0]), ("band top = bar bottom", lambda k: band[k][0] == bar[k][1]),
                           ("band bottom = bar top", lambda k: band[k][1] == bar[k][0]), ("band bottom = bar bottom", lambda k: band[k][1] == bar[k][1])):
             self.assertTrue([k for k in band if hit(k)], "the sweep reaches the edge " + edge)
+        # round 8 (2026-09-20): the fifth outcome of the formula, the band wholly INSIDE the bar (min takes the band's bottom and max
+        # its top), was reached by one state and guarded by proxy only: the length guard above accepts a short band disjoint from
+        # the bar. Beside it, the three outcomes the ties and the C states had satisfied on their behalf: the clamp firing (a
+        # strictly negative difference, the bar wholly above or below the band with a gap), the bar straddling the band's BOTTOM
+        # edge (the round-4 case), and the bar strictly inside the band. Each derived from the geometry, each failing on an empty
+        # sweep, each red once by dropping its states.
+        self.assertTrue([k for k in band if bar[k][0] < band[k][0] and band[k][1] < bar[k][1]],
+                        "a band wholly inside the bar: min takes the band's bottom and max its top")
+        self.assertTrue([k for k in band if bar[k][1] < band[k][0]], "the clamp fires: a bar wholly above the band with a gap")
+        self.assertTrue([k for k in band if bar[k][0] > band[k][1]], "the clamp fires: a bar wholly below the band with a gap")
+        self.assertTrue([k for k in band if band[k][0] < bar[k][0] < band[k][1] < bar[k][1]], "the bar straddles the band's bottom edge")
+        self.assertTrue([k for k in band if band[k][0] < bar[k][0] and bar[k][1] < band[k][1]], "the bar strictly inside the band")
         stale = [r for r in sweep if r["vvHeight"] == 0]
         self.assertEqual(len(stale), 1, "the stale band after a refused height report following a rotation is one state")
         self.assertEqual((band[stale[0]["label"]], stale[0]["innerHeight"]), ((384, 844), 390), "the band last published stands while the layout viewport changed")
         # the band the shell published at each position: the pan and the height it was measured with (the stale state keeps the last)
         self.assertEqual({r["label"]: (r["appTop"], r["appH"]) for r in sweep if r["vvHeight"]},
                          {r["label"]: ("%dpx" % r["ot"], "%dpx" % r["vvHeight"]) for r in sweep if r["vvHeight"]})
+
+    def test_the_deep_pan_is_the_control_on_which_both_forms_agree_and_the_sweep_discriminates_elsewhere(self):
+        # round 8 (2026-09-20): the deep pan (384) had been called the control in a comment and in the body, and no test computed
+        # the one-edge form or asserted agreement; every guard stayed green without it. The one-edge form round 6 replaced,
+        # clamp(bandBottom - barTop, 0, barHeight), is computed here beside the two-interval form: the two agree exactly where the
+        # band's top is at or above the bar's top and differ everywhere else, so the sweep's discriminating half is exactly the
+        # top_below states. The recorded strip equals BOTH forms on every agreeing state (deep384 among them, the control) and
+        # differs from the one-edge form on every discriminating state, so the shell computes the two-interval form and the sweep
+        # can tell (a shell writing the one-edge form reds this by name, not only the derived expectation above).
+        sweep = self.out["sweep"]
+        px = lambda v: int(v[:-2])
+        band = {r["label"]: (px(r["appTop"]), px(r["appTop"]) + px(r["appH"])) for r in sweep}
+        bar = {r["label"]: (r["bar"]["top"], r["bar"]["bottom"]) for r in sweep}
+        strip = {r["label"]: px(r["barH"]) for r in sweep}
+        bar_h = {b - t for t, b in bar.values()}.pop()
+        two_edge = {k: max(0, min(bar[k][1], band[k][1]) - max(bar[k][0], band[k][0])) for k in band}
+        one_edge = {k: max(0, min(bar_h, band[k][1] - bar[k][0])) for k in band}
+        top_below = [k for k in band if band[k][0] > bar[k][0]]
+        agree = [k for k in band if k not in top_below]
+        self.assertTrue(agree and top_below, "both halves of the sweep: %r / %r" % (agree, top_below))
+        self.assertIn("deep384", agree, "the deep pan is an agreeing state: %r" % (agree,))
+        self.assertEqual({k: two_edge[k] for k in agree}, {k: one_edge[k] for k in agree}, "the two forms agree where the band's top is not below the bar's top")
+        self.assertEqual({k: strip[k] for k in agree}, {k: one_edge[k] for k in agree}, "the recorded strip equals both forms on the agreeing states: the control")
+        self.assertEqual([k for k in top_below if one_edge[k] == two_edge[k]], [], "the two forms differ on every state whose band top is below the bar's top")
+        self.assertEqual([k for k in top_below if strip[k] == one_edge[k]], [], "the shell's strip is never the one-edge form on a discriminating state")
+        self.assertEqual({k: strip[k] for k in top_below}, {k: two_edge[k] for k in top_below}, "and is the two-interval form there")
 
     def test_a_pinch_over_a_deep_pan_keeps_the_strip_the_published_band_gives(self):
         # round 4 (2026-09-20): the bar wholly inside the band under a deep pan (384: the band 384..844), then a pinch (scale 2,
