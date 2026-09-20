@@ -153,6 +153,24 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         for surface in ("shell", "federation", "chat", "perf", "reload-core"):
             self.assertNotIn("parked", km.CLIENT_DIAG_KEYS[surface], "the key is the pane-shim surface's alone")
 
+    def test_the_inactive_spacer_rows_marker_passes_whole(self):
+        # PR E review round 1b marked a spacer row whose view was switched away before its frame `view: "inactive"` (sh and ch null: no
+        # geometry, and the row says so; ui/webview/scroll-write.ts spacerRow). The chat allowlist did not name the key, so the kernel
+        # dropped it with a stderr line, and the stored row was byte-identical to an active view's row read with #content missing: the
+        # marker was the only distinguisher and never reached the journal (review round 2). The fixture census below is green with or
+        # without the key, so this is the regression pin: the marked row through the real dispatch, stored whole. The key carries one
+        # fixed word and no host name, and is the chat surface's alone.
+        row = {"sid": WID, "top": [40, 48], "bot": [0, 0], "dTop": 8, "dBot": 0, "sh": None, "ch": None, "view": "inactive"}
+        err = self.post("chat", "spacer", row)
+        self.assertEqual(err, "", "the marker is admitted whole, nothing said: %s" % err)
+        stored = self.rows()[-1]["data"]
+        self.assertEqual(stored, row, "the inactive spacer row survives the allowlist whole, marker included")
+        self.assertEqual(stored["view"], "inactive")
+        self.assertIn("view", km.CLIENT_DIAG_KEYS["chat"])
+        for surface in km.CLIENT_DIAG_KEYS:
+            if surface != "chat":
+                self.assertNotIn("view", km.CLIENT_DIAG_KEYS[surface], "the key is the chat surface's alone")
+
     def test_every_surface_in_the_table_admits_every_key_it_names(self):
         for surface, keys in sorted(km.CLIENT_DIAG_KEYS.items()):
             data = {k: i for i, k in enumerate(sorted(keys))}
@@ -496,6 +514,7 @@ class ClientDiagAllowlistTest(unittest.TestCase):
                 ("unitchange", {"sid": sid, "dh": 4, "cls": "turn", "fromTail": True, "stick": False, "atBottom": True, "sh": 5000, "ch": 800}),
                 ("tailmut", {"sid": sid, "where": "tail", "removed": 1, "added": 2, "reAdded": 0, "shBefore": 5000, "shAfter": 5010, "st": 4200, "ch": 800}),
                 ("spacer", {"sid": sid, "top": 40, "bot": 0, "dTop": 8, "dBot": 0, "sh": 5000, "ch": 800}),
+                ("spacer", {"sid": sid, "top": [40, 48], "bot": [0, 0], "dTop": 8, "dBot": 0, "sh": None, "ch": None, "view": "inactive"}),   # the same poster's other road: a view switched away before its frame carries no geometry and the marker (PR E review round 1b; the kernel half review round 2)
                 ("scrollgesture", {"sid": sid, "top": 4100, "gesture": True, "sh": 5000, "ch": 800}),
                 ("regionask", {"sid": sid, "lo": 10, "hi": 20, "edge": "top", "why": "scroll", "notice": False}),
                 ("regionask", {"sid": sid, "why": "land", "nav": "reload", "kind": "older", "keep": 2, "reland": False, "trail": 1, "notice": True, "atBottom": False}),
