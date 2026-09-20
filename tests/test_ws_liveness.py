@@ -27,6 +27,8 @@ BIN = os.path.join(os.path.dirname(HERE), "bin")
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)
+os.makedirs(os.path.join(os.environ["XDG_STATE_HOME"], "romp"), exist_ok=True)
+open(os.path.join(os.environ["XDG_STATE_HOME"], "romp", "session-hosts"), "w").write("off\n")   # a root this module mints: no session host from it (T348)
 km = load_source("romp_kernel_wslive", os.path.join(BIN, "romp-kernel"))
 
 
@@ -88,6 +90,121 @@ class _Handler(threading.Thread):
         self.client["alive"] = False
 
 
+class _StampClearForcing:
+    """Orders two writers of client["pingAt"] that the kernel leaves free to land either way (2026-09-20): the
+    sender thread's stamp of a ping as it reaches the socket (_ws_sender) and a clear on the handler's thread
+    (_note_ws_inbound: a pong, a message, or the return from a dispatch). Each write is atomic under the client's
+    qlock; only their ORDER is open, and both orders are valid kernel states, because a ping that leaves after the
+    clear is a new outstanding ping stamped at its leave time. Suppressing the late stamp would leave a ping on the
+    wire never judged, so the obvious kernel fix introduces a real defect where the test fix introduces none.
+    The instrument fixes the order of the `ping`th ping's stamp against the first clear after arm(): `late` holds
+    that ping before its stamp until the clear has landed, and lets the clear return only once the stamp point has
+    passed; `early` is the converse, the clear waits for the stamp point first. It wraps the two module functions
+    the harness threads look up by name, so the REAL sender runs, over a queue proxy (the hold, before the stamp)
+    and a socket-lock proxy (the stamp point: the sender takes that lock right after the stamp). Every wait is
+    bounded by hold_s and `holds` records whether the event or the bound released each one; `forced` is True only
+    when every hold was released by its event, so a test that means to force asserts it. `at` carries
+    perf_counter_ns stamps of the clear and of the stamp point for a trace."""
+    HOLD_S = 1.0
+
+    def __init__(self, module, order, ping=2, hold_s=HOLD_S):
+        assert order in ("late", "early"), order
+        self.km, self.order, self.ping, self.hold_s = module, order, ping, hold_s
+        self.cleared, self.stamped = threading.Event(), threading.Event()
+        self.armed, self.holds, self.at = False, [], {}
+
+    @property
+    def forced(self):
+        return bool(self.holds) and all(ok for _, ok in self.holds)
+
+    def arm(self):
+        """The next _note_ws_inbound call is the forced clear (an earlier call would spend the events)."""
+        self.armed = True
+
+    def _wait(self, name, ev):
+        ok = ev.wait(self.hold_s)
+        self.holds.append((name, ok))
+        return ok
+
+    def __enter__(self):
+        f = self
+        real_sender, real_clear = self.km._ws_sender, self.km._note_ws_inbound
+        self._saved = real_sender, real_clear
+
+        class Q:                                    # the sender's queue: the hold sits before the stamp
+            def __init__(s, q):
+                s.q, s.n, s.at_stamp_point = q, 0, False
+
+            def get(s):
+                item = s.q.get()
+                if isinstance(item, bytes) and item[:1] == b"\x89":
+                    s.n += 1
+                    if s.n == f.ping:
+                        s.at_stamp_point = True
+                        if f.order == "late":
+                            f._wait("the stamp held for the clear", f.cleared)
+                return item
+
+        class L:                                    # the socket lock: the sender takes it right after the stamp
+            def __init__(s, lock, q):
+                s.lock, s.q = lock, q
+
+            def __enter__(s):
+                if s.q.at_stamp_point:
+                    s.q.at_stamp_point = False
+                    f.at["stamp"] = time.perf_counter_ns()
+                    f.stamped.set()
+                return s.lock.__enter__()
+
+            def __exit__(s, *a):
+                return s.lock.__exit__(*a)
+
+        def sender(q, sock, lock, client):
+            qp = Q(q)
+            return real_sender(qp, sock, L(lock, qp), client)
+
+        def clear(client, now=None):
+            if not f.armed:
+                return real_clear(client, now)
+            f.armed = False
+            if f.order == "early":
+                f._wait("the clear held for the stamp", f.stamped)
+            r = real_clear(client, now)
+            f.at["clear"] = time.perf_counter_ns()
+            if f.order == "late":
+                f.cleared.set()
+                f._wait("the clear's return held for the stamp", f.stamped)
+            return r
+
+        self.km._ws_sender, self.km._note_ws_inbound = sender, clear
+        return self
+
+    def __exit__(self, *a):
+        self.km._ws_sender, self.km._note_ws_inbound = self._saved
+
+
+class _SplitReadClient(dict):
+    """The client dict the judge (_keepalive_all) reads, with a door between its first and its second read of the
+    pair inRead / pingAt on one thread, the judge's: the first read returns its value, `between` is set, and the
+    thread waits for `written` before the second read, so a test can land the handler's two writes (the pingAt
+    clear, then the inRead flip) exactly there. Keyed on WHICH of the two keys is read first, not on a key: a copy
+    of the kernel with the reads swapped gets the door in the same place, which is what lets the swap be proved to
+    drop a live peer (the recipe is on test_c3d). Every other read, and every read on another thread (the sender's
+    own pingAt check), is a plain dict read."""
+
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        self.judge, self.between, self.written = None, threading.Event(), threading.Event()
+
+    def get(self, key, default=None):
+        val = dict.get(self, key, default)
+        if key in ("inRead", "pingAt") and self.judge is not None and threading.current_thread() is self.judge:
+            self.judge = None                       # one door, after the first of the two reads
+            self.between.set()
+            self.written.wait(3.0)
+        return val
+
+
 class PhantomPanesAreDropped(unittest.TestCase):
     def setUp(self):
         self.closeables, self.threads, self.queues = [], [], []
@@ -141,6 +258,35 @@ class PhantomPanesAreDropped(unittest.TestCase):
                 return True
             time.sleep(0.02)
         return pred()
+
+    def _connect_split(self, pongs):
+        """_connect over a _SplitReadClient: the sender is started by hand on the door dict, and `send` is rebuilt
+        over it, because the factory's closures write to the plain dict it made (test_c2 starts the sender the
+        same way)."""
+        kern, peer_sock = self._pair()
+        plain, q, lock = km._new_ws_client("timeline", "w1", kern, start_sender=False)
+        client = _SplitReadClient(plain)
+        client["send"] = km._mk_ws_send(q, kern, client)
+        sender = threading.Thread(target=km._ws_sender, args=(q, kern, lock, client), daemon=True); sender.start()
+        km._clients.append(client); self.queues.append(q)
+        peer = _Peer(peer_sock, pongs); peer.start()
+        handler = _Handler(client, kern); handler.start()
+        self.threads += [sender, peer, handler]
+        return client, peer, handler
+
+    def _judge_between_reads(self, client, now, writes):
+        """Run the judge on its own thread and land `writes` between its two reads of `client`; returns once it
+        has ruled. The main thread stands in for the handler, as test_c3 does: the loop that flips inRead runs
+        only inside the kernel's request handler."""
+        judge = threading.Thread(target=km._keepalive_all, kwargs={"now": now}, daemon=True, name="judge")
+        client.judge = judge
+        self.threads.append(judge)
+        judge.start()
+        self.assertTrue(client.between.wait(3.0), "the judge reached the door between its two reads")
+        writes()
+        client.written.set()
+        judge.join(3.0)
+        self.assertFalse(judge.is_alive(), "the judge ruled")
 
     def test_a_the_beat_carries_a_ping_and_a_browser_answers_it(self):
         client, peer, _ = self._connect(pongs=True)
@@ -199,7 +345,16 @@ class PhantomPanesAreDropped(unittest.TestCase):
 
     def test_c3_a_peer_is_never_judged_while_its_handler_is_inside_a_dispatch(self):
         """A `ready` runs the connect push on the handler thread — tens of seconds on a cold kernel — and the
-        peer's pongs wait unread in the receive buffer meanwhile. Unread is not missing (review 2026-09-03)."""
+        peer's pongs wait unread in the receive buffer meanwhile. Unread is not missing (review 2026-09-03).
+        The wait before the clear keys the harness on the moment the second ping left rather than on the moment
+        the clear landed: a ping that leaves after the clear is a new outstanding ping stamped at its leave time,
+        so the sender's stamp and this thread's clear are two valid orders of one kernel state, and asserting None
+        right after the clear raced the stamp (red once on CPython 3.14t in CI, 2026-09-20: traced unforced, the
+        stamp landed 68 to 158 microseconds after the clear in the diagnosis and 80 to 196 in this change's re-trace,
+        while this thread was past the assertion within 51 at most, so the red needs one preemption in that gap,
+        which the GIL never grants here). Suppressing the late
+        stamp would leave a ping on the wire never judged, so the obvious kernel fix introduces a real defect where
+        the test fix introduces none. test_c3c runs the late order on purpose."""
         client, peer, handler = self._connect(pongs=False)
         t0 = self.clock[0]
         client["inRead"] = False                                    # as the handler marks itself for a dispatch
@@ -208,6 +363,7 @@ class PhantomPanesAreDropped(unittest.TestCase):
         self.clock[0] = t0 + 3 * km.WS_DEAD_S
         km._keepalive_all(now=self.clock[0])
         self.assertTrue(client["alive"], "silence during a dispatch is the kernel's, not the peer's")
+        self.assertTrue(self._settle(lambda: len(peer.pings) == 2), "the second ping has left: no stamp of it is pending")
         km._note_ws_inbound(client); client["inRead"] = True        # the handler returns to its read: fresh clock
         self.assertIsNone(client["pingAt"])
         km._keepalive_all(now=self.clock[0])                        # a new ping…
@@ -229,6 +385,82 @@ class PhantomPanesAreDropped(unittest.TestCase):
         self.assertTrue(client["alive"])
         self.assertTrue(self._settle(lambda: len(peer.texts) >= 2), "the beat still crossed to the peer")
         self.assertEqual(json.loads(peer.texts[-1])["type"], "ka")
+
+    def test_c3c_a_ping_that_leaves_after_the_clear_is_a_new_outstanding_ping_stamped_as_it_left(self):
+        """The order CI hit in test_c3, run on purpose (2026-09-20): the handler's clear lands first and the second
+        beat's ping, already queued, leaves afterwards. The kernel treats it as what it is, a ping nobody has
+        answered, stamped at its leave time and judged on its own window from there. This is why the kernel is not
+        changed: suppressing the late stamp would leave a ping on the wire never judged, so the obvious kernel fix
+        introduces a real defect where the test fix introduces none. Deterministic through _StampClearForcing
+        (`late`), and it asserts the forcing took, so it never passes by the scheduler's grace.
+        Mutation recipe for the one hold: in a scratch copy of kernel/kernel.py, have _note_ws_inbound set a flag on
+        the client under its qlock after the clear, and have _ws_sender skip the ping stamp once while the flag is set.
+        This test then fails at its pingAt assertion (None where the leave time is due) and test_c3 fails at its wait
+        for the third ping's stamp; executed 2026-09-20, 3 of 3 on CPython 3.12 and on 3.14t (free-threaded)."""
+        with _StampClearForcing(km, "late") as forcing:
+            client, peer, handler = self._connect(pongs=False)
+            t0 = self.clock[0]
+            client["inRead"] = False
+            km._keepalive_all(now=t0)
+            self.assertTrue(self._settle(lambda: client["pingAt"] == t0))
+            self.clock[0] = t0 + 3 * km.WS_DEAD_S
+            km._keepalive_all(now=self.clock[0])                    # the second ping is queued and held before its stamp
+            forcing.arm()
+            km._note_ws_inbound(client); client["inRead"] = True    # the clear lands, then the held ping leaves
+            self.assertTrue(forcing.forced, "the events, not the bound, ordered the two writes: %r" % (forcing.holds,))
+            self.assertEqual(client["pingAt"], self.clock[0], "the late ping is a new outstanding ping, stamped as it left")
+            self.assertTrue(self._settle(lambda: len(peer.pings) == 2))
+        self.clock[0] += km.WS_DEAD_S - 1
+        km._keepalive_all(now=self.clock[0])
+        self.assertTrue(client["alive"], "judged on its own window, from the leave time")
+        self.clock[0] += 1
+        km._keepalive_all(now=self.clock[0])
+        self.assertFalse(client["alive"], "silent for that whole window: dropped")
+
+    def test_c3d_a_handler_returning_from_a_dispatch_between_the_judge_two_reads_is_not_dropped(self):
+        """PIN of the judge's read order (2026-09-20, the reviewer's condition): _keepalive_all reads inRead BEFORE
+        pingAt (the comment at that read says why). The handler ends a dispatch with two writes, the pingAt clear
+        (_note_ws_inbound in its finally) and then inRead = True at the top of its loop. With the shipped order a
+        beat that lands between them pairs the stale read state (in a dispatch: not judged) with the fresh ping
+        state (nothing outstanding): no drop. Read the other way round it pairs the stale ping with the fresh read
+        state and drops a live peer. The door between the reads is _SplitReadClient's, placed after whichever of
+        the two reads comes first, so it sits in the same place in a swapped copy.
+        Mutation recipe: in a scratch copy of kernel/kernel.py, in _keepalive_all, move the line
+        `pa = c.get("pingAt")` above the line `in_read = c.get("inRead", True)`. This test then fails here with the
+        peer dropped (`no pong for 90s`) while test_c3e still passes; as shipped both pass. Executed 2026-09-20 on
+        CPython 3.12 and on 3.14t (free-threaded): swapped, this test red 3 of 3 on each interpreter with the
+        peer dropped (`no pong for 90s (last heard 0s ago)`) and the other 13 tests green; shipped, green 5 of 5 on
+        each."""
+        client, peer, handler = self._connect_split(pongs=False)
+        t0 = self.clock[0]
+        client["inRead"] = False                                    # in a dispatch
+        km._keepalive_all(now=t0)
+        self.assertTrue(self._settle(lambda: client["pingAt"] == t0))
+        self.clock[0] = t0 + 3 * km.WS_DEAD_S                       # that ping is long stale by this beat
+
+        def returning():
+            km._note_ws_inbound(client); client["inRead"] = True    # the handler's two writes, in its order
+
+        self._judge_between_reads(client, self.clock[0], returning)
+        self.assertTrue(client["alive"], "a live peer whose handler returned to its read as the beat judged it is not dropped")
+        self.assertTrue(self._settle(lambda: len(peer.pings) == 2), "and the beat still went out to it")
+
+    def test_c3e_a_handler_entering_a_dispatch_between_the_judge_two_reads_is_not_dropped(self):
+        """The other boundary of the same pin: a message arrives as the beat judges, the handler clears pingAt and
+        marks inRead = False, and the two writes land between the judge's reads. Both read orders keep this peer (a
+        stale ping read first is excused by the fresh inRead = False), so this half holds the no-drop claim for the
+        boundary and test_c3d carries the order."""
+        client, peer, handler = self._connect_split(pongs=False)
+        t0 = self.clock[0]
+        km._keepalive_all(now=t0)
+        self.assertTrue(self._settle(lambda: client["pingAt"] == t0))
+        self.clock[0] = t0 + km.WS_DEAD_S                           # the window runs out on this very beat
+
+        def entering():
+            km._note_ws_inbound(client); client["inRead"] = False   # a message: the handler's two writes, in its order
+
+        self._judge_between_reads(client, self.clock[0], entering)
+        self.assertTrue(client["alive"], "the message that arrived as the beat judged is life")
 
     def test_c4_a_peer_still_draining_its_backlog_is_alive_and_one_that_stopped_acknowledging_is_not(self):
         client, peer, handler = self._connect(pongs=False)
