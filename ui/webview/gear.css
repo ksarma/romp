@@ -136,7 +136,10 @@ body.rs-lifted.rs-pane-gone::before { display: none; }
    inside a Fast mode box and the pointer on the ROW's label, the description shown is the BOX's, not the row's the pointer rests
    on: the pair's twins below stand the row's down at (1,4,0) over the hover show rule's (1,3,0) and show the box's at (1,5,0) over
    the row-hover stand-down's (1,4,0), the head's behaviour kept. So within a row the box wins whenever either road rests on the
-   box, one description either way; across rows the pointer wins. The census leg pins both by name. */
+   box, one description either way; across rows the pointer wins. The box pair's rules select EVERY box in the row (`.rs-fastin
+   .rs-sub` under the row), so the in-row rule is exact for one box per row, which is every judge row today; a row carrying two
+   boxes would show both boxes' descriptions on either road (the author's round 5 prep, road D). The census leg pins both by
+   name and reads the bound (at most one box per row). */
 #rsettings .rs-card:has(.rs-row:hover:not(.rs-picking) .rs-sub, .rs-widget:hover .rs-sub, .rs-mixed:hover) .rs-row:not(:hover) .rs-sub,
 #rsettings .rs-card:has(.rs-row:hover:not(.rs-picking) .rs-sub, .rs-widget:hover .rs-sub, .rs-mixed:hover) .rs-widget:not(:hover) .rs-sub { display: none; }
 /* A setting whose value differs between the connected machines: the checkbox goes tri-state, and this

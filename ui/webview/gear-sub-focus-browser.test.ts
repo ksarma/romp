@@ -567,8 +567,58 @@ const hoverOn = async (page: any, sel: string) => {
   await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
 };
 
-/** What a host shows when it is the one with something to show: one description, or the Account row's two. */
-const ownShown = (h: any) => Array(h.subs).fill(h.host);
+/** The hosts with something shown, each once: the panel's one-tooltip rule is over HOSTS, whatever number of descriptions a host
+ *  owns (the Account row owns two, a synthetic doubled row two), so the pins compare host sets and never counts (the maintainer's
+ *  round 5 on panel-3: the count pin named the doubled host by id and its count, and a second doubled row anywhere would have
+ *  red it; the invariant holds over however many hosts a row carries and however many descriptions a host owns). */
+const hostsShown = (r: { shown: string[] }) => Array.from(new Set(r.shown));
+
+/** A second host owning TWO descriptions, the Account row's shape (a row whose `.rs-sub` count is two), inserted after the open
+ *  pane's first direct-child row: the construction the ruling said the round would make. The census reads it like any row (its
+ *  host id is its checkbox's), so the count pin this replaced reds on it and the invariant must not. Synthetic text only. */
+async function injectDoubledRow(page: any): Promise<void> {
+  await page.evaluate(() => {
+    const pane = document.querySelector("#rsettings .rs-pane:not([hidden])") as HTMLElement;
+    const rows = (Array.from(pane.querySelectorAll(".rs-row")) as HTMLElement[]).filter((r) => r.parentElement === pane);
+    const lab = document.createElement("label"); lab.className = "rs-row";
+    lab.innerHTML = "<input type=checkbox id=probe-synth-box><span><b>Synthetic doubled row <span class=rs-mixed hidden></span></b>"
+      + "<span class=rs-sub>Synthetic description one, a probe row on TESTHOST.</span>"
+      + "<span class=rs-sub>Synthetic description two, the second popover of the same row.</span></span>";
+    if (rows.length) rows[0].parentNode!.insertBefore(lab, rows[0].nextSibling); else pane.appendChild(lab);
+  });
+}
+
+/** The pane's populations, DERIVED (the maintainer's round 5, correctness-3 and ui-2: the body had quoted 52 hosts and 63 controls,
+ *  a count of what the census skips): every description in the open pane is either a census host's (a visible host owning it with
+ *  a visible, enabled, focusable control) or excluded for a stated reason (no host; a hidden host, the four pane-toggle rows when
+ *  the panel is not its own page; a host with no focusable control, the Updates row whose select is display:none), else `missed`,
+ *  so a description the census silently misses fails the leg rather than shrinking the matrix. Beside the census figures the
+ *  WIDER population is derived too: every description-owning host and every control it owns, visible or not, the reading the
+ *  body's earlier figure counted; both are printed per pane so the body's figures are re-derived from the log, never by hand. */
+const populations = (page: any, known: string[]) => page.evaluate((ids: string[]) => {
+  const HOSTS = "#rsettings .rs-fastin, #rsettings .rs-row, #rsettings .rs-widget";
+  const pane = document.querySelector("#rsettings .rs-pane:not([hidden])")!;
+  const out = { descriptions: 0, covered: 0, excluded: [] as string[], missed: [] as string[], describedHosts: 0, describedControls: 0 };
+  const idOf = (h: HTMLElement, controls: HTMLElement[]) => h.classList.contains("rs-fastin") ? h.id : h.classList.contains("rs-widget") ? "widget:" + h.getAttribute("data-widget") : (controls[0] && controls[0].id) || h.className;
+  for (const h of Array.from(pane.querySelectorAll(".rs-row, .rs-widget, .rs-fastin")) as HTMLElement[]) {
+    const owned = (Array.from(h.querySelectorAll(".rs-sub")) as HTMLElement[]).filter((s) => s.closest(HOSTS) === h);
+    if (!owned.length) continue;
+    out.describedHosts++;
+    out.describedControls += (Array.from(h.querySelectorAll("input, button, textarea, select")) as HTMLElement[]).filter((c) => c.closest(HOSTS) === h).length;
+  }
+  for (const sub of Array.from(pane.querySelectorAll(".rs-sub")) as HTMLElement[]) {
+    out.descriptions++;
+    const h = sub.closest(HOSTS) as HTMLElement | null;
+    const text = (sub.textContent || "").slice(0, 30);
+    if (!h) { out.excluded.push("no host: " + text); continue; }
+    if (!h.checkVisibility()) { out.excluded.push("hidden host: " + text); continue; }
+    const controls = (Array.from(h.querySelectorAll("input, button, textarea, select")) as HTMLElement[]).filter((c) => c.closest(HOSTS) === h && c.tabIndex >= 0 && !(c as HTMLInputElement).disabled && c.checkVisibility());
+    if (!controls.length) { out.excluded.push("no control: " + text); continue; }
+    const id = idOf(h, controls);
+    if (ids.includes(id)) out.covered++; else out.missed.push(id + ": " + text);
+  }
+  return out;
+}, known);
 
 /** Every pane, with the floor of hosts the census form found there when the leg was written (a census that finds fewer checked
  *  less than this leg did; the Automation pane's rows carry permanent lines, not descriptions, and have none). */
@@ -591,6 +641,86 @@ async function settleAfterClick(page: any, id: string): Promise<void> {
   await page.mouse.move(5, 5);
 }
 
+/** The one-tooltip matrix over the census `hosts` of the open pane, the INVARIANT and not a count (the maintainer's round 5 on
+ *  panel-3, and its C: correctness-4, tests-2, regression-3, ui-1, extra6-2, extra9-2): a keyboard focus in each host shows that
+ *  host's description alone; the pointer on every OTHER host shows that host's alone (the pointer wins), the BOX's within a row
+ *  whichever road rests on it; the pointer on nothing shows the focused one; a hovered mark on another row shows none. Every pin
+ *  compares the set of hosts shown (hostsShown), so a host owning two descriptions (the Account row; a synthetic doubled row) is
+ *  one host shown, and a second doubled host anywhere changes nothing here. The literal list of doubled hosts this replaced
+ *  (`tab === "general" ? ["rs-login-btn:2"] : []`) named the exception by id and count; now the doubled hosts are DERIVED and
+ *  printed as a diagnostic on every run, which is what keeps a genuinely accidental second `.rs-sub` visible (the defect gear.css's
+ *  rs-note comment records once happening), since the derived form no longer reds on one: a reader of the log sees it, the pin
+ *  does not. Whether a doubled host's two descriptions intersect each other is a diagnostic too (the Account row's stack at the
+ *  row's bottom; a doubled row wrapped otherwise may not stack), never an assertion keyed on the count. */
+async function panelMatrix(t: any, page: any, errors: string[], tab: string, pane: string, hosts: any[]): Promise<void> {
+  const doubled = hosts.filter((h: any) => h.subs > 1).map((h: any) => h.host + ":" + h.subs);
+  const controlsN = hosts.reduce((n: number, h: any) => n + h.controls.length, 0);
+  const rowsN = new Set(hosts.map((h: any) => h.row)).size;
+  const boxesPerRow = hosts.filter((h: any) => h.box).reduce((m: Record<string, number>, h: any) => { m[h.row] = (m[h.row] || 0) + 1; return m; }, {});
+  const maxBoxes = Math.max(0, ...(Object.values(boxesPerRow) as number[]));
+  t.diagnostic(`census ${tab}: hosts=${hosts.length} rows=${rowsN} controls=${controlsN} maxBoxesInARow=${maxBoxes} doubled=${doubled.join(",") || "none"}`);
+  // the within-row arm below is exact for ONE box per row: the box pair's rules select every box in the row (gear.css), so a row
+  // carrying two boxes would show both on either road; the census reads at most one today, and the sheet states the bound
+  assert.ok(maxBoxes <= 1, "the rig: at most one Fast mode box per row (the within-row rule is exact for one box per row, as the sheet states)");
+  // the population, derived both ways: the census's (visible host, visible focusable control) and the wider one (every
+  // description-owning host and its controls, visible or not), with the census's exclusions named; a description the census
+  // silently misses reds here
+  const pop = await populations(page, hosts.map((h: any) => h.host));
+  t.diagnostic(`population ${tab}: census hosts=${hosts.length} controls=${controlsN}; description-owning hosts=${pop.describedHosts} controls=${pop.describedControls}; descriptions=${pop.descriptions} covered=${pop.covered} excluded=${JSON.stringify(pop.excluded)}`);
+  assert.deepEqual(pop.missed, [], "the rig: every description in the pane whose host has a focusable control is a census host's");
+  assert.equal(pop.covered, hosts.reduce((n: number, h: any) => n + h.subs, 0), "the rig: the census's description count is the pane's covered count");
+  assert.equal(pop.describedHosts - pop.excluded.length, hosts.length, "the rig: the wider population less the named exclusions is the census (one exclusion per skipped description; a skipped host owns one)");
+  for (const h of hosts) {
+    await page.mouse.move(5, 5);
+    const tabbed = await tabInto(page, h.control);
+    assert.equal(tabbed.landed && tabbed.focusVisible, true, `the rig: a Tab landed a :focus-visible focus on ${h.control} (from ${tabbed.prev})`);
+    const alone = await shownPanel(page);
+    assert.deepEqual(hostsShown(alone), [h.host], `a keyboard focus in ${h.host} with the pointer on nothing shows its description alone (one host shown, whatever number it owns)`);
+    for (const o of hosts) {
+      if (o === h) continue;
+      await hoverOn(page, o.hoverSel);
+      const r = await shownPanel(page);
+      assert.equal(r.active, h.control, `the rig: the focus stayed on ${h.control} while the pointer rests on ${o.host}`);
+      if (o.row === h.row) {
+        // the two hosts share a row (a judge row and its Fast mode box): within a row the BOX's description wins whenever either
+        // road rests on the box (the box's pair and its twins, both (1,5,0)), one description either way; the one exception to
+        // the pointer-wins rule, stated in the sheet beside the rule; the winner is the box among the pair, whichever road it is on
+        const boxes = [h, o].filter((x: any) => x.box);
+        const winner = boxes.length === 1 ? boxes[0].host : o.host;   // one box among the pair: the box; none: the pointer's
+        assert.deepEqual(hostsShown(r), [winner], `focus in ${h.host}, pointer on ${o.host}, one row: one host's description, the box's (within a row the box wins, whichever road rests on it)`);
+      } else {
+        assert.deepEqual(hostsShown(r), [o.host], `focus in ${h.host}, pointer on ${o.host}, two rows: one host's description, the pointer's (the pointer wins), never the focused row's beside it, whatever number either host owns`);
+      }
+      assert.equal(r.intersect, false, "and no two shown descriptions of different hosts intersect");
+      if (r.intersectWithin) t.diagnostic(`focus in ${h.host}, pointer on ${o.host}: ${o.host}'s ${o.subs} descriptions intersect each other (a doubled host)`);
+    }
+    await page.mouse.move(5, 5);
+    assert.deepEqual(hostsShown(await shownPanel(page)), [h.host], `the pointer gone, ${h.host}'s description shows again on the focus alone`);
+  }
+  // a mark on ANOTHER row hovered while a keyboard focus holds a description: the mark's native title is the one tooltip, so
+  // nothing is shown (the second road out of the row the author's mirror-and-twins pass left open: a focus-shown description
+  // beside another row's title)
+  const first = hosts[0], other = hosts.find((h: any) => h.row !== first.row && h.hasMark);
+  if (tab === "tasks") assert.ok(other, "the rig: the Task tracking pane has a row with a mark span outside the first host's row");
+  if (other) {
+    await page.mouse.move(5, 5);
+    const tabbed = await tabInto(page, first.control);
+    assert.equal(tabbed.landed && tabbed.focusVisible, true, "the rig: a keyboard focus in the first host");
+    await page.evaluate((cid: string) => {
+      const row = document.getElementById(cid)!.closest("#rsettings .rs-row, #rsettings .rs-widget")!;
+      const mark = row.querySelector(".rs-mixed") as HTMLElement;
+      mark.hidden = false; mark.textContent = "mixed"; mark.title = "differs on: TESTHOST";
+    }, other.control);
+    await hoverOn(page, other.hoverSel.replace(/ b$/, " .rs-mixed"));
+    const onMark = await shownPanel(page);
+    assert.equal(onMark.active, first.control, "the rig: the focus stayed in the first host");
+    assert.deepEqual(onMark.shown, [], `the pointer on ${other.host}'s mark while ${first.host} holds the focus: no description beside the mark's title`);
+    await page.mouse.move(5, 5);
+    assert.deepEqual(hostsShown(await shownPanel(page)), [first.host], "the pointer gone, the focused host's shows again");
+  } else t.diagnostic(`the ${pane} pane has no mark span outside the first host's row: the mark road is driven on the Task tracking pane`);
+  assert.deepEqual(errors, [], "no page error");
+}
+
 for (const [tab, pane, floor] of PANES) {
   test(`one tooltip across the ${pane} pane, the census form: a keyboard focus in each host shows its description alone; the pointer on every OTHER host shows that host's alone (the pointer wins); the pointer on nothing shows the focused one; a hovered mark on another row shows none`, { timeout: 240000 }, async (t) => {
     await withGear(t, tab, async (page, errors) => {
@@ -601,61 +731,7 @@ for (const [tab, pane, floor] of PANES) {
         "the rig: the Task tracking census spans the control kinds (checkbox rows, picker-button rows, the Fast mode boxes)");
       if (tab === "general") assert.ok(hosts.some((h: any) => h.kind === "text" && h.tag === "TEXTAREA"), "the rig: the General census reaches the Pictures from the web textarea");
       if (tab === "sessions") assert.ok(hosts.some((h: any) => h.kind === "text" && h.tag === "INPUT"), "the rig: the Sessions census reaches the Default directory input");
-      // the Account row owns TWO descriptions (gear.js lgLogins gives the stored-logins heading the class rs-sub, under the row
-      // that already holds #rs-login-acct), so a hover or a focus there shows two, stacked at the row's bottom: pre-existing on
-      // the hover road (the base has the same line and the same rules), inherited by the focus road, disclosed and pinned here
-      // as the one host in the panel with more than one; a fix (a class of its own for the heading) reds this pin and then
-      // removes the exception, and a second doubled host reds it too
-      assert.deepEqual(hosts.filter((h: any) => h.subs > 1).map((h: any) => h.host + ":" + h.subs), tab === "general" ? ["rs-login-btn:2"] : [],
-        "the hosts owning more than one description: the Account row alone (its stored-logins heading is an rs-sub), nowhere else");
-      for (const h of hosts) {
-        await page.mouse.move(5, 5);
-        const tabbed = await tabInto(page, h.control);
-        assert.equal(tabbed.landed && tabbed.focusVisible, true, `the rig: a Tab landed a :focus-visible focus on ${h.control} (from ${tabbed.prev})`);
-        const alone = await shownPanel(page);
-        assert.deepEqual(alone.shown, ownShown(h), `a keyboard focus in ${h.host} with the pointer on nothing shows its description alone`);
-        for (const o of hosts) {
-          if (o === h) continue;
-          await hoverOn(page, o.hoverSel);
-          const r = await shownPanel(page);
-          assert.equal(r.active, h.control, `the rig: the focus stayed on ${h.control} while the pointer rests on ${o.host}`);
-          if (o.row === h.row) {
-            // the two hosts share a row (a judge row and its Fast mode box): within a row the BOX's description wins whenever
-            // either road rests on the box (the box's pair and its twins, both (1,5,0)), one description either way; the one
-            // exception to the pointer-wins rule, stated in the sheet beside the rule
-            const boxHost = (h.box ? h : o).host;
-            assert.deepEqual(r.shown, [boxHost], `focus in ${h.host}, pointer on ${o.host}, one row: the box's description alone (within a row the box wins, whichever road rests on it)`);
-          } else {
-            assert.deepEqual(r.shown, ownShown(o), `focus in ${h.host}, pointer on ${o.host}: the pointer's description is the one shown (the pointer wins), never the focused row's beside it`);
-          }
-          assert.equal(r.intersect, false, "and no two shown descriptions of different hosts intersect");
-          assert.equal(r.intersectWithin, o.subs > 1, `two descriptions of one host intersect only on the Account row (${o.host})`);
-        }
-        await page.mouse.move(5, 5);
-        assert.deepEqual((await shownPanel(page)).shown, ownShown(h), `the pointer gone, ${h.host}'s description shows again on the focus alone`);
-      }
-      // a mark on ANOTHER row hovered while a keyboard focus holds a description: the mark's native title is the one tooltip, so
-      // nothing is shown (the second road out of the row the author's mirror-and-twins pass left open: a focus-shown description
-      // beside another row's title)
-      const first = hosts[0], other = hosts.find((h: any) => h.row !== first.row && h.hasMark);
-      if (tab === "tasks") assert.ok(other, "the rig: the Task tracking pane has a row with a mark span outside the first host's row");
-      if (other) {
-        await page.mouse.move(5, 5);
-        const tabbed = await tabInto(page, first.control);
-        assert.equal(tabbed.landed && tabbed.focusVisible, true, "the rig: a keyboard focus in the first host");
-        await page.evaluate((cid: string) => {
-          const row = document.getElementById(cid)!.closest("#rsettings .rs-row, #rsettings .rs-widget")!;
-          const mark = row.querySelector(".rs-mixed") as HTMLElement;
-          mark.hidden = false; mark.textContent = "mixed"; mark.title = "differs on: TESTHOST";
-        }, other.control);
-        await hoverOn(page, other.hoverSel.replace(/ b$/, " .rs-mixed"));
-        const onMark = await shownPanel(page);
-        assert.equal(onMark.active, first.control, "the rig: the focus stayed in the first host");
-        assert.deepEqual(onMark.shown, [], `the pointer on ${other.host}'s mark while ${first.host} holds the focus: no description beside the mark's title`);
-        await page.mouse.move(5, 5);
-        assert.deepEqual((await shownPanel(page)).shown, ownShown(first), "the pointer gone, the focused host's shows again");
-      } else t.diagnostic(`the ${pane} pane has no mark span outside the first host's row: the mark road is driven on the Task tracking pane`);
-      assert.deepEqual(errors, [], "no page error");
+      await panelMatrix(t, page, errors, tab, pane, hosts);
     });
   });
 
@@ -678,7 +754,7 @@ for (const [tab, pane, floor] of PANES) {
         assert.equal(off.active, c.id, `the control keeps the focus after the pointer leaves (${c.id})`);
         if (c.kind === "text") {
           assert.equal(on.focusVisible, true, `a mouse click into a text field IS a :focus-visible focus (${c.id}: the caret is the ring)`);
-          assert.deepEqual(off.shown, ownShown(h), `clicked the text field ${c.id} and left: its row's description shows until the field blurs (the one exception to "never a mouse click", stated in the sheet)`);
+          assert.deepEqual(hostsShown(off), [h.host], `clicked the text field ${c.id} and left: its row's description shows until the field blurs (the one exception to "never a mouse click", stated in the sheet)`);
           assert.ok(off.up.every((u: string) => u === h.host), "no host but the shown one wears the placement class");
           await page.evaluate(() => (document.activeElement as HTMLElement).blur());
           assert.deepEqual((await shownPanel(page)).shown, [], `and the field blurred, nothing shows (${c.id})`);
@@ -698,6 +774,17 @@ for (const [tab, pane, floor] of PANES) {
     });
   });
 }
+
+test("a synthetic SECOND doubled row (two descriptions under one checkbox row, the Account row's shape) on the Debug pane: the invariant holds over the whole census with it, one host shown whatever it owns, where the count pin this replaced named the Account row as the one doubled host and red on any other", { timeout: 240000 }, async (t) => {
+  await withGear(t, "debug", async (page, errors) => {
+    await injectDoubledRow(page);
+    const hosts = await census(page);
+    const synth = hosts.find((h: any) => h.host === "probe-synth-box");
+    assert.ok(synth && synth.subs === 2, "the rig: the census reads the synthetic row as a host owning two descriptions: " + JSON.stringify(hosts.map((h: any) => h.host + ":" + h.subs)));
+    assert.ok(hosts.some((h: any) => h.subs > 1), "the rig: the multi-description case is exercised in this run (the property, never a host's identity)");
+    await panelMatrix(t, page, errors, "debug", "Debug", hosts);
+  });
+});
 
 test("the picker-open state, the one the panel leg did not enter (the maintainer's round 5, correctness-1): a colormap or palette list open under the pointer stands the hovered row's own description down, so that row has nothing to show and stands nothing down; a keyboard focus in another row shows that row's description alone (zero before), the pointer on another row with a description shows that one alone, and a Tab out of the open picker's button shows the focused row's; the row wears rs-picking exactly while its list is open, at every site that moves a list", { timeout: 120000 }, async (t) => {
   await withGear(t, "general", async (page, errors) => {
