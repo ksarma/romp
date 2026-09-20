@@ -90,7 +90,7 @@ class InstallStep(unittest.TestCase):
         self.job = python_job()
         self.step = step_block(self.job, STEP)
         self.assertTrue(self.step, "no step named %r in the python job: the 48 SDK-gated tests skip in every cell again" % STEP)
-        self.run = run_block(self.step)
+        self.block = run_block(self.step)      # not self.run: that name is unittest.TestCase.run on the instance
         self.comment = " ".join(l.strip()[1:].strip() for l in self.step.splitlines() if l.strip().startswith("#"))
 
     def test_the_step_sits_between_cryptography_and_pytest(self):
@@ -121,15 +121,15 @@ class InstallStep(unittest.TestCase):
         self.assertLessEqual(int(m.group(1)), 10, "the step timeout is a bound on a download, not a second job cap")
 
     def test_the_run_block_reads_the_constant_from_the_host_module(self):
-        self.assertIn("SDK_TESTED_VERSION", self.run)
-        self.assertIn("kernel/session_host.py", self.run)
-        self.assertTrue(SED_RE.search(self.run), "the run block does not read the constant with a sed over kernel/session_host.py")
-        self.assertRegex(self.run, r'pip install "claude-agent-sdk==\$pin"')
+        self.assertIn("SDK_TESTED_VERSION", self.block)
+        self.assertIn("kernel/session_host.py", self.block)
+        self.assertTrue(SED_RE.search(self.block), "the run block does not read the constant with a sed over kernel/session_host.py")
+        self.assertRegex(self.block, r'pip install "claude-agent-sdk==\$pin"')
 
     def test_the_run_block_carries_no_literal_version(self):
         # one declaration: a literal here would be a second copy that a bump could leave behind
-        self.assertFalse(re.search(r"claude-agent-sdk==\d", self.run), "the run block pins a literal version: read SDK_TESTED_VERSION instead")
-        self.assertFalse(re.search(r"\b\d+\.\d+\.\d+\b", self.run), "the run block carries a version number: the constant is the one declaration")
+        self.assertFalse(re.search(r"claude-agent-sdk==\d", self.block), "the run block pins a literal version: read SDK_TESTED_VERSION instead")
+        self.assertFalse(re.search(r"\b\d+\.\d+\.\d+\b", self.block), "the run block carries a version number: the constant is the one declaration")
 
     def test_the_comment_states_the_pin_source_the_bump_and_the_residual(self):
         for phrase in ("SDK_TESTED_VERSION", "kernel/session_host.py", "bin/romp-sdk-setup", "not PyPI's latest",
@@ -140,8 +140,8 @@ class InstallStep(unittest.TestCase):
 class PinDerivation(unittest.TestCase):
     """The workflow's read of the constant equals the installer's read and the host's own attribute, shown by running it."""
     def setUp(self):
-        self.run = run_block(step_block(python_job(), STEP) or "")
-        self.expr = SED_RE.search(self.run).group(1)
+        self.block = run_block(step_block(python_job(), STEP) or "")
+        self.expr = SED_RE.search(self.block).group(1)
 
     def test_the_constant_is_declared_exactly_once_and_well_formed(self):
         found = CONSTANT_RE.findall(open(HOST).read())
@@ -171,7 +171,7 @@ class PinDerivation(unittest.TestCase):
             f.write('#!/bin/sh\nprintf "%s\\n" "$*" >> "' + calls + '"\n')
         os.chmod(os.path.join(shim, "python"), 0o755)
         env = dict(os.environ, PATH=shim + os.pathsep + os.environ.get("PATH", ""))
-        p = subprocess.run(["bash", "-c", self.run], cwd=tmp, env=env, capture_output=True, text=True)
+        p = subprocess.run(["bash", "-c", self.block], cwd=tmp, env=env, capture_output=True, text=True)
         recorded = open(calls).read().splitlines() if os.path.exists(calls) else []
         return p, recorded
 
