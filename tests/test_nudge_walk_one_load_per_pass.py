@@ -812,6 +812,9 @@ _WALK_EXEMPT = {
     ("_loader_births", "iter_child_nodes"):
         "lists a node's direct children to build the parent map and traverses nothing: every child is yielded by _walk on the next "
         "level, where it is classified or refused",
+    ("_census_floor", "iter_child_nodes"):
+        "lists a node's direct children to build the parent map and traverses nothing: every child is yielded by _walk on the next "
+        "level, where it is classified or refused",
     ("TheGrammarIsTheOneTheWalkersClassify.test_a_walker_refuses_a_node_it_does_not_classify_by_name", "walk"):
         "the control the refusal case compares _walk against, over a tree of grammar nodes only",
 }
@@ -841,11 +844,11 @@ def _traversal_references(tree):
     first cut keyed the attribute and getattr forms on the names the ast module was imported under, an open set of roads to the
     module, and a verifier of the round-4 fixes walked a tree through each of the four roads above with the pin green (the list
     shape the round's ruling names, one more time); the four names are the closed set, so the forms key on them alone, which is
-    clean today: the module spells a traversal attribute at three sites, each inside _walk or exempt. `owner` is the enclosing
+    clean today: the module spells a traversal attribute at four sites, each inside _walk or exempt. `owner` is the enclosing
     top-level def, `Class.method` for a method, `Class` for a class body, `<module>` otherwise, found by walking each module-body
     def's subtree (through _walk, as every reader here walks). Keyed on four names, the finder is wrong in both directions: an
-    innocent use of a listed name needs a _WALK_EXEMPT row (the parent map in _loader_births lists a walked node's children and
-    traverses nothing), and a walk under an unlisted name is not seen. Outside these forms: a traversal name read from the module's
+    innocent use of a listed name needs a _WALK_EXEMPT row (the parent maps in _loader_births and _census_floor list a walked node's
+    children and traverse nothing), and a walk under an unlisted name is not seen. Outside these forms: a traversal name read from the module's
     namespace by string (`vars(ast)[...]`, `ast.__dict__[...]`, `operator.attrgetter(...)`) or assembled at run time, a getattr
     reached under another name (`_g = getattr` then `_g(ast, "walk")`, `builtins.getattr(ast, "walk")`: the form keys on the callee
     being the bare Name getattr, and a verifier of the round-5 fixes planted the rebound name as a real walk with the case green),
@@ -1195,47 +1198,70 @@ def _door_regions(tree):
     return bumps, blocks, tries
 
 
-_TREE_READERS = ("ast.parse", "inspect.getsource", "inspect.getsourcelines")   # the calls by attribute that make a def a reader of a tree it parses
+_TREE_READERS = ("ast.parse", "inspect.getsource", "inspect.getsourcelines")   # the calls by attribute that make their container a reader of a tree it parses
 
 
 def _census_floor(tree):
-    """The mechanical floor under the roster of census entry points (_CENSUSES), read from this module's own AST: (defs, methods).
-    `defs` maps every module-level def other than _walk whose subtree calls _walk by name, or one of _TREE_READERS by attribute
-    (ast.parse, inspect.getsource, inspect.getsourcelines: the calls that make a def a reader of a tree it parses), to the sorted
-    calls it makes, so every such def must be a row of the roster; `methods` maps every method whose subtree calls _walk by
-    name to its calls, the inline readers the witness pins by name with the reason each is outside the roster. Itself a census
-    over a tree (a reader that passed over a node it does not classify would report a def absent), so it is a row of the
-    roster and drives like the rest. Its boundary, stated as the code has it rather than closed by another list: a def is in the
-    floor only when it calls _walk by that Name or spells one of _TREE_READERS exactly, the base Name and the attribute (`ast.parse`,
-    not `_a.parse` after `import ast as _a`, not `compile(source, ..., ast.PyCF_ONLY_AST)`, not an importlib road), so a census that
-    parses under any other road, or is handed a pre-parsed tree under any parameter name, and walks by hand calls none of these
-    and is outside this floor (a verifier of the round-5 fixes planted the compile road and the alias road unregistered with the
+    """The mechanical floor under the roster of census entry points (_CENSUSES), read from this module's own AST: (defs, classes,
+    module). Every reader reference in the tree, _walk by that Name or one of _TREE_READERS by attribute (ast.parse,
+    inspect.getsource, inspect.getsourcelines: the calls that make their container a reader of a tree it parses), as a callee or
+    as a value (a container that hands _walk or ast.parse to another callable, `map(_walk, trees)`, `real = ast.parse`, reads a
+    tree as surely as one that calls it, and a predicate over calls alone attributed it to nothing), is attributed to its nearest
+    enclosing def or class chain, whatever the container. `defs` maps a module-level def to the sorted spellings it
+    references (its nested defs and lambdas fold into it), so every such def must be a row of the roster. `classes` maps a chain that
+    starts at a class, the enclosing classes named from the top and the first def below them: a method ("C.m"), a nested class's
+    method ("C.Inner.m"), a class-body statement ("C"), a method's inner defs folded into the method; these are the inline readers
+    the roster case pins with the reason each is outside the roster. `module` maps a reader reference under no def and no class (a lambda
+    or a comprehension in a module-body statement) to its spellings, keyed by the statement's assignment target, or "<Expr>" and the
+    like for a statement that assigns nothing. Derives: the owner chain of every reader reference over the whole tree, from one parent
+    map built as _loader_births builds its own (ast.iter_child_nodes lists a walked node's children and traverses nothing, the
+    _WALK_EXEMPT row), so no container shape is outside the floor. Until the round-7 fixes the floor read two shapes, a module-level
+    def and a direct method of a module-level class, and every other container was attributed to nothing: a method spelling ast.parse
+    and inspect.getsource and walking node._fields by hand, a nested class's method and a class-body statement reading through
+    _walk, and a module-level statement outside _CENSUSES reading through _walk each left the module green at the head the round-7
+    plan read, and each reds the roster case naming its chain since. Bounds: the spelling of the reader alone. A reference is in the
+    floor only when it names _walk or spells one of _TREE_READERS exactly, the base Name and the attribute (`ast.parse`, not `_a.parse`
+    after `import ast as _a`, not `compile(source, ..., ast.PyCF_ONLY_AST)`, not an importlib road), so a census that parses under
+    any other road, or is handed a pre-parsed tree under any parameter name, and walks by hand calls none of these and is outside
+    this floor in every container (a verifier of the round-5 fixes planted the compile road and the alias road unregistered with the
     module green, and the same def through ast.parse red this floor naming it); it joins the roster by the rule in the roster's
-    comment, and the roster's count pin is what notices the edit."""
-    owners = {}
-    for stmt in tree.body:
-        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            for n in _walk(stmt):
-                owners[id(n)] = (stmt.name, True)
-        elif isinstance(stmt, ast.ClassDef):
-            for item in stmt.body:
-                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    for n in _walk(item):
-                        owners[id(n)] = (stmt.name + "." + item.name, False)
-    calls = {}
-    for n in _walk(tree):
-        if not isinstance(n, ast.Call) or id(n) not in owners:
-            continue
-        if isinstance(n.func, ast.Name) and n.func.id == "_walk":
-            spelled = "_walk"
-        elif isinstance(n.func, ast.Attribute) and isinstance(n.func.value, ast.Name) and n.func.value.id + "." + n.func.attr in _TREE_READERS:
-            spelled = n.func.value.id + "." + n.func.attr
+    comment, and the roster's count pin is what notices the edit. Itself a census over a tree (a reader that passed over a node it
+    does not classify would report a container absent), so it is a row of the roster and drives like the rest: the references are
+    collected during the one walk and attributed after it, so every node of the tree has been yielded, and a stranger refused,
+    before a statement's target is spelled for a key. _walk calls ast.walk and spells none of these, so it is in no map; were it
+    ever to, the roster case would name it as a def outside the roster."""
+    parents, found = {}, []
+    for node in _walk(tree):
+        for child in ast.iter_child_nodes(node):
+            parents[child] = node
+        if isinstance(node, ast.Name) and node.id == "_walk":
+            found.append((node, "_walk"))
+        elif isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id + "." + node.attr in _TREE_READERS:
+            found.append((node, node.value.id + "." + node.attr))
+    defs, classes, module = {}, {}, {}
+    for ref, spelled in found:                        # after the walk: every node has been yielded and refused before a key is spelled
+        chain, node, stmt = [], ref, ref
+        while node is not None:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                chain.append(node)
+            if parents.get(node) is tree:
+                stmt = node                           # the module-body statement the reference sits in
+            node = parents.get(node)
+        chain.reverse()                               # from the top: the enclosing classes, then the first def below them
+        names = []
+        for owner in chain:
+            names.append(owner.name)
+            if isinstance(owner, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                break
+        if not names:
+            targets = stmt.targets if isinstance(stmt, ast.Assign) else [stmt.target] if isinstance(stmt, (ast.AnnAssign, ast.AugAssign)) else []
+            key = ", ".join(ast.unparse(t) for t in targets) or "<%s>" % type(stmt).__name__
+            module.setdefault(key, set()).add(spelled)
+        elif len(names) == 1 and isinstance(chain[0], (ast.FunctionDef, ast.AsyncFunctionDef)):
+            defs.setdefault(names[0], set()).add(spelled)
         else:
-            continue
-        calls.setdefault(owners[id(n)], set()).add(spelled)
-    defs = {name: sorted(c) for (name, top), c in calls.items() if top and name != "_walk"}
-    methods = {name: sorted(c) for (name, top), c in calls.items() if not top and "_walk" in c}
-    return defs, methods
+            classes.setdefault(".".join(names), set()).add(spelled)
+    return ({k: sorted(v) for k, v in defs.items()}, {k: sorted(v) for k, v in classes.items()}, {k: sorted(v) for k, v in module.items()})
 
 
 # The node positions of the grammar, derived from the running interpreter by execution and never listed: the witness by execution
@@ -1572,16 +1598,17 @@ def _plant_at(tree, key, positions):
 # parser and parses the source the entry point reads with it); "parses", it parses inside (inspect.getsource, then ast.parse by
 # attribute, which the witness patches so the plant lands exactly where that entry point parses; a parse whose root is not a Module
 # takes no plant). The rule: a new census joins this roster
-# with its row. The witness pins the roster's count and its floor, _census_floor's derivation over this module's own AST (a
-# module-level def that calls _walk by name or parses a source by attribute must be a row here). The floor's boundary is the
-# spelling of the reader: a def is in it only when it calls _walk by that name or spells ast.parse, inspect.getsource or
-# inspect.getsourcelines exactly, base name and attribute; a def that parses under any other road (compile with ast.PyCF_ONLY_AST,
-# the module under an alias, importlib) or is handed a pre-parsed tree under any parameter name, and walks by hand, is outside
-# the floor and joins by this rule alone, the count pin noticing the edit. Not entry points,
-# and outside the roster on purpose: TheCountersOneSite._the_named_def (parses a helper and reads .body[0], walking nothing),
-# the enumeration's inspect.getsourcelines for a line number, the door witness's read of the door's bump sites (over
-# _door_regions, a row, for the lines a trace is matched against), and the refusal case's _walk over a synthetic grammar tree (the
-# control the _WALK_EXEMPT row names).
+# with its row. The witness pins the roster's count and its floor, _census_floor's derivation over this module's own AST: every
+# reader reference (_walk by name, or ast.parse, inspect.getsource or inspect.getsourcelines by attribute, called or handed on as a
+# value) attributed to its enclosing def or class chain, whatever the container. A module-level def in the floor must be a row
+# here; every class chain in the floor (a method, a nested class's method, a class-body statement) and every module-level statement
+# in the floor is pinned by the roster case with the reason it is outside the roster (the readers inside the test classes, each a
+# helper of a case or a case reading the tree it hands to a row, and the _door_regions row's drive lambda below, which reads the
+# door's source as the argument of the parse the witness hands it). The floor's boundary is the spelling of the reader alone: a
+# reference is in it only when it names _walk or spells one of the three exactly, base name and attribute; a census that parses
+# under any other road (compile with ast.PyCF_ONLY_AST, the module under an alias, importlib) or is handed a pre-parsed tree under
+# any parameter name, and walks by hand, is outside the floor in any container and joins by this rule alone, the count pin
+# noticing the edit.
 _CENSUSES = (
     ("_traversal_references", "tree", lambda parse: _traversal_references(parse(Path(os.path.realpath(__file__)).read_text(encoding="utf-8")))),
     ("_pass_through_lines", "parses", lambda _parse: _pass_through_lines(jd._or_fault, "loader")),
@@ -3655,7 +3682,7 @@ class TheWalkersRefuseAStrangerByExecution(unittest.TestCase):
     classify is REFUSED by every roster census of this module, never passed over as no site ("every" bounded by the roster
     _CENSUSES, its floor and the floor's stated boundary, below). The finder beside this class (_traversal_references, the case in
     TheGrammarIsTheOneTheWalkersClassify) keys on four traversal NAMES and so is wrong in both directions: an innocent use of a
-    listed name costs a _WALK_EXEMPT row (the parent map in _loader_births), and a real walk under an unlisted name, a
+    listed name costs a _WALK_EXEMPT row (the parent maps in _loader_births and _census_floor), and a real walk under an unlisted name, a
     recursion over ast.iter_fields, node._fields or ast.dump, is invisible to it with no row at all; the ruling stops the list
     widening, keeps the finder as an early warning that refuses the forms it names and is silent on the rest, and carries the
     contract here, on something that enumerates no syntax. Every census entry point in _CENSUSES is driven over the real tree it
@@ -3680,14 +3707,19 @@ class TheWalkersRefuseAStrangerByExecution(unittest.TestCase):
     and reds here as an exception that is not the refusal (the finder's from-import branch did, at ImportFrom.names, an
     AttributeError on the stranger's name, the one position where the refusal did not come first; it reads alias nodes alone since
     the round-6 fixes, so every position refuses). The second case holds the roster: its count, its floor by derivation
-    (_census_floor over this module's own AST: every module-level def calling _walk by name or parsing a source by attribute is a
-    row, and the floor is alive, since every row that parses inside is in it), that every row names a module-level def, and that the
-    methods reading through _walk inline are exactly the roster pin (its inline reads are over subtrees _door_regions, a row, holds
-    after a whole-tree walk that refuses first) and the refusal case (the control over a synthetic grammar tree, the _WALK_EXEMPT
-    row). The floor's boundary is the spelling of the reader: a def is in it only when it calls _walk by that name or spells
-    ast.parse, inspect.getsource or inspect.getsourcelines exactly, so a census that parses under another road (compile with
-    ast.PyCF_ONLY_AST, an alias of the module, importlib) or is handed a pre-parsed tree under any parameter name and walks by hand
-    calls none of those and joins the roster by the rule in its comment alone, the count pin noticing the edit. The third case holds
+    (_census_floor over this module's own AST: every reader reference, _walk by name or ast.parse, inspect.getsource or
+    inspect.getsourcelines by attribute, called or handed on as a value, attributed to its enclosing def or class chain over the
+    whole tree; every module-level def in the floor is a row, and the floor is alive, since every row that parses inside is in it),
+    that every row names a module-level def, and that the class chains and the module-level statements in the floor are exactly the
+    pinned ones, each with its reason (the readers inside the test classes, the roster pin's inline _walk over subtrees _door_regions,
+    a row, holds after a whole-tree walk that refuses first, and the refusal case's control over a synthetic grammar tree, the
+    _WALK_EXEMPT row, among them; at module level the _door_regions row's drive lambda alone). The floor's boundary is the spelling
+    of the reader alone, in any container: a reference is in it only when it names _walk or spells one of the three exactly, so a
+    census that parses under another road (compile with ast.PyCF_ONLY_AST, an alias of the module, importlib) or is handed a
+    pre-parsed tree under any parameter name and walks by hand calls none of those and joins the roster by the rule in its comment
+    alone, the count pin noticing the edit; a reader in a nested class's method, a class-body statement or a module-level statement,
+    or one handing _walk on as a value, is in the floor since the round-7 fixes and pinned by the second case (each was attributed
+    to nothing, and green, before them). The third case holds
     the instrument: the derivation is complete or red naming the field (the corpus without its type-comment source reds naming the
     type-comment fields and the type ignores), the planter lands exactly one stranger at exactly the named position, deriving from
     the position's base, and removes it, and a hand-rolled walk substituted for _walk that reads one position by hand passes the
@@ -3773,7 +3805,7 @@ class TheWalkersRefuseAStrangerByExecution(unittest.TestCase):
 
     def test_the_roster_holds_its_count_and_its_floor(self):
         tree = ast.parse(Path(os.path.realpath(__file__)).read_text(encoding="utf-8"))
-        defs, methods = _census_floor(tree)
+        defs, classes, module = _census_floor(tree)
         names = {name for name, _shape, _drive in _CENSUSES}
         self.assertEqual(len(_CENSUSES), 9, "the roster holds nine rows: the finder over this module's text, the hand-off line reader, the site "
                                             "census, the bump census, the birth pin over the judge and over the kernel, the roster pin's reading "
@@ -3791,14 +3823,50 @@ class TheWalkersRefuseAStrangerByExecution(unittest.TestCase):
         top = {s.name for s in tree.body if isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef))}
         self.assertEqual(sorted(names - top), [], "every roster row names a module-level def of this module (a misspelled or moved row would "
                                                    "drive nothing under that name): %r" % sorted(names - top))
-        self.assertEqual(sorted(methods),
-                         ["TheCountersOneSite.test_the_shared_doors_bump_roster_is_the_reconciliations_and_its_second_bumps_sit_below_the_fills",
-                          "TheGrammarIsTheOneTheWalkersClassify.test_a_walker_refuses_a_node_it_does_not_classify_by_name"],
-                         "the methods that read through _walk inline are exactly two, each outside the roster for a stated reason: the roster "
-                         "pin's inline reads (the deep count per list, the bumps under each finalbody, the try subtrees) are over subtrees "
-                         "_door_regions, a roster row, holds after a whole-tree walk that refuses a stranger first; the refusal case's _walk is "
-                         "the control over a synthetic grammar tree (the _WALK_EXEMPT row). A third method walking inline joins the roster "
-                         "through a module-level def or states its reason here: %r" % methods)
+        # every class chain in the floor (a method, a nested class's method or a class-body statement referencing _walk by name or one
+        # of _TREE_READERS by attribute, as a callee or a value), with the reason each is outside the roster; the floor derives the set,
+        # this pins it both ways
+        pinned = {
+            "TheCensusOverEveryForm.test_every_hand_off_form_reads_as_the_table_says":
+                ["inspect.getsourcelines"],                  # a line number for the table's rows; walks nothing
+            "TheCountersOneSite._the_named_def":
+                ["ast.parse", "inspect.getsource"],          # parses a helper and reads .body[0]; walks nothing
+            "TheCountersOneSite.test_the_shared_doors_bump_roster_is_the_reconciliations_and_its_second_bumps_sit_below_the_fills":
+                ["_walk", "ast.parse", "inspect.getsource"], # the roster pin's inline reads (the deep count per list, the bumps under each
+                                                             # finalbody, the try subtrees) are over subtrees _door_regions, a row, holds
+                                                             # after a whole-tree walk that refuses a stranger first
+            "TheDoorBumpsAtMostOneSecondKeyPerCall._sites":
+                ["ast.parse", "inspect.getsourcelines"],     # the door's bump sites through _door_regions, a row, mapped to lines for the trace
+            "TheGrammarIsTheOneTheWalkersClassify.test_a_walker_refuses_a_node_it_does_not_classify_by_name":
+                ["_walk", "ast.parse"],                      # the refusal case's control over a synthetic grammar tree (the _WALK_EXEMPT row)
+            "TheGrammarIsTheOneTheWalkersClassify.test_no_reference_to_a_traversal_name_sits_outside_walk":
+                ["ast.parse"],                               # parses this module's text and the samples for _traversal_references, a row:
+                                                             # the parse is the row's argument
+            "TheWalkersRefuseAStrangerByExecution.test_every_census_entry_point_refuses_a_planted_stranger_and_returns_unplanted":
+                ["ast.parse"],                               # keeps the real parse as a value: the accept side hands it to every drive and
+                                                             # the planting parse wraps it; the case parses nothing itself
+            "TheWalkersRefuseAStrangerByExecution.test_a_hand_rolled_recursion_passes_the_stranger_over_and_the_finder_does_not_see_it":
+                ["ast.parse", "inspect.getsource"],          # parses a census's source for the finder, a row, and the planted tree for the
+                                                             # negative control; its nested recursion folds into the case
+            "TheWalkersRefuseAStrangerByExecution.test_the_positions_are_derived_complete_the_planter_lands_where_it_says_and_a_hand_read_position_passes_its_plant_over":
+                ["ast.parse"],                               # parses the trees the planter plants into and the hand-reading control reads
+                                                             # (the control stands in for _walk under a patch)
+            "TheWalkersRefuseAStrangerByExecution.test_the_roster_holds_its_count_and_its_floor":
+                ["ast.parse"],                               # this case: parses this module's text for _census_floor, a row
+        }
+        self.assertEqual(classes, pinned,
+                         "the class chains reading a tree inline are exactly the pinned ones, each outside the roster for the reason beside "
+                         "its row. A chain in the floor and not pinned reads a tree and answers a census: route it through a module-level def "
+                         "with its roster row, or pin it here with its reason; a pinned chain not in the floor is a stale row. Not pinned: %r; "
+                         "not in the floor: %r; pinned with other spellings: %r"
+                         % (sorted(set(classes) - set(pinned)), sorted(set(pinned) - set(classes)),
+                            sorted(k for k in set(classes) & set(pinned) if classes[k] != pinned[k])))
+        self.assertEqual(module, {"_CENSUSES": ["inspect.getsource"]},
+                         "the module-level statements reading a tree under no def and no class are exactly one: the _door_regions row's drive "
+                         "lambda in _CENSUSES reads the door's source as the argument of the parse the witness hands it, a reader and not a "
+                         "census. Another module-level reader (a lambda or a comprehension at import time calling _walk or one of "
+                         "_TREE_READERS) is a census under no name the roster can drive: route it through a module-level def with its row, or "
+                         "pin it here with its reason: %r" % module)
 
     def test_the_positions_are_derived_complete_the_planter_lands_where_it_says_and_a_hand_read_position_passes_its_plant_over(self):
         positions = _grammar_positions()
