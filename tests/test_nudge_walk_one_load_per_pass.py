@@ -846,6 +846,11 @@ REPLACED_KM = ("_alive_sessions", "_wait_for_graph", "_session_flag", "_compacti
                "_session_awaiting", "_turn_romp_injected", "_closer_settled", "_revivers_pending",
                "_pending_ops", "_log_nudge_event", "_push_all", "_mark_views_dirty", "_path_of",
                "_debt_backstop_tick", "_PREV_ALIVE")
+# REPLACED_DATA: the names of REPLACED_KM whose object is data, not a callable, which the replaced-helpers census skips (a source census
+# has nothing to read on a dict or a set). setUp derives the same tuple from the kernel objects it found and holds it equal to this
+# one both ways, so a callable put here, or a data name left off, reds every harness case at setUp naming both tuples (review round 7,
+# the seventh-axis verifier: the tuple was pinned by the census's count alone, and with the count edited a callable put here had its
+# real body skipped unseen).
 REPLACED_DATA = ("_pending_ops", "_PREV_ALIVE")
 REPLACED_JD = ("parsed_session", "_segs", "plan_units")
 JUDGE_FILE = os.path.basename(os.path.realpath(jd.__file__))
@@ -1894,7 +1899,10 @@ class _WalkHarness(unittest.TestCase):
     """The real pass over two synthetic sessions, the toggle off, every seam it moves put back by a cleanup registered
     before the first rebind (unittest skips tearDown when setUp raises and runs the cleanups regardless). Derives: what setUp
     rebinds, against REPLACED_KM and REPLACED_JD both ways (set equality over the kernel's and the judge's globals by identity, the
-    names jd._rebind_state moves subtracted) with Sessions.backend_for beside them; the two doors' identity before the recorders
+    names jd._rebind_state moves subtracted) with Sessions.backend_for beside them; REPLACED_DATA, the data names the census skips,
+    against the names of REPLACED_KM whose kernel object is not callable, both ways (until the round-7 close the tuple was read one
+    way: a data name left off it errored in the census's identity check, a callable put on it moved the census's count and, with
+    the count edited, was skipped unseen); the two doors' identity before the recorders
     stand; the wrappers' hand-off lines and call counts from their source (_pass_through_lines), one line and one call each; per
     pass, in _pass, every counter delta against the recorded calls; and in the cleanup, _restore, every kernel and judge global
     against setUp's first snapshot by identity once the saved names are back, the names the restoring rebind moves subtracted, so a
@@ -1904,8 +1912,7 @@ class _WalkHarness(unittest.TestCase):
     from the classes' own dicts (_class_attributes; the container Sessions.backend_for sits in, which the cleanup put back by hand
     while a stub on any other class attribute was named by nothing until the round-7 close). Bounds: REPLACED_KM, REPLACED_JD, CASE_KM and CASE_JD, what the fixture replaces and what a
     case may, a policy, the first two pinned by execution in setUp and the last two by the cleanup's check (a case may replace only
-    names on the saved lists, since any other is named as leaked); REPLACED_DATA, the two data names the census skips, read one way (a data name left off it errors in the census's identity
-    check, a callable put on it is skipped unseen); the containers the cleanup's check reads, the globals and the class dicts of both
+    names on the saved lists, since any other is named as leaked); the containers the cleanup's check reads, the globals and the class dicts of both
     modules (the contents of a module-level dict, list or set, an instance's attributes and an imported module's attributes are
     outside it); the window, one tick; the doors recorded, the judge's two; WALK, GATE and SWEEP,
     the callers the condition names; the boundary set, three wrappers hand-picked as the judge's, held against the judge's AST by
@@ -2055,6 +2062,12 @@ class _WalkHarness(unittest.TestCase):
         rebound_km = {k for k, v in vars(km).items() if before_km.get(k, _UNSET) is not v}
         self.assertEqual(rebound_km, set(REPLACED_KM), "setUp replaces exactly the kernel names REPLACED_KM lists, the census's targets: a "
                                                         "stub without a list entry hides a loader from the execution witness and the census")
+        data = tuple(k for k in REPLACED_KM if not callable(before_km[k]))   # the data names among them, from the objects setUp found
+        self.assertEqual(data, REPLACED_DATA, "REPLACED_DATA is exactly the names of REPLACED_KM whose kernel object is not callable, in the "
+                                              "list's order, derived from setUp's first snapshot (the replaced-helpers census skips these names; "
+                                              "until the round-7 close the tuple was pinned by its count alone, so a callable put on it with the "
+                                              "count edited to match left that helper's real body unscanned): derived %r, the tuple %r"
+                                              % (data, REPLACED_DATA))
         rebound_jd = {k for k, v in vars(jd).items() if before_jd.get(k, _UNSET) is not v} - rebound_by_rebind
         self.assertEqual(rebound_jd, set(REPLACED_JD) | {"load_goals", "load_goals_shared"},
                          "and exactly the judge names REPLACED_JD lists plus the two recorded doors (the names jd._rebind_state moves "
@@ -3369,8 +3382,10 @@ class TheCountersOneSite(unittest.TestCase):
         a decorator without it the census
         would read the wrapper's source and answer no site for a body it never read. Derives: its targets from the lists setUp pins by
         execution, REPLACED_KM less REPLACED_DATA, REPLACED_JD and Sessions.backend_for, and each object's identity before its source
-        is read. Bounds: one level deep, the helper's own source; the count, 21, a tripwire; the needle, both doors by substring; and
-        REPLACED_DATA, read one way (a data name left off it errors in the identity check, a callable put on it is skipped unseen)."""
+        is read. Bounds: one level deep, the helper's own source; the count, 21, a tripwire; and the needle, both doors by substring.
+        REPLACED_DATA is no bound of this census since the round-7 close: setUp holds it against the non-callable names of
+        REPLACED_KM both ways, so a callable put on it reds there by name (before that pin it moved this count alone, and with the
+        count edited its real body went unscanned) and a data name left off it errors in the identity check here."""
         targets = ([(k, getattr(km, k)) for k in REPLACED_KM if k not in REPLACED_DATA]
                    + [("jd." + k, getattr(jd, k)) for k in REPLACED_JD]
                    + [("Sessions.backend_for", km.Sessions.backend_for)])
