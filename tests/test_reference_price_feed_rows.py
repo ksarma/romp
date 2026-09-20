@@ -149,8 +149,10 @@ class TheCachedRowsLiveUntilARestartOrTheNextLandedFetch(_Pins):
         self.assertEqual(_indent(assign), _indent(after),
                          "%s: the cache assignment sits in the landed branch at the same depth as the status write, unguarded, "
                          "so a landed fetch replaces the cached rows with what it parsed, even an empty table (the doc's 'even "
-                         "when that is none'); no executed test drives a populated cache through a landed-empty fetch, a "
-                         "follow-up; a guard on `out` here is a behaviour change the doc must follow" % where)
+                         "when that is none'); tests/test_price_feed_consistency.py OneSnapshot."
+                         "test_a_landing_waits_for_a_read_that_is_inside_the_status drives a populated cache through a "
+                         "landed-empty fetch and pins the settled block as defaults/empty; a guard on `out` here is a "
+                         "behaviour change the doc, this pin and that assertion must follow" % where)
         before_assign = body[:body.find(ASSIGN)].rstrip().split("\n")[-1].strip()
         self.assertFalse(before_assign.startswith("if ") or before_assign.startswith("elif "),
                          "%s: the line before the cache assignment is %r, a guard; the doc says the landed rows always replace "

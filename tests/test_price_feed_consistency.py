@@ -230,9 +230,12 @@ class OneSnapshot(H.PriceFeedCase):
 class TheLabelNeverCarriesTheHost(H.PriceFeedCase):
     """CPython's _ssl composes two verify messages itself, with the server hostname quoted in them (its templates
     `Hostname mismatch, certificate is not valid for '%S'.` and `IP address mismatch, certificate is not valid for
-    '%S'.`, verify codes 62 and 64); every other verify message is OpenSSL's table string. Built the way _ssl builds
-    the exception (errno, reason, verify_code, verify_message), the real handshake's shape (round 2's refuters drove
-    it through the worker against a local server with a certificate for another name)."""
+    '%S'.`, verify codes 62 and 64); every other verify message is OpenSSL's table string. The label reads the verify
+    CODE through the kernel's own copy of OpenSSL 3.0's verify-error table and never the message (the review's closing
+    pass; round 2 had dropped any message holding a quote character, which dropped eight table strings too), so the
+    two composed codes read as the table's fixed words and a code the table lacks reads by number. Built the way _ssl
+    builds the exception (errno, reason, verify_code, verify_message), the real handshake's shape (round 2's refuters
+    drove it through the worker against a local server with a certificate for another name)."""
 
     def _cert_error(self, code, message):
         import ssl
@@ -248,10 +251,10 @@ class TheLabelNeverCarriesTheHost(H.PriceFeedCase):
                          "URLError: SSLCertVerificationError: CERTIFICATE_VERIFY_FAILED (hostname mismatch)")
         self.assertEqual(km._price_feed_error_class(urllib.error.URLError(ip)),
                          "URLError: SSLCertVerificationError: CERTIFICATE_VERIFY_FAILED (IP address mismatch)")
-        # a verify message this interpreter does not compose today, quoting a name: the token alone, never the name
+        # a code the table lacks, its message quoting a name: the code by number, never the message or the name
         later = self._cert_error(999, "Some later check, certificate is not valid for 'TESTHOST'.")
         self.assertEqual(km._price_feed_error_class(urllib.error.URLError(later)),
-                         "URLError: SSLCertVerificationError: CERTIFICATE_VERIFY_FAILED")
+                         "URLError: SSLCertVerificationError: CERTIFICATE_VERIFY_FAILED (verify code 999)")
         # control: a table string is relayed as before
         signed = self._cert_error(18, "self-signed certificate")
         self.assertEqual(km._price_feed_error_class(urllib.error.URLError(signed)),

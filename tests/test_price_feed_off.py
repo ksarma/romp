@@ -334,7 +334,7 @@ class FailedFetch(PriceFeedCase):
         a box offline). The label comes from the code's own table instead: OpenSSL's reason token and verify message,
         the EAI_ constant's name and libc's text. Genuine exceptions wherever one can be raised without traffic (a
         handshake fed EOF through in-memory BIOs; a resolver call that forbids a lookup, AI_NUMERICHOST); the
-        certificate failure is built the way CPython's _ssl builds it (errno, reason and verify_message)."""
+        certificate failure is built the way CPython's _ssl builds it (errno, reason, verify_code and verify_message)."""
         import socket
         import ssl
         ctx = ssl.create_default_context()                        # a real handshake failure with no socket: the client
@@ -354,7 +354,7 @@ class FailedFetch(PriceFeedCase):
         self.assertNotIn(os.strerror(eof.errno), label, "never the system errno's text for a library code")
         cert = ssl.SSLCertVerificationError(ssl.SSL_ERROR_SSL, "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify "
                                             "failed: self-signed certificate (_ssl.c:1000)")
-        cert.reason, cert.verify_message = "CERTIFICATE_VERIFY_FAILED", "self-signed certificate"
+        cert.reason, cert.verify_code, cert.verify_message = "CERTIFICATE_VERIFY_FAILED", 18, "self-signed certificate"
         label = km._price_feed_error_class(urllib.error.URLError(cert))
         self.assertEqual(label, "URLError: SSLCertVerificationError: CERTIFICATE_VERIFY_FAILED (self-signed certificate)")
         self.assertNotIn("Operation not permitted", label)
@@ -377,6 +377,57 @@ class FailedFetch(PriceFeedCase):
         want = "URLError: SSLCertVerificationError: CERTIFICATE_VERIFY_FAILED (self-signed certificate)"
         self.assertIn("price feed: fetch failed (%s); " % want, err.getvalue())
         self.assertEqual(km._version_info()["priceFeed"]["lastError"], want)
+
+    def test_a_certificate_failure_is_labelled_from_its_verify_code_never_its_verify_message(self):
+        """The verify CODE, through the kernel's own copy of OpenSSL 3.0's verify-error table (_price_feed_verify_errors);
+        the verify MESSAGE is never read, since CPython composes two of them with the server hostname. Round 2 kept the
+        host out by dropping any message holding a quote character, which dropped eight of the table's own strings, the
+        ones with a possessive apostrophe (codes 4, 5, 13, 14, 15, 16, 24 and 46), to the bare token. Here: the eight
+        read their table string; a code 18 whose message QUOTES a name still reads the table's row (the row that proves
+        the message is not read); the two composed codes read the fixed words (controls); a code the table lacks reads
+        its number; under a library older than OpenSSL 3 every code reads its number; and one of the eight rides through
+        the worker to lastError, the stderr line and /version. Built the way _ssl builds the exception (errno, reason,
+        verify_code, verify_message); every message that names a host names TESTHOST, which no label may carry."""
+        import ssl
+
+        def cert(code, message):
+            e = ssl.SSLCertVerificationError(ssl.SSL_ERROR_SSL, "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify "
+                                             "failed: %s (_ssl.c:1000)" % message)
+            e.reason, e.verify_code, e.verify_message = "CERTIFICATE_VERIFY_FAILED", code, message
+            return urllib.error.URLError(e)
+        head = "URLError: SSLCertVerificationError: CERTIFICATE_VERIFY_FAILED"
+        eight = {4: "unable to decrypt certificate's signature", 5: "unable to decrypt CRL's signature",
+                 13: "format error in certificate's notBefore field", 14: "format error in certificate's notAfter field",
+                 15: "format error in CRL's lastUpdate field", 16: "format error in CRL's nextUpdate field",
+                 24: "issuer certificate doesn't have a public key", 46: "RFC 3779 resource not subset of parent's resources"}
+        for code, text in eight.items():
+            with self.subTest(code=code):
+                self.assertEqual(km._price_feed_error_class(cert(code, text)), "%s (%s)" % (head, text))
+        quoted = km._price_feed_error_class(cert(18, "self-signed certificate, not valid for 'TESTHOST'"))
+        self.assertEqual(quoted, head + " (self-signed certificate)", "the code's row, whatever the message says")
+        self.assertNotIn("TESTHOST", quoted, "never the host")
+        composed = ((62, "Hostname mismatch, certificate is not valid for 'TESTHOST'.", "hostname mismatch"),
+                    (64, "IP address mismatch, certificate is not valid for 'TESTHOST'.", "IP address mismatch"))
+        for code, message, words in composed:                      # controls: the two messages _ssl composes with the host
+            label = km._price_feed_error_class(cert(code, message))
+            self.assertEqual(label, "%s (%s)" % (head, words))
+            self.assertNotIn("TESTHOST", label, "never the host")
+        unknown = km._price_feed_error_class(cert(999, "Some later check, certificate is not valid for 'TESTHOST'."))
+        self.assertEqual(unknown, head + " (verify code 999)", "a code the table lacks: its number, never its message")
+        self.assertNotIn("TESTHOST", unknown, "never the host")
+        with mock.patch.object(ssl, "OPENSSL_VERSION_INFO", (1, 1, 1, 0, 0)):   # a code's meaning belongs to the major version
+            self.assertEqual(km._price_feed_error_class(cert(18, "self-signed certificate")), head + " (verify code 18)",
+                             "under an older library the table is not read: the code by number")
+        self.raise_with = cert(13, eight[13])                       # through the worker: lastError, the line and /version
+        err = io.StringIO()
+        with redirect_stderr(err):
+            km._refresh_remote_prices(NOW)
+            self._join()
+        want = "%s (%s)" % (head, eight[13])
+        self.assertIn("price feed: fetch failed (%s); " % want, err.getvalue())
+        self.assertEqual(km._price_feed_status(NOW)["lastError"], want)
+        self.assertEqual(km._version_info()["priceFeed"]["lastError"], want)
+        self.assertNotIn("TESTHOST", err.getvalue(), "never the host")
 
     def test_a_worker_that_cannot_start_is_a_said_failure_not_a_stuck_inflight(self):
         """threading.Thread.start raising (a kernel at its thread limit) left attemptedAt and t stamped with inflight

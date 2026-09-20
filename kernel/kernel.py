@@ -52418,6 +52418,61 @@ _price_cache = {"t": 0, "remote": {}}   # remote feed prices, refreshed on a TTL
 _price_feed = {"fetchedAt": None, "attemptedAt": None, "lastError": None, "rows": 0, "matched": 0, "inflight": False,
                "offSaid": False}
 _price_feed_lock = threading.Lock()
+# OpenSSL 3.0's verify-error table: the strings X509_verify_cert_error_string returns for verify codes 1 to 94, copied
+# from OpenSSL 3.0.13 on the build box (a ctypes probe over libcrypto, in scratch, never here: the ssl module exposes no
+# name or string for a verify code and the interpreter ships no OpenSSL header), so the kernel holds its own copy.
+# _price_feed_error_class labels a certificate failure from its verify CODE through this table and never reads the
+# verify MESSAGE: CPython's _ssl composes two of those itself (codes 62 and 64) with the server hostname quoted in
+# them, and a label keyed on the code keeps the host out as a property of the code, not of the message's characters
+# (the review's closing pass: a scan for quote characters had dropped the eight table strings with a possessive
+# apostrophe, `format error in certificate's notBefore field` among them, to the bare reason token). A code's meaning
+# belongs to the library's major version: the table is read under OpenSSL 3 or later only, and every code reads as
+# `verify code N` under an older library, as does a code this table lacks.
+_price_feed_verify_errors = {
+    1: "unspecified certificate verification error", 2: "unable to get issuer certificate",
+    3: "unable to get certificate CRL", 4: "unable to decrypt certificate's signature",
+    5: "unable to decrypt CRL's signature", 6: "unable to decode issuer public key",
+    7: "certificate signature failure", 8: "CRL signature failure", 9: "certificate is not yet valid",
+    10: "certificate has expired", 11: "CRL is not yet valid", 12: "CRL has expired",
+    13: "format error in certificate's notBefore field", 14: "format error in certificate's notAfter field",
+    15: "format error in CRL's lastUpdate field", 16: "format error in CRL's nextUpdate field", 17: "out of memory",
+    18: "self-signed certificate", 19: "self-signed certificate in certificate chain",
+    20: "unable to get local issuer certificate", 21: "unable to verify the first certificate",
+    22: "certificate chain too long", 23: "certificate revoked", 24: "issuer certificate doesn't have a public key",
+    25: "path length constraint exceeded", 26: "unsuitable certificate purpose", 27: "certificate not trusted",
+    28: "certificate rejected", 29: "subject issuer mismatch", 30: "authority and subject key identifier mismatch",
+    31: "authority and issuer serial number mismatch", 32: "key usage does not include certificate signing",
+    33: "unable to get CRL issuer certificate", 34: "unhandled critical extension",
+    35: "key usage does not include CRL signing", 36: "unhandled critical CRL extension",
+    37: "invalid non-CA certificate (has CA markings)", 38: "proxy path length constraint exceeded",
+    39: "key usage does not include digital signature",
+    40: "proxy certificates not allowed, please set the appropriate flag",
+    41: "invalid or inconsistent certificate extension", 42: "invalid or inconsistent certificate policy extension",
+    43: "no explicit policy", 44: "different CRL scope", 45: "unsupported extension feature",
+    46: "RFC 3779 resource not subset of parent's resources", 47: "permitted subtree violation",
+    48: "excluded subtree violation", 49: "name constraints minimum and maximum not supported",
+    50: "application verification failure", 51: "unsupported name constraint type",
+    52: "unsupported or invalid name constraint syntax", 53: "unsupported or invalid name syntax",
+    54: "CRL path validation error", 55: "path loop", 56: "Suite B: certificate version invalid",
+    57: "Suite B: invalid public key algorithm", 58: "Suite B: invalid ECC curve",
+    59: "Suite B: invalid signature algorithm", 60: "Suite B: curve not allowed for this LOS",
+    61: "Suite B: cannot sign P-384 with P-256", 62: "hostname mismatch", 63: "email address mismatch",
+    64: "IP address mismatch", 65: "no matching DANE TLSA records", 66: "EE certificate key too weak",
+    67: "CA certificate key too weak", 68: "CA signature digest algorithm too weak",
+    69: "invalid certificate verification context", 70: "issuer certificate lookup error",
+    71: "Certificate Transparency required, but no valid SCTs found", 72: "proxy subject name violation",
+    73: "OCSP verification needed", 74: "OCSP verification failed", 75: "OCSP unknown cert",
+    76: "Cannot find certificate signature algorithm",
+    77: "subject signature algorithm and issuer public key algorithm mismatch",
+    78: "cert info signature and signature algorithm mismatch", 79: "invalid CA certificate",
+    80: "Path length invalid for non-CA cert", 81: "Path length given without key usage keyCertSign",
+    82: "Key usage keyCertSign invalid for non-CA cert", 83: "Issuer name empty", 84: "Subject name empty",
+    85: "Missing Authority Key Identifier", 86: "Missing Subject Key Identifier",
+    87: "Empty Subject Alternative Name extension", 88: "Subject empty and Subject Alt Name extension not critical",
+    89: "Basic Constraints of CA cert not marked critical", 90: "Authority Key Identifier marked critical",
+    91: "Subject Key Identifier marked critical", 92: "CA cert does not include key usage extension",
+    93: "Using cert extension requires at least X509v3", 94: "Certificate public key has explicit ECC parameters",
+}
 
 
 def _price_feed_off():
@@ -52435,18 +52490,20 @@ def _price_feed_error_class(e):
     socket errno reads through os.strerror (`ConnectionRefusedError: errno 111 (Connection refused)`). Two
     OSError families carry LIBRARY codes in `errno`, which os.strerror would mislabel with an unrelated system
     message (an SSL_ERROR_SSL of 1 as EPERM's "Operation not permitted", an EAI_NONAME of -2 as "Unknown
-    error -2"): an ssl.SSLError is labelled with OpenSSL's reason token and, for a certificate failure, its
-    verify message (`SSLCertVerificationError: CERTIFICATE_VERIFY_FAILED (self-signed certificate)`), the token
-    and the message both fixed strings from OpenSSL's own tables, with the one exception CPython makes: for a
-    hostname or IP address mismatch (verify codes X509_V_ERR_HOSTNAME_MISMATCH, 62, and X509_V_ERR_IP_ADDRESS_MISMATCH,
-    64) _ssl composes the verify message itself and quotes the server hostname in it (`Hostname mismatch,
-    certificate is not valid for '<host>'.`), so those two read as the fixed words `hostname mismatch` and `IP
-    address mismatch` (review round 2: a certificate for another name, the shape a TLS-intercepting proxy presents,
-    carried the feed's host into lastError, the stderr line and /version), and any other verify message that quotes
-    a name is dropped to the token alone rather than relayed; a resolver error with the EAI_ constant's name and
-    libc's gai_strerror text (`gaierror: EAI_NONAME (Name or service not known)`). Never str(e), the response body,
-    the URL or its host: the status rides the auth-exempt /version route, and a third party's error page is not
-    ours to relay."""
+    error -2"): an ssl.SSLError is labelled with OpenSSL's reason token and, for a certificate failure, the string
+    its verify CODE has in the kernel's own copy of OpenSSL 3.0's verify-error table, _price_feed_verify_errors
+    (`SSLCertVerificationError: CERTIFICATE_VERIFY_FAILED (self-signed certificate)`), or as `verify code N` for a
+    code the table lacks or under a library older than 3.0; a resolver error with the EAI_ constant's name and
+    libc's gai_strerror text (`gaierror: EAI_NONAME (Name or service not known)`). The verify MESSAGE is never
+    read: CPython's _ssl composes two of them itself with the server hostname quoted in them (verify codes
+    X509_V_ERR_HOSTNAME_MISMATCH, 62, and X509_V_ERR_IP_ADDRESS_MISMATCH, 64: `Hostname mismatch, certificate is
+    not valid for '<host>'.`; review round 2: a certificate for another name, the shape a TLS-intercepting proxy
+    presents, carried the feed's host into lastError, the stderr line and /version), and a label keyed on the code
+    keeps the host out as a property of the code rather than of the message's characters (the review's closing pass:
+    round 2 had dropped any message holding a quote character, and eight of the table's own strings hold a possessive
+    apostrophe, so those read as the bare token); the two composed codes read as the table's `hostname mismatch` and
+    `IP address mismatch`. Never str(e), the response body, the URL or its host: the status rides the auth-exempt
+    /version route, and a third party's error page is not ours to relay."""
     import ssl
     parts = [type(e).__name__]
     code = getattr(e, "code", None)                  # HTTPError: the status line's code, never its body
@@ -52458,11 +52515,11 @@ def _price_feed_error_class(e):
         e = inner
     eno = getattr(e, "errno", None)
     if isinstance(e, ssl.SSLError):                  # errno is an SSL_ERROR_* code: OpenSSL's reason token labels it
-        reason, verify = getattr(e, "reason", None), getattr(e, "verify_message", None)
+        reason, vcode = getattr(e, "reason", None), getattr(e, "verify_code", None)
         label = reason if isinstance(reason, str) and reason else ("ssl error %d" % eno if isinstance(eno, int) else "")
-        named = {62: "hostname mismatch", 64: "IP address mismatch"}   # X509_V_ERR_HOSTNAME_MISMATCH, X509_V_ERR_IP_ADDRESS_MISMATCH:
-        verify = named.get(getattr(e, "verify_code", None), verify)    # the two verify messages _ssl composes WITH the host
-        if isinstance(verify, str) and verify and "'" not in verify and '"' not in verify:   # a quoted name is no table string
+        if isinstance(vcode, int):                   # a certificate failure: its verify CODE through the kernel's copy of
+            table = _price_feed_verify_errors if ssl.OPENSSL_VERSION_INFO[0] >= 3 else {}   # OpenSSL 3's table; never the
+            verify = table.get(vcode) or "verify code %d" % vcode                         # verify MESSAGE, two carry the host
             label = "%s (%s)" % (label, verify) if label else verify
         if label:
             parts.append(label)
