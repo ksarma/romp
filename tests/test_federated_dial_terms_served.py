@@ -121,11 +121,24 @@ def held_pair(frames, slot):
     helper never detach a host, so a host's sockets are one conn's), by federation.ts's rule: a full carrying gen leaves (gen, 0) and a full carrying none clears
     the pair; a stamped delta leaves (newGen when carried, else gen; through), which is (newGen, R) for a composed frame and
     (gen, rev) for the stamping kernel's per-cycle delta (through equal to rev, no newGen); a stamped delta carrying no
-    through moves nothing here, as a gen-less delta does. That refusal is the FEED road's rule alone (applyRemoteFeedDelta:
+    through moves nothing here. That refusal is the FEED road's rule alone (applyRemoteFeedDelta:
     a needFullFeed, nothing applied), bounded by the kernel contract that every stamped delta carries through; the bars
     road (view-deltas.ts receive) applies a through-less frame at rev equal to base plus one and holds (gen, rev), so for
     the bars slot this rule is right only because no designed kernel sends that shape: a lab that met it would need the
-    slot branched and both receiver arms modelled (review round 1, 2026-09-20). A delta onto a held pair that carries a gen
+    slot branched and both receiver arms modelled (review round 1, 2026-09-20). A GEN-LESS delta (no gen key) onto a held
+    pair is the one arm this rule branches on the slot, because the two clients differ there by design and the difference
+    was measured (round 4, the mirror measured, 2026-09-20; until then this rule read "moves no pair" for both slots, the
+    feed road's rule, and was wrong for the bars slot): the feed road applies it on the base's presence alone and moves no
+    pair, since applyRemoteFeedDelta writes Conn.feedHeld only under a gen the frame carries (the vintage guard); the bars
+    road applies it too, and its pair has no home but the base, whose rev every applied frame moves (view-deltas.ts receive
+    keeps base.gen and sets rev to the frame's), so ViewDeltas.held then reads (the held gen, the frame's rev), a newGen the
+    frame carries not adopted (the gate never ran for it). The measurement, one probe per side under the poisoned ports
+    (the client through an esbuild bundle of view-deltas.ts and the feed rig of federation-remote-feed-delta.test.ts, this
+    function through the module imported bare; the logs under the review note's round-4 mirror section): a gen-less delta
+    base 0 rev 1 onto a bars base seeded from a full carrying gen G read held() {gen: G, rev: 1} at the client, the same
+    with through 1 and with newGen and through, where this rule read (G, 0); onto a bars base seeded without a gen, null
+    and None; onto the feed road's pair (G, 0), feedHeld {gen: G, rev: 0} and (G, 0); onto a gen-less feed base, undefined
+    and None. So the bars arm below advances the rev under the held gen and the feed arm moves nothing. A delta onto a held pair that carries a gen
     key the client cannot read (_stamp_field None with the key present, _stamp_present), or whose gen matched and whose
     newGen it cannot read, is a refusal on both roads and is modelled as the client answers it (round 4, 2026-09-20:
     unparseable is not absent): on the feed road the pair stands (needFullFeed with the held pair, nothing applied), on the
@@ -153,7 +166,16 @@ def held_pair(frames, slot):
                     if slot == "bars":
                         pair = None   # needSlot: the base dropped
                     continue          # needFullFeed with the held pair: the pair stands
-                continue   # a gen-less delta moves no pair
+                # a gen-less delta, no gen key at all: the roads differ and this says what each does (round 4, the mirror measured;
+                # the docstring carries the measurement). Feed: applied, the pair unmoved (feedHeld is written under a gen alone).
+                # Bars: applied, and the pair is the base, so its rev is the frame's under the held gen; a newGen the frame carries
+                # is not adopted (the gate never ran for it). A gen-less delta whose rev the hook did not record is not modelled,
+                # as no malformed frame is (the client refuses it into a needSlot; a lab's stream is the kernel's own).
+                if slot == "bars":
+                    rev = _stamp_field(f, "rev")
+                    if rev is not None:
+                        pair = (pair[0], rev)
+                continue
             through, new_gen = _stamp_field(f, "through"), _stamp_field(f, "newGen")
             if new_gen is None and _stamp_present(f, "newGen"):
                 # the gen matched and the newGen is one the client cannot read: refused before the apply (round 4)
@@ -520,7 +542,7 @@ class HeldPairRule(unittest.TestCase):
             self.assertTrue(_stamp_present({k: over_cap}, k) and _stamp_present({k + "Key": True}, k), k)
             self.assertFalse(_stamp_present({"base": 1}, k), k)
 
-    def test_a_stamped_delta_advances_the_pair_and_a_gen_less_one_moves_nothing(self):
+    def test_a_stamped_delta_advances_the_pair_and_a_gen_less_one_moves_no_feed_pair(self):
         frames = [{"t": "feed", "gen": GEN}, {"t": "feedDelta", "gen": GEN, "base": 0, "rev": 1, "through": 1}]
         self.assertEqual(held_pair(frames, "feed"), (GEN, 1), "a per-cycle stamped delta: (gen, rev)")
         self.assertEqual(held_pair([{"t": "feed", "gen": GEN}, {"t": "feedDelta", "gen": GEN, "base": 0, "rev": 1}], "feed"), (GEN, 0),
@@ -528,8 +550,28 @@ class HeldPairRule(unittest.TestCase):
         frames.append({"t": "feedDelta", "gen": GEN, "newGen": GEN2, "base": 1, "rev": 4, "through": 4})
         self.assertEqual(held_pair(frames, "feed"), (GEN2, 4), "a composed frame: (newGen, through)")
         frames.append({"t": "feedDelta", "base": 4, "rev": 5})
-        self.assertEqual(held_pair(frames, "feed"), (GEN2, 4), "a gen-less delta moves nothing")
+        self.assertEqual(held_pair(frames, "feed"), (GEN2, 4), "a gen-less delta moves no feed pair (the bars slot differs: the test below)")
         self.assertIsNone(held_pair([{"t": "feedDelta", "gen": GEN, "base": 0, "rev": 1, "through": 1}], "feed"), "a delta before any full: nothing held")
+
+    def test_a_gen_less_delta_moves_no_feed_pair_and_advances_the_bars_pairs_rev_under_the_held_gen(self):
+        # the roads differ on a gen-less delta onto a held pair, and the difference was measured at both clients (round 4, the
+        # mirror measured, 2026-09-20; held_pair's docstring carries the two probes' readings): the feed road writes its pair
+        # under a gen alone (the vintage guard), the bars road's pair is its base, whose rev every applied frame moves, so
+        # ViewDeltas.held reads (the held gen, the frame's rev) after one; a newGen on a gen-less frame is adopted on neither
+        # road, since the gate never ran for it. Before the measurement this rule read "moves no pair" for both slots.
+        feed = [{"t": "feed", "gen": GEN}, {"t": "feedDelta", "gen": GEN, "base": 0, "rev": 1, "through": 1}]
+        self.assertEqual(held_pair(feed + [{"t": "feedDelta", "base": 1, "rev": 2}], "feed"), (GEN, 1), "feed: a gen-less delta moves no pair")
+        self.assertEqual(held_pair(feed + [{"t": "feedDelta", "newGen": GEN2, "base": 1, "rev": 2, "through": 2}], "feed"), (GEN, 1), "feed: nor does one carrying newGen and through")
+        bars = [{"t": "bars", "gen": GEN3}, {"t": "delta", "slot": "bars", "gen": GEN3, "base": 0, "rev": 1, "through": 1}]
+        self.assertEqual(held_pair(bars + [{"t": "delta", "slot": "bars", "base": 1, "rev": 2}], "bars"), (GEN3, 2), "bars: the rev advances under the held gen")
+        self.assertEqual(held_pair(bars + [{"t": "delta", "slot": "bars", "base": 1, "rev": 2, "through": 2}], "bars"), (GEN3, 2), "bars: the same with through")
+        self.assertEqual(held_pair(bars + [{"t": "delta", "slot": "bars", "newGen": GEN2, "base": 1, "rev": 2, "through": 2}], "bars"), (GEN3, 2), "bars: a newGen on a gen-less frame is not adopted")
+        self.assertEqual(held_pair([{"t": "bars", "gen": GEN3}, {"t": "delta", "slot": "bars", "base": 0, "rev": 1}], "bars"), (GEN3, 1), "bars: straight after the full, the probe's shape")
+        # onto a base seeded without a gen: no pair on either road, before and after (both probes read null and None)
+        self.assertIsNone(held_pair([{"t": "bars"}, {"t": "delta", "slot": "bars", "base": 0, "rev": 1}], "bars"))
+        self.assertIsNone(held_pair([{"t": "feed"}, {"t": "feedDelta", "base": 0, "rev": 1}], "feed"))
+        # and the redial then declares the pair the bars base holds, rev 1 under the full's gen
+        self.assertEqual(expected_relay_caps([{"t": "bars", "gen": GEN3}, {"t": "delta", "slot": "bars", "base": 0, "rev": 1}]), "feedDelta,held:bars:%s.1" % GEN3)
 
     def test_a_per_cycle_stamped_delta_carrying_through_equal_to_its_rev_leaves_gen_rev(self):
         # the stamping kernel's per-cycle shape: every delta carries gen, base, rev AND through, through equal to rev and no
