@@ -3058,9 +3058,9 @@ class AnImportTimeKeptRootLeakMetFirstByAClassThatSwapsTheSingleton(_NestedRun, 
 class TheRefusalIsTheFirstWindowsAlone(AnImportTimeKeptRootLeakMetFirstByAClassThatSwapsTheSingleton):
     """S7B: S7 with a third class of One's shape after Two, so a LATER window where the identity term fails exists
     (Three.a's before object is None while the start read's is the import-time object). The refusal is the first
-    window's: one carrier, Three.a quiet, Three's boundary quiet, still one error. The flag's two cells are in the
-    module docstring's matrix with their rules and derive ids (refusal-flag-dropped, refusal-identity-alone); this case
-    is a carrier of both by the rules, Three.a being a later window, and one where the identity term fails."""
+    window's: one carrier, Three.a quiet, Three's boundary quiet, still one error. The flag's cells (refusal-flag-dropped,
+    refusal-identity-alone) are in the module docstring's matrix with their rules and derive ids; this case is a carrier
+    of both by the rules, Three.a being a later window, and one where the identity term fails."""
     SCRATCH = SCRATCH_S7B
 
     def test_the_later_swapping_class_gets_no_refusal(self):
