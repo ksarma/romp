@@ -7981,14 +7981,17 @@ a synthetic module holding each construct (a regex literal ending in backslash-s
 holding /*, a block comment holding a regex, a URL in a string). The CI pin in
 tools/markdown-viewer-plan-gate-adopt.test.mjs reads the property the Tests paragraph states off the block of the job
 that runs npm test, found by that step and not by its key, over the block's steps with its YAML comment lines removed,
-and a separate presence check holds the key to the name the paragraph's sentence gives it; in scratch copies of the
-head, that module alone, an engine install added to another job left it green (10 of 10), a Chromium install moved
-before the job's Test step turned it red with the sentence to change named (9 of 10), and a Firefox and WebKit install
-before that step with the sentence reworded to the run form left it green with the held-whole paragraph pin red, as
-the same-commit rule intends (9 of 10); after the round-2 review (its pins-2 and pins-3), the job key renamed alone is
-red on the name check (9 of 10), the key and the sentence renamed together green (10 of 10), a `#` comment in the
-job's header naming the browser cache green (10 of 10, where the pin before it read the raw block and was red, 9 of
-10), and a restore step for that cache before the Test step red on the property (9 of 10). Outside the three modules
+and nothing in it reads the job's key: the paragraph's sentence names the job by the step it runs, so a rename of the
+key alone needs no companion edit (the fork PR review's third-round ruling, 2026-09-20: the round-2 push had held the
+key to a name in the sentence by a separate check, which pinned an arrangement, and that check is gone); in scratch
+copies of the head, that module alone, an engine install added to another job left it green (10 of 10), a Chromium
+install moved before the job's Test step turned it red with the sentence to change named (9 of 10), and a Firefox and
+WebKit install before that step with the sentence reworded to the run form left it green with the held-whole paragraph
+pin red, as the same-commit rule intends (9 of 10); after the round-2 review (its pins-2 and pins-3), a `#` comment in
+the job's header naming the browser cache green (10 of 10, where the pin before it read the raw block and was red, 9
+of 10), and a restore step for that cache before the Test step red on the property (9 of 10); after the third-round
+ruling, the job key renamed alone green (10 of 10) and a Chromium install moved before the Test step red on the
+property (9 of 10). Outside the three modules
 that read comment-stripped code (file-view-seam.test.ts, md-url-view.test.ts and md-sanitize-viewer-links.test.ts), no
 test of this branch compares where the chain or the fence pass sits relative to the adoption: file-view.test.ts,
 tools/file-review-viewer-recipe.test.mjs, tools/upstream-ledger-figure-gate-before-adoption.test.mjs and
@@ -8012,11 +8015,12 @@ multi-line fences, an svg image with `src`, with `src` beside a gating `href`, a
 lines) and green in all three with the pass before the chain, one placeholder per fence. Its fifth case, the Copy
 button under the moved pass, clicked for real on two fences: green in all three engines.
 file-view-figures-gate-adopt-svg-browser.test.ts, the second leg: red in Firefox and in WebKit at 2d41e5c9b, green in
-Chromium there, green in all three after the fix. Both legs skip where Playwright's engines are absent. In CI's
-vscode-extension job no Playwright browser install and no restore of Playwright's browser cache precedes the npm test
-step (the job's own steps, read off .github/workflows/ci.yml by tools/markdown-viewer-plan-gate-adopt.test.mjs; what
-another job installs, or this job installs after its Test step, does not bear on it), so in CI the legs skip and the
-node scene runs: file-view-figures-gate-adopt.test.ts drives the real openFileView and openUrlView under plain node
+Chromium there, green in all three after the fix. Both legs skip where Playwright's engines are absent. In CI, the job
+whose step runs npm test has no Playwright browser install and no restore of Playwright's browser cache before that
+step (the job's own steps, the job found by that step and not by its key, read off .github/workflows/ci.yml by
+tools/markdown-viewer-plan-gate-adopt.test.mjs; what another job installs, or this job installs after that step, does
+not bear on it), so in CI the legs skip and the node scene runs: file-view-figures-gate-adopt.test.ts drives the real
+openFileView and openUrlView under plain node
 over a stand-in with two documents, the sanitizer's body inert and the viewer's document live, and pins by execution
 that no node entering the live document carries a fetching attribute on an unlisted host or a page-relative path (an
 img's src and srcset, a source's, a video's src and poster, an audio's src, an svg image's href or xlink:href, an svg
