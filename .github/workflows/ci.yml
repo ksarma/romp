@@ -99,6 +99,42 @@ jobs:
         # and the webpush tests then skip and say so rather than the whole cell going red.
         continue-on-error: ${{ endsWith(matrix.python-version, 't') }}
         run: python -m pip install cryptography
+      - name: Install the Claude Agent SDK
+        # The SDK behind the hosted-session backend, installed at the version the session host is written
+        # against: SDK_TESTED_VERSION in kernel/session_host.py, the repo's ONE declaration of it, read here
+        # with the sed bin/romp-sdk-setup runs over the same line. With it installed, the 48 SDK-gated tests
+        # (43 in tests/test_sdk_backend.py, 5 in tests/test_host_transport.py) and the two SDK-transport host
+        # tests in tests/test_session_host.py RUN in CI instead of skipping, and every session host a test
+        # spawns takes the SDK transport, as it does on a box with the venv bin/romp-sdk-setup builds.
+        # Why that version and not PyPI's latest: it is the one the full suite passed under on the box that
+        # runs the hosted sessions (16875 passed, 566 skipped, 0 failed), and the newer release that existed
+        # when this landed (0.2.157, the fifth release in four days) was left alone on purpose: the version is
+        # chosen by a run of the host tests, not by the package index. Bumping it is the act the constant's
+        # comment describes: install the new version, run the host tests on it, move the number, and the
+        # installer, the host's own version check and this step follow the line. The residual is that nothing
+        # polls PyPI: a person notices a release, and a break in a newer SDK shows up only when someone moves
+        # the constant.
+        # The step refuses an empty, malformed or duplicated constant rather than installing the unpinned
+        # latest, and it carries no continue-on-error: the SDK requires cryptography (through mcp's
+        # pyjwt[crypto]), so a cryptography wheel lagging an interpreter fails THIS step, and that must be the
+        # cell's red, not 48 tests silently skipping. Runs after the cryptography step so pip finds it installed.
+        # The 3.14t cell installs it too: the wheel is py3-none with Requires-Python >=3.10, its compiled
+        # dependencies (cryptography, cffi, pydantic-core, rpds-py) publish cp314t wheels, and on a free-threaded
+        # 3.14.6 with the GIL off the install, the import (the GIL still off after it) and the gated and host
+        # test modules ran green before this landed (2026-09-20). The SDK's own classifiers stop at 3.13, so a
+        # release that breaks there shows as a red cell, which is the point of having the cell.
+        # Cost: about 106.5 MB of download per cell after the cryptography step (the SDK wheel is 102 MB, it
+        # bundles the Claude Code binary; its other dependencies total about 4.5 MB) and a few seconds of
+        # install; the run's own step timings are the measurement that counts.
+        shell: bash
+        run: |
+          set -euo pipefail
+          pin="$(sed -n 's/^SDK_TESTED_VERSION = "\([^"]*\)".*$/\1/p' kernel/session_host.py)"
+          [[ "$pin" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "kernel/session_host.py: expected exactly one line SDK_TESTED_VERSION = \"<x.y.z>\", read: '$pin'" >&2
+            exit 1
+          }
+          python -m pip install "claude-agent-sdk==$pin"
       - name: Run pytest
         env:
           # The free-threaded cell runs with the GIL off, stated rather than defaulted (a 't'
