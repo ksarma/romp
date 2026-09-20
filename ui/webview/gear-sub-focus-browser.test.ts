@@ -12,12 +12,19 @@
 // whose checkbox held a keyboard focus dropped the placement of a description still shown, and it ran past the card's bottom;
 // and a road moving from a row's picker button into its box never left the row, so the row's class stayed behind.
 //
+// And the row holding the keyboard focus is re-placed on the pointer road's enter and exit too (the author's fixer pass after
+// round 4, panel-1): a focus that arrived while the pointer rested on another row with a description measured a popover the
+// panel-wide stand-down hid, and the pointer's exit re-placed its own row alone, so the focused row's description appeared
+// below it unplaced and past the card's bottom, the T408 clip on a new road.
+//
 // Two pins over the sources for every runner, and browser legs over the REAL gear module and its stylesheet, the
 // gear-judge-fast-browser.test.ts pattern (a fake kernel behind page.route; skips with a stated reason without a playwright
 // browser, which CI installs none of). The legs read the PANEL, not the row: every `.rs-sub` under `#rsettings` that is shown,
-// with the host that owns it, over every host in the Debug and Task tracking panes that has a description and a control (the
-// census form: a two-row leg is a sample). The keyboard focus comes from a real Tab press (the previous tabbable focused, then
-// Tab), the mouse from a real click, so the roads the selector distinguishes are the roads driven. Synthetic values only.
+// with the host that owns it, over every host in EVERY pane that has a description and a control of any kind (a checkbox, a
+// button, a text field; the census form: a two-pane leg was a sample, and the two text controls and the Account row's two
+// descriptions lived in the panes it did not open). The keyboard focus comes from a real Tab press (the previous tabbable
+// focused, then Tab), the mouse from a real click, so the roads the selector distinguishes are the roads driven. Synthetic
+// values only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -57,6 +64,10 @@ test("the sheet shows a description while its row holds a KEYBOARD focus: :has(:
   assert.ok(GEAR_CSS.includes(panelStand),
     "one tooltip across the PANEL: while a row with a description or any mixed mark is hovered, every description outside the hovered row stands down, the focused row's included, the hovered row's own exempt; a .rs-widget branch because the widget rows live in their grids, not in a .rs-row");
   assert.match(GEAR_CSS, /THE\s+POINTER WINS wherever it has something to show/, "the precedence is stated in the sheet, not left to specificity");
+  assert.match(GEAR_CSS, /within a row the box wins whenever either road rests on the\s+box, one description either way; across rows the pointer wins/,
+    "the one exception to the pointer-wins rule is stated beside it: within a judge row the BOX's description shows with the focus inside the box and the pointer on the row's label (the census leg pins it)");
+  assert.match(GEAR_CSS, /THE TEXT CONTROLS ARE THE ONE EXCEPTION to\s+"never a mouse click"/,
+    "the show rule's comment names the exception to 'never a mouse click': a focus in a text field is always :focus-visible, so a click into the two text rows shows the description until the field blurs (the click leg pins it by control kind)");
 });
 
 test("placeSub runs on focusin as on mouseover, on the pointer road's host (the box for a focus inside a Fast mode box), and every handler re-places EVERY host of the row rather than one host, the exits never stripping the class", () => {
@@ -68,8 +79,10 @@ test("placeSub runs on focusin as on mouseover, on the pointer road's host (the 
     "the focus road's exit re-places the row's hosts: a focus leaving a HOVERED row keeps the placement of the description the pointer still shows (round 4, correctness-2)");
   assert.match(GEAR, /pcard\.addEventListener\('mouseout', function \(e\) \{ var host = hostOf\(e\.target\); if \(host && !\(e\.relatedTarget && host\.contains\(e\.relatedTarget\)\)\) placeRowHosts\(host\); \}\);/,
     "the pointer road's exit re-places the row's hosts: a pointer leaving a row whose checkbox holds a keyboard focus keeps the placement of the description the focus still shows");
-  assert.match(GEAR, /function placeRowHosts\(host\) \{\s*\n\s*var row = host\.classList\.contains\('rs-fastin'\) \? \(host\.closest\('#rsettings \.rs-row'\) \|\| host\) : host;\s*\n\s*placeSub\(row\);\s*\n\s*var boxes = row\.querySelectorAll\('\.rs-fastin'\);\s*\n\s*for \(var i = 0; i < boxes\.length; i\+\+\) placeSub\(boxes\[i\]\);/,
+  assert.match(GEAR, /function placeRow\(row\) \{\s*\n\s*placeSub\(row\);\s*\n\s*var boxes = row\.querySelectorAll\('\.rs-fastin'\);\s*\n\s*for \(var i = 0; i < boxes\.length; i\+\+\) placeSub\(boxes\[i\]\);/,
     "the whole row and its Fast mode boxes: a focus moving from the row's picker button into its box never leaves the row, so the row's class stayed behind when the box's exit cleared the box's alone");
+  assert.match(GEAR, /function placeRowHosts\(host\) \{\s*\n\s*var row = hostRow\(host\);\s*\n\s*placeRow\(row\);\s*\n\s*var focused = hostOf\(document\.activeElement\);\s*\n\s*if \(focused && hostRow\(focused\) !== row\) placeRow\(hostRow\(focused\)\);/,
+    "and the row holding the keyboard focus, when it is another row: the panel-wide stand-down hides the focused row's description while the pointer rests on a row with one, so a focus that arrives there is left unplaced, and the pointer's exit must place it (the author's fixer pass after round 4, panel-1)");
   assert.doesNotMatch(GEAR, /host\.classList\.remove\('rs-up'\); \}\);/,
     "no exit handler strips the class unconditionally any more: placeSub drops it and re-adds it only while the host's own popover is shown and does not fit below");
   assert.doesNotMatch(GEAR, /focusHostOf/,
@@ -145,7 +158,7 @@ async function withGear(t: any, tab: string, body: (page: any, errors: string[])
 async function tabInto(page: any, id: string): Promise<{ landed: boolean; focusVisible: boolean; prev: string | null }> {
   const prev = await page.evaluate((cid: string) => {
     const target = document.getElementById(cid)!;
-    const all = Array.from(document.querySelectorAll("#rsettings input, #rsettings button, #rsettings select, #rsettings a[href], #rsettings [tabindex]")) as HTMLElement[];
+    const all = Array.from(document.querySelectorAll("#rsettings input, #rsettings button, #rsettings select, #rsettings textarea, #rsettings a[href], #rsettings [tabindex]")) as HTMLElement[];
     const tabbable = all.filter((el) => el.tabIndex >= 0 && !(el as HTMLInputElement).disabled && el.checkVisibility());
     const i = tabbable.indexOf(target);
     if (i <= 0) return null;
@@ -162,26 +175,33 @@ async function tabInto(page: any, id: string): Promise<{ landed: boolean; focusV
 }
 
 /** Everything shown in the PANEL: each shown `.rs-sub` with the id of the host that owns it (the box's wrap id for a Fast mode
- *  box, the control's id for a row, the widget id for a widget row), whether any two shown rects intersect, the focused
- *  control and its :focus-visible, and every host wearing the placement class. */
+ *  box, the first control's id for a row, the widget id for a widget row), whether any two shown rects of DIFFERENT hosts
+ *  intersect (`intersect`) and whether two of one host do (`intersectWithin`: the Account row's two, see the census leg), the
+ *  focused control and its :focus-visible, every host wearing the placement class, and the count of open menus (a picker's
+ *  list, a house dropdown, the login modal), so a leg can read that a click left none behind. */
 const shownPanel = (page: any) => page.evaluate(() => {
   const HOSTS = "#rsettings .rs-fastin, #rsettings .rs-row, #rsettings .rs-widget";
   const hostId = (h: HTMLElement | null) => {
     if (!h) return "?";
     if (h.classList.contains("rs-fastin")) return h.id;
     if (h.classList.contains("rs-widget")) return "widget:" + h.getAttribute("data-widget");
-    const c = h.querySelector("input, button") as HTMLElement | null;
+    // the row's first focusable control, the census's rule (a picker row holds a hidden <select> before its button)
+    const c = (Array.from(h.querySelectorAll("input, button, textarea, select")) as HTMLElement[]).find((el) => el.closest(HOSTS) === h && el.tabIndex >= 0 && !(el as HTMLInputElement).disabled && el.checkVisibility());
     return c ? c.id : h.className;
   };
   const shown = (Array.from(document.querySelectorAll("#rsettings .rs-sub")) as HTMLElement[]).filter((el) => getComputedStyle(el).display !== "none");
   const rects = shown.map((el) => el.getBoundingClientRect());
-  let intersect = false;
+  const owners = shown.map((el) => el.closest(HOSTS));
+  let intersect = false, intersectWithin = false;
   for (let i = 0; i < rects.length; i++) for (let j = i + 1; j < rects.length; j++) {
     const a = rects[i], b = rects[j];
-    if (a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom) intersect = true;
+    if (a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom) { if (owners[i] === owners[j]) intersectWithin = true; else intersect = true; }
   }
   const act = document.activeElement as HTMLElement | null;
-  return { shown: shown.map((el) => hostId(el.closest(HOSTS) as HTMLElement | null)), intersect,
+  const lm = document.getElementById("rs-login-modal");
+  const menus = (Array.from(document.querySelectorAll("#rsettings .rs-widget-opt div, #rsettings .rs-row div[style*='position:absolute'], #rs-cmap-list, #rs-pal-list")) as HTMLElement[])
+    .filter((m) => !m.hidden && getComputedStyle(m).display !== "none" && m.getBoundingClientRect().height > 0).length + (lm && !lm.hidden ? 1 : 0);
+  return { shown: shown.map((el) => hostId(el.closest(HOSTS) as HTMLElement | null)), intersect, intersectWithin, menus,
     active: act && act !== document.body ? (act.id || act.tagName + "." + act.className) : null,
     focusVisible: act && act !== document.body ? act.matches(":focus-visible") : null,
     up: (Array.from(document.querySelectorAll("#rsettings .rs-up")) as HTMLElement[]).map((h) => hostId(h)) };
@@ -340,29 +360,38 @@ test("a pointer parked on the row's mixed mark while the focus is inside a Fast 
 });
 
 /** The census of the open pane: every host (a row, a widget row, a Fast mode box) that owns a description and has a visible
- *  control to focus or click, with the control given an id when it has none (the picker buttons) and a hover target (the
- *  label for a row, the box itself for a box). */
+ *  control to focus or click, EVERY such control with its kind (a checkbox, a button, a text field; a select or another tag
+ *  reads "other", which the click leg refuses until classified), each control given an id when it has none (the picker
+ *  buttons), a hover target (the label for a row, the box itself for a box), and the count of descriptions the host owns (one
+ *  for every host but the Account row, whose stored-logins heading is a second `.rs-sub`: the census leg names it). */
 const census = (page: any) => page.evaluate(() => {
   const HOSTS = "#rsettings .rs-fastin, #rsettings .rs-row, #rsettings .rs-widget";
   const pane = document.querySelector("#rsettings .rs-pane:not([hidden])")!;
-  const out: { host: string; control: string; kind: string; hoverSel: string; row: string; box: boolean; hasMark: boolean }[] = [];
+  const kindOf = (c: HTMLElement) => {
+    if (c.tagName === "TEXTAREA") return "text";
+    if (c.tagName === "BUTTON") return "button";
+    if (c.tagName === "INPUT") { const t = ((c as HTMLInputElement).type || "text").toLowerCase(); return t === "checkbox" || t === "radio" ? "checkbox" : ["text", "search", "url", "email", "password", "number", "tel"].includes(t) ? "text" : "other"; }
+    return "other";
+  };
+  const out: { host: string; control: string; kind: string; tag: string; controls: { id: string; kind: string; tag: string }[]; hoverSel: string; row: string; box: boolean; hasMark: boolean; subs: number }[] = [];
   let n = 0;
   for (const h of Array.from(pane.querySelectorAll(".rs-row, .rs-widget, .rs-fastin")) as HTMLElement[]) {
     if (!h.checkVisibility()) continue;
-    const own = (Array.from(h.querySelectorAll(".rs-sub")) as HTMLElement[]).find((s) => s.closest(HOSTS) === h);
-    if (!own) continue;
-    const control = (Array.from(h.querySelectorAll("input, button")) as HTMLElement[]).find((c) => c.closest(HOSTS) === h && c.tabIndex >= 0 && !(c as HTMLInputElement).disabled && c.checkVisibility());
-    if (!control) continue;
-    if (!control.id) control.id = "probe-control-" + (n++);
+    const owned = (Array.from(h.querySelectorAll(".rs-sub")) as HTMLElement[]).filter((sub) => sub.closest(HOSTS) === h);
+    if (!owned.length) continue;
+    const controls = (Array.from(h.querySelectorAll("input, button, textarea, select")) as HTMLElement[]).filter((c) => c.closest(HOSTS) === h && c.tabIndex >= 0 && !(c as HTMLInputElement).disabled && c.checkVisibility());
+    if (!controls.length) continue;
+    for (const c of controls) if (!c.id) c.id = "probe-control-" + (n++);
     if (!h.id) h.setAttribute("data-probe", "probe-host-" + (n++));
     const hostSel = h.id ? "#" + h.id : `[data-probe="${h.getAttribute("data-probe")}"]`;
     const box = h.classList.contains("rs-fastin");
     const row = (box ? h.closest("#rsettings .rs-row")! : h) as HTMLElement;
     if (!row.id && !row.getAttribute("data-probe")) row.setAttribute("data-probe", "probe-host-" + (n++));
     const hoverSel = box ? hostSel : hostSel + " b";
-    const hostId = box ? h.id : h.classList.contains("rs-widget") ? "widget:" + h.getAttribute("data-widget") : control.id;
-    out.push({ host: hostId, control: control.id, kind: control.tagName === "BUTTON" ? "button" : "checkbox", hoverSel,
-      row: row.id || row.getAttribute("data-probe")!, box, hasMark: !box && !!row.querySelector("b .rs-mixed, .rs-mixed") });
+    const hostId = box ? h.id : h.classList.contains("rs-widget") ? "widget:" + h.getAttribute("data-widget") : controls[0].id;
+    out.push({ host: hostId, control: controls[0].id, kind: kindOf(controls[0]), tag: controls[0].tagName,
+      controls: controls.map((c) => ({ id: c.id, kind: kindOf(c), tag: c.tagName })), hoverSel,
+      row: row.id || row.getAttribute("data-probe")!, box, hasMark: !box && !!row.querySelector("b .rs-mixed, .rs-mixed"), subs: owned.length });
   }
   return out;
 });
@@ -373,20 +402,53 @@ const hoverOn = async (page: any, sel: string) => {
   await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
 };
 
-for (const tab of ["debug", "tasks"] as const) {
-  const pane = tab === "debug" ? "Debug" : "Task tracking";
-  test(`one tooltip across the ${pane} pane, the census form: a keyboard focus in each host shows its description alone; the pointer on every OTHER host shows that host's alone (the pointer wins); the pointer on nothing shows the focused one; a hovered mark on another row shows none`, { timeout: 180000 }, async (t) => {
+/** What a host shows when it is the one with something to show: one description, or the Account row's two. */
+const ownShown = (h: any) => Array(h.subs).fill(h.host);
+
+/** Every pane, with the floor of hosts the census form found there when the leg was written (a census that finds fewer checked
+ *  less than this leg did; the Automation pane's rows carry permanent lines, not descriptions, and have none). */
+const PANES: ReadonlyArray<readonly [string, string, number]> = [["general", "General", 8], ["chat", "Chat", 21], ["feed", "Feed", 1], ["sessions", "Sessions", 2],
+  ["automation", "Automation", 0], ["tasks", "Task tracking", 11], ["debug", "Debug", 4]];
+
+/** The General pane fills the Account row's stored-logins block from the fake kernel's /logins after the open: wait for it, so
+ *  the census reads the row as a user sees it. */
+async function settled(page: any, tab: string): Promise<void> {
+  if (tab === "general") await page.waitForFunction(() => !!document.querySelector("#rs-logins > *"), null, { timeout: 10000 });
+}
+
+/** Close whatever a button's click opened: the login modal (its Cancel), a house dropdown (Escape closes it; the page's own
+ *  Escape handlers close a dialog one level at a time and never the panel), or a colormap or palette list (its button toggles
+ *  it, so a second click closes it, as the earlier two-pane leg did). */
+async function settleAfterClick(page: any, id: string): Promise<void> {
+  await page.evaluate(() => { const lm = document.getElementById("rs-login-modal"); if (lm && !lm.hidden) (document.getElementById("rs-login-cancel") as HTMLElement).click(); });
+  await page.keyboard.press("Escape");
+  if ((await shownPanel(page)).menus > 0) await page.click(`#${id}`);
+  await page.mouse.move(5, 5);
+}
+
+for (const [tab, pane, floor] of PANES) {
+  test(`one tooltip across the ${pane} pane, the census form: a keyboard focus in each host shows its description alone; the pointer on every OTHER host shows that host's alone (the pointer wins); the pointer on nothing shows the focused one; a hovered mark on another row shows none`, { timeout: 240000 }, async (t) => {
     await withGear(t, tab, async (page, errors) => {
+      await settled(page, tab);
       const hosts = await census(page);
-      assert.ok(hosts.length >= (tab === "debug" ? 4 : 10), "the rig: the pane has the hosts the census form expects (" + hosts.length + "): " + hosts.map((h: any) => h.host).join(","));
-      assert.ok(hosts.some((h: any) => h.kind === "checkbox") && (tab !== "tasks" || (hosts.some((h: any) => h.kind === "button") && hosts.some((h: any) => h.host.endsWith("-wrap")))),
-        "the rig: the census spans the control kinds (checkbox rows; on the Task tracking pane the picker-button rows and the Fast mode boxes too)");
+      assert.ok(hosts.length >= floor, "the rig: the pane has the hosts the census form expects (" + hosts.length + " of at least " + floor + "): " + hosts.map((h: any) => h.host).join(","));
+      if (tab === "tasks") assert.ok(hosts.some((h: any) => h.kind === "checkbox") && hosts.some((h: any) => h.kind === "button") && hosts.some((h: any) => h.host.endsWith("-wrap")),
+        "the rig: the Task tracking census spans the control kinds (checkbox rows, picker-button rows, the Fast mode boxes)");
+      if (tab === "general") assert.ok(hosts.some((h: any) => h.kind === "text" && h.tag === "TEXTAREA"), "the rig: the General census reaches the Pictures from the web textarea");
+      if (tab === "sessions") assert.ok(hosts.some((h: any) => h.kind === "text" && h.tag === "INPUT"), "the rig: the Sessions census reaches the Default directory input");
+      // the Account row owns TWO descriptions (gear.js lgLogins gives the stored-logins heading the class rs-sub, under the row
+      // that already holds #rs-login-acct), so a hover or a focus there shows two, stacked at the row's bottom: pre-existing on
+      // the hover road (the base has the same line and the same rules), inherited by the focus road, disclosed and pinned here
+      // as the one host in the panel with more than one; a fix (a class of its own for the heading) reds this pin and then
+      // removes the exception, and a second doubled host reds it too
+      assert.deepEqual(hosts.filter((h: any) => h.subs > 1).map((h: any) => h.host + ":" + h.subs), tab === "general" ? ["rs-login-btn:2"] : [],
+        "the hosts owning more than one description: the Account row alone (its stored-logins heading is an rs-sub), nowhere else");
       for (const h of hosts) {
         await page.mouse.move(5, 5);
         const tabbed = await tabInto(page, h.control);
         assert.equal(tabbed.landed && tabbed.focusVisible, true, `the rig: a Tab landed a :focus-visible focus on ${h.control} (from ${tabbed.prev})`);
         const alone = await shownPanel(page);
-        assert.deepEqual(alone.shown, [h.host], `a keyboard focus in ${h.host} with the pointer on nothing shows its description alone`);
+        assert.deepEqual(alone.shown, ownShown(h), `a keyboard focus in ${h.host} with the pointer on nothing shows its description alone`);
         for (const o of hosts) {
           if (o === h) continue;
           await hoverOn(page, o.hoverSel);
@@ -394,16 +456,18 @@ for (const tab of ["debug", "tasks"] as const) {
           assert.equal(r.active, h.control, `the rig: the focus stayed on ${h.control} while the pointer rests on ${o.host}`);
           if (o.row === h.row) {
             // the two hosts share a row (a judge row and its Fast mode box): within a row the BOX's description wins whenever
-            // either road rests on the box (the box's pair and its twins, both (1,5,0)), one description either way
+            // either road rests on the box (the box's pair and its twins, both (1,5,0)), one description either way; the one
+            // exception to the pointer-wins rule, stated in the sheet beside the rule
             const boxHost = (h.box ? h : o).host;
-            assert.deepEqual(r.shown, [boxHost], `focus in ${h.host}, pointer on ${o.host}, one row: the box's description alone`);
+            assert.deepEqual(r.shown, [boxHost], `focus in ${h.host}, pointer on ${o.host}, one row: the box's description alone (within a row the box wins, whichever road rests on it)`);
           } else {
-            assert.deepEqual(r.shown, [o.host], `focus in ${h.host}, pointer on ${o.host}: the pointer's description is the one shown (the pointer wins), never two`);
+            assert.deepEqual(r.shown, ownShown(o), `focus in ${h.host}, pointer on ${o.host}: the pointer's description is the one shown (the pointer wins), never the focused row's beside it`);
           }
-          assert.equal(r.intersect, false, "and no two shown descriptions intersect");
+          assert.equal(r.intersect, false, "and no two shown descriptions of different hosts intersect");
+          assert.equal(r.intersectWithin, o.subs > 1, `two descriptions of one host intersect only on the Account row (${o.host})`);
         }
         await page.mouse.move(5, 5);
-        assert.deepEqual((await shownPanel(page)).shown, [h.host], `the pointer gone, ${h.host}'s description shows again on the focus alone`);
+        assert.deepEqual((await shownPanel(page)).shown, ownShown(h), `the pointer gone, ${h.host}'s description shows again on the focus alone`);
       }
       // a mark on ANOTHER row hovered while a keyboard focus holds a description: the mark's native title is the one tooltip, so
       // nothing is shown (the second road out of the row the author's mirror-and-twins pass left open: a focus-shown description
@@ -424,28 +488,47 @@ for (const tab of ["debug", "tasks"] as const) {
         assert.equal(onMark.active, first.control, "the rig: the focus stayed in the first host");
         assert.deepEqual(onMark.shown, [], `the pointer on ${other.host}'s mark while ${first.host} holds the focus: no description beside the mark's title`);
         await page.mouse.move(5, 5);
-        assert.deepEqual((await shownPanel(page)).shown, [first.host], "the pointer gone, the focused host's shows again");
-      } else t.diagnostic(`the ${pane} pane has no mark span: the mark road is driven on the Task tracking pane`);
+        assert.deepEqual((await shownPanel(page)).shown, ownShown(first), "the pointer gone, the focused host's shows again");
+      } else t.diagnostic(`the ${pane} pane has no mark span outside the first host's row: the mark road is driven on the Task tracking pane`);
       assert.deepEqual(errors, [], "no page error");
     });
   });
 
-  test(`a mouse click on every control in the ${pane} pane, then the pointer leaving: nothing shown, the control still focused (a click is not :focus-visible, so the description no longer outlives the pointer)`, { timeout: 180000 }, async (t) => {
+  test(`a mouse click on every control in the ${pane} pane, then the pointer leaving, by control kind: a checkbox or a button shows nothing with the control still focused (a click is not :focus-visible); a TEXT field shows its row's description until it blurs (a focus in a text field is always :focus-visible)`, { timeout: 240000 }, async (t) => {
     await withGear(t, tab, async (page, errors) => {
+      await settled(page, tab);
       const hosts = await census(page);
-      assert.ok(hosts.length >= (tab === "debug" ? 4 : 10), "the rig: the census (" + hosts.length + ")");
-      for (const h of hosts) {
-        await page.click(`#${h.control}`);
+      assert.ok(hosts.length >= floor, "the rig: the census (" + hosts.length + " of at least " + floor + ")");
+      const kinds = new Set<string>();
+      for (const h of hosts) for (const c of h.controls) {
+        kinds.add(c.kind);
+        await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur?.());
+        await page.mouse.move(5, 5);
+        assert.equal((await shownPanel(page)).menus, 0, `the rig: no menu or modal left open before the click on ${c.id}`);
+        await page.click(`#${c.id}`);
         const on = await shownPanel(page);
-        assert.equal(on.active, h.control, `the rig: the click focused ${h.control}`);
-        assert.equal(on.focusVisible, false, `the rig: a mouse click is not a :focus-visible focus (${h.control})`);
+        assert.equal(on.active, c.id, `the rig: the click focused ${c.id}`);
         await page.mouse.move(5, 5);
         const off = await shownPanel(page);
-        assert.equal(off.active, h.control, `the control keeps the focus after the pointer leaves (${h.control})`);
-        assert.deepEqual(off.shown, [], `clicked ${h.host} and left: no description outlives the pointer`);
-        assert.deepEqual(off.up, [], "and no host wears the placement class with nothing shown");
-        if (h.kind === "button") { await page.click(`#${h.control}`); await page.mouse.move(5, 5); }   // a picker's menu toggles on its button: closed again
+        assert.equal(off.active, c.id, `the control keeps the focus after the pointer leaves (${c.id})`);
+        if (c.kind === "text") {
+          assert.equal(on.focusVisible, true, `a mouse click into a text field IS a :focus-visible focus (${c.id}: the caret is the ring)`);
+          assert.deepEqual(off.shown, ownShown(h), `clicked the text field ${c.id} and left: its row's description shows until the field blurs (the one exception to "never a mouse click", stated in the sheet)`);
+          assert.ok(off.up.every((u: string) => u === h.host), "no host but the shown one wears the placement class");
+          await page.evaluate(() => (document.activeElement as HTMLElement).blur());
+          assert.deepEqual((await shownPanel(page)).shown, [], `and the field blurred, nothing shows (${c.id})`);
+        } else if (c.kind === "checkbox" || c.kind === "button") {
+          assert.equal(on.focusVisible, false, `the rig: a mouse click on a ${c.kind} is not a :focus-visible focus (${c.id})`);
+          assert.deepEqual(off.shown, [], `clicked the ${c.kind} ${c.id} in ${h.host} and left: no description outlives the pointer`);
+          assert.deepEqual(off.up, [], "and no host wears the placement class with nothing shown");
+        } else {
+          assert.fail(`a control kind this leg does not classify (${c.kind}, ${c.tag}#${c.id}): state what a click into it shows`);
+        }
+        if (c.kind === "button") await settleAfterClick(page, c.id);   // a picker's list, a house dropdown or the login modal opened by the click: closed again
       }
+      assert.equal((await shownPanel(page)).menus, 0, "the rig: nothing left open at the end");
+      const expectKinds: Record<string, string[]> = { general: ["button", "text", "checkbox"], chat: ["checkbox", "button"], feed: ["checkbox"], sessions: ["text", "button"], automation: [], tasks: ["checkbox", "button"], debug: ["checkbox"] };
+      for (const k of expectKinds[tab]) assert.ok(kinds.has(k), `the rig: the ${pane} pane's census drove a ${k} (the kinds it has today)`);
       assert.deepEqual(errors, [], "no page error");
     });
   });
@@ -537,6 +620,101 @@ test("the placement survives the other road's exit: a pointer leaving a row whos
     assert.equal(d1.up, false, "with nothing shown the class is off (placeSub drops it and re-adds it only while a popover is shown)");
     assert.deepEqual(errors, [], "no page error");
   });
+});
+
+test("the placement when the focus ARRIVES under the stand-down: the pointer resting on another row with a description (or on its mark) hides the focused row's description at focusin, and the pointer's exit places it; a pointer entering another row drops the class of the description it hides and its exit restores it; the same for a Fast mode box parked low", { timeout: 180000 }, async (t) => {
+  // the ordinary sequence: the mouse rests where the gear was clicked, and the person tabs into the panel. At focusin the
+  // panel-wide stand-down hides the focused row's description (the pointer wins), so placeSub measures zero height and sets
+  // nothing; before the fix the pointer's exit re-placed the pointer's row alone, and the focused row's description appeared
+  // below it unplaced, 35 px past the card's bottom with room above (the T408 clip; measured at the head of the author's pass
+  // after round 4)
+  await withGear(t, "debug", async (page, errors) => {
+    const read = (id: string) => page.evaluate((cid: string) => {
+      const HOSTS = "#rsettings .rs-fastin, #rsettings .rs-row, #rsettings .rs-widget";
+      const box = document.getElementById(cid)!, host = box.closest(HOSTS) as HTMLElement, row = (box.closest("#rsettings .rs-row") || host) as HTMLElement;
+      const sub = (Array.from(host.querySelectorAll(".rs-sub")) as HTMLElement[]).find((el) => el.closest(HOSTS) === host)!;
+      const card = document.querySelector("#rsettings .rs-card")!;
+      const sr = sub.getBoundingClientRect(), rr = row.getBoundingClientRect(), cr = card.getBoundingClientRect();
+      return { focused: document.activeElement === box, hovered: row.matches(":hover"), display: getComputedStyle(sub).display, up: host.classList.contains("rs-up"),
+        subAboveRow: sr.bottom <= rr.top + 1, pastCard: sr.bottom > cr.bottom + 1, fitsBelow: rr.bottom + sr.height + 2 <= cr.bottom, roomAbove: Math.round(rr.top - cr.top), subH: Math.round(sr.height) };
+    }, id);
+    const park = () => page.evaluate(() => { (document.activeElement as HTMLElement | null)?.blur?.(); (document.querySelector("#rsettings .rs-card") as HTMLElement).scrollTop = 0; });
+    const muteLabel = "#rsettings .rs-row:has(#rs-perfmute) b";
+    // (e) the pointer rests on the mute row's label, a real Tab into the share row parked at the card's bottom, the pointer leaves
+    await park(); await page.mouse.move(5, 5);
+    await hoverOn(page, muteLabel);
+    const e0 = await read("rs-perfmute");
+    assert.equal(e0.hovered && e0.display === "block", true, "the rig: the pointer's row shows its description " + JSON.stringify(e0));
+    const te = await tabInto(page, "rs-perfshare");
+    assert.equal(te.landed && te.focusVisible, true, "the rig: a keyboard focus arrived in the share row (from " + te.prev + ")");
+    const e1 = await read("rs-perfshare");
+    assert.equal(e1.display, "none", "the rig: at focusin the stand-down hides the focused row's description (the pointer wins)");
+    assert.deepEqual((await shownPanel(page)).shown, ["rs-perfmute"], "the rig: the pointer's description is the one shown");
+    await page.mouse.move(5, 5);
+    const e2 = await read("rs-perfshare");
+    assert.equal(e2.focused && !e2.hovered && e2.display === "block", true, "the rig: the pointer gone, the focused row's description shows " + JSON.stringify(e2));
+    assert.equal(e2.fitsBelow, false, "the rig: parked at the card's bottom a popover below the row would run past the card (read with the popover shown; hidden it has no height) " + JSON.stringify(e2));
+    assert.equal(e2.up, true, "the pointer's exit placed the focused row's description (it re-placed the pointer's row alone, and this one appeared unplaced below the row)");
+    assert.equal(e2.subAboveRow && !e2.pastCard, true, "so it opens above the row and inside the card " + JSON.stringify(e2));
+    assert.deepEqual((await shownPanel(page)).up, ["rs-perfshare"], "and the focused row is the one host wearing the class");
+    // (g) the enter half: the focus first (placed), then the pointer enters the mute row (the stand-down hides the focused
+    // row's description, so its class says nothing true and is dropped) and leaves (placed again)
+    await park(); await page.mouse.move(5, 5);
+    const tg = await tabInto(page, "rs-perfshare");
+    assert.equal(tg.landed && tg.focusVisible, true, "the rig: a keyboard focus");
+    const g0 = await read("rs-perfshare");
+    assert.equal(g0.display === "block" && g0.up, true, "the rig: the focus alone shows the description placed above " + JSON.stringify(g0));
+    await hoverOn(page, muteLabel);
+    const g1 = await shownPanel(page);
+    assert.deepEqual(g1.shown, ["rs-perfmute"], "the rig: the pointer's row shows, the focused row's stands down");
+    assert.deepEqual(g1.up.filter((u: string) => u === "rs-perfshare"), [], "the pointer's enter dropped the class of the description it hid (a hidden popover is placed by nothing)");
+    await page.mouse.move(5, 5);
+    const g2 = await read("rs-perfshare");
+    assert.equal(g2.display === "block" && g2.up && g2.subAboveRow && !g2.pastCard, true, "and its exit placed it again " + JSON.stringify(g2));
+    assert.deepEqual(errors, [], "no page error");
+  });
+  // (h) the Fast mode box parked low with the pointer on the Task tracking row's label, a real Tab into the box, the pointer leaves
+  await withGear(t, "tasks", async (page, errors) => {
+    const parkLow = () => page.evaluate(() => {
+      (document.activeElement as HTMLElement | null)?.blur?.();
+      const box = document.getElementById("rs-judgefast")!, row = box.closest("#rsettings .rs-row") as HTMLElement, card = document.querySelector("#rsettings .rs-card") as HTMLElement;
+      card.scrollTop = 0; const rr0 = row.getBoundingClientRect(), cr0 = card.getBoundingClientRect();
+      card.scrollTop = Math.max(0, (rr0.top - cr0.top) - (cr0.height - rr0.height - 4));
+    });
+    const readBox = () => page.evaluate(() => {
+      const box = document.getElementById("rs-judgefast")!, fast = box.closest(".rs-fastin") as HTMLElement, row = box.closest("#rsettings .rs-row") as HTMLElement;
+      const sub = document.getElementById("rs-judgefast-sub")!, sr = sub.getBoundingClientRect(), rr = row.getBoundingClientRect(), cr = document.querySelector("#rsettings .rs-card")!.getBoundingClientRect();
+      return { focused: document.activeElement === box, hovered: row.matches(":hover"), display: getComputedStyle(sub).display, boxUp: fast.classList.contains("rs-up"), rowUp: row.classList.contains("rs-up"),
+        subAboveRow: sr.bottom <= rr.top + 1, pastCard: sr.bottom > cr.bottom + 1, fitsBelow: rr.bottom + sr.height + 2 <= cr.bottom };
+    });
+    await parkLow(); await page.mouse.move(5, 5);
+    await hoverOn(page, "#rsettings .rs-row:has(#rs-tasktrack) b");
+    assert.deepEqual((await shownPanel(page)).shown, ["rs-tasktrack"], "the rig: the pointer's row shows its description");
+    const th = await tabInto(page, "rs-judgefast");
+    assert.equal(th.landed && th.focusVisible, true, "the rig: a keyboard focus arrived in the box (from " + th.prev + ")");
+    const h1 = await readBox();
+    assert.equal(h1.display, "none", "the rig: the box's description stands down under the pointer's row");
+    await page.mouse.move(5, 5);
+    const h2 = await readBox();
+    assert.equal(h2.focused && !h2.hovered && h2.display === "block", true, "the rig: the pointer gone, the box's description shows " + JSON.stringify(h2));
+    assert.equal(h2.fitsBelow, false, "the rig: the row is parked just above the card's bottom (read with the popover shown) " + JSON.stringify(h2));
+    assert.equal(h2.boxUp, true, "the pointer's exit placed the BOX (the focused host's row and its boxes are re-placed with the pointer's row)");
+    assert.equal(h2.rowUp, false, "and the row wears none (its own popover is hidden)");
+    assert.equal(h2.subAboveRow && !h2.pastCard, true, "the box's description opens above the row and inside the card " + JSON.stringify(h2));
+    // (f) the pointer rests on another row's MARK (the Distilling model row's, a synthetic title; the Debug rows carry no mark
+    // span), the same Tab into the box parked low, the pointer leaves
+    await parkLow(); await page.mouse.move(5, 5);
+    const markSel = "#rsettings .rs-row:has(#rs-distillmodel) b .rs-mixed";
+    await page.evaluate((sel: string) => { const m = document.querySelector(sel) as HTMLElement; m.hidden = false; m.textContent = "mixed"; m.title = "differs on: TESTHOST"; }, markSel);
+    await hoverOn(page, markSel);
+    const tf = await tabInto(page, "rs-judgefast");
+    assert.equal(tf.landed && tf.focusVisible, true, "the rig: a keyboard focus arrived in the box while the pointer rests on another row's mark");
+    assert.deepEqual((await shownPanel(page)).shown, [], "the rig: the mark's title is the one tooltip, nothing shown");
+    await page.mouse.move(5, 5);
+    const f1 = await readBox();
+    assert.equal(f1.display === "block" && f1.boxUp && f1.subAboveRow && !f1.pastCard, true, "the pointer leaving the mark placed the box's description above the row " + JSON.stringify(f1));
+    assert.deepEqual(errors, [], "no page error");
+  }, 260);
 });
 
 test("the placement is re-placed at ROW scope: a focus that moves from a row's picker button into its Fast mode box and then out leaves no class behind on the row, and the box parked low keeps its own placement while a pointer passes over the row outside the box", { timeout: 120000 }, async (t) => {

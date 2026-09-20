@@ -64,7 +64,13 @@ body.rs-lifted.rs-pane-gone::before { display: none; }
    a pointer user hovers; until then the disclosure under the Diagnostics share switch, the consent text for the phone's timing
    rows, rendered for a pointer alone (the maintainer's round 3 of that field, ui-1). :focus-visible matches the focused element
    itself where :focus-within matched its ancestors, so the row and the widget test for a descendant with :has() at the same
-   specificity, (0,1,0), and every specificity the comments below rely on holds. */
+   specificity, (0,1,0), and every specificity the comments below rely on holds. THE TEXT CONTROLS ARE THE ONE EXCEPTION to
+   "never a mouse click" (the author's fixer pass after the maintainer's round 4, panel-2): a focus in a text field is always
+   :focus-visible (every engine draws the caret, so a click into one matches as a Tab does), and the panel holds two rows with
+   one, the Pictures from the web textarea (General) and the Default directory input (Sessions): a click into either shows its
+   row's description until the field blurs, over the rows below it or above when parked low, the same reading a Tab into it
+   gives; the field is being edited, so the description is the row's help while it is. Kept, not excluded: keying them out
+   would cost the keyboard user the description of the two rows that take typing. The click leg pins it by control kind. */
 #rsettings .rs-sub { display: none; }
 #rsettings .rs-row:hover .rs-sub, #rsettings .rs-row:has(:focus-visible) .rs-sub, #rsettings .rs-widget:hover .rs-sub, #rsettings .rs-widget:has(:focus-visible) .rs-sub { display: block; position: absolute; left: 0; right: 0; top: 100%; z-index: 10;
   margin-top: 2px; color: var(--text-soft, #cdd3da); font-size: 0.92em; line-height: 1.35; background: var(--input-bg, #1b1b1c); border: 1px solid var(--hairline, #3a3a3a);
@@ -104,7 +110,12 @@ body.rs-lifted.rs-pane-gone::before { display: none; }
    the focused row's included; the hovered row's own is exempt (:not(:hover)), so a pointer resting on the focused row changes
    nothing. Over a row with neither (a section header, an Automation row's permanent line, the widgets' divider) nothing stands
    down and the keyboard's description stays. Specificity (1,7,0), above the box's show twin (1,5,0) below, so the stand-down wins
-   whatever the order in this sheet; the .rs-widget branch is there because the widget rows live in their grids, not in a .rs-row. */
+   whatever the order in this sheet; the .rs-widget branch is there because the widget rows live in their grids, not in a .rs-row.
+   ONE EXCEPTION, within a judge row (the author's fixer pass after the maintainer's round 4, panel-4): with the keyboard focus
+   inside a Fast mode box and the pointer on the ROW's label, the description shown is the BOX's, not the row's the pointer rests
+   on: the pair's twins below stand the row's down at (1,4,0) over the hover show rule's (1,3,0) and show the box's at (1,5,0) over
+   the row-hover stand-down's (1,4,0), the head's behaviour kept. So within a row the box wins whenever either road rests on the
+   box, one description either way; across rows the pointer wins. The census leg pins both by name. */
 #rsettings .rs-card:has(.rs-row:hover .rs-sub, .rs-widget:hover .rs-sub, .rs-mixed:hover) .rs-row:not(:hover) .rs-sub,
 #rsettings .rs-card:has(.rs-row:hover .rs-sub, .rs-widget:hover .rs-sub, .rs-mixed:hover) .rs-widget:not(:hover) .rs-sub { display: none; }
 /* A setting whose value differs between the connected machines: the checkbox goes tri-state, and this

@@ -2063,11 +2063,27 @@ function initGear(post, opts) {
   // the row (relatedTarget inside the host, so no exit fires for the row), and the row's class, decided for the ROW's popover,
   // stayed behind: with nothing shown once the focus left the box (measured: a row wearing rs-up), and while the box's popover
   // showed, placing it above by the row's up rule on a measurement of a different popover.
-  function placeRowHosts(host) {
-    var row = host.classList.contains('rs-fastin') ? (host.closest('#rsettings .rs-row') || host) : host;
+  // And the row holding the KEYBOARD FOCUS, when the event's row is another (the author's fixer pass after the maintainer's
+  // round 4, panel-1): the panel-wide stand-down (gear.css) hides the focused row's description while the pointer rests on
+  // another row with one, so a focus that ARRIVES there (a Tab while the mouse still rests where the gear was clicked) measures
+  // a hidden popover, zero height, and is left unplaced; when the pointer then left that row, its exit re-placed the pointer's
+  // row alone, and the focused row's description appeared below it unplaced, past the card's bottom with room above (measured:
+  // the share row's 35 px past the card, the T408 clip, and a Fast mode box's the same). The pointer's enter is the other
+  // half: a pointer arriving on a row with a description hides the focused row's, whose class then says nothing true. At
+  // focusin the focused host IS the event's host and at focusout the focus is already gone (activeElement is the body), so
+  // this arm is the pointer road's; whichever road's event released or imposed the stand-down, every shown popover in the
+  // panel is placed after it, and no host wears the class for a hidden one.
+  function hostRow(host) { return host.classList.contains('rs-fastin') ? (host.closest('#rsettings .rs-row') || host) : host; }
+  function placeRow(row) {
     placeSub(row);
     var boxes = row.querySelectorAll('.rs-fastin');
     for (var i = 0; i < boxes.length; i++) placeSub(boxes[i]);
+  }
+  function placeRowHosts(host) {
+    var row = hostRow(host);
+    placeRow(row);
+    var focused = hostOf(document.activeElement);
+    if (focused && hostRow(focused) !== row) placeRow(hostRow(focused));
   }
   if (pcard) {
     pcard.addEventListener('mouseover', function (e) { var host = hostOf(e.target); if (host) placeRowHosts(host); });
