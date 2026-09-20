@@ -21,9 +21,10 @@
 // the decision hangs on the figure's own box (watchFigureBoxes) and not on the width watch alone; (6) a control holding the
 // keyboard when the width's change removes it hands the keyboard to the viewer's body, so PageDown scrolls (the file review,
 // ui-4); (7) the viewer hidden (display:none on its card, as the dashboard hides a pane at a narrow viewport): the observer's
-// 0 by 0 report for the hidden figure runs no decision, so a figure under the floor at its real width gains no control while
-// hidden, and the show's report of the real box decides it (before the guard, figureBox fell back to the natural size over the
-// 0 by 0 report and a control was added while hidden, then removed at the show: an add and a remove the reader never saw).
+// 0 by 0 report for the hidden figure runs no decision, so the observer gives a figure under the floor at its real width no
+// control while hidden, and the show's report of the real box decides it (before the guard, figureBox fell back to the natural
+// size over the 0 by 0 report and a control was added while hidden, then removed at the show: an add and a remove the reader
+// never saw; the load road, armFigureControls, is not skipped: a picture that loads while hidden is decided at its load).
 // Skipped LOUDLY where playwright has no browser (CI installs none). Synthetic
 // values only: the notes-api world, a placeholder session id, example.invalid addresses, /repo/notes-api paths.
 import { test } from "node:test";
