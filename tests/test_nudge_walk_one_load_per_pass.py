@@ -16,8 +16,9 @@ restored the floor, so this pin holds both.
 The walk's load is its one decision read, `jd.load_goals_shared_or_fault(sid)` in `_auto_nudge_session`, the read ruling
 A counted (its wording: every alive session walked wake-only with exactly one load_goals_shared_or_fault and zero plain
 load_goals in the decision path). Three witnesses count it. By execution: a recorder stands on `jd.load_goals_shared`, the
-one door both of the judge's boundary wrappers reach (`load_goals_shared_or_fault` hands the name to `_or_fault`, which
-resolves it from the judge's globals at call time, so every spelling of the shared read arrives at this door), and a
+one door both of the judge's boundary wrappers reach (`load_goals_shared_or_fault` resolves the name from the judge's globals at
+each call and hands the object to `_or_fault`, which resolves no door name itself, so every spelling of the shared read
+arrives at this door), and a
 second recorder on `jd.load_goals`, the writer's door. Each records the call with its caller's function, file and line,
 stepping over the judge's boundary frames by code identity (never by name) and only while a wrapper's frame sits at its
 pass-through call (the line read from the wrapper's source at setUp), so a load written anywhere in a wrapper's body other
@@ -2013,8 +2014,8 @@ class _WalkHarness(unittest.TestCase):
         jd._segs = lambda tn, store: []
         jd.plan_units = lambda session, store, lazy_text=None: []
         # the witnesses by execution: recorders on the judge's two doors, each calling through. The shared recorder stands on
-        # the INNER door, jd.load_goals_shared: load_goals_shared_or_fault hands that name to _or_fault, which resolves it from
-        # the judge's globals at call time, so a call by either spelling arrives here (a recorder on the outer door alone
+        # the INNER door, jd.load_goals_shared: load_goals_shared_or_fault resolves that name from the judge's globals at each
+        # call and hands the object to _or_fault, so a call by either spelling arrives here (a recorder on the outer door alone
         # missed the bare spelling, the one _awaiting_wake_outcomes uses: review round 1)
         real_shared, real_writer = self.saved_jd["load_goals_shared"], self.saved_jd["load_goals"]
         for fn, name in ((real_shared, "load_goals_shared"), (real_writer, "load_goals")):
