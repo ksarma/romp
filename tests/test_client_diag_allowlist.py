@@ -766,7 +766,8 @@ class ClientDiagAllowlistTest(unittest.TestCase):
                           r"remotes\.json", r"remotes-known\.json", r"lastAttachedAt", r"exact for", r"order inference",
                           r"no page-life correlation", r"attached-host order",   # the fourth road's whole statement (round 3, extra8-1)
                           r"older than", r"most frequent", r"routine use", r"not from chat rows alone",
-                          r"\bmints\b", r"does not inspect the map's keys", r"nested key"):
+                          r"\bmints\b", r"does not inspect the map's keys", r"nested key",
+                          r"regular-expression test in the page bundle", r"the kernel has none"):   # the enforcement named (round 3, extra8-3)
                 self.assertIsNotNone(re.search(token, text, re.I), "%s: the disclosure no longer states %r" % (name, token))
         # the bare-name example is derived, not hand-kept: every federation row kind that carries the conn's host, read from
         # federation.ts's diag call sites, is named by every copy (round 1, 2026-09-20: the copies named hostconn alone)

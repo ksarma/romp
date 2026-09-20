@@ -4891,8 +4891,10 @@ The two rows, as the kernel writes them (`t` its clock, `wid` the dashboard id):
   pane's `/tunnels` answer had. The
   map's keys carry positions and no host name, a property the collector
   holds: the federation manager mints each key as `h` plus the attach
-  ordinal and the collector keeps a key only in the `h<n>` form; the kernel
-  admits the top-level key and does not inspect the map's keys, as it
+  ordinal and the collector keeps a key only in the `h<n>` form (`bytesByHost`,
+  a regular-expression test in the page bundle, the one enforcement of the
+  property; the kernel has none); the kernel admits the top-level key and
+  does not inspect the map's keys, as it
   inspects no nested key of any admitted object (`marks`, `env`, `nav`,
   `res`, `frames`, `loaf` and federation's `counts` alike): a nested string
   value is cut at 64 characters, a nested key is stored as posted. Host names reach the file wherever

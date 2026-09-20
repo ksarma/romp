@@ -3541,7 +3541,8 @@ CLIENT_DIAG_KEYS = {
                                             # or compared as one position space.
                                             # The map's keys carry positions and no host name, a property the COLLECTOR holds: federation.ts mints each
                                             # key as 'h' plus the attach ordinal (wsBytesByHost) and perf-telemetry.ts's bytesByHost keeps a key only in
-                                            # the h<n> form; the kernel admits the top-level key and does not inspect the map's keys, as it inspects no
+                                            # the h<n> form (a regular-expression test in the page bundle, the one enforcement of the property; the kernel has
+                                            # none); the kernel admits the top-level key and does not inspect the map's keys, as it inspects no
                                             # nested key of any admitted object (marks, env, nav, res, frames, loaf and federation's counts alike): a
                                             # nested string VALUE is cut at CLIENT_DIAG_STR_MAX, a nested key is stored as posted (_client_diag_admit,
                                             # _client_diag_scrub). Host names reach this file wherever an admitted VALUE
