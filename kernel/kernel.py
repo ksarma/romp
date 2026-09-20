@@ -3535,8 +3535,10 @@ CLIENT_DIAG_KEYS = {
                                             # switch, and is filed on routine use (a send, a scroll, a tab set: up to 40 scroll rows a minute per kind),
                                             # so on a federated page it is the most frequent host-carrying row type; the position-to-name MAP itself
                                             # follows from the rows that record a host at attach (federation's hostconn open rows of the same pane
-                                            # document), not from chat rows alone, which name a host without its position. This entry says that and no
-                                            # more.
+                                            # document), not from chat rows alone, which name a host without its position. Two maps need no client-diag
+                                            # row at all: GET /tunnels, the authenticated route whose row order the positions are assigned in, and the
+                                            # state directory this file sits in (its host registries hold the roster in that order), each a
+                                            # position-to-name map in its own right. This entry says that and no more.
     "pane-shim": frozenset(("app", "why", "ready", "quietMs", "hidden",                                         # staleDiag rows
                             "decision", "resumed", "hiddenMs", "frozenMs", "quietAtResumeMs", "resent",         # return
                             "ms", "bytesSince", "redialed",                                                     # return-fresh

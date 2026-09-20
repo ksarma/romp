@@ -4852,8 +4852,19 @@ The two rows, as the kernel writes them (`t` its clock, `wid` the dashboard id):
   of a host's detach carries the characters it received in it and the rows
   after carry no key for it, an attached host that received nothing reads
   0, a host that re-attaches counts on under its old position, and a reload
-  starts over, so `h1` can mean a different host after a reload. The map's
-  keys carry positions and no host name. Host names reach the file wherever
+  starts over, so `h1` can name a different host after a reload, and names
+  the same one again when the hub's dialable rows (a row with a token and a
+  local port) and their order have not changed: the assignment is re-derived
+  from the kernel's `/tunnels` row order at first sight, so it repeats across
+  page lives for a reader of that order until the roster or its order
+  changes, a row was not dialable at the pane's first poll, or the pane's
+  own attach and detach history differs from a fresh pane's first answer.
+  `GET /tunnels`, an authenticated route, is that order and so a
+  position-to-name map in its own right, as is the state directory the file
+  sits in: a holder of either maps any position to a name with no
+  client-diag row at all, and after the file's rotation (8 MB, two files) a
+  pane's host-naming rows can be gone while its later perf rows remain. The
+  map's keys carry positions and no host name. Host names reach the file wherever
   an admitted value can hold one, in three forms: a bare name under a `host`
   key (the shell's push-test row, federation's `hostconn` rows and the
   kernel's own `wsopen` row for a spliced relay, `kind` `hub`, above); a

@@ -1028,7 +1028,9 @@ export class FederationManager {
   // carry a position is the collector's rule, read off the minute's characters and the attachment at the flush
   // (attachedHostOrdinals): the row closing a minute in which the host received characters carries it whether or not the
   // host is still attached, an attached idle host reads 0, and a detached silent host has no key. Never reused; a reload
-  // starts over, so h1 can name another host after a reload. Positions, never names: the minute row carries these keys
+  // starts over, the assignment re-derived from the kernel's /tunnels row order at first sight (ordinalOf, openRemote),
+  // so h1 can name another host after a reload, and names the same one again while the hub's dialable rows and their
+  // order have not changed. Positions, never names: the minute row carries these keys
   // (h1, h2 and so on, one per host the page attached) and no host name. Read through window.__rompFed.wsBytesByHost (wsBytesByHost()).
   private hostOrdinal = new Map<string, number>();
   private wsBytesByOrdinal = new Map<number, number>();
