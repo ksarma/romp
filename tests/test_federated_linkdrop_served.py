@@ -53,12 +53,13 @@ write dropped from the feed arm, the local-down gate dropped from connect(), and
 one (ROMP_LINKDROP_HUB_ROOT, the base-hub lever).
 
 Knobs. LinkDropBothNew needs none: it runs wherever this checkout's served labs run, CI's served job included (about
-a minute and a half: two supervisor waits, the 42 s down dwell and a hub restart; 83.5 s for its setUpClass in the drive
-of 2026-09-20 at this dwell, `ROMP_LINKDROP_LAB=1 ROMP_LINKDROP_OLD_HUB_BUILD=1 pytest tests/test_federated_linkdrop_served.py
---durations=20`). ROMP_LINKDROP_HUB_ROOT boots its hub from another checkout with its
+a minute and a half: two supervisor waits, the 42 s down dwell and a hub restart; 82.5 s for its setUpClass in the drive
+of 2026-09-20 at this code, a clean tree at the commit before these figures were written in (`ROMP_LINKDROP_LAB=1
+ROMP_LINKDROP_OLD_HUB_BUILD=1 pytest tests/test_federated_linkdrop_served.py --durations=20`, the builder's
+`r5/lab-head1.log` outside the repo). ROMP_LINKDROP_HUB_ROOT boots its hub from another checkout with its
 PREBUILT vscode-extension/dist (the fails-before lever for the new-hub class). The old-hub class, the storm's own
-witness (the pre-815 half), runs under ROMP_LINKDROP_LAB=1 (about two minutes more: 121 s for its setUpClass, the mint
-and its build included, in the same drive, the module whole at 205 s; skipped as optional without it, and the skip
+witness (the pre-815 half), runs under ROMP_LINKDROP_LAB=1 (about two minutes more: 120.3 s for its setUpClass, the mint
+and its build included, in the same drive, the module whole at 203 s; skipped as optional without it, and the skip
 reason names what then goes unexecuted and where the mechanisms PR 815 fixed are pinned) with one of two
 hub knobs: ROMP_CORNER_OLD_HUB_ROOT (the corners lab's knob: a checkout of a hub kernel and prebuilt bundle from
 before PR 815) boots the hub from that checkout as it is; ROMP_LINKDROP_OLD_HUB_BUILD=1 makes the class mint its own
@@ -69,8 +70,10 @@ sha in the clone's history and the extension's node deps, so CI's served job ski
 A hub a knob asked for is an error when its bundle cannot be made ready: lab_dist raises SkipTest when a build fails
 (every served lab's stance for an environment that cannot build), and for this checkout's own bundle that skip stands,
 but under ROMP_LINKDROP_OLD_HUB_BUILD=1, ROMP_CORNER_OLD_HUB_ROOT or ROMP_LINKDROP_HUB_ROOT the class re-raises it as
-a RuntimeError carrying the build's words (_ready_dist), so a mint that succeeds and a build that fails cannot leave a
-green run with the class skipped; ROMP_SERVED_TESTS_REQUIRE=1 still turns every remaining skip into a failure, as on
+a RuntimeError carrying the build's words (_ready_dist), and a root one of those knobs names that holds no bin/romp-kernel
+is the same error from _boot's kernel check (a mistyped root must not skip the class green), so a mint that succeeds and a
+build that fails cannot leave a green run with the class skipped; ROMP_SERVED_TESTS_REQUIRE=1 still turns every remaining
+skip into a failure, as on
 CI's served step. ROMP_CORNER_REPORT_DIR gets one JSON per class with everything recorded.
 
 What the old hub showed (2026-09-19, the bundle at 01d4fbe43): the old bundle dials no caps and decodes no patch, so
@@ -81,15 +84,18 @@ property of the bundle: 3 / 0 / 3 / 3 across phase A, the link down, phase B and
 (ROMP_LINKDROP_LAB=1 ROMP_LINKDROP_OLD_HUB_BUILD=1 pytest tests/test_federated_linkdrop_served.py). One reviewer
 drive at round 1's head gave 3 / 0 / 1 / 3 (two relay sockets churned inside phase B and absorbed two notices into
 whole frames: no patch, so no row, and the equality held at 7 / 7), as did one verifier drive at the round-2 head
-whose hook was mutated for a red (its hub rows are real); and one builder drive at the round-3 head gave 0 / 0 / 3 / 3
-(the Outline's relay socket churned 0.7 s into phase A and its retry's whole frame absorbed all three notices: phase A
-0 rows to 0 patches, the drive 6 / 6 by rev), RED at that head on the per-phase at-least-one-patch floors of the storm
-test and the phase-A drops test with the correspondence intact, the datum that asked for the churn-keyed allowance
-(_outline_caught_up_whole: an empty phase is excused only by a whole keyed feed frame the Outline received inside it,
-and that drive is green under it). Every other recorded drive of the unmutated module, the reviewers' further drives
-at round 1's head and the builder's earlier drives at three pre-PR vintages (two with a hand-built old hub), gave
-3 / 0 / 3 / 3 (the per-window table over the builder's report JSONs outside the repo, `python3 analyse.py
-<report.json>...`, with _rows_in's 1.5 s pad). ZERO while the link was down in every recorded drive. The storm
+whose hook was mutated for a red (its hub rows are real); and two builder drives gave 0 / 0 / 3 / 3 (the Outline's
+relay socket churned 0.7 s into phase A and its retry's whole frame absorbed all three notices: phase A 0 rows to 0
+patches, the drive 6 / 6 by rev): one at the round-3 head, RED there on the per-phase at-least-one-patch floors of the
+storm test and the phase-A drops test with the correspondence intact, and one at the 30 s dwell on 2026-09-20, red on
+the margin pin with its floors green. Those two are the data behind the churn-keyed allowance (_outline_caught_up_whole:
+an empty phase is excused only by a whole keyed feed frame the Outline received there after the bundle's last notice
+could have been posted; both drives' frames came about 0.8 s after that, 2.87 and 2.83 s into phase A against a last
+notice posted from 2.01 s, so both are green on the floors under it). Every other recorded drive of the unmutated module
+(15 of the 17 old-hub records in the builder's cache, the builder's earlier drives at three pre-PR vintages among them,
+two with a hand-built old hub) and the reviewers' further drives at round 1's head gave 3 / 0 / 3 / 3 (the per-window
+table over the builder's report JSONs outside the repo, `python3 analyse.py <report.json>...`, with _rows_in's 1.5 s
+pad, 2026-09-20). ZERO while the link was down in every recorded drive. The storm
 is gated on remote patches arriving, which is gated on the link: with phase D due while the link was down, no row
 filed until the link returned, the return's whole frame carried D and filed no row for it, and the next patch (phase
 B's) filed a row again. A relay redial does not end the storm but restarts it: each redial's one whole frame catches
@@ -188,8 +194,11 @@ DOWN_WINDOW_MARGIN = 2.0     # the while-down read comes this many of the drive'
 #                              (_assert_the_down_window_outlasts_the_drives_slowest_delivery; down_dwell_ms is sized for it)
 DOWN_READ_ROOM_MS = 2000     # the room down_dwell_ms holds past DOWN_WINDOW_MARGIN x wait_ms: a phase's delivery (seen.waitedMs) is stamped
 #                              AFTER visible()'s reads (waitVisible), so it exceeds the wait's cap by the reads' duration on a phase that ran
-#                              to the cap; without the room the margin pin could red on a drive whose visibility legs pass.
-#                              tests/test_federated_linkdrop_driver_bound.py pins down_dwell_ms >= DOWN_WINDOW_MARGIN x wait_ms + this
+#                              to the cap; without the room the margin pin could red on a drive whose visibility legs pass. The reads
+#                              alone take 6 to 22 ms where the wait had nothing left to wait for (D.seenAfterReturn.waitedMs over 31
+#                              recorded drives, `python3 reads_census.py <report.json>...` outside the repo), so 2 s is a floor far
+#                              above them, not a fit. tests/test_federated_linkdrop_driver_bound.py pins
+#                              down_dwell_ms >= DOWN_WINDOW_MARGIN x wait_ms + this
 QUIET_TRIES, QUIET_STEP_MS = 7, 2000   # quiet(): up to QUIET_TRIES windows of QUIET_STEP_MS with no new relay frame on any page
 
 
@@ -644,18 +653,23 @@ class _LinkDrop(unittest.TestCase):
     wait_ms = 20000           # each point's visibles after a change (the card, the todo, the provisional row), waited for concurrently
     # The driver's waitFor caps by the mark each wait ends at: each a floor set well above the slowest wait recorded, not a
     # ratio of it (the ratios run from 2.8x to over 600x), with driver_budget_ms as the binding bound (BUDGET_JS: every wait
-    # draws on it). The spans by mark pair over 25 recorded unmutated drives (14 new-bundle, 11 old-hub; `python3
-    # waits_census.py <report.json>...` over the builder's reports outside the repo, 2026-09-20): closed, drop -> closed,
-    # 0.008 to 0.030 s; rowDown, closed -> rowDown, 4.6 to 14.5 s (the supervisor's silent-poll window, longest under the
-    # old bundle's churn); rowUp, resume -> rowUp, 0.8 to 13.2 s (a quarter-second pass inside the supervisor's fast window,
-    # its steady 15 s pass outside it); redialed, rowUp -> redialed, 0.8 to 4.6 s; localUp,
-    # restarted -> localUp, 0.014 to 0.30 s (the restart itself, SIGTERM and the 3 s held down, is the control door's and
-    # not this wait's); redialed2, localUp -> redialed2, 0.014 to 0.81 s.
+    # draws on it). The spans by mark pair over every unmutated recorded drive, 42 at the round-3 code (25 new-bundle, 17
+    # old-hub; `python3 waits_census.py <report.json>...` over the builder's reports outside the repo, 2026-09-20; the
+    # 25-drive census quoted here before missed two bounds the later drives moved, redialed2's maximum from 0.81 to 1.04 s
+    # and rowDown's minimum from 4.6 to 4.3 s): closed, drop -> closed, 0.008 to 0.030 s; rowDown, closed -> rowDown, 4.3 to
+    # 14.5 s (the supervisor's silent-poll window, longest under the old bundle's churn); rowUp, resume -> rowUp, 0.8 to
+    # 13.2 s (a quarter-second pass inside the supervisor's fast window, its steady 15 s pass outside it); redialed, rowUp ->
+    # redialed, 0.8 to 4.6 s; localUp, restarted -> localUp, 0.013 to 0.30 s (the restart itself, SIGTERM and the 3 s held
+    # down, is the control door's and not this wait's); redialed2, localUp -> redialed2, 0.011 to 1.04 s. held, A1 -> drop
+    # (every page holding one open relay socket before the drop), is new in round 3 and has no recorded span before it: the
+    # snapshot alone took 9 to 35 ms there, and in the drive at this code the wait took 17 and 21 ms with every page already
+    # holding one; its cap is closed's, a floor well above the mechanism's worst (a page lacks an open socket for the relay's
+    # 2 s retry plus the open, once per churn of the old bundle's socket), not a fit to those spans.
     waits_ms = {"held": 20000, "closed": 20000, "rowDown": 40000, "rowUp": 40000, "redialed": 30000, "localUp": 30000, "redialed2": 30000}
     page_wait_ms = 30000      # the start, per page: its load, its first relay socket, that socket's whole frame
     driver_budget_ms = 225000  # every wait the driver places draws on this one budget: about twice a healthy drive's total waiting and
-    #                            more (the budget less budget.leftMs in the drive of 2026-09-20 at this dwell: 80 s on the new bundle,
-    #                            115 s on the old, whose frozen feed page shows a phase's cards only at the next churned socket's whole
+    #                            more (the budget less budget.leftMs in the drive of 2026-09-20 at this code, `r5/lab-head1.log`'s
+    #                            reports: 79 s on the new bundle, 115 s on the old, whose frozen feed page shows a phase's cards only at the next churned socket's whole
     #                            frame); the record's budget.leftMs says what a drive left. 225 s, not 240, so the worst case holds the
     #                            42 s dwell under DRIVER_TIMEOUT_S.
     # The row stays down this long after phase D's post, and the gate DEPENDS on it (round 2's ruling): the while-down read of D
@@ -663,12 +677,13 @@ class _LinkDrop(unittest.TestCase):
     # (_assert_the_down_window_outlasts_the_drives_slowest_delivery). The dwell is sized against the lab's own cap on that
     # delivery, not against the drives seen: a phase's delivery is seen.waitedMs, and waitVisible caps every wait it holds at
     # wait_ms, so a catch-up slower than wait_ms reds the visibility legs (_assert_seen) and never reaches the margin pin;
-    # DOWN_WINDOW_MARGIN x wait_ms plus 2 s of room for the reads that follow the wait, so the pin holds for every drive whose
+    # DOWN_WINDOW_MARGIN x wait_ms plus DOWN_READ_ROOM_MS of room for the reads that follow the wait, so the pin holds for every drive whose
     # visibility legs pass and reds only for a window shorter than that (tests/test_federated_linkdrop_driver_bound.py pins the
     # relation). The slowest delivery recorded is the old bundle's, whose frozen feed page shows a change only at the next
     # churned socket's whole frame, and a change whose three notices straddle a churn waits for the frame after that: 19,013 ms
-    # over twelve recorded unmutated old-hub drives (`python3 analyse.py <report.json>...` over the builder's reports outside
-    # the repo, max of the phases' seen.waitedMs; the new bundle's is under 1.4 s). A dwell of 30 s, sized at twice the 12.9 s
+    # over seventeen recorded unmutated old-hub drives (`python3 analyse.py <report.json>...` over the builder's reports
+    # outside the repo, max of the phases' seen.waitedMs, 2026-09-20; the new bundle's is 1.35 s at most over twenty-five). A
+    # dwell of 30 s, sized at twice the 12.9 s
     # then recorded, redded on the very next drive (19.0 s): a threshold fitted to the data at hand is no threshold, which is
     # why the cap sizes it. driver_worst_case_s stays under DRIVER_TIMEOUT_S with the budget at driver_budget_ms (472.5 s for
     # the new class, 452.5 s for the old-hub class). It is also a quiescent tail well past one 4 s /tunnels poll.
