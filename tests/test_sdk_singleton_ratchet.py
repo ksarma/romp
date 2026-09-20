@@ -889,8 +889,7 @@ def derive(cell):
         added = True
         print("# cell: %s" % cell)
         print("# head: %s" % head)
-        dirty = subprocess.run(git + ["status", "--porcelain", "--", "tests/conftest.py",
-                                      "tests/test_sdk_singleton_ratchet.py"],
+        dirty = subprocess.run(git + ["status", "--porcelain", "--", "tests/conftest.py", MODULE_PATH],
                                check=True, capture_output=True, text=True).stdout
         if dirty.strip():
             print("# warning: the working tree differs from HEAD (%s); the derivation ran at HEAD"
@@ -3601,6 +3600,25 @@ class TheDerivationIsRunnable(unittest.TestCase):
                          "the targets' class and method names are not the node ids' parts after '::', in DERIVE_DESELECT's "
                          "order (derive_deselect_targets)")
 
+    def test_the_modules_path_is_spelled_once_in_code(self):
+        """MODULE_PATH is the one spelling of this module's path in code, read from the source by AST: every str
+        constant outside a docstring whose text carries the module's file name is the constant MODULE_PATH's own
+        binding assigns (the node ids, the command's last element, derive_red_lines' regex, derive's dirty check and
+        the --count test's argv all read the name from it), so a renamed module changes one line. The round-8 review
+        found derive's dirty check (the paths given to git status) and the --count test's argv spelled by hand: the
+        first a silent miss under a rename, since git status over a path it knows nothing about warns of nothing."""
+        tree = ast.parse(inspect.getsource(sys.modules[__name__]))
+        binding = next(n for n in module_statements(tree) if isinstance(n, ast.Assign) and len(n.targets) == 1
+                       and isinstance(n.targets[0], ast.Name) and n.targets[0].id == "MODULE_PATH")
+        docstrings = {id(n.body[0].value) for n in ast.walk(tree)
+                      if isinstance(n, (ast.Module, ast.ClassDef, ast.FunctionDef)) and ast.get_docstring(n) is not None}
+        spelled = [n for n in ast.walk(tree) if isinstance(n, ast.Constant) and isinstance(n.value, str)
+                   and os.path.basename(MODULE_PATH) in n.value and id(n) not in docstrings]
+        self.assertEqual([(n.lineno, n.value) for n in spelled], [(binding.value.lineno, MODULE_PATH)],
+                         "a str constant outside a docstring spells this module's file name beside MODULE_PATH's own "
+                         "binding (by AST over the source; line and text): %r"
+                         % [(n.lineno, n.value) for n in spelled if n is not binding.value])
+
     def test_a_node_naming_no_test_is_refused_before_the_plant(self):
         module = sys.modules[__name__]
         bad = ("tests/test_other.py::TheMutationCellsApply", MODULE_PATH + "::NoSuchClass", MODULE_PATH + "::nested_run",
@@ -3942,14 +3960,14 @@ class TheMutationCellsApply(unittest.TestCase):
         stated = NUMBER_OF_CELLS.search(doc)
         self.assertIsNone(stated, "the module docstring carries a number followed by the word cells: %r"
                           % (stated and stated.group(0)))
-        self.assertIn("`python -B tests/test_sdk_singleton_ratchet.py --count`", doc,
-                      "the docstring does not name the command that prints the count")
+        self.assertIn("`python -B %s --count`" % MODULE_PATH, doc,
+                      "the docstring does not name the command that prints the count (`python -B <MODULE_PATH> --count`)")
         counts = cell_counts()
         self.assertEqual(sum(n for block, n in counts.items() if block != "in total"), len(MUTATIONS), counts)
         with tempfile.TemporaryDirectory() as tmp:                # the script's import-time state root lands here
             env = {k: v for k, v in os.environ.items() if not k.startswith("ROMP_") and k not in DERIVE_ENV_DROPPED}
             env.update(TMPDIR=tmp, PYTHONDONTWRITEBYTECODE="1")
-            r = subprocess.run([sys.executable, "-B", os.path.join("tests", "test_sdk_singleton_ratchet.py"), "--count"],
+            r = subprocess.run([sys.executable, "-B", MODULE_PATH, "--count"],
                                cwd=ROOT, env=env, capture_output=True, text=True, timeout=300)
         self.assertEqual(r.returncode, 0, r.stdout[-2000:] + r.stderr[-2000:])
         self.assertEqual(r.stdout.splitlines(), ["%s: %d" % (block, n) for block, n in counts.items()], r.stdout)
