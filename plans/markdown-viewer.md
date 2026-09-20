@@ -1836,6 +1836,25 @@ as built departs from the text above, why, and which test holds each rule:
    and gear-figure-hosts.test.ts holds them equal to settings.ts's. figure-gate.test.ts covers the pure parts (the
    srcset parse, remoteHost, the allowed set, the normaliser); settings.test.ts and md-config-figure-hosts.test.ts the
    field and its reading; docs/reference.md and the guide's Figures paragraph describe it.
+   The chain runs on the sanitizer's own body, before the adoption (2026-09-20; found as pre-existing on main by the
+   review of the link-navigation follow-on, fork PR 862's round 1, and fixed on its own branch). mdBlock had adopted the
+   sanitized nodes into its live-document box first and run resolveFigureRefs, rewriteFigureSrcs and the gate after.
+   WebKit starts an img's fetch synchronously when the element's node document becomes one with a render tree, so in
+   the kernel-served pages under WebKit (Safari, the iOS web app) the bytes had left for the unlisted host while the
+   placeholder stood, and a figure of the file's folder was requested against the page, as the attribute read before
+   the rewrite, and again through /file; the VS Code panes were out of reach, their CSP naming no remote img-src.
+   Chromium and Firefox defer that fetch to a microtask, which ran after the chain had moved the attributes, so neither
+   leaked. DOMPurify's RETURN_DOM body is its parse document's (DOMParser, or createDocument when that fails; no browsing
+   context, defaultView null), which never loads, so the whole chain moved above `box.replaceChildren`, and the passes
+   left after the adoption set no fetching attribute. file-view-figures-gate-adopt-browser.test.ts launches each of
+   Playwright's three engines through an HTTP forward proxy the test runs and reads real servers' request logs, never
+   page.route: with a figure on `remote.test` gated and its placeholder on screen, the logs hold no line for it; the
+   click adds one GET under Host remote.test with no Referer (the harness sends the kernel's Referrer-Policy); the real
+   sanitizeMd's body has no window and a figure in it fetches nothing, where an uninserted img of the live document
+   fetches; a figure of the file's folder makes one request through /file and none page-relative. Red in WebKit at
+   2d41e5c9b in both scenes (the figure server logged GET /fig.png; the harness logged GET /fig.png before the /file
+   one), green in Chromium and Firefox there, green in all three after; file-view-seam.test.ts pins the order. This is
+   Playwright's WebKit build, not a device: the iOS statement rests on the shared engine.
 10. *Not built here.* Obsidian's `%%comment%%` and `#tag` (the text names them for awareness only) stay literal.
    Slice 5's other items (refusal reasons for the remaining token names) are untouched; its goTo into a closed
    details is delivered here (item 5, the panel's revealMarks), since this slice is what makes a closed fold
