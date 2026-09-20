@@ -185,6 +185,12 @@ class OneHeightBasis(unittest.TestCase):
             rs = by_el[el]
             origins = [r for r in rs if r.at == mobile and any(is_origin(p, v) for p, v in r.decls)]
             self.assertTrue(origins, "%s has no --app-top origin inside the mobile block: %r" % (el, [(r.at, r.declarations) for r in rs]))
+            # the origin is INSIDE the mobile block only (round 4, 2026-09-20, tests-1): outside it, on a coarse desktop layout
+            # wider than the query, the body stays in flow at layout y 0, and a lift moved to the pan there would part from
+            # the pane rect render.ts placeLifted measures for the transcript backing. The kernel comment over the lift's
+            # origin states that condition; this is the assertion that holds it.
+            self.assertEqual([(r.at, r.selector, r.declarations) for r in rs if r.at != mobile and any(is_origin(p, v) for p, v in r.decls)], [],
+                             "%s: a --app-top origin outside the mobile block would move the box on a coarse desktop layout" % el)
             for r in origins:
                 tops = [(p, v) for p, v in r.decls if p in top_edge]
                 self.assertTrue(is_origin(*tops[-1]), "%s: the origin is not the last top-edge declaration of its own rule: %r" % (el, r.declarations))

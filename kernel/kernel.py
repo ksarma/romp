@@ -72406,9 +72406,11 @@ def _landing():
             # y 0 it sat a pan above the body under the keyboard, so the band the rule above removes from the composer
             # survived under the picker; a hand list of fixed panels once kept here had missed it, so the consumers are
             # DERIVED (test_shell_viewport_fit scans the served CSS for every fixed rule sized by var(--app-h) and holds
-            # each to this origin) and never listed. Inside this block only: on a coarse desktop layout (wider than the
-            # query) the body stays in flow at layout y 0, and a lift moved to the pan there would part from the pane rect
-            # render.ts placeLifted measures for the transcript backing. On this layout the lifted pane is display:contents
+            # each to this origin) and never listed. Inside this block only (asserted: the census in
+            # tests/test_shell_viewport_fit.py refuses a --app-top origin for a member outside this block): on a coarse
+            # desktop layout (wider than the query) the body stays in flow at layout y 0, and a lift moved to the pan
+            # there would part from the pane rect render.ts placeLifted measures for the transcript backing. On this
+            # layout the lifted pane is display:contents
             # (the id rule below outranks the base .pane.lifted block rule), its rect is empty and placeLifted takes its
             # gone branch, so no backing arithmetic depends on the lift's origin; the served leg reads both boxes under
             # the pan (tests/test_keyboard_gap_served.py).
