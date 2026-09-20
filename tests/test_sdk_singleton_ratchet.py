@@ -240,6 +240,12 @@ alphabetically, and each case's `before` is what the previous case left):
     is in the slot at the first window, the identity term fails, and the refusal's window value says the slot holds
     SdkBackend over the class root, the one run that executes that branch of the render; One.a's window is a cache hit,
     Two.a meets the import-time object, every boundary is quiet, one error.
+  S13, the refusal's named-object guard, a pair: module 1's One builds over a kept sandbox in setUpClass, restores
+    jd.STATE, leaves the build in the slot and raises SkipTest, so no function window opens there and the first-window
+    flag stays armed while One's class boundary names the object (an ERROR on the skipped One.a with the sandbox
+    remedy; the module end quiet); the follower's Two is S7's swapping class over that object, so its Two.a opens the
+    worker's first window with the identity term failing, and the refusal is silent because a verdict has named the
+    object; Three.a meets the object put back and is quiet; two passed, one skipped, one error, no carrier of any head.
   W, a session-scoped autouse fixture in the case directory's own conftest.py (nested_run's conftest) that builds over
     a kept root and restores jd.STATE before the module boundary's start read: a is the first test to meet it and
     carries the kept-root inherited report, its cause clause naming import-time code or a session- or package-scoped
@@ -344,7 +350,9 @@ fixture READS and the branch each read feeds, with the case that reds under each
     start read's object rendered from the live attribute in place of its recorded state_dir (S11: the refusal names the
     repointed root); the window value rendered as None whatever the slot holds (S12: the class's build in the slot is said
     as None (not built); the window value's recorded-text argument is inert, nothing running between the before read and
-    the render, annotated at the call and not a cell); its class guard dropped (T, U and V: a refusal naming None (not built) as the leak on a first window whose
+    the render, annotated at the call and not a cell); the named-object term dropped from its guard (S13: a kept-head
+    refusal on the follower's Two.a, a second line on the object module 1's class boundary named, the count 2 against 1);
+    its class guard dropped (T, U and V: a refusal naming None (not built) as the leak on a first window whose
     start read saw nothing, beside T's class boundary verdict and inside U's and V's gone-report teardown, read as
     carriers); its run-root guard dropped (S8: a refusal on the kernel's own import-time build over the run root, exit
     1); its gone arm removed, the start read's gone object refused silently (S9: no refusal on One.a, the count 1
@@ -374,12 +382,15 @@ fixture READS and the branch each read feeds, with the case that reds under each
     disappears) or without its reference condition (K.One passes silently); the windows never recorded (as the
     yield removed).
   the function fixture not naming the object it accused (A.h gets an inherited report, E, D).
-Seventy-four cells red. Three are pinned by no run, each for a stated reason: the unreadable reference root granting
+Seventy-four cells red. Four are pinned by no run, each for a stated reason: the unreadable reference root granting
 the allowance (not constructible: the kernel always binds jd); the yield's identity condition dropped (redundant by
 construction: when the end value is the last read's and is not the last window's value, a class teardown inside the
 scope installed it, and that class's own boundary judged it against its start, which only a restore of the value the
 scope found passes, so the module end is looking at its own start value); the windows list not cleared at the module
-end (the read-count filter never selects a stale entry; the clearing bounds memory); and no others.
+end (the read-count filter never selects a stale entry; the clearing bounds memory); the refusal's _sdk_reported term (a
+belt: the one site that fills _SDK_REPORTED, the function fixture's report line, runs after the refusal is computed in
+the same first window, and no earlier window exists in the worker, so the list is empty whenever the refusal is
+consulted; dropped, the module stays green; the _sdk_named term beside it is reachable and pinned, S13); and no others.
 """
 import inspect
 import os
@@ -1090,6 +1101,54 @@ SCRATCH_S12 = SCRATCH_HEAD + textwrap.dedent("""\
     class Two(unittest.TestCase):
         def test_a_meets_the_import_time_object(self):
             assert km._sdk_backend.state_dir == _root and _root.is_dir() and jd.STATE != _root
+""")
+
+SCRATCH_S13 = SCRATCH_HEAD + textwrap.dedent("""\
+
+    class One(unittest.TestCase):
+        @classmethod
+        def setUpClass(cls):
+            saved = jd.STATE
+            cls.root = sandbox()
+            build_over(cls.root)                      # a backend over a kept sandbox, left in the slot by the setup
+            jd.STATE = saved
+            raise unittest.SkipTest("this class's tests never run: no function window opens in this module")
+
+        def test_a_never_runs(self):
+            pass
+""")
+
+SCRATCH_S13_FOLLOWER = textwrap.dedent("""\
+    import shutil, sys, tempfile, unittest
+    from pathlib import Path
+    km = sys.modules["romp_kernel"]                   # the kernel the first module loaded: no re-execution here
+    jd = km.jd                                        # km._sdk_backend is not read at import: collection runs before One's setUpClass
+
+    def sandbox():
+        root = Path(tempfile.mkdtemp())
+        (root / "session-hosts").write_text("off\\n")
+        return root
+
+    class Two(unittest.TestCase):
+        @classmethod
+        def setUpClass(cls):
+            cls.saved = (km._sdk_backend, jd.STATE)   # S7's swapping class, over the object module 1's class boundary named
+            cls.root = sandbox()
+            km._sdk_backend = None
+            jd.STATE = cls.root
+
+        @classmethod
+        def tearDownClass(cls):
+            km._sdk_backend, jd.STATE = cls.saved
+            shutil.rmtree(cls.root)
+
+        def test_a_builds_over_the_class_root(self):
+            assert km._sdk().state_dir == Two.root
+
+    class Three(unittest.TestCase):
+        def test_a_meets_the_named_object(self):
+            be = km._sdk_backend
+            assert be is Two.saved[0] and be.state_dir.is_dir() and jd.STATE != be.state_dir
 """)
 
 CONFTEST_W = textwrap.dedent("""\
@@ -2536,6 +2595,50 @@ class ASwappingClassThatLeavesItsOwnBuildInTheSlot(_NestedRun, unittest.TestCase
             self.assertIsNone(boundary(self.out, scope), self.out)
         self.assertEqual(boundary_scopes(self.out), set(), self.out)
         self.assertRatchetPassed("Two", "test_a_meets_the_import_time_object")
+
+
+class AScopeNamesTheObjectBeforeAnyWindowOpens(_NestedRun, unittest.TestCase):
+    """S13, the refusal's named-object guard (_sdk_named in _sdk_swapped's condition), a module pair. Module 1's One
+    has a setUpClass that builds over a kept sandbox, restores jd.STATE, leaves the build in the slot and raises SkipTest,
+    so no function window opens in that module: pytest sets fixtures up by scope, the class boundary's start read runs at
+    One's first item (the slot None), the setUpClass builds and skips, the function fixture never sets up, and the
+    first-window flag stays armed. One's boundary end read finds the build and judges None to a real backend over a
+    root that is not jd.STATE: the verdict lands as an ERROR on One.a's teardown (its call was SKIPPED) with the sandbox
+    remedy, names the object, and module 1's end is quiet on the named object. Module 2 (the follower) opens the
+    worker's FIRST function window at Two.a under S7's swapping class, the slot None while module 2's start read found
+    the named object over its kept root: the identity term fails, the refusal is consulted with the flag armed, and it
+    returns None only because a verdict has named the object. Three.a meets the object put back and is quiet. Two
+    passed, one skipped, one error, no carrier of any head: one line per object. Measured with the named-object term
+    dropped from the condition: a kept-head refusal on the follower's Two.a, a second line on the object module 1's
+    class boundary already named, two errors. The _sdk_reported term beside it is a belt, not a cell: the one site that
+    fills that list, the function fixture's report line, runs after the refusal is computed in the same first window,
+    and no earlier window exists in the worker (the module docstring's unpinned list states it)."""
+    SCRATCH = SCRATCH_S13
+    FOLLOWER = SCRATCH_S13_FOLLOWER
+    ERRORS = 1
+
+    def test_the_skipping_classes_boundary_names_the_object_its_setup_built(self):
+        # outcomes() reads PASSED, FAILED and ERROR and not SKIPPED, so the skip is read by a line anchored on the nodeid
+        self.assertEqual(outcomes(self.out).get("One.test_a_never_runs"), {"ERROR"}, self.out)
+        self.assertRegex(self.out, r"test_scratch\.py::One::test_a_never_runs SKIPPED")
+        self.assertIsNone(verdict(self.out, "One", "test_a_never_runs"), "the skipped test is not accused as a test: %s" % self.out)
+        found = boundary(self.out, "::One")     # assertBoundaryFailed asks for PASSED and ERROR; the scope's one test never ran
+        self.assertIsNotNone(found, "One's class boundary names its setup's build: %s" % self.out)
+        clause, fix = found
+        self.assertTrue(clause.startswith("changed after its teardown: before None (not built), after SdkBackend over "), clause)
+        self.assertNotIn(GONE, clause)
+        self.assertIn(REMEDY_A, fix, fix)
+        self.assertEqual(boundary_scopes(self.out), {"test_scratch.py::One"}, self.out)
+        self.assertIsNone(boundary(self.out, ""), "module 1's end is quiet on the object its class end named: %s" % self.out)
+
+    def test_the_followers_first_window_takes_no_refusal_on_the_named_object(self):
+        self.assertRatchetPassed("Two", "test_a_builds_over_the_class_root")
+        self.assertRatchetPassed("Three", "test_a_meets_the_named_object")
+        for head in (SWAPPED, SWAPPED_GONE, INHERITED, INHERITED_KEPT):
+            self.assertEqual(carriers(self.out, head), set(), "the guard: one line per object: %s" % self.out)
+        self.assertIsNone(inherited(self.out, "Two", "test_a_builds_over_the_class_root", head=SWAPPED), self.out)
+        for scope in ("", "::Two", "::Three"):
+            self.assertIsNone(boundary(self.out, scope, module="test_scratch2.py"), self.out)
 
 
 class SessionScopedFixtureInstallsBeforeTheModulesReads(_NestedRun, unittest.TestCase):

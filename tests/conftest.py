@@ -877,8 +877,13 @@ def _sdk_swapped(start, before):
     gone report because the swapping scope may never put the object back, and then no window starts under it, the gone
     report never fires, and the scope's boundary verdict names the swap and not the object's origin; when the scope does
     put it back, the later test that starts under the object carries the gone report as well, two lines each saying what
-    the other does not. Silent when the start read's object stands over jd.STATE as it recorded it (no leak) and on an
-    object either list has named. The refusal marks nothing on _SDK_REPORTED: no later window takes the kept-root report,
+    the other does not. Silent when the start read's object stands over jd.STATE as it recorded it (no leak); on an
+    object a verdict has named (_sdk_named, reachable: a class or module scope that touches the singleton and then skips
+    or errors before any function window runs files a naming verdict while the flag is still armed, the boundary fixture
+    reading at the scope's first item and the flag spent only in the function fixture; S13, a module pair); and, as a
+    belt, on one the inherited report has named (_sdk_reported, empty at this window by construction: the one site that
+    fills that list, the function fixture's report line, runs after this refusal is computed in the same first window,
+    and no earlier window exists in the worker). The refusal marks nothing on _SDK_REPORTED: no later window takes the kept-root report,
     so a mark would change nothing there, and it would silence that later gone report."""
     be = start.be
     if not _sdk_is_real(be) or _sdk_named(be) or _sdk_reported(be):
