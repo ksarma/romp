@@ -9,7 +9,8 @@
 // moves: the keyboard up with iOS's pan (height 508, offsetTop 83, then resize and scroll), the keyboard down (844, 0),
 // and a keyboard with no pan (508, 0); then (round 2) the picker's lift under the pan, a pinch with the keyboard up and the
 // keyboard dismissed under the zoom; then (round 3) the keyboard up with the visual viewport at the layout viewport's bottom
-// (508, 336), the fixed bar inside the band. After each the driver waits two animation frames (fit() coalesces to one per frame)
+// (508, 336), the fixed bar inside the band; then (round 4) a pinch over that deep pan and the pan at an interior position (508,
+// 320), the bar partly inside the band. After each the driver waits two animation frames (fit() coalesces to one per frame)
 // and reads, in the shell's coordinate space: the composer's bottom (the chat iframe's top plus the composer's bottom inside
 // its same-origin document), the body's box, #mtabs's box, and the three shell variables.
 // Prints one `RESULT:` JSON line; exits 3 when the browser does not launch (the Python side turns that into a skip).
@@ -148,7 +149,15 @@ try {
   // offsetTop 336: the band 336..844), so the fixed bottom:0 bar is inside the band and the fixed body, at the pan, ends at
   // the bar; the strip must be reserved there or the bar paints over the composer
   out.kbUpDeep = await move(508, 336);
+  // round 4 (2026-09-20): a pinch over the deep pan (scale 2, height 254: h = 508 again, the pan holds at 336). The band the shell
+  // published is unchanged, the bar is inside it, and the strip must stand; the round-3 reading handed a pinch back to the
+  // height difference and collapsed it at the 1.01 scale cut
+  out.deepZoomed = await move(254, 336, 2);
   out.settledDeep = await move(844, 0);
+  // round 4 (2026-09-20): the pan at an INTERIOR position (508 + 320 = 828 against a bar whose box starts at 844 less its height):
+  // the bar is partly inside the band and the strip is the overlap, not the bar's whole height
+  out.kbUpMid = await move(508, 320);
+  out.settledMid = await move(844, 0);
   // round 2 (2026-09-19): a zoom after the pan, and the keyboard dismissed while the zoom holds (the fake's scale is what the
   // shell reads; the browser's own layout is not zoomed)
   out.kbUpAgain = await move(508, 83);

@@ -500,7 +500,7 @@ const BAR = { offsetHeight: 44, querySelectorAll: () => [], top: null,
 global.document = {
   visibilityState: 'visible',
   addEventListener: on(DOC),
-  documentElement: { scrollTop: 0, style: { setProperty: (k, v) => { PROPS[k] = v; SETS.push(k); } } },
+  documentElement: { scrollTop: 0, style: { setProperty: (k, v) => { PROPS[k] = v; SETS.push(k); }, getPropertyValue: (k) => PROPS[k] || '' } },   // the published band, read back by barfit (round 4, 2026-09-20)
   body: { setAttribute() {} },
   getElementById: (id) => (id === 'mtabs' ? BAR : (PANES[id] || null)),
 };
@@ -612,8 +612,25 @@ visualViewport.offsetTop = 341; fire(VV, 'scroll'); flush();
 out.barEntersTheBand = { appTop: appTop(), appH: appH(), barH: barH() };
 visualViewport.offsetTop = 384; fire(VV, 'scroll'); flush();
 out.barInTheBand = { appTop: appTop(), appH: appH(), barH: barH() };
-visualViewport.height = 844; visualViewport.offsetTop = 0; fire(VV, 'resize'); flush();
+// round 4 (2026-09-20): a PINCH over the deep pan. The band the shell published stands (the pan holds at 384, --app-h is
+// upstream's 230 * 2) and the bar is wholly inside it, so the strip stands too. The round-3 reading handed a pinch back to
+// upstream's height difference (844 - 460 > 120: a keyboard), which collapsed the strip and put the bar over the composer
+// for as long as the zoom held
+visualViewport.scale = 2; visualViewport.height = 230; visualViewport.offsetTop = 384; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+out.barInTheBandZoomed = { appTop: appTop(), appH: appH(), barH: barH() };
+visualViewport.scale = 1; visualViewport.height = 844; visualViewport.offsetTop = 0; fire(VV, 'resize'); flush();
 out.barInTheBandBack = { appTop: appTop(), appH: appH(), barH: barH() };
+// round 4 (2026-09-20): the strip is PROPORTIONAL. The keyboard up (vv.height 460) and the pan swept across one bar height:
+// the band ends at offsetTop + 460 and the fixed bottom:0 bar is 800..844, so the strip is the part of the bar inside the
+// band, offsetTop - 340 clamped to 0..44: nothing at 340 and below, one pixel at 341, the whole bar at 384 and beyond. The
+// all-or-nothing strip reserved 44 px from 341 up, a bar-tall band over a bar showing a few pixels
+const sweep = {};
+for (const ot of [336, 340, 341, 345, 351, 362, 373, 380, 383, 384, 388]) {
+  visualViewport.height = 460; visualViewport.offsetTop = ot; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+  sweep[ot] = { appTop: appTop(), appH: appH(), barH: barH() };
+}
+out.sweep = sweep;
+visualViewport.height = 844; visualViewport.offsetTop = 0; fire(VV, 'resize'); flush();
 // round 2 (2026-09-19): the writer's other population. fit() publishes a pan only off a coarse pointer; a FINE pointer writes
 // 0px whatever the visual viewport says (no soft keyboard to pan for), so a fine-pointer window the mobile query still
 // matches by width alone (at or under 820 px) takes the fixed body at top 0. From a panned state, the pointer turns fine
@@ -734,9 +751,10 @@ class MobileFitExecutes(unittest.TestCase):
 
     def test_a_bar_whose_box_starts_exactly_at_the_bands_bottom_edge_is_hidden(self):
         # round 2 (2026-09-19): the edge of the geometric reading, held by source text alone before. At exactly offsetTop +
-        # vv.height the bar has no pixel inside the band and reserves nothing; one pixel higher it is visible and keeps its strip.
+        # vv.height the bar has no pixel inside the band and reserves nothing; one pixel higher, one pixel of it is inside the
+        # band and the strip is that one pixel (round 4, 2026-09-20: the strip follows the pixels; it had reserved the whole bar)
         self.assertEqual(self.out["barAtTheEdge"], {"appH": "460px", "barH": "0px"})
-        self.assertEqual(self.out["barOnePxIn"], {"appH": "460px", "barH": "44px"})
+        self.assertEqual(self.out["barOnePxIn"], {"appH": "460px", "barH": "1px"})
         self.assertEqual(self.out["barEdgeBack"], {"appH": "844px", "barH": "44px"})
 
     def test_a_bar_inside_the_band_under_a_pan_keeps_its_strip_whatever_the_height_difference_says(self):
@@ -744,12 +762,42 @@ class MobileFitExecutes(unittest.TestCase):
         # keyboard, so with the keyboard up (844 - 460 > 120) and the visual viewport dragged down the layout viewport until
         # the fixed bar was inside the visible band, the strip still collapsed while the fixed body, following the pan, put
         # the composer at the band's bottom edge under the bar. The box decides whenever it can be read: hidden with the band
-        # ending at the bar's top (offsetTop 340), visible one pixel further (341) and wholly inside (384), and a visible bar
-        # keeps its strip. The first cut gave 0px in all three.
+        # ending at the bar's top (offsetTop 340), one pixel inside one pixel further (341) and wholly inside (384). The first
+        # cut gave 0px in all three; the round-3 strip gave 44px at 341, a bar-tall strip over one pixel of bar (round 4,
+        # 2026-09-20: the strip is the part of the bar inside the band, the sweep test below)
         self.assertEqual(self.out["barUnderTheBand"], {"appTop": "340px", "appH": "460px", "barH": "0px"})
-        self.assertEqual(self.out["barEntersTheBand"], {"appTop": "341px", "appH": "460px", "barH": "44px"}, "one pixel of the bar in the band")
+        self.assertEqual(self.out["barEntersTheBand"], {"appTop": "341px", "appH": "460px", "barH": "1px"}, "one pixel of the bar in the band")
         self.assertEqual(self.out["barInTheBand"], {"appTop": "384px", "appH": "460px", "barH": "44px"}, "the bar wholly inside the band")
         self.assertEqual(self.out["barInTheBandBack"], {"appTop": "0px", "appH": "844px", "barH": "44px"})
+
+    def test_the_strip_is_the_part_of_the_bar_inside_the_band_across_the_pan_range(self):
+        # round 4 (2026-09-20): pinning an endpoint does not pin a range. With the keyboard up (vv.height 460 in an 844 layout
+        # viewport) and the fixed bottom:0 bar at 800..844, the band ends at offsetTop + 460, so the bar's pixels inside the
+        # band are offsetTop - 340 clamped to 0..44, and --mtabs-h is exactly that at every position: the composer then sits
+        # flush above the bar's visible part and no strip stands over bar the keyboard hides. The round-3 strip was the
+        # visibility verdict times the whole height, 44px at every interior position from 341 up: over a bar showing 1 to 43
+        # pixels the shell reserved 44, a dark band of up to 43 px between the composer and the keyboard, the artifact this
+        # change exists to close. The expectation is derived from the positions the driver swept, and the sweep must cross
+        # the range where the strip changes (interior positions, both boundaries), or the derivation proves nothing.
+        sweep = self.out["sweep"]
+        self.assertGreaterEqual(len(sweep), 8, "the sweep: %r" % (sorted(sweep),))
+        expected = {ot: "%dpx" % max(0, min(44, int(ot) - 340)) for ot in sweep}
+        interior = [ot for ot, v in expected.items() if v not in ("0px", "44px")]
+        self.assertGreaterEqual(len(interior), 4, "the sweep crosses the range where the strip changes: %r" % (expected,))
+        for boundary in ("340", "341", "383", "384"):
+            self.assertIn(boundary, sweep, "the boundary positions are in the sweep")
+        self.assertEqual({ot: v["barH"] for ot, v in sweep.items()}, expected, "the strip is the part of the bar inside the band")
+        self.assertEqual({ot: (v["appTop"], v["appH"]) for ot, v in sweep.items()}, {ot: ("%spx" % ot, "460px") for ot in sweep},
+                         "the band the shell published at each position")
+
+    def test_a_pinch_over_a_deep_pan_keeps_the_strip_the_published_band_gives(self):
+        # round 4 (2026-09-20): the bar wholly inside the band under a deep pan (384: the band 384..844), then a pinch (scale 2,
+        # vv.height 230). The shell publishes the same band (the pan holds, --app-h is 230 * 2), so the bar is still inside it
+        # and the strip stands. The round-3 reading handed a pinch back to upstream's height difference (844 - 460 > 120: a
+        # keyboard), so crossing scale 1.01 flipped the strip from 44px to 0 and the bar painted over the composer's bottom
+        # while the zoom held. kbDownZoomed (the clamp test above) is unchanged by this: with the keyboard gone under the zoom
+        # the published band is the whole layout viewport and the bar is inside it there too.
+        self.assertEqual(self.out["barInTheBandZoomed"], {"appTop": "384px", "appH": "460px", "barH": "44px"}, "the strip under the zoom")
 
     def test_a_fine_pointer_writes_no_pan_whatever_the_visual_viewport_says(self):
         # round 2 (2026-09-19): the writer is gated on the pointer and the fixed body on the layout query, two populations. A

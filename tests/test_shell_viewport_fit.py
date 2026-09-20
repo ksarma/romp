@@ -214,22 +214,29 @@ class RefitsWhenTheVisibleHeightChanges(unittest.TestCase):
         self.assertLess(self.js.index("setProperty('--app-top'"), self.js.index("if(window.scrollY||document.documentElement.scrollTop)window.scrollTo(0,0);"))
 
     def test_the_bars_reservation_follows_the_bars_own_box(self):
-        # D1 (2026-09-19): kbOpen is rebound rather than edited because barfit() calls it by name; upstream's declaration
-        # stands, saved as kbOpenVV. The bar's BOX decides whenever it can be read: hidden when the box starts at or below the
-        # visible band's bottom edge (offsetTop + vv.height, layout coordinates), visible otherwise, whatever the height
-        # difference says (round 3, 2026-09-19: the first cut took upstream's verdict FIRST, so with the keyboard up and the
-        # visual viewport dragged far enough down the layout viewport for the bar to enter the band, the strip collapsed and
-        # the bar painted over the composer the fixed body had carried to the band's bottom edge). Upstream's reading stands
-        # only where the box cannot be read (no bar, no visualViewport) and under a pinch, where a zoom must not re-lay the
-        # shell. Behaviour: test_kernel_mobile.MobileFitExecutes.
+        # D1 (2026-09-19): barfit is rebound rather than edited because fit() calls it by name; upstream's declaration stands,
+        # saved as barfitVV, and upstream's kbOpen stands untouched beside it. The strip is the part of the bar's BOX inside
+        # the band the same run PUBLISHED (--app-top to --app-top + --app-h, read back from the style object, so a pinch,
+        # whose pan holds and whose height is upstream's scale arithmetic, is judged against the shell it laid out): 0 for a
+        # bar starting at or below the band's bottom edge, the whole height wholly inside, the overlap between (round 4,
+        # 2026-09-20: the reservation had been all-or-nothing on a visibility verdict, a bar-tall strip over a bar showing a
+        # few pixels; and the pinch term had handed the verdict back to upstream's height difference, which collapsed the
+        # strip at the 1.01 scale cut under a deep pan). Upstream's barfit stands only where the box or the band cannot be
+        # read (no bar, no visualViewport, no getPropertyValue, a run before both variables are published). Behaviour:
+        # test_kernel_mobile.MobileFitExecutes (the sweep across the pan range, the pinch over the deep pan).
         self.assertIn("function kbOpen(){var vv=window.visualViewport;return vv?(window.innerHeight-vv.height*(vv.scale||1)>120):false;}", self.js)
-        self.assertIn("var kbOpenVV=kbOpen;\nkbOpen=function(){var vv=window.visualViewport,bar=document.getElementById('mtabs');\n"
-                      "if(!vv||!bar||typeof bar.getBoundingClientRect!=='function'||(vv.scale||1)>1.01)return kbOpenVV();\n"
-                      "return bar.getBoundingClientRect().top>=(vv.offsetTop||0)+vv.height;};", self.js)
-        # barfit() still reads kbOpen by name, so the rebinding is what it sees
-        self.assertIn("setProperty('--mtabs-h',(kbOpen()?0:(bar.offsetHeight||0))+'px')", self.js)
-        self.assertLess(self.js.index("kbOpen=function(){"), self.js.index("fit();window.addEventListener('resize',refit)"),
-                        "rebound before the boot fit, so the first paint already reads the widened kbOpen")
+        self.assertIn("function barfit(){try{var bar=document.getElementById('mtabs');if(!bar)return;\n"
+                      "document.documentElement.style.setProperty('--mtabs-h',(kbOpen()?0:(bar.offsetHeight||0))+'px');}catch(e){}}\n", self.js)
+        self.assertIn("var barfitVV=barfit;\nbarfit=function(){try{var vv=window.visualViewport,bar=document.getElementById('mtabs'),st=document.documentElement.style;\n"
+                      "if(!vv||!bar||typeof bar.getBoundingClientRect!=='function'||typeof st.getPropertyValue!=='function'){barfitVV();return;}\n"
+                      "var top=parseFloat(st.getPropertyValue('--app-top')),h=parseFloat(st.getPropertyValue('--app-h'));\n"
+                      "if(!(top>=0)||!(h>0)){barfitVV();return;}\n"
+                      "st.setProperty('--mtabs-h',Math.max(0,Math.min(bar.offsetHeight||0,top+h-bar.getBoundingClientRect().top))+'px');}catch(e){}};", self.js)
+        self.assertNotIn("kbOpen=function", self.js, "kbOpen is not rebound: the strip is barfit's own reading now")
+        self.assertLess(self.js.index("barfit=function(){"), self.js.index("fit();window.addEventListener('resize',refit)"),
+                        "rebound before the boot fit, so the first paint already reads the proportional strip")
+        # the band is published before barfit reads it: both writes precede the barfit() call inside fit()
+        self.assertLess(self.js.index("setProperty('--app-top'"), self.js.index("barfit();}catch(e){}}"))
 
     def test_it_refits_on_the_events_ios_actually_changes_the_height_on(self):
         # iOS collapses its toolbars AS YOU SCROLL, with no window resize; the visual viewport's own

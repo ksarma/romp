@@ -69874,28 +69874,36 @@ barfit();}catch(e){}}
 // keyboard is open when the visual viewport is much shorter than the layout viewport (event: vv resize).
 // Measured by fit() itself since 2026-09-08: the two vars describe ONE geometry and went stale together.
 function kbOpen(){var vv=window.visualViewport;return vv?(window.innerHeight-vv.height*(vv.scale||1)>120):false;}
-// [fork] D1 (2026-09-19): the reservation is for a bar the user can SEE. Upstream's reading above (the visual viewport far
-// shorter than the layout viewport) misses a keyboard that shrinks the LAYOUT viewport too (an engine honouring
-// interactive-widget=resizes-content: innerHeight, vv.height and --app-h agree) while the fixed bar is still outside the
-// visible band; .col then reserved a bar-tall strip that rendered as an empty band above the keyboard. Read the geometry
-// instead of inferring it: the bar is hidden when its box starts at or below the visible band's bottom edge, offsetTop +
-// vv.height in layout coordinates (getBoundingClientRect is layout-viewport-relative, for a fixed box too), and visible
-// otherwise, whatever the height difference says. The bar's box decides whenever it can be read; upstream's reading stands
-// only where it cannot (no bar, no visualViewport) and under a pinch (scale above 1.01), where a zoom must not re-lay the
-// shell (the pinch-aware note over fit()). Round 3 (2026-09-19): the first cut took upstream's verdict FIRST and read the
-// box only when that said no keyboard, so with the keyboard up and the visual viewport dragged far enough down the layout
-// viewport for the bar to enter the visible band (the fixed body follows the pan, so the composer rides at the band's
-// bottom edge) the strip still collapsed and the bar painted over the composer's bottom; a bar inside the band keeps its
-// strip now. A bar the engine keeps ABOVE the keyboard (Android Chrome under resizes-content: innerHeight shrinks and
-// fixed bottom:0 rides the shrunken bottom) is visible by this reading too, so its strip stays reserved; the focused-field
-// and shrunken-innerHeight readings considered instead would have collapsed it there. Rebound rather than edited:
-// barfit() calls kbOpen by name.
-var kbOpenVV=kbOpen;
-kbOpen=function(){var vv=window.visualViewport,bar=document.getElementById('mtabs');
-if(!vv||!bar||typeof bar.getBoundingClientRect!=='function'||(vv.scale||1)>1.01)return kbOpenVV();
-return bar.getBoundingClientRect().top>=(vv.offsetTop||0)+vv.height;};
 function barfit(){try{var bar=document.getElementById('mtabs');if(!bar)return;
 document.documentElement.style.setProperty('--mtabs-h',(kbOpen()?0:(bar.offsetHeight||0))+'px');}catch(e){}}
+// [fork] D1 (2026-09-19): the strip is for the bar's pixels the user can SEE. Upstream's reading (kbOpen: the visual viewport
+// far shorter than the layout viewport) misses a keyboard that shrinks the LAYOUT viewport too (an engine honouring
+// interactive-widget=resizes-content: innerHeight, vv.height and --app-h agree) while the fixed bar is still outside the
+// visible band; .col then reserved a bar-tall strip that rendered as an empty band above the keyboard. Read the geometry
+// instead of inferring it. The band is the one THIS run published, --app-top to --app-top + --app-h (the fixed body's box
+// on the phone layout; both are written above barfit's call in fit()), and the strip is the part of the bar's box inside
+// it, clamp(bandBottom - bar.top, 0, offsetHeight), getBoundingClientRect being layout-viewport-relative for a fixed box too:
+// 0 for a bar whose box starts at or below the band's bottom edge, the whole height for a bar wholly inside, and the
+// overlap between. Round 4 (2026-09-20): the reservation had been all-or-nothing on a visibility verdict, so across one bar
+// height of pan values, the bar partly inside the band, the strip stood bar-tall over a bar showing a few pixels, the very
+// band this change exists to close; the strip now follows the pixels. The PUBLISHED band rather than the live visual
+// viewport, so a pinch (whose --app-top holds and whose --app-h is upstream's scale arithmetic) judges the bar against the
+// shell it laid out and the strip never flips at the 1.01 scale cut (round 4: the pinch term had handed the verdict back to
+// upstream's height reading, which disagrees with the box under a deep pan). A bar the engine keeps ABOVE the keyboard
+// (Android Chrome under resizes-content: innerHeight shrinks and fixed bottom:0 rides the shrunken bottom) is wholly inside
+// by this reading, so its strip stays reserved; the focused-field and shrunken-innerHeight readings considered instead would
+// have collapsed it there. Upstream's barfit (kbOpen's verdict: the whole height or nothing) stands only where the box or
+// the band cannot be read: no bar, no visualViewport, a style object without getPropertyValue, or a run before fit()
+// published both variables. Cost: one getBoundingClientRect per fit(), the read the round-3 kbOpen already made; while a
+// pan carries the bar through the band's edge each frame writes a new --mtabs-h, which .col's padding consumes, one
+// relayout per frame, the same as the all-or-nothing strip's single flip spread across the frames it now spans. Rebound
+// rather than edited: fit() calls barfit by name.
+var barfitVV=barfit;
+barfit=function(){try{var vv=window.visualViewport,bar=document.getElementById('mtabs'),st=document.documentElement.style;
+if(!vv||!bar||typeof bar.getBoundingClientRect!=='function'||typeof st.getPropertyValue!=='function'){barfitVV();return;}
+var top=parseFloat(st.getPropertyValue('--app-top')),h=parseFloat(st.getPropertyValue('--app-h'));
+if(!(top>=0)||!(h>0)){barfitVV();return;}
+st.setProperty('--mtabs-h',Math.max(0,Math.min(bar.offsetHeight||0,top+h-bar.getBoundingClientRect().top))+'px');}catch(e){}};
 // ONE fit per animation frame, however many events a keyboard slide or a resume fires: rAF is the
 // frame the browser is about to paint, not a timer, so a burst coalesces and nothing is deferred past
 // the next paint. The boot fit below stays synchronous so the first paint is already right.
