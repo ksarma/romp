@@ -64,6 +64,23 @@
 // the tree-wide read reds it, 2 of 4, one leak at that adoption in each kind. At the head, 4 of 4 green. So (a) and (b) each
 // hold on their own, and the tree-wide read runs before the batch-count pin, so an order regression names the leak, not a
 // count.
+// Re-measured after the fork PR review's round-1 ruling (2026-09-20), at the head that added road (e) and the gate-oracle end
+// state, with the two property-guard tests standing on their own (6 tests in the file), each mutation in a scratch copy of that
+// head, this scene alone: (i) the base's order (the adoption directly after the sanitize, the fence pass and the chain over
+// `box`): 2 of 6 red, the two kind tests on road (a) in both kinds; the property-guard tests stay GREEN there by construction,
+// since the chain ran over the box and the end state is clean (an adoption-time leak is road (a)'s and road (e)'s to see, not
+// the end state's); (iii) the gated-src write-back after the adoption: 4 of 6 red, the kind tests on road (b) and both
+// property-guard tests on the gate's oracle, unlistedHosts over the box answering ["remote.test"]; (iv) an img minted in the
+// sanitizer's document with a src on an unlisted host, appended into the box's first paragraph after the adoption (the fence
+// class, a created element): 4 of 6 red, the kind tests on road (a) tree-wide and both property-guard tests on the gate's
+// oracle, ["remote.test"]; (v) a new helper named in no list, `polishFigures(box)`, called after the adoption, creating an img
+// in the live document under the box and writing a src on an unlisted host: 4 of 6 red, the kind tests first on the box's
+// children pin and both property-guard tests on the gate's oracle, ["remote.test"]. Under the two round-1 mutations of the
+// passes that run inside sanitizeMd before the chain (mintHeadingIds appending `root` to document.body; a second registered
+// post-pass in another module doing the same), each in a scratch copy of the head that added road (e): 2 of 4 red then, the
+// two kind tests on road (e)'s first assertion (a move-aside the gate made landed on a live-document element), beside the seam
+// test's premise guard (its door sweep names `document` in mintHeadingIds; its derived registrant list shows the new
+// registrant). At the head, 6 of 6 green.
 // Synthetic values only: the notes-api world, a placeholder sid, .test hosts.
 import { test, type TestContext } from "node:test";
 import * as assert from "node:assert/strict";
@@ -813,6 +830,34 @@ test("the URL kind: resolveFigureRefs and the gate run on the sanitizer's body, 
   assert.equal(image.getAttribute("href"), NOTE_DIR + "d.png", "the svg image's xlink:href folded into href, resolved against the document");
   assert.equal(image.getAttribute("xlink:href"), null);
   assert.equal(gateAround(image), null, "on the document's own host: not gated");
+});
+
+// ── the property guard on its own: the box's end state through the gate's oracle, one test per kind, so a red names the boundary
+// and nothing before it (the roads above stop at their first red, which for a post-adoption pass is the road that saw it first) ──
+test("the property guard, the file kind: once the render is done no element under the Rendered box carries a fetching attribute naming a host outside the allowed set, by figure-gate's own gateRefs and unlistedHosts, and every figure the gate judged unlisted stands as a placeholder", async (t) => {
+  const fv = await mod();
+  reset();
+  disk[REPORT] = { bytes: NOTE, type: "text/plain; charset=utf-8", mtimeNs: MT };
+  nextBody = fileBody;
+  t.after(() => { nextBody = null; fv.closeFileView(); doc.activeElement = null; });
+  assert.equal(fv.openFileView(REPORT, SID), true, "the open happened");
+  await settle();
+  const { md } = rendered();
+  assertEndState(md, FILE_KIND, allowedNow());
+  assert.equal(placeholders(md).length, FILE_PLACEHOLDERS, "eleven gated roots, each a placeholder");
+});
+
+test("the property guard, the URL kind: the same over a document opened from its URL, the document's own host allowed", async (t) => {
+  const fv = await mod();
+  reset();
+  urls[NOTE_URL] = URL_NOTE;
+  nextBody = urlBody;
+  t.after(() => { nextBody = null; fv.closeFileView(); doc.activeElement = null; });
+  fv.openUrlView(NOTE_URL);
+  await settle();
+  const { md } = rendered();
+  assertEndState(md, URL_KIND, allowedNow(NOTE_HOST));
+  assert.equal(placeholders(md).length, URL_PLACEHOLDERS, "two gated roots, each a placeholder");
 });
 
 // ── the stand-in's projection (ui/test-dom-shim.ts): a node inspects as its primitives, never as the tree or its document ─────
