@@ -9,7 +9,8 @@
 // img leg red in WebKit alone at the base, the svg leg red in Firefox and in WebKit, green in Chromium); the reach names
 // Firefox beside Safari, as the chain block's comment in file-view.ts does; since the fork PR's round-2 push (the branch's fourth
 // round), the rule, scoped to mdBlock, the fence scene, the Copy case and the seam test's re-parse pin are named in the line and in
-// the body and stand in the files; no em dash. The file list is the branch's diff
+// the body and stand in the files; since the first-round ruling was answered, the property guard, the order leg, the derived
+// registrant sweep and the stripper module are named in the line and stand in the files; no em dash. The file list is the branch's diff
 // at its head (against its merge base with main), written down: the entry is a record of that branch, so this module reads no git. Named by its subject and
 // not by the entry's date: a tools module whose name opens with four digits is read as an ADR's by
 // tools/file-review-plan-sidecar-adr-modules.test.mjs, which requires a docs/adr/<NNNN>-*.md behind it (the branch's
@@ -50,6 +51,7 @@ const FILES = [
   'ui/webview/md-sanitize-viewer-links.test.ts',
   'ui/webview/md-url-view.test.ts',
   'ui/webview/render-sanitize.test.ts',
+  'ui/test-code-only.ts',
   ENTRY,
 ];
 
@@ -142,7 +144,15 @@ test('the fork PR\'s round-2 push: the where: line and the body state the rule o
   const view = read('ui', 'webview', 'file-view.ts');
   assert.ok(view.indexOf('clean.querySelectorAll("pre code")') > 0 && view.indexOf('clean.querySelectorAll("pre code")') < view.indexOf('resolveFigureRefs(clean, doc.href);'), 'the fence pass over the sanitized body sits before the chain in file-view.ts');
   const seam = read('ui', 'webview', 'file-view-seam.test.ts');
-  assert.ok(seam.includes('test("no re-parse after the adoption:'), 'the seam test holds the re-parse population pin');
+  assert.ok(seam.includes('test("no re-parse after the adoption:'), 'the seam test holds the re-parse population pin');  // the first-round ruling's answers, named in the line and standing in the files
+  assert.ok(where.includes("reads the box's end state through figure-gate's own gateRefs and unlistedHosts (the CI-run guard, keyed on the outcome at the boundary) and asserts by the clock that the gate ran before any node of the body entered the live document"), 'where: names the property guard and the order leg');
+  assert.ok(where.includes('derives the registered post-passes from the code and sweeps them with mintHeadingIds, counts the dompurify dist\'s importNode and adoptNode whole, and self-checks the stripper'), "where: names the seam test's derived sweep, its census and its self-check");
+  assert.ok(where.includes('ui/test-code-only.ts (new), the comment stripper the seam test, md-url-view.test.ts and md-sanitize-viewer-links.test.ts read through, the TypeScript compiler\'s comment ranges'), 'where: names the stripper module');
+  const scene = read(NODE_SCENE);
+  assert.ok(scene.includes('unlistedHosts(box, PAGE, allowed)') && scene.includes('test("the property guard, the file kind:'), 'the scene reads the end state through the gate\'s oracle, in a test of its own');
+  assert.ok(scene.includes('road (e), the order: the first move of any node of the sanitizer\'s body into the live document'), 'and asserts the order by the clock');
+  assert.ok(seam.includes('registerMdPostPass(renderMathPlaceholders) -> math.ts') && seam.includes('import { codeOnly, stripComments } from "../test-code-only";'), 'the seam test derives the registrants and reads through the stripper module');
+  assert.ok(fs.existsSync(path.join(REPO, 'ui', 'test-code-only.ts')) && read('ui', 'test-code-only.ts').includes('ts.getLeadingCommentRanges'), 'the stripper module exists and reads the compiler\'s comment ranges');
 });
 
 test('the reach names Firefox beside Safari, as the chain block\'s comment in file-view.ts does, and the title names no one engine', () => {

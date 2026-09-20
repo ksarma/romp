@@ -7930,6 +7930,46 @@ label read Copied with the `copied` class, then Copy again after the window, 3 o
 plain http through the proxy, so `navigator.clipboard` is absent there and a recorder stands in for the write, as
 file-view-copy-source-browser.test.ts does; the click and the listeners are the engine's own.
 
+**The guards after the review's first round.** The fork PR's review ruled its first round on 2026-09-20 (six defects,
+all in the instruments, none in the fix), and this push answers them. The CI-run guard for the contract is keyed on
+the outcome at the boundary and on no list of passes, calls or names: file-view-figures-gate-adopt.test.ts reads the
+Rendered box's end state through figure-gate's own gateRefs and unlistedHosts, in two tests standing on their own and
+again at the end of each kind's test, so an element any pass wrote, moved or created under the box with a fetching
+attribute on an unlisted host is red there whatever the pass is called (the three-name denylist over `box` in
+file-view-seam.test.ts stays as a second layer). Measured in scratch copies of the head, this scene alone: a
+post-adoption write of a gated src back into src, a created img minted in the sanitizer's document and appended under
+the box, and a new helper named in no list creating a live img under the box each turned both property-guard tests red
+with unlistedHosts answering the host (4 of 6 red each); the base's order turned the two kind tests red on road (a)
+with the property-guard tests green (2 of 6), an adoption-time leak being road (a)'s and the order leg's to see, not
+the end state's. The same scene asserts the ORDER by execution (road (e)): one clock over every write, every move into
+the live document and every move-aside the gate makes, and in both kinds the first move of any node of the sanitizer's
+body into the live document, read over all moves and not the box-filtered ones, comes after the gate's last move-aside
+on that body, with every move-aside landed while the element was the sanitizer's and no fetching attribute of the body
+written between the two; a caller pass inside sanitizeMd (mintHeadingIds appending the body to document.body) and a
+second registered post-pass in another module doing the same each turned both kind tests red there (2 of 4 at the head
+that added the leg). file-view-seam.test.ts's premise guard no longer claims every door: it derives the registered
+post-passes from the code (every registerMdPostPass call in the dashboard's comment-stripped modules, the name
+resolved to its defining module through the module's `./` imports, a registration it cannot follow refused), pins the
+derived list (one, md-config.ts registering math.ts's renderMathPlaceholders), sweeps that body and mintHeadingIds's
+for a live-document road, holds md-sanitize.ts's registry to its one writer, and counts importNode (four) and
+adoptNode (none) over the whole of each installed dompurify dist's code; the two mutations above turned it red too
+(the door sweep naming `document` in mintHeadingIds; the derived list showing the new registrant). The comment
+stripper every one of those pins reads through is the TypeScript compiler's comment ranges (ui/test-code-only.ts: the
+source parsed, every token visited, the leading and trailing comment ranges removed and nothing else), in place of a
+hand scanner that read a regex literal's closing backslash-slash-slash as a line comment and deleted the rest of
+settings.ts's hostname line (measured with that scanner before it was replaced); the seam test self-checks the new one
+over that module, over md-sanitize.ts and over a synthetic module holding each construct (a regex literal ending in
+backslash-slash, a string holding //, a template holding /*, a block comment holding a regex, a URL in a string). The
+CI pin in tools/markdown-viewer-plan-gate-adopt.test.mjs reads the property the Tests paragraph states off the
+vscode-extension job's own block; in scratch copies of the head, that module alone, an engine install added to another
+job left it green (10 of 10), a Chromium install moved before the job's Test step turned it red with the sentence to
+change named (9 of 10), and a Firefox and WebKit install before that step with the sentence reworded to the run form
+left it green with the held-whole paragraph pin red, as the same-commit rule intends (9 of 10). The order pins outside
+the seam test (file-view.test.ts, tools/file-review-viewer-recipe.test.mjs) are presence pins that name the seam test
+for the order, and the recipe module, which runs in CI's shell job with no node_modules, cannot reach the compiler;
+the ledger entry's file count is derived by `git diff --name-only origin/main...HEAD`, the merge-base form, at the
+head.
+
 **Scope.** Unreachable through the VS Code panes, whose CSP blocks remote figures (`img-src ${webview.cspSource} data:`,
 extension.ts). Reachable through the kernel-served dashboard and the iOS web app. What leaks is the IP address, the
 time, the user agent and the path; the kernel sends Referrer-Policy same-origin, so no referer. The engine measured is
@@ -7964,29 +8004,35 @@ URL kind), the gate alone moved after the adoption (13 and 2), one added post-ad
 src (5 live writes and 2), and one added post-adoption line appending an img minted in the sanitizer's document with a
 src on an unlisted host into the box's first paragraph (1 leak at that adoption in each kind, read tree-wide under the
 box; the top-level read alone stayed green in the file kind); green at the head. It sees no bytes: a leak there is an
-attribute the browser would fetch through, judged by the scene's own oracle, never by figure-gate's remoteHost; the
-engines' loading is the legs' and DOMPurify's document is the seam test's. file-view-seam.test.ts pins the order in
-mdBlock (sanitize, rewrite, gate on `clean`, then the adoption, and no figure pass over `box`) and holds the inertness
-premise, which no node test can execute: its test "the inertness premise, held where CI runs" pins the sanitizer's
-profile literal and its keys at run time, the config the sanitize is handed, sanitizeMd's body, the installed
-DOMPurify's RETURN_DOM branch with its one road into the live document (a clone under an allowed shadowroot attribute,
-which no profile here allows), and `clean` reaching the four chain calls and nothing else before the adoption (the
+attribute the browser would fetch through, judged over the box's end state by figure-gate's own gateRefs and
+unlistedHosts (the property guard, one test per kind on its own, and again at the end of each kind's test) and by the
+scene's own oracle, which alone sees a page-relative leak; the same scene asserts the order by execution, its road
+(e), and the guards paragraph above records both with their mutation runs; the engines' loading is the legs' and
+DOMPurify's document is the seam test's. file-view-seam.test.ts pins the order in mdBlock (sanitize, rewrite, gate on
+`clean`, then the adoption, and no figure pass over `box`) and holds the inertness premise, which no node test can
+execute: its test "the inertness premise, held where CI runs" pins the sanitizer's profile literal and its keys at run
+time, the config the sanitize is handed, sanitizeMd's body, the installed DOMPurify's RETURN_DOM branch with its one
+road into the live document (a clone under an allowed shadowroot attribute, which no profile here allows), the passes
+that run over the body inside sanitizeMd before the chain (mintHeadingIds and every registered post-pass, the list
+derived from the code) opening no door to the live document, the whole of each dist's code holding importNode at four
+sites and adoptNode at none, and `clean` reaching the four chain calls and nothing else before the adoption (the
 review's refuters measured that one added profile key, `ADD_ATTR: ["shadowrootmode"]`, made DOMPurify clone the body
 into the live document with every CI-run module green and WebKit fetching the gated figure again); since the fork PR's
 round-2 push it also pins the fence pass's place (on `clean`, between the sanitize and the chain's first call) and its
 one read of `clean` beside the four chain calls, and, in its test "no re-parse after the adoption", the re-parse
 population above, derived from the code, with the whole file's count. The order pins in file-view-seam.test.ts,
-md-url-view.test.ts, md-sanitize-viewer-links.test.ts, file-view.test.ts and tools/file-review-viewer-recipe.test.mjs
-read comment-stripped code since that push (a comment quoting the pinned lines above an adopt-first body satisfied the
-raw-text pins in the round's reversion runs), and the messages in file-view-text-size.test.ts, render-sanitize.test.ts
-and the recipe pin that claimed an order they did not check now claim presence, the order being the seam test's.
-md-url-view.test.ts pins the URL kind's resolution before the adoption; tools/file-review-viewer-recipe.test.mjs pins
-the sanitize and adoption statements and the chain calls' place before the adoption;
-tools/upstream-ledger-figure-gate-before-adoption.test.mjs holds the ledger entry's file list, its count and its
-engine statements to the tree and the legs; tools/markdown-viewer-plan-gate-adopt.test.mjs holds this section's
-sentences to the code, its comment and the leg. The remedy for the legs' skip in CI is a step in that job installing
-Playwright's engines (Firefox and WebKit, or all three) before npm test; the plan pin reads this paragraph and the job
-together, so taking that remedy means rewording the sentence above to the pin's other sentence, which says the legs
-run there (CI_RUN in that module, beside CI_SKIP, the sentence above), and the pin then holds the job to an install of
-Firefox and WebKit before its Test step instead of to none; the pin does not fight the remedy, it names the sentence
-to change.
+md-url-view.test.ts and md-sanitize-viewer-links.test.ts read comment-stripped code since that push
+(ui/test-code-only.ts, the TypeScript compiler's comment ranges, since the review's first-round ruling; a comment
+quoting the pinned lines above an adopt-first body satisfied the raw-text pins in the round's reversion runs), and the
+messages in file-view-text-size.test.ts, render-sanitize.test.ts, file-view.test.ts and the recipe pin that claimed an
+order they did not check claim presence, the order being the seam test's (file-view-text-size.test.ts's sits in a
+browser-gated test that skips where no engine is installed, so in CI it does not run). md-url-view.test.ts pins the
+URL kind's resolution before the adoption; tools/file-review-viewer-recipe.test.mjs pins the sanitize and adoption
+statements as presence pins; tools/upstream-ledger-figure-gate-before-adoption.test.mjs holds the ledger entry's file
+list, its count and its engine statements to the tree and the legs; tools/markdown-viewer-plan-gate-adopt.test.mjs
+holds this section's sentences to the code, its comment and the leg. The remedy for the legs' skip in CI is a step in
+that job installing Playwright's engines (Firefox and WebKit, or all three) before npm test; the plan pin reads this
+paragraph and the job together, so taking that remedy means rewording the sentence above to the pin's other sentence,
+which says the legs run there (CI_RUN in that module, beside CI_SKIP, the sentence above), and the pin then holds the
+job to an install of Firefox and WebKit before its Test step instead of to none; the pin does not fight the remedy, it
+names the sentence to change.
