@@ -2,9 +2,10 @@
 """The file preview popover on the real chat page (T351 stage 1, the user 2026-09-11): hovering a local file link pops up
 a card with the rendered head of the file, or the section a `path#slug` link names, near-instantly.
 
-A hermetic kernel serves one synthetic session whose reply links six paths: a markdown guide (its head), the guide's
-`#fold-rules` section (with a [[wikilink]] and a callout inside it), a `#no-such-section` anchor (the head with a one-line
-note), a small PNG (the figure at its natural size, capped to the card), a Python file (a highlighted head), a `.env`
+A hermetic kernel serves one synthetic session whose reply links seven paths, twelve links in all (the guide three times;
+the cold note and two bare filenames in code spans are the rest): a markdown guide (its head), the guide's `#fold-rules`
+section (with a [[wikilink]] and a callout inside it), a `#no-such-section` anchor (the head with a one-line note), a
+small PNG (the figure at its natural size, capped to the card), a Python file (a highlighted head), a `.env`
 (a secrets-shaped name: text plus "open", no request), a markdown-named symlink to that `.env` (judged by its target:
 text plus "open"), an absolute path outside the session's folder and the user's home (text plus "open", no request) and a
 note under `a-_b/c_/`, directories whose names begin and end with an underscore: CommonMark's flanking rules make those
@@ -112,7 +113,13 @@ catch (e) {   // say which links rendered, so a short count is diagnosable from 
   const got = await page.evaluate(() => Array.from(document.querySelectorAll("#content .file-uri-link")).map((a) => a.dataset.path + (a.dataset.frag ? "#" + a.dataset.frag : "")));
   console.error("links rendered (" + got.length + "): " + JSON.stringify(got)); process.exit(1);
 }
-await page.mouse.move(900, 720); await page.waitForTimeout(300);
+// Between hovers the pointer parks in the viewport's bottom-right margin. placeFilePreview (render.ts) keeps every card
+// inside the viewport by CMT_POP_EDGE (8 px), so no card can reach a point within that margin; anywhere inside it a
+// card may open UNDER the parked pointer, whose pointerenter pins the card open (HoverIntent.pin), and the next check
+// reads a card that never closed. That happened at (900, 720): in the light theme, with the reply wrapped one line
+// longer and the outside path at xdist's nested length, the last link's text card covered the spot.
+const PARK = { x: 1096, y: 756 };
+await page.mouse.move(PARK.x, PARK.y); await page.waitForTimeout(300);
 const CARD = "#file-preview-pop";
 const shown = () => page.evaluate(() => { const p = document.getElementById("file-preview-pop"); return !!p && getComputedStyle(p).display !== "none"; });
 const links = await page.evaluate(() => Array.from(document.querySelectorAll("#content .file-uri-link")).map((a) => ({ text: a.textContent, path: a.dataset.path, frag: a.dataset.frag || null, preview: a.dataset.preview || null, rel: a.dataset.rel || null, why: a.dataset.previewWhy || null })));
@@ -144,7 +151,7 @@ const hoverCard = async (path, frag) => {
   return { early, ms, requests: fileRequests - before, card: c };
 };
 const shot = async (name) => { if (!cfg.shots) return; fs.mkdirSync(cfg.shots, { recursive: true }); const b = await (await page.$(CARD)).boundingBox(); await page.screenshot({ path: cfg.shots + "/" + name + ".png", clip: { x: Math.max(0, b.x - 40), y: Math.max(0, b.y - 60), width: Math.min(1100, b.width + 80), height: Math.min(760, b.height + 100) } }); };
-const leave = async () => { await page.mouse.move(900, 720); await page.waitForTimeout(400); return await shown(); };
+const leave = async () => { await page.mouse.move(PARK.x, PARK.y); await page.waitForTimeout(400); return await shown(); };
 // the cold read: the build warmed docs/cold.md, so its time is rewritten before each hover (a new mtime is a new cache key).
 // Whether the hover then reads COLD is the pusher's timing, not this driver's: a message build between the rewrite and
 // the hover re-warms the new key (kernel.py _slice_warm, one `warm` per load), and under a slow full serial run one does
@@ -337,7 +344,7 @@ class ServedFilePreview(unittest.TestCase):
         latency = {"cached": [], "cold": [], "code": []}      # dwell end → rendered card, ms, per theme
         for theme in ("dark", "light"):
             t = r["themes"][theme]
-            for name in ("head", "section", "missing", "image", "code", "cold", "outside", "secret"):
+            for name in ("head", "section", "missing", "image", "code", "cold", "outside", "secret", "bare", "leaky"):
                 h = t[name]
                 self.assertFalse(h["early"], "%s/%s: nothing before the dwell" % (theme, name))
                 self.assertGreaterEqual(h["ms"], 300, "%s/%s: the card came up only after the dwell: %r ms" % (theme, name, h["ms"]))
@@ -345,7 +352,7 @@ class ServedFilePreview(unittest.TestCase):
                 self.assertEqual(h["card"]["theme"], theme)
                 self.assertFalse(h["card"]["hasOpen"], "%s/%s: a file card carries no open control; the link opens the file (T369)" % (theme, name))
                 self.assertGreaterEqual(h["card"]["box"]["w"], 300); self.assertGreaterEqual(h["card"]["box"]["h"], 120)
-                self.assertFalse(t[name + "Hidden"], "%s/%s: leaving closes the card after the grace" % (theme, name))
+                self.assertFalse(t[name + "Hidden"], "%s/%s: leaving closes the card after the grace (a card still up here was pinned: the parked pointer sat inside it)" % (theme, name))
             head, sec, miss = t["head"]["card"], t["section"]["card"], t["missing"]["card"]
             self.assertEqual((head["title"], head["sub"], head["note"]), ("guide.md", None, None))
             self.assertIn("fp-markdown", head["kind"]); self.assertIn("<h1", head["html"]); self.assertIn("intro paragraph", head["text"])

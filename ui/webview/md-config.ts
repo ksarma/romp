@@ -4,7 +4,7 @@
 // extensions came in through chat-md.ts, imported by render.ts alone), so a note's `$x^2$` rendered in the chat
 // page's viewer and stayed literal in the Files pane and the feed, and the anchor map (anchor-map.ts), which lexes
 // the same source with the static `Lexer.lex`, saw whatever grammar its bundle happened to carry. Now render.ts,
-// file-view.ts and anchor-map.ts each call applyMdConfig() at load, chat-md.ts builds its breaks:true instance
+// file-view.ts and anchor-map.ts each call applyMdConfig() at load, chat-md.ts builds its two instances
 // from the same `mdExtensions` list, and the eight test copies of the viewer's configuration call the function.
 //
 // Registered on the SINGLETON on purpose, never on a private `Marked` instance: `marked.use` writes the module
@@ -144,71 +144,118 @@ export const delDoubleTilde = {
 // (the 2026-09-19 browser census, Entry 5: a temp directory whose random name began with `_`; the population note,
 // md-emphasis-population.md, measured 55 rows and 20 adversarial ones). marked agrees with the CommonMark reference on
 // every row, so the renderer is not what is wrong: the road hands path-shaped text to the emphasis rule. This override
-// refuses an emphasis opener or closer that lies STRICTLY inside a token the walk's own scanner and gates would link,
-// so one grammar decides linking and protection (the scanner and the gates are imported from path-links.ts, never
-// restated, and a change to the linking grammar changes the protection with it; the bare-filename gate is included so
-// `__init__.py` in prose is covered too). A delimiter at a token's edge is not inside it: `_docs/notes.md_` keeps its
-// emphasis (its token fails the file gate on the trailing `_` anyway), and `*` and `~` are not path characters, so
-// `*docs/a.md*` and `~~/old/notes.md~~` keep theirs. Intraword underscores (`snake_case`) never reach here (marked's own
-// rule), nor do escaped delimiters, code spans or fences.
+// makes a linkable token atomic to the emphasis rule: a `_` run lying STRICTLY inside a token the walk's own scanner
+// and gates would link (the scanner and the gates are imported from path-links.ts, never restated, so a change to the
+// linking grammar changes the protection with it) neither opens, nor closes, nor counts as a nested delimiter. An
+// opener there is refused; a run there is hidden from the built-in's closer scan (a letter in its place in the masked
+// string the built-in scans, as marked itself hides a link or a code span), so a prose opener pairs with the next
+// closer OUTSIDE the token, as it would were the path one word: `_see /tmp/_build/out.md now_` is one emphasis around
+// the literal, linked path. Refusing the built-in's own first choice of pair instead left the opener as text and the
+// emphasis lost, since marked never retries an opener (the 2026-09-20 review). A delimiter at a token's edge is not
+// inside it: `_docs/notes.md_` keeps its emphasis (its token fails the file gate on the trailing `_` anyway), and `*`
+// is not a path character, so `*docs/a.md*` keeps its. Intraword underscores (`snake_case`) never reach here (marked's
+// own rule), nor do escaped delimiters, code spans or fences.
+// Two rules decide "linkable", named apart because the second is wider than the walk's own linking: (1) a token the
+// walk would link where it stands (the file gate, or the URI arm); (2) a bare filename with a known extension
+// (`__init__.py`, `_final_.pdf`), which the walk links only inside a code span but which reads as its name here, so
+// `__init__.py` in prose stays literal, at the cost of `the _final_.pdf file` losing its emphasis. Both are shape rules
+// over the masked paragraph with no view of the rendered DOM: a path in a link's label is protected too, though the
+// walk never links under an <a> (the label shows the path as written), and the kernel's map is not consulted.
 // The shape is delDoubleTilde's, a `tokenizer` override: `false` hands a `*` run to the built-in untouched, `undefined`
-// makes marked read the run as text. The built-in decides the pair first, on a stand-in `this` whose lexer lexes
-// nothing: it lexes the pair's body before it returns, and a body lexed twice numbers a footnote reference twice
-// (footnoteRef counts on the lexer), so the body is lexed here, once, when the pair stands. The scan for tokens is
-// bounded to the whitespace-delimited run around a delimiter (no token crosses whitespace, so every token holding a
-// position lies in that run) and remembered per run, so a paragraph costs one scan per run, not one per delimiter.
+// makes marked read the run as text. The built-in decides the pair on a stand-in `this` whose lexer lexes nothing (it
+// lexes the pair's body before it returns, and a body lexed twice numbers a footnote reference twice, since footnoteRef
+// counts on the lexer), so the body is lexed here, once, when the pair stands. The paragraph is scanned for tokens once
+// per masked string (marked hands every delimiter of a paragraph the same string) and remembered, the memo surviving a
+// standing pair's body lex (which lexes a masked string of its own), so a paragraph costs one linear scan plus a binary
+// search per delimiter, whatever its shape (a 50 KB run with no whitespace and a delimiter every few characters cost
+// sixteen times the base grammar before the memo held the scan, the 2026-09-20 review). The built-in is reached through
+// Tokenizer.prototype (marked's use() gives an override no handle to the tokenizer it replaced), which is right while
+// no other extension the chat's instances take overrides emStrong: none in mdExtensions does, and
+// md-emphasis-override.test.ts pins it by execution, with the stand-in's contract (see DRY_LEXER).
 // Registered on the chat's two instances (chat-md.ts chatMarked and userMarked) and NOT on the singleton, on purpose:
 // the viewer's aim is GitHub's rendering of a note, which makes `foo/__pycache__/bar.pyc` strong, and the anchor
 // map's static lexer pairs the viewer's tokens; whether the viewer should follow is a separate decision (its own
-// walk, file-view-links.ts, has the same gap over a note's prose). One accepted loss, measured: `_foo_-bar/baz.md`,
-// emphasis glued to a path with no space between, renders literal, since the closer lies inside the token the walk
-// then links whole. md-emphasis-paths.test.ts runs both tables.
-const WHITESPACE_RE = /\s/;
-/** The built-in emStrong's lexer for the dry run: lexes nothing, so a refused pair's body is never lexed. */
+// walk, file-view-links.ts, has the same gap over a note's prose). md-emphasis-paths.test.ts runs both tables.
+// Boundaries, measured in the 2026-09-20 review and recorded, none a regression against the base grammar:
+//   - the accepted loss, A08: `_foo_-bar/baz.md`, emphasis glued to a path with no space between, renders literal,
+//     since the closer lies inside the token the walk then links whole. The same when the glue is a strikethrough,
+//     `__note/a.md__~~x.py~~`: `~` IS a path character, so the scanner's token runs on into the struck text and the
+//     strong is lost (the walk links nothing there on either grammar); a space between restores the base's rendering;
+//   - a run at a linkable token's EDGE pairs as the spec says, so `_see /tmp/x_` keeps its emphasis and the DOM token
+//     `/tmp/x` is not the kernel's key `/tmp/x_`, and `_x/y.md and more_` likewise from the start edge. The kernel reads
+//     the delimiter as part of the token: the C42/C43 parity follow-up, identical on the base;
+//   - the scan reads marked's masked string, where an escaped character is `++` and a link, a code span or a tag is
+//     `[aaa]`. An escape inside a path (`/a\-_b/c.md`) splits the scanner's token there, as the kernel's tokeniser
+//     splits it at the backslash (the C41 follow-up), and a relative path escaped in its last segment (`a-_b/c_/d\.md`)
+//     loses the extension its gate needs: both render as on the base. The URI arm admits `[`, `]` and `+`, so a URI glued
+//     to a masked link, code span or tag (`file:///x/y.md[link](u)_bar_`) is one token to the scanner and the `_bar_`
+//     after it is refused, where the base emphasised it; a space between restores it;
+//   - the mask keeps the length for every BMP character; a backslash before an astral symbol (an emoji) masks three
+//     UTF-16 units as two, so every position before it reads one too small, in the built-in's own arithmetic as here:
+//     `see /_build/out_ \😀` renders as on the base, cut.
+/** The built-in emStrong's lexer for the dry run: lexes nothing, so a refused pair's body is never lexed. The stand-in
+ *  the built-in runs on is `{ rules, lexer }` and nothing else, the contract with the installed marked (12.0.2 reads
+ *  this.rules.inline and this.lexer.inlineTokens in emStrong, measured by a recording proxy); md-emphasis-override.test.ts
+ *  pins it by execution on the installed marked, so an upgrade whose emStrong reads more from `this` goes red there by
+ *  name. Unpinned, the throw would land in render.ts md()'s catch, which shows the whole reply as escaped text. */
 const DRY_LEXER = { inlineTokens: (): Token[] => [] };
-/** The runs the walk would link in the paragraph last scanned, keyed by the start of the whitespace-delimited run they
- *  were found in: one scan per run per paragraph (marked hands every delimiter of a paragraph the same masked string). */
-let linkableMemo: { masked: string; byRun: Map<number, Array<[number, number]>> } | null = null;
-/** The tokens the path walk would link inside the whitespace-delimited run of `masked` around `at`, as [start, end) in
- *  `masked`: the walk's scanner, its trailing-punctuation trim and its shape gates (path-links.ts linkifyPathTokens). */
-function linkableRuns(masked: string, at: number): Array<[number, number]> {
-  let lo = at, hi = at;
-  while (lo > 0 && !WHITESPACE_RE.test(masked[lo - 1])) lo--;
-  while (hi < masked.length && !WHITESPACE_RE.test(masked[hi])) hi++;
-  if (!linkableMemo || linkableMemo.masked !== masked) linkableMemo = { masked, byRun: new Map() };
-  const known = linkableMemo.byRun.get(lo);
-  if (known) return known;
-  const text = masked.slice(lo, hi);
-  const scan = new PathTokenScanner(text);
+/** marked's own mask letter (a link, a code span or a tag is `[aaa]` in maskedSrc): a word character, so a run hidden
+ *  behind it is no delimiter run to the built-in's closer scan, and the flanking of its neighbours reads as intraword. */
+const HIDDEN = "a";
+/** One paragraph's linkable tokens, scanned once. `masked` is the string marked handed emStrong; `runs` the tokens the
+ *  path walk would link in it, as [start, end) in `masked`, in order (the walk's scanner, its trailing-punctuation trim
+ *  and its shape gates, path-links.ts linkifyPathTokens); `hidden` is `masked` with every `_` run lying strictly inside
+ *  one of them replaced by HIDDEN, the string the built-in scans for a closer. */
+type LinkableRuns = { masked: string; runs: Array<[number, number]>; hidden: string };
+let linkableMemo: LinkableRuns | null = null;
+function linkableRuns(masked: string): LinkableRuns {
+  if (linkableMemo && linkableMemo.masked === masked) return linkableMemo;
   const runs: Array<[number, number]> = [];
+  let hidden = "", copied = 0;
+  const scan = new PathTokenScanner(masked);
   let from = 0, m: [number, number] | null;
   while ((m = scan.next(from))) {
     const [start, end] = m;
     from = end;                                       // a token that stays prose: the scan resumes after all of it, as the walk's does
-    let tok = text.slice(start, end);
+    let tok = masked.slice(start, end);
     const trail = trailingPunct(tok);
     if (trail) tok = tok.slice(0, tok.length - trail[0].length);
     if (!tok || !(isFileUri(tok) || looksLikeFilePath(tok) || looksLikeBareFileName(tok))) continue;
-    runs.push([lo + start, lo + start + tok.length]);
-    from = start + tok.length;                        // a linked token: right after it, its trimmed tail prose
+    const e = start + tok.length;
+    runs.push([start, e]);
+    from = e;                                         // a linked token: right after it, its trimmed tail prose
+    for (let i = start; i < e; i++) {                 // its `_` runs: one strictly inside (began after the token did, ends before it does) is hidden
+      if (masked.charCodeAt(i) !== 95) continue;
+      let j = i + 1;
+      while (j < e && masked.charCodeAt(j) === 95) j++;
+      if (i > start && j < e) { hidden += masked.slice(copied, i) + HIDDEN.repeat(j - i); copied = j; }
+      i = j - 1;
+    }
   }
-  linkableMemo.byRun.set(lo, runs);
-  return runs;
+  linkableMemo = { masked, runs, hidden: copied ? hidden + masked.slice(copied) : masked };
+  return linkableMemo;
 }
-/** Whether the delimiter run [d0, d1) lies strictly inside one of `runs`: the token began before it and ends after it. */
-const strictlyInside = (runs: Array<[number, number]>, d0: number, d1: number): boolean => runs.some(([s, e]) => s < d0 && d1 < e);
+/** Whether the delimiter run [d0, d1) lies strictly inside one of `runs` (in order, disjoint): the token began before
+ *  it and ends after it. A binary search for the last token that began before d0; an earlier one ended before it. */
+function strictlyInside(runs: Array<[number, number]>, d0: number, d1: number): boolean {
+  let a = 0, b = runs.length;
+  while (a < b) { const mid = (a + b) >> 1; if (runs[mid][0] < d0) a = mid + 1; else b = mid; }
+  return a > 0 && d1 < runs[a - 1][1];
+}
 export const pathAwareEmphasis = {
   tokenizer: {
     emStrong(this: Tokenizer, src: string, maskedSrc: string, prevChar = "") {
       if (src.charCodeAt(0) !== 95) return false;                       // a `*` run: not a path character, the built-in's as it stands
+      const at = maskedSrc.length - src.length;                          // where `src` starts in the paragraph: the mask keeps the length (BMP)
+      const tokens = linkableRuns(maskedSrc);
       const dry = { rules: this.rules, lexer: DRY_LEXER } as unknown as Tokenizer;
-      const pair = Tokenizer.prototype.emStrong.call(dry, src, maskedSrc, prevChar);
+      const pair = Tokenizer.prototype.emStrong.call(dry, src, tokens.hidden, prevChar);   // the closer scan sees no run inside a token
       if (!pair) return undefined;
-      const at = maskedSrc.length - src.length;                          // where `src` starts in the paragraph: the mask keeps the length
       const width = pair.type === "strong" ? 2 : 1;                      // the delimiters the pair spends at each end; a longer run's rest is body
       const end = at + pair.raw.length;
-      if (strictlyInside(linkableRuns(maskedSrc, at), at, at + width) || strictlyInside(linkableRuns(maskedSrc, end - width), end - width, end)) return undefined;
-      pair.tokens = this.lexer.inlineTokens(pair.text);
+      if (strictlyInside(tokens.runs, at, at + width) || strictlyInside(tokens.runs, end - width, end)) return undefined;   // the closer check: a run the hiding left whole (at a token's edge, longer than the pair spends)
+      pair.tokens = this.lexer.inlineTokens(pair.text);                 // the body: its own masked string, its own scan ...
+      linkableMemo = tokens;                                             // ... and the paragraph's comes back for the delimiters after the pair
       return pair;
     },
   },

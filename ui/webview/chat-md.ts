@@ -7,7 +7,9 @@
 //     which is why a reply parses here and not on the singleton since 2026-09-19: the chat links the file paths in
 //     its rendered text, and an emphasis pair opened or closed inside a path cut the token the walk looks for
 //     (`/a-_b/c_/d.md` rendered `/a-<em>b/c</em>/d.md`; md-config.ts says the rest). The viewer, the hover preview
-//     and the feed's cards stay on the singleton, whose rendering of a note is GitHub's;
+//     and the anchor map stay on the singleton, whose rendering of a note is GitHub's; the feed's notice cards are
+//     on neither: they render on a bare instance of their own (feed.ts noticeMarked, gfm with hard breaks and no
+//     extensions), which takes nothing from this module or md-config.ts and links no paths;
 //   - `userMarked` below — `breaks: true`: what the user typed is not authored markdown. Shift+Enter in the
 //     composer means "new line", and the bubble must show the line the person made (the user 2026-09-06:
 //     a multi-line message ran together into one paragraph once it reached the chat). marked's `breaks`

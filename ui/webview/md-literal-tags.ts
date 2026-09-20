@@ -31,9 +31,10 @@
 // are not read here: the tag scan (anchor-map.ts topTags) models what the parser makes of an html block.
 //
 // ONE rule, one code path. The viewer runs this on the tokens of each parse (file-view.ts mdBlock, between marked's lexer and
-// its parser, on that parse's own token tree, so the chat's md(), which parses the same singleton, renders as before) and the
-// map runs it on its own lex of the same source (anchor-map.ts placeTokens, right after Lexer.lex), before anything reads the
-// tokens; both lex the same text under the one configuration (md-config.ts), so both convert the same tokens. Deliberately
+// its parser, on that parse's own token tree, so the chat's md(), which parses on the chat's own instance (chat-md.ts
+// chatMdHtml: the singleton's grammar plus pathAwareEmphasis) and never meets the rule, renders as before) and the map runs it
+// on its own lex of the same source (anchor-map.ts placeTokens, right after Lexer.lex), before anything reads the tokens; both
+// lex the same text under the one configuration (md-config.ts), so both convert the same tokens. Deliberately
 // left, recorded in the plan: `<hr>` inline is void, stays HTML and still splits its paragraph in the parser; a start tag whose
 // end tag stands in a LATER block renders as text now, where the parser used to wrap the blocks between in its element; a
 // block-level element closed within its block mid-line (`<div>x</div>`) still splits the paragraph in the parser. marked's

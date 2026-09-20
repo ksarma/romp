@@ -7,7 +7,8 @@
 // and the kernel's key for it matched no text node (the 2026-09-19 browser census, Entry 5: a temp directory whose
 // random name began with an underscore). marked is spec-correct on every row, so the fix is a tokenizer override on
 // the chat's instances that refuses an opener or closer lying strictly inside a token the walk's own scanner and
-// gates would link. Pinned here, by execution: every member row renders literal on both chat renderers and the walk
+// gates would link, and hides a run inside such a token from the built-in's closer scan (md-emphasis-override.test.ts
+// pins that edge and the mechanism's cost). Pinned here, by execution: every member row renders literal on both chat renderers and the walk
 // then links every wanted token (C36 both of its two); every other row is byte-identical to the base grammar (the
 // singleton's configuration on a private instance), real emphasis, strong, strikethrough, autolinks, code spans and
 // fences included; the adversarial rows change only where the note says, A08 the one accepted loss; the base grammar
@@ -89,7 +90,11 @@ const CASES: Row[] = [
   { id: "C37", text: "_private_ sits beside /a-_b/c_/d.md", after: "<p><em>private</em> sits beside /a-_b/c_/d.md</p>\n", links: [P] },
   { id: "C38", text: "_private /a-b/c_/d.md", after: "<p>_private /a-b/c_/d.md</p>\n", links: ["/a-b/c_/d.md"] },
   { id: "C39", text: "__init__.py and __main__.py", after: "<p>__init__.py and __main__.py</p>\n", links: [], keys: ["__init__.py", "__main__.py"] },
-  { id: "C40", text: "src/*.py and lib/*.ts", keeps: ["src/<em>.py and lib/</em>.ts"], links: [] },
+  { id: "C40", text: "src/*.py and lib/*.ts", keeps: ["src/<em>.py and lib/</em>.ts"], links: [] },   // a boundary, not a member: `*` is no path character, so a glob is no token to the walk or the kernel and was never linked; both grammars pair the stars, as GitHub does
+  // C41 to C43 are the two parity follow-ups the ledger entry records (the kernel tokenises the raw markdown, the walk the
+  // rendered DOM; not this change's): `links` holds the DOM token the walk sees, and the kernel's own key differs (C41 three
+  // tokens, `/a-`, `_b/c`, `_/d.md`; C42 `_docs/notes.md_`; C43 `~~/old/notes.md`) and would link nothing, so these rows
+  // show the DOM token whole under a map that holds it, not that the kernel's map links a wrapped or escaped path
   { id: "C41", text: "see /a-\\_b/c\\_/d.md today", keeps: ["<p>see /a-_b/c_/d.md today</p>"], links: [P] },
   { id: "C42", text: "_docs/notes.md_", keeps: ["<em>docs/notes.md</em>"], links: ["docs/notes.md"] },
   { id: "C43", text: "~~/old/notes.md~~", keeps: ["<del>/old/notes.md</del>"], links: ["/old/notes.md"] },
@@ -268,7 +273,8 @@ test("every other row is byte-identical to the base grammar, and its emphasis, s
     assert.equal(c, b, r.id + ", " + who + ": " + JSON.stringify(r.text));
     for (const k of r.keeps || []) { assert.ok(b.includes(k), r.id + " base keeps " + k + ": " + b); assert.ok(c.includes(k), r.id + ", " + who + " keeps " + k + ": " + c); }
   }
-  // the rows that decide the boundary: real emphasis the user or the session typed, at a token's edge or around one
+  // the rows that decide the boundary: real emphasis the user or the session typed, at a token's edge or around one, and
+  // the glob C40, whose stars pair on text that is no token to the walk
   for (const id of ["C17", "C23", "C24", "C25", "C40", "C42", "C43"]) assert.ok(byId(CASES, id).keeps, id + " asserts a kept shape");
 });
 
@@ -355,10 +361,10 @@ test("the instance boundary: the singleton (the viewer, the hover preview, the a
   assert.doesNotMatch(list, /pathAwareEmphasis/, "the shared list, which the singleton takes, does not carry the override");
   assert.match(CONFIG, /^export const pathAwareEmphasis = \{\n {2}tokenizer: \{\n {4}emStrong\(this: Tokenizer, src: string, maskedSrc: string, prevChar = ""\) \{/m, "the override is an emStrong tokenizer override, delDoubleTilde's shape");
   assert.match(CONFIG, /^import \{ isFileUri, looksLikeBareFileName, looksLikeFilePath, PathTokenScanner, trailingPunct \} from "\.\/path-links";/m, "the scanner and the gates are the walk's own, imported");
-  const override = CONFIG.slice(CONFIG.indexOf("const WHITESPACE_RE = "), CONFIG.indexOf("} as MarkedExtension;", CONFIG.indexOf("export const pathAwareEmphasis")));
+  const override = CONFIG.slice(CONFIG.indexOf("const DRY_LEXER = "), CONFIG.indexOf("} as MarkedExtension;", CONFIG.indexOf("export const pathAwareEmphasis")));
   assert.ok(override.includes("function linkableRuns(") && override.includes("emStrong(this: Tokenizer"), "the override's code, from its first constant to its close");
-  assert.doesNotMatch(override, /\[~\.|BARE_FILE_EXTS|A-Za-z0-9|\\\.\[|new RegExp\(/, "and never restated: no path grammar of its own in the override's code (a whitespace test is its one regex)");
-  assert.match(CONFIG, /Tokenizer\.prototype\.emStrong\.call\(dry, src, maskedSrc, prevChar\)/, "the built-in decides the pair, on the dry stand-in");
+  assert.doesNotMatch(override, /\[~\.|BARE_FILE_EXTS|A-Za-z0-9|\\\.\[|new RegExp\(/, "and never restated: no path grammar of its own in the override's code (no regex of its own at all)");
+  assert.match(CONFIG, /Tokenizer\.prototype\.emStrong\.call\(dry, src, tokens\.hidden, prevChar\)/, "the built-in decides the pair, on the dry stand-in, over the masked string with every run inside a token hidden");
   assert.match(CHAT, /^export const chatMarked = new Marked\(\{ gfm: true, breaks: false \}, \.\.\.mdExtensions, pathAwareEmphasis\);/m, "the reply instance");
   assert.match(CHAT, /^export const userMarked = new Marked\(\{ gfm: true, breaks: true \}, \.\.\.mdExtensions, pathAwareEmphasis\);/m, "the user instance");
   assert.match(RENDER, /^import \{ chatMdHtml, userMdHtml \} from "\.\/chat-md";/m);
@@ -367,4 +373,7 @@ test("the instance boundary: the singleton (the viewer, the hover preview, the a
   assert.doesNotMatch(mdFn, /marked\.parse/, "and no longer on the singleton");
   assert.match(RENDER, /function previewMdClean\(src: string\): HTMLElement \{\n\s*let clean: HTMLElement;\n\s*try \{ clean = sanitizeMd\(marked\.parse\(src\) as string\); \}/, "the hover preview stays on the singleton: a previewed file is a note, rendered as the viewer renders it");
   assert.doesNotMatch(read("file-view.ts"), /pathAwareEmphasis|chatMarked|chatMdHtml/, "the viewer takes none of it");
+  const FEED = read("feed.ts");
+  assert.match(FEED, /^const noticeMarked = new Marked\(\{ gfm: true, breaks: true \}\);/m, "the feed's notice cards render on a bare instance of their own, on neither the singleton nor the chat's instances");
+  assert.doesNotMatch(FEED, /from "\.\/md-config"|from "\.\/chat-md"|from "\.\/path-links"/, "which takes nothing from the grammar modules and links no paths (chat-md.ts's header says so)");
 });
