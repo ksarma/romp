@@ -111,6 +111,14 @@ class LandingShell(unittest.TestCase):
         # the box and the keyboard — the fixed bar's reserved height (--mtabs-h) showing through while the
         # bar itself was hidden behind the keyboard. Collapse the reservation to 0 when the keyboard is open
         # (visual viewport much shorter than the layout viewport), restore it when the keyboard closes.
+        # Round 6 (2026-09-20): these are source pins on upstream's lines, and since D1 rebound barfit the
+        # write pinned last runs only on the FALLBACK road (no bar, no visualViewport, a style object without
+        # getPropertyValue, a run before fit() published the band; reached through barfitVV), so this test no
+        # longer decides the phone's strip: a rebound write reserving the bar's whole height while the keyboard
+        # hides it keeps every line here green. The behaviour for the 2026-07-22 report is held by
+        # MobileFitExecutes (test_the_2026_07_22_dead_band_the_strip_collapses_while_the_keyboard_hides_the_bar,
+        # the keyboard legs and the sweep), which execute the served script; the rebound write's own bytes are
+        # pinned once, in test_shell_viewport_fit.
         js = km._LANDING_MOBILE_JS
         # scale-aware (the user 2026-08-19): a desktop pinch shrinks vv.height by the zoom factor; height*scale
         # recovers the layout height, so a pinch never reads as "keyboard open" (or re-fits --app-h smaller)
@@ -120,7 +128,7 @@ class LandingShell(unittest.TestCase):
         # viewport drives the fit only on coarse-pointer devices, where keyboards/toolbars live
         self.assertIn("var coarse=window.matchMedia&&matchMedia('(pointer: coarse)').matches;", js)
         self.assertIn("var h=(!coarse||!vv)?window.innerHeight:Math.round(vv.height*(vv.scale||1));", js)
-        self.assertIn("--mtabs-h',(kbOpen()?0:(bar.offsetHeight||0))+'px'", js)
+        self.assertIn("--mtabs-h',(kbOpen()?0:(bar.offsetHeight||0))+'px'", js)   # upstream's write: the fallback road's own pin
 
     def test_usage_modal_dismisses_via_a_real_backdrop_not_a_document_click(self):
         # the user 2026-07-22: on mobile the Usage panel got STUCK — an outside tap landed on a content
@@ -768,6 +776,19 @@ class MobileFitExecutes(unittest.TestCase):
     def test_boot_fits_at_once_from_the_visual_viewport(self):
         # the first paint is right without waiting a frame; the bar's reservation is measured too
         self.assertEqual(self.out["boot"], {"appH": "844px", "barH": "44px", "rafPending": 0})
+
+    def test_the_2026_07_22_dead_band_the_strip_collapses_while_the_keyboard_hides_the_bar(self):
+        # the user 2026-07-22: the fixed bar's reserved strip showed as a dead band between the composer and the keyboard
+        # while the bar itself was hidden behind it. LandingShell's pin on upstream's write no longer decides the phone
+        # (barfit is rebound; upstream's line is the fallback road's), so the report's behaviour is held here, executed: with
+        # the keyboard up and the bar's box below the band, the strip is 0, in every sweep state with the bar wholly below
+        # the band (derived from the box and the band each record carries, and there must be such states)
+        self.assertEqual(self.out["kbUp"]["barH"], "0px", "the keyboard up: the bar hidden behind it reserves nothing")
+        self.assertEqual(self.out["pan"]["barH"], "0px", "under iOS's pan too")
+        px = lambda v: int(v[:-2])
+        below = [r for r in self.out["sweep"] if r["bar"]["top"] >= px(r["appTop"]) + px(r["appH"])]
+        self.assertGreaterEqual(len(below), 2, "sweep states with the bar wholly below the band")
+        self.assertEqual({r["label"]: r["barH"] for r in below}, {r["label"]: "0px" for r in below})
 
     def test_the_keyboard_shrinks_the_shell_and_the_composers_blur_alone_grows_it_back(self):
         self.assertEqual(self.out["kbUp"], {"appH": "460px", "barH": "0px"})
