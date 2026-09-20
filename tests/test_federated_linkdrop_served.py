@@ -1160,7 +1160,11 @@ class _LinkDrop(unittest.TestCase):
         population6.py old | xargs python3 excuse_census.py <tests_dir>`, this helper over each record's windows, outside the
         repo), load-bearing in 5, and a planted gating miss (a phase's patches and rows removed from the record) stayed green
         at both floors; keyed on the gap it is available in 5 of those 75, the phase-A windows of the five drives whose
-        Outline socket churned inside phase A (the same command at this module), and the planted miss reds. The post times
+        Outline socket churned inside phase A (the same command at this module), and the planted miss reds. Over all 75
+        windows the planted miss (the phase's feed patches and rows removed, every frame kept) reds the floor in 70 and stays
+        excused in those 5 (`python3 population6.py old | xargs python3 census_module.py <tests_dir>`, the floor itself over
+        each window, outside the repo, as of the same drive): a real gating miss during a churn is indistinguishable from the
+        churn in the record, the excuse's remaining hole and the price of excusing the churn at all. The post times
         are DERIVED from the change record (its t0 plus i x NOTICE_GAP_S, _change's own sleeps between the posts, on the
         poster's clock at millisecond resolution); each notice's answer in the record carries the remote kernel's own stamp
         for the notice too (`at`, `t`), but in whole seconds and on the other clock, too coarse for a millisecond gap check,

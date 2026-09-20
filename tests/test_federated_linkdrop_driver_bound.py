@@ -45,7 +45,8 @@ asked for whose bundle cannot be made ready, or whose root holds no kernel, is a
 checkout's own bundle failing to build stays a skip (round 1's tests-3, ruled twice); the old-hub storm's allowance
 for an empty phase is keyed on a notice post that found the Outline without an open, served relay socket and then on a
 whole keyed feed frame after the bundle's last notice, over a synthetic record, and the floor it guards reds on a planted
-miss with the frame present (round 4: the frame alone excused 47 of 75 recorded windows); and the
+miss with the frame present (round 4: the frame alone excused 47 of the 75 phase windows over the 25 old-hub records as of
+`r6-margin/lab-head5.log`; the census and its command are in _outline_caught_up_whole's docstring); and the
 gate's control in time takes a phase's waitedMs as a delivery only when every wait behind it resolved and its visibles
 showed, over a synthetic record for each class (round 5: a wait that ran to its cap measured as a delivery at the cap).
 
@@ -561,8 +562,9 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
         the gaps between the notices) and before the window's padded end. Round 3 found the key was the window: a frame at
         A0 + 5 ms or between notice 1 and notice 2 excused a stripped phase, though it could not have carried the notices
         posted after it. Round 4 found the frame alone was no key either: on the old bundle a routine redial produces a whole
-        frame after the notices were already delivered as patches, so the excuse was available in 47 of the 75 recorded phase
-        windows and a planted miss stayed green, and the cells below could not tell the keys apart, since a synthetic socket
+        frame after the notices were already delivered as patches, so the excuse was available in 47 of the 75 phase windows
+        over the 25 old-hub records as of `r6-margin/lab-head5.log` (the census is in _outline_caught_up_whole's docstring)
+        and a planted miss stayed green, and the cells below could not tell the keys apart, since a synthetic socket
         with no openAt reads as never open and the gap held in every cell. Over a synthetic record, by cell: with the socket
         recording no open, a frame before the window, before the first post, between the notices, one millisecond before the
         last notice's earliest post (all no excuse), at it, after the bundle, at the right pad's edge (all an excuse), past
