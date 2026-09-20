@@ -14,7 +14,7 @@ at collection) while 16 make it only inside a def (census 2026-09-20 by ast over
 load_source, a Name or an Attribute, with a str first argument and a second argument whose source segment contains romp-kernel,
 so a call inside a string literal is excluded by construction; the split is whether the Call has a FunctionDef ancestor). The
 same census as one line, run from the checkout root, printing files, names, module-level files and def-only files:
-python -c 'import ast,glob;T=[(f,s,ast.parse(s)) for f in glob.glob("tests/*.py") for s in [open(f).read()]];D={id(c) for f,s,t in T for d in ast.walk(t) if isinstance(d,(ast.FunctionDef,ast.AsyncFunctionDef,ast.Lambda)) for c in ast.walk(d)};R=[(f,c) for f,s,t in T for c in ast.walk(t) if isinstance(c,ast.Call) and getattr(c.func,"id",getattr(c.func,"attr",0))=="load_source" and len(c.args)>1 and isinstance(c.args[0],ast.Constant) and isinstance(c.args[0].value,str) and "romp-kernel" in (ast.get_source_segment(s,c.args[1]) or "")];F={f for f,c in R};M={f for f,c in R if id(c) not in D};print(len(F),len({c.args[0].value for f,c in R}),len(M),len(F-M))'
+python3 -c 'import ast,glob;T=[(f,s,ast.parse(s)) for f in glob.glob("tests/*.py") for s in [open(f).read()]];D={id(c) for f,s,t in T for d in ast.walk(t) if isinstance(d,(ast.FunctionDef,ast.AsyncFunctionDef,ast.Lambda)) for c in ast.walk(d)};R=[(f,c) for f,s,t in T for c in ast.walk(t) if isinstance(c,ast.Call) and getattr(c.func,"id",getattr(c.func,"attr",0))=="load_source" and len(c.args)>1 and isinstance(c.args[0],ast.Constant) and isinstance(c.args[0].value,str) and "romp-kernel" in (ast.get_source_segment(s,c.args[1]) or "")];F={f for f,c in R};M={f for f,c in R if id(c) not in D};print(len(F),len({c.args[0].value for f,c in R}),len(M),len(F-M))'
 This module takes its kernel through test_asm_checkpoint.kernel_module(), which loads romp_kernel_t323s4a once per process into
 the module-level cache _KM. test_whole_reads_and_hydrations_are_counted_under_the_calling_threads_stage and
 test_the_push_mark_is_restored_on_every_exit_and_the_pushs_reads_count_under_push mark the stage on that instance's _STAGE_TL and
@@ -35,14 +35,18 @@ collection (chunk = items // workers // 4, xdist 3.8.0), and the pair is red on 
 classes (a slice holding LazyBodies' test and no other of that file's reds too). In the sweeps (run-sweep.sh: -n 10 under an
 80G scope; 17,697 to 17,750 items, chunk 442 or 443) gw1's slice began past the last item of the nine classes, which is why the
 pair was red on gw1 in every full xdist sweep of PRs that did not touch this module (four sightings, 2026-09-19/20) and green
-alone; in this tree at 20933397f (17,604 items, chunk 440, the last item of the nine classes, SeededDocumentMemo's, at index
-441, LazyBodies' at 442, the pair at 511 and 516; a 2026-09-20 recount of that collection gave 17,618 items with the same chunk
-and the same indices, and on this tree the two guard tests below sort before the pair and move it to 513 and 518 under the same
-chunk) gw1 holds the nine's last item and the pair, and the pair passes. setUp below saves the slot's pair, installs this kernel's
-providers through the public setters and restores the saved pair in a cleanup, so a later-loaded kernel's own tests are
-unaffected. Two repros without xdist, as explicit node ids in the order given. Both reproduce at the parent commit 20933397f, or
-on this tree with setUp's four provider lines (the two installs and their two cleanups) removed; on this tree with the binding,
-both orders are green (verified 2026-09-20, this tree and a copy with the four lines commented out). The first: the roads test,
+alone; in this tree at 20933397f (two collections of one tree: 17,604 items under the sweeps' invocation, which passes
+run-sweep.sh's --ignore=tests/test_cut_turn_tree_kill.py, and 17,618 under bare pytest, which collects that file's 14 items too;
+either way chunk 440, the last item of the nine classes, SeededDocumentMemo's, at index 441, LazyBodies' at 442 and the pair at
+511 and 516, the ignored file sorting after this one; on this tree the three guard tests below sort before the pair and move it
+to 514 and 519 under the same chunk) gw1 holds the nine's last item and the pair, and the pair passes. setUp below saves the
+slot's pair, registers the two cleanups that restore it, then installs this kernel's providers through the public setters, so
+the slot is this kernel's for the test's length and a later-loaded kernel's own tests are unaffected. Two repros without xdist,
+as explicit node ids in the order given. Both reproduce at the parent commit 20933397f, or on this tree with setUp's four
+provider lines (the two installs and their two cleanups) removed; on this tree with the binding, both orders are green (verified
+2026-09-20, this tree and a copy with the four lines commented out). In both, "the roads test" is
+tests/test_assembly_road_counters.py::AssemblyRoadCounters::test_the_roads_ride_the_perf_block_with_the_full_parses_reason
+(the module's other roads-named test, test_the_boot_health_row_carries_the_parses_roads, is in neither). The first: the roads test,
 the two stage tests,
 tests/test_intr_marks_memo.py::MarksMemo::test_a_cut_armed_after_the_key_and_before_the_persist_is_answered_but_not_persisted,
 tests/test_ws_liveness.py::PhantomPanesAreDropped::test_a_the_beat_carries_a_ping_and_a_browser_answers_it (the last two run after
@@ -67,10 +71,10 @@ class AssemblyRoadCounters(Harness):
         km = kernel_module()                              # the kernel's first load refreshes the event model's globals: load it
         #                                                   before any counter is read, so the row and the test see one dict
         saved = (em._READ_STAGE_FN[0], em._SET_STAGE_FN[0])   # the event model's one stage-provider slot is the LAST loaded kernel's
-        em.set_read_stage_provider(km._current_read_stage)    #  (module docstring): point it at THIS kernel, whose thread-local the
-        em.set_stage_provider(km._set_stage)                  #  stage tests mark, for the test's length, and put the pair back after
-        self.addCleanup(em.set_read_stage_provider, saved[0])
-        self.addCleanup(em.set_stage_provider, saved[1])
+        self.addCleanup(em.set_read_stage_provider, saved[0]) #  (module docstring). Both restores register BEFORE either
+        self.addCleanup(em.set_stage_provider, saved[1])      #  install: a raise between the installs still puts the pair back;
+        em.set_read_stage_provider(km._current_read_stage)    #  then the slot points at THIS kernel, whose thread-local the stage
+        em.set_stage_provider(km._set_stage)                  #  tests mark, for the test's length; the decoy test keeps the order
 
     def _reset(self):
         for k in list(em._ASM_STATS):
@@ -909,11 +913,15 @@ class AssemblyRoadCounters(Harness):
         """Review round 1 (fresh-1, 2026-09-20): with setUp installing the providers itself, this module no longer reds when the
         kernel's own module-level install is deleted, the two product lines in kernel/kernel.py below the _stage_marked and
         _stage_default decorators, em.set_read_stage_provider(_current_read_stage) and em.set_stage_provider(_set_stage), which the
-        two stage tests caught before the binding and no other in-process test catches. This covers those two lines on their own,
-        independent of setUp's rebinding: a child process loads the event model under its fixed name, then bin/romp-kernel under a
-        private name, and reports whether the slot holds that kernel's _current_read_stage and _set_stage. A child process, not an
-        in-process load, because a fresh kernel load in this process would move the slot for the rest of the worker (the module
-        docstring's mechanism) and become the ordering hazard this module documents."""
+        two stage tests caught before the binding. Of the two, only the setter's line has another in-process test:
+        tests/test_stage_marks.py::StageMarksCensus::test_the_pools_submit_carries_the_submitters_stage_into_the_worker pins
+        em.set_stage_provider(_set_stage) in kernel.py's source (round 2, tests-1); no in-process test catches the read install's
+        line. What this test adds beyond a source pin is that it executes the install: a child process loads the event model under
+        its fixed name, then bin/romp-kernel under a private name, and reports whether the slot holds that kernel's
+        _current_read_stage and _set_stage after the fresh load, so an install that is present in the source and does not take
+        (the wrong function, the wrong event model object, an install before the event model's load) reds here and not at the pin.
+        A child process, not an in-process load, because a fresh kernel load in this process would move the slot for the rest of
+        the worker (the module docstring's mechanism) and become the ordering hazard this module documents."""
         code = ("import sys; sys.path.insert(0, %r)\n"                       # the tests dir, where romp_load lives
                 "from romp_load import load_source\n"
                 "em = load_source('romp_event_model', %r)\n"
@@ -928,14 +936,44 @@ class AssemblyRoadCounters(Harness):
                          "a fresh kernel's module-level install owns the slot (read provider, setter): stdout %r; stderr:\n%s"
                          % (r.stdout, r.stderr[-2000:]))
 
+    def test_a_test_of_this_class_runs_with_the_slot_holding_this_kernels_pair(self):
+        """Review round 2 (extra4-1, 2026-09-20): while a test of this class runs, both halves of the slot are this kernel's and the
+        setter half works: a mark set through em._set_stage_mark lands on this kernel's thread-local. Alone in a process this holds
+        without setUp (this kernel's own load put its pair in the slot), so the mutation that reds it is the decoy test's: it runs
+        this method through a TestSuite under a decoy pair, where only setUp's installs can put this kernel's pair in the slot.
+        Deleting setUp's em.set_stage_provider(km._set_stage) reds this method under the decoy (the setter half is the decoy's, and
+        the probe mark never reaches km._STAGE_TL), and nothing else in the module reds for that line; deleting
+        em.set_read_stage_provider(km._current_read_stage) reds it under the decoy too (the first assertion). The mapping for all
+        four of setUp's provider lines is in the decoy test's docstring."""
+        km = kernel_module()
+        self.assertIs(em._READ_STAGE_FN[0], km._current_read_stage, "the read half is this kernel's (setUp's first install)")
+        self.assertIs(em._SET_STAGE_FN[0], km._set_stage, "the setter half is this kernel's (setUp's second install)")
+        before = km._current_read_stage()
+        self.addCleanup(km._set_stage, before)
+        em._set_stage_mark("probe")                                        # through the slot, as a pool worker sets its mark
+        self.assertEqual(km._current_read_stage(), "probe", "a mark set through the slot lands on this kernel's thread-local")
+        km._set_stage(None)
+        self.assertIsNone(km._current_read_stage())
+
     def test_a_decoy_pair_in_the_slot_is_displaced_for_a_stage_tests_length_and_stands_again_after_it(self):
         """Review round 1 (tests-4, 2026-09-20): the guard on setUp's binding itself. A decoy read provider (answers "decoy") and a
-        decoy setter go into the slot through the public setters; one of the two stage tests runs through a TestSuite into a
-        TestResult and passes, because setUp pointed the slot at this kernel for the test's length; and afterwards the decoy pair
-        is in the slot again, because setUp's cleanup put it back. With setUp's four provider lines removed this reds
-        deterministically in every collection, alone or in any order: the stage test's marks are read through the decoy and its
-        rows book `decoy:`, not `jobs.probe:`. The original defect did not have that property (red only on a worker whose slice
-        held no test of the nine calling classes, module docstring)."""
+        decoy setter go into the slot through the public setters; one of the two stage tests and the slot test above
+        (test_a_test_of_this_class_runs_with_the_slot_holding_this_kernels_pair) run through a TestSuite into a TestResult and
+        pass, because setUp pointed the slot at this kernel for each test's length; and afterwards the decoy pair is in the slot
+        again, because setUp's cleanups put it back. With setUp's four provider lines removed this reds deterministically in every
+        collection, alone or in any order: the stage test's marks are read through the decoy and its rows book `decoy:`, not
+        `jobs.probe:`. The original defect did not have that property (red only on a worker whose slice held no test of the nine
+        calling classes, module docstring). Round 2 (extra4-1): each of setUp's four provider lines has a mutation that reds this
+        test and no other test of the module (verified 2026-09-20 by deleting each line alone in a copy of the tree and running the
+        module: 1 failed, 33 passed, this test, four times; outside a decoy the module stays green with any one of the four gone,
+        because this kernel's own load put its pair in the slot). Deleting self.addCleanup(em.set_read_stage_provider, saved[0])
+        reds this test because the read half stays this kernel's after the inner run (the "put the decoy read provider back"
+        assertion). Deleting self.addCleanup(em.set_stage_provider, saved[1]) reds this test because the setter half stays this
+        kernel's after the inner run ("and the decoy setter"). Deleting em.set_read_stage_provider(km._current_read_stage) reds
+        this test because the inner stage test reads its marks through the decoy and books `decoy:upgrade<-_job_stage`, and the
+        inner slot test's read assertion fails beside it. Deleting em.set_stage_provider(km._set_stage) reds this test because the
+        inner slot test finds the decoy setter in the slot ("the setter half is this kernel's"); before the slot test existed that
+        line had no mutation behind it."""
         def decoy_read():
             return "decoy"
 
@@ -948,9 +986,11 @@ class AssemblyRoadCounters(Harness):
         em.set_stage_provider(decoy_set)
         self.assertEqual(em._read_stage(), "decoy")
         result = unittest.TestResult()
-        unittest.TestSuite([AssemblyRoadCounters("test_whole_reads_and_hydrations_are_counted_under_the_calling_threads_stage")]).run(result)
-        self.assertEqual(result.testsRun, 1)
-        self.assertTrue(result.wasSuccessful(), "the stage test under a decoy slot:\n%s"
+        unittest.TestSuite([AssemblyRoadCounters(name) for name in (
+            "test_whole_reads_and_hydrations_are_counted_under_the_calling_threads_stage",
+            "test_a_test_of_this_class_runs_with_the_slot_holding_this_kernels_pair")]).run(result)
+        self.assertEqual(result.testsRun, 2)
+        self.assertTrue(result.wasSuccessful(), "the stage test and the slot test under a decoy slot:\n%s"
                         % "\n".join(text for _, text in result.failures + result.errors))
         self.assertIs(em._READ_STAGE_FN[0], decoy_read, "setUp's cleanup put the decoy read provider back")
         self.assertIs(em._SET_STAGE_FN[0], decoy_set, "and the decoy setter")
