@@ -56,7 +56,7 @@ SHARED = {"nav": {"type": "reload", "responseEnd": 210, "domContentLoaded": 656,
           "env": {"standalone": True, "iosMajor": 17, "touch": True, "vw": 390, "vh": 664, "dpr": 3, "entryTypes": ["paint", "resource", "navigation"], "ric": False, "dv": 1757100000},
           "vis": {"hiddenN": 1, "visibleN": 1, "hiddenMs": 30000}, "wsBytes": 12345, "rafGap": {"n": 2, "worst": 120},
           # wsBytesByHost (2026-09-19, the user's approval: the bytes each attached host sent, one number per host, no content):
-          # the same unit per REMOTE host by its position on the page, h1 the first remote host it attached; positions, never names
+          # the same unit per REMOTE host by its position in the pane document, h1 the first remote host it attached; positions, never names
           "wsBytesByHost": {"h1": 40123, "h2": 991}}
 
 # The content census (review round 1 of the wsBytesByHost change, 2026-09-20). Every admitted key of every surface, classified by
@@ -769,6 +769,11 @@ class ClientDiagAllowlistTest(unittest.TestCase):
                           r"\bmints\b", r"does not inspect the map's keys", r"nested key",
                           r"regular-expression test in the page bundle", r"the kernel has none"):   # the enforcement named (round 3, extra8-3)
                 self.assertIsNotNone(re.search(token, text, re.I), "%s: the disclosure no longer states %r" % (name, token))
+            # one grain per copy (round 3, the fixer's pass): the copies state the per-document grain and its consequence, so no
+            # sentence of theirs may keep the page grain the first cut wrote (h1 "the first remote host the page saw", a position
+            # "on the page"), which on a page with several panes is false and contradicts the sentence beside it
+            for phrase in (r"position on the page", r"the page saw", r"this page attached", r"page-lifetime", r"the page attaches", r"appeared to the page"):
+                self.assertIsNone(re.search(phrase, text, re.I), "%s: the disclosure states the page grain again: %r" % (name, phrase))
         # the bare-name example is derived, not hand-kept: every federation row kind that carries the conn's host, read from
         # federation.ts's diag call sites, is named by every copy (round 1, 2026-09-20: the copies named hostconn alone)
         kinds = federation_host_row_kinds()

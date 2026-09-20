@@ -1,7 +1,7 @@
 // wsBytesByHost (2026-09-19): the text-frame characters each REMOTE host's sockets deliver to a federated page, counted by
 // the FederationManager in the conn's ws.onmessage before the parse (a keepalive and an undecodable frame both count, as the
 // shim's own wsBytes counter counts them on the LOCAL socket: the same unit, String.length, and disjoint from it), kept per
-// host POSITION for the page's life (h1 the first remote host the page saw, assigned in the order hosts first appear, the
+// host POSITION for the manager's life (h1 the first remote host the pane document saw, assigned in the order hosts first appear, the
 // kernel's /tunnels row order for a first answer that lists several) and published as window.__rompFed.wsBytesByHost for
 // the collector (perf-telemetry.ts) to difference per minute. The two maps are never pruned: a detached host keeps its
 // position and its total, a re-attached host counts on under its old position, and hostSeq (pruned on detach, re-pushed
@@ -121,7 +121,7 @@ test("two hosts from one /tunnels answer take positions in the row's order; fram
   });
 });
 
-test("positions are stable for the page's life: a host detached by a /tunnels answer that omits it keeps its position and its total, the other host stays where it was, a host first seen WHILE one is detached takes the next position (never the detached host's), a re-attached host counts on under its old position while hostSeq now lists it LAST", async () => {
+test("positions are stable for the manager's life: a host detached by a /tunnels answer that omits it keeps its position and its total, the other host stays where it was, a host first seen WHILE one is detached takes the next position (never the detached host's), a re-attached host counts on under its old position while hostSeq now lists it LAST", async () => {
   await withManager(async ({ fm, rows }) => {
     rows.push(row(HOST_A), row(HOST_B));
     await fm.poll();

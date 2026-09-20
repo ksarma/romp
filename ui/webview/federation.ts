@@ -1026,7 +1026,9 @@ export class FederationManager {
   private tlBarsHeld = false; // a bars emission waited for the LOCAL lanes skeleton: their arrival emits it (emitMergedTimeline)
   private hostSeq: string[] = [LOCAL]; // local first, then attach order — fixes the group order in the strip
   // wsBytesByHost (2026-09-19; the user approved the field: the bytes each attached host sent, one number per host, no
-  // content). Two PAGE-LIFETIME maps: each remote host's ordinal, assigned the first time the host appears to this page
+  // content). Two maps for this MANAGER's life (one federation manager per pane document, so the grain is the pane
+  // document and not the page: another pane of the same dashboard, the same app included, mints its own positions):
+  // each remote host's ordinal, assigned the first time the host appears to this manager
   // (openRemote; the first /tunnels answer assigns several at once in the kernel's row order, the order poll() opens
   // them in), h1 the first REMOTE host (hostSeq[0] is LOCAL, and hostSeq is pruned on detach and re-pushed on re-attach,
   // so it cannot be the source); and the text-frame characters received on that ordinal's sockets, counted in the conn's
@@ -1034,14 +1036,14 @@ export class FederationManager {
   // frames included). NEITHER is pruned by closeRemote, unlike every per-host map there: the collector
   // (perf-telemetry.ts) reads the totals as a monotone counter and differences them per minute against a baseline, so a
   // detach that dropped an ordinal would make the next row's difference wrong or re-key a re-attached host; a re-attached
-  // host keeps its ordinal, so a reader holding a page's rows sees one position per host for the page's life. Which rows
+  // host keeps its ordinal, so a reader holding this document's rows sees one position per host for the manager's life. Which rows
   // carry a position is the collector's rule, read off the minute's characters and the attachment at the flush
   // (attachedHostOrdinals): the row closing a minute in which the host received characters carries it whether or not the
   // host is still attached, an attached idle host reads 0, and a detached silent host has no key. Never reused; a reload
   // starts over, the assignment re-derived from the kernel's /tunnels row order at first sight (ordinalOf, openRemote),
   // so h1 can name another host after a reload, and names the same one again while the hub's dialable rows and their
   // order have not changed. Positions, never names: the minute row carries these keys
-  // (h1, h2 and so on, one per host the page attached) and no host name. Read through window.__rompFed.wsBytesByHost (wsBytesByHost()).
+  // (h1, h2 and so on, one per host this document attached) and no host name. Read through window.__rompFed.wsBytesByHost (wsBytesByHost()).
   private hostOrdinal = new Map<string, number>();
   private wsBytesByOrdinal = new Map<number, number>();
   // false until the first /tunnels answer is absorbed (poll): before it, hostSeq is the local host alone and says
@@ -1888,7 +1890,7 @@ export class FederationManager {
     if (!this.hostSeq.includes(h)) this.hostSeq.push(h);
   }
 
-  /** The page-lifetime ordinal for `host` (1-based; h1 the first remote host this page saw), assigned on first sight
+  /** The ordinal for `host` for this manager's life (1-based; h1 the first remote host this pane document saw), assigned on first sight
    *  and never changed or reused (the maps' declaration beside hostSeq says why). */
   private ordinalOf(host: string): number {
     let o = this.hostOrdinal.get(host);
@@ -2034,7 +2036,7 @@ export class FederationManager {
                          viewDeltas: this.mintReceiver(host) };   // for the type; connect() below mints the first socket's own
     this.conns.set(host, conn);
     this.ensureHost(host);
-    this.ordinalOf(host);   // the host's page-lifetime position (wsBytesByHost): assigned at first sight, kept across a detach
+    this.ordinalOf(host);   // the host's position for this manager's life (wsBytesByHost): assigned at first sight, kept across a detach
     this.connect(conn);
   }
 
@@ -2275,7 +2277,7 @@ export class FederationManager {
     ws.onmessage = (ev: MessageEvent) => {
       conn.lastRecv = Date.now();   // every frame counts, the keepalive included — that is the heartbeat
       conn.resumeProvisional = 0;   // and any frame, the keepalive included, confirms a resumed keep
-      // wsBytesByHost: the frame's characters onto this host's page-lifetime total, BEFORE the parse, so an undecodable
+      // wsBytesByHost: the frame's characters onto this host's total for this manager's life, BEFORE the parse, so an undecodable
       // frame and a keepalive both count, as the shim's own counter counts them on the local socket (kernel.py
       // PM.wsBytes, the same expression): the same unit as wsBytes, and disjoint from it (this socket is never the shim's)
       const ord = this.ordinalOf(conn.host);
@@ -2381,10 +2383,10 @@ export class FederationManager {
     const hadTl = host in this.perHostTl || host in this.perHostTlBars;
     delete this.perHostTl[host];
     delete this.perHostTlBars[host];
-    // NOT hostOrdinal or wsBytesByOrdinal (wsBytesByHost): those are the page's, not this attachment's. The collector
+    // NOT hostOrdinal or wsBytesByOrdinal (wsBytesByHost): those are the manager's for its life, not this attachment's. The collector
     // differences the totals per minute against a baseline it took earlier, so dropping the host's total here would
     // turn the next row's figure for its position into a false 0 or a re-count, and a re-attached host keeps its
-    // position so the rows name one position per host for the page's life (the maps' declaration beside hostSeq).
+    // position so the rows name one position per host for the manager's life (the maps' declaration beside hostSeq).
     this.emitMergedOrder();
     this.emitMergedFeed(); // drop the detached host's feed items so they don't linger
     if (hadTl) { this.emitMergedTimeline(false); this.emitMergedTimeline(true); } // …and its lanes/bars

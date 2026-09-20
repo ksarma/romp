@@ -56,8 +56,9 @@
 // touch, viewport, pixel ratio, the entry types the browser supports from a fixed list, requestIdleCallback, the dist
 // token); every row `vis` (visibility transitions and hidden time inside the minute), `wsBytes` (text-frame characters
 // the shim received on the pane's LOCAL socket in the minute, from its counter), `wsBytesByHost` (the same unit, per
-// REMOTE host by its position on the page, h1 the first remote host this page attached, one key per host the page
-// attached, however many, from federation's page-lifetime totals through window.__rompFed.wsBytesByHost and the hosts
+// REMOTE host by its position in the pane document (one federation manager each), h1 the first remote host this document
+// attached, one key per host the document attached, however many, from federation's totals for the manager's life
+// through window.__rompFed.wsBytesByHost and the hosts
 // attached at the flush through window.__rompFed.attachedHostOrdinals: a position is on the row when its host is attached
 // at the flush or received characters in the minute, so the row closing a detach's minute carries the host and the rows
 // after it do not, an attached idle host reads 0, and the key is absent, not null, when no host is attached and none
@@ -123,7 +124,7 @@ export interface PerfDeps {
   switches(): BeaconSwitches;        // the gear's two per-browser switches, read from the store (readSwitches)
   entries(type: string): any[] | null;   // performance.getEntriesByType(type); null where the API is absent
   marks(): Record<string, unknown> | null;   // window.__rompPerfMarks: the shim's stamps (wsOpen, bundleReady, firstFrame), its wsBytes counter and the dist token dv; null without a shim
-  fedBytes(): Record<string, unknown> | null;   // window.__rompFed.wsBytesByHost(): federation's page-lifetime characters per remote host position (h<ordinal>); null without federation, or with a federation bundle before the getter
+  fedBytes(): Record<string, unknown> | null;   // window.__rompFed.wsBytesByHost(): federation's characters per remote host position (h<ordinal>) for the manager's life; null without federation, or with a federation bundle before the getter
   fedAttached(): readonly string[] | null;   // window.__rompFed.attachedHostOrdinals(): the positions attached right now; null without federation, or with a bundle before the read (then a position is on the row only for the minute's characters)
   env(): EnvInfo | null;             // the page's environment, read live (envInfo over the window); null where nothing can be read
 }
@@ -354,7 +355,7 @@ export function pageMarks(marks: Record<string, unknown> | null, paints: readonl
   return out;
 }
 
-/** The minute's characters per remote host position (the row's wsBytesByHost) from federation's page-lifetime totals
+/** The minute's characters per remote host position (the row's wsBytesByHost) from federation's totals for the manager's life
  *  (`now`, keyed h<ordinal>, the getter's shape; a key off that pattern or a non-numeric value is ignored) against the
  *  minute's baselines (`base`, the same shape, {} where a position had no total when the minute began: a host attached
  *  mid-minute counts from 0), for the positions `attached` at the flush (federation's attachedHostOrdinals; null when
@@ -666,7 +667,7 @@ export class PerfTelemetry implements RompPerf {
     data.vis = { hiddenN: b.vis.hiddenN, visibleN: b.vis.visibleN, hiddenMs: Math.round(b.vis.hiddenMs) };
     const bytes = marks ? marks.wsBytes : undefined;
     data.wsBytes = typeof bytes === "number" && isFinite(bytes) ? Math.max(0, Math.round(bytes - b.bytes0)) : null;
-    // per remote host position, the same unit, from federation's page-lifetime totals against this minute's baselines, for
+    // per remote host position, the same unit, from federation's totals for the manager's life against this minute's baselines, for
     // the positions attached at the flush or delivered to in the minute; the key is left off when none qualifies
     // (bytesByHost returns null), never written as null
     const byHost = bytesByHost(this.safe(() => this.d.fedBytes(), null), b.fedBytes0, this.safe(() => this.d.fedAttached(), null));

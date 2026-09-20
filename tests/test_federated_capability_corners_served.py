@@ -1203,7 +1203,7 @@ class TwoHostsBytesByHost(unittest.TestCase):
         self.assertEqual(sorted(sums), ["h1", "h2"], "two positions, no fold key, no host name: %r" % (sums,))
         self.assertEqual(sums, {p: totals[h] for p, h in pos.items()},
                          "each position's figure is that host's relay socket's own character count (positions %r; hook %r)" % (pos, totals))
-        self.assertEqual(sums, self.result["fedAfter"], "and federation's page-lifetime map at the flush says the same")
+        self.assertEqual(sums, self.result["fedAfter"], "and federation's map for the manager's life at the flush says the same")
         self.assertEqual(self.result["fedBefore"], self.result["fedAfter"], "nothing landed between the snapshot and the flush")
         text = json.dumps(self.minute_rows)
         for h in TWO_HOSTS:

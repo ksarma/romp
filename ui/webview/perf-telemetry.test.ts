@@ -1151,7 +1151,7 @@ test("iosMajor, envInfo and orientation: the iPhone's version, the iPad's deskto
   assertIdentifiersOnly(e);
 });
 
-/** federation's page-lifetime totals per remote host position as window.__rompFed.wsBytesByHost returns them: two hosts attached */
+/** federation's totals for the manager's life per remote host position as window.__rompFed.wsBytesByHost returns them: two hosts attached */
 const FED = { h1: 20_000, h2: 5_000 };
 /** a harness whose page has everything the beacon reads, with the switches settable; `fed` is the federation map, mutable */
 function beaconHarness(sw: BeaconSwitches, over: Partial<PerfDeps> = {}) {
@@ -1328,7 +1328,7 @@ test("the detach minute: a host that received characters in the minute and detac
   assert.deepEqual(minute().wsBytesByHost, { h1: 200 }, "the row closing the detach's minute carries the position: the characters are the minute's, whoever is attached at the flush");
   // minute 3: h1 detached and silent
   const r3 = minute();
-  assert.equal("wsBytesByHost" in r3, false, "no host attached at the flush and none received characters: the field is absent, and no h1: 0 for the page's life");
+  assert.equal("wsBytesByHost" in r3, false, "no host attached at the flush and none received characters: the field is absent, and no h1: 0 for the manager's life");
   // minute 4: h2 attaches (a second position) and delivers nothing (a down host; an up one hears a keepalive every 10 s)
   fed.h2 = 0; attached = ["h2"];
   assert.deepEqual(minute().wsBytesByHost, { h2: 0 }, "an attached idle host carries 0; the detached silent h1 has no key");
@@ -1428,7 +1428,7 @@ test("the detach minute through the real composition: a FederationManager's remo
     const fm: any = new FederationManager();
     fm.app = "feed";
     // the browser's wiring (perf-telemetry.ts browserDeps reads the same two getters off window.__rompFed): the manager's
-    // page-lifetime totals and the positions attached at the flush
+    // totals for the manager's life and the positions attached at the flush
     const h = beaconHarness({ share: true, mute: false }, { raf: null, fedBytes: () => fm.wsBytesByHost(), fedAttached: () => fm.attachedHostOrdinals() });
     const p = createPerfTelemetry("feed", h.deps);
     fm.openRemote("TESTHOST", true);

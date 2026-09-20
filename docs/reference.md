@@ -4847,12 +4847,12 @@ The two rows, as the kernel writes them (`t` its clock, `wid` the dashboard id):
   the shim received on this pane's local socket since the previous row
   (`null` without a shim: the shell, VS Code); `wsBytesByHost` is the same
   unit for the pane's remote sockets, one number per attached remote host
-  keyed by the host's position on the page (`h1` the first remote host this
-  page attached, `h2` the next, in the order hosts first appeared to the
-  page, the kernel's `/tunnels` row order when one answer lists several;
-  one key per host, however many the page attaches; a row the map takes over
-  the kernel's 24 KiB bound is stored without it, above), since the previous
-  row (an idle or muted minute carries on the same way).
+  keyed by the host's position in the pane document (`h1` the first remote
+  host this document attached, `h2` the next, in the order hosts first
+  appeared to the document, the kernel's `/tunnels` row order when one answer
+  lists several; one key per host, however many the document attaches; a row
+  the map takes over the kernel's 24 KiB bound is stored without it, above),
+  since the previous row (an idle or muted minute carries on the same way).
   The two are disjoint: a remote socket's characters are counted under its
   position and never in `wsBytes`. Positions are assigned per pane document
   (each pane runs its own federation manager; the row's `app` names the pane),
