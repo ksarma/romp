@@ -648,11 +648,86 @@ a stored login the machine cannot bill just now, refused, expired or removed,
 falls through to the machine's own login),
 and a pick there changes no session that carries its own pick; a session
 with no pick of its own follows it, in its status at once and at its next
-launch. A third choice, Automatic, is the rule that held before: the API key
-when a helper is configured, else the login; it clears the explicit default,
-and the group's sub-line says which rule holds. Until the default is set here,
-the last per-session pick seeds it (as a model or effort pick does); once set
-here, a per-session pick is about that session alone and moves no default. A
+launch; changing the machine default reconnects every session following it
+that runs on the other side, at its next quiet moment (the same pending dots
+a per-session pick shows), and those sessions keep following the default (no
+pick is written for them). The relaunches are staggered on the bounded budget
+boot resumes use (three at a time): a follower keeps its CLI, and keeps
+serving, until its slot is granted, so a message sent while it waits is
+answered by the CLI it still has and the relaunch takes the next quiet moment
+after it. A follower that carried its ask across a kernel restart holds it
+for the background work its surviving CLI still runs (counted from the
+registry's record at the re-attach; the CLI's own turn-end report at the first
+turn after it, the task list its Stop hook carries, confirms each task it lists
+as running, retires a shell it omits (the one task type the report is known to
+enumerate completely: a probe on 2026-08-28, and a read of the bundled CLI's
+producer on 2026-09-19 that found the list type-agnostic on that build; one
+probe per type widens it), keeps a monitor (a `monitor_mcp` or `monitor_ws`
+task; the ordinary Monitor over a shell command registers as a shell and is
+retired like one), an agent or a workflow run it omits until the CLI's own
+stream ends it, and counts a running task it names that the kernel never saw;
+a turn that ends without that report holds what nothing spoke for, said in the
+log). A task counted from the report alone
+starts, for the elapsed time shown, at the report's moment (the report carries
+no start time) and has no tool-use id until the CLI's stream supplies one, so
+such a shell, which streams nothing until its end, is absent from the chat's
+background-task box and offers no Stop there until its end frame, while every
+other reading counts it. Nothing here ends work on an inference
+that it ended: a task is torn down, or reported to the session as cut off,
+only on the CLI's own report; a retry after a handshake that timed out against
+a surviving CLI retires nothing, and a stand-down after four such timeouts
+holds the tasks and the registry's record for the next attach. Two gaps are
+disclosed, not closed: a recorded task whose closing record never reaches the
+kernel holds the ask, the pending dots and a stoppable-task row until the CLI's
+own report or stream speaks for it (for a task other than a shell, until its
+end frame, across turns and restarts), and it counts as live background work in
+the box's restart-disruption reading, keeping `/busy` above zero and the update
+banner's confirm step naming the session, so a quiet deploy waits to its
+15-minute backstop (the automatic converge is unaffected, since it counts
+in-flight turns alone); and a subagent known only to the
+SubagentStart hook has no registry record and is not counted, so a survivor
+whose only live work is such a subagent can be reconnected over it. Both wait
+on one design question, what
+the authoritative read of a surviving CLI's live work is at the re-attach, for
+background tasks, Task agents, Workflow runs and hook-only subagents alike. The
+bundled CLI also pushes a snapshot of its background tasks
+(`background_tasks_changed`) behind a repeated initialize; it arrives after
+the handshake, covers running non-foreground tasks only, and is not applied
+(settled by execution against 2.1.266, 2026-09-19). A report whose snapshot of
+the CLI's task registry predates an end frame the kernel already processed
+would count the ended task as running again, held until the CLI's stream or a
+later report ends it. Every `task_notification` call site in the bundled CLI
+2.1.266 was enumerated (one emitter, 35 call sites): each carries a terminal
+status, 33 behind a write of that status into the task registry or a removal
+of the entry and two on process-exit paths after which no report follows, so
+that road is theoretical at this CLI version. A
+follower whose CLI bills a credential in the CLI's own environment that romp's
+per-session settings layer cannot suppress (Claude Code's settings carry no
+apiKeyHelper) is left where it is, said in one line at each write of the
+default. A follower's move leaves no record in its chat: the pending dots are
+the only session-side signal and they clear at the landing; the kernel log's
+per-session line is the durable record. A third choice, Automatic, is the rule
+that held before: the API key when a helper is configured, else the login; it
+clears the explicit default, the group's sub-line says which rule holds, and
+the sessions following the default are reconnected the same way. A
+per-session pick, before or after the default is set here, is about that
+session alone and moves no default: the new-session picker preselects the
+machine default (the explicit one, else the rule that holds), and a session
+created with no pick of its own follows the machine default, not the last
+pick. A session created while an explicit default stands is seeded with it as
+a pick of its own and is not moved by a later change of the default; a session
+created while none stood follows the default wherever it moves. Since a
+per-session pick's remembered value seeds no new session, a box whose last
+per-session pick was a login, the machine's own or a stored one, bills new
+sessions on the key from this kernel on when its settings carry an
+apiKeyHelper; with no helper, a remembered stored-login pick bills them on the
+machine's own login, or on whatever the CLI resolves by itself when no login is
+signed in either. A remembered key pick keeps the key and makes new sessions
+followers of the default. Where the account moves, or the remembered pick names
+a side this machine cannot bill, the spawn says so as a problem row on the new
+session, naming the pick, what the session bills and the Set default billing
+submenu; a repeat while the pick stands counts on the one ring entry. All of
+this holds until a default is set here. A
 remote session's flyout names its host, and the pick sets that host's default
 (the op routes to the session's owning kernel). The judges follow the same
 resolution: a judge on a session with no pick of its own bills the machine's
@@ -662,13 +737,13 @@ when the right would clip and the left has room, below the row when neither
 side has room, above it when below does not fit, and only then clamped inside
 the window; it never covers its row while a place beside or beyond it exists.
 
-On a one-auth box the picker never chooses the missing side. A remembered
-default that names the side this box cannot bill is set aside at spawn and the
-unpicked rule below decides instead, in both directions: a remembered login
-pick on a machine with no login seeds new sessions on the API key when a
-helper is configured, exactly as a remembered key pick on a helper-less machine
-already fell to the login, and the fall is said once per process as a problem
-row. An explicit pick that names the missing
+On a one-auth box the picker never chooses the missing side. An explicit
+machine default that names the side this box cannot bill is set aside at spawn
+and the unpicked rule below decides instead, in both directions: an explicit
+login default on a machine with no login seeds new sessions on the API key
+when a helper is configured, exactly as an explicit key default on a
+helper-less machine falls to the login, and the fall is said once per process
+as a problem row. An explicit pick that names the missing
 side (a session picked "login" on a box that later lost its login) launches on
 the other side when one exists and says so once per session start, on the tab
 menu's Billing sub-line as `⚠ login unavailable, billing API key` and in the
@@ -696,10 +771,12 @@ login-billed launches.
 The login is named by its account (the email the credential store records);
 the key option is labelled plainly `API key`. No fragment of the key, not even
 a last-4 tail, ever reaches a browser or a screen, and romp never sees the key
-at all. A new session defaults to the last pick made anywhere, and before any
-pick to the key when a helper is configured. A remembered key pick on a box
-whose settings carry no helper leaves new sessions unpicked, and the kernel
-log says so once, naming the settings file to configure.
+at all. A new session is preselected on the machine's explicit default when
+the box can bill it, else on the rule that holds without one: the key when a
+helper is configured, else the login. An explicit key default on a box whose
+settings carry no helper leaves new sessions unpicked, and the kernel log says
+so once, naming the settings file to configure and the Set default billing
+submenu.
 
 A tab not yet loaded after a reconnect shows "Not loaded yet — click to load"
 as its hover tooltip, until its transcript arrives. The strip's skeleton tabs
@@ -736,13 +813,15 @@ flagged, naming the declaration. On a box with a helper every session without
 a login pick bills the key, so `ROMP_EXPECTED_AUTH=key` describes such a box
 truthfully. An undeclared box (the variable unset, or any other value)
 compares each landing against what that session was launched for and stays
-quiet when they agree. One explicit gear **Billing** pick supersedes the
-declaration from then on: the remembered pick becomes the box's expectation
-and the env var goes inert (it described the unpicked design), so re-seeded
-spawns are judged against your pick, never against stale doctrine. The one
-exception is an API-key pick remembered from a box that no longer holds a
-key: it is set aside at spawn, so it seeds nothing (the per-init check still
-judges each landing against the pick).
+quiet when they agree. Setting the machine's default billing (the **Set
+default billing** submenu) supersedes the declaration from then on: the
+explicit default becomes the box's expectation and the env var goes inert (it
+described the unpicked design), so the sessions following the default are
+judged against it, never against stale doctrine; a per-session **Billing**
+pick is about that session alone and leaves the declaration speaking for the
+others. An explicit API-key default on a box that no longer holds a key is set
+aside at spawn, so it seeds nothing (the per-init check still judges each
+landing against the default).
 
 The kernel also checks, once at boot and before anything is spawned, that no
 retired key path is still configured. A `service.env` that still carries a key
@@ -2939,8 +3018,9 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   `kernel/kernel.py`), never the thread's name itself: the name up to the
   naming convention's colon when that part is a registered prefix (`sdk` and
   `sdk-intr` for a session's threads, `codex` for a Codex session's worker,
-  `end-host` for a session's end hook, `port-up` for a dial's port watch,
-  `peer` for a postal peer loop, `romp-refused-mark` for the refused-echo
+  `end-host` for a session's end hook, `sdk-slot` for a session waiting for
+  a relaunch slot after a change of the machine's default billing, `port-up`
+  for a dial's port watch, `peer` for a postal peer loop, `romp-refused-mark` for the refused-echo
   mark a cut-off boot re-delivery writes aside); a registered constant name
   (`pusher`, `jobs` (the housekeeping loop split off the pusher), `producer`,
   `index`, `triage`, `serve-pass`, `parse-warm`, `boot-warm`, `sdk-boot`,
