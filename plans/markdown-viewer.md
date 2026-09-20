@@ -7948,8 +7948,8 @@ placeholder's click, a settings change restoring it, the chat page's heal landin
 figures are the web's. Two more shapes get none, the review's round 1 (a control the sheets' fixed margins laid over a
 figure's neighbours took the clicks meant for them, itself transparent): a figure under 48 CSS px on either side
 (`FIGOPEN_MIN_PX`: the control's 22px box, its 6px inset and as much figure again; a badge, an inline icon, whose
-plain click still opens them where no link holds them), measured from the loaded picture's laid-out box, else its own
-size (`figureBox`, `figureTooSmall`; a loaded figure alone has a box to measure, `figureState`), read wherever the
+plain click still opens them where no link holds them), measured from the loaded picture's laid-out box while it is in
+the document, else its own size (`figureBox`, `figureTooSmall`; a loaded figure alone has a box to measure, `figureState`), read wherever the
 decision runs: in a browser a picture the browser is still fetching at the paint (mdBlock, `addFigureControls`) gets none
 then, and its load or its error (`armFigureControls`) runs the decision with the picture's size known; a picture the
 browser already holds (the report re-opened: Back, Forward, a second open after a close; no request leaves for it) is
@@ -7959,11 +7959,24 @@ re-open the 761 by 76 picture's paint-time control left at its load, the picture
 file-view-figure-floor-browser.test.ts); and the floor is read
 again at each change of the figure's own laid-out box (`watchFigureBoxes`: one ResizeObserver per open over the
 figures of the Rendered box, armed beside the load and error pair, re-armed at each text paint through the seam's
-onRendered and dropped with the viewer, running the same decision for the figure whose box changed; a report of 0 by 0,
-a box not laid out, the viewer hidden or a gated placeholder's img until its click, runs no decision, since it measures
-nothing and the show or the restore reports the real box: found before the file review's round 3, decided over it
-`figureBox` fell back to the picture's own size and a figure hidden under the floor at its real width gained a control
-while hidden and lost it at the show, an add and a remove the reader never saw), which is the
+onRendered and dropped with the viewer, running the same decision for the figure whose box changed; a report of 0 by 0
+runs no decision: it is the transient box of a figure the viewer hides or of a gated placeholder's img until its click,
+the show or the restore reports the real box, which is decided, and a decision over the transient report would take a
+standing control off a figure that is merely hidden and the show would put it back, a remove and an add the reader never
+sees (found before the file review's round 3: decided over it, `figureBox` then fell back to the picture's own size and a
+figure hidden under the floor at its real width gained a control while hidden and lost it at the show); the skip decides
+nothing, so a LOADED figure whose real box is 0 by 0, an author's `<img hidden>` or `<img width="0">`, both kept by the
+sanitizer, gets no control by the floor and not by the skip: `figureBox` reads the laid-out box of a figure in the
+document as it is, 0 by 0 included, and falls back to the picture's own size only for a figure not in the document
+(mdBlock's box at the paint), so such a figure's load decides it under the floor (the file review's round 3,
+correctness-1: the fallback ran for any zero-sided rect, the hidden picture was measured over the floor at its own size,
+and its control lay 28 px into the words before it, where it took the click meant for them and opened the picture the
+author hid; the same read makes a load while the viewer is hidden a decision over 0 by 0, so a standing control leaves
+at that load and the show's report of the real box brings it back, where before the control stood through the hidden
+load; the floor leg drives both authored shapes beside prose, the click on the words, and the hidden load); the watch
+is armed at each text paint and not before the first, since the body is empty when the open arms it (the file review's
+round 3, tests-4: an arm there observed nothing on any road, measured in Chromium over the fresh open, the replace, Back,
+Forward and a reopen, and was removed), which is the
 reflow itself whatever caused it: the pane dragged, the Comments aside opened or closed, the window resized, or a
 text-size step (A-, A+, Ctrl/Cmd + wheel), which re-measures the 80ch column at a constant body width and so reflows
 every column-capped figure with no width report; so a figure the column narrows under the floor loses its control and
@@ -8039,7 +8052,10 @@ review's round 2, a 1300 by 110 band at a 1200 px modal losing its control at th
 under 48 px with the body's width unmoved) and getting it back at three A+, the same by Ctrl + wheel, a control
 removed while it holds the keyboard handing it to the viewer's body, PageDown then scrolling the report, and, since
 before the file review's round 3, the viewer hidden by display:none at 381 px gaining no control while hidden and the
-control following the real box at the show), and, for the chosen candidate,
+control following the real box at the show, and, the file review's round 3, a loaded `<img hidden>` and a loaded
+`<img width="0">` beside prose getting no control at their load and none at a reflow while the wide figure beside them
+wears its, a click on the words before each opening nothing, and a picture re-fetched while the card is hidden losing
+its control at that load and getting it back at the show), and, for the chosen candidate,
 file-view-figure-chosen.test.ts (the source
 pins: chosenSource's body, figureTarget's read of it first, failedSource's delegation and the two callers) and
 file-view-figure-chosen-browser.test.ts (Chromium: a `<picture>`, a srcset img and a gated remote `<picture>` open the
@@ -8130,10 +8146,13 @@ placeholder's img opening nothing while a real click on the restored figure's co
 file review's round 2, the text-size step by the buttons and by Ctrl + wheel taking a band's control away under the
 floor and giving it back at a constant body width, the keyboard handed to the viewer's body when the control
 holding it is removed, and, since before its round 3, the hidden viewer's 0 by 0 report adding no control while hidden,
-the control following the real box at the show) and re-aimed
-ui/webview/file-view-figure-shapes.test.ts (the re-read's pins: watchFigureBoxes's body, its 0 by 0 skip and its arming,
+the control following the real box at the show, and, since its round 3, the two authored boxless figures and the load
+while hidden) and re-aimed
+ui/webview/file-view-figure-shapes.test.ts (the re-read's pins: watchFigureBoxes's body, its 0 by 0 skip with its narrowed
+reason and its arming at the paints alone, figureBox's read of the laid-out box as it is for a figure in the document,
 the repaint deciding no figure and the width-only re-read gone from the source, removeFigureControl's order, the one rule
-figureTarget and figureWantsControl refuse on, figureHasPicture, over FigureState's four values, and both sheets' comment
+figureTarget and figureWantsControl refuse on, figureHasPicture, over FigureState's four values, with each refused
+member's literal derived and pinned absent from every other line of the file, and both sheets' comment
 naming decideFigureControl)
 and ui/webview/file-figure-open.test.ts (the stand-down as the listener's first line).
 The file review (2026-09-20; the control decided from the figure's current state by one function, and the figure's own

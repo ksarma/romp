@@ -24,7 +24,14 @@
 // 0 by 0 report for the hidden figure runs no decision, so the observer gives a figure under the floor at its real width no
 // control while hidden, and the show's report of the real box decides it (before the guard, figureBox fell back to the natural
 // size over the 0 by 0 report and a control was added while hidden, then removed at the show: an add and a remove the reader
-// never saw; the load road, armFigureControls, is not skipped: a picture that loads while hidden is decided at its load).
+// never saw); (8) a LOADED figure with no box (the file review's round 3, correctness-1: an author's `<img hidden>` and
+// `<img width="0">`, both kept by the sanitizer), whose 0 by 0 IS its real box, gets no control at its load and none at a
+// reflow, and a click on the words before it, where the control's -28 px margin would have laid it, opens nothing (before:
+// figureBox fell back to the natural size for any zero-sided rect, so the hidden picture was measured 300 by 200, over the
+// floor, and wore a control inside the neighbouring prose that opened the picture the author hid); (9) the load road while the
+// viewer is hidden (armFigureControls is not skipped): a picture re-fetched while the card is display:none is decided at its
+// load over its 0 by 0 box, under the floor, so a standing control leaves at that load and the show's report of the real box
+// brings it back (before: decided over the natural size, the control stood through the hidden load).
 // Skipped LOUDLY where playwright has no browser (CI installs none). Synthetic
 // values only: the notes-api world, a placeholder session id, example.invalid addresses, /repo/notes-api paths.
 import { test } from "node:test";
@@ -449,6 +456,114 @@ test("in a browser: the viewer hidden at 381 px, where the figure stands under t
     await setHidden(page, false);
     await settle(page, true);
     assert.equal((await hiddenState(page)).controls, 1, "and after the show");
+    assert.deepEqual(errors, [], "no page errors");
+    await page.close();
+  });
+});
+
+// ── the loaded figure with no box (the file review's round 3, correctness-1) ──────────────────────────────────────────────
+// The sanitizer keeps `hidden` and `width` (md-sanitize.ts), so an author's `<img hidden src=...>` and `<img width="0" src=...>`
+// reach the Rendered box, load (Chromium fetches a display:none img), and are laid out 0 by 0 or 0 wide: their real box, not a
+// transient one. figureBox reads the laid-out box of a figure in the document as it is, so both are under the floor and get no
+// control; the wide figure in the same report is the positive control, so a run that observed no controls at all would fail
+// on it rather than pass on the two.
+const BOX = ROOT + "/docs/figs/box.svg";
+const BOXLESS_TEXT = "# Report\n\n"
+  + 'Words before the hidden picture <img hidden src="figs/box.svg" alt=""> and words after it.\n\n'
+  + 'Words before the zero-width picture <img width="0" src="figs/box.svg" alt=""> and words after it.\n\n'
+  + "![wide](figs/wide.svg)\n\nA sentence under the figure.\n\n" + Array.from({ length: 30 }, (_, i) => PARA(i + 1)).join("\n\n") + "\n";
+const BOXLESS_DOCS: Record<string, string> = { [REPORT]: BOXLESS_TEXT, [BOX]: svg(300, 200, "#846"), [WIDE]: svg(761, 76, "#468") };
+type Boxless = { loaded: boolean[]; boxes: [number, number][]; controls: number[]; total: number; before: { x: number; y: number }[] };
+/** The three figures of the report in document order (the hidden, the zero-width, the wide): loaded or not, the laid-out box,
+ *  the count of controls after each anchor (0 or 1), the total of controls in the box, and for the two boxless figures a point
+ *  inside the word before the img, 14 px left of the img's position and 8 px down, where the -28 px margin would have laid
+ *  the control's box. */
+const boxless = (page: any): Promise<Boxless> => page.evaluate(() => {
+  const imgs = Array.from(document.querySelectorAll(".fileview-md img")) as HTMLImageElement[];
+  const control = (img: Element): number => {
+    let a: Element = img;
+    while (a.parentElement && (a.parentElement.classList.contains("fc-imgwrap") || a.parentElement.localName === "picture")) a = a.parentElement;
+    const n = a.nextElementSibling;
+    return n && n.hasAttribute("data-fv-figopen") ? 1 : 0;
+  };
+  return {
+    loaded: imgs.map((i) => i.complete && i.naturalWidth > 0),
+    boxes: imgs.map((i) => { const r = i.getBoundingClientRect(); return [r.width, r.height] as [number, number]; }),
+    controls: imgs.map(control),
+    total: document.querySelectorAll(".fileview-md [data-fv-figopen]").length,
+    before: imgs.slice(0, 2).map((i) => { const r = i.getBoundingClientRect(); return { x: r.left - 14, y: r.top + 8 }; }),
+  };
+});
+const fmtBoxless = (b: Boxless): string => "loaded " + JSON.stringify(b.loaded) + ", boxes " + JSON.stringify(b.boxes.map(([w, h]) => [Math.round(w), Math.round(h)])) + ", controls " + JSON.stringify(b.controls) + " (total " + b.total + ")";
+
+test("in a browser: a loaded `<img hidden>` and a loaded `<img width=\"0\">` beside prose, each 300 by 200 in its own right, get no control at their load and none after a reflow, and a click on the words before each opens nothing; the wide figure in the same report wears its control", async (t) => {
+  await inBrowser(t, async (browser) => {
+    const { page, errors } = await openViewer(browser, "chat", 900, 600, {
+      docs: BOXLESS_DOCS,
+      serve: (u) => { const p = u.pathname === "/file" ? u.searchParams.get("path") || "" : ""; return BOXLESS_DOCS[p] !== undefined && /\.svg$/.test(p) ? { status: 200, type: "image/svg+xml", body: BOXLESS_DOCS[p] } : null; },
+    });
+    await page.evaluate(() => { const w = window as any; w.__opened = []; window.open = ((u: unknown) => { w.__opened.push(String(u)); return { opener: null }; }) as unknown as typeof window.open; });
+    await page.waitForFunction(() => { const imgs = Array.from(document.querySelectorAll(".fileview-md img")) as HTMLImageElement[]; return imgs.length === 3 && imgs.every((i) => i.complete && i.naturalWidth > 0); }, null, { timeout: 10000 });
+    await frames(page, 3);
+    // the wide figure's control is the last decision the leg waits on: with it standing, the two boxless figures' loads are decided too
+    await page.waitForFunction(() => { const i = document.querySelectorAll(".fileview-md img")[2]; return !!(i && i.nextElementSibling && i.nextElementSibling.hasAttribute("data-fv-figopen")); }, null, { timeout: 5000 }).catch(() => { /* read below */ });
+    await frames(page, 1);
+    const after = await boxless(page);
+    t.diagnostic("after the loads at 900: " + fmtBoxless(after));
+    assert.deepEqual(after.loaded, [true, true, true], "all three loaded (the hidden and the zero-width picture are fetched all the same): " + fmtBoxless(after));
+    assert.equal(after.boxes[0][0], 0, "the hidden picture's box is 0 wide: " + fmtBoxless(after));
+    assert.equal(after.boxes[0][1], 0, "and 0 high: " + fmtBoxless(after));
+    assert.equal(after.boxes[1][0], 0, "the zero-width picture's box is 0 wide: " + fmtBoxless(after));
+    assert.equal(after.controls[2], 1, "the wide figure wears its control (the leg observes controls): " + fmtBoxless(after));
+    // FAILS BEFORE: figureBox fell back to the natural size (300 by 200, over the floor) for the zero-sided rect, and each boxless
+    // picture wore a control laid 28 px into the words before it
+    assert.deepEqual(after.controls.slice(0, 2), [0, 0], "no control on a loaded figure with no box: " + fmtBoxless(after));
+    assert.equal(after.total, 1, "one control in the box, the wide figure's: " + fmtBoxless(after));
+    // a reflow (the viewport narrowed): the observer's report for a boxless figure is 0 by 0 and is skipped; nothing adds a control
+    await page.setViewportSize({ width: 800, height: 600 });
+    await frames(page, 4);
+    const reflowed = await boxless(page);
+    t.diagnostic("after the reflow at 800: " + fmtBoxless(reflowed));
+    assert.deepEqual(reflowed.controls.slice(0, 2), [0, 0], "still none after the reflow: " + fmtBoxless(reflowed));
+    assert.equal(reflowed.controls[2], 1, "the wide figure keeps its control at 800: " + fmtBoxless(reflowed));
+    // the click on the words before each boxless picture, where the control's box would have been: the words take it, nothing opens
+    for (const [k, at] of reflowed.before.entries()) {
+      await page.mouse.click(at.x, at.y);
+      await frames(page, 3);
+      assert.deepEqual(await opened(page), [], "figure " + k + ": no tab from a click on the prose before it");
+      assert.equal(await base(page), "report.md", "figure " + k + ": the viewer still shows the report (no picture opened)");
+    }
+    assert.equal(await backDisabled(page), "true", "the trail did not move");
+    assert.deepEqual(errors, [], "no page errors");
+    await page.close();
+  });
+});
+
+// ── the load road while the viewer is hidden (the narrowed reason for the 0 by 0 skip) ────────────────────────────────────
+test("in a browser: a picture re-fetched while the viewer's card is display:none is decided at its load over its 0 by 0 box, so the control standing at 900 leaves at that load, and the show's report of the real box brings it back", async (t) => {
+  await inBrowser(t, async (browser) => {
+    const { page, errors } = await openReport(browser, 900, 600);
+    await settle(page, true);
+    const shown = await hiddenState(page);
+    t.diagnostic("shown at 900: " + fmtHidden(shown));
+    assert.equal(shown.controls, 1, "the control stands at 900: " + fmtHidden(shown));
+    await setHidden(page, true);
+    assert.equal((await hiddenState(page)).controls, 1, "the hide removes nothing (the 0 by 0 report is skipped)");
+    // the re-fetch while hidden: a new src (the same path, a query the /file route ignores) fires the img's load again
+    await page.evaluate(() => { const w = window as any; w.__loads = 0; const i = document.querySelector(".fileview-md img") as HTMLImageElement; i.addEventListener("load", () => { w.__loads++; }); i.src = i.src + "&v=2"; });
+    await page.waitForFunction(() => (window as any).__loads >= 1, null, { timeout: 10000 });
+    await frames(page, 3);
+    const loadedHidden = await hiddenState(page);
+    t.diagnostic("re-fetched while hidden: " + fmtHidden(loadedHidden));
+    assert.deepEqual([loadedHidden.display, loadedHidden.w, loadedHidden.h], ["none", 0, 0], "still hidden, the box 0 by 0: " + fmtHidden(loadedHidden));
+    // FAILS BEFORE: the load's decision read the natural size (761 by 76) and the control stood through the hidden load
+    assert.equal(loadedHidden.controls, 0, "the load while hidden reads the 0 by 0 box, under the floor, and the control leaves: " + fmtHidden(loadedHidden));
+    await setHidden(page, false);
+    await settle(page, true);
+    const shownAgain = await hiddenState(page);
+    t.diagnostic("shown again at 900: " + fmtHidden(shownAgain));
+    assert.ok(shownAgain.w >= FLOOR && shownAgain.h >= FLOOR, "the real box, above the floor: " + fmtHidden(shownAgain));
+    assert.equal(shownAgain.controls, 1, "the show's report of the real box brings the control back: " + fmtHidden(shownAgain));
     assert.deepEqual(errors, [], "no page errors");
     await page.close();
   });

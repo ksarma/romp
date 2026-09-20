@@ -4949,15 +4949,20 @@ function figureHasPicture(state: FigureState): boolean {
  *  hung below the badge and over the prose before the icon and took the click meant for the link or the text (the review's
  *  round 1). Their plain click still opens them where no link holds them. */
 const FIGOPEN_MIN_PX = 48;
-/** A LOADED figure's box (figureState): the rendered box when it is laid out (the width the author or the column gave it),
- *  else the picture's own size (a box not laid out yet); null for any other state (nothing to measure on a fetching or a
- *  failed figure, and a stand-in has no picture to ask), so the floor applies to a loaded figure alone and the fetching and
- *  failed verdicts are figureWantsControl's own. */
+/** A LOADED figure's box (figureState): its laid-out box while it is in the document, whatever that box is (the width the
+ *  author or the column gave it; 0 by 0 for a figure with no box, an author's `hidden` or `width="0"`, a parent that is
+ *  collapsed, the viewer hidden), else the picture's own size (mdBlock's box at the paint, not in the document yet); null for
+ *  any other state (nothing to measure on a fetching or a failed figure, and a stand-in has no picture to ask), so the floor
+ *  applies to a loaded figure alone and the fetching and failed verdicts are figureWantsControl's own. A figure in the document
+ *  with no box is under the floor by this read, so a loaded figure the author gave no box gets no control: before the file
+ *  review's round 3 (correctness-1) the fallback ran for ANY zero-sided rect, so such a figure was measured over the floor at
+ *  its own size and kept a control the sheets lay 28 px into the prose before it, where it took the click meant for those
+ *  words and opened a picture the author hid. */
 function figureBox(img: Element): { w: number; h: number } | null {
   if (figureState(img) !== "loaded") return null;
   const i = img as HTMLImageElement;
-  const r = typeof i.getBoundingClientRect === "function" ? i.getBoundingClientRect() : null;
-  return r && r.width > 0 && r.height > 0 ? { w: r.width, h: r.height } : { w: i.naturalWidth, h: i.naturalHeight };
+  const r = i.isConnected && typeof i.getBoundingClientRect === "function" ? i.getBoundingClientRect() : null;
+  return r ? { w: r.width, h: r.height } : { w: i.naturalWidth, h: i.naturalHeight };
 }
 /** Whether the figure measures under the floor on either side (figureBox), so that no control goes on it. */
 function figureTooSmall(img: Element): boolean {
@@ -5050,21 +5055,30 @@ function armFigureControls(body: HTMLElement, filePath: string): () => void {
  *  re-measuring the 80ch column at a constant body width), with no call from any road (the file review's round 2: a call from
  *  the width watch's repaint ran on one road of two and missed the text-size step). The observer's first report describes each
  *  figure's box at observe(), the decision the paint took over a box not yet laid out, run again over the laid-out one; a report
- *  of 0 by 0 (a box not laid out: the viewer hidden, a gated placeholder's img until its click restores it) runs no decision, since
- *  it measures nothing and the show or the restore reports the real box. Re-armed at
+ *  of 0 by 0 runs no decision: it is the transient box of a figure the viewer hides (display:none on the pane or its page) or of
+ *  a gated placeholder's img before its click, and the show or the restore reports the real box, which is decided; a decision
+ *  over the transient report would take a standing control off a figure that is merely hidden and the show would put it back,
+ *  a remove and an add the reader never sees. A figure whose REAL box is 0 by 0 (an author's `hidden` or `width="0"`) gets no
+ *  control by the floor (figureBox reads its laid-out box, under the floor) at its load, not by this skip, which decides nothing
+ *  (the file review's round 3, correctness-1: the skip's reason had claimed the show or the restore reports every such figure's
+ *  real box, false for one whose real box is 0 by 0). Armed at
  *  each text paint (`onRendered` with any `why` but "reflow": a reflow keeps the figure nodes, a paint replaces them) over the
- *  figures the box holds then, and dropped by the function returned. Null where ResizeObserver is missing (a stand-in outside
- *  a browser), where nothing reflows and the paint's decision stands. */
+ *  figures the box holds then, and dropped by the function returned; the body is empty when the open arms this, before its
+ *  first paint (renderBody runs after the setup), so nothing is observed until that paint. Null where ResizeObserver is missing
+ *  (a stand-in outside a browser), where nothing reflows and the paint's decision stands. */
 function watchFigureBoxes(body: HTMLElement, filePath: string, onRendered: (cb: (why?: FileViewRenderWhy) => void) => void): (() => void) | null {
   if (typeof ResizeObserver !== "function") return null;
   const ro = new ResizeObserver((entries) => {
     for (const e of entries) {
-      // A 0 by 0 report is a box that is not laid out, not a figure's size: the viewer hidden (display:none on the pane or its
-      // page, the dashboard at a viewport where the pane hides), a gated placeholder's img before its click. Decided over it,
-      // figureBox falls back to the picture's own size, so a hidden figure under the floor at its real width was given a control
-      // while hidden and lost it at the show (an add and a remove the reader never saw; found before the file review's round 3).
-      // Skipped: the show that follows reports the real box and is decided; the load, the error (armFigureControls) and the
-      // gate's restore decide their figures themselves.
+      // A 0 by 0 report is skipped: it is the transient box of a figure the viewer hides (display:none on the pane or its page,
+      // the dashboard at a viewport where the pane hides) or of a gated placeholder's img before its click, and the show or the
+      // restore reports the real box, which is decided; decided here, a standing control would leave at the hide and return at
+      // the show, a remove and an add the reader never sees (before the file review's round 3, with figureBox falling back to
+      // the picture's own size over a zero-sided rect, the hide ADDED a control to a figure under the floor at its real width and
+      // the show removed it). The skip decides nothing, so it is no guard for a figure whose real box is 0 by 0 (an author's
+      // `hidden` or `width="0"`): that figure gets no control by the floor, at its load, since figureBox reads the laid-out box of
+      // a figure in the document as it is (the file review's round 3, correctness-1). The load, the error (armFigureControls)
+      // and the gate's restore decide their figures themselves.
       if (e.contentRect.width === 0 || e.contentRect.height === 0) continue;
       const img = e.target;
       if (img.isConnected && figureState(img) !== "standin") decideFigureControl(img, filePath);

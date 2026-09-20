@@ -99,8 +99,13 @@ test("the one decision: figureWantsControl reads the figure's state by one rule 
   assert.match(small, /const b = figureBox\(img\);\n\s*return b !== null && \(b\.w < FIGOPEN_MIN_PX \|\| b\.h < FIGOPEN_MIN_PX\);/, "under the floor on EITHER side (a badge is wide and short)");
   const box = between(VIEW, "function figureBox(img: Element): { w: number; h: number } | null {", "\n}\n");
   assert.match(box, /if \(figureState\(img\) !== "loaded"\) return null;/, "a loaded figure alone has a box to measure: the fetching and failed verdicts are figureWantsControl's, a stand-in has no picture to ask");
-  assert.match(box, /const r = typeof i\.getBoundingClientRect === "function" \? i\.getBoundingClientRect\(\) : null;\n\s*return r && r\.width > 0 && r\.height > 0 \? \{ w: r\.width, h: r\.height \} : \{ w: i\.naturalWidth, h: i\.naturalHeight \};/,
-    "the rendered box when laid out (an author's width attribute counts), else the picture's own size (a detached box)");
+  // the laid-out box of a figure IN the document as it is, 0 by 0 included (an author's `hidden` or `width="0"`: under the floor, no
+  // control), the picture's own size for a figure not in it (mdBlock's box at the paint); the file review's round 3
+  // (correctness-1): the fallback ran for ANY zero-sided rect, so a loaded figure with no box was measured over the floor and wore
+  // a control 28 px into the prose before it (file-view-figure-floor-browser.test.ts drives both authored shapes)
+  assert.match(box, /const r = i\.isConnected && typeof i\.getBoundingClientRect === "function" \? i\.getBoundingClientRect\(\) : null;\n\s*return r \? \{ w: r\.width, h: r\.height \} : \{ w: i\.naturalWidth, h: i\.naturalHeight \};/,
+    "the laid-out box, whatever it is, for a figure in the document (an author's width attribute counts, and so does no box at all), else the picture's own size (a detached box)");
+  assert.doesNotMatch(box, /r\.width > 0|r\.height > 0/, "no fallback keyed on a zero side: a 0 by 0 box in the document is the figure's box");
   const above = between(VIEW, "function linkAbove(anchor: Element): Element | null {", "\n}\n");
   assert.match(above, /const p = anchor\.parentElement;\n\s*return p \? p\.closest\('a, \[data-act="openpath"\]'\) : null;/,
     "ANY anchor above the anchor (a link holding the figure alone IS the anchor and is not read): with an href or without one (a dead link, a named target), or a path link whose href mark time took off");

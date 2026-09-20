@@ -112,7 +112,11 @@ test('L3 opens on the exceptions it names, and names the floor by the source\'s 
   inOrder(watch, ['if (typeof ResizeObserver !== "function") return null;', 'if (e.contentRect.width === 0 || e.contentRect.height === 0) continue;', 'if (img.isConnected && figureState(img) !== "standin") decideFigureControl(img, filePath);', 'body.querySelectorAll(".fileview-md img").forEach((img) => { ro.observe(img); });', 'onRendered((why) => { if (why !== "reflow") rearm(); });'], 'watchFigureBoxes: the guard, the 0 by 0 report skipped, the one decision per reported figure, every figure observed, re-armed at each text paint');
   // a 0 by 0 report (the viewer hidden, a gated placeholder's img) is a box not laid out and runs no decision (found before the
   // file review's round 3: decided over it, a hidden figure gained a control while hidden and lost it at the show); L3 says so
-  assert.ok(L3.includes('a report of 0 by 0, a box not laid out, the viewer hidden or a gated placeholder\'s img until its click, runs no decision, since it measures nothing and the show or the restore reports the real box'), 'L3 records the 0 by 0 report');
+  assert.ok(L3.includes('a report of 0 by 0 runs no decision: it is the transient box of a figure the viewer hides or of a gated placeholder\'s img until its click, the show or the restore reports the real box, which is decided'), 'L3 records the 0 by 0 report and its narrowed reason');
+  assert.ok(L3.includes('the skip decides nothing, so a LOADED figure whose real box is 0 by 0'), 'L3 says what the skip is not (the file review\'s round 3, correctness-1)');
+  assert.ok(L3.includes('`figureBox` reads the laid-out box of a figure in the document as it is, 0 by 0 included'), 'L3 names the read that refuses the boxless figure');
+  assert.ok(read('ui', 'webview', 'file-view-figure-floor-browser.test.ts').includes('a loaded `<img hidden>` and a loaded `<img width=\\"0\\">` beside prose'), 'the floor leg drives both authored shapes');
+  assert.ok(!L3.includes('since it measures nothing and the show or the restore reports the real box'), 'the reason false for the boxless figure is gone');
   assert.ok(viewer.includes('const figureWatch = watchFigureBoxes(body, path, ctx.onRendered);\n  if (figureWatch) ctx.onClose(figureWatch);'), 'armed once per open, dropped with the viewer');
   const repaint = between(viewer, 'const repaint = () => {', '\n  };\n');
   inOrder(repaint, ['if (unmeasurable()) return;', 'landRemembered(); landTarget();', 'retakeAfterHide();'], 'the width watch\'s repaint: the seat and the landings');
