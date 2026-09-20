@@ -8162,7 +8162,10 @@ Alt+Left and Alt+Right to the shell script's listener, onNavKey's stand-downs an
 pictures without the button to the floor's constant, a census of figureWantsControl's refusal arms (an arm added or
 removed fails there until the guide's sentence is read again; re-aimed in the file review's round 2 for the failed
 picture, which the button and the click refuse on one verdict) and the click listener, and the guide's figure sentence
-to the tools pin's copy of it, byte for byte), and,
+to the tools pin's copy of it, byte for byte; and, since the file review's round 4, extra8-3, the hide of the Back and
+Forward pair, `nav.hidden` in openFileView, asserted in one test with the guide's condition clause and the browser plan's
+"(the pair hidden until then)", the two sentences that claim it, and with the tools pins that quote them, so a revert of
+the hide along open point 13's road fails there naming the two sentences, rather than a longer list in that point), and,
 for figureTarget's read of the candidate the browser chose, ui/webview/file-view-figure-chosen.test.ts (the source pins:
 chosenSource's body, figureTarget's order, failedSource's delegation and the two callers) and
 ui/webview/file-view-figure-chosen-browser.test.ts (Chromium over the real chat modal: a `<picture>`, a srcset img and a

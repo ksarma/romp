@@ -35,6 +35,15 @@ left, or an anchor that only marks a place, the plain click opens the picture (l
 withheld there all the same). The figure sentence is quoted whole here and in the tools pin, and the two copies are
 read against each other.
 
+The hidden pair. The trail sentence's condition clause (the two arrow buttons appear once there is a file to step back or
+forward to; there are none before that) and the browser plan's pointer clause ("the pair hidden until then",
+plans/file-browser.md) are two claims about one line of openFileView, `nav.hidden`. Open point 13 of the plan's section
+records the revert road (the dimmed pair the contract had) as that line and the pins and legs L2 names; the file review's
+round 4 (extra8-3) found the guide's clause and its pin missing from that list, so taking the road would have left the
+guide false with nothing catching it. Rather than a longer list, the line and the two clauses are asserted together
+here, and the tools pins that quote the two sentences (FIRST, POINTER) are read for the clauses too, so a revert of the
+hide fails one test naming the two sentences it makes false.
+
 Each guide sentence is pinned flattened, so a rewrap survives. Synthetic: only the repo's own text.
 """
 import os
@@ -100,6 +109,11 @@ PICTURE = ("A picture in a rendered file that comes from a file or a web address
                 "s), while a picture that is all its link holds keeps its button beside the link.")
 PICTURE_HEAD = PICTURE[:PICTURE.index("; a plain click")]
 PICTURE_NONE = PICTURE[PICTURE.index("a figure waiting behind"):]
+# the guide's condition clause for the Back and Forward pair, the browser plan's matching clause, and the one line of openFileView both claim
+HIDDEN_UNTIL = ("Two arrow buttons appear at the left of its title bar once there is a file to step back or forward to (after you "
+                "follow a link or open a picture; there are none before that):")
+BROWSER_PLAN_HIDDEN = "with Back and Forward glyphs at the left of its bar once a step exists either way (the pair hidden until then)"
+HIDE_LINE = "nav.hidden = !trailBackTarget(trailNow) && !trailForwardTarget(trailNow);"
 # the wording the review found false by execution: the arrow chords with no dashboard exception, and every picture with the button
 OLD_TRAIL = "(Alt+Left and Alt+Right, or Cmd+[ and Cmd+] on a Mac, do the same while no text box holds the keyboard)"
 OLD_PICTURE = "Every picture in a rendered file"
@@ -142,6 +156,30 @@ class GuideSentences(unittest.TestCase):
         self.assertNotIn(OLD_PICTURE, _flat(self.guide))
         for word in ("—", "fleet"):
             self.assertNotIn(word, self.links)
+
+
+class TheHiddenPairIsOneLineWithTwoClaims(GuideSentences):
+    """The hide of the Back and Forward pair (`nav.hidden` in openFileView), the guide's condition clause and the browser plan's
+    clause, asserted together: a revert of the hide fails here naming the two sentences it makes false, and the tools pins
+    that quote those sentences are read for the clauses too (the file review's round 4, extra8-3)."""
+
+    def test_the_hide_line_stands_with_the_guide_clause_and_the_browser_plan_clause_it_makes_true(self):
+        self.assertIn(HIDE_LINE, self.viewer,
+                      "openFileView's hide of the Back and Forward pair is gone. Two sentences claim it and go false with it: the guide's "
+                      "(docs/guide.md, Links in a file) %r and the browser plan's (plans/file-browser.md, the navigation-stack pointer) %r; "
+                      "a revert of the hide rewrites both, and the tools pins FIRST and POINTER that quote them, beside the pins and legs "
+                      "open point 13 lists" % (HIDDEN_UNTIL, BROWSER_PLAN_HIDDEN))
+        self.assertIn(HIDDEN_UNTIL, self.links, "the guide's condition clause, which the hide line makes true")
+        pointer = _paragraph(_read("plans", "file-browser.md"), "Since 2026-09-19 the viewer keeps a trail of its own")
+        self.assertIn(BROWSER_PLAN_HIDDEN, pointer, "the browser plan's clause, which the hide line makes true")
+        pin = _read("tools", "markdown-viewer-plan-linknav.test.mjs")
+        m = re.search(r"^const FIRST = '((?:[^'\\]|\\.)*)';$", pin, re.M)
+        assert m, "the tools pin's FIRST literal"
+        self.assertIn(HIDDEN_UNTIL, re.sub(r"\\(.)", r"\1", m.group(1)), "the tools pin quoting the guide's sentence carries the clause")
+        m = re.search(r"^const POINTER = '((?:[^'\\]|\\.)*)';$", pin, re.M)
+        assert m, "the tools pin's POINTER literal"
+        self.assertIn(BROWSER_PLAN_HIDDEN, re.sub(r"\\(.)", r"\1", m.group(1)), "the tools pin quoting the browser plan's sentence carries the clause")
+        self.assertIn(HIDE_LINE, pin, "and the tools module pins the hide line itself (L2)")
 
 
 class TheShellTakesTheArrowsInTheDashboard(GuideSentences):
