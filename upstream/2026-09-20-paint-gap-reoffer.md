@@ -3,7 +3,7 @@ title: Comments panel: the Comment float survives a paint landing in the selecti
 status: candidate
 where: ui/webview/file-comments.ts (noteSelectionAtHead, pendingChange, afterPaint, onSelectionChange, openPanel, dragBegan); tests ui/webview/file-comments-paint-gap-browser.test.ts (new), file-comments-paint-offer.test.ts (cases 10 to 12, cutOnPaint), file-comments-keyboard-offer.test.ts (the dispose pin)
 added: 2026-09-20
-pr:
+pr: 865
 tier: fix
 offered:
 closed:
