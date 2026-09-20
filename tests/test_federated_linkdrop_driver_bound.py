@@ -25,10 +25,12 @@ kernel or a browser:
   driver never calls setDefaultTimeout) and each waitForTimeout to draw on the budget or be one of the two fixed dwells
   driver_worst_case_s counts, and an unlisted wait form or an auto-waiting action fails by name.
 
-Two more pins ride here because the module they pin has no kernel-free test of its own: LinkDropBothNew gates on no
-knob and LinkDropOldLocal skips as optional (round 1's high, closed by a value; round 2 asked for the pin), and a hub a
-knob asked for whose bundle cannot be made ready is an error through _boot, while this checkout's own bundle failing to
-build stays a skip (round 1's tests-3, ruled twice).
+Three more pins ride here because the module they pin has no kernel-free test of its own: LinkDropBothNew gates on no
+knob, wherever such a gate could sit (a class-level skip, setUpClass, _knobs), and LinkDropOldLocal skips as optional
+(round 1's high, closed by a value; round 2 asked for the pin, round 3 for the property over every site); a hub a knob
+asked for whose bundle cannot be made ready, or whose root holds no kernel, is an error through _boot, while this
+checkout's own bundle failing to build stays a skip (round 1's tests-3, ruled twice); and the old-hub storm's allowance
+for an empty phase is keyed on a whole keyed feed frame after the bundle's last notice, over a synthetic record.
 
 Synthetic: no kernel, no browser; stub classes over scratch directories.
 """
@@ -190,21 +192,33 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
 
     def test_the_new_bundle_class_gates_on_no_knob_and_the_old_hub_class_skips_as_optional(self):
         """Round 1's high (this lab was the one served lab of 94 with no executing test in CI: its base class gated on a knob)
-        was closed by a value, _LinkDrop._knobs returning None. The property, pinned (round 2, extra6-1): with the four knobs
-        unset, LinkDropBothNew's _knobs returns, and LinkDropOldLocal's raises a SkipTest whose reason starts with "optional:"
-        and names its knob. The first call is wrapped so a regression fails the pin instead of skipping it; throwaway
-        subclasses, so nothing _knobs assigns reaches the real classes. And the served step runs with -rs, so an optional
-        skip prints its reason in CI's log rather than folding into a count."""
+        was closed by a value, _LinkDrop._knobs returning None. The property, pinned (round 2, extra6-1; round 3 widened it
+        from the one call site to every site a gate could sit at, since the same optional gate re-planted as a class
+        decorator or in setUpClass re-created the high with the pin green): with the four knobs unset, LinkDropBothNew
+        carries no class-level skip (what unittest.skip* sets, __unittest_skip__), its _knobs returns, and its setUpClass runs
+        to the boot (with _boot stubbed) without a SkipTest; LinkDropOldLocal's _knobs raises a SkipTest whose reason starts
+        with "optional:" and names its knob. The new class's calls are wrapped so a regression fails the pin instead of
+        skipping it; throwaway subclasses, so nothing _knobs or setUpClass assigns reaches the real classes. And the served
+        step runs with -rs, so an optional skip prints its reason in CI's log rather than folding into a count."""
         class New(L.LinkDropBothNew):
             pass
 
         class Old(L.LinkDropOldLocal):
             pass
+        self.assertFalse(getattr(New, "__unittest_skip__", False),
+                         "LinkDropBothNew carries a class-level skip (unittest.skip*), so the lab would collect in CI's served job with no executing test: %r"
+                         % (getattr(New, "__unittest_skip_why__", ""),))
         with _without_knobs():
             try:
                 New._knobs()
             except unittest.SkipTest as e:
                 self.fail("LinkDropBothNew._knobs raised SkipTest with the four knobs unset, so the lab would collect in CI's served job with no executing test: %s" % e)
+            try:
+                with mock.patch.object(New, "_boot", classmethod(lambda cls: None)):
+                    New.setUpClass()
+            except unittest.SkipTest as e:
+                self.fail("LinkDropBothNew.setUpClass raised SkipTest before its boot with the four knobs unset (a gate outside _knobs), so the lab would "
+                          "collect in CI's served job with no executing test: %s" % e)
             with self.assertRaises(unittest.SkipTest) as cm:
                 Old._knobs()
         reason = str(cm.exception)
