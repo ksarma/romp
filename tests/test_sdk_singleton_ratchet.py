@@ -2601,22 +2601,42 @@ LIMIT_ORDER = "so their save-and-restore product code lands first, then the ratc
 LIMIT_READING = ("tests/test_kernel_interrupt_machine_cut.py", "tests/test_kernel_msgcaption.py")   # the loaders that read the
                                                                                                     # dangling object, measured 2026-09-19
 PRIVATE_KERNEL_NAME = "romp_kernel_mc"
-MC_LOADER = re.compile(r'load_source\(\s*"%s"' % PRIVATE_KERNEL_NAME)
 NUMBER_WORDS = ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve")
 RATCHET_COMMENT_OPENS = "No test may leave the kernel's backend singleton changed"
 
 
-def private_kernel_loaders():
+def private_kernel_loaders(sources=None):
     """The test files that load the kernel under PRIVATE_KERNEL_NAME, derived from the tree: every tests/*.py whose text
-    calls load_source with that name as its first argument (MC_LOADER), sorted, as tests/<file>. A count of them written
-    in prose is measured once and outlives the file added after it; the wording pin reads this and holds the prose to
-    it."""
+    calls load_source with that name as its first argument, sorted, as tests/<file>. The call is read by AST: a file is
+    a loader when some Call in it names load_source, bare or as an attribute (romp_load.load_source), with a str
+    constant equal to PRIVATE_KERNEL_NAME as its first positional argument. So the quote spelling and a module prefix
+    are not the key; a mention in a comment or inside a string is not a call, and the name in a later argument is not
+    a load (a keyword spelling of the first argument, load_source(name=...), is outside what this reads). A text
+    without the name is not parsed (the prefilter); a text with the name that does not parse raises, naming the file,
+    since a loader that cannot be read is not a non-loader. `sources` is a mapping {"tests/<file>": text} for a
+    synthetic test; None reads the tree's tests directory. A count of them written in prose is measured once and
+    outlives the file added after it; the wording pin reads this and holds the prose to it. The round-8 review found
+    the first form a regex over the double-quoted spelling load_source("<name>", so a single-quoted or prefixed loader
+    was outside the census with the count word green, and a string carrying that spelling was inside it."""
+    if sources is None:
+        sources = {}
+        for name in sorted(os.listdir(HERE)):
+            if name.endswith(".py"):
+                with open(os.path.join(HERE, name)) as f:
+                    sources["tests/" + name] = f.read()
     found = []
-    for name in sorted(os.listdir(HERE)):
-        if name.endswith(".py"):
-            with open(os.path.join(HERE, name)) as f:
-                if MC_LOADER.search(f.read()):
-                    found.append("tests/" + name)
+    for path in sorted(sources):
+        text = sources[path]
+        if PRIVATE_KERNEL_NAME not in text:
+            continue
+        for node in ast.walk(ast.parse(text, filename=path)):
+            if isinstance(node, ast.Call) and node.args and isinstance(node.args[0], ast.Constant) \
+                    and isinstance(node.args[0].value, str) and node.args[0].value == PRIVATE_KERNEL_NAME:
+                func = node.func
+                callee = func.id if isinstance(func, ast.Name) else func.attr if isinstance(func, ast.Attribute) else None
+                if callee == "load_source":
+                    found.append(path)
+                    break
     return found
 
 
@@ -2666,10 +2686,12 @@ class TheStatedLimitIsWorded(unittest.TestCase):
     design comment in the conftest and in this module's docstring, with what it leaves unprotected, the two files that
     read the dangling object (a measurement of 2026-09-19, dated in both texts), and the blocker in its order (the
     harness fixes first, then the private-kernel arm); an edit that drops any of them reds here. The count of files
-    that load the private name is derived from the tree (private_kernel_loaders), never pinned as a word: the conftest
-    names the loaders in one parenthesis, held equal to the derived set, and both texts state the count as the number
-    word of the derived length. The round-7 review found the first form reading every comment line in the conftest
-    and pinning "two of the three" by its spelling, so a fourth loader left the sentence false with the pin green."""
+    that load the private name is derived from the tree (private_kernel_loaders, which reads the load_source call by
+    AST, not a quote spelling), never pinned as a word: the conftest names the loaders in one parenthesis, held equal
+    to the derived set, and both texts state the count as the number word of the derived length. The round-7 review
+    found the first form reading every comment line in the conftest and pinning "two of the three" by its spelling,
+    so a fourth loader left the sentence false with the pin green; the round-8 review found the census a regex over
+    the double-quoted spelling, so a fourth loader written single-quoted was outside it with the count word green."""
 
     def _assert_worded(self, text, where):
         for needle in (LIMIT_UNPROTECTED, LIMIT_BLOCKER, LIMIT_ORDER) + LIMIT_READING:
@@ -2703,6 +2725,28 @@ class TheStatedLimitIsWorded(unittest.TestCase):
         self.assertIn("two of the %s files that load it read" % word, re.sub(r"\s+", " ", __doc__),
                       "the module docstring's reading count is stated over the derived loader count (%s)" % word)
         self.assertTrue(set(LIMIT_READING) <= set(loaders), "a reader that does not load the name: %r" % loaders)
+
+    def test_the_loader_census_reads_the_call_and_not_a_quote_spelling(self):
+        """private_kernel_loaders keys on the call by AST, over synthetic sources only: a file is a loader when some call
+        names load_source, bare or as an attribute, with PRIVATE_KERNEL_NAME as a str constant in its first positional
+        argument, whatever the quote spelling; a comment, a string carrying the call's spelling, the name in a later
+        argument, or another name is not a loader; a text with the name that does not parse raises naming the file."""
+        name = PRIVATE_KERNEL_NAME
+        p = "os.path.join(BIN, 'romp-kernel')"
+        sources = {
+            "tests/test_double_quoted.py": 'km = load_source("%s", %s)\n' % (name, p),
+            "tests/test_single_quoted.py": "km = load_source('%s', %s)\n" % (name, p),
+            "tests/test_prefixed.py": "km = romp_load.load_source('%s', %s)\n" % (name, p),
+            "tests/test_comment_only.py": "# %s is loaded elsewhere\n" % name,
+            "tests/test_in_a_string.py": "PROBE = 'load_source(\"%s\", p)'\n" % name,
+            "tests/test_second_argument.py": 'km = load_source(%s, "%s")\n' % (p, name),
+            "tests/test_other_name.py": 'km = load_source("romp_kernel_other", %s)\n' % p,
+        }
+        self.assertEqual(private_kernel_loaders(sources),
+                         ["tests/test_double_quoted.py", "tests/test_prefixed.py", "tests/test_single_quoted.py"],
+                         "the census keys on the load_source call with the name as its first argument, by AST")
+        with self.assertRaisesRegex(SyntaxError, "test_unparseable"):
+            private_kernel_loaders({"tests/test_unparseable.py": "km = load_source('%s',\n" % name})
 
 
 RESIDUAL_GREEN = "proves no leak occurred in that run and not that no test would leak alone"
