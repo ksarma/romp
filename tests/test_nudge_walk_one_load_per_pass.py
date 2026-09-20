@@ -621,8 +621,10 @@ SHARED_HANDOFF_KEYS = ("absent", "fallback", "corrupt", "unreadable_journal")
 # AST clauses are an early warning for that premise: they refuse the forms they name (a second-key bump that is not a statement of a
 # list, an assignment's value, a with item or a lambda body, say; a second-key list holding two; a list not ending in a return or a
 # raise; a bump under a finally clause; a second-key raise list under a try statement) and are silent on the rest (a helper defined
-# inside the door and called from a second-key list, a return whose expression raises into a bumping handler, an exception from a
-# clean list's other statement caught by one, contextlib.suppress, and any construct nobody listed), each of which the witness catches
+# inside the door, outside the second-key list that calls it, its body reading as a clean list of its own; a return whose expression
+# raises into a bumping handler; an exception from a clean list's other statement caught by one; a second-key raise list under a
+# contextlib.suppress with statement, which the raising clause, reading try statements alone, does not see; and any construct nobody
+# listed), each of which the witness catches
 # on the road it sits on when a drive reaches that road; the drives seed a one-node store for one sid and call once, so a bump
 # conditioned on state no drive arranges is on no driven road, stated in the witness's docstring (review round 4, tests-2,
 # regression-2 and extra4-1: the pin read the first two premises and the third was
@@ -2704,9 +2706,12 @@ class TheCountersOneSite(unittest.TestCase):
         every second-key bump is a statement of some list, an Expr of the call or the AugAssign itself, so a bump written as an
         assignment's value, a with item or a lambda body reds the count of lists against bumps (a verifier of the round-5 fixes: the
         early-warning sentences named four refused forms while this clause refuses a fifth). The clauses
-        refuse the forms they name and are silent on the rest: a helper defined inside the door and called from a second-key list
-        (its body reads as a clean list of its own), a second-key list ending in a Return whose expression raises into a handler
-        that bumps, an exception from any other statement of a clean list caught by a bumping handler, contextlib.suppress, and any
+        refuse the forms they name and are silent on the rest: a helper defined inside the door, outside the second-key list that
+        calls it (its body reads as a clean list of its own; one defined inside that list is refused by the deep count), a second-key
+        list ending in a Return whose expression raises into a handler that bumps, an exception from any other statement of a clean
+        list caught by a bumping handler, a second-key raise list under a contextlib.suppress with statement (the raising clause reads
+        try statements alone, so it does not see one; a suppress around a second bump inside a second-key list is refused by the deep
+        count), and any
         construct nobody listed (review round 5, correctness-1, regression-1 and extra6-1, after this docstring said that with the
         two constructs above refused no path the door's own body shows bumps two second keys: the first three, each planted on the
         corrupt road, bumped two with every clause green). So the clauses are an early warning, and the contract, at most one second
