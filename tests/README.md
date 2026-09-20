@@ -50,8 +50,9 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   the step's own read of the constant and, wherever `claude_agent_sdk` imports,
   asserts the installed version equals it, so a box whose venv moved and a CI
   cell whose install disagreed with the constant both go red; on a venv without
-  the SDK it checks the pin's presence and form and says the equality was not
-  checked there. To execute the gated tests from a plain venv, put romp's SDK
+  the SDK it checks the pin's presence and form and warns (in pytest's warnings
+  summary) that the equality was not checked there. To execute the gated tests
+  from a plain venv, put romp's SDK
   venv on the path:
   `PYTHONPATH=~/.local/state/romp/sdkvenv/lib/python3.12/site-packages python3 -m
   pytest tests/test_sdk_backend.py -q` (the venv `bin/romp-sdk-setup` creates, at

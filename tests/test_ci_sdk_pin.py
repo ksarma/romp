@@ -25,8 +25,9 @@ This module holds three things, and it never skips: a pin that skips reports gre
    host would run (installed_sdk_version: the module's __version__, else the metadata) and the metadata both equal the
    pin; the failure message names the two roads that disagree here: a box whose SDK venv moved (re-run
    bin/romp-sdk-setup, which installs the tested version) or a CI cell whose install disagreed with the constant. When
-   the SDK does not import (a plain venv), the same test asserts the pin's presence and form and prints that the
-   equality is not checked on this road. So a box's full run and a CI cell both go red the moment the installed SDK and
+   the SDK does not import (a plain venv), the same test asserts the pin's presence and form and WARNS (warnings.warn,
+   which pytest lists in its summary under -q; a print is captured and shows only under -s or -rA) that the equality is
+   not checked on this road. So a box's full run and a CI cell both go red the moment the installed SDK and
    the constant disagree, and the bump stays the act the constant's comment describes: install the new version, run the
    host tests on it, move the number. The residual is stated here because nothing else states it: nothing polls PyPI,
    a person notices a release; the trigger for the bump is a red from this module on a box whose venv moved or a red
@@ -45,6 +46,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import warnings
 from romp_load import load_source
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -196,13 +198,15 @@ class InstalledVersion(unittest.TestCase):
     Never a skip. In CI every cell installs the pin, so every cell takes the first road. On a box the full suite takes it
     in every worker where tests/test_host_transport.py has put the SDK venv's site on sys.path before this module ran,
     so a venv that moved past the constant (or a constant moved past the venv) reds there before a hosted session finds
-    out; a worker on the other road checks the form and says so."""
+    out; a worker on the other road checks the form and warns that it checked no more (a warning, because pytest prints
+    the warnings summary under -q where a captured print never shows; no filter in the repo turns a UserWarning into an
+    error)."""
     def test_the_installed_sdk_is_the_pin_where_it_imports_and_the_pin_is_well_formed_where_it_does_not(self):
         pin = sh.SDK_TESTED_VERSION
         self.assertRegex(pin, VERSION_RE, "SDK_TESTED_VERSION is not a bare x.y.z version: %r" % pin)
         if importlib.util.find_spec(sh.SDK_PACKAGE) is None:
-            print("claude_agent_sdk does not import in this interpreter (%s): the pin's form is checked, the installed "
-                  "version is not; a CI cell that ran the install step never takes this road" % sys.executable)
+            warnings.warn("claude_agent_sdk does not import in this interpreter (%s): the pin's form is checked, the installed "
+                          "version is not; a CI cell that ran the install step never takes this road" % sys.executable)
             return
         installed = sh.installed_sdk_version()
         try:
@@ -222,7 +226,7 @@ class InstalledVersion(unittest.TestCase):
 
 class NeverSkips(unittest.TestCase):
     def test_this_module_has_no_skip_road(self):
-        # a pin that skips reports green having checked nothing; the bare road prints and asserts instead
+        # a pin that skips reports green having checked nothing; the bare road warns and asserts instead
         tree = ast.parse(open(os.path.realpath(__file__)).read())
         names = {n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute)} | {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
         for forbidden in ("skip", "skipIf", "skipUnless", "skipTest", "SkipTest"):
