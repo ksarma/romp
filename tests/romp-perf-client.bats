@@ -244,7 +244,8 @@ assert f["loaf"] == {"per_min": 0.0, "blocking_ms_per_min": 0.0, "worst_ms": 0, 
 
 @test "romp perf client: the kernel's capped rows are counted in the header and --json, a whole-row marker is skipped, and no phantom pane appears" {
     # Since 2026-09-18 the kernel bounds a client-diag row at 24 KiB (kernel.py _client_diag_line) in two shapes: a
-    # perf minute row over the bound sheds its per-minute figures (frames first) and names them under its capped key,
+    # perf minute row over the bound sheds its uncapped wsBytesByHost map whole, then its per-minute figures (frames
+    # first), and names them under its capped key,
     # keeping its span, heap and DOM; any other row over the bound becomes a marker, data {"capped": true, "bytes": N}
     # plus the pane's app when the row had one. The reader used to fold a marker as a pane with one zero-ms minute,
     # and a marker without app landed under a pane named "?"; a shed row read as an empty minute with nothing said.

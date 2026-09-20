@@ -3488,16 +3488,23 @@ def _client_diag_append(fp, line):
 # carries {"capped": true, "bytes": N} as its data (said once per surface and what), except a perf minute row, which
 # sheds its per-minute figures first (CLIENT_DIAG_MINUTE_SHED, _client_diag_line): the collector sends nav, res, marks
 # and env exactly once per page, and a whole-row marker lost them for the page's life (review find, 2026-09-18). The
-# bound is derived from the collector's own caps (perf-telemetry.ts), so no row it can build is shed or capped:
+# bound is derived from the collector's own caps (perf-telemetry.ts), so no row it can build is shed or capped while
+# its wsBytesByHost map, the one key without a cap, is under the crossing derived below; past it the map alone is
+# shed, whole, as the ladder's first step, and the rest of the row is stored as posted:
 # MAX_FRAME_TYPES named wire types plus their fold and as many `fed:` keys are 66 frame entries, the wire keys at most
 # 38 characters (the `delta:` prefix and a 32-character identifier) and the `fed:` keys at most 42 (`fed:delta:` and the
 # identifier, since federation.ts times a frame as `fed:` plus its classified type), each with a 14-bucket histogram,
 # 16.5 KB at six-digit counts; MAX_TOP long-frame keys at the string cut, the free sample, the slow counts and the
 # envelope add about 1.4 KB (17.9 KB share off); the shared fields (MAX_RES named resources and the fold, nav, marks,
-# env, vis, wsBytes, wsBytesByHost at its widest and rafGap) add about 3.5 KB (21.5 KB share on); the widest map has
-# no cap on positions: the worst-case row test states eight at nine digits each, 155 bytes, about 17 bytes more per
-# further host, and reads the count, the bytes and the share-on figure back from this comment against the row it
-# builds. 24 KiB holds both with margin (today's minute rows run to 2.5 KB); above it the shed and the marker are the
+# env, vis, wsBytes, wsBytesByHost at eight positions and rafGap) add about 3.5 KB (21.5 KB share on); the map has
+# no cap on positions: the worst-case row test states eight at nine digits each, 155 bytes, and reads the count, the
+# bytes and the share-on figure back from this comment against the row it builds. 24 KiB holds that row and leaves
+# 3110 bytes under the bound (today's minute rows run to 2.5 KB). Each further position adds 17 bytes at a one-digit
+# ordinal, 18 at two and 19 at three (the separator, the quoted key and a nine-digit count), so on that row the map
+# crosses the bound at 177 positions, and on today's rows only past about 1200; the ladder test derives the cost and
+# the crossing from the row it builds and reads them back here. Over the bound the ladder (CLIENT_DIAG_MINUTE_SHED)
+# sheds the map first and whole, which returns any row the collector builds to the figures above, under the bound;
+# the frames, the long-frame report, the free sample and the slow counts go next and the whole-row marker last,
 # backstops for a row no collector builds. The table lists the
 # keys as the posters build them: perf-telemetry.ts (minute, slowframe), the pane shim (staleDiag, the return rows,
 # wsclose, wsconnfail, page-load), the reload core's held row, the shell scripts, federation.ts, render.ts and
@@ -3506,13 +3513,17 @@ def _client_diag_append(fp, line):
 # (said once per what), so a forged wsopen cannot land beside the kernel's; the entry names the kernel's own keys. A
 # surface not in the table keeps no key at all, and a data that is not an object is stored as null.
 CLIENT_DIAG_STR_MAX = 64
-CLIENT_DIAG_ROW_MAX = 24 * 1024   # above the collector's worst case with share on (21.5 KB; the derivation above)
+CLIENT_DIAG_ROW_MAX = 24 * 1024   # above the collector's worst case with share on and eight positions (21.5 KB; the derivation above)
 CLIENT_DIAG_DEPTH_MAX = 8      # nesting past this reads null: the rows are flat or two deep
 CLIENT_DIAG_SAID_MAX = 512     # (surface, key) pairs the stderr latch holds; at the bound one more line says so and nothing else is said
 CLIENT_DIAG_ROW_SAY_MAX = 8    # foreign keys of ONE row said by name; the rest are one counting line, so a row spends at most this many latch entries and one
-# a perf minute row over CLIENT_DIAG_ROW_MAX sheds these, in this order, until its line fits; the row's other keys (the
-# small per-minute figures and the once-per-page nav, res, marks and env) stay, and `capped` names what was shed
-CLIENT_DIAG_MINUTE_SHED = ("frames", "loaf", "free", "slow")
+# a perf minute row over CLIENT_DIAG_ROW_MAX sheds these, in this order, until its line fits, and `capped` names what was
+# shed. wsBytesByHost goes first (review round 1, 2026-09-20): it is the one key the collector does not cap (one position
+# per attached host), so a row the collector builds is over the bound only through it, and shedding it whole returns the
+# row to the derived worst case, which fits; it is never cut to the positions that fit, so a stored map is never read as
+# a host count. The rest is the backstop for a row no collector builds: the frame histograms, then the long-frame report,
+# the free sample and the slow counts, largest first; the once-per-page nav, res, marks and env stay
+CLIENT_DIAG_MINUTE_SHED = ("wsBytesByHost", "frames", "loaf", "free", "slow")
 CLIENT_DIAG_KEYS = {
     "perf": frozenset(("app", "since", "span_ms", "frames", "free", "loaf", "slow", "dom", "visible", "hidden_pane", "ua", "heap_mb",   # minute
                        "type", "ms",                                                # slowframe (app, dom, loaf as above)
@@ -3641,10 +3652,12 @@ def _client_diag_admit(surface, data):
 
 def _client_diag_line(rec):
     """The row's line for the file. Past CLIENT_DIAG_ROW_MAX bytes of JSON its data is replaced by the cap marker
-    {"capped": true, "bytes": N} plus the row's `app` where it has one, except in a perf minute row: that sheds its per-minute figures (CLIENT_DIAG_MINUTE_SHED,
-    in that order) until the line fits and carries what it shed under `capped` ({"bytes": N, "dropped": [...]}, N the
-    line's bytes before the shed), so the once-per-page fields the collector sends exactly once (nav, res, marks, env)
-    reach the file however many frame types the minute saw; a minute row that does not fit even then takes the marker.
+    {"capped": true, "bytes": N} plus the row's `app` where it has one, except in a perf minute row: that sheds
+    CLIENT_DIAG_MINUTE_SHED's keys in that order, the uncapped wsBytesByHost map first and whole (never cut to the
+    positions that fit), then its per-minute figures, until the line fits, and carries what it shed under `capped`
+    ({"bytes": N, "dropped": [...]}, N the line's bytes before the shed), so the once-per-page fields the collector sends
+    exactly once (nav, res, marks, env) reach the file however many hosts the pane attached or frame types the minute
+    saw; a minute row that does not fit even then takes the marker.
     Deterministic on the kernel's side alone: the collector never learns which rows were capped."""
     line = json.dumps(rec)
     if len(line) <= CLIENT_DIAG_ROW_MAX:    # ASCII-escaped JSON: one byte per character

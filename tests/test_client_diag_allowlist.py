@@ -4,9 +4,11 @@ extension). The file used to take whatever a page posted, of any shape and size.
 allowlist (CLIENT_DIAG_KEYS) is dropped and said once on stderr per surface and key; a data that is not an object is
 stored as null; every string value is cut at CLIENT_DIAG_STR_MAX characters at any depth; a row whose JSON runs past
 CLIENT_DIAG_ROW_MAX bytes keeps its surface, what and app and carries {"capped": true, "bytes": N, "app": ...} as its
-data, except a perf minute row, which sheds its per-minute figures (CLIENT_DIAG_MINUTE_SHED, in order) until it fits and
-names them under `capped`, so the once-per-page nav, res, marks and env survive; the bound is derived from the collector's
-own caps, so the row it builds at every cap at once is stored whole; the surface and what strings are cut too, once; the
+data, except a perf minute row, which sheds CLIENT_DIAG_MINUTE_SHED's keys in order (the uncapped wsBytesByHost map first
+and whole, then its per-minute figures) until it fits and names them under `capped`, so the once-per-page nav, res, marks
+and env survive; the bound is derived from the collector's own caps, so the row it builds at every cap at once is stored
+whole while its wsBytesByHost map is under the crossing the ladder test derives, and past it the map alone is shed; the
+surface and what strings are cut too, once; the
 stderr latch is bounded at CLIENT_DIAG_SAID_MAX pairs and one row can have at most CLIENT_DIAG_ROW_SAY_MAX of its keys
 said; and a page's row under the kernel's own surface is refused. Today's rows (the collector's minute and slowframe,
 the shim's return, close and stale rows) pass whole, so the desktop readers keep every key they depend on, and one
@@ -223,7 +225,8 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         self.assertTrue(set(MINUTE) <= km.CLIENT_DIAG_KEYS["perf"], "every key of today's minute row is admitted")
         self.assertTrue(set(SHARED) <= km.CLIENT_DIAG_KEYS["perf"], "and every shared field")
         self.assertTrue({"app", "type", "ms", "dom", "loaf"} <= km.CLIENT_DIAG_KEYS["perf"], "the slowframe row's keys")
-        self.assertEqual(km.CLIENT_DIAG_MINUTE_SHED, ("frames", "loaf", "free", "slow"), "the per-minute figures a minute row over the cap sheds, largest first")
+        self.assertEqual(km.CLIENT_DIAG_MINUTE_SHED, ("wsBytesByHost", "frames", "loaf", "free", "slow"),
+                         "the uncapped map first and whole, then the per-minute figures largest first (the ladder test)")
         self.assertTrue(set(km.CLIENT_DIAG_MINUTE_SHED) <= km.CLIENT_DIAG_KEYS["perf"])
         self.assertEqual(km.CLIENT_DIAG_SAID_MAX, 512)
         self.assertEqual(km.CLIENT_DIAG_ROW_SAY_MAX, 8, "the foreign keys of one row said by name; the rest are counted in one line")
@@ -391,7 +394,8 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         # a first shared minute over the bound: the row the whole-row marker used to swallow, and with it nav, res, marks
         # and env for the page's life, since the collector sends them once (review find, 2026-09-18). The bound now sits
         # above the collector's own worst case (the test below), so this shape (260 frame types) is one no collector
-        # builds; the shed is the backstop
+        # builds; the shed is the backstop. Under pressure the ladder sheds the uncapped map first whatever the cause (the
+        # ladder test), so this row's two-position map goes before its frames
         frames = {("fed:" if i % 2 else "") + "type%03d" % i: {"n": 12 + i, "ms_sum": 340.5 + i, "ms_max": 88.1, "n16": 5, "n100": 1, "hist": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]} for i in range(260)}
         res = {"bundle%02d.js" % i: {"transferSize": 120000 + i, "encodedBodySize": 119700 + i, "duration": 88 + i} for i in range(24)}
         res["other"] = {"transferSize": 600, "encodedBodySize": 400, "duration": 45}   # MAX_RES named entries and the fold, as the collector builds it
@@ -403,7 +407,8 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         row = self.rows()[-1]
         d = row["data"]
         self.assertNotIn("frames", d, "the largest per-minute figure is shed")
-        self.assertEqual(d["capped"], {"bytes": len(line), "dropped": ["frames"]}, "the marker names what was shed and the line's bytes before")
+        self.assertNotIn("wsBytesByHost", d, "the uncapped map is shed first, whatever took the row over")
+        self.assertEqual(d["capped"], {"bytes": len(line), "dropped": ["wsBytesByHost", "frames"]}, "the marker names what was shed, in ladder order, and the line's bytes before")
         for k in ("nav", "res", "marks", "env"):
             self.assertEqual(d[k], shared[k], k)
         for k in ("app", "since", "span_ms", "dom", "visible", "hidden_pane", "ua", "heap_mb", "vis", "wsBytes", "rafGap", "loaf", "free", "slow"):
@@ -417,7 +422,7 @@ class ClientDiagAllowlistTest(unittest.TestCase):
                 "top": [{"k": "render.js:paint%03d@9000" % i, "ms": 90, "n": 1, "inv": "WebSocket.onmessage"} for i in range(320)]}
         self.post("perf", "minute", dict(MINUTE, frames=frames, loaf=loaf, **shared))
         d = self.rows()[-1]["data"]
-        self.assertEqual(d["capped"]["dropped"], ["frames", "loaf"])
+        self.assertEqual(d["capped"]["dropped"], ["wsBytesByHost", "frames", "loaf"])
         self.assertNotIn("loaf", d)
         self.assertEqual(d["free"], MINUTE["free"])
         self.assertEqual(d["slow"], MINUTE["slow"])
@@ -546,16 +551,11 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         self.assertEqual(sorted(lists["TODAY_KEYS"]), sorted(MINUTE), "this module's MINUTE fixture is the same list")
         self.assertEqual(sorted(lists["SHARED_KEYS"]), sorted(SHARED), "and SHARED the same")
 
-    def test_the_collectors_worst_case_minute_row_is_stored_whole(self):
-        # CLIENT_DIAG_ROW_MAX sat at 8 KiB, below the collector's own worst case, so a share-off minute with 28 or more frame
-        # types lost its frames where main stored it whole, and the shared row lost more (review find, 2026-09-18: 16481 B
-        # share off, 19110 B share on, measured). The bound is now derived from the collector's caps; this builds the row
-        # the collector would send with every cap reached at once, from the constants as perf-telemetry.ts declares them,
-        # and asserts it lands whole, no shed, no marker, nothing said. A 16 KiB bound would still have shed it. The fed:
-        # keys are spelled in their longest form, fed:delta: plus the 32-character identifier, 42 characters: federation.ts
-        # times a frame as fed: plus classifyFrame(msg), which reads delta: plus the identifier for a delta frame. This test
-        # first spelled them fed: plus the identifier, 36 characters, and the row it proved whole was 198 B under the row
-        # the collector can build (review find, round 2, 2026-09-18).
+    def _worst_case_row(self):
+        """The minute row the collector would send with every cap reached at once and eight attached hosts, built from the
+        constants as perf-telemetry.ts declares them: (minute, shared, env, consts), `minute` the share-off row, `shared` the
+        fields the share switch adds (wsBytesByHost among them at HOSTS positions of nine-digit counts), `env` the kernel's
+        envelope and `consts` the collector's constants read. Shared by the worst-case row test and the ladder test."""
         src = open(os.path.join(UI, "perf-telemetry.ts"), encoding="utf-8").read()
         def const(name):
             m = re.search(r"^export const %s(?:: [^=]+)? = ([^;]+);" % name, src, re.M)
@@ -598,6 +598,21 @@ class ClientDiagAllowlistTest(unittest.TestCase):
                   "vis": {"hiddenN": big, "visibleN": big, "hiddenMs": 99999999}, "wsBytes": 999999999, "rafGap": {"n": big, "worst": big},
                   "wsBytesByHost": by_host}
         env = {"t": 1700000000, "wid": WID, "surface": "perf", "what": "minute", "reconnect": False}
+        return minute, shared, env, {"max_types": max_types, "hosts": HOSTS}
+
+    def test_the_collectors_worst_case_minute_row_is_stored_whole(self):
+        # CLIENT_DIAG_ROW_MAX sat at 8 KiB, below the collector's own worst case, so a share-off minute with 28 or more frame
+        # types lost its frames where main stored it whole, and the shared row lost more (review find, 2026-09-18: 16481 B
+        # share off, 19110 B share on, measured). The bound is now derived from the collector's caps; this builds the row
+        # the collector would send with every cap reached at once, from the constants as perf-telemetry.ts declares them,
+        # and asserts it lands whole, no shed, no marker, nothing said. A 16 KiB bound would still have shed it. The fed:
+        # keys are spelled in their longest form, fed:delta: plus the 32-character identifier, 42 characters: federation.ts
+        # times a frame as fed: plus classifyFrame(msg), which reads delta: plus the identifier for a delta frame. This test
+        # first spelled them fed: plus the identifier, 36 characters, and the row it proved whole was 198 B under the row
+        # the collector can build (review find, round 2, 2026-09-18). The one key with no cap, wsBytesByHost, is built at
+        # the eight positions the derivation states; the ladder test below takes it past the bound.
+        minute, shared, env, c = self._worst_case_row()
+        max_types, HOSTS, by_host = c["max_types"], c["hosts"], shared["wsBytesByHost"]
         off, on = len(json.dumps(dict(env, data=minute))), len(json.dumps(dict(env, data=dict(minute, **shared))))
         self.assertGreater(off, 16 * 1024, "the share-off worst case is over 16 KiB, so the old 8 KiB bound shed its frames")
         self.assertLess(on, km.CLIENT_DIAG_ROW_MAX, "the share-on worst case fits under the bound (%d of %d bytes)" % (on, km.CLIENT_DIAG_ROW_MAX))
@@ -624,6 +639,63 @@ class ClientDiagAllowlistTest(unittest.TestCase):
             self.assertNotIn("capped", row["data"])
             self.assertEqual(len(row["data"]["frames"]), 2 * (max_types + 1), "every frame type intact")
         self.assertEqual(self.rows()[-1]["data"]["wsBytesByHost"], by_host, "the per-host map lands whole: the admit filters top-level keys only, the scrub walks it")
+
+    def test_a_wide_wsBytesByHost_map_is_shed_whole_as_the_ladders_first_step_and_the_rest_of_the_row_is_stored_as_posted(self):
+        # wsBytesByHost is the one key of the minute row the collector does not cap (one position per attached host, the owner's
+        # decision), so it is the one key that can take a row the collector builds past CLIENT_DIAG_ROW_MAX. Before round 1 of
+        # its review (2026-09-20) the ladder shed the frame histograms first and kept the map that caused the overflow, and past
+        # a second crossing the whole row: a wide map lost exactly what the shed protects. Now the map is the ladder's first
+        # step, shed WHOLE and named under capped (never truncated to the positions that fit, so a stored map is never read as a
+        # host count), and shedding it returns the row to the derived worst case, which fits: the frames and the once-per-page
+        # fields stay, however wide the map. The crossing and the per-position cost are DERIVED here from the row this test
+        # builds and read back against the kernel's comment, so a moved figure or a reshaped row goes red rather than leaving
+        # the comment claiming a crossing the row no longer has.
+        minute, shared, env, c = self._worst_case_row()
+        def with_hosts(n):
+            return dict(minute, **dict(shared, wsBytesByHost={"h%d" % i: 999999999 for i in range(1, n + 1)}))
+        def size(n):
+            return len(json.dumps(dict(env, data=with_hosts(n))))
+        n = c["hosts"]
+        self.assertLessEqual(size(n), km.CLIENT_DIAG_ROW_MAX, "the stated worst case fits (the test above)")
+        while size(n) <= km.CLIENT_DIAG_ROW_MAX:
+            n += 1
+            self.assertLess(n, 100000, "no crossing found: the map never takes the row over the bound?")
+        crossing = n
+        self.assertGreater(crossing, c["hosts"], "derived: the first position count whose row is over the bound")
+        for count in (crossing, crossing + 1, 2000):
+            data = with_hosts(count)
+            line = json.dumps(dict(env, data=data))
+            self.assertGreater(len(line), km.CLIENT_DIAG_ROW_MAX, count)
+            km._client_diag_said.clear()
+            err = self.post("perf", "minute", data)
+            row = self.rows()[-1]
+            d = row["data"]
+            self.assertNotIn("wsBytesByHost", d, "%d positions: the map is shed whole, never stored truncated" % count)
+            self.assertEqual(d["capped"], {"bytes": len(line), "dropped": ["wsBytesByHost"]}, "%d positions: the one step, recorded" % count)
+            self.assertEqual(len(d["frames"]), 2 * (c["max_types"] + 1), "%d positions: every frame type intact" % count)
+            for k, v in data.items():
+                if k != "wsBytesByHost":
+                    self.assertEqual(d[k], v, "%d positions: %s stored as posted" % (count, k))
+            self.assertLessEqual(len(json.dumps(row)), km.CLIENT_DIAG_ROW_MAX)
+            self.assertEqual(len(err.splitlines()), 1, err)
+            self.assertIn("stored without some of its per-minute figures", err, "the shed's existing stderr line fires, once")
+        data = with_hosts(crossing - 1)
+        self.assertEqual(self.post("perf", "minute", data), "", "one position under the crossing: nothing shed, nothing said")
+        self.assertEqual(self.rows()[-1]["data"], data, "stored whole, the map at %d positions included" % (crossing - 1))
+        # the per-position cost by the ordinal's digit width (the separator, the quoted key and a nine-digit count), derived
+        per = (size(9) - size(8), size(10) - size(9), size(100) - size(99))
+        self.assertTrue(all(b > 0 for b in per), per)
+        ksrc = open(os.path.join(os.path.dirname(HERE), "kernel", "kernel.py"), encoding="utf-8").read()
+        ksrc = re.sub(r"\s+", " ", re.sub(r"\n\s*#", " ", ksrc))   # the comment's wrapping is not part of the claim
+        rule = re.search(r"each further position adds (\d+) bytes at a one-digit ordinal, (\d+) at two and (\d+) at three", ksrc, re.I)
+        self.assertIsNotNone(rule, "kernel.py's derivation no longer states the per-position rule: re-aim this read")
+        self.assertEqual(tuple(int(x) for x in rule.groups()), per, "the derivation's per-position figures are this row's")
+        cross = re.search(r"the map crosses the bound at (\d+) positions", ksrc)
+        self.assertIsNotNone(cross, "kernel.py's derivation no longer states the crossing: re-aim this read")
+        self.assertEqual(int(cross.group(1)), crossing, "the derivation's crossing is the one this row derives")
+        margin = re.search(r"leaves (\d+) bytes under the bound", ksrc)
+        self.assertIsNotNone(margin, "kernel.py's derivation no longer states the margin: re-aim this read")
+        self.assertEqual(int(margin.group(1)), km.CLIENT_DIAG_ROW_MAX - size(c["hosts"]), "the stated margin is the bound less the stated worst case")
 
     def test_every_admitted_key_is_classified_by_the_content_its_value_can_carry(self):
         # The census (CENSUS, above) against the table, both ways per surface: a key the table admits with no row here fails, as

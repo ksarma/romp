@@ -4767,12 +4767,19 @@ frames it received is measured in the panes themselves, by
   open dashboard writes a few MB a day; with the share switch on, the first
   shared row adds about 2 KB of `res`, `env`, `nav` and `marks`. Every row is
   bounded at 24 KiB of JSON, a bound derived from the collector's own caps so
-  that no row it can build is touched (its worst case, every cap reached at
+  that no row it can build is touched while its `wsBytesByHost` map, the one
+  key without a cap, is under the crossing (its worst case, every cap reached at
   once, is about 17.9 KB with share off and 21.3 KB with share on): a `perf`
-  minute row over the bound sheds `frames`, `loaf`, `free` and `slow` in that
-  order until it fits, keeps its other keys, and carries
-  `capped: {bytes, dropped}` (the line's bytes before the shed and the keys
-  shed); any other row over the bound, and a minute row that does not fit
+  minute row over the bound sheds `wsBytesByHost` whole, then `frames`,
+  `loaf`, `free` and `slow`, in that order until it fits, keeps its other
+  keys, and carries `capped: {bytes, dropped}` (the line's bytes before the
+  shed and the keys shed). The map goes first because it alone can take a row
+  the collector builds over the bound (each position adds 17 to 19 bytes, so
+  on that worst-case row the crossing is 177 positions and on today's rows
+  about 1200), and shedding it whole returns such a row to its derived size,
+  under the bound, so the frames and the once-per-page fields stay; it is
+  never cut to the positions that fit, so a stored map is never a partial
+  host count. Any other row over the bound, and a minute row that does not fit
   even bare, is stored as `data: {capped: true, bytes: N, app}` (`app` where
   the row had one) with `t`, `wid`, `surface`, `what` and `reconnect` kept.
   `romp perf client` skips the whole-row markers and counts both shapes in
@@ -4842,7 +4849,8 @@ The two rows, as the kernel writes them (`t` its clock, `wid` the dashboard id):
   keyed by the host's position on the page (`h1` the first remote host this
   page attached, `h2` the next, in the order hosts first appeared to the
   page, the kernel's `/tunnels` row order when one answer lists several;
-  one key per host, however many the page attaches), since the previous
+  one key per host, however many the page attaches; a row the map takes over
+  the kernel's 24 KiB bound is stored without it, above), since the previous
   row (an idle or muted minute carries on the same way).
   The two are disjoint: a remote socket's characters are counted under its
   position and never in `wsBytes`. Positions are assigned per pane document

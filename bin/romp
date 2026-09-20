@@ -452,8 +452,8 @@ for key, r in sorted(rows.items(), key=order):
     # rest counted in the minute row. The kernel appends them to $STATE/client-diag.jsonl with the dashboard
     # id (wid) and its clock, and rotates that file to .1 past 8 MB. Since 2026-09-18 the kernel admits each
     # surface's known top-level keys and bounds a row at 24 KiB (CLIENT_DIAG_ROW_MAX, _client_diag_line in
-    # kernel/kernel.py): a perf minute row over the bound sheds its per-minute figures first (frames, then
-    # loaf, free, slow, until the line fits) and names what it shed under its capped key ({"bytes": N,
+    # kernel/kernel.py): a perf minute row over the bound sheds its uncapped wsBytesByHost map whole, then its
+    # per-minute figures (frames, loaf, free, slow, until the line fits) and names what it shed under its capped key ({"bytes": N,
     # "dropped": [...]}, the row's other keys kept); any other row over the bound, or a minute row that does
     # not fit even bare, becomes a cap marker ({"capped": true, "bytes": N}, plus the pane's app when the row
     # had one). This reads both files, skips the markers (nothing in them folds) and counts both kinds in its
