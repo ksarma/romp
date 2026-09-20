@@ -10,7 +10,8 @@
 // and a keyboard with no pan (508, 0); then (round 2) the picker's lift under the pan, a pinch with the keyboard up and the
 // keyboard dismissed under the zoom; then (round 3) the keyboard up with the visual viewport at the layout viewport's bottom
 // (508, 336), the fixed bar inside the band; then (round 4) a pinch over that deep pan and the pan at an interior position (508,
-// 320), the bar partly inside the band. After each the driver waits two animation frames (fit() coalesces to one per frame)
+// 320), the bar partly inside the band; then (round 6) a short band panned deep (20, 830), the band's top below the bar's top.
+// After each the driver waits two animation frames (fit() coalesces to one per frame)
 // and reads, in the shell's coordinate space: the composer's bottom (the chat iframe's top plus the composer's bottom inside
 // its same-origin document), the body's box, #mtabs's box, and the three shell variables.
 // Prints one `RESULT:` JSON line; exits 3 when the browser does not launch (the Python side turns that into a skip).
@@ -158,6 +159,12 @@ try {
   // the bar is partly inside the band and the strip is the overlap, not the bar's whole height
   out.kbUpMid = await move(508, 320);
   out.settledMid = await move(844, 0);
+  // round 6 (2026-09-20): a SHORT band panned deep (height 20, offsetTop 830: the band 830..850 against a bar whose box ends at
+  // 844 and starts above 830): the band's top is below the bar's top, so the strip is the overlap of the two intervals, the
+  // bar's pixels between 830 and 844; the first proportional form read the band's bottom edge only and reserved the whole bar,
+  // more than the band holds
+  out.kbUpShortDeep = await move(20, 830);
+  out.settledShort = await move(844, 0);
   // round 2 (2026-09-19): a zoom after the pan, and the keyboard dismissed while the zoom holds (the fake's scale is what the
   // shell reads; the browser's own layout is not zoomed)
   out.kbUpAgain = await move(508, 83);

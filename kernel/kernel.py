@@ -69898,9 +69898,12 @@ document.documentElement.style.setProperty('--mtabs-h',(kbOpen()?0:(bar.offsetHe
 // visible band; .col then reserved a bar-tall strip that rendered as an empty band above the keyboard. Read the geometry
 // instead of inferring it. The band is the one THIS run published, --app-top to --app-top + --app-h (the fixed body's box
 // on the phone layout; both are written above barfit's call in fit()), and the strip is the part of the bar's box inside
-// it, clamp(bandBottom - bar.top, 0, offsetHeight), getBoundingClientRect being layout-viewport-relative for a fixed box too:
-// 0 for a bar whose box starts at or below the band's bottom edge, the whole height for a bar wholly inside, and the
-// overlap between. Round 4 (2026-09-20): the reservation had been all-or-nothing on a visibility verdict, so across one bar
+// it, the overlap of the two intervals, max(0, min(bar.bottom, bandBottom) - max(bar.top, bandTop)), getBoundingClientRect
+// being layout-viewport-relative for a fixed box too: 0 for a bar whose box starts at or below the band's bottom edge or
+// ends at or above its top edge, the whole height for a bar wholly inside, and the overlap between. Round 6 (2026-09-20):
+// the first form, clamp(bandBottom - bar.top, 0, offsetHeight), read the band's bottom edge only, so a band whose top sat
+// below the bar's top (the band a refused height report leaves standing after a rotation, or a short band panned deep)
+// reserved pixels above the band: the whole bar over a bar with no pixel inside it, and more than a short band holds. Round 4 (2026-09-20): the reservation had been all-or-nothing on a visibility verdict, so across one bar
 // height of pan values, the bar partly inside the band, the strip stood bar-tall over a bar showing a few pixels, the very
 // band this change exists to close; the strip now follows the pixels. The PUBLISHED band rather than the live visual
 // viewport, so a pinch (whose --app-top holds and whose --app-h is upstream's scale arithmetic) judges the bar against the
@@ -69919,7 +69922,7 @@ barfit=function(){try{var vv=window.visualViewport,bar=document.getElementById('
 if(!vv||!bar||typeof bar.getBoundingClientRect!=='function'||typeof st.getPropertyValue!=='function'){barfitVV();return;}
 var top=parseFloat(st.getPropertyValue('--app-top')),h=parseFloat(st.getPropertyValue('--app-h'));
 if(!(top>=0)||!(h>0)){barfitVV();return;}
-st.setProperty('--mtabs-h',Math.max(0,Math.min(bar.offsetHeight||0,top+h-bar.getBoundingClientRect().top))+'px');}catch(e){}};
+var r=bar.getBoundingClientRect().top;st.setProperty('--mtabs-h',Math.max(0,Math.min(r+(bar.offsetHeight||0),top+h)-Math.max(r,top))+'px');}catch(e){}};
 // ONE fit per animation frame, however many events a keyboard slide or a resume fires: rAF is the
 // frame the browser is about to paint, not a timer, so a burst coalesces and nothing is deferred past
 // the next paint. The boot fit below stays synchronous so the first paint is already right.

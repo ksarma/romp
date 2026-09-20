@@ -23,7 +23,9 @@ bar is INSIDE the band, so its strip is reserved and the composer sits above the
 height difference first and collapsed the strip, and the bar painted over the composer's bottom. Round 4 (2026-09-20): the
 strip is the part of the bar's box inside the band the shell published, so at an interior pan (offsetTop 320, the band
 320..828) --mtabs-h is the overlap and the composer sits flush above the bar's visible part; and a pinch over the deep
-pan keeps the strip, the bar being inside the published band whatever the height difference says.
+pan keeps the strip, the bar being inside the published band whatever the height difference says. Round 6 (2026-09-20): the
+overlap is of two intervals, so a short band panned deep (20 at 830: 830..850), its top below the bar's top, reserves the
+bar's pixels from the band's top down, not the whole bar.
 
 The lab: one kernel from test_ship_reship_served.kernel_env (a private XDG root, `session-hosts` floored off,
 ROMP_MANAGER_PORT=1, no catalog or update fetch, a hermetic postal bus), a private dist (lab_dist.copy_dist), the three
@@ -259,13 +261,27 @@ class KeyboardGap(unittest.TestCase):
         self.assertEqual(_px(mid["appTop"]), 320, where + "the pan is published: %r" % (mid,))
         self.assertEqual(_px(mid["appH"]), KB_H, where + "%r" % (mid,))
         mid_band_bottom = 320 + KB_H
-        overlap = mid_band_bottom - mid["bar"]["top"]
+        # the overlap of the two intervals, derived from the box and the band (round 6, 2026-09-20: it had been the bar's pixels
+        # above the band's bottom, the one-edge form, which agrees here and could not disagree anywhere)
+        overlap = max(0, min(mid["bar"]["bottom"], mid_band_bottom) - max(mid["bar"]["top"], 320))
         self.assertGreater(overlap, 0.5, where + "the step is interior: the bar's top is above the band's bottom: %r" % (mid,))
         self.assertLess(overlap, bar_h - 0.5, where + "the step is interior: the bar is not wholly inside the band: %r" % (mid,))
         self.assertAlmostEqual(_px(mid["mtabsH"]), overlap, delta=0.5, msg=where + "the strip is the part of the bar inside the band, not its whole height: %r" % (mid,))
         self.assertAlmostEqual(mid_band_bottom - _px(mid["mtabsH"]) - mid["composerBottom"], rest_gap, delta=1,
                                msg=where + "the composer sits above the bar's visible part at its resting distance, no band between them: %r" % (mid,))
         self.assertAlmostEqual(mid_back["composerBottom"], rest["composerBottom"], delta=0.5, msg=where + "%r" % (mid_back,))
+        # round 6 (2026-09-20): the band's TOP edge. A short band panned deep (height 20 at offsetTop 830: 830..850 against the
+        # bar's box) has its top below the bar's top and is shorter than the bar, so the strip is the overlap of the two
+        # intervals, the bar's pixels from the band's top down to the bar's bottom, derived from the box and the band. The
+        # first proportional form read the band's bottom edge only and reserved the whole bar there, more than the band holds.
+        sd, sd_back = r["kbUpShortDeep"], r["settledShort"]
+        self.assertEqual((_px(sd["appTop"]), _px(sd["appH"])), (830, 20), where + "the short band is published: %r" % (sd,))
+        self.assertGreater(830, sd["bar"]["top"], where + "the state: the band's top is below the bar's top: %r" % (sd,))
+        self.assertLess(20, bar_h, where + "the state: the band is shorter than the bar: %r" % (sd,))
+        sd_overlap = max(0, min(sd["bar"]["bottom"], 830 + 20) - max(sd["bar"]["top"], 830))
+        self.assertTrue(0.5 < sd_overlap < bar_h - 0.5, where + "the step is interior: %r against the bar %r" % (sd_overlap, sd["bar"]))
+        self.assertAlmostEqual(_px(sd["mtabsH"]), sd_overlap, delta=0.5, msg=where + "the strip is the overlap of the band and the bar's box, not the bar's pixels above the band's bottom: %r" % (sd,))
+        self.assertAlmostEqual(sd_back["composerBottom"], rest["composerBottom"], delta=0.5, msg=where + "%r" % (sd_back,))
         # a pinch after the pan, and the keyboard dismissed while zoomed (round 2, 2026-09-19): zoomed with the keyboard up the
         # pan holds and the body is still the band; with the keyboard gone and the zoom standing, --app-h is the full height
         # again, and a held pan would place the body at 83..927 with the composer row below the viewport. The held pan is

@@ -641,12 +641,35 @@ out.barInTheBandBack = { appTop: appTop(), appH: appH(), barH: barH() };
 // round 4 (2026-09-20): the strip is PROPORTIONAL. The keyboard up (vv.height 460) and the pan swept across one bar height:
 // the band ends at offsetTop + 460 and the fixed bottom:0 bar is 800..844, so the strip is the part of the bar inside the
 // band, offsetTop - 340 clamped to 0..44: nothing at 340 and below, one pixel at 341, the whole bar at 384 and beyond. The
-// all-or-nothing strip reserved 44 px from 341 up, a bar-tall band over a bar showing a few pixels
-const sweep = {};
-for (const ot of [336, 340, 341, 345, 351, 362, 373, 380, 383, 384, 388]) {
-  visualViewport.height = 460; visualViewport.offsetTop = ot; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
-  sweep[ot] = { appTop: appTop(), appH: appH(), barH: barH() };
-}
+// all-or-nothing strip reserved 44 px from 341 up, a bar-tall band over a bar showing a few pixels.
+// Round 6 (2026-09-20): BOTH edges. The first proportional form read the band's bottom edge only (clamp(bandBottom - bar.top,
+// 0, height)), so a band whose top sat below the bar's top reserved pixels above the band: the whole bar over a bar with no
+// pixel inside it, more than a short band holds. The sweep drives every state where a variable of the overlap changes which
+// operand min or max takes: the band's top passing the bar's top (800) and the bar's bottom (844); the bar's bottom passing
+// the band's top (BAR.top 296, 320, 339, 340 against a band from 340) and a bar wholly above the band (BAR.top 100); a short
+// band (vv.height 60) panned deep; the band a refused height report leaves standing after a rotation (innerHeight 390 puts
+// the bar at 346..390 while the last published band, 384..844, stands); a band shorter than the bar (vv.height 30: the first
+// form reserved more than the band holds); and the deep pan where the two forms agree (384).
+// Each record carries the bar's box and the band the shell published, so the test derives the overlap from the geometry
+// it reads back, not from a formula of its own.
+const sweep = [];
+const box = () => { const b = BAR.getBoundingClientRect(); return { top: b.top, bottom: b.bottom }; };
+const step = (label, vvH, ot, barTop) => {
+  BAR.top = barTop === undefined ? null : barTop; visualViewport.height = vvH; visualViewport.offsetTop = ot;
+  fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+  sweep.push({ label, innerHeight: global.innerHeight, vvHeight: vvH, ot, bar: box(), appTop: appTop(), appH: appH(), barH: barH() });
+};
+for (const ot of [336, 340, 341, 345, 351, 362, 373, 380, 383, 384, 388]) step('ot' + ot, 460, ot);
+for (const ot of [799, 800, 801, 810, 822, 843, 844, 845]) step('top' + ot, 460, ot);    // the band's top passes the bar's box
+for (const bt of [100, 296, 320, 339, 340]) step('bar' + bt, 460, 340, bt);               // the bar's bottom passes the band's top
+step('short810', 60, 810);                                                                  // a short band panned deep
+step('short30', 30, 810);                                                                   // a band shorter than the bar: 810..840
+step('deep384', 460, 384);
+// the stale band: a rotation moves the bar's box (innerHeight 390, the bar 346..390) and the height report is refused (0), so
+// the band last published (384..844) stands and the bar's pixels inside it are 384..390
+global.innerHeight = 390; visualViewport.height = 0; visualViewport.offsetTop = 0; fire(WIN, 'resize'); fire(VV, 'resize'); flush();
+sweep.push({ label: 'staleAfterRotation', innerHeight: 390, vvHeight: 0, ot: 0, bar: box(), appTop: appTop(), appH: appH(), barH: barH() });
+global.innerHeight = 844; BAR.top = null;
 out.sweep = sweep;
 visualViewport.height = 844; visualViewport.offsetTop = 0; fire(VV, 'resize'); flush();
 // round 2 (2026-09-19): the writer's other population. fit() publishes a pan only off a coarse pointer; a FINE pointer writes
@@ -814,18 +837,42 @@ class MobileFitExecutes(unittest.TestCase):
         # flush above the bar's visible part and no strip stands over bar the keyboard hides. The round-3 strip was the
         # visibility verdict times the whole height, 44px at every interior position from 341 up: over a bar showing 1 to 43
         # pixels the shell reserved 44, a dark band of up to 43 px between the composer and the keyboard, the artifact this
-        # change exists to close. The expectation is derived from the positions the driver swept, and the sweep must cross
-        # the range where the strip changes (interior positions, both boundaries), or the derivation proves nothing.
+        # change exists to close. Round 6 (2026-09-20): the strip is the overlap of two INTERVALS, the bar's box and the band
+        # the shell published, and the expectation is derived from the geometry each record carries (the box read back from
+        # the stub, the band from the published variables), never from a formula of the test's own: the round-4 expectation
+        # was the one-edge formula itself (offsetTop - 340 clamped), so it agreed with the shell in every state it swept and
+        # could not see that a band whose top sat below the bar's top reserved pixels above the band (the whole bar over a
+        # bar with no pixel inside it; more than a short band holds). The sweep must cover every state where a variable
+        # changes which operand min or max takes, both edges of each interval, or the derivation proves nothing.
         sweep = self.out["sweep"]
-        self.assertGreaterEqual(len(sweep), 8, "the sweep: %r" % (sorted(sweep),))
-        expected = {ot: "%dpx" % max(0, min(44, int(ot) - 340)) for ot in sweep}
-        interior = [ot for ot, v in expected.items() if v not in ("0px", "44px")]
-        self.assertGreaterEqual(len(interior), 4, "the sweep crosses the range where the strip changes: %r" % (expected,))
-        for boundary in ("340", "341", "383", "384"):
-            self.assertIn(boundary, sweep, "the boundary positions are in the sweep")
-        self.assertEqual({ot: v["barH"] for ot, v in sweep.items()}, expected, "the strip is the part of the bar inside the band")
-        self.assertEqual({ot: (v["appTop"], v["appH"]) for ot, v in sweep.items()}, {ot: ("%spx" % ot, "460px") for ot in sweep},
-                         "the band the shell published at each position")
+        self.assertGreaterEqual(len(sweep), 20, "the sweep: %r" % ([r["label"] for r in sweep],))
+        px = lambda v: int(v[:-2])
+        band = {r["label"]: (px(r["appTop"]), px(r["appTop"]) + px(r["appH"])) for r in sweep}
+        bar = {r["label"]: (r["bar"]["top"], r["bar"]["bottom"]) for r in sweep}
+        heights = {b - t for t, b in bar.values()}
+        self.assertEqual(len(heights), 1, "one bar height across the sweep: %r" % (heights,))
+        bar_h = heights.pop()
+        expected = {k: "%dpx" % max(0, min(bar[k][1], band[k][1]) - max(bar[k][0], band[k][0])) for k in band}
+        self.assertEqual({r["label"]: r["barH"] for r in sweep}, expected, "the strip is the part of the bar's box inside the band")
+        # the states the sweep must reach, each derived from the geometry and failing on an empty sweep
+        interior = [k for k, v in expected.items() if 0 < px(v) < bar_h]
+        self.assertGreaterEqual(len(interior), 6, "interior positions, the strip between 0 and the bar's height: %r" % (expected,))
+        top_below = [k for k in band if band[k][0] > bar[k][0]]
+        self.assertGreaterEqual(len(top_below), 6, "the band's top below the bar's top, the states the one-edge form over-counted: %r" % (top_below,))
+        self.assertTrue([k for k in top_below if px(expected[k]) == 0] and [k for k in top_below if 0 < px(expected[k]) < bar_h],
+                        "with the band's top below the bar's top: a bar wholly above the band and a bar straddling its top: %r" % ({k: expected[k] for k in top_below},))
+        self.assertTrue([k for k in band if bar[k][1] <= band[k][0]], "a bar wholly above the band (its bottom at or above the band's top)")
+        self.assertTrue([k for k in band if bar[k][0] >= band[k][1]], "a bar wholly below the band (its top at or below the band's bottom)")
+        self.assertTrue([k for k in band if band[k][1] - band[k][0] < bar_h], "a band shorter than the bar")
+        for edge, hit in (("band top = bar top", lambda k: band[k][0] == bar[k][0]), ("band top = bar bottom", lambda k: band[k][0] == bar[k][1]),
+                          ("band bottom = bar top", lambda k: band[k][1] == bar[k][0]), ("band bottom = bar bottom", lambda k: band[k][1] == bar[k][1])):
+            self.assertTrue([k for k in band if hit(k)], "the sweep reaches the edge " + edge)
+        stale = [r for r in sweep if r["vvHeight"] == 0]
+        self.assertEqual(len(stale), 1, "the stale band after a refused height report following a rotation is one state")
+        self.assertEqual((band[stale[0]["label"]], stale[0]["innerHeight"]), ((384, 844), 390), "the band last published stands while the layout viewport changed")
+        # the band the shell published at each position: the pan and the height it was measured with (the stale state keeps the last)
+        self.assertEqual({r["label"]: (r["appTop"], r["appH"]) for r in sweep if r["vvHeight"]},
+                         {r["label"]: ("%dpx" % r["ot"], "%dpx" % r["vvHeight"]) for r in sweep if r["vvHeight"]})
 
     def test_a_pinch_over_a_deep_pan_keeps_the_strip_the_published_band_gives(self):
         # round 4 (2026-09-20): the bar wholly inside the band under a deep pan (384: the band 384..844), then a pinch (scale 2,
