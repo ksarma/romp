@@ -56,8 +56,13 @@ expressions and no AST, finds the `assertIn("<lit>", X)`, `assert "<lit>" in X`,
 `X.index("<lit>")` (find, rindex, rfind, count) forms whose X is `<alias>.<getter>()` or `<alias>.<CONST>` inline, or a
 name bound to one by an assignment of its own (a self.<attr> in any method of the class), by a tuple assignment, or by a
 `for` over served texts inside that loop; every such site must be a row (so a module with such a site the derivation stops
-reading fails here), the row count is at least the site count, and the modules with rows are exactly the modules with sites
-(a module the derivation reads in a form the textual census does not, or the reverse, fails here); the form space is
+reading fails here), the row count is at least the site count, and the modules with rows in a form the textual census reads
+are exactly the modules with sites (a module the derivation reads in such a form and the textual census does not, or the
+reverse, fails here). Each row carries whether its form is one the textual census reads (round 8, 2026-09-20): the literal's
+SOURCE segment must be a plain literal or a run of them (a literal with a backslash, a triple-quoted one, a loop or
+comprehension variable are not), and its container must not be a name bound to a slice; a module all of whose rows are in
+declined forms is outside the module symmetry (its rows are still judged, and the form-space pin below holds the declined
+forms), so a sound module reds nothing there while a module with one readable row and no site still does. The form space is
 pinned on a synthetic module below (a form the derivation stops reading fails there), built over every derived getter and
 over a derived constant of each kind. The container NAMES the tests pin are derived from the test text on their own and
 held to the kernel-derived getters and constants (a getter the tests call or a served str the tests assert over that the
@@ -230,8 +235,9 @@ def _resolve(node, names, attrs, getters, constants):
     return t
 
 
-def _bind(targets, value, names, attrs, getters, constants):
-    """Record Name and self.<attr> targets bound to a served text, or to a slice of one; a tuple assignment binds by position."""
+def _bind(targets, value, names, attrs, getters, constants, sliced=None):
+    """Record Name and self.<attr> targets bound to a served text, or to a slice of one; a tuple assignment binds by position.
+    `sliced`, when given, tracks the Names bound through a slice (a form the textual census does not read; round 8)."""
     if isinstance(value, ast.Tuple) and len(targets) == 1 and isinstance(targets[0], ast.Tuple) \
             and len(targets[0].elts) == len(value.elts):
         pairs = list(zip(targets[0].elts, value.elts))
@@ -239,12 +245,16 @@ def _bind(targets, value, names, attrs, getters, constants):
         pairs = [(t, value) for t in targets]
     for t, v in pairs:
         g = _text(v, getters, constants)
+        via_slice = False
         if not g and isinstance(v, ast.Subscript):   # `fn = html[a:b]`, a slice of a bound text, judged over the whole text
             g = _resolve(v.value, names, attrs, getters, constants)
+            via_slice = True
         if not g:
             continue
         if isinstance(t, ast.Name):
             names[t.id] = g
+            if sliced is not None:
+                (sliced.add if via_slice else sliced.discard)(t.id)
         elif isinstance(t, ast.Attribute) and isinstance(t.value, ast.Name) and t.value.id == "self":
             attrs[t.attr] = g
 
@@ -303,10 +313,14 @@ def _loops(fn):
 
 
 def rows_of(path, getters, constants):
-    """[(line, literal, text, form)] for every membership or position assertion of a literal over a served text in one test
-    module; form is "in" for a membership, else the position method."""
+    """[(line, literal, text, form, readable)] for every membership or position assertion of a literal over a served text in one
+    test module; form is "in" for a membership, else the position method; readable is whether the row's form is one the textual
+    census reads (round 8, 2026-09-20): the literal's source segment is a plain literal or a run of them (re.fullmatch over _LIT:
+    no backslash, not triple-quoted, not a loop or comprehension variable) and the container is not a name bound to a slice."""
     with open(path, encoding="utf-8") as f:
-        tree = ast.parse(f.read(), path)
+        src = f.read()
+    tree = ast.parse(src, path)
+    plain = lambda node: isinstance(node, ast.Constant) and bool(re.fullmatch(_LIT, ast.get_source_segment(src, node) or ""))
     out = []
     functions = (ast.FunctionDef, ast.AsyncFunctionDef)
     groups = [[n for n in cls.body if isinstance(n, functions)] for cls in ast.walk(tree) if isinstance(cls, ast.ClassDef)]
@@ -318,19 +332,20 @@ def rows_of(path, getters, constants):
                 if isinstance(st, ast.Assign):
                     _bind(st.targets, st.value, {}, attrs, getters, constants)
         for fn in fns:
-            names = {}
+            names, sliced = {}, set()
             for st in ast.walk(fn):
                 if isinstance(st, ast.Assign):
-                    _bind(st.targets, st.value, names, attrs, getters, constants)
+                    _bind(st.targets, st.value, names, attrs, getters, constants, sliced)
             text_of = lambda x: _resolve(x, names, attrs, getters, constants)
+            readable = lambda lit, x: plain(lit) and not (isinstance(x, ast.Name) and x.id in sliced)
             rows = []
             for node in ast.walk(fn):
                 for lit, x in _memberships(node):
                     if _literals(lit) and text_of(x):
-                        rows += [(node.lineno, lit.col_offset, i, l, text_of(x), "in") for i, l in enumerate(_literals(lit))]
+                        rows += [(node.lineno, lit.col_offset, i, l, text_of(x), "in", readable(lit, x)) for i, l in enumerate(_literals(lit))]
                 pos = _position(node)
                 if pos and _literals(pos[0]) and text_of(pos[1]):
-                    rows += [(node.lineno, pos[0].col_offset, i, l, text_of(pos[1]), pos[2]) for i, l in enumerate(_literals(pos[0]))]
+                    rows += [(node.lineno, pos[0].col_offset, i, l, text_of(pos[1]), pos[2], readable(pos[0], pos[1])) for i, l in enumerate(_literals(pos[0]))]
             # a loop variable, bound to the loop's own body (a variable rebound by a later loop resolves to its own loop):
             # `for win in ("fiveHour", "sevenDay"):` binds the LITERALS, one row per literal for each membership or position
             # form of the variable over a text (round 5, 2026-09-20); `for page in (km._feed_page(), km._files_page()):` binds
@@ -345,11 +360,11 @@ def rows_of(path, getters, constants):
                     if pos:
                         forms.append(pos)
                     for lit, x, form in forms:
-                        if lits and isinstance(lit, ast.Name) and lit.id == var and text_of(x):
-                            rows += [(node.lineno, lit.col_offset, i, l, text_of(x), form) for i, l in enumerate(lits)]
-                        elif texts and all(texts) and _literals(lit) and isinstance(x, ast.Name) and x.id == var:
-                            rows += [(node.lineno, lit.col_offset, i * len(texts) + j, l, g, form) for i, l in enumerate(_literals(lit)) for j, g in enumerate(texts)]
-            out += [(line, lit, g, form) for line, _, _, lit, g, form in sorted(rows)]
+                        if lits and isinstance(lit, ast.Name) and lit.id == var and text_of(x):   # a loop or comprehension literal: declined by the textual census
+                            rows += [(node.lineno, lit.col_offset, i, l, text_of(x), form, False) for i, l in enumerate(lits)]
+                        elif texts and all(texts) and _literals(lit) and isinstance(x, ast.Name) and x.id == var:   # a for over texts: read by it
+                            rows += [(node.lineno, lit.col_offset, i * len(texts) + j, l, g, form, plain(lit)) for i, l in enumerate(_literals(lit)) for j, g in enumerate(texts)]
+            out += [(line, lit, g, form, readable) for line, _, _, lit, g, form, readable in sorted(rows)]
     return out
 
 
@@ -527,17 +542,22 @@ class ServedPinsReadElements(unittest.TestCase):
             fname = os.path.basename(path)
             if os.path.realpath(path) == os.path.realpath(__file__):
                 continue
-            rows += [(fname, line, lit, name, form) for line, lit, name, form in rows_of(path, getters, constants)]
+            rows += [(fname, line, lit, name, form, readable) for line, lit, name, form, readable in rows_of(path, getters, constants)]
             found, containers = textual_census(path, getters, constants)
             sites += [(fname, line, lit, name, form) for line, lit, name, form in found]
             pinned |= containers
         # the floor, derived: every site the textual census finds is a row the derivation found (so a module the derivation
-        # stops reading, or a form it stops reading, fails here), the population is at least that, and the modules with rows
-        # are the modules with sites, both ways (round 7, 2026-09-20: 5 modules had rows and no site, a drop there invisible)
+        # stops reading, or a form it stops reading, fails here), the population is at least that, and the modules with rows in
+        # a form the textual census reads are the modules with sites, both ways (round 7, 2026-09-20: 5 modules had rows and no
+        # site, a drop there invisible; round 8: over the readable rows, so a module all of whose rows use a form the textual
+        # census declines is not a false red here, and the form-space pin below holds those forms)
         self.assertTrue(sites, "the textual census found no assertion over a served text")
-        self.assertEqual(sorted(set(sites) - set(rows)), [], "sites the textual census reads and the derivation does not")
+        self.assertEqual(sorted(set(sites) - {r[:5] for r in rows}), [], "sites the textual census reads and the derivation does not")
         self.assertGreaterEqual(len(rows), len(sites), "the population is every assertion of a literal over a served text across the suite: %d rows, %d sites" % (len(rows), len(sites)))
-        self.assertEqual(sorted({r[0] for r in rows} ^ {s[0] for s in sites}), [], "modules with rows and no textual site, or the reverse")
+        readable_modules = {r[0] for r in rows if r[5]}
+        self.assertTrue(readable_modules, "no module has a row in a form the textual census reads")
+        self.assertEqual(sorted(readable_modules ^ {s[0] for s in sites}), [],
+                         "modules with readable rows and no textual site, or the reverse: widen the textual census to the form the derivation read, or write the pin in a form it reads")
         self.assertTrue({r[3] for r in rows} & set(getters) and {r[3] for r in rows} & set(constants), "rows over pages and over constants both derived")
         self.assertTrue({r[3] for r in rows} - set(getters) - roster, "rows over constants outside the round-6 roster (the class the roster missed): %r" % (sorted({r[3] for r in rows} - set(getters)),))
         # the container NAMES the tests pin, read from the test text on their own: every getter the tests call is derived, and
@@ -551,7 +571,7 @@ class ServedPinsReadElements(unittest.TestCase):
         self.assertTrue(pinned_served - roster, "the tests pin a served constant outside the round-6 roster: %r" % (sorted(pinned_served),))
         self.assertEqual(sorted(pinned_served - set(constants)), [], "served constants the tests pin that the derivation does not read")
         bad = []
-        for fname, line, lit, name, form in rows:
+        for fname, line, lit, name, form, _ in rows:
             text = texts[name]
             hits = [m.start() for m in re.finditer(re.escape(lit), text)]
             inside = [h for h in hits if any(s <= h < e for s, e in comments[name])]
@@ -617,6 +637,8 @@ class T(unittest.TestCase):
         page.find("d"); page.rindex("c"); page.rfind("b")
         dyn = getattr(km, "_%s_page" % "chat")()
         self.assertIn("a", dyn)
+        self.assertIn("y\\tz", page)
+        self.assertIn("""tq""", page)
 '''
         loop = "        for pg in (%s):\n" % ", ".join("km.%s()" % g for g in getters)
         tail = '''            self.assertIn("a1", pg, "one row per text")
@@ -653,14 +675,19 @@ def test_module_level():
                     (15, "p", "_feed_page", "in"), (15, "q", "_feed_page", "in"), (17, "r", "_feed_page", "in"), (18, "s", "_landing", "in"), (19, "t", "_feed_page", "in"),
                     (23, "m", "_LANDING_MOBILE_JS", "in"), (25, "l", "_LANDING_MOBILE_JS", "in"), (26, "k", "_feed_page", "in"), (26, "j", "_LANDING_MOBILE_JS", "in"),
                     (28, "h", "_feed_page", "in"), (29, "g", "_feed_page", "index"), (29, "f", "_feed_page", "index"), (30, "e", "_LANDING_MOBILE_JS", "count"),
-                    (31, "d", "_feed_page", "find"), (31, "c", "_feed_page", "rindex"), (31, "b", "_feed_page", "rfind")]
+                    (31, "d", "_feed_page", "find"), (31, "c", "_feed_page", "rindex"), (31, "b", "_feed_page", "rfind"),
+                    (34, "y\tz", "_feed_page", "in"), (35, "tq", "_feed_page", "in")]
         expected += [(L + 1, "a1", g, "in") for g in getters] + [(L + 2, "a2", g, "index") for g in getters]
         expected += [(L + 5, "a4", "_feed_page", "index"), (L + 5, "a5", "_feed_page", "index"), (L + 6, "a6", "_feed_page", "index"), (L + 6, "a7", "_feed_page", "index"),
                      (L + 7, "a8", css, "in"), (L + 8, "a9", html, "in"), (L + 10, "b1", script, "in"), (L + 11, "b2", mark, "in"), (L + 12, "b4b5", "_feed_page", "in"),
                      (L + 19, "x1", "_landing", "in"), (L + 19, "x2", "_landing", "in"), (L + 20, "x3", "_landing", "in")]
-        self.assertEqual(rows, expected)
-        self.assertNotIn(("a3", "in"), {(lit, form) for _, lit, _, form in rows}, "the loop variable is bound to the loop's body only")
-        self.assertNotIn(("b3", "in"), {(lit, form) for _, lit, _, form in rows}, "a loop whose iterable mixes a text with something else binds nothing")
+        self.assertEqual([r[:4] for r in rows], expected)
+        self.assertNotIn(("a3", "in"), {(lit, form) for _, lit, _, form, _ in rows}, "the loop variable is bound to the loop's body only")
+        self.assertNotIn(("b3", "in"), {(lit, form) for _, lit, _, form, _ in rows}, "a loop whose iterable mixes a text with something else binds nothing")
+        # round 8 (2026-09-20): the rows the textual census declines, by form: a loop or comprehension literal (p, q, r, a4 to a7),
+        # a name bound to a slice (h), a literal with a backslash and a triple-quoted one; every other row is readable
+        declined = {(15, "p"), (15, "q"), (17, "r"), (28, "h"), (L + 5, "a4"), (L + 5, "a5"), (L + 6, "a6"), (L + 6, "a7"), (34, "y\tz"), (35, "tq")}
+        self.assertEqual({(line, lit) for line, lit, _, _, readable in rows if not readable}, declined)
         # the textual census reads the inline forms, the one-line bound form (a Name, a self.<attr>), the tuple binding (by
         # position, an item that is no served text binding nothing), the bare assert and assertTrue lines, the position forms,
         # the for over texts and an implicit concatenation of literals across the lines of one statement; the loop over
@@ -673,7 +700,7 @@ def test_module_level():
         expected_sites += [(L + 7, "a8", css, "in"), (L + 8, "a9", html, "in"), (L + 10, "b1", script, "in"), (L + 11, "b2", mark, "in"), (L + 12, "b4b5", "_feed_page", "in"),
                            (L + 19, "x1", "_landing", "in"), (L + 19, "x2", "_landing", "in"), (L + 20, "x3", "_landing", "in")]
         self.assertEqual(sites, expected_sites)
-        self.assertTrue(set(sites) <= set(rows))
+        self.assertTrue(set(sites) <= {r[:4] for r in rows if r[4]}, "every site is a readable row")
         # the containers the module pins, whatever the name: the getters, the constants, and `other` and `dyn` are not containers
         self.assertEqual(containers, {(g, True) for g in getters} | {("_LANDING_MOBILE_JS", False), (css, False), (html, False), (script, False), (mark, False)})
 
