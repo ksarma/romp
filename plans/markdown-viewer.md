@@ -7910,8 +7910,13 @@ figure's neighbours took the clicks meant for them, itself transparent): a figur
 (`FIGOPEN_MIN_PX`: the control's 22px box, its 6px inset and as much figure again; a badge, an inline icon, whose
 plain click still opens them where no link holds them), measured from the loaded picture's laid-out box, else its own
 size (`figureBox`, `figureTooSmall`; a loaded figure alone has a box to measure, `figureState`), read wherever the
-decision runs: in a browser every figure is fetching at the paint (mdBlock, `addFigureControls`) and gets none then,
-its load or its error (`armFigureControls`) runs the decision with the picture's size known, and the floor is read
+decision runs: in a browser a picture the browser is still fetching at the paint (mdBlock, `addFigureControls`) gets none
+then, and its load or its error (`armFigureControls`) runs the decision with the picture's size known; a picture the
+browser already holds (the report re-opened: Back, Forward, a second open after a close; no request leaves for it) is
+complete at the paint and is decided then, from its natural size, since mdBlock's box is not in the document yet, and its
+load event, which fires all the same, decides it again over the laid-out box (the file review's closing check: at a 381 px
+re-open the 761 by 76 picture's paint-time control left at its load, the picture laid out 324 by 32; at 900 it stood;
+file-view-figure-floor-browser.test.ts); and the floor is read
 again at each change of the body's width (`refigureControls`, run from the
 width watch's repaint over every figure of the box through the same decision: the pane dragged, the Comments aside
 opened or closed), so a figure the column narrows under the floor loses its control and one it widens past gets it

@@ -4421,9 +4421,11 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
     linkMarkdownAnchors(box, doc.path);
     // Then every figure's "Open the picture" control decided (L3 of the link-navigation follow-on; decideFigureControl and the
     // section above it). After the anchors, so a link holding the figure alone is sorted before the control goes in after it:
-    // the control is no part of the author's link (figureAnchor climbs the link). In a browser every figure is still fetching
-    // here and gets its control at its load (armFigureControls, in openFileView), a gated placeholder's at the load its click
-    // starts; a stand-in is decided from its source.
+    // the control is no part of the author's link (figureAnchor climbs the link). In a browser a figure the browser is still
+    // fetching here gets none and its control at its load (armFigureControls, in openFileView); a figure the browser already
+    // holds (the report re-opened: Back, Forward, a second open) is complete here and decided now, from its natural size, since
+    // this box is not in the document yet, and decided again at its load event, which fires all the same, over the laid-out box;
+    // a gated placeholder's comes at the load its click starts; a stand-in is decided from its source.
     addFigureControls(box, doc.path);
   } else {
     // A URL document (openUrlView), or a caller with no location: links open a NEW tab, for the same reason. One
@@ -4823,8 +4825,13 @@ function resolveFigureRefs(root: ParentNode, base: string): void {
 // note reopened at that width had none). currentSrc changes only with a new fetch (a `<picture>` re-selecting its source at
 // a media change, the chat page's heal retrying a failed figure), and a fetch ends in a load or an error, both heard. A
 // stand-in outside a browser (the node suites' DOM) carries no `complete` and is decided from its source alone, as a loaded
-// figure of unknown size. In a browser the paint adds nothing: every figure is fetching then, and its control arrives at
-// its load, when the picture it opens is on the screen.
+// figure of unknown size. In a browser the paint adds nothing to a figure still on the wire: it is fetching then, and its
+// control arrives at its load, when the picture it opens is on the screen. A picture the browser already holds (the report
+// re-opened after a close, Back, Forward, a second open: no request leaves for it) is complete at the paint and decided then,
+// from its natural size, since mdBlock's box is not in the document yet and has no laid-out box; its load event fires all the
+// same and decides it again over the laid-out box (the file review's closing check, file-view-figure-floor-browser.test.ts: at
+// a 381 px re-open the 761 by 76 picture's paint-time control left at its load, the picture laid out 324 by 32; at 900 it
+// stood).
 // The sheets lay it over the figure's top-right corner from that place with no measuring (`.fileview-md .fv-figopen`: a zero-width margin box aligned to the line's top), transparent until the pointer is over the figure or over
 // it, or a keyboard focus reaches it; always in the tab order. A figure the author floated by its align attribute stacks
 // sideways, so the control floats with it (the -left and -right classes). It has no text of its own and the text walks skip
@@ -4956,8 +4963,10 @@ function decideFigureControl(img: Element, filePath: string): void {
   const parent = anchor.parentNode;
   if (parent) parent.insertBefore(b, anchor.nextSibling);
 }
-/** Every figure of a freshly painted Rendered box decided (mdBlock, the file kind, after the links are sorted): in a browser
- *  every figure is fetching at the paint and its control arrives at its load; a stand-in is decided from its source. */
+/** Every figure of a freshly painted Rendered box decided (mdBlock, the file kind, after the links are sorted): in a browser a
+ *  figure still fetching gets none here and its control at its load; one the browser already holds is complete here and is
+ *  decided now, from its natural size (the box is not in the document yet), then again at its load over the laid-out box; a
+ *  stand-in is decided from its source. */
 function addFigureControls(box: HTMLElement, filePath: string): void {
   box.querySelectorAll("img").forEach((img) => { decideFigureControl(img, filePath); });
 }

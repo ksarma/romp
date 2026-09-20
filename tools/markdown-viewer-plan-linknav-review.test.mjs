@@ -71,7 +71,17 @@ test('L3 opens on the exceptions it names, and names the floor by the source\'s 
     assert.ok(viewer.includes('function ' + fn + '('), 'the source defines ' + fn);
     assert.ok(L3.includes('`' + fn + '`'), 'L3 names ' + fn);
   }
-  assert.ok(L3.includes('in a browser every figure is fetching at the paint (mdBlock, `addFigureControls`) and gets none then, its load or its error (`armFigureControls`) runs the decision with the picture\'s size known'), 'L3: the paint adds nothing in a browser; the load and the error decide');
+  assert.ok(L3.includes('in a browser a picture the browser is still fetching at the paint (mdBlock, `addFigureControls`) gets none then, and its load or its error (`armFigureControls`) runs the decision with the picture\'s size known'), 'L3: a fetching picture gets none at the paint; the load and the error decide');
+  // the file review's closing check: the record's universal (every figure is fetching at the paint) was false, a picture the
+  // browser already holds at a re-open is complete at the paint and decided then, so the pin that held the universal now holds
+  // its absence and the case that replaced it, in the record, in the source's figure-control section, and in the leg that drives it
+  assert.ok(!L3.includes('every figure is fetching at the paint'), 'the universal is gone from L3');
+  assert.ok(L3.includes('a picture the browser already holds (the report re-opened: Back, Forward, a second open after a close; no request leaves for it) is complete at the paint and is decided then, from its natural size, since mdBlock\'s box is not in the document yet, and its load event, which fires all the same, decides it again over the laid-out box'), 'L3: a held picture is decided at the paint and again at its load');
+  assert.ok(L3.includes('file-view-figure-floor-browser.test.ts'), 'L3 names the leg that drives the re-open');
+  assert.ok(exists('ui', 'webview', 'file-view-figure-floor-browser.test.ts'), 'which exists');
+  assert.ok(read('ui', 'webview', 'file-view-figure-floor-browser.test.ts').includes('the browser already holds'), 'and drives the held picture\'s re-open');
+  for (const gone of ['every figure is fetching', 'every figure is still fetching', 'the paint adds nothing: every figure']) assert.ok(!viewer.includes(gone), 'the source no longer says ' + JSON.stringify(gone));
+  assert.ok(viewer.includes('A picture the browser already holds'), 'the source\'s figure-control section states the held picture\'s case');
   assert.ok(!L3.includes('adds the control and the load (armFigureControls, the same builder) removes'), 'the round-1 wording, the paint adding and the load dropping, is gone');
   assert.ok(!L3.includes('keeps its control, and a figure at the floor'), 'a failed figure no longer keeps a control');
   assert.ok(L3.includes('a picture that failed to load gets none (nothing to open, and with an empty alt no box'), 'L3: a failed figure gets none');

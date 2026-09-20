@@ -11,8 +11,13 @@
 // hardening: a synthetic click dispatched on the img inside a gated placeholder (an element no pointer can reach) is the
 // gate listener's, which prevents default as it restores the img; the figure listener, second on the same event, stands
 // down (window.open not called, the trail unmoved), and the restored figure gets its control at its load and opens its tab
-// from a real click on that control. Skipped LOUDLY where playwright has no browser (CI installs none). Synthetic values
-// only: the notes-api world, a placeholder session id, example.invalid addresses, /repo/notes-api paths.
+// from a real click on that control; (4) the file review's closing check: a picture the browser already holds (the viewer
+// closed and the report re-opened; no request leaves for it) is complete at the paint and decided then, from its natural size,
+// since mdBlock's box is not in the document yet, and its load event, which fires all the same, decides it again over the
+// laid-out box, so at a 381 px re-open the paint's control leaves at the load and at 900 it stands (the record had said every
+// figure is fetching at the paint, which a held picture is not; the first open's picture, on the wire at the paint, gets none
+// until its load, and the leg records that too). Skipped LOUDLY where playwright has no browser (CI installs none). Synthetic
+// values only: the notes-api world, a placeholder session id, example.invalid addresses, /repo/notes-api paths.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import { inBrowser, openViewer, openPanel, closePanel, frames, ROOT, REPORT, SID, PARA } from "./real-viewer-leg";
@@ -160,6 +165,107 @@ test("in a browser: a synthetic click dispatched on the img inside a gated place
     await frames(page, 3);
     assert.deepEqual(await opened(page), [PROTO_ABS], "a tab from the control's own click");
     assert.equal(await base(page), "report.md", "never the viewer");
+    assert.deepEqual(errors, [], "no page errors");
+    await page.close();
+  });
+});
+
+type Paint = { complete: boolean; naturalWidth: number; control: boolean; loadsBefore: number } | null;
+type Load = { box: [number, number]; controlBefore: boolean };
+type Probe = { paint: Paint; loads: Load[] };
+/** The paint probe for the held picture's case (the header's (4)), installed before the first open (openViewer's `before`): a
+ *  MutationObserver over the document's body records the wide figure's state the first time an open's Rendered box holds it
+ *  (the records are delivered as a microtask after the paint's own run and before the load event's task, so the record is the
+ *  paint's outcome: whether the browser already held the picture, `complete`, and whether the paint's decision put a control
+ *  after it); a capture-phase load listener on the document, which runs before the body's own (armFigureControls), records at
+ *  each of the figure's load events its laid-out box and whether a control stood before that load's decision. The width
+ *  watch's first report describes the size at observe() and runs no repaint (openFileView), so between the paint and the load
+ *  nothing else decides the figure. `window.__probeReset()` starts the next open's record. */
+const armPaintProbe = (page: any): Promise<void> => page.evaluate(() => {
+  const w = window as any;
+  const wide = (i: HTMLImageElement): boolean => /wide\.svg/.test(i.currentSrc || i.src);
+  const control = (img: Element): boolean => {
+    let a: Element = img;
+    while (a.parentElement && (a.parentElement.classList.contains("fc-imgwrap") || a.parentElement.localName === "picture")) a = a.parentElement;
+    const n = a.nextElementSibling;
+    return !!(n && n.hasAttribute("data-fv-figopen"));
+  };
+  w.__probeReset = () => { w.__probe = { paint: null, loads: [] }; };
+  w.__probeReset();
+  new MutationObserver(() => {
+    if (w.__probe.paint) return;
+    const img = (Array.from(document.querySelectorAll(".fileview-md img")) as HTMLImageElement[]).find(wide);
+    if (!img) return;
+    w.__probe.paint = { complete: img.complete, naturalWidth: img.naturalWidth, control: control(img), loadsBefore: w.__probe.loads.length };
+  }).observe(document.body, { childList: true, subtree: true });
+  document.addEventListener("load", (e) => {
+    const img = e.target as HTMLImageElement;
+    if (!(img instanceof HTMLImageElement) || !wide(img) || !img.closest(".fileview-md")) return;
+    const r = img.getBoundingClientRect();
+    w.__probe.loads.push({ box: [Math.round(r.width), Math.round(r.height)], controlBefore: control(img) });
+  }, true);
+});
+const probe = (page: any): Promise<Probe> => page.evaluate(() => (window as any).__probe);
+/** The viewer closed through its own export and the report opened again at the viewport size, the probe's record started over. */
+async function reopen(page: any, width: number, height: number): Promise<void> {
+  await page.evaluate(() => { (window as any).FV.closeFileView(); (window as any).__probeReset(); });
+  await page.waitForFunction(() => !document.getElementById("romp-fileview"), null, { timeout: 5000 });
+  await page.setViewportSize({ width, height });
+  await frames(page, 2);
+  await page.evaluate(([p, sid]: [string, string]) => { (window as any).FV.openFileView(p, sid, null); }, [REPORT, SID]);
+  await page.waitForFunction(() => (window as any).__probe.loads.length >= 1, null, { timeout: 10000 });
+}
+
+test("in a browser: a picture the browser already holds (the viewer closed and the report re-opened) is complete at the paint and decided then, from its natural size since the box is not in the document yet; its load event fires all the same and decides it again over the laid-out box, so at a 381 px re-open the paint's control leaves at the load and at 900 it stands; the first open's picture, on the wire at the paint, gets none until its load", async (t) => {
+  await inBrowser(t, async (browser) => {
+    let wideAsked = 0;   // the wide figure's requests at the /file route: the browser's own, from the img (the page's fetch stub never sees them)
+    const { page, errors } = await openViewer(browser, "chat", 900, 600, {
+      docs: DOCS,
+      serve: (u) => { const p = u.pathname === "/file" ? u.searchParams.get("path") || "" : ""; if (p === WIDE) wideAsked++; return DOCS[p] !== undefined && /\.svg$/.test(p) ? { status: 200, type: "image/svg+xml", body: DOCS[p] } : null; },
+      before: armPaintProbe,
+    });
+    await page.waitForFunction(() => (window as any).__probe.loads.length >= 1, null, { timeout: 10000 });
+    await settle(page, true);
+    const first = await probe(page);
+    const firstFig = await figure(page);
+    t.diagnostic("first open at 900: " + JSON.stringify(first) + "; " + fmt(firstFig) + "; wide asked " + wideAsked);
+    // the first open: the picture was on the wire at the paint, so the paint decided against a control, and the load brought it
+    assert.ok(first.paint, "the paint was recorded");
+    assert.deepEqual([first.paint.complete, first.paint.control, first.paint.loadsBefore], [false, false, 0], "on the wire at the paint: not complete, no control, before any load: " + JSON.stringify(first.paint));
+    assert.equal(first.loads.length, 1, "one load event");
+    assert.equal(first.loads[0].controlBefore, false, "no control stood when the load arrived");
+    assert.equal(firstFig.control, true, "the load's decision added it: " + fmt(firstFig));
+    assert.equal(wideAsked, 1, "one request for the picture");
+    // the viewer closed and the report re-opened at 381 px: the browser holds the picture
+    await reopen(page, 381, 600);
+    await settle(page, false);
+    const narrow = await probe(page);
+    const narrowFig = await figure(page);
+    t.diagnostic("re-opened at 381: " + JSON.stringify(narrow) + "; " + fmt(narrowFig) + "; wide asked " + wideAsked);
+    assert.equal(wideAsked, 1, "no request left for the picture at the re-open: the browser holds it");
+    assert.ok(narrow.paint, "the paint was recorded");
+    assert.deepEqual([narrow.paint.complete, narrow.paint.naturalWidth, narrow.paint.loadsBefore], [true, 761, 0], "complete at the paint, its natural size known, before any load event: " + JSON.stringify(narrow.paint));
+    // the paint decided it from its natural size (761 by 76, above the floor): the box was not in the document, so figureBox had
+    // no laid-out rect to read, and a control stands that the laid-out box (under the floor, below) would not get
+    assert.equal(narrow.paint.control, true, "the paint's decision put a control after the held picture: " + JSON.stringify(narrow.paint));
+    // the load event fired all the same, found the paint's control standing, and decided again over the laid-out box
+    assert.equal(narrow.loads.length, 1, "one load event after the paint");
+    assert.equal(narrow.loads[0].controlBefore, true, "the paint's control stood when the load arrived");
+    assert.ok(narrow.loads[0].box[1] < FLOOR, "laid out under the floor at the load: " + JSON.stringify(narrow.loads[0].box));
+    assert.equal(narrowFig.control, false, "the load's decision took the control away: " + fmt(narrowFig));
+    // closed and re-opened at 900: the paint's control stands, and the load's decision leaves it
+    await reopen(page, 900, 600);
+    await settle(page, true);
+    const again = await probe(page);
+    const againFig = await figure(page);
+    t.diagnostic("re-opened at 900: " + JSON.stringify(again) + "; " + fmt(againFig) + "; wide asked " + wideAsked);
+    assert.equal(wideAsked, 1, "still no request: the browser holds it");
+    assert.ok(again.paint, "the paint was recorded");
+    assert.deepEqual([again.paint.complete, again.paint.control, again.paint.loadsBefore], [true, true, 0], "complete at the paint and decided then, a control after it: " + JSON.stringify(again.paint));
+    assert.equal(again.loads.length, 1, "one load event after the paint");
+    assert.equal(again.loads[0].controlBefore, true, "the paint's control stood when the load arrived");
+    assert.ok(again.loads[0].box[0] >= FLOOR && again.loads[0].box[1] >= FLOOR, "laid out above the floor at the load: " + JSON.stringify(again.loads[0].box));
+    assert.equal(againFig.control, true, "and the load's decision left it standing: " + fmt(againFig));
     assert.deepEqual(errors, [], "no page errors");
     await page.close();
   });
