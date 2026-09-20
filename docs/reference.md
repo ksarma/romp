@@ -709,13 +709,25 @@ the only session-side signal and they clear at the landing; the kernel log's
 per-session line is the durable record. A third choice, Automatic, is the rule
 that held before: the API key when a helper is configured, else the login; it
 clears the explicit default, the group's sub-line says which rule holds, and
-the sessions following the default are reconnected the same way. Until the
-default is set here, the last per-session pick seeds it (as a model or effort
-pick does); once set here, a per-session pick is about that session alone and
-moves no default. A session created while a default stands, the explicit one
-or the last pick's remembered value, is seeded with it as a pick of its own
-and is not moved by a later change of the default; a session created while
-none stood follows the default wherever it moves. A
+the sessions following the default are reconnected the same way. A
+per-session pick, before or after the default is set here, is about that
+session alone and moves no default: the new-session picker preselects the
+machine default (the explicit one, else the rule that holds), and a session
+created with no pick of its own follows the machine default, not the last
+pick. A session created while an explicit default stands is seeded with it as
+a pick of its own and is not moved by a later change of the default; a session
+created while none stood follows the default wherever it moves. Since a
+per-session pick's remembered value seeds no new session, a box whose last
+per-session pick was a login, the machine's own or a stored one, bills new
+sessions on the key from this kernel on when its settings carry an
+apiKeyHelper; with no helper, a remembered stored-login pick bills them on the
+machine's own login, or on whatever the CLI resolves by itself when no login is
+signed in either. A remembered key pick keeps the key and makes new sessions
+followers of the default. Where the account moves, or the remembered pick names
+a side this machine cannot bill, the spawn says so as a problem row on the new
+session, naming the pick, what the session bills and the Set default billing
+submenu; a repeat while the pick stands counts on the one ring entry. All of
+this holds until a default is set here. A
 remote session's flyout names its host, and the pick sets that host's default
 (the op routes to the session's owning kernel). The judges follow the same
 resolution: a judge on a session with no pick of its own bills the machine's
@@ -725,13 +737,13 @@ when the right would clip and the left has room, below the row when neither
 side has room, above it when below does not fit, and only then clamped inside
 the window; it never covers its row while a place beside or beyond it exists.
 
-On a one-auth box the picker never chooses the missing side. A remembered
-default that names the side this box cannot bill is set aside at spawn and the
-unpicked rule below decides instead, in both directions: a remembered login
-pick on a machine with no login seeds new sessions on the API key when a
-helper is configured, exactly as a remembered key pick on a helper-less machine
-already fell to the login, and the fall is said once per process as a problem
-row. An explicit pick that names the missing
+On a one-auth box the picker never chooses the missing side. An explicit
+machine default that names the side this box cannot bill is set aside at spawn
+and the unpicked rule below decides instead, in both directions: an explicit
+login default on a machine with no login seeds new sessions on the API key
+when a helper is configured, exactly as an explicit key default on a
+helper-less machine falls to the login, and the fall is said once per process
+as a problem row. An explicit pick that names the missing
 side (a session picked "login" on a box that later lost its login) launches on
 the other side when one exists and says so once per session start, on the tab
 menu's Billing sub-line as `⚠ login unavailable, billing API key` and in the
@@ -759,10 +771,12 @@ login-billed launches.
 The login is named by its account (the email the credential store records);
 the key option is labelled plainly `API key`. No fragment of the key, not even
 a last-4 tail, ever reaches a browser or a screen, and romp never sees the key
-at all. A new session defaults to the last pick made anywhere, and before any
-pick to the key when a helper is configured. A remembered key pick on a box
-whose settings carry no helper leaves new sessions unpicked, and the kernel
-log says so once, naming the settings file to configure.
+at all. A new session is preselected on the machine's explicit default when
+the box can bill it, else on the rule that holds without one: the key when a
+helper is configured, else the login. An explicit key default on a box whose
+settings carry no helper leaves new sessions unpicked, and the kernel log says
+so once, naming the settings file to configure and the Set default billing
+submenu.
 
 A tab not yet loaded after a reconnect shows "Not loaded yet — click to load"
 as its hover tooltip, until its transcript arrives. The strip's skeleton tabs
@@ -805,9 +819,9 @@ explicit default becomes the box's expectation and the env var goes inert (it
 described the unpicked design), so the sessions following the default are
 judged against it, never against stale doctrine; a per-session **Billing**
 pick is about that session alone and leaves the declaration speaking for the
-others. An API-key value remembered from a box that no longer holds a key, a
-pick's or the explicit default, is set aside at spawn, so it seeds nothing
-(the per-init check still judges each landing against the explicit default).
+others. An explicit API-key default on a box that no longer holds a key is set
+aside at spawn, so it seeds nothing (the per-init check still judges each
+landing against the default).
 
 The kernel also checks, once at boot and before anything is spawned, that no
 retired key path is still configured. A `service.env` that still carries a key
