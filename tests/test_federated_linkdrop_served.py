@@ -186,6 +186,10 @@ HUB_SPAWN_TRIES = 40         # _spawn_hub's /healthz tries, a 1 s probe and a 0.
 PHASE_SETTLE_MS = 1500       # phase() lets the panes' rows land on the hub before marking the phase's end
 DOWN_WINDOW_MARGIN = 2.0     # the while-down read comes this many of the drive's slowest link-up deliveries after phase D's post
 #                              (_assert_the_down_window_outlasts_the_drives_slowest_delivery; down_dwell_ms is sized for it)
+DOWN_READ_ROOM_MS = 2000     # the room down_dwell_ms holds past DOWN_WINDOW_MARGIN x wait_ms: a phase's delivery (seen.waitedMs) is stamped
+#                              AFTER visible()'s reads (waitVisible), so it exceeds the wait's cap by the reads' duration on a phase that ran
+#                              to the cap; without the room the margin pin could red on a drive whose visibility legs pass.
+#                              tests/test_federated_linkdrop_driver_bound.py pins down_dwell_ms >= DOWN_WINDOW_MARGIN x wait_ms + this
 QUIET_TRIES, QUIET_STEP_MS = 7, 2000   # quiet(): up to QUIET_TRIES windows of QUIET_STEP_MS with no new relay frame on any page
 
 
