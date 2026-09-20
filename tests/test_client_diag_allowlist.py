@@ -761,6 +761,7 @@ class ClientDiagAllowlistTest(unittest.TestCase):
             self.assertIsNotNone(text, "%s: the disclosure copy was not found: re-aim disclosure_copies()" % name)
             self.assertGreater(len(text), 200, name)
             for token in (r"host-prefixed session id", r"host-keyed map", r"remote session", r"share switch", r"`?host`? key", r"positions and no host name",
+                          r"several positions for one machine",   # the per-document grain's consequence (round 3, fresh-2)
                           r"GET /tunnels", r"in (its|their) own right",
                           r"remotes\.json", r"remotes-known\.json", r"lastAttachedAt", r"exact for", r"order inference",
                           r"older than", r"most frequent", r"routine use", r"not from chat rows alone",

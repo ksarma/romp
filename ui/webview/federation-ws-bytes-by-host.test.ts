@@ -224,3 +224,52 @@ test("start() publishes the getter as window.__rompFed.wsBytesByHost beside host
     for (const [k, [had, v]] of Object.entries(saved)) { if (had) g[k] = v; else delete g[k]; }
   }
 });
+
+// The grain, by execution (round 3, 2026-09-20; the probe's cases): a position is minted per FederationManager instance, one
+// per pane DOCUMENT, so two managers on one page can hold one host under different positions, two panes of the same app
+// included, and nothing on either published map names the document. The disclosure copies state the grain and its
+// consequence: a page with several panes mints several positions for one machine.
+test("two managers on one page assign different positions to one host when their first /tunnels answers differ in order, a same-app pair included; a detach and re-attach reordering does the same across a fresh document; two managers reading one unchanged roster agree; no published map names the document", async () => {
+  await withManager(async ({ fm, rows }) => {
+    const fm2: any = new FederationManager();
+    fm2.app = fm.app;   // the same app: two columns of one kind
+    const ord = (m: any) => Object.fromEntries([...m.hostOrdinal].map(([h, o]: [string, number]) => [h, "h" + o]));
+    // differing timing: fm polls [A, B]; the roster reorders (a detach and re-attach on the hub) before fm2's first poll
+    rows.push(row(HOST_A), row(HOST_B));
+    await fm.poll();
+    rows.splice(0, rows.length, row(HOST_B), row(HOST_A));
+    await fm2.poll();
+    assert.deepEqual(ord(fm), { [HOST_A]: "h1", [HOST_B]: "h2" });
+    assert.deepEqual(ord(fm2), { [HOST_B]: "h1", [HOST_A]: "h2" }, "one host, two positions, one app: the grain is the manager instance, not the page or (wid, app)");
+    const wsA1 = fm.conns.get(HOST_A).ws, wsA2 = fm2.conns.get(HOST_A).ws;
+    wsA1.open(); wsA2.open();
+    const n1 = wsA1.frame(full(1)), n2 = wsA2.frame(full(2));
+    assert.equal(fm.wsBytesByHost().h1, n1);
+    assert.equal(fm2.wsBytesByHost().h2, n2, "host A's characters land under h1 in one document and under h2 in the other");
+    // a detach and re-attach reordering: fm3 polls [A, B], then [B], then [B, C], so C is h3 there; fm4, a fresh document, polls [B, C]: C is h2
+    const fm3: any = new FederationManager(), fm4: any = new FederationManager();
+    fm3.app = "timeline"; fm4.app = "timeline";
+    rows.splice(0, rows.length, row(HOST_A), row(HOST_B));
+    await fm3.poll();
+    rows.splice(0, rows.length, row(HOST_B));
+    await fm3.poll();
+    rows.push(row(HOST_C));
+    await fm3.poll();
+    await fm4.poll();
+    assert.deepEqual(ord(fm3), { [HOST_A]: "h1", [HOST_B]: "h2", [HOST_C]: "h3" });
+    assert.deepEqual(ord(fm4), { [HOST_B]: "h1", [HOST_C]: "h2" }, "the same host under h3 in one document and h2 in another");
+    // the control: one unchanged roster, two managers, every position agrees
+    const fm5: any = new FederationManager(), fm6: any = new FederationManager();
+    fm5.app = "feed"; fm6.app = "feed";
+    rows.splice(0, rows.length, row(HOST_B), row(HOST_A), row(HOST_C));
+    await fm5.poll(); await fm6.poll();
+    assert.deepEqual(ord(fm5), { [HOST_B]: "h1", [HOST_A]: "h2", [HOST_C]: "h3" });
+    assert.deepEqual(ord(fm6), ord(fm5), "an unchanged roster gives the same positions in every document");
+    // nothing on any published map names the document, the pane or a host
+    for (const m of [fm, fm2, fm3, fm4, fm5, fm6]) {
+      const text = JSON.stringify(m.wsBytesByHost()) + JSON.stringify(m.attachedHostOrdinals());
+      for (const h of [HOST_A, HOST_B, HOST_C, "app", "wid", "hublab", "timeline", "feed"]) assert.ok(!text.includes(h), text);
+      for (const c of m.conns.values()) c.closed = true;
+    }
+  });
+});

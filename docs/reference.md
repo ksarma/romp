@@ -4855,8 +4855,13 @@ The two rows, as the kernel writes them (`t` its clock, `wid` the dashboard id):
   row (an idle or muted minute carries on the same way).
   The two are disjoint: a remote socket's characters are counted under its
   position and never in `wsBytes`. Positions are assigned per pane document
-  (each pane runs its own federation manager; the row's `app` names the pane)
-  and never reused: a position is on a row when its host is attached at the
+  (each pane runs its own federation manager; the row's `app` names the pane),
+  so a page with several panes mints several positions for one machine, one
+  per document (two panes of the same `app` are two documents), and the file
+  holds more rows per host than a per-page grain would give; nothing on the
+  row names the document, so rows from different panes of one `wid` are never
+  folded or compared as one position space. A position is never reused: it is
+  on a row when its host is attached at the
   flush or received characters in the minute, so the row closing the minute
   of a host's detach carries the characters it received in it and the rows
   after carry no key for it, an attached host that received nothing reads

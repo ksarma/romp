@@ -3535,6 +3535,10 @@ CLIENT_DIAG_KEYS = {
                                             # counts (one federation manager per pane document; the row's app names the pane): h1 the first remote host it
                                             # attached, assigned when the host first attaches, kept for that document's life and never shifting on a
                                             # detach (a re-attached host keeps its ordinal), so h2 names one host across every row that document files.
+                                            # A position is per pane document, so a page with several panes mints several positions for one machine (one per
+                                            # document; two panes of the same app are two documents), and the file then holds more rows per host than a per-page
+                                            # grain would give. Nothing on the row names the document, so rows from different panes of one wid are never folded
+                                            # or compared as one position space.
                                             # The map's keys carry positions and no host name, a property the COLLECTOR holds: federation.ts mints each
                                             # key as 'h' plus the attach ordinal (wsBytesByHost) and perf-telemetry.ts's bytesByHost keeps a key only in
                                             # the h<n> form; the kernel admits the top-level key and does not inspect the map's keys, as it inspects no
