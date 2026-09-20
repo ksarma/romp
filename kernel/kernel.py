@@ -3507,8 +3507,8 @@ def _client_diag_append(fp, line):
 # bytes and the share-on figure back from this comment against the row it builds. 24 KiB holds that row and leaves
 # 3110 bytes under the bound (today's minute rows run to 2.5 KB). Each further position adds 17 bytes at a one-digit
 # ordinal, 18 at two and 19 at three (the separator, the quoted key and a nine-digit count), so on that row the map
-# crosses the bound at 177 positions, and on today's rows only past about 1200; the ladder test derives the cost and
-# the crossing from the row it builds and reads them back here. Over the bound the ladder (CLIENT_DIAG_MINUTE_SHED)
+# crosses the bound at 177 positions, and on a smaller row later; the ladder test derives the cost and
+# the crossing from the row it builds and reads them back here and from docs/reference.md's copy. Over the bound the ladder (CLIENT_DIAG_MINUTE_SHED)
 # sheds the map first and whole, which returns any row the collector builds to the figures above, under the bound;
 # the frames, the long-frame report, the free sample and the slow counts go next and the whole-row marker last,
 # backstops for a row no collector builds. The table lists the
@@ -3730,7 +3730,7 @@ def _client_diag_line(rec):
             trimmed = json.dumps(dict(rec, data=dict(kept, capped={"bytes": n, "dropped": shed})))
             if len(trimmed) <= CLIENT_DIAG_ROW_MAX:
                 _client_diag_say(rec.get("surface"), "what %r, shed" % rec.get("what"),
-                                 "a minute row over %d bytes is stored without some of its per-minute figures (its capped key names them)" % CLIENT_DIAG_ROW_MAX)
+                                 "a minute row over %d bytes is stored without some of its keys (its capped key names them)" % CLIENT_DIAG_ROW_MAX)
                 return trimmed + "\n"
     _client_diag_say(rec.get("surface"), "what %r" % rec.get("what"), "a row over %d bytes is stored capped" % CLIENT_DIAG_ROW_MAX)
     marker = {"capped": True, "bytes": n}

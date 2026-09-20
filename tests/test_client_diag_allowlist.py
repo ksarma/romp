@@ -112,7 +112,7 @@ CENSUS = {
         "host": (BARE, "the conn's host on every hostconn, feedDelta-nobase, feedDelta-stale, sendqueue and senddrop row (federation_host_row_kinds, "
                        "derived from federation.ts); empty on the poll rows, local on the local nobase row"),
         "ev": (NONE, "the hostconn event word"),
-        "why": (NONE, "a cause word, a slot name, the remote's build id, or the page's own /tunnels fetch failure text cut at 200"),
+        "why": (NONE, "a cause word, a slot name, the remote's build id, or the page's own /tunnels fetch failure text, cut at 200 by the poster and 64 here"),
         "quietMs": (NONE, _INT), "foreground": (NONE, _BOOL), "msgType": (NONE, "a message type word"), "rs": (NONE, "a readyState"),
         "flushed": (NONE, "message type words"), "held": (NONE, "message type words"), "unread": (NONE, _BOOL), "endedUnread": (NONE, _BOOL),
         "code": (NONE, "the close code"), "clean": (NONE, _BOOL), "detached": (NONE, _BOOL), "pendingDropped": (NONE, "message type words or a count"),
@@ -528,7 +528,8 @@ class ClientDiagAllowlistTest(unittest.TestCase):
             self.assertEqual(d[k], data[k], "%s stays: the shed stops once the line fits" % k)
         self.assertLessEqual(len(json.dumps(row)), km.CLIENT_DIAG_ROW_MAX)
         self.assertEqual(len(err.splitlines()), 1, err)
-        self.assertIn("stored without some of its per-minute figures", err)
+        self.assertIn("stored without some of its keys (its capped key names them)", err, "worded for the ladder as a whole: the map alone may be what went (round 4)")
+        self.assertNotIn("per-minute figures", err)
         self.assertEqual(self.post("perf", "minute", data), "", "said once per surface and what")
         # a minute whose long-frame report is big too: frames goes first, then loaf; free, slow and the shared fields stay
         loaf = {"n": 320, "blocking_ms": 900, "worst_ms": 200, "src": "loaf",
@@ -803,7 +804,7 @@ class ClientDiagAllowlistTest(unittest.TestCase):
                     self.assertEqual(d[k], v, "%d positions: %s stored as posted" % (count, k))
             self.assertLessEqual(len(json.dumps(row)), km.CLIENT_DIAG_ROW_MAX)
             self.assertEqual(len(err.splitlines()), 1, err)
-            self.assertIn("stored without some of its per-minute figures", err, "the shed's existing stderr line fires, once")
+            self.assertIn("stored without some of its keys (its capped key names them)", err, "the shed's stderr line fires, once, worded for the ladder as a whole (this row lost the map and kept every per-minute figure)")
         data = with_hosts(crossing - 1)
         self.assertEqual(self.post("perf", "minute", data), "", "one position under the crossing: nothing shed, nothing said")
         self.assertEqual(self.rows()[-1]["data"], data, "stored whole, the map at %d positions included" % (crossing - 1))
@@ -821,6 +822,22 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         margin = re.search(r"leaves (\d+) bytes under the bound", ksrc)
         self.assertIsNotNone(margin, "kernel.py's derivation no longer states the margin: re-aim this read")
         self.assertEqual(int(margin.group(1)), km.CLIENT_DIAG_ROW_MAX - size(c["hosts"]), "the stated margin is the bound less the stated worst case")
+        # docs/reference.md carries a copy of the same derived figures (round 4, regression-2: a fourth, unpinned copy): its own
+        # patterns, whitespace-flattened, each guarded, read back against the same row: the per-position range against the derived
+        # tuple's least and most, the crossing against the derived crossing, the shed order against CLIENT_DIAG_MINUTE_SHED. Neither
+        # copy states the crossing on "today's rows" any more: that figure was pinned by nothing in either and is dropped from both.
+        dsrc = re.sub(r"\s+", " ", open(os.path.join(os.path.dirname(HERE), "docs", "reference.md"), encoding="utf-8").read())
+        drange = re.search(r"each position adds (\d+) to (\d+) bytes", dsrc)
+        self.assertIsNotNone(drange, "docs/reference.md no longer states the per-position range: re-aim this read")
+        self.assertEqual(tuple(int(x) for x in drange.groups()), (min(per), max(per)), "the docs' range is the derived tuple's least and most")
+        dcross = re.search(r"on that worst-case row the crossing is (\d+) positions", dsrc)
+        self.assertIsNotNone(dcross, "docs/reference.md no longer states the crossing: re-aim this read")
+        self.assertEqual(int(dcross.group(1)), crossing, "the docs' crossing is the one this row derives")
+        dorder = re.search(r"sheds `(\w+)` whole, then `(\w+)`, `(\w+)`, `(\w+)` and `(\w+)`, in that order", dsrc)
+        self.assertIsNotNone(dorder, "docs/reference.md no longer states the shed order: re-aim this read")
+        self.assertEqual(dorder.groups(), km.CLIENT_DIAG_MINUTE_SHED, "the docs' shed order is the ladder's")
+        for name, text in (("kernel.py", ksrc), ("docs/reference.md", dsrc)):
+            self.assertIsNone(re.search(r"about 1200|today's rows (only )?(past )?about", text), "%s: the unpinnable today's-rows crossing is stated again" % name)
 
     def test_every_admitted_key_is_classified_by_the_content_its_value_can_carry(self):
         # The census (CENSUS, above) against the table, both ways per surface: a key the table admits with no row here fails, as

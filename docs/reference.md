@@ -4779,8 +4779,8 @@ frames it received is measured in the panes themselves, by
   keys, and carries `capped: {bytes, dropped}` (the line's bytes before the
   shed and the keys shed). The map goes first because it alone can take a row
   the collector builds over the bound (each position adds 17 to 19 bytes, so
-  on that worst-case row the crossing is 177 positions and on today's rows
-  about 1200), and shedding it whole returns such a row to its derived size,
+  on that worst-case row the crossing is 177 positions, and on a smaller row
+  later), and shedding it whole returns such a row to its derived size,
   under the bound, so the frames and the once-per-page fields stay; it is
   never cut to the positions that fit, so a stored map is never a partial
   host count. Any other row over the bound, and a minute row that does not fit
