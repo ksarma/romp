@@ -125,8 +125,10 @@ def _stamp_present(f, k):
     feeding held_pair sets for gen and newGen: the driver hooks of the dial-terms, relay-redial and capability-corners labs
     (both of the corners module's, since the author's pass after round 4: until then those two set neither flag, so a gen of
     null, a boolean, an object or a list, which the hooks copy no value for, read as a gen-less frame in those two labs) and
-    the relay-redial consumer's _record (tests/test_relay_dial_declares_held_pair.py), which keeps parsed values alone.
-    FrameRecorderCensus pins the population and the two lines."""
+    the relay-redial consumer's _record (tests/test_relay_dial_declares_held_pair.py), which keeps the revs as the hooks do (any
+    number, an integral float as its int: _rev_as_js) and the gens parsed (_stamp_field), so a gen the client cannot read is
+    told from an absent one there by this flag alone. FrameRecorderCensus pins the population, the two lines, the type and slot
+    rule (a string, else none) and the forms a recorder may take."""
     return k in f or bool(f.get(k + "Key"))
 
 
@@ -163,14 +165,26 @@ def held_pair(frames, slot):
     ("ahead"); a through absent or not a safe integer ("through") or below the held rev ("behind"); a rev that is not a safe
     integer ("rev") or not equal to the through ("disagree"). Applied, the pair is (newGen when carried, else gen; rev).
 
-    THE BOUND, as a rule and not a list: this rule reads what a frame recorder keeps of a frame, its type, slot and stamp
-    fields (a gen field of any string or number, a rev field as a number, and the gen and newGen keys' presence), so every
-    refusal a receiver makes on THOSE is modelled above, on both roads, and every refusal it makes on what a recorder does not
-    keep is not: the receiver's shape checks on the frame's collections and remainder (view-deltas.ts receive's throws inside
-    its try; the feed road has none, applyFeedDelta refuses nothing) and a rev field of a type the hooks do not copy. The one
-    measured divergence of that second kind: a bars delta whose through is a string ("1") at base plus one is refused by the
-    client (revOk reads the through) and read here as through-less and applied, since the hook keeps no through that is not
-    a number; a base or rev of such a type reads as absent on both sides and is refused on both. The authorities are the two
+    THE BOUND, as a rule and not a list: this rule reads what a frame recorder keeps of a frame, its type and slot when they
+    are strings (a non-string type or slot is recorded as none and moves nothing here, as on the client, which ignores such a
+    frame), its stamp fields (a gen field of any string or number, a rev field as a number, and the gen and newGen keys'
+    presence), so every refusal a receiver makes on THOSE is modelled above, on both roads, and every refusal it makes on
+    what a recorder does not keep is not. Three classes of the second kind, each measured (the author's fixer pass after the
+    maintainer's round 4; RECEIVER_BLIND holds one row per shape with the reading):
+    (1) the bars receiver's content checks on a patch, view-deltas.ts receive's throws inside its try (the collections, the
+    remainder, a remainder that drops the frame type under restAll, a set, an order) and a rev field of a type the hooks do
+    not copy (a through of "1" at base plus one: the client reads the through and refuses, this reads through-less and
+    applies): the client drops the base (needSlot, None) and this rule advances;
+    (2) the bars receiver's refusal of a WHOLE frame, outside its try (receive's full arm: a collection split() cannot key, a
+    dictlist given a list, a byid given an object, a lane holding the separator, throws Unkeyable, and the arm deletes the
+    base and returns the frame whole, calling neither recover nor throw): the client holds no pair after such a full, a held
+    pair included, and the delta after it finds no base; this rule reads (gen, 0) from the recorded full and advances on the
+    delta;
+    (3) the feed road's content refusals, which are applyFeedDelta's throws (ui/webview/feed-delta.ts: asks not a list, an ask
+    or a ledger item null, removeAsks not iterable): the throw escapes ws.onmessage before Conn.feedHeld is written, so the
+    client's pair STANDS and it asks for nothing, where this rule advances it, the one direction in which expected_relay_caps
+    would demand a held term the client never sends. The gate itself refuses nothing on content.
+    A base or rev of a type no recorder keeps reads as absent on both sides and is refused on both. The authorities are the two
     receivers, never a list kept here (the maintainer's round 3, tests-3: a hand list here went stale twice in one day); the
     words the feed gate files are stale_why_words()'s derivation in tests/test_client_diag_allowlist.py. None when no pair is
     held."""
@@ -462,7 +476,7 @@ await page.addInitScript(() => {
         try {
           const m = JSON.parse(ev.data);
           if (m && m.type !== "ka") {
-            const f = { sock: idx, t: String(m.type), slot: m.slot ? String(m.slot) : "" };
+            const f = { sock: idx, t: typeof m.type === "string" ? m.type : "", slot: typeof m.slot === "string" ? m.slot : "" };   // type and slot as the client reads them: a string, else none (a String() here read an array ['bars'] as the word the client ignores; the author's fixer pass after round 4)
             for (const k of ["gen", "newGen", "base", "rev", "through"]) if (typeof m[k] === "number" || (typeof m[k] === "string" && (k === "gen" || k === "newGen"))) f[k] = m[k];   // the revs as numbers, the gens as the kernel's strings; no content
             if ("gen" in m) f.genKey = true;   // the key's presence, whatever its value: drive_pair tells an unreadable gen from none
             if ("newGen" in m) f.newGenKey = true;   // the same for newGen: held_pair reads a present newGen the client cannot read as the refusal it is (round 4)
@@ -550,6 +564,12 @@ RECEIVER_CASES = [
     ('bars-apply-stamped-nothrough', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}, {"t": "delta", "slot": "bars", "gen": GEN, "base": 0, "rev": 1, "genKey": True}], (GEN, 1), None),  # applies on THIS road: a stamped delta carrying no through at base plus one (the feed road refuses it)
     ('bars-apply-after-composed', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}, {"t": "delta", "slot": "bars", "gen": GEN, "newGen": GEN2, "base": 0, "rev": 4, "through": 4, "genKey": True, "newGenKey": True}, {"t": "delta", "slot": "bars", "gen": GEN2, "base": 4, "rev": 5, "through": 5, "genKey": True}], (GEN2, 5), None),  # applies: a per-cycle delta under the new generation after a composed frame
     ('bars-refuse-then-reseed', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}, {"t": "delta", "slot": "bars", "gen": GEN2, "base": 0, "rev": 1, "through": 1, "genKey": True}, {"t": "bars", "slot": "", "gen": GEN11, "genKey": True}], (GEN11, 0), None),  # after a refusal (a foreign gen) the next whole frame re-seeds
+    ('bars-slot-array', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}, {"t": "delta", "slot": "", "base": 0, "rev": 1}], (GEN, 0), None),  # R1 (:200): a slot that is the array ['bars'], recorded as none (the hooks keep a string slot alone since the fixer pass; a String() read it as the word): the client returns null with no ask, the pair stands
+    ('bars-type-array-delta', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}, {"t": "", "slot": "bars", "base": 0, "rev": 1}], (GEN, 0), None),  # a type that is the array ['delta'], recorded as none: the client passes the frame through, nothing applied
+    ('bars-type-array-full', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}, {"t": "", "slot": "", "gen": GEN2, "genKey": True}], (GEN, 0), None),  # a type that is the array ['bars']: not a full to the client, the pair stands
+    ('feed-type-array-delta', 'feed', [{"t": "feed", "slot": "", "gen": GEN, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 0, "rev": 1, "through": 1, "genKey": True}, {"t": "", "slot": "", "gen": GEN, "base": 1, "rev": 2, "through": 2, "genKey": True}], (GEN, 1), None),  # a type that is the array ['feedDelta']: ignored by the client, the pair stands
+    ('feed-type-array-full', 'feed', [{"t": "feed", "slot": "", "gen": GEN, "genKey": True}, {"t": "", "slot": "", "gen": GEN2, "genKey": True}], (GEN, 0), None),  # a type that is the array ['feed']: not a full to the client
+    ('feed-base-written-float', 'feed', [{"t": "feed", "slot": "", "gen": GEN, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 0, "rev": 1, "through": 1, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 1, "rev": 2, "through": 2, "genKey": True}], (GEN, 2), None),  # the wire text base 1.0, rev 2.0 or through 2e0 is the number the client reads as a safe integer; every recorder keeps it as the int (the Python one since the fixer pass: _rev_as_js), so the recorded row is the applying row
     ('feed-nobase', 'feed', [{"t": "feedDelta", "slot": "", "gen": GEN, "base": 0, "rev": 1, "through": 1, "genKey": True}], None, None),  # A nobase (:1518): a delta before any full frame on the conn
     ('feed-genless-applies', 'feed', [{"t": "feed", "slot": "", "gen": GEN, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 0, "rev": 1, "through": 1, "genKey": True}, {"t": "feedDelta", "slot": "", "base": 1, "rev": 2}], (GEN, 1), None),  # no refusal: a gen-less delta applies and moves no pair (the vintage guard)
     ('feed-genless-newgen-through', 'feed', [{"t": "feed", "slot": "", "gen": GEN, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 0, "rev": 1, "through": 1, "genKey": True}, {"t": "feedDelta", "slot": "", "newGen": GEN2, "base": 1, "rev": 2, "through": 2, "newGenKey": True}], (GEN, 1), None),  # no refusal: a gen-less delta carrying newGen and through moves no pair
@@ -592,6 +612,22 @@ RECEIVER_BLIND = [
     ('bars-set-scalar', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}, {"t": "delta", "slot": "bars", "base": 0, "rev": 1}], None, (GEN, 1)),  # R11 (:268) change.set not an object
     ('bars-del-nonstrings', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}, {"t": "delta", "slot": "bars", "base": 0, "rev": 1}], None, (GEN, 1)),  # R13 stringKeys (:137) del not a list of strings
     ('bars-order-incomplete', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}, {"t": "delta", "slot": "bars", "base": 0, "rev": 1}], None, (GEN, 1)),  # R12 (:275-277) incomplete collection order
+    ('bars-rest-restall-type-dropped', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}, {"t": "delta", "slot": "bars", "base": 0, "rev": 1}], None, (GEN, 1)),  # R9 (:260) a remainder under restAll that carries no type drops the frame type: "missing frame type" (the point the pass enumerated and never probed: text-1)
+    # the full path (class 2 of the docstring): a bars FULL one of whose collections split() cannot key throws Unkeyable and the
+    # full arm deletes the base (view-deltas.ts:178-190, neither a recover call nor a throw inside the try); every hook records
+    # the frame as {t: bars, gen, genKey}, the same record a keyable full leaves
+    ('bars-full-unkeyable-turns-list', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}], None, (GEN, 0)),  # turns a list where the kind is a dictlist: the client seeds no base
+    ('bars-full-unkeyable-judging-list', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}], None, (GEN, 0)),  # judging a list
+    ('bars-full-unkeyable-messages-object', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}], None, (GEN, 0)),  # messages an object where the kind is a byid list
+    ('bars-full-unkeyable-lane-sep', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}], None, (GEN, 0)),  # a lane holding the separator (the kernel's twin refusal)
+    ('bars-full-unkeyable-after-pair', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}, {"t": "delta", "slot": "bars", "base": 0, "rev": 1}, {"t": "bars", "slot": "", "gen": GEN2, "genKey": True}], None, (GEN2, 0)),  # an unkeyable full after a held pair drops the base; this rule reseeds
+    ('bars-full-unkeyable-then-delta', 'bars', [{"t": "bars", "slot": "", "gen": GEN, "genKey": True}, {"t": "delta", "slot": "bars", "base": 0, "rev": 1}], None, (GEN, 1)),  # the delta after an unkeyable full finds no base (R2, needSlot); this rule applies it
+    # the feed road's content refusals (class 3): applyFeedDelta's throws escape ws.onmessage before Conn.feedHeld is written, so
+    # the client's pair STANDS with no ask, where this rule advances it (the direction expected_relay_caps would over-demand)
+    ('feed-apply-throw-asks-object', 'feed', [{"t": "feed", "slot": "", "gen": GEN, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 0, "rev": 1, "through": 1, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 1, "rev": 2, "through": 2, "genKey": True}], (GEN, 1), (GEN, 2)),  # asks an object: ups.map is not a function
+    ('feed-apply-throw-asks-null-item', 'feed', [{"t": "feed", "slot": "", "gen": GEN, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 0, "rev": 1, "through": 1, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 1, "rev": 2, "through": 2, "genKey": True}], (GEN, 1), (GEN, 2)),  # an ask that is null: reading itemId of null
+    ('feed-apply-throw-removeAsks-number', 'feed', [{"t": "feed", "slot": "", "gen": GEN, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 0, "rev": 1, "through": 1, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 1, "rev": 2, "through": 2, "genKey": True}], (GEN, 1), (GEN, 2)),  # removeAsks a number: not iterable (new Set)
+    ('feed-apply-throw-ledgers-null-item', 'feed', [{"t": "feed", "slot": "", "gen": GEN, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 0, "rev": 1, "through": 1, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 1, "rev": 2, "through": 2, "genKey": True}], (GEN, 1), (GEN, 2)),  # a ledger item that is null: reading sid of null
 ]
 
 
@@ -796,15 +832,26 @@ class HeldPairRule(unittest.TestCase):
         self.assertEqual({slot for _, slot, _, _, _ in RECEIVER_CASES}, {"bars", "feed"}, "both roads")
 
     def test_the_recorder_blind_class_is_named_and_reads_as_the_docstring_says(self):
-        # the refusals a receiver makes on what a hook does not keep (the frame's collections and remainder; a rev field of a
-        # type the hook does not copy): this rule cannot see them, the docstring says so as a rule, and this pins the measured
-        # reading so the divergence is never silent. Every row: the client refused (None) and this rule applied.
-        self.assertGreaterEqual(len(RECEIVER_BLIND), 8)
+        # the refusals a receiver makes on what a hook does not keep, three classes (the docstring's bound): the bars receiver's
+        # content checks on a patch and a rev field of a type the hooks do not copy (the client drops the base, this rule
+        # applies); the bars receiver's refusal of a whole frame it cannot key (the client holds no pair, this rule reads the
+        # recorded full as a seed); the feed road's applyFeedDelta throws (the client's pair STANDS with no ask, this rule
+        # advances it). This rule cannot see any of them; this pins each measured reading so the divergence is never silent, and
+        # the direction per road, since the third class diverges the other way from the first two.
+        self.assertGreaterEqual(len(RECEIVER_BLIND), 21)
         for cid, slot, frames, client, mirror in RECEIVER_BLIND:
-            self.assertIsNone(client, cid)
             self.assertEqual(held_pair(frames, slot), mirror, "%s: the recorder-blind reading" % cid)
+            self.assertNotEqual(client, mirror, "%s: a row here is a measured divergence" % cid)
             self.assertIsNotNone(mirror, cid)
-        self.assertIn("bars-through-string", [r[0] for r in RECEIVER_BLIND], "the one rev-field divergence, a through the hook does not copy")
+            if slot == "bars":
+                self.assertIsNone(client, "%s: on the bars road the client drops the base (or seeds none), and holds no pair" % cid)
+            else:
+                self.assertEqual(client, held_pair(frames[:-1], slot), "%s: on the feed road the client's pair stands as it was before the frame (the throw escapes before Conn.feedHeld is written)" % cid)
+        ids = [r[0] for r in RECEIVER_BLIND]
+        self.assertIn("bars-through-string", ids, "the one rev-field divergence, a through the hook does not copy")
+        self.assertIn("bars-rest-restall-type-dropped", ids, "the frame-type throw (view-deltas.ts:260), enumerated and probed")
+        self.assertEqual(len([i for i in ids if i.startswith("bars-full-unkeyable")]), 6, "the full path: the four Unkeyable shapes, the drop of a held pair, the delta after")
+        self.assertEqual(len([i for i in ids if i.startswith("feed-apply-throw")]), 4, "the feed road's four measured throws")
 
     def test_the_receivers_refusal_sites_are_counted_so_a_new_one_reds_until_classified(self):
         # the census form space: the refusal points the table above enumerates are read off the receivers' sources, so a
@@ -816,11 +863,29 @@ class HeldPairRule(unittest.TestCase):
         self.assertEqual(body.count("this.recover("), 6, "receive's recover sites: the unknown slot, no base, the exact base, the gen gate, the newGen test, the catch (each modelled above but the catch's content class)")
         self.assertEqual(body.count("throw new Error("), 7, "receive's throws inside the try: the rev relation and coll object test (modelled for the stamp fields), the remainder, a collection in it, the frame type, an unknown collection, a set, the order (recorder-blind)")
         self.assertEqual(vd.count('throw new Error("invalid key list")'), 1, "stringKeys' throw, reached from receive for del and order (recorder-blind)")
+        # the full path (the docstring's class 2): split()'s Unkeyable throws and the full arm's catch that deletes the base and
+        # returns the frame whole, neither a recover call nor a throw inside the try, so the counts above cannot see it
+        self.assertEqual(vd.count("throw new Unkeyable("), 2, "split's two Unkeyable sites: a container the kind cannot key, a lane holding the separator (the full arm refuses the whole frame as a base on either: recorder-blind, the bars-full-unkeyable rows)")
+        self.assertEqual(body.count("if (!(e instanceof Unkeyable)) throw e;"), 1, "the full arm's catch tells Unkeyable from every other error")
+        self.assertEqual(body.count("this.bases.delete(full);"), 1, "and drops the base for it: the one refusal of a WHOLE frame, outside the try (recorder-blind)")
         fed = open(os.path.join(ROOT, "ui", "webview", "federation.ts"), encoding="utf-8").read()
         m2 = re.search(r"^  private applyRemoteFeedDelta\(host: string, d: any\): void \{\n(.*?)^  \}\n", fed, re.S | re.M)
         self.assertIsNotNone(m2, "federation.ts applyRemoteFeedDelta was not found: re-aim this census")
         self.assertEqual(m2.group(1).count('"needFullFeed"'), 3, "the feed road's two refusal sites: nobase (a bare ask) and the gate (the ask with the held pair, or bare when none is held)")
         self.assertEqual(m2.group(1).count("this.diag("), 2, "the two rows the refusals file: feedDelta-nobase and feedDelta-stale (its words are stale_why_words()'s derivation)")
+        # the feed road's content refusals (class 3): applyFeedDelta's throws, which nothing between the socket and the pair write
+        # catches, so a throw leaves the pair standing with no ask. A try around the call, or a throw of the gate's own, moves
+        # the reading and reds here until the rows above say what the client then holds
+        self.assertEqual(m2.group(1).count("const next = applyFeedDelta(raw, d);"), 1, "the apply, once, before the pair write")
+        self.assertEqual(m2.group(1).count("try"), 0, "nothing in applyRemoteFeedDelta catches the apply's throw (the feed-apply-throw rows read the pair standing)")
+        self.assertEqual(m2.group(1).count("throw "), 0, "and the gate itself throws nothing: its refusals are the asks and the rows above")
+        fd = open(os.path.join(ROOT, "ui", "webview", "feed-delta.ts"), encoding="utf-8").read()
+        self.assertEqual(fd.count("try"), 0, "applyFeedDelta catches nothing of its own")
+        self.assertEqual(fd.count("upsertById("), 3, "the two upserts (asks by itemId, ledgers by sid) and the function: the throw-capable sites are their reads of an item's id, a null item, and the Set over the removals (the four feed-apply-throw rows)")
+        m3 = re.search(r"^    ws\.onmessage = \(ev: MessageEvent\) => \{\n(.*?)^    \};\n", fed, re.S | re.M)
+        self.assertIsNotNone(m3, "federation.ts ws.onmessage was not found: re-aim this census")
+        self.assertRegex(m3.group(1), r"try \{\n\s*msg = JSON\.parse\(ev\.data\);\n\s*\} catch", "onmessage's one try wraps the parse alone")
+        self.assertEqual(m3.group(1).count("try"), 1, "so the apply's throw escapes the handler (nothing else in onmessage catches)")
 
 
 class FrameRecorderCensus(unittest.TestCase):
@@ -867,12 +932,69 @@ class FrameRecorderCensus(unittest.TestCase):
                 # the message variable differs per hook (m, j); the frame variable is the pushed one
                 self.assertRegex(block, r'if \("gen" in \w+\) %s\.genKey = true;' % re.escape(var), "%s: the gen presence flag" % name)
                 self.assertRegex(block, r'if \("newGen" in \w+\) %s\.newGenKey = true;' % re.escape(var), "%s: the newGen presence flag" % name)
+                # type and slot as the client reads them, a string else none (the author's fixer pass after round 4: a String()
+                # read an array ['bars'] as the word, and the mirror applied a delta or reseeded a pair the client ignored)
+                self.assertRegex(block, r'const %s = \{ sock: idx, t: typeof (\w+)\.type === "string" \? \1\.type : "", slot: typeof \1\.slot === "string" \? \1\.slot : ""' % re.escape(var), "%s: type and slot recorded only when strings" % name)
+                self.assertRegex(block, r'for \(const k of \["gen", "newGen", "base", "rev", "through"\]\) if \(typeof \w+\[k\] === "number" \|\| \(typeof \w+\[k\] === "string" && \(k === "gen" \|\| k === "newGen"\)\)\) %s\[k\] = \w+\[k\];' % re.escape(var), "%s: the stamp fields, the revs as numbers, the gens as strings or numbers" % name)
             else:
                 self.assertIn('f["genKey"] = True', block, "%s: the gen presence flag" % name)
                 self.assertIn('f["newGenKey"] = True', block, "%s: the newGen presence flag" % name)
+                self.assertIn('"t": m.get("type") if isinstance(m.get("type"), str) else ""', block, "%s: the type recorded only when a string" % name)
+                self.assertIn('"slot": m.get("slot") if isinstance(m.get("slot"), str) else ""', block, "%s: the slot recorded only when a string" % name)
+                self.assertIn("_rev_as_js(m.get(k))", block, "%s: the revs kept as the JS hooks keep them" % name)
         # and the flag is read as the docstring says: a frame carrying the key alone reads as a present gen the client cannot read
         self.assertTrue(_stamp_present({"genKey": True}, "gen") and _stamp_present({"newGenKey": True}, "newGen"))
         self.assertFalse(_stamp_present({"base": 0}, "gen"))
+
+    def test_the_census_form_space_is_pinned_so_a_recorder_in_another_form_reds(self):
+        # the derivation above finds a JS recorder by a push of a NAMED frame onto window.__frames (JS_PUSH) with `const <name> = {`
+        # above it, and a Python one by a module-level `def _record(m):` ending in `return f`; a sixth recorder pushing an inline
+        # object, or naming its function otherwise, would fall outside the population and the docstring's "a sixth lands here"
+        # would be false. So every reader module's every push onto __frames and every _record must match a form the derivation
+        # reads. (The needle is assembled, so this test's own text is not a push.)
+        needle = "__frames." + "push("
+        readers = 0
+        for name in sorted(os.listdir(HERE)):
+            if not (name.startswith("test_") and name.endswith(".py")):
+                continue
+            src = open(os.path.join(HERE, name), encoding="utf-8").read()
+            if not self.READER.search(src):
+                continue
+            readers += 1
+            pushes = src.count(needle)
+            self.assertEqual(len(self.JS_PUSH.findall(src)), pushes, "%s: every push onto __frames in a reader module names a variable declared as `const <name> = {` (a push in another form is a recorder the census cannot see)" % name)
+            defs = len(re.findall(r"^def _record\b", src, re.M))
+            self.assertEqual(len(re.findall(r"^def _record\(m\):\n(?:.*?\n)*?    return f\n", src, re.M)), defs, "%s: every module-level _record takes (m) and ends in `return f`" % name)
+        self.assertGreaterEqual(readers, 4, "the reader modules (an empty derivation checked nothing)")
+
+    def test_the_python_recorder_keeps_type_slot_and_revs_as_the_js_hooks_do(self):
+        # the fifth recorder reads the wire itself (Python json), the four JS hooks the client's parse (JavaScript); the same wire
+        # text must leave the same record, or held_pair reads one frame two ways by lab (the author's fixer pass after round 4,
+        # refusals-3 and refusals-4). The JS side of each row is the hook line's semantics: `typeof m[k] === "number"` keeps
+        # any number (a bool is not one), JSON.parse reads 1.0 and 2e0 as 1 and 2, -1 as -1, 1.5 as 1.5, and a string, null or
+        # bool is not copied; type and slot are kept when strings.
+        sys.path.insert(0, HERE)
+        import test_relay_dial_declares_held_pair as decl   # noqa: E402  the module's _record (no kernel is booted by the import)
+        rows = [('{"type": "delta", "slot": "bars", "base": -1, "rev": 0}', {"t": "delta", "slot": "bars", "base": -1, "rev": 0}),
+                ('{"type": "feedDelta", "gen": "%s", "base": 1.0, "rev": 2.0, "through": 2e0}' % GEN, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 1, "rev": 2, "through": 2, "genKey": True}),
+                ('{"type": "delta", "slot": "bars", "base": 0, "rev": 1.5, "through": "1"}', {"t": "delta", "slot": "bars", "base": 0, "rev": 1.5}),
+                ('{"type": "delta", "slot": "bars", "base": true, "rev": null}', {"t": "delta", "slot": "bars"}),
+                ('{"type": ["delta"], "slot": ["bars"], "base": 0, "rev": 1}', {"t": "", "slot": "", "base": 0, "rev": 1}),
+                ('{"type": "bars", "gen": 8, "newGen": null}', {"t": "bars", "slot": "", "genKey": True, "newGenKey": True}),
+                ('{"type": "bars", "gen": "%s"}' % GEN, {"t": "bars", "slot": "", "gen": GEN, "genKey": True})]
+        for text, want in rows:
+            self.assertEqual(decl._record(json.loads(text)), want, text)
+        # an int the double cannot hold: JSON.parse rounds 2^53 + 1 to 2^53 and the client refuses it (not a safe integer); the
+        # exact int here is refused by the same rule, so the two records read alike
+        big = decl._record(json.loads('{"type": "delta", "slot": "bars", "base": 0, "rev": 9007199254740993}'))
+        self.assertEqual(big["rev"], 2 ** 53 + 1)
+        self.assertIsNone(_stamp_field(big, "rev"))
+        self.assertIsNone(_stamp_field({"rev": 2 ** 53}, "rev"), "the JS-rounded value is refused too")
+        self.assertEqual(_stamp_field({"rev": 2 ** 53 - 1}, "rev"), 2 ** 53 - 1)
+        # the same wire frames through held_pair on both recorders' records agree: a negative feed base applies, the float forms apply
+        wire = ['{"type": "feed", "gen": "%s"}' % GEN, '{"type": "feedDelta", "gen": "%s", "base": 0, "rev": 1, "through": 1}' % GEN,
+                '{"type": "feedDelta", "gen": "%s", "base": -1, "rev": 2, "through": 2}' % GEN, '{"type": "feedDelta", "gen": "%s", "base": 1.0, "rev": 3.0, "through": 3e0}' % GEN]
+        self.assertEqual(held_pair([decl._record(json.loads(t)) for t in wire], "feed"), (GEN, 3))
 
 
 class FederatedDialTerms(unittest.TestCase):

@@ -194,7 +194,7 @@ const hook = (o) => {
         try {
           const m = JSON.parse(ev.data);
           if (m && m.type !== "ka") {
-            const f = { sock: idx, t: String(m.type), slot: m.slot ? String(m.slot) : "", len: String(ev.data).length, at: Date.now() };
+            const f = { sock: idx, t: typeof m.type === "string" ? m.type : "", slot: typeof m.slot === "string" ? m.slot : "", len: String(ev.data).length, at: Date.now() };   // type and slot as the client reads them: a string, else none (the author's fixer pass after round 4)
             for (const k of ["gen", "newGen", "base", "rev", "through"]) if (typeof m[k] === "number" || (typeof m[k] === "string" && (k === "gen" || k === "newGen"))) f[k] = m[k];   // the stamp fields (the revs as numbers, the gens as the kernel's strings), no content: the drive a redial's held member is derived from
             if ("gen" in m) f.genKey = true;   // the key's presence, whatever its value: held_pair tells a present gen the client cannot read (a null, a boolean, an object, a list: no value copied above) from none (the author's pass after round 4; until then this hook set neither flag and such a frame read as gen-less here)
             if ("newGen" in m) f.newGenKey = true;   // the same for newGen: a composed frame whose newGen the client cannot read is a refusal, never a per-cycle delta
@@ -986,7 +986,7 @@ await page.addInitScript(() => {
       try {
         const j = JSON.parse(ev.data); if (j && j.type === "ka") window.__ka[idx]++; if (j && j.type === "feed") window.__full[idx] = true;
         if (j && j.type !== "ka" && window.__hostOf[idx]) {   // a relay socket's frame: type, slot and stamp fields, no content (the drive expected_relay_caps reads)
-          const f = { sock: idx, t: String(j.type), slot: j.slot ? String(j.slot) : "" };
+          const f = { sock: idx, t: typeof j.type === "string" ? j.type : "", slot: typeof j.slot === "string" ? j.slot : "" };   // type and slot as the client reads them: a string, else none (the author's fixer pass after round 4)
           for (const k of ["gen", "newGen", "base", "rev", "through"]) if (typeof j[k] === "number" || (typeof j[k] === "string" && (k === "gen" || k === "newGen"))) f[k] = j[k];   // the revs as numbers, the gens as the kernel's strings
           if ("gen" in j) f.genKey = true;   // the key's presence, whatever its value: held_pair tells a present gen the client cannot read from none (the author's pass after round 4; this hook set neither flag before)
           if ("newGen" in j) f.newGenKey = true;   // the same for newGen

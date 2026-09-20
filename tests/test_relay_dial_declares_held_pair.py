@@ -92,12 +92,30 @@ def _read_frame(s, buf):
     return buf[0] & 0x0F, buf[off:off + ln], buf[off + ln:]
 
 
+def _rev_as_js(v):
+    """A rev field as a JS hook keeps it off the parsed wire (`typeof m[k] === "number"`, the value as the client's Number): any
+    JSON number that is not a bool, an integral float read as the int JavaScript reads it (the wire text 1.0 or 2e0 is the number
+    1 or 2 there, where Python's json gives a float), a non-integral float as itself; anything else none. The author's fixer pass
+    after round 4: this recorder had kept _stamp_field's parsed form, so a negative base the feed gate applies, and a base, rev or
+    through written 1.0 or 2e0, which the client reads as a safe integer, were dropped here and read as absent, where the four JS
+    hooks keep the number; the held-pair rule then read the same wire frame two ways, by recorder."""
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return None
+    if isinstance(v, float) and v.is_integer() and abs(v) < 2 ** 63:
+        return int(v)
+    return v
+
+
 def _record(m):
-    """A frame as a driver hook records it: type, slot and the stamp fields (the gens as the kernel's strings, the revs as
-    numbers: _stamp_field's form, the client's), no content."""
-    f = {"t": str(m.get("type")), "slot": str(m.get("slot") or "")}
+    """A frame as the JS driver hooks record it: type and slot as the client reads them (a string, else none: a non-string type or
+    slot moves nothing on either side), the stamp fields (the gens through _stamp_field, the kernel's string form parsed, so a gen
+    the client cannot read is dropped here and told from an absent one by the presence flag; the revs as the hooks keep them,
+    _rev_as_js, any number), no content. What this recorder drops that a JS hook keeps: a gen or newGen string the client cannot
+    read (a number, an empty string, a separator, one over GEN_MAX); held_pair reads such a gen as a refusal from the flag alone,
+    so the pair it reads is the same either way."""
+    f = {"t": m.get("type") if isinstance(m.get("type"), str) else "", "slot": m.get("slot") if isinstance(m.get("slot"), str) else ""}
     for k in _dial.STAMP_FIELDS:
-        v = _dial._stamp_field(m, k)
+        v = _dial._stamp_field(m, k) if k in _dial.GEN_FIELDS else _rev_as_js(m.get(k))
         if v is not None:
             f[k] = v
     if "gen" in m:
