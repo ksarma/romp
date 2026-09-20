@@ -83,14 +83,14 @@ counters that the recorders do not wrap, or through a reference to a real door t
 even though it cannot be named. Outside both witnesses: a reader below the judge's loaders or beside its module, the
 kernel opening and parsing the store file itself, the kernel calling the judge's own file reader (`jd._read_store_json`,
 below the loaders) or a second judge module loaded under another name with a cache and counters of its own (three plants,
-each per session in the pass loop, re-taken by the round-5 fixers at the head the round-5 verifiers read, over its 36 cases, one at a time with
+each per session in the pass loop, re-taken at this head, the head of the round-5 fixes, over its 37 cases, one at a time with
 the kernel, the judge and this module hashed before the plant, across the run and after the revert: the first two leave every case
 green with no file changed across a run, so they stay outside every witness here; the third has been refused since the consolidation
 pass by the kernel-wide birth pin, whose called population names `_PJ.load_goals_shared` as a fifth loader spelling, so a second judge
 module is outside both execution witnesses and inside the static pin, which reds alone while every execution case stays green; and
 the alias control beside them reds the shared reconciliation on each of the five harness cases that drive a pass, and the birth pin
-(6 failed, 30 passed at the head the round-5 verifiers read; the door witness's twelve cases there ran outside any pass, eleven calling
-the door once and one reading the table, and stayed green, so the control reds five of the seventeen harness cases of that head; review
+(6 failed, 31 passed at this head, the head of the round-5 fixes; the door witness's thirteen cases run outside any pass, twelve calling
+the door once and one reading the table, and stay green, so the control reds five of the eighteen harness cases; review
 round 5, extra7-1: this sentence said every harness case, and one of the six at the head the round-5 ruling read drove no pass; a verifier
 of the round-5 fixes: it then said the door witness's cases call the door, one of them reading the table). Review round 3, correctness-2 and
 regression-2: this sentence had been written at the head of the build's verifier pass after the round-2 fixes, over that
@@ -451,59 +451,100 @@ on 3.10, 3.11, 3.12, 3.13 and 3.14t, and with two workers on 3.12.
 
 Review round 5 (2026-09-20; seventeen findings, none refuted, one medium, sixteen lows, and the reviewer's ruling on approach: five
 rounds each closed what was asked and the same class returned one construct over, because pinning a shape property by AST is a
-list-of-syntax problem by construction, so each AST clause is kept as an early warning that refuses the forms it names and is silent on
-the rest, and the two contracts, the walker's and the at-most-one, are carried by execution). The reviewer's correction: four findings
-said the roster pin walks outside _walk at its iter_fields read; it does not (the traversal is _walk, and iter_fields lists a walked
-node's fields), and no exemption row was added there. Three fixers landed the round's fixes in sequence, the two execution witnesses,
-the finder and the Docs count pin, and the prose; every state below was taken by the round's fixers at the head the round-5 verifiers
-read, over its 36 cases (the round's fixes add fourteen: the walker witness's three and the door witness's eleven beyond the corrupt
-case), each landed on kernel/kernel.py, kernel/judge.py or this module and reverted with the file hashed before the plant and after the
-revert, the module run single-process on 3.12 through the clean runner, so a figure in this paragraph reads against 36 and names no
-other head; the consolidation of the round-5 fixes then added one case, the door witness's drive of the fill's own raise road, at this
-head, the head of the round-5 fixes, over its 37 cases. The walker contract
-by execution (correctness-2, tests-1, extra5-2, regression-2): every census entry point of this module, the roster of eight rows in
-_CENSUSES read against a derivation over its own AST (_census_floor), refuses a planted stranger statement naming its class, and
-unplanted returns; _loader_sites rewritten as an ast.iter_fields recursion around _walk reds the witness naming it while the finder
-case stays green (1 failed, 35 passed; the finder is silent on that class by design, and its class docstring says so); its roster row
-removed with the count set to seven reds the floor naming the def, and the count set one off reds the count line (1 failed, 35 passed
-each); _walk's refusal disabled reds the witness with all eight rows named as having passed the stranger over, the refusal case and
-the witness's own control (3 failed, 33 passed); a NodeVisitor subclass at module level, the plant the finder is known to catch, reds
-the finder case alone (1 failed, 35 passed). The at-most-one by execution (correctness-1, regression-1, extra6-1, extra6-2): the door
-witness drives nine roads of both rosters and two raise roads on the real door and asserts the exact keys per road and at most one
-second key per call; a helper defined inside the door bumping dup from the corrupt handler, a Return whose expression raises into an
-outer handler that bumps dup, and a raising statement in the corrupt list under such a handler each red the corrupt drive, two second
-keys against one, corrupt and dup, with the roster pin's three AST clauses green (1 failed, 35 passed each), as does the round-4 plant
-the clauses are known not to read, a dup bump through __setitem__ beside the corrupt bump (1 failed, 35 passed); a dup bump planted as
-the first statement of each callee derives the witness per callee the roster pin's docstring states: in _shared_forget it reds the
-absent, unreadable_journal, corrupt, open_raises and read_raises drives and the no-store sweep case (6 failed, 30 passed); in
-_guard_nodes and in _finish_load the miss, compare_miss, dup, refuse and unreadable_journal drives and the four harness cases with
-fills, and not the corrupt drive (9 failed, 27 passed each); in _freeze_store the miss, compare_miss, dup and refuse drives and the
-four fill cases (8 failed, 28 passed); in _journal_read every fill-road drive and the four fill cases (10 failed, 26 passed); in
-_disk_parse those but unreadable_journal (9 failed, 27 passed); refuse dropped from SHARED_SECOND_KEYS reds the coverage case naming
-it, the roster pin and the refuse drive (3 failed, 33 passed), and a key added to that roster with no drive reds the coverage case
-naming it and the roster pin (2 failed, 34 passed). The finder (extra5-1, tests-4, extra5-3): a getattr with the walk in a
-no-placeholder f-string and a from-import through a sys.modules alias, each planted at module level, red the finder case naming the
-line and the form (1 failed, 35 passed each; both left the module green at the head the round-5 ruling read), the getattr clause
-reverted to a direct Constant reds the two f-string sample rows, the from-import branch narrowed back to the module road reds the
-alias row, and a misspelled traversal name reds the derivation check naming it (1 failed, 35 passed each), the samples spelled
-independently of the roster they test. The Docs count pin (tests-2): this paragraph's count set one below and the first paragraph's
-count set one below each red it naming the figure and its fragment, a historical fragment relabelled this head at its own count reds
-it the same way, a second current head left standing beside this one reds its one-head line naming rounds 4 and 5, the clean line one
-below reds its sum, and a historical label removed reds its unlabelled line (1 failed, 35 passed each). The transform limit (tests-3,
-regression-3, extra4-1), held on its side by kernel plants as real loads in the real _closer_settled, a replaced helper whose body
-never runs under the harness: the door's name as a utf-16 bytes literal decoded at getattr, and a chars-strip of a padded name handed
-to a partial of getattr, each leave the module green (36 passed each, the assembled class), while the same bytes literal in ASCII at
-getattr and the chars-strip handed to getattr itself, a listed receiver, each red the birth pin naming the constant and its receiver
-(1 failed, 35 passed each, the string class). The bypass plants and the alias control, re-taken by the fixers at the head the round-5
-verifiers read, over its 36 cases, each landed on the kernel alone with the kernel, the judge and this module hashed before the plant,
-across the run and after the revert:
-the kernel opening and parsing the store file itself and the kernel calling jd._read_store_json, per session in the pass loop, 36
-passed each and no file changed across a run; a second judge module loaded under another name reds the birth pin alone, naming
-`_PJ.load_goals_shared` (1 failed, 35 passed); the alias control, the shared door bound at kernel import and called per session, reds
-the shared reconciliation on each of the five harness cases that drive a pass, 2 against 0, 7 against 5 twice, 6 against 4 and 3
-against 1, and the birth pin (6 failed, 30 passed). The clean module at the head the round-5 verifiers read: 36 passed single-process
-on 3.10, 3.11, 3.12, 3.13 and 3.14t, and with four workers on 3.12. The clean module at this head, the head of the round-5 fixes:
-37 passed single-process on 3.10, 3.11, 3.12, 3.13 and 3.14t, and with two workers on 3.12.
+list-of-syntax problem by construction, so each AST clause is kept as an early warning that refuses the forms it names and is silent
+on the rest, and the two contracts, the walker's and the at-most-one, are carried by execution). The reviewer's correction: four
+findings said the roster pin walks outside _walk at its iter_fields read; it does not (the traversal is _walk, and iter_fields lists
+a walked node's fields), and no exemption row was added there. Three fixers landed the round's fixes in sequence, the two execution
+witnesses, the finder and the Docs count pin, and the prose; three verifiers read them and left fifteen findings, one medium and
+fourteen lows, and a consolidator closed the fifteen (the next paragraph). Every state below was re-taken by the consolidator at
+this head, the head of the round-5 fixes, over its 37 cases (the round adds fifteen: the walker witness's three, the door witness's
+eleven beyond the corrupt case, and the consolidation's drive of the fill's own raise road), each landed on kernel/kernel.py,
+kernel/judge.py or this module at the head of the round's last code change, one docstring-only commit before this one, which adds no
+case, and reverted with the planted file and the kernel, judge and module triple hashed before the plant and after the revert and
+found equal, the module run single-process on 3.12 through the clean runner, so a figure here reads against 37 and names no other
+head. The walker contract by execution (correctness-2, tests-1, extra5-2, regression-2): every census entry point of this module,
+the roster of eight rows in _CENSUSES read against a derivation over its own AST (_census_floor), refuses a stranger statement
+planted at each of three sites alone and at all together, naming its class, and unplanted returns; _loader_sites rewritten as an
+ast.iter_fields recursion around _walk reds the witness naming it at the module site, the def site and the sites together (its tree,
+one helper's source, offers no class body) while the finder case stays green (1 failed, 36 passed; the finder is silent on that
+class by design, and its class docstring says so); a hand-rolled census handed a tree, added as a ninth row, reds the witness naming
+it while the floor stays green, the stated boundary (1 failed, 36 passed); its roster row removed with the count set to seven reds
+the floor naming the def and the no-class list (2 failed, 35 passed), and the count set one off reds the count line (1 failed, 36
+passed); _walk's refusal disabled reds the witness with every row and site named as having passed the stranger over, the refusal
+case and the witness's own control (3 failed, 34 passed); a NodeVisitor subclass at module level, the plant the finder is known to
+catch, reds the finder case alone (1 failed, 36 passed). The at-most-one by execution (correctness-1, regression-1, extra6-1,
+extra6-2): the door witness drives one road per key of both rosters and three raise roads on the real door and asserts the exact
+keys per road and at most one second key per call; a helper defined inside the door bumping dup from the corrupt handler, a Return
+whose expression raises into an outer handler that bumps dup, and a raising statement in the corrupt list under such a handler each
+red the corrupt drive, two second keys against one, corrupt and dup, with the roster pin's AST clauses green (1 failed, 36 passed
+each), as does the round-4 plant the clauses are known not to read, a dup bump through __setitem__ beside the corrupt bump (1
+failed, 36 passed); a dup bump planted as the first statement of each callee derives the witness per callee the roster pin's
+docstring states: in _shared_forget it reds the absent, unreadable_journal, corrupt, open_raises and read_raises drives and the
+no-store sweep case (6 failed, 31 passed); in _guard_nodes and in _finish_load the miss, compare_miss, dup, refuse,
+unreadable_journal and fill_raises drives and the four harness cases with fills, and not the corrupt drive (10 failed, 27 passed
+each); in _freeze_store the miss, compare_miss, dup and refuse drives and the four fill cases (8 failed, 29 passed); in
+_journal_read every fill-road drive, fill_raises among them, and the four fill cases (11 failed, 26 passed); in _disk_parse those
+but unreadable_journal (10 failed, 27 passed); refuse dropped from SHARED_SECOND_KEYS reds the coverage case naming it, the roster
+pin and the refuse drive (3 failed, 34 passed), a key added to that roster with no drive reds the coverage case naming it and the
+roster pin (2 failed, 35 passed), and the dup drive's method renamed off the road rule reds _drive's name check in it and the
+coverage case (2 failed, 35 passed). The finder (extra5-1, tests-4, extra5-3): a getattr with the walk in a no-placeholder f-string
+and a from-import through a sys.modules alias, each planted at module level, red the finder case naming the line and the form (1
+failed, 36 passed each; both left the module green at the head the round-5 ruling read), the getattr clause reverted to a direct
+Constant reds the two f-string sample rows, the from-import branch narrowed back to the module road reds the alias row, a misspelled
+traversal name reds the derivation check naming it, and the same misspelling with that check disabled reds the name's sample row (1
+failed, 36 passed each), the samples spelled independently of the roster they test. The Docs count pin (tests-2): this paragraph's
+count set one below and the first paragraph's count set one below each red it naming the figure and its fragment, a historical
+fragment relabelled this head at its own count reds it the same way, a second current head left standing beside this one reds its
+one-head line naming rounds 4 and 5, the clean line one below reds its sum, a second clean line reds its one-line count, a
+historical label removed reds its unlabelled line, and two counts in one fragment red its one-count line (1 failed, 36 passed each);
+the battery paragraph's count spelled as a word changed leaves the module green, the stated unread form (37 passed). The transform
+limit (tests-3, regression-3, extra4-1), held on its side by three enumeration rows, F75 to F77, and by kernel plants as real loads
+in the real _closer_settled, a replaced helper whose body never runs under the harness: the door's name as a utf-16 bytes literal
+decoded at getattr, and a chars-strip of a padded name handed to a partial of getattr, each leave the module green (37 passed each,
+the assembled class), while the same bytes literal in ASCII at getattr and the chars-strip handed to getattr itself, a listed
+receiver, each red the birth pin naming the constant and its receiver (1 failed, 36 passed each, the string class); _door_text
+widened to a utf-16 decode, to a strip of the padding characters and to casefold reds F75, F76 and F77 in turn (1 failed, 36 passed
+each). The bypass plants and the alias control, re-taken at this head, the head of the round-5 fixes, over its 37 cases, each landed
+on the kernel alone with the kernel, the judge and this module hashed before the plant, across the run and after the revert: the
+kernel opening and parsing the store file itself and the kernel calling jd._read_store_json, per session in the pass loop, 37 passed
+each and no file changed across a run; a second judge module loaded under another name reds the birth pin alone, naming
+`_PJ.load_goals_shared` (1 failed, 36 passed); the alias control, the shared door bound at kernel import and called per session,
+reds the shared reconciliation on each of the five harness cases that drive a pass, 2 against 0, 7 against 5 twice, 6 against 4 and
+3 against 1, and the birth pin (6 failed, 31 passed). The clean module at this head, the head of the round-5 fixes: 37 passed
+single-process on 3.10, 3.11, 3.12, 3.13 and 3.14t, and with two workers on 3.12.
+
+The verifiers of the round-5 fixes (three lenses, fifteen findings, one medium and fourteen lows: the adversarial lens's five, the
+fixtures lens's three, the prose lens's seven), each closed and re-taken at this head, the head of the round-5 fixes, over its 37
+cases; a state's earlier figure reads at the head the round-5 verifiers read, over its 36 cases, where the clean module read 36
+passed on the five interpreters and with four workers on 3.12. The walker witness's plant sat at two sites with one refusal per
+drive accepted (the adversarial lens's medium): _census_floor with its module level read by hand, and _traversal_references the
+same, each left the module green at the head the verifiers read, the def plant refused and the module-level plant passed over; the
+plant lands at three sites now, each driven alone and then together, so those two shapes red the witness naming the census and the
+site, the module site and the class site for the first and the module site for the second (1 failed, 36 passed each), and the class
+site disabled in the plant reds the landing check naming the rows whose tree holds a class (1 failed, 36 passed). The floor's
+boundary (the adversarial lens's first low): an unregistered census parsing through compile with ast.PyCF_ONLY_AST, and one parsing
+through the module under an alias, each walking by hand, leave the module green while the same def through ast.parse reds the floor
+naming it (37 passed, 37 passed, and 1 failed, 36 passed; the same three states at the head the verifiers read), and _census_floor's
+docstring, the roster's comment and the witness's docstring state the boundary as the code has it, the spelling of the reader. The
+fill's own raise road (the adversarial lens's third low): a journal row whose instant is not a number raised out of _finish_load
+after the miss bump with no second key, on a road no drive reached and the undriven list did not name, and a dup bump in a handler
+around _finish_load left the module green at the head the verifiers read; the twelfth road drives it, that bump reds the drive at
+its raise (1 failed, 36 passed), and the raise swallowed reds it the same way (1 failed, 36 passed). The arrangement's limit (the
+fourth low): a dup bump conditioned on a two-node store after _finish_load leaves every drive green at both heads (36 passed there;
+37 passed here), since every drive seeds one node for one sid and calls once, stated in the witness's docstring and its message. The
+fifth refused form (the fifth low): a second-key bump that is not a statement of a list, an assignment's value, reds the roster
+pin's count of lists against bumps and the miss, compare_miss, dup, refuse and fill_raises drives and the four fill cases (10
+failed, 27 passed; 9 failed, 27 passed at the head the verifiers read), named in the early-warning sentences now. The Docs count pin
+(the fixtures lens's first two lows): a stale count written before a fresh one in the same fragment left the module green at the
+head the verifiers read and reds the one-count line now (1 failed, 36 passed), and the pin's docstring says what the sweep reads and
+what it does not. The getattr under another name (the fixtures lens's third low): the rebound name as a real walk at module level
+leaves the module green at both heads (36 passed; 37 passed), the stated silence, held by two limits rows, and the getattr form
+widened to the rebound name reds the first of them (1 failed, 36 passed). The prose lens's seven: the at-most-one clause's message;
+the enumeration docstring's claim that the limit texts cannot overstate (the assembled text rewritten to a false universal left the
+module green at the head the verifiers read; the texts are messages no assertion reads, said so now); the derivation check's
+self-contradicting comment (a misspelled name with the check off reds the sample row, 1 failed, 36 passed); 'every road of both
+rosters' at four sites; 'every census' at two; the door witness's case count in the first paragraph; and the three assembled
+enumeration rows tests-3's Fix line asked for, each landed.
 
 Drives the real pass (_auto_nudge_tick) over two alive sessions with real transcript files and real goal stores, on the
 suite's fake clock (the pass takes `now`). SYNTHETIC fixtures only; a PRIVATE synthetic sid pair (the goal-store fixture
