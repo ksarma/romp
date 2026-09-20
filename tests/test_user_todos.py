@@ -415,6 +415,50 @@ class WriterCarriesItsOwnVerdict(_StoreSandbox):
             self.assertEqual(km._user_todos_read(), ({}, (st.st_mtime_ns, st.st_size)), "and the same from the cache")
             self.assertTrue(km._user_todos_unreadable(), "the unreadable check is that read's verdict")
 
+    def test_a_cache_hit_answers_the_cached_versions_verdict_never_the_slot_at_its_look(self):
+        # the interleaving a slot look cannot survive: a not-a-store version is on disk. A reader on another thread is
+        # mid-lift after a stat-fault blink (its fault-lift block popped the slot and the cache), THIS read looks at
+        # the slot in that gap (nothing there), and that reader's re-read re-sets both before this read looks at the
+        # cache (a hit). A verdict taken off the slot look answered healthy for the empty stand-in: a writer copying
+        # it fell to the slot check, and _user_todos_unreadable's callers answered a definite state (no such row,
+        # nothing to show) off a file the kernel could not read as a store. The verdict rides the cache entry beside
+        # the stand-in it describes, so a hit answers the version's verdict whatever the slot read. The other
+        # reader's completion runs inline, once, at the one seam between the two looks (_ut_flag_is_fault on the
+        # slot's value); the case asserts its premise: the slot look found nothing, and the slot holds the version
+        # again by the cache look
+        p = jd.STATE / "user-todos.json"
+        p.write_text(json.dumps({"enabled": True}))
+        st = p.stat(); key = (st.st_mtime_ns, st.st_size)
+        real_is_fault = km._ut_flag_is_fault
+        real_read = km._user_todos_read
+        fired = []
+
+        def other_reader_finishes_here(flag):
+            if not fired:
+                fired.append(flag)
+                real_read()                              # its re-read: the slot holds the key, the cache the stand-in
+            return real_is_fault(flag)
+
+        def mid_lift():
+            km._user_todos_bad.clear(); km._user_todos_cache.clear(); fired.clear()
+
+        with mock.patch.object(km, "_ut_flag_is_fault", other_reader_finishes_here), \
+                contextlib.redirect_stderr(io.StringIO()):
+            mid_lift()
+            store, flag = km._user_todos_read()
+            self.assertEqual(fired, [None], "the premise: this read's slot look found nothing")
+            self.assertEqual(km._user_todos_bad.get(str(p)), key, "and the slot holds the version by the cache look")
+            self.assertEqual((store, flag), ({}, key), "a cache hit on a not-a-store version: its key, whatever the slot read")
+            mid_lift()
+            self.assertTrue(km._user_todos_unreadable(), "the unreadable check answers that verdict")
+            mid_lift()
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err), self.assertRaises(RuntimeError):
+                cur, flag = km._user_todos_read()
+                km._write_user_todos(dict(cur), flag)
+            self.assertIn("the read this write copied came back flagged", err.getvalue(),
+                          "a writer under it refuses on its own read's verdict, before the slot check")
+
     def test_every_kernel_call_of_the_writer_hands_it_the_flag_of_the_read_it_copied(self):
         # a writer that leaves the flag out leans on the slot alone, the window this class exists for
         src = (Path(HERE).parent / "kernel" / "kernel.py").read_text()

@@ -8535,7 +8535,9 @@ _autonudge_cache = {}   # str(path) -> ((mtime_ns,size), dict)
 # that judge.py never names it and that every call of a writer in this file resolves to a listed def).
 # Registration rides POST /usertodo from the postal bus's add_user_todo, the way set_working rides
 # POST /working. The same (mtime_ns, size) cache as the per-session view flags; _atomic_write publish.
-_user_todos_cache = {}   # str(path) -> ((mtime_ns, size), dict)
+_user_todos_cache = {}   # str(path) -> ((mtime_ns, size), dict, verdict): the store read at that version and the verdict
+#                          _user_todos_read answers for it (None: a store; the key: not a store, the dict its EMPTY stand-in).
+#                          The verdict rides the entry so a cache hit answers the version's, never the slot's state at the look
 _user_todos_bad = {}     # str(path) -> (mtime_ns, size) of a file VERSION that is not a request store, or ("stat" | "read",
 #                          errno) of a read that FAILED for a reason other than absence (_UT_FAULT_KINDS): one flagged state
 #                          either way (_user_todos reads it as empty, loudly; _write_user_todos refuses to overwrite it; the
@@ -8614,9 +8616,11 @@ def _user_todos_read():
             _user_todos_bad.pop(str(p), None)
     hit = _user_todos_cache.get(str(p))
     if hit is not None and hit[0] == key:
-        # the cached version: a not-a-store version's stand-in is cached too, with its key in the slot, so the verdict
-        # is the version flag when the slot still holds THIS version's key, and healthy when it holds no flag for it
-        return hit[1], (key if flag == key else None)
+        # the cached version, with the verdict it was read under (None for a store; its key for a not-a-store stand-in).
+        # The verdict rides the entry, never the slot's state at this read's look: a reader on another thread mid-lift
+        # (a fault blink: its lift popped the slot and the cache, its re-read re-set both) left the slot empty at the
+        # look and the cache filled by the hit, and a verdict taken off the slot answered healthy for the stand-in
+        return hit[1], hit[2]
     try:
         d = json.loads(p.read_text())
         found = ", ".join(sorted(map(str, d)))[:200] if isinstance(d, dict) else type(d).__name__
@@ -8634,10 +8638,10 @@ def _user_todos_read():
                              "each mapping to a list of records; found: %s). Reading it as EMPTY and "
                              "refusing to overwrite it until it is fixed or removed. The on/off switch "
                              "lives in %s, not here.\n" % (p, found or "<empty object>", USER_TODOS_SWITCH_FILE))
-        _user_todos_cache[str(p)] = (key, {})
+        _user_todos_cache[str(p)] = (key, {}, key)
         return {}, key
     _user_todos_bad.pop(str(p), None)
-    _user_todos_cache[str(p)] = (key, d)
+    _user_todos_cache[str(p)] = (key, d, None)
     return d, None
 
 
