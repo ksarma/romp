@@ -666,7 +666,8 @@ class ClientDiagAllowlistTest(unittest.TestCase):
             self.assertGreater(len(text), 200, name)
             for token in (r"host-prefixed session id", r"host-keyed map", r"remote session", r"share switch", r"`?host`? key", r"positions and no host name",
                           r"GET /tunnels", r"in (its|their) own right",
-                          r"remotes\.json", r"remotes-known\.json", r"exact for", r"order inference"):
+                          r"remotes\.json", r"remotes-known\.json", r"exact for", r"order inference",
+                          r"\bmints\b", r"does not inspect the map's keys", r"nested key"):
                 self.assertIsNotNone(re.search(token, text, re.I), "%s: the disclosure no longer states %r" % (name, token))
         # the stability caveat lives where the position rule is stated for readers, the docs (and the PR body outside the tree): a
         # reload re-derives the assignment from the same /tunnels order, so the caveat must carry its condition, never read as a

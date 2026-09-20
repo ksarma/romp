@@ -3524,7 +3524,12 @@ CLIENT_DIAG_KEYS = {
                                             # counts (one federation manager per pane document; the row's app names the pane): h1 the first remote host it
                                             # attached, assigned when the host first attaches, kept for that document's life and never shifting on a
                                             # detach (a re-attached host keeps its ordinal), so h2 names one host across every row that document files.
-                                            # The map's keys carry positions and no host name. Host names reach this file wherever an admitted VALUE
+                                            # The map's keys carry positions and no host name, a property the COLLECTOR holds: federation.ts mints each
+                                            # key as 'h' plus the attach ordinal (wsBytesByHost) and perf-telemetry.ts's bytesByHost keeps a key only in
+                                            # the h<n> form; the kernel admits the top-level key and does not inspect the map's keys, as it inspects no
+                                            # nested key of any admitted object (marks, env, nav, res, frames, loaf and federation's counts alike): a
+                                            # nested string VALUE is cut at CLIENT_DIAG_STR_MAX, a nested key is stored as posted (_client_diag_admit,
+                                            # _client_diag_scrub). Host names reach this file wherever an admitted VALUE
                                             # can hold one, in three forms, and tests/test_client_diag_allowlist.py classifies every admitted key of
                                             # every surface by content, so a new key fails there until classified: a bare name under a `host` key (the
                                             # shell's push-test row, federation's hostconn rows, and the kernel's own wsopen row for a spliced relay,
