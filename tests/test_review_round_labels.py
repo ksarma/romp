@@ -28,10 +28,10 @@ naming its author's pass, by raising REVIEWER_ROUNDS when the reviewer did hold 
 its file out of FILES with a note here.
 
 kernel/kernel.py, ui/webview/render.ts and tests/test_error_center.py are not in FILES because they carry other
-work's review rounds numbered past REVIEWER_ROUNDS (kernel.py: 50 lines naming rounds from six to thirteen at the
-pass-7 fixer's head 034c88ef9, every one on main and none in the project's copy). kernel.py is read two ways
+work's review rounds numbered past REVIEWER_ROUNDS (kernel.py: 50 lines naming rounds from six to thirteen at
+034c88ef9, the pass-7 fixer's last kernel.py commit, every one on main and none in the project's copy). kernel.py is read two ways
 (KERNEL). The VERIFY rule reads every line of it: no file on main or in the project writes "round N verify" as a
-label (`git grep -il 'round[- ]\?[0-9]\+ verify'` over origin/main and over upstream/main: no file), so the
+label (`git grep -ilE 'round[- ]?[0-9]+ verify'` over origin/main and over upstream/main: no file), so the
 whole-file read costs no other change anything, and it is the form that slipped the tag-scoped read (the three
 pane-loader comments above, found by the pass-7 verify). The NUMERIC and LETTERED rules read the `[fork]`-tagged
 lines alone (main's own `[fork]` lines name no such round): other work's numeric labels are the 50 lines above, and
