@@ -42,23 +42,32 @@ in the served job it must run. It boots no kernel and drives no browser; it need
 The regex census in the driver-bound module stays as the matrix's backstop, its docstring naming the spellings it checks
 and this module as the instrument that reads the rest.
 
-THE WALK. A receiver is known by its TYPE through the walk, never by its spelling, and the walk's default is the REFUSAL:
-a node it cannot resolve to a typed receiver, a known callee or a name it binds is refused by construction, and the shapes
-it follows are the exceptions, each a list held equal to the driver (round 6: the earlier walk refused the shapes it
-recognised and let the rest through, so each round of planting found more). The roots: the destructuring of
+THE WALK. A receiver is known by its TYPE through the walk, never by its spelling, and the walk's default is the REFUSAL of
+three things: a NAME no scope of the tree binds, a MEMBER of a root the driver does not read, and a receiver (or a table, a
+list or an object holding one) reaching a shape the walk does not follow, each refused by construction; what is done with an
+untyped value (`cfg.fifo`, a literal, an arithmetic expression) is not read, and the soundness argument is the consumption
+rule below (a receiver cannot enter an untyped local unrefused), not a per-node refusal. The shapes the walk follows are the
+exceptions, each a list held equal to the driver (round 6: the earlier walk refused the shapes it recognised and let the rest
+through, so each round of planting found more). The roots: the destructuring of
 `require("playwright")` names a browser type (chromium; firefox and webkit would be named the same way and refused by the
 allow-list, which knows chromium alone), `chromium.launch(...)` is a browser, `browser.newContext(...)` a context,
 `context.newPage(...)` a page, a page's or a locator's LOCATOR_MAKERS call a locator, `makeBudget(...)` the budget and
 `budget.waitFor` read without a call the budget's poll; an import binding (`fs`, `createRequire`) is a MODULE, a kind the
 walk types and reads nothing of. A type flows through `await`, parentheses, a ternary's or a logical expression's branches,
 an array literal (a list of that type), an object literal's property (an object holding it), a `const`, `let` or `var`
-declaration, an assignment, a destructuring from the playwright module, a helper's return (its expression body, the last
-child of the function that is not a parameter, so `(page) => page` returns its parameter; or its `return` statements) and a
-helper's parameters (from the types of the arguments at each call of it); a write of a receiver into a member of a declared
-object (`pages[app] = page`) makes that object a TABLE of the receiver's type, whose every member read is one. Names resolve
-by function scope: every binding of the tree is declared before the typing starts (a parameter, a declaration, a function's
-or a class's name, an import binding, a catch variable, the names inside a destructuring pattern), a parameter or a
-declaration inside a helper shadows the module's, and a name bound to two types in one scope is refused. A name no scope
+declaration, a destructuring pattern followed ELEMENT BY ELEMENT (each name bound to the member the walk can type on the
+value: a record's or the playwright module's named member, a list's element, a module's member; nested to any depth, and an
+element the walk cannot bind on a receiverish value, a rest element, a default, a computed property name, a member of a
+receiver read by a pattern, an array pattern over anything but a list, is refused where it stands, since its names would
+stay untyped with the receiver inside them), an assignment, which types the name in the scope that DECLARES it (a closure's
+write to an outer name types the outer binding), a helper's return (its expression body, the last child of the function that
+is not a parameter, so `(page) => page` returns its parameter; or its `return` statements), a helper's parameters (from the
+types of the arguments at each call of it, or a default's), and a for-of's declaration over a list (a pattern there is
+followed the same way); a write of a receiver into a member of a declared object (`pages[app] = page`) makes that object a
+TABLE of the receiver's type, whose every member read is one. Names resolve by function scope: every binding of the tree is
+declared before the typing starts (a parameter, a declaration, a function's or a class's name, an import binding, a catch
+variable, the names inside a destructuring pattern), a parameter or a declaration inside a helper shadows the module's, and
+a name bound to two types in one scope is refused. A name no scope
 binds is FREE, and a free name is refused wherever it is read (as the object of a member, a callee, an argument, a value)
 unless it is one of KNOWN_GLOBALS, the free names the driver reads today, a tuple the driver cell holds EQUAL to the walk's
 own list over the unplanted driver, so a global the driver starts or stops reading is a red until the tuple says so. A known
@@ -70,7 +79,9 @@ a known global or member is the disclosed class below, and TIMERS, PROMISE_ALLOW
 particular uses of particular names. Then every expression whose type is a receiver, a table, a list or an object holding
 one must be CONSUMED by one of the shapes the walk follows: the object of a member call (checked against the allow-list by
 kind, `evaluate` on a page only), a truth test (an if, a while, a for, a `!`, a ternary's condition, a `&&` or `||`), a
-binding or an assignment, an argument to a helper the driver declares (its type flows to the parameter) or to Object.keys
+binding or an assignment (accepted because the BINDING was judged, never by the target's form: a declaration's or a
+parameter's pattern has every element bound or refused by the pattern rule above, an assignment's target is a declared name
+or a table's member or is refused), an argument to a helper the driver declares (its type flows to the parameter) or to Object.keys
 (the table), an `await`, a literal it is placed in (under a property name the parse can read: a computed key is refused,
 since the record would hold the receiver under a name no member read can be typed by), the iterable of a for-of over a list,
 a record's or the playwright module's member under a name or a string literal (typed by _member; under a computed key
@@ -115,9 +126,9 @@ member bound to a name, a name imported from the module): the census keys on WHI
 and WHICH member is read, all three held equal to the driver (KNOWN_GLOBALS, IMPORTS_ALLOWED, KNOWN_MEMBERS), and not on the
 arguments, so the driver's `fs.readFileSync(process.env.CFG)` and a planted `fs.readFileSync("/dev/stdin")` are one call to
 it, a blocking one included; a member the driver does not read (`process.binding`, `fs.promises`, `fs.watchFile`) is refused
-by construction. The budget is a deadline and bounds none of it. DISCLOSED names the plant rows of that class, one witness
-per spelling of each member, which pass by disclosure and are pinned as passing, so a census that learns to see one says so. The two fetches (ctl and tunnelsStatus) stay the acknowledged
-driver_error road, pinned at two.
+by construction. The budget is a deadline and bounds none of it. DISCLOSED names the plant rows of that class, witness rows
+for each member (several spellings of the second), which pass by disclosure and are pinned as passing, so a census that
+learns to see one says so. The two fetches (ctl and tunnelsStatus) stay the acknowledged driver_error road, pinned at two.
 
 THE PLANTS. PLANTS is a fixture: each row is one line inserted into the driver after `out.provBefore = await provText();`,
 run through this census, and must give the verdict class its row names (a walk refusal, an unlisted call, an uncapped or
@@ -353,6 +364,18 @@ class Walk:
             s = None if s["k"] == "SourceFile" else self.scope_of(s)
         return None
 
+    def declaring_scope(self, name, n):
+        """The scope that DECLARES `name` as seen from `n` (the nearest enclosing one that binds it, typed or not), else the
+        node's own scope for a name no scope binds (which _kind refuses as free). An assignment types the name where it is
+        declared, so a closure's write to an outer name types the outer binding (round 6's fixer pass: `let cap; const set = ()
+        => { cap = pages.feed; }` typed cap inside the arrow alone, and the read at module level saw an untyped name)."""
+        s = self.scope_of(n)
+        while s is not None:
+            if name in self.scopes.get(id(s), {}):
+                return s
+            s = None if s["k"] == "SourceFile" else self.scope_of(s)
+        return self.scope_of(n)
+
     def refuse(self, n, why):
         self.refusals.add((self.line(n), self.text(n), why))
 
@@ -513,19 +536,17 @@ class Walk:
             self._declare(n, kids)
             return None
         if k == "Parameter":
-            if kids and kids[0]["k"] == "Identifier":
-                self.declare(self.scope_of(kids[0]), kids[0]["t"])
-                if len(kids) > 1:
-                    self.bind(self.scope_of(kids[0]), kids[0]["t"], self.kind_of(kids[1]), n)
+            if len(kids) > 1:   # a default: its type flows into the parameter's name or pattern (a call's arguments flow in _flow)
+                self._bind_pattern(self.scope_of(n), kids[0], self.kind_of(kids[-1]), n)
             return None
         if k == "ForOfStatement":
             ki = self.kind_of(kids[1])
             if isinstance(ki, tuple) and ki[0] == "list" and kids[0]["k"] == "VariableDeclarationList":
                 for d in self.kids(kids[0]):
                     dk = self.kids(d)
-                    if dk and dk[0]["k"] == "Identifier":
-                        self.bind(self.scope_of(dk[0]), dk[0]["t"], ki[1], d)
-            return None
+                    if dk:
+                        self._bind_pattern(self.scope_of(d), dk[0], ki[1], d)   # the element's type into the name or the pattern
+            return None   # a table, a record or a receiver iterated is refused in _consume
         if k == "ImportDeclaration":
             spec = next((c for c in kids if c["k"] == "StringLiteral"), None)
             if spec is not None:
@@ -722,51 +743,88 @@ class Walk:
         return out
 
     def _declare(self, n, kids):
-        scope, name = self.scope_of(n), kids[0]
-        if name["k"] == "Identifier":
-            self.declare(scope, name["t"])
-        else:
-            for el in self.kids(name):
-                ek = self.kids(el)
-                if ek and ek[-1]["k"] == "Identifier":
-                    self.declare(scope, ek[-1]["t"])
+        """A variable declaration: its initializer's type flows into the name or the pattern (_bind_pattern); the names
+        themselves were declared by _declare_all before the typing started."""
         if len(kids) < 2:
             return
         k = self.kind_of(kids[1])
         if k is None:
             return
-        if name["k"] == "Identifier":
-            self.bind(scope, name["t"], k, n)
-            if k == "poll":
-                self.poll_bindings.append((self.scope_of(n)["k"], self.line(n)))
-        elif name["k"] == "ObjectBindingPattern":
-            for el in self.kids(name):
+        if kids[0]["k"] == "Identifier" and k == "poll":
+            self.poll_bindings.append((self.scope_of(n)["k"], self.line(n)))
+        self._bind_pattern(self.scope_of(n), kids[0], k, n)
+
+    @staticmethod
+    def _element_has(el, token):
+        return any(t["k"] == "Token" and t.get("t") == token for t in el.get("c", []))
+
+    def _bind_pattern(self, scope, target, k, at):
+        """A value of kind `k` flows into a binding target. A name is bound to it. A destructuring pattern is followed element
+        by element, nested to any depth: each name is bound to the member the walk can type on the value (a record's named
+        member, absent ones holding no receiver; the playwright module's member; a table's or a list's element; a module's or
+        a global's member, read by _root_member and, for a module, bound as that member), and every element the walk CANNOT
+        bind on a receiverish value is refused where it stands: a rest element, an element with a default, a computed property
+        name, a member of a receiver or of a list read by an object pattern, a pattern over a root's member, an array pattern
+        over anything but a list. Its names would otherwise stay untyped with the receiver inside them, and a read of one would
+        be invisible (round 6's fixer pass: a nested pattern, a rest element, a for-of pattern and a parameter pattern with a
+        receiver default passed both censuses, since _consume accepted a pattern by its FORM and _declare bound one level of
+        plain names). A value with no type flows nowhere: the names stay untyped, as _declare_all left them."""
+        if target["k"] == "Identifier":
+            self.bind(scope, target["t"], k, at)
+            return
+        root = isinstance(k, tuple) and k[0] in ("module", "global")
+        if not receiverish(k) and not root:
+            return
+        if target["k"] == "ObjectBindingPattern":
+            for el in self.kids(target):
                 ek = self.kids(el)
-                prop, target = (ek[0]["t"], ek[-1]) if len(ek) > 1 else (ek[0].get("t"), ek[0])
-                if isinstance(k, tuple) and k[0] in ("module", "global"):
+                if el["k"] != "BindingElement" or not ek:
+                    continue
+                named = len(ek) > 1 and ":" in self.src[ek[0]["e"]:ek[1]["s"]]
+                prop, sub = (ek[0].get("t"), ek[1]) if named else (ek[0].get("t"), ek[0])
+                if self._element_has(el, "...") or len(ek) > (2 if named else 1) or prop is None:   # a rest element; a default (an initializer is one more child); a computed name
+                    self.refuse(el, "%s destructured by an element the walk cannot bind (a rest element, a default, a computed property name): its names would hold the value untyped" % show(k))
+                    continue
+                if root:
                     self._root_member(el, k, prop)   # `const { readFileSync } = fs`: the module's member, read
-                    if target["k"] == "Identifier" and k[0] == "module" and k[2] is None:
-                        self.bind(scope, target["t"], ("module", k[1], prop), n)
-                elif target["k"] == "Identifier":
-                    self.bind(scope, target["t"], self._member(k, prop), n)
-        elif name["k"] == "ArrayBindingPattern" and isinstance(k, tuple) and k[0] == "list":
-            for el in self.kids(name):
+                    if sub["k"] != "Identifier":
+                        self.refuse(el, "a pattern over %s.%s, a member the walk reads nothing of" % (k[1], prop))
+                    elif k[0] == "module" and k[2] is None:
+                        self.bind(scope, sub["t"], ("module", k[1], prop), at)
+                    continue
+                if isinstance(k, tuple) and k[0] == "record":
+                    member = dict(k[1]).get(prop)   # absent: the value under that name holds no receiver
+                elif k == "playwright" or (isinstance(k, tuple) and k[0] == "table"):
+                    member = self._member(k, prop)
+                else:
+                    self.refuse(el, "a member of %s read by a pattern: its value is of a type the walk does not know" % show(k))
+                    continue
+                self._bind_pattern(scope, sub, member, at)
+        elif target["k"] == "ArrayBindingPattern":
+            if not (isinstance(k, tuple) and k[0] == "list"):
+                self.refuse(target, "%s destructured by an array pattern: the walk types no element of it" % show(k))
+                return
+            for el in self.kids(target):
                 ek = self.kids(el)
-                if ek and ek[0]["k"] == "Identifier":
-                    self.bind(scope, ek[0]["t"], k[1], n)
+                if el["k"] != "BindingElement" or not ek:
+                    continue   # an omitted element (`[, b]`)
+                if self._element_has(el, "...") or len(ek) > 1:   # a rest element; a default (the initializer is a second child)
+                    self.refuse(el, "%s destructured by an element the walk cannot bind (a rest element, a default): its names would hold the value untyped" % show(k))
+                    continue
+                self._bind_pattern(scope, ek[0], k[1], at)
 
     def _assign(self, n, left, kr):
         if kr is None:
             return
         if left["k"] == "Identifier":
-            self.bind(self.scope_of(left), left["t"], kr, n)
+            self.bind(self.declaring_scope(left["t"], left), left["t"], kr, n)   # typed where the name is declared, not where it is written
             return
         if left["k"] in ("PropertyAccessExpression", "ElementAccessExpression"):
             obj = self.kids(left)[0]
             if obj["k"] == "Identifier":
                 ko = self.lookup(obj["t"], obj)
                 if ko is None and receiverish(kr) and self.resolves(obj["t"], obj):
-                    self.bind(self.scope_of(obj), obj["t"], ("table", kr), n)   # a receiver written into a member of a declared object: the object is a table of them
+                    self.bind(self.declaring_scope(obj["t"], obj), obj["t"], ("table", kr), n)   # a receiver written into a member of a declared object: the object is a table of them, where it is declared
                     return
                 if isinstance(ko, tuple) and ko[0] == "table":
                     if ko[1] != kr:
@@ -870,24 +928,19 @@ class Walk:
                 return   # the argument's type flowed to the helper's parameter (_flow)
             return self.refuse(p, "%s passed to %s, a callee the walk does not follow" % (show(k), ctext))
         if pk == "VariableDeclaration" and pkids[-1] is n:
-            target = pkids[0]
-            if target["k"] == "Identifier":
-                return
-            if target["k"] == "ObjectBindingPattern" and (k == "playwright" or isinstance(k, tuple) and k[0] in ("table", "record")):
-                return
-            if target["k"] == "ArrayBindingPattern" and isinstance(k, tuple) and k[0] == "list":
-                return
-            return self.refuse(p, "%s destructured by a pattern the walk does not follow" % show(k))
+            return   # the BINDING was judged, not the target's form: _declare bound every name the target declares through _bind_pattern, or refused the element it could not bind
         if pk == "BinaryExpression":
             if p.get("op") in LOGICAL or p.get("op") in ("=", ","):
-                return   # a branch the expression inherits; an assignment's target or value (_assign judged the target)
+                return   # a branch the expression inherits; an assignment's target or value (_assign judged the target: a declared name, a table's member, or a refusal)
             return self.refuse(p, "%s in a %s expression" % (show(k), p.get("op")))
         if pk == "ExpressionStatement" and n["k"] == "BinaryExpression" and n.get("op") == "=":
             return
         if pk == "ReturnStatement":
             return self._returned(n, k, self._enclosing_fn(p))
-        if pk in PASS_THROUGH or pk in ("ConditionalExpression", "ArrayLiteralExpression", "PropertyAssignment", "ShorthandPropertyAssignment", "Parameter"):
-            return
+        if pk == "Parameter" and pkids[-1] is n:
+            return   # a default: _kind's Parameter arm bound the name or the pattern through _bind_pattern, or refused the element it could not bind
+        if pk in PASS_THROUGH or pk in ("ConditionalExpression", "ArrayLiteralExpression", "PropertyAssignment", "ShorthandPropertyAssignment"):
+            return   # typed by _kind: the expression inherits it, a list of it, a record holding it (a computed key is refused there)
         if pk == "PrefixUnaryExpression" and p.get("op") == "!":
             return
         if pk in ("IfStatement", "WhileStatement", "DoStatement", "ForStatement") and n["k"] != "Block":
@@ -1010,9 +1063,9 @@ SEL = "cfg.provSel"
 # third-fetch, set-default-timeout, bracket-page-control and template-string (four of them by an accident of spelling), and of
 # the fixer's, fetch-globalthis; the review record outside the repo carries that table, and no count is kept here.
 CONTROLS = ("count-control", "identity-control", "hook-control", "evaluate-fn-control", "bracket-locator-count-control")
-# the disclosed class, passing by disclosure (the rule is the module docstring's Disclosed paragraph; one witness row per member
-# here): a wait with no timer, promise, script, module or playwright name as a node, and a call on a root the walk resolves to
-# no receiver and reads nothing of (a known global or a known member of a global or a module, with any argument, however reached)
+# the disclosed class, passing by disclosure (the rule is the module docstring's Disclosed paragraph; these are its witness rows,
+# by member): a wait with no timer, promise, script, module or playwright name as a node, and a call on a root the walk resolves
+# to no receiver and reads nothing of (a known global or a known member of a global or a module, with any argument, however reached)
 DISCLOSED = ("busy-loop", "evaluate-busy", "thenable-await", "fs-blocking-read", "fs-blocking-fifo", "fs-alias-read", "fs-member-bound", "named-import-known-member")
 PLANTS = (
     ("var-held-page", "const p = pages.feed; await p.locator(cfg.provSel).textContent();", "unlisted"),
@@ -1148,6 +1201,19 @@ PLANTS = (
     ('fs-alias-read', 'const F = fs; F.readFileSync("/dev/stdin", "utf8");', 'passed'),
     ('fs-member-bound', 'const rfs = fs.readFileSync; rfs("/dev/stdin", "utf8");', 'passed'),
     ('named-import-known-member', 'import { readFileSync as rfs2 } from "node:fs"; rfs2("/dev/stdin", "utf8");', 'passed'),
+    # round 6's fixer pass (the pattern binder and the declaring scope): a destructuring element the walk cannot bind is refused,
+    # one it can is followed to any depth, and an assignment from inside a closure types the outer name
+    ("nested-object-destructure", "const { a: { b: nb } } = { a: { b: pages.feed } }; await nb.locator(%s).textContent();" % SEL, "unlisted"),
+    ("nested-array-destructure", "const [[nc]] = [[pages.feed]]; await nc.locator(%s).textContent();" % SEL, "unlisted"),
+    ("object-rest-destructure", "const { ...rst } = { p: pages.feed }; await rst.p.locator(%s).textContent();" % SEL, "refused"),
+    ("array-rest-destructure", "const [...restA] = [pages.feed]; await restA[0].locator(%s).textContent();" % SEL, "refused"),
+    ("element-default-destructure", "const { p: pd = null } = { p: pages.feed }; await pd.locator(%s).textContent();" % SEL, "refused"),
+    ("for-of-destructure", "for (const { p: fp } of [{ p: pages.feed }]) await fp.locator(%s).textContent();" % SEL, "unlisted"),
+    ("param-destructure-default", "const rdd = ({ p } = { p: pages.feed }) => p.locator(%s).textContent(); await rdd();" % SEL, "unlisted"),
+    ("closure-assigns-outer", "let cap; const setCap = () => { cap = pages.feed; }; setCap(); await cap.locator(%s).textContent();" % SEL, "unlisted"),
+    ("iife-assigns-outer", "let ip; (() => { ip = pages.feed; })(); await ip.locator(%s).textContent();" % SEL, "unlisted"),
+    ("callback-assigns-outer", "let onp; [1].forEach(() => { onp = pages.feed; }); await onp.locator(%s).textContent();" % SEL, "unlisted"),
+    ("closure-fills-table", "const tbl2 = {}; const fill = () => { tbl2.p = pages.feed; }; fill(); await tbl2.p.locator(%s).textContent();" % SEL, "unlisted"),
 )
 
 
@@ -1160,45 +1226,45 @@ PRELUDE_JS = 'import { createRequire } from "node:module"; const require = creat
 ROOT_JS = PRELUDE_JS + 'const { chromium } = require("playwright"); const context = await (await chromium.launch({})).newContext({}); const pages = {}; pages[app] = await context.newPage();\n'
 
 REFUSED_CELLS = {
-        "member-read": ("await pages.feed.request.get(u);", "a member read on a page that is not itself called"),
-        "member-bound": ("const wf = pages.feed.waitForFunction;", "a member read on a page that is not itself called"),
-        "computed": ("await pages.feed.locator(s)[mth]();", "a computed member call on a locator the walk cannot name"),
-        "unknown-callee": ("await read(pages.feed);", "a page passed to read, a callee the walk does not follow"),
-        "member-callee": ("await Reflect.get(pages.feed, \"locator\");", "a page passed to Reflect.get"),
-        "template": ("const t = `${pages.feed}`;", "a page reaches a TemplateSpan"),
-        "comparison": ("if (pages.feed === x) {}", "a page in a === expression"),
-        "constructor": ("const w = new Wrapper(pages.feed);", "a page reaches a NewExpression"),
-        "two-types": ("let v = pages.feed; v = pages.feed.locator(s);", "v is bound to a page and to a locator"),
-        "list-iterated": ("for (const k of pages) {}", "a table of a page iterated"),
-        "table-call": ("await pages.locator(s);", "a call on a table of a page"),
-        "bare-wait": ("await waitFor(fn, 1, \"w\");", None),
-        "second-browser": ('const { firefox } = require("playwright"); await firefox.launch({});', None),
-        "timer": ("await new Promise((r) => setTimeout(r, 5));", "a wait outside playwright and the budget"),
-        "timer-member": ("globalThis.setTimeout(f, 5);", "a wait outside playwright and the budget"),
-        "timer-bound": ("const st = setTimeout;", "a wait outside playwright and the budget"),
-        "foreign-require": ('const cp = require("child_process");', "a require of a module the census does not know"),
-        "foreign-import": ('import { setTimeout as delay } from "node:timers/promises";', "an import of a module the census does not know"),
-        # the fixer pass's roads (round 5)
-        "return-uninvoked": ("const cb = [1].map(() => pages.feed);", "returned from a helper the walk follows to no call"),
-        "return-method": ("const om = { m() { return pages.feed; } };", "returned from a method, an accessor or a constructor"),
-        "return-getter": ("const go = { get p() { return pages.feed; } };", "returned from a method, an accessor or a constructor"),
-        "helper-in-literal": ("const fns = [() => pages.feed];", "a helper that returns a page reaches a ArrayLiteralExpression"),
-        "helper-member": ("function hf() { return pages.feed; } await hf.call(null);", "a helper that returns a page reaches a PropertyAccessExpression"),
-        "dynamic-import": ('const tp = await import("node:timers/promises");', "a dynamic import()"),
-        "second-createrequire": ("const rq2 = createRequire(process.env.EXT_PKG);", "a createRequire beyond the driver's one"),
-        "require-alias": ("const rq = require;", "require read as a value"),
-        "require-built": ('const cp2 = require("child_" + "process");', "a require whose module is not a string literal"),
-        "eval": ('await eval("1");', "eval"),
-        "function-ctor": ('new Function("return 1");', "Function"),
-        "script-string": ('await pages.feed.evaluate("1");', "a script handed to evaluate as anything but a function literal"),
-        "script-bound-string": ('const es = "1"; await pages.feed.evaluate(es);', "a script handed to evaluate as anything but a function literal"),
-        "script-init": ('await pages.feed.addInitScript("1");', "a script handed to addInitScript as anything but a function literal"),
-        "promise-alias": ("const PC = Promise;", "Promise read anywhere but"),
-        "promise-race": ("await Promise.race([]);", "Promise read anywhere but"),
-        "fetch-alias": ("const f2 = fetch;", "fetch read as a value"),
-        "atomics": ("Atomics.wait(x, 0, 0, 1);", "Atomics"),
-        "globalthis": ("globalThis.x = 1;", "globalThis"),
-        "computed-callee": ('x["a" + "b"]();', "a computed member call on a value the walk does not type"),
+    "member-read": ("await pages.feed.request.get(u);", "a member read on a page that is not itself called"),
+    "member-bound": ("const wf = pages.feed.waitForFunction;", "a member read on a page that is not itself called"),
+    "computed": ("await pages.feed.locator(s)[mth]();", "a computed member call on a locator the walk cannot name"),
+    "unknown-callee": ("await read(pages.feed);", "a page passed to read, a callee the walk does not follow"),
+    "member-callee": ("await Reflect.get(pages.feed, \"locator\");", "a page passed to Reflect.get"),
+    "template": ("const t = `${pages.feed}`;", "a page reaches a TemplateSpan"),
+    "comparison": ("if (pages.feed === x) {}", "a page in a === expression"),
+    "constructor": ("const w = new Wrapper(pages.feed);", "a page reaches a NewExpression"),
+    "two-types": ("let v = pages.feed; v = pages.feed.locator(s);", "v is bound to a page and to a locator"),
+    "list-iterated": ("for (const k of pages) {}", "a table of a page iterated"),
+    "table-call": ("await pages.locator(s);", "a call on a table of a page"),
+    "bare-wait": ("await waitFor(fn, 1, \"w\");", None),
+    "second-browser": ('const { firefox } = require("playwright"); await firefox.launch({});', None),
+    "timer": ("await new Promise((r) => setTimeout(r, 5));", "a wait outside playwright and the budget"),
+    "timer-member": ("globalThis.setTimeout(f, 5);", "a wait outside playwright and the budget"),
+    "timer-bound": ("const st = setTimeout;", "a wait outside playwright and the budget"),
+    "foreign-require": ('const cp = require("child_process");', "a require of a module the census does not know"),
+    "foreign-import": ('import { setTimeout as delay } from "node:timers/promises";', "an import of a module the census does not know"),
+    # the fixer pass's roads (round 5)
+    "return-uninvoked": ("const cb = [1].map(() => pages.feed);", "returned from a helper the walk follows to no call"),
+    "return-method": ("const om = { m() { return pages.feed; } };", "returned from a method, an accessor or a constructor"),
+    "return-getter": ("const go = { get p() { return pages.feed; } };", "returned from a method, an accessor or a constructor"),
+    "helper-in-literal": ("const fns = [() => pages.feed];", "a helper that returns a page reaches a ArrayLiteralExpression"),
+    "helper-member": ("function hf() { return pages.feed; } await hf.call(null);", "a helper that returns a page reaches a PropertyAccessExpression"),
+    "dynamic-import": ('const tp = await import("node:timers/promises");', "a dynamic import()"),
+    "second-createrequire": ("const rq2 = createRequire(process.env.EXT_PKG);", "a createRequire beyond the driver's one"),
+    "require-alias": ("const rq = require;", "require read as a value"),
+    "require-built": ('const cp2 = require("child_" + "process");', "a require whose module is not a string literal"),
+    "eval": ('await eval("1");', "eval"),
+    "function-ctor": ('new Function("return 1");', "Function"),
+    "script-string": ('await pages.feed.evaluate("1");', "a script handed to evaluate as anything but a function literal"),
+    "script-bound-string": ('const es = "1"; await pages.feed.evaluate(es);', "a script handed to evaluate as anything but a function literal"),
+    "script-init": ('await pages.feed.addInitScript("1");', "a script handed to addInitScript as anything but a function literal"),
+    "promise-alias": ("const PC = Promise;", "Promise read anywhere but"),
+    "promise-race": ("await Promise.race([]);", "Promise read anywhere but"),
+    "fetch-alias": ("const f2 = fetch;", "fetch read as a value"),
+    "atomics": ("Atomics.wait(x, 0, 0, 1);", "Atomics"),
+    "globalthis": ("globalThis.x = 1;", "globalThis"),
+    "computed-callee": ('x["a" + "b"]();', "a computed member call on a value the walk does not type"),
     # round 6 (the maintainer's round 5, tests-2): the branches no cell and no PLANTS row fired, each with its own cell now, so the
     # derived coverage assertion below is green (it is what closes the class; these cells are what it needs)
     "ternary-two-types": ("const p = cfg.x ? pages.feed : pages.feed.locator(s);", "yields a page and a locator"),
@@ -1207,7 +1273,7 @@ REFUSED_CELLS = {
     "table-write-mismatch": ("const tbl = {}; tbl.a = pages.feed; tbl.b = context;", "written into a table of"),
     "nested-assign-target": ("holder.inner.p = pages.feed;", "assigned to a target the walk does not follow"),
     "return-outside-function": ("return pages.feed;", "returned outside a function"),   # a return at module level: the parser accepts it (a grammar error the checker would report), the walk refuses it
-    "destructure-table": ("const [q] = pages;", "destructured by a pattern the walk does not follow"),
+    "destructure-table": ("const [q] = pages;", "destructured by an array pattern: the walk types no element of it"),
     "createrequire-as-value": ("const cr = createRequire;", "createRequire read as a value"),
     # round 6 (the METHOD): the roots the walk resolves to no receiver
     "free-name": ("fs2.readFileSync(u);", "a free name no scope of the tree binds"),
@@ -1217,6 +1283,17 @@ REFUSED_CELLS = {
     "module-member-member": ("createRequire.call(null, u);", "a member of createRequire imported from node:module, a value the walk reads nothing of"),
     "computed-record-member": ("const box = { p: pages.feed }; await box[mth].locator(s).count();", "a computed member on an object holding {p: a page}"),
     "computed-key-property": ("const rec = { [mth]: pages.feed };", "a page placed under a property name the walk cannot read"),
+    # round 6's fixer pass: the pattern binder (_bind_pattern) refuses every element it cannot bind on a receiverish value, in a
+    # declaration, a for-of and a parameter default alike, and an assignment types the name where it is declared
+    "pattern-rest": ("const { ...rst } = { p: pages.feed };", "destructured by an element the walk cannot bind (a rest element, a default, a computed property name)"),
+    "pattern-default": ("const { p = x } = { p: pages.feed };", "destructured by an element the walk cannot bind (a rest element, a default, a computed property name)"),
+    "pattern-computed-key": ("const { [mth]: cq } = { p: pages.feed };", "destructured by an element the walk cannot bind (a rest element, a default, a computed property name)"),
+    "pattern-member-of-receiver": ("const { keyboard } = pages.feed;", "a member of a page read by a pattern: its value is of a type the walk does not know"),
+    "pattern-over-root-member": ('import fs from "node:fs"; const { readFileSync: { call: rc } } = fs;', "a pattern over node:fs.readFileSync, a member the walk reads nothing of"),
+    "array-pattern-rest": ("const [...ra] = [pages.feed];", "destructured by an element the walk cannot bind (a rest element, a default)"),
+    "for-of-pattern-rest": ("for (const { ...fr } of [{ p: pages.feed }]) {}", "destructured by an element the walk cannot bind"),
+    "param-pattern-rest": ("const rp = ({ ...pr } = { p: pages.feed }) => 1;", "destructured by an element the walk cannot bind"),
+    "closure-two-types": ("let cv; const set1 = () => { cv = pages.feed; }; const set2 = () => { cv = context; };", "cv is bound to a page and to a context"),
 }
 # the two-round convergence bound (round 6, tests-2): a page reaches a binding through a helper's return, which the fixpoint types
 # in round 2; under rounds=1 the walk refuses "did not converge", and under the default bound the same source is clean
@@ -1252,14 +1329,16 @@ class TheDriverParsed(unittest.TestCase):
 
     def test_the_driver_walks_clean_and_every_wait_draws_on_the_budget(self):
         """The census over the driver as written: every receiver-typed expression is consumed by a shape the walk follows
-        (no refusal), every call on a receiver is one ALLOWED_CALLS names for its kind, the fourteen (kind, method) pairs the
-        driver makes today are all seen (the walk is not vacuous), every wait site is a listed form whose timeout is one
+        (no refusal), every call on a receiver is one ALLOWED_CALLS names for its kind, the (kind, method) pairs the driver
+        makes today, the set the assertion below holds, are all seen (the walk is not vacuous), every wait site is a listed form whose timeout is one
         budget.capped(...) call or a fixed dwell the arithmetic counts, the five forms the driver uses are all seen, the
         bare `waitFor(` sites are the poll because the module scope binds that name to `budget.waitFor` exactly once, no
         timer or promise constructor sits outside the budget's sleep, the driver imports and requires its own modules only,
-        the free names the driver reads are exactly KNOWN_GLOBALS and the members it reads on them and on its loaded modules
-        exactly KNOWN_MEMBERS (the walk's lists over the unplanted driver, held equal to the tuples, so a global or a member
-        the driver starts or stops reading is a red until the tuple says so), and the two fetches stand."""
+        the free names the driver reads are exactly KNOWN_GLOBALS, the members it reads on them and on its loaded modules
+        exactly KNOWN_MEMBERS, the modules it imports exactly IMPORTS_ALLOWED and the modules it requires exactly
+        REQUIRE_ALLOWED (the walk's lists over the unplanted driver, held equal to the tuples, so a global, a member or a
+        module the driver starts or stops reading is a red until the tuple says so; round 6's fixer pass: the docstring said
+        all three tuples were held equal while only two were), and the two fetches stand."""
         c = self._census("driver.mjs", L.DRIVER)
         self.assertEqual(c["refusals"], [], "a receiver, or a table, list or object holding one, reaches a shape the walk does not follow (a member read that "
                                             "is not called, a computed member, a callee the driver does not declare, a template, a comparison, a constructor), "
@@ -1287,6 +1366,9 @@ class TheDriverParsed(unittest.TestCase):
                                                               "every other free name is a refusal, so a global the driver starts or stops reading is a red until the tuple says so): %r" % (c["globals"],))
         self.assertEqual(c["member_reads"], sorted(KNOWN_MEMBERS), "KNOWN_MEMBERS is exactly the members the driver reads on its known globals and its loaded modules (the walk "
                                                                    "reads nothing of what a member does; any other member of a root is a refusal, so one the driver starts or stops reading is a red until the tuple says so): %r" % (c["member_reads"],))
+        self.assertEqual(sorted({m for m, _ in c["walk"].imports}), sorted(IMPORTS_ALLOWED), "IMPORTS_ALLOWED is exactly the modules the driver imports (an import outside it is a refusal above; "
+                                                                                             "a name here that nothing imports is a stale allowance): %r" % (c["walk"].imports,))
+        self.assertEqual(sorted({m for m, _ in c["walk"].requires}), sorted(REQUIRE_ALLOWED), "REQUIRE_ALLOWED is exactly the modules the driver requires: %r" % (c["walk"].requires,))
         self.assertGreaterEqual(len(c["waits"]), 16, "the census saw the driver's wait sites (16 at the round-5 head): %d" % len(c["waits"]))
 
     def test_the_walk_types_a_receiver_however_it_is_reached_and_refuses_what_it_cannot_follow(self):
