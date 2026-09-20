@@ -133,9 +133,16 @@ jobs:
         # cell's red, not 48 tests silently skipping. Runs after the cryptography step so pip finds it installed.
         # The 3.14t cell installs it too: the wheel is py3-none with Requires-Python >=3.10, its compiled
         # dependencies (cryptography, cffi, pydantic-core, rpds-py) publish cp314t wheels, and on a free-threaded
-        # 3.14.6 with the GIL off the install, the import (the GIL still off after it) and the gated and host
-        # test modules ran green before this landed (2026-09-20). The SDK's own classifiers stop at 3.13, so a
-        # release that breaks there shows as a red cell, which is the point of having the cell.
+        # 3.14.6 the install, the import and the gated and host test modules ran green before this landed
+        # (2026-09-20). The free-threading evidence is the import with PYTHON_GIL UNSET: in that configuration
+        # CPython turns the GIL back on, with a RuntimeWarning, for an extension module that does not declare
+        # free-threading support, and the GIL read off after the import, so the four compiled extensions it
+        # loads (_cffi_backend, cryptography's _rust, pydantic_core, rpds) declare it. Under the PYTHON_GIL=0 the
+        # pytest step runs with, that read cannot fail: the setting forbids the re-enable and silences the
+        # warning, so "still off after the import" under it says nothing about the extensions. What the setting
+        # buys is that a later wheel without the declaration cannot turn the cell back into a GIL cell; the
+        # price is that such a wheel runs without the GIL and without a warning. The SDK's own classifiers
+        # stop at 3.13, so a release that breaks there shows as a red cell, which is the point of having the cell.
         # Cost on the Linux cells: about 106.5 MB of download per cell after the cryptography step (the SDK
         # wheel is 102 MB there, 92 MB on the macOS arm64 cells; it bundles the Claude Code binary; its other
         # dependencies total about 4.5 MB) and a few seconds of install; the run's own step timings are the
@@ -155,8 +162,8 @@ jobs:
         env:
           # The free-threaded cell runs with the GIL off, stated rather than defaulted (a 't'
           # build disables it by default, and an extension that lacks free-threading support
-          # would otherwise turn it back on silently). Empty on every other cell, which CPython
-          # reads as unset.
+          # would otherwise turn it back on, with a RuntimeWarning in pytest's summary that the
+          # cell does not fail on). Empty on every other cell, which CPython reads as unset.
           PYTHON_GIL: ${{ endsWith(matrix.python-version, 't') && '0' || '' }}
         # T230b: a hung test used to be 15 minutes of silence (five jobs since 2026-08-27, a
         # process-global time.sleep patch consumed by a foreign thread). pytest-timeout turns the
