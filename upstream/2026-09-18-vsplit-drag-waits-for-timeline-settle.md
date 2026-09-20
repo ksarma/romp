@@ -1,12 +1,12 @@
 ---
 title: The vertical-split drag test waits for the timeline band to settle before it measures
-status: approved
+status: merged
 where: tests/test_chat_vsplit_served.py (the pointer driver: the settled() wait on the band, test_0 pane-rect hold, VSplitDragLateTimeline; and the failing-before reproduction BARS_HOLD_JS, BARS_RELEASE_JS, _bars_held_past_the_zone and VSplitDragBarsHeldPastTheZone)
 added: 2026-09-18
 pr:
 tier: docs
-offered:
-closed:
+offered: their PR #1893
+closed: 2026-09-19
 ---
 Upstream copy has the same race: the timeline band collapses from its 250 px loader to two lanes when the bars land, the shell auto-fits the band, and a drag begun before that measures a drop zone the collapse moves (533 to 686 px pane). The driver now waits for the band settle event and names the step and the measured heights when it times out. Tests only.
 
@@ -37,3 +37,6 @@ out.settled = await settled() as the last line before it.
 
 
 2026-09-19: approved for offer by the user (his answer at 07:02Z on todo ut-1acd8aae, the consolidated ask that named this entry with the two other test fixes outside the 2026-09-18 plan's batches: yes). Offered on its own branch from the project's tip, not stacked, since no open offer touches this file; publish waits for a slot under the open-offer throttle.
+
+2026-09-19: offered as their PR #1893 at 12:49Z (docs tier, its own branch on the project's tip 892d7c0a1, after their #1882 landed the tracking loop this wait completes).
+2026-09-19: merged upstream at 13:58Z (2634fdfb0) by the project's maintainer; the scaffold and branch pair are closed.

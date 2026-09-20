@@ -1234,15 +1234,26 @@ class KeyerParsesTheKindOnce(unittest.TestCase):
     def test_delta_key_and_the_keyer_agree_on_every_kind_and_shape(self):
         items = [{"id": "a"}, {"id": ""}, {"id": None}, {"id": 1.0}, {"id": "#1"}, {"itemId": "x:g1"}, {"itemId": ""},
                  {"sid": S1, "t": 1, "judge": "closer", "t1": None}, {"sid": S1}, "not a dict", 7, None, {}]
+
+        def outcome(fn):   # the key, or the refusal: both forms must agree on which (NonStrKeyFieldIsRefusedAtTheSource)
+            try:
+                return fn()
+            except ValueError as e:
+                return ("ValueError", str(e))
+        refused = 0
         for kind in ("byid", "byid:itemId", "dictlist:id", "bykeys:sid,t,judge,t1", "dict", "weird"):
             keyer = km._delta_keyer(kind)
             for it in items:
                 for prefix in ("", "lane" + SEP):
-                    self.assertEqual(keyer(it, prefix), km._delta_key(kind, it, prefix), (kind, it, prefix))
+                    got = outcome(lambda: keyer(it, prefix))
+                    self.assertEqual(got, outcome(lambda: km._delta_key(kind, it, prefix)), (kind, it, prefix))
+                    refused += isinstance(got, tuple)
+        self.assertEqual(refused, 4, "the float id under byid and dictlist:id, with and without a prefix, is the refusal both forms make")
         self.assertEqual(km._delta_keyer("bykeys:sid,t,judge,t1")({"sid": S1, "t": 1, "judge": "closer", "t1": None}),
                          S1 + SEP + "1" + SEP + "closer" + SEP + "None")
         self.assertEqual(km._delta_keyer("bykeys:sid,t,judge,t1")({"sid": S1}, "p"), "p" + S1 + SEP + "None" + SEP + "None" + SEP + "None")
-        self.assertEqual(km._delta_keyer("byid:itemId")({"itemId": 1.0}, "p"), "p1.0")
+        with self.assertRaises(ValueError):
+            km._delta_keyer("byid:itemId")({"itemId": 1.0}, "p")   # a non-str key field is refused, never spelled (it read "p1.0" before 2026-09-19)
         self.assertIsNone(km._delta_keyer("byid")({"id": ""}), "an empty id would spell the bare-prefix marker")
         self.assertIsNone(km._delta_keyer("dict")({"id": "a"}))
 
@@ -1280,6 +1291,292 @@ class KeyerParsesTheKindOnce(unittest.TestCase):
         self.assertEqual(len(order), 100); self.assertEqual(len(ents), 100)
         self.assertEqual(calls, ["dictlist:id"], "the kind is parsed once per split, not once per item")
 
+
+
+class NonStrKeyFieldIsRefusedAtTheSource(unittest.TestCase):
+    """A key field that is not a str is refused by the keyer (_delta_keyer), so _delta_split raises, _delta_parts returns None
+    and the slot goes WHOLE on every push, for every receiver at once (review round 6 of PR 815, 2026-09-19). The two
+    languages spell such a field apart: Python str(1.0) is "1.0" and JavaScript String(1.0) is "1" (True against "true"), so
+    a receiver that keyed the whole frame itself (T278c: no full carries a key list) and then applied a patch the kernel
+    spelled would hold the entry twice, the patched copy beside the seeded one, and no resync would ever ask. Three
+    receivers key by the one rule (ui/webview/view-deltas.ts, the inline shim in kernel.py, _py_maps here); refusing at the
+    source removes the case instead of teaching each reader the other language's spelling, and lands on the unkeyable road
+    CatchUpRoadsOfAWholeFrameClient test_g measures. No producer ships a non-str key field (by read of kernel.py: a turn's id
+    is the segment's string id, a message's id the postal id, judging's k a kernel-minted string, a card's itemId a string),
+    so the cost is nothing today. tests/extension_delta_fixture.py replays the same payload through both JavaScript receivers
+    (vscode-extension/src/pipe-view-deltas.test.ts). The bykeys composite is untouched: unused since T278c, it spells every
+    field with str() as before and carried a key list for that reason."""
+
+    def setUp(self):
+        km._delta_parts_cache.clear(); km._delta_unkeyable_said.clear()
+
+    def test_a_the_keyer_and_the_split_refuse_a_float_a_bool_and_an_int_key_field(self):
+        for kind, it in (("byid", {"id": 1.0}), ("byid", {"id": True}), ("byid:itemId", {"itemId": 7}), ("dictlist:id", {"id": 2.0})):
+            field = "id" if kind == "byid" else kind.split(":", 1)[1]
+            with self.assertRaises(ValueError, msg=(kind, it)) as cm:
+                km._delta_keyer(kind)(it, "p")
+            self.assertEqual(str(cm.exception), "%s key field %r is a %s, not a str" % (kind, field, type(it[field]).__name__))
+            with self.assertRaises(ValueError):
+                km._delta_key(kind, it, "p")
+        with self.assertRaises(ValueError):
+            km._delta_split("byid", [{"id": "a"}, {"id": True}])
+        with self.assertRaises(ValueError):
+            km._delta_split("dictlist:id", {S1: [{"id": 2.0}]})
+        self.assertEqual(km._delta_split("byid", [{"id": "1.0"}])[1], ["1.0"], "a str that spells a number is a str: keyed as before")
+        self.assertEqual(km._delta_keyer("bykeys:sid,t")({"sid": S1, "t": 1.0}), S1 + SEP + "1.0", "the bykeys composite spells with str() as before")
+
+    def test_b_a_bars_payload_with_a_float_message_id_goes_whole_on_every_push_and_is_said_once(self):
+        a = _bars({S1: [{"id": "web-0", "t": 1000, "end": 1030}]}, [], [{"id": 1.0, "text": "synthetic message"}], now=1055)
+        b = json.loads(json.dumps(a)); b["messages"][0]["text"] = "synthetic message, edited"; b["now"] = 1060
+        self.assertIsInstance(b["messages"][0]["id"], float, "the round trip keeps the float")
+        st = _Stream("bars")
+        err = io.StringIO()
+        with redirect_stderr(err):
+            self.assertEqual([f["type"] for f in st.push(a)], ["bars"])
+            self.assertEqual([f["type"] for f in st.push(b)], ["bars"], "the change goes whole too: the kernel holds no base for a slot it cannot key")
+        self.assertNotIn("bars", st.c.get("dstate", {}), "nothing held")
+        self.assertEqual(err.getvalue().count("cannot be keyed"), 1, "said once")
+        self.assertIn("view-delta bars: payload cannot be keyed (messages: byid key field 'id' is a float, not a str); sending whole frames", err.getvalue())
+        self.assertEqual(st.held["messages"], b["messages"], "the whole-frame client keys the frame itself and holds one copy")
+
+
+class CatchUpRoadsOfAWholeFrameClient(unittest.TestCase):
+    """The roads on which a client that applies WHOLE frames only (a hub bundle before PR 815's receiver, its corner 3:
+    the page drops every {type:"delta"} patch and moves only on a whole frame) catches up with a remote kernel, measured
+    against the encoder with the size guard at its real value (_DELTA_MAX_FRACTION, 0.6; the sibling classes raise it to
+    10.0 so their structural pins are not about size). Review round 4 of PR 815 (2026-09-19) measured the same by driving
+    km._send_slot in-process on a synthetic 8-session board; these pin what it found, so the sentence the deploy notes
+    carry has a test behind it and not another version by prose:
+      (a) the 0.6 guard is a road for the FEED on a remainder-moving change (a session joining `working` here) while the
+          changed cards plus the whole remainder reach 0.6 of the frame: whole with no cards and few, a restAll delta from
+          a few cards on, and monotone in the card count. THE BUSIER THE BOARD, THE LESS OFTEN A WHOLE-FRAME CLIENT CATCHES
+          UP. The variable is the remainder's weight against the cards', not the item count: the same board at the
+          crossover goes whole with a heavier remainder and delta with a lighter one. A whole frame does not imply an empty
+          prior dstate: the guard pops a held one and re-bases.
+      (b) a change confined to the cards (a new card, a text edit, a card leaving) is a delta while its patch stays under
+          0.6 of the frame, which at every size here it does (test c); the two exceptions, measured in test (i): a change
+          touching MOST cards (the set entries reach 0.6 of the frame: 20 of 30 cards on the 8-session board, past half;
+          about 72 percent on the kernel's recorded 660-card shape by its figures, 0.6 of 5.75 MB over 7.3 KB a card, derived
+          and not measured), and a shrink whose del list reaches 0.6 of what remains, which needs a light remainder (30 to 2
+          cards on ONE session crosses whole; 30 to 0 on the 8-session board is a patch, the ledgers and scalars that remain
+          outweighing the del list; on the recorded shape 660 dels are about 50 KB against a 0.95 MB remainder, 0.05, derived
+          from its figures like the 72 percent, so that road is closed there). Every other change confined to the cards is
+          never a road.
+      (c) the timeline bars: the remainder is three fields (type, now, warming), so a warming flip and an appended bar are
+          deltas on the lab's board and on a lane of three bars; the guard is dead for the bars.
+      (d) a fresh client (a relay redial opens a fresh upstream socket, a new client dict) is served whole once and deltas
+          after: a redial buys exactly one catch-up.
+      (e) an encoder error sends the whole frame and forgets the base (BarsDeltas test_l for the bars; the feed twin here).
+      (f) an unkeyable collection is NOT a catch-up road: such a payload goes whole on every push, so a whole-frame client
+          is never frozen for that slot (TwoThreadsOneClient test_b for the bars; the feed twin here).
+      (g) the 60 s repost of an unchanged slot is a clock-only patch, not a road.
+    Synthetic payloads only (the notes-api demo names, placeholder sids)."""
+    SIDS = ["11111111-2222-4333-8444-0000000007%02d" % i for i in range(16)]
+    NAMES = ["api", "worker", "web", "tests", "docs", "build", "deploy", "notes"] * 2
+
+    def setUp(self):
+        km._delta_parts_cache.clear()
+        self.assertEqual(km._DELTA_MAX_FRACTION, 0.6, "the guard's real threshold: a sibling class that raised it must have restored it")
+
+    def _remainder(self, nsess=8, working=()):
+        rows = list(zip(self.SIDS[:nsess], self.NAMES))
+        return {"sessions": [{"sid": s, "name": n, "color": None} for s, n in rows], "order": [s for s, _ in rows],
+                "working": list(working), "awaiting": [],
+                "ledgers": [{"sid": s, "name": n, "ledger": {"tops": ["step %d of %s" % (i, n) for i in range(4)]},
+                             "status": {"state": "working", "needsInput": False, "since": 1000 + i}} for i, (s, n) in enumerate(rows)]}
+
+    def _cards(self, n):
+        return [{"itemId": self.SIDS[i % 8] + ":g%d" % i, "sid": self.SIDS[i % 8], "name": self.NAMES[i % 8],
+                 "text": "goal %d: " % i + "the next thing to do, spelled out at the length a real card runs to; " * 8,
+                 "t": 1000 - i, "column": "working"} for i in range(n)]
+
+    def _feed(self, n, nsess=8, working=(), now=1000):
+        return dict({"type": "feed", "asks": self._cards(n), "now": now}, **self._remainder(nsess, working))
+
+    @staticmethod
+    def _restall(p):
+        # the delta the kernel builds for a remainder-only move: no collection change and the WHOLE remainder (restAll); the
+        # guard compares its bytes with 0.6 of the new frame's (_send_slot_delta), and this is that frame, in its key order
+        rest = {k: v for k, v in p.items() if k != "asks"}
+        return json.dumps({"type": "delta", "slot": "feed", "base": 0, "rev": 1, "coll": {}, "rest": rest, "restAll": 1})
+
+    def _remainder_move(self, n, nsess=8):
+        """Push an n-card board, then the same board with a session joining `working`: (the frame's type, the guard's
+        ratio: the restAll delta's bytes over the new frame's)."""
+        st = _Stream("feed")
+        self.assertEqual([f["type"] for f in st.push(self._feed(n, nsess))], ["feed"])
+        self.assertIn("feed", st.c["dstate"], "a base is held before the move")
+        p2 = self._feed(n, nsess, working=[self.SIDS[0]], now=1005)
+        frames = st.push(p2)
+        self.assertEqual(len(frames), 1, frames)
+        ratio = len(self._restall(p2)) / len(json.dumps(p2))
+        if frames[0]["type"] == "delta":
+            self.assertEqual(frames[0].get("restAll"), 1); self.assertEqual(frames[0]["coll"], {})
+            self.assertEqual(json.dumps(frames[0]), self._restall(p2), "the constructed delta is the kernel's, byte for byte")
+            self.assertLess(ratio, km._DELTA_MAX_FRACTION, "a delta because it stays under the guard")
+        else:
+            self.assertEqual(frames[0]["type"], "feed")
+            self.assertGreaterEqual(ratio, km._DELTA_MAX_FRACTION, "whole because the delta would reach the guard")
+            self.assertEqual(st.c["dstate"]["feed"]["rev"], 0, "the guard re-based: a whole frame from a NON-empty dstate, popped and re-held")
+        return frames[0]["type"], round(ratio, 3)
+
+    def _crossover(self, nsess=8, upto=30):
+        """The first card count at which a remainder move is a delta on an nsess-session board, and the sweep behind it."""
+        sweep = [(n,) + self._remainder_move(n, nsess) for n in range(0, upto + 1)]
+        types = [k for _, k, _ in sweep]
+        self.assertEqual(types[0], "feed", "no cards: the remainder move crosses whole (the guard's road, live for the feed): %r" % (sweep,))
+        self.assertEqual(types[-1], "delta", "%d cards: a restAll delta, which a whole-frame client drops: %r" % (upto, sweep))
+        first = types.index("delta")
+        self.assertNotIn("feed", types[first:], "monotone in the card count: past the crossover no remainder move crosses whole again, so the busier the board, the fewer whole frames: %r" % (sweep,))
+        return first, sweep
+
+    def test_a_a_remainder_move_crosses_whole_only_while_the_cards_are_light_and_never_again_past_the_crossover(self):
+        first, sweep = self._crossover()
+        self.assertGreaterEqual(first, 1, sweep)
+        self.assertLessEqual(first, 4, "on the 8-session board the crossover sits at a few cards (round 4 measured whole at 0 and 1 cards and deltas from 2 on its composition): %r" % (sweep,))
+
+    def test_b_the_variable_is_the_remainders_weight_against_the_cards_not_the_item_count(self):
+        first, sweep = self._crossover()
+        heavier, _ = self._remainder_move(first, nsess=16)   # the same cards, twice the sessions and ledgers
+        self.assertEqual(heavier, "feed", "the first card count that is a delta on 8 sessions is whole on 16: the same item count, a heavier remainder (%d cards; %r)" % (first, sweep))
+        lighter, _ = self._remainder_move(first - 1, nsess=1)   # the last card count that is whole on 8 sessions, one session
+        self.assertEqual(lighter, "delta", "…and the last count that is whole on 8 sessions is a delta on 1: a lighter remainder (%d cards)" % (first - 1,))
+
+    def test_c_a_change_confined_to_the_cards_is_a_delta_at_every_size(self):
+        for n in (0, 1, 2, 8, 30):
+            st = _Stream("feed")
+            st.push(self._feed(n))
+            p2 = self._feed(n + 1, now=1005)                   # a new card
+            fr = st.push(p2)
+            self.assertEqual([f["type"] for f in fr], ["delta"], "a new card on a %d-card board is a patch" % n)
+            self.assertEqual(set(fr[0]["coll"]), {"asks"}); self.assertNotIn("restAll", fr[0])
+            p3 = json.loads(json.dumps(p2)); p3["asks"][0]["text"] += " (edited)"; p3["now"] = 1010   # a text edit
+            self.assertEqual([f["type"] for f in st.push(p3)], ["delta"], "a text edit at %d cards" % (n + 1))
+            p4 = json.loads(json.dumps(p3)); p4["asks"] = p4["asks"][1:]; p4["now"] = 1015          # a card leaving
+            fr = st.push(p4)
+            self.assertEqual([f["type"] for f in fr], ["delta"], "a card leaving at %d cards" % (n + 1))
+            self.assertIn("del", fr[0]["coll"]["asks"])
+
+    def test_d_the_bars_remainder_is_three_fields_so_the_guard_is_dead_for_the_bars(self):
+        t0 = 1_000_000
+        lanes = {self.SIDS[i]: [{"id": "seg-%d-%d" % (i, j), "t": t0 - 60 * j, "end": t0 - 60 * j + 30, "open": False} for j in range(6)] for i in range(8)}
+        for name, board in (("the lab's eight lanes of six bars", lanes), ("one lane of three bars", {self.SIDS[0]: lanes[self.SIDS[0]][:3]})):
+            st = _Stream("bars")
+            st.push(_bars(board, [], [], now=1000, warming=True))
+            fr = st.push(_bars(board, [], [], now=1005, warming=False))   # the warming flip: the whole remainder moves
+            self.assertEqual([f["type"] for f in fr], ["delta"], "the flip is a patch on %s: the remainder is three fields" % name)
+            self.assertEqual(fr[0].get("restAll"), 1); self.assertEqual(fr[0]["coll"], {})
+            self.assertEqual(set(fr[0]["rest"]), {"type", "now", "warming"})
+            grown = json.loads(json.dumps(board)); grown[self.SIDS[0]].append({"id": "seg-0-9", "t": t0 + 60, "end": t0 + 90, "open": False})
+            fr = st.push(_bars(grown, [], [], now=1010))
+            self.assertEqual([f["type"] for f in fr], ["delta"], "an appended bar is a patch on %s" % name)
+            self.assertEqual(set(fr[0]["coll"]), {"turns"})
+
+    def test_e_a_fresh_client_is_served_whole_once_so_a_redial_buys_exactly_one_catch_up(self):
+        p1 = self._feed(30)
+        a = _Stream("feed"); a.push(p1)
+        p2 = self._feed(30, now=1005); p2["asks"][0]["text"] += " (edited)"
+        self.assertEqual([f["type"] for f in a.push(p2)], ["delta"], "the client that holds a base gets a patch")
+        b = _Stream("feed")   # a relay redial: _remote_ws opens a fresh upstream socket, a new client dict holding nothing
+        self.assertEqual([f["type"] for f in b.push(p2)], ["feed"], "the fresh client is served whole: the one catch-up")
+        p3 = self._feed(30, now=1010); p3["asks"][1]["text"] += " (edited)"
+        self.assertEqual([f["type"] for f in b.push(p3)], ["delta"], "…and patches after: exactly one")
+
+    def test_f_an_encoder_error_sends_the_whole_frame_and_forgets_the_base_the_feed_twin(self):
+        st = _Stream("feed"); st.push(self._feed(3))
+        real = km._delta_parts
+
+        def boom(ftype, payload):
+            raise RuntimeError("synthetic")
+        km._delta_parts = boom
+        try:
+            err = io.StringIO()
+            with redirect_stderr(err):
+                fr = st.push(self._feed(4, now=1005))
+        finally:
+            km._delta_parts = real
+        self.assertEqual([f["type"] for f in fr], ["feed"]); self.assertIn("view-delta feed", err.getvalue()); self.assertIn("synthetic", err.getvalue())
+        self.assertNotIn("feed", st.c.get("dstate", {}), "the base is forgotten")
+        self.assertEqual([f["type"] for f in st.push(self._feed(5, now=1010))], ["feed"], "the stream starts afresh: whole, and held again")
+        self.assertEqual([f["type"] for f in st.push(self._feed(6, now=1015))], ["delta"])
+
+    def test_g_an_unkeyable_collection_is_not_a_road_such_a_payload_goes_whole_on_every_push(self):
+        c = _Client()
+        km._delta_unkeyable_said.clear()
+        p = self._feed(3); p["asks"] = {"a": 1}   # a dict where byid says a list: unkeyable, the kernel's own rule (_delta_split)
+        err = io.StringIO()
+        with redirect_stderr(err):
+            for i, pi in enumerate((p, dict(p, now=1005, working=[self.SIDS[0]]), dict(p, now=1010, working=[]))):
+                pre = json.dumps(pi); km._send_slot(c, "feed", pi, pre, km._dedup_sig(pi, pre))
+        self.assertEqual([f["type"] for f in c.frames], ["feed", "feed", "feed"], "whole on every push: a whole-frame client sees every change, so the slot is never frozen for it")
+        self.assertNotIn("feed", c.get("dstate", {}), "the kernel holds nothing for the client")
+        self.assertEqual(err.getvalue().count("cannot be keyed"), 1, "said once")
+
+    @staticmethod
+    def _set_delta(p2, which):
+        # the delta the kernel builds for an edit of the cards at `which`: their entries set under their ids, the clock in the
+        # remainder and no order (the keys stand); the guard compares its bytes with 0.6 of the new frame's
+        return json.dumps({"type": "delta", "slot": "feed", "base": 0, "rev": 1,
+                           "coll": {"asks": {"set": {p2["asks"][i]["itemId"]: p2["asks"][i] for i in which}}}, "rest": {"now": p2["now"]}})
+
+    @staticmethod
+    def _del_delta(p1, p2):
+        # the delta for a shrink: the ids that left, the clock in the remainder
+        kept = {c["itemId"] for c in p2["asks"]}
+        return json.dumps({"type": "delta", "slot": "feed", "base": 0, "rev": 1,
+                           "coll": {"asks": {"del": [c["itemId"] for c in p1["asks"] if c["itemId"] not in kept]}}, "rest": {"now": p2["now"]}})
+
+    def _card_change(self, p1, p2, delta):
+        """Push p1, then p2, a change confined to the cards whose kernel delta would be `delta`: (the frame's type, the
+        guard's ratio: the delta's bytes over the new frame's), the type checked against the ratio's side of 0.6 and, for a
+        patch, the constructed delta checked against the kernel's byte for byte."""
+        st = _Stream("feed")
+        self.assertEqual([f["type"] for f in st.push(p1)], ["feed"]); self.assertIn("feed", st.c["dstate"], "a base is held before the change")
+        frames = st.push(p2)
+        self.assertEqual(len(frames), 1, frames)
+        ratio = len(delta) / len(json.dumps(p2))
+        if frames[0]["type"] == "delta":
+            self.assertEqual(set(frames[0]["coll"]), {"asks"}); self.assertNotIn("restAll", frames[0])
+            self.assertEqual(json.dumps(frames[0]), delta, "the constructed delta is the kernel's, byte for byte")
+            self.assertLess(ratio, km._DELTA_MAX_FRACTION, "a delta because it stays under the guard")
+        else:
+            self.assertEqual(frames[0]["type"], "feed")
+            self.assertGreaterEqual(ratio, km._DELTA_MAX_FRACTION, "whole because the delta would reach the guard")
+            self.assertEqual(st.c["dstate"]["feed"]["rev"], 0, "the guard re-based: a whole frame from a NON-empty dstate, popped and re-held")
+        return frames[0]["type"], round(ratio, 3)
+
+    def test_i_a_change_touching_most_cards_or_a_shrink_to_a_light_remainder_crosses_whole_the_two_card_only_exceptions(self):
+        # k of 30 cards edited on the 8-session board: the set entries grow with k and the frame barely, so the ratio is
+        # monotone in k; the crossover, where the patch reaches 0.6 of the frame, sits past half the cards ("most")
+        p1 = self._feed(30)
+        sweep = []
+        for k in range(1, 31):
+            p2 = json.loads(json.dumps(p1)); p2["now"] = 1005
+            for i in range(k):
+                p2["asks"][i]["text"] += " (edited)"
+            sweep.append((k,) + self._card_change(p1, p2, self._set_delta(p2, range(k))))
+        types = [t for _, t, _ in sweep]
+        self.assertEqual(types[0], "delta", "one card edited: a patch, (b)'s rule: %r" % (sweep,))
+        self.assertEqual(types[-1], "feed", "every card edited: whole, the exception: %r" % (sweep,))
+        first = types.index("feed")
+        self.assertNotIn("delta", types[first:], "monotone in the cards touched: %r" % (sweep,))
+        self.assertGreater(sweep[first][0], 15, "the crossover is past half the cards on this board: %r" % (sweep[first],))
+        # a shrink: the del list against what remains. On ONE session 30 to 2 cards crosses whole (a light remainder); on the
+        # 8-session board 30 to 0 stays a patch, the ledgers and scalars that remain outweighing the del list
+        p1 = self._feed(30, nsess=1); p2 = self._feed(2, nsess=1, now=1005)
+        kind, ratio = self._card_change(p1, p2, self._del_delta(p1, p2))
+        self.assertEqual(kind, "feed", "30 to 2 cards on one session: whole at %s" % ratio)
+        p1 = self._feed(30); p2 = self._feed(0, now=1005)
+        kind, ratio = self._card_change(p1, p2, self._del_delta(p1, p2))
+        self.assertEqual(kind, "delta", "30 to 0 cards on eight sessions: a patch at %s, which a whole-frame client drops" % ratio)
+
+    def test_h_the_repost_of_an_unchanged_slot_is_a_clock_patch_not_a_road(self):
+        st = _Stream("feed"); p = self._feed(3); st.push(p)
+        self.assertEqual(st.push(dict(p, now=1010)), [], "the clock alone, inside the window: nothing")
+        st.c["dstate"]["feed"]["at"] -= km._DEDUP_REPOST_S + 1
+        fr = st.push(dict(p, now=1020))
+        self.assertEqual([f["type"] for f in fr], ["delta"]); self.assertEqual(fr[0]["coll"], {})
+        self.assertEqual(fr[0].get("rest"), {"now": 1020}); self.assertNotIn("restAll", fr[0])
 
 
 class HandlerWiring(unittest.TestCase):
