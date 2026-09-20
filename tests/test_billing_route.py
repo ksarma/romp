@@ -1829,6 +1829,9 @@ class BackendHelpers(unittest.TestCase):
         with mock.patch.object(sb, "write_reg", refused_for(web.sid)):
             self.assertFalse(self.be.set_auth_guarded(web.sid, "key"))
         self.assertEqual(sb.read_sdk_defaults(Path(self.d)), {}, "the refused pick left the seed ABSENT, not moved to key")
+        # Since the merge of main in round 6 of the review (2026-09-20) this line holds for a refused and an accepted write
+        # alike (fork PR #819: a flag-less write seeds no new session), so the seed-not-moved property rests on the
+        # read_sdk_defaults assertions of this test; the line stays as what a spawn makes of the file either way.
         u = self.be.spawn("u", "/tmp")
         self.assertEqual(sb.read_reg(self.be.state_dir, u).get("auth", ""), "",
                          "a session spawned after the refusal inherits no pick from the refused write")
@@ -1953,8 +1956,14 @@ class BackendHelpers(unittest.TestCase):
         out = self.be.set_auth_followers("login")
         self.assertEqual((out["moved"], out["skipped"]), (["tests"], ["web"]))
         self.assertEqual(sb.read_sdk_defaults(Path(self.d)), {"auth": "login", "authLogin": ""}, "the walk's accepted pick seeds too")
+        # The merge of main in round 6 of the review (2026-09-20): this line said a session spawned after inherits the walk's
+        # pick, the mechanism fork PR #819 removed (a flag-less write seeds no new session; only the explicit default does),
+        # and redded at the merged head alone ('' != 'login'; green at the round-5 head and at the first round-6 commit). The
+        # seed assertions above are the pin on the write; this line pins what a spawn makes of it, as main's own tests do
+        # (tests/test_session_auth.py, test_persists_pending_and_remembers_the_pick_without_seeding_the_next_spawn).
         u = self.be.spawn("u", "/tmp")
-        self.assertEqual(sb.read_reg(self.be.state_dir, u).get("auth", ""), "login", "a session spawned after inherits the walk's pick")
+        self.assertNotIn("auth", sb.read_reg(self.be.state_dir, u),
+                         "a session spawned after follows the machine default: the flag-less record seeds no new session")
 
     def test_the_best_effort_rows_say_the_record_untouched_on_the_roads_that_write_none(self):
         # round 4 of the review (2026-09-20; its correctness-3 and kernel-4): the seed row and the two chip rows said "its record
