@@ -69089,7 +69089,8 @@ function feedHere(){return !(window.__rompPaneEnabled&&!window.__rompPaneEnabled
 // page has loaded waits for the iframe's load, once (the files forward's shape): a message posted into the
 // document still on its way would be dropped, and the first click would show nothing. A second ask while that
 // one waits is not queued: the page's opener toggles, so two would open and close it.
-var sPend=false,sArmed=false,sOpen=null;   // sOpen: the poster of the ask the fetch in flight answers, written by the tap that fetched and read once by the one load listener (review round 4, 2026-09-19, correctness-2 and extra6-2)
+var sPend=false;
+var sArmed=false,sOpen=null;   // [fork] review round 4 (2026-09-19, correctness-2 and extra6-2), on its own line so the project's declaration above stands unedited: sArmed, the one load listener armed for the element's life; sOpen, the poster of the ask the fetch in flight answers, written by the tap that fetched and read once by that listener
 var sDeferred=false;   // [fork] review round 5 (2026-09-20, ui-1): a tap has ridden the fetch in flight (the deferral below), once per fetch; cleared where a fetch starts
 window.__rompOpenSettings=function(tab,section){var f=document.getElementById('f-settings');if(!f)return;
 // tab and section (T379): the chat strip's tab-widgets gear asks for the Chat tab at its Tab widgets section; the rail's gear names none (the remembered tab)

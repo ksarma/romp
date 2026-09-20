@@ -1269,7 +1269,7 @@ class RelayArms(unittest.TestCase):
         self.assertEqual((f2["src"], f2["sets"], f2["settings"], f2["waiting"]), ("/settings", 6, [], 1), "a second tap while the fetch is in flight (about:blank, no marker) restarts it and posts nothing yet: %r" % (f2,))
         self.assertEqual(self.out["gearInFlightLoaded"]["settings"], [{"romp": "openSettings", "tab": "panes", "section": "files"}], "the restarted fetch's load delivers the SECOND tap's ask (before: the first's, its names dropped)")
         js = km._LANDING_SETTINGS_JS
-        self.assertIn("var sPend=false,sArmed=false,sOpen=null;", js, "the pending ask's poster lives in the shared scope the listener reads")
+        self.assertIn("\nvar sPend=false;\nvar sArmed=false,sOpen=null;", js, "the project's declaration stands byte-identical (review round 6: the upstream-line rule, so a fold meets no conflict on it) and the fork declares the listener's arm flag and the pending ask's poster on the line after it, in the shared scope the listener reads")
         self.assertIn("if(sPend){sPend=false;var o=sOpen;sOpen=null;if(o)o();}});}return;}", js, "the one listener posts the recorded ask and clears it")
         up = "if(!f.getAttribute('src')){var u=f.getAttribute('data-src');if(!u)return;sPend=true;f.setAttribute('src',u);"
         self.assertIn(up, js, "the upstream promotion line is intact")
