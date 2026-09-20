@@ -70,16 +70,37 @@ def _free_port():
 REMOTE_DIAL_CAPS = "feedDelta"
 STAMP_FIELDS = ("gen", "newGen", "base", "rev", "through")   # what a hook copies off a frame beside its type: the gens as the kernel's strings, the revs as numbers, no content
 GEN_FIELDS = ("gen", "newGen")
-GEN_MAX = 64   # view-deltas.ts GEN_MAX: the longest gen the client reads as a stamp (the relay refuses a request line over 65,536 bytes)
+
+
+def client_gen_max():
+    """The client's cap on a gen's length, read from its one declaration (ui/webview/view-deltas.ts, `export const GEN_MAX =
+    <n>;`), so the mirror below cannot drift from the rule the client applies (round 3, the fixer's pass, 2026-09-20: the
+    cap was a second hand-kept literal). A declaration not found fails here, loudly, at import: a mirror that cannot read
+    the client's cap must not derive a dial expectation from a cap of its own."""
+    src = open(os.path.join(ROOT, "ui", "webview", "view-deltas.ts"), encoding="utf-8").read()
+    m = re.search(r"^export const GEN_MAX = (\d+);", src, re.M)
+    if not m:
+        raise AssertionError("ui/webview/view-deltas.ts no longer declares `export const GEN_MAX = <n>;`: re-aim client_gen_max()")
+    return int(m.group(1))
+
+
+GEN_MAX = client_gen_max()   # the client's cap, derived: the longest gen it reads as a stamp (the relay refuses a request line over 65,536 bytes)
+
+
+def _utf16_len(v):
+    """A string's length as the client counts it (String.length): UTF-16 code units, so a character outside the Basic
+    Multilingual Plane counts two where Python's len counts one code point; a lone surrogate passes through as one unit."""
+    return len(v.encode("utf-16-le", "surrogatepass")) // 2
 
 
 def _stamp_field(f, k):
-    """A stamp field as the client reads it: a gen (view-deltas.ts genOf) is a non-empty string of at most GEN_MAX characters
-    holding neither '.' (the held member's own separator) nor ',' (the caps term's), the kernel's boot token and counter
-    joined by '-'; a rev (base, rev, through) is a non-negative int. Anything else reads as absent, as the client reads it."""
+    """A stamp field as the client reads it: a gen (view-deltas.ts genOf) is a non-empty string of at most GEN_MAX UTF-16
+    code units (String.length, the client's count: _utf16_len) holding neither '.' (the held member's own separator) nor ','
+    (the caps term's), the kernel's boot token and counter joined by '-'; a rev (base, rev, through) is a non-negative int.
+    Anything else reads as absent, as the client reads it."""
     v = f.get(k)
     if k in GEN_FIELDS:
-        return v if isinstance(v, str) and v and len(v) <= GEN_MAX and "." not in v and "," not in v else None
+        return v if isinstance(v, str) and v and _utf16_len(v) <= GEN_MAX and "." not in v and "," not in v else None
     return v if isinstance(v, int) and not isinstance(v, bool) and v >= 0 else None
 
 
@@ -415,6 +436,26 @@ class HeldPairRule(unittest.TestCase):
         self.assertEqual(_stamp_field({"rev": 3}, "rev"), 3)
         for bad in ("3", -1, True, None):
             self.assertIsNone(_stamp_field({"rev": bad}, "rev"), "a rev is a non-negative int: %r" % (bad,))
+
+    def test_the_length_cap_is_the_clients_own_declaration_and_counts_as_the_client_counts(self):
+        # the mirror's cap is read from view-deltas.ts, never a second literal (round 3, the fixer's pass): the declaration is
+        # found (an empty read fails, never passes) and the module's GEN_MAX is its value; and the count is String.length's,
+        # UTF-16 code units, so a gen of GEN_MAX // 2 + 1 characters outside the Basic Multilingual Plane (GEN_MAX + 2 units)
+        # is over the cap where Python's len would read it under, and GEN_MAX // 2 of them (GEN_MAX units) is at the cap
+        src = open(os.path.join(ROOT, "ui", "webview", "view-deltas.ts"), encoding="utf-8").read()
+        m = re.search(r"^export const GEN_MAX = (\d+);", src, re.M)
+        self.assertIsNotNone(m, "the client's declaration was not found")
+        self.assertEqual(GEN_MAX, int(m.group(1)))
+        self.assertEqual(GEN_MAX, client_gen_max())
+        wide = "\U0001F600"
+        self.assertEqual((len(wide), _utf16_len(wide)), (1, 2))
+        over = wide * (GEN_MAX // 2 + 1)
+        self.assertLessEqual(len(over), GEN_MAX, "under the cap as len() counts")
+        self.assertIsNone(_stamp_field({"gen": over}, "gen"), "over the cap as the client counts: no stamp")
+        self.assertIsNone(held_pair([{"t": "feed", "gen": over}], "feed"))
+        at = wide * (GEN_MAX // 2)
+        self.assertEqual(_utf16_len(at), GEN_MAX)
+        self.assertEqual(_stamp_field({"gen": at}, "gen"), at, "at the cap in the client's units: a stamp")
 
     def test_a_stamped_delta_advances_the_pair_and_a_gen_less_one_moves_nothing(self):
         frames = [{"t": "feed", "gen": GEN}, {"t": "feedDelta", "gen": GEN, "base": 0, "rev": 1, "through": 1}]
