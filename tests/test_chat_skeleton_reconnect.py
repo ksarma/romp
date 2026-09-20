@@ -961,6 +961,60 @@ class SkeletonReconnect(unittest.TestCase):
             self.assertEqual(self._names(self._tab_orders(c5)[0]["skeleton"]), ["tests", "web"], "the stored tab a skeleton")
             self.assertEqual([f["id"] for f in self._frames(c5, "focus")], [S2], "the arm consumed the park")
             self.assertEqual(km._PENDING_REVEAL, {})
+            # THE DECLARATION (the round-5 verify, correctness-1's residual). The sockets read above is ONE column's at the first column's
+            # resolve when a split page's columns redial one after another (the second's handshake has not registered its col yet), so
+            # at the round-5 head the first column was served the parked session's full and its own shown tab as a skeleton in that
+            # window. The shell now declares its chat column count with the tap (_LANDING_REVEAL_JS cols, the /reveal body) and the park
+            # carries it: a park declaring two columns declines the preference for the first column to resolve, alone in _clients, and
+            # its own hint stays whole; the park is consumed all the same (the page routes the focus to the owning column).
+            del km._clients[:]
+            trail2 = io.StringIO()
+            with contextlib.redirect_stderr(trail2):
+                self.assertFalse(km._reveal_request(S2, "W1", via="ack", cols=2), "parked, with the declaration")
+                self.assertEqual(km._PENDING_REVEAL.get("W1"), {"sid": S2, "wid": "W1", "cols": 2}, "the park carries the shell's column count")
+                cA2 = self._client(active=S1, reconnect=True, wid="W1", col="")
+                km._clients.append(cA2)                                            # the first column's handshake registered it; the second's has not yet
+                km._push([cA2])
+            self.assertTrue(self._sessions(cA2))
+            self.assertEqual(sorted(self._names(self._sessions(cA2))), ["docs", "web"], "the first column to redial, alone in _clients: the declared two columns decline the preference, so its one full is its own hint's (at the round-5 head: api's full, web a skeleton)")
+            self.assertEqual(self._names(self._tab_orders(cA2)[0]["skeleton"]), ["tests", "api"])
+            self.assertEqual([f["id"] for f in self._frames(cA2, "focus")], [S2], "the park is consumed behind the strip all the same (the page hands the focus to the owning column)")
+            self.assertEqual(km._PENDING_REVEAL, {})
+            self.assertRegex(trail2.getvalue(), r"\[reveal\] ack sid=\S+ wid=W1: parked cols=2", "the park's journal line records the declaration")
+            with contextlib.redirect_stderr(io.StringIO()):
+                cB2 = self._client(active=S3, reconnect=True, wid="W1", col="2")   # the second column's redial lands after the first resolved
+                km._clients.append(cB2)
+                km._push([cB2])
+            self.assertEqual(sorted(self._names(self._sessions(cB2))), ["docs", "tests"], "the second column: its own hint's full")
+            # ...a declared ONE-column window takes the preference (the phone's shape, and a desktop with one column)...
+            del km._clients[:]
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertFalse(km._reveal_request(S2, "W1", via="ack", cols=1))
+                c6 = self._client(active=S1, reconnect=True, wid="W1", col="")
+                km._clients.append(c6)
+                km._push([c6])
+            self.assertEqual(sorted(self._names(self._sessions(c6))), ["api", "docs"], "one declared column: the parked session's full")
+            self.assertEqual(self._names(self._tab_orders(c6)[0]["skeleton"]), ["tests", "web"])
+            # ...unless a second column's socket is registered already (a column split off after the tap): the sockets read is the belt
+            del km._clients[:]
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertFalse(km._reveal_request(S2, "W1", via="ack", cols=1))
+                c7 = self._client(active=S1, reconnect=True, wid="W1", col="")
+                c8 = self._client(active=S3, reconnect=True, wid="W1", col="2")
+                km._clients.extend([c7, c8])
+                km._push([c7])
+            self.assertEqual(sorted(self._names(self._sessions(c7))), ["docs", "web"], "one declared but a second column registered (split off after the tap): the sockets read declines the preference")
+            # THE UNDECLARED PARK (a focus _send_focus_to_view parked; a shell of a build before the field): the sockets read alone, so on
+            # a split page the first column to redial, alone in _clients, takes the preference. The residual the PR body discloses,
+            # pinned so the disclosure and the code say the same thing.
+            del km._clients[:]
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertFalse(km._reveal_request(S2, "W1", via="ack"))
+                self.assertEqual(km._PENDING_REVEAL.get("W1"), {"sid": S2, "wid": "W1"}, "no declaration: the two-key entry as before")
+                c9 = self._client(active=S1, reconnect=True, wid="W1", col="")
+                km._clients.append(c9)
+                km._push([c9])
+            self.assertEqual(sorted(self._names(self._sessions(c9))), ["api", "docs"], "no declaration and one socket registered: the preference applies (the disclosed residual: a split page's staggered redial over a park with no declaration)")
         finally:
             km._PENDING_REVEAL.clear()
 

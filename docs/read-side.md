@@ -295,7 +295,9 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   records the regime. On the phone layout the chat pane's first dial declares
   `skeleton=1` too (since 2026-09-18), so a cold open there is served the same
   way: the strip, one full for the stored tab (or, when a notification tap is
-  parked for the window, for the tapped session: review round 4b) and a status
+  parked for the window, for the tapped session: review round 4b; the shell
+  declares its chat column count with the tap and the kernel prefers only for a
+  one-column window, a split page keeping the stored tab: round 5) and a status
   per other tab, and the `skeleton` row records it. The idle chain's start gate
   runs on every layout (the desktop's panes and dial are unchanged; a desktop
   redial's first background ask follows the active tab's full instead of the

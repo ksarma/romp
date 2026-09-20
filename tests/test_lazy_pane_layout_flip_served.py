@@ -204,19 +204,23 @@ class LazyPaneLayoutFlip(unittest.TestCase):
         # member is the kernel's own 403 line (its body names the serve-token file's path). Round 4's bound kept the src whatever the answer, so
         # that body stood on the desktop's screen with no failed state and no retry for the page's life. Driven against the REAL kernel's denial
         # (the route re-issues the request credential-less and hands the frame the kernel's answer): at the bound the src is dropped and the frame
-        # navigates to about:blank, the url waits under data-src, no third request; the flip back parks it with the failed state and the tab tap
-        # loads it. Asserted: the status and the page's state. The body is never read, printed or kept by the driver or here.
+        # navigates to about:blank (the kernel's answer is on show for the frames between its commit and the load event that judged it, then
+        # dropped: the round-5 verify's rAF witness saw it for about two frames), the url waits under data-lazy-src, the attribute the
+        # controller's gear-save reconcile does not read (under data-src it re-fetched the denial on every save with no token and no backstop,
+        # the round-5 verify; the Waiting pane is outside that controller's optional set, so the reconcile road is driven by the LazyPanes node
+        # case on the Outline, where a save after the bound moves nothing), no third request; the flip back parks it with the failed state and
+        # the tab tap loads it. Asserted: the status and the page's state. The body is never read, printed or kept by the driver or here.
         r = self._drive("D")
         d = r["desktopBound"]
         self.assertGreaterEqual(d.get("ms", -1), 0, "the second denial reached the bound within the wait (two promotions, then the src dropped): %r" % (d,))
-        self.assertEqual((d["mobile"], d["src"], d["lazy"], d["dataSrc"], d["sets"]), (False, None, None, "/waiting", 2), "the desktop's bound over a document the kernel sent: the src DROPPED, the url under data-src, two promotions (before: the src kept over the 403 body): %r" % (d,))
+        self.assertEqual((d["mobile"], d["src"], d["lazy"], d["dataSrc"], d["sets"]), (False, None, "/waiting", None, 2), "the desktop's bound over a document the kernel sent: the src DROPPED, the url under data-lazy-src (not data-src: the controller's reconcile reads that on every gear save), two promotions (before: the src kept over the 403 body): %r" % (d,))
         self.assertEqual((d["divFailed"], d["bodyFailed"], d["divLoading"], d["bodyLoading"]), (False, False, False, False), "no failed or loading state on the desktop (nothing paints one there): %r" % (d,))
         b = r["blanked"]
-        self.assertGreaterEqual(b.get("ms", -1), 0, "the frame navigated to about:blank once the src was dropped: nothing of the kernel's answer stays on show: %r" % (b,))
+        self.assertGreaterEqual(b.get("ms", -1), 0, "the frame navigated to about:blank once the src was dropped: the kernel's answer, on show for the frames between its commit and the load event that judged it, is dropped: %r" % (b,))
         self.assertEqual(b["url"], "about:blank", "%r" % (b,))
         self.assertEqual(r["denied"], {"statuses": [403, 403], "responses": 2}, "the kernel answered both document requests with its 403 (the status read off the response; the body never read): %r" % (r["denied"],))
         a = r["after"]
-        self.assertEqual((a["sets"], a["src"], a["dataSrc"], a["url"]), (2, None, "/waiting", "about:blank"), "1.5 s on: no third promotion, the frame blank: %r" % (a,))
+        self.assertEqual((a["sets"], a["src"], a["lazy"], a["dataSrc"], a["url"]), (2, None, "/waiting", None, "about:blank"), "1.5 s on: no third promotion, the frame blank: %r" % (a,))
         self.assertEqual(r["requestsAtBound"], 2, "two document requests reached the wire before the flip back, both denied; no third: %r" % (r["requests"],))
         pb = r["phoneBack"]
         self.assertGreaterEqual(pb.get("ms", -1), 0, "the flip back parked the recorded pane within the wait: %r" % (pb,))

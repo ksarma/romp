@@ -470,15 +470,18 @@ class ReturnFromBackground(unittest.TestCase):
     # ---- review round 5 (2026-09-20, tests-1): docState's `doc` answer witnessed in a real engine: the kernel's own stamped 200 with no shim, shown as served ----
     def _unmarked(self, name, r, rows, tap):
         """The tapped pane's document request was re-issued to the lab kernel by the driver's route and the frame fulfilled with the kernel's
-        own 200, status and headers, its body with the inline shim's one marker statement (`window.__rompApp=APP;`) removed: a document the
-        kernel stamped (data-romp-served=200 on its <html> tag, Handler._send's rule over every text/html 200 with a root tag) with no pane
-        shim in its window, the shape of the kernel's "needs the ui/ modules" fallback page, through Chromium's own HTML parser. Round 3's
-        leg for this road was deleted with round 4's narrowing, which left the `doc` answer with a hand-built stand-in as its only driver.
-        Asserted: the route saw one marker statement and a stamped root tag in what it handed over (counts, never the text); in the engine the
-        frame's document is at the pane's url, its documentElement carries data-romp-served=200 and its window has no __rompApp; the loader
-        retired on the document's load (not the 30 s backstop), the src stands, no failed or loading state on the body or the pane div, one
-        pane-load-unmarked row via load and no pane-load-failed row. The document runs no shim, so the leg's parked and lazy checks read a
-        no-tap boot (out.tapped null)."""
+        own 200, status and headers, its body with the inline shim's WHOLE <script> element removed (the one holding the marker statement
+        `window.__rompApp=APP;`): a document the kernel stamped (data-romp-served=200 on its <html> tag, Handler._send's rule over every
+        text/html 200 with a root tag) with no pane shim in its window, the shape of the kernel's "needs the ui/ modules" fallback page,
+        through Chromium's own HTML parser. Round 3's leg for this road was deleted with round 4's narrowing, which left the `doc` answer
+        with a hand-built stand-in as its only driver; round 5's first cut removed the one statement, and the shim ran on to its connect()
+        and redialed the kernel every ~250 ms, refused each time (the round-5 verify): the document the prose called shim-less was not.
+        Asserted: the route removed exactly one script element holding exactly one marker statement and a stamped root tag survived (counts,
+        never the text); the premise the prose states, pinned: after the tap the pane's app dials no socket and posts no wsState word; in
+        the engine the frame's document is at the pane's url, its documentElement carries data-romp-served=200 and its window has no
+        __rompApp; the loader retired on the document's load (not the 30 s backstop), the src stands, no failed or loading state on the body
+        or the pane div, one pane-load-unmarked row via load and no pane-load-failed row. The document runs no shim, so the leg's parked and
+        lazy checks read a no-tap boot (out.tapped null)."""
         where = name + ": "
         u = r.get("unmarked") or {}
         self.assertEqual((u.get("stamp"), u.get("shim")), ("200", "undefined"), where + "read in the engine: the frame's root tag carries the kernel's stamp and its window has no pane shim (docState's `doc`; a re-parked pane reads no stamp, its frame back at about:blank): %r" % (u,))
@@ -500,8 +503,19 @@ class ReturnFromBackground(unittest.TestCase):
         rt = r.get("unmarkedRoute") or {}
         self.assertEqual(rt.get("status"), 200, where + "the kernel answered the pane's request 200 (the stored cookie rode as ever): %r" % (rt,))
         self.assertTrue(str(rt.get("contentType") or "").startswith("text/html"), where + "…text/html: %r" % (rt,))
-        self.assertEqual(rt.get("stripped"), 1, where + "the route removed exactly one marker statement from the body: %r" % (rt,))
+        self.assertEqual(rt.get("scriptsStripped"), 1, where + "the route removed exactly one script element, the inline shim's: %r" % (rt,))
+        self.assertEqual(rt.get("stripped"), 1, where + "…which held exactly one marker statement (zero would mean the pane's own document, `app`): %r" % (rt,))
+        self.assertGreater(rt.get("scripts") or 0, 1, where + "the page carried more script elements than the shim's (the bundles' src elements stay): %r" % (rt,))
         self.assertEqual(rt.get("stampedTags"), 1, where + "…and the kernel's stamp on the <html> tag survived the strip, once: %r" % (rt,))
+        # the premise, pinned (the round-5 verify): no shim ran in the document, so the pane's app dialed no socket and posted no wsState word
+        # after the tap. With the marker alone removed the shim connected and redialed every ~250 ms, refused each time: a perturbation the
+        # prose denied, and one the leg's kernel-ledger reads could not see (the kernel accepted none of those sockets)
+        t_tap = (r.get("t") or {}).get("tap") or 0
+        self.assertGreater(t_tap, 0, where + "the tap is stamped: %r" % (r.get("t"),))
+        late_dials = [d for d in (r.get("dials") or []) if d.get("app") == tap and d.get("t", 0) >= t_tap]
+        self.assertEqual(late_dials, [], where + "no socket dial for the tapped pane's app after the tap (the shim, had it run, dials at parse and redials when refused): %r" % (late_dials,))
+        late_words = [w for w in (r.get("wsWords") or []) if w.get("app") == tap and w.get("t", 0) >= t_tap]
+        self.assertEqual(late_words, [], where + "no wsState word from the tapped pane after the tap (the shim posts one on every open and close): %r" % (late_words,))
 
     # ---- review round 4 (2026-09-19, kernel-1 and tests-1): the kernel's OWN denial at a pane url is a failure with the retry road, never shown as served ----
     def _denied(self, name, r, rows, tap):
@@ -511,7 +525,7 @@ class ReturnFromBackground(unittest.TestCase):
         file's path, and that is what the frame received, status, headers and bytes. Round 3
         showed any same-origin document as served, which painted that body as the pane with no retry road for the page's life, and its leg
         fulfilled a hand-written stand-in, so no test met the real one. The round-2 rule is scoped to a 200 the kernel served; the kernel
-        now stamps every text/html 200 (data-romp-served=200 on the <html> tag) and the shell's docState shows as served only a document
+        now stamps every text/html 200 whose body has an <html> tag (data-romp-served=200 on that tag) and the shell's docState shows as served only a document
         carrying it. Asserted, on top of _abort's failed-state and re-tap checks: the status the kernel answered was 403 (read off the
         response event; the body is never read, printed or kept, by the driver or here), the failed overlay is painted opaque and fixed over
         the pane's whole box (the document under it is not on show), no pane-load-unmarked row was filed, and the detector was the load
@@ -885,6 +899,7 @@ class ReturnFromBackground(unittest.TestCase):
                 self.assertEqual(resp.status, 200, p + ": served with the token")
                 self.assertTrue(resp.headers.get("Content-Type", "").startswith("text/html"), p + ": text/html: %r" % (resp.headers.get("Content-Type"),))
             self.assertEqual(body.count(b"<html data-romp-served=200"), 1, p + ": one stamp on the <html> tag (count %d, %d bytes)" % (body.count(b"data-romp-served"), len(body)))
+            self.assertTrue(re.match(rb"\s*<!DOCTYPE html>\s*<html data-romp-served=200[\s>]", body, re.I), p + ": the stamped tag is the document's root, the one documentElement carries (review round 5 verify: a count of one cannot tell a stamped root from a stamped <html in a leading comment; %d bytes)" % (len(body),))
             try:
                 urllib.request.urlopen("http://127.0.0.1:%d%s" % (self.port, p), timeout=10)
                 self.fail(p + ": a credential-less request was served (no denial to test)")
@@ -905,6 +920,7 @@ class ReturnFromBackground(unittest.TestCase):
             self.assertEqual(resp.status, 200, "/: the landing, served with the token")
             self.assertTrue(resp.headers.get("Content-Type", "").startswith("text/html"), "/: text/html: %r" % (resp.headers.get("Content-Type"),))
         self.assertEqual(landing.count(b"<html data-romp-served=200"), 1, "/: one stamp on the landing's <html> tag (count %d, %d bytes)" % (landing.count(b"data-romp-served"), len(landing)))
+        self.assertTrue(re.match(rb"\s*<!DOCTYPE html>\s*<html data-romp-served=200[\s>]", landing, re.I), "/: the stamped tag is the landing's root (%d bytes)" % (len(landing),))
         self.assertGreaterEqual(len(re.findall(rb"<html(?=[\s>])", landing, re.I)), 2, "/: the landing's body carries more than one <html match (its shell script's), so the count above pins the first-tag rule (%d matches)" % (len(re.findall(rb"<html(?=[\s>])", landing, re.I)),))
         with urllib.request.urlopen("http://127.0.0.1:%d/" % self.port, timeout=10) as resp:
             token_page = resp.read()

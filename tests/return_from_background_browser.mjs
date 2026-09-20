@@ -351,24 +351,29 @@ try {
     // docState's `doc` answer in a REAL engine (review round 5, 2026-09-20, tests-1: round 3's served leg for the shown-as-served road was
     // deleted with the narrowing, and the node harness's hand-built documentElement was the answer's only driver). The tapped pane's document
     // request is re-issued to the lab kernel (route.fetch, the stored cookie riding as ever) and the frame is fulfilled with the kernel's own
-    // 200, status and headers, its body with ONE statement removed: the inline shim's `window.__rompApp=APP;`, the marker the shell reads
-    // for `app`. So the frame holds a document the kernel stamped (data-romp-served=200 on its <html> tag, written by Handler._send) with no
-    // pane shim in its window, the shape of the kernel's "needs the ui/ modules" page, through a real HTML parser. The shell must show it as
-    // served: the loader retires on the document's load (not the 30 s backstop), the src stays, no failed state on the body or the pane, one
-    // pane-load-unmarked row via load and no pane-load-failed row. The stamp is read in the engine off documentElement (a byte count cannot
-    // tell a stamped root tag from a stamped `<html` elsewhere in the body). No shim runs in the document, so the pane says nothing on the
-    // shell's wire (no wsState, no socket): the tapUp wait is skipped and out.tapped stays null, so _parked expects nothing parked at the
-    // return and _lazy counts a no-tap boot.
+    // 200, status and headers, its body with the inline shim's WHOLE <script> element removed, the one holding `window.__rompApp=APP;` (the
+    // marker the shell reads for `app`; the round-5 verify: with the one statement removed the shim still ran to its connect() and redialed
+    // the kernel at ~250 ms, refused every time, a perturbation the prose denied). So the frame holds a document the kernel stamped
+    // (data-romp-served=200 on its <html> tag, written by Handler._send) with no pane shim in its window, the shape of the kernel's "needs the
+    // ui/ modules" page, through a real HTML parser; the bundles' <script src> elements stay, as the pane's own page carries them. The shell
+    // must show it as served: the loader retires on the document's load (not the 30 s backstop), the src stays, no failed state on the body
+    // or the pane, one pane-load-unmarked row via load and no pane-load-failed row. The stamp is read in the engine off documentElement (a
+    // byte count cannot tell a stamped root tag from a stamped `<html` elsewhere in the body). No shim runs in the document, so the pane says
+    // nothing on the shell's wire (no wsState word, no socket dial for its app after the tap; pinned off out.wsWords and out.dials): the tapUp
+    // wait is skipped and out.tapped stays null, so _parked expects nothing parked at the return and _lazy counts a no-tap boot.
     const path = "/" + cfg.tapPane, isPath = (u) => u.pathname === path;
     const MARK = "window.__rompApp=APP;";
-    const unmarked = { status: null, contentType: null, stripped: 0, stampedTags: null };
+    const SHIM_SCRIPT = /<script\b[^>]*>(?:(?!<\/script>)[\s\S])*?window\.__rompApp=APP;(?:(?!<\/script>)[\s\S])*<\/script>/g;   // the inline <script> element that holds the marker statement: the shim's, whole
+    const unmarked = { status: null, contentType: null, scripts: null, scriptsStripped: 0, stripped: 0, stampedTags: null };
     const stripper = async (route) => {
       const resp = await route.fetch();
       unmarked.status = resp.status(); unmarked.contentType = (resp.headers() || {})["content-type"] || null;
       const text = await resp.text();
-      const parts = text.split(MARK);
-      unmarked.stripped += parts.length - 1;
-      const body = parts.join("");
+      const shim = text.match(SHIM_SCRIPT) || [];
+      unmarked.scripts = (text.match(/<script\b/g) || []).length;                      // the page's script elements before the strip (the shim's inline one, the bundles' src ones)
+      unmarked.scriptsStripped += shim.length;                                         // exactly one element removed: the shim's
+      unmarked.stripped += shim.join("").split(MARK).length - 1;                      // the marker statements inside it (one)
+      const body = text.replace(SHIM_SCRIPT, "");
       unmarked.stampedTags = (body.match(/<html data-romp-served=200[\s>]/g) || []).length;   // the kernel's stamp survives the strip (counted, not read)
       return route.fulfill({ response: resp, body });
     };
@@ -395,7 +400,7 @@ try {
     await page.unroute(isPath, stripper);
     await page.click("#mtabs button[data-pane=chat]");
     await sleep(Math.max(300, (cfg.settleMs || 1500) / 2));
-    out.tapped = null;   // no shim in the served document: nothing to park, nothing to dial (the reason above)
+    out.tapped = null;   // no shim in the served document (its script element stripped whole): nothing to park, nothing to dial; the pins on out.dials and out.wsWords hold the premise
     out.framesAtBoot = out.frames;
     out.frames = page.frames().map((f) => { try { return new URL(f.url()).pathname; } catch (e) { return f.url(); } });
   } else if (cfg.tapPane) {

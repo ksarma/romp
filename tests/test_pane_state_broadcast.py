@@ -1347,7 +1347,7 @@ console.log(JSON.stringify(out));
 # Family two (review round 3, 2026-09-19; narrowed in review round 4, kernel-1 and tests-1): docState() classifies the frame's document,
 # and a same-origin document at the pane's url with NO pane shim that carries the kernel's stamp of a 200 (`doc`: the kernel's own
 # "needs the ui/ modules" fallback page; the stamp is data-romp-served=200 on its <html> tag, written by Handler._send on every text/html
-# 200) is a 200 the kernel served that this reader cannot classify. It is shown as served (the loading state ends, the src stays, no failed
+# 200 whose body has an <html> tag) is a 200 the kernel served that this reader cannot classify. It is shown as served (the loading state ends, the src stays, no failed
 # state, no re-park) and said once (one shell client-diag row `pane-load-unmarked` {pane, via}); a reader that cannot classify a 200 never
 # reports absent. Round 2 called it a failure, which re-parked the kernel's own diagnostic behind an overlay no tap could clear; round 3
 # then showed EVERY same-origin document as served, the kernel's 403 line (its body naming the serve-token file's path) included, with no
@@ -1605,21 +1605,26 @@ console.log(JSON.stringify(out));
 # the src whatever the answer, so that body stood on the desktop's screen with no failed state and no retry for the page's life: round 3's
 # high moved to the desktop. The bound now drops a document the kernel sent from the frame (src removed, the url under data-src) and keeps
 # the browser's own error page (`none`) as before; both record DEAD, and the flip back parks the pane with the failed state (the DEAD branch
-# ahead of the unloaded parking, which would otherwise have parked the src-less pane with no state).
+# ahead of the unloaded parking, which would otherwise have parked the src-less pane with no state). The dropped document's url waits under
+# data-lazy-src, not data-src (the round-5 verify): the controller's reconcile copies data-src to src on every gear save (the romp:settings
+# storage event), so parked there the bound pane was re-fetched with no token and no backstop and the bound promotion's stale listener
+# judged and dropped it again, one re-fetch and one row per save; under data-lazy-src a gear save moves nothing.
 _LAZY_DESKTOP_OTHER_BOUND_DRIVER = _LAZY_TOOLS + r"""
 SOCKS.forEach((s) => { s.readyState = 1; s.onopen && s.onopen(); });
 shimUp('feed'); (LOADS.feed || []).forEach((f) => f());
-const snapO = (k) => ({ src: src()[k], lazy: lazy()[k], dataSrc: dataSrc()[k], div: divCls(k), sets: SETS[k] || 0, rows: diagRows('pane-load-failed').filter((r) => r.pane === k), unmarked: diagRows('pane-load-unmarked').filter((r) => r.pane === k), bodyFailed: BODY_CLS.has('pane-failed'), bodyLoading: BODY_CLS.has('pane-loading'), msg: MSG.textContent, mobile: window.__rompMobileOn(), tab: TAB });
+const snapO = (k) => ({ src: src()[k], lazy: lazy()[k], dataSrc: dataSrc()[k], div: divCls(k), sets: SETS[k] || 0, rows: diagRows('pane-load-failed').filter((r) => r.pane === k), unmarked: diagRows('pane-load-unmarked').filter((r) => r.pane === k), bodyFailed: BODY_CLS.has('pane-failed'), bodyLoading: BODY_CLS.has('pane-loading'), msg: MSG.textContent, mobile: window.__rompMobileOn(), tab: TAB, listeners: (LOADS[k] || []).length, backstops: TIMERS.filter((t) => t.ms === 30000).length });
 MATCHES = false; MQL.forEach((f) => f({}));   // the rotation to the desktop: every parked pane promoted
 ['waiting', 'files'].forEach((k) => { shimUp(k); (LOADS[k] || []).forEach((f) => f()); });
 out.flipped = { fleet: snapO('fleet'), timeline: snapO('timeline') };
 otherDoc('fleet'); (LOADS.fleet || []).forEach((f) => f());   // the Outline's document is the kernel's own 403 line (the cookie stale): the episode's first desktop failure, re-parked under data-src and promoted again
 out.firstOther = snapO('fleet');
-otherDoc('fleet'); (LOADS.fleet || []).forEach((f) => f());   // the re-promotion's document is the same denial: the bound, and the document is dropped from the frame
+otherDoc('fleet'); (LOADS.fleet || []).forEach((f) => f());   // the re-promotion's document is the same denial: the bound, and the document is dropped from the frame, its url under data-lazy-src
 out.desktopOtherBound = snapO('fleet');
 frames['f-timeline'].contentDocument = null; (LOADS.timeline || []).forEach((f) => f());   // the Sessions band: the browser's own error page (Chromium's, no readable document), twice: the bound keeps the src, as a desktop failure always showed
 frames['f-timeline'].contentDocument = null; (LOADS.timeline || []).forEach((f) => f());
 out.desktopNoneBound = snapO('timeline');
+STORE['romp:settings'] = JSON.stringify({ showFilesControl: true, panes: {} }); STORAGE.forEach((f) => f({ key: 'romp:settings' }));   // a gear save on the desktop: the controller's reconcile copies data-src to src for every enabled pane without one; the bound pane's url is under data-lazy-src, so it finds none (under data-src: a third set with no token and no backstop, judged by the stale listener)
+out.afterSave = { fleet: snapO('fleet'), timeline: snapO('timeline') };
 backstops();   // every 30 s backstop armed so far: every verdict is in, nothing moves
 out.afterBackstops = { fleet: snapO('fleet'), timeline: snapO('timeline') };
 MATCHES = true; MQL.forEach((f) => f({}));   // the flip back to the phone: both recorded panes parked under data-lazy-src with the failed state (the chat is the shown tab: nothing painted)
@@ -1721,19 +1726,54 @@ def _kernel_source():
     return Path(os.path.join(os.path.dirname(HERE), "kernel", "kernel.py")).read_text()
 
 
+_COMPUTED_TYPE_WRITERS = {"_file_slice", "_file_preview", "_remote_file"}   # the file relays: their Content-Type is the file's (a text/html file is stamped by the same call in _send; none serves a pane url)
+_DIST_TYPE_EXPR = "ct + '; charset=utf-8'"                                   # the /dist/ route's type expression in do_GET: the bundle's type from its extension table (a 304 and a 200)
+
+
+def _kernel_functions(tree):
+    """(first line, last line, name) of every function in the parsed kernel source, for the enclosing-function reads below."""
+    return [(n.lineno, n.end_lineno, n.name) for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+
+
+def _enclosing(spans, line):
+    """The innermost function holding `line`, by name; None outside every function."""
+    inside = [sp for sp in spans if sp[0] <= line <= sp[1]]
+    return max(inside, key=lambda sp: sp[0])[2] if inside else None
+
+
 def _text_html_200_writers(src):
-    """The kernel's text/html 200 writers, DERIVED from the source (review round 5, tests-4): every `self._send(200, <body>, "text/html…")`
-    call with the type a literal, found by an AST walk (a pattern-matched grep is a sample: the round-5 refuter's grep missed one of the
-    nine). Returns the callee names of the bodies built by a call (the page functions) and the names of the bodies passed as a constant
-    (the paste-the-token page). A writer whose type is computed (the file relays' `_send(status, body, ctype)`) is outside this census:
-    _send stamps it the same way when the type is text/html, and none serves a pane url. A body shape neither a call nor a name is
-    loud, so a new writer's shape is classified here before it is served."""
+    """The kernel's text/html 200 writers, DERIVED from the source (review round 5, tests-4; every `_send` call classified since the
+    round-5 verify, which found the first walk read one shape alone): an AST walk over every `self._send(...)` call, its status, body and
+    type read positionally or by keyword (`code`, `body`, `ctype`). A type that is not a literal is admitted inside the named
+    computed-type writers alone (_COMPUTED_TYPE_WRITERS, the file relays whose type is the file's, and the /dist/ route's _DIST_TYPE_EXPR in
+    do_GET): a computed type anywhere else is loud, so a page served as `_send(200, page(), _CT_HTML)` reds this census instead of shipping
+    unclassified. A literal text/html type must ride a literal status (a relayed status with a text/html literal is loud), and a 200's
+    body is a call of a page function or a constant name (any other shape is loud). Returns the callee names of the bodies built by a call
+    (the page functions) and the names of the bodies passed as a constant (the paste-the-token page). A pattern-matched grep is a sample:
+    the round-5 refuter's grep missed one of the nine writers; this walks every call."""
+    tree = ast.parse(src)
+    spans = _kernel_functions(tree)
     calls, names = set(), set()
-    for node in ast.walk(ast.parse(src)):
-        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "_send" and len(node.args) >= 3):
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "_send"):
             continue
-        code, body, ctype = node.args[0], node.args[1], node.args[2]
-        if not (isinstance(code, ast.Constant) and code.value == 200 and isinstance(ctype, ast.Constant) and isinstance(ctype.value, str) and ctype.value.lower().startswith("text/html")):
+        kws = {k.arg: k.value for k in node.keywords}
+        args = list(node.args) + [None, None, None]
+        code = args[0] if args[0] is not None else kws.get("code")
+        body = args[1] if args[1] is not None else kws.get("body")
+        ctype = args[2] if args[2] is not None else kws.get("ctype")
+        if code is None or body is None or ctype is None:
+            raise AssertionError("kernel.py line %d: a _send call whose status, body or type this walk cannot find; classify it here" % node.lineno)
+        if not (isinstance(ctype, ast.Constant) and isinstance(ctype.value, str)):
+            fn = _enclosing(spans, node.lineno)
+            if fn in _COMPUTED_TYPE_WRITERS or (fn == "do_GET" and ast.unparse(ctype) == _DIST_TYPE_EXPR):
+                continue
+            raise AssertionError("kernel.py line %d (%s): a _send call whose Content-Type is computed outside the named computed-type writers (%s); classify it here" % (node.lineno, fn, ast.unparse(ctype)))
+        if not ctype.value.lower().startswith("text/html"):
+            continue
+        if not (isinstance(code, ast.Constant) and isinstance(code.value, int) and not isinstance(code.value, bool)):
+            raise AssertionError("kernel.py line %d: a text/html writer whose status is not a literal (%s); classify it here" % (node.lineno, ast.unparse(code)))
+        if code.value != 200:
             continue
         if isinstance(body, ast.Call) and isinstance(body.func, ast.Name):
             calls.add(body.func.id)
@@ -1764,7 +1804,47 @@ def _send_response_bypasses(src):
         text = "\n".join(block)
         status = re.search(r"send_response\(([^)]+)\)", ln).group(1).strip()
         ct = re.search(r'send_header\("Content-Type",\s*([^\n]+?)\)\s*(#|$)', text, re.M)
-        sites.append({"line": i, "status": status, "ctype": ct.group(1).strip() if ct else None, "writes": bool(re.search(r"wfile\.write\(|copyfileobj\(", text))})
+        sites.append({"line": i, "end": i + len(block) - 1, "status": status, "ctype": ct.group(1).strip() if ct else None, "writes": bool(re.search(r"wfile\.write\(|copyfileobj\(", text))})
+    return sites
+
+
+_WS_FRAME_WRITERS = {"_ws_sender", "_ws_send", "_ws_pong"}   # WebSocket frames on a socket the 101 upgrade hijacked: not HTTP responses, named so a new raw writer reds
+
+
+def _raw_socket_writers(src, bypasses):
+    """Every raw write to a socket in kernel.py (a `sendall(...)` call, or a `write(...)` on a `wfile`, read off the AST), classified (review round 5 verify, extra6-1's third road):
+    the stamping writer (Handler._send's own write), a bypassing `send_response` block's (`bypasses`, the census above: the HEAD roads and
+    the two attachments), the _remote_ws splice (the remote kernel's status line, headers and frames pumped to the client byte for byte,
+    the one road bytes leave a handler with no send_response at all), or a WebSocket frame writer (_WS_FRAME_WRITERS). Anything else is
+    `unclassified`, so a new raw writer of an HTTP response reds the census."""
+    tree = ast.parse(src)
+    spans = _kernel_functions(tree)
+    send_lines, send_start = inspect.getsourcelines(km.Handler._send)
+    ws_lines, ws_start = inspect.getsourcelines(km.Handler._remote_ws)
+    in_send = range(send_start, send_start + len(send_lines))
+    in_remote_ws = range(ws_start, ws_start + len(ws_lines))
+    lines = src.split("\n")
+    writes = []   # the CALLS, off the AST (a text grep would read this census's own name in a docstring or a comment as a writer)
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+            continue
+        if node.func.attr == "sendall" or (node.func.attr == "write" and isinstance(node.func.value, ast.Attribute) and node.func.value.attr == "wfile"):
+            writes.append(node.lineno)
+    sites = []
+    for i in sorted(set(writes)):
+        ln = lines[i - 1]
+        fn = _enclosing(spans, i)
+        if i in in_send:
+            kind = "send"
+        elif any(b["line"] <= i <= b["end"] for b in bypasses):
+            kind = "bypass"
+        elif i in in_remote_ws:
+            kind = "remote-ws"
+        elif fn in _WS_FRAME_WRITERS:
+            kind = "ws-frame"
+        else:
+            kind = "unclassified"
+        sites.append({"line": i, "fn": fn, "kind": kind, "text": ln.strip()[:80]})
     return sites
 
 
@@ -1929,7 +2009,7 @@ class LazyPanes(unittest.TestCase):
     def test_a_document_the_origin_served_with_no_shim_is_shown_as_served_and_said_never_a_failure(self):
         # Family two (review round 3, 2026-09-19; narrowed in round 4, kernel-1): the detector must not claim failure for a 200 the kernel served
         # that it cannot classify. A same-origin document at the pane's url with no pane shim that carries the kernel's 200 stamp (its own
-        # "needs the ui/ modules" page: data-romp-served=200 on the <html> tag, Handler._send's mark on every text/html 200) is what the
+        # "needs the ui/ modules" page: data-romp-served=200 on the <html> tag, Handler._send's mark on every text/html 200 whose body has an <html> tag) is what the
         # kernel served, so the loading state ends, the src stays, no failed state paints and one pane-load-unmarked row says what was seen.
         # Round 2 called this a failure and re-parked the kernel's own diagnostic behind an overlay no tap could clear. The input is recorded
         # beside the verdict; the refused inputs (no document; a frame never committed by the backstop; a document with neither marker nor
@@ -2021,6 +2101,7 @@ class LazyPanes(unittest.TestCase):
             out = stamp(200, b, "text/html; charset=utf-8")
             self.assertEqual(out.count("<html data-romp-served=200"), 1, k + ": one stamp on the <html> tag of a text/html 200")
             self.assertEqual(len(out), len(b) + len(" data-romp-served=200"), k + ": nothing else changes")
+            self.assertTrue(re.match(r"\s*<!DOCTYPE html>\s*<html data-romp-served=200[\s>]", out, re.I), k + ": the stamped tag is the document's ROOT, the one documentElement carries (review round 5 verify: the stamp lands on the FIRST <html match, so a leading comment naming the tag would take it, count one and add the same 21 bytes, with the root unstamped and docState reading `other`): %r" % (out[:80],))
         self.assertNotIn("<html", km._TOKEN_LOGIN_HTML, "the token-less landing (the paste-the-token page at /) writes no root tag, so it is the one 200 the writer cannot stamp: disclosed here; it is served at / alone, never at a pane url, so no pane frame's reader meets it")
         self.assertEqual(stamp(200, km._TOKEN_LOGIN_HTML, "text/html"), km._TOKEN_LOGIN_HTML, "...and it passes through as it came")
         self.assertEqual(stamp(200, b"<!DOCTYPE html><html lang=en><body>x</body></html>", "text/html"), b"<!DOCTYPE html><html data-romp-served=200 lang=en><body>x</body></html>", "a bytes body is stamped the same")
@@ -2046,6 +2127,26 @@ class LazyPanes(unittest.TestCase):
             self.assertTrue(non200 or not st["writes"] or octet, "kernel.py line %d bypasses Handler._send and could write a text/html 200: status %s, Content-Type %s, writes a body %r (a text/html 200 must leave through _send, the stamping writer)" % (st["line"], st["status"], st["ctype"], st["writes"]))
         self.assertTrue([st for st in sites if st["status"] == "200" and st["writes"]], "the census saw the 200 attachments that write a body (the sites the octet-stream clause is for): %r" % (sites,))
         self.assertTrue([st for st in sites if not st["writes"]], "…and the bodiless HEAD roads: %r" % (sites,))
+
+    def test_every_raw_socket_write_is_the_stamping_writers_a_bypassing_blocks_the_remote_ws_splices_or_a_websocket_frames(self):
+        # review round 5 verify (extra6-1's third road): the two censuses above read `_send` calls and `send_response(` sites, and neither
+        # sees bytes that leave a handler with NO send_response: _remote_ws writes a remote kernel's status line and headers to the client
+        # (`down.sendall(head)`) and pumps its body, byte for byte. Today no document can arrive by that road (the route answers 400
+        # text/plain without a Sec-WebSocket-Key, a header no navigation or fetch can set, pinned by tests/test_kernel_remote_ws_proxy.py),
+        # so the gap was in the pins, not the behaviour: a future raw writer of a text/html 200 (a second splice, a streaming relay) would
+        # have shipped unstamped with both censuses green. This census classifies every `sendall(` and `wfile.write(` in kernel.py: the
+        # stamping writer's own, a bypassing send_response block's, the _remote_ws splice's, or a WebSocket frame writer's (named); a raw
+        # writer anywhere else is unclassified and reds. Red under mutation: a `self.connection.sendall(b"HTTP/1.1 200 OK…")` in do_GET.
+        src = _kernel_source()
+        sites = _raw_socket_writers(src, _send_response_bypasses(src))
+        kinds = {k: [st["line"] for st in sites if st["kind"] == k] for k in ("send", "bypass", "remote-ws", "ws-frame", "unclassified")}
+        self.assertEqual(kinds["unclassified"], [], "a raw socket write outside the stamping writer, the bypassing blocks, the _remote_ws splice and the WebSocket frame writers: classify it (an HTTP response written raw carries no stamp): %r" % ([st for st in sites if st["kind"] == "unclassified"],))
+        self.assertEqual(len(kinds["send"]), 1, "the stamping writer's one write: %r" % (sites,))
+        self.assertTrue(kinds["bypass"], "the bypassing blocks' body writes were seen (the attachments): %r" % (sites,))
+        self.assertGreaterEqual(len(kinds["remote-ws"]), 2, "the splice's writes to the client (the remote's head, its pumped frames) were seen: %r" % (sites,))
+        self.assertTrue(kinds["ws-frame"], "the WebSocket frame writers were seen: %r" % (sites,))
+        self.assertIn("_remote_ws", km._stamp_served_html.__doc__, "the stamp's docstring names the splice as the road outside both censuses")
+        self.assertIn("Sec-WebSocket-Key", km._stamp_served_html.__doc__, "…with its gate")
 
     def test_a_failure_judged_after_a_flip_to_the_desktop_re_promotes_there_and_the_phone_armed_detectors_are_inert(self):
         # Family one (review round 3): the layout is read when the failure is JUDGED, not when the promotion was armed, across an actual media-query
@@ -2096,7 +2197,8 @@ class LazyPanes(unittest.TestCase):
         self.assertEqual(o["mirrorB"], dict(rb, mobile=True), "the mirror: a flip there and back over the loaded pane parks nothing (nothing recorded)")
         js = km._LANDING_MOBILE_JS
         self.assertIn("function failed(k,via,s){var f=F[k];if(!f)return;var mob=mobileOn();", js, "the layout is read at fire time, docState's answer passed in (review round 5)")
-        self.assertIn("f.setAttribute(mob?LAZY:'data-src',URLS[k]);", js)
+        self.assertIn("var park=(mob||bound)?LAZY:'data-src';", js, "the url waits under the phone's attribute on the phone and at the desktop's bound, and under data-src for the desktop's first failure alone (review round 5 verify: the controller's reconcile reads data-src on every gear save)")
+        self.assertIn("f.setAttribute(park,URLS[k]);", js)
         self.assertIn("var hold=!mob&&s==='blank',again=!mob&&!hold&&EPI[k]<2,bound=!mob&&!hold&&!again,keep=hold||(bound&&s!=='other');", js, "the desktop's table (review round 5): a fetch still in flight at the backstop is held; else one re-promotion per episode, and the bound keeps the src for the browser's own error page alone")
         self.assertIn("DEAD[k]=(hold||bound)?TOK[k]:0;", js, "the hold and the bound are recorded under the promotion's token")
         self.assertIn("if(DEAD[lk3]&&DEAD[lk3]===TOK[lk3]){", js, "lazyFlip's phone branch parks the recorded pane")
@@ -2148,7 +2250,7 @@ class LazyPanes(unittest.TestCase):
         tt = o["tabTap"]
         self.assertEqual((tt["src"], tt["lazy"], tt["div"], tt["sets"], tt["listeners"], tt["backstops"]), ("/fleet", None, ["loading"], 2, pv["listeners"] + 1, pv["backstops"] + 1), "the tab tap is the promotion road, with its own listener and backstop")
         js = km._LANDING_MOBILE_JS
-        self.assertIn("if(URLS[k]){f.setAttribute(mob?LAZY:'data-src',URLS[k]);f.removeAttribute(mob?'data-src':LAZY);}", js, "failed() re-parks under this layout's attribute and drops the other's")
+        self.assertIn("if(URLS[k]){f.setAttribute(park,URLS[k]);f.removeAttribute(park===LAZY?'data-src':LAZY);}", js, "failed() re-parks under the attribute its next promotion reads and drops the other")
 
     def test_a_flip_back_while_the_desktops_promotion_is_in_flight_paints_the_loader_for_the_shown_tab(self):
         # review round 4 verify: the grid's promote() paints no loading class, lazyFlip's phone branch left a frame with a src alone, and the
@@ -2174,20 +2276,25 @@ class LazyPanes(unittest.TestCase):
         # kernel's own 403 line, its body naming the serve-token file's path; round 4's bound kept the src whatever the answer, so on the
         # desktop that body stood as the pane with no failed state and no retry short of a flip or a reload. Now the bound drops a document
         # the kernel sent (src removed, the url under data-src, the frame navigates to about:blank) and keeps the browser's own error page;
-        # both are recorded, and the flip back parks the pane with the failed state, from which the tab tap recovers it.
+        # both are recorded, and the flip back parks the pane with the failed state, from which the tab tap recovers it. The dropped
+        # document's url waits under data-lazy-src (the round-5 verify): under data-src the controller's reconcile re-promoted it on every
+        # gear save with no token and no backstop, and the bound promotion's stale listener judged and dropped it again (one re-fetch and
+        # one row per save); a gear save after the bound now moves nothing.
         o = _lazy(self.seed, _LAZY_DESKTOP_OTHER_BOUND_DRIVER)
         fl = o["flipped"]
         self.assertEqual((fl["fleet"]["mobile"], fl["fleet"]["src"], fl["fleet"]["dataSrc"], fl["fleet"]["sets"], fl["timeline"]["src"], fl["timeline"]["sets"]), (False, "/fleet", "/fleet", 1, "/timeline", 1), "the flip promoted both")
         fo = o["firstOther"]
         self.assertEqual((fo["src"], fo["lazy"], fo["dataSrc"], fo["div"], fo["sets"], fo["rows"]), ("/fleet", None, "/fleet", [], 2, [{"pane": "fleet", "via": "load", "n": 1}]), "the kernel's denial at the first desktop failure: re-parked under data-src and promoted again, as before")
         ob = o["desktopOtherBound"]
-        self.assertEqual((ob["src"], ob["dataSrc"]), (None, "/fleet"), "the bound over a document the kernel sent: the src is DROPPED (the frame navigates to about:blank; before: the 403 body stood on the screen) and the url waits under data-src")
-        self.assertEqual((ob["lazy"], ob["div"], ob["sets"], ob["bodyFailed"], ob["bodyLoading"], ob["msg"]), (None, [], 2, False, False, ""), "no third promotion, no failed class on the desktop (nothing paints it there), no loader")
+        self.assertEqual((ob["src"], ob["lazy"], ob["dataSrc"]), (None, "/fleet", None), "the bound over a document the kernel sent: the src is DROPPED (the frame navigates to about:blank; before: the 403 body stood on the screen) and the url waits under data-lazy-src, the attribute the controller's reconcile does not read (round 5's first cut parked it under data-src)")
+        self.assertEqual((ob["div"], ob["sets"], ob["bodyFailed"], ob["bodyLoading"], ob["msg"]), ([], 2, False, False, ""), "no third promotion, no failed class on the desktop (nothing paints it there), no loader")
         self.assertEqual(ob["rows"], [{"pane": "fleet", "via": "load", "n": 1}, {"pane": "fleet", "via": "load", "n": 2}], "both failures counted and said")
         self.assertEqual(ob["unmarked"], [], "nothing shown as served")
         nb = o["desktopNoneBound"]
         self.assertEqual((nb["src"], nb["dataSrc"], nb["div"], nb["sets"], nb["rows"][-1]), ("/timeline", "/timeline", [], 2, {"pane": "timeline", "via": "load", "n": 2}), "the bound over the browser's own error page keeps the src, as a desktop failure always showed (the page is the browser's, and names nothing of the kernel's)")
-        self.assertEqual(o["afterBackstops"], {"fleet": ob, "timeline": nb}, "every backstop: the verdicts are in, nothing moves")
+        ob_now = dict(ob, backstops=nb["backstops"])   # the Outline's state as it stands after the Sessions band's bound (the backstop count is the page's: the band's re-promotion armed one more)
+        self.assertEqual(o["afterSave"], {"fleet": ob_now, "timeline": nb}, "a gear save on the desktop (the romp:settings storage event): the controller's reconcile finds no data-src on the bound pane and sets no src, arms no listener and no backstop, files no row (parked under data-src it re-fetched the denied document with no token and no backstop, and the stale listener judged and dropped it again: a third set, a third row)")
+        self.assertEqual(o["afterBackstops"], {"fleet": ob_now, "timeline": nb}, "every backstop: the verdicts are in, nothing moves")
         bk = o["back"]
         self.assertEqual((bk["fleet"]["mobile"], bk["fleet"]["src"], bk["fleet"]["lazy"], bk["fleet"]["dataSrc"], bk["fleet"]["div"], bk["fleet"]["sets"]), (True, None, "/fleet", None, ["failed"], 2), "the flip back parks the src-less recorded pane under data-lazy-src WITH the failed state (the DEAD branch ahead of the unloaded parking, which would have parked it with no state)")
         self.assertEqual((bk["timeline"]["src"], bk["timeline"]["lazy"], bk["timeline"]["div"]), (None, "/timeline", ["failed"]), "…and the kept-src pane the same way, as before")
@@ -2232,7 +2339,7 @@ class LazyPanes(unittest.TestCase):
         self.assertEqual((h["fleet"]["mobile"], h["fleet"]["src"], h["fleet"]["dataSrc"], h["fleet"]["sets"], h["fleet"]["rows"]), (False, "/fleet", "/fleet", 1, [{"pane": "fleet", "via": "backstop", "n": 1}]), "held at the backstop: src kept, one set, the row")
         self.assertEqual((h["timeline"]["src"], h["timeline"]["sets"], h["timeline"]["rows"]), ("/timeline", 1, [{"pane": "timeline", "via": "backstop", "n": 1}]), "the second held pane the same")
         lo = o["lateOther"]
-        self.assertEqual((lo["src"], lo["dataSrc"], lo["div"], lo["sets"], lo["rows"][-1]), (None, "/timeline", [], 1, {"pane": "timeline", "via": "load", "n": 2}), "the held fetch lands as the kernel's denial: the episode's second failure is the bound, the document dropped from the frame, no re-promotion")
+        self.assertEqual((lo["src"], lo["lazy"], lo["dataSrc"], lo["div"], lo["sets"], lo["rows"][-1]), (None, "/timeline", None, [], 1, {"pane": "timeline", "via": "load", "n": 2}), "the held fetch lands as the kernel's denial: the episode's second failure is the bound, the document dropped from the frame and its url under data-lazy-src, no re-promotion")
         bt = o["backTap"]
         self.assertEqual((bt["mobile"], bt["tab"], bt["src"], bt["lazy"], bt["dataSrc"], bt["div"], bt["sets"], bt["bodyLoading"], bt["bodyFailed"]), (True, "fleet", "/fleet", None, None, ["loading"], 2, True, False), "the rotation back parked the held pane under data-lazy-src (its src dropped), and the tab tap promoted it again with the loader painted")
         rc = o["recovered"]

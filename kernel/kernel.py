@@ -54337,18 +54337,26 @@ def _resolve_reconnect(c, chat_list):
             # [fork] review round 5 (2026-09-20, correctness-1: the round-4b ruling's own regression). The preference is for the client
             # that will SHOW the parked session, and the kernel cannot name it on a split chat page (two or more columns under one wid:
             # the consume focuses the first chat client of the wid, and the page hands a session another column holds to that column,
-            # render.ts's focus gate), so it applies to a window with ONE chat column: every chat client of this wid, this one included,
-            # reports the same `col` (the column each declares at its handshake, _ws). Keyed on the column and not on a count of same-wid
-            # clients, because the boot road's normal state is a stale twin of the SAME column (the previous page's socket, its wid kept
-            # by sessionStorage, up to WS_DEAD_S from its reaping): a count read it as a second column and dropped the preference on the
-            # road the clause exists for (executed by the round-5 refuter). Read off a lock-free copy of _clients, no _clients_lock under
-            # this slot lock (a new nesting would need its order stated; a stale read here chooses between the preference and the
-            # parent's whole-hint push, fail-safe either way). `not fresh`: the skeleton client's pre-ready pop consumes nothing (the
-            # ready arm re-resolves and consumes), so the preference waits for the pop that does.
+            # render.ts's focus gate), so it applies to a window with ONE chat column. Two reads say how many the window has, and both
+            # must say one. The DECLARATION (the round-5 verify): the shell posts its chat column count with the tap (_LANDING_REVEAL_JS
+            # cols, the /reveal body), kept on the park as `cols`, so a split page is known before its columns have all redialed; a park
+            # with no declaration (_send_focus_to_view's, a shell of a build before the field) leaves this read open. The SOCKETS: every
+            # chat client of this wid, this one included, reports the same `col` (the column each declares at its handshake, _ws), the
+            # belt for a column split off after the tap. Keyed on the column and not on a count of same-wid clients, because the boot
+            # road's normal state is a stale twin of the SAME column (the previous page's socket, its wid kept by sessionStorage, up to
+            # WS_DEAD_S from its reaping): a count read it as a second column and dropped the preference on the road the clause exists
+            # for (executed by the round-5 refuter). Read off a lock-free copy of _clients, no _clients_lock under this slot lock (a new
+            # nesting would need its order stated; a stale read here chooses between the preference and the parent's whole-hint push,
+            # fail-safe either way). RESIDUAL, disclosed in the PR body: for a park with NO declaration the sockets read is the only one,
+            # and on a split page whose columns redial one after another (both reaped by the ping timeout, or a kernel restart) the first
+            # column's resolve sees one column and takes the preference: its own shown tab is served as a skeleton (a loader until it
+            # asks) and the parked session's full is spent on a column that may not show it. `not fresh`: the skeleton client's pre-ready
+            # pop consumes nothing (the ready arm re-resolves and consumes), so the preference waits for the pop that does.
+            _pc = (_pr or {}).get("cols")
             _col = str(c.get("col") or "")
             _cols = {str(x.get("col") or "") for x in list(_clients) if x.get("app") == "chat" and str(x.get("wid") or "") == _pk}
             _cols.add(_col)
-            if _ps and len(_cols) <= 1 and _ps != str(act) and any(s.get("sid") == _ps for s in chat_list):
+            if _ps and (_pc is None or _pc == 1) and len(_cols) <= 1 and _ps != str(act) and any(s.get("sid") == _ps for s in chat_list):
                 act = _ps
         held = c.get("echat") or {}
         if not act:
@@ -62859,10 +62867,15 @@ def _reveal_msg(sid):
     return {"type": "focus", "id": sid, "live": True}
 
 
-def _reveal_request(sid, wid, boot=False, via=""):
+def _reveal_request(sid, wid, boot=False, via="", cols=None):
     """POST /reveal: aim the focus at the dashboard whose wid asked. Its chat pane already
     connected → deliver now; not yet (the cold-start norm — the shell's fetch beats the iframe's
     WS) → park for _consume_pending_reveal. Returns whether it was delivered immediately.
+    `cols` ([fork] review round 5 verify, correctness-1's residual): the window's chat column count the shell
+    declared with the tap, kept on the park (`cols`) for _resolve_reconnect's parked-reveal preference, which
+    applies to a one-column window and cannot read that off the sockets registered at the first column's
+    resolve; None declares nothing (a shell of a build before the field; _send_focus_to_view's park has no
+    declaration either) and the entry keeps its two-key shape.
 
     Two ways a same-wid chat socket the kernel holds is NOT the pane this tap is for (the user
     2026-09-06, whose tap on the phone did nothing — the phone is where sockets die without a
@@ -62925,13 +62938,16 @@ def _reveal_request(sid, wid, boot=False, via=""):
                 sent.append(c)
         except Exception:
             pass
+    entry = {"sid": str(sid), "wid": str(wid or "")}
+    if cols is not None:
+        entry["cols"] = int(cols)
     if not delivered:
-        _PENDING_REVEAL[str(wid or "")] = {"sid": str(sid), "wid": str(wid or "")}
+        _PENDING_REVEAL[str(wid or "")] = entry
     elif sent:
-        _PENDING_REVEAL[str(wid or "")] = {"sid": str(sid), "wid": str(wid or ""), "sent": sent}
+        _PENDING_REVEAL[str(wid or "")] = dict(entry, sent=sent)
     outcome = ("delivered, copy parked (%s)" % ("booting page" if boot else "target unproven") if sent else "delivered") if delivered else "parked"
-    print("[reveal] %s sid=%s wid=%s%s: %s" % (via or "shell", str(sid)[:8], str(wid or "")[:8],
-                                             " boot" if boot else "", outcome), file=sys.stderr)
+    print("[reveal] %s sid=%s wid=%s%s: %s%s" % (via or "shell", str(sid)[:8], str(wid or "")[:8],
+                                               " boot" if boot else "", outcome, " cols=%d" % cols if cols is not None else ""), file=sys.stderr)   # cols after the outcome: the trail regexes of the unit and served legs read `wid=…: parked` and `boot: parked`
     return delivered
 
 
@@ -68513,8 +68529,12 @@ function filesCtlM(){try{var st=JSON.parse(localStorage.getItem('romp:settings')
 // healthy slow load is not torn down and lands through the load listener as ever, loaded() ending the episode (round 4 tore it down at
 // 30 s, re-fetched it, and a rotation to the desktop armed one such deadline per parked pane in the same tick). Otherwise the episode's
 // first failure re-parks under data-src and promotes again, and the second is the bound: `other`, a document the kernel sent (its 403
-// line, whose body names the serve-token file's path; its 500 page), is DROPPED from the frame (the src removed, so the frame navigates
-// to about:blank, the url under data-src) and `none`, the browser's own error page, keeps its src as a desktop failure always showed;
+// line, whose body names the serve-token file's path; its 500 page), is dropped from the frame (the src removed, so the frame navigates
+// to about:blank; the answer is on show for the frames between its commit and its load event, the listener's read, then dropped: review
+// round 5 verify), its url parked under data-lazy-src, the attribute the controller's reconcile does not read (parked under data-src, a
+// gear save set the src again with no token and no backstop and the bound promotion's stale listener judged and dropped it once more:
+// one re-fetch and one pane-load-failed row per save, review round 5 verify), so on the desktop nothing promotes it again short of a
+// flip to the phone or a reload; and `none`, the browser's own error page, keeps its src as a desktop failure always showed;
 // both record the promotion's token in DEAD, so the promote-fail loop is closed at two and the flip back to the phone (lazyFlip's phone
 // branch) parks that pane under data-lazy-src with the failed state, where the three retry roads promote it again. Round 4's bound kept
 // the src whatever the answer, which left the kernel's 403 body on the desktop's screen with no failed state and no retry: round 3's
@@ -68548,7 +68568,8 @@ function docState(f){try{var d=f.contentDocument;if(!d)return 'none';var u=d.URL
 function unmarked(k,via){loaded(k);try{shellDiag('pane-load-unmarked',{pane:k,via:via});}catch(e){}}   // a 200 the kernel served with no pane shim (its "needs the ui/ modules" fallback page): shown as served, the loading state ended and the src kept, and said once (review round 3; a 200 alone since review round 4, the stamp)
 function failed(k,via,s){var f=F[k];if(!f)return;var mob=mobileOn();PEND[k]=0;FAILS[k]=(FAILS[k]||0)+1;EPI[k]=(EPI[k]||0)+1;   // the verdict is in, s docState's answer at it (review round 5); FAILS: the page-life count the row carries (docs/read-side.md); EPI: this episode's, for the copy and the desktop's bound
 var hold=!mob&&s==='blank',again=!mob&&!hold&&EPI[k]<2,bound=!mob&&!hold&&!again,keep=hold||(bound&&s!=='other');   // the desktop's table (review round 5; the comment above): a fetch still in flight at the backstop is held (the src kept, nothing re-fetched); else the episode's first failure is re-parked and promoted again below, and the second is the bound, which drops a document the kernel sent (`other`) from the frame and keeps the browser's own error page (`none`); the hold and the bound record DEAD for the flip back
-if(!keep){try{f.removeAttribute('src');}catch(e){}try{if(URLS[k]){f.setAttribute(mob?LAZY:'data-src',URLS[k]);f.removeAttribute(mob?'data-src':LAZY);}}catch(e){}}   // re-parked under the attribute THIS layout reads, and the other layout's dropped (review round 4 verify: a pane the desktop promoted and the phone judged held data-src beside data-lazy-src, and the controller's reconcile set its src from data-src on the next gear save with no token, listener or backstop armed; so a feed parked by a failure is re-fetched by its Feed tab tap, never off screen by a gear save): promote()'s src guard reads nothing, the url is back where a first tap (the phone) or the grid's promotion below (the desktop) finds it, and no other writer promotes it
+var park=(mob||bound)?LAZY:'data-src';   // the attribute the url waits under: the phone's, and the desktop BOUND's too (review round 5 verify: the controller's reconcile copies data-src to src on every gear save, so a bound pane parked there was re-fetched with no token and no backstop and judged by the bound promotion's stale listener, one re-fetch and one pane-load-failed row per save); the desktop's first failure keeps data-src, which the promotion below reads at once
+if(!keep){try{f.removeAttribute('src');}catch(e){}try{if(URLS[k]){f.setAttribute(park,URLS[k]);f.removeAttribute(park===LAZY?'data-src':LAZY);}}catch(e){}}   // re-parked under the attribute its next promotion reads, and the other dropped (review round 4 verify: a pane the desktop promoted and the phone judged held data-src beside data-lazy-src, and the controller's reconcile set its src from data-src on the next gear save with no token, listener or backstop armed; so a feed parked by a failure is re-fetched by its Feed tab tap, never off screen by a gear save): promote()'s src guard reads nothing, the url is back where a first tap (the phone) or the grid's promotion below (the desktop's first failure) finds it, and no other writer promotes it (at the desktop's bound the reconcile reads data-src and finds none)
 DEAD[k]=(hold||bound)?TOK[k]:0;
 try{var d=paneDiv(f);if(d){d.classList.remove('loading');if(mob)d.classList.add('failed');else d.classList.remove('failed');}}catch(e){}   // the failed state is the phone's; the desktop path never leaves one for a later rotation to paint (the flip back paints it for a DEAD pane, lazyFlip)
 try{shellDiag('pane-load-failed',{pane:k,via:via,n:FAILS[k]});}catch(e){}paintLoading();
@@ -68962,9 +68983,20 @@ feedReady=true;if(pendingCard){var c=pendingCard;pendingCard=null;revealCard(c.i
 // the session the user is looking at: the chat pane's active tab, read off the same-origin iframe's DOM — the read
 // the bell's test push uses (one truth, no second channel); '' before the pane has tabs, or without a pane
 function activeSid(){try{var f=document.getElementById('f-chat'),d=f&&f.contentDocument,t=d&&d.querySelector('#tabs .tab.active[data-id]');return t?String(t.getAttribute('data-id')||''):'';}catch(e){return '';}}
+// [fork] review round 5 verify (2026-09-20, correctness-1's residual): the window's CHAT COLUMN COUNT rides every /reveal, so the kernel's
+// parked-reveal preference (_resolve_reconnect) reads a declaration the page made rather than the chat sockets registered so far, which
+// on a split page whose columns redial one after another are one column's at the first column's resolve, whatever the page holds.
+// Before _LANDING_SPLIT_JS parses (this script's own boot run, fromLink below) the count is what that script will build: one on the
+// phone layout (it restores nothing there), else one plus the later columns persisted under romp-chat-cols (a v2 record's entries, or
+// the v1 array of column numbers; an entry the split script would drop is counted, the safe side: a count above one declines the
+// preference). Once the split script is up its frames are the truth (window.__rompChatFrames; a bottom pane counts, it dials as a
+// column). A count this page cannot read (a throwing store) declares nothing, and the kernel reads the sockets it holds as before.
+function cols(){try{var fr=window.__rompChatFrames;if(typeof fr==='function')return fr().length||1;
+if(window.__rompMobileOn&&window.__rompMobileOn())return 1;
+var raw=JSON.parse(localStorage.getItem('romp-chat-cols')||'null');var n=Array.isArray(raw)?raw.length:((raw&&typeof raw==='object'&&raw.v===2&&Array.isArray(raw.cols))?raw.cols.length:0);return 1+n;}catch(e){return 0;}}
 function land(sid,kind,cardId,boot,via){
 boot=!!boot||!(chatUp||activeSid());   // booting, or our chat pane has not connected yet: the kernel parks for it and its ready delivers, never a same-wid socket the previous page left; via: which road the tap took, for the kernel's log line. The pane's rendered tabs (activeSid, the same-origin read above) are proof its socket was up even when its wsState message beat this listener (2026-09-09: the served shell's parser can yield to that message before this script runs, and every landing then said booting and parked for a ready that had already come)
-var body={sid:sid,wid:wid(),via:via};if(boot)body.boot=true;
+var body={sid:sid,wid:wid(),via:via};if(boot)body.boot=true;var cc=cols();if(cc>0)body.cols=cc;   // cols: the window's chat column count (above), the kernel's parked-reveal preference reads it
 if(sid)fetch('/reveal',{method:'POST',body:JSON.stringify(body)}).then(function(r){
 diag('reveal-post',{status:r.status,via:via,boot:!!boot});
 if(!r.ok)return r.text().then(function(t){throw new Error(t||('HTTP '+r.status));});},
@@ -71788,7 +71820,12 @@ def _stamp_served_html(code, body, ctype):
     eight `send_response` sites bypass it, and the rule holds over text/html 200s because none of them writes one: they are HEAD roads
     with no body, 206 ranges, the 204 preflight, the 101 upgrade, and two 200 attachments with application/octet-stream hardcoded, a
     census tests/test_pane_state_broadcast.py pins over the writers (every `send_response(` outside _send is a non-200, a bodiless
-    road, or an octet-stream attachment). A body with no <html> tag is returned as it came, unstamped, so served at a pane url it
+    road, or an octet-stream attachment). One road lies outside both censuses (the round-5 verify): _remote_ws writes the remote
+    kernel's status line and headers to the client with `down.sendall(head)` and pumps its frames, with no send_response at all; no
+    document can arrive by it (the route answers 400 text/plain without a Sec-WebSocket-Key, a header no navigation or fetch can set,
+    pinned by tests/test_kernel_remote_ws_proxy.py), and a third census in the same module classifies every raw `sendall(` and
+    `wfile.write(` in this file (this writer's, a bypassing block's, that splice's, or a WebSocket frame's), so a new raw writer of an
+    HTTP response reds it. A body with no <html> tag is returned as it came, unstamped, so served at a pane url it
     would read as a failure; the paste-the-token page at / is one today, and / is not a pane url (correctness-2, regression-1, extra6-2:
     the rule with its shape condition, the token page an example and not a list). The phone shell's docState (_LANDING_MOBILE_JS) reads it
     off a pane frame's same-origin document: one with the pane shim's marker is the pane's own; one with this stamp and no marker
@@ -73449,11 +73486,15 @@ class Handler(BaseHTTPRequestHandler):
                     via = str(body.get("via") or "")   # 'sw' | 'link' | 'ack' | 'vanish': the road the tap took, for the log line
                     if via not in _REVEAL_ROADS:       # whitelisted before it reaches the journal (_REVEAL_ROADS has the why)
                         via = "other" if via else ""
+                    # [fork] review round 5 verify (correctness-1's residual): the window's chat column count the shell declares with the
+                    # tap (_LANDING_REVEAL_JS cols), a positive int; anything else, or a shell of a build before the field, declares nothing
+                    cols = body.get("cols")
+                    cols = cols if (isinstance(cols, int) and not isinstance(cols, bool) and 0 < cols < 100) else None
                 except (ValueError, AttributeError):
                     return self._send(400, "bad json", "text/plain")
                 if not sid:
                     return self._send(400, "missing sid", "text/plain")
-                now_ = _reveal_request(sid, wid, boot=boot, via=via)
+                now_ = _reveal_request(sid, wid, boot=boot, via=via, cols=cols)
                 return self._send(200, json.dumps({"ok": True, "delivered": now_}), "application/json")
             if u.path == "/tick":
                 # Event-driven wake: the Stop / UserPromptSubmit / PostCompact hooks (and the postal drain) poke

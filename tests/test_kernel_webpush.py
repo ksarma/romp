@@ -1564,6 +1564,21 @@ class RevealRoute(unittest.TestCase):
         self.assertFalse(json.loads(body)["delivered"])
         self.assertEqual(km._PENDING_REVEAL.get("W-x"), {"sid": "SID-x", "wid": "W-x"})
 
+    def test_parks_with_the_declared_chat_column_count_and_ignores_any_other_shape(self):
+        # review round 5 verify (correctness-1's residual): the shell posts the window's chat column count with the tap and the park
+        # keeps it for _resolve_reconnect's one-column check; a shape other than a positive int (a string, zero, a boolean, a shell of
+        # a build before the field) declares nothing and the entry keeps its two-key shape
+        import contextlib, io
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            code, body = self._post("/reveal", {"sid": "SID-c", "wid": "W-c", "cols": 2})
+        self.assertEqual((code, json.loads(body)["delivered"]), (200, False))
+        self.assertEqual(km._PENDING_REVEAL.get("W-c"), {"sid": "SID-c", "wid": "W-c", "cols": 2}, "the park carries the declaration")
+        self.assertEqual([l for l in buf.getvalue().splitlines() if l.startswith("[reveal]")], ["[reveal] shell sid=SID-c wid=W-c: parked cols=2"], "the journal line records it after the outcome (the trail regexes read the outcome)")
+        for bad in ("2", 0, -1, True, 100, None, [1]):
+            self._post("/reveal", {"sid": "SID-d", "wid": "W-d", "cols": bad})
+            self.assertEqual(km._PENDING_REVEAL.get("W-d"), {"sid": "SID-d", "wid": "W-d"}, "cols %r declares nothing" % (bad,))
+
     def test_requires_token_and_sid(self):
         code, _ = self._post("/reveal", {"sid": "S"}, token=False)
         self.assertEqual(code, 403)
@@ -1959,6 +1974,13 @@ const chatFrame = { contentDocument: { querySelector: () => (activeSid ? { getAt
 global.document = { getElementById: (id) => (id === 'f-feed' ? { contentWindow: feedWin } : id === 'f-chat' ? chatFrame : null),
   addEventListener: (k, f) => { if (k === 'visibilitychange') DOC.push(f); }, visibilityState: 'visible' };
 global.sessionStorage = { getItem: (k) => (k === 'romp:wid' ? 'W-test' : null) };
+// the shell's split state and layout probe (review round 5 verify: the reveal declares the window's chat column count): ROMP_TEST_CHAT_COLS
+// is the raw romp-chat-cols record (none: one column); ROMP_TEST_MOBILE the phone layout (the head probe's answer); a driver may define
+// window.__rompChatFrames (the split script up: its frames are the truth) or make the store throw (a count the page cannot read)
+const STORE = {}; if (process.env.ROMP_TEST_CHAT_COLS) STORE['romp-chat-cols'] = process.env.ROMP_TEST_CHAT_COLS;
+let storeThrows = false;
+global.localStorage = { getItem: (k) => { if (storeThrows) throw new Error('no store'); return (k in STORE) ? STORE[k] : null; } };
+global.__rompMobileOn = () => !!process.env.ROMP_TEST_MOBILE;
 global.addEventListener = (k, f) => { if (k === 'message') WIN.push(f); if (k === 'pageshow') PAGESHOW.push(f); if (k === 'popstate') POPSTATE.push(f); if (k === 'focus') FOCUS.push(f); };
 // this page's registration and its pushManager: the subscription ROMP_TEST_ENDPOINT, or none (a device that never opted in)
 // …and its getNotifications: the screen, as DISPLAYED above; ROMP_TEST_NO_GETN: a browser without the method
@@ -2243,12 +2265,32 @@ _FEED_OFF_DRIVER = _REVEAL_LIB + r"""
 """
 
 
-def _run_reveal(driver, href=None, active=None, endpoint=None, pending=None, no_sw=False, displayed=None, no_getn=False, feed_off=False):
+# review round 5 verify (correctness-1's residual): the reveal declares the window's CHAT COLUMN COUNT with every tap, so the kernel's
+# parked-reveal preference reads a declaration rather than the chat sockets registered so far. Before the split script parses (the boot
+# link, this script's own run) the count is what that script will build from the persisted record and the layout; once it is up, its
+# frames are the truth; a store the page cannot read declares nothing.
+_COLS_DRIVER = _REVEAL_LIB + r"""
+(async () => {
+  const out = { boot: FETCHES.slice() };   // the boot link's land(), at this script's own run: before _LANDING_SPLIT_JS, so the record and the layout decide
+  await settle(); reset();
+  global.__rompChatFrames = () => [{}, {}, {}];   // the split script up, three chat frames in the document: its frames outrank the record
+  swMsg({ romp: 'notificationClick', sid: 'S70', kind: 'turn', pid: 'PID-cols-000000000001' });
+  await settle(); out.frames = FETCHES.slice(); reset();
+  delete global.__rompChatFrames; storeThrows = true;   // a count the page cannot read: nothing declared
+  swMsg({ romp: 'notificationClick', sid: 'S71', kind: 'turn', pid: 'PID-cols-000000000002' });
+  await settle(); out.throwing = FETCHES.slice();
+  console.log(JSON.stringify(out));
+})();
+"""
+
+
+def _run_reveal(driver, href=None, active=None, endpoint=None, pending=None, no_sw=False, displayed=None, no_getn=False, feed_off=False, chat_cols=None, mobile=False):
     """node runs the harness + the shell's reveal script + `driver`, booting on `href` (default: the deep link) — see the
     harness's env. `active`: the chat pane's active tab at boot; `endpoint`: this page's push subscription endpoint (none =
     a device that never opted in); `pending`: what the kernel's GET /push/pending answers at boot; `no_sw`: a browser with
     no service worker at all; `displayed`: the pids of the notifications still on the screen at boot, as
-    registration.getNotifications() lists them; `no_getn`: a browser without that method."""
+    registration.getNotifications() lists them; `no_getn`: a browser without that method; `chat_cols`: the raw
+    romp-chat-cols record this browser persisted (the split columns; none = one column); `mobile`: the phone layout."""
     import subprocess, tempfile as _tf
     env = dict(os.environ)
     if endpoint:
@@ -2267,6 +2309,10 @@ def _run_reveal(driver, href=None, active=None, endpoint=None, pending=None, no_
         env["ROMP_TEST_NO_SW"] = "1"
     if feed_off:
         env["ROMP_TEST_FEED_OFF"] = "1"
+    if chat_cols is not None:
+        env["ROMP_TEST_CHAT_COLS"] = chat_cols
+    if mobile:
+        env["ROMP_TEST_MOBILE"] = "1"
     with _tf.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
         f.write(_REVEAL_HARNESS + km._LANDING_REVEAL_JS + driver)
         path = f.name
@@ -2292,7 +2338,7 @@ class LandingRevealExecutes(unittest.TestCase):
         b = self.out["boot"]
         # boot:true — this page is booting, so its own chat pane is not connected yet; the kernel parks for it rather
         # than aiming at a same-wid socket the previous page left behind. The link's pid settles the kernel's row
-        self.assertEqual(b["fetches"], [["/reveal", {"sid": "S1", "wid": "W-test", "via": "link", "boot": True}], ["/push/landed", {"pid": "PID-link-0000000001"}]])
+        self.assertEqual(b["fetches"], [["/reveal", {"sid": "S1", "wid": "W-test", "via": "link", "boot": True, "cols": 1}], ["/push/landed", {"pid": "PID-link-0000000001"}]])
         self.assertEqual(b["replaced"], ["/?keep=1#frag"], "only OUR params go; a reload must not replay the jump")
         self.assertEqual(b["diag"], [["deeplink", {"via": "boot", "hasSid": True, "hasCard": True, "hasPid": True, "dup": False, "controlled": True}]])
         self.assertIn(["reveal-post", {"status": 200, "via": "link", "boot": True}], b["diagAfter"])
@@ -2300,7 +2346,7 @@ class LandingRevealExecutes(unittest.TestCase):
         self.assertIn(["tap-pending", {"via": "boot", "sub": False, "rows": 0}], b["diagAfter"], "…and the boot says so")
         # a browser with no service worker at all still lands the link
         n = self.no_sw["boot"]
-        self.assertEqual(n["fetches"][0], ["/reveal", {"sid": "S1", "wid": "W-test", "via": "link", "boot": True}])
+        self.assertEqual(n["fetches"][0], ["/reveal", {"sid": "S1", "wid": "W-test", "via": "link", "boot": True, "cols": 1}])
         self.assertEqual(_rows(n, "deeplink")[0]["controlled"], False)
 
     def test_the_card_waits_for_the_feeds_own_ready(self):
@@ -2317,7 +2363,7 @@ class LandingRevealExecutes(unittest.TestCase):
 
     def test_a_live_tap_routes_the_same_way_and_settles_its_row(self):
         live = self.out["live"]
-        self.assertEqual(live["fetches"], [["/reveal", {"sid": "S2", "wid": "W-test", "via": "sw"}], ["/push/landed", {"pid": "PID-live-0000000001"}]])
+        self.assertEqual(live["fetches"], [["/reveal", {"sid": "S2", "wid": "W-test", "via": "sw", "cols": 1}], ["/push/landed", {"pid": "PID-live-0000000001"}]])
         self.assertEqual(live["posted"], [{"romp": "revealCard", "itemId": "S2:g4", "sid": "S2", "gesture": True}])
         self.assertEqual(live["diag"], [["sw-message", {"shape": "notificationClick", "hasSid": True, "kind": "card", "dup": False, "sw": {"clients": 3, "tops": 1, "road": "focus", "vis": "hidden"}}],
                                         ["reveal-post", {"status": 200, "via": "sw", "boot": False}]])
@@ -2328,13 +2374,13 @@ class LandingRevealExecutes(unittest.TestCase):
             self.assertNotIn("sid", data, "structure only: the row never carries the session id")
 
     def test_a_turn_focuses_without_a_card_and_a_sidless_test_lands_nowhere(self):
-        self.assertEqual(self.out["turn"]["fetches"], [["/reveal", {"sid": "S3", "wid": "W-test", "via": "sw"}]], "no pid: lands, nothing to settle")
+        self.assertEqual(self.out["turn"]["fetches"], [["/reveal", {"sid": "S3", "wid": "W-test", "via": "sw", "cols": 1}]], "no pid: lands, nothing to settle")
         self.assertEqual(self.out["turn"]["posted"], [])
         self.assertEqual((self.out["test"]["fetches"], self.out["test"]["posted"]), ([], []))
         self.assertEqual(_rows(self.out["test"], "sw-message"), [{"shape": "notificationClick", "hasSid": False, "kind": "test", "dup": False, "sw": {"clients": 1, "tops": 1, "road": "focus", "vis": ""}}],
                          "a sid-less tap: the row says so, and no /reveal follows")
         # the user 2026-09-06: ANY sid lands, whatever the kind; only a card adds the card scroll
-        self.assertEqual(self.out["testSid"]["fetches"], [["/reveal", {"sid": "S5", "wid": "W-test", "via": "sw"}], ["/push/landed", {"pid": "PID-test-0000000005"}]])
+        self.assertEqual(self.out["testSid"]["fetches"], [["/reveal", {"sid": "S5", "wid": "W-test", "via": "sw", "cols": 1}], ["/push/landed", {"pid": "PID-test-0000000005"}]])
         self.assertEqual(self.out["testSid"]["posted"], [])
 
     def test_an_unknown_message_shape_is_not_a_tap(self):
@@ -2352,10 +2398,10 @@ class LandingRevealExecutes(unittest.TestCase):
         # so the kernel parks and the pane's ready delivers; live from then on, latched (a later drop must not re-arm a
         # park nothing would consume)
         e = self.out["earlySw"]
-        self.assertEqual(e["fetches"][0], ["/reveal", {"sid": "S0", "wid": "W-test", "via": "sw", "boot": True}])
-        self.assertEqual(self.out["earlySwFeedUp"]["fetches"][0], ["/reveal", {"sid": "S0", "wid": "W-test", "via": "sw", "boot": True}], "another pane's socket is not the chat pane's")
+        self.assertEqual(e["fetches"][0], ["/reveal", {"sid": "S0", "wid": "W-test", "via": "sw", "boot": True, "cols": 1}])
+        self.assertEqual(self.out["earlySwFeedUp"]["fetches"][0], ["/reveal", {"sid": "S0", "wid": "W-test", "via": "sw", "boot": True, "cols": 1}], "another pane's socket is not the chat pane's")
         self.assertNotIn("boot", self.out["live"]["fetches"][0][1], "once the chat pane is up, a tap is delivered live")
-        self.assertEqual(self.out["afterDrop"]["fetches"][0], ["/reveal", {"sid": "S30", "wid": "W-test", "via": "sw"}], "a later drop does not re-arm the flag")
+        self.assertEqual(self.out["afterDrop"]["fetches"][0], ["/reveal", {"sid": "S30", "wid": "W-test", "via": "sw", "cols": 1}], "a later drop does not re-arm the flag")
 
 
 class LandingRevealWithTheFeedPaneOffHere(unittest.TestCase):
@@ -2368,13 +2414,13 @@ class LandingRevealWithTheFeedPaneOffHere(unittest.TestCase):
 
     def test_a_cards_deep_link_opens_the_session_and_latches_no_card_for_a_feed_that_is_not_here(self):
         b = self.out["boot"]
-        self.assertEqual(b["fetches"][0], ["/reveal", {"sid": "S1", "wid": "W-test", "via": "link", "boot": True}], "the session lands in the chat as ever")
+        self.assertEqual(b["fetches"][0], ["/reveal", {"sid": "S1", "wid": "W-test", "via": "link", "boot": True, "cols": 1}], "the session lands in the chat as ever")
         self.assertEqual(b["postedAtBoot"], 0)
         self.assertEqual(b["postedAfterFeedReady"], [], "no card was latched: a feed's ready has nothing to flush")
 
     def test_a_live_card_tap_lands_the_session_and_posts_no_card(self):
         live = self.out["live"]
-        self.assertEqual(live["fetches"], [["/reveal", {"sid": "S2", "wid": "W-test", "via": "sw"}], ["/push/landed", {"pid": "PID-live-0000000001"}]])
+        self.assertEqual(live["fetches"], [["/reveal", {"sid": "S2", "wid": "W-test", "via": "sw", "cols": 1}], ["/push/landed", {"pid": "PID-live-0000000001"}]])
         self.assertEqual(live["posted"], [], "no revealCard into a pane that is not here")
         self.assertEqual(live["notes"], [], "and nothing to complain about: the landing succeeded")
 
@@ -2403,7 +2449,7 @@ class LandingRevealReadsTheLinkLater(unittest.TestCase):
 
     def test_a_pageshow_with_the_params_lands_the_link_live_and_strips_it(self):
         s = self.out["pageshow"]
-        self.assertEqual(s["fetches"], [["/reveal", {"sid": "S40", "wid": "W-test", "via": "link"}], ["/push/landed", {"pid": "PID-show-0000000040"}]],
+        self.assertEqual(s["fetches"], [["/reveal", {"sid": "S40", "wid": "W-test", "via": "link", "cols": 1}], ["/push/landed", {"pid": "PID-show-0000000040"}]],
                          "landed by the link road on a LIVE page: no boot flag; the row is settled")
         self.assertEqual(s["posted"], [{"romp": "revealCard", "itemId": "S40:g2", "sid": "S40", "gesture": True}], "a card kind scrolls the feed too")
         self.assertEqual(_rows(s, "deeplink"), [{"via": "pageshow", "hasSid": True, "hasCard": True, "hasPid": True, "dup": False, "controlled": True}])
@@ -2413,7 +2459,7 @@ class LandingRevealReadsTheLinkLater(unittest.TestCase):
 
     def test_a_popstate_with_the_params_lands_too_and_a_history_walk_back_onto_it_is_a_dup(self):
         p = self.out["popstate"]
-        self.assertEqual(p["fetches"], [["/reveal", {"sid": "S41", "wid": "W-test", "via": "link"}], ["/push/landed", {"pid": "PID-pop-00000000041"}]])
+        self.assertEqual(p["fetches"], [["/reveal", {"sid": "S41", "wid": "W-test", "via": "link", "cols": 1}], ["/push/landed", {"pid": "PID-pop-00000000041"}]])
         self.assertEqual(_rows(p, "deeplink"), [{"via": "popstate", "hasSid": True, "hasCard": False, "hasPid": True, "dup": False, "controlled": True}])
         d = self.out["popstateDup"]
         self.assertEqual(d["fetches"], [], "the same pid again: nothing lands twice")
@@ -2422,7 +2468,7 @@ class LandingRevealReadsTheLinkLater(unittest.TestCase):
 
     def test_a_crafted_card_id_and_a_malformed_pid_are_dropped_before_they_land(self):
         c = self.out["crafted"]
-        self.assertEqual(c["fetches"], [["/reveal", {"sid": "S42", "wid": "W-test", "via": "link"}]], "the session lands; the bad card id and pid do not ride")
+        self.assertEqual(c["fetches"], [["/reveal", {"sid": "S42", "wid": "W-test", "via": "link", "cols": 1}]], "the session lands; the bad card id and pid do not ride")
         self.assertEqual(c["posted"], [])
         self.assertEqual(_rows(c, "deeplink"), [{"via": "pageshow", "hasSid": True, "hasCard": False, "hasPid": False, "dup": False, "controlled": True}])
 
@@ -2469,7 +2515,7 @@ class LandingRevealAsksTheLedger(unittest.TestCase):
 
     def test_a_clicked_push_lands_by_the_ack_road_once_and_settles_the_row(self):
         c = self.out["clicked"]
-        self.assertEqual(c["fetches"], [["/reveal", {"sid": "S50", "wid": "W-test", "via": "ack"}], ["/push/landed", {"pid": "PID-clicked-000001"}]],
+        self.assertEqual(c["fetches"], [["/reveal", {"sid": "S50", "wid": "W-test", "via": "ack", "cols": 1}], ["/push/landed", {"pid": "PID-clicked-000001"}]],
                          "the user tapped: a jump by the same land() path, the road named; then the kernel's row is landed")
         self.assertEqual(c["posted"], [{"romp": "revealCard", "itemId": "S50:g1", "sid": "S50", "gesture": True}], "a card kind scrolls the feed too")
         self.assertEqual(_rows(c, "tap-pending"), [{"via": "visible", "sub": True, "rows": 1, "getNotifications": True, "displayed": 0, "vanished": 0}])
@@ -2479,7 +2525,7 @@ class LandingRevealAsksTheLedger(unittest.TestCase):
         self.assertEqual(a["fetches"], [], "the same pid again is a dup: no second /reveal, no second settle")
         self.assertEqual(_rows(a, "tap-pending-land"), [{"sid8": "S50", "ageS": 4, "dup": True}])
         t = self.out["two"]
-        self.assertEqual([f for f in t["fetches"] if f[0] == "/reveal"], [["/reveal", {"sid": "S52", "wid": "W-test", "via": "ack"}], ["/reveal", {"sid": "S51", "wid": "W-test", "via": "ack"}]],
+        self.assertEqual([f for f in t["fetches"] if f[0] == "/reveal"], [["/reveal", {"sid": "S52", "wid": "W-test", "via": "ack", "cols": 1}], ["/reveal", {"sid": "S51", "wid": "W-test", "via": "ack", "cols": 1}]],
                          "two taps the worker saw: both land, newest first (the kernel keeps the latest reveal)")
         self.assertEqual(sorted(f[1]["pid"] for f in t["fetches"] if f[0] == "/push/landed"), ["PID-two-00000000001", "PID-two-00000000002"])
 
@@ -2487,7 +2533,7 @@ class LandingRevealAsksTheLedger(unittest.TestCase):
         # the one tap a live iOS app leaves for the page to see: the notification the worker showed is no longer on the screen
         v = self.out["oneVanished"]
         self.assertEqual(v["getn"], 1, "the screen is read once per check")
-        self.assertEqual(v["fetches"], [["/reveal", {"sid": "S41", "wid": "W-test", "via": "vanish"}], ["/push/landed", {"pid": "PID-shown-00000001"}]],
+        self.assertEqual(v["fetches"], [["/reveal", {"sid": "S41", "wid": "W-test", "via": "vanish", "cols": 1}], ["/push/landed", {"pid": "PID-shown-00000001"}]],
                          "the one gone lands by the same land() path, the road named; the displayed one is untouched")
         self.assertEqual(v["posted"], [{"romp": "revealCard", "itemId": "S41:g3", "sid": "S41", "gesture": True}], "a card kind scrolls the feed too")
         self.assertEqual(_rows(v, "tap-pending"), [{"via": "visible", "sub": True, "rows": 2, "getNotifications": True, "displayed": 1, "vanished": 1}])
@@ -2517,7 +2563,7 @@ class LandingRevealAsksTheLedger(unittest.TestCase):
     def test_a_superseded_row_is_settled_as_such_and_never_read_as_a_tap(self):
         s = self.out["superseded"]
         self.assertEqual(s["fetches"], [["/push/superseded", {"pid": "PID-older-00000001"}],
-                                        ["/reveal", {"sid": "S51", "wid": "W-test", "via": "vanish"}], ["/push/landed", {"pid": "PID-other-00000001"}]],
+                                        ["/reveal", {"sid": "S51", "wid": "W-test", "via": "vanish", "cols": 1}], ["/push/landed", {"pid": "PID-other-00000001"}]],
                          "the older row for the session whose newer notification is displayed was replaced, not tapped; the other session's gone row is the one tap")
         self.assertEqual(_rows(s, "tap-pending"), [{"via": "visible", "sub": True, "rows": 3, "getNotifications": True, "displayed": 1, "vanished": 1, "superseded": 1}])
         self.assertEqual(_rows(s, "tap-vanish-land"), [{"sid8": "S51", "ageS": 61}])
@@ -2533,31 +2579,31 @@ class LandingRevealAsksTheLedger(unittest.TestCase):
 
     def test_the_other_roads_settle_the_row_by_pid_so_the_ledger_never_lands_a_push_twice(self):
         m = self.out["msg"]
-        self.assertEqual(m["fetches"], [["/reveal", {"sid": "S54", "wid": "W-test", "via": "sw"}], ["/push/landed", {"pid": "PID-msg-0000000001"}]], "the worker's message carries the pid: landed by the message, settled")
+        self.assertEqual(m["fetches"], [["/reveal", {"sid": "S54", "wid": "W-test", "via": "sw", "cols": 1}], ["/push/landed", {"pid": "PID-msg-0000000001"}]], "the worker's message carries the pid: landed by the message, settled")
         self.assertEqual(self.out["msgThenLedger"]["fetches"], [])
         self.assertEqual(_rows(self.out["msgThenLedger"], "tap-pending-land"), [{"sid8": "S54", "ageS": 1, "dup": True}])
         l = self.link_clicked["boot"]
-        self.assertEqual(l["fetches"], [["/reveal", {"sid": self.LONG, "wid": "W-test", "via": "link", "boot": True}], ["/push/landed", {"pid": "PID-boot-000000001"}]],
+        self.assertEqual(l["fetches"], [["/reveal", {"sid": self.LONG, "wid": "W-test", "via": "link", "boot": True, "cols": 1}], ["/push/landed", {"pid": "PID-boot-000000001"}]],
                          "the link landed the same pid first: the kernel's clicked row for it is a dup")
         self.assertEqual(_rows(l, "tap-pending-land"), [{"sid8": self.LONG[:8], "ageS": 9, "dup": True}])
         self.assertNotIn(self.LONG, json.dumps(l["diag"]), "the session id is clipped to 8, never whole")
         b = self.out["clickedBesideVanished"]
-        self.assertEqual(b["fetches"], [["/reveal", {"sid": "S55", "wid": "W-test", "via": "ack"}], ["/push/landed", {"pid": "PID-both-clicked-01"}], ["/push/dropped", {"pid": "PID-both-vanish-001"}]],
+        self.assertEqual(b["fetches"], [["/reveal", {"sid": "S55", "wid": "W-test", "via": "ack", "cols": 1}], ["/push/landed", {"pid": "PID-both-clicked-01"}], ["/push/dropped", {"pid": "PID-both-vanish-001"}]],
                          "the tap the worker saw lands; what else vanished is spent, never a second landing")
         self.assertEqual(_rows(b, "tap-vanish-land"), [])
 
     def test_a_boot_lands_a_clicked_or_vanished_push_as_a_boot_and_a_deep_link_boot_outranks_the_vanish(self):
         b = self.boot_clicked["boot"]
-        self.assertEqual(b["fetches"], [["/reveal", {"sid": self.LONG, "wid": "W-test", "via": "ack", "boot": True}], ["/push/landed", {"pid": "PID-boot-000000001"}]],
+        self.assertEqual(b["fetches"], [["/reveal", {"sid": self.LONG, "wid": "W-test", "via": "ack", "boot": True, "cols": 1}], ["/push/landed", {"pid": "PID-boot-000000001"}]],
                          "a relaunch on the start URL: the kernel parks for this page's pane")
         self.assertEqual(_rows(b, "tap-pending"), [{"via": "boot", "sub": True, "rows": 1, "getNotifications": True, "displayed": 0, "vanished": 0}])
         self.assertEqual(_rows(b, "tap-pending-land"), [{"sid8": self.LONG[:8], "ageS": 9, "dup": False}])
         v = self.boot_vanished["boot"]
-        self.assertEqual(v["fetches"], [["/reveal", {"sid": self.LONG, "wid": "W-test", "via": "vanish", "boot": True}], ["/push/landed", {"pid": "PID-bootv-000000001"}]],
+        self.assertEqual(v["fetches"], [["/reveal", {"sid": self.LONG, "wid": "W-test", "via": "vanish", "boot": True, "cols": 1}], ["/push/landed", {"pid": "PID-bootv-000000001"}]],
                          "the one vanished lands as a boot too")
         self.assertEqual(_rows(v, "tap-vanish-land"), [{"sid8": self.LONG[:8], "ageS": 12}])
         lv = self.link_vanished["boot"]
-        self.assertEqual(lv["fetches"], [["/reveal", {"sid": "S1", "wid": "W-test", "via": "link", "boot": True}], ["/push/landed", {"pid": "PID-linkv-0000000001"}], ["/push/dropped", {"pid": "PID-bootv-000000001"}]],
+        self.assertEqual(lv["fetches"], [["/reveal", {"sid": "S1", "wid": "W-test", "via": "link", "boot": True, "cols": 1}], ["/push/landed", {"pid": "PID-linkv-0000000001"}], ["/push/dropped", {"pid": "PID-bootv-000000001"}]],
                          "the link is the newer word (a killed app, navigated by iOS): what else vanished is spent, never a second landing")
         self.assertEqual(_rows(lv, "tap-vanish-land"), [])
         self.assertEqual(_rows(lv, "tap-pending"), [{"via": "boot", "sub": True, "rows": 2, "getNotifications": True, "displayed": 1, "vanished": 1}])
@@ -2575,8 +2621,8 @@ class LandingRevealAsksTheLedger(unittest.TestCase):
         # 2026-09-09, the served leg of the browser test: the shell's parser yielded to the chat pane's wsState message before
         # this script existed, so every landing said booting and parked for a ready that had already come. The tabs come over
         # that very socket: an active tab in the pane's DOM is proof enough, and a landing is delivered live
-        self.assertEqual(self.tabs["noTabs"]["fetches"][0], ["/reveal", {"sid": "S60", "wid": "W-test", "via": "sw", "boot": True}], "no tabs, no message: booting")
-        self.assertEqual(self.tabs["tabs"]["fetches"][0], ["/reveal", {"sid": "S61", "wid": "W-test", "via": "sw"}], "tabs rendered: live, whatever this script heard")
+        self.assertEqual(self.tabs["noTabs"]["fetches"][0], ["/reveal", {"sid": "S60", "wid": "W-test", "via": "sw", "boot": True, "cols": 1}], "no tabs, no message: booting")
+        self.assertEqual(self.tabs["tabs"]["fetches"][0], ["/reveal", {"sid": "S61", "wid": "W-test", "via": "sw", "cols": 1}], "tabs rendered: live, whatever this script heard")
 
 
 class RailBell(unittest.TestCase):
@@ -2701,6 +2747,26 @@ class MasterBellRoute(unittest.TestCase):
         self.assertEqual(code, 400)
         self.assertFalse(km._notify_all_on(), "a refused body must not flip the master")
 
+
+
+class RevealDeclaresChatColumns(unittest.TestCase):
+    """review round 5 verify (correctness-1's residual): every /reveal body carries `cols`, the window's chat column count, so the kernel's
+    parked-reveal preference (_resolve_reconnect) can tell a one-column window from a split page before the page's columns have all
+    redialed. The count is the split script's own rule before that script parses (one on the phone layout; one plus the persisted later
+    columns of romp-chat-cols, v2 entries or the v1 array), the document's chat frames once it is up, and nothing when the store throws."""
+    URL = "http://localhost:7777/?push-reveal=S1&push-pid=PID-cols-000000000000"
+    V2 = json.dumps({"v": 2, "cols": [{"n": 2, "ids": ["S9"]}]})
+
+    def test_the_count_is_the_records_before_the_split_script_the_frames_after_it_and_nothing_when_the_store_throws(self):
+        one = _run_reveal(_COLS_DRIVER, href=self.URL)
+        self.assertEqual(one["boot"][0], ["/reveal", {"sid": "S1", "wid": "W-test", "via": "link", "boot": True, "cols": 1}], "no record persisted: one column")
+        two = _run_reveal(_COLS_DRIVER, href=self.URL, chat_cols=self.V2)
+        self.assertEqual(two["boot"][0][1]["cols"], 2, "a v2 record with one later column: two, at the boot link (before the split script has made the column)")
+        self.assertEqual(_run_reveal(_COLS_DRIVER, href=self.URL, chat_cols=json.dumps([2, 3]))["boot"][0][1]["cols"], 3, "a v1 record (column numbers): three")
+        self.assertEqual(_run_reveal(_COLS_DRIVER, href=self.URL, chat_cols=self.V2, mobile=True)["boot"][0][1]["cols"], 1, "the phone layout restores no column: one, whatever the record")
+        self.assertEqual(two["frames"], [["/reveal", {"sid": "S70", "wid": "W-test", "via": "sw", "boot": True, "cols": 3}], ["/push/landed", {"pid": "PID-cols-000000000001"}]], "the split script up: the document's chat frames are the count, over the record's two")
+        self.assertEqual(two["throwing"][0], ["/reveal", {"sid": "S71", "wid": "W-test", "via": "sw", "boot": True}], "a store that throws: nothing declared, the body as before the field")
+        self.assertIn("var cc=cols();if(cc>0)body.cols=cc;", km._LANDING_REVEAL_JS, "the declaration rides land()'s one body")
 
 if __name__ == "__main__":
     unittest.main()

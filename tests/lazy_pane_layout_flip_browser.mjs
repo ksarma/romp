@@ -22,10 +22,12 @@
 //      re-issued to the lab kernel credential-less (route.fetch with an explicit empty Cookie header, the return harness's denied mode)
 //      and the frame fulfilled with the kernel's own answer, 403, text/plain, a body naming the serve-token file's path (its STATUS is
 //      recorded; the body is never read, printed or kept). The flip to the desktop promotes the parked pane; the first denial re-parks
-//      under data-src and promotes again; the second is the bound: the src is DROPPED, the frame navigates to about:blank (nothing of the
-//      kernel's answer on show), the url waits under data-src, no third request. Round 4's bound kept the src, so that body stood on the
-//      desktop's screen with no failed state and no retry. The flip back parks it with the failed state; the Waiting tab's tap (the
-//      route passing now) loads it.
+//      under data-src and promotes again; the second is the bound: the src is DROPPED and the frame navigates to about:blank (the kernel's
+//      answer is on show for the frames between its commit and the load event that judged it, then dropped), the url waits under
+//      data-lazy-src, the attribute the controller's gear-save reconcile does not read (the Waiting pane is outside that controller's
+//      optional set, so the reconcile road is driven by the LazyPanes node case on the Outline, not here), no third request. Round 4's
+//      bound kept the src, so that body stood on the desktop's screen with no failed state and no retry. The flip back parks it with the
+//      failed state; the Waiting tab's tap (the route passing now) loads it.
 //   E  (review round 5, tests-2 with extra9-1) a healthy but SLOW desktop load through the 30 s backstop: the first request for /waiting
 //      is held cfg.slowMs (34 s, past LOAD_MS) and then continued. The flip to the desktop promotes the pane; at 30 s the backstop reads a
 //      frame never committed (`blank`) and HOLDS it: the src kept, no re-fetch (one request on the wire, one src set), one pane-load-failed
@@ -178,7 +180,7 @@ try {
     out.t.tap = now();
     out.t.flip = now();
     await page.setViewportSize({ width: 1200, height: 800 });   // the rotation to the desktop: lazyFlip promotes the parked Waiting pane
-    const bound = await until((r) => !r.mobile && r.sets >= 2 && r.src === null && r.dataSrc === "/waiting", 25000);
+    const bound = await until((r) => !r.mobile && r.sets >= 2 && r.src === null && r.lazy === "/waiting", 25000);
     out.desktopBound = { ...bound.r, ms: bound.ok ? bound.ms : -1 };
     const blank = await until((r) => r.url === "about:blank", 5000);   // the src removed: the frame navigates to about:blank (the engine's rule for a removed src)
     out.blanked = { url: blank.r && blank.r.url, ms: blank.ok ? blank.ms : -1 };
