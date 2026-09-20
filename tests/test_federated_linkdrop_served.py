@@ -672,9 +672,9 @@ class _LinkDrop(unittest.TestCase):
     wait_ms = 20000           # each point's visibles after a change (the card, the todo, the provisional row), waited for concurrently
     # The driver's waitFor caps by the mark each wait ends at: each a floor set well above the slowest wait recorded, not a
     # ratio of it (the ratios run from 2.8x to over 600x), with driver_budget_ms as the binding bound (BUDGET_JS: every wait
-    # draws on it). The spans by mark pair over every unmutated recorded drive as of the drive of 2026-09-20 at this code
-    # (`r5/lab-head2.log`; 45 drives, 27 new-bundle and 18 old-hub; `python3 waits_census.py <report.json>...` over the
-    # builder's reports outside the repo; a census over a growing record is dated by construction: the 25-drive census
+    # draws on it). The spans by mark pair over every unmutated recorded drive as of the CI-shaped drive of 2026-09-20 at the
+    # round-5 code (`r5/lab-ci2.log`, the drive after `r5/lab-head2.log`, whose own record is the 45th; 45 drives, 27
+    # new-bundle and 18 old-hub; `python3 waits_census.py <report.json>...` over the builder's reports outside the repo; a census over a growing record is dated by construction: the 25-drive census
     # quoted here before missed three bounds later drives moved, redialed2's maximum from 0.81 to 1.04 s, rowDown's minimum
     # from 4.6 to 4.3 s and closed's maximum from 0.030 to 0.27 s, so a later drive may move one again and the caps are
     # floors far above every bound, not fits): closed, drop -> closed, 0.008 to 0.27 s; rowDown, closed -> rowDown, 4.3 to
@@ -707,9 +707,10 @@ class _LinkDrop(unittest.TestCase):
     # drive whose link-up waits all resolved and showed, the reads inside the room, and reds only for a window shorter than that
     # (tests/test_federated_linkdrop_driver_bound.py pins the relation). The slowest delivery recorded is the old bundle's, whose frozen feed page shows a change only at the next
     # churned socket's whole frame, and a change whose three notices straddle a churn waits for the frame after that: 19,013 ms
-    # over eighteen recorded unmutated old-hub drives as of the drive of 2026-09-20 at this code (`python3 analyse.py
-    # <report.json>...` over the builder's reports outside the repo, max of the phases' seen.waitedMs; the new bundle's is
-    # 1.35 s at most over twenty-seven). A dwell of 30 s, sized at twice the 12.9 s
+    # over eighteen recorded unmutated old-hub drives as of the drive at `r5/lab-ci2.log` (2026-09-20, the round-5 code, the
+    # drive the waits census above is dated to; `python3 population.py old | xargs python3 analyse.py`, the builder's scripts
+    # over the report JSONs outside the repo, max of the phases' seen.waitedMs; the new bundle's is 1.35 s at most over the
+    # twenty-seven as of that drive). A dwell of 30 s, sized at twice the 12.9 s
     # then recorded, redded on the very next drive (19.0 s): a threshold fitted to the data at hand is no threshold, which is
     # why the cap sizes it. driver_worst_case_s stays under DRIVER_TIMEOUT_S with the budget at driver_budget_ms (472.5 s for
     # the new class, 452.5 s for the old-hub class). It is also a quiescent tail well past one 4 s /tunnels poll.
