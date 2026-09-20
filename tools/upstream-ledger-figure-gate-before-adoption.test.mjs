@@ -28,7 +28,8 @@ const read = (...parts) => fs.readFileSync(path.join(REPO, ...parts), 'utf8');
 const ENTRY = 'upstream/2026-09-20-figure-gate-before-adoption.md';
 const IMG_LEG = 'ui/webview/file-view-figures-gate-adopt-browser.test.ts';
 const SVG_LEG = 'ui/webview/file-view-figures-gate-adopt-svg-browser.test.ts';
-/** The node scene that executes the order where the legs skip (CI installs no engine before npm test). */
+/** The node scene that executes the order where the legs skip (in CI's vscode-extension job no engine is installed before the
+ *  npm test step; tools/markdown-viewer-plan-gate-adopt.test.mjs reads that off the job's block). */
 const NODE_SCENE = 'ui/webview/file-view-figures-gate-adopt.test.ts';
 /** `git diff --name-only origin/main...HEAD` at the branch's head (the branch's own files, from its merge base with main), sorted as git
  *  prints it. Not the two-dot diff from 2d41e5c9b: the branch merged origin/main once, so that diff also counts what main brought in

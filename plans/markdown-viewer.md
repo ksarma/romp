@@ -7938,48 +7938,55 @@ device test. In the dashboard, Safari was reachable through an HTML img and thro
 Firefox through an svg image in either spelling on a long note; Chromium made no request at the base for any figure
 measured.
 
-**Tests.** file-view-figures-gate-adopt-browser.test.ts, above: red in WebKit at 2d41e5c9b in all three scenes, green in
-Chromium and Firefox there, green in all three engines after the fix. Its fourth scene, the fence hole (three raw
-multi-line fences, an svg image with `src`, with `src` beside a gating `href`, and with `srcset`, and the `language-js`
-control): red in all three engines with the fence pass after the adoption (the figure server's three GET lines) and
-green in all three with the pass before the chain, one placeholder per fence. Its fifth case, the Copy button under the
-moved pass, clicked for real on two fences: green in all three engines. file-view-figures-gate-adopt-svg-browser.test.ts,
-the second leg: red in Firefox and in WebKit at 2d41e5c9b, green in Chromium there, green in all three after the fix.
-Both legs skip where Playwright's engines are absent, and CI's npm test runs before its one browser install, so in CI
-the legs skip and the node scene runs: file-view-figures-gate-adopt.test.ts drives the real openFileView and openUrlView
-under plain node over a stand-in with two documents, the sanitizer's body inert and the viewer's document live, and
-pins by execution that no node entering the live document carries a fetching attribute on an unlisted host or a
-page-relative path (an img's src and srcset, a source's, a video's src and poster, an audio's src, an svg image's href or
-xlink:href, an svg paint reference, a figure inside details, a folder figure, and for a URL document a relative figure
-resolved against the document's directory; read at every move into the live document whose parent is the viewer's box
-or stands under it, so a node a later pass brings in at any depth is read at its own moment), that no write of such an
-attribute lands on a live-document element across the render, that nothing under the box carries one once the render is
-done, that the gated figures stand as placeholders holding their sources in data-fv-gated-* and a click on the host
-restores exactly them, and that the folder figure is requested through /file. Red on four mutations of file-view.ts in
-scratch copies of the head (2026-09-20): the base's order (the adoption first: 16 leaks at the adoption in the file
-kind and 4 in the URL kind), the gate alone moved after the adoption (13 and 2), one added post-adoption write of a
-gated src back into src (5 live writes and 2), and one added post-adoption line appending an img minted in the
-sanitizer's document with a src on an unlisted host into the box's first paragraph (1 leak at that adoption in each
-kind, read tree-wide under the box; the top-level read alone stayed green in the file kind); green at the head. It sees
-no bytes: a leak there is an attribute the browser
-would fetch through, judged by the scene's own oracle, never by figure-gate's remoteHost; the engines' loading is the
-legs' and DOMPurify's document is the seam test's. file-view-seam.test.ts pins the order in mdBlock (sanitize, rewrite,
-gate on `clean`, then the adoption, and no figure pass over `box`) and holds the inertness premise, which no node test
-can execute: its test "the inertness premise, held where CI runs" pins the
-sanitizer's profile literal and its keys at run time, the config the sanitize is handed, sanitizeMd's body, the
-installed DOMPurify's RETURN_DOM branch with its one road into the live document (a clone under an allowed shadowroot
-attribute, which no profile here allows), and `clean` reaching the four chain calls and nothing else before the
-adoption (the review's refuters measured that one added profile key, `ADD_ATTR: ["shadowrootmode"]`, made DOMPurify
-clone the body into the live document with every CI-run module green and WebKit fetching the gated figure again); since
-the fork PR's round-2 push it also pins the fence pass's place (on `clean`, between the sanitize and the chain's first
-call) and its one read of `clean` beside the four chain calls, and, in its test "no re-parse after the adoption", the
-re-parse population above, derived from the code, with the whole file's count. The order pins in
-file-view-seam.test.ts, md-url-view.test.ts, md-sanitize-viewer-links.test.ts, file-view.test.ts and
-tools/file-review-viewer-recipe.test.mjs read comment-stripped code since that push (a comment quoting the pinned lines
-above an adopt-first body satisfied the raw-text pins in the round's reversion runs), and the messages in
-file-view-text-size.test.ts, render-sanitize.test.ts and the recipe pin that claimed an order they did not check now
-claim presence, the order being the seam test's. md-url-view.test.ts pins the URL kind's resolution before the adoption;
-tools/file-review-viewer-recipe.test.mjs pins the sanitize and adoption statements and the chain calls' place before
-the adoption; tools/upstream-ledger-figure-gate-before-adoption.test.mjs holds the ledger
-entry's file list, its count and its engine statements to the tree and the legs;
-tools/markdown-viewer-plan-gate-adopt.test.mjs holds this section's sentences to the code, its comment and the leg.
+**Tests.** file-view-figures-gate-adopt-browser.test.ts, above: red in WebKit at 2d41e5c9b in all three scenes, green
+in Chromium and Firefox there, green in all three engines after the fix. Its fourth scene, the fence hole (three raw
+multi-line fences, an svg image with `src`, with `src` beside a gating `href`, and with `srcset`, and the
+`language-js` control): red in all three engines with the fence pass after the adoption (the figure server's three GET
+lines) and green in all three with the pass before the chain, one placeholder per fence. Its fifth case, the Copy
+button under the moved pass, clicked for real on two fences: green in all three engines.
+file-view-figures-gate-adopt-svg-browser.test.ts, the second leg: red in Firefox and in WebKit at 2d41e5c9b, green in
+Chromium there, green in all three after the fix. Both legs skip where Playwright's engines are absent. In CI's
+vscode-extension job no Playwright browser install and no restore of Playwright's browser cache precedes the npm test
+step (the job's own steps, read off .github/workflows/ci.yml by tools/markdown-viewer-plan-gate-adopt.test.mjs; what
+another job installs, or this job installs after its Test step, does not bear on it), so in CI the legs skip and the
+node scene runs: file-view-figures-gate-adopt.test.ts drives the real openFileView and openUrlView under plain node
+over a stand-in with two documents, the sanitizer's body inert and the viewer's document live, and pins by execution
+that no node entering the live document carries a fetching attribute on an unlisted host or a page-relative path (an
+img's src and srcset, a source's, a video's src and poster, an audio's src, an svg image's href or xlink:href, an svg
+paint reference, a figure inside details, a folder figure, and for a URL document a relative figure resolved against
+the document's directory; read at every move into the live document whose parent is the viewer's box or stands under
+it, so a node a later pass brings in at any depth is read at its own moment), that no write of such an attribute lands
+on a live-document element across the render, that nothing under the box carries one once the render is done, that the
+gated figures stand as placeholders holding their sources in data-fv-gated-* and a click on the host restores exactly
+them, and that the folder figure is requested through /file. Red on four mutations of file-view.ts in scratch copies
+of the head (2026-09-20): the base's order (the adoption first: 16 leaks at the adoption in the file kind and 4 in the
+URL kind), the gate alone moved after the adoption (13 and 2), one added post-adoption write of a gated src back into
+src (5 live writes and 2), and one added post-adoption line appending an img minted in the sanitizer's document with a
+src on an unlisted host into the box's first paragraph (1 leak at that adoption in each kind, read tree-wide under the
+box; the top-level read alone stayed green in the file kind); green at the head. It sees no bytes: a leak there is an
+attribute the browser would fetch through, judged by the scene's own oracle, never by figure-gate's remoteHost; the
+engines' loading is the legs' and DOMPurify's document is the seam test's. file-view-seam.test.ts pins the order in
+mdBlock (sanitize, rewrite, gate on `clean`, then the adoption, and no figure pass over `box`) and holds the inertness
+premise, which no node test can execute: its test "the inertness premise, held where CI runs" pins the sanitizer's
+profile literal and its keys at run time, the config the sanitize is handed, sanitizeMd's body, the installed
+DOMPurify's RETURN_DOM branch with its one road into the live document (a clone under an allowed shadowroot attribute,
+which no profile here allows), and `clean` reaching the four chain calls and nothing else before the adoption (the
+review's refuters measured that one added profile key, `ADD_ATTR: ["shadowrootmode"]`, made DOMPurify clone the body
+into the live document with every CI-run module green and WebKit fetching the gated figure again); since the fork PR's
+round-2 push it also pins the fence pass's place (on `clean`, between the sanitize and the chain's first call) and its
+one read of `clean` beside the four chain calls, and, in its test "no re-parse after the adoption", the re-parse
+population above, derived from the code, with the whole file's count. The order pins in file-view-seam.test.ts,
+md-url-view.test.ts, md-sanitize-viewer-links.test.ts, file-view.test.ts and tools/file-review-viewer-recipe.test.mjs
+read comment-stripped code since that push (a comment quoting the pinned lines above an adopt-first body satisfied the
+raw-text pins in the round's reversion runs), and the messages in file-view-text-size.test.ts, render-sanitize.test.ts
+and the recipe pin that claimed an order they did not check now claim presence, the order being the seam test's.
+md-url-view.test.ts pins the URL kind's resolution before the adoption; tools/file-review-viewer-recipe.test.mjs pins
+the sanitize and adoption statements and the chain calls' place before the adoption;
+tools/upstream-ledger-figure-gate-before-adoption.test.mjs holds the ledger entry's file list, its count and its
+engine statements to the tree and the legs; tools/markdown-viewer-plan-gate-adopt.test.mjs holds this section's
+sentences to the code, its comment and the leg. The remedy for the legs' skip in CI is a step in that job installing
+Playwright's engines (Firefox and WebKit, or all three) before npm test; the plan pin reads this paragraph and the job
+together, so taking that remedy means rewording the sentence above to the pin's other sentence, which says the legs
+run there (CI_RUN in that module, beside CI_SKIP, the sentence above), and the pin then holds the job to an install of
+Firefox and WebKit before its Test step instead of to none; the pin does not fight the remedy, it names the sentence
+to change.

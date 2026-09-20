@@ -4,8 +4,9 @@
 // box only afterwards; at the base 2d41e5c9b the adoption came first and WebKit and Firefox requested gated figures while the
 // placeholders stood. The two browser legs (file-view-figures-gate-adopt-browser.test.ts, file-view-figures-gate-adopt-svg-
 // browser.test.ts) see the bytes: real servers' request logs, in each of Playwright's engines. They skip where the engines are
-// absent, and CI's `npm test` runs before its one `npx playwright install` (.github/workflows/ci.yml), so in CI they skip and
-// this scene is the guard that runs there. What it pins, by execution over the REAL openFileView and openUrlView:
+// absent, and in CI's vscode-extension job no browser install precedes the npm test step (.github/workflows/ci.yml; the plan
+// pin tools/markdown-viewer-plan-gate-adopt.test.mjs reads that property off the job's block), so in CI they skip and this scene
+// is the guard that runs there. What it pins, by execution over the REAL openFileView and openUrlView:
 //   (a) at the adoption of the sanitized nodes into the live document, no element of the adopted subtree carries a fetching
 //       attribute (an img's or a source's src or srcset, a video's src or poster, an audio's or a track's src, an svg image's
 //       href or xlink:href, an svg paint attribute naming a url) whose host is outside the allowed set, or that names a
