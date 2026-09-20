@@ -1365,18 +1365,13 @@ class _LinkDrop(unittest.TestCase):
             return "asks" in (f.get("coll") or [])
         return False
 
-    def _attach_revs_since(self, since_ms):
-        """The revs of the card-less feed slot patches (the connect push's ledgers attach, _carries_cards) the Outline received
-        from `since_ms` to phase B's first change, read over the drive's record and not a window's: the kernel floors a row's
-        stamp to the second, so the row the old bundle files for an attach can sit inside a window whose patch pad the attach
-        itself is past by tens of milliseconds (round 2, regression-3: a 40 ms gap on a recorded drive). A SET of revs, read
-        by the return window's stray filter alone; the two down-window sites match rows to the attach (_minus_attach_rows)."""
-        m = self._marks()
-        return {int(f["rev"]) for f in self._outline_feed_patches() if since_ms <= f["at"] < m["B0"] and not self._carries_cards(f)}
-
     def _attaches_since(self, since_ms):
         """One (rev, floored second) per card-less feed slot patch (the connect push's ledgers attach, _carries_cards) the Outline
-        received from `since_ms` to phase B's first change, over the drive's record as _attach_revs_since reads it, in order."""
+        received from `since_ms` to phase B's first change, in order, read over the drive's record and not a window's: the
+        kernel floors a row's stamp to the second, so the row the old bundle files for an attach can sit inside a window whose
+        patch pad the attach itself is past by tens of milliseconds (round 2, regression-3: a 40 ms gap on a recorded drive).
+        Every reader of an attach matches rows to it through _minus_attach_rows (the two down-window sites since round 4, the
+        return window since that round's fixer pass, when its own set of revs went); no reader keeps a set of revs."""
         m = self._marks()
         return sorted((int(f["rev"]), int(f["at"] // 1000)) for f in self._outline_feed_patches() if since_ms <= f["at"] < m["B0"] and not self._carries_cards(f))
 
@@ -1407,6 +1402,29 @@ class _LinkDrop(unittest.TestCase):
             else:
                 out.append(d)
         return out
+
+    def _rows_down_minus_attaches(self):
+        """The gate leg's down-window read: the outline/delta-unapplied rows stamped in [drop, resume] (padded as _rows_in pads)
+        less one row per ledgers attach the Outline received from 1.5 s BEFORE the resume (the attach can sit in the window's
+        right pad by the kernel's whole-second floor, and its own stamp before the mark's second); the storm test's site reads
+        attaches from the mark itself. The read is a helper so the since it passes is the one the pin in
+        tests/test_federated_linkdrop_driver_bound.py reads (round 4's fixer pass: the leg's inline since was reached by no test,
+        and a mutation moving it to the resume stayed green while the helpers were pinned at both values)."""
+        return self._minus_attach_rows(self._outline_unapplied_stamped(self._rows_in("drop", "resume")), self._marks()["resume"] - 1500)
+
+    def _return_window_stray(self):
+        """The rows filed between the link's return and phase B's first change beyond one per ledgers attach the Outline received
+        there: the outline/delta-unapplied rows stamped in [resume - 1.5 s, B0 - 1 s] (padded on the left as _rows_in pads, the
+        kernel's whole-second floor; closed a second before B0, since phase B's first row is stamped at a floor no earlier than
+        B0 - 1 s, B0 being marked before the change is posted) less one row per attach from 1.5 s before the resume, matched to
+        the attach as the down window's are (_minus_attach_rows). Round 4's fixer pass: this reader kept a set of revs after the
+        two down-window sites moved to the match, so two rows of one attach's rev both passed a filter whose message promised one
+        per attach (over the 65 recorded records of both classes the window holds 0 rows and 0 attaches, so the switch moves no
+        recorded verdict; the census is in _minus_attach_rows's docstring). Returns (the stray rows' data, the attaches)."""
+        m = self._marks()
+        t0, t1 = m["resume"] / 1000.0 - 1.5, m["B0"] / 1000.0 - 1.0
+        stamped = self._outline_unapplied_stamped([r for r in self.hub_diag_rows if t0 <= float(r.get("t") or 0) <= t1])
+        return self._minus_attach_rows(stamped, m["resume"] - 1500), self._attaches_since(m["resume"] - 1500)
 
     def _link_up_phases(self):
         return ("A", "B", "C") if self.local_drop else ("A", "B")
@@ -1480,8 +1498,7 @@ class _LinkDrop(unittest.TestCase):
         self._assert_seen(D["seenWhileDown"], False, todo=(False if todo else None), what="phase D while the link was down (a change due, nothing to carry it)")
         if prompt is not None:
             self.assertNotEqual(D["seenWhileDown"].get("prov"), prompt, "api's provisional row did not read phase D's prompt while the link was down: %r" % (D["seenWhileDown"],))
-        attach_revs = self._attach_revs_since(m["resume"] - 1500)   # the return's ledgers attaches, by rev, for the return window's stray filter below
-        down = self._minus_attach_rows(self._outline_unapplied_stamped(self._rows_in("drop", "resume")), m["resume"] - 1500)   # one row per attach, matched to it
+        down = self._rows_down_minus_attaches()   # one row per ledgers attach from 1.5 s before the resume, matched to it
         self.assertEqual(down, [], "no outline/delta-unapplied row filed while the link was down with phase D due (the one row the old bundle files for a "
                                    "ledgers attach the Outline received after the resume is the return's, in this window's right pad by the kernel's whole-second "
                                    "floor: it names the feed slot, carries the attach's rev and is stamped at or after the attach's floored second): %r" % (down,))
@@ -1496,15 +1513,12 @@ class _LinkDrop(unittest.TestCase):
             self.assertTrue(wholes, "…and a whole feed frame did reach the %s page in that window: %r" % (app, [self._kinds(s) for s in self._relay_socks(app, "resume", "B0")]))
         # the rows, read over the return window itself (round 2's review, finding 2; the down window's zero above ends 1.5 s
         # after resume and reaches none of the return's whole frames, which arrive 1 to 5 s after it): no outline/
-        # delta-unapplied row for the return's whole frame or for a replayed patch. Padded on the left as _rows_in pads
-        # (the kernel's whole-second floor) and closed one second before B0 (phase B's first row is stamped at a floor no
-        # earlier than B0 - 1 s, B0 being marked before the change is posted). The one row allowed is the old bundle's for
-        # a ledgers attach the Outline received in the window, matched by rev; a row with no such patch behind it is stray.
-        t0, t1 = m["resume"] / 1000.0 - 1.5, m["B0"] / 1000.0 - 1.0
-        rows = self._outline_unapplied([r for r in self.hub_diag_rows if t0 <= float(r.get("t") or 0) <= t1])
-        stray = [d for d in rows if not (isinstance(d, dict) and d.get("slot") == "feed" and d.get("rev") is not None and int(d["rev"]) in attach_revs)]
+        # delta-unapplied row for the return's whole frame or for a replayed patch (_return_window_stray: the window's bounds,
+        # and the one row allowed per ledgers attach the Outline received there, matched to the attach as the down window's are)
+        stray, attaches = self._return_window_stray()
         self.assertEqual(stray, [], "no outline/delta-unapplied row filed between the link's return and phase B's first change beyond one per ledgers attach the "
-                                    "Outline received there (a row here is a row for the return's whole frame or for a replayed patch); rows %r, attaches by rev %r" % (rows, sorted(attach_revs)))
+                                    "Outline received there (a row here is a row for the return's whole frame or for a replayed patch; the attach's row names the feed "
+                                    "slot, carries its rev and is stamped at or after its floored second): stray %r, attaches (rev, floored second) %r" % (stray, attaches))
         self._assert_seen(self._phase("B")["seenD"], True, todo=todo, what="phase D's changes after phase B")
         if self.local_drop:
             self._assert_seen(self._phase("C")["seenD"], True, todo=todo, what="phase D's changes at the end")

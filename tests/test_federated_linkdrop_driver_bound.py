@@ -664,11 +664,16 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
         the slot check ran); a second row with no attach behind it reds (narrowness: a widened exemption passes the first
         cell alone); the same patch carrying cards is no attach and its row reds (a control on the card conditioning, red at
         both trees, so not a discriminator of the match). The gate leg
-        reads attaches from 1.5 s before the resume and the storm test from the resume (the gate leg's SEPARATE copy): an
-        attach 1 s before the resume is in the first set and not the second, through the match and through the set the return
-        window's filter still reads. Nothing here exercises the two call sites' wiring; the replays over recorded drives do
-        (0 rows and 0 attaches in every recorded down window, so the exemption fires on no recorded drive: the census is in
-        the served module's _minus_attach_rows docstring)."""
+        reads attaches from 1.5 s before the resume and the storm test from the resume: an attach 1 s before the resume is in
+        the first set and not the second, through the helpers at both since values and through the gate leg's own read
+        (_rows_down_minus_attaches, which carries its since; round 4's fixer pass: the leg's inline since was reached by no
+        test, and a mutation moving it to the resume stayed green). And the return window's read (_return_window_stray, the
+        third reader of the attaches, which kept a set of revs until the fixer pass): one row of an attach's rev in the window
+        is the attach's, a second row of the same rev is stray (the set passed both), a row of a rev no attach carries is
+        stray, and a row of the attach's rev two seconds before its floored second is stray. Nothing here reaches the test
+        methods' own lines; the replays over recorded drives do (0 rows and 0 attaches in every recorded down window and
+        return window, so neither exemption fires on any recorded drive: the census is in the served module's
+        _minus_attach_rows docstring)."""
         DROP, RESUME = 1_000_000, 1_030_000
         B0, END = RESUME + 20_000, RESUME + 60_000
 
@@ -718,7 +723,14 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
                          "an attach 1 s before the resume is in the gate leg's set of attaches and not the storm test's")
         self.assertEqual((t._minus_attach_rows(stamped, RESUME - 1500), t._minus_attach_rows(stamped, RESUME)), ([], [{"rev": 5, "slot": "feed"}]),
                          "…so the gate leg's since exempts its row and the storm test's does not")
-        self.assertEqual((t._attach_revs_since(RESUME - 1500), t._attach_revs_since(RESUME)), ({5}, set()), "…and the return window's set reads the same two since values")
+        self.assertEqual(t._rows_down_minus_attaches(), [], "…and the gate leg's own read, which carries its since of 1.5 s before the resume, exempts the row (at the resume it would not)")
+        # the return window's read (the third reader of the attaches): one row per attach the Outline received there, matched to it
+        late = patch(RESUME + 1540, ["ledgers"], rev=1)   # the connect push's ledgers attach 1.54 s after the resume, past the down window's patch pad
+        f = (RESUME + 1540) // 1000   # the attach's floored second; row() takes milliseconds and floors them the same way
+        self.assertEqual(record([row(1, f * 1000)], [late])._return_window_stray(), ([], [(1, f)]), "one row of the attach's rev at its floored second is the attach's, not stray")
+        self.assertEqual(record([row(1, f * 1000), row(1, (f + 1) * 1000)], [late])._return_window_stray()[0], [{"rev": 1, "slot": "feed"}], "a second row of the attach's rev is stray (the set of revs passed both)")
+        self.assertEqual(record([row(1, f * 1000), row(2, (f + 2) * 1000)], [late])._return_window_stray()[0], [{"rev": 2, "slot": "feed"}], "a row of a rev no attach carries is stray")
+        self.assertEqual(record([row(1, (f - 2) * 1000)], [late])._return_window_stray()[0], [{"rev": 1, "slot": "feed"}], "a row of the attach's rev two seconds before its floored second is not the attach's")
 
     def test_the_margin_leg_takes_no_expired_or_unshown_wait_as_a_delivery(self):
         """The gate's control in time (_assert_the_down_window_outlasts_the_drives_slowest_delivery) reads a phase's
