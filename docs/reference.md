@@ -4861,9 +4861,15 @@ The two rows, as the kernel writes them (`t` its clock, `wid` the dashboard id):
   own attach and detach history differs from a fresh pane's first answer.
   `GET /tunnels`, an authenticated route, is that order and so a
   position-to-name map in its own right, as is the state directory the file
-  sits in: a holder of either maps any position to a name with no
+  sits in, whose host registries `remotes.json` (the live set) and
+  `remotes-known.json` (the detached hosts) hold the roster in that order
+  beside the file: a holder of either maps any position to a name with no
   client-diag row at all, and after the file's rotation (8 MB, two files) a
-  pane's host-naming rows can be gone while its later perf rows remain. The
+  pane's host-naming rows can be gone while its later perf rows remain.
+  Reading a registry is itself a join, and what any of these roads yields is
+  exact for a pane life that attached one host; for several it is an order
+  inference, holding while `remotes.json` still carries the row order the
+  pane's `/tunnels` answer had. The
   map's keys carry positions and no host name. Host names reach the file wherever
   an admitted value can hold one, in three forms: a bare name under a `host`
   key (the shell's push-test row, federation's `hostconn` rows and the

@@ -664,8 +664,15 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         for name, text in sorted(copies.items()):
             self.assertIsNotNone(text, "%s: the disclosure copy was not found: re-aim disclosure_copies()" % name)
             self.assertGreater(len(text), 200, name)
-            for token in (r"host-prefixed session id", r"host-keyed map", r"remote session", r"share switch", r"`?host`? key", r"positions and no host name"):
+            for token in (r"host-prefixed session id", r"host-keyed map", r"remote session", r"share switch", r"`?host`? key", r"positions and no host name",
+                          r"GET /tunnels", r"in (its|their) own right",
+                          r"remotes\.json", r"remotes-known\.json", r"exact for", r"order inference"):
                 self.assertIsNotNone(re.search(token, text, re.I), "%s: the disclosure no longer states %r" % (name, token))
+        # the stability caveat lives where the position rule is stated for readers, the docs (and the PR body outside the tree): a
+        # reload re-derives the assignment from the same /tunnels order, so the caveat must carry its condition, never read as a
+        # de-linking property (round 1, correctness-2)
+        for token in (r"names the same one again", r"dialable rows", r"first poll", r"attach and detach history", r"rotation"):
+            self.assertIsNotNone(re.search(token, copies["docs"], re.I), "docs: the reload sentence no longer states %r" % token)
         named = {"chat": r"\bchat\b", "federation": r"\bfederation\b", "shell": r"\bshell\b", "kernel": r"\bwsopen\b"}
         carrying = host_carrying_keys()
         self.assertTrue(carrying)
