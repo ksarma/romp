@@ -1415,7 +1415,8 @@ class _LinkDrop(unittest.TestCase):
         """The gate's control in TIME (round 2's ruling): the while-down read of phase D came at least DOWN_WINDOW_MARGIN times
         this drive's own slowest link-up delivery after D's post ended. A phase's delivery is the driver's seen.waitedMs, from
         the change's post returning to the last of its visibles on the pages (waited for concurrently), taken over EVERY
-        link-up phase (A, B and C with the local drop; A is the fastest, C often the slowest), so the yardstick is this drive's
+        link-up phase (A, B and C with the local drop; which is slowest moves from drive to drive with the churn's timing against
+        the notices, so no one phase stands for the rest), so the yardstick is this drive's
         and this bundle's: on the old bundle a change shows only at the next churned socket's whole frame, 6 to 19 s. Without
         this pin the two temporal pins hold for a post at the END of the dwell (an 18 ms window, both round-2 voters), and
         "absent while down" cannot be told from "no time passed". The span is read to `settled`, the mark the while-down read
