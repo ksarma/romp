@@ -52,33 +52,55 @@ real subprocess module, however it was spelled, and any object it cannot read (_
 property's getter, a SimpleNamespace, a bound method and a generator held `subprocess.run` unseen and unlisted).
 
 What the census cannot see is stated as a rule, not a count: it refuses the nodes it enumerates and nothing else, so a road
-to a process is unseen exactly when no enumerated node spells it. The class is a spawning name reached through a reflective
-primitive the census does not enumerate, or a name that is not a whole node of the parsed source (the enumerated primitives
-are refused whatever their argument, so exec over text that carries the spelling whole is refused at the exec, where the
-earlier disclosure, which called this class "built text", let it pass; the dunder roads are enumerated since round 5's fixer
-pass, a built name handed to getattr over any imported name since round 6). That class has no list by construction: a name
-the census enumerates is refused, so nothing it could list remains.
-On the recorder's side the residual is THREE roads, and the rule over them: the recorder sees a call only through the lab
-module's own `subprocess` attribute and the census reads only the censused set's own sources, so a spawning call whose
-source is outside both is unseen, however far out the import that reaches it. (1) A program a censused module's own
-function starts through that module's own subprocess binding when the lab module calls the function (the recorder patches
-the lab module's attribute alone, and the census reads that call as the module's own). (2) A program a function of an
-IMPORTED module starts through that module's own binding, the same road one import further out, which round 4 named and
-round 5 narrowed away. (3) A program a foreign module the import allow-list permits starts inside its own source, reached
-by a whole-node name no spawner table carries: `uuid.getnode()` runs a program on an interpreter without the `_uuid`
-extension, `http.server`'s CGI handler forks and execs, `os.popen` is a Python body that calls `subprocess.Popen`, and
-`subprocess` itself reaches `_posixsubprocess` and `os.posix_spawn`. The lists are derived and printed by the disclosure
-cell, none counted here: `_own_spawn_sites` for road (1) (module, line, function); `_foreign_spawn_roads` for road (3),
-over every DOTTED foreign import the censused set makes, each module's own source read by path under the standard library
-without importing it and scanned for the spawner families (an attribute of os, subprocess, pty, asyncio or
-_posixsubprocess named as a spawner, or an import of subprocess, pty, _posixsubprocess, multiprocessing, socketserver or
-asyncio), at the depth of the DIRECT sites, a module those modules import being a further road, with the modules whose
-source the scan cannot read (built in, an extension module) named as unread rather than dropped; the censused set's own
-touches of the road modules other than os and subprocess (`uuid.uuid4()`, `http.server.ThreadingHTTPServer`), by module and
-line, so the reader sees where the residual is reachable from (os and subprocess are the census's own subject: os.popen and
-os.fork are refused as attributes, and subprocess is the recorder's); and the identity walk's boundary (path, kind) with
-the depth it reached against its bound. A green run shows them under pytest's -rA or -s and a red run carries them in its
-message; no site, module or count of them is written here.
+to a process is unseen exactly when no enumerated node spells it. On the census's side the class is a spawning name resolved
+from a STRING inside a function of an allowed module that the censused set calls with it. The enumerated primitives are
+refused as nodes whatever their argument (exec over text that carries the spelling whole is refused at the exec, where the
+earlier disclosure, which called this class "built text", let it pass; the dunder roads since round 5's fixer pass; a built
+name handed to getattr over any imported name since round 6, and since its fixer pass over ANY value, with a reflective
+primitive read bare, a second binding of `subprocess`, a spawn or a callable at import time refused too), and an attribute
+chain rooted at a foreign import binding is RESOLVED step by step through the modules' own import tables, read by path
+(_reach): a module ALLOWED_IMPORTS does not name, reached through an allowed module's own import (`mock.pkgutil`,
+`mock.builtins`, `mock.partial` from functools, `subprocess.builtins`, `http.server.socketserver`), and a member of a module
+whose source the census cannot read that the censused set does not read today (UNREAD_MEMBERS: `sys._getframe`,
+`sys.meta_path`, `mock.sys.modules`), are refused. What remains is a call of an allowed module's OWN function whose body
+resolves a name from the string it is handed (`mock.patch("sub" + "process.run")` resolves its target by import inside
+mock). The modules whose own source does so are DERIVED, the second family `_foreign_reflective_roads` scans for and the
+disclosure cell prints (on this Python `subprocess`, which reads a frame, and `unittest.mock`, which runs exec and resolves
+names); which call of the censused set hands which string to one of them is not read, and that is the class.
+On the recorder's side the residual is FOUR roads, and the rule over them: the recorder sees a call only through the lab
+module's own `subprocess` attribute, and only while it is installed, and the census reads only the censused set's own
+sources, so a spawning call whose source is outside both, or whose time is before the recorder, is unseen, however far out
+the import that reaches it. (1) A program a censused module's own function starts through that module's own subprocess
+binding when the lab module calls the function (the recorder patches the lab module's attribute alone, and the census reads
+that call as the module's own). (2) A program a function of an IMPORTED module starts through that module's own binding,
+the same road one import further out, which round 4 named and round 5 narrowed away. (3) A program a foreign module the
+import allow-list permits starts inside its own source, reached by a whole-node name no spawner table carries:
+`uuid.getnode()` runs a program on an interpreter without the `_uuid` extension, `http.server`'s CGI handler forks and
+execs, `os.popen` is a Python body that calls `subprocess.Popen`, `subprocess` itself reaches `_posixsubprocess` and
+`os.posix_spawn`, and `unittest.mock` imports asyncio, a spawner family's module, which the scan's own rule counts as a
+road. (4) A program started at IMPORT time, before any recorder is installed, by code the census cannot resolve as running
+then: the module-level statements of the censused set run at import, a spawning call and a callable handed to a call there
+are refused, and what a module-level call does inside its callee is the callee's own source, road (2) or (3) at import time.
+The lists are derived and printed by the disclosure cell, none counted here: `_own_spawn_sites` for road (1) (module,
+line, function); `_foreign_spawn_roads` for roads (2) and (3), its attribute arm being (2) at the direct depth (a spawner
+named on a foreign module's own os, subprocess, pty, asyncio or _posixsubprocess binding) and the whole scan (3), over every
+module the censused set's import bindings LOAD (`_import_bindings`; a submodule imported by `from pkg import sub` included,
+since the source read is the submodule's: round 6's fixer pass, when `from unittest import mock` was read as an import of
+unittest and unittest.mock's own source went unread), each module's own source read by path under the standard library
+without importing it and scanned for the spawner families (an attribute of os, subprocess, pty, asyncio or _posixsubprocess
+named as a spawner, or an import of subprocess, pty, _posixsubprocess, multiprocessing, socketserver or asyncio), at the
+depth of the DIRECT sites, a module those modules import being a further road, with the modules whose source the scan
+cannot read (built in, an extension module) named as unread rather than dropped, and the derived road set held EQUAL to
+FOREIGN_ROADS by the road cell, so a new road is a red until it is read; `_foreign_reflective_roads` for the second family;
+`_foreign_touch_sites` for where the censused set touches the road modules other than os and subprocess, keyed on the names
+its import statements BIND (an alias, a from-imported name) and spelled by the module's name (`uuid.uuid4`,
+`http.server.ThreadingHTTPServer`, `unittest.mock.patch.dict`), by module and line, so the reader sees where the residual is
+reachable from (os and subprocess are the census's own subject: os.popen and os.fork are refused as attributes, and
+subprocess is the recorder's); `_import_time_statements` for road (4), the module-level statements that are not a def, a
+class, an import or a constant; `_unread_member_reads` for the members read on the source-less modules, held equal to
+UNREAD_MEMBERS; and the identity walk's boundary (path, kind) with the depth it reached against its bound. A green run
+shows them under pytest's -rA or -s and a red run carries them in its message; no site, module or count of them is written
+here.
 
 Synthetic: a scratch repository minted here, hostname TESTHOST; no kernel, no browser.
 """
@@ -147,8 +169,8 @@ REFLECTIVE_NAMES = ("__builtins__",)
 # ctypes and _posixsubprocess, and importlib, builtins and operator, which reach one by reflection) are a red the moment one is
 # imported; the cell holds the tuple EQUAL to the imports in use, so a name here that nothing imports is a red too. The tuple
 # does NOT say that no allowed module starts a program: which of them do inside their own source is DERIVED by
-# _foreign_spawn_roads (on this Python http.server, os, subprocess and uuid) and printed by the disclosure cell, the module
-# docstring's third road.
+# _foreign_spawn_roads (FOREIGN_ROADS, held equal) and printed by the disclosure cell, the module docstring's third road; what
+# the censused set REACHES through an allowed module's own imports is resolved and refused by _reach.
 ALLOWED_IMPORTS = ("base64", "contextlib", "fcntl", "fnmatch", "hashlib", "http", "json", "os", "pathlib", "re", "select", "shlex",
                    "shutil", "signal", "socket", "subprocess", "sys", "tempfile", "threading", "time", "unittest", "urllib", "uuid")
 # the hand-kept DENY list the import pin keys on beside the equality: none of these eight is allowed (the check is this list,
@@ -158,6 +180,20 @@ DENIED_IMPORTS = ("pty", "asyncio", "_posixsubprocess", "multiprocessing", "ctyp
 # socketserver, whose ForkingMixIn forks), for _foreign_spawn_roads; the attribute roots it reads the spawner names on
 FOREIGN_SPAWN_MODULES = ("subprocess", "pty", "_posixsubprocess", "multiprocessing", "socketserver", "asyncio")
 FOREIGN_SPAWN_ROOTS = ("os", "subprocess", "pty", "asyncio", "_posixsubprocess")
+# the reflective calls a foreign module's OWN source may make, resolving a name from a string handed to it (the second family
+# _foreign_reflective_roads scans for, printed beside the spawner roads): a bare call of one of REFLECTIVE_CALLS, or an attribute
+# named as one of these
+FOREIGN_REFLECTIVE_CALLS = ("__import__", "exec", "eval", "compile")
+FOREIGN_REFLECTIVE_ATTRS = ("import_module", "resolve_name", "_getframe", "__import__")
+# The foreign modules whose own source starts a program, on this Python, DERIVED by _foreign_spawn_roads over the censused
+# set's import bindings and held EQUAL to this tuple by the road cell, so a new road (a new import, or a Python whose source
+# changes) is a red until it is read (round 6's fixer pass: the cell pinned a subset, so a fifth road could not red it).
+FOREIGN_ROADS = ("http.server", "os", "subprocess", "unittest.mock", "uuid")
+# The members the censused set reads on the foreign modules whose source the scan cannot read (built in, an extension module:
+# fcntl, select, sys, time), as {module: (member, ...)}, held EQUAL to the derived reads by the allow-list cell: a member of such a
+# module is a name the census cannot resolve (its source is not there to read), so one outside the tuple (`sys._getframe`,
+# `sys.meta_path`, `sys.modules`) is refused until it is read, the rule the parsed census's KNOWN_MEMBERS states for the driver.
+UNREAD_MEMBERS = {"fcntl": ("LOCK_EX", "flock"), "select": ("select",), "sys": ("path",), "time": ("gmtime", "monotonic", "sleep", "strftime", "time")}
 LAB_MODULE = "test_federated_linkdrop_served"
 PACKAGE = os.path.basename(HERE)   # this directory is a package (tests/__init__.py), so a sibling is importable as tests.x and as .x too
 OTHER_NAMES = tuple(sorted({n for names in OTHER_SPAWNERS.values() for n in names}))
@@ -250,6 +286,7 @@ def _commands_around_the_recorder(src, siblings=()):
             parent[child] = node
     spawners = set(OS_SPAWNERS) | set(OTHER_NAMES)
     defs = {n.name for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    bindings, loaded = _import_bindings(src)
 
     def in_a_body(n):
         """Whether the node sits inside some function's BODY: a default argument, a decorator and an annotation are outside it
@@ -321,6 +358,11 @@ def _commands_around_the_recorder(src, siblings=()):
             text = n.value.decode("utf-8", "replace") if isinstance(n.value, bytes) else n.value
             if text == "subprocess" or text in OS_SPAWNERS:
                 found.append((n.lineno, '"%s"' % (text,)))
+        if isinstance(n, ast.Attribute) and not (isinstance(p, ast.Attribute) and p.value is n):
+            chain = _dotted(n)
+            hit = _reach(chain, bindings, loaded, siblings) if chain else None
+            if hit is not None:
+                found.append((n.lineno, "%s.%s %s" % (hit[0], hit[1], hit[2])))
         if isinstance(n, ast.Call) and not in_a_body(n):
             if isinstance(n.func, ast.Attribute) and isinstance(n.func.value, ast.Name) and n.func.value.id == "subprocess" and n.func.attr in SPAWNERS:
                 found.append((n.lineno, "subprocess.%s(...) outside every function body: it runs at import, before any recorder" % n.func.attr))
@@ -342,18 +384,114 @@ def _foreign_imports(mods):
     return {name for name in out if name not in mods and name != PACKAGE}
 
 
-def _dotted_foreign_imports(mods):
-    """Every DOTTED module name the censused modules import that is no sibling of theirs (`http.server`, `urllib.request`,
-    `uuid`): the modules whose own source _foreign_spawn_roads reads. `_foreign_imports` above keeps the top-level names
-    ALLOWED_IMPORTS is held equal to; this keeps the dotted spelling, since the source read is the submodule's."""
+def _stdlib_source(dotted, stdlib=None):
+    """The path of a module's Python source under the standard library (`<stdlib>/a/b.py` or `<stdlib>/a/b/__init__.py`), else
+    None (built in, an extension module, or no such module)."""
+    stdlib = stdlib or sysconfig.get_paths()["stdlib"]
+    rel = dotted.replace(".", os.sep)
+    return next((p for p in (os.path.join(stdlib, rel + ".py"), os.path.join(stdlib, rel, "__init__.py")) if os.path.isfile(p)), None)
+
+
+def _import_bindings(src, stdlib=None, package=None):
+    """What the source's absolute import statements BIND, and which modules they load: ({bound name: (module, member)}, {dotted
+    module}). `import a.b.c` binds `a` to the package `a` and loads a, a.b and a.b.c; `import a.b as x` binds x to a.b; `from M
+    import n` binds n to the SUBMODULE M.n when the standard library holds its source (`from unittest import mock` is
+    unittest.mock, whose own source the road scan must read: round 6's fixer pass, residual-1) and otherwise to the member n of
+    M (`from pathlib import Path`); `from M import n as x` binds x the same way. A relative import (a sibling of this directory,
+    or, for a stdlib module read by path, its own package's module, resolved against `package`) binds its name to that
+    package-qualified module. The touch derivation and the reach rule key on these bindings, not on the dotted spelling as
+    written (round 6's fixer pass: `import uuid as u; u.getnode()` and `from uuid import getnode; getnode()` printed no touch)."""
+    bindings, loaded = {}, set()
+    for n in ast.walk(ast.parse(src)):
+        if isinstance(n, ast.Import):
+            for a in n.names:
+                parts = a.name.split(".")
+                loaded.update(".".join(parts[:i + 1]) for i in range(len(parts)))
+                bindings[a.asname or parts[0]] = (a.name if a.asname else parts[0], None)
+        elif isinstance(n, ast.ImportFrom):
+            if n.level == 0:
+                base = n.module or ""
+            elif package is None:
+                continue
+            else:
+                up = package.split(".")
+                base = ".".join(up[:len(up) - (n.level - 1)] + ([n.module] if n.module else []))
+            if not base:
+                continue
+            loaded.add(base)
+            for a in n.names:
+                if a.name == "*":
+                    continue
+                if _stdlib_source(base + "." + a.name, stdlib) is not None:
+                    loaded.add(base + "." + a.name)
+                    bindings[a.asname or a.name] = (base + "." + a.name, None)
+                else:
+                    bindings[a.asname or a.name] = (base, a.name)
+    return bindings, loaded
+
+
+def _dotted_foreign_imports(mods, stdlib=None):
+    """Every dotted module the censused modules LOAD that is no sibling of theirs (`http`, `http.server`, `urllib.request`,
+    `unittest.mock`, `uuid`), from their import bindings: the modules whose own source _foreign_spawn_roads reads.
+    `_foreign_imports` above keeps the top-level names ALLOWED_IMPORTS is held equal to; this keeps every module loaded, a
+    submodule imported by `from pkg import sub` included."""
     out = set()
     for src in mods.values():
-        for n in ast.walk(ast.parse(src)):
-            if isinstance(n, ast.Import):
-                out.update(a.name for a in n.names)
-            elif isinstance(n, ast.ImportFrom) and n.level == 0 and n.module:
-                out.add(n.module)
+        out.update(_import_bindings(src, stdlib)[1])
     return {name for name in out if name.split(".")[0] not in mods and name.split(".")[0] != PACKAGE}
+
+
+_MODULE_IMPORTS = {}
+
+
+def _module_imports(dotted, stdlib=None):
+    """A foreign module's OWN module-level import bindings, read from its source by path and never imported: {bound name:
+    (module, member)}, or None for a module with no Python source (built in, an extension module). A relative import inside a
+    package's module resolves against the package (`from .util import safe_repr` in unittest/mock.py is unittest.util). Cached
+    per (module, stdlib): the reach rule reads it for every attribute chain rooted at a foreign binding."""
+    key = (dotted, stdlib)
+    if key not in _MODULE_IMPORTS:
+        path = _stdlib_source(dotted, stdlib)
+        if path is None:
+            _MODULE_IMPORTS[key] = None
+        else:
+            package = dotted if os.path.basename(path) == "__init__.py" else dotted.rpartition(".")[0]
+            with open(path, encoding="utf-8") as f:
+                body = ast.parse(f.read()).body
+            _MODULE_IMPORTS[key] = _import_bindings("\n".join(ast.unparse(n) for n in body if isinstance(n, (ast.Import, ast.ImportFrom))), stdlib, package)[0]
+    return _MODULE_IMPORTS[key]
+
+
+def _reach(chain, bindings, loaded, siblings=(), stdlib=None):
+    """Where an attribute chain rooted at a foreign import binding REACHES, resolved step by step through the modules' own
+    import tables (_module_imports): None when every step lands on a module's own definition, an allowed module or a member the
+    censused set reads today; else (module, attribute, why) for the first step the census cannot resolve to something it
+    reads: an attribute that is the module's own import of a module outside ALLOWED_IMPORTS (`mock.pkgutil`, `mock.builtins`,
+    `mock.partial` from functools, `subprocess.builtins`, `http.server.socketserver`: a road the census would refuse as a
+    direct import, reached through an allowed module's binding, round 6's fixer pass), or a member of a module whose source
+    the census cannot read that is outside UNREAD_MEMBERS (`sys._getframe`, `sys.meta_path`, `mock.sys.modules`). A binding
+    to a def or a class imported by name (`Path`) is its own: the walk stops there."""
+    names = chain.split(".")
+    bound = bindings.get(names[0])
+    if bound is None or bound[1] is not None or bound[0].split(".")[0] in siblings or bound[0].split(".")[0] == PACKAGE:
+        return None
+    module = bound[0]
+    for attr in names[1:]:
+        if module + "." + attr in loaded:
+            module = module + "." + attr
+            continue
+        table = _module_imports(module, stdlib)
+        if table is None:
+            return None if attr in UNREAD_MEMBERS.get(module, ()) else (module, attr, "a member of %s, a module whose source the census cannot read (built in, an extension module), that the censused set does not read today (UNREAD_MEMBERS)" % module)
+        if attr not in table:
+            return None   # the module's own definition (a function, a class, a constant, a submodule it loads inside a function)
+        nxt, member = table[attr]
+        if nxt.split(".")[0] not in ALLOWED_IMPORTS and nxt.split(".")[0] not in siblings:
+            return (module, attr, "reaches %s, a module ALLOWED_IMPORTS does not name, through %s's own import (a road the census refuses as a direct import)" % (nxt, module))
+        if member is not None:
+            return None
+        module = nxt
+    return None
 
 
 def _foreign_spawn_roads(mods, stdlib=None):
@@ -370,9 +508,8 @@ def _foreign_spawn_roads(mods, stdlib=None):
     dynload = os.path.join(sysconfig.get_paths()["platstdlib"], "lib-dynload")
     spawners = set(OS_SPAWNERS) | set(OTHER_NAMES) | set(SPAWNERS)
     roads, unread = {}, {}
-    for name in sorted(_dotted_foreign_imports(mods)):
-        rel = name.replace(".", os.sep)
-        path = next((p for p in (os.path.join(stdlib, rel + ".py"), os.path.join(stdlib, rel, "__init__.py")) if os.path.isfile(p)), None)
+    for name in sorted(_dotted_foreign_imports(mods, stdlib)):
+        path = _stdlib_source(name, stdlib)
         if path is None:
             if name in sys.builtin_module_names:
                 unread[name] = "built in (no Python source)"
@@ -396,6 +533,65 @@ def _foreign_spawn_roads(mods, stdlib=None):
     return roads, unread
 
 
+def _foreign_reflective_roads(mods, stdlib=None):
+    """The second derived family (round 6's fixer pass, plants-10): for each dotted foreign import of the censused set, the calls in
+    that module's OWN source that resolve a name from a string handed to them, {module: [(line, form)]}: a bare call of one of
+    FOREIGN_REFLECTIVE_CALLS (__import__, exec, eval, compile; globals, locals and vars return a namespace and are a road only
+    with a string key, which is the censused set's own rule), or an attribute named as one of FOREIGN_REFLECTIVE_ATTRS
+    (import_module, resolve_name, _getframe, __import__). Read the same way as the spawner roads, by path and never imported, at
+    the direct depth. A program a module
+    starts by resolving a name inside its own function from a string the censused set hands it (`mock.patch("sub" +
+    "process.run")`) is the residual's fourth road; this is its derived list, printed by the disclosure cell."""
+    stdlib = stdlib or sysconfig.get_paths()["stdlib"]
+    roads = {}
+    for name in sorted(_dotted_foreign_imports(mods, stdlib)):
+        path = _stdlib_source(name, stdlib)
+        if path is None:
+            continue
+        with open(path, encoding="utf-8") as f:
+            tree = ast.parse(f.read())
+        hits = []
+        for n in ast.walk(tree):
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id in FOREIGN_REFLECTIVE_CALLS:
+                hits.append((n.lineno, n.func.id + "("))
+            elif isinstance(n, ast.Attribute) and n.attr in FOREIGN_REFLECTIVE_ATTRS:
+                hits.append((n.lineno, "." + n.attr))
+        if hits:
+            roads[name] = sorted(hits)
+    return roads
+
+
+def _unread_member_reads(mods, unread):
+    """The members the censused set reads on the foreign modules whose source the scan could not read (`unread`, from
+    _foreign_spawn_roads), as {module: sorted members}, over attribute chains rooted at a binding to such a module: what
+    UNREAD_MEMBERS is held equal to."""
+    out = {}
+    for src in mods.values():
+        bindings, _ = _import_bindings(src)
+        for n in ast.walk(ast.parse(src)):
+            if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) and n.value.id in bindings:
+                module, member = bindings[n.value.id]
+                if member is None and module in unread:
+                    out.setdefault(module, set()).add(n.attr)
+    return {m: sorted(v) for m, v in out.items()}
+
+
+def _import_time_statements(mods):
+    """The module-level statements of the censused set that RUN at import and are not a def, a class, an import or an
+    assignment of a constant, as (module, line, text): the import-time surface, everything that could start a program before
+    any recorder is installed. The census refuses a spawning call and a callable handed to a call there; the rest is printed
+    by the disclosure cell as the derived list of what runs then, never counted."""
+    out = []
+    for name, src in sorted(mods.items()):
+        for n in ast.parse(src).body:
+            if isinstance(n, (ast.Import, ast.ImportFrom, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                continue
+            if isinstance(n, (ast.Assign, ast.AnnAssign, ast.Expr)) and isinstance(n.value, ast.Constant):
+                continue   # a constant assignment, a docstring
+            out.append((name, n.lineno, ast.unparse(n).splitlines()[0][:90]))
+    return out
+
+
 def _dotted(node):
     """The dotted spelling of an attribute chain rooted at a name (`http.server.HTTPServer`), else None."""
     parts = []
@@ -409,20 +605,39 @@ def _dotted(node):
 
 
 def _foreign_touch_sites(mods, roads):
-    """Where the censused set touches a road module (an attribute chain rooted at that module's name and starting with it), as
-    (module, line, dotted name), for the road modules other than os and subprocess, whose roads the census refuses itself
-    (OS_SPAWNERS and OTHER_SPAWNERS as attributes; subprocess is the recorder's). Printed by the disclosure cell beside the
-    roads: the residual's reach into the censused set, derived, never counted."""
+    """Where the censused set touches a road module, as (module, line, dotted name), keyed on the names its import statements
+    BIND (_import_bindings) and not on the spelling as written: an attribute chain rooted at a name bound to the module (`uuid.
+    uuid4`, `u.getnode()` under `import uuid as u`, `mock.patch` under `from unittest import mock`, spelled by the module's
+    name) and a bare read of a name imported from it (`getnode()` under `from uuid import getnode`), for the road modules other
+    than os and subprocess, whose roads the census refuses itself (OS_SPAWNERS and OTHER_SPAWNERS as attributes; subprocess is
+    the recorder's). The outermost chain only. Printed by the disclosure cell beside the roads: the residual's reach into the
+    censused set, derived, never counted (round 6's fixer pass: keyed on the dotted spelling, an alias or a from-import of a
+    road module printed nothing)."""
     watch = sorted(r for r in roads if r not in ("os", "subprocess"))
-    out = []
+    out = set()
     for name, src in sorted(mods.items()):
-        for n in ast.walk(ast.parse(src)):
-            if isinstance(n, ast.Attribute):
-                d = _dotted(n)
-                if d and any(d == r or d.startswith(r + ".") for r in watch):
-                    out.append((name, n.lineno, d))
-    # the outermost chain only: `http.server.HTTPServer` is one touch, not three
-    return sorted({(m, ln, d) for m, ln, d in out if not any(m2 == m and ln2 == ln and d2 != d and d2.startswith(d + ".") for m2, ln2, d2 in out)})
+        bindings, _ = _import_bindings(src)
+        tree = ast.parse(src)
+        parent = {}
+        for node in ast.walk(tree):
+            for child in ast.iter_child_nodes(node):
+                parent[child] = node
+        for n in ast.walk(tree):
+            p = parent.get(n)
+            if isinstance(n, ast.Attribute) and not (isinstance(p, ast.Attribute) and p.value is n):
+                chain = _dotted(n)
+                if chain is None or chain.split(".")[0] not in bindings:
+                    continue
+                head, *rest = chain.split(".")
+                module, member = bindings[head]
+                spelled = ".".join([module] + ([member] if member else []) + rest)
+            elif isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load) and n.id in bindings and bindings[n.id][1] is not None and not (isinstance(p, ast.Attribute) and p.value is n):
+                spelled = "%s.%s" % bindings[n.id]
+            else:
+                continue
+            if any(spelled == r or spelled.startswith(r + ".") for r in watch):
+                out.add((name, n.lineno, spelled))
+    return sorted(out)
 
 
 def _own_spawn_sites(mods):
@@ -888,7 +1103,19 @@ class OldHubMintIsPrivate(unittest.TestCase):
                  ('hasattr(x, n)\n', "hasattr(x, <a name built at run time>"),
                  ('from builtins import getattr as g\n', "from builtins import getattr"),
                  ('b"subprocess".decode()\n', '"subprocess"'),
-                 ('x.__getattr__("ru" + "n")\n', ".__getattr__"))
+                 ('x.__getattr__("ru" + "n")\n', ".__getattr__"),
+                 # the reach through an allowed module's own imports, resolved by the modules' import tables (round 6's fixer
+                 # pass, plants-10), and a member of a source-less module the censused set does not read
+                 ('from unittest import mock\nmock.pkgutil.resolve_name(NAME)\n', "unittest.mock.pkgutil reaches pkgutil, a module ALLOWED_IMPORTS does not name, through unittest.mock's own import"),
+                 ('from unittest import mock\nmock.builtins.__import__(NAME)\n', "unittest.mock.builtins reaches builtins"),
+                 ('from unittest import mock\nmock.partial(f, x)\n', "unittest.mock.partial reaches functools"),
+                 ('import unittest.mock as mk\nmk.pkgutil\n', "unittest.mock.pkgutil reaches pkgutil"),
+                 ('import subprocess\nsubprocess.builtins\n', "subprocess.builtins reaches builtins"),
+                 ('import http.server\nclass F(http.server.socketserver.ForkingMixIn):\n    pass\n', "http.server.socketserver reaches socketserver"),
+                 ('import sys\nsys._getframe(0)\n', "sys._getframe a member of sys, a module whose source the census cannot read"),
+                 ('import sys as _s\n_s.meta_path\n', "sys.meta_path a member of sys"),
+                 ('from unittest import mock\nmock.sys.modules\n', "sys.modules a member of sys"),
+                 ('import time\ntime.perf_counter()\n', "time.perf_counter a member of time"))
         for src, form in forms:
             with self.subTest(form=form, src=src):
                 hits = _commands_around_the_recorder(src, siblings=("test_federated_dial_terms_served",))
@@ -897,9 +1124,12 @@ class OldHubMintIsPrivate(unittest.TestCase):
                    'HERE = os.path.dirname(os.path.realpath(__file__))\nsys.path.insert(0, HERE)\n'
                    'def f():\n    import select\n    subprocess.run(["true"], stdout=subprocess.PIPE)\n    p = subprocess.Popen(["true"])\n    return select.select([], [], [], 0)\n'
                    'def g(cb=None):\n    return cb\ndef h():\n    return g(lambda: 1)\nos.path.join("a", "b")\n'
-                   'getattr(cls, "procs", [])\ngetattr(type(self), "result", None)\ngetattr(lab_dist, "build", None)\nhasattr(x, "y")\n"""os.system in a docstring; exec and eval too"""\n')
+                   'getattr(cls, "procs", [])\ngetattr(type(self), "result", None)\ngetattr(lab_dist, "build", None)\nhasattr(x, "y")\n"""os.system in a docstring; exec and eval too"""\n'
+                   'import time\nimport http.server\nimport urllib.request\nfrom unittest import mock\nfrom pathlib import Path\n'
+                   'def k():\n    time.monotonic()\n    time.sleep(1)\n    mock.patch.object(a, "b", c)\n    http.server.ThreadingHTTPServer\n    urllib.request.urlopen(u)\n    subprocess.PIPE\n    subprocess.os.path\n    Path.home()\n')
         self.assertEqual(_commands_around_the_recorder(allowed, siblings=("lab_dist", "fs_clock")), [], "the allowed spellings (a spawner CALLED inside a function body, a nested import of another module, a "
-                                                                                                          "module-level call with no callable argument, a lambda handed to a call inside a function, a constant name to getattr or hasattr), and the words in a docstring, are not refused")
+                                                                                                          "module-level call with no callable argument, a lambda handed to a call inside a function, a constant name to getattr or hasattr, a module's own "
+                                                                                                          "definition or an allowed module reached through a binding, a source-less module's member the set reads), and the words in a docstring, are not refused")
         mods = _lab_modules()
         self.assertTrue({LAB_MODULE, "lab_dist"} <= set(mods), "the derivation reaches the lab module and lab_dist: %r" % sorted(mods))
         found = {name: hits for name, src in sorted(mods.items()) for hits in [_commands_around_the_recorder(src, siblings=set(mods))] if hits}
@@ -911,9 +1141,11 @@ class OldHubMintIsPrivate(unittest.TestCase):
         """OTHER_SPAWNERS names a real attribute of the module it is filed under on this Python (a name the module lacks, or a
         module absent here, is a red naming it: the table is not a guess), and every family the census refuses by attribute
         is also refused by import, since its module is outside ALLOWED_IMPORTS; ALLOWED_IMPORTS equals the foreign imports the
-        censused modules make today (a module added or dropped in one of them is a red until the tuple says so), and none of
+        censused modules make today (a module added or dropped in one of them is a red until the tuple says so), none of
         the eight names of DENIED_IMPORTS is among them (a deny list, the check's key; which allowed modules start a program
-        inside their own source is not this cell's claim but the next cell's derivation)."""
+        inside their own source is not this cell's claim but the next cell's derivation), and UNREAD_MEMBERS equals the members
+        the set reads on the modules whose source the scan cannot read (round 6's fixer pass: `sys._getframe(0).f_builtins`
+        and `sys.meta_path` reached a loader with no red, since sys has no source to scan)."""
         for modname, names in OTHER_SPAWNERS.items():
             with self.subTest(module=modname):
                 top, _, attr = modname.partition(".")
@@ -926,24 +1158,36 @@ class OldHubMintIsPrivate(unittest.TestCase):
         self.assertEqual(sorted(_foreign_imports(mods)), sorted(ALLOWED_IMPORTS), "ALLOWED_IMPORTS is exactly the foreign imports the censused modules make (%s)" % ", ".join(sorted(mods)))
         self.assertEqual([m for m in DENIED_IMPORTS if m in ALLOWED_IMPORTS], [],
                          "none of the eight names of DENIED_IMPORTS (%s) is allowed: a deny list, keyed on these names and nothing else" % ", ".join(DENIED_IMPORTS))
+        _, unread = _foreign_spawn_roads(mods)
+        self.assertEqual(_unread_member_reads(mods, unread), {m: list(v) for m, v in UNREAD_MEMBERS.items()},
+                         "UNREAD_MEMBERS is exactly the members the censused set reads on the foreign modules whose source the scan cannot read (%s): a member of such a module is a "
+                         "name the census cannot resolve, so one the set starts or stops reading is a red until the table says so" % ", ".join(sorted(unread)))
 
     def test_the_foreign_modules_whose_own_source_starts_a_program_are_derived(self):
-        """The third road (the module docstring), derived and pinned: _foreign_spawn_roads over the censused set reads each
-        dotted foreign import's own source by path and names the modules that start a program inside it. On this Python the
-        set holds uuid (its node lookup runs a program when the _uuid extension is absent) and subprocess itself (its
-        _posixsubprocess import and os.posix_spawn), asserted by name since both roads are in every 3.x source; http.server
-        (the CGI handler's fork and exec, deprecated upstream) and os (os.popen's body calls subprocess.Popen) are asserted
-        present on this interpreter and named in the message, so the day a Python drops one the cell says which. Every
-        unread module is unread for a reason the scan can account for (built in, an extension module), never for a missing
-        source, and every road module is a dotted foreign import. Then over a synthetic standard library: a module whose
-        source calls a spawner, one that imports pty, one whose package __init__ is clean and one with no source, imported by
-        a synthetic censused module, give exactly the two roads and the one unread name (red before the derivation existed)."""
+        """The third road (the module docstring), derived and pinned: _foreign_spawn_roads over the censused set reads the
+        own source of every module its import bindings load, by path, and names the modules that start a program inside it.
+        The derived set is held EQUAL to FOREIGN_ROADS (round 6's fixer pass: the cell pinned a subset, so a fifth road could
+        not red it): on this Python uuid (its node lookup runs a program when the _uuid extension is absent), subprocess
+        itself (its _posixsubprocess import and os.posix_spawn), http.server (the CGI handler's fork and exec, deprecated
+        upstream), os (os.popen's body calls subprocess.Popen) and unittest.mock (it imports asyncio, a spawner family's
+        module, a road by the scan's own rule; read since the fixer pass, when `from unittest import mock` was read as an
+        import of unittest alone), so a Python that drops one or an import that adds one changes this tuple and the docstring's
+        example. Every unread module is unread for a reason the scan can account for (built in, an extension module), never
+        for a missing source, and every road module is a module the set loads. The second family, the modules whose own
+        source resolves a name from a string (_foreign_reflective_roads), is non-empty on this Python and every entry is a
+        loaded module. Then over a synthetic standard library: a module whose source calls a spawner, one that imports pty, a
+        package whose submodule imports pty and is imported by `from pkg import sub` (the road is the SUBMODULE), one whose
+        package __init__ is clean, one that runs exec (a reflective road, not a spawner one) and one with no source, imported
+        by a synthetic censused module, give exactly the three spawner roads, the one reflective road and the one unread name
+        (red before the derivation existed; the submodule and the reflective road red before the fixer pass)."""
         mods = _lab_modules()
         roads, unread = _foreign_spawn_roads(mods)
-        self.assertTrue(roads, "the derivation names the foreign modules whose own source starts a program: %r" % (roads,))
-        self.assertLessEqual({"uuid", "subprocess"}, set(roads), "uuid (a program for the node id) and subprocess (its own spawn) are roads in every 3.x source: %r" % (sorted(roads),))
-        self.assertLessEqual({"http.server", "os"}, set(roads), "on this Python http.server (the CGI handler forks and execs) and os (os.popen calls subprocess.Popen) are roads too; a Python that drops one changes this line and the docstring's example: %r" % (sorted(roads),))
+        self.assertEqual(sorted(roads), sorted(FOREIGN_ROADS), "the foreign modules whose own source starts a program, on this Python, are exactly FOREIGN_ROADS (a new import or a "
+                                                              "changed Python source moves this set: read the road, then the tuple): %r" % ({k: v for k, v in roads.items()},))
+        reflective = _foreign_reflective_roads(mods)
+        self.assertTrue(reflective, "the derivation names the foreign modules whose own source resolves a name from a string: %r" % (reflective,))
         dotted = _dotted_foreign_imports(mods)
+        self.assertLessEqual(set(reflective), dotted, "every reflective road is a module the set loads")
         self.assertLessEqual(set(roads) | set(unread), dotted, "every road and every unread name is a dotted foreign import of the censused set")
         self.assertEqual({name: why for name, why in unread.items() if "no source found" in why}, {}, "a module the scan could not read and cannot account for (no source anywhere) is a red, not a dropped name: %r" % (unread,))
         self.assertTrue(unread, "the built-in and extension modules among the imports are named as unread, not dropped: %r" % (unread,))
@@ -953,18 +1197,44 @@ class OldHubMintIsPrivate(unittest.TestCase):
         top = tempfile.mkdtemp(prefix="linkdrop-stdlib-")
         self.addCleanup(shutil.rmtree, top, True)
         os.makedirs(os.path.join(top, "cleanpkg"))
+        os.makedirs(os.path.join(top, "pkg"))
         with open(os.path.join(top, "spawner.py"), "w", encoding="utf-8") as f:
             f.write('import subprocess\ndef run(c):\n    return subprocess.run(c)\n')
         with open(os.path.join(top, "importer.py"), "w", encoding="utf-8") as f:
             f.write('import pty\n')
         with open(os.path.join(top, "cleanpkg", "__init__.py"), "w", encoding="utf-8") as f:
             f.write('import os\nx = os.path.join("a", "b")\n')
-        synthetic = {"root": "import spawner\nimport importer\nimport cleanpkg.sub\nimport nosource\n"}
+        with open(os.path.join(top, "pkg", "__init__.py"), "w", encoding="utf-8") as f:
+            f.write('import os\n')
+        with open(os.path.join(top, "pkg", "sub.py"), "w", encoding="utf-8") as f:
+            f.write('import pty\n')
+        with open(os.path.join(top, "runner.py"), "w", encoding="utf-8") as f:
+            f.write('def go(text):\n    exec(text)\n')
+        synthetic = {"root": "import spawner\nimport importer\nimport cleanpkg.sub\nimport nosource\nfrom pkg import sub\nimport runner\n"}
         roads, unread = _foreign_spawn_roads(synthetic, stdlib=top)
-        self.assertEqual(roads, {"importer": [(1, "import pty")], "spawner": [(1, "import subprocess"), (3, "subprocess.run")]},
-                         "a module whose source imports a spawner family or calls a spawner is a road, by line and form; a clean package is not")
+        self.assertEqual(roads, {"importer": [(1, "import pty")], "pkg.sub": [(1, "import pty")], "spawner": [(1, "import subprocess"), (3, "subprocess.run")]},
+                         "a module whose source imports a spawner family or calls a spawner is a road, by line and form, a submodule imported by `from pkg import sub` as itself; a clean package and a reflective module are not")
         self.assertEqual(unread, {"cleanpkg.sub": "no source found under the standard library", "nosource": "no source found under the standard library"},
                          "a module with no source is unread with its reason, never dropped")
+        self.assertEqual(_foreign_reflective_roads(synthetic, stdlib=top), {"runner": [(2, "exec(")]}, "a module whose own source runs exec is a reflective road, by line and form; the spawner roads are not")
+        self.assertEqual(_import_bindings("import a.b.c\nimport a.b as x\nfrom pkg import sub, other\nfrom pkg.sub import thing as t\nfrom . import sibling\n", stdlib=top),
+                         ({"a": ("a", None), "x": ("a.b", None), "sub": ("pkg.sub", None), "other": ("pkg", "other"), "t": ("pkg.sub", "thing")}, {"a", "a.b", "a.b.c", "pkg", "pkg.sub"}),
+                         "the bindings: a dotted import binds its first name, an alias the whole module, a from-import the submodule when the standard library holds its source and else the member; a relative import binds nothing without a package")
+
+    def test_the_touch_derivation_keys_on_the_binding_not_the_spelling(self):
+        """_foreign_touch_sites over a synthetic censused set (round 6's fixer pass): a road module reached through its bare name,
+        an alias, a from-imported name and a submodule alias is one touch each, spelled by the module's name, and a module that
+        is no road, or a name imported from one that is a class (`Path`), is none. Red before the fixer pass for every spelling
+        but the bare one."""
+        mods = {"a": "import uuid\nuuid.uuid4()\nuuid.getnode()\n",
+                "b": "import uuid as u\nu.getnode()\n",
+                "c": "from uuid import getnode\ngetnode()\n",
+                "d": "import http.server as hs\nclass F(hs.HTTPServer):\n    pass\n",
+                "e": "from unittest import mock\nmock.patch.object(x, 'y', z)\nimport pathlib\npathlib.Path('.')\nfrom pathlib import Path\nPath.home()\n"}
+        roads = {"uuid": [], "http.server": [], "unittest.mock": [], "os": [], "subprocess": []}
+        self.assertEqual(_foreign_touch_sites(mods, roads),
+                         [("a", 2, "uuid.uuid4"), ("a", 3, "uuid.getnode"), ("b", 2, "uuid.getnode"), ("c", 2, "uuid.getnode"), ("d", 2, "http.server.HTTPServer"), ("e", 2, "unittest.mock.patch.object")],
+                         "a touch is keyed on the name the import binds and spelled by the module; a module outside the roads and a class imported by name are none")
 
     def test_the_recorder_refuses_a_spawning_function_bound_before_it_is_installed(self):
         """The recorder's side of the alias road (round 5): _bound_spawners over a synthetic module finds, by identity and by
@@ -1050,10 +1320,12 @@ class OldHubMintIsPrivate(unittest.TestCase):
         recorder's side a spawning call whose source is outside the lab module's attribute and the censused sources is unseen.
         Derived here: road (1), the censused modules' own calls of a spawning function through their own subprocess binding
         (_own_spawn_sites; every such site is outside the lab module by construction, and no name is held here: the list is
-        what the derivation prints); road (3), the foreign modules whose own source starts a program (_foreign_spawn_roads,
-        with the modules it could not read named as unread) and where the censused set touches the road modules other than os
-        and subprocess (_foreign_touch_sites); and what _bound_spawners does not enter, by path and kind, with the depth it
-        reached against its bound. Each list is printed to stdout, which pytest shows for a passed test under -rA or -s, and
+        what the derivation prints); roads (2) and (3), the foreign modules whose own source starts a program
+        (_foreign_spawn_roads, with the modules it could not read named as unread), the second family that resolves a name
+        from a string (_foreign_reflective_roads), where the censused set touches the road modules other than os and
+        subprocess (_foreign_touch_sites, by binding) and the members it reads on the source-less modules
+        (_unread_member_reads); road (4), the import-time surface (_import_time_statements); and what _bound_spawners does
+        not enter, by path and kind, with the depth it reached against its bound. Each list is printed to stdout, which pytest shows for a passed test under -rA or -s, and
         carried in an assertion's message for a red, so a run's record can carry the derived residual as it stood (round 5's
         fixer pass: the lists sat in assertion messages alone, which a green run never prints; the maintainer's round 5, tests-3:
         the prints themselves are pinned, the cell's stdout captured, asserted to carry each list and re-emitted). Its two
@@ -1069,9 +1341,15 @@ class OldHubMintIsPrivate(unittest.TestCase):
                 print("the residual on the recorder's side, road 1, derived by _own_spawn_sites (module, line, function): %r" % (sites,))
                 roads, unread = _foreign_spawn_roads(mods)
                 touches = _foreign_touch_sites(mods, roads)
-                print("the residual on the recorder's side, road 3, derived by _foreign_spawn_roads (module: [(line, form)]; direct sites in each module's own source, a module it imports being a further road): %r; unread (no Python source): %r"
+                reflective = _foreign_reflective_roads(mods)
+                at_import = _import_time_statements(mods)
+                unread_reads = _unread_member_reads(mods, unread)
+                print("the residual on the recorder's side, roads 2 and 3, derived by _foreign_spawn_roads (module: [(line, form)]; direct sites in each module's own source, a module it imports being a further road): %r; unread (no Python source): %r"
                       % (roads, unread))
-                print("where the censused set touches the road modules other than os and subprocess, derived by _foreign_touch_sites (module, line, dotted name): %r" % (touches,))
+                print("the census's side, the second family, derived by _foreign_reflective_roads (module: [(line, form)]; a foreign module whose own source resolves a name from a string): %r" % (reflective,))
+                print("where the censused set touches the road modules other than os and subprocess, derived by _foreign_touch_sites over the import bindings (module, line, dotted name): %r" % (touches,))
+                print("the members the censused set reads on the modules the scan cannot read, derived by _unread_member_reads (held equal to UNREAD_MEMBERS): %r" % (unread_reads,))
+                print("the residual on the recorder's side, road 4, derived by _import_time_statements (module, line, statement): what runs at import before any recorder: %r" % (at_import,))
                 stats = {}
                 bound, boundary = _bound_spawners(L, stats=stats)
                 print("the identity walk's boundary over the lab module, derived by _bound_spawners (path, kind): %r; the walk entered to depth %d of its bound %d"
@@ -1079,8 +1357,9 @@ class OldHubMintIsPrivate(unittest.TestCase):
         finally:
             sys.stdout.write(buf.getvalue())   # re-emitted whole, so a green run still shows the lists under -rA or -s
         shown = buf.getvalue()
-        for label, text in (("road 1 (the sites)", repr(sites)), ("road 3 (the foreign roads)", repr(roads)), ("road 3 (the unread modules)", repr(unread)),
-                            ("the touches", repr(touches)), ("the boundary", repr(sorted(boundary)))):
+        for label, text in (("road 1 (the sites)", repr(sites)), ("roads 2 and 3 (the foreign roads)", repr(roads)), ("road 3 (the unread modules)", repr(unread)),
+                            ("the reflective roads", repr(reflective)), ("the touches", repr(touches)), ("the unread member reads", repr(unread_reads)),
+                            ("road 4 (the import-time statements)", repr(at_import)), ("the boundary", repr(sorted(boundary)))):
             self.assertIn(text, shown, "the disclosure cell prints its %s list, so a run's record carries the derived residual: %r" % (label, shown[:300]))
         self.assertTrue(sites, "the derivation reads the censused modules' own spawning calls: %r" % (sites,))
         self.assertEqual([site for site in sites if site[0] == LAB_MODULE], [],
@@ -1089,6 +1368,8 @@ class OldHubMintIsPrivate(unittest.TestCase):
         self.assertTrue(all(name in mods for name, _, _ in sites),
                         "every filed site names a module the census read (a site under a module outside the censused set is a derivation over a source the census never saw): %r" % (sites,))
         self.assertTrue(roads and touches, "the derivation names the foreign roads and where the censused set reaches them: %r %r" % (roads, touches))
+        self.assertTrue(reflective and at_import and unread_reads, "the derivation names the reflective roads, the import-time surface and the unread members: %r %r %r" % (reflective, at_import[:3], unread_reads))
+        self.assertTrue(all(name in mods and isinstance(line, int) for name, line, _ in at_import), "every import-time statement names a censused module and a line: %r" % (at_import[:5],))
         self.assertEqual(bound, [])
         self.assertTrue(boundary, "the identity walk names what it does not enter: %r" % (sorted(boundary),))
         modules = [path for path, kind in boundary if kind == "module"]
