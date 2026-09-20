@@ -7811,13 +7811,13 @@ without them**; a second press or Escape disarms. The press arms rather than pri
 reason: the gate is a privacy choice, so a print never fetches from a host outside the list unless the person chose it
 (where a chosen figure's requests then go, a redirect its host answers among them: `loadGatedFigure`'s doc, figure-gate.ts,
 stated in full there, which this sentence and P6's point at rather than restate; the round-5 review's tests-3; the
-round-6 review's copies-2: the pointers had called that doc the one full statement while `loadGatedHost`'s doc carried
-a second, which now points at it, and the record test holds the full statement to one place).
-"With them" restores exactly the placeholders it counted, each through `loadGatedFigure` (figure-gate.ts), the gate's
-restore of ONE placeholder: the figure's moved attributes back under their names, on it and on its descendants, and the
-figure back in the placeholder's place, the same restore a click's `loadGatedHost` runs for each placeholder of a host,
-WITHOUT adding the host to the document's `loadedHosts`. So the requests are the ones those figures make, and the grant
-is this
+branch's verification pass finding copies-2: the pointers had called that doc the one full statement while
+`loadGatedHost`'s doc carried a second, which now points at it, and the record test holds the full statement to one
+place). "With them" restores exactly the placeholders it counted, each through `loadGatedFigure` (figure-gate.ts), the
+gate's restore of ONE placeholder: the figure's moved attributes back under their names, on it and on its descendants,
+and the figure back in the placeholder's place, the same restore a click's `loadGatedHost` runs for each placeholder of
+a host, WITHOUT adding the host to the document's `loadedHosts`. So the requests are the ones those figures make, and
+the grant is this
 print's alone: a placeholder inside a closed fold or under `hidden` that
 names the same host stands as it is, and the next paint of the page gates the host's figures again, since every paint
 reads the loaded set (a Reload of the note and a later note naming the host, both landing as placeholders:
@@ -8285,7 +8285,7 @@ viewer's own, and the census holds its declaration to that name); and EVERY OTHE
 line: an alias (`const b = body`), a return, an arrow's value, an array element, a ternary or logical operand, a
 parenthesised or cast receiver (`(body).append(x)`), an argument to a callee it does not list. The file is then read a
 SECOND time, by the compiler's tree, for every seat on ANY receiver and for every other member call, classed by the
-member's NAME (the round-6 review's census-1, 2026-09-20: the form axis is an allowlist too): a seat is a call of a
+member's NAME (the branch's verification pass finding census-1, 2026-09-20: the form axis is an allowlist too): a seat is a call of a
 seating method (`append`, `prepend`, `appendChild`, `insertBefore`, `replaceChildren`, `insertAdjacentElement`,
 `replaceWith`, `after`, `before`, `replaceChild`, `insertAdjacentHTML`, a range's `insertNode` and `surroundContents`,
 `setHTMLUnsafe`, `moveBefore`, `write`, `writeln`) or an assignment to `innerHTML` or `outerHTML`; a `call`, `apply` or
@@ -8295,7 +8295,7 @@ receiver is the `body` token was the first read's; every other seat and every si
 census lists by hand (`SEATS_READ_BY_HAND`: the enclosing function, the receiver's spelling and the form, with what the
 receiver is and so why its seat lands no child in the body, and the declaration a bare receiver name is bound to, so an
 entry reads ONE binding and a second declaration of a listed name inside the entry's function fails with its line rather
-than passing under the entry's claim, the round-6 review's census-2) and FAILS with its line otherwise, whatever produced
+than passing under the entry's claim, the branch's verification pass finding census-2) and FAILS with its line otherwise, whatever produced
 the receiver; a seating or site-read method read without being called (`md.append.call(md, x)`, `Reflect.apply(md.append,
 ...)`, a bound seat, `const f = md.append`) fails with its line; a member read by a computed name and stored (`const f =
 md[m]`) passes only as a site listed (`INDEX_READS_BY_HAND`); a listed site the source no longer has fails too, so the
@@ -8337,9 +8337,9 @@ table equal to the live sites rather than to a number; the commit that landed th
 read), a listed site the source loses reds, and the mutant case plants each of the six forms, a parent held in a variable, `closest`,
 `getRootNode`, a computed-name call, a seat on an unlisted receiver by each seating form, a removed entry, a stale entry
 and a renamed ctx declaration and reads the census red with the planted line (FAILS BEFORE in its title). Before the
-round-6 review (2026-09-20) that inversion stood on the receiver axis alone: the second read knew a closed list of
-eleven seating names and two assignments and passed every other form on a receiver other than the `body` token, so a
-seating method reached through `call`, `bind` or `apply`, through `Reflect.apply` or as a bound function, a range's
+branch's verification pass (2026-09-20) that inversion stood on the receiver axis alone: the second read knew a closed
+list of eleven seating names and two assignments and passed every other form on a receiver other than the `body` token,
+so a seating method reached through `call`, `bind` or `apply`, through `Reflect.apply` or as a bound function, a range's
 `insertNode`, `setHTMLUnsafe` and `moveBefore` seated with no refusal and no root, an entry keyed on a receiver's
 spelling covered a second binding of the same name in the same function, and a spread into a `body` seat made the
 resolver throw with no line, while this record, the census's header, the READY_ROOTS comment and the install comment

@@ -729,7 +729,7 @@ function elementChildren(body: BodyLike): BodyChild[] {
  *  every other seat, every other method name, a seating method read without being called and a member stored under a
  *  computed name fail the census with its line, whatever produced the receiver (a query result's parent, a stored query
  *  result, `md.parentElement`, a variable, `closest`, `getRootNode`, an alias, a range's `insertNode`, `Reflect.apply`,
- *  a second binding of a listed name; the round-6 review, 2026-09-20); on the `body` token
+ *  a second binding of a listed name; the branch's verification pass, 2026-09-20); on the `body` token
  *  a call, an assignment, a further access or a bare read the census lists as seating nothing passes, a bare `body` passes
  *  as a declaration, a parameter, a property key, a comparison operand, the action-context accessor at its one declared
  *  site (`body: () => body` inside `const ctx: FileViewActionCtx = {`) or an argument to a callee the census lists as read
@@ -743,7 +743,7 @@ function elementChildren(body: BodyLike): BodyChild[] {
  *  names as the sites, a roster the census itself had outgrown; the round-5 fix: the census read member accesses on the
  *  token alone, so a parenthesised receiver or an alias seated unseen; the round-5 review: the census refused a closed list
  *  of dangerous forms and passed every other seat unread, so a seat through a query result's parent seated unseen; the
- *  round-6 review: the second read knew a closed list of seating names, so a seat by any other name or through call, bind
+ *  branch's verification pass: the second read knew a closed list of seating names, so a seat by any other name or through call, bind
  *  or apply on another receiver passed unread). */
 export const READY_ROOTS: readonly string[] = ["div.fileview-md", "div.fileview-code", "div.fileview-imgbox", "div.fileview-pdffall", "div.fileview-pdfhost", "div.fileview-cm"];
 export const NOT_READY_ROOTS: readonly string[] = ["div.fileview-load", "textarea.fileview-editor"];

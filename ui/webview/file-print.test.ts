@@ -634,7 +634,7 @@ test("bodyReady reads the element children through `children`, else through `chi
 // ternary or logical operand, a parenthesised or cast receiver (`(body).append`, `(body as HTMLElement).append`), an
 // argument to a callee the census does not list (`Element.prototype.append.call(body, x)`, a helper of its own).
 // SECOND, EVERY MEMBER CALL in the file on ANY receiver, by the compiler's tree (seatSites), classed by the member's NAME
-// (the round-6 review's census-1, 2026-09-20: the form axis is an allowlist too). A call of a method that seats a node
+// (the branch's verification pass finding census-1, 2026-09-20: the form axis is an allowlist too). A call of a method that seats a node
 // (SEAT_CALLS: the six the body's read resolves; replaceWith, after, before, replaceChild and insertAdjacentHTML; a range's
 // insertNode and surroundContents; setHTMLUnsafe; moveBefore; write and writeln) and an assignment to innerHTML or
 // outerHTML (SEAT_ASSIGNS) are SEATS; a call, apply or bind, a mount or render, and any method of Object, Reflect or
@@ -677,7 +677,7 @@ test("bodyReady reads the element children through `children`, else through `chi
 // `body.querySelector(...)!.parentElement`, a node read inside any body call's arguments, a listener's callback included,
 // then seated, `md.parentElement!.append(x)`, the accessor by its spelling, a stored query result); the default now
 // refuses, every seat in the file is read against the table, and the mutant case below plants every one of those forms and
-// reads the census red with the planted line. The round-6 review (2026-09-20): the inversion landed on the receiver axis
+// reads the census red with the planted line. The branch's verification pass (2026-09-20): the inversion landed on the receiver axis
 // alone, and the second read still knew a closed list of eleven seating names and two assignments and passed every other
 // form on a receiver other than the body, so a seating method reached through call, bind or apply, through Reflect.apply or
 // as a bound function, a range's insertNode, setHTMLUnsafe and moveBefore seated with no refusal and no root, an entry
@@ -884,7 +884,7 @@ function census(src: string, table: SeatRead[] = SEATS_READ_BY_HAND, indexTable:
         const args = inner.replace(/\s+/g, " ").trim();
         for (const arg of seats(args ? splitTop(args, ",") : [])) {
           let roots: string[];
-          try { roots = rootsOf(src, arg, at); } catch (e) { refused.push("line " + line + ": " + use + "(...) seats `" + arg + "`, an expression the census cannot resolve to a root (" + (e as Error).message + "): a spread, a call it does not know, a variable assigned where it cannot read"); continue; }   // the round-6 review's census-4: before this the resolver threw, naming the expression and not its line
+          try { roots = rootsOf(src, arg, at); } catch (e) { refused.push("line " + line + ": " + use + "(...) seats `" + arg + "`, an expression the census cannot resolve to a root (" + (e as Error).message + "): a spread, a call it does not know, a variable assigned where it cannot read"); continue; }   // the branch's verification pass finding census-4: before this the resolver threw, naming the expression and not its line
           for (const root of roots) seated.set(root, [...(seated.get(root) || []), line]);
         }
       } else if (!NON_SEATING_CALLS.includes(member)) refused.push("line " + line + ": " + use + "(...) is a call the census does not know");
@@ -938,7 +938,7 @@ function census(src: string, table: SeatRead[] = SEATS_READ_BY_HAND, indexTable:
  *  no element child. */
 const SEAT_CALLS = [...Object.keys(SEATING), "replaceWith", "after", "before", "replaceChild", "insertAdjacentHTML", "insertNode", "surroundContents", "setHTMLUnsafe", "moveBefore", "write", "writeln"];
 const SEAT_ASSIGNS = ["innerHTML", "outerHTML"];
-/** The calls the census reads BY THEIR SITE like a seat, through SEATS_READ_BY_HAND (the round-6 review's census-1,
+/** The calls the census reads BY THEIR SITE like a seat, through SEATS_READ_BY_HAND (the branch's verification pass finding census-1,
  *  2026-09-20): a method named call, apply or bind runs a method where the census cannot read its receiver or its
  *  arguments (Function.prototype's and Reflect.apply), one named mount or render seats inside the element it is handed (the
  *  editor chunk's mount, the PDF chunk's render), and any method of the reflection globals (SITE_RECEIVERS: Object.assign
@@ -972,7 +972,7 @@ const NON_SEATING_METHODS = [
  *  property's arrow or function expression, a method; `<module>` at the top level), the receiver as spelled with a non-null
  *  `!` dropped and its whitespace collapsed to single spaces (`on`), the form (`via`: the method's name, or `<member> =` for
  *  an assignment), the call or assignment's text, whether the receiver is the sanctioned `body` token (the identifier alone;
- *  `(body)` and a cast are not it), and, for a receiver that is a bare identifier, its BINDING (the round-6 review's
+ *  `(body)` and a cast are not it), and, for a receiver that is a bare identifier, its BINDING (the branch's verification pass finding
  *  census-2, 2026-09-20): the declaration the name resolves to by the language's scopes (`decl`: the declaration as
  *  written, `const main = el("div", "fileview-main")`, a loop's `const a of fileViewActions`; "a parameter of <function>",
  *  or of "the callback handed to <call>" for an unnamed callback's, since what fills it is that call's; "a global" for a
@@ -983,7 +983,7 @@ const NON_SEATING_METHODS = [
 type SeatSite = { line: number; fn: string; on: string; via: string; text: string; body: boolean; decl?: string; bindingAt?: number };
 /** A use of a member the census reads only by its site or refuses: its line and text. */
 type Use = { line: number; text: string };
-/** Every seat in `src` on any receiver, and every other form the second read classes (the round-6 review's census-1: the
+/** Every seat in `src` on any receiver, and every other form the second read classes (the branch's verification pass finding census-1: the
  *  form axis is an allowlist too). Every CALL of a member (`x.m(...)`, `x?.m(...)`, `x["m"](...)`) is classed by the member's
  *  NAME: a seating name (SEAT_CALLS) or a site-read one (SITE_CALLS, or any method of a SITE_RECEIVERS global) is a site,
  *  passed only through the table; a name NON_SEATING_METHODS lists passes; any other name is `unknown` and refused. A
@@ -1168,7 +1168,7 @@ const SEATS_READ_BY_HAND: SeatRead[] = [
   { in: "pdfBlock", on: "col", via: "appendChild", is: "the PDF column itself (div.fileview-pdffall), which this builder returns; the frame goes inside it", decl: "const col = el(\"div\", \"fileview-pdffall\")" },
   // the figure labels (armFigureLabels's onError): a label beside a failed figure's anchor
   { in: "onError", on: "parent", via: "insertBefore", is: "the parent of a failed figure's anchor (parent = anchor.parentNode): figureOf takes an img inside .fileview-md alone and figureAnchor climbs wrappers around that img, so the parent is inside the markdown root or is the root itself, never the body; the label goes beside the anchor", decl: "const parent = anchor.parentNode" },
-  // the calls the census reads by their site (SITE_CALLS, SITE_RECEIVERS; the round-6 review's census-1): reflection and module hand-offs, each read by hand for what it calls
+  // the calls the census reads by their site (SITE_CALLS, SITE_RECEIVERS; the branch's verification pass finding census-1): reflection and module hand-offs, each read by hand for what it calls
   { in: "<module>", on: "Object", via: "entries", is: "Object.entries over the highlighter's language table at module load, a literal record of grammars; each is registered with hljs; no element is touched", decl: "a global" },
   { in: "fetchFile", on: "Object", via: "assign", is: "Object.assign onto a fresh Error, setting its status for the failure road; the target is the Error, never an element", decl: "a global" },
   { in: "mdBlock", on: "base", via: "call", is: "marked's default walkTokens, called with marked as this over each token (base = marked.defaults.walkTokens): it walks the token tree and seats nothing", decl: "const base = marked.defaults.walkTokens" },
@@ -1179,7 +1179,7 @@ const SEATS_READ_BY_HAND: SeatRead[] = [
 ];
 /** A member of a receiver read by a COMPUTED name and stored or handed on (`const at = rows[cur]`), READ BY HAND and listed by
  *  its site: the nearest named function (`in`) and the receiver's spelling (`on`), with what the receiver is (`is`), the
- *  hand read's claim that the value is no seating method of an element (the round-6 review's census-1, 2026-09-20: a
+ *  hand read's claim that the value is no seating method of an element (the branch's verification pass finding census-1, 2026-09-20: a
  *  computed member read is the one form that reaches a method without spelling its name, `const f = md[m]; f(x)`). A stored
  *  index read the table does not list fails the census with its line, and an entry the source has no such read for fails
  *  it too. An index read whose value is only compared, tested or read further is not stored and is not listed. */
@@ -1278,7 +1278,7 @@ test("the census of the body's roots, its default refusing: every `body` token i
   for (const r of LINE_ROOTS) assert.equal(bodyReady(bodyOf(r), "pdf"), false, r + " alone under the PDF kind: not in");
 });
 
-test("the census refuses its unknown and derives its population, executed over mutants of file-view.ts's source: a root seated by body.append or body.insertBefore is resolved and fails the lists (FAILS BEFORE: the three-name list never saw either, so the census passed over both), a seat through an innerHTML assignment, a call the census does not know, a further access on a child node and a child-level replaceWith each fail with their line, and a read or a scroll assignment passes; the round-4 review's forms each red with the planted line (FAILS BEFORE: body?.append(x) and body[\"append\"](x) were outside the collect pattern, body.append?.(x) was a further access refused for node members alone, body.append.call(body, x), .bind and .apply and a bare body.append passed); the round-5 fix's forms each red with the planted line (FAILS BEFORE: (body).append(x), (body as HTMLElement).append(x), an alias const b = body, [body].forEach(...), Element.prototype.append.call(body, x) and a helper handed the body passed with no refusal and no root; a seat quoted in a column-0 // comment or after ;// counted as a seat, and a listed root's seat moved into one kept the census green); a seat written across a newline is read, a comment's prose is not, a declaration, a comparison and a listed callee's argument pass, and body.classList.add(...) still passes; the round-5 review's forms each red with the planted line (FAILS BEFORE: the census refused six child-level method names and passed every other seat unread, so a seat through body.querySelector(...)!.parentElement, a stored query result, md.parentElement!.append(x), a parent held in a variable, body.closest(...) and body.getRootNode(), a node read inside a listener's callback or a nested call within a body call's arguments and then seated, and the accessor body: () => body written anywhere but its declared site all passed with no refusal and no root); a seat on a receiver the table does not list, a computed-name call, a live site whose entry is removed, a stale entry and the ctx declaration renamed each red; the round-6 review's forms each red with the planted line (FAILS BEFORE: the second read knew a closed list of seating names and passed every other form on a receiver other than the body, so a seating method reached through call, bind or apply on md or md.parentElement, Reflect.apply(md.append, ...), a bound seat, a Range's insertNode, setHTMLUnsafe, moveBefore, a method by a name the census does not list, a bare read of md.append or md[\"append\"], a member read by a computed name and stored, a parenthesised callee, Object.assign(md, { innerHTML }) and Reflect.set(md, \"innerHTML\", ...) all passed with no refusal and no root; a block's const main = md.parentElement! and a callback's parameter named main seated under the entry for openFileView's main, while a second seat on the listed binding passes; a spread into body.append threw with no line), and a receiver with a cast inside is spelled with its spaces", () => {
+test("the census refuses its unknown and derives its population, executed over mutants of file-view.ts's source: a root seated by body.append or body.insertBefore is resolved and fails the lists (FAILS BEFORE: the three-name list never saw either, so the census passed over both), a seat through an innerHTML assignment, a call the census does not know, a further access on a child node and a child-level replaceWith each fail with their line, and a read or a scroll assignment passes; the round-4 review's forms each red with the planted line (FAILS BEFORE: body?.append(x) and body[\"append\"](x) were outside the collect pattern, body.append?.(x) was a further access refused for node members alone, body.append.call(body, x), .bind and .apply and a bare body.append passed); the round-5 fix's forms each red with the planted line (FAILS BEFORE: (body).append(x), (body as HTMLElement).append(x), an alias const b = body, [body].forEach(...), Element.prototype.append.call(body, x) and a helper handed the body passed with no refusal and no root; a seat quoted in a column-0 // comment or after ;// counted as a seat, and a listed root's seat moved into one kept the census green); a seat written across a newline is read, a comment's prose is not, a declaration, a comparison and a listed callee's argument pass, and body.classList.add(...) still passes; the round-5 review's forms each red with the planted line (FAILS BEFORE: the census refused six child-level method names and passed every other seat unread, so a seat through body.querySelector(...)!.parentElement, a stored query result, md.parentElement!.append(x), a parent held in a variable, body.closest(...) and body.getRootNode(), a node read inside a listener's callback or a nested call within a body call's arguments and then seated, and the accessor body: () => body written anywhere but its declared site all passed with no refusal and no root); a seat on a receiver the table does not list, a computed-name call, a live site whose entry is removed, a stale entry and the ctx declaration renamed each red; the branch's verification pass's forms each red with the planted line (FAILS BEFORE: the second read knew a closed list of seating names and passed every other form on a receiver other than the body, so a seating method reached through call, bind or apply on md or md.parentElement, Reflect.apply(md.append, ...), a bound seat, a Range's insertNode, setHTMLUnsafe, moveBefore, a method by a name the census does not list, a bare read of md.append or md[\"append\"], a member read by a computed name and stored, a parenthesised callee, Object.assign(md, { innerHTML }) and Reflect.set(md, \"innerHTML\", ...) all passed with no refusal and no root; a block's const main = md.parentElement! and a callback's parameter named main seated under the entry for openFileView's main, while a second seat on the listed binding passes; a spread into body.append threw with no line), and a receiver with a cast inside is spelled with its spaces", () => {
   const at = (src: string, needle: string): number => { const i = src.indexOf(needle); assert.ok(i >= 0, needle + " is in the source"); return i; };
   const seat = (call: string): string => { const i = at(VIEWER_SRC, "\n  body.appendChild(load);\n"); return VIEWER_SRC.slice(0, i) + "\n  " + call + VIEWER_SRC.slice(i); };   // a line inside the local viewer's open, before its loader is seated
   const plantedLine = VIEWER_SRC.slice(0, at(VIEWER_SRC, "\n  body.appendChild(load);\n")).split("\n").length + 1;   // the line the planted call lands on
@@ -1359,7 +1359,7 @@ test("the census refuses its unknown and derives its population, executed over m
   assert.deepEqual(nested.seated.get("div.fileview-mutant"), [plantedLine], "...and the seat itself is still resolved");
   for (const [form, planted] of [["md[\"append\"](x)", 'md["append"](el("div", "fileview-mutant"));'], ["md[m](x)", 'md[m](el("div", "fileview-mutant"));']] as const) refusedMutant(seat(planted), form + ", a call through a computed name", /calls through a computed name the census cannot read/);
   for (const [form, planted] of [["md.replaceWith(x)", 'md.replaceWith(el("div", "fileview-mutant"));'], ["md.after(x)", 'md.after(el("div", "fileview-mutant"));'], ["md.insertAdjacentHTML(...)", 'md.insertAdjacentHTML("afterend", "<div class=\\"fileview-mutant\\"></div>");'], ["md.outerHTML = ...", 'md.outerHTML = "<div class=\\"fileview-mutant\\"></div>";'], ["md.innerHTML += ...", 'md.innerHTML += "<div class=\\"fileview-mutant\\"></div>";']] as const) refusedMutant(seat(planted), form + " on a receiver the table does not list", SEAT_UNREAD);
-  // the round-6 review's census-1 (2026-09-20): the FORM axis refuses its unknown too. Before this the second read knew a closed
+  // the branch's verification pass finding census-1 (2026-09-20): the FORM axis refuses its unknown too. Before this the second read knew a closed
   // list of seating names and passed every other method call, a seating method read without being called, and a member
   // read by a computed name, so each of these seated with no refusal and no root
   const SITE_UNREAD = /calls (?:call|apply|bind|assign|set|insertNode) on `[^`]+` in openFileView, a call the census reads by its site/;
@@ -1380,8 +1380,8 @@ test("the census refuses its unknown and derives its population, executed over m
   refusedMutant(seat('(md.append)(el("div", "fileview-mutant"));'), "(md.append)(x), a parenthesised callee", HANDED_METHOD, 2);   // append read without being called (its call is the parenthesised expression's), and the callee the census cannot read
   refusedMutant(seat('Object.assign(md, { innerHTML: "<div class=\\"fileview-mutant\\"></div>" });'), "Object.assign(md, { innerHTML })", SITE_UNREAD);
   refusedMutant(seat('Reflect.set(md, "innerHTML", "<div class=\\"fileview-mutant\\"></div>");'), 'Reflect.set(md, "innerHTML", ...)', SITE_UNREAD);
-  refusedMutant(seat('(md as any).up.append(el("div", "fileview-mutant"));'), "a cast inside the receiver", /seats on `\(md as any\)\.up` in openFileView/);   // the round-6 review's census-5: the receiver is spelled with its spaces, so the line can be read
-  // the round-6 review's census-2 (2026-09-20): an entry is keyed on the receiver's spelling and held to ONE binding, so a
+  refusedMutant(seat('(md as any).up.append(el("div", "fileview-mutant"));'), "a cast inside the receiver", /seats on `\(md as any\)\.up` in openFileView/);   // the branch's verification pass finding census-5: the receiver is spelled with its spaces, so the line can be read
+  // the branch's verification pass finding census-2 (2026-09-20): an entry is keyed on the receiver's spelling and held to ONE binding, so a
   // second declaration of a listed name inside the entry's function is refused rather than read under the entry's claim
   const rebound = (src: string, form: string, decl: RegExp): void => {
     const r = census(src);
@@ -1395,7 +1395,7 @@ test("the census refuses its unknown and derives its population, executed over m
   rebound(seat('[md.parentElement!].forEach((main) => main.appendChild(el("div", "fileview-mutant")));'), "a callback's parameter named main", /seats on `main` in openFileView, bound to `a parameter of the callback handed to \[md\.parentElement!\]\.forEach`/);
   const sameBinding = census(seat('main.appendChild(el("div", "fileview-mutant"));'));
   assert.deepEqual(sameBinding.refused, [], "a second seat on the listed binding of main passes: the entry's claim (the body's parent, so a seat in it lands beside the body) is about the binding, and covers every seat on it");
-  // the round-6 review's census-4 (2026-09-20): an argument the resolver cannot read is refused with its line (before this rootsOf threw, naming the expression and not the line)
+  // the branch's verification pass finding census-4 (2026-09-20): an argument the resolver cannot read is refused with its line (before this rootsOf threw, naming the expression and not the line)
   refusedMutant(seat('body.append(...[el("div", "fileview-mutant")]);'), "a spread into body.append", /body\.append\(\.\.\.\) seats `\.\.\.\[el\("div", "fileview-mutant"\)\]`, an expression the census cannot resolve to a root \(a seated expression the census cannot resolve/);
   refusedMutant(seat('const kids = [el("div", "fileview-mutant")]; body.append(...kids);'), "a spread of a variable into body.append", /body\.append\(\.\.\.\) seats `\.\.\.kids`, an expression the census cannot resolve to a root/);
   // the action-context accessor passes at its one site alone (the round-5 review's extra8-2): the spelling anywhere else is refused
@@ -1423,7 +1423,7 @@ test("the census refuses its unknown and derives its population, executed over m
   assert.equal(live.computed.length, 0, "file-view.ts calls nothing through a computed name");
   assert.ok(live.sites.filter((s) => s.body).length >= 10 && live.sites.filter((s) => !s.body).length > live.sites.filter((s) => s.body).length, "the seat read finds the file's seats, on the body token and on the rest (the counts are the commit's, derived by this read, not kept here)");
   assert.equal(new Set(live.sites.filter((s) => !s.body).map((s) => s.fn + "|" + s.on + "|" + s.via)).size, SEATS_READ_BY_HAND.length, "one entry per distinct site (function, receiver, form): the table has no duplicate and no site is covered twice");
-  assert.deepEqual({ unknown: live.unknown, handedOut: live.handedOut, oddCallee: live.oddCallee }, { unknown: [], handedOut: [], oddCallee: [] }, "every method file-view.ts calls is by a name the census lists, no seating method is read without being called, and every callee is a name or a member (the round-6 review's census-1)");
+  assert.deepEqual({ unknown: live.unknown, handedOut: live.handedOut, oddCallee: live.oddCallee }, { unknown: [], handedOut: [], oddCallee: [] }, "every method file-view.ts calls is by a name the census lists, no seating method is read without being called, and every callee is a name or a member (the branch's verification pass finding census-1)");
   assert.equal(new Set(live.indexReads.map((i) => i.fn + "|" + i.on)).size, INDEX_READS_BY_HAND.length, "one entry per stored index read (function, receiver): the index table has no duplicate and no site is covered twice");
   for (const e of SEATS_READ_BY_HAND) { const s = live.sites.find((x) => x.fn === e.in && x.on === e.on && x.via === e.via)!; assert.equal(e.decl, s.decl, "the entry for " + e.in + "/" + e.on + "/" + e.via + " names the binding its sites resolve to (a member chain names none)"); }
   // a listed callee whose parameter the census reads under the body's name: renamed, the census fails until it is read again
