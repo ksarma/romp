@@ -441,10 +441,13 @@ is that run's, at the head it prints, and none is written here.
     refusal followed by a gone report on an object no refusal named; derive: report-link-by-existence); the refusal
     marking its object as reported (red: every case with a gone report on the refused object after the refusal, that
     report then silenced; derive: refusal-marks-reported); the flag dropped from its condition with the spent first
-    term kept (red: every case whose worker has a later window where the refusal renders at all, the start read's
-    object real, unnamed, and gone or off the recorded jd.STATE, and the slot not holding it; a case whose object a
-    verdict named stays green; derive: refusal-flag-dropped); the identity term alone in the condition's place (red:
-    every case whose worker has a later window where the identity term fails; derive: refusal-identity-alone); a scope
+    term kept (red: every case whose worker has a later window where the refusal renders at all, whether or not the
+    slot holds the start read's object there (the identity check lives in the spent first term), its guards standing:
+    the object real, unnamed, unreported, and gone or off the recorded jd.STATE; a case whose object a verdict named or
+    the first window's report marked stays green; derive: refusal-flag-dropped); the identity term alone in the
+    condition's place (red: every refusing case whose worker has a later window where the identity term fails, the
+    refusal's guards standing there; a case whose start read found no object is never a refusing one, whatever its later
+    windows hold; derive: refusal-identity-alone); a scope
     appended to its text (red: every case that reads the refusal for naming no scope or test; derive:
     refusal-scope-appended); the flag kept when the identity term fails, the deferral not taken (red: every case whose
     first window refuses, the refusal then never taken and the flag spent only where the identity term holds, so a
