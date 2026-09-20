@@ -559,9 +559,15 @@ class SpawnSpec(unittest.TestCase):
         re-raises FileExistsError (17) first; round 5's wrap, keyed on `errno is None`, let that out of the class, so a
         peer's one-syscall plant read "[Errno 17] File exists" with no problem row and no remedy where round 4's head
         filed both. The wrap now keys on the errno set of the shape class (host_transport.HELPER_SHAPE_ERRNOS). Eight
-        arms over the REAL helpers, no stub, plus a symlink loop at hosts/: each is HostDirRefused, errno None, worded
-        as the helpers word a non-directory (`<what> <path> is not a directory`), no spawn.json written anywhere, and
-        the plant left standing. Red at the round-6 head: FileExistsError, errno 17, not the class, on every arm."""
+        arms over the REAL helpers, no stub, plus a symlink that names itself standing AT hosts/: each is HostDirRefused,
+        errno None, worded as the helpers word a non-directory (`<what> <path> is not a directory`), no spawn.json
+        written anywhere, and the plant left standing. The self-link arm exercises EEXIST, not ELOOP (the round-7
+        addendum, 2026-09-20, after a verifier found the arm's startswith accepting either wording): os.mkdir on a name
+        that is a self-link reports the name taken (17), and pathlib's mkdir(exist_ok=True) then asks is_dir(), whose
+        stat meets ELOOP and swallows it (_ignore_error), so the EEXIST re-raises and the wrap words it as a
+        non-directory; the arm pins the cause's errno and the exact wording. ELOOP itself is reached by re-pointing
+        hosts/ to a self-link BETWEEN the helpers, the `loop` arm of the re-pointed case below. Red at the round-6
+        head: FileExistsError, errno 17, not the class, on every arm."""
         spec = {"sid": SID, "name": "web", "version": "abc12345", "state_dir": "/state", "protocol": 1, "env": {"FEATURE_FLAG": "1"}}
         shapes = ("regular file", "fifo", "symlink to a file", "dangling symlink")
         for where in ("hosts", "hosts/<sid>"):
@@ -593,14 +599,19 @@ class SpawnSpec(unittest.TestCase):
                     self.assertEqual(str(cm.exception), "%s %s is not a directory" % (what, target))
                     self.assertEqual(os.lstat(target)[:2], before[:2], "the plant stands as planted")
                     self.assertEqual([str(p) for p in Path(root).rglob("spawn.json")], [], "no spawn.json anywhere under the root")
-        with self.subTest(where="hosts", shape="symlink loop"):
+        with self.subTest(where="hosts", shape="self-link (EEXIST, not ELOOP)"):
+            import errno as _errno
             root = tempfile.mkdtemp()
             self.addCleanup(shutil.rmtree, root, True)
             (Path(root) / "hosts").symlink_to(Path(root) / "hosts")
             with self.assertRaises(ht.HostDirRefused) as cm:
                 ht.write_spawn_spec(root, SID, spec)
             self.assertIsNone(cm.exception.errno)
-            self.assertTrue(str(cm.exception).startswith("hosts directory %s is not a directory" % (Path(root) / "hosts")), str(cm.exception))
+            self.assertEqual(str(cm.exception), "hosts directory %s is not a directory" % (Path(root) / "hosts"),
+                             "the EEXIST wording, with no loop clause: this arm never reaches ELOOP")
+            self.assertIsInstance(cm.exception.__cause__, FileExistsError)
+            self.assertEqual(cm.exception.__cause__.errno, _errno.EEXIST, "pathlib re-raised os.mkdir's EEXIST; the loop's ELOOP was is_dir()'s to swallow")
+            self.assertTrue((Path(root) / "hosts").is_symlink(), "the self-link stands")
 
     def test_a_hosts_re_pointed_between_the_helpers_is_refused_for_a_dangling_or_file_target_and_is_the_errno_for_an_unwritable_one(self):
         """The two decisions the round-6 rulings asked for in code (C), driven through the window condition 1 states:
@@ -610,8 +621,18 @@ class SpawnSpec(unittest.TestCase):
         itself a plain file (ENOTDIR at the first helper, which only the operator can cause and which the class's
         remedy, point the state root elsewhere, fits). EACCES (a link to a directory this uid cannot write) stays the
         launch error's OSError with errno 13, by the ruling, though a peer can cause it too. The read-only target
-        receives nothing on any arm. Red at the round-6 head: FileNotFoundError 2 and NotADirectoryError 20 outside
-        the class; the EACCES arm green there and pinned here so the decision cannot move unseen."""
+        receives nothing on any arm. ELOOP (the `loop` arm, the round-7 addendum, 2026-09-20): hosts/ re-pointed to a
+        link that names ITSELF, so the second helper's os.mkdir of hosts/<sid> fails resolving hosts/ with ELOOP (40)
+        and pathlib's is_dir() reads False through the same loop, the one arm in this file that reaches the class by
+        ELOOP; the shapes case's self-link AT hosts/ is EEXIST (its docstring says why). And the component named (the
+        addendum, after a verifier read `host directory <root> is not a directory` for a dangling-link STATE ROOT):
+        helper_shape_refusal names the component the errno's filename is, so a state root that is a dangling symlink
+        (the create road: root.exists() False, then parents=True meets the root itself by path and pathlib re-raises
+        EEXIST with the root as the filename) reads `state root <root> is not a directory`, the noun hosts_dir's own
+        refusals use for it. Red at the round-6 head: FileNotFoundError 2 and NotADirectoryError 20 outside the class;
+        the EACCES arm green there and pinned here so the decision cannot move unseen; red at the merged head on the
+        loop arm (a bare OSError 40, not the class) and at the round-7 commit on the dangling-root arm (`host
+        directory` for the root)."""
         import errno as _errno
         spec = {"sid": SID, "name": "web", "version": "abc12345", "state_dir": "/state", "protocol": 1, "env": {"FEATURE_FLAG": "1"}}
         real_hosts_dir = sh.hosts_dir
@@ -623,7 +644,7 @@ class SpawnSpec(unittest.TestCase):
                 os.symlink(target, r)
                 return r
             return wrapped
-        for arm in ("dangling", "file", "unwritable"):
+        for arm in ("dangling", "file", "unwritable", "loop"):
             with self.subTest(arm=arm):
                 root = tempfile.mkdtemp()
                 self.addCleanup(shutil.rmtree, root, True)
@@ -632,6 +653,8 @@ class SpawnSpec(unittest.TestCase):
                 elif arm == "file":
                     target = Path(root) / "a-file.txt"
                     target.write_text("")
+                elif arm == "loop":
+                    target = Path(root) / "hosts"           # the link names itself: hosts/ -> hosts/
                 else:
                     target = Path(root) / "readonly"
                     target.mkdir(mode=0o500)
@@ -647,9 +670,13 @@ class SpawnSpec(unittest.TestCase):
                 else:
                     self.assertIsInstance(cm.exception, ht.HostDirRefused, repr(cm.exception))
                     self.assertIsNone(cm.exception.errno)
-                    why = ("does not exist (a component is missing, or a symlink there dangles)" if arm == "dangling"
-                           else "is not a directory, or a directory above it is not")
+                    why = {"dangling": "does not exist (a component is missing, or a symlink there dangles)",
+                           "file": "is not a directory, or a directory above it is not",
+                           "loop": "is not a directory (a symlink loop)"}[arm]
                     self.assertEqual(str(cm.exception), "host directory %s %s" % (leaf, why))
+                    if arm == "loop":
+                        self.assertEqual(cm.exception.__cause__.errno, _errno.ELOOP, "the cause is the mkdir's ELOOP, the class's one loop road")
+                        self.assertEqual(os.readlink(Path(root) / "hosts"), str(target), "the self-link stands")
                 self.assertEqual([str(p) for p in Path(root).rglob("spawn.json")], [], "no spawn.json anywhere under the root")
         with self.subTest(arm="plain-file state root"):
             scratch = tempfile.mkdtemp()
@@ -660,6 +687,19 @@ class SpawnSpec(unittest.TestCase):
                 ht.write_spawn_spec(root, SID, spec)
             self.assertIsNone(cm.exception.errno)
             self.assertEqual(str(cm.exception), "hosts directory %s is not a directory, or a directory above it is not" % (root / "hosts"))
+        with self.subTest(arm="dangling-link state root"):
+            scratch = tempfile.mkdtemp()
+            self.addCleanup(shutil.rmtree, scratch, True)
+            root = Path(scratch) / "root"
+            root.symlink_to(Path(scratch) / "nowhere")
+            with self.assertRaises(ht.HostDirRefused) as cm:
+                ht.write_spawn_spec(root, SID, spec)
+            self.assertIsNone(cm.exception.errno)
+            self.assertEqual(str(cm.exception), "state root %s is not a directory" % root,
+                             "the component the errno's filename names, in hosts_dir's own noun for it")
+            self.assertEqual(cm.exception.__cause__.errno, _errno.EEXIST, "pathlib's parents=True mkdir met the dangling root by path")
+            self.assertTrue(root.is_symlink() and not root.exists(), "the dangling link stands, nothing made through it")
+            self.assertEqual(sorted(os.listdir(scratch)), ["root"], "nothing made beside it")
 
     def test_a_directory_at_spawn_json_or_host_stderr_is_the_opens_own_error_with_eisdir_and_not_a_refusal(self):
         """tests-2 (round 6 of the review, 2026-09-20): _open_file_nofollow narrows the class to ELOOP alone, every other

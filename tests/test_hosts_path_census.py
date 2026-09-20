@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """The census of every use of a path under `hosts/`, derived by ORIGIN over the three modules that mint one (round 7 of
-fork PR #814's review, 2026-09-20; the round-6 rulings' condition 2).
+fork PR #814's review, 2026-09-20; the round-6 rulings' condition 2; the follow rules widened by BINDING FORM in the
+round-7 addendum, after the round's verifiers planted ten shapes and six were missed in silence).
 
 WHY BY ORIGIN. Through round 6 the PR's record enumerated the residual (the reads under hosts/ that still take a path
 before any descriptor guard) with a line grep over kernel/sdk_backend.py, widened three times to the spellings each
@@ -20,50 +21,77 @@ THE METHOD, in the order it runs.
   the census does not follow a value across exec (the argv list ends at subprocess.Popen on the kernel side, an
   `exec-arg` terminal), so the host's entry re-seeds it by declaration. The seed scan also runs over every product module
   (kernel/, bin/, cli/, postal/), and a pin holds that no module outside the three builds such a path.
-  GROW, to a fixpoint. The taint (a set of origin tags, each the seed's file, line and text) flows through assignment
-  and augmented assignment (a name, a tuple target, an attribute store `self.x = v`, which taints `x` for every reader
-  of `self.x` in that class, a subscript store into a name or an attribute), the with-target and the for-target, into
-  containers (a list, tuple, set or dict literal holding it, `.append`, `.extend`, `.add`, `.update` on a name or an
-  attribute) and out of them (a subscript, `.get`, `.pop`, a splat), through the pure conversions (`str`, `repr`,
-  `bytes`, `format`, `os.fspath`, `os.fsencode`, `os.fsdecode`, `Path`, `PurePath`, `os.path.join`, `dirname`,
-  `abspath`, `normpath`, `.encode`, `.decode`, `.format`, `.join`, `.strip`, `/`, `+`, `%`, an f-string, `.parent`,
-  `.parents`, `.parts`, `.with_name`, `.with_suffix`, `.joinpath`, `.relative_to`, a conditional expression, a walrus,
-  a comprehension), into a callee's parameters from every call site (positional or keyword, context-insensitively: a
-  parameter tainted at any site is tainted everywhere, the safe direction) and out of a callee's return to every call
-  site, with the call itself added as an origin tag (so a terminal names the road that minted its path, not only the
-  helper's body), through a parameter that is called (`log(...)`) to the callables its call sites bind, and out of a
-  read that yields paths (`glob`, `rglob`, `iterdir`, `scandir` on a path). A leaf-only read (`.name`, `.stem`,
-  `.suffix`) drops the taint: a bare file name cannot reach outside the directory it is used in. A second kind, `fd`,
-  seeds at every `os.open` whose path is tainted or whose dir_fd is, and flows the same way (HostDirs' two descriptors
-  reach every `dir_fd=dirs.dir` through the attribute store in its __init__); the return of a terminal read (the bytes
-  of a file, a stat result) is not tainted.
+  GROW, to a fixpoint, through every form Python binds or reads a name or an attribute by. The taint (a set of origin
+  tags, each the seed's file, line and text) flows through assignment, annotated and augmented assignment to a name, a
+  tuple or list target (element-wise when the value's shape is known, else the union), a starred target, an attribute
+  target on `self`, on a typed receiver, on a class or on a receiver the walk cannot type (stored by attribute NAME and
+  read back by every read of that name, the safe direction), a subscript target on any of those, a walrus, the
+  with-target, the for-target, a comprehension's target, a match statement's capture names, a `global` or `nonlocal`
+  name (bound in the scope it names), a class-body assignment (readable as `self.<name>`, `<Class>.<name>`,
+  `type(self).<name>`, `self.__class__.<name>` and, in the class body, by the bare name; a base class's through the
+  subclass), a parameter's default or keyword default (evaluated in the defining scope), a property's return at every
+  read of the property and a setter's parameter at every store to it, an exception bound by `except ... as e` (its
+  `filename` and `filename2`, the path attributes an OSError carries, read as the path of a syscall the try body or a
+  callee of it made), into containers (a list, tuple, set or dict literal holding it; `.append`, `.extend`, `.add`,
+  `.update`, `.insert`, `.appendleft`, `.extendleft`, `.put`, `.put_nowait`, `.setdefault` on a name or an attribute,
+  `setattr` with a constant name) and out of them (a subscript, `.get`, `.pop`, `.setdefault`, `getattr`, a splat, a
+  dynamic `getattr` reading every attribute of the receiver's class), through the pure conversions (`str`, `repr`,
+  `bytes`, `bytearray`, `format`, `os.fspath`, `os.fsencode`, `os.fsdecode`, `Path`, `PurePath`, `os.path.join`,
+  `dirname`, `abspath`, `normpath`, `min`, `max`, `json.dumps`, `json.loads`, the `re` functions that return text or a
+  match, `.encode`, `.decode`, `.format`, `.join`, `.strip`, `.split`, `.partition`, `.group`, `.replace`, `/`, `+`, `%`,
+  an f-string, `.parent`, `.parents`, `.parts`, `.with_name`, `.with_suffix`, `.joinpath`, `.relative_to`, `.absolute`,
+  a conditional expression, an `await`, `asyncio.wait_for`, `asyncio.run`), into a callee's parameters from every call
+  site (positional, keyword, splatted or double-splatted, context-insensitively: a parameter tainted at any site is
+  tainted everywhere, the safe direction; a classmethod's `cls` and a bound method's `self` are never bound to an
+  argument) and out of a callee's return or yield to every call site, with the call itself added as an origin tag (so a
+  terminal names the road that minted its path, not only the helper's body), into a nested function or a lambda (indexed
+  as a function of its own that reads its enclosing scopes' names, called where its name is called, bound where its
+  value is bound: an assignment, a default, an attribute, an argument to a function of the files), through a parameter
+  that is called (`log(...)`) to the callables its call sites bind, and out of a read that yields paths (`glob`, `rglob`,
+  `iterdir`, `scandir` on a path). A leaf-only read (`.name`, `.stem`, `.suffix`) drops the taint: a bare file name
+  cannot reach outside the directory it is used in. A second kind, `fd`, seeds at every `os.open` whose path is tainted
+  or whose dir_fd is, and flows the same way (HostDirs' two descriptors reach every `dir_fd=dirs.dir` through the
+  attribute store in its __init__); the return of a terminal read (the bytes of a file, a stat result) is not tainted.
   CLASSIFY every TERMINAL, a call that takes the value at a position where the operating system reads it: `open`, the
   path-taking os and os.path functions, the Path methods, shutil, `asyncio.open_unix_connection`, `start_unix_server`,
-  the subprocess constructors. `by-descriptor`: a `dir_fd` keyword, or the first argument of fstat, fchmod, fdopen,
-  scandir or write, carries `fd` taint, and a subprocess's stdin, stdout or stderr keyword too. `by-path`: a path
-  position carries `path` or `text` taint and no descriptor does. `exec-arg`: a subprocess's argv carries the path. And
-  `escape`: a `path`-tainted value handed to a call the walk cannot resolve to a function of the three files, a pure
-  conversion, a container operation or a data sink (a logger, an exception's message, a file's `.write`, `json.dumps`),
-  reported by site, never dropped: a value the census cannot follow is a finding, not a silence. A `text`-tainted value
-  at such a call is a message (that is what tells the two kinds apart at the use) and is not reported.
-  PIN. `EXPECTED` below is the published list: every terminal at this head, keyed by file, enclosing function, the
-  operation, the argument's text and its ordinal in that function (never a line number, which main's insertions move),
-  with the mechanical class the census derived and, for the reader, the road it sits on and whether the round's ruling
-  counts it as residual. The test holds the derived set equal to it: a new terminal, a lost one, one whose class
-  changed, or a changed set of origins reds; and the expected set is non-empty. Run the module directly to print the
-  list with line numbers at the head it reads.
-  WHAT THE CENSUS CANNOT SEE, from its own follow rules and nothing else: (1) a segment not spelled as the literal
-  (`"ho" + "sts"`, a value read from a file or an environment variable, a bytes segment split across two constants);
-  (2) a value that leaves the process by any road but the argv it stops at (an environment variable, a socket frame,
-  stdin, a file's content; the spec's `state_dir` field is one: the host re-seeds by the literal, so its `hosts/` under
-  that root is seen, and the field's own value is a root, not a path under hosts/); (3) a syscall made by code outside
-  the three files (kernel/kernel.py, a C extension, a library called with a path the walk already classed as an
-  escape); (4) a receiver the walk cannot type (`sess._host.something(p)`: an escape when p is path-tainted, a silence
-  when it is a plain name); (5) a path reassembled from a leaf name and an untainted base (`base / sock.name`) after
-  `.name` dropped the taint; (6) control flow: the walk is flow-insensitive within a function, so it reports a use on a
+  the subprocess constructors; a `**` splat into one is taken as its path position. `by-descriptor`: a `dir_fd` keyword,
+  or the first argument of fstat, fchmod, fdopen, scandir or write, carries `fd` taint, and a subprocess's stdin, stdout
+  or stderr keyword too. `by-path`: a path position carries `path` or `text` taint and no descriptor does. `exec-arg`: a
+  subprocess's argv carries the path. And `escape`: a `path`-tainted value at a form the walk does not follow, reported
+  by file and line with the form named, counted, never dropped: a value the census cannot follow is a finding, not a
+  silence. The forms: a call the walk cannot resolve to a function of the three files, a pure conversion, a container
+  operation or a data sink (a logger, an exception's message, a file's `.write`); a method the walk does not know called
+  on a path-tainted receiver; a callable (a terminal's name, a function of the files, a lambda) handed as a VALUE into a
+  call outside the files beside a path-tainted argument (`map(open, paths)`, `sorted(paths, key=os.path.getmtime)`: the
+  callee applies it where the walk cannot see); a store with a name the walk cannot read (`setattr(o, name, p)`); and a
+  decorator the walk does not know on a function that holds or returns a path (the decorator rebinds the name to a value
+  the walk cannot follow). A `text`-tainted value at such a form is a message (that is what tells the two kinds apart at
+  the use) and is not reported.
+  PIN. `ROADS` below is the published list: every terminal, carrier and mint at this head, keyed by file, enclosing
+  function, the operation, the argument's text and its ordinal in that function (never a line number, which main's
+  insertions move), with the mechanical class the census derived and, for the reader, the road it sits on and whether the
+  round's ruling counts it as residual. The test holds the derived set equal to it: a new terminal, a lost one, one whose
+  class changed, or a changed set of origins reds; the expected set is non-empty; and the escapes over the real tree are
+  `[]`, so a value the walk loses at any form above reds the census rather than thinning it. Run the module directly to
+  print the list with line numbers at the head it reads.
+  WHAT THE CENSUS CANNOT SEE is what it PRINTS: every escape, by file and line with the form named (the ESCAPES section
+  of the printer, the `escapes:` count of its summary line, and `test_no_use_escapes_the_walk`), derived from the code at
+  the head it reads and not from a list kept in prose; a follow rule the code outgrows shows up there as a member, never
+  as a silence. Two kinds lie outside the census by construction, and are the whole of what it cannot print: (1) a path
+  that reaches a syscall as an argument STRING of a subprocess is followed to the exec boundary and no further (the
+  `exec-arg` terminal; the host's side re-seeds its `spec_path` by declaration, above), so a syscall the child makes on
+  it is the child's census, not this one's; (2) a syscall made inside a C extension, or by code outside the three files
+  given a value this census did class (the wide pin holds no other product module builds such a path itself, and a
+  library given a path is the escape at the call). Everything else it does not follow is an escape at the form, with
+  three consequences the reader should hold: the walk is flow-insensitive within a function, so it reports a use on a
   road a guard makes unreachable exactly as it reports a live one (the dir_fd=None arms of the readers are that shape;
-  a second pin below holds, transitively over their in-file callers, that every caller passes a dir_fd that is not
-  None, which is the argument for "unreachable today", made by the census rather than by a sentence).
+  `test_every_road_into_a_by_path_fallback_arm_passes_a_descriptor` holds, transitively over their in-file callers, that
+  every caller passes a dir_fd that is not None, which is the argument for "unreachable today", made by the census rather
+  than by a sentence); the seed rule is a definition, not a follow rule, so a hosts path that never passes through the
+  literal segment in these files (a segment spelled otherwise, a whole path read from a file or the environment) is
+  never tainted and is outside what the escapes can show, which is why the seed scan runs over every product module as
+  well; and a leaf name reassembled onto an untainted base after `.name` dropped the taint is a drop by rule (a bare
+  name cannot leave its directory), not an escape.
 """
 import ast
 import glob
@@ -101,32 +129,71 @@ PATH_METHODS = {"exists", "is_dir", "is_file", "is_symlink", "is_fifo", "is_sock
                 "glob", "rglob", "iterdir", "rename", "replace", "symlink_to", "hardlink_to", "resolve", "samefile",
                 "readlink", "owner", "group", "connect", "bind"}
 YIELDS_PATHS = {"glob", "rglob", "iterdir", "os.scandir", "os.listdir"}
-PURE_FUNCS = {"str", "repr", "bytes", "format", "os.fspath", "os.fsencode", "os.fsdecode", "Path", "PurePath",
-              "PurePosixPath", "pathlib.Path", "os.path.join", "os.path.dirname", "os.path.abspath", "os.path.normpath",
-              "os.path.expanduser", "list", "tuple", "set", "frozenset", "sorted", "reversed", "enumerate", "zip",
-              "dict", "iter", "next", "filter", "map"}
+# THE FOUR LISTS BELOW are decided member by member by ONE question (the round-7 addendum, after the verifiers found
+# `setdefault` among the pure methods and `re.sub` among the sinks): can a hosts path flow THROUGH this call, either OUT
+# of it in its return (then it is PURE: the return carries the receiver's and the arguments' tags) or INTO its receiver to
+# be read back later (then it is a STORE: the arguments' tags land on the receiver)? A member is a SINK only when the
+# answer is no on both counts: its return cannot carry the value (a bool, an int, a hash, a type, None) and it keeps no
+# argument (it compares, counts, closes, logs, writes out, or leaves the process). A call in none of the lists with a
+# path-tainted argument or receiver is an escape, never a silence. Moved by that question in the addendum: `setdefault`
+# from PURE to STORE_RETURN (it stores its default AND returns it); `put` and `put_nowait` from SINK to STORE (a queue is
+# read back by `.get`); `split`, `rsplit` and `splitlines` from SINK to PURE (they return pieces of the receiver, from
+# which a path is reassembled); `re.sub`, `re.match` and `re.search` from SINK to PURE beside the other `re` functions
+# that return text or a match; `json.dumps` and `json.loads` from SINK to PURE (`json.loads(json.dumps(p))` is `p`);
+# `min` and `max` from SINK to PURE (they return one of their arguments); `asyncio.wait_for` and `asyncio.run` from SINK
+# to PURE (they return the awaited value); `getattr` and `setattr` from SINK to their own rules in the walk (a read or a
+# store by attribute name, the name a constant or not); `vars` from SINK to a dynamic read of the receiver's attributes.
+# A compiled pattern's `match`, `search`, `fullmatch`, `findall`, `finditer`, `sub` and `subn` are PURE (a Match or a
+# string carries the text searched), which puts Path.match, a bool, on the safe side too.
+PURE_FUNCS = {"str", "repr", "bytes", "bytearray", "memoryview", "format", "os.fspath", "os.fsencode", "os.fsdecode",
+              "Path", "PurePath", "PurePosixPath", "pathlib.Path", "pathlib.PurePath", "os.path.join", "os.path.dirname",
+              "os.path.abspath", "os.path.normpath", "os.path.expanduser", "os.path.basename", "os.path.split",
+              "os.path.splitext", "os.path.relpath", "os.path.commonpath", "os.path.normcase", "list", "tuple", "set",
+              "frozenset", "sorted", "reversed", "enumerate", "zip", "dict", "iter", "next", "filter", "map", "min", "max",
+              "json.dumps", "json.loads", "re.sub", "re.subn", "re.split", "re.findall", "re.finditer", "re.match",
+              "re.search", "re.fullmatch", "re.escape", "re.compile", "asyncio.wait_for", "asyncio.run",
+              "asyncio.ensure_future", "asyncio.shield", "copy.copy", "copy.deepcopy", "functools.reduce", "itertools.chain"}
 PURE_METHODS = {"encode", "decode", "format", "join", "strip", "rstrip", "lstrip", "lower", "upper", "replace",
-                "with_name", "with_suffix", "joinpath", "relative_to", "expanduser", "as_posix", "copy", "items",
-                "values", "keys", "get", "pop", "setdefault", "popleft", "__getitem__"}
+                "split", "rsplit", "splitlines", "partition", "rpartition", "removeprefix", "removesuffix", "casefold",
+                "title", "capitalize", "swapcase", "zfill", "ljust", "rjust", "center", "expandtabs", "translate",
+                "group", "groups", "groupdict", "expand", "search", "match", "fullmatch", "findall", "finditer", "sub",
+                "subn", "with_name", "with_suffix", "with_stem", "joinpath",
+                "relative_to", "expanduser", "absolute", "as_posix", "as_uri", "copy", "items", "values", "keys", "get",
+                "pop", "popleft", "popitem", "__getitem__", "union", "intersection", "difference", "symmetric_difference"}
 PURE_ATTRS = {"parent", "parents", "parts", "anchor", "drive", "root"}
 DROP_ATTRS = {"name", "stem", "suffix", "suffixes"}
-STORE_METHODS = {"append", "extend", "add", "update", "insert", "appendleft"}
-SINK_FUNCS = {"print", "json.dumps", "len", "int", "float", "bool", "isinstance", "any", "all", "min", "max", "hash",
-              "id", "type", "getattr", "setattr", "hasattr", "delattr", "callable", "os.strerror", "re.sub", "re.match", "re.search",
-              "re.compile", "json.loads", "time.time", "os.geteuid", "os.getpid", "stat.S_IMODE", "stat.S_ISDIR",
-              "stat.S_ISLNK", "stat.S_ISREG", "sys.exit", "warnings.warn", "os.close", "os.umask", "asyncio.wait_for",
-              "asyncio.sleep", "asyncio.run", "asyncio.Queue", "asyncio.Event", "super", "range", "abs", "round",
-              "divmod", "chr", "ord", "hex", "oct", "vars", "traceback.format_exc", "traceback.extract_tb"}
-SINK_METHODS = {"write", "writelines", "log", "debug", "info", "warning", "error", "exception", "seek", "read",
-                "readline", "readlines", "close", "flush", "put", "put_nowait", "send", "startswith", "endswith",
-                "split", "rsplit", "splitlines", "count", "find", "index", "isdigit", "isalnum", "discard", "remove",
-                "clear", "poll", "wait", "terminate", "kill", "drain", "feed", "dump"}
+STORE_METHODS = {"append", "extend", "add", "update", "insert", "appendleft", "extendleft", "put", "put_nowait"}
+STORE_RETURN_METHODS = {"setdefault"}
+SINK_FUNCS = {"print", "len", "int", "float", "bool", "isinstance", "issubclass", "any", "all", "hash", "id", "type",
+              "hasattr", "delattr", "callable", "os.strerror", "time.time", "time.monotonic", "os.geteuid", "os.getpid",
+              "stat.S_IMODE", "stat.S_ISDIR", "stat.S_ISLNK", "stat.S_ISREG", "stat.S_ISFIFO", "stat.S_ISSOCK", "sys.exit",
+              "warnings.warn", "os.close", "os.umask", "asyncio.sleep", "asyncio.Queue", "asyncio.Event", "asyncio.Lock",
+              "super", "range", "abs", "round", "divmod", "chr", "ord", "hex", "oct", "traceback.format_exc",
+              "traceback.extract_tb", "traceback.format_exception", "logging.getLogger"}
+SINK_METHODS = {"write", "writelines", "log", "debug", "info", "warning", "error", "exception", "critical", "seek",
+                "read", "readline", "readlines", "close", "flush", "send", "startswith", "endswith", "count", "find",
+                "rfind", "index", "rindex", "isdigit", "isalnum", "isalpha", "isspace", "discard", "remove", "clear",
+                "poll", "wait", "terminate", "kill", "drain", "feed", "dump", "is_absolute", "is_relative_to",
+                "fileno", "isatty", "truncate", "cancel", "done", "set", "is_set", "release", "acquire", "notify",
+                "notify_all", "sort", "reverse", "issubset", "issuperset", "isdisjoint", "__contains__"}
 LOG_PARAMS = {"log", "logger", "on_fault", "on_stderr", "on_exit", "on_hello", "on_ack"}
+KEY_METHODS = {"get", "pop", "setdefault", "__getitem__", "__contains__", "has_key"}   # a constant first argument is a key
+# Decorators the walk knows the binding of. `property` and `cached_property` make a read of the name the method's return
+# and (with `.setter`) a store to it the setter's parameter; `staticmethod` and `classmethod` change how the first
+# parameter binds; the two contextmanagers make `with f() as x` bind x to the yield; `wraps`, the caches, `abstractmethod`
+# and `overload` leave the callable's parameters and return as written. Any other decorator on a function that holds or
+# returns a path is an escape: the name is rebound to whatever the decorator returned.
+KNOWN_DECORATORS = {"property", "functools.cached_property", "cached_property", "staticmethod", "classmethod",
+                    "contextlib.contextmanager", "contextlib.asynccontextmanager", "contextmanager", "asynccontextmanager",
+                    "functools.wraps", "wraps", "functools.lru_cache", "lru_cache", "functools.cache", "cache",
+                    "abc.abstractmethod", "abstractmethod", "typing.overload", "overload"}
+PROPERTY_DECORATORS = {"property", "functools.cached_property", "cached_property"}
 
 
 class Tag(tuple):
     """An origin: (kind, file, line, text). Two tags are the same origin when their (kind, file, qual, text, ordinal)
-    agree; the line is for the printed list."""
+    agree; the line is for the printed list. Kinds: `path`, `text`, `fd`, and `exc` (a path carried by an exception the
+    try body raised, readable through its `filename`; never counted at a terminal or an escape until read so)."""
     __slots__ = ()
 
     def __new__(cls, kind, file, line, text, qual, ordinal):
@@ -142,22 +209,92 @@ class Tag(tuple):
     def key(self):
         return (self.kind, self.file, self.qual, self.text[:72], self.ordinal)
 
+    def as_kind(self, kind):
+        return Tag(kind, self.file, self.line, self.text, self.qual, self.ordinal)
+
+
+def _pseudo_def(name, body, lineno):
+    return ast.FunctionDef(name=name, args=ast.arguments(posonlyargs=[], args=[], vararg=None, kwonlyargs=[], kw_defaults=[],
+                                                          kwarg=None, defaults=[]),
+                           body=body or [ast.Pass()], decorator_list=[], returns=None, lineno=lineno, col_offset=0,
+                           end_lineno=lineno, end_col_offset=0)
+
+
+def _dotted(e):
+    if isinstance(e, ast.Name):
+        return e.id
+    if isinstance(e, ast.Attribute):
+        base = _dotted(e.value)
+        return base + "." + e.attr if base else None
+    if isinstance(e, ast.Call):
+        return _dotted(e.func)
+    return None
+
 
 class Fn:
-    def __init__(self, file, qual, node, cls):
-        self.file, self.qual, self.node, self.cls = file, qual, node, cls
+    """A scope the walk binds names in: a module-level function or method, a nested function, a lambda, a class body or
+    the module level (the last two as pseudo-functions). `outer` is the enclosing scope (a method's is its class body,
+    a module function's the module level, a nested function's or lambda's the function it is written in); a function
+    body reads its enclosing FUNCTION scopes and the module level, never a class body, which only its own statements,
+    its methods' defaults and its decorators read (Python's rule)."""
+
+    def __init__(self, file, qual, node, cls, outer=None, is_class_body=False):
+        self.file, self.qual, self.node, self.cls, self.outer, self.is_class_body = file, qual, node, cls, outer, is_class_body
         a = node.args
         self.params = [p.arg for p in a.posonlyargs + a.args] + ([a.vararg.arg] if a.vararg else []) + \
                       [p.arg for p in a.kwonlyargs] + ([a.kwarg.arg] if a.kwarg else [])
         self.pos = [p.arg for p in a.posonlyargs + a.args]
         self.defaults = {}
-        for p, d in zip(reversed(a.args), reversed(a.defaults)):
+        for p, d in zip(reversed(a.posonlyargs + a.args), reversed(a.defaults)):
             self.defaults[p.arg] = d
         for p, d in zip(a.kwonlyargs, a.kw_defaults):
             if d is not None:
                 self.defaults[p.arg] = d
+        self.decorators = [_dotted(d) or "?" for d in getattr(node, "decorator_list", [])]
+        self.is_lambda = isinstance(node, ast.Lambda)
+        self.globals_, self.nonlocals = set(), set()
+        self.bound = set(self.params)
+        self.nodes, self.chain, self.exc_used = None, None, set()
         self.identity = self._identity_param()
         self.tokens = self._tokens()
+
+    def own_nodes(self):
+        """The nodes of this scope and no nested one (listed once `_fn` is marked, by finish())."""
+        if self.nodes is not None:
+            return self.nodes
+        return [n for n in ast.walk(self.node) if getattr(n, "_fn", None) is self]
+
+    def finish(self):
+        """After `_fn` marking: the names this scope binds (a store to a name that is not one of these is a store into
+        an enclosing scope's object, `_CACHE[k] = v` on a module-level dict), and its global/nonlocal declarations."""
+        self.nodes = list(self.own_nodes())
+        self.chain = list(self.scopes())
+        handlers = set()
+        for n in self.nodes:
+            if isinstance(n, ast.Name) and isinstance(n.ctx, (ast.Store, ast.Del)):
+                self.bound.add(n.id)
+            elif isinstance(n, ast.Global):
+                self.globals_ |= set(n.names)
+            elif isinstance(n, ast.Nonlocal):
+                self.nonlocals |= set(n.names)
+            elif isinstance(n, ast.ExceptHandler) and n.name:
+                self.bound.add(n.name)
+                handlers.add(n.name)
+            elif isinstance(n, (ast.MatchAs, ast.MatchStar)) and n.name:
+                self.bound.add(n.name)
+            elif isinstance(n, ast.MatchMapping) and n.rest:
+                self.bound.add(n.rest)
+        self.bound -= self.globals_ | self.nonlocals
+        # an exception's path can only be read through `<name>.filename`, or reach one through a call the name is
+        # handed to: a handler whose name is used neither way binds nothing the walk needs
+        for n in self.nodes:
+            if isinstance(n, ast.Attribute) and n.attr in ("filename", "filename2") and isinstance(n.value, ast.Name) \
+                    and n.value.id in handlers:
+                self.exc_used.add(n.value.id)
+            elif isinstance(n, ast.Call):
+                for a in list(n.args) + [k.value for k in n.keywords]:
+                    if isinstance(a, ast.Name) and a.id in handlers:
+                        self.exc_used.add(a.id)
 
     def _identity_param(self):
         """The parameter this function returns unchanged (itself, or through Path/str/os.fspath), when every return
@@ -172,6 +309,9 @@ class Fn:
                 if n in ("Path", "str", "fspath", "PurePath"):
                     return base(e.args[0])
             return None
+        if self.is_lambda:
+            b = base(self.node.body)
+            return b if b in self.params else None
         assigns = {}
         for n in ast.walk(self.node):
             if isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name):
@@ -208,13 +348,24 @@ class Fn:
                 attrs.add(n.attr)
         return seed, calls, attrs
 
+    def scopes(self):
+        """This scope, then each enclosing FUNCTION scope, then the module level: the scopes a name read here resolves
+        in (a class body in the chain is skipped, as Python skips it)."""
+        yield self
+        o = self.outer
+        while o is not None:
+            if not o.is_class_body or o.qual == "module level":
+                yield o
+            o = o.outer
+
     def __repr__(self):
         return "%s:%s" % (self.file, self.qual)
 
 
 class Terminal:
-    def __init__(self, fn, node, op, arg_text, ordinal, mech, origins):
-        self.fn, self.node, self.op, self.arg_text, self.ordinal, self.mech, self.origins = fn, node, op, arg_text, ordinal, mech, origins
+    def __init__(self, fn, node, op, arg_text, ordinal, mech, origins, why=""):
+        self.fn, self.node, self.op, self.arg_text, self.ordinal, self.mech, self.origins, self.why = \
+            fn, node, op, arg_text, ordinal, mech, origins, why
 
     def key(self):
         return (self.fn.file, self.fn.qual, self.op, self.arg_text, self.ordinal)
@@ -228,47 +379,105 @@ class Census:
         self.root = Path(root)
         self.files = tuple(files)
         self.src, self.lines, self.trees, self.fns, self.classes, self.mod_fns = {}, {}, {}, {}, {}, {}
-        self.by_name, self.methods = {}, {}
+        self.by_name, self.methods, self.bases, self.class_body = {}, {}, {}, {}
+        self.callables, self.attr_callables, self.properties, self.setters = {}, {}, {}, {}
         self.local, self.attr, self.ret, self.ret_type, self.var_type, self.attr_type = {}, {}, {}, {}, {}, {}
         self.terminals, self.escapes, self.seeds, self.sites = {}, {}, [], {}
+        self.sites_by_fn = {}
         self.shape_local, self.shape_ret = {}, {}          # per-element tags of tuple-valued names and returns
         self.calls_of = {}
         self._ordinals = {}
+        self._tag_pos, self._tag_group = {}, {}
+        self.dyn_reads = {}
         self._changed = False
+        self._reach_memo = {}
+        self._resolving = set()
         for f in self.files:
             self._index(f)
 
     # ── indexing ──────────────────────────────────────────────────────────────────────────────────
     def _index(self, f):
+        """Every scope of the file: the module level, each class body, each function and method, and, inside any of
+        those, each nested function, lambda and class, in discovery order (a scope before the scopes it encloses), so
+        the `_fn` marking below lets an inner scope's nodes override the outer's."""
         src = (self.root / f).read_text(encoding="utf-8")
         tree = ast.parse(src)
         self.src[f], self.trees[f], self.lines[f] = src, tree, src.splitlines(keepends=True)
-        self.mod_fns[f] = []
+        order = []
         top = [n for n in tree.body if not isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))]
-        mod_node = ast.FunctionDef(name="module level", args=ast.arguments(posonlyargs=[], args=[], vararg=None, kwonlyargs=[],
-                                                                            kw_defaults=[], kwarg=None, defaults=[]),
-                                   body=top or [ast.Pass()], decorator_list=[], returns=None, lineno=1, col_offset=0,
-                                   end_lineno=1, end_col_offset=0)
-        mod_fn = Fn(f, "module level", mod_node, None)
+        mod_fn = Fn(f, "module level", _pseudo_def("module level", top, 1), None)
         self.fns[(f, "module level")] = mod_fn
-        self.mod_fns[f].append(mod_fn)
+        order.append(mod_fn)
+        self._register_nested(f, mod_fn, top, order)
         for n in tree.body:
             if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                fn = Fn(f, n.name, n, None)
+                fn = Fn(f, n.name, n, None, outer=mod_fn)
                 self.fns[(f, n.name)] = fn
                 self.by_name.setdefault(n.name, []).append(fn)
-                self.mod_fns[f].append(fn)
+                order.append(fn)
+                self._register_nested(f, fn, n.body, order)
             elif isinstance(n, ast.ClassDef):
-                self.classes[n.name] = (f, n)
-                for c in n.body:
-                    if isinstance(c, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                        fn = Fn(f, n.name + "." + c.name, c, n.name)
-                        self.fns[(f, fn.qual)] = fn
-                        self.methods.setdefault((n.name, c.name), []).append(fn)
-                        self.mod_fns[f].append(fn)
-        for fn in self.mod_fns[f]:
+                self._register_class(f, n, mod_fn, order)
+        self.mod_fns[f] = order
+        for fn in order:
             for node in ast.walk(fn.node):
                 node._fn = fn
+        for fn in order:
+            fn.finish()
+
+    def _register_class(self, f, cdef, outer, order):
+        cname = cdef.name
+        self.classes[cname] = (f, cdef)
+        self.bases[cname] = [(_dotted(b) or "").split(".")[-1] for b in cdef.bases]
+        body = [c for c in cdef.body if not isinstance(c, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))]
+        cb = Fn(f, cname + ".<class body>", _pseudo_def(cname + ".<class body>", body, cdef.lineno), cname, outer=outer,
+                is_class_body=True)
+        self.fns[(f, cb.qual)] = cb
+        self.class_body[cname] = cb
+        order.append(cb)
+        self._register_nested(f, cb, body, order)
+        for c in cdef.body:
+            if isinstance(c, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                fn = Fn(f, cname + "." + c.name, c, cname, outer=cb)
+                self.fns[(f, fn.qual)] = fn
+                self.methods.setdefault((cname, c.name), []).append(fn)
+                order.append(fn)
+                for d in fn.decorators:
+                    if d in PROPERTY_DECORATORS:
+                        self.properties[(cname, c.name)] = fn
+                    elif d.endswith(".setter") and d.count(".") == 1:
+                        self.setters[(cname, d.split(".")[0])] = fn
+                self._register_nested(f, fn, c.body, order)
+            elif isinstance(c, ast.ClassDef):
+                self._register_class(f, c, cb, order)
+
+    def _register_nested(self, f, fn, stmts, order):
+        """The functions, lambdas and classes written inside `fn`'s own statements (not inside a nested scope): each is a
+        scope of its own reading `fn`'s names; a nested def is callable by its name in `fn`, a lambda where its value is
+        bound (the walk records that binding)."""
+        todo = list(stmts)
+        while todo:
+            n = todo.pop()
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                nf = Fn(f, fn.qual + "." + n.name, n, fn.cls, outer=fn)
+                self.fns[(f, nf.qual)] = nf
+                self.callables.setdefault((f, fn.qual, n.name), []).append(nf)
+                fn.bound.add(n.name)                  # `def home():` binds `home` in the enclosing scope
+                order.append(nf)
+                self._register_nested(f, nf, n.body, order)
+                todo.extend(n.decorator_list + [d for d in n.args.defaults + n.args.kw_defaults if d is not None])
+            elif isinstance(n, ast.Lambda):
+                lf = Fn(f, fn.qual + ".<lambda>@%d" % n.lineno, n, fn.cls, outer=fn)
+                self.fns[(f, lf.qual)] = lf
+                n._lfn = lf
+                order.append(lf)
+                self._register_nested(f, lf, [n.body], order)
+                todo.extend([d for d in n.args.defaults + n.args.kw_defaults if d is not None])
+            elif isinstance(n, ast.ClassDef):
+                fn.bound.add(n.name)
+                self._register_class(f, n, fn, order)
+            else:
+                todo.extend(ast.iter_child_nodes(n))
 
     def segment(self, fn, node):
         """The node's source text, whitespace collapsed, from the cached lines (ast.get_source_segment splits the
@@ -297,79 +506,204 @@ class Census:
             self._changed = True
 
     def _type(self, store, key, cls):
-        if cls and store.get(key) != cls:
-            store[key] = cls
-            self._changed = True
+        """The candidate classes of a name, an attribute or a return, in the order met and never dropped: two
+        constructors reaching one name resolve to the methods and attributes of BOTH (the safe direction), and the set
+        only grows, so the fixpoint holds (the `*` bucket, keyed by attribute name over every receiver, meets many)."""
+        for c in (cls if isinstance(cls, tuple) else ((cls,) if cls else ())):
+            cur = store.get(key, ())
+            if c not in cur:
+                store[key] = cur + (c,)
+                self._changed = True
+
+    def _scope_of(self, fn, name):
+        """The scope a read or a store of `name` inside `fn` binds in: `fn` when it binds the name itself (a parameter,
+        an assignment, a for or with target, a capture), else the nearest enclosing function scope that does, else the
+        module level; a `global` name is the module's, a `nonlocal` name the nearest enclosing function's that binds it."""
+        if name in fn.globals_:
+            return self.fns[(fn.file, "module level")]
+        chain = fn.chain if fn.chain is not None else list(fn.scopes())
+        if name in fn.nonlocals:
+            chain = chain[1:]
+        for s in chain:
+            if name in s.bound or (s.qual == "module level"):
+                return s
+        return chain[-1]
 
     def local_tags(self, fn, name):
-        own = self.local.get((fn.file, fn.qual, name))
-        if own is not None or name in fn.params:
-            return own or set()
-        return self.local.get((fn.file, "module level", name), set())     # a module-level binding read by name
+        s = self._scope_of(fn, name)
+        return self.local.get((s.file, s.qual, name), set())
+
+    def _mro(self, cls):
+        seen, todo = [], [cls]
+        while todo:
+            c = todo.pop(0)
+            if c in seen or c is None:
+                continue
+            seen.append(c)
+            todo.extend(self.bases.get(c, []))
+        return seen
+
+    def attr_tags(self, cls, attr, fn=None, node=None):
+        """The tags a read of `<instance of cls>.attr` yields: every store to the attribute on the class or a base, a
+        store to the same attribute name on a receiver the walk could not type (the `*` bucket, the safe direction), and
+        the return of a property of that name, with the read recorded as an origin like a call."""
+        out = set(self.attr.get(("*", attr), set()))
+        for c in self._mro(cls):
+            out |= self.attr.get((c, attr), set())
+            prop = self.properties.get((c, attr))
+            if prop is not None:
+                r = self.ret.get((prop.file, prop.qual), set())
+                if r and fn is not None and node is not None:
+                    text = self.segment(fn, node)
+                    out |= r | {Tag(next(iter(r)).kind, fn.file, node.lineno, text, fn.qual, self._ord_of(fn, "call", text, node))}
+                else:
+                    out |= r
+        return out
+
+    def _all_attr_tags(self, cls):
+        """A dynamic read (`getattr(self, name)`, `vars(self)`): every attribute of the class and its bases."""
+        mro = self._mro(cls) + ["*"]
+        out = set()
+        for (c, a), tags in self.attr.items():
+            if c in mro:
+                out |= tags
+        for (c, a), prop in self.properties.items():
+            if c in mro:
+                out |= self.ret.get((prop.file, prop.qual), set())
+        return out
 
     # ── resolution ────────────────────────────────────────────────────────────────────────────────
     def dotted(self, e):
-        if isinstance(e, ast.Name):
-            return e.id
-        if isinstance(e, ast.Attribute):
-            base = self.dotted(e.value)
-            return base + "." + e.attr if base else None
+        return _dotted(e) if not isinstance(e, ast.Call) else None
+
+    def _is_type_of_self(self, e, fn):
+        """`type(self)`, `self.__class__`, `cls`: the class object of the method's class."""
+        if isinstance(e, ast.Call) and isinstance(e.func, ast.Name) and e.func.id == "type" and len(e.args) == 1:
+            return self.type_of(e.args[0], fn)
+        if isinstance(e, ast.Attribute) and e.attr == "__class__":
+            return self.type_of(e.value, fn)
         return None
+
+    def _class_named(self, e, fn):
+        """The class an expression denotes as a class object, or None: a bare class name, `cls`, `type(self)`,
+        `self.__class__`, `mod.Class`."""
+        if isinstance(e, ast.Name):
+            if e.id in self.classes:
+                return e.id
+            if e.id == "cls" and fn.cls:
+                return fn.cls
+            return None
+        if isinstance(e, ast.Attribute) and e.attr in self.classes and e.attr != "__class__":
+            return e.attr
+        return self._is_type_of_self(e, fn)
+
+    def _local_callables(self, fn, name):
+        s = self._scope_of(fn, name)
+        return self.callables.get((s.file, s.qual, name), [])
 
     def resolve(self, call, fn):
         """The in-file functions a call may reach, or [] when it reaches none the census knows."""
         f = call.func
+        if isinstance(f, ast.Lambda):
+            return [f._lfn] if hasattr(f, "_lfn") else []
         if isinstance(f, ast.Name):
+            found = self._local_callables(fn, f.id)
+            if found:
+                return found
             if f.id in self.classes:
-                return self.methods.get((f.id, "__init__"), [])
+                return self._init_of(f.id)
             if f.id == "cls" and fn.cls:
-                return self.methods.get((fn.cls, "__init__"), [])
+                return self._init_of(fn.cls)
             if f.id in fn.params:
                 return self._param_callables(fn, f.id)
-            if f.id in fn.params or self.local_tags(fn, f.id):
+            if self.local_tags(fn, f.id):
                 return []
             return [x for x in self.by_name.get(f.id, []) if x.file == fn.file] or self.by_name.get(f.id, [])
         if isinstance(f, ast.Attribute):
             recv, name = f.value, f.attr
+            if isinstance(recv, ast.Call) and isinstance(recv.func, ast.Name) and recv.func.id == "super" and fn.cls:
+                for c in self._mro(fn.cls)[1:]:
+                    if (c, name) in self.methods:
+                        return self.methods[(c, name)]
+                return []
             if isinstance(recv, ast.Name) and recv.id in ("self", "cls") and fn.cls:
                 if name == "__class__":
                     return []
-                found = self.methods.get((fn.cls, name))
-                if found:
-                    return found
-                return [x for k, x in [(k, m) for k, ms in self.methods.items() if k[1] == name for m in ms]]
-            if isinstance(recv, ast.Name) and recv.id in self.classes:
-                return self.methods.get((recv.id, name), [])
-            if isinstance(recv, ast.Attribute) and recv.attr in self.classes:
-                return self.methods.get((recv.attr, name), [])
-            t = self.type_of(recv, fn)
-            if t:
-                return self.methods.get((t, name), [])
+                for c in self._mro(fn.cls):
+                    if (c, name) in self.attr_callables:
+                        return self.attr_callables[(c, name)]
+                    if (c, name) in self.methods:
+                        return self.methods[(c, name)]
+                return [m for k, ms in self.methods.items() if k[1] == name for m in ms]
+            cn = self._class_named(recv, fn)
+            if cn:
+                for c in self._mro(cn):
+                    if (c, name) in self.methods:
+                        return self.methods[(c, name)]
+                return []
+            ts = self.types_of(recv, fn)
+            if ts:
+                out = []
+                for t in ts:
+                    for c in self._mro(t):
+                        if (c, name) in self.attr_callables:
+                            out.extend(x for x in self.attr_callables[(c, name)] if x not in out)
+                            break
+                        if (c, name) in self.methods:
+                            out.extend(x for x in self.methods[(c, name)] if x not in out)
+                            break
+                return out
             if name in self.classes:
-                return self.methods.get((name, "__init__"), [])
+                return self._init_of(name)
             if name in self.by_name and name not in PATH_METHODS and name not in PURE_METHODS:
                 return self.by_name[name]
         return []
 
+    def _init_of(self, cname):
+        for c in self._mro(cname):
+            if (c, "__init__") in self.methods:
+                return self.methods[(c, "__init__")]
+        return []
+
     def _param_callables(self, fn, pname):
-        """The callables a parameter is bound to at the function's call sites (a bound method or a lambda)."""
+        """The callables a parameter is bound to at the function's call sites (a bound method, a function, a lambda);
+        a parameter forwarded around a cycle of calls resolves once per cycle."""
+        key = (fn.file, fn.qual, pname)
+        if key in self._resolving:
+            return []
+        self._resolving.add(key)
+        try:
+            return self._param_callables_inner(fn, pname)
+        finally:
+            self._resolving.discard(key)
+
+    def _param_callables_inner(self, fn, pname):
         out = []
         for site_fn, call in self.calls_of.get((fn.file, fn.qual), []):
             bound = self._bound_arg(call, fn, pname)
-            if bound is None or isinstance(bound, ast.Lambda):
-                continue                              # a lambda's body is not followed: a logger, by every binding here
+            if bound is None:
+                continue
+            if isinstance(bound, ast.Lambda):
+                if hasattr(bound, "_lfn"):
+                    out.append(bound._lfn)
+                continue
             out.extend(self.resolve(ast.Call(func=bound, args=[], keywords=[]), site_fn))
         return out
 
     def _positional(self, call, callee):
-        """The callee's positional parameter names aligned with the call's positional arguments: the bound `self`
-        or `cls` is dropped unless the call spells it (`Class.method(self, ...)`)."""
+        """The callee's positional parameter names aligned with the call's positional arguments: the bound `self` is
+        dropped unless the call spells it (`Class.method(self, ...)`, an unbound call); a classmethod's `cls` and a
+        constructor's `self` are never bound to an argument."""
         pos = list(callee.pos)
-        if callee.cls and pos and pos[0] in ("self", "cls"):
-            explicit = isinstance(call.func, ast.Attribute) and isinstance(call.func.value, ast.Name) \
-                and call.func.value.id in self.classes and not callee.qual.endswith(".__init__")
-            if not explicit:
+        if callee.cls and pos and pos[0] in ("self", "cls") and "staticmethod" not in callee.decorators:
+            if "classmethod" in callee.decorators or callee.qual.endswith(".__init__"):
                 pos = pos[1:]
+            else:
+                explicit = isinstance(call.func, ast.Attribute) and self._class_named(call.func.value, self.fns.get(
+                    (callee.file, "module level"))) is not None and not (
+                    isinstance(call.func.value, ast.Name) and call.func.value.id == "cls")
+                if not explicit:
+                    pos = pos[1:]
         return pos
 
     def _bound_arg(self, call, callee, pname):
@@ -383,20 +717,40 @@ class Census:
                 return call.args[i]
         return None
 
-    def type_of(self, e, fn):
+    def types_of(self, e, fn):
+        """Every class of the files the expression may be an instance of (a tuple, possibly empty)."""
         if isinstance(e, ast.Name):
             if e.id in ("self", "cls"):
-                return fn.cls
-            return self.var_type.get((fn.file, fn.qual, e.id))
-        if isinstance(e, ast.Attribute) and isinstance(e.value, ast.Name) and e.value.id in ("self", "cls"):
-            return self.attr_type.get((fn.cls, e.attr))
+                return (fn.cls,) if fn.cls else ()
+            s = self._scope_of(fn, e.id)
+            return self.var_type.get((s.file, s.qual, e.id), ())
+        if isinstance(e, ast.Attribute):
+            out = ()
+            if isinstance(e.value, ast.Name) and e.value.id in ("self", "cls") and fn.cls:
+                owners = (fn.cls,)
+            else:
+                owners = self.types_of(e.value, fn)
+            for t in owners:
+                for c in self._mro(t):
+                    out += tuple(x for x in self.attr_type.get((c, e.attr), ()) if x not in out)
+            out += tuple(x for x in self.attr_type.get(("*", e.attr), ()) if x not in out)
+            return out
         if isinstance(e, ast.Call):
+            out = ()
             for callee in self.resolve(e, fn):
                 if callee.qual.endswith(".__init__"):
-                    return callee.cls
-                if self.ret_type.get((callee.file, callee.qual)):
-                    return self.ret_type[(callee.file, callee.qual)]
-        return None
+                    out += (callee.cls,) if callee.cls not in out else ()
+                else:
+                    out += tuple(x for x in self.ret_type.get((callee.file, callee.qual), ()) if x not in out)
+            return out
+        if isinstance(e, ast.Await):
+            return self.types_of(e.value, fn)
+        return ()
+
+    def type_of(self, e, fn):
+        """The first candidate class, for the places that want one; `types_of` for the union."""
+        t = self.types_of(e, fn)
+        return t[0] if t else None
 
     # ── taint of an expression ────────────────────────────────────────────────────────────────────
     def tags(self, e, fn):
@@ -408,15 +762,7 @@ class Census:
         if isinstance(e, ast.Name):
             return set(self.local_tags(fn, e.id))
         if isinstance(e, ast.Attribute):
-            if e.attr in DROP_ATTRS:
-                return set()
-            if isinstance(e.value, ast.Name) and e.value.id in ("self", "cls") and fn.cls:
-                return set(self.attr.get((fn.cls, e.attr), set()))
-            t = self.type_of(e.value, fn)
-            if t:
-                return set(self.attr.get((t, e.attr), set()))
-            inner = self.tags(e.value, fn)
-            return inner if inner else set()
+            return self._attribute(e, fn)
         if isinstance(e, (ast.BinOp,)):
             return self.tags(e.left, fn) | self.tags(e.right, fn)
         if isinstance(e, ast.JoinedStr):
@@ -449,21 +795,53 @@ class Census:
             return out
         if isinstance(e, ast.NamedExpr):
             t = self.tags(e.value, fn)
-            self._add(self.local, (fn.file, fn.qual, e.target.id), t)
+            self._bind_target(e.target, t, fn, self.types_of(e.value, fn), e.value)
             return t
         if isinstance(e, (ast.ListComp, ast.SetComp, ast.GeneratorExp, ast.DictComp)):
             for g in e.generators:
-                self._bind_target(g.target, self.tags(g.iter, fn) | self._yielded(g.iter, fn), fn)
+                self._bind_target(g.target, self.tags(g.iter, fn) | self._yielded(g.iter, fn), fn, None, g.iter)
+                for cond in g.ifs:
+                    self.tags(cond, fn)
             if isinstance(e, ast.DictComp):
                 return self.tags(e.value, fn)
             return self.tags(e.elt, fn)
-        if isinstance(e, ast.Await):
+        if isinstance(e, (ast.Await, ast.YieldFrom)):
             return self.tags(e.value, fn)
+        if isinstance(e, ast.Yield):
+            return self.tags(e.value, fn) if e.value is not None else set()
         if isinstance(e, ast.Call):
             return self._call(e, fn)
         if isinstance(e, ast.Lambda):
+            return set()                      # the function object carries no path; its body is a scope of its own
+        if isinstance(e, ast.Compare):
+            for x in [e.left] + list(e.comparators):
+                self.tags(x, fn)              # walked for the calls inside; a comparison yields a bool
             return set()
+        if isinstance(e, ast.UnaryOp):
+            return self.tags(e.operand, fn)
         return set()
+
+    def _attribute(self, e, fn):
+        if e.attr in DROP_ATTRS:
+            return set()
+        if e.attr in ("filename", "filename2"):
+            inner = self.tags(e.value, fn)
+            return {t.as_kind("path") for t in inner if t.kind == "exc"} | {t for t in inner if t.kind in ("path", "text")}
+        if isinstance(e.value, ast.Name) and e.value.id in ("self", "cls") and fn.cls:
+            return self.attr_tags(fn.cls, e.attr, fn, e)
+        cn = self._class_named(e.value, fn)
+        if cn and e.attr != "__class__":
+            return self.attr_tags(cn, e.attr, fn, e)
+        ts = self.types_of(e.value, fn)
+        if ts:
+            out = set()
+            for t in ts:
+                out |= self.attr_tags(t, e.attr, fn, e)
+            return out
+        inner = self.tags(e.value, fn)
+        if e.attr in PURE_ATTRS:
+            return inner
+        return {t for t in inner if t.kind != "exc"} | self.attr.get(("*", e.attr), set())
 
     def _merge_shape(self, store, key, shape):
         """Union a shape into the store per element; two lengths for one key settle to False (no shape) once, so the
@@ -504,7 +882,8 @@ class Census:
                 return [set().union(*[x[i] for x in shapes]) for i in range(len(shapes[0]))]
             return None
         if isinstance(e, ast.Name):
-            return self.shape_local.get((fn.file, fn.qual, e.id)) or self.shape_local.get((fn.file, "module level", e.id)) or None
+            s = self._scope_of(fn, e.id)
+            return self.shape_local.get((s.file, s.qual, e.id)) or None
         return None
 
     def _seed_const(self, e, fn):
@@ -525,7 +904,7 @@ class Census:
             if s[0] == key:
                 return {s[1]}
         text = self.segment(fn, e)
-        tag = Tag(kind, fn.file, e.lineno, text, fn.qual, self.ordinal(fn, "seed", text))
+        tag = Tag(kind, fn.file, e.lineno, text, fn.qual, self._ord_of(fn, "seed", text, e))
         self.seeds.append((key, tag))
         self._changed = True
         return {tag}
@@ -538,8 +917,9 @@ class Census:
             return True
         if isinstance(p, ast.Compare):
             return True
-        if isinstance(p, ast.keyword):
-            return False
+        if isinstance(p, ast.Call) and isinstance(p.func, ast.Attribute) and p.func.attr in KEY_METHODS \
+                and p.args and p.args[0] is e:
+            return True                       # `d.get("hosts")`, `d.pop("hosts")`: a dict key, as a literal key is
         return False
 
     def _yielded(self, e, fn):
@@ -553,6 +933,37 @@ class Census:
         return set()
 
     # ── calls ─────────────────────────────────────────────────────────────────────────────────────
+    def _callable_value(self, a, fn):
+        """Whether expression `a`, as an argument, is a callable that would take a path somewhere the walk cannot see
+        if it were applied: a lambda, a nested function's name, a function or method of the files, a terminal's name
+        (`open`, `os.stat`, `Path.read_text`). A pure conversion's or a type's name is not one (`isinstance(p, Path)`,
+        `map(str, paths)`: applying it yields the value again, which the call's own class already carries)."""
+        if isinstance(a, ast.Lambda):
+            return True
+        if isinstance(a, (ast.Name, ast.Attribute)):
+            if self.local_tags(fn, _dotted(a) or "") or (isinstance(a, ast.Name) and a.id in fn.params):
+                return False              # a value, not a callable name
+            name = _dotted(a)
+            if name in PATH_FUNCS or name in FD_FUNCS or name in EXEC_FUNCS:
+                return True
+            if isinstance(a, ast.Attribute) and a.attr in PATH_METHODS and self._class_named(a.value, fn) is None \
+                    and isinstance(a.value, ast.Name) and a.value.id in ("Path", "PurePath", "os", "shutil"):
+                return True
+            if self.resolve(ast.Call(func=a, args=[], keywords=[]), fn):
+                return True
+        return False
+
+    def _escape(self, e, fn, path_tags, why, text=None):
+        text = text or self.segment(fn, e)
+        key = (fn.file, fn.qual, "escape", text, e.lineno, e.col_offset)
+        if key not in self.escapes:
+            self.escapes[key] = Terminal(fn, e, "escape", text, self._ord_of(fn, "escape", text, e), "escape", set(), why)
+            self._changed = True
+        before = len(self.escapes[key].origins)
+        self.escapes[key].origins |= path_tags
+        if len(self.escapes[key].origins) != before:
+            self._changed = True
+
     def _call(self, e, fn):
         name = self.dotted(e.func)
         arg_tags = [self.tags(a, fn) for a in e.args]
@@ -564,30 +975,84 @@ class Census:
         all_tags = set().union(*arg_tags) if arg_tags else set()
         for v in kw_tags.values():
             all_tags |= v
+        path_tags = {t for t in all_tags if t.kind == "path"}
+        recv_tags = self.tags(e.func.value, fn) if isinstance(e.func, ast.Attribute) else set()
+        recv_path = {t for t in recv_tags if t.kind == "path"}
         # terminals
         term = self._terminal(e, fn, name, arg_tags, kw_tags)
         if term is not None:
             return term
+        callees = self.resolve(e, fn)
+        # a callable handed as a value beside a tainted argument, into a call the walk does not follow into
+        if not callees and path_tags:
+            applied = [a for a in e.args if self._callable_value(a, fn)] + \
+                      [kw.value for kw in e.keywords if self._callable_value(kw.value, fn)]
+            if applied:
+                self._escape(e, fn, path_tags, "a callable (%s) applied outside the walk to a tainted argument"
+                             % ", ".join(self.segment(fn, a) for a in applied))
+                return set()
+        # reads and stores by attribute name
+        if name == "getattr" and e.args:
+            recv = e.args[0]
+            if len(e.args) > 1 and isinstance(e.args[1], ast.Constant) and isinstance(e.args[1].value, str):
+                read = ast.Attribute(value=recv, attr=e.args[1].value, ctx=ast.Load())
+                ast.copy_location(read, e)
+                return self._attribute(read, fn) | (arg_tags[2] if len(arg_tags) > 2 else set())
+            cn = self._class_named(recv, fn)
+            owners = (cn,) if cn else self.types_of(recv, fn)
+            if owners:
+                out = set()
+                for t in owners:
+                    out |= self._all_attr_tags(t)
+                return out | (arg_tags[2] if len(arg_tags) > 2 else set())
+            # a dynamic read on a receiver the walk cannot type: the walk does not know the object's attributes, and
+            # says so (an escape, decided once the fixpoint holds) whenever a path is stored by attribute name on some
+            # receiver it could not type either (the `*` bucket), since this read may be the one that reads it; with
+            # that bucket empty of paths, as over this tree, the read carries nothing and nothing is printed
+            self._dyn_read(e, fn)
+            inner = self.tags(recv, fn)
+            return {t for t in inner if t.kind != "exc"} | (arg_tags[2] if len(arg_tags) > 2 else set())
+        if name == "vars" and e.args:
+            cn = self._class_named(e.args[0], fn)
+            owners = (cn,) if cn else self.types_of(e.args[0], fn)
+            out = set()
+            for t in owners:
+                out |= self._all_attr_tags(t)
+            if not owners:
+                self._dyn_read(e, fn)
+            return out
+        if name == "setattr" and len(e.args) == 3:
+            if isinstance(e.args[1], ast.Constant) and isinstance(e.args[1].value, str):
+                store = ast.Attribute(value=e.args[0], attr=e.args[1].value, ctx=ast.Store())
+                self._bind_target(store, arg_tags[2], fn, self.types_of(e.args[2], fn), e.args[2])
+                return set()
+            if {t for t in arg_tags[2] if t.kind == "path"}:
+                self._escape(e, fn, {t for t in arg_tags[2] if t.kind == "path"}, "a store under a name the walk cannot read")
+            return set()
         # pure conversions and container operations
         if name in PURE_FUNCS:
-            return all_tags
+            return {t for t in all_tags if t.kind != "exc"}
         if isinstance(e.func, ast.Attribute):
-            recv_tags = self.tags(e.func.value, fn)
             m = e.func.attr
             if m in STORE_METHODS:
                 self._store_into(e.func.value, all_tags, fn)
                 return set()
+            if m in STORE_RETURN_METHODS:
+                self._store_into(e.func.value, all_tags, fn)
+                return {t for t in recv_tags | all_tags if t.kind != "exc"}
             if m in PURE_METHODS:
-                return recv_tags | all_tags
-            if m in SINK_METHODS:
+                return {t for t in recv_tags | all_tags if t.kind != "exc"}
+            if m in SINK_METHODS and not callees:
                 return set()
         if name in SINK_FUNCS:
             return set()
         if self._is_exception(e.func):
             return set()
-        callees = self.resolve(e, fn)
         if callees:
-            self.sites.setdefault((fn.file, fn.qual, e.lineno, e.col_offset, e.end_lineno, e.end_col_offset), (fn, e, callees))
+            key = (fn.file, fn.qual, e.lineno, e.col_offset, e.end_lineno, e.end_col_offset)
+            if key not in self.sites:
+                self.sites[key] = (fn, e, callees)
+                self.sites_by_fn.setdefault((fn.file, fn.qual), []).append(self.sites[key])
             out = set()
             for c in callees:
                 self._bind_call(e, c, fn, arg_tags, kw_tags)
@@ -612,18 +1077,26 @@ class Census:
             return set()
         if isinstance(e.func, ast.Attribute) and e.func.attr in LOG_PARAMS:
             return set()
-        path_tags = {t for t in all_tags if t.kind == "path"}
-        if path_tags and not self._recv_tainted_only_text(e, fn):
-            text = self.segment(fn, e)
-            key = (fn.file, fn.qual, "escape", text)
-            if key not in self.escapes:
-                self.escapes[key] = Terminal(fn, e, "escape", text, self._ord_of(fn, "escape", text, e), "escape", set())
-                self._changed = True
-            self.escapes[key].origins |= path_tags
+        if path_tags:
+            self._escape(e, fn, path_tags, "a tainted argument to a call the walk cannot resolve")
+        elif recv_path:
+            self._escape(e, fn, recv_path, "a method the walk does not know, called on a tainted receiver")
         return set()
 
-    def _recv_tainted_only_text(self, e, fn):
-        return False
+    def _dyn_read(self, e, fn):
+        key = (fn.file, e.lineno, e.col_offset)
+        if key not in self.dyn_reads:
+            self.dyn_reads[key] = (e, fn)
+
+    def _dyn_read_escapes(self):
+        """Every dynamic attribute read on a receiver the walk could not type (collected over round 0, which walks every
+        scope) is an escape when a path is stored by attribute name on such a receiver anywhere in the files."""
+        star = {t for (c, a), tags in self.attr.items() if c == "*" for t in tags if t.kind == "path"}
+        if not star:
+            return
+        for e, fn in self.dyn_reads.values():
+            self._escape(e, fn, star, "a dynamic attribute read on a receiver the walk cannot type, while a path is stored by "
+                         "attribute name on such a receiver")
 
     def _ord_of(self, fn, kind, text, node):
         k = (fn.file, fn.qual, kind, text, node.lineno, node.col_offset)
@@ -631,7 +1104,22 @@ class Census:
             return self._ordinals[k]
         n = self.ordinal(fn, kind, text)
         self._ordinals[k] = n
+        self._tag_pos[(fn.file, fn.qual, text, n)] = (node.lineno, node.col_offset)
+        self._tag_group.setdefault((fn.file, fn.qual, text), set()).add((node.lineno, node.col_offset))
         return n
+
+    def stable_key(self, tag):
+        """A tag's pinned key with its ordinal counted in SOURCE order among the same text in the same function (the
+        walk meets the two `host_dir(state_dir, sid)` of write_spawn_spec in an order its passes decide; the pin must
+        not move when the walk does)."""
+        pos = self._tag_pos.get((tag.file, tag.qual, tag.text, tag.ordinal))
+        if pos is None:
+            return tag.key()
+        group = sorted(self._tag_group[(tag.file, tag.qual, tag.text)])
+        return (tag.kind, tag.file, tag.qual, tag.text[:72], group.index(pos) + 1)
+
+    def origin_keys(self, t):
+        return tuple(sorted(set(self.stable_key(o) for o in t.origins)))
 
     def _is_exception(self, f):
         name = f.id if isinstance(f, ast.Name) else (f.attr if isinstance(f, ast.Attribute) else "")
@@ -639,7 +1127,8 @@ class Census:
 
     def _bind_call(self, call, callee, fn, arg_tags, kw_tags):
         """Bind a call's arguments to the callee's parameters: their tags, and their type when the walk knows it (a
-        HostDirs handed to _open_file_nofollow types `dirs` there, so `dirs.dir` reads the descriptor's taint)."""
+        HostDirs handed to _open_file_nofollow types `dirs` there, so `dirs.dir` reads the descriptor's taint). A lambda
+        or a nested function handed as an argument is bound as a callable of the parameter."""
         self.calls_of.setdefault((callee.file, callee.qual), [])
         if not any(c is call for _, c in self.calls_of[(callee.file, callee.qual)]):
             self.calls_of[(callee.file, callee.qual)].append((fn, call))
@@ -652,7 +1141,8 @@ class Census:
                 break
             if i < len(pos):
                 self._add(self.local, (callee.file, callee.qual, pos[i]), tags)
-                self._type(self.var_type, (callee.file, callee.qual, pos[i]), self.type_of(a, fn))
+                self._type(self.var_type, (callee.file, callee.qual, pos[i]), self.types_of(a, fn))
+                self._bind_callable(callee, pos[i], a, fn)
             elif callee.node.args.vararg:
                 self._add(self.local, (callee.file, callee.qual, callee.node.args.vararg.arg), tags)
         for kw in call.keywords:
@@ -660,12 +1150,26 @@ class Census:
             tags = kw_tags.get(k if k is not None else "**", set())
             if k in callee.params:
                 self._add(self.local, (callee.file, callee.qual, k), tags)
-                self._type(self.var_type, (callee.file, callee.qual, k), self.type_of(kw.value, fn))
+                self._type(self.var_type, (callee.file, callee.qual, k), self.types_of(kw.value, fn))
+                self._bind_callable(callee, k, kw.value, fn)
             elif k is None:
                 for p in callee.params:
                     self._add(self.local, (callee.file, callee.qual, p), tags)
             elif callee.node.args.kwarg:
                 self._add(self.local, (callee.file, callee.qual, callee.node.args.kwarg.arg), tags)
+
+    def _bind_callable(self, callee, pname, value, fn):
+        found = []
+        if isinstance(value, ast.Lambda) and hasattr(value, "_lfn"):
+            found = [value._lfn]
+        elif isinstance(value, (ast.Name, ast.Attribute)) and not self.local_tags(fn, _dotted(value) or ""):
+            found = self.resolve(ast.Call(func=value, args=[], keywords=[]), fn)
+        if found:
+            cur = self.callables.setdefault((callee.file, callee.qual, pname), [])
+            for c in found:
+                if c not in cur:
+                    cur.append(c)
+                    self._changed = True
 
     def _terminal(self, e, fn, name, arg_tags, kw_tags):
         """Record `e` as a terminal when a path or descriptor position carries taint; returns the tags the call
@@ -678,13 +1182,13 @@ class Census:
         fd_positions = FD_FUNCS.get(name)
         exec_positions = EXEC_FUNCS.get(name)
         if positions is None and fd_positions is None and exec_positions is None:
-            if m in PATH_METHODS and recv_tags:
+            if m in PATH_METHODS and recv_tags and self._class_named(e.func.value, fn) is None:
                 is_method = True
             else:
                 return None
         path_tags, fd_tags, arg_text = set(), set(), None
         if is_method:
-            path_tags = {t for t in recv_tags if t.kind != "fd"}
+            path_tags = {t for t in recv_tags if t.kind in ("path", "text")}
             fd_tags = {t for t in recv_tags if t.kind == "fd"}
             arg_text = self.segment(fn, e.func.value)
             op = m
@@ -692,16 +1196,21 @@ class Census:
             op = name
             for p in (positions or ()) + (exec_positions or ()):
                 if isinstance(p, int) and p < len(arg_tags):
-                    path_tags |= {t for t in arg_tags[p] if t.kind != "fd"}
+                    path_tags |= {t for t in arg_tags[p] if t.kind in ("path", "text")}
                     fd_tags |= {t for t in arg_tags[p] if t.kind == "fd"}
                     arg_text = arg_text or self.segment(fn, e.args[p])
                 elif isinstance(p, str) and p in kw_tags:
-                    path_tags |= {t for t in kw_tags[p] if t.kind != "fd"}
+                    path_tags |= {t for t in kw_tags[p] if t.kind in ("path", "text")}
                     arg_text = arg_text or self.segment(fn, next(k.value for k in e.keywords if k.arg == p))
             for p in (fd_positions or ()):
                 if p < len(arg_tags):
                     fd_tags |= {t for t in arg_tags[p] if t.kind == "fd"}
                     arg_text = arg_text or self.segment(fn, e.args[p])
+            splat = kw_tags.get("**", set())          # `open(**kw)`: the walk cannot tell the keyword, so it is the path position
+            if splat:
+                path_tags |= {t for t in splat if t.kind in ("path", "text")}
+                fd_tags |= {t for t in splat if t.kind == "fd"}
+                arg_text = arg_text or "**" + self.segment(fn, next(k.value for k in e.keywords if k.arg is None))
         dir_fd = kw_tags.get("dir_fd", set())
         fd_tags |= {t for t in dir_fd if t.kind == "fd"}
         if exec_positions is not None:
@@ -745,24 +1254,51 @@ class Census:
         return set()
 
     def _store_into(self, target, tags, fn):
+        """A store INTO the object a target names (`.append`, a subscript store): the name's own scope, which for a
+        name this function does not bind is the enclosing scope's or the module's (`_CACHE[k] = v` on a module dict)."""
         if isinstance(target, ast.Name):
-            self._add(self.local, (fn.file, fn.qual, target.id), tags)
+            s = self._scope_of(fn, target.id)
+            if s.is_class_body:
+                self._add(self.attr, (s.cls, target.id), tags)
+            self._add(self.local, (s.file, s.qual, target.id), tags)
         elif isinstance(target, ast.Attribute):
-            if isinstance(target.value, ast.Name) and target.value.id in ("self", "cls") and fn.cls:
-                self._add(self.attr, (fn.cls, target.attr), tags)
-            else:
-                t = self.type_of(target.value, fn)
-                if t:
-                    self._add(self.attr, (t, target.attr), tags)
+            self._attr_store(target, tags, fn, None)
         elif isinstance(target, ast.Subscript):
             self._store_into(target.value, tags, fn)
+        elif isinstance(target, ast.Call) and self.dotted(target.func) == "getattr" and len(target.args) > 1 \
+                and isinstance(target.args[1], ast.Constant):
+            read = ast.Attribute(value=target.args[0], attr=target.args[1].value, ctx=ast.Store())
+            self._attr_store(read, tags, fn, None)
+
+    def _attr_store(self, target, tags, fn, typ):
+        """An attribute store on any receiver: `self`, a class object, a typed receiver, or one the walk cannot type
+        (the `*` bucket keyed by the attribute's name, read back by every read of that name: the safe direction, where
+        round 7's walk dropped the store in silence). A property with a setter binds the setter's parameter too."""
+        recv = target.value
+        if isinstance(recv, ast.Name) and recv.id in ("self", "cls") and fn.cls:
+            owners = (fn.cls,)
+        else:
+            cn = self._class_named(recv, fn)
+            owners = (cn,) if cn else self.types_of(recv, fn)
+        for cls in owners or ("*",):
+            if cls != "*":
+                setter = None
+                for c in self._mro(cls):
+                    setter = self.setters.get((c, target.attr))
+                    if setter:
+                        break
+                if setter is not None and len(setter.pos) > 1:
+                    self._add(self.local, (setter.file, setter.qual, setter.pos[1]), tags)
+                    self._type(self.var_type, (setter.file, setter.qual, setter.pos[1]), typ)
+            self._add(self.attr, (cls, target.attr), tags)
+            self._type(self.attr_type, (cls, target.attr), typ)
 
     def _bind_target(self, target, tags, fn, typ=None, value=None):
         if isinstance(target, (ast.Tuple, ast.List)):
             if isinstance(value, (ast.Tuple, ast.List)) and len(value.elts) == len(target.elts) \
                     and not any(isinstance(x, ast.Starred) for x in target.elts + value.elts):
                 for x, v in zip(target.elts, value.elts):      # element-wise: `self.hosts, self.dir, self.path = hosts, dir, path`
-                    self._bind_target(x, self.tags(v, fn), fn, self.type_of(v, fn), v)
+                    self._bind_target(x, self.tags(v, fn), fn, self.types_of(v, fn), v)
                 return
             shape = self._elems(value, fn) if value is not None else None
             if shape is not None and len(shape) == len(target.elts) and not any(isinstance(x, ast.Starred) for x in target.elts):
@@ -774,33 +1310,114 @@ class Census:
             return
         if isinstance(target, ast.Starred):
             return self._bind_target(target.value, tags, fn)
+        if isinstance(value, ast.Lambda) and hasattr(value, "_lfn"):
+            if isinstance(target, ast.Name):
+                s = self._scope_of(fn, target.id)
+                cur = self.callables.setdefault((s.file, s.qual, target.id), [])
+                if value._lfn not in cur:
+                    cur.append(value._lfn)
+                    self._changed = True
+            elif isinstance(target, ast.Attribute):
+                recv = target.value
+                if isinstance(recv, ast.Name) and recv.id in ("self", "cls") and fn.cls:
+                    owners = (fn.cls,)
+                else:
+                    cn = self._class_named(recv, fn)
+                    owners = (cn,) if cn else (self.types_of(recv, fn) or ("*",))
+                for cls in owners:
+                    cur = self.attr_callables.setdefault((cls, target.attr), [])
+                    if value._lfn not in cur:
+                        cur.append(value._lfn)
+                        self._changed = True
         if isinstance(target, ast.Name):
-            self._add(self.local, (fn.file, fn.qual, target.id), tags)
-            self._type(self.var_type, (fn.file, fn.qual, target.id), typ)
+            s = self._scope_of(fn, target.id)
+            if s.is_class_body:                                   # a class-body assignment: an attribute of the class
+                self._add(self.attr, (s.cls, target.id), tags)
+                self._type(self.attr_type, (s.cls, target.id), typ)
+            self._add(self.local, (s.file, s.qual, target.id), tags)
+            self._type(self.var_type, (s.file, s.qual, target.id), typ)
             shape = self._elems(value, fn) if value is not None else None
             if shape is not None:
-                self._merge_shape(self.shape_local, (fn.file, fn.qual, target.id), shape)
+                self._merge_shape(self.shape_local, (s.file, s.qual, target.id), shape)
         elif isinstance(target, ast.Attribute):
-            if isinstance(target.value, ast.Name) and target.value.id in ("self", "cls") and fn.cls:
-                self._add(self.attr, (fn.cls, target.attr), tags)
-                self._type(self.attr_type, (fn.cls, target.attr), typ)
-            else:
-                t = self.type_of(target.value, fn)
-                if t:
-                    self._add(self.attr, (t, target.attr), tags)
+            self._attr_store(target, tags, fn, typ)
         elif isinstance(target, ast.Subscript):
             self._store_into(target.value, tags, fn)
 
+    def _reach_path_tags(self, fn, seen=None):
+        """The path tags of every terminal inside `fn` and, transitively, inside the functions of the files its resolved
+        call sites reach: what an exception raised in `fn`'s body can carry as its `filename`. Memoised per round."""
+        key = (fn.file, fn.qual)
+        if key in self._reach_memo:
+            return self._reach_memo[key]
+        seen = seen if seen is not None else set()
+        if key in seen:
+            return set()
+        seen.add(key)
+        out = set()
+        for t in self.terminals.values():
+            if t.fn is fn:
+                out |= {o for o in t.origins if o.kind == "path"}
+        for _, call, callees in self.sites_by_fn.get(key, []):
+            for a in call.args:
+                out |= {o for o in self.tags(a, fn) if o.kind == "path"}
+            for c in callees:
+                out |= self._reach_path_tags(c, seen)
+        self._reach_memo[key] = out
+        return out
+
+    def _bind_handlers(self, node, fn):
+        """`except ... as e`: `e` carries, as `exc` tags, the path of any syscall the try body or a callee of it made,
+        readable through `e.filename` and `e.filename2` (OSError's path attributes) and nowhere else; bound only for
+        a handler whose name the function reads so or hands to a call (finish() lists them)."""
+        if not any(h.name and h.name in fn.exc_used for h in node.handlers):
+            return
+        body_tags = set()
+        for n in node.body:
+            for sub in ast.walk(n):
+                if getattr(sub, "_fn", None) is not fn:
+                    continue
+                if isinstance(sub, ast.Call):
+                    for a in sub.args:
+                        body_tags |= {t for t in self.tags(a, fn) if t.kind == "path"}
+                    for c in self.resolve(sub, fn):
+                        body_tags |= self._reach_path_tags(c)
+                    body_tags |= {t for t in self._reach_terminal(sub, fn)}
+        exc = {t.as_kind("exc") for t in body_tags}
+        for h in node.handlers:
+            if h.name:
+                self._add(self.local, (fn.file, fn.qual, h.name), exc)
+
+    def _reach_terminal(self, call, fn):
+        for (f, q, op, text, ln, col), t in self.terminals.items():
+            if t.fn is fn and ln == call.lineno and col == call.col_offset:
+                return {o for o in t.origins if o.kind == "path"}
+        return set()
+
     # ── the walk ──────────────────────────────────────────────────────────────────────────────────
     def _walk_fn(self, fn):
-        for node in ast.walk(fn.node):
-            if getattr(node, "_fn", None) is not fn:
-                continue
+        scope = fn.outer or fn
+        for p, d in fn.defaults.items():                          # a default is evaluated in the defining scope
+            self._add(self.local, (fn.file, fn.qual, p), {t for t in self.tags(d, scope) if t.kind != "exc"})
+            self._type(self.var_type, (fn.file, fn.qual, p), self.types_of(d, scope))
+            if isinstance(d, ast.Lambda) and hasattr(d, "_lfn"):
+                cur = self.callables.setdefault((fn.file, fn.qual, p), [])
+                if d._lfn not in cur:
+                    cur.append(d._lfn)
+                    self._changed = True
+        if fn.is_lambda:
+            self._add(self.ret, (fn.file, fn.qual), self.tags(fn.node.body, fn))
+            self._type(self.ret_type, (fn.file, fn.qual), self.types_of(fn.node.body, fn))
+            for node in ast.walk(fn.node.body):
+                if getattr(node, "_fn", None) is fn and isinstance(node, ast.Call):
+                    self.tags(node, fn)
+            return
+        for node in fn.own_nodes():
             if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
                 if node.value is None:
                     continue
                 tags = self.tags(node.value, fn)
-                typ = self.type_of(node.value, fn)
+                typ = self.types_of(node.value, fn)
                 targets = node.targets if isinstance(node, ast.Assign) else [node.target]
                 for t in targets:
                     if isinstance(node, ast.AugAssign):
@@ -812,12 +1429,12 @@ class Census:
                 for item in node.items:
                     tags = self.tags(item.context_expr, fn)
                     if item.optional_vars is not None:
-                        self._bind_target(item.optional_vars, tags, fn, self.type_of(item.context_expr, fn))
+                        self._bind_target(item.optional_vars, tags, fn, self.types_of(item.context_expr, fn))
             elif isinstance(node, (ast.Return, ast.Yield)):
                 if node.value is not None:
-                    self._add(self.ret, (fn.file, fn.qual), self.tags(node.value, fn))
+                    self._add(self.ret, (fn.file, fn.qual), {t for t in self.tags(node.value, fn) if t.kind != "exc"})
                     if isinstance(node, ast.Return):
-                        self._type(self.ret_type, (fn.file, fn.qual), self.type_of(node.value, fn))
+                        self._type(self.ret_type, (fn.file, fn.qual), self.types_of(node.value, fn))
                     shape = self._elems(node.value, fn)
                     if shape is not None:
                         self._merge_shape(self.shape_ret, (fn.file, fn.qual), shape)
@@ -827,11 +1444,35 @@ class Census:
                 self.tags(node.test, fn)
             elif isinstance(node, ast.Raise):
                 self.tags(node.exc, fn)
-        for node in ast.walk(fn.node):
-            if getattr(node, "_fn", None) is not fn:
-                continue
+            elif isinstance(node, ast.Match):
+                subject = self.tags(node.subject, fn)
+                for case in node.cases:
+                    for p in ast.walk(case.pattern):
+                        nm = getattr(p, "name", None) if isinstance(p, (ast.MatchAs, ast.MatchStar)) else \
+                            (p.rest if isinstance(p, ast.MatchMapping) else None)
+                        if nm:
+                            self._add(self.local, (fn.file, fn.qual, nm), subject)
+            elif isinstance(node, ast.Try) or (hasattr(ast, "TryStar") and isinstance(node, ast.TryStar)):
+                self._bind_handlers(node, fn)
+        for node in fn.own_nodes():
             if isinstance(node, ast.Call):
                 self.tags(node, fn)
+
+    def _decorator_escapes(self):
+        """A decorator the walk does not know on a function that holds a seed, a tainted local or a tainted return: the
+        name is rebound to whatever the decorator returned, which the walk cannot follow."""
+        seed_quals = {(t.file, t.qual) for _, t in self.seeds}
+        for fn in self.fns.values():
+            unknown = [d for d in fn.decorators if d not in KNOWN_DECORATORS and not d.endswith(".setter")
+                       and not d.endswith(".getter") and not d.endswith(".deleter")]
+            if not unknown:
+                continue
+            path_tags = {t for t in self.ret.get((fn.file, fn.qual), set()) if t.kind == "path"}
+            path_tags |= {t for (f, q, n), tags in self.local.items() if (f, q) == (fn.file, fn.qual) for t in tags if t.kind == "path"}
+            path_tags |= {t for _, t in self.seeds if (t.file, t.qual) == (fn.file, fn.qual) and t.kind == "path"}
+            if path_tags or (fn.file, fn.qual) in seed_quals:
+                self._escape(fn.node, fn, path_tags, "a decorator the walk does not know (%s) rebinds a function that carries a path"
+                             % ", ".join(unknown), text="@%s def %s" % (", @".join(unknown), fn.qual))
 
     def run(self):
         for f in self.files:
@@ -842,57 +1483,74 @@ class Census:
             if (f, qual) in self.fns:
                 fn = self.fns[(f, qual)]
                 self._add(self.local, (f, qual, pname), {Tag("path", f, fn.node.lineno, why, qual, 1)})
-        for _ in range(60):
+        for rnd in range(80):
             self._changed = False
+            self._reach_memo = {}
             holders = {c for (c, a), tags in self.attr.items() if tags}
             minting = set()
             for fn in self.fns.values():
-                if (self.ret.get((fn.file, fn.qual)) or self.ret_type.get((fn.file, fn.qual)) in holders
+                if (self.ret.get((fn.file, fn.qual)) or any(t in holders for t in self.ret_type.get((fn.file, fn.qual), ()))
                         or any(t.qual == fn.qual and t.file == fn.file and t.kind == "path" for _, t in self.seeds)
                         or any(f == fn.file and q == fn.qual for f, q, _, _ in DECLARED_SEEDS)):
                     minting.add(fn.cls if fn.qual.endswith(".__init__") else fn.qual.split(".")[-1])
             tainted_rets = minting
-            tainted_attrs = {a for (c, a), tags in self.attr.items() if tags}
+            tainted_attrs = {a for (c, a), tags in self.attr.items() if tags} | \
+                            {a for (c, a), p in self.properties.items() if self.ret.get((p.file, p.qual))}
             has_local = {(f, q) for (f, q, n), tags in self.local.items() if tags}
+            any_terminal = bool(self.terminals)
             for fn in [x for f in self.files for x in self.mod_fns[f]]:
                 seed, calls, attrs = fn.tokens
-                if not (seed or (fn.file, fn.qual) in has_local or (calls & tainted_rets) or (attrs & tainted_attrs)):
-                    continue
-                self._walk_fn(fn)
+                # a scope is walked when something could move it: a seed of its own, a tainted local in it or in a scope
+                # it reads (its defining scope included, for a default), a call to a function whose value is tainted, a
+                # read of a tainted attribute, or a handler binding it reads a path from once any terminal exists
+                outer_live = any((s.file, s.qual) in has_local for s in fn.chain) or \
+                    (fn.outer is not None and (fn.outer.file, fn.outer.qual) in has_local)
+                if rnd > 0 and not (seed or outer_live or (calls & tainted_rets) or (attrs & tainted_attrs)
+                                    or (fn.exc_used and any_terminal)):
+                    continue                  # round 0 walks every scope once, so a type or a callable bound in a
+                self._walk_fn(fn)             # function nothing tainted reaches (`sess = SdkSession(self, ...)`) is known
             if not self._changed:
                 break
         else:
-            raise AssertionError("the census did not reach a fixpoint in 60 rounds")
+            raise AssertionError("the census did not reach a fixpoint in 80 rounds")
+        self._decorator_escapes()
+        self._dyn_read_escapes()
         return self
 
     # ── views ─────────────────────────────────────────────────────────────────────────────────────
     def roads(self):
         """The carriers and mints, read off the resolved call sites once the fixpoint holds: a CARRIER hands a tainted
-        value (a path or a descriptor) to a function of the files (`host_log_mark(..., dir_fd=dirs.dir)`,
-        `owner_only_dir(host_dir(...))`, `HostTransport.from_journal(hdir)`); a MINT is a call whose value is tainted
+        value (a path or a descriptor), or a HOLDER of one (a HostDirs, whose attributes carry the descriptors: kind
+        `holder`), to a function of the files (`host_log_mark(..., dir_fd=dirs.dir)`, `owner_only_dir(host_dir(...))`,
+        `HostTransport.from_journal(hdir)`, `host_stderr_size(dirs)`); a MINT is a call whose value is tainted
         (`hdir = ht.host_dir(...)`, `spec_path = ht.write_spawn_spec(...)`) or that enters a function holding a seed or
         returning a descriptor holder (`open_host_dirs(...)`, `remove_host_dir(...)`, `hosts_dir(...)`), the roads by
         which a use inside a helper is reached from a caller that passes nothing tainted itself."""
         seed_quals = {(t.file, t.qual) for _, t in self.seeds if t.kind == "path"} | {(f, q) for f, q, _, _ in DECLARED_SEEDS}
-        holders = {c for (c, a), tags in self.attr.items() if tags}
+        holders = {c for (c, a), tags in self.attr.items() if tags and c != "*"}
         out = []
         for (f, q, ln, col, _eln, _ecol), (fn, call, callees) in self.sites.items():
             kinds = set()
-            for a in call.args:
+            args = list(call.args) + [kw.value for kw in call.keywords]
+            for a in args:
                 kinds |= {t.kind for t in self.tags(a, fn)}
-            for kw in call.keywords:
-                kinds |= {t.kind for t in self.tags(kw.value, fn)}
-            carrier = bool(kinds - {"text"})
+                if any(t in holders for t in self.types_of(a, fn)) and not (isinstance(a, ast.Name) and a.id in ("self", "cls")):
+                    kinds.add("holder")
+            carrier = bool(kinds - {"text", "exc"})
             value = self.tags(call, fn)
-            mint = bool(value) or any((c.file, c.qual) in seed_quals or self.ret_type.get((c.file, c.qual)) in holders for c in callees)
+            mint = bool(value) or any((c.file, c.qual) in seed_quals or any(t in holders for t in self.ret_type.get((c.file, c.qual), ()))
+                                      for c in callees)
             if not (carrier or mint):
                 continue
-            tainted = [self.segment(fn, a) for a in call.args if self.tags(a, fn) - {t for t in self.tags(a, fn) if t.kind == "text"}]
-            tainted += ["%s=%s" % (kw.arg, self.segment(fn, kw.value)) for kw in call.keywords
-                        if {t for t in self.tags(kw.value, fn) if t.kind != "text"}]
-            text = "%s(%s)" % (self.segment(fn, call.func), ", ".join(tainted) if tainted else "...")
+
+            def tainted(a):
+                return bool({t for t in self.tags(a, fn) if t.kind not in ("text", "exc")}) or \
+                    (any(t in holders for t in self.types_of(a, fn)) and not (isinstance(a, ast.Name) and a.id in ("self", "cls")))
+            tainted_args = [self.segment(fn, a) for a in call.args if tainted(a)]
+            tainted_args += ["%s=%s" % (kw.arg, self.segment(fn, kw.value)) for kw in call.keywords if tainted(kw.value)]
+            text = "%s(%s)" % (self.segment(fn, call.func), ", ".join(tainted_args) if tainted_args else "...")
             kind = "carrier" if carrier else "mint"
-            mech = "+".join(sorted(kinds - {"text"})) if carrier else ("+".join(sorted({t.kind for t in value})) or "enters")
+            mech = "+".join(sorted(kinds - {"text", "exc"})) if carrier else ("+".join(sorted({t.kind for t in value})) or "enters")
             out.append(Terminal(fn, call, kind, text, self._ord_of(fn, kind, text, call), mech, set()))
         return out
 
@@ -911,7 +1569,12 @@ class Census:
     def derived(self):
         """{member key: (mech, origin keys)}: the pinned view. A terminal's key names its operation; a carrier's or a
         mint's names its kind."""
-        return {t.key(): (t.mech, t.origin_keys()) for t in self.members()}
+        return {t.key(): (t.mech, self.origin_keys(t)) for t in self.members()}
+
+    def escape_lines(self):
+        """Every escape as `file:line qual  text  [why]`, the printed form of what the census cannot follow."""
+        return ["%s:%d %s  %s  [%s]" % (t.fn.file, t.node.lineno, t.fn.qual, t.arg_text, t.why)
+                for t in sorted(self.escapes.values(), key=lambda t: (self.files.index(t.fn.file), t.node.lineno, t.node.col_offset))]
 
     def dir_fd_forwarding(self):
         """For every function with a `dir_fd` parameter defaulting to None whose body holds a by-path terminal: the
@@ -980,7 +1643,8 @@ def wide_census(root=ROOT):
 # is the mechanical class and the ROAD, written for the reader: `kernel` or `host` is the process; `guard` a syscall
 # that decides a refusal; `HELPER` one of the two directory helpers write_spawn_spec runs before the descent, the
 # window condition 1 states; `RESIDUAL (queued)` a by-path read the queued item owns; `unreachable today` a
-# dir_fd=None arm held by test_every_road_into_a_by_path_fallback_arm_passes_a_descriptor. ORIGINS below is the
+# dir_fd=None arm held by test_every_road_into_a_by_path_fallback_arm_passes_a_descriptor; a `holder` carrier hands
+# a HostDirs (its descriptors in its attributes) to a function of the files. ORIGINS below is the
 # derived provenance of each terminal (the seeds and minting calls whose value reaches it), generated by
 # `python3 tests/test_hosts_path_census.py --expected` and pasted; a road's origins are the empty tuple.
 ROADS = {
@@ -990,6 +1654,8 @@ ROADS = {
         ('mixed', "kernel; guard's wording: the lstat after a refused open (a link or a non-directory), by path for hosts/, by name under the descriptor for <sid>; it decides nothing"),
     ('kernel/host_transport.py', '_open_dir_nofollow', 'os.fstat', 'fd', 1):
         ('by-descriptor', "kernel; guard: the descent's checks on the object opened (a directory, this uid, no group or other bits)"),
+    ('kernel/host_transport.py', 'HostDirs.__exit__', 'mint', 'self.close(...)', 1):
+        ('enters', 'kernel; a call into HostDirs.close, a seeding function by the seed rule\'s letter: it spells the literal as an attribute NAME (`for name in ("hosts", "dir")`), reads each descriptor by getattr and closes it; nothing under hosts/ is named or opened there (the round-7 addendum, whose walk resolves a method spelled like a sink before treating it as one)'),
     ('kernel/host_transport.py', 'open_host_dirs', 'carrier', '_open_dir_nofollow(str(hosts_path), hosts_path)', 1):
         ('path', "kernel; the descent's first component, by path"),
     ('kernel/host_transport.py', 'open_host_dirs', 'carrier', '_open_dir_nofollow(hosts_path / str(sid), dir_fd=hfd)', 1):
@@ -998,8 +1664,8 @@ ROADS = {
         ('fd+path', 'kernel; the two descriptors and the wording path handed to the holder'),
     ('kernel/host_transport.py', '_open_file_nofollow', 'os.open', 'name', 1):
         ('by-descriptor', 'kernel; spawn.json and host.stderr opened by NAME under the verified <sid> descriptor, O_NOFOLLOW'),
-    ('kernel/host_transport.py', 'host_stderr_open', 'mint', '_open_file_nofollow(...)', 1):
-        ('fd', "kernel; host.stderr's descriptor"),
+    ('kernel/host_transport.py', 'host_stderr_open', 'carrier', '_open_file_nofollow(dirs)', 1):
+        ('holder', "kernel; the HostDirs holder handed to the by-name open of host.stderr, its two descriptors in its attributes (round 7 listed this call as a mint by its fd return; the addendum's holder rule lists what it carries)"),
     ('kernel/host_transport.py', 'host_stderr_open', 'os.fchmod', 'fd', 1):
         ('by-descriptor', 'kernel; host.stderr tightened on its descriptor (round 5, kernel-1)'),
     ('kernel/host_transport.py', 'host_stderr_size', 'os.stat', '"host.stderr"', 1):
@@ -1040,26 +1706,26 @@ ROADS = {
         ('fd', 'kernel; the descriptor forwarded to the open'),
     ('kernel/host_transport.py', 'host_exit_reason', 'carrier', 'host_log_rows(dir_fd=dir_fd)', 1):
         ('fd', 'kernel; the descriptor forwarded to the rows read'),
+    ('kernel/host_transport.py', 'helper_shape_refusal', 'mint', 'host_dir(...)', 1):
+        ('path', 'kernel; the sentence for a shape errno of the helpers names the component: hosts/<sid>/ when the errno carried no path (a message, no syscall)'),
     ('kernel/host_transport.py', 'write_spawn_spec', 'mint', 'sh.hosts_dir(...)', 1):
         ('path', "kernel; HELPER (condition 1's window): hosts/ made and checked by path before the descent"),
     ('kernel/host_transport.py', 'write_spawn_spec', 'carrier', 'sh.owner_only_dir(host_dir(state_dir, sid))', 1):
         ('path', "kernel; HELPER (condition 1's window): hosts/<sid>/ made and checked by path before the descent"),
     ('kernel/host_transport.py', 'write_spawn_spec', 'mint', 'host_dir(...)', 1):
         ('path', 'kernel; the path the second helper takes'),
+    ('kernel/host_transport.py', 'write_spawn_spec', 'mint', 'helper_shape_refusal(...)', 1):
+        ('path', "kernel; the refusal's sentence, built from the failing path (a message, no syscall; the exception is the sink)"),
     ('kernel/host_transport.py', 'write_spawn_spec', 'mint', 'host_dir(...)', 2):
         ('path', "kernel; spawn.json's path, the value returned: spec_path in _host_transport_for, handed to the host in argv"),
     ('kernel/host_transport.py', 'write_spawn_spec', 'mint', 'open_host_dirs(...)', 1):
         ('enters', "kernel; the spec write's own descent"),
-    ('kernel/host_transport.py', 'write_spawn_spec', 'mint', '_open_file_nofollow(...)', 1):
-        ('fd', "kernel; spawn.json's descriptor"),
+    ('kernel/host_transport.py', 'write_spawn_spec', 'carrier', '_open_file_nofollow(dirs)', 1):
+        ('holder', 'kernel; the holder handed to the by-name open of spawn.json, after the descent (a mint by its fd return through round 7)'),
     ('kernel/host_transport.py', 'write_spawn_spec', 'os.fchmod', 'fd', 1):
         ('by-descriptor', 'kernel; spawn.json tightened on its descriptor before the write'),
     ('kernel/host_transport.py', 'write_spawn_spec', 'os.fdopen', 'fd', 1):
         ('by-descriptor', 'kernel; spawn.json written through its descriptor'),
-    ('kernel/host_transport.py', 'helper_shape_refusal', 'mint', 'host_dir(...)', 1):
-        ('path', "kernel; the sentence for a shape errno of the helpers names the component: hosts/<sid>/ when the errno carried no path (a message, no syscall)"),
-    ('kernel/host_transport.py', 'write_spawn_spec', 'mint', 'helper_shape_refusal(...)', 1):
-        ('path', "kernel; the refusal's sentence, built from the failing path (a message, no syscall; the exception is the sink)"),
     ('kernel/host_transport.py', 'HostTransport.from_journal', 'carrier', 'cls(journal_dir=journal_dir)', 1):
         ('path', "kernel; the replay transport given the orphan's directory"),
     ('kernel/host_transport.py', 'HostTransport.connect', 'asyncio.open_unix_connection', 'self.sock_path', 1):
@@ -1134,6 +1800,8 @@ ROADS = {
         ('by-path', "host; the exit's unlink of the published socket"),
     ('kernel/session_host.py', 'main', 'mint', 'SessionHost(...)', 1):
         ('enters', 'host; the entry: argv[0] is the spec path the kernel handed over (the declared seed)'),
+    ('kernel/sdk_backend.py', 'SdkSession._amain', 'mint', 'self.backend._host_transport_for(...)', 1):
+        ('enters', "kernel; the session's entry into the spawn road, passing nothing tainted: the call enters the function that mints the spec path and holds the descent (resolved since the addendum typed `backend`, an attribute stored on a receiver the walk could not type)"),
     ('kernel/sdk_backend.py', 'SdkBackend._host_lease_applies', 'mint', '_ht().host_dir(...)', 1):
         ('path', "kernel; the lease-applies read's binding"),
     ('kernel/sdk_backend.py', 'SdkBackend._host_lease_applies', 'exists', 'hdir / "identity.json"', 1):
@@ -1158,30 +1826,38 @@ ROADS = {
         ('by-descriptor', "kernel; a dead host's published socket unlinked by name under the hosts/ descriptor"),
     ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'carrier', 'ht.host_log_mark(dir_fd=dirs.dir)', 1):
         ('fd', 'kernel; the spawn watermark through the descriptor'),
+    ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'carrier', 'ht.host_stderr_size(dirs)', 1):
+        ('holder', "kernel; host.stderr's watermark by name under the holder's <sid> descriptor, taken before the launcher runs (kernel-1 and correctness-1, round 4)"),
     ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'carrier', 'self._spawn_host(spec_path)', 1):
         ('path', 'kernel; the spec path handed to the launcher'),
     ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'exists', 'sock', 1):
         ('by-path', "kernel; RESIDUAL (queued): the spawn wait's poll of the published path, by path, after the descent"),
     ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'carrier', 'ht.host_exit_reason(dir_fd=dirs.dir)', 1):
         ('fd', "kernel; the exited arm's reason through the descriptor"),
+    ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'carrier', 'ht.host_stderr_size(dirs)', 2):
+        ('holder', "kernel; the watermark read again on the exited-before-serving arm, to say whether THIS launch's host wrote to host.stderr"),
     ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'carrier', 'self._file_refused_launch_context(dir_fd=dirs.dir)', 1):
         ('fd', "kernel; the exited arm's untested-row read through the descriptor"),
     ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'carrier', 'self._record_refused_launch_position(dir_fd=dirs.dir)', 1):
         ('fd', "kernel; the exited arm's position through the descriptor"),
     ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'carrier', 'ht.host_exit_reason(dir_fd=dirs.dir)', 2):
         ('fd', "kernel; the deadline arm's reason through the descriptor"),
+    ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'carrier', 'ht.host_stderr_size(dirs)', 3):
+        ('holder', 'kernel; the watermark read again on the did-not-serve-in-time arm, the same question'),
     ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'carrier', 'self._file_refused_launch_context(dir_fd=dirs.dir)', 2):
         ('fd', "kernel; the deadline arm's untested-row read through the descriptor"),
     ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'carrier', 'self._record_refused_launch_position(dir_fd=dirs.dir)', 2):
         ('fd', "kernel; the deadline arm's position through the descriptor"),
+    ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'mint', 'dirs.close(...)', 1):
+        ('enters', 'kernel; the holder closed on the spawn road (HostDirs.close, a seeding function by the attribute-name literal, as its __exit__ road above; nothing under hosts/ named or opened)'),
     ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'carrier', 'self._new_host_transport(sock)', 1):
         ('path', 'kernel; RESIDUAL (queued): the first connect after the wait hands the published path to the transport (its connect, above)'),
     ('kernel/sdk_backend.py', 'SdkBackend._new_host_transport', 'carrier', 'ht.HostTransport(str(sock))', 1):
         ('path', "kernel; the transport's sock_path (its connect, above)"),
     ('kernel/sdk_backend.py', 'SdkBackend._spawn_host', 'mint', 'ht.open_host_dirs(...)', 1):
         ('enters', "kernel; the launcher's own descent"),
-    ('kernel/sdk_backend.py', 'SdkBackend._spawn_host', 'mint', 'ht.host_stderr_open(...)', 1):
-        ('fd', "kernel; host.stderr's descriptor for the child"),
+    ('kernel/sdk_backend.py', 'SdkBackend._spawn_host', 'carrier', 'ht.host_stderr_open(dirs)', 1):
+        ('holder', "kernel; the holder handed to the launcher's host.stderr open, whose descriptor becomes the child's stderr (a mint by its fd return through round 7)"),
     ('kernel/sdk_backend.py', 'SdkBackend._spawn_host', 'subprocess.Popen', 'argv', 1):
         ('exec-arg', "kernel; THE HANDOFF: the spec path leaves the process in argv (host.stderr's descriptor as the child's stderr beside it); the host re-opens that path by path in its constructor (above), the deferred road"),
     ('kernel/sdk_backend.py', 'SdkBackend._host_orphan_recover', 'mint', 'ht.host_dir(...)', 1):
@@ -1208,9 +1884,10 @@ ROADS = {
         ('by-path', "kernel; RESIDUAL (queued), THE SERVED ROAD: host.log read by path at the hello and at the exit, after the spawn road's descriptors are closed"),
     ('kernel/sdk_backend.py', 'SdkBackend._end_host_by_lease', 'mint', 'ht.host_sock(...)', 1):
         ('path', 'kernel; the published path for the end by lease'),
-    ('kernel/sdk_backend.py', 'SdkBackend._end_host_by_lease', 'carrier', 'ht.HostTransport(str(sock))', 1):
-        ('path', 'kernel; RESIDUAL (queued): the end-by-lease road hands the published path to the transport (its connect, above)'),
+    ('kernel/sdk_backend.py', 'SdkBackend._end_host_by_lease.go', 'carrier', 'ht.HostTransport(str(sock))', 1):
+        ('path', 'kernel; RESIDUAL (queued): the end-by-lease road hands the published path to the transport (its connect, above) (inside the nested coroutine `go`, a scope of its own since the addendum)'),
 }
+
 
 ORIGINS = {
     ('kernel/host_transport.py', '_open_dir_nofollow', 'os.open', 'name', 1):
@@ -1219,6 +1896,8 @@ ORIGINS = {
         (('fd', 'kernel/host_transport.py', '_open_dir_nofollow', 'os.open(name, _DIR_FLAGS, dir_fd=dir_fd)', 1), ('fd', 'kernel/host_transport.py', 'open_host_dirs', '_open_dir_nofollow(str(hosts_path), "hosts directory", hosts_path)', 1), ('path', 'kernel/host_transport.py', 'open_host_dirs', '"hosts"', 1), ('path', 'kernel/host_transport.py', 'remove_host_dir', '"hosts"', 1)),
     ('kernel/host_transport.py', '_open_dir_nofollow', 'os.fstat', 'fd', 1):
         (('fd', 'kernel/host_transport.py', '_open_dir_nofollow', 'os.open(name, _DIR_FLAGS, dir_fd=dir_fd)', 1),),
+    ('kernel/host_transport.py', 'HostDirs.__exit__', 'mint', 'self.close(...)', 1):
+        (),
     ('kernel/host_transport.py', 'open_host_dirs', 'carrier', '_open_dir_nofollow(str(hosts_path), hosts_path)', 1):
         (),
     ('kernel/host_transport.py', 'open_host_dirs', 'carrier', '_open_dir_nofollow(hosts_path / str(sid), dir_fd=hfd)', 1):
@@ -1227,7 +1906,7 @@ ORIGINS = {
         (),
     ('kernel/host_transport.py', '_open_file_nofollow', 'os.open', 'name', 1):
         (('fd', 'kernel/host_transport.py', '_open_dir_nofollow', 'os.open(name, _DIR_FLAGS, dir_fd=dir_fd)', 1), ('fd', 'kernel/host_transport.py', 'open_host_dirs', '_open_dir_nofollow(str(sid), "host directory", hosts_path / str(sid), di', 1)),
-    ('kernel/host_transport.py', 'host_stderr_open', 'mint', '_open_file_nofollow(...)', 1):
+    ('kernel/host_transport.py', 'host_stderr_open', 'carrier', '_open_file_nofollow(dirs)', 1):
         (),
     ('kernel/host_transport.py', 'host_stderr_open', 'os.fchmod', 'fd', 1):
         (('fd', 'kernel/host_transport.py', '_open_file_nofollow', 'os.open(name, flags | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0), 0o600', 1), ('fd', 'kernel/host_transport.py', 'host_stderr_open', '_open_file_nofollow("host.stderr", os.O_WRONLY | os.O_CREAT | os.O_APPEN', 1)),
@@ -1283,7 +1962,7 @@ ORIGINS = {
         (),
     ('kernel/host_transport.py', 'write_spawn_spec', 'mint', 'open_host_dirs(...)', 1):
         (),
-    ('kernel/host_transport.py', 'write_spawn_spec', 'mint', '_open_file_nofollow(...)', 1):
+    ('kernel/host_transport.py', 'write_spawn_spec', 'carrier', '_open_file_nofollow(dirs)', 1):
         (),
     ('kernel/host_transport.py', 'write_spawn_spec', 'os.fchmod', 'fd', 1):
         (('fd', 'kernel/host_transport.py', '_open_file_nofollow', 'os.open(name, flags | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0), 0o600', 1), ('fd', 'kernel/host_transport.py', 'write_spawn_spec', '_open_file_nofollow("spawn.json", os.O_WRONLY | os.O_CREAT | os.O_TRUNC,', 1)),
@@ -1322,13 +2001,13 @@ ORIGINS = {
     ('kernel/session_host.py', 'read_journal_dir', 'open', 'p', 1):
         (('path', 'kernel/host_transport.py', 'host_dir', '"hosts"', 1), ('path', 'kernel/sdk_backend.py', 'SdkBackend._host_orphan_recover', 'ht.host_dir(self.state_dir, sess.sid)', 1)),
     ('kernel/session_host.py', 'owner_only_dir', 'mkdir', 'd', 1):
-        (('path', 'kernel/host_transport.py', 'host_dir', '"hosts"', 1), ('path', 'kernel/host_transport.py', 'write_spawn_spec', 'host_dir(state_dir, sid)', 2), ('path', 'kernel/session_host.py', 'SessionHost.__init__', 'spec_path: the path under hosts/ the kernel hands the host in argv (decl', 1), ('path', 'kernel/session_host.py', 'hosts_dir', '"hosts"', 1)),
+        (('path', 'kernel/host_transport.py', 'host_dir', '"hosts"', 1), ('path', 'kernel/host_transport.py', 'write_spawn_spec', 'host_dir(state_dir, sid)', 1), ('path', 'kernel/session_host.py', 'SessionHost.__init__', 'spec_path: the path under hosts/ the kernel hands the host in argv (decl', 1), ('path', 'kernel/session_host.py', 'hosts_dir', '"hosts"', 1)),
     ('kernel/session_host.py', 'owner_only_dir', 'os.lstat', 'd', 1):
-        (('path', 'kernel/host_transport.py', 'host_dir', '"hosts"', 1), ('path', 'kernel/host_transport.py', 'write_spawn_spec', 'host_dir(state_dir, sid)', 2), ('path', 'kernel/session_host.py', 'SessionHost.__init__', 'spec_path: the path under hosts/ the kernel hands the host in argv (decl', 1), ('path', 'kernel/session_host.py', 'hosts_dir', '"hosts"', 1)),
+        (('path', 'kernel/host_transport.py', 'host_dir', '"hosts"', 1), ('path', 'kernel/host_transport.py', 'write_spawn_spec', 'host_dir(state_dir, sid)', 1), ('path', 'kernel/session_host.py', 'SessionHost.__init__', 'spec_path: the path under hosts/ the kernel hands the host in argv (decl', 1), ('path', 'kernel/session_host.py', 'hosts_dir', '"hosts"', 1)),
     ('kernel/session_host.py', 'owner_only_dir', 'os.chmod', 'd', 1):
-        (('path', 'kernel/host_transport.py', 'host_dir', '"hosts"', 1), ('path', 'kernel/host_transport.py', 'write_spawn_spec', 'host_dir(state_dir, sid)', 2), ('path', 'kernel/session_host.py', 'SessionHost.__init__', 'spec_path: the path under hosts/ the kernel hands the host in argv (decl', 1), ('path', 'kernel/session_host.py', 'hosts_dir', '"hosts"', 1)),
+        (('path', 'kernel/host_transport.py', 'host_dir', '"hosts"', 1), ('path', 'kernel/host_transport.py', 'write_spawn_spec', 'host_dir(state_dir, sid)', 1), ('path', 'kernel/session_host.py', 'SessionHost.__init__', 'spec_path: the path under hosts/ the kernel hands the host in argv (decl', 1), ('path', 'kernel/session_host.py', 'hosts_dir', '"hosts"', 1)),
     ('kernel/session_host.py', 'owner_only_dir', 'os.lstat', 'd', 2):
-        (('path', 'kernel/host_transport.py', 'host_dir', '"hosts"', 1), ('path', 'kernel/host_transport.py', 'write_spawn_spec', 'host_dir(state_dir, sid)', 2), ('path', 'kernel/session_host.py', 'SessionHost.__init__', 'spec_path: the path under hosts/ the kernel hands the host in argv (decl', 1), ('path', 'kernel/session_host.py', 'hosts_dir', '"hosts"', 1)),
+        (('path', 'kernel/host_transport.py', 'host_dir', '"hosts"', 1), ('path', 'kernel/host_transport.py', 'write_spawn_spec', 'host_dir(state_dir, sid)', 1), ('path', 'kernel/session_host.py', 'SessionHost.__init__', 'spec_path: the path under hosts/ the kernel hands the host in argv (decl', 1), ('path', 'kernel/session_host.py', 'hosts_dir', '"hosts"', 1)),
     ('kernel/session_host.py', 'hosts_dir', 'carrier', 'owner_only_dir(root / "hosts")', 1):
         (),
     ('kernel/session_host.py', 'SessionHost.__init__', 'open', 'self.spec_path', 1):
@@ -1363,6 +2042,8 @@ ORIGINS = {
         (('path', 'kernel/session_host.py', 'SessionHost.__init__', '"hosts"', 1),),
     ('kernel/session_host.py', 'main', 'mint', 'SessionHost(...)', 1):
         (),
+    ('kernel/sdk_backend.py', 'SdkSession._amain', 'mint', 'self.backend._host_transport_for(...)', 1):
+        (),
     ('kernel/sdk_backend.py', 'SdkBackend._host_lease_applies', 'mint', '_ht().host_dir(...)', 1):
         (),
     ('kernel/sdk_backend.py', 'SdkBackend._host_lease_applies', 'exists', 'hdir / "identity.json"', 1):
@@ -1387,11 +2068,15 @@ ORIGINS = {
         (('fd', 'kernel/host_transport.py', '_open_dir_nofollow', 'os.open(name, _DIR_FLAGS, dir_fd=dir_fd)', 1), ('fd', 'kernel/host_transport.py', 'open_host_dirs', '_open_dir_nofollow(str(hosts_path), "hosts directory", hosts_path)', 1)),
     ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'carrier', 'ht.host_log_mark(dir_fd=dirs.dir)', 1):
         (),
+    ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'carrier', 'ht.host_stderr_size(dirs)', 1):
+        (),
     ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'carrier', 'self._spawn_host(spec_path)', 1):
         (),
     ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'exists', 'sock', 1):
         (('path', 'kernel/host_transport.py', 'host_sock', '"hosts"', 1), ('path', 'kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'ht.host_sock(self.state_dir, sess.sid)', 2)),
     ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'carrier', 'ht.host_exit_reason(dir_fd=dirs.dir)', 1):
+        (),
+    ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'carrier', 'ht.host_stderr_size(dirs)', 2):
         (),
     ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'carrier', 'self._file_refused_launch_context(dir_fd=dirs.dir)', 1):
         (),
@@ -1399,9 +2084,13 @@ ORIGINS = {
         (),
     ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'carrier', 'ht.host_exit_reason(dir_fd=dirs.dir)', 2):
         (),
+    ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'carrier', 'ht.host_stderr_size(dirs)', 3):
+        (),
     ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'carrier', 'self._file_refused_launch_context(dir_fd=dirs.dir)', 2):
         (),
     ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'carrier', 'self._record_refused_launch_position(dir_fd=dirs.dir)', 2):
+        (),
+    ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'mint', 'dirs.close(...)', 1):
         (),
     ('kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'carrier', 'self._new_host_transport(sock)', 1):
         (),
@@ -1409,10 +2098,10 @@ ORIGINS = {
         (),
     ('kernel/sdk_backend.py', 'SdkBackend._spawn_host', 'mint', 'ht.open_host_dirs(...)', 1):
         (),
-    ('kernel/sdk_backend.py', 'SdkBackend._spawn_host', 'mint', 'ht.host_stderr_open(...)', 1):
+    ('kernel/sdk_backend.py', 'SdkBackend._spawn_host', 'carrier', 'ht.host_stderr_open(dirs)', 1):
         (),
     ('kernel/sdk_backend.py', 'SdkBackend._spawn_host', 'subprocess.Popen', 'argv', 1):
-        (('fd', 'kernel/host_transport.py', '_open_file_nofollow', 'os.open(name, flags | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0), 0o600', 1), ('fd', 'kernel/host_transport.py', 'host_stderr_open', '_open_file_nofollow("host.stderr", os.O_WRONLY | os.O_CREAT | os.O_APPEN', 1), ('fd', 'kernel/sdk_backend.py', 'SdkBackend._spawn_host', 'ht.host_stderr_open(dirs)', 1), ('path', 'kernel/host_transport.py', 'host_dir', '"hosts"', 1), ('path', 'kernel/host_transport.py', 'write_spawn_spec', 'host_dir(state_dir, sid)', 1), ('path', 'kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'ht.write_spawn_spec(self.state_dir, sess.sid, spec)', 1)),
+        (('fd', 'kernel/host_transport.py', '_open_file_nofollow', 'os.open(name, flags | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0), 0o600', 1), ('fd', 'kernel/host_transport.py', 'host_stderr_open', '_open_file_nofollow("host.stderr", os.O_WRONLY | os.O_CREAT | os.O_APPEN', 1), ('fd', 'kernel/sdk_backend.py', 'SdkBackend._spawn_host', 'ht.host_stderr_open(dirs)', 1), ('path', 'kernel/host_transport.py', 'host_dir', '"hosts"', 1), ('path', 'kernel/host_transport.py', 'write_spawn_spec', 'host_dir(state_dir, sid)', 2), ('path', 'kernel/sdk_backend.py', 'SdkBackend._host_transport_for', 'ht.write_spawn_spec(self.state_dir, sess.sid, spec)', 1)),
     ('kernel/sdk_backend.py', 'SdkBackend._host_orphan_recover', 'mint', 'ht.host_dir(...)', 1):
         (),
     ('kernel/sdk_backend.py', 'SdkBackend._host_orphan_recover', 'read_text', 'hdir / "identity.json"', 1):
@@ -1437,7 +2126,7 @@ ORIGINS = {
         (('path', 'kernel/host_transport.py', 'host_dir', '"hosts"', 1), ('path', 'kernel/sdk_backend.py', 'SdkBackend._file_host_log_rows', '_ht().host_dir(self.state_dir, sess.sid)', 1)),
     ('kernel/sdk_backend.py', 'SdkBackend._end_host_by_lease', 'mint', 'ht.host_sock(...)', 1):
         (),
-    ('kernel/sdk_backend.py', 'SdkBackend._end_host_by_lease', 'carrier', 'ht.HostTransport(str(sock))', 1):
+    ('kernel/sdk_backend.py', 'SdkBackend._end_host_by_lease.go', 'carrier', 'ht.HostTransport(str(sock))', 1):
         (),
 }
 
@@ -1500,6 +2189,169 @@ class _PlantedReaders:
         return open(p).read()
 '''
 
+# The round-7 verifier's ten shapes (q01 to q10, recreated from the finding's description of each) and the five extras
+# named beside them (x01 to x05), appended to a scratch copy of kernel/sdk_backend.py; q05's tuple is assembled by a
+# helper appended to kernel/session_host.py (PLANTED_VERIFIER_HOST). At the round-7 commit the census found q05, q06, q07
+# and q10 and missed the other six in silence; the addendum's follow rules find every one, and x04 (a callable handed to
+# `map` beside the path) is the one shape that is an escape rather than a terminal: the walk cannot see `map` apply it.
+PLANTED_VERIFIER = '''
+
+class _Q814Plants:
+    """The round-7 verifier's ten shapes and five extras; never called."""
+    _SEG = "hosts"
+
+    def q01_fstring_via_class_body_constant(self, sess):
+        base = f"{self.state_dir}/{self._SEG}"
+        p = f"{base}/{sess.sid}/host.log"
+        return open(p).read()
+
+    def q02_join_through_a_default_parameter(self, sess, seg="hosts"):
+        base = os.path.join(str(self.state_dir), seg)
+        return open(os.path.join(base, sess.sid, "identity.json")).read()
+
+    @property
+    def q03_home(self):
+        return self._q03_home
+
+    def q03_bind_the_property(self, sess):
+        self._q03_home = self.state_dir / "hosts" / sess.sid
+
+    def q03_division_from_a_property(self, sess):
+        return (self.q03_home / "host.log").read_text()
+
+    def q04_name_from_a_setdefault_dict(self, sess):
+        segs = {}
+        segs.setdefault("seg", "hosts")
+        seg = segs["seg"]
+        return open(os.path.join(str(self.state_dir), seg, sess.sid, "host.log")).read()
+
+    def q05_tuple_unpacked_across_files(self, sess):
+        d, leaf = _ht().sh.q05_host_log_parts(self.state_dir, sess.sid)
+        return open(os.path.join(d, leaf)).read()
+
+    def q06_bytearray_augmented(self, sess):
+        b = bytearray(os.fsencode(str(self.state_dir)))
+        b += b"/hosts/" + sess.sid.encode() + b"/spawn.json"
+        return os.stat(bytes(b))
+
+    def q07_fsdecode_of_a_percent_bytes_path(self, sess):
+        b = b"%s/hosts/%s/host.stderr" % (os.fsencode(str(self.state_dir)), sess.sid.encode())
+        return open(os.fsdecode(b), "rb").read()
+
+    def q08_path_through_a_lambda(self, sess):
+        pick = lambda s: self.state_dir / "hosts" / s / "host.log"  # noqa: E731
+        return open(pick(sess.sid)).read()
+
+    def q09_store_on_an_untyped_receiver(self, sess):
+        sess._q814_home = self.state_dir / "hosts" / sess.sid
+
+    def q09_read_from_the_untyped_receiver(self, sess):
+        return (sess._q814_home / "identity.json").read_text()
+
+    def q10_literal_split_across_the_line_break(self, sess):
+        p = ("%s/ho"
+             "sts/%s/host.log") % (self.state_dir, sess.sid)
+        return open(p).read()
+
+    def x01_nested_def(self, sess):
+        def home():
+            return self.state_dir / "hosts" / sess.sid
+        return (home() / "host.log").read_text()
+
+    def x02_open_through_a_double_splat(self, sess):
+        kw = {"file": self.state_dir / "hosts" / sess.sid / "host.log"}
+        return open(**kw).read()
+
+    def x03_re_sub_on_a_template(self, sess):
+        p = re.sub(r"SID", sess.sid, f"{self.state_dir}/hosts/SID/host.log")
+        return open(p).read()
+
+    def x04_map_open_over_paths(self, sess):
+        return [f.read() for f in map(open, [self.state_dir / "hosts" / sess.sid / "host.log"])]
+
+    def x05_setattr_then_attribute_read(self, sess):
+        setattr(self, "_x05_home", self.state_dir / "hosts" / sess.sid)
+        return (self._x05_home / "host.log").read_text()
+'''
+
+PLANTED_VERIFIER_HOST = '''
+
+def q05_host_log_parts(state_dir, sid):
+    """The round-7 verifier's q05: a (directory, leaf) tuple assembled here and unpacked in kernel/sdk_backend.py."""
+    return (os.path.join(str(state_dir), "hosts", sid), "host.log")
+'''
+
+# Three shapes the builder wrote down BEFORE widening the follow rules (the round-7 addendum's own check that the
+# rules were written by binding form and not to the ten above): a module-level dict mutated by a subscript store from
+# one method without a `global` statement and read in another; a class-body constant read through `type(self)` and
+# `self.__class__`; a path yielded by a @contextlib.contextmanager method and bound by a with-target.
+PLANTED_ADDENDUM = '''
+
+_Q814_HOMES = {}
+
+
+class _Q814Addendum:
+    """The builder's three shapes, written before the rules; never called."""
+    _SEG2 = "hosts"
+
+    def m01_store_into_a_module_dict_by_subscript(self, sess):
+        _Q814_HOMES[sess.sid] = self.state_dir / "hosts" / sess.sid
+
+    def m01_read_from_the_module_dict(self, sess):
+        return open(_Q814_HOMES[sess.sid] / "host.log").read()
+
+    def m02_class_constant_through_type_of_self(self, sess):
+        return (self.state_dir / type(self)._SEG2 / sess.sid / "host.log").read_text()
+
+    def m02_class_constant_through_dunder_class(self, sess):
+        return (self.state_dir / self.__class__._SEG2 / sess.sid / "identity.json").read_text()
+
+    @contextlib.contextmanager
+    def _m03_home(self, sid):
+        yield self.state_dir / "hosts" / sid
+
+    def m03_with_target_from_a_contextmanager(self, sess):
+        with self._m03_home(sess.sid) as home:
+            return open(home / "host.log").read()
+'''
+
+
+def plant(base_census, appendices):
+    """Run the census over a scratch copy of the three files with `appendices` ({file: source}) appended, and return
+    ({plant method prefix: [(op, mech)]}, [member keys new outside the planted classes, escapes excepted], [escape lines
+    inside them], [escape lines outside them]): the instrument's self-test harness, shared by the plant cases below."""
+    import shutil
+    import tempfile
+    scratch = tempfile.mkdtemp(prefix="hosts-census-")
+    try:
+        for f in FILES:
+            os.makedirs(os.path.dirname(os.path.join(scratch, f)), exist_ok=True)
+            shutil.copy(os.path.join(ROOT, f), os.path.join(scratch, f))
+        for f, text in appendices.items():
+            with open(os.path.join(scratch, f), "a") as fh:
+                fh.write(text)
+        base = set(base_census.derived())
+        c = Census(scratch).run()
+        found, elsewhere, escapes, outside = {}, [], [], []
+        planted = ("_PlantedReaders.", "_Q814Plants.", "_Q814Addendum.")
+        for t in c.members():
+            if t.key() in base:
+                continue
+            line = "%s:%d %s  %s  [%s]" % (t.fn.file, t.node.lineno, t.fn.qual, t.arg_text, t.why)
+            if t.fn.qual.startswith(planted):
+                name = t.fn.qual.split(".")[1]
+                prefix = name.split("_")[0]
+                found.setdefault(prefix, []).append((t.op, t.mech))
+                if t.op == "escape":
+                    escapes.append(line)
+            elif t.op == "escape":
+                outside.append(line)
+            elif not t.fn.qual.startswith(("module level", "q05_host_log_parts")):
+                elsewhere.append(t.key())
+        return found, elsewhere, escapes, outside
+    finally:
+        shutil.rmtree(scratch, True)
+
 
 class HostsPathCensus(unittest.TestCase):
     @classmethod
@@ -1526,7 +2378,12 @@ class HostsPathCensus(unittest.TestCase):
                          "missing %r, new %r, class changed %r, origins changed %r" % (missing, new, changed, origins))
 
     def test_no_use_escapes_the_walk(self):
-        esc = [k for k, v in ROADS.items() if v[0] == "escape"] + [k for k in self.census.derived() if k[2] == "escape"]
+        """What the census cannot follow it prints as an escape, by file and line with the form named; over the real
+        tree that list is empty, so a value the walk loses at any form (a call it cannot resolve, a method it does not
+        know on a tainted receiver, a callable applied outside it, a store under a name it cannot read, a decorator it
+        does not know) reds here instead of thinning the list in silence (the round-7 addendum, after six planted shapes
+        were lost that way)."""
+        esc = [k for k, v in ROADS.items() if v[0] == "escape"] + self.census.escape_lines()
         self.assertEqual(esc, [], "an escape is a value the census could not follow; classify it or follow it: %r" % (esc,))
 
     def test_the_residual_the_queued_item_owns_is_exactly_the_by_path_reads_labelled_so(self):
@@ -1548,27 +2405,87 @@ class HostsPathCensus(unittest.TestCase):
         splatted tuple, and the full literal wrapped across two lines), appended to a scratch copy of kernel/sdk_backend.py:
         the census over the copy finds a by-path terminal in every one, and nothing else new outside them. The published
         grep found 0 of 11; a narrowing of the seed or the follow rules reds here."""
-        import shutil
-        import tempfile
-        scratch = tempfile.mkdtemp(prefix="hosts-census-")
-        self.addCleanup(shutil.rmtree, scratch, True)
-        for f in FILES:
-            os.makedirs(os.path.dirname(os.path.join(scratch, f)), exist_ok=True)
-            shutil.copy(os.path.join(ROOT, f), os.path.join(scratch, f))
-        with open(os.path.join(scratch, "kernel/sdk_backend.py"), "a") as fh:
-            fh.write(PLANTED_READERS)
-        base = set(self.census.derived())
-        found, elsewhere = {}, []
-        for t in Census(scratch).run().members():
-            if t.key() in base:
-                continue
-            if t.fn.qual.startswith("_PlantedReaders.p"):
-                found.setdefault(t.fn.qual.split(".")[1][:3], []).append((t.op, t.mech))
-            elif not t.fn.qual.startswith("_PlantedReaders."):
-                elsewhere.append(t.key())
-        self.assertEqual(elsewhere, [], "the plants changed the census outside their own class")
+        found, elsewhere, _, outside = plant(self.census, {"kernel/sdk_backend.py": PLANTED_READERS})
+        self.assertEqual((elsewhere, outside), ([], []), "the plants changed the census outside their own class")
         missing = ["p%02d" % i for i in range(1, 12) if not any(mech == "by-path" for _, mech in found.get("p%02d" % i, []))]
         self.assertEqual(missing, [], "planted by-path readers the census did not find: %r (found %r)" % (missing, found))
+
+    def test_the_ten_shapes_the_round_7_verifier_planted_are_found_and_the_extras_are_found_or_escape(self):
+        """The round-7 verifier's ten shapes (a class-body constant through self, a default parameter, a property, a
+        setdefault-fed dict, a tuple unpacked across the two files, a bytearray grown by +=, os.fsdecode of a %-built
+        bytes path, a lambda, a store on a receiver the walk cannot type, a literal split across a line break): the
+        census at the round-7 commit found 4 of the 10 and missed the rest in silence. Each is now a by-path terminal;
+        of the five extras, four are terminals and the fifth, `map(open, [...])`, is an ESCAPE (the callable is applied
+        where the walk cannot see, and the walk says so rather than dropping the path). No terminal, carrier or mint
+        changes outside the planted classes and the host-side helper; what q09's store on a receiver the walk cannot
+        type DOES change outside them is printed: every dynamic attribute read on such a receiver in the tree
+        (`getattr(exc, attr, None)` and its siblings) becomes an escape saying it may be the reader of that store,
+        which over the real tree, where no path is stored that way, none of them is."""
+        found, elsewhere, escapes, outside = plant(self.census, {"kernel/sdk_backend.py": PLANTED_VERIFIER,
+                                                                 "kernel/session_host.py": PLANTED_VERIFIER_HOST})
+        self.assertEqual(elsewhere, [], "the plants changed the census outside their own class")
+        self.assertGreater(len(outside), 0, "q09's untyped store makes the tree's dynamic reads on untyped receivers escapes")
+        for line in outside:
+            self.assertIn("a dynamic attribute read on a receiver the walk cannot type", line, line)
+        missing = ["q%02d" % i for i in range(1, 11) if not any(mech == "by-path" for _, mech in found.get("q%02d" % i, []))]
+        self.assertEqual(missing, [], "the verifier's shapes the census did not find: %r (found %r)" % (missing, found))
+        missing = ["x%02d" % i for i in (1, 2, 3, 5) if not any(mech == "by-path" for _, mech in found.get("x%02d" % i, []))]
+        self.assertEqual(missing, [], "extras the census did not find: %r (found %r)" % (missing, found))
+        missing = []
+        self.assertEqual(missing, [], "extras the census did not find: %r (found %r)" % (missing, found))
+        self.assertEqual([mech for _, mech in found.get("x04", [])], ["escape"],
+                         "map(open, paths) is the one extra the walk cannot follow, and it is printed, not dropped: %r" % (found.get("x04"),))
+        self.assertEqual(len(escapes), 1, escapes)
+        self.assertIn("a callable (open) applied outside the walk", escapes[0])
+
+    def test_three_shapes_written_before_the_rules_were_widened_are_found(self):
+        """The addendum's own check that the rules were written by binding form: a module-level dict mutated by a
+        subscript store from one method, with no `global`, and read in another (a store into a name the method does not
+        bind lands in the scope that does); a class-body constant read through `type(self)` and `self.__class__`; a path
+        yielded by a @contextlib.contextmanager method and bound by `with ... as home`. Each a by-path terminal."""
+        found, elsewhere, escapes, outside = plant(self.census, {"kernel/sdk_backend.py": PLANTED_ADDENDUM})
+        self.assertEqual((elsewhere, outside), ([], []), "the plants changed the census outside their own class")
+        self.assertEqual(escapes, [], "an escape among the builder's three: the rule for its form is missing")
+        missing = ["m%02d" % i for i in range(1, 4) if not any(mech == "by-path" for _, mech in found.get("m%02d" % i, []))]
+        self.assertEqual(missing, [], "the builder's shapes the census did not find: %r (found %r)" % (missing, found))
+        self.assertEqual(sum(1 for _, mech in found.get("m02", []) if mech == "by-path"), 2, "both reads of the class constant: %r" % (found.get("m02"),))
+
+    def test_a_form_the_walk_does_not_follow_is_an_escape_and_not_a_silence(self):
+        """The escape rule itself, one shape per form the docstring names: a path handed to a call the walk cannot
+        resolve; a method it does not know on a path-tainted receiver; a callable applied outside it beside a path; a
+        store under a name it cannot read; a decorator it does not know on a function returning a path. Each is printed
+        with its form and counted; none is a terminal and none is dropped."""
+        src = '''
+
+def _q814_unknown_decorator(f):
+    return f
+
+
+class _Q814Escapes:
+    def e01_call_the_walk_cannot_resolve(self, sess):
+        return _q814_elsewhere(self.state_dir / "hosts" / sess.sid)
+
+    def e02_unknown_method_on_a_tainted_receiver(self, sess):
+        return (self.state_dir / "hosts" / sess.sid).q814_unknown_method()
+
+    def e03_callable_applied_outside_the_walk(self, sess):
+        return sorted([self.state_dir / "hosts" / sess.sid], key=os.path.getmtime)
+
+    def e04_store_under_a_dynamic_name(self, sess, name):
+        setattr(self, name, self.state_dir / "hosts" / sess.sid)
+
+    @_q814_unknown_decorator
+    def e05_decorated_minter(self, sess):
+        return self.state_dir / "hosts" / sess.sid
+'''
+        found, elsewhere, escapes, outside = plant(self.census, {"kernel/sdk_backend.py": src.replace("_Q814Escapes", "_Q814Plants")})
+        self.assertEqual((elsewhere, outside), ([], []), "the plants changed the census outside their own class")
+        for i in range(1, 6):
+            self.assertEqual([mech for _, mech in found.get("e%02d" % i, [])], ["escape"], "e%02d: %r" % (i, found.get("e%02d" % i)))
+        forms = ("cannot resolve", "does not know, called on a tainted receiver", "applied outside the walk",
+                 "a name the walk cannot read", "a decorator the walk does not know")
+        for form, line in zip(forms, sorted(escapes)):
+            self.assertIn(form, line)
 
     def test_every_road_into_a_by_path_fallback_arm_passes_a_descriptor(self):
         holes, fns = self.census.dir_fd_forwarding()
@@ -1580,18 +2497,22 @@ def main():
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     c = derive(Path(args[0]) if args else ROOT)
     if "--expected" in sys.argv:
-        # the pinned view as Python, for pasting into EXPECTED after each entry's road is written by hand
+        # the pinned view as Python, for pasting into ROADS (each entry's road written by hand) and ORIGINS
         for t in c.members():
-            print("    %r: (%r, %r,\n        %r)," % (t.key(), t.mech, "ROAD", t.origin_keys()))
+            print("    %r: (%r, %r,\n        %r)," % (t.key(), t.mech, "ROAD", c.origin_keys(t)))
         return
     print("SEEDS")
     for _, t in sorted(c.seeds, key=lambda x: (c.files.index(x[1].file), x[1].line)):
         print("  %s %s:%d %s  %s" % (t.kind, t.file, t.line, t.qual, t.text))
     print("MEMBERS")
     for t in c.members():
-        print("%s:%d %s  %s(%s) #%d  [%s]" % (t.fn.file, t.node.lineno, t.fn.qual, t.op, t.arg_text, t.ordinal, t.mech))
+        print("%s:%d %s  %s(%s) #%d  [%s]%s" % (t.fn.file, t.node.lineno, t.fn.qual, t.op, t.arg_text, t.ordinal, t.mech,
+                                               ("  " + t.why) if t.why else ""))
         for o in sorted(set(t.origins), key=lambda o: (o.file, o.line)):
             print("      <- %s %s:%d %s  %s #%d" % (o.kind, o.file, o.line, o.qual, o.text, o.ordinal))
+    print("ESCAPES (what the census cannot follow, by file and line; [] over this tree by pin)")
+    for line in c.escape_lines():
+        print("  " + line)
     roads = c.roads()
     print("terminals: %d, escapes: %d, carriers: %d, mints: %d, seeds: %d"
           % (len(c.terminals), len(c.escapes), sum(1 for r in roads if r.op == "carrier"), sum(1 for r in roads if r.op == "mint"), len(c.seeds)))
@@ -1603,6 +2524,16 @@ def main():
                 print("WIDE %s: terminals %d, escapes %d, seeds %d" % (rel, len(wc.terminals), len(wc.escapes), len(wc.seeds)))
                 for t in list(wc.terminals.values()) + list(wc.escapes.values()):
                     print("  %s:%d %s  %s(%s) [%s]" % (t.fn.file, t.node.lineno, t.fn.qual, t.op, t.arg_text, t.mech))
+    if "--plants" in sys.argv:
+        for label, app in (("round 6 (p01-p11)", {"kernel/sdk_backend.py": PLANTED_READERS}),
+                           ("round 7 verifier (q01-q10, x01-x05)", {"kernel/sdk_backend.py": PLANTED_VERIFIER, "kernel/session_host.py": PLANTED_VERIFIER_HOST}),
+                           ("addendum (m01-m03)", {"kernel/sdk_backend.py": PLANTED_ADDENDUM})):
+            found, elsewhere, escapes, outside = plant(c, app)
+            print("PLANTS %s: %s; elsewhere %r" % (label, ", ".join("%s=%s" % (k, "/".join(sorted({m for _, m in v}))) for k, v in sorted(found.items())), elsewhere))
+            for e in escapes:
+                print("  escape " + e)
+            for e in outside:
+                print("  escape outside the plants " + e)
 
 
 if __name__ == "__main__":

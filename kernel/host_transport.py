@@ -546,20 +546,41 @@ HELPER_SHAPE_ERRNOS = (errno.EEXIST, errno.ENOTDIR, errno.ELOOP, errno.ENOENT)
 # re-raising for a name taken by a non-directory (a regular file, a FIFO, a dangling symlink, a symlink to a file, at
 # hosts/ or at hosts/<sid>/), ENOTDIR a component that is not a directory (a plain-file state root, which only the
 # operator can cause and which the same remedy fits; or hosts/ re-pointed to a file between the helpers, which a peer
-# can), ELOOP a symlink loop, and ENOENT a missing component, which between the two helpers is hosts/ re-pointed to a
-# DANGLING link, a peer's one-syscall plant, and which the descent's own open already files as "does not exist"; it joins
-# the class for both reasons. Outside the set, an errno is a filesystem failure and stays the launch error with its
+# can), ELOOP a symlink loop met by a helper's mkdir (hosts/ re-pointed between the helpers to a link that names itself;
+# a self-loop already standing AT hosts/ when the first helper runs is EEXIST instead, since os.mkdir reports the name
+# taken and pathlib's is_dir() swallows the ELOOP of the stat that follows), and ENOENT a missing component, which between
+# the two helpers is hosts/ re-pointed to a DANGLING link, a peer's one-syscall plant, or a dangling target under the
+# second helper's chmod, and which the descent's own open already files as "does not exist"; it joins the class for both
+# reasons. EEXIST is also what the second helper's mkdir meets when hosts/ was re-pointed to a directory already holding
+# <sid> as a non-directory (nothing is made or chmodded there). Outside the set, an errno is a filesystem failure and stays the launch error with its
 # errno: ENOSPC and EROFS (only the machine causes them), EACCES and EPERM (a peer CAN cause these too, with hosts/
 # re-pointed to a directory this uid cannot write or, at the chmod leg, to an object it does not own; by the round-6
 # ruling they pass through unchanged, so that road reads the errno's text with the path, no remedy, no refusal row).
 
 
 def helper_shape_refusal(e: OSError, state_dir, sid: str) -> str:
-    """The sentence for a shape errno one of the two helpers raised: the component the failing path names, then what
-    the errno says of it, in the words the helpers' own refusals use."""
-    hosts_path = Path(state_dir) / "hosts"
-    failed = Path(e.filename) if getattr(e, "filename", None) else host_dir(state_dir, sid)
-    what = "hosts directory" if failed == hosts_path else "host directory"
+    """The sentence for a shape errno one of the two helpers raised: the component the errno's filename names, in the
+    nouns the helpers' own refusals use (`state root`, `hosts directory`, `host directory`; a directory above the root
+    that the create road's parents=True mkdir met, or any other path, is named as what it is), then what the errno says
+    of it. An errno with no filename is read as the second helper's directory, the only helper syscall that raises one
+    without it in this tree's Python. Through round 7 every component but hosts/ read `host directory`, so a state
+    root that was a dangling symlink was refused as `host directory <root> is not a directory`: pathlib's mkdir with
+    parents=True meets the root by path on the way up and re-raises EEXIST with the root as the filename (the round-7
+    addendum, 2026-09-20)."""
+    root = Path(state_dir)
+    hosts_path = root / "hosts"
+    leaf = host_dir(state_dir, sid)
+    failed = Path(e.filename) if getattr(e, "filename", None) else leaf
+    if failed == hosts_path:
+        what = "hosts directory"
+    elif failed == leaf:
+        what = "host directory"
+    elif failed == root:
+        what = "state root"
+    elif failed in root.parents:
+        what = "directory above the state root"
+    else:
+        what = "directory"
     if e.errno == errno.EEXIST:
         why = "is not a directory"
     elif e.errno == errno.ENOTDIR:
@@ -599,22 +620,35 @@ def write_spawn_spec(state_dir, sid: str, spec: dict) -> Path:
     and a path-taking open) is closed for this write since round 4 of the review: the open below takes a name
     relative to a held descriptor, not a path, and a link swapped in after the read-back fails it (the paragraph
     on the open, below). WHAT STILL TAKES A PATH (correctness-2 and extra5-1, round 5 of the review; restated to the
-    code's window at round 7, correctness-2 and extra6-2, 2026-09-20): the two directory helpers themselves. Each of
-    sh.hosts_dir (hosts/) and sh.owner_only_dir (hosts/<sid>/) makes and checks its directory by PATH, in four
-    syscalls, mkdir, lstat, chmod (only when the lstat read a loose directory of ours) and the read-back lstat, so the
-    window runs from hosts_dir's first syscall to owner_only_dir's read-back, INSIDE each helper as much as between
-    them, and a re-point of hosts/ or of the <sid> leaf landing anywhere in it is followed by the syscalls after it.
-    What each landing does, by execution at round 7: a link swapped in at the leaf between owner_only_dir's lstat
-    (which read a loose directory of ours) and its chmod is followed by that chmod onto whatever the link names, any
-    object this uid owns anywhere, a regular file included, and on a file 0700 is a LOOSENING (a 0400 file outside the
-    state root read 0700 after); the read-back then refuses, its lstat reading the link itself, under the words "stays
-    group/world-accessible". A hosts/ re-pointed between the two helpers to a directory gets an empty 0700 <sid>/ of
-    ours made inside it (or a loose <sid>/ of ours already there tightened), no content, and the descent below then
-    refuses the link. A hosts/ re-pointed between them to a DANGLING link, a regular file or a directory this uid
-    cannot write never reaches the descent: the second helper's mkdir ends with ENOENT, ENOTDIR or EACCES, and the wrap
-    below files the first two under the class and lets EACCES through as the launch error with its errno. Under the
-    same precondition as every residual here (a state root a peer can write while a session starts); closing it means
-    making hosts/<sid>/ with mkdir and fchmod relative to a verified descriptor on hosts/, its own change.
+    code's window at round 7, correctness-2 and extra6-2, and counted from the code at the round-7 addendum,
+    2026-09-20): the two directory helpers themselves. Each of sh.hosts_dir (hosts/) and sh.owner_only_dir
+    (hosts/<sid>/) makes and checks its directory by PATH in up to FIVE syscalls: its mkdir; on an existing directory,
+    the stat pathlib.Path.mkdir makes after the failed os.mkdir to decide whether EEXIST re-raises (`if not exist_ok or
+    not self.is_dir(): raise`; a stat, so it follows a link standing there); its lstat; and, only when that lstat read
+    a loose directory of ours, its chmod and the read-back lstat (recorded at the addendum by interposing the four os
+    calls: a fresh directory, mkdir and lstat; an existing 0700 one, mkdir, stat, lstat; an existing loose one, mkdir,
+    stat, lstat, chmod, lstat). hosts_dir also stats the root by path before its helper (`root.exists()`, the
+    create-road decision). So the window runs from hosts_dir's first syscall to owner_only_dir's read-back, INSIDE each
+    helper as much as between them, and a re-point of hosts/ or of the <sid> leaf landing anywhere in it is followed by
+    the syscalls after it. What each landing does, by execution at round 7 and its addendum: a link swapped in at
+    EITHER component between its helper's lstat (which read a loose directory of ours; hosts/ is loose on every install
+    from before 2026-09-19, 0775 under the live umask, so the first spawn after this lands takes that chmod on hosts/
+    for real) and its chmod is followed by that chmod onto whatever the link names, any object this uid owns anywhere,
+    a regular file included, and on a file 0700 is a LOOSENING (a 0400 file outside the state root read 0700 after,
+    driven at hosts/ and at the <sid> leaf); the read-back then refuses, its lstat reading the link itself, under the
+    words "stays group/world-accessible". The same chmod onto an object this uid does NOT own ends with EPERM, outside
+    the class: the launch error with errno 1, the target's mode unchanged (a root-owned 0644 file read 0644 after);
+    onto a target that dangles, with ENOENT, refused under the class as "does not exist". A hosts/ re-pointed between
+    the two helpers to a directory gets an empty 0700 <sid>/ of ours made inside it (or a loose <sid>/ of ours already
+    there tightened), no content, and the descent below then refuses the link; when that directory already holds <sid>
+    as a NON-directory (a regular file, a dangling link, a link to a file) the second helper's mkdir ends with EEXIST,
+    refused under the class as "host directory ... is not a directory", nothing made and nothing chmodded (the link's
+    0400 target read 0400 after). A hosts/ re-pointed between them to a DANGLING link, a regular file, a link to itself
+    or a directory this uid cannot write never reaches the descent: the second helper's mkdir ends with ENOENT, ENOTDIR,
+    ELOOP or EACCES, and the wrap below files the first three under the class and lets EACCES through as the launch
+    error with its errno. Under the same precondition as every residual here (a state root a peer can write while a
+    session starts); closing it means making hosts/<sid>/ with mkdir and fchmod relative to a verified descriptor on
+    hosts/, its own change.
     The file's mode is set on the descriptor BEFORE the write (os.fchmod): a
     pre-existing file keeps its old mode through O_CREAT|O_TRUNC, and the trailing chmod this had until
     2026-09-18 tightened it only after the overlay was already in it (PR 789, review round 1, the same
