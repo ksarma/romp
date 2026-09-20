@@ -420,12 +420,17 @@ class RefitsWhenTheVisibleHeightChanges(unittest.TestCase):
         self.js = km._LANDING_MOBILE_JS
 
     def test_it_drives_app_h_off_the_live_visual_viewport(self):
-        # pinch-aware since 2026-08-19: desktop (fine pointer) reads innerHeight outright — pinch-immune
-        # in every browser, no scale arithmetic (desktop Firefox does not reliably report vv.scale during
-        # a pinch); the visual viewport drives the fit only on coarse-pointer devices, where the soft
-        # keyboards and collapsing toolbars it exists for live, scale-guarded against mobile pinches.
+        # pinch-aware since 2026-08-19: the fine-pointer road reads innerHeight on upstream's line (its premise, "pinch-immune in
+        # every browser", and the fork's contrary engine model both live in the fit() comment, the one home, with their evidence
+        # status), and the fork line after it re-reads the layout viewport as documentElement.clientHeight before the --app-h
+        # write (round 8, 2026-09-20; a no-op wherever innerHeight was right, standards mode pinned and the page overflow:hidden);
+        # the visual viewport drives the fit only on coarse-pointer devices, where the soft keyboards and collapsing toolbars it
+        # exists for live, scale-guarded against mobile pinches. Behaviour: test_kernel_mobile.MobileFitExecutes drives that road
+        # with innerHeight parted from clientHeight.
         self.assertIn("var coarse=window.matchMedia&&matchMedia('(pointer: coarse)').matches;", self.js)
         self.assertIn("var h=(!coarse||!vv)?window.innerHeight:Math.round(vv.height*(vv.scale||1));", self.js)
+        self.assertIn("if(!coarse||!vv)h=document.documentElement.clientHeight||h;\nif(h)document.documentElement.style.setProperty('--app-h',h+'px');", self.js,
+                      "the fork's re-read of the layout viewport on the fine-pointer road, right before the --app-h write")
         self.assertIn("setProperty('--app-h',h+'px')", self.js)
         # D1 (2026-09-19): the visual viewport's PAN rides beside the height. iOS reveals a focused input by moving the
         # visual viewport down the layout viewport (offsetTop > 0) with no document scroll to undo, so a body sized to
@@ -436,8 +441,9 @@ class RefitsWhenTheVisibleHeightChanges(unittest.TestCase):
         # run publishes, so a keyboard dismissed while zoomed cannot leave the body hanging below the viewport (round 2,
         # 2026-09-19); the layout viewport is document.documentElement.clientHeight, the same height in both engine models
         # (round 7, 2026-09-20: it had read window.innerHeight, which WebKit shrinks to the visual viewport's height under a
-        # pinch, so on iOS Safari the difference was below 0 on every zoomed run and the road published 0px whatever the
-        # hold; the harness drives both models); the clamp bounds what is published and never writes back into the hold (round 4, 2026-09-20: it had,
+        # pinch under the engine model the fit() comment states, the one home, holding by WebKit's source and a Chromium run
+        # with the on-device read as the only real-engine confirmation, so there the difference was below 0 on every zoomed
+        # run and the road published 0px whatever the hold; the harness drives both models); the clamp bounds what is published and never writes back into the hold (round 4, 2026-09-20: it had,
         # so the hold decayed to 0 the first time the clamp bound and a keyboard raised again under the zoom reopened the
         # band). Every road that WRITES the hold writes the value it publishes: the measured road its measurement, the 0px
         # road a zero, and that only in a true no-pan state (no visual viewport, or one at or under the pinch road's cut, scale

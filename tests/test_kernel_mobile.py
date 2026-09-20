@@ -123,11 +123,13 @@ class LandingShell(unittest.TestCase):
         # scale-aware (the user 2026-08-19): a desktop pinch shrinks vv.height by the zoom factor; height*scale
         # recovers the layout height, so a pinch never reads as "keyboard open" (or re-fits --app-h smaller)
         self.assertIn("function kbOpen(){var vv=window.visualViewport;return vv?(window.innerHeight-vv.height*(vv.scale||1)>120):false;}", js)
-        # desktop (fine pointer) uses innerHeight outright — pinch-immune in every browser, no scale
-        # arithmetic (desktop Firefox does not reliably report vv.scale during a pinch); the visual
+        # the fine-pointer road: upstream's line reads innerHeight (its premise, "pinch-immune in every browser", and the fork's
+        # contrary engine model both live in kernel.py's fit() comment, the one home, with their evidence status; round 8,
+        # 2026-09-20), and the fork line after it re-reads the layout viewport as documentElement.clientHeight; the visual
         # viewport drives the fit only on coarse-pointer devices, where keyboards/toolbars live
         self.assertIn("var coarse=window.matchMedia&&matchMedia('(pointer: coarse)').matches;", js)
         self.assertIn("var h=(!coarse||!vv)?window.innerHeight:Math.round(vv.height*(vv.scale||1));", js)
+        self.assertIn("if(!coarse||!vv)h=document.documentElement.clientHeight||h;", js)   # the fork's re-read of the layout viewport (round 8, 2026-09-20)
         self.assertIn("--mtabs-h',(kbOpen()?0:(bar.offsetHeight||0))+'px'", js)   # upstream's write: the fallback road's own pin
 
     def test_usage_modal_dismisses_via_a_real_backdrop_not_a_document_click(self):
@@ -509,9 +511,9 @@ const pane = (id) => ({ id, classList: { toggle() {} }, contentDocument: {},
   contentWindow: { addEventListener: on(id === 'f-chat' ? CHAT : {}) },
   addEventListener: (k) => { if (k === 'load') LOADS.push(id); } });
 const PANES = { 'f-chat': pane('f-chat'), 'f-fleet': pane('f-fleet'), 'f-feed': pane('f-feed'), 'f-timeline': pane('f-timeline') };
-// the LAYOUT viewport's height (round 7, 2026-09-20): document.documentElement.clientHeight, what the pinch road's clamp reads. It is
-// innerHeight unless a scenario parts the two (LAYOUT.h): Chromium keeps window.innerHeight at the layout viewport under a pinch,
-// WebKit shrinks it to the visual viewport's height (iOS Safari), and the layout viewport, clientHeight, keeps its height in both
+// the LAYOUT viewport's height (round 7, 2026-09-20): document.documentElement.clientHeight, what the pinch road's clamp and (round 8)
+// the fine-pointer road read. It is innerHeight unless a scenario parts the two (LAYOUT.h), the engine model kernel.py's fit()
+// comment states with its evidence status (the one home): the stub models it, and a model is not a measurement
 const LAYOUT = { h: null };
 const layoutH = () => (LAYOUT.h === null ? global.innerHeight : LAYOUT.h);
 // the bar's BOX (D1, 2026-09-19): a fixed bottom:0 bar sits at the layout viewport's bottom, its height above layoutH(), unless a
@@ -745,11 +747,12 @@ flip('onePixelPan', { height: 460, offsetTop: 1, scale: 1 });   // a standing pa
 flip('zoomedTop', { height: 422, offsetTop: 0, scale: 2 });     // zoomed with the keyboard gone, at the top: the hold stands
 flip('zoomPan', { height: 422, offsetTop: 200, scale: 2 });     // a zoom pan with the keyboard gone: the hold stands
 out.flips = flips;
-// round 7 (2026-09-20): the ENGINE MODEL of innerHeight under a pinch, and every sign of the clamp's difference. Chromium keeps
-// window.innerHeight at the layout viewport's height under a pinch; WebKit (iOS Safari, where the meta's user-scalable=no is
-// ignored and a pinch is reachable) shrinks it to the visual viewport's height, so a clamp reading innerHeight saw a difference
-// below 0 on every zoomed run there and published 0px whatever the hold, the band under the composer reopened for as long
-// as the zoom held; every step above kept innerHeight at 844 through the pinch, the Chromium model. The clamp reads
+// round 7 (2026-09-20): the ENGINE MODEL of innerHeight under a pinch, and every sign of the clamp's difference. The model (Chromium
+// keeps window.innerHeight at the layout viewport's height under a pinch, WebKit shrinks it to the visual viewport's) and the
+// reachability of a pinch on iOS Safari are the two premises kernel.py's fit() comment states, with their evidence status, in one
+// place; this block drives the model, it does not verify it. A clamp reading innerHeight saw a difference below 0 on every zoomed
+// run under it and published 0px whatever the hold, the band under the composer reopened for as long as the zoom held; every
+// step above kept innerHeight at 844 through the pinch, the Chromium model. The clamp reads
 // document.documentElement.clientHeight, the layout viewport in both models, and the stub parts the two here: LAYOUT.h holds
 // the layout height while innerHeight tracks vv.height, and the bar's box stays at the layout viewport's bottom (800..844), as a
 // fixed bottom:0 box does under a WebKit pinch. The difference's three states: SLACK (844 - 460: the hold, 83, is published),
@@ -768,6 +771,18 @@ out.webkitKbDownZoomed = { appTop: appTop(), appH: appH(), barH: barH(), innerHe
 // report is still the one above (422 at scale 2), so h is 844 against a layout height of 390
 LAYOUT.h = 390; BAR.top = null; fire(WIN, 'resize'); flush();
 out.rotatedUnderZoom = { appTop: appTop(), appH: appH(), barH: barH(), innerHeight: global.innerHeight, clientHeight: clientHeight() };
+// round 8 (2026-09-20): the FINE-POINTER road under the same model. The pointer turns fine while the zoom stands and the layout
+// viewport (844) is parted from innerHeight (422 at scale 2): the road reads the layout viewport (clientHeight, the fork line after
+// upstream's h assignment), so the published band is 0..844 and the bar (800..844) is wholly inside it, the strip its whole height.
+// It had read innerHeight and published a 422 px band with the bar outside it (appH 422px, barH 0px). Then the same parting with
+// no visualViewport at all (the other population of that road; barfit falls to upstream's reading there, which reserves the bar)
+LAYOUT.h = 844; BAR.top = 800; global.innerHeight = 422; visualViewport.scale = 2; visualViewport.height = 422; visualViewport.offsetTop = 0;
+global.matchMedia = () => ({ matches: false }); fire(WIN, 'resize'); flush();
+out.finePointerWebKit = { appTop: appTop(), appH: appH(), barH: barH(), innerHeight: global.innerHeight, clientHeight: clientHeight() };
+global.matchMedia = savedMatchMedia;
+const savedVV = global.visualViewport; global.visualViewport = null; fire(WIN, 'resize'); flush();
+out.noVVWebKit = { appTop: appTop(), appH: appH(), barH: barH(), innerHeight: global.innerHeight, clientHeight: clientHeight() };
+global.visualViewport = savedVV;
 LAYOUT.h = null; BAR.top = null; global.innerHeight = 844; visualViewport.scale = 1; visualViewport.height = 844; visualViewport.offsetTop = 0; fire(WIN, 'resize'); fire(VV, 'resize'); fire(VV, 'scroll'); flush();
 out.webkitBack = { appTop: appTop(), appH: appH(), barH: barH(), innerHeight: global.innerHeight, clientHeight: clientHeight() };
 console.log(JSON.stringify(out));
@@ -1004,11 +1019,12 @@ class MobileFitExecutes(unittest.TestCase):
 
     def test_the_clamp_reads_the_layout_viewport_in_both_engine_models_and_binds_only_below_zero(self):
         # round 7 (2026-09-20). The clamp had read window.innerHeight as the layout viewport's height, which holds in Chromium
-        # and not in WebKit: iOS Safari shrinks innerHeight to the visual viewport's height under a pinch, so there every zoomed
-        # run had innerHeight - h below 0 and the pinch road published 0px whatever the hold (the band under the composer, back
-        # for as long as the zoom held), while every step above kept innerHeight at 844 through the pinch and could not see it.
-        # The clamp reads document.documentElement.clientHeight, the layout viewport in both models. The records carry both
-        # readings, so the model (innerHeight parted from clientHeight) and the sign of the difference are derived, not assumed.
+        # and not in WebKit under the engine model kernel.py's fit() comment states (the one home: it holds by WebKit's source and
+        # a Chromium run; the on-device read under a pinch is the only real-engine confirmation): there every zoomed run had
+        # innerHeight - h below 0 and the pinch road published 0px whatever the hold (the band under the composer, back for as
+        # long as the zoom held), while every step above kept innerHeight at 844 through the pinch and could not see it. The clamp
+        # reads document.documentElement.clientHeight, the layout viewport in both models. The records carry both readings, so
+        # the stub's model (innerHeight parted from clientHeight) and the sign of the difference are derived, not assumed.
         px = lambda v: int(v[:-2])
         wp, wd, rot, back = (self.out[k] for k in ("webkitPinchPanned", "webkitKbDownZoomed", "rotatedUnderZoom", "webkitBack"))
         self.assertLess(wp["innerHeight"], wp["clientHeight"], "the WebKit model: innerHeight shrunk to the visual viewport under the pinch: %r" % (wp,))
@@ -1021,6 +1037,21 @@ class MobileFitExecutes(unittest.TestCase):
         self.assertEqual(signs, {"slack": 1, "zero": 0, "negative": -1}, "the clamp's difference driven at both signs and zero: %r" % (signs,))
         self.assertEqual({k: back[k] for k in ("appTop", "appH", "barH")}, {"appTop": "0px", "appH": "844px", "barH": "44px"})
         self.assertEqual(back["innerHeight"], back["clientHeight"], "the models rejoin at scale 1")
+
+    def test_the_fine_pointer_road_reads_the_layout_viewport_in_both_engine_models(self):
+        # round 8 (2026-09-20): the sibling read. The fine-pointer road, and the road with no visualViewport, had taken innerHeight
+        # as the layout height, licensed by upstream's "pinch-immune in every browser" premise, which the fork's engine-model
+        # premise contradicts (both live in kernel.py's fit() comment, the one home, with their evidence status); the road reads
+        # document.documentElement.clientHeight too, a no-op wherever innerHeight was right. Driven here with the two parted: the
+        # published band is the layout viewport and the bar inside it keeps its strip (the head kernel gave 422px and 0px on the
+        # fine pointer, and a 422 px band with no visualViewport).
+        fp, nv = self.out["finePointerWebKit"], self.out["noVVWebKit"]
+        for r in (fp, nv):
+            self.assertLess(r["innerHeight"], r["clientHeight"], "the model parted on this road: %r" % (r,))
+        self.assertEqual({k: fp[k] for k in ("appTop", "appH", "barH")}, {"appTop": "0px", "appH": "844px", "barH": "44px"},
+                         "a fine pointer under the WebKit model publishes the layout viewport, and the bar inside it keeps its strip")
+        self.assertEqual({k: nv[k] for k in ("appTop", "appH", "barH")}, {"appTop": "0px", "appH": "844px", "barH": "44px"},
+                         "no visualViewport under the WebKit model: the layout viewport, and upstream's reading reserves the bar")
 
 
 # A node stand-in for the installed phone app with a REAL class list: the shell's mobile script and

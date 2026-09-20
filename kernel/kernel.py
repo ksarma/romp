@@ -69833,6 +69833,10 @@ function wid(){try{return sessionStorage.getItem('romp:wid')||'';}catch(e){retur
 // keyboards and collapsing toolbars — where height*scale keeps a mobile pinch from re-fitting too.
 // Every run recomputes from scratch — never adjusts a stored value — so a viewport that grows back
 // (keyboard gone, app back in front) can never leave a stale, shorter --app-h behind.
+// [fork] round 8 (2026-09-20): "pinch-immune in every browser" above is upstream's premise about innerHeight, left as written;
+// the fork's contrary reading of WebKit and its evidence status live in ONE place, the fit() comment below the --app-h write
+// ("TWO PREMISES rest here"), which names this paragraph as the contrary. The fine-pointer road reads the layout viewport
+// as document.documentElement.clientHeight through the fork line after the h assignment.
 // [fork] D1 (2026-09-19): the pan a WRITING road of fit() last stored, the value its pinch branch holds: the measured road
 // stores its measurement and the 0px road a zero, in a no-pan state only; the clamp road publishes a bound of the hold and
 // stores nothing, so what the page is using can sit below the hold until a writing road runs next (round 6, 2026-09-20: it
@@ -69844,6 +69848,10 @@ var lastPan=0;
 function fit(){try{var vv=window.visualViewport;
 var coarse=window.matchMedia&&matchMedia('(pointer: coarse)').matches;
 var h=(!coarse||!vv)?window.innerHeight:Math.round(vv.height*(vv.scale||1));
+// [fork] round 8 (2026-09-20): the layout viewport on this road too, read as the clamp below reads it (the reasoning and the engine
+// premise are in the fit() comment below the --app-h write); innerHeight stands in only where the document element has no
+// clientHeight (a node stub), a real standards-mode document always has one
+if(!coarse||!vv)h=document.documentElement.clientHeight||h;
 if(h)document.documentElement.style.setProperty('--app-h',h+'px');
 // [fork] D1 (2026-09-19): the visual viewport's PAN. iOS reveals a focused input by moving the visual viewport down the
 // layout viewport (offsetTop > 0; no document scroll for the scrollTo below to undo) while the layout viewport keeps its
@@ -69862,12 +69870,21 @@ if(h)document.documentElement.style.setProperty('--app-h',h+'px');
 // never re-lays the shell, the pinch-aware note above), CLAMPED AT USE to the layout viewport's height less h (round 2,
 // 2026-09-19): the same run recomputes --app-h from the zoomed viewport, so a pan measured under a keyboard that has since
 // gone would otherwise place the body's bottom, the composer row, below the layout viewport until the zoom ended. The layout
-// height is document.documentElement.clientHeight, the layout viewport in both engine models (round 7, 2026-09-20): it had
-// read window.innerHeight, which Chromium keeps at the layout viewport under a pinch and WebKit shrinks to the visual
-// viewport's height (iOS Safari, where the meta's user-scalable=no is ignored and this road is reachable), so there every
-// zoomed run had innerHeight - h below 0, the max term bound at 0 and the road published 0px whatever the hold, the band
-// under the composer reopened for as long as the zoom held; the harness drives both models and both signs of the
-// difference (a rotation under a standing zoom with the visual viewport's report not yet updated makes it negative). The clamp bounds what is
+// height is document.documentElement.clientHeight, on this road (round 7, 2026-09-20) and on the fine-pointer road above
+// (round 8, 2026-09-20); both had read window.innerHeight. TWO PREMISES rest here and nowhere else in this file: the other
+// sites point here, and the upstream lines that state the contrary (the "pinch-immune in every browser" paragraph above;
+// the meta comment in _landing) stay as written. ENGINE MODEL: Chromium keeps innerHeight at the layout viewport under a
+// pinch and WebKit shrinks it to the visual viewport's height, so a clamp reading innerHeight there had innerHeight - h
+// below 0 on every zoomed run, the max term bound at 0 and the road published 0px whatever the hold, the band under the
+// composer reopened for as long as the zoom held; clientHeight is the layout viewport in both models (standards mode is
+// pinned and the page is overflow:hidden, so no scrollbar parts it from innerHeight where innerHeight was right), which
+// makes the read a no-op on every road where the old value was right and a fix on any road where it was not. The model
+// holds by WebKit's source and a Chromium run; the on-device read under a pinch is the only real-engine confirmation, and
+// it is pending (headless WebKit here refuses a scale above 1). REACHABILITY: the pinch machinery here assumes a pinch is
+// reachable on iOS Safari despite the meta's user-scalable=no, unverified on device; the meta comment in _landing states
+// the contrary (that the token disables zoom). The harness drives both engine models on the pinch road and on the
+// fine-pointer road, and both signs of the clamp's difference (a rotation under a standing zoom with the visual viewport's
+// report not yet updated makes it negative). The clamp bounds what is
 // published and leaves the hold itself standing (round 4, 2026-09-20: it had written its result back, so the first time it
 // bound the held pan decayed to 0 and a keyboard raised again under the same zoom laid the shell out at pan 0 under a
 // keyboard-sized --app-h, the band reopened). The hold is the pan of the KEYBOARD it was measured with: a keyboard of a
@@ -71674,6 +71691,9 @@ def _landing():
             # maximum-scale=1,user-scalable=no: the top document governs pinch-zoom for the whole visual
             # viewport (incl. iframes), so without this iOS page-zooms on a timeline pinch instead of letting
             # the timeline's own pinch handler run (the user 2026-06-16). Disables browser zoom on the mobile UI.
+            # [fork] round 8 (2026-09-20): whether iOS Safari honours user-scalable=no is a premise this file states ONCE, in the
+            # fit() comment of _LANDING_MOBILE_JS ("TWO PREMISES rest here": the pinch machinery there assumes iOS ignores the
+            # token, unverified on device); the line above is upstream's and stays as written.
             # NO viewport-fit=cover in the STATIC meta (the user 2026-06-17): with cover, Android Chrome reports a non-zero
             # env(safe-area-inset-bottom) even though the viewport already sits ABOVE the nav bar, so #mtabs's
             # safe-area padding-bottom became a dead slab below the Chat/Feed/Timeline labels; cover also drew
