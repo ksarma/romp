@@ -3434,7 +3434,8 @@ class TheReadersRosterNamesEveryReader(unittest.TestCase):
         self.assertEqual(len(named), len(set(named)), "the roster names a reader twice: %r" % sorted(named))
         self.assertEqual(set(named), readers, "the module docstring's roster of readers and the call sites differ "
                          "(a reader: a function defined as a statement of the module or under a module-level if or "
-                         "try, passed a name the nested_run unpacking binds, %r, as a positional or keyword argument): "
+                         "try, passed a name the nested_run unpacking binds, %r, as the first positional or a keyword "
+                         "argument): "
                          "missing from it %r, in it with no reader %r"
                          % (sorted(bindings), sorted(readers - set(named)), sorted(set(named) - readers)))
 
