@@ -1368,7 +1368,11 @@ class Panel {
   pendingChange = false;
   /** Read the selection at the head of a pass, before its writes, into pendingChange: raised when the live selection is at neither
    *  note (atNote: lastDelivered, the last delivered event's; passLeft, the last pass's own). A latch already raised stands: the event
-   *  that lowers it has not run. */
+   *  that lowers it has not run. This head read is a comparison, and what makes it sound is that BOTH notes are written by events and
+   *  by nothing else: lastDelivered by the delivered selectionchange, passLeft by the pass that left the selection there and retired by
+   *  the next delivered selectionchange. A pass never captures its own record here; a compare against the record (the float's own
+   *  offeredFor) was the earlier shape, and it read a stale record, a missing record and an already-delivered event alike as a change
+   *  still to come, so do not fold this read back onto the record. */
   private noteSelectionAtHead(): void {
     if (this.pendingChange) return;
     const sel = typeof window.getSelection === "function" ? window.getSelection() : null;
