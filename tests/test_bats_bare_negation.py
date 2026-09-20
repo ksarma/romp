@@ -15,9 +15,11 @@ check that reads the previous run.
 
 The design (fork PR #871, after eight review rounds of fork PR #778 on a line scanner that modelled where bash reads a status and
 was wrong in a new way each round): bats is the oracle and this module classifies nothing. It finds CANDIDATES, and bats decides
-each one by running its test with the negated pipeline rewritten twice, to `! true` and to `! false`: a read negation fails the
-test under exactly one of them, one that passes under both asserted nothing, and both failing, a failure blamed on another line or
-a rewritten file bash does not parse is undecided and reported as such. The predicate over-approximates by construction: every `!`
+each one by running its test with the negated pipeline rewritten twice, to `! true` and to `! false`: the two files differ in one
+word, so a test whose outcome differs under them read the negation's status (`read`: one `ok`, one `not ok` blamed inside the
+candidate's own test, on the negation's line, on the line before a `( ! cmd )` subshell, or on the `[ ]` a saved `$?` reaches), one
+passing under both asserted nothing, and both failing, a failure blamed outside the test, a run not ending within RUN_TIMEOUT or a
+rewritten file bash does not parse is undecided and reported as such. The predicate over-approximates by construction: every `!`
 standing as its own word in a test's text (_BANG: bounded by bash's metacharacters, the line's ends or a backtick, so
 `!>/dev/null true`, `!(true)`, `` `! true` `` and a `!` alone on a line are words and `!=`, `$!` and `!cmd` are none), outside a
 comment, a quoted string and a here-document's body, with no grammar of where a pipeline begins. Test bodies are
@@ -37,31 +39,49 @@ Over the 46 tests/*.bats at this head (BatsSuites lists a file's candidates and 
 `!` words file-wide, 191 of them `[ !`, 24 inside comments and strings (the word rule takes a `!` next to a backtick, a `)` or a
 `>`), 5 at file scope, and 12 candidates in test bodies (bootstrap-sh.bats 184; install-optional-deps.bats 505; install-sh.bats
 329, 400, 411; pr-orphans.bats 125; romp-serve.bats 117, 309, 334, 382; romp-service.bats 683; romp-sessions.bats 84), listed in
-6.66 s with the extents. bats reads all 12 (BatsCorpus, under 1.10.0 and 1.11.1): the nine at line start are `not ok` on their own
+4.25 s with the extents. bats reads all 12 (BatsCorpus, under 1.10.0 and 1.11.1): the nine at line start are `not ok` on their own
 line under `! true` and `ok` under `! false`; the three condition heads of romp-serve.bats (309, 334 and 382, `if ! _dead "$pid";
 then kill ...; return 1; fi`) the reverse, `ok` under `! true` and `not ok` on their own line under `! false`, so they are read only
-through the second rewrite; 0 inert, 0 undecided, in 92.18 s on this box, 58 s of it the three heads' probe tests. The 5 file-scope
+through the second rewrite; 0 inert, 0 undecided, in 90.67 s on this box, 56.27 s of it the three heads' probe tests, whose
+slowest single run is 12.95 s (romp-serve.bats 334 under `! true`, on a loaded box), against which RUN_TIMEOUT stands at
+60 s. The 5 file-scope
 `!` words sit in helpers and a setup (bats-state-isolation.bats 125, 126 and 129 twice; romp-postal.bats 47): outside the subject,
 since a `!` there has no enclosing test to run alone. Two classes this instrument does not see: that file scope, and a negation
 inside a string another shell runs (`eval "! true; true"`, `bash -c "! true; true"`), which is text to the predicate by bash's
-reading of the test's own text (G_eval_string_mid and G_bash_c_string_mid, declared in the register).
+reading of the test's own text (G_eval_string_mid and G_bash_c_string_mid, declared in the register). One class it reports without
+deciding: a loop whose condition is the negation (`while ! cmd; do sleep 1; done`) never ends under one rewrite, so that run is
+ended at RUN_TIMEOUT and the candidate reported undecided, its row's head printed before its runs so a run an outer bound ends is
+attributable too; none in the tree today, by the 12 rows.
 
-The register (ground_truth_shapes, BatsGroundTruth) is the gate on the two things the instrument still asserts. Recall: every `!`
+The register (ground_truth_shapes, BatsGroundTruth) is the gate on the three things the instrument still asserts. Recall: every `!`
 character of a shape's tests is a candidate unless NOT_A_NEGATION declares it text or an operator, and a test recorded `ok` with no
 candidate holds only declared `!` characters or none (NO_NEGATION); the expected set is every `!` character of the text, derived
 from the shapes and the record and not from the predicate's word rule, so a spelling the predicate misses reds it whatever the rule
-says. Agreement: with bats on PATH the shapes go through the
-corpus's own road (record_under_bats: candidates, extent, both rewrites, one bats run) and the per-test verdicts must equal
-RECORDED, which holds both rewrites' columns and names the bats versions it was verified against (RECORDED_WITH: 1.10.0 on this
-box and 1.11.1, CI's pin); without bats that half skips, as the corpus test does, naming CI's shell job, the one cell that installs
-bats, as where it runs: tests/bats-bare-negation-shell-job.bats, a wrapper the job's `bats tests/*.bats` picks up, runs each of the
-two under python3 with every BATS_* variable unset (the job's BATS_TEST_TIMEOUT would otherwise hang a shape's bare `wait` on
-bats's timeout watcher) and skips on the macOS cell, whose bash 3.2.57 and Homebrew bats 1.14.0 the record is not verified against.
-Measured at this head: 367 shapes, 377 tests; under `! true` 225 ok and 152 not ok, under `! false` 368 ok and 9 not ok (the four
-condition heads whose branch fails the test, `command _h` and `env _h`, which find no shell function, `run ! true`, which run
-itself fails, and the doubled negation mid and last, whose inversions cancel). The 250 shapes of the earlier register keep their
-260 recorded `! true` verdicts and are 260 ok under `! false`; every negation of the register is a candidate, the 139
-recorded-inert line-start sites the earlier register counted and every one off line start among them.
+says. Agreement: with bats on PATH the shapes go through the corpus's own road (record_under_bats: candidates, extent, both
+rewrites, one bats run) and the per-test verdicts must equal RECORDED, which holds both rewrites' columns and names the bats
+versions it was verified against (RECORDED_WITH: 1.10.0 on this box and 1.11.1, CI's pin); the extent's terminators are pinned
+there one shape each (`; true`, `|| ...`, `&& false`, a lone `&` before `wait %%`, the unmatched `)`, the closing backtick, a
+comment holding operators, the continued line), so a split that runs past one changes a recorded verdict or loses one. Decision:
+decide, asked about every test of the register holding one candidate from the same run's outcomes and blamed lines, reads every
+test whose verdicts differ, calls inert every one passing under both and undecided every one failing under both, so its refusal of
+a failure blamed outside the candidate's test fires on no deterministic shape (bash blames a `( ! cmd )` subshell's failure on the
+line before it, a multi-line one's on the @test line, and a saved `$?` on the `[ ]` reading it, all inside the test; a register
+reading verdicts alone was blind to that clause, and to a bats that blamed differently). Without bats those two skip, as the corpus
+test does, naming CI's shell job, the one cell that installs bats, as where they run: tests/bats-bare-negation-shell-job.bats, a
+wrapper the job's `bats tests/*.bats` picks up, runs the register class, the road class (the corpus road's pieces against bats: the
+TAP reader, the bound on a run, the TERM to the process running one, a suite decided end to end) and the corpus test under python3
+with every BATS_* variable unset (the job's BATS_TEST_TIMEOUT would otherwise hang a shape's bare `wait` on bats's timeout watcher)
+and skips on the macOS cell, whose bash 3.2.57 and Homebrew bats 1.14.0 the record is not verified against; the inner bats resolves
+through a PATH without the outer's libexec directory (_bats_env), since the entry point there expects the BATS_ROOT the scrub
+removes and did not load under CI's /usr/local layout. Measured at this head: 375 shapes, 385 tests; under `! true` 229 ok
+and 156 not ok, under `! false` 371 ok and 14 not ok (the four condition heads whose branch fails the test, `command _h` and
+`env _h`, which find no shell function, `run ! true`, which run itself fails, the doubled negation mid and last, whose inversions
+cancel, `! true && false` mid and last, the backgrounded negation whose job status `wait %%` reads, mid and last, and the status
+saved with `rc=$?` and read by `[ ]`); decide over the 370 tests holding one candidate: 159 read, 208 inert, 3 undecided
+(`command _h`, `env _h` and `! true && false` last, failing under both), the 5 holding two (the doubled and tripled negations,
+`if ! _h` with its helper) and the 10 holding none not asked. The 250 shapes of the earlier register keep their 260 recorded
+`! true` verdicts and are 260 ok under `! false`; every negation of the register is a candidate, the 139 recorded-inert line-start
+sites the earlier register counted and every one off line start among them.
 
 Deleted here, not fixed: the line scanner's frame model (the brace-depth walk, its block ends and the coverage pin over them), its
 heredoc classification (introducers, delimiter words, the skip) and its status-read grammar (`_plain_call`, `_helper_read`,
@@ -73,8 +93,11 @@ import collections
 import os
 import re
 import shutil
+import signal
 import subprocess
+import sys
 import tempfile
+import threading
 import time
 import unittest
 import unittest.mock
@@ -355,8 +378,19 @@ def _bats_env(scratch):
     """The environment for a bats run of this module's: every BATS_* variable unset (under BATS_TEST_TIMEOUT bats's timeout watcher
     is a background child of the test, and a bare `wait` in a test waits on it: the register's D_bg hung to a 40 s kill with the
     variable set and passed in 0.07 s without; a nested bats must also not read the outer run's BATS_ROOT, BATS_RUN_TMPDIR and the
-    rest), HOME and TMPDIR each a fresh directory under the scratch one, so a test reads and writes no state of this machine's."""
+    rest); every directory on PATH holding bats's libexec entry point dropped from it (an outer bats prepends its libexec
+    directory to PATH, and the `bats` there, beside bats-exec-test, is the entry point that expects the BATS_ROOT its bin wrapper
+    exported, which the strip above removes; the wrapper's own scrub removes BATS_LIBEXEC with the rest before python starts, so
+    the directory is known by what it holds and not by that variable; with it gone `bats` resolves to a wrapper again. Left in
+    place, the inner bats ran with BATS_ROOT empty: on this box, whose bats lives under /usr and whose /lib is /usr/lib, that only
+    put the frames of an `exit` and of a teardown failure on bats-exec-test's own lines, since the frames bats drops are those under
+    $BATS_ROOT/lib and libexec, and under CI's /usr/local prefix the inner bats did not load at all, `//bats-core/validator.bash: No
+    such file or directory`, measured with 1.11.1 from a scratch prefix as the outer and the inner bats); HOME and TMPDIR each a
+    fresh directory under the scratch one, so a test reads and writes no state of this machine's. A bats started with this
+    environment resolves through its PATH (Popen looks the executable up in the environment it is given)."""
     env = {k: v for k, v in os.environ.items() if not k.startswith("BATS_")}
+    if "PATH" in env:
+        env["PATH"] = os.pathsep.join(p for p in env["PATH"].split(os.pathsep) if not os.path.isfile(os.path.join(p, "bats-exec-test")))
     for var, sub in (("HOME", "home"), ("TMPDIR", "tmp")):
         env[var] = os.path.join(scratch, sub)
         os.makedirs(env[var], exist_ok=True)
@@ -364,66 +398,137 @@ def _bats_env(scratch):
 
 
 # one bats run of a test alone: the outcome (`ok`, `not ok`, or why bats gave no verdict: `skipped`, `did not load`, `no such
-# test`, `N tests`, `no TAP`), the 1-based line bats blames for a `not ok` (the innermost frame of its trace) and the file it names
-# there, the TAP and stderr text, and the wall time
+# test`, `N tests`, `no TAP`, `timed out`), the 1-based line bats blames for a `not ok` (the innermost frame of its trace) and the
+# file it names there, the TAP and stderr text, and the wall time
 BatsRun = collections.namedtuple("BatsRun", "outcome line file detail secs")
 _TAP_TEST = re.compile(r"^(ok|not ok) \d+ (.*)$")
 _TAP_SKIP = re.compile(r"^ok \d+ .* # skip( |$)")
 _TAP_FRAME = re.compile(r"^# \((?:from function `[^']*' )?in (?:test )?file (\S+), line (\d+)")
+# the bound on one bats run of the corpus road, in seconds. A rewrite that does not terminate (a loop whose condition is the
+# negation, `while ! cmd; do sleep 1; done`, runs forever under `! false`, and `until ! cmd` under `! true`) would otherwise hang
+# the oracle with no verdict and no row: under pytest forever, and in CI's shell job to the wrapper test's BATS_TEST_TIMEOUT
+# (180 s), which names the wrapper and no candidate and ends python alone (bats's pkill -P reaches a test's direct children),
+# leaving the inner bats and the loop running. A run ended at this bound is `timed out`: undecided, reported with its candidate.
+# The bound stands against the slowest legitimate run of the corpus, a romp-serve.bats probe test (line 334, 12.95 s under
+# `! true` on a loaded box), and under the corpus's whole time here (90.67 s), so one run ended at it still ends the corpus
+# test inside the wrapper's 180 s on this box
+RUN_TIMEOUT = 60
+# the bound on the register's one run over every shape: every shape terminates, so a run past it is an error and not a verdict, a
+# backstop for a run with no outer bound (pytest)
+REGISTER_TIMEOUT = 900
 
 
-def run_test_alone(tree, relpath, name, scratch, bats="bats"):
-    """The test named `name` of the suite at relpath, run alone under bats with the tree as cwd (`bats -t -f '^<name>$' <relpath>`,
-    the name matched literally: _ere_literal), stdin /dev/null and the environment _bats_env gives. Read off the TAP: exactly one
-    test line is a verdict, `ok` (a skipped one is not: `skipped`, with bats's reason) or `not ok` with the line the first frame
-    of bats's trace blames, the candidate's own or a caller's or a callee's; `not ok N setup_file failed` (bats 1.10.0, on stdout)
-    or `not ok N bats-gather-tests` (1.11.1, on stderr) is a file bash could not load (`did not load`); no test line is `no such
-    test` (bats printed `1..0`) or `no TAP`; more than one is `N tests`. The detail carries the TAP after the plan line and bats's
-    stderr, for the report."""
+def _end_group(p, grace=5.0):
+    """Ends the process group the process p leads (a Popen with start_new_session): TERM to the group, under which bats's EXIT
+    traps run and so does a test's teardown (measured: a teardown's marker file is written under TERM and not under KILL), then
+    KILL to whatever of it is left after grace seconds."""
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(p.pid, sig)
+        except ProcessLookupError:
+            return
+        try:
+            p.wait(timeout=grace)
+        except subprocess.TimeoutExpired:
+            continue
+
+
+def _run_bats(args, cwd, env, timeout):
+    """(stdout, stderr, whether the bound ended it, the exit status, seconds) of one bats process, stdin /dev/null, in its own
+    process group and bounded: past timeout seconds the group is ended (_end_group) and what bats had written comes back with the
+    flag set. A TERM to this process while the run is on (the wrapper test's BATS_TEST_TIMEOUT ends a test's direct children, the
+    python running the module, and nothing below them) ends the group first and then takes its course, so no bats this module
+    started outlives it; the handler is installed for the run and on the main thread only, the one a handler can be set from."""
     t0 = time.monotonic()
-    r = subprocess.run([bats, "-t", "-f", "^%s$" % _ere_literal(name), relpath], cwd=tree, capture_output=True, text=True,
-                       stdin=subprocess.DEVNULL, env=_bats_env(scratch))
-    secs = time.monotonic() - t0
-    out = r.stdout.splitlines()
-    detail = "\n".join([l for l in out if not re.match(r"^1\.\.\d+$", l)] + [l for l in r.stderr.splitlines() if l.strip()])
-    if re.search(r"^not ok \d+ (setup_file failed|bats-gather-tests)", r.stdout + "\n" + r.stderr, re.M):   # 1.11.1 prints its line on stderr
+    p = subprocess.Popen(args, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,
+                         start_new_session=True)
+
+    def on_term(signum, frame):
+        _end_group(p)
+        signal.signal(signal.SIGTERM, signal.SIG_DFL)
+        os.kill(os.getpid(), signal.SIGTERM)
+
+    main = threading.current_thread() is threading.main_thread()
+    previous = signal.signal(signal.SIGTERM, on_term) if main else None
+    try:
+        try:
+            out, err = p.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            _end_group(p)
+            out, err = p.communicate()
+            return out, err, True, p.returncode, time.monotonic() - t0
+        return out, err, False, p.returncode, time.monotonic() - t0
+    finally:
+        if main:
+            signal.signal(signal.SIGTERM, previous)
+
+
+def _frame(out, i):
+    """(1-based line, file) the frame line after the TAP line out[i] blames, the innermost of bats's trace, or (None, None)."""
+    m = _TAP_FRAME.match(out[i + 1]) if i + 1 < len(out) else None
+    return (int(m.group(2)), m.group(1)) if m else (None, None)
+
+
+def run_test_alone(tree, relpath, name, scratch, bats="bats", timeout=RUN_TIMEOUT):
+    """The test named `name` of the suite at relpath, run alone under bats with the tree as cwd (`bats -t -f '^<name>$' <relpath>`,
+    the name matched literally: _ere_literal), stdin /dev/null and the environment _bats_env gives, bounded at timeout seconds
+    (_run_bats). Read off the TAP: exactly one test line is a verdict, `ok` (a skipped one is not: `skipped`, with bats's reason)
+    or `not ok` with the line the first frame of bats's trace blames, the candidate's own or a caller's or a callee's; `not ok N
+    setup_file failed` (bats 1.10.0, on stdout) or `not ok N bats-gather-tests` (1.11.1, on stderr) is a file bash could not load
+    (`did not load`); no test line is `no such test` (bats printed `1..0`) or `no TAP`; more than one is `N tests`; a run the
+    bound ended is `timed out`. The detail carries the TAP after the plan line and bats's stderr, for the report."""
+    out_text, err_text, ended, status, secs = _run_bats([bats, "-t", "-f", "^%s$" % _ere_literal(name), relpath], tree, _bats_env(scratch), timeout)
+    out = out_text.splitlines()
+    detail = "\n".join([l for l in out if not re.match(r"^1\.\.\d+$", l)] + [l for l in err_text.splitlines() if l.strip()])
+    if ended:
+        return BatsRun("timed out", None, None, detail or "(nothing beyond the plan line)", secs)
+    if re.search(r"^not ok \d+ (setup_file failed|bats-gather-tests)", out_text + "\n" + err_text, re.M):   # 1.11.1 prints its line on stderr
         return BatsRun("did not load", None, None, detail, secs)
     tests = [i for i, l in enumerate(out) if _TAP_TEST.match(l)]
     if not tests:
-        return BatsRun("no such test" if any(l == "1..0" for l in out) else "no TAP", None, None, detail or "(bats printed nothing; exit %d)" % r.returncode, secs)
+        return BatsRun("no such test" if any(l == "1..0" for l in out) else "no TAP", None, None, detail or "(bats printed nothing; exit %d)" % status, secs)
     if len(tests) > 1:
         return BatsRun("%d tests" % len(tests), None, None, detail, secs)
     i = tests[0]
     if out[i].startswith("ok "):
         return BatsRun("skipped" if _TAP_SKIP.match(out[i]) else "ok", None, None, detail, secs)
-    m = _TAP_FRAME.match(out[i + 1]) if i + 1 < len(out) else None
-    return BatsRun("not ok", int(m.group(2)) if m else None, m.group(1) if m else None, detail, secs)
+    line, file = _frame(out, i)
+    return BatsRun("not ok", line, file, detail, secs)
 
 
 REWRITES = (("! true", "the negated command succeeding"), ("! false", "the negated command failing"))
 
 
-def decide(relpath, cand, runs):
-    """(verdict, message) for a candidate from its two runs (BatsRun under `! true` and under `! false`, in REWRITES' order): `read`
-    when the test's outcome turns on the negation, `ok` under one rewrite and `not ok` blamed on the candidate's own line in its
-    own file under the other, with no report; `inert` when the test passes under both, the negation asserting nothing, a defect;
-    `undecided`, a report too, for everything else: `not ok` under both (the failure does not turn on this negation), a `not ok`
-    blamed on another line or file (the status may be read elsewhere, or not at all), and a run bats gave no verdict on. The
-    message says which, so a maintainer can tell a negation bats read as inert from a position this instrument could not
-    decide (fork PR #778 round 8, Group C's rule)."""
+def decide(relpath, cand, extent, runs):
+    """(verdict, message) for a candidate from its two runs (BatsRun under `! true` and under `! false`, in REWRITES' order) and
+    its test's extent (bash_test_extents' (open, close) pair). The two rewritten files differ in one word, `true` against `false`,
+    so a test whose outcome differs under them read that status somewhere: `read`, no report, when one run is `ok` and the other
+    `not ok` with the failure blamed inside the candidate's own test, its file and a line from the test's opener to its close (the
+    candidate's own line; the line before a `( ! cmd )` subshell, which bash blames for the compound's failure; the `[ "$rc" -eq 1 ]`
+    a status saved with `rc=$?` reaches). `inert` when the test passes under both, the negation asserting nothing, a defect.
+    `undecided`, a report too, for everything else: `not ok` under both (the failure does not turn on this negation), a failure
+    blamed outside the test (a setup, a teardown, a loaded file, another test: the status may have reached there, or the failure
+    is unrelated to it), and a run bats gave no verdict on (a skip, a file that did not load, no such test, a run the bound ended,
+    a rewrite bash does not parse). The message says which, so a maintainer can tell a negation bats read as inert from a position
+    this instrument could not decide (fork PR #778 round 8, Group C's rule)."""
     for (what, _), run in zip(REWRITES, runs):
         if run.outcome not in ("ok", "not ok"):
-            return "undecided", "under `%s` bats gave no verdict on the test: %s; nothing was decided" % (
-                what, run.detail if run.outcome == "no run" else "the outcome was `%s`" % run.outcome)
+            why = (run.detail if run.outcome == "no run" else
+                   "the run was ended after %.0f s with no verdict: a rewrite that does not terminate is one cause, a loop whose "
+                   "condition is this negation running forever under one of the two" % run.secs if run.outcome == "timed out" else
+                   "the outcome was `%s`" % run.outcome)
+            return "undecided", "under `%s` bats gave no verdict on the test: %s; nothing was decided" % (what, why)
     if all(run.outcome == "ok" for run in runs):
         return "inert", "the test passes with the negated command succeeding and with it failing: this negation asserts nothing"
     if all(run.outcome == "not ok" for run in runs):
         return "undecided", "the test fails under both rewrites (blamed on line %s and line %s): its failure does not turn on this negation" % (
             runs[0].line, runs[1].line)
     failing = runs[0] if runs[0].outcome == "not ok" else runs[1]
-    if failing.file != relpath or failing.line != cand.line + 1:
-        return "undecided", "the failing rewrite is blamed on %s line %s, not on the candidate's line %d: the negation's status may be read elsewhere, or not at all" % (
-            failing.file, failing.line, cand.line + 1)
+    o, c = extent
+    if failing.file != relpath or failing.line is None or not o + 1 <= failing.line <= c + 1:
+        return "undecided", ("the outcomes differ under the two rewrites, but the failing one is blamed on %s line %s, outside the candidate's "
+                             "test (%s lines %d to %d): either the negation's status reached there or the failure is unrelated to it" % (
+                                 failing.file, failing.line, relpath, o + 1, c + 1))
     return "read", "the test's outcome turns on this negation"
 
 
@@ -432,12 +537,12 @@ def decide(relpath, cand, runs):
 Decision = collections.namedtuple("Decision", "relpath cand test verdict message rewritten runs secs")
 
 
-def decide_under_bats(root, relpath, lines, extents, cand, scratch, bats="bats"):
+def decide_under_bats(root, relpath, lines, extents, cand, scratch, bats="bats", timeout=RUN_TIMEOUT):
     """One candidate decided by bats: for each rewrite of REWRITES the tree at root is copied whole into a fresh directory under
     scratch (without `.git`, `node_modules` and python caches, none of which a suite reads; the shell job's checkout has no
     node_modules when bats runs), the suite in the copy is replaced by the rewritten file (rewrite), and the enclosing test runs
-    alone there (run_test_alone). A rewritten file bash does not parse, or a pipeline running off the text, is decided without a
-    run: undecided. Each copy is removed after its run."""
+    alone there (run_test_alone, bounded at timeout seconds). A rewritten file bash does not parse, or a pipeline running off the
+    text, is decided without a run: undecided. Each copy is removed after its run."""
     o, _ = extents[cand.test]
     test = _test_name(lines[o])
     runs, shown = [], []
@@ -457,16 +562,23 @@ def decide_under_bats(root, relpath, lines, extents, cand, scratch, bats="bats")
         with open(os.path.join(tree, relpath), "w", encoding="utf-8") as f:
             f.write("\n".join(new))
         try:
-            runs.append(run_test_alone(tree, relpath, test, d, bats))
+            runs.append(run_test_alone(tree, relpath, test, d, bats, timeout))
         finally:
             shutil.rmtree(d, ignore_errors=True)
-    verdict, message = decide(relpath, cand, runs)
+    verdict, message = decide(relpath, cand, extents[cand.test], runs)
     return Decision(relpath, cand, test, verdict, message, shown, runs, sum(r.secs for r in runs))
 
 
 def _shown(run):
     """A run's outcome for the table: `ok`, `not ok @<line>`, or why there was no verdict."""
     return "not ok @%s" % run.line if run.outcome == "not ok" else run.outcome
+
+
+def _row(d):
+    """A decision's row in the corpus table, after its head (`<path>:<line> `): the verdict, both outcomes, each run's seconds and
+    the candidate's line under `! true`."""
+    return "%-9s `! true` %s, `! false` %s  (%.2f + %.2f s)  %s" % (d.verdict, _shown(d.runs[0]), _shown(d.runs[1]), d.runs[0].secs, d.runs[1].secs,
+                                                                   d.rewritten[0].strip())
 
 
 def report(d):
@@ -773,11 +885,15 @@ def ground_truth_shapes():
     S["G_first_command"] = '@test "x" {\n    %s\n    true\n}\n' % N
     S["G_two_tests_second_mid"] = '@test "a" {\n    run true\n    %s\n}\n\n@test "b" {\n    %s\n    true\n}\n' % (N, N)
     S["G_tab_indented_mid"] = '@test "x" {\n\t%s\n\ttrue\n}\n' % N
+    # the negated pipeline's extent (negated_pipeline_end) is pinned here: for each terminator a tail whose verdict changes when
+    # the split runs past it. `; true` and `|| ...`; `&& false`, a list whose status is false when the negation is true, where
+    # `&& echo yes` succeeds either way; a lone `&` before `wait %%`, which returns the backgrounded command's own status and not
+    # its negation (measured: `! true & wait %%` is ok and `! false & wait %%` is not); a comment holding operators, further down
     for name, tail in (("or_fallback", " || echo fb"), ("or_false", " || false"), ("or_return_1", " || return 1"), ("or_return_bare", " || return"),
                        ("or_return_0", " || return 0"), ("or_group_return", " || { echo no; return 1; }"), ("and_then", " && echo yes"), ("and_or", " && true || echo fb"),
-                       ("and_or_false", " && true || false"),
+                       ("and_or_false", " && true || false"), ("and_false", " && false"),
                        ("pipeline", " | cat"), ("pipe_or", " | cat || echo fb"), ("semicolon_command", "; true"), ("trailing_semicolon", ";"),
-                       ("trailing_comment", "   # note"), ("bg", " &\n    wait"),
+                       ("trailing_comment", "   # note"), ("bg", " &\n    wait"), ("bg_wait_job", " & wait %%"),
                        ("or_true", " || true"), ("or_exit_1", " || exit 1"), ("or_fail", " || fail no"), ("or_group_true", " || { echo no; true; }"),
                        ("continued_args", " \\\n        x"), ("continued_or_false", " \\\n        || false"), ("continued_or_true", " \\\n        || true"),
                        ("continued_pipe", " |\n        cat")):
@@ -833,6 +949,13 @@ def ground_truth_shapes():
     S["H_after_bg_mid"] = '@test "x" {\n    sleep 0 & %s\n    wait\n    true\n}\n' % N
     S["H_inline_subshell_mid"] = '@test "x" {\n    ( %s )\n    true\n}\n' % N
     S["H_inline_subshell_nospace_mid"] = '@test "x" {\n    (%s)\n    true\n}\n' % N
+    # read positions whose failing line is not the negation's: bash blames a `( ... )` compound's failure on the line before it (the
+    # @test line for a first body line, H_inline_subshell_mid; the test's own line for a one-liner, I_one_liner_subshell) and a
+    # status saved with `rc=$?` on the `[ ]` that reads it. decide accepts a failure anywhere inside the candidate's test; the
+    # decision test of BatsGroundTruth holds it to that over every shape (fork PR #871, the commit-3 review's F1)
+    S["H_inline_subshell_after_command_mid"] = '@test "x" {\n    true\n    ( %s )\n    true\n}\n' % N
+    S["H_inline_subshell_last"] = '@test "x" {\n    true\n    ( %s )\n}\n' % N
+    S["H_status_read_by_test_mid"] = '@test "x" {\n    %s\n    rc=$?\n    [ "$rc" -eq 1 ]\n    true\n}\n' % N
     S["H_inline_group_mid"] = '@test "x" {\n    { %s; }\n    true\n}\n' % N
     S["H_inline_assign_subst_mid"] = '@test "x" {\n    x=$(%s)\n    true\n}\n' % N
     S["H_inline_echo_subst_mid"] = '@test "x" {\n    echo "$(%s)" > /dev/null\n    true\n}\n' % N
@@ -868,6 +991,7 @@ def ground_truth_shapes():
         S["I_opener_%s_last" % name] = '%s\n    true\n    %s\n}\n' % (opener, N)
     S["I_one_liner_between"] = '@test "a" {\n    %s\n    true\n}\n@test "b" { true; }\n@test "c" {\n    true\n    %s\n}\n' % (N, N)
     S["I_one_liner_negation"] = '@test "x" { ! true; }\n'
+    S["I_one_liner_subshell"] = '@test "x" { ( ! true ); }\n'
     S["I_opener_trailing_negation"] = '@test "x" { ! true\n    true\n}\n'
     # the `!` that is an operator of `[`, `[[` or bats's `run`, which the predicate leaves out by the word before it (_OPERATOR_OF)
     S["X_test_bracket_mid"] = '@test "x" {\n    [ ! -s /dev/null ]\n    true\n}\n'
@@ -902,18 +1026,22 @@ NO_NEGATION = {"I_one_liner_between": (2,), "E_setup_before_test": (1,)}
 
 
 def record_under_bats(shapes, bats="bats"):
-    """({shape: comma-joined per-test verdicts under the `! true` rewrite}, {the same under `! false`}, bats's TAP output and
-    stderr, the version line): every shape goes through the corpus road, its candidates found (candidates) and each one's negated
-    pipeline rewritten (rewritten_shape, over rewrite) to `! true` and to `! false`, the two files run under bats in one directory
-    with stdin /dev/null and the environment _bats_env gives (HOME and TMPDIR isolated, every BATS_* variable unset). One run over
-    the directory rather than one per test as the corpus makes (run_test_alone), and every candidate of a test rewritten at once
-    rather than one at a time: in every test of the register but one the two are the same file, since the test holds one negated
-    pipeline (a run of `!` words is one); the one, D_if_negated, holds two, a helper's `! true` and the `! _h` that calls it, and
-    its record is the file with both rewritten. Each test is renamed to carry its shape's index, the rewrite and its ordinal so the
-    TAP lines map back (a @test line inside a heredoc or a string is renamed too, harmlessly: bats-preprocess rewrites it either
-    way)."""
+    """({shape: comma-joined per-test verdicts under the `! true` rewrite}, {the same under `! false`}, {"t": {shape: [BatsRun per
+    test]}, "f": {the same}}, bats's TAP output and stderr, the version line): every shape goes through the corpus road, its
+    candidates found (candidates) and each one's negated pipeline rewritten (rewritten_shape, over rewrite) to `! true` and to
+    `! false`, the two files run under bats in one directory with stdin /dev/null and the environment _bats_env gives (HOME and
+    TMPDIR isolated, every BATS_* variable unset). One run over the directory rather than one per test as the corpus makes
+    (run_test_alone), bounded at REGISTER_TIMEOUT (every shape terminates, so a run past it is an error, not a verdict), and every
+    candidate of a test rewritten at once rather than one at a time: in every test of the register but one the two are the same
+    file, since the test holds one negated pipeline (a run of `!` words is one); the one, D_if_negated, holds two, a helper's
+    `! true` and the `! _h` that calls it, and its record is the file with both rewritten. Each test is renamed to carry its shape's
+    index, the rewrite and its ordinal so the TAP lines map back (a @test line inside a heredoc or a string is renamed too,
+    harmlessly: bats-preprocess rewrites it either way). Each test's run comes back too, its outcome with the line bats blames and
+    the file, the shape's own file reported under the shape's name (decide compares the frame's file to the suite's path; a shape
+    is one file), so decide can be asked about a shape's test the way the corpus asks it about a candidate (BatsGroundTruth)."""
     names = sorted(shapes)
     with tempfile.TemporaryDirectory() as d:
+        files = {}
         for n, name in enumerate(names):
             lines = shapes[name].split("\n")
             extents = bash_test_extents(lines)
@@ -921,31 +1049,43 @@ def record_under_bats(shapes, bats="bats"):
                 k = iter(range(1, 100))
                 text = "\n".join(_TEST_LINE.sub(lambda m, n=n, tag=tag: m.group(0).replace(m.group(1), "s%03d_%s_t%d" % (n, tag, next(k)), 1), l)
                                  if _TEST_LINE.match(l) else l for l in rewritten_shape(lines, extents, repl))
-                with open(os.path.join(d, "%03d_%s.bats" % (n, tag)), "w", encoding="utf-8") as f:
+                path = os.path.join(d, "%03d_%s.bats" % (n, tag))
+                files[path] = files[os.path.realpath(path)] = name
+                with open(path, "w", encoding="utf-8") as f:
                     f.write(text)
-        version = subprocess.run([bats, "--version"], capture_output=True, text=True).stdout.strip()
-        r = subprocess.run([bats, "-t", d], capture_output=True, text=True, stdin=subprocess.DEVNULL, env=_bats_env(d))
-    got = {"t": {}, "f": {}}
-    for line in r.stdout.splitlines():
+        env = _bats_env(d)
+        version = subprocess.run([bats, "--version"], capture_output=True, text=True, env=env).stdout.strip()
+        out_text, err_text, ended, _, _ = _run_bats([bats, "-t", d], None, env, REGISTER_TIMEOUT)
+    if ended:
+        raise RuntimeError("bats did not finish the register in %d s (REGISTER_TIMEOUT); its TAP ends:\n%s" % (REGISTER_TIMEOUT, out_text[-3000:]))
+    got, runs = {"t": {}, "f": {}}, {"t": {}, "f": {}}
+    out = out_text.splitlines()
+    for i, line in enumerate(out):
         m = re.match(r"^(ok|not ok) \d+ s(\d{3})_([tf])_t\d+", line)
         if m:
-            got[m.group(3)].setdefault(names[int(m.group(2))], []).append(m.group(1))
-    return ({name: ",".join(v) for name, v in got["t"].items()}, {name: ",".join(v) for name, v in got["f"].items()},
-            r.stdout + r.stderr, version)
+            name, tag, verdict = names[int(m.group(2))], m.group(3), m.group(1)
+            got[tag].setdefault(name, []).append(verdict)
+            ln, fl = _frame(out, i) if verdict == "not ok" else (None, None)
+            runs[tag].setdefault(name, []).append(BatsRun(verdict, ln, files.get(fl, fl), "", 0.0))
+    return ({name: ",".join(v) for name, v in got["t"].items()}, {name: ",".join(v) for name, v in got["f"].items()}, runs,
+            out_text + err_text, version)
 
 
 class BatsGroundTruth(unittest.TestCase):
     """The register: every shape of ground_truth_shapes under bats itself, the negated command succeeding. RECORDED holds each
     shape's verdicts per test in file order under the two rewrites the corpus road makes of a candidate's negated pipeline, `! true`
     (the shapes as written, the pipeline reduced to the word) and `! false`, pasted from bats; RECORDED_WITH names the bats
-    versions the record was verified against. The gate has two halves. Recall: every `!` character of a shape's tests is a
+    versions the record was verified against. The gate has three parts. Recall: every `!` character of a shape's tests is a
     candidate unless declared an operator or text (NOT_A_NEGATION), and a test recorded `ok` with no candidate holds only declared
     `!` characters or none (NO_NEGATION); the expected set owes nothing to the predicate's word rule, so a spelling it misses reds
-    here and a new shape costs one entry. Agreement: with bats on PATH the
-    shapes go through the corpus road (record_under_bats) and the verdicts must equal the record, which pins the extent of the
-    negated pipeline (a split that swallows a trailing comment or an operator changes a verdict) and the record itself (a bats whose
-    semantics differ, or a stale record, reds). Without bats the agreement half SKIPS, saying where it runs: CI's shell job is the
-    one cell that installs bats, and a run that verified nothing must not read like one that verified every shape."""
+    here and a new shape costs one entry. Agreement: with bats on PATH the shapes go through the corpus road (record_under_bats)
+    and the verdicts must equal the record, which pins the extent of the negated pipeline (a split that swallows a trailing comment
+    or an operator changes a verdict) and the record itself (a bats whose semantics differ, or a stale record, reds). Decision: from
+    the same run, decide over every test holding one candidate must read every test whose verdicts differ, call inert every one ok
+    under both and undecided every one failing under both, so decide's refusal of a failure blamed outside the candidate's test
+    fires on no deterministic shape; the verdicts alone could not see that clause. Without bats the last two SKIP, saying where they
+    run: CI's shell job is the one cell that installs bats, and a run that verified nothing must not read like one that verified
+    every shape."""
 
     # the bats versions RECORDED was verified against by the agreement test below with that bats on PATH: 1.10.0, the box the
     # record was taken on, and 1.11.1, CI's pin (.github/workflows/ci.yml installs it from the release tarball), installed from the
@@ -1168,6 +1308,8 @@ class BatsGroundTruth(unittest.TestCase):
         'F_nested_group_inner_followed': ('ok', 'ok'),
         'F_nested_group_last': ('not ok', 'ok'),
         'F_orlist_group_last': ('not ok', 'ok'),
+        'G_and_false_last': ('not ok', 'not ok'),
+        'G_and_false_mid': ('ok', 'not ok'),
         'G_and_or_false_last': ('not ok', 'ok'),
         'G_and_or_false_mid': ('not ok', 'ok'),
         'G_and_or_last': ('ok', 'ok'),
@@ -1179,6 +1321,8 @@ class BatsGroundTruth(unittest.TestCase):
         'G_bash_c_string_mid': ('ok', 'ok'),
         'G_bg_last': ('ok', 'ok'),
         'G_bg_mid': ('ok', 'ok'),
+        'G_bg_wait_job_last': ('ok', 'not ok'),
+        'G_bg_wait_job_mid': ('ok', 'not ok'),
         'G_comment_apostrophe_last': ('not ok', 'ok'),
         'G_comment_apostrophe_mid': ('ok', 'ok'),
         'G_comment_bang_mid': ('ok', 'ok'),
@@ -1258,10 +1402,13 @@ class BatsGroundTruth(unittest.TestCase):
         'H_inline_assign_subst_mid': ('not ok', 'ok'),
         'H_inline_echo_subst_mid': ('ok', 'ok'),
         'H_inline_group_mid': ('ok', 'ok'),
+        'H_inline_subshell_after_command_mid': ('not ok', 'ok'),
+        'H_inline_subshell_last': ('not ok', 'ok'),
         'H_inline_subshell_mid': ('not ok', 'ok'),
         'H_inline_subshell_nospace_mid': ('not ok', 'ok'),
         'H_or_list_last': ('not ok', 'ok'),
         'H_or_list_mid': ('ok', 'ok'),
+        'H_status_read_by_test_mid': ('ok', 'not ok'),
         'H_time_last': ('not ok', 'ok'),
         'H_time_mid': ('ok', 'ok'),
         'H_time_p_mid': ('ok', 'ok'),
@@ -1269,6 +1416,7 @@ class BatsGroundTruth(unittest.TestCase):
         'H_while_head_return_mid': ('ok', 'not ok'),
         'I_one_liner_between': ('ok,ok,not ok', 'ok,ok,ok'),
         'I_one_liner_negation': ('not ok', 'ok'),
+        'I_one_liner_subshell': ('not ok', 'ok'),
         'I_opener_indented_last': ('not ok', 'ok'),
         'I_opener_indented_mid': ('ok', 'ok'),
         'I_opener_tab_indented_last': ('not ok', 'ok'),
@@ -1392,19 +1540,67 @@ class BatsGroundTruth(unittest.TestCase):
         # regression-1 of fork PR #778: absent bats is a skip that names CI's shell job and the versions the record stands on, never
         # a pass that verified nothing
         with unittest.mock.patch("shutil.which", return_value=None):
-            with self.assertRaises(unittest.SkipTest) as cm:
-                self.test_the_record_is_what_bats_says_under_both_rewrites()
-        self.assertIn("shell job", str(cm.exception))
-        self.assertIn(" and ".join(self.RECORDED_WITH), str(cm.exception))
+            for test in (self.test_the_record_is_what_bats_says_under_both_rewrites, self.test_decide_reads_every_test_of_the_register_whose_verdicts_differ_and_refuses_none):
+                with self.assertRaises(unittest.SkipTest) as cm:
+                    test()
+                self.assertIn("shell job", str(cm.exception))
+                self.assertIn(" and ".join(self.RECORDED_WITH), str(cm.exception))
 
-    def test_the_record_is_what_bats_says_under_both_rewrites(self):
+    _record = None   # the one record_under_bats run of this process and its seconds, read by the agreement and the decision test
+
+    @classmethod
+    def record(cls):
+        """(record_under_bats's result, the seconds it took), run once per process: the agreement test and the decision test read
+        the same run, so the wrapper's register test costs one bats run over the directory."""
+        if cls._record is None:
+            t0 = time.monotonic()
+            cls._record = (record_under_bats(ground_truth_shapes()), time.monotonic() - t0)
+        return cls._record
+
+    def skip_without_bats(self):
         if not shutil.which("bats"):
             self.skipTest("bats is not on PATH: the record (bats %s) stands unverified here; CI's shell job, the one cell that installs "
                           "bats, is where this runs" % " and ".join(self.RECORDED_WITH))
+
+    def test_decide_reads_every_test_of_the_register_whose_verdicts_differ_and_refuses_none(self):
+        # F1 of fork PR #871's commit-3 review: decide refused a `( ! cmd )` subshell on its own line as undecided, since bash blames
+        # the compound's failure on the line before it, and the register could not see that: it read verdicts, never the blamed
+        # line. Now decide is asked about every test of the register that holds one candidate (there the whole-file rewrite is the
+        # corpus's per-candidate one), from the same run's outcomes and blamed lines: verdicts that differ are read, both ok is
+        # inert, both not ok is undecided. The clause refusing a failure blamed outside the candidate's test fires on no shape
+        # here; a bats blaming a shape's failure outside its test would show, by name
+        self.skip_without_bats()
         shapes = ground_truth_shapes()
-        t0 = time.monotonic()
-        got_true, got_false, output, version = record_under_bats(shapes)
-        print("%s: %d shapes, %d tests, in %.2f s" % (version, len(shapes), sum(len(v.split(",")) for v in got_true.values()), time.monotonic() - t0))
+        (_, _, runs, output, version), _ = self.record()
+        counts, several, none, problems = collections.Counter(), [], [], []
+        for name in sorted(shapes):
+            lines, extents, found = self.shape(name, shapes)
+            for t, extent in enumerate(extents):
+                cands = [c for c in found if c.test == t]
+                if len(cands) != 1:
+                    (several if cands else none).append(name)
+                    continue
+                pair = [runs[tag].get(name, [])[t] if t < len(runs[tag].get(name, [])) else None for tag in ("t", "f")]
+                if None in pair:
+                    problems.append("%s test %d: no verdict under one rewrite:\n%s" % (name, t + 1, output[-2000:]))
+                    continue
+                outcomes = tuple(r.outcome for r in pair)
+                expected = "inert" if outcomes == ("ok", "ok") else "undecided" if outcomes == ("not ok", "not ok") else "read"
+                verdict, message = decide(name, cands[0], extent, pair)
+                counts[verdict] += 1
+                if verdict != expected:
+                    problems.append("%s test %d: `! true` %s, `! false` %s: decided %s, not %s: %s" % (
+                        name, t + 1, _shown(pair[0]), _shown(pair[1]), verdict, expected, message))
+        print("%s: decide over %d tests of the register: %d read, %d inert, %d undecided; %d with more than one candidate (%s) and %d with none not asked" % (
+            version, sum(counts.values()), counts["read"], counts["inert"], counts["undecided"], len(several), ", ".join(several), len(none)))
+        self.assertGreater(counts["read"], 0, "no test of the register decided read: the clause would be held to nothing")
+        self.assertEqual(problems, [], "%d tests of the register decide does not read from its verdicts:\n" % len(problems) + "\n".join(problems))
+
+    def test_the_record_is_what_bats_says_under_both_rewrites(self):
+        self.skip_without_bats()
+        shapes = ground_truth_shapes()
+        (got_true, got_false, _, output, version), secs = self.record()
+        print("%s: %d shapes, %d tests, in %.2f s" % (version, len(shapes), sum(len(v.split(",")) for v in got_true.values()), secs))
         recorded_with = version.split()[-1] in self.RECORDED_WITH
         for what, got, col in (("! true", got_true, 0), ("! false", got_false, 1)):
             self.assertEqual(got, {name: v[col] for name, v in self.RECORDED.items()},
@@ -1413,18 +1609,23 @@ class BatsGroundTruth(unittest.TestCase):
                                  output[-6000:]))
 
 
+CORPUS_SKIP = ("bats is not on PATH: the corpus's candidates stand undecided here; CI's shell job, the one cell that installs bats, is "
+               "where this runs (tests/bats-bare-negation-shell-job.bats)")
+
+
 class BatsCorpus(unittest.TestCase):
     """bats over the tree: every candidate of every suite (suite_files, bash_test_extents, candidates) is decided by bats itself,
     its negated pipeline rewritten to `! true` and to `! false` (rewrite) and the enclosing test run alone under each in a scratch
-    copy of the tree (decide_under_bats, run_test_alone). Three verdicts (decide): read, the test's outcome turns on the negation,
-    no report; inert, the test passes under both, the negation asserts nothing, a defect; undecided, both fail, the failure is
-    blamed on another line, bats gave no verdict, or the rewritten file does not parse. The table of every candidate is printed,
-    and an inert or undecided one's report in full (the message naming which, the line as written and under each rewrite, both
-    outcomes, the blamed line, what bats said) in this test's own output, then the test fails on it. Where bats is absent this
-    skips, naming CI's shell job: tests/bats-bare-negation-shell-job.bats runs it there, the one cell that installs bats."""
+    copy of the tree (decide_under_bats, run_test_alone, every run bounded at RUN_TIMEOUT). Three verdicts (decide): read, the
+    test's outcome turns on the negation, no report; inert, the test passes under both, the negation asserts nothing, a defect;
+    undecided, both fail, the failure is blamed outside the candidate's test, bats gave no verdict (a run the bound ended among
+    them), or the rewritten file does not parse. Each candidate's row is printed as it is decided, its head before its runs, so a
+    run an outer bound ends (the wrapper test's BATS_TEST_TIMEOUT) leaves its candidate named in this test's output; an inert or
+    undecided one's report in full (the message naming which, the line as written and under each rewrite, both outcomes, the
+    blamed line, what bats said) follows the table, and the test fails on it. Where bats is absent this skips, naming CI's shell
+    job: tests/bats-bare-negation-shell-job.bats runs it there, the one cell that installs bats."""
 
-    SKIP = ("bats is not on PATH: the corpus's candidates stand undecided here; CI's shell job, the one cell that installs bats, is "
-            "where this runs (tests/bats-bare-negation-shell-job.bats)")
+    SKIP = CORPUS_SKIP
 
     def test_every_candidate_of_every_suite_is_read_by_bats(self):
         if not shutil.which("bats"):
@@ -1437,26 +1638,38 @@ class BatsCorpus(unittest.TestCase):
                 lines, extents = _read_suite(name)
                 relpath = os.path.join(os.path.basename(HERE), name)
                 for cand in candidates(lines, extents):
+                    print("%s:%d " % (relpath, cand.line + 1), end="", flush=True)   # the head before the runs: a run an outer bound ends is attributable
                     decisions.append(decide_under_bats(root, relpath, lines, extents, cand, scratch))
+                    print(_row(decisions[-1]), flush=True)
         counts = collections.Counter(d.verdict for d in decisions)
-        table = ["%s:%d %-9s `! true` %s, `! false` %s  (%.2f s)  %s" % (d.relpath, d.cand.line + 1, d.verdict, _shown(d.runs[0]), _shown(d.runs[1]),
-                                                                          d.secs, d.rewritten[0].strip()) for d in decisions]
-        table.append("%d files: %d candidates, %d read, %d inert, %d undecided, in %.2f s" % (
-            len(files), len(decisions), counts["read"], counts["inert"], counts["undecided"], time.monotonic() - t0))
-        print("\n".join(table))
+        print("%d files: %d candidates, %d read, %d inert, %d undecided, in %.2f s" % (
+            len(files), len(decisions), counts["read"], counts["inert"], counts["undecided"], time.monotonic() - t0), flush=True)
         reports = [report(d) for d in decisions if d.verdict != "read"]
         if reports:
-            print("\n\n".join(reports))
+            print("\n\n".join(reports), flush=True)
         self.assertEqual(reports, [], "%d candidate(s) bats did not read; the reports are above, and here:\n\n" % len(reports) + "\n\n".join(reports))
 
-    def test_the_environment_handed_to_bats_has_no_bats_variable_and_an_isolated_home_and_tmpdir(self):
+    def test_the_environment_handed_to_bats_has_no_bats_variable_no_outer_libexec_on_path_and_an_isolated_home_and_tmpdir(self):
         # under an outer bats (the shell job's wrapper) the process holds BATS_TEST_TIMEOUT and the rest; none may reach the inner
-        # bats (a shape's bare `wait` hangs on the timeout watcher), and HOME and TMPDIR are fresh directories under the scratch one
+        # bats (a shape's bare `wait` hangs on the timeout watcher); a directory holding bats's libexec entry point (a `bats` beside
+        # a bats-exec-test: the outer's libexec, first on PATH) is dropped wherever it stands, so the inner `bats` is a wrapper that
+        # exports BATS_ROOT and not the entry point that expects it; a PATH without such a directory stands as it is, an absent
+        # directory included; HOME and TMPDIR are fresh directories under the scratch one
         with tempfile.TemporaryDirectory() as d:
-            with unittest.mock.patch.dict(os.environ, {"BATS_TEST_TIMEOUT": "180", "BATS_RUN_TMPDIR": d, "KEEP_ME": "1"}):
+            libexec, bin_, absent = os.path.join(d, "libexec"), os.path.join(d, "bin"), os.path.join(d, "absent")
+            for p, names in ((libexec, ("bats", "bats-exec-test")), (bin_, ("bats",))):
+                os.makedirs(p)
+                for n in names:
+                    open(os.path.join(p, n), "w").close()
+            with unittest.mock.patch.dict(os.environ, {"BATS_TEST_TIMEOUT": "180", "BATS_RUN_TMPDIR": d, "KEEP_ME": "1",
+                                                       "PATH": os.pathsep.join((libexec, bin_, libexec))}):
                 env = _bats_env(d)
+            with unittest.mock.patch.dict(os.environ, {"PATH": os.pathsep.join((bin_, absent))}):
+                plain = _bats_env(d)
         self.assertEqual([k for k in env if k.startswith("BATS_")], [])
         self.assertEqual(env["KEEP_ME"], "1")
+        self.assertEqual(env["PATH"], bin_)
+        self.assertEqual(plain["PATH"], os.pathsep.join((bin_, absent)))
         self.assertEqual((env["HOME"], env["TMPDIR"]), (os.path.join(d, "home"), os.path.join(d, "tmp")))
 
     def test_without_bats_the_corpus_skips_and_names_where_it_runs(self):
@@ -1466,36 +1679,80 @@ class BatsCorpus(unittest.TestCase):
         self.assertIn("shell job", str(cm.exception))
         self.assertIn("tests/bats-bare-negation-shell-job.bats", str(cm.exception))
 
-    def test_decide_reads_a_candidate_only_when_one_rewrite_fails_on_its_own_line_and_names_the_other_cases(self):
-        # the three-way rule on synthetic runs: read needs `ok` under one rewrite and `not ok` blamed on the candidate's line in
-        # its file under the other, whichever way round (a condition head fails under `! false`); both `ok` is inert; everything
-        # else is undecided, and its message says what was seen, so an inert report and an undecided one cannot be confused
+    def test_decide_reads_a_candidate_only_when_one_rewrite_fails_inside_its_test_and_names_the_other_cases(self):
+        # the three-way rule on synthetic runs: read needs `ok` under one rewrite and `not ok` under the other, whichever way round
+        # (a condition head fails under `! false`), blamed inside the candidate's test: its own line, or another of the test's from
+        # the opener to the close (the line before a `( ! cmd )` subshell, the `[ ]` reading a saved status); both `ok` is inert;
+        # everything else is undecided, and its message says what was seen, so an inert report and an undecided one cannot be
+        # confused: a failure blamed outside the test (a teardown's line, a line of another file, no line), no verdict, a run the
+        # bound ended
         ok = BatsRun("ok", None, None, "", 0.0)
         bad = lambda line, file="tests/x.bats": BatsRun("not ok", line, file, "", 0.0)
-        cand = Candidate(0, 9, 4, False)   # 1-based line 10
-        self.assertEqual(decide("tests/x.bats", cand, [bad(10), ok])[0], "read")
-        self.assertEqual(decide("tests/x.bats", cand, [ok, bad(10)])[0], "read")
-        inert = decide("tests/x.bats", cand, [ok, ok])
+        cand, extent = Candidate(0, 9, 4, False), (7, 11)   # 1-based line 10 of a test spanning lines 8 to 12
+        for runs in ([bad(10), ok], [ok, bad(10)], [bad(9), ok], [bad(8), ok], [ok, bad(12)]):
+            self.assertEqual(decide("tests/x.bats", cand, extent, runs)[0], "read", runs)
+        inert = decide("tests/x.bats", cand, extent, [ok, ok])
         self.assertEqual(inert[0], "inert")
         self.assertIn("asserts nothing", inert[1])
-        for runs, said in (([bad(10), bad(10)], "fails under both rewrites"), ([bad(11), ok], "blamed on tests/x.bats line 11, not on the candidate's line 10"),
-                           ([ok, bad(10, "tests/helper.bash")], "blamed on tests/helper.bash line 10"),
+        for runs, said in (([bad(10), bad(10)], "fails under both rewrites"),
+                           ([bad(13), ok], "blamed on tests/x.bats line 13, outside the candidate's test (tests/x.bats lines 8 to 12)"),
+                           ([ok, bad(7)], "blamed on tests/x.bats line 7, outside the candidate's test"),
+                           ([ok, bad(10, "tests/helper.bash")], "blamed on tests/helper.bash line 10, outside the candidate's test"),
+                           ([ok, bad(None)], "blamed on tests/x.bats line None, outside the candidate's test"),
                            ([BatsRun("skipped", None, None, "ok 1 x # skip why", 0.0), ok], "the outcome was `skipped`"),
                            ([ok, BatsRun("no such test", None, None, "", 0.0)], "the outcome was `no such test`"),
                            ([BatsRun("did not load", None, None, "", 0.0), bad(10)], "the outcome was `did not load`"),
+                           ([ok, BatsRun("timed out", None, None, "1..1", 61.2)], "under `! false` bats gave no verdict on the test: the run was ended after 61 s with no verdict"),
                            ([BatsRun("no run", None, None, "the rewritten file does not parse under bash -n: x", 0.0), ok], "does not parse under bash -n"),
                            ([BatsRun("no run", None, None, "the negated pipeline runs off the end of the text", 0.0), ok], "runs off the end")):
-            verdict, message = decide("tests/x.bats", cand, runs)
+            verdict, message = decide("tests/x.bats", cand, extent, runs)
             self.assertEqual(verdict, "undecided", message)
             self.assertIn(said, message)
             self.assertNotIn("asserts nothing", message)
+
+
+def _processes_of(path, ignore=()):
+    """The pids of the processes whose command line holds the path (pgrep -f), the ignored ones left out: bats-exec-suite,
+    bats-exec-file and bats-exec-test carry the suite's absolute path, so a run of a tree under the path shows here while any of it
+    lives."""
+    r = subprocess.run(["pgrep", "-f", "--", path], capture_output=True, text=True)
+    return [int(p) for p in r.stdout.split() if int(p) not in ignore]
+
+
+def _within(secs, pred):
+    """Whether pred came true within secs seconds, polled every 0.1 s."""
+    t0 = time.monotonic()
+    while not pred():
+        if time.monotonic() - t0 > secs:
+            return False
+        time.sleep(0.1)
+    return True
+
+
+class BatsRoad(unittest.TestCase):
+    """The corpus road's pieces against the bats on PATH, on synthetic suites: the TAP reader (run_test_alone), the bound on a run
+    and the TERM to the process running one (_run_bats), a suite decided candidate by candidate (decide_under_bats). Each skips
+    without bats, naming the wrapper that runs this class in CI's shell job."""
+
+    # a test polling for a file that never comes: a loop whose condition is a negation runs forever under `! false`, and as written
+    # too; the teardown leaves a marker, so whether the group was ended by TERM (bats runs the teardown) or KILL (it does not) shows
+    POLL = ('@test "poll" {\n    while ! test -e "$TMPDIR/ready"; do sleep 0.1; done\n}\n'
+            'teardown() {\n    echo torn > "$TMPDIR/torn"\n}\n')
+
+    def hanging_suite(self, d):
+        """A tree under d holding tests/hang.bats (POLL); returns the tree."""
+        tree = os.path.join(d, "tree")
+        os.makedirs(os.path.join(tree, "tests"))
+        with open(os.path.join(tree, "tests", "hang.bats"), "w", encoding="utf-8") as f:
+            f.write(self.POLL)
+        return tree
 
     def test_run_test_alone_reads_what_bats_says_of_a_frame_a_skip_an_unloadable_file_and_a_missing_name(self):
         # the TAP reader against the bats on PATH: a failure inside a helper is blamed on the helper's line (the innermost frame),
         # a skipped test is no verdict, a file bash cannot load is `did not load` under both bats names for it, a name bats runs
         # no test for is `no such test`, and a name holding ERE metacharacters and a `$` is matched literally, as written
         if not shutil.which("bats"):
-            self.skipTest(self.SKIP)
+            self.skipTest(CORPUS_SKIP)
         with tempfile.TemporaryDirectory() as d:
             os.makedirs(os.path.join(d, "tree", "tests"))
             with open(os.path.join(d, "tree", "tests", "probe.bats"), "w", encoding="utf-8") as f:
@@ -1517,17 +1774,95 @@ class BatsCorpus(unittest.TestCase):
         self.assertEqual(_test_name("@test 'q' {"), "q")
         self.assertEqual(_ere_literal("a (b) $c [d] x.y|z*"), r"a \(b\) \$c \[d\] x\.y\|z\*")
 
-    def test_decide_under_bats_on_a_synthetic_suite_reads_a_last_negation_and_a_condition_head_and_reports_an_inert_one(self):
+    def test_under_an_outer_bats_path_the_inner_run_still_blames_the_test_file(self):
+        # the wrapper's inner run inherits the outer bats's PATH, whose first entry is the outer's libexec directory (bats puts it
+        # there), with every BATS_* variable scrubbed: the `bats` there expects the BATS_ROOT its bin wrapper exports, and with
+        # BATS_ROOT empty the frames bats drops (under $BATS_ROOT/lib and libexec) are not dropped, so an `exit 1` and a teardown
+        # failure were blamed on bats-exec-test's own lines here, and under CI's /usr/local prefix the inner bats did not load at
+        # all; this showed only once the register's decision test and the end-to-end teardown case ran under the wrapper. The
+        # wrapper's precondition exactly: the libexec directory of the bats on PATH, read off a probe run, put first on PATH and no
+        # BATS_* variable set; the exit is blamed on its own line of the test file
+        if not shutil.which("bats"):
+            self.skipTest(CORPUS_SKIP)
+        with tempfile.TemporaryDirectory() as d:
+            tree = os.path.join(d, "tree")
+            os.makedirs(os.path.join(tree, "tests"))
+            with open(os.path.join(tree, "tests", "probe.bats"), "w", encoding="utf-8") as f:
+                f.write('@test "libexec" {\n    echo "$BATS_LIBEXEC" > "$HOME/libexec.txt"\n}\n@test "exit" {\n    true\n    ! true || exit 1\n}\n')
+            run = run_test_alone(tree, "tests/probe.bats", "libexec", d)
+            self.assertEqual(run.outcome, "ok", run.detail)
+            with open(os.path.join(d, "home", "libexec.txt"), encoding="utf-8") as f:
+                libexec = f.read().strip()
+            self.assertTrue(os.path.isfile(os.path.join(libexec, "bats")), libexec)
+            with unittest.mock.patch.dict(os.environ, {"PATH": libexec + os.pathsep + os.environ.get("PATH", "")}):
+                self.assertEqual([k for k in os.environ if k.startswith("BATS_")], [], "a BATS_* variable is set here: not the wrapper's precondition")
+                self.assertEqual(shutil.which("bats"), os.path.join(libexec, "bats"), "PATH does not resolve bats to the libexec entry point: this pins nothing")
+                run = run_test_alone(tree, "tests/probe.bats", "exit", d)
+            self.assertEqual((run.outcome, run.line, run.file), ("not ok", 6, "tests/probe.bats"), run.detail)
+
+    def test_a_run_past_the_bound_is_timed_out_with_its_teardown_run_and_no_process_of_it_left(self):
+        # F2 of fork PR #871's commit-3 review: run_test_alone had no bound, so a rewrite that never terminates hung the oracle,
+        # locally forever and in CI to the wrapper's per-test bound, nameless. Bounded at 2 s the poll test comes back `timed out`
+        # a few seconds later, its process group ended by TERM first (bats runs the teardown: the marker) and then KILL, nothing of
+        # it left; decide makes an undecided verdict of it
+        if not shutil.which("bats"):
+            self.skipTest(CORPUS_SKIP)
+        with tempfile.TemporaryDirectory() as d:
+            tree = self.hanging_suite(d)
+            t0 = time.monotonic()
+            run = run_test_alone(tree, "tests/hang.bats", "poll", d, timeout=2)
+            took = time.monotonic() - t0
+            self.assertEqual(run.outcome, "timed out", run.detail)
+            self.assertGreaterEqual(run.secs, 2)
+            self.assertLess(took, 20, "the run was not ended near its bound")
+            self.assertEqual(_processes_of(d), [], "processes of the ended run remain")
+            self.assertTrue(os.path.exists(os.path.join(d, "tmp", "torn")), "the test's teardown did not run: the group was not ended by TERM first")
+        verdict, message = decide("tests/hang.bats", Candidate(0, 1, 10, False), (0, 2), [BatsRun("ok", None, None, "", 0.1), run])
+        self.assertEqual(verdict, "undecided")
+        self.assertIn("the run was ended after %.0f s with no verdict" % run.secs, message)
+
+    def test_a_term_to_the_process_running_a_rewrite_ends_the_inner_bats_with_it(self):
+        # the wrapper test's BATS_TEST_TIMEOUT ends the test's direct children (bats's pkill -P), the python running the module,
+        # and nothing below it, so the inner bats and its loop outlived the outer kill (measured in the commit-3 review). A python
+        # running run_test_alone on the poll test, bounded at 60 s, is sent TERM once its bats is up: it exits by that TERM, and no
+        # process of the run is left
+        if not shutil.which("bats"):
+            self.skipTest(CORPUS_SKIP)
+        with tempfile.TemporaryDirectory() as d:
+            tree = self.hanging_suite(d)
+            code = ("import sys; sys.path.insert(0, %r)\nfrom tests.test_bats_bare_negation import run_test_alone\n"
+                    "print(run_test_alone(%r, 'tests/hang.bats', 'poll', %r, timeout=60).outcome)" % (os.path.dirname(HERE), tree, d))
+            p = subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            try:
+                self.assertTrue(_within(30, lambda: _processes_of(d, ignore=(p.pid,))), "the inner bats did not come up within 30 s")
+                p.send_signal(signal.SIGTERM)
+                out, err = p.communicate(timeout=30)
+            finally:
+                if p.poll() is None:
+                    p.kill()
+                    p.communicate()
+            self.assertEqual(p.returncode, -signal.SIGTERM, (out, err))
+            self.assertTrue(_within(10, lambda: not _processes_of(d)), "processes of the run outlived the python that started it: %s" % _processes_of(d))
+
+    def test_decide_under_bats_on_a_synthetic_suite_reads_a_last_negation_a_head_and_a_subshell_and_reports_the_rest(self):
         # the per-candidate road end to end on a tree of one suite: a mid-test `! true` is inert (ok under both) and its report
         # carries the message, the rewritten lines and both outcomes; a last `! true` is read (not ok on its line under `! true`);
         # a condition head whose branch returns 1 is read the other way round (not ok on its line under `! false`); a mid-test
-        # negation followed by a failing command is undecided, both rewrites failing on the later line
+        # negation followed by a failing command is undecided, both rewrites failing on the later line; a `( ! true )` subshell on
+        # its own line is read, its failure blamed on the line before it (F1 of the commit-3 review: undecided before); a status
+        # saved with `SAVED_RC=$?` and read by the teardown is undecided, the failure blamed outside the test, and the message says
+        # so; a poll loop whose condition is the negation is undecided, its `! false` run ended at the bound (3 s here), and the
+        # message says so (F2)
         if not shutil.which("bats"):
-            self.skipTest(self.SKIP)
+            self.skipTest(CORPUS_SKIP)
         text = ('@test "mid" {\n    ! true\n    true\n}\n'
                 '@test "last" {\n    true\n    ! true\n}\n'
                 '@test "head" {\n    if ! true; then return 1; fi\n    true\n}\n'
-                '@test "later failure" {\n    ! true\n    false\n}\n')
+                '@test "later failure" {\n    ! true\n    false\n}\n'
+                '@test "subshell" {\n    true\n    ( ! true )\n    true\n}\n'
+                '@test "read in teardown" {\n    ! true\n    SAVED_RC=$?\n    true\n}\n'
+                '@test "poll" {\n    while ! test -e "$TMPDIR/ready"; do sleep 0.1; done\n}\n'
+                'teardown() {\n    [ "${SAVED_RC-1}" -eq 1 ]\n}\n')
         with tempfile.TemporaryDirectory() as d:
             os.makedirs(os.path.join(d, "tree", "tests"))
             with open(os.path.join(d, "tree", "tests", "one.bats"), "w", encoding="utf-8") as f:
@@ -1535,13 +1870,22 @@ class BatsCorpus(unittest.TestCase):
             lines = text.split("\n")
             extents = bash_test_extents(lines)
             found = candidates(lines, extents)
-            self.assertEqual([c.line + 1 for c in found], [2, 7, 10, 14])
-            decisions = [decide_under_bats(os.path.join(d, "tree"), "tests/one.bats", lines, extents, c, d) for c in found]
-        self.assertEqual([(x.test, x.verdict) for x in decisions], [("mid", "inert"), ("last", "read"), ("head", "read"), ("later failure", "undecided")])
+            self.assertEqual([c.line + 1 for c in found], [2, 7, 10, 14, 19, 23, 28])
+            decisions = [decide_under_bats(os.path.join(d, "tree"), "tests/one.bats", lines, extents, c, d, timeout=3) for c in found]
+        self.assertEqual([(x.test, x.verdict) for x in decisions],
+                         [("mid", "inert"), ("last", "read"), ("head", "read"), ("later failure", "undecided"), ("subshell", "read"),
+                          ("read in teardown", "undecided"), ("poll", "undecided")])
         self.assertEqual([(r.outcome, r.line) for r in decisions[1].runs], [("not ok", 7), ("ok", None)])
         self.assertEqual([(r.outcome, r.line) for r in decisions[2].runs], [("ok", None), ("not ok", 10)])
         self.assertEqual([(r.outcome, r.line) for r in decisions[3].runs], [("not ok", 15), ("not ok", 15)])
         self.assertIn("fails under both rewrites (blamed on line 15 and line 15)", decisions[3].message)
+        self.assertEqual([(r.outcome, r.line) for r in decisions[4].runs], [("not ok", 18), ("ok", None)])
+        self.assertEqual([(r.outcome, r.line) for r in decisions[5].runs], [("ok", None), ("not ok", 31)])
+        self.assertIn("blamed on tests/one.bats line 31, outside the candidate's test (tests/one.bats lines 22 to 26)", decisions[5].message)
+        self.assertEqual([r.outcome for r in decisions[6].runs], ["ok", "timed out"])
+        self.assertTrue(3 <= decisions[6].runs[1].secs < 15, decisions[6].runs[1].secs)
+        self.assertIn("under `! false` bats gave no verdict on the test: the run was ended after", decisions[6].message)
+        self.assertIn("under `! false`: while ! false; do sleep 0.1; done  ->  timed out", report(decisions[6]))
         text = report(decisions[0])
         self.assertIn("tests/one.bats:2 in test 'mid': INERT: the test passes with the negated command succeeding and with it failing", text)
         self.assertIn("under `! true`: ! true  ->  ok", text)
