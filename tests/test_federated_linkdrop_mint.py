@@ -44,19 +44,22 @@ compile, __import__, vars, globals, locals; import_module, __getattribute__, __d
 over os) as nodes whatever their argument; and any import outside ALLOWED_IMPORTS, the modules the censused set uses
 today, held equal to the imports in use so that a new module is a red until it is read. The recorder closes the alias
 road on its own side too: before it is installed, _spy walks the lab module's namespace by IDENTITY (its globals, its own
-classes' attributes, its functions' defaults and closure cells, partials, containers, instances of its own classes) and
-refuses any object that IS a spawning function of the real subprocess module, however it was spelled (_bound_spawners).
+classes' attributes, its functions' defaults and closure cells, partials, properties, bound methods, generators' frames,
+containers, and the instance dict of any object that has one) and refuses any object that IS a spawning function of the
+real subprocess module, however it was spelled, and any object it cannot read (_bound_spawners; round 5's fixer pass: a
+property's getter, a SimpleNamespace, a bound method and a generator held `subprocess.run` unseen and unlisted).
 
 What the census cannot see is stated as a rule, not a count: it refuses the nodes it enumerates and nothing else, so a road
-to a process is unseen exactly when no enumerated node spells it. The class is a name that is not a whole node of the
-parsed source: a spawning name reached through a reflective primitive the census does not enumerate (the enumerated ones
+to a process is unseen exactly when no enumerated node spells it. The class is a spawning name reached through a reflective
+primitive the census does not enumerate, or a name that is not a whole node of the parsed source (the enumerated primitives
 are refused whatever their argument, so exec over text that carries the spelling whole is refused at the exec, where the
-earlier disclosure, which called this class "built text", let it pass). And on the recorder's side, a program a censused
-module's own function starts through that module's own subprocess binding when the lab module calls the function: the
-recorder patches the lab module's attribute alone, and the census reads that call as the module's own. Both are derived
-where they are read, in the disclosure cell (_own_spawn_sites over the censused modules: the sibling labs' kernel boots and
-lab_dist's builds, as the derivation prints them; the module objects _bound_spawners does not enter), and the derived list
-is printed there, never carried here as a number or a name.
+earlier disclosure, which called this class "built text", let it pass; the dunder roads are enumerated since round 5's fixer
+pass). That class has no list by construction: a name the census enumerates is refused, so nothing it could list remains.
+On the recorder's side the residual is a program a censused module's own function starts through that module's own
+subprocess binding when the lab module calls the function (the recorder patches the lab module's attribute alone, and the
+census reads that call as the module's own), and it IS derived: the disclosure cell prints _own_spawn_sites over the censused
+modules (module, line, function) and the identity walk's boundary (path, kind) to stdout, so a green run shows them under
+pytest's -rA or -s and a red run carries them in its message; no site, module or count of them is written here.
 
 Synthetic: a scratch repository minted here, hostname TESTHOST; no kernel, no browser.
 """
@@ -90,7 +93,8 @@ OS_SPAWNERS = ("system", "popen",
                "execl", "execle", "execlp", "execlpe", "execv", "execve", "execvp", "execvpe")
 # the other stdlib roads to a program, by the module that carries each and the attribute's name: refused as an attribute on
 # any value and as a bare call wherever they appear (the same rule as OS_SPAWNERS, whose comment above keeps its own pin
-# against the os module), and their modules are outside ALLOWED_IMPORTS, so the import is refused before the attribute is.
+# against the os module); their modules except os are outside ALLOWED_IMPORTS, so those imports are refused before the
+# attribute is, while os.fork and os.forkpty are refused as attributes and bare calls alone (os is an allowed import).
 # Pinned against this Python's modules below: every name is an attribute of the module named for it (a loop's two are on
 # asyncio.AbstractEventLoop). A fork is a process the recorder never sees, whatever it goes on to exec.
 OTHER_SPAWNERS = {"pty": ("spawn",), "asyncio": ("create_subprocess_exec", "create_subprocess_shell"),
@@ -102,9 +106,15 @@ OTHER_SPAWNER_MODULES = {"pty": pty, "asyncio": asyncio, "_posixsubprocess": _po
 # NODES, whatever their argument, so the road through them is closed at the primitive and not at the spelling it carries
 # (round 5: `exec("import subprocess as _s; _s.run(...)")` passed a census that read the constant "subprocess" alone); a
 # getattr whose first argument is the os module is refused the same way (a getattr on the lab module's `subprocess` is the
-# recorder's, which sees the dynamic lookup)
+# recorder's, which sees the dynamic lookup). The dunder roads (round 5, the fixer pass: a function's `__globals__` reaches
+# its module's namespace whole, `subprocess.CompletedProcess.__init__.__globals__["run"]`; `__spec__` and `__loader__` reach
+# the loader; `__class__`, `__subclasses__`, `__code__`, `__closure__`, `__wrapped__`, `__self__` and `__func__` reach an
+# object's type, code or bound function; the bare name `__builtins__` reaches `__import__` by a string) are refused the
+# same way, as attributes or as a bare name (REFLECTIVE_NAMES), whatever follows them.
 REFLECTIVE_CALLS = ("exec", "eval", "compile", "__import__", "vars", "globals", "locals")
-REFLECTIVE_ATTRS = ("import_module", "__getattribute__", "__dict__", "modules", "attrgetter")
+REFLECTIVE_ATTRS = ("import_module", "__getattribute__", "__dict__", "modules", "attrgetter",
+                    "__globals__", "__spec__", "__loader__", "__builtins__", "__class__", "__subclasses__", "__code__", "__closure__", "__wrapped__", "__self__", "__func__")
+REFLECTIVE_NAMES = ("__builtins__",)
 # every module the censused set imports today, foreign to this directory (a sibling is walked, never listed): an import
 # outside this tuple is refused, so a module that starts a program (pty, asyncio, multiprocessing, ctypes, _posixsubprocess)
 # or reaches one (importlib, builtins, operator) is a red the moment it is imported; the cell holds the tuple EQUAL to the
@@ -178,7 +188,8 @@ def _commands_around_the_recorder(src, siblings=()):
     (`_sp = subprocess`, `f(subprocess)`); an attribute named `subprocess` on any other value (`_dial.subprocess.run`); an
     import of the subprocess module or of os under another name, or of a name from subprocess; a constant "subprocess" or one
     equal to an OS_SPAWNERS name (the road through a string handed to a primitive); a call to one of REFLECTIVE_CALLS, an
-    attribute named as one of REFLECTIVE_ATTRS, a getattr whose first argument is the os module, or an import of such a name,
+    attribute named as one of REFLECTIVE_ATTRS, a bare read of one of REFLECTIVE_NAMES, a getattr whose first argument is the
+    os module, or an import of such a name,
     each refused as a node whatever its argument, so the text it carries is not what is matched; and an import of any module
     outside ALLOWED_IMPORTS that is not a sibling this census walks (`siblings`; a relative import is one by construction). A
     comment or a docstring is no node of these kinds, so the words in one do not count; a docstring is one constant equal to
@@ -203,6 +214,8 @@ def _commands_around_the_recorder(src, siblings=()):
                 found.append((n.lineno, "subprocess.%s bound, not called" % n.attr))
         elif isinstance(n, ast.Name) and n.id == "subprocess" and isinstance(n.ctx, ast.Load) and not (isinstance(p, ast.Attribute) and p.value is n):
             found.append((n.lineno, "subprocess read bare"))
+        elif isinstance(n, ast.Name) and n.id in REFLECTIVE_NAMES and isinstance(n.ctx, ast.Load):
+            found.append((n.lineno, n.id))
         elif isinstance(n, ast.Call) and isinstance(n.func, ast.Name):
             if n.func.id in spawners:
                 found.append((n.lineno, n.func.id + "("))
@@ -262,16 +275,26 @@ def _own_spawn_sites(mods):
     return out
 
 
+# a value that holds no reference of ours, never a holder: a scalar leaf, and a C type's slot or method descriptor (a class's own
+# `__dict__` and `__weakref__` descriptors are in vars(cls) of every class)
+LEAF_TYPES = (str, bytes, int, float, complex, bool, type(None), type(Ellipsis), range,
+              types.GetSetDescriptorType, types.MemberDescriptorType, types.WrapperDescriptorType, types.MethodDescriptorType, types.ClassMethodDescriptorType)
+
+
 def _bound_spawners(module, depth=8):
     """Every object reachable from the module's namespace that IS a spawning function of the real subprocess module, by
-    identity, as (path, name): the module's globals, its own classes' attributes, its functions' defaults, keyword defaults
-    and closure cells, partials (function, arguments, keywords), staticmethods and classmethods, dicts, lists, tuples, sets,
-    and the instance dicts of objects of its own classes, to `depth`. Keyed on the ROAD and not the spelling: a binding made
-    before the recorder is installed (`_run = subprocess.run` at module level, a dict value, a default argument, a partial, a
-    class attribute) calls the real module past the recorder however it was written, and this is what _spy refuses before it
-    patches. Not entered, and returned beside the findings as the derived list of what this cannot see: other modules'
-    namespaces (a module object is a boundary; the census over the parsed source reads the road to them) and objects of
-    foreign classes."""
+    identity, as (path, name). Entered, to `depth`: the module's globals, its own classes' attributes, its functions' defaults,
+    keyword defaults and closure cells, partials (function, arguments, keywords), staticmethods and classmethods, properties
+    (fget, fset, fdel), bound methods (the function and the object), generators and coroutines (their frames' locals), dicts,
+    lists, tuples, sets, and the instance dict of any object that has one (an instance of the module's own class or of a
+    foreign one, a SimpleNamespace). Keyed on the ROAD and not the spelling: a binding made before the recorder is installed
+    (`_run = subprocess.run` at module level, a dict value, a default argument, a partial, a class attribute, a property's
+    getter) calls the real module past the recorder however it was written, and this is what _spy refuses before it patches.
+    Not entered, and returned beside the findings as (path, kind), the derived list of what this walk cannot see: a module
+    object (a boundary by design; the census over the parsed source reads the road to it), a class of another module (its
+    attributes are that module's), and an object the walk cannot read (no instance dict and no holder shape it knows: an
+    iterator, a C-level object), which _spy refuses outright since a spawning function could sit in it unseen. A scalar leaf
+    (LEAF_TYPES) holds no reference and is not listed."""
     spawners = {id(getattr(subprocess, n)): n for n in SPAWNERS}
     found, boundary, seen = [], [], set()
 
@@ -279,11 +302,11 @@ def _bound_spawners(module, depth=8):
         if id(obj) in spawners:
             found.append((path, spawners[id(obj)]))
             return
-        if id(obj) in seen or d > depth:
+        if id(obj) in seen or d > depth or isinstance(obj, LEAF_TYPES):
             return
         seen.add(id(obj))
         if isinstance(obj, types.ModuleType):
-            boundary.append(path)
+            boundary.append((path, "module"))
         elif isinstance(obj, functools.partial):
             visit(obj.func, path + ".func", d + 1)
             for i, a in enumerate(obj.args):
@@ -292,6 +315,19 @@ def _bound_spawners(module, depth=8):
                 visit(v, "%s.keywords[%r]" % (path, k), d + 1)
         elif isinstance(obj, (staticmethod, classmethod)):
             visit(obj.__func__, path + ".__func__", d + 1)
+        elif isinstance(obj, property):
+            for k in ("fget", "fset", "fdel"):
+                visit(getattr(obj, k), "%s.%s" % (path, k), d + 1)
+        elif isinstance(obj, types.MethodType):
+            visit(obj.__func__, path + ".__func__", d + 1)
+            visit(obj.__self__, path + ".__self__", d + 1)
+        elif isinstance(obj, types.BuiltinFunctionType):
+            if getattr(obj, "__self__", None) is not None:
+                visit(obj.__self__, path + ".__self__", d + 1)   # a bound builtin method (`bag.append`) holds its object
+        elif isinstance(obj, (types.GeneratorType, types.CoroutineType)):
+            frame = obj.gi_frame if isinstance(obj, types.GeneratorType) else obj.cr_frame
+            for k, v in (frame.f_locals if frame is not None else {}).items():
+                visit(v, "%s.<frame %s>" % (path, k), d + 1)
         elif isinstance(obj, types.FunctionType):
             for i, v in enumerate(obj.__defaults__ or ()):
                 visit(v, "%s.__defaults__[%d]" % (path, i), d + 1)
@@ -306,19 +342,28 @@ def _bound_spawners(module, depth=8):
             if obj.__module__ == module.__name__:
                 for k, v in vars(obj).items():
                     visit(v, "%s.%s" % (path, k), d + 1)
+            else:
+                boundary.append((path, "class of %s" % obj.__module__))
         elif isinstance(obj, dict):
             for k, v in obj.items():
                 visit(v, "%s[%r]" % (path, k), d + 1)
         elif isinstance(obj, (list, tuple, set, frozenset)):
             for i, v in enumerate(obj):
                 visit(v, "%s[%d]" % (path, i), d + 1)
-        elif type(obj).__module__ == module.__name__ and hasattr(obj, "__dict__"):
+        elif hasattr(obj, "__dict__"):
             for k, v in vars(obj).items():
                 visit(v, "%s.%s" % (path, k), d + 1)
+        else:
+            boundary.append((path, "%s the walk cannot read" % type(obj).__name__))
     for name, obj in vars(module).items():
         if not name.startswith("__"):
             visit(obj, name, 0)
     return found, boundary
+
+
+def _unreadable(boundary):
+    """The boundary entries that are neither a module nor a foreign class: objects the identity walk could not enter."""
+    return [b for b in boundary if b[1] != "module" and not b[1].startswith("class of ")]
 
 
 def _git(*args):
@@ -401,8 +446,10 @@ class OldHubMintIsPrivate(unittest.TestCase):
         by identity (_bound_spawners over the lab module's namespace), whatever spelling made it."""
         bound, boundary = _bound_spawners(L)
         self.assertEqual(bound, [], "a spawning function of the subprocess module is bound in the lab module's namespace before the recorder is installed "
-                                    "(an alias, a dict value, a default argument, a partial, a class attribute, a closure), so a call through it reaches the real module "
-                                    "past the recorder: %r (namespaces this walk does not enter, module objects the census reads the road to: %r)" % (bound, sorted(boundary)))
+                                    "(an alias, a dict value, a default argument, a partial, a class attribute, a closure, a property's getter, an instance attribute), "
+                                    "so a call through it reaches the real module past the recorder: %r (what this walk does not enter, by path and kind: %r)" % (bound, sorted(boundary)))
+        self.assertEqual(_unreadable(boundary), [], "an object in the lab module's namespace the identity walk cannot read (no instance dict, no holder shape it knows: an "
+                                                    "iterator, a C-level object), so a spawning function could sit in it unseen by this recorder: %r" % (_unreadable(boundary),))
         seen = []
         real = subprocess
 
@@ -609,7 +656,21 @@ class OldHubMintIsPrivate(unittest.TestCase):
                  ('from asyncio import create_subprocess_shell as sh\n', "from asyncio import create_subprocess_shell"),
                  ('import ctypes\nctypes.CDLL(None).system(b"true")\n', ".system"),
                  ('import operator\noperator.attrgetter("sys" + "tem")\n', ".attrgetter"),
-                 ('from importlib import import_module\n', "from importlib import import_module"))
+                 ('from importlib import import_module\n', "from importlib import import_module"),
+                 # the dunder roads (round 5, the fixer pass): a function's globals, a module's spec and loader, an object's type,
+                 # code, closure, wrapped function, bound self and function, and the builtins by a bare name
+                 ('import subprocess\nsubprocess.CompletedProcess.__init__.__globals__["run"](["true"])\n', ".__globals__"),
+                 ('import subprocess\nsubprocess.__spec__.loader.exec_module(m)\n', ".__spec__"),
+                 ('import subprocess\nsubprocess.__loader__.exec_module(m)\n', ".__loader__"),
+                 ('__builtins__["__imp" + "ort__"]("sub" + "process")\n', "__builtins__"),
+                 ('x.__builtins__["__imp" + "ort__"]\n', ".__builtins__"),
+                 ('type(x).__subclasses__()\n', ".__subclasses__"),
+                 ('x.__class__.__mro__\n', ".__class__"),
+                 ('f.__code__\n', ".__code__"),
+                 ('f.__closure__[0].cell_contents\n', ".__closure__"),
+                 ('f.__wrapped__\n', ".__wrapped__"),
+                 ('m.__self__\n', ".__self__"),
+                 ('m.__func__\n', ".__func__"))
         for src, form in forms:
             with self.subTest(form=form, src=src):
                 hits = _commands_around_the_recorder(src, siblings=("test_federated_dial_terms_served",))
@@ -637,7 +698,8 @@ class OldHubMintIsPrivate(unittest.TestCase):
                 mod = OTHER_SPAWNER_MODULES[top]
                 holder = getattr(mod, attr) if attr else mod
                 self.assertEqual([n for n in names if not hasattr(holder, n)], [], "every name filed under %s is its attribute on this Python" % modname)
-                self.assertNotIn(top, ALLOWED_IMPORTS + ("os",) if top != "os" else (), "a spawner family's module is outside the import allow-list: %s" % top)
+                if top != "os":   # os is an allowed import (os.path and the rest): its fork and forkpty are refused as attributes and bare calls alone
+                    self.assertNotIn(top, ALLOWED_IMPORTS, "a spawner family's module is outside the import allow-list: %s" % top)
         mods = _lab_modules()
         self.assertEqual(sorted(_foreign_imports(mods)), sorted(ALLOWED_IMPORTS), "ALLOWED_IMPORTS is exactly the foreign imports the censused modules make (%s)" % ", ".join(sorted(mods)))
         self.assertEqual([m for m in ("pty", "asyncio", "_posixsubprocess", "multiprocessing", "ctypes", "importlib", "builtins", "operator") if m in ALLOWED_IMPORTS], [],
@@ -646,10 +708,13 @@ class OldHubMintIsPrivate(unittest.TestCase):
     def test_the_recorder_refuses_a_spawning_function_bound_before_it_is_installed(self):
         """The recorder's side of the alias road (round 5): _bound_spawners over a synthetic module finds, by identity and by
         path, an alias at module level, a dict value, a default argument, a keyword default, a functools.partial, a class
-        attribute of the module's own class, a closure cell and a staticmethod, and reports the module objects it does not
-        enter as the boundary; a module that reads subprocess.run at call time (a lambda, a decorator, a function body) binds
-        nothing early and is clean; the lab module itself is clean, which is what every _spy asserts before it patches, so a
-        binding planted there reds every recorder pin (the review record outside the repo runs the plants through them)."""
+        attribute of the module's own class, a closure cell, a staticmethod, and (the fixer pass) a property's getter, a
+        SimpleNamespace attribute, a bound method's function, a generator frame's local and a bound builtin method's object,
+        and reports what it does not enter as the boundary by path and kind (a module object, a class of another module, an
+        object it cannot read such as an iterator); a module that reads subprocess.run at call time (a lambda, a decorator, a
+        function body) binds nothing early and is clean; the lab module itself is clean and holds nothing the walk cannot
+        read, which is what every _spy asserts before it patches, so a binding planted there reds every recorder pin (the
+        review record outside the repo runs the plants through them)."""
         m = types.ModuleType("linkdrop_synthetic_module")
         m.subprocess, m.os = subprocess, os
         m._run = subprocess.run
@@ -657,42 +722,58 @@ class OldHubMintIsPrivate(unittest.TestCase):
         exec("def _sweep(run=subprocess.run):\n    return run\ndef _kw(*, call=subprocess.call):\n    return call\n"
              "def _mk():\n    f = subprocess.check_call\n    return lambda c: f(c)\n_closed = _mk()\n"
              "class _Sp:\n    out = staticmethod(subprocess.check_output)\n    go = subprocess.getoutput\n"
-             "_L = lambda c: subprocess.run(c)\ndef _late(c):\n    return subprocess.Popen(c)\n", vars(m))
+             "_L = lambda c: subprocess.run(c)\ndef _late(c):\n    return subprocess.Popen(c)\n"
+             "def _g(f=subprocess.call):\n    yield f\n_gen = _g()\n_app = [subprocess.Popen].append\n", vars(m))
         m._Sp.__module__ = m.__name__
         m._partial = functools.partial(subprocess.getstatusoutput)
+        m._ns = types.SimpleNamespace(r=subprocess.run)
+        m._prop = property(subprocess.getoutput)
+        m._meth = types.MethodType(subprocess.check_output, m._ns)
+        m._it = iter((subprocess.run,))
+        m.Foreign = unittest.TestCase
         found, boundary = _bound_spawners(m)
         self.assertEqual(sorted(found), sorted([("_run", "run"), ("SPAWN['run']", "Popen"), ("_sweep.__defaults__[0]", "run"), ("_kw.__kwdefaults__['call']", "call"),
-                                                ("_closed.<closure 0>", "check_call"), ("_Sp.out.__func__", "check_output"), ("_Sp.go", "getoutput"), ("_partial.func", "getstatusoutput")]),
+                                                ("_closed.<closure 0>", "check_call"), ("_Sp.out.__func__", "check_output"), ("_Sp.go", "getoutput"), ("_partial.func", "getstatusoutput"),
+                                                ("_g.__defaults__[0]", "call"), ("_gen.<frame f>", "call"), ("_app.__self__[0]", "Popen"),
+                                                ("_ns.r", "run"), ("_prop.fget", "getoutput"), ("_meth.__func__", "check_output")]),
                          "every early binding is found by identity and named by its path")
-        self.assertEqual(sorted(boundary), ["os", "subprocess"], "the module objects are the boundary the walk does not enter, reported beside the findings")
+        self.assertEqual(sorted(boundary), [("Foreign", "class of unittest.case"), ("_it", "tuple_iterator the walk cannot read"), ("os", "module"), ("subprocess", "module")],
+                         "the module objects, the foreign class and the iterator are the boundary the walk does not enter, reported beside the findings by path and kind")
+        self.assertEqual(_unreadable(boundary), [("_it", "tuple_iterator the walk cannot read")], "the iterator is what the walk could not read, and what _spy refuses")
         clean = types.ModuleType("linkdrop_synthetic_clean")
         clean.subprocess = subprocess
         exec("_L = lambda c: subprocess.run(c)\ndef _late(c):\n    return subprocess.Popen(c)\n", vars(clean))
         self.assertEqual(_bound_spawners(clean)[0], [], "a read of the attribute at call time binds nothing early: the recorder sees it")
         bound, boundary = _bound_spawners(L)
         self.assertEqual(bound, [], "the lab module binds no spawning function before the recorder is installed: %r" % (bound,))
-        self.assertTrue({"subprocess", "os", "lab_dist"} <= set(boundary), "the lab module's module objects are the walk's boundary: %r" % (sorted(boundary),))
+        self.assertEqual(_unreadable(boundary), [], "the lab module holds nothing the identity walk cannot read: %r" % (_unreadable(boundary),))
+        self.assertTrue({"subprocess", "os", "lab_dist"} <= {path for path, kind in boundary if kind == "module"}, "the lab module's module objects are the walk's boundary: %r" % (sorted(boundary),))
 
     def test_what_the_census_cannot_see_is_a_rule_with_its_list_derived(self):
         """The disclosure, derived where it is read and never counted (round 5: the earlier docstring said two roads remained
         unseen and named a third's class wrongly). The rule is the module docstring's: the census refuses the nodes it
         enumerates and nothing else. Derived here: the censused modules' own calls of a spawning function through their own
         subprocess binding, which the recorder over the lab module's attribute does not reach when the lab module calls them
-        (the sibling labs' kernel boots and lab_dist's builds, as the derivation reads them; every such site is outside the
-        lab module by construction, and no name is held here: the list is what the derivation prints), and the module objects
-        _bound_spawners does not enter. Each list is printed in an assertion's message, so a run's record carries the derived
-        residual as it stood."""
+        (every such site is outside the lab module by construction, and no name is held here: the list is what the derivation
+        prints), and what _bound_spawners does not enter, by path and kind. Each list is printed to stdout, which pytest shows
+        for a passed test under -rA or -s, and carried in an assertion's message for a red, so a run's record can carry the
+        derived residual as it stood (round 5's fixer pass: the lists sat in assertion messages alone, which a green run never
+        prints)."""
         mods = _lab_modules()
         sites = _own_spawn_sites(mods)
+        print("the residual on the recorder's side, derived by _own_spawn_sites (module, line, function): %r" % (sites,))
         self.assertTrue(sites, "the derivation reads the censused modules' own spawning calls: %r" % (sites,))
         self.assertEqual([site for site in sites if site[0] == LAB_MODULE], [], "the lab module's own calls are the recorder's, never a residual")
         self.assertTrue(all(name in mods and name != LAB_MODULE for name, _, _ in sites),
                         "the residual on the recorder's side, derived: a program these modules' own functions start through their own subprocess "
                         "binding when the lab module calls them, unseen by the recorder over the lab module's attribute (module, line, function): %r" % (sites,))
         bound, boundary = _bound_spawners(L)
+        print("the identity walk's boundary over the lab module, derived by _bound_spawners (path, kind): %r" % (sorted(boundary),))
         self.assertEqual(bound, [])
-        self.assertTrue(boundary, "the identity walk names the module objects it does not enter: %r" % (sorted(boundary),))
-        self.assertTrue(all(isinstance(getattr(L, name.split(".")[0]), types.ModuleType) for name in boundary), "each boundary entry is a module object: %r" % (sorted(boundary),))
+        self.assertTrue(boundary, "the identity walk names what it does not enter: %r" % (sorted(boundary),))
+        modules = [path for path, kind in boundary if kind == "module"]
+        self.assertTrue(modules and all(isinstance(getattr(L, path.split(".")[0]), types.ModuleType) for path in modules), "each module entry is a module object: %r" % (sorted(boundary),))
+        self.assertEqual(_unreadable(boundary), [], "nothing in the lab module's namespace is beyond the walk's reading (an unreadable holder is a red, not a residual): %r" % (_unreadable(boundary),))
 
     def test_the_import_derivation_reads_every_spelling_of_a_sibling_import(self):
         """The census walks a module by the file its import names, whatever the spelling. The follow-up's fixer pass: the
