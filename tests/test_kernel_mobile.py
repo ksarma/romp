@@ -685,9 +685,11 @@ out.finePointer = { appTop: appTop(), appH: appH() };
 global.matchMedia = savedMatchMedia;
 visualViewport.height = 844; visualViewport.offsetTop = 0; fire(VV, 'resize'); flush();
 out.finePointerBack = { appTop: appTop(), appH: appH(), barH: barH() };
-// round 4 (2026-09-20): the 0px road updates the hold. From a pan (83) the pointer turns fine (0px published) and coarse again
-// under a zoom whose clamp is slack (230 * 2 = 460, so 844 - 460 leaves room for 83): the hold is the last value PUBLISHED, 0,
-// not the coarse pan from before the flip, which a hold the 0px road skipped would have republished
+// round 4 (2026-09-20): the 0px road and the hold. From a pan (83) the pointer turns fine (0px published) with the keyboard
+// still up and its pan standing, then coarse again under a zoom whose clamp is slack (230 * 2 = 460, so 844 - 460 leaves room
+// for 83). Round 6 (2026-09-20): the hold STANDS across that flip, so the pinch road publishes the keyboard's pan, 83; round 4
+// had the 0px road write the hold on every fine run, so this state published 0px under a keyboard-sized --app-h, the band
+// reopened for as long as the zoom held (and the leg pinned that value as right)
 visualViewport.height = 460; visualViewport.offsetTop = 83; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
 global.matchMedia = () => ({ matches: false }); fire(WIN, 'resize'); flush();
 out.fineFromPan = appTop();
@@ -696,6 +698,31 @@ visualViewport.scale = 2; visualViewport.height = 230; visualViewport.offsetTop 
 out.coarseAgainZoomed = { appTop: appTop(), appH: appH() };
 visualViewport.scale = 1; visualViewport.height = 844; visualViewport.offsetTop = 0; fire(VV, 'resize'); flush();
 out.coarseAgainBack = { appTop: appTop(), appH: appH(), barH: barH() };
+// round 6 (2026-09-20): the 0px road's CONDITION, both sides of every variable in it. The road clears the hold only in a true
+// no-pan state, one an unzoomed coarse run would have measured as 0: no visual viewport, or one at scale 1 with offsetTop 0
+// (the keyboard gone in the same run the pointer turned fine, the kernel-4 case); a standing pan (one pixel) or a standing
+// zoom (scale 1.02; 1.01 is the cut the pinch road uses) leaves it. Each state: the hold from a pan (83), the pointer turns
+// fine in the given visual-viewport state (one run), coarse again under the slack zoom so the pinch road publishes the hold
+const flips = {};
+const flip = (label, vvState) => {
+  visualViewport.scale = 1; visualViewport.height = 460; visualViewport.offsetTop = 83; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+  const saved = global.visualViewport;
+  if (vvState === null) global.visualViewport = null; else Object.assign(visualViewport, vvState);
+  global.matchMedia = () => ({ matches: false }); fire(WIN, 'resize'); flush();
+  const fine = { appTop: appTop(), appH: appH() };
+  global.visualViewport = saved; global.matchMedia = savedMatchMedia;
+  visualViewport.scale = 2; visualViewport.height = 230; visualViewport.offsetTop = 83; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+  flips[label] = { fine, coarseAgainZoomed: { appTop: appTop(), appH: appH() } };
+  visualViewport.scale = 1; visualViewport.height = 844; visualViewport.offsetTop = 0; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+};
+flip('noVV', null);                                             // no visual viewport: no pan is possible, cleared
+flip('atRest', { height: 844, offsetTop: 0, scale: 1 });        // the keyboard gone in the flip's own run: cleared
+flip('scaleAtCut', { height: 844, offsetTop: 0, scale: 1.01 }); // at the pinch road's cut, unzoomed: cleared
+flip('scaleAboveCut', { height: 844, offsetTop: 0, scale: 1.02 }); // a standing zoom: the hold stands
+flip('onePixelPan', { height: 460, offsetTop: 1, scale: 1 });   // a standing pan of one pixel: the hold stands
+flip('zoomedTop', { height: 422, offsetTop: 0, scale: 2 });     // zoomed with the keyboard gone, at the top: the hold stands
+flip('zoomPan', { height: 422, offsetTop: 200, scale: 2 });     // a zoom pan with the keyboard gone: the hold stands
+out.flips = flips;
 console.log(JSON.stringify(out));
 """
 
@@ -891,13 +918,23 @@ class MobileFitExecutes(unittest.TestCase):
         self.assertEqual(self.out["finePointer"], {"appTop": "0px", "appH": "844px"})
         self.assertEqual(self.out["finePointerBack"], {"appTop": "0px", "appH": "844px", "barH": "44px"})
 
-    def test_the_hold_is_the_last_pan_published_on_every_road(self):
-        # round 4 (2026-09-20): the 0px road writes the hold too. From a pan (83) the pointer turns fine, so the page is laid out
-        # at 0px; coarse again under a zoom whose clamp is slack, the pinch branch holds the last value PUBLISHED, 0. A hold the
-        # 0px road skipped republished the coarse pan from before the flip (83px), a pan no run had published since.
+    def test_the_0px_road_clears_the_hold_only_where_no_pan_stands(self):
+        # round 6 (2026-09-20). Round 4 had the 0px road write the hold on every fine run (a pointer that turns fine and coarse
+        # again under a zoom then published the 0 the fine window laid out), and that reopened this change's own band: with
+        # the keyboard up and its pan standing the pinch road published 0px under a keyboard-sized --app-h. The road now clears
+        # the hold only in a true no-pan state, one an unzoomed coarse run would have measured as 0 (no visual viewport, or
+        # one at scale 1 with offsetTop 0); with a pan standing, or under a standing zoom, the hold stands for the keyboard it
+        # was measured with. Every writing road writes the value it publishes; the clamp road writes nothing.
         self.assertEqual(self.out["fineFromPan"], "0px", "the fine pointer published 0px from the pan")
-        self.assertEqual(self.out["coarseAgainZoomed"], {"appTop": "0px", "appH": "460px"}, "the hold is the 0 the page is using")
+        self.assertEqual(self.out["coarseAgainZoomed"], {"appTop": "83px", "appH": "460px"}, "the hold stands across a flip with the keyboard's pan standing")
         self.assertEqual(self.out["coarseAgainBack"], {"appTop": "0px", "appH": "844px", "barH": "44px"})
+        flips = self.out["flips"]
+        self.assertEqual({k: v["fine"] for k, v in flips.items()}, {k: {"appTop": "0px", "appH": "844px"} for k in flips}, "the fine pointer publishes 0px and innerHeight in every state")
+        self.assertEqual({k: v["coarseAgainZoomed"] for k, v in flips.items()},
+                         {"noVV": {"appTop": "0px", "appH": "460px"}, "atRest": {"appTop": "0px", "appH": "460px"}, "scaleAtCut": {"appTop": "0px", "appH": "460px"},
+                          "scaleAboveCut": {"appTop": "83px", "appH": "460px"}, "onePixelPan": {"appTop": "83px", "appH": "460px"},
+                          "zoomedTop": {"appTop": "83px", "appH": "460px"}, "zoomPan": {"appTop": "83px", "appH": "460px"}},
+                         "cleared where no pan stands and the viewport is unzoomed; kept under a standing pan or zoom")
 
 
 # A node stand-in for the installed phone app with a REAL class list: the shell's mobile script and

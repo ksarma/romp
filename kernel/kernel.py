@@ -69865,15 +69865,21 @@ if(h)document.documentElement.style.setProperty('--app-h',h+'px');
 // different height raised while the zoom stands (the emoji keyboard, the predictive bar toggled) is laid out at that pan
 // under its own height until the zoom ends, a band under the composer for a taller keyboard and the body's bottom below
 // the band for a shorter one, by the height difference (round 5, 2026-09-20, disclosed: re-measuring under a zoom only
-// when the height changes is a design call not taken here; the harness and served legs re-raise the same keyboard). The
-// hold is the last value PUBLISHED, on every road: the 0px road writes it
-// too, so a pointer that turns fine and coarse again under a zoom holds the 0 the page is using, not the coarse pan from
-// before the flip. The pan is published under the same validity guard as the height it belongs to (round 4, 2026-09-20,
+// when the height changes is a design call not taken here; the harness and served legs re-raise the same keyboard). Two
+// roads WRITE the hold and each writes the value it publishes: the measured road its measurement, and the 0px road a zero,
+// only in a true no-pan state, one an unzoomed coarse run would have measured as 0 (no visual viewport, or one at scale 1
+// with offsetTop 0; round 6, 2026-09-20). A pointer that turns fine with a pan standing (the keyboard up on iOS) or under a
+// standing zoom leaves the hold for the keyboard it was measured with, so coarse again under that zoom the pinch road
+// publishes the keyboard's pan and not a 0 the fine window never measured (round 4 had written the zero on every fine run,
+// and the pinch road then laid the shell out at pan 0 under a keyboard-sized --app-h, the band reopened); a flip with the
+// visual viewport at rest clears it, so a zoom after that republishes no stale pan. The clamp road publishes a bound of the
+// hold and stores nothing, so --app-top can sit below the hold until a writing road runs next. The pan is published under
+// the same validity guard as the height it belongs to (round 4, 2026-09-20,
 // as round 1 confirmed it): a coarse run whose height report is refused (h 0) publishes neither, so the prior pan stands
 // beside the prior height rather than moving the fixed body by a pan measured against nothing; the 0px road has no height
 // to belong to and is unconditional. The visual viewport's scroll event, where a pan lands, is already bound below, so no
 // new listener.
-if(!coarse||!vv)document.documentElement.style.setProperty('--app-top',(lastPan=0)+'px');
+if(!coarse||!vv){if(!vv||((vv.scale||1)<=1.01&&!(vv.offsetTop>0)))lastPan=0;document.documentElement.style.setProperty('--app-top','0px');}
 else if(h&&(vv.scale||1)<=1.01)document.documentElement.style.setProperty('--app-top',(lastPan=Math.round(vv.offsetTop||0))+'px');
 else if(h)document.documentElement.style.setProperty('--app-top',Math.min(lastPan,Math.max(0,window.innerHeight-h))+'px');
 // iOS ignores interactive-widget and reveals a focused input by SCROLLING this overflow:hidden page

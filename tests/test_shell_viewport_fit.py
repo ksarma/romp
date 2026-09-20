@@ -336,7 +336,7 @@ class RefitsWhenTheVisibleHeightChanges(unittest.TestCase):
         # confirmed it); the 0px road has no height to belong to and stays unconditional. Behaviour:
         # test_kernel_mobile.MobileFitExecutes.
         self.assertIn("\nvar lastPan=0;\nfunction fit(){", self.js)
-        self.assertIn("if(!coarse||!vv)document.documentElement.style.setProperty('--app-top',(lastPan=0)+'px');", self.js)
+        self.assertIn("if(!coarse||!vv){if(!vv||((vv.scale||1)<=1.01&&!(vv.offsetTop>0)))lastPan=0;document.documentElement.style.setProperty('--app-top','0px');}", self.js)
         self.assertIn("else if(h&&(vv.scale||1)<=1.01)document.documentElement.style.setProperty('--app-top',(lastPan=Math.round(vv.offsetTop||0))+'px');\n"
                       "else if(h)document.documentElement.style.setProperty('--app-top',Math.min(lastPan,Math.max(0,window.innerHeight-h))+'px');", self.js)
         self.assertNotIn("lastPan=Math.min", self.js, "the clamp is at use: nothing writes its result back into the hold")
