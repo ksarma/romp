@@ -32,28 +32,40 @@ const SVG_LEG = 'ui/webview/file-view-figures-gate-adopt-svg-browser.test.ts';
 /** The node scene that executes the order where the legs skip (in CI's job that runs npm test no engine is installed before that
  *  step; tools/markdown-viewer-plan-gate-adopt.test.mjs reads that off the job's block). */
 const NODE_SCENE = 'ui/webview/file-view-figures-gate-adopt.test.ts';
-/** `git diff --name-only origin/main...HEAD` at the branch's head (the branch's own files, from its merge base with main), sorted as git
- *  prints it. Not the two-dot diff from the branch point: the branch merged origin/main once, so that diff also counts what main brought in
- *  (22 files at the head before the node scene, where the line said 15; found and corrected by the build of the node scene, 2026-09-20). */
-const FILES = [
-  'plans/markdown-viewer.md',
-  'tools/file-review-viewer-recipe.test.mjs',
-  'tools/markdown-viewer-plan-gate-adopt.test.mjs',
-  'tools/upstream-ledger-figure-gate-before-adoption.test.mjs',
-  IMG_LEG,
-  SVG_LEG,
-  NODE_SCENE,
-  'ui/webview/file-view-figures-gate-browser.test.ts',
-  'ui/webview/file-view-seam.test.ts',
-  'ui/webview/file-view-text-size.test.ts',
-  'ui/webview/file-view.test.ts',
-  'ui/webview/file-view.ts',
-  'ui/webview/md-sanitize-viewer-links.test.ts',
-  'ui/webview/md-url-view.test.ts',
-  'ui/webview/render-sanitize.test.ts',
-  'ui/test-code-only.ts',
-  ENTRY,
-];
+/** The output of `git diff --name-only origin/main...HEAD` at the branch's head, recorded verbatim: git's own order (paths
+ *  byte-sorted, one per line), the branch's own files from its merge base with main. This is the ONE derived list. FILES is read
+ *  off it, the where: line's stated count is asserted equal to its length and every path in it must be named in the line, so the
+ *  line and this record cannot disagree without a red, and both are re-derived from that command in the same commit (the review's
+ *  round 2 found the line at 17 where the command printed 19, two changed files named nowhere and absent here, so the pin passed:
+ *  correctness-1, tests-3, extra9-2; round 1 had found the line at 13 where the diff listed 14). Not the two-dot diff from the
+ *  branch point: the branch merged origin/main, so that diff also counts what main brought in (22 files by that form at the head
+ *  before the node scene, where the line said 15; found by the build of the node scene). The module reads no git (round 1's ruling: the entry is a record of the branch, and a pin
+ *  that shelled out and skipped where git was absent would report green having checked nothing), so a file the branch adds later
+ *  is caught by the caller re-running the command at the swept head and re-recording this block and the line together, and the
+ *  self-check below holds this block to the command's shape (sorted, unique, one path per line), which a hand edit tends to break. */
+const DIFF_OUTPUT = `
+plans/markdown-viewer.md
+tools/file-review-viewer-recipe.test.mjs
+tools/markdown-viewer-plan-gate-adopt.test.mjs
+tools/upstream-ledger-figure-gate-before-adoption.test.mjs
+ui/test-code-only.ts
+ui/webview/code-block.test.ts
+ui/webview/file-view-figures-gate-adopt-browser.test.ts
+ui/webview/file-view-figures-gate-adopt-svg-browser.test.ts
+ui/webview/file-view-figures-gate-adopt.test.ts
+ui/webview/file-view-figures-gate-browser.test.ts
+ui/webview/file-view-links.test.ts
+ui/webview/file-view-links.ts
+ui/webview/file-view-seam.test.ts
+ui/webview/file-view-text-size.test.ts
+ui/webview/file-view.test.ts
+ui/webview/file-view.ts
+ui/webview/md-sanitize-viewer-links.test.ts
+ui/webview/md-url-view.test.ts
+ui/webview/render-sanitize.test.ts
+upstream/2026-09-20-figure-gate-before-adoption.md
+`;
+const FILES = DIFF_OUTPUT.trim().split('\n');
 
 const entry = read(ENTRY);
 /** The front matter's pairs (one line each, `key: value`) and the prose after the closing delimiter. */
@@ -89,6 +101,14 @@ test('the count the where: line states is the number of files it names, derived 
   assert.ok(m, 'the line states its count and the command it was derived from, at the head');
   assert.equal(Number(m[1]), FILES.length, 'the stated count is the list\'s length');
   assert.ok(where.includes('this entry among them'), 'the entry counts itself');
+});
+
+test('the recorded command output is the command\'s shape and holds the files the other tests read: one path per line, byte-sorted as git prints, no duplicate, no blank, and the two legs, the node scene, the stripper module, the product files and this entry among them', () => {
+  assert.ok(FILES.length > 0, 'the record is not empty');
+  assert.deepEqual(FILES, [...FILES].sort(), 'byte-sorted, as `git diff --name-only` prints (a hand-appended path lands out of order)');
+  assert.equal(new Set(FILES).size, FILES.length, 'no path twice');
+  assert.ok(FILES.every((f) => /^[A-Za-z0-9._\/-]+$/.test(f)), 'one plain path per line, no blank and no stray text');
+  for (const f of [IMG_LEG, SVG_LEG, NODE_SCENE, ENTRY, 'ui/test-code-only.ts', 'ui/webview/file-view.ts', 'ui/webview/file-view-links.ts', 'tools/upstream-ledger-figure-gate-before-adoption.test.mjs']) assert.ok(FILES.includes(f), 'the record holds ' + f);
 });
 
 test('both browser legs are named in the where: line and in the body, the svg leg as the second vector', () => {
