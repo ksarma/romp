@@ -24,11 +24,11 @@
 //      the title bar names the count and offers "Print with them" and "Print without them"; Escape or a second press
 //      disarms (the update banner's two-click shape: the gate is a privacy choice, so a print never fetches from an
 //      unlisted host unless the person chose it; where a chosen figure's requests then go, a redirect its host answers
-//      among them, is stated once, in loadGatedFigure's doc, figure-gate.ts). "With them" restores exactly the
+//      among them, is stated in full in loadGatedFigure's doc, figure-gate.ts). "With them" restores exactly the
 //      placeholders it counted, each through the gate's restore of ONE placeholder (figure-gate.ts loadGatedFigure: the
 //      moved attributes back, the figure back in its place), so the requests are the ones those figures make and no
-//      other, going where those figures' URLs point (loadGatedFigure's doc, the one full statement of it; the round-5
-//      review's tests-3: these two sentences stood without it). The restore is the WHOLE figure's: the
+//      other, going where those figures' URLs point (loadGatedFigure's doc, figure-gate.ts, stated in full there; the
+//      round-5 review's tests-3: these two sentences stood without it). The restore is the WHOLE figure's: the
 //      browser may fetch any URL the figure names, a remote URL inside a non-painting element of a figure that paints among
 //      them (an svg <image> under <defs> beside one that paints; a hidden <img> inside a <video> that paints its poster),
 //      for something never on the paper; which of them it fetches is the browser's own (a <picture> fetches the <source>

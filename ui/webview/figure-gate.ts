@@ -446,8 +446,8 @@ export function regateFigures(doc: ParentNode): void {
 }
 /** The click: the host joins the document's loaded set and every placeholder waiting on it (alone) is restored. A click on a
  *  placeholder keeps this host-wide, page-life meaning (the ruling: for the session); the print's one-time restore is
- *  loadGatedFigure below. The restored figures' requests go where their URLs point, a redirect followed to a host this
- *  never names or grants (the header). */
+ *  loadGatedFigure below, whose doc states in full where the restored figures' requests go, a redirect among them; this
+ *  restore's requests go the same way (the header). */
 export function loadGatedHost(host: string, doc: ParentNode = document): void {
   if (!host) return;
   loadedHosts.add(host.toLowerCase());

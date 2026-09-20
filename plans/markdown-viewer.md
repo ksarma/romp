@@ -7810,7 +7810,9 @@ another host is not loaded." or "N pictures from other hosts are not loaded.", w
 without them**; a second press or Escape disarms. The press arms rather than prints, a two-click shape, for decision 8's
 reason: the gate is a privacy choice, so a print never fetches from a host outside the list unless the person chose it
 (where a chosen figure's requests then go, a redirect its host answers among them: `loadGatedFigure`'s doc, figure-gate.ts,
-the one full statement, which this sentence and P6's point at rather than restate; the round-5 review's tests-3).
+stated in full there, which this sentence and P6's point at rather than restate; the round-5 review's tests-3; the
+round-6 review's copies-2: the pointers had called that doc the one full statement while `loadGatedHost`'s doc carried
+a second, which now points at it, and the record test holds the full statement to one place).
 "With them" restores exactly the placeholders it counted, each through `loadGatedFigure` (figure-gate.ts), the gate's
 restore of ONE placeholder: the figure's moved attributes back under their names, on it and on its descendants, and the
 figure back in the placeholder's place, the same restore a click's `loadGatedHost` runs for each placeholder of a host,
