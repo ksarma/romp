@@ -124,6 +124,8 @@ repo, which names the rows that were red there. No count is kept in this docstri
 
 Synthetic: no kernel, no browser; node and the extension's node_modules only.
 """
+import ast
+import inspect
 import json
 import os
 import re
@@ -132,6 +134,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -1151,6 +1154,69 @@ PRELUDE_NAMES_JS = "let makeBudget, s, x, u, f, fn, app, cfg, APPS, mth, read, W
 PRELUDE_JS = 'import { createRequire } from "node:module"; const require = createRequire(process.env.EXT_PKG); ' + PRELUDE_NAMES_JS + "const budget = makeBudget({}); "
 ROOT_JS = PRELUDE_JS + 'const { chromium } = require("playwright"); const context = await (await chromium.launch({})).newContext({}); const pages = {}; pages[app] = await context.newPage();\n'
 
+REFUSED_CELLS = {
+        "member-read": ("await pages.feed.request.get(u);", "a member read on a page that is not itself called"),
+        "member-bound": ("const wf = pages.feed.waitForFunction;", "a member read on a page that is not itself called"),
+        "computed": ("await pages.feed.locator(s)[mth]();", "a computed member call on a locator the walk cannot name"),
+        "unknown-callee": ("await read(pages.feed);", "a page passed to read, a callee the walk does not follow"),
+        "member-callee": ("await Reflect.get(pages.feed, \"locator\");", "a page passed to Reflect.get"),
+        "template": ("const t = `${pages.feed}`;", "a page reaches a TemplateSpan"),
+        "comparison": ("if (pages.feed === x) {}", "a page in a === expression"),
+        "constructor": ("const w = new Wrapper(pages.feed);", "a page reaches a NewExpression"),
+        "two-types": ("let v = pages.feed; v = pages.feed.locator(s);", "v is bound to a page and to a locator"),
+        "list-iterated": ("for (const k of pages) {}", "a table of a page iterated"),
+        "table-call": ("await pages.locator(s);", "a call on a table of a page"),
+        "bare-wait": ("await waitFor(fn, 1, \"w\");", None),
+        "second-browser": ('const { firefox } = require("playwright"); await firefox.launch({});', None),
+        "timer": ("await new Promise((r) => setTimeout(r, 5));", "a wait outside playwright and the budget"),
+        "timer-member": ("globalThis.setTimeout(f, 5);", "a wait outside playwright and the budget"),
+        "timer-bound": ("const st = setTimeout;", "a wait outside playwright and the budget"),
+        "foreign-require": ('const cp = require("child_process");', "a require of a module the census does not know"),
+        "foreign-import": ('import { setTimeout as delay } from "node:timers/promises";', "an import of a module the census does not know"),
+        # the fixer pass's roads (round 5)
+        "return-uninvoked": ("const cb = [1].map(() => pages.feed);", "returned from a helper the walk follows to no call"),
+        "return-method": ("const om = { m() { return pages.feed; } };", "returned from a method, an accessor or a constructor"),
+        "return-getter": ("const go = { get p() { return pages.feed; } };", "returned from a method, an accessor or a constructor"),
+        "helper-in-literal": ("const fns = [() => pages.feed];", "a helper that returns a page reaches a ArrayLiteralExpression"),
+        "helper-member": ("function hf() { return pages.feed; } await hf.call(null);", "a helper that returns a page reaches a PropertyAccessExpression"),
+        "dynamic-import": ('const tp = await import("node:timers/promises");', "a dynamic import()"),
+        "second-createrequire": ("const rq2 = createRequire(process.env.EXT_PKG);", "a createRequire beyond the driver's one"),
+        "require-alias": ("const rq = require;", "require read as a value"),
+        "require-built": ('const cp2 = require("child_" + "process");', "a require whose module is not a string literal"),
+        "eval": ('await eval("1");', "eval"),
+        "function-ctor": ('new Function("return 1");', "Function"),
+        "script-string": ('await pages.feed.evaluate("1");', "a script handed to evaluate as anything but a function literal"),
+        "script-bound-string": ('const es = "1"; await pages.feed.evaluate(es);', "a script handed to evaluate as anything but a function literal"),
+        "script-init": ('await pages.feed.addInitScript("1");', "a script handed to addInitScript as anything but a function literal"),
+        "promise-alias": ("const PC = Promise;", "Promise read anywhere but"),
+        "promise-race": ("await Promise.race([]);", "Promise read anywhere but"),
+        "fetch-alias": ("const f2 = fetch;", "fetch read as a value"),
+        "atomics": ("Atomics.wait(x, 0, 0, 1);", "Atomics"),
+        "globalthis": ("globalThis.x = 1;", "globalThis"),
+        "computed-callee": ('x["a" + "b"]();', "a computed member call on a value the walk does not type"),
+    # round 6 (the maintainer's round 5, tests-2): the branches no cell and no PLANTS row fired, each with its own cell now, so the
+    # derived coverage assertion below is green (it is what closes the class; these cells are what it needs)
+    "ternary-two-types": ("const p = cfg.x ? pages.feed : pages.feed.locator(s);", "yields a page and a locator"),
+    "budget-unknown-call": ("const budget2 = makeBudget({}); budget2.spend(1);", "a call on the budget the census does not know"),
+    "rest-parameter": ("const fr = (...rest) => 1; fr(pages.feed);", "a helper parameter the walk cannot name"),
+    "table-write-mismatch": ("const tbl = {}; tbl.a = pages.feed; tbl.b = context;", "written into a table of"),
+    "nested-assign-target": ("holder.inner.p = pages.feed;", "assigned to a target the walk does not follow"),
+    "return-outside-function": ("return pages.feed;", "returned outside a function"),   # a return at module level: the parser accepts it (a grammar error the checker would report), the walk refuses it
+    "destructure-table": ("const [q] = pages;", "destructured by a pattern the walk does not follow"),
+    "createrequire-as-value": ("const cr = createRequire;", "createRequire read as a value"),
+    # round 6 (the METHOD): the roots the walk resolves to no receiver
+    "free-name": ("fs2.readFileSync(u);", "a free name no scope of the tree binds"),
+    "unread-member": ("process.binding(u);", "a member of the global process the driver does not read"),
+    "root-computed-member": ('process["bind" + "ing"](u);', "a computed member on the global process"),
+    "module-called": ('import fs from "node:fs"; fs();', "the module node:fs (an import binding) called as a function"),
+    "module-member-member": ("createRequire.call(null, u);", "a member of createRequire imported from node:module, a value the walk reads nothing of"),
+    "computed-record-member": ("const box = { p: pages.feed }; await box[mth].locator(s).count();", "a computed member on an object holding {p: a page}"),
+    "computed-key-property": ("const rec = { [mth]: pages.feed };", "a page placed under a property name the walk cannot read"),
+}
+# the two-round convergence bound (round 6, tests-2): a page reaches a binding through a helper's return, which the fixpoint types
+# in round 2; under rounds=1 the walk refuses "did not converge", and under the default bound the same source is clean
+CONVERGENCE_JS = ROOT_JS + "const gp = () => pages.feed; const p2 = gp(); await p2.locator(s).count();"
+
 
 def planted(js):
     """The driver with one plant line after ANCHOR (the unmodified driver for an empty plant)."""
@@ -1219,7 +1285,8 @@ class TheDriverParsed(unittest.TestCase):
         argument to a helper (its parameter typed from the call), a default parameter; the page table by write, read by name
         and by bracket; a parameter shadows the module's binding of the same name; a name bound to two types is refused; a
         member read not called, a computed member, a pass to an unknown callee, a template, a comparison and a constructor
-        are refused; a bare waitFor is the poll only where the tree binds it; a second browser type is seen by its name."""
+        are refused; a bare waitFor is the poll only where the tree binds it; a second browser type is seen by its name. The
+        refused cells are REFUSED_CELLS, at module level so the coverage cell below runs the same table."""
         root = ROOT_JS
         cells = {
             "roots": PRELUDE_JS + 'const { chromium } = require("playwright"); const b = await chromium.launch({}); const c = await b.newContext({}); const p = await c.newPage(); await p.locator(s).first().waitFor({ timeout: budget.capped(x) });',
@@ -1259,49 +1326,8 @@ class TheDriverParsed(unittest.TestCase):
         w = census(cells["poll"], trees["poll"][1])
         self.assertEqual([(f, ln) for f, _, _, ln in w["waits"]], [("waitFor", 1), ("waitFor", 1)], "the bare call and the receiver call are the poll; inner's waitFor is its own function and no site")
         self.assertEqual(w["poll_bindings"], [("SourceFile", 1)])
-        refused = {
-            "member-read": ("await pages.feed.request.get(u);", "a member read on a page that is not itself called"),
-            "member-bound": ("const wf = pages.feed.waitForFunction;", "a member read on a page that is not itself called"),
-            "computed": ("await pages.feed.locator(s)[mth]();", "a computed member"),
-            "unknown-callee": ("await read(pages.feed);", "a page passed to read, a callee the walk does not follow"),
-            "member-callee": ("await Reflect.get(pages.feed, \"locator\");", "a page passed to Reflect.get"),
-            "template": ("const t = `${pages.feed}`;", "a page reaches a TemplateSpan"),
-            "comparison": ("if (pages.feed === x) {}", "a page in a === expression"),
-            "constructor": ("const w = new Wrapper(pages.feed);", "a page reaches a NewExpression"),
-            "two-types": ("let v = pages.feed; v = pages.feed.locator(s);", "v is bound to a page and to a locator"),
-            "list-iterated": ("for (const k of pages) {}", "a table of a page iterated"),
-            "table-call": ("await pages.locator(s);", "a call on a table of a page"),
-            "bare-wait": ("await waitFor(fn, 1, \"w\");", None),
-            "second-browser": ('const { firefox } = require("playwright"); await firefox.launch({});', None),
-            "timer": ("await new Promise((r) => setTimeout(r, 5));", "a wait outside playwright and the budget"),
-            "timer-member": ("globalThis.setTimeout(f, 5);", "a wait outside playwright and the budget"),
-            "timer-bound": ("const st = setTimeout;", "a wait outside playwright and the budget"),
-            "foreign-require": ('const cp = require("child_process");', "a require of a module the census does not know"),
-            "foreign-import": ('import { setTimeout as delay } from "node:timers/promises";', "an import of a module the census does not know"),
-            # the fixer pass's roads (round 5)
-            "return-uninvoked": ("const cb = [1].map(() => pages.feed);", "returned from a helper the walk follows to no call"),
-            "return-method": ("const om = { m() { return pages.feed; } };", "returned from a method, an accessor or a constructor"),
-            "return-getter": ("const go = { get p() { return pages.feed; } };", "returned from a method, an accessor or a constructor"),
-            "helper-in-literal": ("const fns = [() => pages.feed];", "a helper that returns a page reaches a ArrayLiteralExpression"),
-            "helper-member": ("function hf() { return pages.feed; } await hf.call(null);", "a helper that returns a page reaches a PropertyAccessExpression"),
-            "dynamic-import": ('const tp = await import("node:timers/promises");', "a dynamic import()"),
-            "second-createrequire": ("const rq2 = createRequire(process.env.EXT_PKG);", "a createRequire beyond the driver's one"),
-            "require-alias": ("const rq = require;", "require read as a value"),
-            "require-built": ('const cp2 = require("child_" + "process");', "a require whose module is not a string literal"),
-            "eval": ('await eval("1");', "eval"),
-            "function-ctor": ('new Function("return 1");', "Function"),
-            "script-string": ('await pages.feed.evaluate("1");', "a script handed to evaluate as anything but a function literal"),
-            "script-bound-string": ('const es = "1"; await pages.feed.evaluate(es);', "a script handed to evaluate as anything but a function literal"),
-            "script-init": ('await pages.feed.addInitScript("1");', "a script handed to addInitScript as anything but a function literal"),
-            "promise-alias": ("const PC = Promise;", "Promise read anywhere but"),
-            "promise-race": ("await Promise.race([]);", "Promise read anywhere but"),
-            "fetch-alias": ("const f2 = fetch;", "fetch read as a value"),
-            "atomics": ("Atomics.wait(x, 0, 0, 1);", "Atomics"),
-            "globalthis": ("globalThis.x = 1;", "globalThis"),
-            "computed-callee": ('x["a" + "b"]();', "a computed member call on a value the walk does not type"),
-        }
-        trees = parse_js([(name, root + src) for name, (src, _) in refused.items()])[1]
-        for name, (src, token) in refused.items():
+        trees = parse_js([(name, root + src) for name, (src, _) in REFUSED_CELLS.items()])[1]
+        for name, (src, token) in REFUSED_CELLS.items():
             with self.subTest(refused=name):
                 c = census(root + src, trees[name][1])
                 if token is None:
@@ -1311,6 +1337,43 @@ class TheDriverParsed(unittest.TestCase):
                         self.assertEqual(c["unlisted"], [("firefox", "launch", 2)], "a browser type the allow-list does not know is refused by its name: %r" % (c["calls"],))
                     continue
                 self.assertTrue(any(token in why and line == 2 for line, _, why in c["refusals"]), "%s: the walk refuses the shape by line and class: %r" % (name, c["refusals"]))
+
+    def test_every_refusal_site_of_the_walk_fires_under_a_pinned_cell(self):
+        """The derived coverage (round 6, the maintainer's round 5 tests-2: nine of the walk's refusal branches were exercised by no
+        cell and no row, each deletable with the module green, and four more fired under no pin of their own). The refusal
+        sites are read from this module's own source by ast (every `self.refuse(` and `self.refuse_at(` call inside class
+        Walk, by line), and every REFUSED_CELLS cell, every PLANTS row, the unplanted driver and the one-round convergence cell
+        are run with `Walk.refuse` and `Walk.refuse_at` spied to record the line each call came from; the two sets must be
+        EQUAL, so a refusal branch added with no cell or row that fires it is a red until one does, and a cell deleted from
+        under a branch is a red too. The convergence cell: under rounds=1 the walk refuses that it did not converge (a page
+        reaches a binding through a helper's return, typed in round 2), and under the default bound the same source is clean
+        and its one call allowed, so the pin cannot pass because the source was refused for another reason."""
+        with open(os.path.realpath(__file__), encoding="utf-8") as f:
+            tree = ast.parse(f.read())
+        walk = next(n for n in ast.walk(tree) if isinstance(n, ast.ClassDef) and n.name == "Walk")
+        sites = {n.lineno for n in ast.walk(walk) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr in ("refuse", "refuse_at")
+                 and isinstance(n.func.value, ast.Name) and n.func.value.id == "self"}
+        self.assertGreaterEqual(len(sites), 30, "the walk's refusal sites, read from the source: %r" % (sorted(sites),))
+        fired = set()
+
+        def spy(fn):
+            def wrapped(self, *a, **k):
+                fired.add(inspect.currentframe().f_back.f_lineno)
+                return fn(self, *a, **k)
+            return wrapped
+        cells = parse_js([(name, ROOT_JS + src) for name, (src, _) in REFUSED_CELLS.items()] + [("convergence", CONVERGENCE_JS)])[1]
+        with mock.patch.object(Walk, "refuse", spy(Walk.refuse)), mock.patch.object(Walk, "refuse_at", spy(Walk.refuse_at)):
+            for name, (src, _) in REFUSED_CELLS.items():
+                census(ROOT_JS + src, cells[name][1])
+            for name, js, _ in PLANTS:
+                census(planted(js), self.trees[name if js else "driver.mjs"][1])
+            one = Walk(CONVERGENCE_JS, cells["convergence"][1]).run(rounds=1)
+        self.assertTrue(any("did not converge in 1 rounds" in why for _, _, why in one.refusals), "the one-round walk refuses that it did not converge: %r" % (sorted(one.refusals),))
+        c = census(CONVERGENCE_JS, cells["convergence"][1])
+        self.assertEqual((c["refusals"], c["unlisted"]), ([], []), "the same source under the default bound is clean, so the convergence pin is not another refusal: %r" % (c["refusals"],))
+        self.assertEqual(sorted(sites - fired), [], "refusal sites of the walk (by line) that no cell of REFUSED_CELLS, no PLANTS row, the driver and the convergence cell fire: "
+                                                  "each needs a cell that exercises it, or it is a branch nothing pins")
+        self.assertEqual(sorted(fired - sites), [], "refusals recorded from lines the source read names no site at (the derivation and the run disagree)")
 
     def test_the_driver_stores_each_read_under_the_key_the_driver_bound_module_names(self):
         """The record keys the driver-bound module's wiring pin reads (WAITED_READS, UNWAITED_READS), derived here from the
