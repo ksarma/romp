@@ -113,7 +113,8 @@ jobs:
         # with the sed bin/romp-sdk-setup runs over the same line. With it installed, the 48 SDK-gated tests
         # (43 in tests/test_sdk_backend.py, 5 in tests/test_host_transport.py) and the two SDK-transport host
         # tests in tests/test_session_host.py RUN in CI instead of skipping, and every session host a test
-        # spawns takes the SDK transport, as it does on a box with the venv bin/romp-sdk-setup builds.
+        # spawns takes the SDK transport, as it does on a box with the venv bin/romp-sdk-setup builds (one
+        # control in tests/test_session_host.py hides the SDK from its host and keeps the pipe transport tested).
         # Why that version and not PyPI's latest: it is the one the full suite passed under on the box that
         # runs the hosted sessions (16875 passed, 566 skipped, 1 xfailed, 0 failed), and the newer release that existed
         # when this landed (0.2.157, the fifth release in four days) was left alone on purpose: the version is

@@ -9,7 +9,8 @@ here), every process killed by the test, synthetic ids. A spawned host runs the 
 interpreter imports the SDK (CI, which installs the pinned SDK in every Python cell since 2026-09-20) and its
 built-in pipe transport otherwise (the plain test venv); two tests ask for the SDK transport by name, over the
 machine's SDK venv when there is one and over the host interpreter's own SDK otherwise, and skip only when
-neither exists (HOST_SDK below).
+neither exists (HOST_SDK below); one control hides the SDK from its host and asserts the pipe transport, so
+that road stays tested where the interpreter has the SDK.
 """
 import asyncio
 import json
@@ -1275,6 +1276,27 @@ class HostProcess(unittest.TestCase):
         k = self._one_turn(sock)
         self.assertEqual([r["transport"] for r in self._hostlog() if r["kind"] == "cli-spawned"], ["sdk"])
         self.assertEqual(open(seen).read(), "present")
+        k.send({"t": "end", "grace": 10})
+        k.recv_until(lambda f: f.get("t") == "exit")
+        k.close()
+
+    def test_a_host_hidden_from_the_sdk_drives_the_fake_cli_over_the_pipe_transport(self):
+        """The control for the switch above (2026-09-20). Under an interpreter that has the SDK (every CI cell since the
+        workflow installs it), every host these tests spawn takes the SDK transport, whatever ROMP_SDK_SITE says, so the
+        pipe transport, the road a plain venv's host runs, would have no test in CI. This host is hidden from the SDK the
+        way tests/test_session_host_sdk_pin.py's no-SDK control hides it: a site on PYTHONPATH whose sitecustomize.py sets
+        sys.modules["claude_agent_sdk"] = None before the host imports anything, so its find_spec answers None and the
+        launcher falls through to ROMP_SDK_SITE, which _start(sdk=False) points at a path that does not exist."""
+        site = os.path.join(self.state, "no-sdk-site")
+        os.makedirs(site)
+        with open(os.path.join(site, "sitecustomize.py"), "w") as f:
+            f.write('import sys\nsys.modules["claude_agent_sdk"] = None\n')
+        host, sock, spec = self._start(host_env={"PYTHONPATH": site})
+        k, hello = self._attach(sock)
+        k.send({"t": "in", "data": self._user("hi sleep=0.1")})
+        k.recv_until(lambda f: f.get("t") == "out" and f["data"].get("type") == "result")
+        self.assertEqual([r["transport"] for r in self._hostlog() if r["kind"] == "cli-spawned"], ["pipe-fallback"],
+                         "the host's built-in pipe transport spawned the CLI: its interpreter saw no SDK")
         k.send({"t": "end", "grace": 10})
         k.recv_until(lambda f: f.get("t") == "exit")
         k.close()
