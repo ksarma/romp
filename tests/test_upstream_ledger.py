@@ -1068,6 +1068,77 @@ class AddedDate(unittest.TestCase):
         self.assertIn("2 rows whose first commit the pickaxe could not find (added = today; set the date by hand): 0001, 0002", report)
 
 
+def _run_git(root, *args):
+    return subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True)
+
+
+def _is_entry(path):
+    return path.startswith("upstream/") and path.endswith(".md")
+
+
+def _names(where, path):
+    """Whether the where: line names the path as a whole token (tests/README.md does not name tests/README.md.bak)."""
+    return re.search(r"(?<![\w./-])" + re.escape(path) + r"(?![\w./-])", where or "") is not None
+
+
+def _where_of(root, entry):
+    e, _ = L.parse_entry(Path(entry).name, (Path(root) / entry).read_text(encoding="utf-8"))
+    return (e or {}).get("where") or ""
+
+
+def _touching_commits(root, base, head="HEAD"):
+    """{entry: [(commit, subject, [files changed])]} over base..head, for every entry file one of those commits changed and that
+    exists at head (a merge commit lists no files of its own, so a batch merge attributes nothing)."""
+    touched = {}
+    for line in _run_git(root, "log", "--format=%H %s", "%s..%s" % (base, head)).stdout.splitlines():
+        sha, _, subject = line.partition(" ")
+        files = _run_git(root, "show", "--name-only", "--format=", sha).stdout.split()
+        for f in files:
+            if _is_entry(f) and (Path(root) / f).exists():
+                touched.setdefault(f, []).append((sha, subject, files))
+    return touched
+
+
+def where_line_omissions(root, base, head="HEAD"):
+    """[(entry, [files])]: for each entry a commit in base..head touches, the files those commits changed (entries and UPSTREAM.md
+    aside) that the entry's where: line does not name as a whole token; then, unless HEAD is main or detached at origin/main, the
+    working tree's uncommitted changes (staged, unstaged and untracked: a created test module is the omission round 7 filed twice)
+    against the entries it modifies, under one `working tree (...)` row."""
+    out = []
+    for entry, commits in sorted(_touching_commits(root, base, head).items()):
+        where = _where_of(root, entry)
+        owed = sorted({f for _, _, files in commits for f in files if not _is_entry(f) and f != "UPSTREAM.md"})
+        missing = [f for f in owed if not _names(where, f)]
+        if missing:
+            out.append((entry, missing))
+    branch = _run_git(root, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+    on_main = branch == "main" or (branch == "HEAD" and _run_git(root, "rev-parse", "HEAD").stdout == _run_git(root, "rev-parse", "origin/main").stdout)
+    if not on_main:
+        changed = [l[3:].split(" -> ")[-1] for l in _run_git(root, "status", "--porcelain", "-uall").stdout.splitlines()]
+        entries = [c for c in changed if _is_entry(c) and (Path(root) / c).exists()]
+        if entries:
+            named = " ".join(_where_of(root, e) for e in entries)
+            missing = sorted(c for c in changed if not _is_entry(c) and c != "UPSTREAM.md" and not _names(named, c))
+            if missing:
+                out.append(("working tree (%s)" % ", ".join(entries), missing))
+    return out
+
+
+def round_currency_omissions(root, base, head="HEAD"):
+    """[(entry, N)]: for each entry a commit in base..head touches, the highest N among `Review round N` in those commits' subjects
+    that the entry's body does not name as `Round N`; an entry whose commits carry no such subject owes nothing."""
+    out = []
+    for entry, commits in sorted(_touching_commits(root, base, head).items()):
+        rounds = [int(m.group(1)) for _, subject, _ in commits for m in re.finditer(r"[Rr]eview round (\d+)", subject)]
+        if not rounds:
+            continue
+        n = max(rounds)
+        text = (Path(root) / entry).read_text(encoding="utf-8")
+        if not re.search(r"\bRound %d\b" % n, text):
+            out.append((entry, n))
+    return out
+
+
 class RealTree(unittest.TestCase):
     """Check 7: the repository's own ledger passes every rule, and its rendering passes the checker."""
 
@@ -1091,33 +1162,116 @@ class RealTree(unittest.TestCase):
         text = (ROOT / "upstream" / "2026-09-04-tab-groups-on-tags.md").read_text(encoding="utf-8")
         self.assertIn("a name that already runs: `/new` re-asserts an explicit `--in`, the picker's op warns instead", text)
 
-    def test_the_where_line_of_an_entry_this_branch_touches_names_every_file_the_branch_changes(self):
-        """The where: line is DERIVED from the branch's diff (round 7 of fork PR #778, rules-2 and regression-4: the line omitted a test
-        module the chain had created, the second such omission on one entry; round 4 ruled the derivation and nothing ran it). The base
-        is HEAD's merge base with the fork's main (origin/main, else main); the diff is taken to HEAD and to the working tree, so a run
-        before the commit reads its own edits. On main the diff is empty and nothing is asserted. With no base to diff against (a
-        shallow checkout) the test skips saying so, since the branch's diff is not derivable there; the local runs every round makes
-        are where it holds. A branch that touches no entry has nothing to derive against and passes."""
-        def git(*args):
-            return subprocess.run(["git", "-C", str(ROOT), *args], capture_output=True, text=True)
-        base = None
+    def _base(self):
         for ref in ("origin/main", "main"):
-            r = git("merge-base", "HEAD", ref)
+            r = _run_git(ROOT, "merge-base", "HEAD", ref)
             if r.returncode == 0 and r.stdout.strip():
-                base = r.stdout.strip()
-                break
-        if base is None:
-            self.skipTest("no merge base with origin/main or main: the branch's diff is not derivable in this checkout")
-        committed, tree = git("diff", "--name-only", base, "HEAD"), git("diff", "--name-only", base)
-        self.assertEqual((committed.returncode, tree.returncode), (0, 0), committed.stderr + tree.stderr)
-        changed = sorted(set(committed.stdout.split()) | set(tree.stdout.split()))
-        entries = [c for c in changed if c.startswith("upstream/") and c.endswith(".md") and (ROOT / c).exists()]
-        if not entries:
-            return
-        named = " ".join(L.parse_entry(Path(e).name, (ROOT / e).read_text(encoding="utf-8"))[0].get("where") for e in entries)
-        missing = [c for c in changed if not (c.startswith("upstream/") and c.endswith(".md")) and c != "UPSTREAM.md" and c not in named]
-        self.assertEqual(missing, [], "files this branch changes that no touched entry's where: line names (derive the line from the "
-                         "diff: git diff --name-only <base>..HEAD): " + ", ".join(missing))
+                return r.stdout.strip()
+        self.skipTest("no merge base with origin/main or main: the branch's diff is not derivable in this checkout")
+
+    def test_the_where_line_of_an_entry_this_branch_touches_names_every_file_its_commits_change(self):
+        """The where: line is DERIVED from the branch's diff (round 7 of fork PR #778, rules-2 and regression-4: the line omitted a test
+        module the chain had created, the second such omission on one entry; round 4 ruled the derivation and nothing ran it), scoped to
+        the entry (round 8, regression-1): for each entry a commit in base..HEAD touches, the files changed by the commits that touched
+        THAT entry must be named on its where: line, so a batch branch's other members, a stacked branch's earlier PR and a peer
+        branch's files are never attributed to it (the round-7 form demanded every file of the whole diff be named by some touched
+        entry, and would have gone red at the batch head, which is where every fork PR lands). The base is HEAD's merge base with the
+        fork's main (origin/main, else main). The working tree is read too, so a run before the commit reads its own edits (every
+        uncommitted non-entry change must be named by an entry the tree modifies), except on main or detached at origin/main, where
+        uncommitted edits carry no entry to attribute to. With no base (a shallow checkout) the test skips saying so; the local runs
+        every round makes are where it holds. A branch that touches no entry has nothing to derive against and passes."""
+        omissions = where_line_omissions(ROOT, self._base())
+        self.assertEqual(omissions, [], "files an entry's own commits change that its where: line does not name (derive the line from "
+                         "those commits: git log --format=%H <base>..HEAD -- <entry>, then git show --name-only --format= <commit>):\n"
+                         + "\n".join("  %s: %s" % (e, ", ".join(files)) for e, files in omissions))
+
+    def test_the_body_of_an_entry_this_branch_touches_names_its_latest_review_round(self):
+        """The entry's prose is derived too (round 8 of fork PR #778, extra7-2: the round-7 paragraph could be deleted with the suite
+        green, since the derivation covered the where: line alone): when the subjects of the commits that touched an entry carry
+        `Review round N`, the entry's body must name the highest such N as `Round N`. A proxy for currency (the numeral, not the
+        paragraph's content); commits whose subjects carry no such token assert nothing, which the synthetic case below pins."""
+        omissions = round_currency_omissions(ROOT, self._base())
+        self.assertEqual(omissions, [], "entries whose body does not name the latest review round of the commits that touched them:\n"
+                         + "\n".join("  %s: the commits say Review round %d, the body never says Round %d" % (e, n, n) for e, n in omissions))
+
+
+class WhereLineDerivation(unittest.TestCase):
+    """The two derivations over a synthetic two-entry repository (round 8 of fork PR #778, regression-1 and extra7-2): a batch of two
+    member branches and a stacked branch are green, an omission on one entry's own commit is red and blames that entry, a path is a whole
+    token (tests/README.md does not name tests/README.md.bak), the working tree is read on a branch and not on main, and the round
+    numeral is owed only where a commit's subject carries one."""
+
+    ENTRY = "---\ntitle: %s\nstatus: candidate\nwhere: %s\nadded: 2026-01-0%d\n---\n%s\n"
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="romp-ledger-derive-")
+        self.addCleanup(shutil.rmtree, self.dir, True)
+        self.env = dict(os.environ, GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_NOSYSTEM="1", GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.invalid",
+                        GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.invalid", HOME=self.dir)
+        self.git("init", "-q")
+        self.git("symbolic-ref", "HEAD", "refs/heads/main")
+        os.makedirs(os.path.join(self.dir, "upstream"))
+        self.write("upstream/2026-01-01-alpha.md", self.ENTRY % ("alpha", "tests/README.md", 1, "Alpha's body."))
+        self.write("upstream/2026-01-02-beta.md", self.ENTRY % ("beta", "", 2, "Beta's body."))
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "start")
+        self.main = self.git("rev-parse", "HEAD").strip()
+
+    def git(self, *args):
+        r = subprocess.run(["git", "-C", self.dir, *args], capture_output=True, text=True, env=self.env)
+        self.assertEqual(r.returncode, 0, " ".join(args) + ": " + r.stderr)
+        return r.stdout
+
+    def write(self, rel, text):
+        path = os.path.join(self.dir, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+
+    def commit(self, subject, files):
+        for rel, text in files.items():
+            self.write(rel, text)
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", subject)
+
+    def test_a_batch_of_two_members_and_a_stacked_branch_are_green_and_an_omission_blames_its_own_entry(self):
+        # member a: names its file; member b: a test module and no entry (round 7's union form blamed alpha for b's file)
+        self.git("checkout", "-q", "-b", "a", self.main)
+        self.commit("Review round 2: alpha names a.py", {"a.py": "", "upstream/2026-01-01-alpha.md": self.ENTRY % ("alpha", "tests/README.md, a.py", 1, "Alpha's body. Round 2 (a).")})
+        self.git("checkout", "-q", "-b", "b", self.main)
+        self.commit("member b adds a test", {"tests/test_member.py": ""})
+        self.git("checkout", "-q", "-b", "batch/x", self.main)
+        self.git("merge", "-q", "--no-ff", "-m", "merge a", "a")
+        self.git("merge", "-q", "--no-ff", "-m", "merge b", "b")
+        self.assertEqual(where_line_omissions(self.dir, self.main), [])
+        self.assertEqual(round_currency_omissions(self.dir, self.main), [])
+        # stacked on a: a docs file and no entry
+        self.git("checkout", "-q", "-b", "stacked", "a")
+        self.commit("a docs follow-up", {"docs/x.md": ""})
+        self.assertEqual(where_line_omissions(self.dir, self.main), [])
+        # an omission on alpha's own commit is red and names alpha; beta, untouched, is not blamed; a path is a whole token
+        self.git("checkout", "-q", "-b", "d", self.main)
+        self.commit("Review round 3: alpha grows", {"d.py": "", "tests/README.md.bak": "",
+                                                    "upstream/2026-01-01-alpha.md": self.ENTRY % ("alpha", "tests/README.md", 1, "Alpha's body, longer.")})
+        self.assertEqual(where_line_omissions(self.dir, self.main), [("upstream/2026-01-01-alpha.md", ["d.py", "tests/README.md.bak"])])
+        # and the round numeral: owed on d (Review round 3, the body says nothing), not on b (no such subject)
+        self.assertEqual(round_currency_omissions(self.dir, self.main), [("upstream/2026-01-01-alpha.md", 3)])
+        self.commit("Review round 3: the body says so", {"upstream/2026-01-01-alpha.md": self.ENTRY % ("alpha", "tests/README.md, d.py, tests/README.md.bak", 1, "Alpha's body. Round 3 (d).")})
+        self.assertEqual(where_line_omissions(self.dir, self.main), [])
+        self.assertEqual(round_currency_omissions(self.dir, self.main), [])
+        self.git("checkout", "-q", "b")
+        self.assertEqual(round_currency_omissions(self.dir, self.main), [])
+
+    def test_the_working_tree_is_read_on_a_branch_and_not_on_main(self):
+        self.git("checkout", "-q", "-b", "fresh", self.main)
+        self.write("e.py", "")
+        self.write("upstream/2026-01-02-beta.md", self.ENTRY % ("beta", "", 2, "Beta's body, edited."))
+        self.assertEqual(where_line_omissions(self.dir, self.main), [("working tree (upstream/2026-01-02-beta.md)", ["e.py"])])
+        self.write("upstream/2026-01-02-beta.md", self.ENTRY % ("beta", "e.py", 2, "Beta's body, edited."))
+        self.assertEqual(where_line_omissions(self.dir, self.main), [])
+        self.git("checkout", "-q", "main")
+        self.write("upstream/2026-01-02-beta.md", self.ENTRY % ("beta", "", 2, "Beta's body, edited on main."))
+        self.assertEqual(where_line_omissions(self.dir, self.main), [], "on main uncommitted edits carry no entry to derive against")
 
 
 if __name__ == "__main__":

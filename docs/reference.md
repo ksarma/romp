@@ -1575,6 +1575,16 @@ other form (re-saved by `plutil -convert`, PlistBuddy, `defaults write` or
 Xcode) is refused with exit 5 rather than read as a plist with no entries,
 since a reader that cannot parse a file must not report its values as absent;
 `romp-service install` from the owning shell and clone writes it afresh.
+Through `plutil` the reader first learns the tool's line end on a scratch
+plist of its own (a value with no line end of its own and three that end in
+one), checks it on the file (every extract must end as the scratch said, each
+value is read with and without `-n` where the tool honours that switch, and
+each value is echoed through the scratch and must read back as it did on the
+file), reads `<string>` entries alone, and refuses every plist read through a
+plutil it cannot classify, or that renders an entry of another type, with
+exit 5 and nothing written, naming the two ways out: another plutil in
+`ROMP_PLUTIL`, or `romp-service install` from the owning shell and clone,
+which reads no plist.
 Without `plutil` the reader also refuses romp's own form with any one entry
 it reads split across two lines (`<key>` on one, `<string>` on the next,
 which a text editor does), or with the `ProgramArguments` array not laid out
