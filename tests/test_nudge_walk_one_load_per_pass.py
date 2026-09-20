@@ -633,7 +633,11 @@ that drive a pass and the birth pin); the case count's 'reads against N' copies,
 pass and rounds 4, 5 and 6, sat in fragments the split at '3.12' left with no head label, so the round-5 copy set one below its
 count left the module green (39 passed) and so did a stale copy written into this paragraph (39 passed); the copies are removed and
 the Docs case reads this paragraph whole by a census of its figures, so the stale copy written into this paragraph reds it since,
-naming the clause (1 failed, 38 passed), while the same copy in a historical paragraph stays unread by design. The
+naming the clause (1 failed, 38 passed), while the same copy in a historical paragraph stays unread by design. The axis statements,
+the standard's second clause, on the tree of the round's fifth fix: every instrument's docstring carries a sentence naming what it
+derives and what it bounds, prose no assertion reads (of this module's docstrings the Docs case reads the module's own alone), each
+checked against the code, with no failing state; an existing sentence made false and a Derives clause negated each left the module
+green on the tree of the round's fourth fix (39 passed each). The
 clean module at this head, the head of the round-7 fixes: 39 passed single-process on 3.10, 3.11, 3.12, 3.13 and 3.14t.
 
 Drives the real pass (_auto_nudge_tick) over two alive sessions with real transcript files and real goal stores, on the
@@ -825,7 +829,16 @@ def _walk(tree):
     refusal comes when the walk yields the node, so a census that reads a child off the parent the walk yielded, before the child's
     own turn, meets a stranger there unrefused and fails some other way (the finder's from-import branch read every name's `.name`
     at the ImportFrom and raised AttributeError on a stranger among the names until the round-6 fixes; it reads alias nodes alone
-    now, and the witness files any such read as an exception that is not the refusal)."""
+    now, and the witness files any such read as an exception that is not the refusal). Derives: nothing of its own; the class set it
+    refuses against, _AST_KNOWN, is the table's classes by identity, and the interpreter check
+    (TheGrammarIsTheOneTheWalkersClassify.test_the_interpreter_defines_no_node_class_outside_the_table) reads every node class of the
+    running interpreter from vars(ast) and pins the three tables against it both ways: no class outside them, the concrete classes
+    present exactly the table's at or below the version, _AST_KNOWN that set by identity, every concrete class a leaf but for the
+    compatibility classes and derived from a sum type or from AST, every sum type at or below its version defined with subclasses
+    and one above it absent. Bounds: the tables themselves, _AST_CONCRETE with its version gates, _AST_ABSTRACT and _AST_COMPAT, and
+    the split between them, a policy the version demand asks for (a new class must red by name rather than be absorbed, so the table
+    is kept by hand and pinned by execution on each interpreter, never computed from it); a compatibility name the interpreter lacks
+    is no red, since that set shrinks by version."""
     for node in ast.walk(tree):
         if type(node) not in _AST_KNOWN:
             raise AssertionError("a node of class %s, which the census walkers of this module do not classify (not in _AST_CONCRETE, "
@@ -895,7 +908,12 @@ def _traversal_references(tree):
     the ruling stops the name list at four, so the finder refuses the forms it names and is silent on the rest, an early warning;
     the contract, a stranger node refused and never passed over, is carried by execution in TheWalkersRefuseAStrangerByExecution
     over every roster census entry point of this module). The interpreter check beside the walker case scans vars(ast) for every node
-    class and reds by name on a new one with no walker involved, so the version demand does not rest on this finder."""
+    class and reds by name on a new one with no walker involved, so the version demand does not rest on this finder. Derives: every
+    reference to a name of _TRAVERSAL in the three forms over the tree handed, each with its line, form, spelling and owner. Bounds:
+    the four names (the ruling's stop) and the three forms; and the owner label, which reads two container shapes, a module-body def
+    and a class with its direct methods, and labels a deeper reference by the module-body def, the class or the direct method that
+    holds it, a label for the message and the exemption key and not a population. The roster's membership and the exemption rows
+    are pinned by the finder case, not here."""
     owners = {}
     for stmt in tree.body:
         if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -930,7 +948,10 @@ def _pass_through_lines(fn, callee):
     are the boundary wrapper's hand-off of the read (`loader(fsid)` in _or_fault, `_or_fault(...)` in the two outer wrappers),
     read from the source by the AST so a docstring or a comment naming the callee is not one. The lines are absolute (inspect
     gives the source with its first line's number) and are what _caller steps over at; the count is the guard's (review round
-    2, extra5-2: two hand-off calls written on one line are one line and were passed by a guard whose message said one call)."""
+    2, extra5-2: two hand-off calls written on one line are one line and were passed by a guard whose message said one call).
+    Derives: the lines and the count from the AST of `fn`'s source. Bounds: the one form read, a Call whose callee is the bare Name
+    `callee`; a hand-off spelled otherwise (through __call__, a partial, a local alias) is no call here and setUp's guard reds on it,
+    each form held on its side by the hand-off enumeration (_HANDOFF_FORMS)."""
     src, start = inspect.getsourcelines(fn)
     tree = ast.parse(textwrap.dedent("".join(src)))
     calls = [node for node in _walk(tree) if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == callee]
@@ -988,7 +1009,12 @@ def _loader_sites(obj, needle):
     (review round 2, correctness-1): the first cut blanked comments and strings token by token, and on 3.10 and 3.11 the
     tokenizer gives a whole f-string as one STRING token (3.12 and later split it into FSTRING_* parts), so a loader CALL
     written inside an f-string was blanked with the literal and invisible on two of the five CI interpreters; ast.walk reaches
-    the JoinedStr's FormattedValue and its Call on every interpreter, and reads the f-string's literal text on none."""
+    the JoinedStr's FormattedValue and its Call on every interpreter, and reads the f-string's literal text on none. Derives: the
+    sites from the AST of `obj`'s source as inspect gives it. Bounds: the three node kinds read, Name, Attribute and alias, and the
+    substring rule over the needle, so a loader in any other node or in a string is no site, each form held on the side it falls by
+    the loader enumeration (_LOADER_FORMS) and, for the string and assembled classes, by the kernel-wide pin's verdict over the form's
+    file; and the object handed, the wrapper behind a decorator without functools.wraps, which the identity check of the
+    replaced-helpers census and the walk census holds first."""
     src = textwrap.dedent(inspect.getsource(obj))
     lines = src.splitlines()
     out = []
@@ -1013,7 +1039,9 @@ def _bump_sites(obj):
     a variable, the dict under a local alias or qualified by its module, `-= -1`, `__setitem__`, `update`) is no bump here, so
     the walk census reds on it, conservatively; the increment's value is not read (the served counter's delta holds it), and a
     bump under a one-line `if` or `for` on the line after the load counts with its adjacency intact. The bump forms are
-    enumerated in TheCensusOverEveryForm (the consolidation pass)."""
+    enumerated in TheCensusOverEveryForm (the consolidation pass). Derives: the bump lines from the AST of `obj`'s source. Bounds:
+    the one spelling read, an augmented Add on a constant "loads" subscript of the Name _NUDGE_WALK_STATS, so every other spelling
+    is no bump and the walk census reds on it, conservatively, each form held on its side by the bump enumeration (_BUMP_FORMS)."""
     tree = ast.parse(textwrap.dedent(inspect.getsource(obj)))
     return [n.lineno - 1 for n in _walk(tree)
             if isinstance(n, ast.AugAssign) and isinstance(n.op, ast.Add) and isinstance(n.target, ast.Subscript)
@@ -1120,7 +1148,12 @@ def _loader_births(path, judge):
     bound to a variable before the lookup (`n = "load_goals_shared"; getattr(jd, n)`)
     was that class's until the round-4 fixes and is the string class's now: the constant spells the door whole where it is bound,
     and the rule reads it there. `called` counts each spelling called and `defs` each def named like a loader, so a caller can
-    check the population it read is the doors' and not empty."""
+    check the population it read is the doors' and not empty. Derives: every birth, every called spelling, every loader def and
+    every hand-off from the whole AST of the file at `path`, with one parent map over the walk. Bounds: _DOOR_SPELLINGS, the four
+    doors' names, the closed set the value rule keys on, spelled by hand; _DYNAMIC_LOOKUPS and _DICT_READS, the receivers the
+    consumer clause reads, an open set kept only for a constant that merely contains the name (a whole spelling is refused whatever
+    receives it); the three transforms _door_text undoes, a policy boundary, so the assembled class is outside by it; and the
+    needle, "load_goals" by substring."""
     tree = ast.parse(path.read_text(encoding="utf-8"))
     parents = {}
     for node in _walk(tree):
@@ -1690,7 +1723,10 @@ def _caller(frame, boundary):
     in the judge's file (the build's verifier pass after the round-1 fixes: stepped over unconditionally, a load planted inside
     _or_fault was named for the wrapper's kernel caller, the misnaming that costs more than silence). The file is the basename of the frame's REAL
     path: the kernel is loaded from bin/romp-kernel, a symlink to kernel/kernel.py, so the bare basename would read
-    romp-kernel."""
+    romp-kernel. Derives: the asker from the frame chain, the boundary frames stepped over by code identity while at a hand-off
+    line. Bounds: `boundary`, the wrappers and lines setUp derives from the judge's source, three wrappers hand-picked as the
+    judge's boundary set (held against the judge's AST by the birth pin's hand-offs line), so a fourth wrapper is a caller named
+    for itself."""
     f = frame.f_back
     while True:
         lines = next((ls for c, ls in boundary if f.f_code is c), None)
@@ -1713,7 +1749,19 @@ class _FakeBackend:
 
 class _WalkHarness(unittest.TestCase):
     """The real pass over two synthetic sessions, the toggle off, every seam it moves put back by a cleanup registered
-    before the first rebind (unittest skips tearDown when setUp raises and runs the cleanups regardless)."""
+    before the first rebind (unittest skips tearDown when setUp raises and runs the cleanups regardless). Derives: what setUp
+    rebinds, against REPLACED_KM and REPLACED_JD both ways (set equality over the kernel's and the judge's globals by identity, the
+    names jd._rebind_state moves subtracted) with Sessions.backend_for beside them; the two doors' identity before the recorders
+    stand; the wrappers' hand-off lines and call counts from their source (_pass_through_lines), one line and one call each; and per
+    pass, in _pass, every counter delta against the recorded calls. Bounds: REPLACED_KM, REPLACED_JD, CASE_KM and CASE_JD, what the
+    fixture replaces and what a case may, a policy, the first two pinned by execution here and the last two by nothing (_restore
+    puts the saved names back and checks no other name, so a case that stubs a name outside every list leaks it to the tests after
+    it unseen: a new-identity pass-through on such a kernel name left the module green at the head the round-7 plan read);
+    REPLACED_DATA, the two data names the census skips, read one way (a data name left off it errors in the census's identity
+    check, a callable put on it is skipped unseen); the window, one tick; the doors recorded, the judge's two; WALK, GATE and SWEEP,
+    the callers the condition names; the boundary set, three wrappers hand-picked as the judge's, held against the judge's AST by
+    the birth pin's hand-offs line; KEYS, the walk counters the cases pin exactly (a tuple derived from km._NUDGE_WALK_STATS would
+    report more with nothing asserting it); and the fixture constants, SIDS, NOW and the seeded stores."""
 
     def setUp(self):
         before_km, before_jd = dict(vars(km)), dict(vars(jd))   # FIRST: the agreement check at the end of setUp compares against these
@@ -1871,6 +1919,9 @@ class _WalkHarness(unittest.TestCase):
         2). A pin overrides it to place a stub there and expects setUp to refuse it (TheAgreementCheckSpansSetUp)."""
 
     def _restore(self):
+        """Every seam back the way setUp found it: the saved kernel and judge names, the backend, the caches, the counters, the
+        journals, the state root. Derives: nothing. Bounds: the names put back are the saved lists' (REPLACED_KM, CASE_KM,
+        REPLACED_JD, CASE_JD and the two doors); a name a case rebound outside them stays rebound, unseen here."""
         journals = [jd._overrides_dir() / (sid + ".jsonl") for sid in SIDS + (SID_C,)]   # under this test's root, resolved before the rebind back
         for k, v in self.saved.items():
             setattr(km, k, v)
@@ -2745,6 +2796,10 @@ class TheDoorBumpsAtMostOneSecondKeyPerCall(_WalkHarness):
 
 
 class TheRecorderNamesTheAsker(unittest.TestCase):
+    """_caller's rule over a stand-in. Derives: nothing. Bounds: a contract case over one stand-in wrapper with two body lines and a
+    boundary of its own, so it holds the rule, a boundary frame stepped over only at its hand-off line, and not the composition of
+    the real boundary set, which setUp's guard holds."""
+
     def test_a_load_inside_a_stand_in_wrapper_is_named_for_the_wrapper_and_its_hand_off_for_the_caller(self):
         """_caller's contract over a stand-in, not the composition of the real boundary set (setUp's guard over the judge's three
         wrappers holds that): a boundary frame is stepped over only while it sits at its pass-through call. `wrapper` is the
@@ -2776,6 +2831,11 @@ class TheRecorderNamesTheAsker(unittest.TestCase):
 
 
 class TheAgreementCheckSpansSetUp(unittest.TestCase):
+    """setUp's agreement check over throwaway harness subclasses. Derives: nothing. Bounds: contract cases, each placing one stub
+    through a hook on a named seam (a CASE_KM name right after the rebind; a judge name outside every list between the first
+    snapshot and the rebind) and expecting setUp's refusal by name; the regions probed are the two the check once missed, not every
+    point of setUp."""
+
     def test_a_stub_placed_right_after_the_rebind_is_refused(self):
         """The agreement check covers the whole setUp (review round 2, correctness-2 and tests-1: with the snapshot taken after the
         cache clears, a stub above it for a name outside both lists escaped the check, the census and the execution witness). A
@@ -2984,7 +3044,10 @@ class TheCountersOneSite(unittest.TestCase):
         object is first checked to be the named helper, by the name inspect.unwrap reaches and by the def its source parses to
         (ruling 3 of the reviewer's rulings on the pre-emption): inspect follows __wrapped__ only through functools.wraps, so behind
         a decorator without it the census
-        would read the wrapper's source and answer no site for a body it never read."""
+        would read the wrapper's source and answer no site for a body it never read. Derives: its targets from the lists setUp pins by
+        execution, REPLACED_KM less REPLACED_DATA, REPLACED_JD and Sessions.backend_for, and each object's identity before its source
+        is read. Bounds: one level deep, the helper's own source; the count, 21, a tripwire; the needle, both doors by substring; and
+        REPLACED_DATA, read one way (a data name left off it errors in the identity check, a callable put on it is skipped unseen)."""
         targets = ([(k, getattr(km, k)) for k in REPLACED_KM if k not in REPLACED_DATA]
                    + [("jd." + k, getattr(jd, k)) for k in REPLACED_JD]
                    + [("Sessions.backend_for", km.Sessions.backend_for)])
@@ -3023,7 +3086,13 @@ class TheCountersOneSite(unittest.TestCase):
         class of _LIMITS, which the enumeration holds on that side). Review round 4,
         correctness-1, tests-1 and extra6-1: the string class was stated closed by a list of receivers, nine lookups, four dict
         reads and a subscript slice, and six working doors on no list passed the pin with a real load in a replaced helper's body;
-        the pin keys on the door's spelling now, the closed set, and the receivers need no listing."""
+        the pin keys on the door's spelling now, the closed set, and the receivers need no listing. Derives: the births, the called
+        spellings, the defs and the hand-offs over the kernel's and the judge's whole files (_loader_births). Bounds: the four door
+        names, spelled by hand in this case's defs line as in _DOOR_SPELLINGS and the enumeration's stub judge, three copies pinned to
+        each other by nothing at this tree (a fifth spelling added to _DOOR_SPELLINGS left the module green at the head the round-7
+        plan read); the kernel's call sites per spelling, 27, 9, 7 and 15, a tripwire on the population read, so an upstream fold
+        that moves one reds here by design; and the two hand-offs, the judge's two outer wrappers, a pinned pair that also holds the
+        recorder's hand-picked boundary set against the judge's AST."""
         born, called, defs, handoffs = _loader_births(Path(os.path.realpath(km.__file__)), judge=False)
         self.assertEqual(born, [], "%s: a loader bound to another name, or reached through a string, is a body the census cannot read; every "
                                    "reference to a loader in the kernel is the callee of a call spelled jd.<door>(...), so no other name is born, "
@@ -3489,7 +3558,12 @@ class TheCensusOverEveryForm(unittest.TestCase):
     them beyond the listed forms is not caught here (a verifier of the consolidation pass found the module's text saying the pin
     closed the string limit while vars(jd)[...] and jd.__dict__[...] passed it; review round 5 found the recaps naming families where
     _door_text undoes one member; a verifier of the round-5 fixes rewrote the assembled limit text to a false universal with every
-    case green, which is why this sentence no longer says the texts cannot overstate)."""
+    case green, which is why this sentence no longer says the texts cannot overstate). Derives: each row's answer by execution of
+    the census on the running interpreter, the gated rows' SyntaxError below their version, and the kernel-wide pin's verdict over
+    every string and assembled row's file. Bounds: the rows of _LOADER_FORMS, _BUMP_FORMS and _HANDOFF_FORMS, the lens's
+    enumeration, a sample of Python's forms and not a population (no module can enumerate the language's forms, so a form nobody
+    listed is held by nothing here); the five classes of _LIMITS and each row's class, a classification by hand; and the counts
+    pinned, 122, 20 and 7 rows and the missed forms by class, tripwires that make an edit to a table carry a reason."""
 
     def setUp(self):
         self.td = tempfile.TemporaryDirectory()
@@ -3840,7 +3914,15 @@ class TheWalkersRefuseAStrangerByExecution(unittest.TestCase):
     plant at that position over while the plant at another is refused, the per-position sensitivity the first case rests on. The
     fourth case is the negative control and the reason the contract rides on execution: two hand-rolled recursions, one over
     ast.iter_fields and one over node._fields, walk the same planted tree, return a census listing the stranger twice with no
-    refusal, and the finder answers no reference over either; ast.iter_fields is deliberately NOT added to _TRAVERSAL."""
+    refusal, and the finder answers no reference over either; ast.iter_fields is deliberately NOT added to _TRAVERSAL. Derives: the
+    node positions from the running interpreter over the corpus (_grammar_positions, every field of every concrete class observed
+    or red naming the field), the plantable residue as the positions of the mod roots other than Module (_plantable, re-derived by
+    the instrument case), one drive per plantable position per roster row (the count asserted), and each stranger's base from the
+    children the corpus showed at its position. Bounds: the roster's drive column, hand-written drives each executed unplanted and
+    planted; _GRAMMAR_CORPUS, _as_statement's container rows and _minimal's defaults, scaffolding whose completeness the derivation
+    reds on (an unobserved field, a base no row holds); the refusal's text matched, the stranger's name and the table's phrase; and
+    the instrument case's samples, four field names the reduced corpus must name and one hand-read position, ClassDef.body, against
+    one walked, FunctionDef.body."""
 
     def test_every_census_entry_point_refuses_a_planted_stranger_and_returns_unplanted(self):
         door = jd.load_goals_shared
@@ -3918,6 +4000,15 @@ class TheWalkersRefuseAStrangerByExecution(unittest.TestCase):
                                      % (len(plantable), sys.version.split()[0], "; ".join(refuse)))
 
     def test_the_roster_holds_its_count_and_its_floor(self):
+        """The roster's count and its floor. Derives: the floor over this module's own AST (_census_floor: every reader reference
+        attributed to its def or class chain, whatever the container) and, against it, every module-level def in the floor a roster
+        row; every row that parses inside found by the floor (alive, so a derivation answering less reds); every row naming a
+        module-level def of this module; the class chains equal to the pinned dict both ways; and the module-level statements equal
+        to the one lambda. Bounds: the count, nine, a tripwire that makes a row added or removed carry a reason; the reason beside
+        each pinned chain and the module statement, a judgment (each is outside the roster because it hands its parse to a row, reads
+        a subtree a row holds, keeps a parse as a value, reads a line number or a def's first statement and walks nothing, or reads
+        a synthetic grammar tree); and the floor's own boundary, the spelling of the reader (_TREE_READERS and _walk by Name), so a
+        census parsing under another road or handed a pre-parsed tree joins the roster by the comment's rule alone."""
         tree = ast.parse(Path(os.path.realpath(__file__)).read_text(encoding="utf-8"))
         defs, classes, module = _census_floor(tree)
         names = {name for name, _shape, _drive in _CENSUSES}
@@ -4116,7 +4207,10 @@ class Docs(unittest.TestCase):
         home's wording, with each writer's callers, and the two pointers a test can read: the memos.nudgeWalk entry's and this
         module's own docstring's. The ledger entry (upstream/) carries the same pointer by hand and is not read here: the
         directory is fork-only infrastructure and this module is part of the offer the entry records, so a read of it would red
-        upstream or need a skip, and a skipping pin pins nothing."""
+        upstream or need a skip, and a skipping pin pins nothing. Derives: nothing; the paragraphs are found by their anchors and the
+        phrases asserted present. Bounds: the phrases pinned, the clause's wording as the reviewer ruled it, and the anchors that
+        slice the reference and the field gloss, a policy; a rewording reds here and is answered by re-reading the ruling, not by
+        widening the list."""
         doc = Path(HERE).parent.joinpath("docs", "reference.md").read_text()
         jobs = doc[doc.index("- `jobs`: the jobs thread"):]
         jobs = " ".join(jobs[:jobs.index("\n- `caches`:")].split())   # the paragraph is wrapped: one space between words
