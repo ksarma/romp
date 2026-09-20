@@ -261,6 +261,15 @@ class ParsedSheetReads(unittest.TestCase):
         self.assertEqual(served_css.scripts(page), ['x="<!--";', 'y="-->";'])
         self.assertEqual([page[s:e] for s, e in served_css.comment_spans(page)], ["<!-- c -->"])
 
+    def test_a_style_elements_media_attribute_conditions_every_rule_it_holds(self):
+        # round 8 (2026-09-20): style_blocks and rules read every live style element's rules with no regard for the element's own
+        # media attribute, so CSS that never applies on screen read as unconditional, and the fixed-box census passed over a page
+        # whose only --app-top origin sat in a <style media=print>. The attribute is the outermost prelude of every rule in the
+        # element, so such an origin's `at` is not the mobile block's and the census refuses it (the plant in the record)
+        rules = served_css.rules("<style media=print>@media (x){#a{top:var(--app-top)}}</style><style>@media (x){#b{top:0}}</style>")
+        self.assertEqual([(r.selector, r.at) for r in rules], [("#a", ("@media print", "@media (x)")), ("#b", ("@media (x)",))])
+        self.assertEqual([r.selector for r in rules if r.at == ("@media (x)",)], ["#b"], "the print rule is not the (x) block's")
+
     def test_a_statement_at_rule_is_consumed_and_the_rule_after_it_is_read(self):
         # a statement at-rule had accumulated into the next rule's prelude, which then began with @ and was dropped with its
         # declarations as a nested at-rule, silently (round 6, 2026-09-20: the case had used @import, which refuses now)
@@ -293,11 +302,13 @@ class ParsedSheetReads(unittest.TestCase):
         # passed in silence while the same sheet under rel=stylesheet refused. linked_sheets is the predicate both the parse
         # and the census's pin read
         for rel in ("'preload stylesheet'", '"stylesheet preload"', "'alternate stylesheet'", "StyleSheet", "'a stylesheet b'"):
-            page = "<link rel=%s href=x.css><style>#a{top:0}</style>" % rel
-            with self.assertRaises(AssertionError, msg=rel) as cm:
-                served_css.rules(page)
-            self.assertIn("links 1 external stylesheet", str(cm.exception), rel)
-            self.assertEqual(len(served_css.linked_sheets(page)), 1, rel)
+            # round 8 (2026-09-20): with the rel after an attribute whose quoted value holds a `>` too, the shape the regex extent
+            # (`<link\b[^>]*\brel`) could not cross, so such a link passed in silence while the same rel first refused
+            for page in ("<link rel=%s href=x.css><style>#a{top:0}</style>" % rel, "<link title='a>b' href=x.css rel=%s><style>#a{top:0}</style>" % rel):
+                with self.assertRaises(AssertionError, msg=page) as cm:
+                    served_css.rules(page)
+                self.assertIn("links 1 external stylesheet", str(cm.exception), page)
+                self.assertEqual(len(served_css.linked_sheets(page)), 1, page)
         for rel in ("'preload'", '"stylesheets"', "'my-stylesheet'", "icon"):   # no stylesheet token in the set
             page = "<link rel=%s href=x.css><style>#a{top:0}</style>" % rel
             self.assertEqual([r.selector for r in served_css.rules(page)], ["#a"], rel)
@@ -313,6 +324,42 @@ class ParsedSheetReads(unittest.TestCase):
         self.assertEqual([r.selector for r in served_css.rules("<style>#a{top:0}@layer base</style>")], ["#a"])
         with self.assertRaises(AssertionError):   # trailing text that is no at-rule is a parse the instrument cannot account for
             served_css.rules("<style>#a{top:0}#b</style>")
+
+    def test_the_element_layer_reads_tags_and_attributes_as_the_tokenizer_does(self):
+        # round 8 (2026-09-20): the element and attribute layer is the standard library's HTML tokenizer (html.parser), not a set
+        # of regular expressions over the markup, after the same silent-pass shape closed three times in this module: a linked
+        # sheet passed unread (round 6), a `rel="preload stylesheet"` passed a start-anchored token read (round 7), and a `>`
+        # inside a quoted attribute value before rel ended the regex's element early while a `<style media=print>` was read as
+        # unconditional CSS (round 8). The three are this layer's cases; each was green under the reading it replaces.
+        # (1) the linked sheet, whichever way the tag is written
+        for page in ("<link rel=stylesheet href=x.css>", "<link rel=stylesheet href=x.css/>", "<LINK REL=StyleSheet href=x.css>"):
+            self.assertEqual(len(served_css.linked_sheets(page)), 1, page)
+        # (2) rel is a set of tokens the tokenizer hands over unquoted, the keyword anywhere in it
+        el = served_css.elements("<link title='a>b' href=x.css rel='preload stylesheet'>")[0]
+        self.assertEqual((el.kind, served_css.attr(el, "title"), served_css.attr(el, "href"), sorted(served_css.rel_tokens(el))), ("link", "a>b", "x.css", ["preload", "stylesheet"]))
+        # (3) a `>` inside a quoted value does not end the tag (an element's extent is the tokenizer's), for a link and for a
+        # script's body; a media attribute conditions every rule its style element holds, folded into `at` as the outermost
+        # prelude, and `all`, `screen` and an empty value condition nothing (the census compares `at` by equality)
+        self.assertEqual(len(served_css.linked_sheets('<link title="a>b" rel=stylesheet href=x.css>')), 1)
+        self.assertEqual(served_css.linked_sheets('<link title="a>b" rel=icon href=x.css>'), [])
+        self.assertEqual(served_css.scripts('<script data-x="a>b">var a=1;</script>'), ["var a=1;"])
+        self.assertEqual([r.at for r in served_css.rules("<style media=print>#a{top:0}</style>")], [("@media print",)])
+        self.assertEqual([r.at for r in served_css.rules("<style media='screen and (max-width: 600px)'>@media (x){#a{top:0}}#b{top:0}</style>")],
+                         [("@media screen and (max-width: 600px)", "@media (x)"), ("@media screen and (max-width: 600px)",)])
+        for media in ("all", "screen", "''", '""', "ALL", " all "):
+            self.assertEqual([r.at for r in served_css.rules("<style media=%s>#a{top:0}</style>" % media)], [()], media)
+        self.assertEqual([r.at for r in served_css.rules("<style>#a{top:0}</style>")], [()])
+        # the layer's own refusals: an element the page never closes (the count guard it replaces refused the same), and a
+        # self-closing script or style tag, which HTML reads as a start tag
+        with self.assertRaises(AssertionError) as cm:
+            served_css.rules("<style>#a{top:0}")
+        self.assertIn("never closes", str(cm.exception))
+        with self.assertRaises(AssertionError):
+            served_css.scripts("<script/>var a=1;</script>")
+        # offsets are absolute across lines (getpos is line and column): the spans index the page
+        page = "line1\n<style>\n#a{top:0}\n</style>\n<script>\nvar a;\n</script>"
+        self.assertEqual(served_css.element_spans(page), [(13, 24, "style"), (41, 49, "script")])
+        self.assertEqual([page[s:e] for s, e, _ in served_css.element_spans(page)], ["\n#a{top:0}\n", "\nvar a;\n"])
 
     def test_surely_refuses_a_selector_that_selects_by_a_state_the_sheet_cannot_show(self):
         # round 6 (2026-09-20): surely() had dropped attribute selectors and functional pseudo-classes the way can_match

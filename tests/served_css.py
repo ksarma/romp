@@ -7,20 +7,37 @@ substring-searches declarations misses members written through a custom-property
 the var() call, under a split selector, inside a style element carrying an attribute, or re-topped through the inset
 shorthand (D1 round 2, 2026-09-19). This module is the instrument both kinds of pin read instead.
 
-Style rules: `rules(html)` parses every <style> element that is live markup (any attributes; a style or script element
-inside an HTML comment is comment text, not an element, round 5, 2026-09-20; the number of `<style` tag openings outside
-script elements and HTML comments must equal the number of elements consumed, or the parse refuses), strips its comments,
-and brace-matches it into Rule(index, at, selector, declarations, decls): `at` is the tuple of enclosing at-rule preludes
-(an @media query, a @supports condition), `declarations` the block's raw text, `decls` its (property, value) pairs split
-at ; outside parentheses and quotes; a statement at-rule (@charset, @namespace, `@layer name;`: an at-prelude ended by ;
-with no block) is consumed and dropped, never folded into the next rule's prelude (round 5). CSS the parser cannot read
-REFUSES rather than shrinking a census silently (round 6, 2026-09-20): a `<link>` whose rel set carries the stylesheet
-token anywhere (`rel=stylesheet`, `rel="preload stylesheet"`, `alternate stylesheet` too; round 7, 2026-09-20: a token
-after another had passed) in the live markup and an `@import` statement, ended by `;` or by the end of the element (round 7:
-a trailing statement had been dropped unread), both raise, the way an unconsumed `<style` opening does, since what an external file adds or
-re-tops is outside every rule the parse returns (a rule the file merely moves still reds the pins that name it); a caller
-that reads a page which links its stylesheets by design passes `linked=True` and takes the style elements alone. Keywords
-and function names are compared case-insensitively, as CSS reads them (`position:FIXED`, `VAR(--app-h)`, `! IMPORTANT`).
+Elements (round 8, 2026-09-20): the element and attribute layer is the standard library's HTML tokenizer, html.parser
+(`_Elements`, `elements(html)`), not regular expressions over the markup. The question was put after the same silent-pass
+shape closed three times here (a linked sheet unread, round 6; `rel="preload stylesheet"` past a start-anchored token read,
+round 7; a `>` inside a quoted attribute value ending a regex's element early, and a `<style media=print>` read as
+unconditional CSS, round 8), and the answer is yes: the tokenizer reads tags, attributes (unquoted values, lower-cased names,
+the first of a duplicate), comments, and script and style CDATA the way HTML does, and getpos() maps to absolute offsets by
+line start, which is all this layer needs; those three closed members are its unit cases. What it does not do, and this module
+still does itself: tokenize CSS and JS (the scanners below), and the HTML5 script-data escaped states (a `<!-- <script>` inside
+a script), which the served pages do not use. The tokenizer's CDATA end-tag and comment rules were tightened in the 3.12 and
+3.13 maintenance releases (a `</script` ends the element only before whitespace, `/` or `>`; a comment closes at `-->` or
+`--!>`); the shapes this module's unit cases pin read the same under 3.10, 3.11, 3.12, 3.13 and 3.14, and the eight served
+pages gave byte-identical spans, scripts and rules under each at round 8. Refuses a script or style element the page never
+closes, and a self-closing `<script/>` or `<style/>` (a start tag to HTML).
+
+Style rules: `rules(html)` parses every live style element (any attributes; a style or script element inside an HTML comment
+is comment text, not an element, round 5, 2026-09-20), strips its comments, and brace-matches it into Rule(index, at, selector,
+declarations, decls): `at` is the tuple of enclosing at-rule preludes (an @media query, a @supports condition), with the
+element's own `media` attribute as the outermost prelude where it conditions anything (`media_prelude`: `@media print`;
+absent, empty, `all` and `screen` add nothing; round 8: a rule under `<style media=print>` had read as unconditional, so a
+census over what applies on the phone's screen passed over a page whose only origin sat in one), `declarations` the block's raw
+text, `decls` its (property, value) pairs split at ; outside parentheses and quotes; a statement at-rule (@charset, @namespace,
+`@layer name;`: an at-prelude ended by ; with no block) is consumed and dropped, never folded into the next rule's prelude
+(round 5). CSS the parser cannot read REFUSES rather than shrinking a census silently (round 6, 2026-09-20): a `<link>` whose
+rel set carries the stylesheet token anywhere (`rel=stylesheet`, `rel="preload stylesheet"`, `alternate stylesheet` too; round
+7, 2026-09-20: a token after another had passed; round 8: the rel read from the tokenizer's attributes, so a `>` inside a quoted
+value before it no longer hides it) in the live markup and an `@import` statement, ended by `;` or by the end of the element
+(round 7: a trailing statement had been dropped unread), both raise, the way an unclosed style element does, since what an
+external file adds or re-tops is outside every rule the parse returns (a rule the file merely moves still reds the pins that
+name it); a caller that reads a page which links its stylesheets by design passes `linked=True` and takes the style elements
+alone. Keywords and function names are compared case-insensitively, as CSS reads them (`position:FIXED`, `VAR(--app-h)`,
+`! IMPORTANT`).
 Custom properties: `closure(rules, "--app-h")` is the fixed point of the names whose declared value names var(--app-h) or
 a name already in the set, so a declaration keyed to the shell height through any depth of indirection is seen
 (`names_any(value, names)`); `bare_var(value)` is the one custom property a value consists of (`var(--app-top,0px)` and
@@ -54,96 +71,186 @@ a string inside a script); `js_code(js)` and `css_code(css)` blank the comments 
 over one of the kernel's served constants (a string spliced into a page), which the same census reads; `element_spans(html)`
 is every live script and style element's content span with its kind, for a reader that needs to know which kind of element
 a text landed in (the census picks a constant's comment scanner by it, round 7, 2026-09-20); `linked_sheets(html)` the
-offsets of the live `<link>` elements whose rel set carries stylesheet, the parse's refusal and the census's pin reading one
-predicate.
+offsets of the live `<link>` elements whose rel set carries stylesheet (`rel_tokens`), the parse's refusal and the census's pin
+reading one predicate; `attr(element, name)` an element's attribute as the tokenizer read it. A script element's `type`
+attribute is read and not judged: a data block (`<script type=application/json>`) is still script text to `scripts()` and
+`element_spans()`, and no served page carries one today (disclosed, not closed).
 
 Loads no romp code, so it needs no state preamble.
 """
+import functools
 import re
 from collections import namedtuple
+from html.parser import HTMLParser
 
 Rule = namedtuple("Rule", "index at selector declarations decls")
+# a live script, style or link element: absolute offsets of the element and of its content (a link has none: content_start,
+# content_end and end coincide at the end of its tag), and its attributes as the tokenizer read them, (name, value) pairs with
+# the name lower-cased and the value unquoted (None for a bare attribute)
+Element = namedtuple("Element", "kind start content_start content_end end attrs")
 
-_STYLE = re.compile(r"<style\b[^>]*>(.*?)</style\s*>", re.S | re.I)
-_SCRIPT = re.compile(r"<script\b[^>]*>(.*?)</script\s*>", re.S | re.I)
-_STYLE_OPEN = re.compile(r"<style(?=[\s>/])", re.I)
-_HTML_COMMENT = re.compile(r"<!--.*?-->", re.S)
 _VAR = re.compile(r"var\(\s*(--[\w-]+)", re.I)
 _IMPORTANT = re.compile(r"!\s*important\s*$", re.I)
 _BARE_VAR = re.compile(r"^var\(\s*(--[\w-]+)\s*(?:,(.*))?\)$", re.S | re.I)
+# a style element's media attribute that conditions nothing: absent, empty, `all`, or `screen` (every page here is a screen)
+_UNCONDITIONAL_MEDIA = {"", "all", "screen"}
 
 
-def _outside(pos, spans):
-    return not any(s <= pos < e for s, e in spans)
+class _Elements(HTMLParser):
+    """The element and attribute layer of a served page, read by the standard library's HTML tokenizer (round 8, 2026-09-20):
+    every live script, style and link element with absolute offsets and its attributes, and every HTML comment's span. A
+    script or style element's content is the tokenizer's CDATA (it ends at the element's own end tag, whatever the content
+    spells, a `<!--` in a script string included), a `<style` or `<link` inside an HTML comment or a script string is comment
+    or script text and no element, and an attribute value is read as HTML reads it, so a `>` inside a quoted value does not
+    end the tag. Positions come from getpos() (line and column) mapped onto the page's line starts; a comment's span ends where
+    the tokenizer began the next construct, so it is what the tokenizer read as the comment whatever closed it. Refuses a
+    script or style element the page never closes, and a self-closing `<script/>` or `<style/>` (a start tag to HTML)."""
+
+    def __init__(self, html):
+        super().__init__(convert_charrefs=False)
+        self.html, self.elements, self.comments, self.open, self.pending = html, [], [], None, None
+        self.starts = [0] + [m.end() for m in re.finditer("\n", html)]
+        self.feed(html)
+        self.close()
+        self._event(len(html))
+        assert self.open is None, "a <%s> element the served page never closes (opened at offset %d)" % (self.open or ("?", -1))[:2]
+
+    def _pos(self):
+        line, col = self.getpos()
+        return self.starts[line - 1] + col
+
+    def _event(self, pos):
+        if self.pending is not None:   # the construct after a comment begins where the comment ended
+            self.comments.append((self.pending, pos))
+            self.pending = None
+
+    def _link(self, pos, attrs):
+        end = pos + len(self.get_starttag_text())
+        self.elements.append(Element("link", pos, end, end, end, tuple(attrs)))
+
+    def handle_starttag(self, tag, attrs):
+        pos = self._pos()
+        self._event(pos)
+        if tag in ("script", "style"):
+            self.open = (tag, pos, pos + len(self.get_starttag_text()), tuple(attrs))
+        elif tag == "link":
+            self._link(pos, attrs)
+
+    def handle_startendtag(self, tag, attrs):
+        pos = self._pos()
+        self._event(pos)
+        assert tag not in ("script", "style"), "a self-closing <%s/> at offset %d is a start tag to HTML; this reader refuses it" % (tag, pos)
+        if tag == "link":
+            self._link(pos, attrs)
+
+    def handle_endtag(self, tag):
+        pos = self._pos()
+        self._event(pos)
+        if tag in ("script", "style"):
+            assert self.open is not None and self.open[0] == tag, "a </%s> at offset %d with no open %s element" % (tag, pos, tag)
+            kind, start, content_start, attrs = self.open
+            self.elements.append(Element(kind, start, content_start, pos, self.html.index(">", pos) + 1, attrs))
+            self.open = None
+
+    def handle_comment(self, data):
+        pos = self._pos()
+        self._event(pos)
+        self.pending = pos
+
+    def handle_data(self, data):
+        self._event(self._pos())
+
+    def handle_entityref(self, name):
+        self._event(self._pos())
+
+    def handle_charref(self, name):
+        self._event(self._pos())
+
+    def handle_decl(self, decl):
+        self._event(self._pos())
+
+    def handle_pi(self, data):
+        self._event(self._pos())
+
+    def unknown_decl(self, data):
+        self._event(self._pos())
 
 
+@functools.lru_cache(maxsize=64)
+def elements(html):
+    """Every live script, style and link element of a page, as Element records in document order (parsed once per page text)."""
+    return tuple(_Elements(html).elements)
+
+
+@functools.lru_cache(maxsize=64)
 def html_comment_spans(html):
-    """Spans of the page's HTML comments: a <!-- that opens outside a script or style element (inside one it is script
-    or style text: a `<!--` in a served script's regular expression is not a comment, and one that opens a comment
-    holding a `</script>` would otherwise swallow the element's end)."""
-    raw = [(m.start(1), m.end(1)) for m in _SCRIPT.finditer(html)] + [(m.start(1), m.end(1)) for m in _STYLE.finditer(html)]
-    spans, i = [], 0
-    while True:
-        i = html.find("<!--", i)
-        if i < 0:
-            return spans
-        if _outside(i, raw):
-            j = html.find("-->", i + 4)
-            j = len(html) if j < 0 else j + 3
-            spans.append((i, j))
-            i = j
-        else:
-            i += 4
+    """Spans of the page's HTML comments: a <!-- the tokenizer read as a comment, which is one outside a script or style
+    element (inside one it is script or style text: a `<!--` in a served script's regular expression is not a comment, and
+    one that opens a comment holding a `</script>` would otherwise swallow the element's end)."""
+    return list(_Elements(html).comments)
 
 
 def markup(html):
-    """The page with its HTML comments blanked (offsets preserved): the text the element locators read, so a <style> or
-    <script> written inside an HTML comment is neither an element nor a tag opening (round 5, 2026-09-20: it had been read as
-    live markup, so a census accepted an origin rule that existed only in commented-out markup)."""
+    """The page with its HTML comments blanked (offsets preserved): the text a reader that wants live markup only reads, so a
+    <style> or <script> written inside an HTML comment is neither an element nor a tag opening (round 5, 2026-09-20: it had been
+    read as live markup, so a census accepted an origin rule that existed only in commented-out markup). The element layer
+    itself no longer needs it: the tokenizer reads a comment as a comment."""
     return _blank(html, html_comment_spans(html))
 
 
-def _script_spans(html):
-    return [(m.start(1), m.end(1)) for m in _SCRIPT.finditer(markup(html))]
+def attr(element, name):
+    """The value of an element's attribute as the tokenizer read it (unquoted; None when absent or bare); HTML keeps the first of
+    a duplicated attribute, so does this."""
+    return next((v for k, v in element.attrs if k == name), None)
 
 
-# a <link> whose rel SET carries the stylesheet token: HTML reads rel as space-separated tokens and applies the keyword wherever
-# it sits (round 7, 2026-09-20: the regex had anchored the token at the start of the value, so `rel="preload stylesheet"`
-# passed in silence while `rel="stylesheet preload"` refused; `alternate stylesheet` refuses too, the safe side)
-# (a token is whitespace-delimited: `my-stylesheet` is one token and not the keyword, so no \b, which treats `-` as a boundary)
-_LINK_SHEET = re.compile(r"""<link\b[^>]*\brel\s*=\s*(?:"(?:[^"]*\s)?stylesheet(?:\s[^"]*)?"|'(?:[^']*\s)?stylesheet(?:\s[^']*)?'|stylesheet(?=[\s/>]))""", re.I)
+def rel_tokens(element):
+    """The tokens of a link element's rel set, lower-cased: HTML reads rel as whitespace-separated tokens and applies the keyword
+    wherever it sits (round 7, 2026-09-20: `rel="preload stylesheet"` had passed a start-anchored reading in silence)."""
+    value = attr(element, "rel")
+    return set((value or "").lower().split())
 
 
 def linked_sheets(html):
     """Offsets of every live `<link>` element whose rel set carries the stylesheet token (outside script elements and HTML
-    comments): the one predicate behind the parse's refusal and a census's pin that a page links no sheet."""
-    live = markup(html)
-    scripts = _script_spans(html)
-    return [m.start() for m in _LINK_SHEET.finditer(live) if _outside(m.start(), scripts)]
+    comments; the element's extent and its attributes are the tokenizer's, so a `>` inside a quoted value before rel does not
+    hide the rel, round 8, 2026-09-20): the one predicate behind the parse's refusal and a census's pin that a page links no
+    sheet."""
+    return [e.start for e in elements(html) if e.kind == "link" and "stylesheet" in rel_tokens(e)]
 
 
 def element_spans(html):
     """[(start, end, kind)] for the content span of every live script and style element, kind 'script' or 'style', in
     document order: a text that lands inside one is script or style text, and one outside every span is markup."""
-    live = markup(html)
-    spans = [(m.start(1), m.end(1), "script") for m in _SCRIPT.finditer(live)] + [(m.start(1), m.end(1), "style") for m in _STYLE.finditer(live)]
-    return sorted(spans)
+    return sorted((e.content_start, e.content_end, e.kind) for e in elements(html) if e.kind in ("script", "style"))
+
+
+def style_elements(html, linked=False):
+    """Every live style element, as Element records; refuses when the live markup links an external stylesheet (a `<link>`
+    whose rel set carries stylesheet, outside script elements: linked_sheets), whose rules no parse of the page's style
+    elements returns (round 6, 2026-09-20: an unconsumed tag refused while the linked sheet passed in silence, which taught a
+    reader that unread CSS is always caught); `linked=True` states that the caller knows the page links its stylesheets and
+    wants the style elements alone. A style element the page never closes refuses in the tokenizer (_Elements)."""
+    links = linked_sheets(html)
+    assert linked or not links, "the served page links %d external stylesheet(s) this parse does not read; pass linked=True to take the style elements alone" % len(links)
+    return [e for e in elements(html) if e.kind == "style"]
 
 
 def style_blocks(html, linked=False):
-    """[(start, css)] for every live style element; refuses when a `<style` tag opening outside a script element or an
-    HTML comment was not consumed, and when the live markup links an external stylesheet (a `<link>` whose rel set carries
-    stylesheet, outside script elements: linked_sheets), whose rules no parse of the page's style elements returns (round 6,
-    2026-09-20: the unconsumed tag refused while the linked sheet passed in silence, which taught a reader that unread CSS is
-    always caught); `linked=True` states that the caller knows the page links its stylesheets and wants the style elements alone."""
-    live = markup(html)
-    blocks = [(m.start(1), m.group(1)) for m in _STYLE.finditer(live)]
-    scripts = _script_spans(html)
-    opens = [m.start() for m in _STYLE_OPEN.finditer(live) if _outside(m.start(), scripts)]
-    assert len(opens) == len(blocks), "the served page opens %d style elements and the parser consumed %d" % (len(opens), len(blocks))
-    links = linked_sheets(html)
-    assert linked or not links, "the served page links %d external stylesheet(s) this parse does not read; pass linked=True to take the style elements alone" % len(links)
-    return blocks
+    """[(start, css)] for every live style element (style_elements), the content's offset and text."""
+    return [(e.content_start, html[e.content_start:e.content_end]) for e in style_elements(html, linked)]
+
+
+def media_prelude(element):
+    """The at-rule prelude a style element's own media attribute puts over every rule it holds (`@media print`), or None where
+    the attribute conditions nothing (absent, empty, `all`, `screen`): round 8 (2026-09-20), a `<style media=print>` had been
+    read as unconditional CSS, so a census over what applies on the phone's screen passed over a page whose only origin sat in
+    one. The query text is kept as written (whitespace collapsed); a folded prelude never equals the shell's mobile query, so
+    a rule under it is not the mobile block's."""
+    value = attr(element, "media")
+    if value is None or value.strip().lower() in _UNCONDITIONAL_MEDIA:
+        return None
+    return "@media " + " ".join(value.split())
 
 
 def css_comment_spans(css):
@@ -222,12 +329,15 @@ def _statement(buf):
 
 
 def rules(html, linked=False):
-    """Every rule of every served style element, comments stripped, as Rule tuples in document order; refuses a linked
-    stylesheet (style_blocks) and an `@import` statement, ended by `;` or by the end of the element (its sheet is outside this
-    parse)."""
+    """Every rule of every served style element, comments stripped, as Rule tuples in document order, a style element's own
+    media attribute folded into its rules' `at` as the outermost prelude (media_prelude); refuses a linked stylesheet
+    (style_elements) and an `@import` statement, ended by `;` or by the end of the element (its sheet is outside this parse)."""
     out = []
-    for _, css in style_blocks(html, linked):
+    for el in style_elements(html, linked):
+        css = html[el.content_start:el.content_end]
         css = _blank(css, css_comment_spans(css))
+        media = media_prelude(el)   # the element's own media attribute conditions every rule it holds (round 8, 2026-09-20)
+        outer = (media,) if media else ()
         stack, buf, i, n = [], "", 0, len(css)
         while i < n:
             ch = css[i]
@@ -246,7 +356,7 @@ def rules(html, linked=False):
                     stack.append(prelude)
                 else:
                     j = css.index("}", i)
-                    out.append(Rule(len(out), tuple(stack), prelude, css[i + 1:j], tuple(declarations(css[i + 1:j]))))
+                    out.append(Rule(len(out), outer + tuple(stack), prelude, css[i + 1:j], tuple(declarations(css[i + 1:j]))))
                     i = j
             elif ch == "}":
                 assert stack, "an unmatched } in a served style element"
@@ -529,12 +639,11 @@ def comment_spans(html):
     """Every span of the page that is comment text: HTML comments (outside script and style elements), style-element
     comments, script-element comments; the elements are the live ones (a style or script inside an HTML comment is
     already in that comment's span)."""
-    spans = html_comment_spans(html)
-    live = markup(html)
-    for m in _STYLE.finditer(live):
-        spans += [(m.start(1) + s, m.start(1) + e) for s, e in css_comment_spans(m.group(1))]
-    for m in _SCRIPT.finditer(live):
-        spans += [(m.start(1) + s, m.start(1) + e) for s, e in js_comment_spans(m.group(1))]
+    spans = list(html_comment_spans(html))
+    for el in elements(html):
+        if el.kind in ("script", "style"):
+            scan = js_comment_spans if el.kind == "script" else css_comment_spans
+            spans += [(el.content_start + s, el.content_start + e) for s, e in scan(html[el.content_start:el.content_end])]
     return sorted(spans)
 
 
@@ -548,9 +657,10 @@ def scripts(html):
     """Every live script element's code, its comments removed, in document order (a script inside an HTML comment is not
     an element)."""
     out = []
-    for m in _SCRIPT.finditer(markup(html)):
-        js = m.group(1)
-        out.append(_blank(js, js_comment_spans(js)))
+    for el in elements(html):
+        if el.kind == "script":
+            js = html[el.content_start:el.content_end]
+            out.append(_blank(js, js_comment_spans(js)))
     return out
 
 
