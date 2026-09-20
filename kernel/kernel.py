@@ -6727,22 +6727,86 @@ def _clear_state_fault(path):
     _state_fault_seen.pop(str(path), None)
 
 
-def _note_read_fault_once(path, text):
+def _note_read_fault_once(path, text, fold=None, fold_head="", name=""):
     """A reader's fault said ONCE per episode in its own words: one stderr line and one bell row under the refused kind
     the first time `text` is seen for `path`, quiet until _clear_state_fault(path) ends the episode (a clean listing or
     read: the event, no timer), when the next fault is a new episode. The registry is _note_state_fault's
     (_state_fault_seen), for a reader whose store is not a state file and whose text is not that helper's ("showing the
     last-known value; changes to it are refused" is false of a listing that shows nothing and refuses nothing): the
     held-mail directory (_note_hold_dir_fault) and the notices store (_note_notice_dir_fault, _note_notice_file_fault;
-    review round 2). `text` names the store and the errno, never a record's text."""
+    review round 2). `text` names the store and the errno, never a record's text.
+
+    THE THREE STATES a reader of a store meets, stated once here for every reader that cites this helper (_held_records
+    and its say-so, the notices readers and their parse; the manager's round 1 on the held-mail readers PR, 2026-09-20).
+    Only the second earns a rename. (1) Bytes that could not be READ: a stat or read fault (EACCES, EIO, a directory
+    that lists but cannot be searched). The reader skips the file, says the fault once per episode, and leaves the file
+    for the next build; it never renames, because the bytes may be a good record and a rename is terminal, and it never
+    reports the record absent, because it did not read it. (2) Bytes that were read and could not be PARSED, or read
+    and refused by shape: not JSON, not UTF-8, not an object, nested past the parser's depth, no message id, an id that
+    is not the file's name or that the bus cannot decide, a type-wrong `at`. A successful read supports the judgement, so
+    the held-mail reader moves such a file aside and the notices reader skips the row; both say so. (3) A record that
+    parsed whose FIELD has an unexpected type (a `body`, `frm`, `to`, `origin` or `toId` that is not text). The field is
+    handled, named by its type alone and never formatted (_hold_text); the file is never moved or refused for it.
+    Declaring a file corrupt is a judgement only a successful read supports: unreadable is not unparseable, and neither
+    is corrupt.
+
+    `fold`, when a _FaultFold is given, is the LISTING's collector (correctness-3): the fact is still registered and
+    written to stderr here, but its bell row is left to the listing, which files one row per cause for the files it had
+    to skip (_fault_fold_bell), so one chmod on a directory of forty files is one row on the forty-row ring and not
+    forty; `fold_head` is that row's head with the count open (the token {n}) and `name` what the row lists for this
+    file. Returns whether the fact was new."""
     if _state_fault_seen.get(str(path)) == text:
-        return
+        return False
     _state_fault_seen[str(path)] = text
     sys.stderr.write("romp-kernel: %s\n" % text)
+    if fold is not None:
+        fold.rows.append((fold_head, name, text))
+        return True
     try:
         _sync_notice(text, ok=False, kind="refused")   # the bell (resolved at call time)
     except Exception:
         pass
+    return True
+
+
+class _FaultFold:
+    """One LISTING's collector for the files it had to skip, so a directory-level fault is said once for the directory
+    and not once per file under it (correctness-3, the manager's round 1 on the held-mail readers PR): the bell ring
+    holds SYNC_RING rows (40) and the feed shows 20, so one chmod on the notices or held-mail directory filed one
+    near-identical row per file under it and evicted every other notice the user had, unrelated refusals included.
+    `skipped` is str(path) of every file this listing skipped, said or not: the episodes the listing must NOT end
+    (_end_notice_file_episodes, _end_hold_unreadable_episodes). `rows` is the facts NEW this listing, as (fold_head,
+    name, text): the per-file bell text to file when the cause is one file's alone, and the folded row's head (its
+    count open as {n}) with this file's name for the list when several files share one cause. The per-file detail stays
+    on stderr either way. The episode key stays the per-file fact (the path and the fault text, or the (path, errno)
+    pair), never the rendered row with its count, so a count that changes re-files nothing: a file joining the fault
+    set is a new fact and is said, a file staying in it is not. The fold lives at the listing seams (_notice_cards,
+    _compact_notices, _held_records) and never inside the per-file helpers, which the writer paths call too
+    (post_notice and expire_notice through _notice_rows_unlocked; _notice_action_run through _notice_rows_or_fault)."""
+    __slots__ = ("skipped", "rows")
+
+    def __init__(self):
+        self.skipped = set()
+        self.rows = []
+
+
+def _fault_fold_bell(fold):
+    """The bell rows a listing's _FaultFold owes, filed at the listing's end: a cause one file has is that file's own
+    row (its per-file text, unchanged); a cause several files share is ONE row, the fold head with the count and as many
+    names as fit SYNC_NOTICE_FIT through _notice_list, the rest counted. Never raises (the bell is best-effort, as every
+    filer of it is)."""
+    groups = {}
+    for fold_head, name, text in fold.rows:
+        groups.setdefault(fold_head, []).append((name, text))
+    for fold_head, items in groups.items():
+        try:
+            if len(items) == 1:
+                _sync_notice(items[0][1], ok=False, kind="refused")
+            else:
+                _sync_notice(_notice_list(fold_head.replace("{n}", str(len(items)), 1), "; ", [n for n, _ in items]),
+                             ok=False, kind="refused")
+        except Exception:
+            pass
 
 
 def _setting_refusal_text(what, exc):
@@ -28105,6 +28169,31 @@ def _watches_save():
 # pinned (_pin_mention), so the card keeps the picture it was posted with and never shows a file the preview would refuse.
 NOTICE_KEY_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 NOTICE_PRODUCER_RE = re.compile(r"^[A-Za-z0-9_.-]{1,32}$")
+# Every character str.splitlines() treats as a line break (LF, CR, VT, FF, FS, GS, RS, NEL, LINE SEPARATOR, PARAGRAPH
+# SEPARATOR) plus the rest of the C0 and C1 controls and NUL: postal_service._HDR_BREAK_RE, the class the bus's header
+# writer replaces so a value can forge no header line, duplicated here for the readers' say-so (extra8-2, the manager's
+# round 1 on the held-mail readers PR: a file name or session id from a directory listing is interpolated into a
+# `romp-kernel:` line and a bell row, and one carrying a newline forged a second line and split the row).
+_HDR_BREAK_RE = re.compile(r"[\x00-\x1f\x7f-\x9f\u2028\u2029]")
+
+
+def _notice_sid_text(sid):
+    """A session id as a log line or bell row names it: as it is when it clears _safe_id (a session id is a uuid, and the
+    names a notices listing supplies are file stems this kernel wrote), else with every line boundary replaced by U+FFFD
+    and cut to a uuid's width, so a hand-made file name under notices/ forges no second `romp-kernel:` line and no bell
+    row of its length: log and bell injection through a file name, the notices half (extra8-2, the manager's round 1 on
+    the held-mail readers PR; the hold half is _hold_name_text)."""
+    sid = str(sid)
+    return sid if _safe_id(sid) else _HDR_BREAK_RE.sub("\ufffd", sid)[:64]
+
+
+def _notice_fault_text(sid, why):
+    """The prose a WRITER or a gesture answers with when one session's notice file could not be read (regression-2,
+    fresh-1): the file and the errno, never a row. The say-so on stderr and the bell (_note_notice_file_fault) carries
+    the same fact with its consequence for the board."""
+    return "notices/%s.jsonl could not be read (%s)" % (_notice_sid_text(sid), why)
+
+
 NOTICE_TITLE_MAX = 200
 NOTICE_BODY_MAX = 64 * 1024
 NOTICE_ACTIONS_MAX = 4
@@ -28153,10 +28242,15 @@ def _notice_row_bad_field(o):
     a value int() refuses. A falsy value reads as 0 wherever the integer fields are read (`int(r.get("rev") or 0)`), so only
     a truthy one can fail. OverflowError is int()'s answer to a float infinity (json parses 1e400 and Infinity to one, the
     _gt_int lesson) and is neither a TypeError nor a ValueError, so it is named with them (review round 1: such a row still
-    raised out of every feed build)."""
+    raised out of every feed build). `op` when it is not text (kernel-4, the manager's round 1 on the PR): a number or
+    a list passed the parse's truthy gate, so the row was ADMITTED and then read as no op any reader knows, a silent
+    third outcome beside skipped and taken; it skips and is named by its type now."""
     k = o.get("key")
     if k and not isinstance(k, str):
         return "key", type(k).__name__
+    op = o.get("op")
+    if op and not isinstance(op, str):
+        return "op", type(op).__name__
     for k in _NOTICE_ROW_FIELDS_INT:
         v = o.get(k)
         if not v:
@@ -28174,7 +28268,12 @@ _UTF8_BOM = b"\xef\xbb\xbf"                # an editor's "save with BOM": json.l
 
 def _notice_parse_rows(sid, raw, skipped=None):
     """The rows of one session's notice file from its BYTES (or its text), for both readers (_notice_rows,
-    _notice_rows_unlocked). A line that is not JSON, not an object, or has no op or key is skipped, as it always was. A
+    _notice_rows_unlocked). A line that is not JSON at all (the truncated-append shape a killed writer leaves, trailing
+    garbage), a JSON value that is not an object, a row with no op or no key, and a row whose op is not text are
+    skipped and SAID, each as a coarse fact naming the session and the shape and never the line's text (kernel-4 and
+    extra6-3, the manager's round 1 on the PR: they were skipped in silence on both surfaces, and the sweep then archived
+    the line and rewrote the live file without it, data leaving the system with no signal anywhere; before that PR they
+    were skipped silently too). A
     row whose rev, t or expiresAt is not an integer is skipped too (2026-09-19), as is one whose key is not text (review
     round 1) and a line that is not UTF-8 (review round 2: the file was decoded whole, so one Latin-1 byte in one row, or
     a file saved as UTF-16, raised UnicodeDecodeError, a ValueError the readers' `except OSError` never caught, out of
@@ -28193,10 +28292,19 @@ def _notice_parse_rows(sid, raw, skipped=None):
     The episode is keyed on the fact said, (key, field, type): a parse of the file that meets no bad row ends it (the
     sweep archived the row as a `skipped` row, or the file was rewritten), so the next one is said again; a parse that
     meets the same row again is quiet, and the memo (_notice_rows) means a parse runs only when the file's stat moved.
+    The facts new to the episode are, together, ONE bell row under the refused kind for the file (extra5-1 and kernel-3,
+    the manager's round 1 on the PR: the row-level fault was the one reader fault with no user surface, the card never
+    appearing and the board looking complete, while the file, directory and held-record faults all ring; the row names
+    the session, the count of lines left out and as many keys as fit through _notice_list, never a title, a body or a
+    value's text). Never one row per fact: sixty distinct facts from one file filled the forty-row ring and evicted
+    every other notice. The gate is the fact set (_NOTICE_BAD_ROW_SAID), not the rendered row, so a changed count
+    re-files nothing. The session is named through _notice_sid_text (extra8-2).
     `skipped`, when a list is given, receives the text of every line left out, in file order (a line that is not UTF-8
     with its bytes as backslash escapes, so nothing of it is lost): the sweep (_compact_notices) archives them when it
-    rewrites the live file from the parsed rows, a rewrite that deleted them (review round 1)."""
-    rows, bad = [], set()
+    rewrites the live file from the parsed rows, a rewrite that deleted them (review round 1); every line it receives is
+    a fact in `bad` first, so nothing leaves the live file unsaid."""
+    rows, bad, left = [], set(), 0
+    shown = _notice_sid_text(sid)
     if isinstance(raw, bytes):
         lines = []                                 # main's boundary set in two steps (the closing pass): the bytes split on CR, LF
         for chunk in (raw[len(_UTF8_BOM):] if raw.startswith(_UTF8_BOM) else raw).splitlines():   # and CRLF (bytes.splitlines), and
@@ -28209,6 +28317,7 @@ def _notice_parse_rows(sid, raw, skipped=None):
     for line in lines:
         if isinstance(line, bytes):                # not UTF-8: skipped and said, its bytes escaped for the sweep's archive
             bad.add(("", "line", "bytes"))
+            left += 1
             if skipped is not None:
                 skipped.append(line.decode("utf-8", "backslashreplace"))
             continue
@@ -28216,28 +28325,57 @@ def _notice_parse_rows(sid, raw, skipped=None):
             continue
         try:
             o = json.loads(line)
-        except Exception:
-            o = None
-        if isinstance(o, dict) and o.get("op") and o.get("key"):
-            b = _notice_row_bad_field(o)
-            if b is None:
-                rows.append(o)
-                continue
-            k = o.get("key")                       # named only when it is a valid key: a key that is not text, or not one by the grammar, is not
-            bad.add((k if b[0] != "key" and NOTICE_KEY_RE.fullmatch(k) else "", b[0], b[1]))   # named, not even cast (fullmatch: `$` alone lets a trailing newline through)
+        except Exception:                          # every shape the parse leaves out is a fact (kernel-4, extra6-3): the
+            bad.add(("", "line", "json"))          # torn tail or trailing garbage a killed writer leaves,
+        else:
+            if not isinstance(o, dict):
+                bad.add(("", "line", "null" if o is None else type(o).__name__))   # a JSON scalar or list,
+            elif not o.get("op"):
+                bad.add(("", "op", "absent"))      # a row with no op,
+            elif not o.get("key"):
+                bad.add(("", "key", "absent"))     # or no key,
+            else:
+                b = _notice_row_bad_field(o)       # or a field of the wrong type (op included)
+                if b is None:
+                    rows.append(o)
+                    continue
+                k = o.get("key")                   # named only when it is a valid key: a key that is not text, or not one by the grammar, is not
+                bad.add((k if b[0] != "key" and NOTICE_KEY_RE.fullmatch(k) else "", b[0], b[1]))   # named, not even cast (fullmatch: `$` alone lets a trailing newline through)
+        left += 1
         if skipped is not None:
             skipped.append(line)
     said = _NOTICE_BAD_ROW_SAID.get(sid) or set()
-    for key, field, tname in sorted(bad - said):
-        if field == "line":
-            what = "a line is not UTF-8 text"
+    fresh = sorted(bad - said)
+    for key, field, tname in fresh:
+        who = "for key %s" % key if key else "whose key is not a valid key"
+        if field == "line":                        # the loop dispatches on the field, so each shape has its own branch: a torn
+            if tname == "bytes":                   # JSON line under the bytes branch would read as `not UTF-8 text` (kernel-4)
+                what = "a line is not UTF-8 text"
+            elif tname == "json":
+                what = "a line is not JSON (a torn line, or trailing garbage) and is not a notice row"
+            else:
+                what = "a line is a JSON %s, not a notice row" % tname
         elif field == "key":
-            what = "a row carries a key of type %s where text is needed" % tname
+            what = "a row has no key" if tname == "absent" else "a row carries a key of type %s where text is needed" % tname
+        elif field == "op":
+            what = "a row has no op" if tname == "absent" else "a row %s carries a %s where op needs text" % (who, tname)
         else:
-            what = "a row %s carries a %s where %s needs an integer" % ("for key %s" % key if key else "whose key is not a valid key",
-                                                                     tname, field)
+            what = "a row %s carries a %s where %s needs an integer" % (who, tname, field)
         sys.stderr.write("romp-kernel: notices/%s.jsonl: %s; the row is skipped and the session's other notices stand\n"
-                         % (sid, what))
+                         % (shown, what))
+    if fresh:
+        # ONE bell row for the file this episode (extra5-1, kernel-3; extra6-2 supplies the evidence: of the PR's four
+        # readers, the notices directory and file faults through _note_read_fault_once and the held records through
+        # _held_records each filed a refused row, and the row-level reader alone was silent; it files too now, and files
+        # once for the file, not once per fact). The keys named are the valid ones of every fact in the episode, so the
+        # row reads whole when a later fact joins it; the count is this parse's.
+        named = sorted({k for k, _, _ in bad if k})
+        head = "notices/%s.jsonl: %d line%s skipped (not notice rows, or a field of the wrong type); the session's other notices stand" % (
+            shown, left, "" if left == 1 else "s")
+        try:
+            _sync_notice(_notice_list(head, "; keys ", named) if named else head, ok=False, kind="refused")
+        except Exception:
+            pass
     if bad:
         _NOTICE_BAD_ROW_SAID[sid] = said | bad
     else:
@@ -28254,21 +28392,53 @@ def _note_notice_dir_fault(d, exc):
                              "the board until it can be read again" % _errno_text(exc))
 
 
-def _note_notice_file_fault(p, sid, why):
+def _note_notice_file_fault(p, sid, why, fold=None):
     """One session's notice file exists but could not be stat'd or read: said once per episode naming the session and
     the errno, never a row; a clean read ends the episode. Before this the readers folded it to [] silently, so a chmod
-    on one file took one session's cards off the board on every build with nothing said (review round 2)."""
-    _note_read_fault_once(p, "notices/%s.jsonl could not be read (%s); the session's notices are off the board until it "
-                             "can be read again" % (sid, why))
+    on one file took one session's cards off the board on every build with nothing said (review round 2). `fold`, from
+    a listing (_notice_cards, _compact_notices), collects the file among the ones the listing skipped and leaves the bell
+    row to the listing, one per cause (correctness-3); a reader outside a listing (the action door, a writer) files its
+    own row here. The session is named through _notice_sid_text (extra8-2)."""
+    if fold is not None:
+        fold.skipped.add(str(p))
+    shown = _notice_sid_text(sid)
+    _note_read_fault_once(p, "%s; the session's notices are off the board until it can be read again" % _notice_fault_text(sid, why),
+                          fold, "notices: {n} session files could not be read (%s); their sessions' notices are off the board "
+                                "until they can be read again" % why, shown)
 
 
-def _notice_rows(sid):
+def _end_notice_file_episodes(d, unread=frozenset()):
+    """The episode end for the notices store's per-file faults, one rule for the three ways an episode stayed open
+    (correctness-4, kernel-1, kernel-2, the manager's round 1 on the PR): an episode ends on any successful read of its
+    subject, wherever that read happens. Every _state_fault_seen entry whose path lies under the notices directory `d`
+    and that this listing did not have to skip (the file read, or is gone, the directory with it when the listing found
+    none) is forgotten, so a fault that returns on it is said again; the directory's own entry is _clear_state_fault's,
+    and another store's entries (the state files' and the held-mail directory's, which share the registry) are not this
+    listing's to end. Called from every listing of the directory, _notice_cards and _compact_notices, on the clean
+    listing and on the FileNotFoundError arm: the hold side's _end_hold_unreadable_episodes, ported with its safety
+    condition. The registry is read through a snapshot (list(...), one step under the GIL), never iterated live:
+    _notice_cards runs on the pusher's thread, on GET /feed.json and on the clearAll handler at once, and a live-dict
+    comprehension on the hold side raised RuntimeError out of the build in review round 2."""
+    root = str(d) + os.sep
+    for k in [k for k in list(_state_fault_seen) if k.startswith(root) and k not in unread]:
+        _state_fault_seen.pop(k, None)
+
+
+def _notice_rows_or_fault(sid, fold=None):
     """Every row of STATE/notices/<sid>.jsonl in file order (a bad line, a row with a non-integer rev, t or expiresAt or
-    a key that is not text, and a line that is not UTF-8 are skipped: _notice_parse_rows), memoized on the file's stat
-    taken BEFORE the read (the chain-memo rule, as _cleared_ids); an absent file is [] and never cached. A file that is
-    present but cannot be stat'd or read (EACCES, EIO; a directory that lists but cannot be searched) is [] too, UNPROVED
-    and uncached, and said once per episode on stderr and the bell (_note_notice_file_fault; review round 2: both faults
-    folded to [] silently, the F3 shape on the notices side). The memo is bounded in bytes (NOTICE_MEMO_BYTES): over it
+    a key that is not text, and a line that is not UTF-8 are skipped: _notice_parse_rows), as (rows, why): memoized on
+    the file's stat taken BEFORE the read (the chain-memo rule, as _cleared_ids); an absent file is ([], "") and never
+    cached. A file that is present but cannot be stat'd or read (EACCES, EIO; a directory that lists but cannot be
+    searched) is ([], the errno text), UNPROVED and uncached, and said once per episode on stderr and the bell
+    (_note_notice_file_fault; review round 2: both faults folded to [] silently, the F3 shape on the notices side). The
+    second element is the unproved-versus-absent split the held-mail reader has (fresh-1, the manager's round 1 on the
+    PR): the action door's only test of a card's existence was the fold to [], so a click on a card whose file could not
+    be read was answered `that notice is gone`, reported-absent in the gesture layer; the door reads this pair now and
+    answers the fault in its own words. The (value, error) pair is the shape post_notice already takes from
+    _notice_archive_rev_unlocked, copied rather than a new one. A served memo entry is a proved clean read of exactly
+    those bytes, so the memo hit ends the file's episode too (kernel-1: a fault healed without moving the stat key never
+    ended, and its return was silent for as long as the memo stayed warm; _session_flags and _notify_cards clear on their
+    hits). `fold` is a listing's _FaultFold (correctness-3). The memo is bounded in bytes (NOTICE_MEMO_BYTES): over it
     the largest entries go first, and only the deficit is shed. Callers never mutate the rows."""
     sid = str(sid)
     p = _notice_path(sid)
@@ -28278,26 +28448,29 @@ def _notice_rows(sid):
         with _notice_lock:
             _NOTICE_MEMO.pop(sid, None)
         _clear_state_fault(p)
-        return []
+        return [], ""
     except OSError as e:                             # present, the stat refused: said once, nothing cached
-        _note_notice_file_fault(p, sid, "stat failed: %s" % _errno_text(e))
-        return []
+        why = "stat failed: %s" % _errno_text(e)
+        _note_notice_file_fault(p, sid, why, fold)
+        return [], why
     with _notice_lock:
         ent = _NOTICE_MEMO.get(sid)
         if ent is not None and ent[0] == st:
             _NOTICE_MEMO_STATS["hit"] += 1
             ent[3] = time.time()
-            return ent[1]
+            _clear_state_fault(p)                    # a proved clean read of these bytes ends the episode (kernel-1)
+            return ent[1], ""
     try:
         raw = p.read_bytes()
     except FileNotFoundError:                        # removed between the stat and the read
         with _notice_lock:
             _NOTICE_MEMO.pop(sid, None)
         _clear_state_fault(p)
-        return []
+        return [], ""
     except OSError as e:
-        _note_notice_file_fault(p, sid, _errno_text(e))
-        return []
+        why = _errno_text(e)
+        _note_notice_file_fault(p, sid, why, fold)
+        return [], why
     _clear_state_fault(p)
     rows = _notice_parse_rows(sid, raw)
     size = len(raw)
@@ -28305,7 +28478,14 @@ def _notice_rows(sid):
         _NOTICE_MEMO_STATS["miss"] += 1
         _NOTICE_MEMO[sid] = [st, rows, size, time.time()]
         _notice_memo_shed_unlocked()                           # the deficit, largest first, this entry included, the revision indexes counted too
-    return rows
+    return rows, ""
+
+
+def _notice_rows(sid, fold=None):
+    """_notice_rows_or_fault's rows alone, for the DISPLAY reader (_notice_projection): a fault is said there and the
+    board is kept with the session's cards off it; a reader that must tell a fault from an absence (the action door)
+    takes the pair."""
+    return _notice_rows_or_fault(sid, fold)[0]
 
 
 def _notice_memo_report():
@@ -28425,7 +28605,10 @@ def post_notice(sid, key, title, body="", *, producer, attachment=None, needs_yo
     except (TypeError, ValueError):
         return None, "t must be epoch seconds"
     with _notice_lock:
-        prior = [r for r in _notice_rows_unlocked(sid) if r.get("op") == "post" and r.get("key") == key]
+        prior, rerr = _notice_rows_unlocked(sid)   # a file the kernel cannot read refuses the post (regression-2): a revision
+        if rerr:                                   # minted over an empty read stood on an older one the producer thought replaced
+            return None, rerr + ", so no revision was assigned"
+        prior = [r for r in prior if r.get("op") == "post" and r.get("key") == key]
         arch_rev, aerr = _notice_archive_rev_unlocked(sid, key)   # the archived revisions count too (round six, medium)
         if aerr:
             return None, aerr
@@ -28447,7 +28630,10 @@ def expire_notice(sid, key, now=None):
     now = int(now if now is not None else time.time())
     sid, key = str(sid or "").strip(), str(key or "").strip()
     with _notice_lock:
-        posts = [r for r in _notice_rows_unlocked(sid) if r.get("op") == "post" and r.get("key") == key]
+        posts, rerr = _notice_rows_unlocked(sid)   # a file the kernel cannot read is a fault, never `no notice with key`
+        if rerr:                                   # (regression-2: the absence was reported over a notice that WAS present)
+            return None, rerr + ", so nothing was retired"
+        posts = [r for r in posts if r.get("op") == "post" and r.get("key") == key]
         if not posts:
             return None, "no notice with key %r on that session" % key
         rev = max(int(r.get("rev") or 0) for r in posts)
@@ -28460,20 +28646,28 @@ def expire_notice(sid, key, now=None):
     return dict(row), None
 
 
-def _notice_rows_unlocked(sid, skipped=None):
-    """The rows for a WRITER holding _notice_lock: a fresh read of the file (the memo is keyed on the stat the next reader takes),
-    through the same parse as the reader's (_notice_parse_rows), so a type-wrong row skips here too and a post's revision
-    count never raises over it. `skipped` is the parse's: the lines left out, for the sweep to archive."""
+def _notice_rows_unlocked(sid, skipped=None, fold=None):
+    """The rows for a WRITER holding _notice_lock, as (rows, error): a fresh read of the file (the memo is keyed on the
+    stat the next reader takes), through the same parse as the reader's (_notice_parse_rows), so a type-wrong row skips
+    here too and a post's revision count never raises over it. An absent file is ([], ""): nothing posted yet, and the
+    first post makes the file, so no fault. A file that is present and cannot be read is said once per episode
+    (_note_notice_file_fault, review round 2) AND answered as ([], the store's prose), which every caller refuses on
+    (regression-2, the manager's round 1 on the PR: the fold to [] stood, so expire_notice reported a false absence over a
+    notice that was present and post_notice minted a revision blind over the revisions it could not read; the sweep
+    continues to the next session with the rows left live). The shape is the (value, error) pair the callers already
+    take from _notice_archive_rev_unlocked. `skipped` is the parse's: the lines left out, for the sweep to archive;
+    `fold` the sweep's _FaultFold (correctness-3)."""
     p = _notice_path(sid)
     try:
         raw = p.read_bytes()
     except FileNotFoundError:
-        return []
-    except OSError as e:                             # said once per episode (review round 2); the fold to [] itself stands (a follow-up)
-        _note_notice_file_fault(p, str(sid), _errno_text(e))
-        return []
+        return [], ""
+    except OSError as e:
+        why = _errno_text(e)
+        _note_notice_file_fault(p, str(sid), why, fold)
+        return [], _notice_fault_text(sid, why)
     _clear_state_fault(p)
-    return _notice_parse_rows(str(sid), raw, skipped)
+    return _notice_parse_rows(str(sid), raw, skipped), ""
 
 
 def _notice_append(sid, row):
@@ -28488,13 +28682,13 @@ def _notice_append(sid, row):
         return "the notice could not be saved (%s)" % e
 
 
-def _notice_projection(sid, now, cleared=()):
+def _notice_projection(sid, now, cleared=(), fold=None):
     """The newest revision per key that still stands: not retired by an expire row, not past its expiresAt, not in the cleared
     ledger, in post order, and at most NOTICE_LIVE_KEYS_MAX of them (the newest by post time). The ledger is applied BEFORE
     the cap (round three, low a): a dismissed row held a cap slot until the sweep and hid the oldest undismissed card. A key
     past the cap is superseded into the archive by the sweep with no further signal (the reference and the help line say so)."""
     newest, retired, acted = {}, set(), set()
-    for r in _notice_rows(sid):
+    for r in _notice_rows(sid, fold):
         k = r.get("key")
         if r.get("op") == "post":
             cur = newest.get(k)
@@ -28532,20 +28726,25 @@ def _notice_item_id(sid, key, rev):
 def _notice_cards(now, cleared):
     """The notice cards for build_feed: every session with a notice file, its standing newest revision per key, minus the
     cleared item ids, as AskItem-shaped cards under notice:<sid>:<key>:<rev>. Every field but the fold's age colour is a
-    function of the row alone, so the per-client dedup holds across unchanged builds. Best-effort []."""
+    function of the row alone, so the per-client dedup holds across unchanged builds. Best-effort []. The listing keeps a
+    _FaultFold (correctness-3): the files it had to skip are said once per cause on the bell at its end, and their
+    episodes are the ones it does not end (_end_notice_file_episodes, correctness-4: an absent store ends every episode
+    under it, so the same fault in a recreated store is said again)."""
     out = []
     d = _notice_dir()
     try:
         sids = sorted(n[:-6] for n in os.listdir(d) if n.endswith(".jsonl"))
     except FileNotFoundError:                        # no notice was ever posted: nothing to show and no fault
         _clear_state_fault(d)
+        _end_notice_file_episodes(d)                 # the store is gone, every file in it with it (correctness-4)
         return out
     except OSError as e:                             # present but unlistable: said once per episode, the board kept (review round 2)
         _note_notice_dir_fault(d, e)
         return out
     _clear_state_fault(d)
+    fold = _FaultFold()
     for sid in sids:
-        for r in _notice_projection(sid, now, cleared):
+        for r in _notice_projection(sid, now, cleared, fold):
             item_id = _notice_item_id(sid, r.get("key"), r.get("rev") or 0)
             t = int(r.get("t") or 0)
             out.append({
@@ -28561,6 +28760,8 @@ def _notice_cards(now, cleared):
                            "dismissOnAction": bool(r.get("dismissOnAction")), "acted": bool(r.get("acted"))},
                 "column": "needs_input" if r.get("needsYou") else "completed",
                 "tree": []})
+    _fault_fold_bell(fold)
+    _end_notice_file_episodes(d, fold.skipped)
     out.sort(key=lambda c: (c["t"], c["itemId"]))
     return out
 
@@ -28591,8 +28792,18 @@ def _notice_action(item_id, route, body):
 
 
 def _notice_action_run(m, item_id, route, body):
+    """The action's run, once _notice_action admitted the click. Both reads of the store take the unproved-versus-absent
+    split (_notice_rows_or_fault; fresh-1, the manager's round 1 on the PR): a card still on the board whose session file
+    cannot be read just now is answered with the fault and told to try again, never `that notice is gone`, which stays
+    the answer for a row that is genuinely absent; and the acted-mark check, the second read, refuses on a fault too,
+    since an unreadable store there would let a dismissOnAction card's action run a second time, the very double
+    delivery the mark exists to prevent. The answer rides the door's existing frame (noticeActionDone, its `error`), so
+    the pane learns nothing new."""
     sid, key, rev = m.group(1), m.group(2), int(m.group(3))
-    row = next((r for r in _notice_rows(sid) if r.get("op") == "post" and r.get("key") == key and int(r.get("rev") or 0) == rev), None)
+    rows, fault = _notice_rows_or_fault(sid)
+    if fault:
+        return False, "that card's notices could not be read just now (%s); nothing was done, try again" % fault
+    row = next((r for r in rows if r.get("op") == "post" and r.get("key") == key and int(r.get("rev") or 0) == rev), None)
     if row is None:
         return False, "that notice is gone"
     act = next((a for a in (row.get("actions") or []) if a.get("route") == route and a.get("body") == body), None)
@@ -28602,7 +28813,10 @@ def _notice_action_run(m, item_id, route, body):
         # the one-shot mark is the store's own acted row (round five): the cleared ledger's Undo restores the card, and a
         # refusal keyed on the ledger let the restored card deliver the words a second time. A card that does not dismiss
         # on its action is meant to run again.
-        if any(a.get("op") == "acted" and a.get("key") == key and int(a.get("rev") or 0) == rev for a in _notice_rows(sid)):
+        rows, fault = _notice_rows_or_fault(sid)     # the second read: a fault here is a refusal, never a run (fresh-1)
+        if fault:
+            return False, "that card's notices could not be read just now (%s); nothing was done, try again" % fault
+        if any(a.get("op") == "acted" and a.get("key") == key and int(a.get("rev") or 0) == rev for a in rows):
             return False, "that card's action ran already"
         if item_id in _cleared_ids():
             return False, "that card was dismissed"
@@ -28634,29 +28848,41 @@ def _compact_notices(now=None):
     archivable rows and a moved modification time, never on bytes (the _USAGE_PRUNE_BYTES lesson). The cleared ledger is
     read per session under the lock (memoized on its stat, so one stat a session): read once before the loop, a pass
     running beside an Undo archived the restored row back out, and no later Undo could reach it (round six, low).
-    Returns the count moved."""
+    Returns the count moved. A session file the sweep cannot read is left as it is, rows live and nothing archived
+    (regression-2: the fold to [] rewrote nothing but read as nothing to keep), and its fault episode kept open; the
+    pass is a listing of the directory like _notice_cards, so it ends the directory's own episode on a clean listing
+    and on an absent store (kernel-2: with task tracking off the sweep is the only reader, and a fault that returned
+    after a heal was silent for the life of the process), ends the per-file episodes of the files it did not have to
+    skip (_end_notice_file_episodes), and folds the rows it owes the bell (_FaultFold, correctness-3)."""
     now = int(now if now is not None else time.time())
     moved = 0
     try:
         names = [n[:-6] for n in os.listdir(_notice_dir()) if n.endswith(".jsonl")]
     except FileNotFoundError:
+        _clear_state_fault(_notice_dir())            # the store is gone: its episode and every file's end with it (kernel-2, correctness-4)
+        _end_notice_file_episodes(_notice_dir())
         return 0
     except OSError as e:                             # the display reader's text, so the two say one episode once (review round 2)
         _note_notice_dir_fault(_notice_dir(), e)
         return 0
+    _clear_state_fault(_notice_dir())                # a clean listing ends the directory's episode here too (kernel-2)
+    fold = _FaultFold()
     ledger = jd.STATE / "cleared.jsonl"
     for sid in names:
         p = _notice_path(sid)
         st = _stat_key(p)
-        if st is None:
-            continue
-        with _notice_lock:
+        if st is None:                               # gone between the listing and the stat, or a stat the sweep cannot take (the
+            fold.skipped.add(str(p))                 # display reader says that one on the same build, a recorded low): either way
+            continue                                 # not a read, so not this pass's episode to end; a vanished file's ends at the
+        with _notice_lock:                           # next listing, which does not name it
             ledger_st = _stat_key(ledger)          # per session and under the lock, the stat before the read (the chain-memo rule): a
             cleared = _cleared_ids()               # snapshot from before the loop archived back out a row an Undo restored meanwhile
             if _NOTICE_SWEPT.get(sid) == (st, ledger_st):   # unmoved file AND ledger: a dismissal moves the ledger alone (round five)
                 continue
             skipped = []                           # the lines the parse left out: archived below with the rows when the file is rewritten
-            rows = _notice_rows_unlocked(sid, skipped)
+            rows, rerr = _notice_rows_unlocked(sid, skipped, fold)
+            if rerr:
+                continue                           # the rows stay live and nothing is archived (regression-2); the fault is said
             newest = {}
             for r in rows:
                 if r.get("op") == "post":
@@ -28720,6 +28946,8 @@ def _compact_notices(now=None):
                 if werr:
                     sys.stderr.write("notice: %s's revision index describes an older archive (%s); the next post rebuilds it\n" % (sid[:8], werr))
             _NOTICE_SWEPT[sid] = (_stat_key(p), ledger_st)
+    _fault_fold_bell(fold)
+    _end_notice_file_episodes(_notice_dir(), fold.skipped)
     return moved
 
 
@@ -44520,7 +44748,7 @@ def _gesture_store_refusal(client, gesture, skipped):
             sys.stderr.write("gesture refusal (%s %s): %s\n" % (gesture, sid[:8], traceback.format_exc()))
 
 
-def _clear_all(item_ids):
+def _clear_all(item_ids, written=None):
     """Clear every given card in ONE batch (shared float timestamp = the batch key) so a single
     UndoClear restores the whole batch. Append-only + single-writer (the kernel) → crash-safe; an
     undo just appends 'undo' rows. Used by the feed's Clear-all and by single-card clears. A delegation's
@@ -44530,12 +44758,18 @@ def _clear_all(item_ids):
     Approve, Edit or Deny, never dismissed, and its card takes no ledger (_quarantine_cards), so a row for it was inert on
     the board yet lit canUndoClear and formed an Undo batch that restored nothing (after a hold-only Clear-all the first
     Undo did nothing and the second brought back an earlier clear), and its pseudo-sid read a goal store that is no
-    session's. The rule sits at the one write every door reaches, so no door needs a list of what not to clear."""
+    session's. The rule sits at the one write every door reaches, so no door needs a list of what not to clear.
+    `written`, when a list is given, receives every id the write took (the ids not declined, and the linked peers
+    appended with them), so a door can act on what was cleared rather than on what it asked: the clearAll handler's chip
+    drop and its answer to the pane (extra7-1, the manager's round 1 on the held-mail readers PR). The return stays the
+    {sid: fault} map every door hands _gesture_store_refusal."""
     item_ids = [i for i in item_ids if i and not str(i).startswith("quarantine:")]
     if not item_ids:
         return {}
     seen = set(item_ids)
     item_ids = item_ids + [i for i in _delegation_linked_ids(item_ids) if i not in seen]   # + the delegation's peer copy
+    if written is not None:
+        written.extend(item_ids)
     p = jd.STATE / "cleared.jsonl"
     p.parent.mkdir(parents=True, exist_ok=True)
     t = time.time()
@@ -50229,26 +50463,66 @@ def _parked_handoffs(now, alive_sids):
     return out
 
 
-_HOLD_UNREADABLE_SAID = set()    # (path, errno) of a held file that could not be read AND could not be moved aside: said once per
-#                                  episode, which _held_records ends when a listing no longer has to skip the file (review round 1)
+_HOLD_UNREADABLE_SAID = set()    # (path, errno) of a held file the listing had to skip and leave in place (one it could not
+#                                  read, or read and could not move aside): said once per episode, which _held_records ends
+#                                  when a listing no longer has to skip the file (review round 1)
+_HOLD_NAME_FIT = 80              # the widest a hold's file name renders on the bell before _hold_bell_text shortens it: a relayed
+#                                  message's real mid runs 61 characters plus `.json`, under it, so a real hold is named whole
 
 
-def _hold_bell_text(head, mid, tail, reason):
+class _HoldUndecidable(ValueError):
+    """A held record that parsed cleanly and that the bus will refuse to decide (correctness-1, the manager's round 1 on
+    the held-mail readers PR): its message id fails _safe_id, the bus's own gate on the id a decision names
+    (quarantine_get, quarantine_decide), so a card built for it would answer every Approve and Deny with a refusal, and
+    since a hold is never dismissed it would stand forever. Refused by shape like the no-mid case and moved aside; a
+    ValueError so the parse arm takes it, its own class so the head can say `could not be taken` of a record that parsed
+    rather than `could not be parsed`."""
+
+
+def _hold_name_text(name):
+    """A listed file's name as a log line or bell row names it. The bus writes a hold as <mid>.json with a mid that clears
+    _safe_id, so a listed name whose stem does is rendered as it is; any other is not the bus's, and is rendered with
+    every line boundary replaced by U+FFFD (the bus's own _hdr_val idiom over the same class, _HDR_BREAK_RE: LF, CR, VT,
+    FF, FS, GS, RS, NEL, LINE SEPARATOR, PARAGRAPH SEPARATOR and the rest of the C0 and C1 controls), so a crafted name
+    forges no second `romp-kernel:` line and splits no bell row: LOG AND BELL INJECTION through a file name (extra8-2,
+    the manager's round 1 on the held-mail readers PR; a malformed or hostile name could manufacture a user-visible
+    notice line). A fixed phrase would not do here, as it does for a notices key: the file name IS the key the user
+    needs to act on the record. The width is _hold_bell_text's, which shortens a long name inside the fit; the stderr
+    line carries the rendered name whole."""
+    name = str(name)
+    stem = name[:-5] if name.endswith(".json") else name
+    return name if _safe_id(stem) else _HDR_BREAK_RE.sub("\ufffd", name)
+
+
+def _hold_bell_text(head, mid, tail, reason, name=""):
     """`head; mid, tail (reason)` fitted to SYNC_NOTICE_FIT for the bell, the way _notice_list fits a list: the point (head
     and mid: which file, what became of it) is never cut, the tail goes when the three do not fit, and the reason takes
     what is left, cut with an ellipsis and dropped under a dozen characters. The stderr line carries the whole text. A
     relayed message's mid runs over sixty characters and the row named the file twice (once in the aside's name), so for
-    every real hold the bell cut the row inside the aside name (review round 1)."""
+    every real hold the bell cut the row inside the aside name (review round 1). `name`, when given, is the file name the
+    head carries: a name longer than _HOLD_NAME_FIT gives first, shortened with an ellipsis, before the tail and the
+    reason go (extra8-2: the widest name the bus itself writes, 128 characters plus `.json`, already overran the fit with
+    the reason and the tail whole, and a name of any length made a row of any length; a fit helper that can overflow is
+    the trap, so the width lives here and not at the callers). The last line is the belt: whatever the head, the row
+    never exceeds SYNC_NOTICE_FIT."""
     base = "%s; %s" % (head, mid)
     full = "%s, %s (%s)" % (base, tail, reason)
     if len(full) <= SYNC_NOTICE_FIT:
         return full
+    if name and len(name) > _HOLD_NAME_FIT and name in head:
+        head = head.replace(name, name[:_HOLD_NAME_FIT - 1] + "\u2026", 1)
+        base = "%s; %s" % (head, mid)
+        full = "%s, %s (%s)" % (base, tail, reason)
+        if len(full) <= SYNC_NOTICE_FIT:
+            return full
     if len(base) + len(tail) + 2 <= SYNC_NOTICE_FIT:
         base = "%s, %s" % (base, tail)
     room = SYNC_NOTICE_FIT - len(base) - 3           # " (" and ")"
     if len(reason) <= room:
         return "%s (%s)" % (base, reason)
-    return "%s (%s\u2026)" % (base, reason[:room - 1]) if room >= 12 else base
+    if room >= 12:
+        return "%s (%s\u2026)" % (base, reason[:room - 1])
+    return base if len(base) <= SYNC_NOTICE_FIT else base[:SYNC_NOTICE_FIT - 1] + "\u2026"
 
 
 def _hold_text(v, default=""):
@@ -50256,8 +50530,11 @@ def _hold_text(v, default=""):
     spelled out, and a container (a list, an object) named by its TYPE alone, never formatted. str() of a container is its
     repr, and a record's value can be nested past what the repr survives: the free-threaded Python 3.14 parses a
     100000-deep document its predecessors refused with RecursionError, and str() of that document as a hold's `body`
-    overflowed the stack out of every feed build (2026-09-19). The reader moves a record whose `body` is not text aside
-    before a card is built (_held_records); this is the belt for the fields the card coerces rather than refuses."""
+    overflowed the stack out of every feed build (2026-09-19). A record that parsed is never moved aside for a field's
+    type (state three of the three at _note_read_fault_once; extra8-1, the manager's round 1 on the held-mail readers
+    PR: the PR's last commit refused a non-text `body` in _held_records and moved the file aside, so a held message the
+    bus's writer had accepted left the board with no card and could be neither approved nor denied). Every field the
+    card shows, the body included, comes through here, so a container is named and never formatted on any Python."""
     if not v:
         return default
     if isinstance(v, (str, int, float)):
@@ -50277,23 +50554,39 @@ def _corrupt_aside_name(f):
     return aside
 
 
-def _say_hold_unreadable_once(f, exc):
-    """One stderr line and one bell row (the refused kind, as the reader's other two faults file) per (file, errno) per
-    episode for a held file the listing had to skip AND could not move aside (the bus's _say_unreadable_once, plus the
-    bell the bus has no surface for): the feed rebuilds on every push, so a line per build would bury the log, and the
-    file stays in place, so every build meets it again. The episode ends when a listing no longer has to skip the file
-    (_held_records prunes the set: it read, was moved aside, or is gone), so a fault that returns is said again. Before
-    review round 1 this wrote stderr alone and never ended: a directory that lists but cannot be searched (mode 400) fails
-    every stat, so every hold left the board behind a clean bell, and the second build said nothing."""
+def _say_hold_unreadable_once(f, exc, fold=None, read=False):
+    """One stderr line and one bell row (the refused kind, as the reader's other faults file) per (file, errno) per
+    episode for a held file the listing had to skip and leave in place: one it could not READ (`read`, the first of the
+    three states at _note_read_fault_once; correctness-2, the manager's round 1 on the held-mail readers PR: the bytes
+    may be a good held message and a rename is terminal, so the file waits for the next build as it did before the PR,
+    and the words say a read failed and nothing was attempted on the file), or one it read or lstat'd and could not
+    move aside (the bus's _say_unreadable_once, plus the bell the bus has no surface for). The feed rebuilds on every
+    push, so a line per build would bury the log, and the file stays in place, so every build meets it again. The
+    episode ends when a listing no longer has to skip the file (_held_records prunes the set: it read, was moved aside,
+    or is gone), so a fault that returns is said again. Before review round 1 this wrote stderr alone and never ended: a
+    directory that lists but cannot be searched (mode 400) fails every stat, so every hold left the board behind a clean
+    bell, and the second build said nothing. The name is rendered through _hold_name_text (extra8-2), and the bell row is
+    the listing's to file when `fold` is given (correctness-3: one row per cause for the files one listing skips, so a
+    mode-400 directory of forty holds is one row and not forty)."""
     key = (str(f), getattr(exc, "errno", None))
     if key in _HOLD_UNREADABLE_SAID:
         return
     _HOLD_UNREADABLE_SAID.add(key)
-    head = "held mail: %s could not be read or parsed and could not be moved aside" % f.name
-    mid, tail = "skipped and left in place", "the held messages that could be read are on the board"
-    sys.stderr.write("romp-kernel: %s (%s); %s, %s\n" % (head, _errno_text(exc), mid, tail))
+    shown, why = _hold_name_text(f.name), _errno_text(exc)
+    tail = "the held messages that could be read are on the board"
+    if read:
+        head, mid = "held mail: %s could not be read" % shown, "skipped and left in place for the next build"
+        fold_head = "held mail: {n} files could not be read (%s); skipped and left in place for the next build, %s" % (why, tail)
+    else:
+        head, mid = "held mail: %s could not be read or parsed and could not be moved aside" % shown, "skipped and left in place"
+        fold_head = "held mail: {n} files could not be read or parsed and could not be moved aside (%s); skipped and left in place, %s" % (why, tail)
+    sys.stderr.write("romp-kernel: %s (%s); %s, %s\n" % (head, why, mid, tail))
+    text = _hold_bell_text(head, mid, tail, why, name=shown)
+    if fold is not None:
+        fold.rows.append((fold_head, shown, text))
+        return
     try:
-        _sync_notice(_hold_bell_text(head, mid, tail, _errno_text(exc)), ok=False, kind="refused")
+        _sync_notice(text, ok=False, kind="refused")
     except Exception:
         pass
 
@@ -50324,28 +50617,41 @@ def _end_hold_unreadable_episodes(qdir, unread=frozenset()):
 
 
 def _held_records(qdir, now):
-    """Every READABLE hold under `qdir` as (mid, at, record), in file-name order: the postal bus's _list_json_records
-    shape, ported whole (2026-09-19). A file that cannot be read, is not JSON, is not an object, has no string `mid`, or
-    carries an `at` that is not an integer is moved aside ONCE to `<name>.corrupt-<utc stamp>` beside the others, with
-    one stderr line and one bell row (the refused kind) naming the file and the reason, and the listing goes on with
-    the rest; the `.json` listing never meets it again. The bus's precondition comes with it: the file's stat is taken
-    BEFORE the read, and a file whose stat moved by the time the parse failed was rewritten under the read (the bus
-    publishes a hold by rename) and is left for the next build, so a torn READ of a healthy record is never moved
-    aside; a file that cannot be moved either stays, skipped and said once per (file, errno) per episode, on stderr and
-    the bell, the episode ending when a listing no longer has to skip it (review round 1). The listing is
+    """Every hold under `qdir` the reader can take, as (mid, at, record) in file-name order: the postal bus's
+    _list_json_records shape, ported whole (2026-09-19), under the three states _note_read_fault_once states for every
+    reader here. STATE ONE, bytes that could not be READ: a file whose stat or read refuses (EACCES, EIO, a directory
+    that lists but cannot be searched) is skipped and left in place for the next build, said once per (file, errno) per
+    episode on stderr and the bell (_say_hold_unreadable_once), and NEVER moved aside: the bytes may be a good held
+    message and a rename is terminal, the sender having been acked at hold time (correctness-2, the manager's round 1
+    on the held-mail readers PR: the PR's first shape renamed such a file when its stat had succeeded, a regression
+    against the skip main had, on the one thing in this subsystem that cannot be regenerated). STATE TWO, bytes read
+    and not PARSED, or read and refused by shape: not JSON, not UTF-8, nested past the parser's depth (RecursionError out
+    of json's C scanner, review round 2), not an object, no string `mid`, a `mid` that is not the file's name (the bus
+    decides a hold by its file name, quarantine_get, so such a card could be neither approved nor denied; review round
+    2), a `mid` the bus's _safe_id refuses (correctness-1: the bus's two decision doors refuse it, and since a hold is
+    never dismissed the card would stand forever; the kernel's _safe_id is the bus's twin, pinned identical by
+    tests/test_postal_self_host.py), or an `at` that is not an integer (OverflowError caught with the rest since review
+    round 1: an infinite float). Such a file is moved aside ONCE to `<name>.corrupt-<utc stamp>` beside the others
+    (_corrupt_aside_name), with one stderr line naming the file and the reason and a bell row (the refused kind), and the
+    `.json` listing never meets it again; the head reads `could not be parsed` for the parser's and the shape's refusals
+    and `could not be taken` for an id the bus cannot decide, which parsed cleanly. The bus's precondition comes with it:
+    the stat is taken BEFORE the read, and a file whose stat moved by the time the parse failed was rewritten under the
+    read (the bus publishes a hold by rename) and is left for the next build, so a torn READ of a healthy record is
+    never moved aside. A file that cannot be moved either stays, skipped and said once per (file, errno) per episode,
+    the episode ending when a listing no longer has to skip it (_end_hold_unreadable_episodes; review round 1). A
+    `.json` symlink whose target is gone stays in this state where review round 2 put it: its FileNotFoundError read as
+    `decided meanwhile`, so it was listed on every build and never said, and a successful lstat of a link with nothing
+    behind it is a read that proved the record absent, so the link is moved aside by its own name. STATE THREE, a
+    record that parsed whose FIELD has an unexpected type (a `body`, `frm`, `to`, `origin` or `toId` that is not
+    text), is not this reader's to refuse: the record is taken and the card names the field by its type (_hold_text;
+    extra8-1: the PR's last commit refused a non-text body here and moved the file aside, so a held message the bus's
+    writer had accepted left the board with no card and could be neither approved nor denied).
+    The bell rows one listing owes are folded (correctness-3, _FaultFold): a cause several files share is one row naming
+    the store, the fault, the count and as many names as fit, whether the files were skipped or moved aside; the stderr
+    line per file stays. The name in every line and row is rendered through _hold_name_text (extra8-2). The listing is
     os.listdir, never Path.glob: on this Python the glob swallows a PermissionError and yields nothing, which is how an
-    unreadable directory read as an empty one. An absent directory is nothing held; any other listing fault is said
-    (_note_hold_dir_fault) and the build goes on without the holds, the board kept.
-    Review round 2 widened the record faults the same way: a record whose `mid` is not the file's name is moved aside
-    (the bus decides a hold by its file name, quarantine_get, so such a card could be neither approved nor denied, and
-    the card's Clear refuses a hold, so it stood forever); a document nested past the interpreter's limit
-    (RecursionError out of json's C scanner, a RuntimeError the ValueError arm never caught) is moved aside with the
-    others; a `.json` symlink whose target is gone (a FileNotFoundError from the stat that read as `decided meanwhile`,
-    so it was listed on every build and never said) is moved aside by its own name. A record whose `body` is present and
-    not text is moved aside the same way, named by its type (2026-09-19): the free-threaded Python 3.14 parses a
-    100000-deep document where every earlier Python raised RecursionError, so the deep hold that used to land in the
-    parser's arm came back as a record whose body no repr survives, and the card's gist, str() of it, overflowed the
-    stack out of the build; the check runs before any reader formats the value, on every Python.
+    unreadable directory read as an empty one. An absent directory is nothing held and ends every episode under it; any
+    other listing fault is said (_note_hold_dir_fault) and the build goes on without the holds, the board kept.
     Before this the reader's try wrapped json.loads alone: a non-object raised AttributeError and a non-integer `at`
     ValueError out of every feed build, a torn file or a record with no mid was skipped silently forever with the file
     left in place, and the directory fault returned a clean board."""
@@ -50359,7 +50665,7 @@ def _held_records(qdir, now):
         _note_hold_dir_fault(qdir, e)
         return []
     _clear_state_fault(qdir)
-    out, unread = [], set()                          # unread: the files this listing had to skip AND leave in place
+    out, fold = [], _FaultFold()                     # fold.skipped: the files this listing had to skip AND leave in place
     for name in names:
         f = qdir / name
         st = None
@@ -50373,28 +50679,25 @@ def _held_records(qdir, now):
                 raise ValueError("no message id")
             if mid != name[:-5]:                     # the file's name IS the id the bus decides by (quarantine_get), so a record that names
                 raise ValueError("the record's message id is not the file's name")   # another can be neither approved nor denied (review round 2)
+            if not _safe_id(mid):                    # the bus's own gate on an id (correctness-1): a card the bus would refuse to decide
+                raise _HoldUndecidable("the message id is not one the bus can decide")   # is never built
             at = rec.get("at") or now
             try:
                 at = int(at)
             except (TypeError, ValueError, OverflowError):   # OverflowError: int() of a float infinity (json's 1e400, Infinity); review round 1
                 raise ValueError("`at` is a %s, not an integer" % type(at).__name__) from None
-            body = rec.get("body")
-            if body is not None and not isinstance(body, str):   # the type alone, never the value: a body can be nested past what
-                raise ValueError("`body` is a %s, not text" % type(body).__name__)   # any repr survives (_hold_text, 2026-09-19)
         except FileNotFoundError:
             if not f.is_symlink():
                 continue                             # decided between the listing and the read: the bus removed it
-            how, reason, fault = "read", "a link to a file that is gone", None   # a dangling symlink is listed on every build and never
-        except OSError as e:                                                   # readable or decided: moved aside below by its own name (review round 2)
-            if st is None:                           # the stat itself failed: no fingerprint to move by
-                unread.add(str(f))
-                _say_hold_unreadable_once(f, e)
-                continue
-            how, reason, fault = "read", "unreadable, %s" % _errno_text(e), e
-        except (ValueError, RecursionError) as e:    # RecursionError: json's C scanner on a document nested past the interpreter's limit (review round 2)
-            how, reason, fault = "parsed", str(e), None
+            how, reason = "read", "a link to a file that is gone"   # a dangling symlink is listed on every build and never readable
+        except OSError as e:                                         # or decided: moved aside below by its own name (review round 2)
+            fold.skipped.add(str(f))                 # STATE ONE: the stat or the read refused, so nothing is known of the bytes and
+            _say_hold_unreadable_once(f, e, fold, read=True)   # nothing is done to the file (correctness-2); the next build retries
+            continue
+        except (ValueError, RecursionError) as e:    # STATE TWO: read and not parsed, or read and refused by shape; RecursionError is
+            how, reason = ("taken" if isinstance(e, _HoldUndecidable) else "parsed"), str(e)   # json's C scanner past the limit
         else:
-            out.append((mid, at, rec))
+            out.append((mid, at, rec))               # STATE THREE, a field's type, is the card's to name (_hold_text), never a refusal
             continue
         try:
             cur = f.stat() if st is not None else f.lstat()   # the link itself when its target is gone: there is no file to fingerprint
@@ -50405,19 +50708,20 @@ def _held_records(qdir, now):
         except FileNotFoundError:
             continue                                 # decided meanwhile
         except OSError as e:
-            unread.add(str(f))
-            _say_hold_unreadable_once(f, fault if fault is not None else e)
+            fold.skipped.add(str(f))
+            _say_hold_unreadable_once(f, e, fold)
             continue
         # stderr carries the whole row (the reason where it happened, the aside's full name); the bell gets it fitted to
-        # SYNC_NOTICE_FIT with the file named once and the aside as its suffix (_hold_bell_text, review round 1)
-        head = "held mail: %s could not be %s" % (f.name, how)
+        # SYNC_NOTICE_FIT with the file named once and the aside as its suffix (_hold_bell_text, review round 1), or folded
+        # with the listing's other asides of the same kind into one row (correctness-3)
+        shown = _hold_name_text(f.name)
+        head = "held mail: %s could not be %s" % (shown, how)
         mid, tail = "moved aside with the suffix %s" % aside.name[len(f.name):], "the held messages that could be read are on the board"
-        sys.stderr.write("romp-kernel: %s (%s); moved aside to %s, %s\n" % (head, reason, aside.name, tail))
-        try:
-            _sync_notice(_hold_bell_text(head, mid, tail, reason), ok=False, kind="refused")
-        except Exception:
-            pass
-    _end_hold_unreadable_episodes(qdir, unread)     # the said-once episodes this listing ends (its docstring says how)
+        sys.stderr.write("romp-kernel: %s (%s); moved aside to %s, %s\n" % (head, reason, _hold_name_text(aside.name), tail))
+        fold.rows.append(("held mail: {n} files could not be %s and were moved aside, each with a .corrupt-<utc stamp> suffix; %s" % (how, tail),
+                          shown, _hold_bell_text(head, mid, tail, reason, name=shown)))
+    _fault_fold_bell(fold)                           # the bell rows this listing owes, one per cause (correctness-3)
+    _end_hold_unreadable_episodes(qdir, fold.skipped)   # the said-once episodes this listing ends (its docstring says how)
     return out
 
 
@@ -50435,17 +50739,22 @@ def _quarantine_cards(now):
     handler, so every present and future Clear door is covered without naming one; _clear_all declines
     the id as well since review round 1 (a row for it lit Undo with nothing to restore), and the rows an
     older ledger holds stay inert here. The directory is
-    read through _held_records (2026-09-19), the bus's own listing shape: a record it cannot read is
-    moved aside and said, a directory it cannot list is said, and the build keeps the board either
-    way. The other fields are coerced to text here (_hold_text: a container by its type alone, never
-    its repr) so a hand-edited value of another type cannot raise out of the build either. [] when
-    nothing is held or nothing could be read."""
+    read through _held_records (2026-09-19), the bus's own listing shape under the three states at
+    _note_read_fault_once: a record it reads and cannot parse is moved aside and said, a record it
+    cannot read is skipped and left in place for the next build and said (correctness-2, the
+    manager's round 1: never renamed, since the bytes may be a good message), a directory it cannot
+    list is said, and the build keeps the board either way. Every field the card shows is coerced to
+    text here (_hold_text: a container by its type
+    alone, never its repr), the body included, so a hand-edited or peer-sent value of another type
+    cannot raise out of the build, and the record is never refused for it (extra8-1: a decidable card
+    over a held message beats a file moved aside with no card and no decision). [] when nothing is
+    held or nothing could be read."""
     out = []
     for mid, t, rec in _held_records(jd.STATE / "postal" / "quarantine", now):
         item_id = "quarantine:" + mid
         to_id = _hold_text(rec.get("toId"))
         frm, to, origin = _hold_text(rec.get("frm"), "?"), _hold_text(rec.get("to"), "?"), _hold_text(rec.get("origin"), "?")
-        body = _hold_text(rec.get("body"))           # text by _held_records' check; the helper is the belt should a reader let another type through
+        body = _hold_text(rec.get("body"))           # a container by its type alone, never formatted (extra8-1: the card stands)
         # COMPACT card (the user 2026-07-26): what you're approving is a delivery to THIS session, so
         # the card reads as one line under the recipient's name — "New message" + a dim sender/gist
         # line — and the full body lives in the click-through decision modal. The gist is the same
@@ -69393,12 +69702,25 @@ var hh=document.createElement('div');hh.className='rnet-khead';
 hh.textContent='Held for approval elsewhere';
 hh.title='Postal mail quarantined on another machine (its trust for the sender is directed). Open that machine\u2019s dashboard to approve or deny; the hold itself lives there.';
 list.appendChild(hh);
-Object.keys(byHost).sort().forEach(function(hn){var rows=byHost[hn],ehn=esc(hn);
-var gl=rows.slice(0,6).map(function(r){return r.frm+' \\u2192 '+r.to+((r.origin&&r.origin!==hn)?' (from '+r.origin+')':'')+': '+(r.gist||'');}).join('\\n');
+// A row carrying `fault` is NOT a held message: the holding bus could not read its own held-mail store, and its
+// _hold_rows answered that one row in place of the holds (the bus's _hold_fault_row: the fault's kind and errno text,
+// never a path or a record's text; the kernel's _bus_remote_holds hands the snapshot through as it came). Before this
+// the holder dropped out of the section with nothing said on THIS machine (the holder's own board hears it from its
+// kernel), so the section read as complete. Read `fault` first: such a row is never counted as a message and none
+// of its other fields is rendered; the fault gets the host's own line, the way the trust table above says an
+// unreadable tier (the cause named, retried on the next refresh), and the other hosts' rows stand as they were.
+Object.keys(byHost).sort().forEach(function(hn){var all=byHost[hn],ehn=esc(hn),rows=[],faults=[];
+all.forEach(function(r){if(!r.fault){rows.push(r);return;}
+var ft=typeof r.fault==='string'?r.fault:'a fault of type '+(typeof r.fault);if(faults.indexOf(ft)<0)faults.push(ft);});
+if(rows.length){var gl=rows.slice(0,6).map(function(r){return r.frm+' \\u2192 '+r.to+((r.origin&&r.origin!==hn)?' (from '+r.origin+')':'')+': '+(r.gist||'');}).join('\\n');
 var hr=document.createElement('div');hr.className='rnet-row rnet-known';
 hr.innerHTML='<span class=rnet-dot style=\"background:#b58900\" title=\"Mail is waiting for approval on '+ehn+'.\"></span>'+
 '<span class=nm><b>'+ehn+'</b> <span class=st title=\"'+esc(gl)+'\">'+rows.length+' message'+(rows.length===1?'':'s')+' held for your approval</span></span>';
-list.appendChild(hr);});}
+list.appendChild(hr);}
+faults.forEach(function(ft){var eft=esc(ft),fr=document.createElement('div');fr.className='rnet-row rnet-known';
+fr.innerHTML='<span class=rnet-dot style=\"background:transparent;box-shadow:inset 0 0 0 1.5px #b58900\" title=\"'+ehn+' could not read its held mail on this pass.\"></span>'+
+'<span class=nm><b>'+ehn+'</b> <span class=st title=\"'+ehn+' could not read its own held-mail store: '+eft+'. Whatever is held there is not counted here; it is retried on the next refresh, and '+ehn+'\\u2019s own dashboard names the same fault.\">held mail could not be read: '+eft+'</span></span>';
+list.appendChild(fr);});});}
 // Pending is recorded ON THE CLICK (ack now — the buttons rule), so any re-render in the round-trip
 // window repaints the chosen level + applying cue instead of the stale snapshot's old value. A
 // refused/failed write DELETES the pending entry, so the next render honestly reverts — plus the alert.
@@ -76578,11 +76900,33 @@ class Handler(BaseHTTPRequestHandler):
             # _clear_all ever ran, so Clear-all cleared nothing and only the receive loop's stderr line knew.
             # A held message's id reaches _clear_all with the rest and is declined there (a hold is decided,
             # never dismissed, and _quarantine_cards never reads the ledger), so this door needs no list of
-            # what not to clear.
-            _gesture_store_refusal(client, "clear",
-                                   _clear_all([a["itemId"] for a in d["asks"]]
-                                              + [c["itemId"] for c in (d.get("items") or [])]))
-            _send_to_app("chat", {"type": "dropCitationsAll"})   # every card cleared → drop every composer chip
+            # what not to clear. The door's ANSWER is true (extra7-1, the manager's round 1 on the held-mail
+            # readers PR): the chat's chip drop follows the WRITE, not the gesture (dropCitation over the ids
+            # _clear_all took and their subtrees, read after the write since the durable flag it sets archives
+            # nothing; dropCitationsAll wiped every chip, the quote chips that cite no card included, on a press
+            # that cleared nothing), and a press that cleared fewer than it asked, or nothing, is answered on
+            # THIS socket (clearAllResult, the targeted _reply idiom _refuse_setting uses; never a broadcast):
+            # on a board of held messages alone the press moved nothing, offered no Undo and told chat every
+            # chip was gone, visible and false. A press that cleared all it asked answers nothing, as undoClear
+            # does: the next payload is the answer.
+            _asked = [a["itemId"] for a in d["asks"]] + [c["itemId"] for c in (d.get("items") or [])]
+            _written = []
+            _gesture_store_refusal(client, "clear", _clear_all(_asked, written=_written))
+            if _written:
+                _gone = []
+                for _i in _written:
+                    _gone.extend(x for x in _subtree_item_ids(_i) if x not in _gone)
+                _send_to_app("chat", {"type": "dropCitation", "itemId": str(_written[0]), "itemIds": _gone})
+            _wset = set(_written)
+            _left = [i for i in _asked if i and i not in _wset]
+            if _left:
+                _n = sum(1 for i in _asked if i in _wset)
+                _held = sum(1 for i in _left if str(i).startswith("quarantine:"))
+                _what = ("%d held message%s awaiting your decision" % (_held, "" if _held == 1 else "s") if _held == len(_left)
+                         else "%d card%s this kernel does not clear" % (len(_left), "" if len(_left) == 1 else "s"))
+                _text = (("nothing was cleared: the board holds %s; approve or deny each" % _what) if not _n
+                         else "%d card%s cleared; %s stay%s on the board" % (_n, "" if _n == 1 else "s", _what, "s" if len(_left) == 1 else ""))
+                _reply(client, {"type": "clearAllResult", "ok": bool(_n), "cleared": _n, "left": len(_left), "held": _held, "text": _text})
             _mark_views_dirty()
         elif msg and msg.get("type") == "undoClear":
             # the Undo click's failure path speaks (2026-09-07): a session whose goal store or archive could not

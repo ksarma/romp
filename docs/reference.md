@@ -445,10 +445,14 @@ headers at its next start. `check_sent` and `romp mail sent`
 show a message the bus had to give up on later (a cross-host record it could
 not write, a file it could not read, a write a restart found unfinished) as
 `bounced`, marked `refused` with the reason; a peer's refusal that did come
-back as a note still reads `undeliverable, returned to you`. A message file the bus cannot read, in a
+back as a note still reads `undeliverable, returned to you`. A message file the bus reads but cannot parse, in a
 recipient's inbox or in the cross-host outbox, is moved aside once (see the
 state files below), its sender's receipt reads refused, and the dashboard's
-error center says so under the `refused` kind. A cross-host store the bus
+error center says so under the `refused` kind; an inbox file the bus cannot
+read is moved aside the same way, while a cross-host record (an outbox or
+readbox file) the bus cannot read is skipped and left in place, said once per
+fault spell on the error center and in the log, and its sender's receipt keeps
+reading pending until the record can be read. A cross-host store the bus
 cannot list at all (an outbox or readbox directory) is said the same way, once
 per fault spell, and the mail parked there stands until the directory can be
 read again.
@@ -5460,12 +5464,16 @@ raw string.
 The postal service's own files live under `postal/` there: `mail/<session>/`
 (a maildir per recipient), `outbox/<host>/` and `readbox/<host>/` (cross-host
 mail and read receipts awaiting their peer). A record or message file the bus
-cannot parse or read is moved aside once, never deleted, to
+reads but cannot parse, or an inbox message file it cannot read, is moved
+aside once, never deleted, to
 `<name>.corrupt-<UTC stamp>` beside the original (an inbox file lands beside
 its `new/` directory, out of every listing; a `-1`, `-2` suffix when two land
 in the same second), the rest of the store is served, the sender's receipt for
 that message reads refused, and the error center says so under the `refused`
-kind. At start the bus removes the temporary files a crash left behind (a
+kind. An outbox or readbox record the bus cannot read is not moved: it is
+skipped and left in place, said once per fault spell, the rest of the store is
+served, and the sender's receipt keeps reading pending until the record can be
+read. At start the bus removes the temporary files a crash left behind (a
 message written but never placed, a store record never finished), closes each
 one's receipt as refused, and says so once. The sidecars are yours to inspect
 or delete.

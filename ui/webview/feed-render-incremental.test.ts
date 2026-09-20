@@ -1175,3 +1175,55 @@ test("a NOTICE CARD (T370) renders its producer, body, pinned image and action b
   c2._clr.onclick(ev);
   assert.deepEqual(posted.slice(sent2).filter((m) => m.type === "askClear"), [{ type: "askClear", itemId: "notice:" + API + ":dropped-sends:1", sid: API }]);
 });
+
+test("the footer's Clear all is offered only while a card would take the clear: hidden on a board of held messages alone, or of placeholders alone; the count-gated controls stay", async () => {
+  // the held-mail readers PR's review (2026-09-20): the kernel declines a hold's id and re-lists a placeholder, so with the
+  // button gated on the card count a board of holds alone offered a press that moved nothing and said nothing
+  const hold = (id: string, mid: string) => cardOf(id, WEB, "web", "#3366cc", "New message", "needs_input",
+    { blocked: { state: "quarantine", mid, frm: "api", origin: "", to: "web", body: "the README draft is ready for a look", gist: "the README draft is ready" } });
+  const q1 = hold("q1", "m1"), q2 = hold("q2", "m2");
+  const p1 = cardOf("provisional:" + API, API, "api", "#cc6633", "Working on the exporter", "working", { provisional: true, tree: [] });
+  const clearAll = () => body.byId("feed-clearall")!, viewMenu = () => body.byId("feed-viewbtn")!, tagLens = () => body.byId("feed-taglens")!, sessBox = () => body.byId("feed-search")!;
+  await dispatch(frame([q1, q2], { working: ["web"] }));
+  assert.equal(clearAll().style.display, "none", "two held messages: nothing a clear would take, so no Clear all");
+  assert.deepEqual([viewMenu().style.display, tagLens().style.display, sessBox().style.display, foot.style.display], ["", "", "", ""], "the view menu, the tag lens, the session box and the footer read the card count and stay");
+  await dispatch(frame([q1, p1], { working: ["web", "api"] }));
+  assert.equal(clearAll().style.display, "none", "a held message beside a placeholder (provisional: the kernel lists it again on every build): still nothing to take");
+  await dispatch(frame([q1, g1], { working: ["web"] }));
+  assert.equal(clearAll().style.display, "", "one ordinary card beside the hold: the press has something to take, so it is offered");
+  await dispatch(frame([g1]));
+  assert.equal(clearAll().style.display, "", "an ordinary board, as before");
+  // the merged-board edge: a host attached with no frame yet has its cards absent from this frame; the button is offered
+  // while the board has a card and a host's cards are unknown, and hides when the frame that knows every host lands
+  await dispatch(frame([q1], { working: ["web"], pendingHosts: ["box2"] }));
+  assert.equal(clearAll().style.display, "", "a hold alone, a host's frame pending: an absence proves nothing yet, and a press is answered truthfully");
+  await dispatch(frame([q1], { working: ["web"], hostsUnread: true }));
+  assert.equal(clearAll().style.display, "", "the first merged frame before the host list is read: the same");
+  await dispatch(frame([q1], { working: ["web"], pendingHosts: [] }));
+  assert.equal(clearAll().style.display, "none", "every host's cards known and none clearable: the button leaves, once, on that frame");
+  await dispatch(frame([], { pendingHosts: ["box2"] }));
+  assert.deepEqual([clearAll().style.display, foot.style.display], ["none", "none"], "an empty board with a host pending: no card, no button, no footer (nowhere the count hid it before)");
+  await dispatch(frame([g1, g2, g3], { working: ["web"] }));
+  assert.equal(clearAll().style.display, "");
+});
+
+test("the kernel's clearAllResult is rendered: a refusal is toasted and rings the shell's bell; a partial clear is toasted; nothing on the board is moved by either", async () => {
+  const bell: any[] = [];
+  const prevPost = win.postMessage;
+  win.postMessage = (m: any) => { bell.push(m); };
+  try {
+    const refusal = "nothing was cleared: the board holds 2 held messages awaiting your decision; approve or deny each";
+    await dispatch({ type: "clearAllResult", ok: false, cleared: 0, left: 2, held: 2, text: refusal });
+    assert.equal(body.querySelector(".feed-toast")?.textContent, refusal, "the refusal is said in the kernel's words");
+    assert.deepEqual(bell.filter((m) => m && m.romp === "notify").map((m) => [m.kind, m.text]), [["refused", refusal]], "and kept by the shell's bell under the refused kind");
+    assert.deepEqual([card("g1"), card("g2"), card("g3")].map((c) => !!c), [true, true, true], "the cards are the payload's business, not this frame's");
+    const partial = "1 card cleared; 1 held message awaiting your decision stays on the board";
+    await dispatch({ type: "clearAllResult", ok: true, cleared: 1, left: 1, held: 1, text: partial });
+    assert.equal(body.querySelector(".feed-toast")?.textContent, partial, "a partial clear says what stayed and why");
+    assert.equal(bell.filter((m) => m && m.romp === "notify").length, 1, "a partial clear is no refusal: no bell row");
+    await dispatch({ type: "clearAllResult", ok: false, cleared: 0, left: 1, held: 1 });
+    assert.equal(body.querySelector(".feed-toast")?.textContent, partial, "a frame with no text says nothing new");
+  } finally {
+    win.postMessage = prevPost;
+  }
+});

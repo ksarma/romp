@@ -805,6 +805,7 @@ function nowSec(): number { return liveNow(hostNow, hostNowAt, Date.now()); }
 let showDismissed = false;
 let dismissedCount = 0;
 let canUndoClear = false;   // host: cleared.jsonl has rows → the UndoClear button shows
+let boardCardsUnknown: CardsUnknown = false;   // the last payload's frameCardsUnknown: while a host's cards are unknown the footer's Clear all is offered (clearAllOffered)
 // FLIP-across-identity (the user 2026-06-29): which render KEY covered each goal itemId on the LAST render.
 // A goal's card can change identity — a group ("g:"+turnId) dissolving to a solo ask ("a:"+itemId), a goal
 // absorbed under an umbrella ("a:"+umbrellaId) — which is a DIFFERENT DOM node, so the normal FLIP (reuse one
@@ -4083,13 +4084,15 @@ function ensureUndoClear(): HTMLElement {
   return b;
 }
 
-// Clear all: inbox-zero every open card at once. Destructive, so it hovers RED (.fdismiss); the single
-// Undo restores the whole batch (the host clears them as one cleared.jsonl batch).
+// Clear all: the cards a Clear may take (clearable: not a placeholder, not a held message) leave at once.
+// Destructive, so it hovers RED (.fdismiss); the single Undo restores the whole batch (the host clears them as
+// one cleared.jsonl batch). Offered only while such a card is on the board (clearAllOffered, read in renderBody);
+// the title names what stays, since a held message's card is the one a user sees the press leave behind.
 function makeClearAllBtn(): HTMLElement {
   const b = el("button", "fdismiss");
   b.id = "feed-clearall";
   b.textContent = "Clear all";
-  b.title = "clear every open card (inbox-zero) — Undo restores them";
+  b.title = "clear the open cards (inbox-zero); Undo restores them. A held message stays until you approve or deny it";
   b.onclick = (ev) => { ev.stopPropagation(); vscodeApi?.postMessage({ type: "clearAll" }); };
   return b;
 }
@@ -4936,9 +4939,25 @@ function childKeys(listEl: HTMLElement): string[] {
 // both; the session Clear must not reach around that (the review of the session Clear, 2026-09-08).
 // Since 2026-09-19 the kernel holds the same line for a hold on its side: _quarantine_cards reads no cleared
 // ledger, so a server-side door such as the footer's Clear-all cannot hide one either. This check stays so
-// the pane never offers a click the kernel would ignore.
+// the pane never offers a click the kernel would ignore: the card's Clear and the session header's Clear hide
+// for a card that fails it, and the footer's Clear all (clearAllOffered, below) is offered only while a card
+// on the board passes it, so a board of held messages alone, or of placeholders alone, offers no click the
+// kernel would decline (the held-mail readers PR's review, 2026-09-20).
 function clearable(it: AskItem): boolean {
   return !it.provisional && it.blocked?.state !== "quarantine";
+}
+// Whether the footer's Clear all is offered: only while a card on the board would take the clear. The kernel
+// declines a held message's id at the ledger write and lists a placeholder again on every build, so on a board of
+// holds alone, or of placeholders alone, the press moved nothing and offered no Undo: a visible click the kernel
+// ignored (the held-mail readers PR's review, 2026-09-20). The board's card COUNT (showCA) keeps gating the view
+// menu, the tag lens and the session box, which read every card. While a host's cards are unknown (a merged
+// board's host attached with no frame yet, an off host, the first merged frame before the host list is read) the
+// button is offered as long as the board has a card: a card absent from this frame is no evidence of absence then
+// (the payload gate, T404 round seven), a press reaches that host's kernel, every kernel answers the press
+// truthfully (clearAllResult: a refusal when it cleared nothing, the count when it cleared some), and the button
+// does not blink off and back on as the frames land. It never appears where the card count hid it before.
+function clearAllOffered(items: AskItem[], cardsUnknown: CardsUnknown): boolean {
+  return items.some(clearable) || (items.length > 0 && !!cardsUnknown);
 }
 // Every CLEARABLE card a session has in the CURRENT view (the same filters render reads: scope, lens,
 // `#only=`), across every column, folded-under-the-header ones included — the set the header's Clear removes.
@@ -5654,7 +5673,7 @@ function renderBody(list: HTMLElement) {
   ensureViewMenuBtn().style.display = showCA ? "" : "none";       // sort + layout menu (the user 2026-08-24)
   ensureTagLensBtn().style.display = showCA ? "" : "none";        // the feed-local tag lens (the user 2026-08-25, T70)
   ensureSessionBox().style.display = showCA ? "" : "none";        // session combobox: type-or-pick filter (the user 2026-08-24)
-  ensureClearAll().style.display = showCA ? "" : "none";
+  ensureClearAll().style.display = clearAllOffered(asks, boardCardsUnknown) ? "" : "none";   // its own gate: a card a clear would take, not the card count (clearAllOffered)
   ensureUndoClear().style.display = canUndoClear ? "" : "none";
   const foot = document.getElementById("feed-foot");
   // show the footer whenever there are cards (so the Sub-goals toggle is reachable) or an undo is available
@@ -6431,6 +6450,7 @@ function applyFeedPayload(m: any): void {
   // attached ISOLATED peer never adopts the switch: _converge_peer_settings stands down for it) costs stale entries
   // for cards that left, never growth without a gesture. The frame's own `off` stays the local kernel's word.
   const cardsUnknown = frameCardsUnknown(m);
+  boardCardsUnknown = cardsUnknown;   // the footer's Clear all reads it at render time (clearAllOffered)
   // A clear is CONFIRMED once the kernel's payload no longer lists it → stop suppressing it. Then drop
   // any still-pending (kernel hasn't caught up) from this payload so a stale push can't resurrect them.
   if (!cardsUnknown) for (const id of Array.from(pendingCleared)) if (!incomingAsks.some((a) => a.itemId === id)) pendingCleared.delete(id);
@@ -6662,6 +6682,18 @@ listenForFrames(perfFrameHandler("feed", (m) => vscodeApi?.postMessage(m), (e: M
       }
       feedToast("couldn't undo the clear: " + (String(m.error || "") || "the kernel refused it"));
     }
+  } else if (m.type === "clearAllResult" && typeof m.text === "string" && m.text) {
+    // The kernel's answer to the footer's Clear all when the press cleared fewer cards than it asked, or none (the
+    // held-mail readers PR's review, 2026-09-20: on a board of held messages alone the press moved nothing, offered no
+    // Undo and said nothing, while chat was told every citation chip was gone). Sent on THIS page's socket, the
+    // settingRefused idiom; a press that cleared all it asked answers nothing, and the next payload is the answer, as
+    // after an Undo (undoClearResult). Nothing here to put back: the footer's press is not optimistic, the cards leave
+    // when the payload no longer lists them. `ok` false is a refusal (nothing cleared): the reason rides the fading
+    // toast and the shell's bell keeps the durable record under its refused kind, as a refused bell toggle does;
+    // `ok` true is a partial clear: the toast alone says what stayed and why. The text is the kernel's (the count,
+    // and how many are held messages awaiting a decision); the pane adds no reading of its own.
+    if (!m.ok) window.parent?.postMessage({ romp: "notify", kind: "refused", text: m.text, sid: "", itemId: "" }, "*");
+    feedToast(m.text);
   } else if (m.type === "revealCards") {
     // chat rail CLICK → scroll to the card(s) covering that turn and pulse them (the user 2026-07-23).
     // Distinct from hoverCards, which only outlines whatever is already on screen: this one MOVES the

@@ -212,8 +212,9 @@ class NoticeKeyNotText(_Case):
     def test_the_writer_and_the_sweep_read_past_it_too(self):
         self.r.write_notice_rows([_good(self.now), dict(_good(self.now), key=[1])])
         with contextlib.redirect_stderr(io.StringIO()):
-            rows = km._notice_rows_unlocked(SID)
+            rows, err = km._notice_rows_unlocked(SID)   # (rows, error) since the manager's round 1 (regression-2)
             moved = km._compact_notices(self.now)
+        self.assertEqual(err, "", "a file that read is no fault")
         self.assertEqual([r["key"] for r in rows], ["figure"])
         self.assertEqual(moved, 0)
 
@@ -236,7 +237,8 @@ class NonFiniteNumbers(_Case):
         for key, field in (("sweep", "rev"), ("infy", "rev"), ("noon", "t"), ("later", "expiresAt"), ("nan", "rev")):
             self.assertIn("a row for key %s carries a float where %s needs an integer" % (key, field), log)
         with contextlib.redirect_stderr(io.StringIO()):
-            rows = km._notice_rows_unlocked(SID)
+            rows, err = km._notice_rows_unlocked(SID)   # (rows, error) since the manager's round 1 (regression-2)
+        self.assertEqual(err, "", "a file that read is no fault")
         self.assertEqual([r["key"] for r in rows], ["figure"], "the writer's reader skips them too")
 
     def test_an_infinite_at_moves_the_hold_aside(self):
@@ -354,7 +356,13 @@ class UnreadableHoldRingsTheBell(_Case):
     where the reader's two other faults (a moved-aside record, a directory that cannot be listed) file a refused bell
     row; a directory that lists but cannot be searched (mode 400) fails every stat, so every hold left the board behind
     a clean bell and two stderr lines, and the second build said nothing. The line files the bell row now, and its
-    episode ends when a listing no longer has to skip the file, so a fault that returns is said again."""
+    episode ends when a listing no longer has to skip the file, so a fault that returns is said again. Since the
+    manager's round 1 the mode-400 case is state one of the three at _note_read_fault_once: a stat or read fault is
+    skipped and left in place, never moved aside (correctness-2: the PR's first shape renamed such a file when its stat
+    had succeeded), and the files one listing skips for one cause are ONE bell row naming the count and the files
+    (correctness-3: one chmod on a directory of forty holds filed forty rows and evicted every other notice from the
+    forty-row ring), the per-file line staying on stderr. The second case pins that shape; over the 35fad278c archive it
+    is red at the row count (2 rows, one per file, each claiming a failed move)."""
 
     def test_a_file_that_cannot_be_moved_aside_rings_the_bell_once_per_episode(self):
         _skip_as_root(self)
@@ -390,20 +398,30 @@ class UnreadableHoldRingsTheBell(_Case):
         cards, log = self._cards()
         self.assertEqual(cards, [], "nothing could be read...")
         rows = _refused()
-        self.assertEqual(len(rows), 2, "...and the bell says so, one row per file")
-        self.assertTrue(all("could not be moved aside" in r and "Permission denied" in r for r in rows))
-        self.assertTrue(all(len(r) <= km.SYNC_NOTICE_FIT for r in rows))
-        self.assertTrue(all("the held messages that could be read are on the board" in r for r in rows),
-                        "the tail is true when none could be read: no false reassurance in other words")
+        self.assertEqual(len(rows), 1, "...and the bell says so ONCE for the directory: two files, one cause, one row (correctness-3)")
+        self.assertIn("held mail: 2 files could not be read (", rows[0])
+        self.assertIn("Permission denied", rows[0])
+        self.assertIn("qc-1.json", rows[0])
+        self.assertIn("qc-2.json", rows[0])
+        self.assertIn("skipped and left in place for the next build", rows[0])
+        self.assertNotIn("moved aside", rows[0], "nothing was attempted on the files: a read fault is skipped, never renamed (correctness-2)")
+        self.assertLessEqual(len(rows[0]), km.SYNC_NOTICE_FIT)
+        self.assertIn("the held messages that could be read are on the board", rows[0],
+                      "the tail is true when none could be read: no false reassurance in other words")
+        self.assertEqual(log.count("could not be read ("), 2, "stderr keeps one line per file")
+        self.assertNotIn("moved aside", log)
         cards, log = self._cards()
-        self.assertEqual((cards, log, len(_refused())), ([], "", 2))
+        self.assertEqual((cards, log, len(_refused())), ([], "", 1), "quiet while the episode lasts")
         self.r.chmod(self.r.qdir, 0o700)
         cards, log = self._cards()
-        self.assertEqual((cards, log, len(_refused())), (["quarantine:qc-1", "quarantine:qc-2"], "", 2), "back, quietly")
+        self.assertEqual((cards, log, len(_refused())), (["quarantine:qc-1", "quarantine:qc-2"], "", 1),
+                         "back, quietly: the files were never moved")
+        self.assertEqual(sorted(p.name for p in self.r.qdir.iterdir()), ["qc-1.json", "qc-2.json"], "no aside beside them")
         self.assertEqual([k for k in km._HOLD_UNREADABLE_SAID if k[0].startswith(str(self.r.qdir))], [], "the episode is over")
         self.r.chmod(self.r.qdir, 0o400)
         cards, log = self._cards()
-        self.assertEqual((cards, len(_refused())), ([], 4), "a fault that returns is said again")
+        self.assertEqual((cards, len(_refused())), ([], 2), "a fault that returns is said again, again as one row")
+        self.assertEqual(log.count("could not be read ("), 2)
 
 
 class BellRowFits(_Case):

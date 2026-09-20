@@ -20331,7 +20331,9 @@ listenForFrames(perfFrameHandler("chat", (m) => vscodeApi?.postMessage(m), (e: M
     if (m.cite && typeof m.cite.itemId === "string" && typeof m.cite.title === "string") setCitation(m.id, { itemId: m.cite.itemId, title: m.cite.title });
   }
   // A card was CLEARED → drop any composer citation chip pointing at it (the user 2026-07-01): the goal is
-  // gone, so following up on it makes no sense. dropCitationsAll (Clear-all) drops every chip.
+  // gone, so following up on it makes no sense. dropCitationsAll dropped every chip on Clear-all until 2026-09-20 (the
+  // held-mail readers PR's review): the kernel now sends dropCitation over the ids the clear wrote, and the
+  // dropCitationsAll branch stays for an older kernel's frame (a merged board can attach one).
   else if (m.type === "dropCitation" && typeof m.itemId === "string") dropCitationByItem(m.itemId, Array.isArray(m.itemIds) ? m.itemIds.filter((x: unknown) => typeof x === "string") : undefined);
   else if (m.type === "dropCitationsAll") {
     if (composerCitations.size) { composerCitations.clear(); persistDrafts(); renderComposerChips(activeId); }

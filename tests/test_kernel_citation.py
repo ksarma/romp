@@ -152,7 +152,7 @@ class ClearDropsCitation(unittest.TestCase):
     """Clearing a card tells the chat to drop any composer citation chip pointing INTO it (the user
     2026-07-01): chips can cite a SUB-goal (wireNodeZones sends the clicked node's own id), so a single
     clear pushes dropCitation{itemId, itemIds: the card's whole subtree, read BEFORE the clear archives
-    it}; Clear-all pushes dropCitationsAll."""
+    it}; Clear-all pushes dropCitation over the ids it wrote."""
 
     def test_clear_handlers_push_drop_to_the_chat(self):
         with open(os.path.join(BIN, "romp-kernel")) as fh:
@@ -161,8 +161,14 @@ class ClearDropsCitation(unittest.TestCase):
                       "the subtree is collected BEFORE _clear_ask archives it out of the live store")
         self.assertIn('_send_to_app("chat", {"type": "dropCitation", "itemId": str(msg["itemId"]), "itemIds": _gone})', src,
                       "a single askClear pushes dropCitation with the cleared card's whole subtree")
-        self.assertIn('_send_to_app("chat", {"type": "dropCitationsAll"})', src,
-                      "Clear-all pushes dropCitationsAll")
+        # the held-mail readers PR's review (2026-09-20, extra7-1): the chip drop follows the WRITE, not the gesture,
+        # so a Clear-all that cleared nothing (a board of held messages alone) wipes no chip
+        self.assertNotIn('_send_to_app("chat", {"type": "dropCitationsAll"})', src,
+                         "Clear-all no longer wipes every chip: the drop follows the write (extra7-1)")
+        self.assertIn('_clear_all(_asked, written=_written)', src,
+                      "the handler asks _clear_all what it wrote")
+        self.assertIn('_send_to_app("chat", {"type": "dropCitation", "itemId": str(_written[0]), "itemIds": _gone})', src,
+                      "and drops the chips of those ids alone")
 
     def test_subtree_item_ids_walks_the_whole_card(self):
         import json, tempfile

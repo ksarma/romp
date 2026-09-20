@@ -478,9 +478,12 @@ class HeldMailStoreUnlistable(unittest.TestCase):
     directory with Path.glob, which on Python 3.12 swallows a PermissionError and yields nothing, so their `except
     OSError` never ran for that fault and a directory that could not be listed read as an empty one, nothing said, while every
     hold sat undelivered. Now the listing is os.listdir (_json_files): quarantine_list raises QuarantineUnreadable and
-    GET /quarantine answers it as a 503 with the reason (the /inbox shape), the gossip summary answers nothing and says
-    so, the fault is said once per episode in the log and never as a bell row (the kernel's own reader of the directory
-    files that one), and a clean listing re-arms the episode. Synthetic: a placeholder mid, an invented body."""
+    GET /quarantine answers it as a 503 with the reason (the /inbox shape), the gossip summary answers one row carrying
+    `fault` (since 2026-09-20; it answered nothing until the fork PR's review, and every other machine's section vanished
+    in silence: AHolderWhoseStoreCannotBeListedSaysSoOnTheWire has the wire), the fault is said once per episode in the log
+    and never as a bell row (the kernel's own reader of the directory files that one), and a clean listing re-arms the
+    episode. The two source-text pins that used to sit here run in TheStoresAreListedNeverGlobbed, a class with no root
+    skip. Synthetic: a placeholder mid, an invented body."""
 
     HOLD = {"mid": "11111111-2222-3333-4444-555555550301", "to": "web", "toId": "sess-web", "frm": "api",
             "frmId": "id-api", "body": "invented held text", "kind": "coordinate", "origin": "TESTHOST",
@@ -568,15 +571,19 @@ class HeldMailStoreUnlistable(unittest.TestCase):
 
     def test_the_gossip_summary_says_the_fault_once_and_the_exchange_payload_still_builds(self):
         os.chmod(ps.QUARANTINE, 0)
-        self.assertEqual(ps._hold_rows(), [])
+        rows = ps._hold_rows()
+        self.assertEqual([r.get("mid") for r in rows], [""], "one row, and it is not a held message: %r" % (rows,))
+        self.assertIn("cannot be listed", rows[0]["fault"])
         self.assertEqual(len(self._said()), 1, self.logged)
-        self.assertIsInstance(ps.holds_payload("TESTHOST"), list)      # the exchange payload never raises over it
+        payload = ps.holds_payload("TESTHOST")                          # the exchange payload never raises over it
+        self.assertEqual([r.get("fault") for r in payload], [rows[0]["fault"]], "and carries the fault row")
         with self.assertRaises(ps.QuarantineUnreadable):
             ps.quarantine_list()
         self.assertEqual(len(self._said()), 1, "one episode across both readers of the one directory")
         self.assertEqual([p for p, _ in self.told], [])
         os.chmod(ps.QUARANTINE, 0o755)
         self.assertEqual([r["mid"] for r in ps._hold_rows()], [self.HOLD["mid"]])
+        self.assertNotIn("fault", ps._hold_rows()[0], "a listable store's rows carry no fault key")
 
     def test_an_absent_directory_is_nothing_held_and_no_fault(self):
         for f in ps.QUARANTINE.glob("*"):
@@ -585,6 +592,15 @@ class HeldMailStoreUnlistable(unittest.TestCase):
         self.assertEqual(ps.quarantine_list(), [])
         self.assertEqual(ps._hold_rows(), [])
         self.assertEqual(self._said(), [])
+
+
+
+class TheStoresAreListedNeverGlobbed(unittest.TestCase):
+    """The two source-text pins of the bus side of F3, in a class with NO root skip (the fork PR's tests-4, 2026-09-20):
+    they sat in HeldMailStoreUnlistable, whose setUp skips every case as root because a mode-000 directory lists for root,
+    so on a root runner nothing pinned the os.listdir-not-Path.glob mechanism that is the whole of the fix. The pins read
+    source and need no fixture, no store and no permission bit. Under a geteuid that answers 0 they run and pass; with
+    _json_files reverted to Path.glob in a scratch copy they fail under the same simulation."""
 
     def test_the_stores_are_listed_never_globbed(self):
         import inspect
@@ -610,31 +626,10 @@ class HeldMailStoreUnlistable(unittest.TestCase):
         self.assertNotIn(".glob(", src)
 
 
-class HeldMailRecordsThatCannotBeParsed(unittest.TestCase):
-    """The bus side of the fold investigation's F4, review round 2 (2026-09-19). quarantine_list wrapped json.loads alone in
-    `except (OSError, ValueError)` and then sorted on r.get("at"), so one hold holding a JSON list or null raised
-    AttributeError out of the list and out of GET /quarantine (the connection closed with no response), one string `at`
-    beside an int one raised TypeError out of the sort the same way, JSON nested past the parser's depth raised
-    RecursionError through the except, and _hold_rows, whose .get ran after its own except, raised out of every exchange
-    payload the gossip summary rides in; every other bad record was skipped in silence on every pass. Now one walk
-    (_held_records_bus) skips a record it cannot read or parse, one that is not an object, and a link with nothing
-    behind it, says each once per (file, reason) per episode in the log (the file's name and the fault's kind, never its
-    text; no bell row and no move aside, since the kernel's own reader of the directory does both), ends the episode when a
-    listing no longer has to skip the file, and a type-wrong `at` sorts as the oldest (_hold_sort_at); quarantine_get
-    reads a record that is not an object as nothing a decide could replay. Synthetic: placeholder mids, invented bodies.
-
-    Fails before over a git archive of 4383cc9af with this module copied in, all six cases: the not-an-object case with
-    AttributeError from quarantine_list's sort, the type-wrong `at` case with TypeError from the same sort, the nested case
-    with RecursionError out of quarantine_list, the decide case with AttributeError from quarantine_decide's approve arm
-    (there a bare deny dropped the file unread and approve raised), and the two skip-and-say cases at their said-once
-    assertion (0 lines); HeldMailStoreUnlistable's widened pin fails there on the absent walk.
-
-    The free-threaded Python 3.14 (2026-09-19) parses the 100000-deep document every earlier Python refused: the nested
-    case's real parse now ends in the not-an-object arm there, so its pin takes either reason, and a sibling case makes
-    the 3.14 outcome deterministic on every Python by patching json.loads to return the deep value. A record whose
-    `body` is that value is skipped by its type: _hold_rows' gist was str() of the body, its repr. Over a git archive of
-    c6f427d0b that case fails at its first assertion (the record is listed as a hold), and _hold_rows past it raises
-    RecursionError while getting the repr of the body."""
+class _HeldStore(unittest.TestCase):
+    """The held-mail store fixture the record-level classes share: one readable hold written, the log and the kernel leg of
+    _refused_notice captured, the said-once registries cleared, modes restored and the store emptied in cleanup, and a
+    served bus for the route cases. No tests of its own."""
 
     HOLD = {"mid": "11111111-2222-3333-4444-555555550301", "to": "web", "toId": "sess-web", "frm": "api",
             "frmId": "id-api", "body": "invented held text", "kind": "coordinate", "origin": "TESTHOST",
@@ -657,6 +652,10 @@ class HeldMailRecordsThatCannotBeParsed(unittest.TestCase):
         self.addCleanup(self._restore)
 
     def _restore(self):
+        try:
+            os.chmod(ps.QUARANTINE, 0o755)
+        except OSError:
+            pass
         for f in ps.QUARANTINE.iterdir():
             try:
                 os.chmod(f, 0o644)
@@ -665,6 +664,7 @@ class HeldMailRecordsThatCannotBeParsed(unittest.TestCase):
         self._clear_store()
         ps._log, ps._kernel_post = self._saved
         getattr(ps, "_HOLD_SKIPPED_SAID", {}).clear()
+        getattr(ps, "_UNLISTABLE_SAID", {}).clear()
         restore_env("ROMP_SESSIONS_FILE", self._prior_seam)
 
     def _clear_store(self):
@@ -703,6 +703,49 @@ class HeldMailRecordsThatCannotBeParsed(unittest.TestCase):
             return e.code, json.loads(e.read().decode() or "{}")
         except Exception as e:                       # the defect's shape: the handler raised and the connection closed
             return "no response (%s)" % type(e).__name__, None
+
+    @staticmethod
+    def _act(port, body):
+        """POST /quarantine/act as the kernel's card does; (status, json), or the dropped-connection shape."""
+        import urllib.error
+        import urllib.request
+        req = urllib.request.Request("http://127.0.0.1:%d/quarantine/act" % port, data=json.dumps(body).encode(),
+                                     headers={"X-Romp-Token": ps.SERVE_TOKEN, "Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+                return r.status, json.loads(r.read().decode())
+        except urllib.error.HTTPError as e:
+            return e.code, json.loads(e.read().decode() or "{}")
+        except Exception as e:
+            return "no response (%s)" % type(e).__name__, None
+
+
+class HeldMailRecordsThatCannotBeParsed(_HeldStore):
+    """The bus side of the fold investigation's F4, review round 2 (2026-09-19). quarantine_list wrapped json.loads alone in
+    `except (OSError, ValueError)` and then sorted on r.get("at"), so one hold holding a JSON list or null raised
+    AttributeError out of the list and out of GET /quarantine (the connection closed with no response), one string `at`
+    beside an int one raised TypeError out of the sort the same way, JSON nested past the parser's depth raised
+    RecursionError through the except, and _hold_rows, whose .get ran after its own except, raised out of every exchange
+    payload the gossip summary rides in; every other bad record was skipped in silence on every pass. Now one walk
+    (_held_records_bus) skips a record it cannot read or parse, one that is not an object, and a link with nothing
+    behind it, says each once per (file, reason) per episode in the log (the file's name and the fault's kind, never its
+    text; no bell row and no move aside, since the kernel's own reader of the directory does both), ends the episode when a
+    listing no longer has to skip the file, and a type-wrong `at` sorts as the oldest (_hold_sort_at); quarantine_get
+    reads a record that is not an object as nothing a decide could replay. Synthetic: placeholder mids, invented bodies.
+
+    Fails before over a git archive of 4383cc9af with this module copied in, all six cases: the not-an-object case with
+    AttributeError from quarantine_list's sort, the type-wrong `at` case with TypeError from the same sort, the nested case
+    with RecursionError out of quarantine_list, the decide case with AttributeError from quarantine_decide's approve arm
+    (there a bare deny dropped the file unread and approve raised), and the two skip-and-say cases at their said-once
+    assertion (0 lines); HeldMailStoreUnlistable's widened pin fails there on the absent walk.
+
+    The free-threaded Python 3.14 (2026-09-19) parses the 100000-deep document every earlier Python refused: the nested
+    case's real parse now ends in the not-an-object arm there, so its pin takes either reason, and a sibling case makes
+    the 3.14 outcome deterministic on every Python by patching json.loads to return the deep value. A record whose
+    `body` is that value was skipped by its type for a day (commit 35fad278c); since the fork PR's review (extra8-1,
+    2026-09-20) a record that read and parsed is never skipped for a field's type: it is listed, its gist names the body
+    by type (_hold_text), the route serves the body as its type name (_hold_wire), and HeldBodyThatIsNotTextKeepsItsHold
+    has the decide roads. The fixture is _HeldStore's."""
 
     def test_a_record_that_is_not_an_object_skips_and_the_readable_hold_is_listed(self):
         f2 = self._write(self.M2, json.dumps(["invented list text"]))
@@ -780,25 +823,35 @@ class HeldMailRecordsThatCannotBeParsed(unittest.TestCase):
         self.assertEqual(len(said), 1, self.logged)
         self._assert_said_deep(said[0], deep, ("not JSON (RecursionError)", "not a JSON object (list)"))
 
-    def test_a_deep_document_the_parser_returns_is_skipped_by_its_type_and_never_formatted(self):
+    def test_a_deep_document_the_parser_returns_is_skipped_as_a_list_and_kept_as_a_body_named_by_type(self):
         """json.loads as the free-threaded Python 3.14 answers the deep document, made deterministic here: the parser
-        returns the 100000-deep value. As a bare list it is not an object; as a record's body it is not text. Both are
-        skipped and said by type alone, on the list, the gossip summary and the route, and the files stay for the
-        kernel's reader to move aside."""
+        returns the 100000-deep value. As a bare list it is not an object and is skipped, said by type alone. As a
+        record's body it is a FIELD of a record that read and parsed, so the record keeps its hold (the fork PR's extra8-1,
+        2026-09-20): listed, its gist the type name, the route serving the body as its type name (json.dumps of the value
+        would raise RecursionError out of the handler), nothing said for it, and never formatted anywhere. Fails before
+        over a git archive of 35fad278c, whose walk skipped the record for its body: absent from the list."""
         deep_list = self._write(self.M2, DEEP)
         deep_body = self._write(self.M3, json.dumps(dict(self.HOLD, mid=self.M3, body="DEEP")).replace('"DEEP"', DEEP))
         value = _deep_list()
         with _parser_returning({"[": value, '{"mid": "%s"' % self.M3: dict(self.HOLD, mid=self.M3, body=value)}):
-            self.assertEqual([h["mid"] for h in ps.quarantine_list()], [self.HOLD["mid"]])
-            self.assertEqual([r["mid"] for r in ps._hold_rows()], [self.HOLD["mid"]], "the gossip summary skips it: its gist is str() of the body")
-            self.assertEqual(len(ps.holds_payload("TESTHOST")), 1, "the exchange payload still builds")
+            self.assertEqual(sorted(h["mid"] for h in ps.quarantine_list()), sorted([self.HOLD["mid"], self.M3]),
+                             "the record whose body is the deep value keeps its hold; the bare list is skipped")
+            rows = {r["mid"]: r for r in ps._hold_rows()}
+            self.assertEqual(sorted(rows), sorted([self.HOLD["mid"], self.M3]))
+            self.assertEqual(rows[self.M3]["gist"], "list", "the gist names the body by its type, never its repr")
+            self.assertEqual(len(ps.holds_payload("TESTHOST")), 2, "the exchange payload still builds")
             code, body = self._get(self._serve())
-        self.assertEqual((code, [h["mid"] for h in body["held"]]), (200, [self.HOLD["mid"]]))
+        self.assertEqual(code, 200, body)
+        served = {h["mid"]: h for h in body["held"]}
+        self.assertEqual(sorted(served), sorted([self.HOLD["mid"], self.M3]))
+        self.assertEqual((served[self.M3]["body"], served[self.M3]["bodyType"]), ("list", "list"),
+                         "the route serves the body as its type name and says it did")
+        self.assertNotIn("bodyType", served[self.HOLD["mid"]], "a text body is served as it is")
         said = self._said()
-        self.assertEqual(len(said), 2, self.logged)
-        self._assert_said_deep(next(l for l in said if deep_list.name in l), deep_list, ("not a JSON object (list)",))
-        self._assert_said_deep(next(l for l in said if deep_body.name in l), deep_body, ("a record whose `body` is a list, not text",))
-        self.assertTrue(deep_list.is_file() and deep_body.is_file(), "left in place: the kernel's reader moves aside")
+        self.assertEqual(len(said), 1, self.logged)
+        self._assert_said_deep(said[0], deep_list, ("not a JSON object (list)",))
+        self.assertFalse(any(deep_body.name in l for l in self.logged), "nothing is said of a record that keeps its hold")
+        self.assertTrue(deep_list.is_file() and deep_body.is_file(), "left in place: the kernel's reader moves the list aside")
         self.assertEqual([p for p, _ in self.told], [], "no bell row from the bus")
 
     def test_a_record_that_cannot_be_read_is_said_once_with_its_errno_and_the_episode_ends_when_it_reads(self):
@@ -828,6 +881,465 @@ class HeldMailRecordsThatCannotBeParsed(unittest.TestCase):
             self.assertNotIn("no held message", err, "the file is there: never reported absent")
             self.assertTrue(f2.is_file(), "the decide touched nothing: the kernel's reader moves it aside and says so")
         self.assertEqual(ps.quarantine_get(self.M2), [1], "the store's one-record read still answers what it parsed")
+
+
+def _kernel_hold_text():
+    """The kernel's _hold_text, compiled from its source alone (the daemon is never loaded here): the twin the bus's copy
+    must agree with over the probe set below."""
+    import ast
+    tree = ast.parse(Path(os.path.join(BIN, "romp-kernel")).read_text())
+    fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_hold_text")
+    ns = {}
+    exec(compile(ast.Module(body=[fn], type_ignores=[]), "kernel _hold_text", "exec"), ns)
+    return ns["_hold_text"]
+
+
+class HeldRecordOnDiskIsNeverReportedAbsent(_HeldStore):
+    """quarantine_get folded every read and parse fault to None, and quarantine_decide turned None into "no held message
+    '<mid>'", the answer for a mid that was never held: a hold on disk that the bus could not read was reported ABSENT,
+    visible and false, on the one road the held-mail feature exists for (the fork PR's extra5-2 and tests-1, 2026-09-20;
+    the sibling list reader had been given QuarantineUnreadable for the same class, the one-record reader not). Now
+    quarantine_get answers None only for a mid _safe_id refuses or a plain file that is not there, and raises
+    HeldRecordUnreadable for a file on disk under the name that it could not read (EACCES), a link with nothing behind it,
+    a document it could not parse (not JSON, nested past the parser's depth) or one that parses to null; quarantine_decide
+    catches it inside the bus and answers in words (the fault, nothing was done, the message is still held), so
+    /quarantine/act answers a refusal and never a dropped connection the kernel would read as the bus unreachable. The
+    record stays: the kernel's reader is the one that moves a file aside.
+
+    Fails before over a git archive of 35fad278c for the RecursionError shape (that PR's round 2 added the arm that folded
+    it to None: the deep document answers "no held message") and over bc88256e8 for the OSError shape (the fold predates
+    the PR; there the deep document raised RecursionError out of the decide instead). The deep case reads the same on the
+    3.12 parser (RecursionError, refused as not JSON) and the free-threaded 3.14 one (a list, refused as not an object):
+    both are refusals naming the record as one that cannot be read, never absent. Synthetic: placeholder mids."""
+
+    def _refused_not_absent(self, err, *marks):
+        self.assertIsInstance(err, str)
+        self.assertNotIn("no held message", err, "the file is on disk: never reported absent")
+        self.assertIn("cannot be read", err)
+        self.assertIn("nothing was done", err)
+        for m in marks:
+            self.assertIn(m, err)
+
+    def _decide_all_refuse(self, mid, *marks):
+        for action, extra in (("approve", {}), ("approve", {"text": "edited by the human"}),
+                              ("deny", {"feedback": "invented reviewer note"}), ("deny", {})):
+            ok, err = ps.quarantine_decide(mid, action, **extra)
+            self.assertFalse(ok, (action, extra, err))
+            self._refused_not_absent(err, *marks)
+
+    def _get_refusal(self, mid):
+        """quarantine_get's typed refusal for `mid`, as text; asserted after the decide-level checks so a run over the
+        pre-fix archive fails at the defect (the absent answer) and not on the class's absence."""
+        refusal = getattr(ps, "HeldRecordUnreadable", None)
+        self.assertIsNotNone(refusal, "the one-record reader's typed refusal, QuarantineUnreadable's sibling")
+        with self.assertRaises(refusal) as cm:
+            ps.quarantine_get(mid)
+        return str(cm.exception)
+
+    def test_a_deep_document_is_refused_as_unreadable_never_absent_on_either_parser(self):
+        deep = self._write(self.M2, DEEP)
+        self._decide_all_refuse(self.M2)             # the real parser: RecursionError through 3.13, a list on 3.14t
+        self.assertTrue(deep.is_file(), "the decide touched nothing: the kernel's reader moves it aside")
+        with _parser_returning({"[": _deep_list()}):  # the 3.14 outcome, deterministic on every Python
+            self._decide_all_refuse(self.M2, "JSON list, not an object")
+        self.assertTrue(deep.is_file())
+        try:
+            got = ps.quarantine_get(self.M2)
+        except Exception as e:                       # the 3.12 shape: the typed refusal, naming the parser's fault
+            self.assertEqual(type(e).__name__, "HeldRecordUnreadable", repr(e)[:200])
+            self.assertIn("not JSON (RecursionError)", str(e))
+        else:                                        # the 3.14 shape: the value, refused by the decide as not an object
+            self.assertIsInstance(got, list)
+
+    def test_a_record_that_cannot_be_read_is_refused_with_its_errno_never_absent(self):
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            self.skipTest("root reads a mode-000 file; the fault cannot be staged")
+        locked = self._write(self.M2, json.dumps(dict(self.HOLD, mid=self.M2)))
+        os.chmod(locked, 0)
+        self._decide_all_refuse(self.M2, "errno %d" % errno.EACCES, "still held")
+        self.assertTrue(locked.is_file(), "left in place")
+        code, body = self._act(self._serve(), {"mid": self.M2, "action": "approve"})
+        self.assertEqual(code, 400, "the route answers the refusal, never a dropped connection: %r" % (body,))
+        self.assertEqual(body["ok"], False)
+        self._refused_not_absent(body["error"], "errno %d" % errno.EACCES)
+        reason = self._get_refusal(self.M2)
+        self.assertIn("unreadable (errno %d" % errno.EACCES, reason)
+        self.assertNotIn(str(ps.QUARANTINE), reason, "the reason names the fault, never the path")
+        os.chmod(locked, 0o644)
+        self.assertEqual(ps.quarantine_get(self.M2)["mid"], self.M2, "readable again: the record itself")
+
+    def test_a_dangling_link_and_a_null_document_are_refused_never_absent(self):
+        link = ps.QUARANTINE / (self.M2 + ".json")
+        os.symlink(ps.QUARANTINE / "nothing-behind-it.json", link)
+        self._decide_all_refuse(self.M2, "a link with nothing behind it")
+        self.assertTrue(link.is_symlink(), "left in place")
+        null = self._write(self.M3, "null")
+        self._decide_all_refuse(self.M3, "NoneType")
+        self.assertTrue(null.is_file())
+        torn = self._write(self.M4, "{not json")
+        self._decide_all_refuse(self.M4, "not JSON")
+        self.assertTrue(torn.is_file())
+        self.assertFalse(any("not json" in l for l in self.logged), "the file's text never reaches the log")
+        self.assertIn("a link with nothing behind it", self._get_refusal(self.M2))
+        self.assertIn("not a JSON object (NoneType)", self._get_refusal(self.M3))
+        self.assertIn("not JSON (JSONDecodeError)", self._get_refusal(self.M4))
+
+    def test_a_mid_that_was_never_held_is_still_absent(self):
+        self.assertIsNone(ps.quarantine_get(self.M2), "a plain file that is not there is the one absent answer")
+        self.assertIsNone(ps.quarantine_get("../not-a-component"), "a mid _safe_id refuses was never held")
+        ok, err = ps.quarantine_decide(self.M2, "approve")
+        self.assertEqual((ok, err), (False, "no held message '%s'" % self.M2))
+        self.assertEqual(ps.quarantine_get(self.HOLD["mid"])["mid"], self.HOLD["mid"], "and a readable record reads")
+
+
+class HeldBodyThatIsNotTextKeepsItsHold(_HeldStore):
+    """A record that READ and PARSED is never skipped or declared corrupt for a field's TYPE (the fork PR's extra8-1, with
+    extra5-4, 2026-09-20). Commit 35fad278c made the walk skip a record whose `body` is not text, so a message the bus's
+    own writer had accepted and acked left the board with no card and could be neither approved nor denied; and
+    quarantine_decide's approve arm handed the body to deliver's string concatenation, TypeError out of /quarantine/act
+    (a dropped connection the kernel reported as the bus unreachable), while deny with a note took str() of the body for
+    its gist, RecursionError on a deep one. Now the walk keeps the record; _hold_rows and the route name the body by its
+    type (_hold_text, _hold_wire); deny (bare, or with a note whose gist is the type name) drops the hold; approve with
+    edited text delivers that text; and a BARE approve of a non-text body is refused in words, by the type alone, the
+    record untouched and still held, the two doors that work named. Only the bare approve changes: the two roads that
+    worked before (edited text on approve, a bare deny) work as they did. The bus's _hold_text is the kernel's twin,
+    pinned over one probe set.
+
+    Fails before over a git archive of 35fad278c: the list-body record is missing from quarantine_list, the gossip summary
+    and the route (skipped for its body), the bare approve raises TypeError out of the decide, and deny with a note over
+    the deep body raises RecursionError. Synthetic: placeholder mids, invented text, the deep value built iteratively."""
+
+    LIST_BODY = ["invented", "list", "text"]
+
+    def _clear_mail(self):
+        for d in (ps.OUTBOX / "TESTHOST", ps.MAILROOT / "sess-web" / "new"):
+            if d.is_dir():
+                for f in d.iterdir():
+                    f.unlink()
+
+    def setUp(self):
+        super().setUp()
+        self._clear_mail()
+        self.addCleanup(self._clear_mail)
+
+    def test_a_list_body_keeps_its_hold_and_is_named_by_type_everywhere(self):
+        f2 = self._write(self.M2, json.dumps(dict(self.HOLD, mid=self.M2, body=self.LIST_BODY)))
+        self.assertEqual(sorted(h["mid"] for h in ps.quarantine_list()), sorted([self.HOLD["mid"], self.M2]))
+        rows = {r["mid"]: r for r in ps._hold_rows()}
+        self.assertEqual(rows[self.M2]["gist"], "list", "the gist is the type name, never the value")
+        self.assertEqual(rows[self.HOLD["mid"]]["gist"], "invented held text")
+        code, body = self._get(self._serve())
+        served = {h["mid"]: h for h in body["held"]}
+        self.assertEqual((code, served[self.M2]["body"], served[self.M2]["bodyType"]), (200, "list", "list"))
+        self.assertEqual(self._said(), [], "nothing is said of a record that keeps its hold")
+        self.assertFalse(any("invented" in l and "list" in l for l in self.logged))
+        self.assertTrue(f2.is_file(), "nothing moved aside")
+        self.assertEqual([p for p, _ in self.told], [])
+
+    def test_a_bare_approve_of_a_non_text_body_is_refused_in_words_and_the_hold_stands(self):
+        f2 = self._write(self.M2, json.dumps(dict(self.HOLD, mid=self.M2, body=self.LIST_BODY)))
+        ok, err = ps.quarantine_decide(self.M2, "approve")
+        self.assertFalse(ok, err)
+        self.assertIn("body of type list, not text", err)
+        self.assertIn("still held", err)
+        self.assertIn("edit the text and approve, or deny", err, "the two doors that work are named")
+        self.assertNotIn("invented", err, "the type alone, never the value")
+        self.assertTrue(f2.is_file(), "the record is untouched")
+        self.assertEqual(ps.read_box("sess-web", consume=False), [], "nothing was delivered")
+        code, body = self._act(self._serve(), {"mid": self.M2, "action": "approve"})
+        self.assertEqual((code, body["ok"]), (400, False), "the route answers a refusal, never a dropped connection: %r" % (body,))
+        self.assertIn("body of type list", body["error"])
+        deep = self._write(self.M3, json.dumps(dict(self.HOLD, mid=self.M3, body="DEEP")).replace('"DEEP"', DEEP))
+        with _parser_returning({'{"mid": "%s"' % self.M3: dict(self.HOLD, mid=self.M3, body=_deep_list())}):
+            ok, err = ps.quarantine_decide(self.M3, "approve")
+        self.assertFalse(ok)
+        self.assertIn("body of type list, not text", err)
+        self.assertLess(len(err), 400, "the type is named, never the value")
+        self.assertTrue(deep.is_file())
+
+    def test_approve_with_edited_text_delivers_and_deny_with_a_note_names_the_type(self):
+        f2 = self._write(self.M2, json.dumps(dict(self.HOLD, mid=self.M2, body=self.LIST_BODY)))
+        ok, err = ps.quarantine_decide(self.M2, "approve", text="edited by the human")
+        self.assertTrue(ok, err)
+        self.assertFalse(f2.exists(), "approved: the hold is gone")
+        box = ps.read_box("sess-web", consume=False)
+        self.assertTrue(any("edited by the human" in (m.get("body") or "") for m in box), "the edited text was delivered")
+        deep = self._write(self.M3, json.dumps(dict(self.HOLD, mid=self.M3, body="DEEP")).replace('"DEEP"', DEEP))
+        with _parser_returning({'{"mid": "%s"' % self.M3: dict(self.HOLD, mid=self.M3, body=_deep_list())}):
+            ok, err = ps.quarantine_decide(self.M3, "deny", feedback="not tonight, we freeze before the demo")
+        self.assertTrue(ok, err)
+        self.assertFalse(deep.exists(), "denied: the hold is gone")
+        notes = [json.loads(f.read_text()) for f in (ps.OUTBOX / "TESTHOST").glob("*.json")]
+        self.assertEqual(len(notes), 1, "one note back to the sender")
+        self.assertIn('("list")', notes[0]["body"], "the gist names the type")
+        self.assertIn("not tonight, we freeze before the demo", notes[0]["body"])
+        self.assertLess(len(notes[0]["body"]), 400, "the value is never formatted into the note")
+        f4 = self._write(self.M4, json.dumps(dict(self.HOLD, mid=self.M4, body=self.LIST_BODY)))
+        ok, err = ps.quarantine_decide(self.M4, "deny")
+        self.assertTrue(ok, err)
+        self.assertFalse(f4.exists(), "a bare deny drops the hold as it always did")
+
+    def test_the_bus_hold_text_agrees_with_the_kernels_over_a_probe_set(self):
+        kernel_hold_text = _kernel_hold_text()
+        probes = [("", None, "invented text", " spaced  text ", 0, 7, -3, 2.5, True, False, [], [1, 2], {}, {"a": 1},
+                   ("t",), b"bytes"), ]
+        labelled = [(repr(v), v) for v in probes[0]] + [("the deep list (never formatted, not even here)", _deep_list())]
+        for label, v in labelled:
+            self.assertEqual(ps._hold_text(v), kernel_hold_text(v), label)
+            self.assertEqual(ps._hold_text(v, "?"), kernel_hold_text(v, "?"), label)
+        self.assertEqual(ps._hold_text([1, 2]), "list")
+        self.assertEqual(ps._hold_text({"a": 1}), "dict")
+        self.assertEqual(ps._hold_text(7), "7")
+        self.assertEqual(ps._hold_text("", "?"), "?")
+
+
+class HeldRecordsUnderAFalseIdAreNeverServed(_HeldStore):
+    """The bus decides a hold by its FILE name (quarantine_get), and the walk vetted a record's shape but never its `mid`
+    (the fork PR's extra6-1, 2026-09-20): a held file carrying another hold's mid, no mid, a mid of another type, or a mid
+    _safe_id refuses was served by quarantine_list and GET /quarantine and gossiped by _hold_rows under a false id, with
+    nothing logged, and a decide by the other message's id could act on a file never read. Now the walk applies the rule
+    the kernel's reader applies, one rule on both sides: such a record is skipped and said once per file, the line naming
+    the FILE and never the id it carries; the good hold beside it stands and is decidable; and quarantine_decide refuses a
+    record whose id is not the name it was asked by, so a decide on the collision file's own name acts on nothing. The
+    files stay: the kernel's reader is the one that moves them aside. The pinned type-wrong `at` behaviour (sorts oldest,
+    stays listed) is untouched.
+
+    Fails before over a git archive of 35fad278c (round 2's walk, which vets no mid): the collision record is listed under
+    the good hold's id, the no-mid and integer-mid records are listed, nothing is said. Synthetic: placeholder mids."""
+
+    def _stage(self):
+        good = self.HOLD["mid"]
+        collision = self._write(self.M2, json.dumps(dict(self.HOLD)))                        # M2.json carrying good's mid
+        nomid = self._write(self.M3, json.dumps({k: v for k, v in self.HOLD.items() if k != "mid"}))
+        intmid = self._write(self.M4, json.dumps(dict(self.HOLD, mid=7)))
+        undecidable = self._write("bad id", json.dumps(dict(self.HOLD, mid="bad id")))       # its own name, one _safe_id refuses
+        return good, collision, nomid, intmid, undecidable
+
+    def test_records_under_a_false_id_are_skipped_named_by_file_and_the_good_hold_stands(self):
+        good, collision, nomid, intmid, undecidable = self._stage()
+        self.assertEqual([h.get("mid") for h in ps.quarantine_list()], [good], "served under a false id, or none")
+        self.assertEqual([r.get("mid") for r in ps._hold_rows()], [good], "the gossip summary carries no false id")
+        code, body = self._get(self._serve())
+        self.assertEqual((code, [h.get("mid") for h in body["held"]]), (200, [good]))
+        said = self._said()
+        self.assertEqual(len(said), 4, self.logged)
+        by_file = {f.name: next(l for l in said if f.name in l) for f in (collision, nomid, intmid, undecidable)}
+        self.assertIn("a record whose message id is not the file's name", by_file[collision.name])
+        self.assertNotIn(good, by_file[collision.name], "the line names the file, never the foreign id")
+        self.assertIn("a record with no message id", by_file[nomid.name])
+        self.assertIn("a record whose message id is not the file's name", by_file[intmid.name])
+        self.assertIn("a record whose message id the bus cannot decide", by_file[undecidable.name])
+        self.assertFalse(any("invented held text" in l for l in self.logged), "never the record's text")
+        ps.quarantine_list()
+        ps._hold_rows()
+        self.assertEqual(len(self._said()), 4, "said once per file per episode")
+        self.assertTrue(all(f.is_file() for f in (collision, nomid, intmid, undecidable)), "left in place")
+        self.assertEqual([p for p, _ in self.told], [], "no bell row from the bus")
+
+    def test_a_decide_on_the_collision_files_own_name_acts_on_nothing(self):
+        good, collision, nomid, intmid, undecidable = self._stage()
+        goodfile = ps.QUARANTINE / (good + ".json")
+        for name in (self.M2, self.M3, self.M4):
+            for action in ("deny", "approve"):
+                ok, err = ps.quarantine_decide(name, action)
+                self.assertFalse(ok, (name, action, err))
+                self.assertIn("cannot be decided under this name", err)
+                self.assertNotIn("no held message", err, "the file is on disk: never reported absent")
+        self.assertTrue(collision.is_file() and nomid.is_file() and intmid.is_file(), "nothing was dropped")
+        self.assertTrue(goodfile.is_file(), "the other message was not acted on")
+        self.assertEqual(ps.read_box("sess-web", consume=False), [], "nothing was delivered")
+        ok, err = ps.quarantine_decide(good, "deny")
+        self.assertTrue(ok, err)
+        self.assertFalse(goodfile.exists(), "the good hold beside them is decidable")
+        self.assertTrue(collision.is_file(), "and its decide left the collision file where it was")
+
+
+class ListedNamesForgeNoLogLine(_HeldStore):
+    """The hold say-so wrote the listed file's name raw into its log line, so a name carrying a line boundary forged a
+    second `[postal]` line and a long name wrote a line of its length, while the kernel's notices half gated its key for
+    exactly this (the fork PR's extra8-2, 2026-09-20: log injection through a filename). Now every listed name a line
+    carries goes through _listed_name: a name whose stem _safe_id accepts (the only names the bus writes) is rendered as
+    it is; any other has every line boundary and control character replaced by U+FFFD (the header rule's class, never the
+    LF byte alone) and is cut to 133 characters, the widest name the bus writes. The name is still there to act on, and
+    it forges nothing. The recall arm's host-directory label goes through the same rule.
+
+    Fails before over a git archive of 35fad278c (round 2's walk and say-so): the line carries the newline and the
+    separator, and the long name whole. Synthetic: placeholder mids with invented suffixes."""
+
+    def test_a_name_carrying_a_line_boundary_forges_no_second_line(self):
+        record = "{not json"                                             # skipped and said once, on every walk since round 2
+        newline = self._write("11111111-2222-3333-4444-555555550601\n[postal] forged line", record)
+        separator = self._write("11111111-2222-3333-4444-555555550602 forged", record)
+        self.assertEqual([h["mid"] for h in ps.quarantine_list()], [self.HOLD["mid"]])
+        said = self._said()
+        self.assertEqual(len(said), 2, self.logged)
+        for line in said:
+            self.assertIsNone(ps._HDR_BREAK_RE.search(line), "no line boundary inside a line: %r" % line)
+            self.assertNotIn("\n", line)
+            self.assertNotIn(" ", line)
+            self.assertIn("�", line, "the boundary is replaced, visibly, never dropped")
+        self.assertTrue(any("555555550601" in l for l in said) and any("555555550602" in l for l in said),
+                        "the name is still there to act on")
+        self.assertTrue(newline.is_file() and separator.is_file())
+
+    def test_a_long_name_writes_a_bounded_line(self):
+        long_stem = "l" * 250                                            # with `.json`, the widest name the filesystem takes
+        self._write(long_stem, "{not json")
+        ps.quarantine_list()
+        said = self._said()
+        self.assertEqual(len(said), 1, self.logged)
+        self.assertNotIn(long_stem, said[0], "the name is cut")
+        self.assertIn("l" * 100, said[0], "and still recognisable")
+        self.assertLess(len(said[0]), 133 + 120, "a bounded line")
+        self.assertLessEqual(len(ps._listed_name("x" * 300 + ".json")), 133)
+        self.assertEqual(ps._listed_name(self.HOLD["mid"] + ".json"), self.HOLD["mid"] + ".json", "a name the bus writes, as it is")
+        self.assertEqual(ps._listed_name("a" * 128 + ".json"), "a" * 128 + ".json", "the widest name the bus writes, whole")
+        self.assertEqual(ps._listed_name("srv\nfake"), "srv�fake", "a directory name, the same rule")
+
+    def test_a_host_directory_name_in_the_recall_arm_forges_no_bell_line(self):
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            self.skipTest("root lists a mode-000 directory; the fault cannot be staged")
+        prior = os.environ.get("ROMP_POSTAL_PEERS")
+        os.environ["ROMP_POSTAL_PEERS"] = "1"                            # the outbox arm runs in peer-bus mode only
+        self.addCleanup(restore_env, "ROMP_POSTAL_PEERS", prior)
+        hostdir = ps.OUTBOX / "srv\nfake"
+        hostdir.mkdir(parents=True, exist_ok=True)
+        os.chmod(hostdir, 0)
+        self.addCleanup(lambda: (os.chmod(hostdir, 0o755), hostdir.rmdir()))
+        saved = (ps.local_agents, ps.local_agents_checked)
+        ps.local_agents = lambda threads=False: []
+        ps.local_agents_checked = lambda threads=False: ([], True)
+        self.addCleanup(lambda: setattr(ps, "local_agents", saved[0]))
+        self.addCleanup(lambda: setattr(ps, "local_agents_checked", saved[1]))
+        ps._recall("11111111-2222-3333-4444-555555550701", "", "11111111-2222-3333-4444-555555550702", kept=[])
+        bells = [b.get("text", "") for p, b in self.told if p == "/postal-notice"]
+        lines = [l for l in self.logged if "cannot be listed" in l]
+        self.assertEqual((len(bells), len(lines)), (1, 1), (self.told, self.logged))
+        for text in bells + lines:
+            self.assertNotIn("\n", text, "no forged line: %r" % text)
+            self.assertIn("outbox srv�fake", text)
+
+
+class ADirectoryFaultIsSaidOnceForTheDirectory(_HeldStore):
+    """The walk said a single DIRECTORY-level fault once per FILE: a held-mail directory that lists but cannot be searched
+    (mode 400) fails every record's read with one errno, and 45 records wrote 45 near-identical log lines per episode
+    (the fork PR's correctness-3, 2026-09-20: the kernel's bell keeps a ring of 40 rows, and one chmod evicted every other
+    notice there; the bus has the log, flooded the same way). Now a listing none of whose two or more records could be read
+    is one fact about the store (_unread_fold): said ONCE for the directory with the count, keyed on the directory and the
+    errno so a moving count is not said again, and raised as QuarantineUnreadable like an unlistable directory, because a
+    reader that could not read must never report absent what it did not read: GET /quarantine answers 503 and _hold_rows
+    a fault row, never nothing held over a store full of mail. A fault some files carry and others do not is the files'
+    own and stays said per file; one record alone is said per file too. A clean listing ends the episode.
+
+    Fails before over a git archive of 35fad278c: 45 log lines and quarantine_list answering [] (200 with nothing held).
+    Skipped as root, who reads through a mode-400 directory. Synthetic: placeholder mids."""
+
+    def _many(self, n):
+        return [self._write("11111111-2222-3333-4444-%012d" % i, json.dumps(dict(self.HOLD, mid="11111111-2222-3333-4444-%012d" % i)))
+                for i in range(n)]
+
+    def test_a_directory_that_lists_but_cannot_be_searched_is_said_once_with_the_count(self):
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            self.skipTest("root reads through a mode-400 directory; the fault cannot be staged")
+        self._clear_store()
+        files = self._many(45)
+        os.chmod(ps.QUARANTINE, 0o400)
+        try:
+            answer = ps.quarantine_list()
+        except ps.QuarantineUnreadable as e:
+            answer = e
+        self.assertEqual(len(self._said()), 1, "once for the directory, not once per file: %d lines" % len(self._said()))
+        self.assertIsInstance(answer, ps.QuarantineUnreadable, "never nothing held over 45 records no reader could read: %r" % (answer,))
+        self.assertIn("none of its 45 records can be read", str(answer))
+        self.assertIn("errno %d" % errno.EACCES, str(answer))
+        rows = ps._hold_rows()
+        self.assertEqual(len(rows), 1, rows)
+        self.assertIn("none of its 45 records can be read", rows[0]["fault"])
+        code, body = self._get(self._serve())
+        self.assertEqual((code, body["held"]), (503, []), "never 200 with nothing held: %r" % (body,))
+        self.assertIn("45 records", body["unreadable"])
+        with self.assertRaises(ps.QuarantineUnreadable):
+            ps.quarantine_list()
+        self.assertEqual(len(self._said()), 1, "the second pass says nothing more")
+        self.assertEqual([p for p, _ in self.told], [], "no bell row from the bus: the kernel's reader files it")
+        os.chmod(ps.QUARANTINE, 0o755)
+        self.assertEqual(len(ps.quarantine_list()), 45, "the records stood the whole time")
+        self.assertTrue(all(f.is_file() for f in files), "nothing moved aside")
+        self.assertNotIn("fault", ps._hold_rows()[0])
+        os.chmod(ps.QUARANTINE, 0o400)
+        with self.assertRaises(ps.QuarantineUnreadable):
+            ps.quarantine_list()
+        self.assertEqual(len(self._said()), 2, "the clean listing ended the episode; the fault's return is said again")
+
+    def test_a_fault_of_the_files_own_stays_said_per_file(self):
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            self.skipTest("root reads a mode-000 file; the fault cannot be staged")
+        f2 = self._write(self.M2, json.dumps(dict(self.HOLD, mid=self.M2)))
+        f3 = self._write(self.M3, json.dumps(dict(self.HOLD, mid=self.M3)))
+        os.chmod(f2, 0)
+        os.chmod(f3, 0)
+        self.assertEqual([h["mid"] for h in ps.quarantine_list()], [self.HOLD["mid"]], "the readable hold is listed")
+        said = self._said()
+        self.assertEqual(len(said), 2, self.logged)
+        self.assertTrue(any(f2.name in l for l in said) and any(f3.name in l for l in said), "each file named")
+        self.assertFalse(any("none of its" in l for l in said), "not the store's fault: some record read")
+        self._clear_store()
+        alone = self._write(self.M4, json.dumps(dict(self.HOLD, mid=self.M4)))
+        os.chmod(alone, 0)
+        self.assertEqual(ps.quarantine_list(), [], "one record alone: skipped and said per file, the accepted shape")
+        self.assertTrue(any(alone.name in l and "unreadable (errno" in l for l in self._said()))
+        self.assertFalse(any("none of its" in l for l in self._said()))
+
+
+class AHolderWhoseStoreCannotBeListedSaysSoOnTheWire(_HeldStore):
+    """_hold_rows swallowed the store's listing fault and answered no rows, so holds_payload shipped nothing for this host
+    and on every OTHER machine's dashboard the held-elsewhere section simply disappeared, silently, with no bell row on the
+    viewing machine (the fork PR's extra5-3, 2026-09-20; the holder's own board hears it from the kernel's reader). Now the
+    fault rides the exchange as ONE row carrying `fault` (_hold_fault_row: the fault's kind and errno text, never a path or
+    a record's text, the ordinary keys empty), stamped `via` on the one hop by holds_payload and `atHost` by remote_holds
+    like a hold's row, so the viewing machine's kernel proxy (its peers snapshot's remoteHolds) receives it unchanged and
+    its panel can say the holder's store could not be read. A listable store carries no fault key. The wire's CONTRACT is
+    in the postal unit's report; tests/test_postal_peers.py drives the same row through a real two-bus exchange.
+
+    Fails before over a git archive of bc88256e8 (the swallow predates the PR: holds_payload is [] over the fault). Skipped
+    as root, who lists a mode-000 directory. Synthetic: placeholder mids, the peer name TESTHOST."""
+
+    def setUp(self):
+        super().setUp()
+        self.addCleanup(ps.PEER_STATE.pop, "TESTHOST", None)
+
+    def test_an_unlistable_store_rides_as_one_fault_row_and_reaches_remote_holds_with_at_host(self):
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            self.skipTest("root lists a mode-000 directory; the fault cannot be staged")
+        os.chmod(ps.QUARANTINE, 0)
+        payload = ps.holds_payload("other")
+        self.assertEqual(len(payload), 1, payload)
+        row = payload[0]
+        self.assertIn("cannot be listed", row["fault"])
+        self.assertIn("PermissionError", row["fault"])
+        self.assertIn("errno %d" % errno.EACCES, row["fault"])
+        self.assertNotIn(str(ps.QUARANTINE), row["fault"], "the fault text carries no path")
+        self.assertEqual((row["mid"], row["frm"], row["to"], row["gist"], row["at"]), ("", "", "", "", 0))
+        self.assertNotIn("via", row, "this host's own row")
+        # the receiving bus folds the payload in as the dialer's half of the exchange does
+        ps.peer_exchange_apply("TESTHOST", {}, {"presence": [], "epoch": 1, "holds": payload})
+        remote = ps.remote_holds()
+        self.assertEqual(len(remote), 1, remote)
+        self.assertEqual((remote[0]["atHost"], remote[0]["fault"]), ("TESTHOST", row["fault"]))
+        self.assertEqual(ps.peers_snapshot()["remoteHolds"], remote, "what the kernel proxies to the panel")
+        os.chmod(ps.QUARANTINE, 0o755)
+        hop = ps.holds_payload("third")               # the one hop: our own hold, and the fault row labelled via
+        self.assertEqual([(r.get("mid"), r.get("via")) for r in hop], [(self.HOLD["mid"], None), ("", "TESTHOST")])
+        self.assertEqual(hop[1]["fault"], row["fault"])
+        self.assertEqual([r.get("mid") for r in ps.holds_payload("TESTHOST")], [self.HOLD["mid"]], "never gossiped back to its holder")
+
+    def test_a_listable_store_carries_no_fault_key(self):
+        payload = ps.holds_payload("other")
+        self.assertEqual([r["mid"] for r in payload], [self.HOLD["mid"]])
+        self.assertTrue(all("fault" not in r for r in payload))
+        ps.peer_exchange_apply("TESTHOST", {}, {"presence": [], "epoch": 1, "holds": payload})
+        self.assertTrue(all("fault" not in r for r in ps.remote_holds()))
+        self.assertEqual([r["atHost"] for r in ps.remote_holds()], ["TESTHOST"])
 
 
 class RecallOfAParkedRecordInAStoreThatCannotBeListed(unittest.TestCase):

@@ -8,12 +8,15 @@ The cases: a notice line that is not UTF-8 skips and is said once instead of rai
 feed build, and a file saved with a UTF-8 BOM keeps its first row; the rows split on every line boundary main split on,
 so a file with CR endings reads whole (the closing pass); a notices directory or file the kernel cannot list,
 stat or read is said once per episode on the bell instead of drawing a clean board; a hold nested past the interpreter's
-limit (RecursionError, or on the free-threaded Python 3.14, whose parser takes the depth, a record whose body no repr
-survives), a hold whose record names another message id than its file, and a dangling .json symlink are
-moved aside and said like the other unreadable records; the said-once registry's prune reads a snapshot, so two
-overlapping builds cannot raise RuntimeError out of one another, and a removed directory ends the episodes under it;
-Undo and the two ledger counts pass over an older ledger's hold rows; and the type-wrong row's log line names the key
-only when it is a valid key.
+limit (RecursionError; on the free-threaded Python 3.14, whose parser takes the depth, the bare deep list is moved aside
+as a non-object and a record whose body is the deep list keeps its card with the body named by its type, since a record
+that parsed is never refused for a field's type: the manager's round 1, extra8-1), a hold whose record names another
+message id than its file, and a dangling .json symlink are moved aside and said like the other records that cannot be
+parsed; the said-once registry's prune reads a snapshot, so two overlapping builds cannot raise RuntimeError out of one
+another, and a removed directory ends the episodes under it; Undo and the two ledger counts pass over an older ledger's
+hold rows; and the type-wrong row's log line names the key only when it is a valid key. Two classes from the manager's
+round 1 ride here beside the classes they pin the neighbours of: the card's coercion of a hold's fields of another type
+(tests-2) and the writer-side say-once for a notice file the sweep cannot read (tests-3).
 
 The harness is the round 1 module's (tests/test_held_mail_reader_guards.py: its hermetic root, its private synthetic sid,
 its fixtures), imported the way the api-health modules share theirs. Synthetic only: TESTHOST, placeholder ids, invented
@@ -100,7 +103,8 @@ class NoticeLineNotUtf8(_R2Case):
         feed, log = self._feed()
         self.assertEqual((self._notice_ids(feed), log), ([NOTICE_ID], ""), "said once per episode")
         with contextlib.redirect_stderr(io.StringIO()):
-            rows = km._notice_rows_unlocked(SID)
+            rows, err = km._notice_rows_unlocked(SID)   # (rows, error) since the manager's round 1 (regression-2)
+        self.assertEqual(err, "", "a file that read is no fault")
         self.assertEqual([r["key"] for r in rows], ["figure"], "the writer's reader skips it too")
 
     def test_a_utf16_file_beside_a_good_one_takes_only_its_own_session_off(self):
@@ -137,7 +141,8 @@ class NoticeFileWithABom(_R2Case):
         feed, log = self._feed()
         self.assertEqual((self._notice_ids(feed), log), ([NOTICE_ID], ""))
         with contextlib.redirect_stderr(io.StringIO()):
-            self.assertEqual([r["key"] for r in km._notice_rows_unlocked(SID)], ["figure"])
+            rows, err = km._notice_rows_unlocked(SID)   # (rows, error) since the manager's round 1 (regression-2)
+        self.assertEqual((err, [r["key"] for r in rows]), ("", ["figure"]))
 
 
 class NoticeRowsSplitOnEveryLineBoundary(_R2Case):
@@ -147,13 +152,19 @@ class NoticeRowsSplitOnEveryLineBoundary(_R2Case):
     the bytes, then VT, FF, FS, GS, RS, NEL, LINE SEPARATOR and PARAGRAPH SEPARATOR in each line that decodes. A line
     that is not UTF-8 still skips and is said once, and the sweep's skipped lines keep file order and carry no line
     ending, as main's did. Over the round 2 archive the CR case and the boundary case read no rows; the CRLF case fails
-    there on the skipped line's text alone (json.loads takes a trailing CR as whitespace, so its rows already read)."""
+    there on the skipped line's text alone (json.loads takes a trailing CR as whitespace, so its rows already read).
+    Since the manager's round 1 a line that is not JSON is said too (kernel-4, extra6-3: the parse skipped it in silence
+    on both surfaces and the sweep then archived it unsaid), and every fact new to the episode is ONE refused bell row
+    for the file (extra5-1, kernel-3), so the two cases that stage such a line assert the line and the row where they
+    asserted an empty log; over the 35fad278c archive both are red there (a silent skip, one line where two are due)."""
 
     MENU_ID = "notice:%s:menu:1" % SID
 
     def _rows(self, skipped=None):
         with contextlib.redirect_stderr(io.StringIO()):
-            return [r["key"] for r in km._notice_rows_unlocked(SID, skipped)]
+            rows, err = km._notice_rows_unlocked(SID, skipped)   # (rows, error) since the manager's round 1 (regression-2)
+        self.assertEqual(err, "", "a file that read is no fault")
+        return [r["key"] for r in rows]
 
     def _two_rows(self, ending):
         return ending.join(json.dumps(_good(self.now, key=k)).encode() for k in ("figure", "menu")) + ending
@@ -167,10 +178,17 @@ class NoticeRowsSplitOnEveryLineBoundary(_R2Case):
     def test_crlf_endings_read_every_row_and_a_skipped_line_carries_no_ending(self):
         self._write_bytes(SID, b"not json\r\n" + self._two_rows(b"\r\n"))
         feed, log = self._feed()
-        self.assertEqual((sorted(self._notice_ids(feed)), log), ([NOTICE_ID, self.MENU_ID], ""))
+        self.assertEqual(sorted(self._notice_ids(feed)), [NOTICE_ID, self.MENU_ID], "both cards stand")
+        # the line that is not JSON is said once and rings once for the file (the manager's round 1, kernel-4 and extra5-1)
+        self.assertEqual(log.count("romp-kernel:"), 1, log)
+        self.assertIn("notices/%s.jsonl: a line is not JSON (a torn line, or trailing garbage) and is not a notice row" % SID, log)
+        rows = _refused()
+        self.assertEqual(len(rows), 1, "one refused row for the file")
+        self.assertIn("notices/%s.jsonl: 1 line skipped" % SID, rows[0])
         skipped = []
         self.assertEqual(self._rows(skipped), ["figure", "menu"])
         self.assertEqual(skipped, ["not json"], "the line the sweep archives, without its CR")
+        self.assertEqual(len(_refused()), 1, "the writer's reader meets the same fact: no second row")
 
     def test_the_other_boundaries_split_as_main_did(self):
         seps = ["\x0b", "\x0c", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029"]      # VT FF FS GS RS NEL LS PS
@@ -185,14 +203,19 @@ class NoticeRowsSplitOnEveryLineBoundary(_R2Case):
         self._write_bytes(SID, b"not json\r" + bad + b"\r" + json.dumps(_good(self.now)).encode() + b"\r")
         feed, log = self._feed()
         self.assertEqual(self._notice_ids(feed), [NOTICE_ID], "the good row's card stands; the damaged row skips")
-        self.assertEqual(log.count("romp-kernel:"), 1, log)
+        self.assertEqual(log.count("romp-kernel:"), 2, log)   # two facts, each once: not UTF-8, and not JSON (kernel-4)
         self.assertIn("notices/%s.jsonl: a line is not UTF-8 text; the row is skipped" % SID, log)
+        self.assertIn("notices/%s.jsonl: a line is not JSON (a torn line, or trailing garbage) and is not a notice row" % SID, log)
         self.assertNotIn("MARKER-ROW-TEXT", log, "never the line's text")
+        rows = _refused()
+        self.assertEqual(len(rows), 1, "the two facts are one refused row for the file")
+        self.assertIn("notices/%s.jsonl: 2 lines skipped" % SID, rows[0])
+        self.assertNotIn("MARKER-ROW-TEXT", rows[0])
         skipped = []
         self.assertEqual(self._rows(skipped), ["figure"])
         self.assertEqual(skipped, ["not json", bad.decode("utf-8", "backslashreplace")], "the lines left out, in file order")
         feed, log = self._feed()
-        self.assertEqual((self._notice_ids(feed), log), ([NOTICE_ID], ""), "said once per episode")
+        self.assertEqual((self._notice_ids(feed), log, len(_refused())), ([NOTICE_ID], "", 1), "said once per episode")
 
 
 class NoticeStoreUnreadableIsSaid(_R2Case):
@@ -278,13 +301,73 @@ class NoticeStoreUnreadableIsSaid(_R2Case):
         self.assertEqual(km._state_fault_seen, {})
 
 
+class WriterSideUnreadableFileIsSaidOnce(_R2Case):
+    """tests-3 (the manager's round 1): the writer-side say-once for a notice file the kernel cannot read
+    (_notice_rows_unlocked's OSError arm, reached by the sweep, post_notice and expire_notice) had no test; the class above
+    covers the reader's arm, which never reaches it, and deleting the writer's call was green. The sweep is the vehicle,
+    over a mode-000 file with no reader in the episode before it. One refused bell row names the file and the errno and
+    never a row's text; the sweep returns 0 with the file's bytes unchanged (the rows stay live: since regression-2 the
+    writer's reader answers the fault and the sweep passes the session by, where the fold to [] read as nothing to keep);
+    a following build_feed, the reader's arm over the same fault, adds no second line and no second row (writer and
+    reader are one episode); and the writer's reader answers (rows, error) with the fault named.
+
+    Fails before by mutation: with the _note_notice_file_fault call deleted from the writer's OSError arm in a scratch
+    copy of the kernel, red at the bell assertion (no row after the sweep). Over the 35fad278c archive red at the shape
+    assertion (that writer answered a bare list), the row, the untouched bytes and the one episode already true there."""
+
+    def test_the_sweep_alone_says_the_file_once_and_the_reader_adds_no_second_row(self):
+        _skip_as_root(self)
+        self.r.write_notice_rows([dict(_good(self.now), title="SECRET-TITLE-MARKER-TEXT")])
+        self.r.write_notice_rows([_good(self.now, key="other")], sid=SID2)
+        p = km._notice_path(SID)
+        before = p.read_bytes()
+        self.r.chmod(p, 0)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            moved = km._compact_notices(self.now)
+        log = err.getvalue()
+        self.assertEqual(moved, 0, "nothing is archived from a file that did not read")
+        rows = _refused()
+        self.assertEqual(len(rows), 1, "the writer's fault is on the bell, under the refused kind: %r" % rows)
+        self.assertIn("notices/%s.jsonl could not be read" % SID, rows[0])
+        self.assertIn("Permission denied", rows[0])
+        self.assertIn("the session's notices are off the board", rows[0])
+        self.assertEqual(log.count("romp-kernel:"), 1, log)
+        self.assertIn("notices/%s.jsonl could not be read" % SID, log)
+        self.assertNotIn("SECRET-TITLE-MARKER-TEXT", log + rows[0], "never a row's text")
+        self.assertNotIn("notices/%s.jsonl" % SID2, log, "the other session's file is not named")
+        self.r.chmod(p, 0o600)
+        self.assertEqual(p.read_bytes(), before, "the rows stay live: the file is not rewritten from an empty read")
+        self.r.chmod(p, 0)
+        feed, log = self._feed()
+        self.assertEqual(self._notice_ids(feed), ["notice:%s:other:1" % SID2], "the other session's card stands")
+        self.assertEqual((log, len(_refused())), ("", 1), "the reader meets the same episode: no second line, no second row")
+        with contextlib.redirect_stderr(io.StringIO()):
+            rows, fault = km._notice_rows_unlocked(SID)
+        self.assertEqual(rows, [])
+        self.assertIn("notices/%s.jsonl could not be read" % SID, fault)
+        self.assertIn("Permission denied", fault)
+        self.assertNotIn("SECRET-TITLE-MARKER-TEXT", fault)
+        self.assertEqual(len(_refused()), 1, "still one episode")
+
+
 class HeldRecordFaultsWidened(_R2Case):
     """_held_records caught FileNotFoundError, OSError and ValueError around the parse. Three inputs slipped past: a
     document nested past the interpreter's limit raised RecursionError (a RuntimeError) out of every feed build with the
     file left in place; a record whose `mid` was not the file's name built a card the bus refused to decide (it looks a
     hold up by file name) and the card's Clear refuses a hold, so it stood forever; a `.json` symlink whose target was
     gone raised FileNotFoundError from the stat, which read as `decided meanwhile`, so it was listed on every build and
-    never said. Each is moved aside and said now like any record the reader cannot take."""
+    never said. Each is moved aside and said now like any record the reader cannot take. A record whose BODY is the deep
+    value is not one of them: the closing commit refused it by type and moved it aside, and the manager's round 1
+    (extra8-1) ruled that a record that parsed is never declared corrupt for a field's type, so its card stands with the
+    body named `list` and never formatted (_hold_text); the two deep cases assert that outcome where they asserted the
+    aside, and over the 35fad278c archive the parser-returning case is red there (the record moved aside, no card)."""
+
+    def _full_cards(self):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            cards = km._quarantine_cards(self.now)
+        return cards, err.getvalue()
 
     def _assert_said_deep(self, log, name, reasons):
         """Exactly one stderr line names `name`.json, with one of `reasons` where the reader says why, and no line carries
@@ -298,44 +381,70 @@ class HeldRecordFaultsWidened(_R2Case):
 
     def test_a_document_nested_past_the_limit_moves_aside(self):
         """The real parser on the running Python. Through 3.13 json.loads raises RecursionError at the depth and the
-        record lands in the parser's arm; the free-threaded 3.14 parses it and hands back a record whose body is the
-        deep list, which the reader refuses by its type before anything formats it (the sibling case below pins that
-        outcome on every Python). Either way: moved aside, said once, the readable hold on the board."""
+        record lands in the parser's arm: moved aside, said once, the readable hold on the board. The free-threaded 3.14
+        parses it and hands back a record whose body is the deep list, and a record that parsed is never refused for a
+        field's type (the manager's round 1, extra8-1): its card stands beside the readable hold with the body named
+        `list` and never formatted (the sibling case below pins that outcome on every Python). Which arm the running
+        parser takes is read from the parser itself, never assumed."""
         self.r.write_hold("qc-good")
         (self.r.qdir / "qc-deep.json").write_text(DEEP_BODY_DOC % "qc-deep")
-        cards, log = self._cards()
-        self.assertEqual(cards, ["quarantine:qc-good"], "the readable hold stands")
-        self.assertEqual(len(self._asides("qc-deep")), 1, "moved aside like any record that cannot be parsed")
-        self._assert_said_deep(log, "qc-deep", ("maximum recursion depth exceeded", "`body` is a list, not text"))
-        self.assertEqual(len(_refused()), 1)
+        try:
+            json.loads(DEEP)
+            parser_takes_the_depth = True
+        except RecursionError:
+            parser_takes_the_depth = False
+        full, log = self._full_cards()
+        cards = [c["itemId"] for c in full]
+        if parser_takes_the_depth:
+            self.assertEqual(cards, ["quarantine:qc-deep", "quarantine:qc-good"], "the record parsed: its card stands")
+            self.assertEqual((full[0]["blocked"]["body"], full[0]["blocked"]["gist"]), ("list", "list"), "the body by its type")
+            self.assertNotIn("[[", json.dumps(full))
+            self.assertEqual((self._asides("qc-deep"), log, _refused()), ([], "", []), "nothing moved, nothing said")
+            expected = ["quarantine:qc-deep", "quarantine:qc-good"]
+        else:
+            self.assertEqual(cards, ["quarantine:qc-good"], "the readable hold stands")
+            self.assertEqual(len(self._asides("qc-deep")), 1, "moved aside like any record that cannot be parsed")
+            self._assert_said_deep(log, "qc-deep", ("maximum recursion depth exceeded",))
+            self.assertEqual(len(_refused()), 1)
+            expected = ["quarantine:qc-good"]
         feed, log = self._feed()
-        self.assertEqual(([c["itemId"] for c in _asks(feed, "quarantine:")], log), (["quarantine:qc-good"], ""),
-                         "the build survives it, and the next meets no such file")
+        self.assertEqual(([c["itemId"] for c in _asks(feed, "quarantine:")], log), (expected, ""),
+                         "the build survives it, and the next build says nothing new")
 
-    def test_a_deep_document_the_parser_returns_is_moved_aside_by_its_type_and_never_formatted(self):
+    def test_a_deep_document_the_parser_returns_is_moved_aside_as_a_list_and_kept_as_a_body_named_by_type(self):
         """json.loads as the free-threaded Python 3.14 answers the deep document, made deterministic here: the parser
-        returns the 100000-deep value instead of raising. As a bare list it is not an object; as a record's body it is
-        not text. Both are moved aside and said by type alone. Before the fix the record with the deep body was taken,
-        and the card's gist, str() of the body, overflowed the stack out of every feed build (the 3.14t CI job:
-        `Stack overflow ... while getting the repr of an object`); over a git archive of that head this case raises
-        RecursionError out of _cards() on this Python too."""
+        returns the 100000-deep value instead of raising. As a bare list it is not an object: moved aside and said by
+        type alone. As a record's BODY it is a field of another type in a record that parsed: the card stands with the
+        body named `list`, nothing is moved and nothing is said for it (the manager's round 1, extra8-1; the closing
+        commit had refused the record by type and moved it aside, so a held message the bus's writer accepted left the
+        board with no card and no decision). Before the closing commit the record with the deep body was taken and the
+        card's gist, str() of the body, overflowed the stack out of every feed build (the 3.14t CI job: `Stack overflow
+        ... while getting the repr of an object`); nothing formats the value now on any Python. Over the 35fad278c
+        archive this case is red at the card list (the record moved aside, no card)."""
         self.r.write_hold("qc-good")
         (self.r.qdir / "qc-list.json").write_text(DEEP)
         (self.r.qdir / "qc-body.json").write_text(DEEP_BODY_DOC % "qc-body")
         deep = _deep_list()
-        with _parser_returning({"[": deep, '{"mid": "qc-body"': {"mid": "qc-body", "to": "web", "at": 1000, "body": deep}}):
-            cards, log = self._cards()
-        self.assertEqual(cards, ["quarantine:qc-good"], "the readable hold stands")
-        self.assertEqual((len(self._asides("qc-list")), len(self._asides("qc-body"))), (1, 1), "both moved aside")
+        answers = {"[": deep, '{"mid": "qc-body"': {"mid": "qc-body", "to": "web", "at": 1000, "body": deep}}
+        with _parser_returning(answers):
+            full, log = self._full_cards()
+        cards = [c["itemId"] for c in full]
+        self.assertEqual(cards, ["quarantine:qc-body", "quarantine:qc-good"], "the list is refused; the record with the deep body keeps its card")
+        self.assertEqual((len(self._asides("qc-list")), len(self._asides("qc-body"))), (1, 0), "the list moved aside, the record left where it is")
+        self.assertEqual((full[0]["blocked"]["body"], full[0]["blocked"]["gist"]), ("list", "list"), "the body named by its type, never formatted")
+        self.assertLess(len(json.dumps(full)), 4000, "no field carries the value")
+        self.assertNotIn("[[", json.dumps(full))
         self._assert_said_deep(log, "qc-list", ("not a JSON object",))
-        self._assert_said_deep(log, "qc-body", ("`body` is a list, not text",))
-        self.assertEqual(log.count("romp-kernel:"), 2, log)
+        self.assertEqual(log.count("romp-kernel:"), 1, log)
         rows = _refused()
-        self.assertEqual(len(rows), 2)
-        self.assertTrue(all(len(r) < 400 and "[[" not in r for r in rows), rows)
-        feed, log = self._feed()
-        self.assertEqual(([c["itemId"] for c in _asks(feed, "quarantine:")], log), (["quarantine:qc-good"], ""),
-                         "the next build meets neither file")
+        self.assertEqual(len(rows), 1, "one row: the list's")
+        self.assertIn("qc-list.json", rows[0])
+        self.assertNotIn("qc-body", rows[0])
+        self.assertTrue(len(rows[0]) < 400 and "[[" not in rows[0], rows[0])
+        with _parser_returning(answers):
+            feed, log = self._feed()
+        self.assertEqual(([c["itemId"] for c in _asks(feed, "quarantine:")], log), (["quarantine:qc-body", "quarantine:qc-good"], ""),
+                         "the next build meets the list no more and the record still, quietly")
 
     def test_a_record_that_names_another_message_id_moves_aside(self):
         self.r.write_hold("qc-good")
@@ -374,6 +483,80 @@ class HeldRecordFaultsWidened(_R2Case):
         self.r.chmod(self.r.qdir, 0o700)
         cards, log = self._cards()
         self.assertEqual((len(self._asides("qc-link")), len(_refused())), (1, 2), "the next listing moves it aside")
+
+
+class HoldFieldsOfAnotherTypeAreNamedNeverFormatted(_R2Case):
+    """tests-2 (the manager's round 1): _hold_text's coercion of the card's toId, frm, to, origin and body was covered by
+    no test, and removing it was green. It is the belt that keeps a value no repr survives out of the card, the failure
+    class the closing commit exists to remove, and since extra8-1 dropped the body arm in _held_records it is the only
+    thing between a peer-sent container and the card. A container (a list, an object) renders as its type name alone, a
+    number spelled out, text as it is, a falsy value as the field's default; the card's sid and name stay text; the
+    build does not raise; and a container in those fields is QUIET (the card stands, no stderr line, no bell row, no
+    aside), which is intended and not accidental: the record parsed, and a record that parsed is never refused for a
+    field's type (state three at _note_read_fault_once), where a line the parser refuses is loud.
+
+    Fails before by mutation, not by archive (the belt exists at 35fad278c; the finding is that nothing pinned it): with
+    _hold_text's coercion removed in a scratch copy of the kernel (the raw value handed back) both cases are red with
+    AttributeError out of the build, the card's gist splitting the raw body (a dict's in the first case, the deep list's
+    in the second) before any repr is reached; green here. Over the 35fad278c archive both are red too, but at the card
+    list and for another reason (that head's body arm moved these records aside), so the mutation is the evidence."""
+
+    FIELDS = ("toId", "frm", "to", "origin", "body")
+
+    def _full_cards(self):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            cards = km._quarantine_cards(self.now)
+        return cards, err.getvalue()
+
+    @staticmethod
+    def _shown(card):
+        b = card["blocked"]
+        return (card["sid"], card["name"], b["frm"], b["to"], b["origin"], b["body"], b["gist"])
+
+    def test_a_list_a_dict_and_a_number_in_the_cards_fields_are_named_by_type(self):
+        self.r.write_hold("qc-good")
+        docs = {"qc-list": dict(zip(self.FIELDS, (["SECRET-FIELD-TEXT"], ["a", "b"], ["web"], ["TESTHOST"], ["SECRET-FIELD-TEXT"]))),
+                "qc-dict": dict(zip(self.FIELDS, ({"SECRET-FIELD-TEXT": 1}, {"k": "v"}, {"n": "web"}, {"h": 1}, {"SECRET-FIELD-TEXT": 2}))),
+                "qc-num": dict(zip(self.FIELDS, (7, 3.5, 42, 0, 12345)))}
+        for mid, fields in docs.items():
+            (self.r.qdir / (mid + ".json")).write_text(json.dumps(dict({"mid": mid, "at": 1000}, **fields)))
+        cards, log = self._full_cards()
+        by = {c["itemId"]: c for c in cards}
+        self.assertEqual(sorted(by), ["quarantine:qc-dict", "quarantine:qc-good", "quarantine:qc-list", "quarantine:qc-num"],
+                         "every record parsed, so every card stands")
+        self.assertEqual(self._shown(by["quarantine:qc-list"]), ("list",) * 7, "a list is its type name in every field")
+        self.assertEqual(self._shown(by["quarantine:qc-dict"]), ("dict",) * 7, "an object the same")
+        self.assertEqual(self._shown(by["quarantine:qc-num"]), ("7", "42", "3.5", "42", "?", "12345", "12345"),
+                         "a number is spelled out; a falsy value takes the field's default")
+        for c in cards:
+            self.assertIsInstance(c["sid"], str)
+            self.assertIsInstance(c["name"], str)
+            for k in ("frm", "to", "origin", "body", "gist", "what"):
+                self.assertIsInstance(c["blocked"][k], str, k)
+        self.assertNotIn("SECRET-FIELD-TEXT", json.dumps(cards), "a container's contents never reach the card")
+        self.assertEqual((log, _refused()), ("", []), "quiet: the records parsed, so nothing is said")
+        self.assertEqual(sorted(p.name for p in self.r.qdir.iterdir()), ["qc-dict.json", "qc-good.json", "qc-list.json", "qc-num.json"],
+                         "and nothing is moved aside")
+        feed, log = self._feed()
+        self.assertEqual((len(_asks(feed, "quarantine:")), log), (4, ""), "the whole build survives them")
+
+    def test_a_deep_value_the_parser_returns_in_every_field_is_named_never_formatted(self):
+        self.r.write_hold("qc-good")
+        (self.r.qdir / "qc-deep.json").write_text(DEEP_BODY_DOC % "qc-deep")   # the bytes stand in; the parser's answer is below
+        deep = _deep_list()
+        rec = dict({"mid": "qc-deep", "at": 1000}, **{k: deep for k in self.FIELDS})
+        with _parser_returning({'{"mid": "qc-deep"': rec}):
+            cards, log = self._full_cards()
+            feed, flog = self._feed()
+        by = {c["itemId"]: c for c in cards}
+        self.assertEqual(sorted(by), ["quarantine:qc-deep", "quarantine:qc-good"])
+        self.assertEqual(self._shown(by["quarantine:qc-deep"]), ("list",) * 7, "every field by its type alone")
+        self.assertLess(len(json.dumps(by["quarantine:qc-deep"])), 2000, "no field carries the value")
+        self.assertNotIn("[[", json.dumps(cards))
+        self.assertEqual((log, flog, _refused()), ("", "", []), "quiet")
+        self.assertEqual(sorted(a["itemId"] for a in _asks(feed, "quarantine:")), ["quarantine:qc-deep", "quarantine:qc-good"])
+        self.assertTrue((self.r.qdir / "qc-deep.json").exists(), "the record is left where it is")
 
 
 class SaidOncePruneReadsASnapshot(_R2Case):

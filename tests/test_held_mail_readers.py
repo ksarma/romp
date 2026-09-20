@@ -5,8 +5,9 @@ Skip the row, name the session and the key in the log, keep the board.
 
 The cases: the footer's Clear-all reaches _clear_all with every ask id, a hold's included, and the hold's card must stand
 (a hold is decided by Approve or Deny, never dismissed); one type-wrong value in one notice row must not raise out of
-every feed build; the quarantine directory reader must name a directory it cannot list, move a record it cannot read
-aside once with the other holds still built, and name a record with no message id.
+every feed build; the quarantine directory reader must name a directory it cannot list, move a record it cannot parse
+aside once with the other holds still built, leave a record it cannot READ in place for the next build, and name a
+record with no message id.
 
 Synthetic only: a hermetic temp state root, placeholder session ids, invented hold and notice text, TESTHOST. Every root
 this module mints writes `off` into <root>/session-hosts (repo rule, 2026-09-11) and no goals are minted."""
@@ -249,10 +250,13 @@ class NoticeRowTypeFault(unittest.TestCase):
         self.assertEqual(log3.count("needs an integer"), 1)
 
     def test_the_writer_side_reader_skips_the_row_too(self):
-        # post_notice counts a key's revisions over _notice_rows_unlocked; a type-wrong row there raised for the writer
+        # post_notice counts a key's revisions over _notice_rows_unlocked; a type-wrong row there raised for the writer.
+        # The writer's reader answers (rows, error) since the manager's round 1 (regression-2: a file it could not read
+        # was folded to [], a false absence for expire_notice and a blind revision for post_notice); a clean read is ""
         self.r.write_notice_rows([self._good(), dict(self._good(key="sweep"), rev="abc-not-a-rev")])
         with contextlib.redirect_stderr(io.StringIO()):
-            rows = km._notice_rows_unlocked(SID)
+            rows, err = km._notice_rows_unlocked(SID)
+        self.assertEqual(err, "", "a file that read is no fault")
         self.assertEqual([r["key"] for r in rows], ["figure"])
 
 
@@ -262,10 +266,13 @@ class HeldMailReader(unittest.TestCase):
     glob swallowed the PermissionError itself, so the reader's except never even ran). F4: the try wrapped json.loads
     alone, so a hold file whose JSON is not an object raised AttributeError, and a non-integer `at` ValueError, out of
     _quarantine_cards and build_feed. F5: a torn file, or a record with no mid, was skipped silently forever with the file
-    left in place. The port of the postal bus's _list_json_records, precondition included: an unreadable record is moved
-    aside ONCE to <name>.corrupt-<utc stamp> with a line naming the file, the other holds stay on the board, a file
-    rewritten under the read is left for the next build, and a directory fault names itself (one stderr line and one bell
-    row under the refused kind, once per episode) instead of returning an empty board."""
+    left in place. The port of the postal bus's _list_json_records, precondition included: a record that reads but
+    cannot be parsed is moved aside ONCE to <name>.corrupt-<utc stamp> with a line naming the file, the other holds stay
+    on the board, a file rewritten under the read is left for the next build, and a directory fault names itself (one
+    stderr line and one bell row under the refused kind, once per episode) instead of returning an empty board. A record
+    whose bytes could not be READ is not this class's: since the manager's round 1 (correctness-2) it is skipped and left
+    in place for the next build, never renamed, because a rename is terminal and the bytes may be a good message
+    (tests/test_held_mail_manager_r1.py ReadFaultLeavesTheFileInPlace)."""
 
     def setUp(self):
         self.r = _Root()
