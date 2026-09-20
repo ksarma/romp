@@ -29,6 +29,14 @@ import * as path from "node:path";
 import { literals, type Unit } from "./source-units";
 
 const VIEW = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "file-view.ts"), "utf8");
+/** The units among `units` that name a refused member: a string or template literal whose whole value is the member, or a
+ *  regular expression literal whose text names the word (its escape classes, `\b` `\w` `\s` and the rest, read as gaps first,
+ *  since the `b` of a `\b` before the word is a word character to the tester and hid `/\bfailed\b/` from it, the boundary
+ *  test's plant); each as the member, the line and the kind. */
+const readersOf = (units: Unit[], refused: string[]): string[] =>
+  refused.flatMap((m) => units.filter((l) => (l.kind === "regex" ? new RegExp("\\b" + m + "\\b").test(l.text.replace(/\\[A-Za-z]/g, " ")) : l.text === m)).map((l) => JSON.stringify(m) + " at line " + l.line + " (" + l.kind + ")"));
+/** What the refused-state pin reads and what stands outside it, in the pin's message and pinned by execution below. */
+const BOUNDARY_NOTE = "the pin reads WHOLE literal values, so an identifier used as a key, a word assembled from parts, a prefix or substring test and a case-folded comparison stand outside it, which the boundary test pins by execution";
 /** The text from one anchor to the next, both present. */
 const between = (src: string, from: string, to: string): string => {
   const a = src.indexOf(from); assert.ok(a >= 0, from + " present");
@@ -101,10 +109,16 @@ test("the one decision: figureWantsControl reads the figure's state by one rule 
   // allowance names, and the file's string literals are read as the compiler reads them (source-units.ts: either quote, a
   // template span, escapes resolved, and a regular expression literal by its text), so no literal equal to a refused member
   // stands outside the type line and figureState's body, the two places that must name every member, and a reader that names
-  // one in any spelling (a comparison in either order, a `case`, an array or a Set, a template, a regular expression over the
-  // word) fails here; comments are not literals, so prose may quote the word. The pin is file-wide on purpose (the author's
-  // closing pass after the file review's round 3, records-3), so a literal "failed" or "fetching" for anything else in the
-  // module must be spelled another way
+  // one by its whole literal (a comparison in either order, a `case`, an array or a Set, a template, an escaped spelling) or by
+  // a regular expression over the word fails here; comments are not literals, so prose may quote the word. The pin's boundary,
+  // stated because the comment here had claimed any spelling (the author's closing pass after the file review's round 4,
+  // guards-1 with records-11): it reads whole values equal to a member, so a reader that uses the word as an identifier key
+  // (`{ failed: true }`, a lookup table), assembles it from parts (`'fai' + 'led'`), tests a prefix or a substring of it
+  // (`startsWith('fail')`, `/^fetch/`) or compares case-folded (`toUpperCase() === 'FAILED'`) stands outside it; the identifier
+  // form is left unread on purpose, since file-view.ts names a save hook `failed` (editHooks), which a key reader would red at
+  // rest or force a rename of product code for a pin. The boundary test below plants every form and pins which side each
+  // falls on. The pin is file-wide on purpose (the author's closing pass after the file review's round 3, records-3), so a
+  // literal "failed" or "fetching" for anything else in the module must be spelled another way
   const typeLine = VIEW.match(/\ntype FigureState = [^\n]*;\n/);
   assert.ok(typeLine, "the FigureState type line");
   const typeAt = VIEW.indexOf(typeLine![0]);
@@ -117,8 +131,8 @@ test("the one decision: figureWantsControl reads the figure's state by one rule 
   const refused = members.filter((m) => !allowed.includes(m));
   assert.ok(members.length >= 3 && allowed.length >= 1 && refused.length >= 1 && allowed.every((a) => members.includes(a)), "a derived refused set: " + JSON.stringify({ members, allowed, refused }));
   const elsewhere = lits.filter((l) => !within(l, typeAt, typeAt + typeLine![0].length) && !within(l, stateAt, stateAt + state.length));
-  const readers = refused.flatMap((m) => elsewhere.filter((l) => (l.kind === "regex" ? new RegExp("\\b" + m + "\\b").test(l.text) : l.text === m)).map((l) => JSON.stringify(m) + " at line " + l.line + " (" + l.kind + ")"));
-  assert.deepEqual(readers, [], "no reader names a refused state (" + refused.map((m) => JSON.stringify(m)).join(", ") + "): its literal stands only on the type line and in figureState (read by the compiler: a string in either quote, a template span or an escaped spelling is the same literal, and a regular expression naming the word counts; comments are not read, so prose may quote it; the pin is file-wide on purpose, so a literal for anything else in file-view.ts must be spelled another way)");
+  const readers = readersOf(elsewhere, refused);
+  assert.deepEqual(readers, [], "no reader names a refused state (" + refused.map((m) => JSON.stringify(m)).join(", ") + "): its literal stands only on the type line and in figureState (read by the compiler: a string in either quote, a template span or an escaped spelling is the same literal, and a regular expression naming the word counts; comments are not read, so prose may quote it; " + BOUNDARY_NOTE + "; the pin is file-wide on purpose, so a literal for anything else in file-view.ts must be spelled another way)");
   assert.match(VIEW, /\nconst FIGOPEN_MIN_PX = 48;\n/, "the floor: the control's 22px box, its 6px inset and as much figure again");
   const small = between(VIEW, "function figureTooSmall(img: Element): boolean {", "\n}\n");
   assert.match(small, /const b = figureBox\(img\);\n\s*return b !== null && \(b\.w < FIGOPEN_MIN_PX \|\| b\.h < FIGOPEN_MIN_PX\);/, "under the floor on EITHER side (a badge is wide and short)");
@@ -186,6 +200,27 @@ test("the one decision: figureWantsControl reads the figure's state by one rule 
   // regression-3 with extra5-4): a plain click on a fetching or a failed figure opens nothing, and the two readers agree
   const target = between(VIEW, "function figureTarget(img: Element, filePath: string): FigureTarget | null {", "\n}\n");
   inOrder(target, ["const state = figureState(img);", "if (!figureHasPicture(state)) return null;", "const dest = chosenSource(img);"], "figureTarget: a target only for a state with a picture to name, read before the candidate (no candidate before the browser has picked, nothing to open after a failure, nothing for a state the type gains later)");
+});
+
+test("the refused-state pin's boundary, by execution over an assembled probe: a whole literal in either quote, a template, a `case`, a Set member with an escaped spelling and a regular expression over the word are read; an identifier key, a word assembled from parts, a prefix or substring test and a case-folded comparison are not, as the pin's message says", () => {
+  // the author's closing pass after the file review's round 4 (guards-1 with records-11): four planted readers of a refused
+  // state passed the pin silently while its comment claimed any spelling; the boundary is stated in the message and held here
+  const src = [
+    "const s: string = String(Math.random());",
+    "const a = s === 'failed' || s === 'fetching';",
+    "const b = `failed`;",
+    "switch (s) { case 'fetching': break; }",
+    "const c = new Set(['fai\\x6ced']);",
+    "const d = /\\bfailed\\b/.test(s);",
+    "const e: Record<string, boolean> = { failed: true, fetching: true };",
+    "const f = s === 'fai' + 'led';",
+    "const g = s.startsWith('fail') || /^fetch/.test(s);",
+    "const h = s.toUpperCase() === 'FAILED';",
+  ].join("\n");
+  const found = readersOf(literals(src, "probe.ts"), ["failed", "fetching"]);
+  assert.deepEqual(found.map((r) => Number(/ at line (\d+) /.exec(r)![1])).sort((x, y) => x - y), [2, 2, 3, 4, 5, 6], "read: the two comparisons, the template, the case, the escaped Set member and the regular expression: " + JSON.stringify(found));
+  assert.ok(found.every((r) => !/ at line (?:7|8|9|10) /.test(r)), "not read, the boundary the message states: the identifier keys, the assembled word, the prefix tests and the case-folded comparison: " + JSON.stringify(found));
+  assert.match(BOUNDARY_NOTE, /identifier used as a key, a word assembled from parts, a prefix or substring test and a case-folded comparison stand outside it/, "the message names the four forms outside the pin");
 });
 
 test("the sheets' figure-control comment names the builder that exists (decideFigureControl), not the one the one decision replaced", () => {

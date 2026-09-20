@@ -7741,9 +7741,10 @@ review before the PR ran two rounds, named below as the review's round 1 and rou
 of the PR (2026-09-20) is named the file review. Its contract is kept outside the repo; this section records what was built,
 with the build's deliberate departures from that contract recorded as the decisions, and what is left for the owner to
 rule on. The file review's rounds are named the file review's round 1 to round 4, the rounds it has ruled (its fixlists and
-rulings are kept beside the contract, one pair per round); the author's own verification after each round's fixes, by a
-verifier of the author's, is named the author's closing pass after that round, never a round of either review, and its
-findings carry the ids behaviour-N, records-N and coverage-N, which no fixlist of the file review holds. A record naming a
+rulings are kept outside the repo in the maintainer's notes, one pair per round); the author's own verification after each
+round's fixes, by a verifier of the author's, is named the author's closing pass after that round, never a round of either
+review, and its findings carry the ids behaviour-N, records-N, coverage-N, guards-N and attribution-and-gates-N, which no
+fixlist of the file review holds. A record naming a
 round names the review it belongs to first (ui/webview/linknav-records-attribution.test.ts holds this over every record the
 branch wrote).
 
@@ -7911,9 +7912,14 @@ compiler reads it, in either quote, a template span or an escaped spelling alike
 text (ui/webview/source-units.ts, the reader ui/webview/linknav-records-attribution.test.ts shares; before the file review's
 round 4, regression-2 with extra6-1, three copies of the pin matched the double-quoted spelling alone and a single-quoted
 comparison passed them all while their messages claimed no member's literal stood anywhere), but the type line's and
-`figureState`'s, and the pin is file-wide on purpose, so a literal `"failed"` or `"fetching"` for anything else in the
-module must be spelled another way, which the author's closing pass after the file review's round 3 recorded, records-3, while prose may
-quote the word, since a comment is no literal); the target is read
+`figureState`'s; the pin reads whole values equal to a member, so a reader that uses the word as an identifier key (a
+lookup table `{ failed: true }`), assembles it from parts, tests a prefix or a substring of it or compares case-folded
+stands outside the pin, which its message says and its boundary test pins by execution (the author's closing pass after
+the file review's round 4, guards-1 with records-11: the pin's comment had claimed any spelling; the identifier form is
+left unread on purpose, since file-view.ts names a save hook `failed`, which a key reader would red at rest or force a
+rename of product code for a pin); and the pin is file-wide on purpose, so a literal `"failed"` or `"fetching"` for anything
+else in the module must be spelled another way, which the author's closing pass after the file review's round 3 recorded,
+records-3, while prose may quote the word, since a comment is no literal); the target is read
 again at the click; the failed figure's label, `failedSource`,
 delegates to it; read from the src alone, the control opened the fallback src a `<picture>` or a srcset figure had
 skipped), joined by the model's `figurePath` (file-comments-model.ts, the join rewriteFigureSrcs fetched through, so the
@@ -8261,7 +8267,16 @@ of created files checked against the diff's added files there. It and ui/webview
 ui/webview/source-units.ts, the compiler's parser (comments as text with wrapped lines joined, string literals by value
 in either quote, template spans, escapes resolved), Markdown as paragraphs and Python as paragraphs with backslash
 escapes folded: the one reader for both pins, since the file review's round 4 ruled that a guard against a form is
-keyed on the property or parses, and that three guards keyed on three spellings are fixed as one mechanism. The census
+keyed on the property or parses, and that three guards keyed on three spellings are fixed as one mechanism. The author's
+closing pass after the file review's round 4 stated each pin's boundary in its message and pinned it by execution (guards-1
+with records-11: the refused-state pin reads whole literal values and regular expressions, not an identifier key, an
+assembled word, a prefix or a case-folded test; guards-2 with attribution-and-gates-3: the attribution pin reads a round as
+`round` or `rounds` followed by digits, a comma list or a `to` range after `rounds` as the set, and no ordinal, spelled-out
+or abbreviated form, and an id as the family word, a hyphen and digits), had the attribution pin's second road diff the
+working tree against the merge-base so an uncommitted planted phrase is charged like a committed one (guards-3), charged a
+fault in this section to its plan line rather than a section-relative one (attribution-and-gates-4), and widened its first
+road's read of file-view.ts to the units carrying an id of the author's family beside those naming the file review, so a
+pass misnamed as a round in a figure comment is judged in every checkout (records-1). The census
 those two pins grew out of, every line the branch added since the merge-base 3711863c9 that names a review, run for the
 file review's round 3, tests-2, with the corrections it produced: the commit that recorded it said 173 lines over 19
 files at this head, and 173 is the count at that commit's parent, 677b0e1c8; at the commit's own head, 2a35d92c9, the same

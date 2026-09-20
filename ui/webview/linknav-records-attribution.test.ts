@@ -14,6 +14,12 @@
 // named a pass before it, so crediting the pass's finding to a round of the file review fails whatever the round; and a
 // "round N" with no review named before it in its unit fails, since nothing can be checked about it. A review outside the
 // section's convention (a "Slice 7 review") is not the section's to enumerate and is left alone.
+// What the reader takes as a round, stated so a green here is read for what it covers (the author's closing pass after the
+// file review's round 4, guards-2 with attribution-and-gates-3: the plural form passed silently while the message claimed
+// every round): the word round or rounds followed by digits, spaced or hyphenated, and after rounds a comma list or a
+// to-range ("rounds N, M and K", "rounds N to M", the range expanded) as the set of those rounds, each judged against the
+// same nearest review; an ordinal ("the fourth round"), a spelled-out number ("round four") and an abbreviation ("R4") are
+// not read. An id is the family word, a hyphen and digits ("behaviour-N"); the spaced form ("behaviour N") is not read.
 // Read as the language reads it (source-units.ts, the one reader the refused-state pin in file-view-figure-shapes.test.ts
 // shares): a TS or JS module's comments as text with wrapped lines joined and its string literals by value, so a phrase
 // naming a round is one phrase whether its apostrophe is bare, escaped inside a JS string or typographic (the file review's
@@ -21,21 +27,31 @@
 // modules used); a Markdown or Python file as paragraphs, Python with backslash escapes folded (the compiler does not read
 // Python), which the message says. Two roads, as the author's closing pass after the file review's round 3 (behaviour-6) set
 // them: (1) in every checkout the files the branch created (a roster), the plan's section, the guide's Links paragraph, the
-// browser plan's pointer paragraph and the units of file-view.ts that name the file review (file-view.ts also carries the
-// viewer project's own review, whose rounds this section does not enumerate, so its units naming only "the review" are road
+// browser plan's pointer paragraph and the units of file-view.ts that name the file review or carry an id of the author's
+// family (the author's closing pass after the file review's round 4, records-1: a pass misnamed as a round beside its id, in
+// a figure comment naming no review, passed road 1 wherever road 2 stood down; file-view.ts also carries the viewer
+// project's own review, whose rounds this section does not enumerate, so its units naming only "the review" are road
 // 2's); (2) where the merge-base with origin/main tells this branch's delta from main's tip, every "round N" and every id
 // on a line the branch added since the merge-base, in every file it changed, judged in the unit that carries it (a modified
 // file's untouched lines are context, never the charge: a stylesheet's block carries other projects' rounds around the lines
 // this branch added), and the roster checked against the diff's added files. The gate on road 2 has two parts, both read
 // off git (the file review's round 4, extra8-1, taking its refuter's correction): the merge-base is not origin/main itself,
 // and the diff since the merge-base adds this module. One part alone is not the gate. With the merge-base at origin/main
-// the diff is the whole history over main's tip, which is what a batch head, main itself, a branch cut from main's tip and
-// this branch right after merging origin/main all look like, and the roster equality would fail on each for a reason that
-// is not a defect; and once the follow-on has landed, a later branch whose fork point main has moved past has a merge-base
-// off origin/main too, while its diff adds that branch's files and not this module, so the roster equality would fail on
-// every such branch in the repo (the pin before this gate did, in both refuters' scratch repos). So road 2 runs in one kind
-// of checkout: this follow-on's open PR branch, in a clone where origin/main has moved past the branch's last merge of it,
-// and the diagnostic says which road ran and, when road 2 stood down, which part of the gate held it. Synthetic values
+// the diff is the whole history over main's tip, which is what main itself, a branch or a batch head cut from main's tip
+// and this branch right after merging origin/main all look like, and the roster equality would fail on each for a reason
+// that is not a defect; and once the follow-on has landed, a later branch whose fork point main has moved past has a
+// merge-base off origin/main too, while its diff adds that branch's files and not this module, so the roster equality would
+// fail on every such branch in the repo (the pin before this gate did, in both refuters' scratch repos). So road 2 runs on
+// this follow-on's open PR branch in a clone where origin/main has moved past the branch's last merge of it, and the
+// diagnostic says which road ran and, when road 2 stood down, which part of the gate held it. The gate's residual,
+// disclosed and not closed: a batch head that main has moved under (a commit landed on main after the batch was cut from
+// its tip) has its merge-base off origin/main and a diff that adds this module, so road 2 runs over the batch's whole delta
+// and the roster equality fails on the other PRs' files. A third part would close it, every first-parent merge since the
+// merge-base merging main alone, and is named for the maintainer in the PR body rather than built unruled (the author's
+// closing pass after the file review's round 4, attribution-and-gates-2 with records-2). Road 2 diffs the WORKING TREE
+// against the merge-base, not HEAD, so the line ranges and the units it reads come from the same bytes and an uncommitted
+// edit in a scratch copy is charged like a committed one (the same pass, guards-3: a diff against HEAD read no added line
+// for an uncommitted planted phrase, a false green for a verifier who edits a copy without committing). Synthetic values
 // only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
@@ -82,8 +98,10 @@ const nextAt = plan.indexOf("\n## ", headAt + 1);
 const sectionStart = headAt + 1;
 const sectionText = plan.slice(sectionStart, nextAt < 0 ? plan.length : nextAt);
 const sectionLine = plan.slice(0, sectionStart).split("\n").length;
-/** The section's paragraphs, their lines numbered in the plan. */
-const sectionUnits = (): Unit[] => proseUnits(sectionText).map((u) => ({ ...u, line: u.line + sectionLine - 1, endLine: u.endLine + sectionLine - 1 }));
+/** The section's paragraphs, their lines numbered in the plan: the unit's lines and every start it maps offsets through
+ *  (the author's closing pass after the file review's round 4, attribution-and-gates-4: with the starts left section-relative,
+ *  a fault in the section was charged to a line about seven thousand short of the plan's). */
+const sectionUnits = (): Unit[] => proseUnits(sectionText).map((u) => ({ ...u, line: u.line + sectionLine - 1, endLine: u.endLine + sectionLine - 1, starts: u.starts.map((s) => ({ line: s.line + sectionLine - 1, at: s.at })) }));
 
 export type Reviews = { branch: Set<number>; file: Set<number>; ids: string[] };
 /** What the convention paragraph gives each review: the branch's review "round 1 and round 2", the file review "round 1 to
@@ -94,11 +112,11 @@ export function conventionOf(paragraph: string): Reviews {
   assert.ok(branch, "the convention names the branch's review's two rounds");
   const file = /are named the file review's round 1 to round (\d+), the rounds it has ruled/.exec(paragraph);
   assert.ok(file, "the convention enumerates the file review's rounds (round 1 to round N)");
-  const ids = /is named the author's closing pass after that round, never a round of either review, and its findings carry the ids ((?:[a-z]+-N(?:, | and ))+)/.exec(paragraph);
+  const ids = /is named the author's closing pass after that round, never a round of either review, and its findings carry the ids ((?:[a-z]+(?:-[a-z]+)*-N(?:, | and ))+)/.exec(paragraph);
   assert.ok(ids, "the convention names the author's passes as passes, never rounds, with their id family");
   const n = Number(file![1]);
   assert.ok(n >= 1 && n < 100, "a plausible count of file-review rounds: " + n);
-  const family = Array.from(ids![1].matchAll(/([a-z]+)-N/g), (m) => m[1]);
+  const family = Array.from(ids![1].matchAll(/([a-z]+(?:-[a-z]+)*)-N/g), (m) => m[1]);
   assert.ok(family.length >= 1, "the id family: " + JSON.stringify(family));
   return { branch: new Set([1, 2]), file: new Set(Array.from({ length: n }, (_, i) => i + 1)), ids: family };
 }
@@ -110,7 +128,27 @@ const ANCHORS: [RegExp, Who][] = [
   [/\breview\b/g, "branch"],
   [/\b(?:closing|verification|verifier's|author's|own) pass(?:es)?\b|\bverifier\b/g, "pass"],
 ];
-/** Every "round N" and every id of the author's family in a unit, judged against the reviews named before it: the faults,
+/** A round phrase as the set of rounds it names: `round N` or `round-N`; after the plural, a comma list or a `to` range
+ *  (`rounds N, M and K`, `rounds N to M`, the range expanded). Digits only: an ordinal, a spelled-out number and an
+ *  abbreviation are outside the reader, which the messages say. */
+const ROUND_RE = /\bround[- ](\d+)\b|\brounds[- ](\d+)((?:(?:,\s*|\s+(?:and|or|to)\s+)\d+)*)\b/gi;
+const roundsOf = (m: RegExpMatchArray): number[] => {
+  if (m[1] !== undefined) return [Number(m[1])];
+  const out = [Number(m[2])];
+  for (const p of m[3].matchAll(/(?:,\s*|\s+(and|or|to)\s+)(\d+)/g)) {
+    const n = Number(p[2]);
+    if (p[1] === "to") { for (let k = out[out.length - 1] + 1; k <= n; k++) out.push(k); } else out.push(n);
+  }
+  return out;
+};
+/** An id of the author's family: the family word, a hyphen and digits (the spaced form is not read). */
+const idPattern = (reviews: Reviews, flags = ""): RegExp => new RegExp("\\b(?:" + reviews.ids.join("|") + ")-\\d+\\b", flags);
+/** Road 1's selection of file-view.ts units: those naming the file review, and those carrying an id of the author's family
+ *  (a pass misnamed as a round beside its id, in a figure comment that names no review, is judged in every checkout; the
+ *  author's closing pass after the file review's round 4, records-1); a unit naming only "the review" is the viewer project's
+ *  and road 2's. */
+export const roadOneViewerUnit = (text: string, reviews: Reviews): boolean => /\bfile review\b/.test(text) || idPattern(reviews).test(text);
+/** Every round phrase and every id of the author's family in a unit, judged against the reviews named before it: the faults,
  *  each a sentence with the offset in `text` of the phrase it is about. */
 export type Fault = { at: number; fault: string };
 export function roundFaults(text: string, reviews: Reviews): Fault[] {
@@ -125,16 +163,22 @@ export function roundFaults(text: string, reviews: Reviews): Fault[] {
     return JSON.stringify((at > 0 ? "..." : "") + text.slice(at, m.index! + m[0].length + 30));
   };
   const fileMax = Math.max(...reviews.file);
-  for (const m of text.matchAll(/\bround[- ](\d+)\b/gi)) {
-    const n = Number(m[1]);
+  for (const m of text.matchAll(ROUND_RE)) {
+    const ns = roundsOf(m);
+    const list = ns.join(", ");
     const before = kept.filter((a) => a.end <= m.index!);
     const near = before.length ? before[before.length - 1] : null;
-    if (!near) faults.push({ at: m.index!, fault: quoteAt(m) + ": names round " + n + " of no review (nothing is named before it in this unit); write the file review's round " + n + ", the review's round " + n + ", or the author's closing pass after the file review's round M" });
+    if (!near) faults.push({ at: m.index!, fault: quoteAt(m) + ": names round " + list + " of no review (nothing is named before it in this unit); write the file review's round " + list + ", the review's round " + list + ", or the author's closing pass after the file review's round M" });
     else if (near.who === "pass") faults.push({ at: m.index!, fault: quoteAt(m) + ": a pass of the author's has no rounds; it is the author's closing pass after the file review's round M, with the finding's id kept" });
-    else if (near.who === "file" && !reviews.file.has(n)) faults.push({ at: m.index!, fault: quoteAt(m) + ": the file review's round " + n + " is not one the convention enumerates (rounds 1 to " + fileMax + "); a round the maintainer has ruled is named in the convention first" });
-    else if (near.who === "branch" && !reviews.branch.has(n)) faults.push({ at: m.index!, fault: quoteAt(m) + ": the branch's review ran rounds 1 and 2 alone; a later round is the file review's (write the file review's round " + n + ") or the author's closing pass" });
+    else if (near.who === "file") {
+      const bad = ns.filter((n) => !reviews.file.has(n));
+      if (bad.length) faults.push({ at: m.index!, fault: quoteAt(m) + ": the file review's round " + bad.join(" and ") + " is not one the convention enumerates (its last is round " + fileMax + "); a round the maintainer has ruled is named in the convention first" });
+    } else if (near.who === "branch") {
+      const bad = ns.filter((n) => !reviews.branch.has(n));
+      if (bad.length) faults.push({ at: m.index!, fault: quoteAt(m) + ": the branch's review ran rounds 1 and 2 alone; a later round is the file review's (write the file review's round " + bad.join(" and ") + ") or the author's closing pass" });
+    }
   }
-  const idRe = new RegExp("\\b(?:" + reviews.ids.join("|") + ")-\\d+\\b", "g");
+  const idRe = idPattern(reviews, "g");
   for (const m of text.matchAll(idRe)) {
     if (!kept.some((a) => a.who === "pass" && a.end <= m.index!)) faults.push({ at: m.index!, fault: quoteAt(m) + ": an id of the author's family (" + reviews.ids.map((p) => p + "-N").join(", ") + ") with no pass named before it in this unit; the finding is the author's closing pass's, never a round's of the file review" });
   }
@@ -169,8 +213,15 @@ test("the convention: the branch's review has rounds 1 and 2, the file review's 
   const r = convention();
   assert.deepEqual([...r.branch], [1, 2]);
   assert.ok(r.file.size >= 4 && r.file.has(1) && r.file.has(r.file.size), "the file review's rounds 1 to " + r.file.size);
-  assert.deepEqual(r.ids, ["behaviour", "records", "coverage"]);
+  assert.deepEqual(r.ids, ["behaviour", "records", "coverage", "guards", "attribution-and-gates"]);
   const two: Reviews = { branch: new Set([1, 2]), file: new Set([1, 2, 3, 4]), ids: ["behaviour", "records", "coverage"] };
+  // a phrase in the section is charged to the plan line that carries it: the section's last paragraph's last word stands at
+  // the end of the plan line lineAt names (the starts follow the section's offset; the author's closing pass after the file
+  // review's round 4, attribution-and-gates-4, found them section-relative)
+  const units = sectionUnits();
+  const last = units[units.length - 1];
+  const w = last.text.slice(last.text.lastIndexOf(" ") + 1);
+  assert.ok(plan.split("\n")[lineAt(last, last.text.length - 1) - 1].trimEnd().endsWith(w), "the section's last word " + JSON.stringify(w) + " is charged to the plan line that ends with it");
   // the probes are assembled, so this module's own literals name no round and no id at rest
   const F = "the file review's round ", B = "the review's round ", P = "the author's closing pass ";
   assert.deepEqual(roundFaults(F + 2 + " re-decided this on the rule the record of its round " + 1 + " had said did not exist", two), []);
@@ -186,9 +237,27 @@ test("the convention: the branch's review has rounds 1 and 2, the file review's 
   assert.equal(roundFaults("(" + F + 4 + ", records-" + 3 + ")", two).length, 1, "the pass's finding credited to a round of the file review: the id has no pass before it");
   assert.equal(roundFaults("recorded by " + F + 4 + " (rules-" + 1 + ")", two).length, 0, "the maintainer's own ids are not the family's");
   assert.deepEqual(roundFaults("the review ran two rounds; the pin holds a round-trip", two), [], "no round number, no claim");
+  // the plural and the range (the author's closing pass after the file review's round 4, guards-2: the plural form passed the
+  // singular reader), and the forms the reader leaves outside, held there so the message's own words stay true
+  const FS = "the file review's rounds ", BS = "the review's rounds ";
+  assert.equal(roundFaults(FS + 5 + " and " + 6 + " found it", two).length, 1, "the plural naming rounds past the enumeration: one fault for the phrase");
+  assert.deepEqual(roundFaults(FS + 1 + " to " + 4 + " ruled it; " + BS + 1 + " and " + 2 + " found it", two), [], "a range and a list of rounds the reviews had");
+  assert.equal(roundFaults(FS + 3 + " to " + 5 + " found it", two).length, 1, "a to-range is expanded, and the round past the enumeration reds");
+  assert.equal(roundFaults(P + "(rounds " + 5 + " and " + 6 + ", records-" + 2 + ")", two).length, 1, "a pass with rounds in the plural");
+  assert.deepEqual(roundFaults("the file review's fourth round found it, in its round four (R4)", two), [], "an ordinal, a spelled-out number and an abbreviation are outside the reader, which the message says");
+  assert.deepEqual(roundFaults("(" + F + 4 + ", behaviour " + 3 + ")", two), [], "a spaced id is outside the reader, which the message says");
+  // road 1's selection of file-view.ts units (the author's closing pass after the file review's round 4, records-1): a unit
+  // carrying an id of the family is read even
+  // where it names no review, and a pass named as a round there reds; a unit naming only the review is road 2's
+  const misnamed = "decided in the author's closing pass (round " + 5 + ", behaviour-" + 2 + ") over the measured box";
+  assert.ok(roadOneViewerUnit(misnamed, two) && roundFaults(misnamed, two).length === 1, "a pass named as a round beside its id, in a unit naming no review, is selected and reds");
+  const pronoun = "its round " + 4 + " (behaviour-" + 2 + ", records-" + 1 + ") measured this";
+  const pf = roundFaults(pronoun, two);
+  assert.ok(roadOneViewerUnit(pronoun, two) && pf.length === 3 && /of no review/.test(pf[0].fault), "the pronoun form: a round of no review and two ids with no pass");
+  assert.ok(!roadOneViewerUnit("the review's round " + 3 + " found it", two), "a unit naming only the review is road 2's");
 });
 
-test("road 1, every checkout: the files the branch created, the plan's section, the guide's Links paragraph, the browser plan's pointer and file-view.ts's units naming the file review name no round outside the convention and no finding of the author's outside a pass; road 2, on the open PR branch where main has moved past its last merge (the merge-base off origin/main and the diff adding this module): every unit the branch added or touched, and the roster is the diff's added files", (t) => {
+test("road 1, every checkout: the files the branch created, the plan's section, the guide's Links paragraph, the browser plan's pointer and file-view.ts's units naming the file review or carrying an id of the author's family name no round outside the convention and no finding of the author's outside a pass; road 2, on the open PR branch where main has moved past its last merge (the merge-base off origin/main and the diff adding this module): every unit the branch added or touched, the working tree against the merge-base, and the roster is the diff's added files", (t) => {
   const reviews = convention();
   const faults: string[] = [];
   for (const f of CREATED) {
@@ -205,10 +274,10 @@ test("road 1, every checkout: the files the branch created, the plan's section, 
   assert.ok(pointerAt >= 0, "the browser plan's pointer paragraph");
   faults.push(...faultsOf("plans/file-browser.md (the pointer)", proseUnits(browserPlan.slice(pointerAt, browserPlan.indexOf("\n\n", pointerAt))), reviews));
   const viewer = read("ui/webview/file-view.ts");
-  const viewerUnits = unitsOf("ui/webview/file-view.ts", viewer).filter((u) => /\bfile review\b/.test(u.text));
-  assert.ok(viewerUnits.length >= 10, "file-view.ts names the file review in its figure and trail comments: " + viewerUnits.length);
-  faults.push(...faultsOf("ui/webview/file-view.ts (units naming the file review)", viewerUnits, reviews));
-  assert.deepEqual(faults, [], "every round a record names is a round the convention gives the review it names, and every finding of the author's family follows a pass (TS and JS read by the compiler, comments joined and literals by value; Markdown as paragraphs; Python as paragraphs with backslash escapes folded)");
+  const viewerUnits = unitsOf("ui/webview/file-view.ts", viewer).filter((u) => roadOneViewerUnit(u.text, reviews));
+  assert.ok(viewerUnits.length >= 10, "file-view.ts names the file review or carries an id of the author's family in its figure and trail comments: " + viewerUnits.length);
+  faults.push(...faultsOf("ui/webview/file-view.ts (units naming the file review or carrying an id of the author's family)", viewerUnits, reviews));
+  assert.deepEqual(faults, [], "every round a record names is a round the convention gives the review it names, and every finding of the author's family follows a pass (TS and JS read by the compiler, comments joined and literals by value; Markdown as paragraphs; Python as paragraphs with backslash escapes folded; a round is read as the word round or rounds followed by digits, spaced or hyphenated, with a comma list or a to-range after rounds as the set, and not as an ordinal, a spelled-out number or an abbreviation; an id as the family word, a hyphen and digits, never spaced)");
   // road 2
   const git = (...args: string[]): string => execFileSync("git", args, { cwd: REPO, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
   let base: string | null = null;
@@ -216,10 +285,11 @@ test("road 1, every checkout: the files the branch created, the plan's section, 
   try { base = git("merge-base", "origin/main", "HEAD"); main = git("rev-parse", "origin/main"); } catch { base = null; }
   if (!base) { t.diagnostic("road 2 did not run: origin/main is not known in this checkout (CI's default-depth checkout); road 1 read the created files, the section, the guide, the pointer and file-view.ts's file-review units"); return; }
   if (base === main) {
-    t.diagnostic("road 2 did not run: the merge-base with origin/main is origin/main itself (a batch head, main itself, a branch cut from main's tip, or this branch just after merging origin/main), so the diff since it is the whole history over main's tip and not this follow-on's delta; road 2 runs on the open PR branch once main has moved past the branch's last merge of it. Road 1 ran.");
+    t.diagnostic("road 2 did not run: the merge-base with origin/main is origin/main itself (main itself, a branch or a batch head cut from main's tip, or this branch just after merging origin/main), so the diff since it is the whole history over main's tip and not this follow-on's delta; road 2 runs on the open PR branch once main has moved past the branch's last merge of it. Road 1 ran.");
     return;
   }
-  const status = git("diff", "--name-status", base, "HEAD").split("\n").filter(Boolean).map((l) => l.split("\t"));
+  // the working tree against the merge-base (no HEAD argument): the ranges and the units read come from the same bytes
+  const status = git("diff", "--name-status", base).split("\n").filter(Boolean).map((l) => l.split("\t"));
   const created = status.filter((s) => s[0] === "A").map((s) => s[1]).sort();
   if (!created.includes(THIS_MODULE)) {
     t.diagnostic("road 2 did not run: the diff since the merge-base " + base + " does not add " + THIS_MODULE + " (a later branch after this follow-on landed, whose fork point main has moved past; or HEAD is main), so the diff is that branch's delta and not this follow-on's; road 2 runs on the open PR branch once main has moved past the branch's last merge of it. Road 1 ran.");
@@ -230,7 +300,7 @@ test("road 1, every checkout: the files the branch created, the plan's section, 
   const faults2: string[] = [];
   for (const f of touched) {
     const ranges: [number, number][] = [];
-    for (const m of git("diff", "-U0", base, "HEAD", "--", f).matchAll(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/gm)) {
+    for (const m of git("diff", "-U0", base, "--", f).matchAll(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/gm)) {
       const n = m[2] === undefined ? 1 : Number(m[2]);
       if (n > 0) ranges.push([Number(m[1]), Number(m[1]) + n - 1]);
     }
@@ -239,6 +309,6 @@ test("road 1, every checkout: the files the branch created, the plan's section, 
     faults2.push(...faultsOf(f, units, reviews, (line) => ranges.some(([a, b]) => line >= a && line <= b)));
   }
   assert.ok(touched.length > 0, "the branch touched files since " + base);
-  assert.deepEqual(faults2, [], "every round and every id on a line the branch added since " + base + " is judged in its unit and passes (road 2)");
-  t.diagnostic("road 2 ran: " + touched.length + " touched files read since " + base + ", the added lines judged in their units");
+  assert.deepEqual(faults2, [], "every round and every id on a line the branch added since " + base + " (the working tree against the merge-base, so an uncommitted edit is charged like a committed one) is judged in its unit and passes (road 2; a round is read as the word round or rounds followed by digits, a comma list or a to-range after rounds as the set, never an ordinal, a spelled-out number or an abbreviation; an id as the family word, a hyphen and digits)");
+  t.diagnostic("road 2 ran: " + touched.length + " touched files read since " + base + ", the working tree's added lines (committed or not) judged in their units");
 });
