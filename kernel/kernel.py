@@ -69833,10 +69833,13 @@ function wid(){try{return sessionStorage.getItem('romp:wid')||'';}catch(e){retur
 // keyboards and collapsing toolbars — where height*scale keeps a mobile pinch from re-fitting too.
 // Every run recomputes from scratch — never adjusts a stored value — so a viewport that grows back
 // (keyboard gone, app back in front) can never leave a stale, shorter --app-h behind.
-// [fork] D1 (2026-09-19): the pan fit() last PUBLISHED, on every road that publishes one (the 0px road included), the value its
-// pinch branch holds. The one stored value in this script, and the sentence above is about --app-h, which every run still
-// recomputes from scratch: the hold is bounded at use (the clamp inside fit) and never adjusted in place, so a keyboard
-// raised again under a standing zoom finds the pan it was measured with, not a value the clamp lowered (round 4, 2026-09-20).
+// [fork] D1 (2026-09-19): the pan a WRITING road of fit() last stored, the value its pinch branch holds: the measured road
+// stores its measurement and the 0px road a zero, in a no-pan state only; the clamp road publishes a bound of the hold and
+// stores nothing, so what the page is using can sit below the hold until a writing road runs next (round 6, 2026-09-20: it
+// had read "the pan last published, on every road", which the clamp road contradicts whenever it binds). The one stored
+// value in this script, and the sentence above is about --app-h, which every run still recomputes from scratch: the hold is
+// bounded at use (the clamp inside fit) and never adjusted in place, so a keyboard raised again under a standing zoom finds
+// the pan it was measured with, not a value the clamp lowered (round 4, 2026-09-20).
 var lastPan=0;
 function fit(){try{var vv=window.visualViewport;
 var coarse=window.matchMedia&&matchMedia('(pointer: coarse)').matches;
@@ -69877,8 +69880,8 @@ if(h)document.documentElement.style.setProperty('--app-h',h+'px');
 // the same validity guard as the height it belongs to (round 4, 2026-09-20,
 // as round 1 confirmed it): a coarse run whose height report is refused (h 0) publishes neither, so the prior pan stands
 // beside the prior height rather than moving the fixed body by a pan measured against nothing; the 0px road has no height
-// to belong to and is unconditional. The visual viewport's scroll event, where a pan lands, is already bound below, so no
-// new listener.
+// to belong to and publishes unconditionally (only its write into the hold carries the no-pan condition above). The visual
+// viewport's scroll event, where a pan lands, is already bound below, so no new listener.
 if(!coarse||!vv){if(!vv||((vv.scale||1)<=1.01&&!(vv.offsetTop>0)))lastPan=0;document.documentElement.style.setProperty('--app-top','0px');}
 else if(h&&(vv.scale||1)<=1.01)document.documentElement.style.setProperty('--app-top',(lastPan=Math.round(vv.offsetTop||0))+'px');
 else if(h)document.documentElement.style.setProperty('--app-top',Math.min(lastPan,Math.max(0,window.innerHeight-h))+'px');

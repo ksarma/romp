@@ -330,10 +330,15 @@ class RefitsWhenTheVisibleHeightChanges(unittest.TestCase):
         # run publishes, so a keyboard dismissed while zoomed cannot leave the body hanging below the viewport (round 2,
         # 2026-09-19); the clamp bounds what is published and never writes back into the hold (round 4, 2026-09-20: it had,
         # so the hold decayed to 0 the first time the clamp bound and a keyboard raised again under the zoom reopened the
-        # band), and the hold is the last value published on EVERY road, the 0px road included. Both coarse branches sit
-        # under the height's own validity guard (h truthy, the `if(h)` of the --app-h write above them): a refused height
-        # report publishes no pan either, so the prior pan stands beside the prior height (round 4, 2026-09-20, as round 1
-        # confirmed it); the 0px road has no height to belong to and stays unconditional. Behaviour:
+        # band). Every road that WRITES the hold writes the value it publishes: the measured road its measurement, the 0px
+        # road a zero, and that only in a true no-pan state (no visual viewport, or one at scale 1 with offsetTop 0; round 6,
+        # 2026-09-20: written on every fine run, the zero had reopened the band after a pointer flip under a keyboard or a
+        # zoom); the clamp road publishes a bound of the hold and stores nothing, so --app-top can sit below the hold until a
+        # writing road runs next (round 6: this comment had said the hold is the last value published on every road, which
+        # the clamp road contradicts whenever it binds, and the harness asserts that state). Both coarse branches sit under
+        # the height's own validity guard (h truthy, the `if(h)` of the --app-h write above them): a refused height report
+        # publishes no pan either, so the prior pan stands beside the prior height (round 4, 2026-09-20, as round 1
+        # confirmed it); the 0px road has no height to belong to and publishes unconditionally. Behaviour:
         # test_kernel_mobile.MobileFitExecutes.
         self.assertIn("\nvar lastPan=0;\nfunction fit(){", self.js)
         self.assertIn("if(!coarse||!vv){if(!vv||((vv.scale||1)<=1.01&&!(vv.offsetTop>0)))lastPan=0;document.documentElement.style.setProperty('--app-top','0px');}", self.js)
