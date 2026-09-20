@@ -4203,13 +4203,16 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
   // svg, and its src or srcset fetched from the unlisted host in Chromium, Firefox and WebKit with no click (the fourth scene of
   // file-view-figures-gate-adopt-browser.test.ts: red with this pass over `box` after the adoption, green here, measured
   // 2026-09-20). Before the chain, the chain judges what the re-parse created, once; a placeholder placed before this pass was
-  // repeated by the line splitter, three for one gated svg. Of every element the sanitizer keeps inside an svg, the re-parse in
-  // body changes what fetches for `image` alone (an HTML img, whose src and srcset are FETCH_ATTRS.img); a nested `svg` stays an
-  // svg, whose paint references paintRefs judges; every other one becomes an HTML element of the same name that fetches through
-  // none of its kept attributes (measured 2026-09-20 in the three engines over DOMPurify's svg tag list; the table is under the
-  // fence hole in the plan section named below). The Copy button (code-block.ts addCopyBtn) is created in the live document,
-  // appended into this body's <pre> and adopted with it below; its listeners ride both adoptions, and the same leg clicks each
-  // fence's button for real in the three engines.
+  // repeated by the line splitter, three for one gated svg. What the re-parse in body makes of every element the sanitizer keeps
+  // inside an svg, and which of those fetch, is the namespace table under "The fence hole" in the plan section the chain block
+  // names: `image` alone becomes a fetching element the chain judges through other attributes (an HTML img, src and srcset); a
+  // nested `svg` stays an svg, its paint references judged by paintRefs. One further effect of the order: an svg <a xlink:href>
+  // split across lines in such a fence comes back an HTML <a> whose xlink:href is a plain attribute, which the fold below
+  // (`a[*|href]`) does not match, so it ends a dead link (fv-dead) where the old order, folding before the re-parse, made it a
+  // section link; an svg anchor on one line keeps its namespace and folds as before (measured 2026-09-20 in the three engines by
+  // the fork PR review's verification). The Copy button (code-block.ts addCopyBtn) is created in the live document, appended into
+  // this body's <pre> and adopted with it below; its listeners ride both adoptions, and the same leg clicks each fence's button
+  // for real in the three engines.
   const copySources = fenceCopyQueue(text, fences);
   clean.querySelectorAll("pre code").forEach((node) => {
     const codeEl = node as HTMLElement;
@@ -4250,16 +4253,19 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
   // fence re-parse in a fourth, and file-view-figures-gate-adopt-svg-browser.test.ts, two inline svg images at the end of a
   // long note, read real servers' request logs in all three engines, and file-view-figures-gate-adopt.test.ts executes this
   // order under plain node, where those legs skip; the section "Fix: the gate before adoption (2026-09-20)" of
-  // plans/markdown-viewer.md records the hole, the instrument and the scope). The rule this block keeps: every pass that
-  // sets, repoints, moves or creates a fetching element runs before the adoption. The fence pass (above) is the one pass
+  // plans/markdown-viewer.md records the hole, the instrument and the scope). The rule this block keeps: every pass of mdBlock
+  // that sets, repoints, moves or creates a fetching element runs before the adoption (the hooks renderBody runs after mdBlock
+  // returns wrap, move or label elements the chain has judged, inside the live document, and set no fetching attribute; the plan
+  // section names them). The fence pass (above) is the one pass
   // that re-parses markup, so it runs before this block and this block judges what its re-parse creates (its comment says
   // what that is). The passes after the adoption write a video's style, a list item's class, anchors' attributes (class,
-  // title, data-*, target, rel, an href removed) and new anchors and spans in place of the prose's and the code blocks' text
-  // nodes, and none re-parses: after the adoption line this function, and every module a pass after it reaches (the
-  // callees' modules and their imports, derived from the code), holds no write of innerHTML or outerHTML and no
-  // insertAdjacentHTML, insertAdjacentElement, createContextualFragment, DOMParser or document.write;
-  // file-view-seam.test.ts derives that population from the comment-stripped code (its RE_PARSE pattern) and pins it, so a
-  // new such site after the adoption is red there until it is judged.
+  // title, data-*, target, rel, tabindex, role, an href set, resolved or removed) and new anchors and spans in place of the
+  // prose's and the code blocks' text nodes, and none re-parses: after the adoption line this function, and every module a pass
+  // after it reaches (the callees' modules and their imports, derived from the code), holds no write of innerHTML or outerHTML
+  // and no insertAdjacentHTML, insertAdjacentElement, createContextualFragment, DOMParser, document.write, setHTML,
+  // setHTMLUnsafe, parseHTMLUnsafe or template element; file-view-seam.test.ts derives that population from the
+  // comment-stripped code (its RE_PARSE pattern) and pins it, so a new such site after the adoption is red there until it is
+  // judged.
   if (doc && doc.kind === "url") {
     // Every attribute a figure fetches through resolves against the document (resolveFigureRefs, below): this arm read
     // `img[src]` alone, so a relative `srcset` candidate, a video's `src` or `poster`, an audio's, a `source`'s or a

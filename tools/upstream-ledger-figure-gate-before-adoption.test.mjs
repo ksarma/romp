@@ -2,13 +2,14 @@
 // gate-before-adoption fix to an upstream offer, and its `where:` line is the offer's inventory. Round 1 of the branch's
 // review added a second browser leg and rewrote that line without naming the leg or re-deriving its count, so the line said
 // 13 files where the head's diff listed 14, and the body kept saying WebKit alone fetched a gated figure where the new leg
-// had measured Firefox doing so too (found by the review's round 2, 2026-09-20). This module holds the entry to the tree and
+// had measured Firefox doing so too (found by the branch's second review round, 2026-09-20). This module holds the entry to the tree and
 // to the legs: every file the branch changed is named in the where: line, by its path or its basename (the entry by the
 // ledger's own phrase, "this entry among them"), and exists; the count the line states is the number of files it names;
 // both browser legs and the node scene are named in the line and in the body; the body's engine statements match the legs' own headers (the
 // img leg red in WebKit alone at the base, the svg leg red in Firefox and in WebKit, green in Chromium); the reach names
-// Firefox beside Safari, as the chain block's comment in file-view.ts does; since round 2, the rule, the fence scene, the Copy
-// case and the seam test's re-parse pin are named in the line and in the body and stand in the files; no em dash. The file list is the branch's diff
+// Firefox beside Safari, as the chain block's comment in file-view.ts does; since the fork PR's round-2 push (the branch's fourth
+// round), the rule, scoped to mdBlock, the fence scene, the Copy case and the seam test's re-parse pin are named in the line and in
+// the body and stand in the files; no em dash. The file list is the branch's diff
 // at its head (against its merge base with main), written down: the entry is a record of that branch, so this module reads no git. Named by its subject and
 // not by the entry's date: a tools module whose name opens with four digits is read as an ADR's by
 // tools/file-review-plan-sidecar-adr-modules.test.mjs, which requires a docs/adr/<NNNN>-*.md behind it (the branch's
@@ -125,12 +126,13 @@ test("the body's engine statements are the legs' own: the img leg red in WebKit 
   assert.ok(!body.includes('so neither leaked'), 'the pre-round-1 sentence that Chromium and Firefox did not leak is gone');
 });
 
-test('round 2: the where: line and the body state the rule, name the fence scene and the Copy case of the img leg and the seam test\'s re-parse pin, and the leg holds those two tests', () => {
+test('the fork PR\'s round-2 push: the where: line and the body state the rule over mdBlock, name the fence scene and the Copy case of the img leg and the seam test\'s re-parse pin, and the leg holds those two tests', () => {
   assert.ok(where.includes('the fence pass, the one pass that re-parses markup, then resolveFigureRefs, rewriteFigureSrcs and gateRemoteFigures, all on the sanitized body'), 'where: names the fence pass first in the order');
-  assert.ok(where.includes('the chain block\'s comment states the rule, every pass that sets, repoints, moves or creates a fetching element runs before the adoption'), 'where: states the rule');
+  assert.ok(where.includes('the chain block\'s comment states the rule, every pass of mdBlock that sets, repoints, moves or creates a fetching element runs before the adoption'), 'where: states the rule with its domain, mdBlock');
   assert.ok(where.includes('a fourth scene, the fence pass\'s re-parse of raw multi-line fences holding an svg image with src or srcset, red in all three engines with the pass after the adoption; and a fifth case, the Copy button clicked for real after the move'), 'where: names the fence scene and the Copy case');
-  assert.ok(where.includes('which since round 2 reads comment-stripped code, pins the fence pass\'s place and derives and pins the post-adoption re-parse population'), 'where: names the seam test\'s round-2 pins');
-  assert.ok(body.includes('the rule it keeps is that every pass that sets, repoints, moves or creates a fetching element runs before the adoption'), 'the body states the rule');
+  assert.ok(where.includes('which since the fork PR\'s round-2 push reads comment-stripped code, pins the fence pass\'s place and derives and pins the post-adoption re-parse population'), 'where: names the seam test\'s round-2 pins');
+  assert.ok(body.includes('the rule it keeps is that every pass of mdBlock that sets, repoints, moves or creates a fetching element runs before the adoption'), 'the body states the rule with its domain');
+  assert.ok(body.includes('The fork PR\'s review (its round-2 push, the branch\'s fourth round, 2026-09-20) found and closed the one pass that creates one'), 'the body names the review series once, as the plan does');
   assert.ok(body.includes('an HTML img the chain had never judged, which fetched from the unlisted host in Chromium, Firefox and WebKit with no click, on main and at this fix as filed; the fence pass now runs before the chain, over the same inert body, so the chain judges what the re-parse creates'), 'the body records the fence hole, its engines, its standing on main and the move');
   const leg = read(IMG_LEG);
   assert.ok(leg.includes('raw multi-line fences holding an svg image with a src, a gated one with a src beside its href, and one with a srcset'), 'the img leg holds the fence scene');
