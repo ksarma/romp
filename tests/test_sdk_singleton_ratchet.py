@@ -671,7 +671,16 @@ MUTATIONS = {
         (_JUDGE_CHANGED_RETURN, _JUDGE_CHANGED_RETURN.replace("    return (", "    return _sdk_found_refused((", 1)
                                 .replace("_sdk_remedy(after, ref))\n", "_sdk_remedy(after, ref)), before, after)\n"))]),
 }
-DERIVE_DESELECT = "tests/test_sdk_singleton_ratchet.py::TheMutationCellsApply"   # reds under any plant (its docstring)
+# The pins derive() deselects, each a reader of tests/conftest.py's text, which the plant changes, so its red under a
+# plant is the plant's and not a case's (each class's docstring says how): the applicability pin, which reds under any
+# plant, and the conftest roster pin, which reds under a plant that changes a text the conftest renders for the refusal
+# (refusal_text_names is keyed on those texts, so a case reading the changed text alone leaves the derived population
+# while the roster, which the plant does not touch, still names it). No case is deselected. derive() refuses a node id
+# here that names no test of this module: pytest ignores an unmatched --deselect without a word, so a renamed pin would
+# print as a red again under every plant it reads.
+DERIVE_DESELECT = ("tests/test_sdk_singleton_ratchet.py::TheMutationCellsApply",
+                   "tests/test_sdk_singleton_ratchet.py::TheCaseRostersNameEveryCase::"
+                   "test_the_conftests_roster_names_every_case_that_reads_the_refusal_and_no_other")
 # What nested_run pops from its child's environment, the one copy (the round-7 review found derive's list a second
 # hand-kept copy of the tuple in nested_run's loop, bound by no pin): pytest's own variables, the recipe's temp root,
 # and the colour-forcing variables, since two readers parse plain text. TheDeriveEnvironmentIsNestedRuns holds
@@ -766,12 +775,27 @@ def derive(cell):
     with the head, and remove the worktree: the runnable derivation of the cell's current red set, which no sentence in
     this module lists (the module docstring's matrix states each cell's rule and points here). Exits 0 when the plant
     and the run completed, whatever the run's colour; an old text absent or found twice, a mutated file that does not
-    parse, or a run that does not finish is a loud error. The applicability pin is deselected on the command line, never
-    skipped in the test: under any plant it reds (a replacement that removes its old text fails the exact-once count,
-    and one that appends beside the old text puts a new text the pin holds absent into the file), and it is no cell's
-    set. The run's environment is the test recipe's (every ROMP_* variable and the pytest variables nested_run pops
-    dropped, TMPDIR fresh)."""
+    parse, or a run that does not finish is a loud error. Two pins are deselected on the command line (DERIVE_DESELECT),
+    never skipped in the test, because each reads the conftest's text, which the plant changes, so its red under a
+    plant is the plant's and not a case's: the applicability pin (TheMutationCellsApply), which reds under any plant (a
+    replacement that removes its old text fails the exact-once count, and one that appends beside the old text puts a
+    new text the pin holds absent into the file), and the conftest roster pin (TheCaseRostersNameEveryCase's conftest
+    test), which reds under a plant that changes a text the conftest renders for the refusal (refusal_text_names is
+    keyed on those texts, so a case reading the changed text alone leaves the derived population while the roster,
+    which the plant does not touch, still names it, and the pin reports a roster entry with no class). Neither is a
+    case, and neither is any cell's set; a red this prints with no case id is a pin's, and the fix is a deselect here or
+    a pin that reads the plant's text no longer, never a case list. A node id in that tuple that names no test of this
+    module is a loud error before the plant: pytest ignores an unmatched --deselect without a word. The run's
+    environment is the test recipe's (every ROMP_* variable and the pytest variables nested_run pops dropped, TMPDIR
+    fresh)."""
     target, subs = MUTATIONS[cell]
+    module = sys.modules[__name__]
+    for node in DERIVE_DESELECT:              # an unmatched --deselect is silently a no-op: refuse it before the plant
+        path, _, rest = node.partition("::")
+        cls, _, test = rest.partition("::")
+        klass = getattr(module, cls, None) if path == "tests/test_sdk_singleton_ratchet.py" else None
+        if not (isinstance(klass, type) and (not test or callable(getattr(klass, test, None)))):
+            raise SystemExit("derive: DERIVE_DESELECT names no test of this module: %s" % node)
     scratch = tempfile.mkdtemp(prefix="derive-")
     tree = os.path.join(scratch, "tree")
     added = False
@@ -802,8 +826,10 @@ def derive(cell):
         print("# planted: %s, %d substitution(s)" % (target, len(subs)))
         env = {k: v for k, v in os.environ.items() if not k.startswith("ROMP_") and k not in DERIVE_ENV_DROPPED}
         env.update(TMPDIR=scratch, PYTHONDONTWRITEBYTECODE="1")
-        cmd = [sys.executable, "-B", "-m", "pytest", "-p", "no:cacheprovider", "-q", "-rf",
-               "--deselect", DERIVE_DESELECT, "tests/test_sdk_singleton_ratchet.py"]
+        cmd = [sys.executable, "-B", "-m", "pytest", "-p", "no:cacheprovider", "-q", "-rf"]
+        for node in DERIVE_DESELECT:
+            cmd += ["--deselect", node]
+        cmd.append("tests/test_sdk_singleton_ratchet.py")
         print("# run: %s (in the worktree)" % " ".join(cmd[1:]))
         r = subprocess.run(cmd, cwd=tree, env=env, capture_output=True, text=True, timeout=1200)
         if r.returncode not in (0, 1):
@@ -812,7 +838,6 @@ def derive(cell):
         failed = {}
         for cls, test in re.findall(r"^FAILED tests/test_sdk_singleton_ratchet\.py::(\w+)::(\w+)", r.stdout, re.M):
             failed.setdefault(cls, []).append(test)
-        module = sys.modules[__name__]
         ids = {}
         for cls in failed:
             scratch_text = getattr(getattr(module, cls, None), "SCRATCH", None)
@@ -2989,7 +3014,13 @@ class TheCaseRostersNameEveryCase(unittest.TestCase):
     of four names that omitted REFUSED_FOUND_TAIL, the clause's last words, so a case reading the clause through its
     tail alone was off the population with the module green); a class reading those lines through a literal copy of
     the text is outside the population, and the pin reads no literal. The third test runs the derivations and both
-    readers over synthetic texts."""
+    readers over synthetic texts. derive() deselects the conftest test (DERIVE_DESELECT): it reads the texts the
+    conftest renders, which a plant can change, so under a plant that stops rendering one text the cases reading that
+    text's copy alone leave the derived population while the roster, which the plant does not touch, still names them,
+    and the test reds on a roster entry that lost no class. That red is the plant's, not a case's, and this class is no
+    cell's set. The case-list test's verdict reads no conftest text (it holds the module docstring's list to the
+    classes' SCRATCH bindings; the names case_population derives on the way are unused by it) and the third test reads
+    synthetic texts, so both stay selected."""
 
     def _assert_same(self, what, derived, named):
         self.assertEqual(len(named), len(set(named)), "%s names an id twice: %r" % (what, sorted(named)))
