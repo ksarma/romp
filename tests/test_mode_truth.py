@@ -31,7 +31,10 @@ os.environ.pop("ROMP_STATE_DIR", None)
 # the callback imports PermissionResult* lazily — a hermetic box has no real SDK, so a stub module
 # stands in AT CALL TIME ONLY (installed per-test in _Harness.setUp, removed in tearDown): a
 # module-scope sys.modules entry leaked into the whole pytest process and made every real-SDK-gated
-# test elsewhere stop skipping and run against the stub (30 failures in the full suite).
+# test elsewhere stop skipping and run against the stub (30 failures in the full suite). Installed only
+# where the interpreter has no SDK (2026-09-20): where it has one, the lazy import takes the real
+# classes. Until then the stub went in whenever the module was not yet imported, so on an interpreter
+# with the SDK these tests met the real classes only when another module's collection had imported it.
 _fake = types.ModuleType("claude_agent_sdk")
 class _PRA:
     def __init__(self, behavior="allow", updated_input=None, updated_permissions=None):
@@ -50,7 +53,16 @@ SID = "11111111-2222-3333-4444-00000000d139"
 class _Harness(unittest.TestCase):
     def setUp(self):
         self._sdk_before = sys.modules.get("claude_agent_sdk")
+        # Does this process reach a real SDK? Asked NOW, before the fake goes in (find_spec cannot judge a module without a
+        # __spec__, so sdk_importable answers False over any fake), and of the module already imported when there is one
+        # (the real SDK under the whole suite; a venv tests/test_host_transport.py put on sys.path after this module was
+        # collected, so an import-time read would be stale).
         if self._sdk_before is None:
+            self.real_sdk = sb.sdk_importable()
+        else:
+            self.real_sdk = getattr(self._sdk_before, "__spec__", None) is not None   # a hand-made fake has no __spec__
+        self._installed_fake = self._sdk_before is None and not self.real_sdk
+        if self._installed_fake:
             sys.modules["claude_agent_sdk"] = _fake   # call-time only; removed in tearDown
         self.d = tempfile.mkdtemp()
         self.logs = []
@@ -60,7 +72,7 @@ class _Harness(unittest.TestCase):
         self.be.sessions[SID] = self.s
 
     def tearDown(self):
-        if self._sdk_before is None:
+        if self._installed_fake:
             sys.modules.pop("claude_agent_sdk", None)
 
     def _problems(self):
@@ -76,6 +88,22 @@ class DeclaredIntentGuard(_Harness):
                          "romp re-imposes the declared intent — never a block under bypass")
         self.assertTrue(any("bypassPermissions" in t and "contract" in t for t in self._problems()),
                         "…and the CLI's contract breach is VISIBLE, never silent: %r" % self._problems())
+
+    def test_the_guard_answers_with_the_classes_of_the_sdk_the_interpreter_has(self):
+        """The road pin (2026-09-20): where the interpreter has claude_agent_sdk, the callback's lazy import takes the
+        real PermissionResult classes and the fake stays out of sys.modules; where it has none, the fake stands in. The
+        harness used to install the fake whenever the module was not yet imported, so under an interpreter that HAS the
+        SDK (every CI cell since the workflow installs it) these tests exercised the real classes only when another
+        module's collection had imported the SDK first, and the fake when the module ran alone. The verdict is read in
+        setUp, of this process's state at that moment: on a box the suite's tests/test_host_transport.py puts the machine's
+        SDK venv on sys.path after this module is collected, so a venv-less interpreter still meets the real classes there."""
+        self.s.perm_mode = "bypassPermissions"
+        res = asyncio.run(self.s._can_use_tool("Bash", {"command": "mkdir -p x"}, object()))
+        if self.real_sdk:
+            self.assertIsNot(type(res), _PRA, "the interpreter has the SDK, and the guard answered with the fake's class")
+            self.assertTrue(type(res).__module__.startswith("claude_agent_sdk"), type(res).__module__)
+        else:
+            self.assertIs(type(res), _PRA, "no SDK in this interpreter, so the fake stands in at call time")
 
     def test_other_modes_still_ask(self):
         # a consult under default is the CLI honestly delegating — the ask machinery must engage.
