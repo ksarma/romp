@@ -331,8 +331,8 @@ class FailedFetch(PriceFeedCase):
         """ssl.SSLError and socket.gaierror carry LIBRARY codes in errno (SSL_ERROR_SSL is 1, EAI_NONAME is -2);
         labelled through os.strerror they read as EPERM's "Operation not permitted" and "Unknown error -2", a false
         diagnosis in the two ways a fetch to a public host fails most (a TLS-intercepting proxy or a stale CA bundle;
-        a box offline). The label comes from the code's own table instead: OpenSSL's reason token and verify message,
-        the EAI_ constant's name and libc's text. Genuine exceptions wherever one can be raised without traffic (a
+        a box offline). The label comes from the code's own table instead: OpenSSL's reason token and the verify code's
+        table string (the verify message is never read), the EAI_ constant's name and libc's text. Genuine exceptions wherever one can be raised without traffic (a
         handshake fed EOF through in-memory BIOs; a resolver call that forbids a lookup, AI_NUMERICHOST); the
         certificate failure is built the way CPython's _ssl builds it (errno, reason, verify_code and verify_message)."""
         import socket
