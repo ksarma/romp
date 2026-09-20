@@ -2620,20 +2620,27 @@ class NestedSummaryMatcher(unittest.TestCase):
         for line in ("6 passed, 3 errors in 0.19s", "6 passed, 1 warning, 1 error in 0.19s"):
             problem = summary_mismatch("=== %s ===\n" % line, 0)
             self.assertIsNotNone(problem, line)
-            self.assertIn("not 0 errors", problem)
+            self.assertIn("not 0 errors", problem,
+                          "the refusal of an errors segment under an expected 0 does not name the count (summary_mismatch's "
+                          "wording over %r): %r" % (line, problem))
 
     def test_a_wrong_count_is_refused_and_the_message_names_both_counts_and_the_line(self):
         problem = summary_mismatch("=== 6 passed, 1 warning, 3 errors in 0.19s ===\n", 2)
-        self.assertIsNotNone(problem)
-        self.assertIn("counts 3 errors, not 2 errors", problem)
-        self.assertIn("'6 passed, 1 warning, 3 errors in 0.19s'", problem)
+        self.assertIsNotNone(problem, "3 errors where 2 are expected is not refused (summary_mismatch's count comparison)")
+        self.assertIn("counts 3 errors, not 2 errors", problem,
+                      "the refusal does not name both counts (summary_mismatch's wording): %r" % problem)
+        self.assertIn("'6 passed, 1 warning, 3 errors in 0.19s'", problem,
+                      "the refusal does not quote the summary line found (summary_mismatch's wording): %r" % problem)
         self.assertIsNotNone(summary_mismatch("=== 6 passed, 13 errors in 0.19s ===\n", 3), "13 errors do not stand for 3")
-        self.assertIsNotNone(summary_mismatch("=== 6 passed, 3 errors in 0.19s ===\n", 1))
+        self.assertIsNotNone(summary_mismatch("=== 6 passed, 3 errors in 0.19s ===\n", 1),
+                             "3 errors where 1 is expected is not refused (summary_mismatch's count comparison)")
 
     def test_a_count_that_agrees_on_a_line_of_another_shape_is_named_as_the_shape(self):
         problem = summary_mismatch("=== 3 errors in 0.19s ===\n", 3)      # no passed segment: pytest prints no "0 passed"
-        self.assertIsNotNone(problem)
-        self.assertIn("counts 3 errors but does not read 'N passed, other counts, 3 errors in'", problem)
+        self.assertIsNotNone(problem, "a line with no passed segment is not refused (summary_mismatch's shape check, "
+                                      "'N passed, other counts, N errors in')")
+        self.assertIn("counts 3 errors but does not read 'N passed, other counts, 3 errors in'", problem,
+                      "the refusal does not name the shape it asks for (summary_mismatch's wording): %r" % problem)
 
     def test_the_count_is_read_on_the_summary_line_alone(self):
         """SUMMARY_LINE's line selection, not the segment class, keeps the count on the summary line: the class's
@@ -2645,20 +2652,28 @@ class NestedSummaryMatcher(unittest.TestCase):
         holds the newline)."""
         out = "=== 6 passed, 3 errors in 0.19s ===\nanother line, with a comma, 2 errors named here\n"
         self.assertIsNotNone(summary_mismatch(out, 2), "the count is read on the summary line alone")
-        self.assertIsNone(summary_mismatch(out, 3))
+        self.assertIsNone(summary_mismatch(out, 3),
+                          "the summary line's own count of 3 is refused (SUMMARY_LINE's selection of the summary line)")
         out = "=== 6 passed, 3 errors in 0.19s ===\n2 passed, 1 error in 0.01s\n"
         self.assertIsNotNone(summary_mismatch(out, 1), "a later line's own passed-and-errors shape is not the summary line")
-        self.assertIsNone(summary_mismatch(out, 3))
+        self.assertIsNone(summary_mismatch(out, 3),
+                          "the summary line's own count of 3 is refused beside a later line's passed-and-errors shape "
+                          "(SUMMARY_LINE's selection of the summary line)")
         out = "=== 6 passed,\n3 errors in 0.19s ===\n"
         self.assertIsNone(SUMMARY_LINE.search(out), "a rule split across two lines is no summary line")
-        self.assertIn("no pytest summary line", summary_mismatch(out, 3))
+        self.assertIn("no pytest summary line", summary_mismatch(out, 3),
+                      "a rule split across two lines is not refused as no summary line (summary_mismatch's wording)")
 
     def test_no_summary_line_is_refused_with_the_count_expected(self):
         for out in ("", "collected 0 items\n", "6 passed, 3 errors in 0.19s\n"):     # the last lacks pytest's rule of equals signs
             problem = summary_mismatch(out, 3)
             self.assertIsNotNone(problem, repr(out))
-            self.assertIn("no pytest summary line", problem)
-            self.assertIn("3 errors expected", problem)
+            self.assertIn("no pytest summary line", problem,
+                          "the refusal does not say no summary line was found (summary_mismatch's wording over %r): %r"
+                          % (out, problem))
+            self.assertIn("3 errors expected", problem,
+                          "the refusal does not name the count expected (summary_mismatch's wording over %r): %r"
+                          % (out, problem))
 
 
 LIMIT_UNPROTECTED = ("a private-name kernel's dangling backend over a removed directory that a sibling file reads and gets the "
@@ -2736,16 +2751,20 @@ class TheCountLimitIsStatedBesideTheCount(unittest.TestCase):
     the matcher every run's count goes through, and beside ERRORS in the runs' shared half, which points at it."""
 
     def test_the_matchers_docstring_states_the_limit(self):
-        self.assertIn(LIMIT_COUNT, re.sub(r"\s+", " ", summary_mismatch.__doc__))
+        self.assertIn(LIMIT_COUNT, re.sub(r"\s+", " ", summary_mismatch.__doc__),
+                      "summary_mismatch's docstring does not state the count's limit (LIMIT_COUNT, whitespace collapsed)")
 
     def test_the_error_count_attribute_points_at_the_limit(self):
         src = inspect.getsource(_NestedRun)
         m = re.search(r"^    ERRORS = 0 +#(.*(?:\n {27}#.*)*)", src, re.M)
         self.assertIsNotNone(m, "ERRORS carries a comment: %s" % src)
         note = re.sub(r"\s+", " ", m.group(1))
-        self.assertIn("summary_mismatch", note)
-        self.assertIn("THE COUNT'S LIMIT", note)
-        self.assertIn("boundary", note)
+        self.assertIn("summary_mismatch", note,
+                      "the comment beside _NestedRun.ERRORS does not point at summary_mismatch: %r" % note)
+        self.assertIn("THE COUNT'S LIMIT", note,
+                      "the comment beside _NestedRun.ERRORS does not name the limit (THE COUNT'S LIMIT): %r" % note)
+        self.assertIn("boundary", note,
+                      "the comment beside _NestedRun.ERRORS does not say a boundary verdict is no second count: %r" % note)
 
 
 class TheStatedLimitIsWorded(unittest.TestCase):
@@ -3278,7 +3297,9 @@ class TheCaseRostersNameEveryCase(unittest.TestCase):
                          "(ids, readers): an id per class in _NestedRun's tree from its SCRATCH binding; a reader by a "
                          "reference to a name in the class or a module-defined base other than _NestedRun (its helper's "
                          "reference to SWAPPED puts no case among the readers)")
-        self.assertEqual(cases, {"One": "S98", "Two": "S99", "Three": "S98", "Four": "Z", "Gated": "G"})
+        self.assertEqual(cases, {"One": "S98", "Two": "S99", "Three": "S98", "Four": "Z", "Gated": "G"},
+                         "the class-to-id map (case_population over the synthetic module: each case's id from its own "
+                         "SCRATCH binding, or its base's when it binds none; the class outside _NestedRun's tree absent)")
         with self.assertRaisesRegex(AssertionError, "two classes share a name.*'Four'"):
             case_population(synthetic + "\nclass Four(_NestedRun):\n    SCRATCH = SCRATCH_Z\n", names=())
         with self.assertRaisesRegex(AssertionError, "Four binds its SCRATCH in a shape case_population does not read"):
@@ -3317,17 +3338,27 @@ class TheCaseRostersNameEveryCase(unittest.TestCase):
             if sys.version_info >= (3, 0):
                 TRIED = "the value it held"
             ''')
-        self.assertEqual(refusal_text_names(conftest, module), ("HEAD", "LINK", "REFUSED", "TAIL", "TRIED"))
+        self.assertEqual(refusal_text_names(conftest, module), ("HEAD", "LINK", "REFUSED", "TAIL", "TRIED"),
+                         "the module's copies of the refusal's texts (refusal_text_names over the synthetic pair: every "
+                         "module constant whose value is a piece of a text the conftest renders for the refusal or for the "
+                         "link to it; a docstring, the gone report's own head, a tuple and a text no renderer uses are no "
+                         "piece)")
         with self.assertRaisesRegex(AssertionError, "no refusal or link text found in the conftest"):
             refusal_text_names("def _sdk_other():\n    return 'x'\n", module)
         with self.assertRaisesRegex(AssertionError, "no constant of this module is a piece"):
             refusal_text_names(conftest, "ELSEWHERE = 'a text no renderer uses'\n")
         doc = "%s:\n  A, one:\n    a. sub\n  H and H2, two:\n  S99, three\n%s" % (CASE_LIST_OPENS, CASE_LIST_CLOSES)
-        self.assertEqual(case_list_ids(doc), ["A", "H", "H2", "S99"])
+        self.assertEqual(case_list_ids(doc), ["A", "H", "H2", "S99"],
+                         "the case list's ids (case_list_ids over the synthetic docstring: every line at the list's indent "
+                         "between CASE_LIST_OPENS and CASE_LIST_CLOSES opens an entry with its id, or its ids joined by "
+                         "'and', in list order)")
         with self.assertRaisesRegex(AssertionError, "opens no entry"):
             case_list_ids(doc.replace("  S99, three", "  a stray line"))
         text = "x. %s, every case (S7, one; S9 and S10, two; and M, three). y" % CONFTEST_ROSTER_OPENS
-        self.assertEqual(conftest_roster_ids(text), ["S7", "S9", "S10", "M"])
+        self.assertEqual(conftest_roster_ids(text), ["S7", "S9", "S10", "M"],
+                         "the conftest roster's ids (conftest_roster_ids over the synthetic text: the parenthesis after "
+                         "CONFTEST_ROSTER_OPENS, each entry opening with its id, or its ids joined by 'and', in roster "
+                         "order)")
         with self.assertRaisesRegex(AssertionError, "opens on no id"):
             conftest_roster_ids(text.replace("S9 and S10, two", "the pair, two"))
         with self.assertRaisesRegex(AssertionError, "no roster in one parenthesis"):
@@ -3418,13 +3449,19 @@ class TheReadersRosterNamesEveryReader(unittest.TestCase):
             def later(text):
                 return text
             """)
-        self.assertEqual(reader_population(synthetic), ({"probe", "later", "gated", "tried", "keyed"}, {"result"}))
+        self.assertEqual(reader_population(synthetic), ({"probe", "later", "gated", "tried", "keyed"}, {"result"}),
+                         "(readers, output names): reader_population over the synthetic module, keyed on the call sites "
+                         "that pass the nested run's output, the name its unpacking binds, as the first positional or a "
+                         "keyword argument (a call with a literal and a nested function's call are no reader's)")
         with self.assertRaisesRegex(AssertionError, "no unpacking of a nested_run result"):
             reader_population(synthetic.replace("cls.rc, cls.result = nested_run(\"\")", "pass"))
         with self.assertRaisesRegex(AssertionError, "a shape reader_population does not read"):
             reader_population(synthetic.replace("cls.rc, cls.result = nested_run(\"\")", "cls.result = nested_run(\"\")"))
         text = "x %s (a: one; b, c and d: two, with a comma; e_f: three). y" % READERS_ROSTER_OPENS
-        self.assertEqual(readers_roster_names(text), ["a", "b", "c", "d", "e_f"])
+        self.assertEqual(readers_roster_names(text), ["a", "b", "c", "d", "e_f"],
+                         "the readers roster's names (readers_roster_names over the synthetic text: the parenthesis after "
+                         "READERS_ROSTER_OPENS, each entry's names before its colon, joined by commas and 'and', in roster "
+                         "order)")
         with self.assertRaisesRegex(AssertionError, "opens on no name before a colon"):
             readers_roster_names(text.replace("e_f: three", "the third, a reader"))
         with self.assertRaisesRegex(AssertionError, "no roster in one parenthesis"):
@@ -3540,7 +3577,8 @@ class TheDerivationIsRunnable(unittest.TestCase):
     def test_every_deselected_node_names_a_test_of_this_module(self):
         module = sys.modules[__name__]
         targets = derive_deselect_targets()
-        self.assertEqual(len(targets), len(DERIVE_DESELECT))
+        self.assertEqual(len(targets), len(DERIVE_DESELECT),
+                         "derive_deselect_targets does not resolve one target per node id of DERIVE_DESELECT")
         for node, (klass, method) in zip(DERIVE_DESELECT, targets):
             self.assertTrue(node.startswith(MODULE_PATH + "::"), node)
             self.assertTrue(isinstance(klass, type) and issubclass(klass, unittest.TestCase), node)
@@ -3551,7 +3589,9 @@ class TheDerivationIsRunnable(unittest.TestCase):
                                 and getattr(klass, method.__name__) is method, node)
         self.assertEqual([(klass.__name__, method and method.__name__) for klass, method in targets],
                          [(node.split("::")[1], node.split("::")[2] if node.count("::") == 2 else None)
-                          for node in DERIVE_DESELECT])
+                          for node in DERIVE_DESELECT],
+                         "the targets' class and method names are not the node ids' parts after '::', in DERIVE_DESELECT's "
+                         "order (derive_deselect_targets)")
 
     def test_a_node_naming_no_test_is_refused_before_the_plant(self):
         module = sys.modules[__name__]
@@ -3563,18 +3603,25 @@ class TheDerivationIsRunnable(unittest.TestCase):
                  mock.patch.object(tempfile, "mkdtemp", side_effect=AssertionError("the plant ran")) as mkdtemp, \
                  self.assertRaises(SystemExit) as refused:
                 derive(sorted(MUTATIONS)[0])
-            self.assertEqual(str(refused.exception), "derive: DERIVE_DESELECT names no test of this module: %s" % node)
+            self.assertEqual(str(refused.exception), "derive: DERIVE_DESELECT names no test of this module: %s" % node,
+                             "the refusal does not name the node id it could not resolve (derive_deselect_targets' "
+                             "SystemExit text)")
             mkdtemp.assert_not_called()
 
     def test_the_command_deselects_every_pin_and_runs_this_module(self):
         cmd = derive_command()
-        self.assertEqual(cmd[0], sys.executable)
-        self.assertEqual(cmd[1:8], ["-B", "-m", "pytest", "-p", "no:cacheprovider", "-q", "-rf"])
+        self.assertEqual(cmd[0], sys.executable,
+                         "the command does not open on this interpreter (derive_command's first element)")
+        self.assertEqual(cmd[1:8], ["-B", "-m", "pytest", "-p", "no:cacheprovider", "-q", "-rf"],
+                         "the command's pytest arguments before the --deselect pairs differ (derive_command's elements 1 to 7)")
         self.assertEqual(cmd[8:-1], [arg for node in DERIVE_DESELECT for arg in ("--deselect", node)],
                          "the command does not pair every node id of DERIVE_DESELECT with its own --deselect, in the "
                          "tuple's order: %r" % (cmd,))
-        self.assertEqual(cmd[-1], MODULE_PATH)
-        self.assertEqual(derive_command(DERIVE_DESELECT[:1])[8:], ["--deselect", DERIVE_DESELECT[0], MODULE_PATH])
+        self.assertEqual(cmd[-1], MODULE_PATH,
+                         "the command does not end in this module's path (derive_command's last element, MODULE_PATH)")
+        self.assertEqual(derive_command(DERIVE_DESELECT[:1])[8:], ["--deselect", DERIVE_DESELECT[0], MODULE_PATH],
+                         "a one-node tuple does not give one --deselect pair and then MODULE_PATH (derive_command over "
+                         "DERIVE_DESELECT[:1])")
         with self.assertRaisesRegex(SystemExit, "names no test of this module: " + re.escape(MODULE_PATH + "::NoSuchClass")):
             derive_command((MODULE_PATH + "::NoSuchClass",))
 
@@ -3600,8 +3647,12 @@ class TheDerivationIsRunnable(unittest.TestCase):
 
     def test_the_red_lines_carry_the_case_id_the_class_and_its_tests(self):
         stdout, reds = self._fabricated_output()
-        self.assertEqual(derive_red_lines(stdout), reds)
-        self.assertEqual(derive_red_lines("195 passed in 60.00s\n"), [])
+        self.assertEqual(derive_red_lines(stdout), reds,
+                         "the red lines differ (derive_red_lines over the fabricated -rf output: one line per class with a "
+                         "FAILED line of this module, its case id by SCRATCH identity or '-', its tests sorted; another "
+                         "module's FAILED line unread)")
+        self.assertEqual(derive_red_lines("195 passed in 60.00s\n"), [],
+                         "an output with no FAILED line gives red lines (derive_red_lines over a summary line alone)")
 
     def test_derive_runs_the_command_in_a_worktree_and_prints_the_plant_the_reds_and_the_cell(self):
         cell = sorted(MUTATIONS)[0]
@@ -3643,17 +3694,23 @@ class TheDerivationIsRunnable(unittest.TestCase):
                 derive(cell)
             self.assertEqual(os.listdir(tmp), [], "derive left its scratch directory")
         argv, kw = seen["pytest"]
-        self.assertEqual(argv, derive_command())
+        self.assertEqual(argv, derive_command(),
+                         "derive did not run derive_command()'s argv (the pytest call the faked subprocess.run saw)")
         self.assertEqual(seen["added"], [kw["cwd"]], "the module ran outside the worktree derive added")
         self.assertEqual(seen["removed"], seen["added"], "the worktree derive added was not the one it removed")
         self.assertTrue(seen["planted"], "the module ran over a tree without the cell's plant")
         self.assertTrue(kw["env"]["TMPDIR"].startswith(tmp + os.sep), kw["env"]["TMPDIR"])
-        self.assertEqual(kw["env"]["PYTHONDONTWRITEBYTECODE"], "1")
-        self.assertEqual([k for k in kw["env"] if k.startswith("ROMP_") or k in DERIVE_ENV_DROPPED], [])
+        self.assertEqual(kw["env"]["PYTHONDONTWRITEBYTECODE"], "1",
+                         "the run's environment does not set PYTHONDONTWRITEBYTECODE=1 (the env the faked subprocess.run saw)")
+        self.assertEqual([k for k in kw["env"] if k.startswith("ROMP_") or k in DERIVE_ENV_DROPPED], [],
+                         "the run's environment carries a ROMP_* name or a name of DERIVE_ENV_DROPPED (the env the faked "
+                         "subprocess.run saw)")
         self.assertEqual(out.getvalue().splitlines(),
                          ["# cell: %s" % cell, "# head: %s" % head, "# planted: %s, %d substitution(s)" % (target, len(subs)),
                           "# run: %s (in the worktree)" % " ".join(derive_command()[1:])] + reds
-                         + ["summary: 4 failed, 191 passed in 60.00s (0:01:00)", "cell: %s" % mutation_cell_text(__doc__, cell)])
+                         + ["summary: 4 failed, 191 passed in 60.00s (0:01:00)", "cell: %s" % mutation_cell_text(__doc__, cell)],
+                         "derive's output differs (its stdout lines over the faked run: the cell, the head, the plant, the "
+                         "run line, the red lines, the summary and the cell's text)")
 
     def test_the_derive_arm_calls_derive_once_per_sorted_key_for_all_and_once_for_a_named_cell(self):
         """The __main__ block (main_block) run over this module's globals with derive replaced by a recorder, MUTATIONS
@@ -3745,12 +3802,16 @@ class TheMutationCellsApply(unittest.TestCase):
         module = sys.modules[__name__]
         one_each = {prefixes[0] + "cell": None for _, _, prefixes in CELL_BLOCKS}
         self.assertEqual(cell_counts(one_each),
-                         dict({block: 1 for block, _, _ in CELL_BLOCKS}, **{"in total": len(CELL_BLOCKS)}))
+                         dict({block: 1 for block, _, _ in CELL_BLOCKS}, **{"in total": len(CELL_BLOCKS)}),
+                         "one key per block is not counted as one under each block and the blocks' number in total "
+                         "(cell_counts over the synthetic table %r)" % (sorted(one_each),))
         with self.assertRaisesRegex(ValueError, r"^stray-x opens on no block prefix \(CELL_BLOCKS\)$"):
             cell_counts(dict(one_each, **{"stray-x": None}))
         nested = (("the outer block", "outer", ("x-",)), ("the inner block", "inner", ("x-y-",)))
         with mock.patch.object(module, "CELL_BLOCKS", nested):
-            self.assertEqual(cell_counts({"x-1": None}), {"the outer block": 1, "the inner block": 0, "in total": 1})
+            self.assertEqual(cell_counts({"x-1": None}), {"the outer block": 1, "the inner block": 0, "in total": 1},
+                             "a key opening on the outer prefix alone is not counted under the outer block (cell_counts "
+                             "over the nested synthetic CELL_BLOCKS)")
             with self.assertRaisesRegex(ValueError, r"^x-y-2 opens on more than one block prefix \(CELL_BLOCKS\)$"):
                 cell_counts({"x-1": None, "x-y-2": None})
 
@@ -3765,7 +3826,9 @@ class TheMutationCellsApply(unittest.TestCase):
         heads = [opening + BLOCK_HEAD_TAIL for _, opening, _ in CELL_BLOCKS]
         cells = ["cell %d (red: rule %d; derive: c-%d)" % (i, i, i) for i in range(len(CELL_BLOCKS))]
         self.assertEqual(docstring_block_ids(" ".join(head + " " + cell for head, cell in zip(heads, cells))),
-                         {block: ["c-%d" % i] for i, (block, _, _) in enumerate(CELL_BLOCKS)})
+                         {block: ["c-%d" % i] for i, (block, _, _) in enumerate(CELL_BLOCKS)},
+                         "every head once is not read as each block's own derive id (docstring_block_ids over the "
+                         "synthetic docstring)")
         first = CELL_BLOCKS[0][0]
         with self.assertRaisesRegex(AssertionError, r"^%s's head occurs %d times in the docstring, not once: "
                                     % (re.escape(first), len(CELL_BLOCKS))):
@@ -3794,7 +3857,8 @@ class TheMutationCellsApply(unittest.TestCase):
                                 "The table now: %s: %r"
                                 % (TABLE_FLOOR, ", ".join("%s %d" % (block, n) for block, n in counts.items()),
                                    sorted(MUTATIONS)))
-        self.assertEqual(counts["in total"], len(MUTATIONS))
+        self.assertEqual(counts["in total"], len(MUTATIONS),
+                         "cell_counts' total is not the table's length (cell_counts over MUTATIONS): %r" % (counts,))
 
     def test_the_count_is_printed_never_written(self):
         """The count of cells is the table's: the module docstring carries no numeral or number word followed by the word
