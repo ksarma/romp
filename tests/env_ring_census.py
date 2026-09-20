@@ -186,12 +186,14 @@ import json
 import logging
 import os
 import pathlib
+import pickle
 import queue
 import re
 import socket
 import subprocess
 import sys
 import threading
+import traceback
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -449,6 +451,37 @@ class CensusError(AssertionError):
     """A failure of the derivation itself (a door value the walk cannot follow, a ring writer it cannot find)."""
 
 
+class PoolTransportError(RuntimeError):
+    """A Census that could not cross a process boundary (its pickling in a worker failed). Never a census result: the
+    pool's client (tests/test_session_env.py, EnvRowsCensusBlindSpots._censuses) reads it as the pool being unusable and
+    builds the batch in its own process."""
+
+
+def pool_probe():
+    """The start probe of the blind-spot class's census pool: a worker that imported this module answers with its pid."""
+    return os.getpid()
+
+
+def build_census(files, sources):
+    """The worker side of the blind-spot class's census pool (tests/test_session_env.py, EnvRowsCensusBlindSpots._censuses,
+    fork PR 781): construct the Census over `files` under `sources` in this process and return the outcome PICKLED, a
+    bytes object, so the executor's own result transport carries something that cannot fail to serialize; the client
+    unpickles it (Census.__getstate__ says what the round trip re-keys). The outcome is ("census", the Census) or, when
+    the construction raised (a CensusError for a second writer of the ring, or any other exception), ("raised", the
+    exception) with the worker's traceback text on it, for the client to re-raise where the construction was asked for.
+    A failure of the pickling itself is a PoolTransportError, which the client reads as the pool being unusable; so is
+    anything else that comes out of a worker as an exception."""
+    try:
+        outcome = ("census", Census(files, sources))
+    except Exception as e:
+        e.worker_traceback = traceback.format_exc()
+        outcome = ("raised", e)
+    try:
+        return pickle.dumps(outcome, protocol=pickle.HIGHEST_PROTOCOL)
+    except Exception as e:
+        raise PoolTransportError("the census over %s could not be pickled: %r" % ([os.path.basename(f) for f in files], e)) from e
+
+
 class Census:
     def __init__(self, files, sources):
         self.files = [os.path.realpath(f) for f in files]
@@ -480,6 +513,52 @@ class Census:
         self._taint()
         self._reduce_all()
         self._classify()
+
+    # ------------------------------------------------------------------ pickling
+    # A Census crosses a process boundary in tests/test_session_env.py's blind-spot class (fork PR 781: the class builds
+    # its censuses in worker processes and reads the objects in the test process). Five tables and every Fn's `lexical`
+    # are keyed by id(node), a process-local address that names nothing after a round trip: the state ships them
+    # re-keyed by the nodes themselves (the same node objects the Mods' trees hold, so pickle's memo keeps every node one
+    # object) and __setstate__ keys them by the new addresses. The construction's dedupe sets (_failed_sites,
+    # _ambiguous_seen) hold tuples, not ids, and travel as they are; every other table is keyed by an object (a Fn, a
+    # node) or a string, which pickle preserves. An id the trees do not hold is a PoolTransportError, never a table
+    # silently shipped short.
+    _ID_KEYED = ("fn_of", "fn_by_node", "cls_by_node", "callees", "_decl_node_tags")
+
+    def _nodes_by_id(self):
+        by_id = {}
+        for mod in {id(m): m for m in self.mods.values()}.values():
+            for node in ast.walk(mod.tree):
+                by_id[id(node)] = node
+        return by_id
+
+    def _rekeyed(self, name, table, by_id):
+        pairs = []
+        for key, value in table.items():
+            node = by_id.get(key)
+            if node is None:
+                raise PoolTransportError("%s holds the id of a node outside the trees; the census cannot be pickled" % name)
+            pairs.append((node, value))
+        return ("by-node", pairs)
+
+    def __getstate__(self):
+        by_id = self._nodes_by_id()
+        state = dict(self.__dict__)
+        for name in self._ID_KEYED:
+            if state.get(name) is not None:
+                state[name] = self._rekeyed(name, state[name], by_id)
+        state["_lexical_by_fn"] = [(fn, self._rekeyed("%s.lexical" % fn.qual, fn.lexical, by_id)[1]) for fn in self.all_fns]
+        return state
+
+    def __setstate__(self, state):
+        lexical = state.pop("_lexical_by_fn", [])
+        for name in self._ID_KEYED:
+            value = state.get(name)
+            if isinstance(value, tuple) and len(value) == 2 and value[0] == "by-node":
+                state[name] = {id(node): v for node, v in value[1]}
+        self.__dict__.update(state)
+        for fn, pairs in lexical:
+            fn.lexical = {id(node): v for node, v in pairs}
 
     # ------------------------------------------------------------------ indexing
     def _index(self, path):

@@ -57,20 +57,27 @@ door tests deliberately plant credential-shaped NAMES, since refusing them is wh
 """
 import ast
 import collections
+import concurrent.futures
+import contextlib
 import copy
 import errno
 import glob
 import inspect
+import io
 import json
+import multiprocessing
 import os
+import pickle
 import re
 import shutil
 import stat
+import sys
 import tempfile
 import threading
 import types
 import unittest
 import uuid
+from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
 from unittest import mock
 from romp_load import load_source
@@ -1433,6 +1440,30 @@ class EnvRowsPopulation(unittest.TestCase):
 
 
 
+class _Raised:
+    """A construction's own exception, carried out of EnvRowsCensusBlindSpots._censuses for `_take` to re-raise where the
+    test asks for the result (a loud plant's CensusError, or anything else the construction raised)."""
+    __slots__ = ("exc",)
+
+    def __init__(self, exc):
+        self.exc = exc
+
+
+class _WorkerTraceback(Exception):
+    """The worker's traceback text, chained as the cause of an exception a worker raised, for the failure report."""
+
+
+class _Pending:
+    """A batch result the test has not read yet: the worker's future and the spec it was built over. `_take` unpickles it
+    when the test asks, so one unpickled Census is alive in the test process at a time, as in the serial class (a batch
+    unpickled whole left millions of objects for the next full collection to walk, and the pause landed in whichever
+    test came next)."""
+    __slots__ = ("spec", "future")
+
+    def __init__(self, spec, future):
+        self.spec, self.future = spec, future
+
+
 class EnvRowsCensusBlindSpots(unittest.TestCase):
     """The round-6 blind-pin lens planted a tenth env-carrying ring row 69 ways and the census passed 13 of them at its
     baseline (2026-09-19): aliases of the door bound at module or class scope (a module `_RING = SdkBackend._log` or
@@ -1466,6 +1497,13 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
             assert cls.src.count(needle) == 1, "the copies' anchors are in the module once each: %r" % needle
         cls.BASE = len(census(CENSUS_FILES).content_rows)     # the head's content rows (ROWS holds them by identity)
         assert cls.BASE == len(ROWS), (cls.BASE, len(ROWS))
+        cls._start_pool()
+
+    @classmethod
+    def tearDownClass(cls):
+        pool, cls._pool = cls._pool, None
+        if pool is not None:
+            pool.shutdown(wait=True)
 
     def _copy(self, edit, name="sdk_backend.py"):
         new = edit(self.src)
@@ -1487,8 +1525,135 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         return self._copy(lambda s: self._with_format(s).replace(
             self.METHOD_ANCHOR, extra_methods + "    def _tenth(self, sess):\n" + body + "\n\n" + self.METHOD_ANCHOR))
 
+    # ---- the census pool (fork PR 781, the reviewer's ruling of 2026-09-20 on the walk's cost on CI) ----
+    # This class constructs about 180 censuses, each over a distinct sabotaged copy of kernel/sdk_backend.py, at about
+    # 1.3 s each in one process; CI runs pytest serially under a 25-minute job ceiling, and at the head before this
+    # commit the Python 3.10 job was cancelled by it. The ruling: build the class's censuses in worker processes and
+    # assert on the same results, every plant still over the real file (not synthetic fixtures, and no cap raise before
+    # the cost is reduced and re-measured). Every plain Census this class reads comes through ONE entry point,
+    # `_censuses(specs)`, a spec being (files, sources). It submits the batch to the class's ProcessPoolExecutor (the
+    # spawn start method; min(os.cpu_count(), 4) workers; started once in setUpClass with a start probe bounded by
+    # POOL_START_TIMEOUT; each worker imports tests.env_ring_census, the module's registered name, and runs its
+    # `build_census` over the copy paths this process wrote) and returns the results in the batch's order: the Census
+    # objects, unpickled (Census.__getstate__ re-keys the id(node) tables), or, for a construction that raised, its
+    # exception carried back from the worker in a `_Raised`, which `_take` re-raises where the test asks for the result,
+    # so a loud plant's CensusError still raises in this process with the worker's message. Each test plants first,
+    # then builds its plants in one batch, then asserts in the order it always did; a batch's results are unpickled one
+    # at a time as the test reads them (`_Pending`), never all at once, so the test process holds one Census at a time
+    # and its full garbage collections walk the heap the serial class left them. Degradation, never an error: when
+    # the pool cannot start, a worker fails to import, start or answer within the bound, the pool breaks under a
+    # batch, or a census cannot cross the boundary (BrokenProcessPool, OSError including PermissionError, the
+    # pickling errors, PoolTransportError, the start timeout), `_pool_lost` writes ONE line to stderr naming the
+    # reason and that the results are unchanged, the batch is built in this process, and so is every later one; the
+    # module never fails for want of a pool. The two test-local Census subclasses below (Tracing, Sweeping) are not
+    # importable by a worker and build in this process, as does the `census(CENSUS_FILES)` door with its own cache.
+    # `roads` records the road each batch took and `built` counts constructions by road; the last two tests of the
+    # class pin that the pool road is taken and that the fallback reads the same.
+    POOL_WORKERS = min(os.cpu_count() or 1, 4)
+    POOL_START_TIMEOUT = 120.0        # seconds the pool's first worker has to answer the start probe
+    POOL_FAILURES = (BrokenProcessPool, OSError, pickle.PicklingError, pickle.UnpicklingError, concurrent.futures.TimeoutError,
+                     concurrent.futures.CancelledError, erc.PoolTransportError)
+    _pool = None                      # the class's executor, or None while unavailable
+    _pool_reason = None               # why it is unavailable, once known
+    roads = []                        # per batch, in order, the road it was routed to: "pool" or "serial (<reason>)"
+    built = collections.Counter()     # constructions by the road that built them (a pooled batch's stragglers may be serial)
+
+    @classmethod
+    def _new_pool(cls):
+        """A fresh executor whose first worker has answered the start probe; raises what the start raised."""
+        pool = concurrent.futures.ProcessPoolExecutor(max_workers=cls.POOL_WORKERS, mp_context=multiprocessing.get_context("spawn"))
+        try:
+            pool.submit(erc.pool_probe).result(timeout=cls.POOL_START_TIMEOUT)
+        except BaseException:
+            pool.shutdown(wait=False, cancel_futures=True)
+            raise
+        return pool
+
+    @classmethod
+    def _start_pool(cls):
+        try:
+            cls._pool = cls._new_pool()
+        except cls.POOL_FAILURES as e:
+            cls._pool_lost("the census pool could not start: %s: %s" % (type(e).__name__, e))
+
+    @classmethod
+    def _pool_lost(cls, reason):
+        """The pool is gone for the rest of the class: one line on stderr, and every construction from here builds in this
+        process (a batch already submitted finishes serially as its results are read)."""
+        pool, cls._pool, cls._pool_reason = cls._pool, None, reason
+        if pool is not None:
+            pool.shutdown(wait=False, cancel_futures=True)
+        print("[%s] %s; building this class's censuses in the test process instead (the results are unchanged, the class is slower)"
+              % (cls.__name__, reason), file=sys.stderr, flush=True)
+
+    def _censuses(self, specs):
+        """The censuses over `specs`, one result per (files, sources) in the specs' order, each read through `_take`: on the
+        pool road a `_Pending` (the worker builds now, the test process unpickles when asked), on the serial road a
+        Census or a `_Raised` holding the construction's own exception."""
+        specs = [(tuple(files), sources) for files, sources in specs]
+        cls = type(self)
+        if cls._pool is not None:
+            try:
+                futures = [cls._pool.submit(erc.build_census, files, sources) for files, sources in specs]
+            except cls.POOL_FAILURES as e:
+                cls._pool_lost("the census pool failed under a batch of %d: %s: %s" % (len(specs), type(e).__name__, e))
+            else:
+                cls.roads.append("pool")
+                return [_Pending(spec, f) for spec, f in zip(specs, futures)]
+        out = self._serial(specs)
+        cls.roads.append("serial (%s)" % cls._pool_reason)
+        cls.built["serial"] += len(out)
+        return out
+
+    def _resolve(self, result):
+        """A batch result as a Census or a `_Raised`: a `_Pending` is unpickled from its worker here, and one whose pool
+        failed under it (the worker gone, the future cancelled by the shutdown, the transport refused) is built in this
+        process after `_pool_lost` has spoken once."""
+        if not isinstance(result, _Pending):
+            return result
+        cls = type(self)
+        try:
+            out = self._unpack(pickle.loads(result.future.result()))
+        except cls.POOL_FAILURES as e:
+            if cls._pool is not None:
+                cls._pool_lost("the census pool failed under a batch: %s: %s" % (type(e).__name__, e))
+            out = self._serial([result.spec])[0]
+            cls.built["serial"] += 1
+        else:
+            cls.built["pool"] += 1
+        return out
+
+    @staticmethod
+    def _serial(specs):
+        """The same results built in this process."""
+        out = []
+        for files, sources in specs:
+            try:
+                out.append(Census(files, sources))
+            except Exception as e:
+                out.append(_Raised(e))
+        return out
+
+    @staticmethod
+    def _unpack(payload):
+        kind, value = payload
+        if kind == "raised":
+            value.__cause__ = _WorkerTraceback(getattr(value, "worker_traceback", "(no traceback carried)"))
+            return _Raised(value)
+        return value
+
+    def _take(self, result):
+        """The Census of a batch result, or the construction's exception raised here."""
+        result = self._resolve(result)
+        if isinstance(result, _Raised):
+            raise result.exc
+        return result
+
+    def _spec(self, *paths, sources=DEFAULT_SOURCES):
+        return (tuple(paths) + (CREDENTIALS_PY,), sources)
+
     def _census(self, *paths):
-        return Census(tuple(paths) + (CREDENTIALS_PY,), DEFAULT_SOURCES)
+        return self._take(self._censuses([self._spec(*paths)])[0])
 
     def _assert_tenth_found(self, c, kind, expect_failures=()):
         """The planted row is a CONTENT row (found, env-tainted, its head read) and the pin's identity assertion
@@ -1509,13 +1674,16 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         bound at import, called through the bare name with the message after an explicit self (the alias is the
         writer's function, unbound); both quiet at aa1037c8f (doors 395, content 9, failures none). Found as kind
         "alias" with the message read in the right position. A module alias nothing calls is a failure named by site."""
-        for label, binding in (("attribute", "_RING = SdkBackend._log"), ("getattr", '_RING = getattr(SdkBackend, "_log")')):
+        bindings = (("attribute", "_RING = SdkBackend._log"), ("getattr", '_RING = getattr(SdkBackend, "_log")'))
+        results = self._censuses([self._spec(self._copy(lambda s: self._with_format(s) + "\n%s\ndef _tenth(be, sess):\n    _RING(be, %s, problem=True, %s)\n"
+                                                        % (binding, self.MSG, self.RING))) for _label, binding in bindings]
+                                 + [self._spec(self._copy(lambda s: s + "\n_RING4 = SdkBackend._log\n"))])
+        for (label, _binding), r in zip(bindings, results):
             with self.subTest(alias=label):
-                c = self._census(self._copy(lambda s: self._with_format(s) + "\n%s\ndef _tenth(be, sess):\n    _RING(be, %s, problem=True, %s)\n"
-                                            % (binding, self.MSG, self.RING)))
+                c = self._take(r)
                 self._assert_tenth_found(c, "alias")
                 self.assertIn("module alias _RING", [how for _b, _ln, how, _f in c.door_value_sites])
-        c = self._census(self._copy(lambda s: s + "\n_RING4 = SdkBackend._log\n"))
+        c = self._take(results[-1])
         self.assertEqual([(k, b, t) for k, b, _ln, t in c.failures], [("door-escapes", "sdk_backend.py", "module alias _RING4 is never called")])
         self.assertEqual(len(c.content_rows), self.BASE)
 
@@ -1527,19 +1695,23 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         scope since ruling 4 of review round 6 (the next test walks every arm), so with the alias called through self in
         the writer's class the row is found, the collision is recorded and nothing fails; the failure is reserved for an
         untyped receiver of the twice-bound name."""
+        class_body, method_default, lens_ring = self._censuses([self._spec(p) for p in (
+            self._copy(lambda s: self._with_format(s).replace(self.METHOD_ANCHOR,
+                "    _ring_door = _log\n\n    def _tenth(self, sess):\n        self._ring_door(%s, problem=True, %s)\n\n" % (self.MSG, self.RING) + self.METHOD_ANCHOR)),
+            self._copy(lambda s: self._with_format(s).replace(self.METHOD_ANCHOR,
+                "    def _tenth(self, sess, log=_log):\n        log(self, %s, problem=True, %s)\n\n" % (self.MSG, self.RING) + self.METHOD_ANCHOR)),
+            self._copy(lambda s: self._with_format(s).replace(self.METHOD_ANCHOR,
+                "    _ring = _log\n\n    def _tenth(self, sess):\n        self._ring(%s, problem=True, %s)\n\n" % (self.MSG, self.RING) + self.METHOD_ANCHOR)))])
         with self.subTest(alias="class-body _ring_door = _log"):
-            c = self._census(self._copy(lambda s: self._with_format(s).replace(self.METHOD_ANCHOR,
-                "    _ring_door = _log\n\n    def _tenth(self, sess):\n        self._ring_door(%s, problem=True, %s)\n\n" % (self.MSG, self.RING) + self.METHOD_ANCHOR)))
+            c = self._take(class_body)
             self._assert_tenth_found(c, "alias")
             self.assertIn("class alias _ring_door of SdkBackend", [how for _b, _ln, how, _f in c.door_value_sites])
         with self.subTest(alias="method default log=_log"):
-            c = self._census(self._copy(lambda s: self._with_format(s).replace(self.METHOD_ANCHOR,
-                "    def _tenth(self, sess, log=_log):\n        log(self, %s, problem=True, %s)\n\n" % (self.MSG, self.RING) + self.METHOD_ANCHOR)))
+            c = self._take(method_default)
             self._assert_tenth_found(c, "param")
             self.assertIn("parameter log of SdkBackend._tenth (default)", [how for _b, _ln, how, _f in c.door_value_sites])
         with self.subTest(alias="the lens's _ring, ApiHealth's deque"):
-            c = self._census(self._copy(lambda s: self._with_format(s).replace(self.METHOD_ANCHOR,
-                "    _ring = _log\n\n    def _tenth(self, sess):\n        self._ring(%s, problem=True, %s)\n\n" % (self.MSG, self.RING) + self.METHOD_ANCHOR)))
+            c = self._take(lens_ring)
             self._assert_tenth_found(c, "alias")
             self.assertEqual(c.alias_collisions, {"_ring": ["ApiHealth._ring (an attribute bound in __init__)"]}, "the collision is recorded, not failed")
             self.assertEqual([dc.lineno for dc in c.door_calls if dc.kind == "alias" and dc.fn.cls is not None and dc.fn.cls.name == "ApiHealth"], [],
@@ -1584,9 +1756,10 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
                 'problem=True, ring_text=TENTH_RING % (sess.name[:20], len(info["names"])))\n\n' + self.METHOD_ANCHOR)
                 + '\ndef _tenth_info(sess):\n    d = {}\n    d["names"] = sorted(sess.env_vars)\n    return d\n'),
         }
-        for road, edit in roads.items():
+        results = self._censuses([self._spec(self._copy(edit)) for edit in roads.values()])
+        for road, r in zip(roads, results):
             with self.subTest(road=road):
-                self._assert_tenth_found(self._census(self._copy(edit)), "self")
+                self._assert_tenth_found(self._take(r), "self")
 
     def test_the_env_key_of_a_dict_return_stays_a_source_at_the_read_and_does_not_taint_the_dicts_other_keys(self):
         """The other boundary of the dict rule: a helper returning {"env": sess.env_vars, "mode": sess.mode} taints
@@ -1612,22 +1785,27 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         name outside the one getattr form the walk follows is a failure named by site, as is one spelling the ring's;
         the module constant `LOG_ATTR = "_log"` handed to getattr is the same failure at the constant."""
         helper = '\ndef _tenth_helper(sess, log=None):\n    log(%s, problem=True, %s)\n' % (self.MSG, self.RING)
+        attrgetter, constant, ring_name, followed = self._censuses([
+            self._spec(self._copy(lambda s: "import operator\n" + self._with_format(s).replace(self.METHOD_ANCHOR,
+                '    def _tenth(self, sess):\n        _tenth_helper(sess, log=operator.attrgetter("_log")(self))\n\n' + self.METHOD_ANCHOR) + helper)),
+            self._spec(self._copy(lambda s: s.replace(self.FMT_ANCHOR, 'LOG_ATTR = "_log"\n' + self.TENTH + self.FMT_ANCHOR).replace(self.METHOD_ANCHOR,
+                '    def _tenth(self, sess):\n        _tenth_helper(sess, log=getattr(self, LOG_ATTR, None))\n\n' + self.METHOD_ANCHOR) + helper)),
+            self._spec(self._method('        getattr(self, "_problems").append({"text": "x"})')),
+            self._spec(self._copy(lambda s: self._with_format(s).replace(self.METHOD_ANCHOR,
+                '    def _tenth(self, sess):\n        _tenth_helper(sess, log=getattr(self, "_log", None))\n\n' + self.METHOD_ANCHOR) + helper))])
         with self.subTest(road="attrgetter"):
-            c = self._census(self._copy(lambda s: "import operator\n" + self._with_format(s).replace(self.METHOD_ANCHOR,
-                '    def _tenth(self, sess):\n        _tenth_helper(sess, log=operator.attrgetter("_log")(self))\n\n' + self.METHOD_ANCHOR) + helper))
+            c = self._take(attrgetter)
             self.assertEqual([(k, b, t.split(":")[0]) for k, b, _ln, t in c.failures], [("door-name-string", "sdk_backend.py", "the door's name '_log' is a string outside getattr(x, '_log')")])
             self.assertIn('attrgetter', c.failures[0][3])
             self.assertEqual([dc.owner for dc in c.door_calls if dc.owner in ("_tenth", "_tenth_helper")], [], "the door itself is invisible, which is why the string must be loud")
         with self.subTest(road="a module constant naming the attribute"):
-            c = self._census(self._copy(lambda s: s.replace(self.FMT_ANCHOR, 'LOG_ATTR = "_log"\n' + self.TENTH + self.FMT_ANCHOR).replace(self.METHOD_ANCHOR,
-                '    def _tenth(self, sess):\n        _tenth_helper(sess, log=getattr(self, LOG_ATTR, None))\n\n' + self.METHOD_ANCHOR) + helper))
+            c = self._take(constant)
             self.assertEqual([(k, b) for k, b, _ln, _t in c.failures], [("door-name-string", "sdk_backend.py")])
         with self.subTest(road="the ring's name as a string"):
-            c = self._census(self._method('        getattr(self, "_problems").append({"text": "x"})'))
+            c = self._take(ring_name)
             self.assertIn(("ring-name-string", "sdk_backend.py"), [(k, b) for k, b, _ln, _t in c.failures])
         with self.subTest(road="the followed form is no failure"):
-            c = self._census(self._copy(lambda s: self._with_format(s).replace(self.METHOD_ANCHOR,
-                '    def _tenth(self, sess):\n        _tenth_helper(sess, log=getattr(self, "_log", None))\n\n' + self.METHOD_ANCHOR) + helper))
+            c = self._take(followed)
             self.assertEqual(c.failures, [])
             self.assertIn(("_tenth_helper", "TENTH_RING", False), c.content_identities())
 
@@ -1641,20 +1819,21 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         append and trim, problems()' copy, problem_keyed()'s scan) pass."""
         row = '{"seq": 0, "t": 0, "text": "env (%s): tenth %s" % (sess.name, ", ".join(sess.env_vars))}'
         cases = {
-            "kernel-side be._problems.append": (lambda: self._census(SDK_BACKEND, self._plant("plant.py", "def tenth(be, sess):\n    be._problems.append(%s)\n" % row)), "2 appenders"),
-            "a session's self.backend._problems.append": (lambda: self._census(self._copy(lambda s: s.replace(self.SESSION_ANCHOR,
+            "kernel-side be._problems.append": (lambda: self._spec(SDK_BACKEND, self._plant("plant.py", "def tenth(be, sess):\n    be._problems.append(%s)\n" % row)), "2 appenders"),
+            "a session's self.backend._problems.append": (lambda: self._spec(self._copy(lambda s: s.replace(self.SESSION_ANCHOR,
                 "    def _tenth(self, sess):\n        self.backend._problems.append(%s)\n\n" % row + self.SESSION_ANCHOR))), "2 appenders"),
-            "a second method's self._problems.insert": (lambda: self._census(self._method("        self._problems.insert(0, %s)" % row)), "mutated other than by the writer's append"),
-            "an alias of the ring": (lambda: self._census(self._method('        rows = self._problems\n        rows.append({"text": "x"})')), "read where the walk cannot follow"),
-            "the ring returned": (lambda: self._census(self._method("        return self._problems")), "read where the walk cannot follow"),
-            "the ring rebound outside __init__": (lambda: self._census(self._method("        self._problems = []")), "rebound outside __init__"),
-            "a foreign class reading it": (lambda: self._census(self._copy(lambda s: s.replace(self.SESSION_ANCHOR,
+            "a second method's self._problems.insert": (lambda: self._spec(self._method("        self._problems.insert(0, %s)" % row)), "mutated other than by the writer's append"),
+            "an alias of the ring": (lambda: self._spec(self._method('        rows = self._problems\n        rows.append({"text": "x"})')), "read where the walk cannot follow"),
+            "the ring returned": (lambda: self._spec(self._method("        return self._problems")), "read where the walk cannot follow"),
+            "the ring rebound outside __init__": (lambda: self._spec(self._method("        self._problems = []")), "rebound outside __init__"),
+            "a foreign class reading it": (lambda: self._spec(self._copy(lambda s: s.replace(self.SESSION_ANCHOR,
                 "    def _tenth(self):\n        return len(self.backend._problems)\n\n" + self.SESSION_ANCHOR))), "touched outside its writer's class"),
         }
-        for label, (build, words) in cases.items():
+        results = self._censuses([spec() for spec, _words in cases.values()])
+        for (label, (_spec, words)), r in zip(cases.items(), results):
             with self.subTest(case=label):
                 with self.assertRaises(CensusError) as cm:
-                    build()
+                    self._take(r)
                 self.assertIn(words, str(cm.exception))
         head = census(CENSUS_FILES)
         refs = [(mod.base, node.lineno, fn.qual if fn else None) for mod, node, fn in head.ring_refs]
@@ -1666,11 +1845,14 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         """The same family on the kernel's side: _sdk_problem_rows' lists took rows by `append` alone in the census's
         eyes. A synthetic module standing in for kernel.py (its own _sdk_problem_rows reading a module list) adds by
         insert, by extend and by +=, and each is a feeder append whose row text is read."""
-        for how, stmt in (("insert", 'ROWS.insert(0, {"text": "env (%s): tenth %s" % (sess.name, ", ".join(sess.env_vars))})'),
-                          ("extend", 'ROWS.extend([{"text": "env (%s): tenth %s" % (sess.name, ", ".join(sess.env_vars))}])'),
-                          ("augmented assignment", 'ROWS += [{"text": "env (%s): tenth %s" % (sess.name, ", ".join(sess.env_vars))}]')):
+        adds = (("insert", 'ROWS.insert(0, {"text": "env (%s): tenth %s" % (sess.name, ", ".join(sess.env_vars))})'),
+                ("extend", 'ROWS.extend([{"text": "env (%s): tenth %s" % (sess.name, ", ".join(sess.env_vars))}])'),
+                ("augmented assignment", 'ROWS += [{"text": "env (%s): tenth %s" % (sess.name, ", ".join(sess.env_vars))}]'))
+        results = self._censuses([self._spec(SDK_BACKEND, self._plant("plant.py", "ROWS = []\ndef _sdk_problem_rows():\n    return list(ROWS)\ndef feed(sess):\n    %s\n" % stmt))
+                                  for _how, stmt in adds])
+        for (how, _stmt), r in zip(adds, results):
             with self.subTest(how=how):
-                c = self._census(SDK_BACKEND, self._plant("plant.py", "ROWS = []\ndef _sdk_problem_rows():\n    return list(ROWS)\ndef feed(sess):\n    %s\n" % stmt))
+                c = self._take(r)
                 self.assertEqual([(fn.name, lst) for fn, _c, lst in c.feeder_appends if fn.base == "plant.py"], [("feed", "ROWS")])
                 planted = [dc for dc in c.door_calls if dc.base == "plant.py"]
                 self.assertEqual([(dc.kind, sorted(dc.taint), dc.problem_decl) for dc in planted], [("feeder-append:ROWS", ["env"], ("const", True))])
@@ -1685,15 +1867,15 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         plant = ("def relay(be, m):\n    be._log(m)\n"
                  "def a(be):\n    relay(be, 'x: literal')\n"
                  "def b(be, e):\n    relay(be, str(e))\n")
-        c = self._census(SDK_BACKEND, self._plant("plant.py", plant))
+        path = self._copy(lambda s: s.replace(self.CRASH_ANCHOR, '_log(f"{self.name} crashed: '))
+        c, c2, c3 = (self._take(r) for r in self._censuses([self._spec(SDK_BACKEND, self._plant("plant.py", plant)),
+                                                             self._spec(SDK_BACKEND, self._plant("plant.py", plant.replace("'x: literal'", "repr(be)"))),
+                                                             self._spec(path)]))
         inner = [dc for dc in c.door_calls if dc.base == "plant.py" and dc.kind == "typed"]
         self.assertEqual([(dc.owner, dc.heads, dc.unreduced) for dc in inner], [("relay", ["x: literal"], False)])
         sites = sorted((dc.owner, dc.heads, dc.unreduced) for dc in c.door_calls if dc.base == "plant.py" and dc.kind == "conduit:relay")
         self.assertEqual(sites, [("a", ["x: literal"], False), ("b", [], True)])
-        c2 = self._census(SDK_BACKEND, self._plant("plant.py", plant.replace("'x: literal'", "repr(be)")))
         self.assertEqual(sorted((dc.owner, dc.unreduced) for dc in c2.door_calls if dc.base == "plant.py"), [("a", True), ("b", True), ("relay", True)])
-        path = self._copy(lambda s: s.replace(self.CRASH_ANCHOR, '_log(f"{self.name} crashed: '))
-        c3 = self._census(path)
         line = [i + 1 for i, ln in enumerate(Path(path).read_text(encoding="utf-8").splitlines()) if '_log(f"{self.name} crashed: ' in ln]
         self.assertEqual(len(line), 1)
         self.assertIn(line[0], [dc.lineno for dc in c3.unreduced if dc.base == "sdk_backend.py"], "the crash line's reduction rests on its leading text")
@@ -1751,32 +1933,28 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         `shape["mode"]` stays clean and the 96 content rows and 267 violations of the addendum's first census stay
         gone), and the head reads content rows 9, violations 0."""
         declared = self._declared()
-        loud = set()
+        plants = []       # (variant, form, spec) in the order the subTests run
         for label, (body, expr) in self.REKEYS.items():
             for form, (param, origin, mode) in self.FORMS.items():
-                with self.subTest(variant=label, form=form):
-                    fn = "\ndef _tenth_shape(%s):\n    e = %s\n%s" % (param, origin, body % {"P": mode})
-                    c = Census((self._copy(lambda s: self._with_format(s).replace(
-                        self.METHOD_ANCHOR, self._reader("_tenth_shape(%s)" % param, expr) + self.METHOD_ANCHOR) + fn), CREDENTIALS_PY),
-                               declared if form == "declared" else DEFAULT_SOURCES)
-                    self._assert_tenth_found(c, "self")
-                    loud.add((label, form))
+                fn = "\ndef _tenth_shape(%s):\n    e = %s\n%s" % (param, origin, body % {"P": mode})
+                plants.append((label, form, ((self._copy(lambda s: self._with_format(s).replace(
+                    self.METHOD_ANCHOR, self._reader("_tenth_shape(%s)" % param, expr) + self.METHOD_ANCHOR) + fn), CREDENTIALS_PY),
+                    declared if form == "declared" else DEFAULT_SOURCES)))
         chain = 'def _tenth_rekey(d):\n    x = d.pop("env")\n    return {"opts": x}\n'
         for form, (param, origin, _mode) in self.FORMS.items():
             sources = declared if form == "declared" else DEFAULT_SOURCES
-            with self.subTest(variant=self.CHAIN, form=form):
-                fn = '\ndef _tenth_shape(%s):\n    e = %s\n    d = {"env": e}\n    return d\n' % (param, origin) + chain
-                c = Census((self._copy(lambda s: self._with_format(s).replace(
-                    self.METHOD_ANCHOR, self._reader("_tenth_rekey(_tenth_shape(%s))" % param, 'shape["opts"]') + self.METHOD_ANCHOR) + fn), CREDENTIALS_PY), sources)
-                self._assert_tenth_found(c, "self")
-                loud.add((self.CHAIN, form))
-            with self.subTest(variant=self.HELD, form=form):
-                methods = ('    def _tenth_shape(self, %s):\n        self._tenth_held = %s\n        return {"env": self._tenth_held}\n\n'
-                           '    def _tenth_other(self):\n        return {"opts": self._tenth_held}\n\n' % (param, origin))
-                c = Census((self._copy(lambda s: self._with_format(s).replace(
-                    self.METHOD_ANCHOR, methods + self._reader("self._tenth_other()", 'shape["opts"]') + self.METHOD_ANCHOR)), CREDENTIALS_PY), sources)
-                self._assert_tenth_found(c, "self")
-                loud.add((self.HELD, form))
+            fn = '\ndef _tenth_shape(%s):\n    e = %s\n    d = {"env": e}\n    return d\n' % (param, origin) + chain
+            plants.append((self.CHAIN, form, ((self._copy(lambda s: self._with_format(s).replace(
+                self.METHOD_ANCHOR, self._reader("_tenth_rekey(_tenth_shape(%s))" % param, 'shape["opts"]') + self.METHOD_ANCHOR) + fn), CREDENTIALS_PY), sources)))
+            methods = ('    def _tenth_shape(self, %s):\n        self._tenth_held = %s\n        return {"env": self._tenth_held}\n\n'
+                       '    def _tenth_other(self):\n        return {"opts": self._tenth_held}\n\n' % (param, origin))
+            plants.append((self.HELD, form, ((self._copy(lambda s: self._with_format(s).replace(
+                self.METHOD_ANCHOR, methods + self._reader("self._tenth_other()", 'shape["opts"]') + self.METHOD_ANCHOR)), CREDENTIALS_PY), sources)))
+        loud = set()
+        for (label, form, _spec), r in zip(plants, self._censuses([spec for _label, _form, spec in plants])):
+            with self.subTest(variant=label, form=form):
+                self._assert_tenth_found(self._take(r), "self")
+                loud.add((label, form))
         self.assertEqual(len(loud), 20)
         self.assertTrue(self.QUIET_BEFORE <= loud, "every variant quiet before this commit is loud now")
         head = census(CENSUS_FILES)
@@ -1818,29 +1996,34 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
             "a string annotation": dict(tail='\ndef _tenth(be: "SdkBackend", sess):\n' + call("be", " " * 4)),
             "self.backend in a session, typed by its __init__": dict(session="    def _tenth(self, sess):\n" + call("self.backend", " " * 8) + "\n"),
         }
-        for label, kw in doors.items():
-            with self.subTest(arm=label):
-                c = self._census(plant(**kw))
-                self._assert_tenth_found(c, "alias")
-                self.assertEqual(c.alias_collisions, {"_ring": ["ApiHealth._ring (an attribute bound in __init__)"]})
-                self.assertEqual(api_doors(c), [], "ApiHealth's own self._ring uses are no door")
         uncalled = ("door-escapes", "sdk_backend.py", "class alias _ring of SdkBackend is never called")
         others = {
             "self in ApiHealth, its own deque": dict(api="    def _tenth(self, sess):\n" + call("self", " " * 8) + "\n"),
             "a parameter annotated with ApiHealth": dict(tail="\ndef _tenth(h: ApiHealth, sess):\n" + call("h", " " * 4)),
             "a local assigned from ApiHealth's constructor": dict(tail="\ndef _tenth(state_dir, sess):\n    h = ApiHealth(state_dir)\n" + call("h", " " * 4)),
         }
+        untyped = (("an untyped receiver calling the name", "\ndef _tenth(x, sess):\n" + call("x", " " * 4)),
+                   ("an untyped receiver using the deque", "\ndef _tenth(x, ev):\n    x._ring.append(ev)\n"))
+        built = iter(self._censuses([self._spec(plant(**kw)) for kw in doors.values()] + [self._spec(plant(**kw)) for kw in others.values()]
+                                    + [self._spec(plant(tail=tail)) for _label, tail in untyped]
+                                    + [self._spec(self._copy(lambda s: self._with_format(s).replace(self.METHOD_ANCHOR, "    _ring_door = _log\n\n" + self.METHOD_ANCHOR)
+                                                             + "\ndef _tenth(x, sess):\n    x._ring_door(%s, problem=True, %s)\n" % (self.MSG, self.RING)))]))
+        for label, kw in doors.items():
+            with self.subTest(arm=label):
+                c = self._take(next(built))
+                self._assert_tenth_found(c, "alias")
+                self.assertEqual(c.alias_collisions, {"_ring": ["ApiHealth._ring (an attribute bound in __init__)"]})
+                self.assertEqual(api_doors(c), [], "ApiHealth's own self._ring uses are no door")
         for label, kw in others.items():
             with self.subTest(arm=label):
-                c = self._census(plant(**kw))
+                c = self._take(next(built))
                 self.assertEqual([(k, b, t) for k, b, _ln, t in c.failures], [uncalled], "the call is the other binding's, so the alias is called nowhere")
                 self.assertEqual([dc.lineno for dc in c.door_calls if dc.owner == "_tenth"], [])
                 self.assertEqual(api_doors(c), [])
                 self.assertEqual(len(c.content_rows), self.BASE)
-        for label, tail in (("an untyped receiver calling the name", "\ndef _tenth(x, sess):\n" + call("x", " " * 4)),
-                            ("an untyped receiver using the deque", "\ndef _tenth(x, ev):\n    x._ring.append(ev)\n")):
+        for label, _tail in untyped:
             with self.subTest(arm=label):
-                c = self._census(plant(tail=tail))
+                c = self._take(next(built))
                 self.assertEqual([(k, b) for k, b, _ln, _t in c.failures], [("door-alias-ambiguous", "sdk_backend.py"), ("door-escapes", "sdk_backend.py")])
                 text = c.failures[0][3]
                 self.assertIn("x._ring in _tenth: the receiver is untyped", text)
@@ -1850,8 +2033,7 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
                 self.assertEqual([dc.lineno for dc in c.door_calls if dc.owner == "_tenth"], [], "not counted as a door: named as a failure instead")
                 self.assertEqual(len(c.content_rows), self.BASE)
         with self.subTest(arm="an untyped receiver of a name bound once resolves to the alias, as before"):
-            c = self._census(self._copy(lambda s: self._with_format(s).replace(self.METHOD_ANCHOR, "    _ring_door = _log\n\n" + self.METHOD_ANCHOR)
-                                        + "\ndef _tenth(x, sess):\n    x._ring_door(%s, problem=True, %s)\n" % (self.MSG, self.RING)))
+            c = self._take(next(built))
             self._assert_tenth_found(c, "alias")
         head = census(CENSUS_FILES)
         self.assertEqual((head.class_alias_doors, head.module_alias_doors, head.alias_collisions), ({}, {}, {}),
@@ -1864,8 +2046,8 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
 
     # ---- the addendum's replays (the round-6 rulings' lenses, 2026-09-19): a plant per quiet pass, each loud now ----
 
-    def _shape_census(self, form, body=None, expr='shape["opts"]', methods="", extra="", arg=None):
-        """A module copy planted the way the ruling-2 test plants: TENTH_RING, a reader SdkBackend._tenth writing the tenth
+    def _shape_spec(self, form, body=None, expr='shape["opts"]', methods="", extra="", arg=None):
+        """The spec of a module copy planted the way the ruling-2 test plants: TENTH_RING, a reader SdkBackend._tenth writing the tenth
         row from `expr` over `shape = <arg>`, and `_tenth_shape(<param>)` whose body follows `e = <origin>` (declared
         form: the parameter's key, declared a source; helper form: a source read under DEFAULT_SOURCES); `%(P)s` a second
         read of the parameter, `%(O)s` the origin, `%(PARAM)s` the parameter's name."""
@@ -1875,7 +2057,10 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         arg = (arg or "_tenth_shape(%(PARAM)s)") % sub
         path = self._copy(lambda s: self._with_format(s).replace(
             self.METHOD_ANCHOR, (methods % sub) + self._reader(arg, expr % sub) + self.METHOD_ANCHOR) + fn + (extra % sub))
-        return Census((path, CREDENTIALS_PY), self._declared() if form == "declared" else DEFAULT_SOURCES)
+        return ((path, CREDENTIALS_PY), self._declared() if form == "declared" else DEFAULT_SOURCES)
+
+    def _shape_census(self, form, **kw):
+        return self._take(self._censuses([self._shape_spec(form, **kw)])[0])
 
     def _assert_tenth_quiet(self, c):
         """The refusal side of a rule: the plant is read, nothing fails, and the tenth row carries no env (BASE rows)."""
@@ -1918,9 +2103,10 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
             "holder: a dict holding a value the roots cannot reach, used whole": ('    d = {"env": _tenth_make(e)}\n    return {"env": {}, "opts": list(d.values())}\n',
                                                                                     "\ndef _tenth_make(x):\n    return dict(x)\n"),
         }
-        for label, (body, extra) in plants.items():
+        results = self._censuses([self._shape_spec("declared", body, extra=extra) for body, extra in plants.values()])
+        for label, r in zip(plants, results):
             with self.subTest(variant=label):
-                self._assert_tenth_found(self._shape_census("declared", body, extra=extra), "self")
+                self._assert_tenth_found(self._take(r), "self")
 
     def test_nested_targets_lambdas_generators_and_reflected_stores_carry_the_env_with_the_value(self):
         """Ruling 2's lens, the mechanics the value crossed by: a nested tuple target (`(k, v), = d.items()`,
@@ -1949,14 +2135,17 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
                 methods='    def _tenth_shape(self, %(PARAM)s):\n        e = %(O)s\n        return {"env": e, "opts": e}\n\n',
                 arg='getattr(self, "_tenth_shape")(%(PARAM)s)'),
         }
+        reads = (("ax: the reader reads getattr(sess, 'env_vars')", 'getattr(sess, "env_vars")'),
+                 ("ay: the reader reads vars(sess)['env_vars']", 'vars(sess)["env_vars"]'))
+        built = iter(self._censuses([self._shape_spec(form, **kw) for kw in both.values() for form in self.FORMS]
+                                    + [self._shape_spec("helper", arg=arg, expr="shape") for _label, arg in reads]))
         for label, kw in both.items():
             for form in self.FORMS:
                 with self.subTest(variant=label, form=form):
-                    self._assert_tenth_found(self._shape_census(form, **kw), "self")
-        for label, arg in (("ax: the reader reads getattr(sess, 'env_vars')", 'getattr(sess, "env_vars")'),
-                           ("ay: the reader reads vars(sess)['env_vars']", 'vars(sess)["env_vars"]')):
+                    self._assert_tenth_found(self._take(next(built)), "self")
+        for label, _arg in reads:
             with self.subTest(variant=label, form="helper"):
-                self._assert_tenth_found(self._shape_census("helper", arg=arg, expr="shape"), "self")
+                self._assert_tenth_found(self._take(next(built)), "self")
 
     def test_a_whole_value_use_of_a_dict_sources_return_reads_the_env_and_a_keyed_read_reads_its_own_key(self):
         """The bound the ruling-2 commit disclosed (a whole-value use of a dict source's return, `str(shape)` or
@@ -1980,10 +2169,6 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
             "the return passed whole to a helper that stringifies it": dict(
                 body=shape, extra="\ndef _tenth_text(d):\n    return str(d)\n", expr="sorted(_tenth_text(shape))"),
         }
-        for label, kw in loud.items():
-            for form in self.FORMS:
-                with self.subTest(variant=label, form=form):
-                    self._assert_tenth_found(self._shape_census(form, **kw), "self")
         quiet = {
             "shape[mode]": dict(body=shape, expr='shape["mode"]'),
             "shape.get(mode)": dict(body=shape, expr='str(shape.get("mode"))'),
@@ -1998,17 +2183,24 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
                 body='    d = {"env": {}, "mode": %(P)s} if %(P)s else {"env": {}}\n    d["opts"] = e\n    return d\n'),
             "ah: os.environ under another key is no per-session source": dict(body='    return {"env": e, "opts": os.environ.copy()}\n'),
         }
-        for label, kw in quiet.items():
-            with self.subTest(variant=label, form="declared"):
-                self._assert_tenth_quiet(self._shape_census("declared", **kw))
         unlocated = {
             "m2g2: a local nothing stored the key into": '    d = {"mode": %(P)s}\n    d["opts"] = e\n    return d\n',
             "m2g3: a conditional with one branch unlocated": '    return {"env": {}, "mode": %(P)s} if %(P)s else {"opts": e}\n',
             "m2g4: a dict(...) call without the key": '    return dict(mode=%(P)s, opts=e)\n',
         }
+        built = iter(self._censuses([self._shape_spec(form, **kw) for kw in loud.values() for form in self.FORMS]
+                                    + [self._shape_spec("declared", **kw) for kw in quiet.values()]
+                                    + [self._shape_spec("declared", body) for body in unlocated.values()]))
+        for label, kw in loud.items():
+            for form in self.FORMS:
+                with self.subTest(variant=label, form=form):
+                    self._assert_tenth_found(self._take(next(built)), "self")
+        for label, kw in quiet.items():
+            with self.subTest(variant=label, form="declared"):
+                self._assert_tenth_quiet(self._take(next(built)))
         for label, body in unlocated.items():
             with self.subTest(variant=label, form="declared"):
-                self._assert_tenth_found(self._shape_census("declared", body), "self")
+                self._assert_tenth_found(self._take(next(built)), "self")
         head = census(CENSUS_FILES)
         self.assertEqual(sorted(a for a, t in head.attr_whole.items() if "env" in t), ["_launched_env", "_launching", "env_vars"],
                          "at this head the shape held whole on _launching and the two env source attributes are the whole-env attributes")
@@ -2023,20 +2215,26 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         `x.__dict__["n"]` and its `.get`/`.setdefault`/`.pop`) is a failure named by site; a store by reflection under a name
         the census cannot place (`setattr(self, name, e)`, `self.__dict__[name] = e`) is a failure when the value is tainted.
         The followed forms are read as the attribute or the call they name (the previous test's ap, aq, ae, ax, ay)."""
+        stores = (("setattr under a computed name", 'setattr(self, name, e)'),
+                  ("self.__dict__ under a computed name", 'self.__dict__[name] = e'))
+        built = iter(self._censuses([
+            self._shape_spec("helper", arg="getattr(sess, _TENTH_ATTR)", expr="shape", extra='\n_TENTH_ATTR = "env_vars"\n'),
+            self._shape_spec("declared", methods='    def _tenth_shape(self, raw):\n        e = raw["vars"]\n        return {"env": e, "opts": e}\n\n',
+                             arg="getattr(self, _TENTH_FN)(raw)", extra='\n_TENTH_FN = "_tenth_shape"\n')]
+            + [self._shape_spec("declared", methods='    def _tenth_shape(self, raw, name):\n        e = raw["vars"]\n        %s\n        return {"env": e}\n\n'
+                                '    def _tenth_other(self):\n        return {"opts": self._tenth_held}\n\n' % store, arg="self._tenth_other()")
+               for _label, store in stores]))
         with self.subTest(case="an attribute source's name in a module constant handed to getattr"):
-            c = self._shape_census("helper", arg="getattr(sess, _TENTH_ATTR)", expr="shape", extra='\n_TENTH_ATTR = "env_vars"\n')
+            c = self._take(next(built))
             self.assertEqual([(k, b) for k, b, _ln, _t in c.failures], [("source-name-string", "sdk_backend.py")])
             self.assertIn("'env_vars' is a string outside a reflected read or store", c.failures[0][3])
             self.assertEqual(len(c.content_rows), self.BASE, "the row is read but untainted: the string is what is loud")
         with self.subTest(case="a declared source function's name in a constant handed to getattr"):
-            c = self._shape_census("declared", methods='    def _tenth_shape(self, raw):\n        e = raw["vars"]\n        return {"env": e, "opts": e}\n\n',
-                                   arg="getattr(self, _TENTH_FN)(raw)", extra='\n_TENTH_FN = "_tenth_shape"\n')
+            c = self._take(next(built))
             self.assertEqual([(k, b) for k, b, _ln, _t in c.failures], [("source-name-string", "sdk_backend.py")])
-        for label, store in (("setattr under a computed name", 'setattr(self, name, e)'),
-                             ("self.__dict__ under a computed name", 'self.__dict__[name] = e')):
+        for label, _store in stores:
             with self.subTest(case=label):
-                c = self._shape_census("declared", methods='    def _tenth_shape(self, raw, name):\n        e = raw["vars"]\n        %s\n        return {"env": e}\n\n'
-                                       '    def _tenth_other(self):\n        return {"opts": self._tenth_held}\n\n' % store, arg="self._tenth_other()")
+                c = self._take(next(built))
                 self.assertEqual([(k, b) for k, b, _ln, _t in c.failures], [("reflection-store", "sdk_backend.py")])
                 self.assertIn("a name the census cannot place", c.failures[0][3])
         with self.subTest(case="the head spells no source's name as a string and stores nothing by a computed name"):
@@ -2082,29 +2280,12 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
             "m4d5: SdkBackend | None": dict(tail="\ndef _tenth(be: SdkBackend | None, sess):\n" + call("be", " " * 4)),
             "m4l: a keyword-only annotated parameter": dict(tail="\ndef _tenth(sess, *, be: SdkBackend):\n" + call("be", " " * 4)),
         }
-        for label, kw in doors.items():
-            with self.subTest(arm=label):
-                c = self._census(plant(**kw))
-                self._assert_tenth_found(c, "alias")
-                self.assertEqual([dc.lineno for dc in c.unreduced if dc.owner == "_tenth"], [])
-        with self.subTest(arm="23b: getattr(be, '_ring', None) handed to a helper that calls it"):
-            c = self._census(plant(tail="\ndef _tenth_helper(sess, log):\n    log(%s, problem=True, %s)\n\n\ndef _tenth(be: SdkBackend, sess):\n    _tenth_helper(sess, log=getattr(be, '_ring', None))\n" % (self.MSG, self.RING)))
-            self.assertEqual(c.failures, [])
-            self.assertIn(("_tenth_helper", "TENTH_RING", False), c.content_identities())
-            self.assertEqual(len(c.content_rows), self.BASE + 1)
-            self.assertEqual([dc.kind for dc in c.door_calls if dc.owner == "_tenth_helper"], ["param"])
         uncalled = ("door-escapes", "sdk_backend.py", "class alias _ring of SdkBackend is never called")
         others = {
             "m4g4: a subclass rebinding the name as a method, self in the subclass": dict(tail="\nclass _TenthSub(SdkBackend):\n    def _ring(self, line, **kw):\n        pass\n\n    def _tenth(self, sess):\n" + call("self", " " * 8)),
             "35: a mixin mixed only into ApiHealth, using the deque": dict(tail="\nclass _TenthMixin:\n    def _tenth(self, ev):\n        self._ring.append(ev)\n\nclass _TenthHealth(_TenthMixin, ApiHealth):\n    pass\n"),
             "Optional[ApiHealth]": dict(tail="\ndef _tenth(h: Optional[ApiHealth], sess):\n" + call("h", " " * 4)),
         }
-        for label, kw in others.items():
-            with self.subTest(arm=label):
-                c = self._census(plant(**kw))
-                self.assertEqual([(k, b, t) for k, b, _ln, t in c.failures], [uncalled], "the call is the other binding's, so the alias is called nowhere")
-                self.assertEqual(tenth(c), [])
-                self.assertEqual(len(c.content_rows), self.BASE)
         ambiguous = {
             "03b: a mixin mixed into both classes": dict(tail="\nclass _TenthMixin:\n    def _tenth(self, sess):\n" + call("self", " " * 8) + "\nclass _TenthBackend(_TenthMixin, SdkBackend):\n    pass\n\nclass _TenthHealth(_TenthMixin, ApiHealth):\n    pass\n", why="admits both bindings"),
             "19: a __getattr__ proxy typed by its constructor": dict(tail="\nclass _TenthProxy:\n    def __init__(self, be: SdkBackend):\n        self._be = be\n\n    def __getattr__(self, n):\n        return getattr(self._be, n)\n\n\ndef _tenth(be: SdkBackend, sess):\n    p = _TenthProxy(be)\n" + call("p", " " * 4), why="is untyped"),
@@ -2120,10 +2301,36 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
             "37: self._be bound in __init__ from a parameter typed object": dict(tail="\nclass _TenthHolder:\n    def __init__(self, be: object):\n        self._be = be\n\n    def _tenth(self, sess):\n" + call("self._be", " " * 8), why="is untyped"),
             "m4e2: a local with one constructor assignment and one untyped": dict(tail="\ndef _tenth(state_dir, x, sess):\n    h = ApiHealth(state_dir)\n    if x:\n        h = x\n" + call("h", " " * 4), why="is untyped"),
         }
-        for label, kw in ambiguous.items():
-            why = kw.pop("why")
+        classmethods = (("R05e: cls._log(be or 'tenth', msg, problem=True) in a classmethod", "    @classmethod\n    def _tenth(cls, be, sess):\n        cls._log(be or 'tenth', %s, problem=True, %s)\n\n"),
+                            ("type(self)._log(self, msg, ...)", "    def _tenth(self, sess):\n        type(self)._log(self, %s, problem=True, %s)\n\n"),
+                            ("getattr(self, '_log')(msg, ...)", "    def _tenth(self, sess):\n        getattr(self, '_log')(%s, problem=True, %s)\n\n"))
+        built = iter(self._censuses(
+            [self._spec(plant(**kw)) for kw in doors.values()] + [self._spec(plant(tail="\ndef _tenth_helper(sess, log):\n    log(%s, problem=True, %s)\n\n\ndef _tenth(be: SdkBackend, sess):\n    _tenth_helper(sess, log=getattr(be, '_ring', None))\n" % (self.MSG, self.RING)))]
+            + [self._spec(plant(**kw)) for kw in others.values()]
+            + [self._spec(plant(with_benign=True, **{k: v for k, v in kw.items() if k != "why"})) for kw in ambiguous.values()]
+            + [self._spec(plant(with_benign=True, tail="\nclass _TenthByMethod:\n    def _ring(self, line, **kw):\n        pass\n\n\nclass _TenthByName:\n    _ring = None\n")), self._spec(plant(with_benign=True, tail="\n_TENTH_ATTR = '_ring'\n\n\ndef _tenth(be: SdkBackend, sess):\n    getattr(be, _TENTH_ATTR)(%s, problem=True, %s)\n" % (self.MSG, self.RING)))]
+            + [self._spec(plant(backend=body % (self.MSG, self.RING), with_alias=False)) for _label, body in classmethods]))
+        for label, kw in doors.items():
             with self.subTest(arm=label):
-                c = self._census(plant(with_benign=True, **kw))
+                c = self._take(next(built))
+                self._assert_tenth_found(c, "alias")
+                self.assertEqual([dc.lineno for dc in c.unreduced if dc.owner == "_tenth"], [])
+        with self.subTest(arm="23b: getattr(be, '_ring', None) handed to a helper that calls it"):
+            c = self._take(next(built))
+            self.assertEqual(c.failures, [])
+            self.assertIn(("_tenth_helper", "TENTH_RING", False), c.content_identities())
+            self.assertEqual(len(c.content_rows), self.BASE + 1)
+            self.assertEqual([dc.kind for dc in c.door_calls if dc.owner == "_tenth_helper"], ["param"])
+        for label, kw in others.items():
+            with self.subTest(arm=label):
+                c = self._take(next(built))
+                self.assertEqual([(k, b, t) for k, b, _ln, t in c.failures], [uncalled], "the call is the other binding's, so the alias is called nowhere")
+                self.assertEqual(tenth(c), [])
+                self.assertEqual(len(c.content_rows), self.BASE)
+        for label, kw in ambiguous.items():
+            why = kw["why"]
+            with self.subTest(arm=label):
+                c = self._take(next(built))
                 kinds = [(k, b) for k, b, _ln, _t in c.failures]
                 self.assertEqual(kinds, [("door-alias-ambiguous", "sdk_backend.py")], "the loud ambiguity, and no other failure (the benign call keeps the alias called)")
                 text = c.failures[0][3]
@@ -2133,18 +2340,16 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
                 self.assertEqual(tenth(c), [], "not counted as a door: named as a failure instead")
                 self.assertEqual(len(c.content_rows), self.BASE)
         with self.subTest(arm="m4j: the collision record's other hows, a method and a class-body name"):
-            c = self._census(plant(with_benign=True, tail="\nclass _TenthByMethod:\n    def _ring(self, line, **kw):\n        pass\n\n\nclass _TenthByName:\n    _ring = None\n"))
+            c = self._take(next(built))
             self.assertEqual(c.failures, [])
             self.assertEqual(c.alias_collisions, {"_ring": ["ApiHealth._ring (an attribute bound in __init__)", "_TenthByMethod._ring (a method)", "_TenthByName._ring (a class-body name)"]})
         with self.subTest(arm="the alias's name spelled as a string outside getattr"):
-            c = self._census(plant(with_benign=True, tail="\n_TENTH_ATTR = '_ring'\n\n\ndef _tenth(be: SdkBackend, sess):\n    getattr(be, _TENTH_ATTR)(%s, problem=True, %s)\n" % (self.MSG, self.RING)))
+            c = self._take(next(built))
             self.assertEqual([(k, b) for k, b, _ln, _t in c.failures], [("door-name-string", "sdk_backend.py")])
             self.assertIn("a door alias's name '_ring' is a string outside getattr(x, '_ring')", c.failures[0][3])
-        for label, body in (("R05e: cls._log(be or 'tenth', msg, problem=True) in a classmethod", "    @classmethod\n    def _tenth(cls, be, sess):\n        cls._log(be or 'tenth', %s, problem=True, %s)\n\n"),
-                            ("type(self)._log(self, msg, ...)", "    def _tenth(self, sess):\n        type(self)._log(self, %s, problem=True, %s)\n\n"),
-                            ("getattr(self, '_log')(msg, ...)", "    def _tenth(self, sess):\n        getattr(self, '_log')(%s, problem=True, %s)\n\n")):
+        for label, _body in classmethods:
             with self.subTest(arm=label):
-                c = self._census(plant(backend=body % (self.MSG, self.RING), with_alias=False))
+                c = self._take(next(built))
                 self._assert_tenth_found(c, "typed")
                 self.assertEqual([dc.lineno for dc in c.unreduced if dc.owner == "_tenth"], [])
         head = census(CENSUS_FILES)
@@ -2163,44 +2368,49 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         rather than a silent miss; and a problem= that is not a constant (a name, a call) or a call the signature cannot
         place (a starred argument) is a FAILURE ROW naming the site, never counted as False, the standing rule's restricted
         side. Each form is a plant on a module copy: a `_tenth_caller` method in the conduit's class."""
-        c0 = Census((SDK_BACKEND, CREDENTIALS_PY), DEFAULT_SOURCES)
-        rows0, refused0 = c0.bound_site_args("SdkSession._log_quietly", constants=("problem",))
-        base = _true_callers(rows0)
-        self.assertEqual((len(base), refused0), (7, []), "the module's own roster at round 7's head: seven, none refused")
         plant = "    def _tenth_caller(self, flag, *rest):\n        self._log_quietly(%s)\n\n"
-
-        def roster(call):
-            path = self._copy(lambda s: s.replace(self.SESSION_ANCHOR, plant % call + self.SESSION_ANCHOR))
-            c = self._census(path)
-            rows, refused = c.bound_site_args("SdkSession._log_quietly", constants=("problem",))
-            self.assertEqual(len(rows) + len([r for r in refused if r[0] == "site-unbound"]), len(rows0) + 1,
-                             "the planted site is bound like the others, or refused as unbound")
-            return [t for t in _true_callers(rows) if t[0] == "_tenth_caller"], [(k, ln, text) for k, _b, ln, text in refused]
         counted = {
             "keyword True": '"live work (%s): planted" % self.name, problem=True',
             "positional True": '"live work (%s): planted" % self.name, True',
             "keyword True, ring_text=None written": '"live work (%s): planted" % self.name, problem=True, ring_text=None',
             "falsy constant 0 (the ruling's rule: any constant but False and None)": '"live work (%s): planted" % self.name, problem=0',
         }
-        for label, call in counted.items():
-            with self.subTest(form=label):
-                self.assertEqual(roster(call), ([("_tenth_caller", False)], []), label)
-        with self.subTest(form="positional True with a positional ring_text"):
-            self.assertEqual(roster('"live work (%s): planted" % self.name, True, None, "planted ring text"'), ([("_tenth_caller", True)], []))
-        with self.subTest(form="keyword False, and None written: the routine road"):
-            self.assertEqual(roster('"live work (%s): planted" % self.name, problem=False'), ([], []))
-            self.assertEqual(roster('"live work (%s): planted" % self.name, problem=None'), ([], []))
-        line = self.src[:self.src.index(self.SESSION_ANCHOR)].count("\n") + 2      # the planted call's line in the copy
+        positional_ring = '"live work (%s): planted" % self.name, True, None, "planted ring text"'
+        routine = ('"live work (%s): planted" % self.name, problem=False', '"live work (%s): planted" % self.name, problem=None')
         refused = {
             "positional non-constant": ('"live work (%s): planted" % self.name, flag', "site-argument-unread", "problem= at SdkSession._tenth_caller is"),
             "a name": ('"live work (%s): planted" % self.name, problem=flag', "site-argument-unread", "problem= at SdkSession._tenth_caller is"),
             "a call": ('"live work (%s): planted" % self.name, problem=bool(flag)', "site-argument-unread", "problem= at SdkSession._tenth_caller is"),
             "a starred argument": ('"live work (%s): planted" % self.name, *rest', "site-unbound", "SdkSession._log_quietly at SdkSession._"),
         }
+        calls = list(counted.values()) + [positional_ring] + list(routine) + [call for call, _kind, _head in refused.values()]
+        results = self._censuses([((SDK_BACKEND, CREDENTIALS_PY), DEFAULT_SOURCES)]
+                                 + [self._spec(self._copy(lambda s: s.replace(self.SESSION_ANCHOR, plant % call + self.SESSION_ANCHOR))) for call in calls])
+        c0 = self._take(results[0])
+        built = dict(zip(calls, results[1:]))
+        rows0, refused0 = c0.bound_site_args("SdkSession._log_quietly", constants=("problem",))
+        base = _true_callers(rows0)
+        self.assertEqual((len(base), refused0), (7, []), "the module's own roster at round 7's head: seven, none refused")
+
+        def roster(call):
+            c = self._take(built[call])
+            rows, refused_rows = c.bound_site_args("SdkSession._log_quietly", constants=("problem",))
+            self.assertEqual(len(rows) + len([r for r in refused_rows if r[0] == "site-unbound"]), len(rows0) + 1,
+                             "the planted site is bound like the others, or refused as unbound")
+            return [t for t in _true_callers(rows) if t[0] == "_tenth_caller"], [(k, ln, text) for k, _b, ln, text in refused_rows]
+        for label, call in counted.items():
+            with self.subTest(form=label):
+                self.assertEqual(roster(call), ([("_tenth_caller", False)], []), label)
+        with self.subTest(form="positional True with a positional ring_text"):
+            self.assertEqual(roster(positional_ring), ([("_tenth_caller", True)], []))
+        with self.subTest(form="keyword False, and None written: the routine road"):
+            self.assertEqual(roster(routine[0]), ([], []))
+            self.assertEqual(roster(routine[1]), ([], []))
+        line = self.src[:self.src.index(self.SESSION_ANCHOR)].count("\n") + 2      # the planted call's line in the copy
         for label, (call, kind, head) in refused.items():
             with self.subTest(form=label):
-                counted, rows = roster(call)
-                self.assertEqual((counted, [(k, ln) for k, ln, _t in rows]), ([], [(kind, line)]), "%s: a failure row naming the site, not a False" % label)
+                hits, rows = roster(call)
+                self.assertEqual((hits, [(k, ln) for k, ln, _t in rows]), ([], [(kind, line)]), "%s: a failure row naming the site, not a False" % label)
                 self.assertTrue(rows[0][2].startswith(head), rows[0][2])
 
     def test_a_conduit_whose_inner_call_folds_a_source_of_its_own_is_refused_at_the_inner_call_and_the_no_fold_control_is_not(self):
@@ -2228,9 +2438,13 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         relay = "    def _tenth_relay(self, msg, ring=True):\n        self._log(%s)\n\n"
         site = "    def _tenth(self, sess):\n        self._tenth_relay('env (%s): tenth' % sess.name)\n\n"
 
-        def census_with(inner):
-            path = self._copy(lambda s: s.replace(anchor, relay % inner + site + anchor))
-            c = self._census(path)
+        def path_with(inner):
+            return self._copy(lambda s: s.replace(anchor, relay % inner + site + anchor))
+
+        def path_with_local(local, helpers="", where=site):
+            return self._copy(lambda s: s.replace(anchor, helpers + relay2 % local + where + anchor))
+
+        def census_with(c):
             self.assertEqual(c.failures, [])
             inner_calls = [dc for dc in c.door_calls if dc.owner == "_tenth_relay"]
             self.assertEqual([dc.kind for dc in inner_calls], ["self"], "the conduit's one inner call")
@@ -2238,11 +2452,28 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
             return c, inner_calls[0]
         fold = "', '.join(sorted(AUTH_ENV_NAMES))"
         at_site = [("_tenth", "problem=True with a ring text that reduces to no format")]
-        for road, inner, site_rows in (("message", "msg + %s, problem=bool(ring)" % fold, []),
-                                       ("ring_text", "msg, problem=bool(ring), ring_text=str(msg) + %s" % fold, []),
-                                       ("key", "msg, problem=bool(ring), key=%s" % fold, at_site)):
+        relay2 = "    def _tenth_relay(self, msg, ring=True):\n        line = %s\n        self._log(line, problem=bool(ring))\n\n"
+        wrap = "    def _tenth_wrap(self, m):\n        return str(m) + %s\n\n"
+        tainted_site = "    def _tenth(self, sess):\n        self._tenth_relay(%s)\n\n" % self.MSG
+        chain = "".join("    def _tenth_w%d(self, m):\n        return str(m) + %s\n\n"
+                        % (i, "self._tenth_w%d(m)" % (i + 1) if i < 8 else "' tail'") for i in range(1, 9))
+        inner_row = ("_tenth_relay", "problem= is the expression bool(ring)")
+        fold_roads = (("message", "msg + %s, problem=bool(ring)" % fold, []),
+                      ("ring_text", "msg, problem=bool(ring), ring_text=str(msg) + %s" % fold, []),
+                      ("key", "msg, problem=bool(ring), key=%s" % fold, at_site))
+        local_roads = (("a fold through a conduit local", "msg + %s" % fold, ""),
+                       ("a fold through a helper's return", "str(msg) + self._tenth_wrap(msg)", wrap % fold))
+        tainted_roads = (("the parameter alone through a local and a clean helper, under a tainted site (the control)", wrap % "' tail'"),
+                         ("a clean helper chain past RESIDUAL_DEPTH, under a tainted site (the over-approximating side)", chain))
+        helper_of = lambda road: "_tenth_wrap" if "wrap" in road else "_tenth_w1"
+        built = iter(self._censuses(
+            [self._spec(path_with(inner)) for _road, inner, _rows in fold_roads]
+            + [self._spec(path_with_local(local, helpers)) for _road, local, helpers in local_roads]
+            + [self._spec(path_with_local("str(msg) + self.%s(msg)" % helper_of(road), helpers, tainted_site)) for road, helpers in tainted_roads]
+            + [self._spec(path_with_local("str(msg) + self._tenth_w1(msg)", chain)), self._spec(path_with("msg, problem=bool(ring)"))]))
+        for road, inner, site_rows in fold_roads:
             with self.subTest(road=road):
-                c, dc = census_with(inner)
+                c, dc = census_with(self._take(next(built)))
                 self.assertEqual(sorted(dc.taint), ["env"], "the inner call is tainted by the fold")
                 self.assertEqual(sorted(dc.residual), ["env"], "the residual names what no site carries")
                 self.assertEqual(sorted((d.owner, why) for d, why in c.explicit_violations),
@@ -2270,36 +2501,25 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         # residual_taint's docstring says) and under a clean site it is silent. The local is `str(msg) + helper(msg)`,
         # never a bare `helper(msg)`: a local that is no wrap of a parameter makes the method no conduit at all, and the
         # inner call is then judged as a plain door (loud, but not through the residual).
-        relay2 = "    def _tenth_relay(self, msg, ring=True):\n        line = %s\n        self._log(line, problem=bool(ring))\n\n"
-        wrap = "    def _tenth_wrap(self, m):\n        return str(m) + %s\n\n"
-        tainted_site = "    def _tenth(self, sess):\n        self._tenth_relay(%s)\n\n" % self.MSG
-        chain = "".join("    def _tenth_w%d(self, m):\n        return str(m) + %s\n\n"
-                        % (i, "self._tenth_w%d(m)" % (i + 1) if i < 8 else "' tail'") for i in range(1, 9))
-        inner_row = ("_tenth_relay", "problem= is the expression bool(ring)")
 
-        def census_with_local(local, helpers="", where=site):
-            path = self._copy(lambda s: s.replace(anchor, helpers + relay2 % local + where + anchor))
-            c = self._census(path)
+        def census_with_local(c):
             self.assertEqual(c.failures, [])
             inner_calls = [dc for dc in c.door_calls if dc.owner == "_tenth_relay"]
             self.assertEqual([dc.kind for dc in inner_calls], ["self"], "the conduit's one inner call")
             self.assertEqual([dc.kind for dc in c.door_calls if dc.owner == "_tenth"], ["conduit:SdkBackend._tenth_relay"],
                              "the planted site is a conduit site: the local wraps the parameter")
             return c, inner_calls[0]
-        for road, local, helpers in (("a fold through a conduit local", "msg + %s" % fold, ""),
-                                     ("a fold through a helper's return", "str(msg) + self._tenth_wrap(msg)", wrap % fold)):
+        for road, local, helpers in local_roads:
             with self.subTest(road=road):
-                c, dc = census_with_local(local, helpers)
+                c, dc = census_with_local(self._take(next(built)))
                 self.assertEqual((sorted(dc.taint), sorted(dc.residual)), (["env"], ["env"]),
                                  "the fold reaches the inner call through the local (and the helper's return); the residual names it")
                 self.assertEqual(sorted((d.owner, why) for d, why in c.explicit_violations), [inner_row], "refused at the inner call")
                 self.assertEqual(([d.owner for d in c.tainted if d.owner == "_tenth"], len(c.content_rows)), ([], self.BASE),
                                  "the site passed a clean prose and is not judged; no constant True at the inner call, so no row")
-        for road, helpers in (("the parameter alone through a local and a clean helper, under a tainted site (the control)", wrap % "' tail'"),
-                              ("a clean helper chain past RESIDUAL_DEPTH, under a tainted site (the over-approximating side)", chain)):
-            helper = "_tenth_wrap" if "wrap" in road else "_tenth_w1"
+        for road, helpers in tainted_roads:
             with self.subTest(road=road):
-                c, dc = census_with_local("str(msg) + self.%s(msg)" % helper, helpers, tainted_site)
+                c, dc = census_with_local(self._take(next(built)))
                 self.assertEqual(sorted(dc.taint), ["env"], "the main pass carries the site's env into the inner call through msg")
                 deep = "RESIDUAL_DEPTH" in road
                 self.assertEqual(sorted(dc.residual), ["env"] if deep else [],
@@ -2312,11 +2532,11 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
                 self.assertEqual(([d.owner for d in c.tainted if d.owner == "_tenth"], len(c.content_rows)), (["_tenth"], self.BASE + 1))
                 self.assertIn(("_tenth", "UNBOUNDED", False), c.content_identities(), "the site, declared True through ring's default")
         with self.subTest(road="the same chain past RESIDUAL_DEPTH, under a clean site"):
-            c, dc = census_with_local("str(msg) + self._tenth_w1(msg)", chain)
+            c, dc = census_with_local(self._take(next(built)))
             self.assertEqual((sorted(dc.taint), sorted(dc.residual), c.explicit_violations, len(c.content_rows)), ([], [], [], self.BASE),
                              "nothing folded, nothing passed: the bound's over-approximation reads a return that carries nothing")
         with self.subTest(road="no fold (the control)"):
-            c, dc = census_with("msg, problem=bool(ring)")
+            c, dc = census_with(self._take(next(built)))
             self.assertEqual((sorted(dc.taint), sorted(dc.residual), c.explicit_violations), ([], [], []))
             self.assertEqual(len(c.content_rows), self.BASE)
         with self.subTest(road="the head's own inner calls carry no residual"):
@@ -2446,9 +2666,11 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         by_name = lambda d: {k: sorted(v) for k, v in d.items() if v}
         rows = lambda c: [(dc.base, dc.lineno, dc.kind, sorted(dc.taint), dc.heads, dc.ring_formats, dc.unreduced, sorted(dc.residual))
                           for dc in c.door_calls]
-        for label, files in (("the real pair", (SDK_BACKEND, CREDENTIALS_PY)), ("the module-list plant", (self._module_list_plant(), CREDENTIALS_PY))):
+        pairs = (("the real pair", (SDK_BACKEND, CREDENTIALS_PY)), ("the module-list plant", (self._module_list_plant(), CREDENTIALS_PY)))
+        fasts = self._censuses([(files, DEFAULT_SOURCES) for _label, files in pairs])
+        for (label, files), fast_result in zip(pairs, fasts):
             with self.subTest(over=label):
-                fast, slow = Census(files, DEFAULT_SOURCES), Sweeping(files, DEFAULT_SOURCES)
+                fast, slow = self._take(fast_result), Sweeping(files, DEFAULT_SOURCES)
                 self.assertTrue(fast.global_taint, "module names gain taint: the sweep had events to fire on")
                 self.assertGreater(slow.taint_rounds, fast.taint_rounds, "the sweep visits more, else the pin compares a pass with itself")
                 if label == "the real pair":
@@ -2500,6 +2722,104 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         tenth = [f for f in c.all_fns if f.qual == "SdkBackend._tenth"][0]
         self.assertEqual(sorted(c.tainted_names[tenth].get("names", ())), ["env"], "the with-target carries the env")
         self.assertEqual(sorted(c.carried_names[tenth].get("names", ())), ["env"], "and carries it whole")
+
+    # ---- the pool's own pins (the block comment above _censuses says why the pool exists) ----
+
+    def _pool_specs(self):
+        """Two specs a pin builds both ways: a tenth-row plant on a module copy, and a loud plant (a second appender in a
+        synthetic module beside the real file) whose construction raises CensusError."""
+        return [self._spec(self._method("        self._log(%s, problem=True, %s)" % (self.MSG, self.RING))),
+                self._spec(SDK_BACKEND, self._plant("plant.py", "def tenth(be, sess):\n    be._problems.append({'text': 'x'})\n"))]
+
+    def _reads_of(self, results):
+        """What this class reads from a batch, in one comparable shape: for a Census its identities, failures, door calls
+        with their taint, violations, summary, alias tables, functions and site binding; for a raised construction the
+        exception's class and text."""
+        out = []
+        for r in results:
+            r = self._resolve(r)
+            if isinstance(r, _Raised):
+                out.append(("raised", type(r.exc).__name__, str(r.exc)))
+                continue
+            rows, refused = r.bound_site_args("SdkSession._log_quietly", constants=("problem",))
+            out.append(("census", r.content_identities(), r.failures,
+                        [(dc.base, dc.lineno, dc.owner, dc.kind, sorted(dc.taint), dc.heads, dc.ring_formats, dc.unreduced, sorted(dc.residual),
+                          dc.problem_decl) for dc in r.door_calls],
+                        [(dc.lineno, why) for dc, why in r.explicit_violations], r.summary(), r.alias_collisions,
+                        sorted((b, ln, how) for b, ln, how, _f in r.door_value_sites), [(f.qual, f.node.lineno) for f in r.all_fns],
+                        r.cap_requeues, r.taint_rounds,
+                        [(caller.qual, call.lineno, sorted((k, ast.unparse(v)) for k, v in b.items())) for caller, call, b in rows], refused))
+        return out
+
+    def test_the_censuses_come_through_the_worker_pool_and_read_the_same_as_this_process_builds(self):
+        """The ruling's pin that the pool road is TAKEN: in this run, for this batch, the class's censuses came from the
+        worker pool (a fallback that silently ran every batch passes every other test of the class and fails here), and
+        what came through reads the same as this process builds over the same inputs, a loud plant's CensusError text
+        included, so the tests above prove the same things they proved serially. Where the pool is unavailable in this
+        environment the class has already said so on stderr and ran serial; this pin then skips naming the reason,
+        since the road it pins did not run (condition (2) of the ruling: the module never fails for want of a pool)."""
+        cls = type(self)
+        if cls._pool is None:
+            self.skipTest("the census pool is unavailable here, the class ran serial: %s" % cls._pool_reason)
+        specs = self._pool_specs()
+        pooled = self._censuses(specs)
+        self.assertEqual(cls.roads[-1], "pool", "the batch was routed to the pool")
+        self.assertEqual([type(r).__name__ for r in pooled], ["_Pending", "_Pending"], "unpickled when read, not before")
+        pooled = [self._resolve(r) for r in pooled]
+        self.assertGreaterEqual(cls.built["pool"], len(specs), "the batch's constructions came from the pool")
+        self.assertEqual(cls.built["serial"], 0, "no construction of this class fell back to this process in this run")
+        self.assertEqual([type(r).__name__ for r in pooled], ["Census", "_Raised"])
+        self.assertIsInstance(pooled[1].exc, CensusError)
+        self.assertIsInstance(pooled[1].exc.__cause__, _WorkerTraceback, "the worker's traceback travels as the cause")
+        self.assertEqual(self._reads_of(pooled), self._reads_of(self._serial(specs)))
+        c = pooled[0]
+        self.assertIn(self.TENTH_ID, c.content_identities())
+        # the round trip's tables are keyed by the unpickled trees (Census.__getstate__): a table left keyed by the
+        # worker's addresses would answer nothing here
+        nodes = set(c._nodes_by_id())
+        self.assertTrue(c.all_fns and all(c.fn_by_node.get(id(f.node)) is f for f in c.all_fns), "fn_by_node is keyed by the unpickled defs")
+        self.assertTrue(c.door_calls and all(c.fn_of.get(id(dc.node)) is dc.fn for dc in c.door_calls if isinstance(dc.fn, erc.Fn)),
+                        "fn_of is keyed by the unpickled call nodes")
+        self.assertTrue(all(id(call) in c.callees for f in c.all_fns for call in f.calls), "callees is keyed by the unpickled call nodes")
+        self.assertTrue(c.classes_by_name and all(c.cls_by_node.get(id(k.node)) is k for lst in c.classes_by_name.values() for k in lst),
+                        "cls_by_node is keyed by the unpickled class nodes")
+        self.assertTrue(c._decl_node_tags and set(c._decl_node_tags) <= nodes, "the declared roots name nodes of the unpickled trees")
+        self.assertTrue(all(set(f.lexical) <= nodes for f in c.all_fns) and any(f.lexical for f in c.all_fns), "every lexical table does too")
+
+    def test_a_pool_that_breaks_is_named_once_on_stderr_and_the_batch_is_built_here_with_the_same_results(self):
+        """Condition (2) of the ruling: the class degrades, never errors. With the pool broken (an executor whose submit
+        raises BrokenProcessPool, standing in for the class's for this test alone) a batch is built in this process,
+        ONE stderr line names the reason and says the results are unchanged, the class drops the pool so later batches
+        go the same way without a second line, and the results read the same as the pool's over the same inputs, the
+        loud plant's CensusError text included. The class's own pool comes back after the test."""
+        cls = type(self)
+        specs = self._pool_specs()
+        pooled = [self._resolve(r) for r in self._censuses(specs)] if cls._pool is not None else None
+
+        class _Broken:
+            def submit(self, *a, **k):
+                raise BrokenProcessPool("planted: every worker is gone")
+
+            def shutdown(self, *a, **k):
+                pass
+
+        err = io.StringIO()
+        with mock.patch.object(cls, "_pool", _Broken()), mock.patch.object(cls, "_pool_reason", None), \
+                mock.patch.object(cls, "roads", []), mock.patch.object(cls, "built", collections.Counter()), contextlib.redirect_stderr(err):
+            out = self._censuses(specs)
+            self.assertIsNone(cls._pool, "the pool is dropped for the rest of the class")
+            again = self._censuses(specs[1:])
+            self.assertEqual(cls.roads, ["serial (the census pool failed under a batch of 2: BrokenProcessPool: planted: every worker is gone)"] * 2)
+            self.assertEqual(cls.built, {"serial": 3})
+        lines = err.getvalue().splitlines()
+        self.assertEqual(len(lines), 1, lines)
+        self.assertTrue(lines[0].startswith("[EnvRowsCensusBlindSpots] the census pool failed under a batch of 2: BrokenProcessPool: planted: every worker is gone; "), lines[0])
+        self.assertIn("the results are unchanged", lines[0])
+        self.assertEqual([type(r).__name__ for r in out], ["Census", "_Raised"])
+        self.assertEqual(self._reads_of(out[1:]), self._reads_of(again))
+        if pooled is not None:
+            self.assertEqual(self._reads_of(pooled), self._reads_of(out))
+            self.assertIsNotNone(cls._pool, "the class's own pool is back")
 
 
 class CensusParseRetention(unittest.TestCase):
