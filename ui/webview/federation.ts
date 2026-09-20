@@ -1042,7 +1042,8 @@ export class FederationManager {
   // host is still attached, an attached idle host reads 0, and a detached silent host has no key. Never reused; a reload
   // starts over, the assignment re-derived from the kernel's /tunnels row order at first sight (ordinalOf, openRemote),
   // so h1 can name another host after a reload, and names the same one again while the hub's dialable rows and their
-  // order have not changed. Positions, never names: the minute row carries these keys
+  // order have not changed, every row was dialable at this pane's first poll, and this pane's attach and detach history
+  // is a fresh pane's first answer (the three conditions docs/reference.md states). Positions, never names: the minute row carries these keys
   // (h1, h2 and so on, one per host this document attached) and no host name. Read through window.__rompFed.wsBytesByHost (wsBytesByHost()).
   private hostOrdinal = new Map<string, number>();
   private wsBytesByOrdinal = new Map<number, number>();

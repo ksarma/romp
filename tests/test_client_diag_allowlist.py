@@ -198,6 +198,17 @@ def disclosure_copies():
     return {"kernel": flat(k), "docs": flat(d), "ledger": flat(l)}
 
 
+def maps_comment():
+    """The federation manager's two-maps comment in federation.ts (from the field's header line to the first map's
+    declaration), flattened to one line, or None when its anchors are gone. Not a disclosure copy (it states the maps, not
+    the rule), but the copy a reader of the code meets first, so its reload sentence carries the docs' three conditions
+    (round 3; the revision 14 read found it carrying one)."""
+    root = os.path.dirname(HERE)
+    fsrc = open(os.path.join(root, "ui", "webview", "federation.ts"), encoding="utf-8").read()
+    m = re.search(r"// wsBytesByHost \(2026-09-19;(.*?)\n\s*private hostOrdinal = ", fsrc, re.S)
+    return re.sub(r"\s+", " ", re.sub(r"\n\s*//", " ", m.group(1))).strip() if m else None
+
+
 class ClientDiagAllowlistTest(unittest.TestCase):
     def setUp(self):
         # A private state root (T282): km.jd is the judge module every test module shares, and its STATE is whatever
@@ -788,6 +799,11 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         for name in ("docs", "ledger"):
             for token in (r"names the same one again", r"dialable rows", r"first poll", r"attach and detach history", r"rotation"):
                 self.assertIsNotNone(re.search(token, copies[name], re.I), "%s: the reload sentence no longer states %r" % (name, token))
+        # federation.ts's two-maps comment carries the same three conditions (it carried one until round 3)
+        maps = maps_comment()
+        self.assertIsNotNone(maps, "federation.ts: the two-maps comment's anchors are gone: re-aim maps_comment()")
+        for token in (r"names the same one again", r"dialable rows", r"first poll", r"attach and detach history"):
+            self.assertIsNotNone(re.search(token, maps, re.I), "maps: the reload sentence no longer states %r" % token)
         named = {"chat": r"\bchat\b", "federation": r"\bfederation\b", "shell": r"\bshell\b", "kernel": r"\bwsopen\b"}
         carrying = host_carrying_keys()
         self.assertTrue(carrying)
