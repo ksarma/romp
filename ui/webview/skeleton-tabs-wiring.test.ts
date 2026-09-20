@@ -15,7 +15,7 @@ import { isReplyReady } from "./reply-ready";
 import { hostOf } from "./host-prefix";
 import { hideEdges, staysEnumerable } from "../test-dom-shim";
 import { isProvisionalId } from "./provisional";   // the loading branch's one "opening" gate (2026-09-11): the real module
-import { newSkeletonState, applyTabOrderSkeleton, onSocketUp, onFull, gateOnFrame, gateOnShow, onLayoutWord, nextPrefetch } from "./skeleton-tabs";   // the real state machine under the lifted panes handler (review round 4, verdict 1): the layout-word road over a gate already open
+import { newSkeletonState, applyTabOrderSkeleton, onSocketUp, onFull, gateOnFrame, gateOnStrip, gateOnShow, onLayoutWord, nextPrefetch } from "./skeleton-tabs";   // the real state machine under the lifted panes handler (review round 4, verdict 1): the layout-word road over a gate already open
 
 const requireCjs = createRequire(__filename);
 const WEBVIEW = path.resolve(process.cwd(), "..", "ui", "webview");
@@ -457,7 +457,7 @@ test("the idle prefetch's START GATE (stage 0, 2026-09-18): upsert reads the sho
   assert.match(RENDER, /if \(typeof m\.mob === "boolean" && onLayoutWord\(skeletonTabs, m\.mob\) && \(\(activeId && gateOnShow\(skeletonTabs, activeId\)\) \|\| skeletonTabs\.gate\)\) schedulePrebuild\(\);/, "the word re-decides the hold; a lifted hold arms the chain when the gate is open for it: opened now for the shown tab whose full applied on this socket, or open already (review round 4, verdict 1: gateOnShow refuses an open gate, so the gate itself is the second read; the executed case at the end of this file drives both roads)");
   const SK = fs.readFileSync(path.join(WEBVIEW, "skeleton-tabs.ts"), "utf8");
   assert.match(SK, /export function onSocketUp\(st: SkeletonState, phone\?: boolean\): void \{\s*\n\s*st\.loaded\.clear\(\);\s*\n\s*st\.gate = false;[^\n]*\n\s*st\.returnHold = phone === true;/, "a new socket closes the gate, and on the phone holds the chain for the socket's life");
-  for (const opener of ["gateOnFrame", "gateOnStrip", "gateOnShow"]) assert.match(SK, new RegExp("export function " + opener + "\\([^\\n]*\\n\\s*if \\(st\\.gate \\|\\| st\\.returnHold"), opener + " opens nothing while the return hold stands");
+  for (const opener of ["gateOnFrame", "gateOnShow"]) assert.match(SK, new RegExp("export function " + opener + "\\([^\\n]*\\n\\s*if \\(st\\.gate \\|\\| st\\.returnHold"), opener + " opens nothing while the return hold stands (gateOnStrip reads no hold since round 4b, extra7-1; the composed case at the end of this file is its pin)");
   assert.match(SK, /if \(hidden \|\| !st\.gate \|\| st\.returnHold\) return null;/, "nextPrefetch is null while the gate is closed or the return hold stands: no background ask leaves (the hold term since round 3: a hold set on a layout word after the gate opened must stop the chain)");
   assert.match(SK, /return \{ ids: new Set\(\), order: \[\], status: new Map\(\), loaded: new Set\(\), gate: false, returnHold: false, redialed: false \};/, "a fresh state's gate is closed, nothing is held and no redial is recorded (the boot dial sends no wsup)");
   assert.match(SK, /export function onLayoutWord\(st: SkeletonState, phone: boolean\): boolean \{\n\s*const was = st\.returnHold;\n\s*st\.returnHold = st\.redialed && phone;\n\s*return was && !st\.returnHold;\n\}/, "the hold is the redial record AND the word's layout; the return says whether a standing hold was lifted");
@@ -639,4 +639,39 @@ test("review round 4 (2026-09-19, verdict 1): a lift that finds the prefetch gat
   onSocketUp(st3, true);
   r = run({ romp: "panes", on: { chat: true }, mob: false }, { ...real, skeletonTabs: st3 });
   assert.deepEqual([r.gateAsks, r.armed, st3.gate, st3.returnHold], [1, 0, false, false], "the hold lifts, the gate stays closed with no full applied, and the lift arms nothing");
+});
+
+test("review round 4b (2026-09-20, extra7-1): a local strip with no local want under the return hold opens the gate, which issues no ask while the hold stands (nextPrefetch's hold term) and arms the chain on the flip back, through the real state machine", () => {
+  // The defect (the round-3 refuter reproduced it twice: an ended stored tab; a remote one whose relay redialed too): gateOnStrip refused
+  // its opening event while the hold stood and recorded it nowhere, so a phone return whose local strip listed no local want left the
+  // gate closed; the flip back to the desktop lifted the hold, asked gateOnShow (nothing loaded for a want the kernel does not list), read
+  // the gate (closed) and armed nothing, so nextPrefetch stayed null until a later strip, a later full for the shown tab or the user's
+  // first tap reopened the chain (so not for the socket's life; and a surviving relay socket makes st.loaded carry the shown tab, so the
+  // lift arms via gateOnShow there). The fix: gateOnStrip reads no hold. Its safety is nextPrefetch's hold term (extra8-1's surface), so
+  // this case pins the COMPOSED chain and not the opener alone: an open gate under the hold issues no ask, and the lift arms over it.
+  const A = "11111111-2222-3333-4444-aaaaaaaaaaaa", B = "11111111-2222-3333-4444-bbbbbbbbbbbb", C = "11111111-2222-3333-4444-cccccccccccc";
+  const none = new Set<string>(), all = () => true;
+  const run = liftedPanesOnBlock();
+  const st = newSkeletonState();
+  onSocketUp(st, true);   // the return's redial on the phone: the hold stands
+  applyTabOrderSkeleton(st, [B, C], [B, C]);   // the redial's local strip: A, the stored tab, ended while the phone was away
+  assert.equal(gateOnStrip(st, [B, C], A), true, "the strip that lists no local want opens the gate under the hold (before this fix: false, the event lost)");
+  assert.equal(st.returnHold, true, "the hold still stands");
+  assert.equal(nextPrefetch(st, A, none, false, all), null, "an open gate under the hold issues no ask: nextPrefetch's hold term is the safety");
+  const real: PanesWordState = { panesOn: { chat: true }, activeId: A, skeletonTabs: st, onLayoutWord, gateOnShow };
+  let r = run({ romp: "panes", on: { chat: true }, mob: true }, real);
+  assert.deepEqual([r.armed, st.returnHold], [0, true], "a repeat phone word: the hold stays, nothing arms");
+  assert.equal(nextPrefetch(st, A, none, false, all), null, "still no ask under the hold");
+  r = run({ romp: "panes", on: { chat: true }, mob: false }, real);
+  assert.deepEqual([r.layoutWords, r.gateAsks, r.armed, st.returnHold, st.gate], [[false], 1, 1, false, true],
+    "the flip back to the desktop lifts the hold and arms the chain once over the gate the strip opened (gateOnShow opens nothing: A's full never applied; the gate's own state is the arm's second read)");
+  assert.equal(nextPrefetch(st, A, none, false, all), B, "the chain runs on the desktop grid, cheapest first");
+  // the phone road is unchanged: a strip that lists the shown tab leaves the gate to the frame, and under the hold the frame opens nothing
+  const st2 = newSkeletonState();
+  onSocketUp(st2, true);
+  applyTabOrderSkeleton(st2, [B, C], [A, B, C]);
+  assert.equal(gateOnStrip(st2, [A, B, C], A), false, "the strip lists A: no opening here (the frame's road)");
+  onFull(st2, A);
+  assert.equal(gateOnFrame(st2, A, [A]), false, "held: A's full opens nothing on the phone");
+  assert.equal(nextPrefetch(st2, A, none, false, all), null, "no ask on the phone's return");
 });

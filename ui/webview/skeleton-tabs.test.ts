@@ -243,7 +243,6 @@ test("T6: a return on the phone (the owner's decision, 2026-09-19): the redial r
   assert.equal(st.returnHold, true, "…and on the phone the chain is held for this socket's life");
   assert.equal(applyTabOrderSkeleton(st, [B, C], [A, B, C]), true, "the redial's strip re-lists B and C (the loaded record was cleared with the socket)");
   assert.equal(gateOnStrip(st, [A, B, C], A), false, "the strip opens nothing");
-  assert.equal(gateOnStrip(st, [B, C], A), false, "…not even a strip that lists no local want (an ended stored tab): the hold outranks the strip's opening");
   assert.equal(nextPrefetch(st, A, none, false, all), null, "no background ask on the redial before A's full");
   assert.equal(gateOnFrame(st, A, [A]), false, "A's full applied on the new socket: the visible tab alone reloads, the gate stays closed");
   assert.equal(nextPrefetch(st, A, none, false, all), null, "the chain does not re-download B and C, tabs nobody asked for");
@@ -268,6 +267,16 @@ test("T6: a return on the phone (the owner's decision, 2026-09-19): the redial r
   onSocketUp(st3);
   assert.equal(st3.returnHold, false);
   assert.equal(newSkeletonState().returnHold, false, "a fresh state holds nothing: the boot dial sends no wsup, so a cold open's chain is untouched");
+  // a return whose local strip lists no local want (the stored tab ended while the phone was away; review round 4b, 2026-09-20, extra7-1):
+  // the strip opens the gate under the hold, the hold alone keeps the chain silent (nextPrefetch's hold term), and the flip back to the
+  // desktop resumes it; before this the strip refused under the hold and recorded nothing, so the lift found the gate closed and armed nothing
+  const st4 = newSkeletonState();
+  onSocketUp(st4, true);
+  applyTabOrderSkeleton(st4, [B, C], [B, C]);
+  assert.equal(gateOnStrip(st4, [B, C], A), true, "the strip that lists no local want opens the gate, hold or no hold");
+  assert.equal(nextPrefetch(st4, A, none, false, all), null, "an open gate under the hold issues no ask: the hold outranks the chain, not the opening");
+  assert.equal(onLayoutWord(st4, false), true, "the flip back to the desktop lifts the hold");
+  assert.equal(nextPrefetch(st4, A, none, false, all), B, "and the chain runs over the gate the strip opened");
 });
 
 test("T6b (review round 3, 2026-09-19, extra8-1): the hold follows the shell's LAYOUT WORD: a flip to the desktop after a phone redial lifts it and the shown tab opens the gate; a flip to the phone after a desktop redial sets it and nextPrefetch stops; before any redial the word holds nothing", () => {
